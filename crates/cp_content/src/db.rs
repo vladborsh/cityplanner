@@ -41,6 +41,11 @@ impl<T> Table<T> {
     }
 }
 
+/// The content set as sim-world state, for command handlers. Not in saves (saves keep
+/// only the content hash).
+#[derive(bevy_ecs::resource::Resource, Clone)]
+pub struct SimContent(pub std::sync::Arc<ContentDb>);
+
 /// The validated, immutable content set.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContentDb {

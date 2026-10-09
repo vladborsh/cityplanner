@@ -2436,6 +2436,7 @@ dependencies = [
 name = "cp_content"
 version = "0.0.0"
 dependencies = [
+ "bevy_ecs",
  "cp_core",
  "postcard",
  "ron",

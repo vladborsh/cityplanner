@@ -10,7 +10,9 @@ use std::sync::Arc;
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
+use cp_content::{ContentDb, SimContent};
 use cp_core::{CommandLog, CommandQueue, GameTime, SimSpeed, Tick};
+pub use cp_terrain::SimTerrain;
 use cp_terrain::{Terrain, TileOwnership};
 
 use crate::checksum::SimChecksum;
@@ -52,10 +54,6 @@ pub struct SimStats {
     pub commands_applied: usize,
 }
 
-/// The loaded map, as sim state. Immutable for the lifetime of a game.
-#[derive(Resource, Clone)]
-pub struct SimTerrain(pub Arc<Terrain>);
-
 /// Read-only snapshot of the sim after a tick.
 #[derive(Resource, Clone)]
 pub struct SimView {
@@ -84,6 +82,12 @@ impl SimRunner {
         {
             world.insert_resource(TileOwnership::m1_around(start));
         }
+    }
+
+    /// Puts the content database into the sim world (read by command handlers, e.g.
+    /// road defs for `NetCommand`). Call before pushing commands that need content.
+    pub fn set_content(&mut self, content: Arc<ContentDb>) {
+        self.world_mut().insert_resource(SimContent(content));
     }
 
     /// Snapshot of the current state for clients.

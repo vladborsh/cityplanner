@@ -24,7 +24,9 @@ mod ownership;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use bevy_ecs::resource::Resource;
 use bevy_math::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +45,11 @@ pub const MAP_SIZE: f32 = (GRID - 1) as f32 * SPACING;
 pub const TILE_SIZE: f32 = MAP_SIZE / TILES_PER_SIDE as f32;
 /// Height (metres) that the maximum `u16` sample encodes.
 pub const MAX_HEIGHT: f32 = 1024.0;
+
+/// The loaded map as sim-world state (immutable for the lifetime of a game; not in saves).
+/// Lives here so domain crates (`cp_net`, ...) can read it from the world.
+#[derive(Resource, Clone)]
+pub struct SimTerrain(pub Arc<Terrain>);
 
 /// `map.ron` contents.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
