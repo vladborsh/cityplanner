@@ -101,6 +101,8 @@ fn kinds(e: &[RoadBuildError]) -> Vec<&'static str> {
             RoadBuildError::UnknownRoad(_) => "UnknownRoad",
             RoadBuildError::NoElevatedVariant(_) => "NoElevatedVariant",
             RoadBuildError::NoBridgeVariant(_) => "NoBridgeVariant",
+            RoadBuildError::RampTooShort { .. } => "RampTooShort",
+            RoadBuildError::RampStartsOverWater { .. } => "RampStartsOverWater",
             RoadBuildError::PathTooShort => "PathTooShort",
             RoadBuildError::DegenerateLeg { .. } => "DegenerateLeg",
             RoadBuildError::SegmentTooShort { .. } => "SegmentTooShort",
@@ -240,7 +242,12 @@ fn error_water_without_bridge_but_elevated_is_allowed() {
     r.snap = no_snap();
     let e = w.run(&r).unwrap_err();
     assert_eq!(kinds(&e), ["WaterWithoutBridge"], "{e:?}");
-    r.elevation = ElevationMode::Elevated(8.0);
+    // A long elevated path (it must ramp up from ground level and back down).
+    r.path = RoadPath::Straight {
+        from: at(-120.0, 0.0),
+        to: at(210.0, 0.0),
+    };
+    r.elevation = ElevationMode::Elevated(3.0);
     let plan = w.run(&r).unwrap();
     // The piece over the water is a bridge (and priced as one), the rest is elevated.
     let levels: Vec<_> = plan.segments.iter().map(|s| s.elevation).collect();
@@ -253,14 +260,14 @@ fn error_water_without_bridge_but_elevated_is_allowed() {
         };
         assert_eq!(s.cost, segment_cost(s.length, per_m));
     }
-    // Deck height over the water is measured from the water surface (98 m) + 8.
+    // Deck height over the water is measured from the water surface (98 m) + 3.
     let mid = plan
         .segments
         .iter()
         .find(|s| s.elevation == Elevation::Bridge)
         .unwrap();
     let wet_y = |p: Vec3| p.y;
-    assert!(wet_y(mid.curve.point(0.5)) >= 98.0 + 8.0 - 0.5);
+    assert!(wet_y(mid.curve.point(0.5)) >= 98.0 + 3.0 - 0.5);
 }
 
 #[test]
@@ -278,9 +285,9 @@ fn bridge_needs_a_bridge_variant() {
         .join("\n");
     w.db = ContentDb::from_sources(vec![("basic_2l.ron".into(), stripped)]).unwrap();
     w.terrain = terrain(98.0, |x, _| 97.0 + 0.04 * (x - 5045.0).abs());
-    let mut r = w.straight(at(0.0, 0.0), at(90.0, 0.0));
+    let mut r = w.straight(at(-120.0, 0.0), at(210.0, 0.0));
     r.snap = no_snap();
-    r.elevation = ElevationMode::Elevated(8.0);
+    r.elevation = ElevationMode::Elevated(3.0);
     let e = w.run(&r).unwrap_err();
     assert_eq!(kinds(&e), ["NoBridgeVariant"], "{e:?}");
     // Dry ground needs no bridge variant.
@@ -289,44 +296,114 @@ fn bridge_needs_a_bridge_variant() {
 }
 
 #[test]
-fn ground_nodes_and_raised_nodes_do_not_snap_to_each_other() {
+fn elevated_ends_snap_to_ground_nodes_but_interior_vertices_do_not() {
     let mut w = W::new();
     let s = w.add(at(0.0, 0.0), at(0.0, 60.0));
     let node = w.graph.segment(s).unwrap().end;
-    // A ground path ending 5 m from the node snaps to it ...
+    // A ground path ending 5 m from the node snaps to it.
     let r = w.straight(at(60.0, 60.0), at(5.0, 60.0));
     assert_eq!(
         w.run(&r).unwrap().segments.last().unwrap().end,
         NodeRef::Existing(node)
     );
-    // ... an elevated one does not.
-    let mut r = r;
-    r.elevation = ElevationMode::Elevated(6.0);
-    assert_eq!(
-        w.run(&r).unwrap().segments.last().unwrap().end,
-        NodeRef::New(1)
+    // An elevated path's END snaps to it too, and stays at ground level there.
+    let mut r = w.straight(at(300.0, 60.0), at(5.0, 60.0));
+    r.elevation = ElevationMode::Elevated(4.0);
+    let plan = w.run(&r).unwrap();
+    let last = plan.segments.last().unwrap();
+    assert_eq!(last.end, NodeRef::Existing(node));
+    assert!((last.curve.p3.y - 100.0).abs() < 0.01);
+    // An interior vertex 2 m from the ground node does not snap (grade separation).
+    r.path = RoadPath::Free(vec![at(-250.0, 62.0), at(2.0, 62.0), at(250.0, 62.0)]);
+    let plan = w.run(&r).unwrap();
+    assert!(
+        plan.segments
+            .iter()
+            .all(|s| s.start != NodeRef::Existing(node) && s.end != NodeRef::Existing(node))
     );
+}
+
+#[test]
+fn elevated_paths_ramp_from_ground_within_max_slope() {
+    let w = W::new();
+    let mut r = w.straight(at(-200.0, 0.0), at(200.0, 0.0));
+    r.snap = no_snap();
+    r.elevation = ElevationMode::Elevated(5.0);
+    let plan = w.run(&r).unwrap();
+    let max = w.db.road(r.road).max_slope;
+    let first = plan.segments.first().unwrap().curve.p0.y;
+    let last = plan.segments.last().unwrap().curve.p3.y;
+    assert!((first - 100.0).abs() < 0.01 && (last - 100.0).abs() < 0.01);
+    // Heights rise, plateau at 105, then fall; no piece exceeds max_slope.
+    let ys: Vec<f32> = std::iter::once(first)
+        .chain(plan.segments.iter().map(|s| s.curve.p3.y))
+        .collect();
+    assert!(ys.iter().any(|&y| (y - 105.0).abs() < 0.01), "{ys:?}");
+    let peak = ys.iter().position(|&y| (y - 105.0).abs() < 0.01).unwrap();
+    assert!(ys[..=peak].windows(2).all(|w| w[1] >= w[0] - 1e-4));
+    for s in &plan.segments {
+        let run = to_xz(s.curve.p3).distance(to_xz(s.curve.p0));
+        assert!((s.curve.p3.y - s.curve.p0.y).abs() / run <= max + 1e-4);
+        assert_eq!(s.elevation, Elevation::Elevated);
+    }
+}
+
+#[test]
+fn error_ramp_too_short() {
+    let w = W::new();
+    // 90 m cannot go up 7 m and down again at 12 %.
+    let mut r = w.straight(at(0.0, 0.0), at(90.0, 0.0));
+    r.snap = no_snap();
+    r.elevation = ElevationMode::Elevated(7.0);
+    let e = w.run(&r).unwrap_err();
+    assert_eq!(kinds(&e), ["RampTooShort"], "{e:?}");
+    // A single piece between two ground ends never lifts off, however low.
+    r.elevation = ElevationMode::Elevated(0.5);
+    assert_eq!(kinds(&w.run(&r).unwrap_err()), ["RampTooShort"]);
+    // 300 m has interior nodes but still cannot climb 40 m at 12 %.
+    r.path = RoadPath::Straight {
+        from: at(-150.0, 0.0),
+        to: at(150.0, 0.0),
+    };
+    r.elevation = ElevationMode::Elevated(40.0);
+    assert_eq!(kinds(&w.run(&r).unwrap_err()), ["RampTooShort"]);
+    r.elevation = ElevationMode::Elevated(10.0);
+    assert!(w.run(&r).is_ok());
+}
+
+#[test]
+fn error_ramp_over_water() {
+    let mut w = W::new();
+    w.terrain = terrain(98.0, |x, _| 97.0 + 0.04 * (x - 5045.0).abs());
+    // Starts at x = 5030: in the water.
+    let mut r = w.straight(at(30.0, 0.0), at(400.0, 0.0));
+    r.snap = no_snap();
+    r.elevation = ElevationMode::Elevated(3.0);
+    let e = w.run(&r).unwrap_err();
+    assert!(kinds(&e).contains(&"RampStartsOverWater"), "{e:?}");
 }
 
 #[test]
 fn piers_every_48_m_on_raised_segments_only() {
     use crate::{PIER_SPACING, pier_positions};
     let mut w = W::new();
-    let mut r = w.straight(at(0.0, 0.0), at(90.0, 0.0));
+    let mut r = w.straight(at(-200.0, 0.0), at(200.0, 0.0));
     r.snap = no_snap();
-    r.elevation = ElevationMode::Elevated(6.0);
+    r.elevation = ElevationMode::Elevated(3.0);
     let plan = w.run(&r).unwrap();
     let id = w.road("basic_2l");
     let def = w.db.road(id).clone();
+    // A middle (plateau) piece of the deck.
+    let piece = plan.segments[plan.segments.len() / 2].curve;
     let seg = w
         .graph
-        .add_segment(&def, id, plan.segments[0].curve, Elevation::Elevated)
+        .add_segment(&def, id, piece, Elevation::Elevated)
         .unwrap();
     let segment = w.graph.segment(seg).unwrap();
-    assert!((segment.length - 90.0).abs() < 0.5);
+    assert!(segment.length > 48.0 && segment.length < 96.0);
     let piers = pier_positions(segment);
     assert_eq!(piers.len(), 1, "{piers:?}");
-    assert!((to_xz(piers[0]).distance(at(0.0, 0.0)) - PIER_SPACING).abs() < 0.5);
+    assert!((piers[0].distance(piece.p0) - PIER_SPACING).abs() < 1.0);
     // A longer deck gets more; ground segments none.
     let mut long = segment.clone();
     long.length = 200.0;
@@ -439,7 +516,11 @@ fn snap_segment_splits_it() {
     assert!(plan.snaps.iter().any(|a| a.kind == SnapKind::Segment(s)));
     // Elevated roads do not snap onto ground segments.
     let mut r = r;
-    r.elevation = ElevationMode::Elevated(6.0);
+    r.path = RoadPath::Straight {
+        from: at(300.0, 52.0),
+        to: at(4.0, 50.0),
+    };
+    r.elevation = ElevationMode::Elevated(1.0);
     let plan = w.run(&r).unwrap();
     assert!(plan.splits.is_empty());
 }
@@ -575,12 +656,22 @@ fn ground_crossing_creates_a_node_elevated_does_not() {
     assert_eq!(plan.segments[0].end, NodeRef::Split(0));
     assert_eq!(plan.segments[1].start, NodeRef::Split(0));
 
-    r.elevation = ElevationMode::Elevated(7.0);
+    // Long enough to ramp up and over; the road at x = 45 passes underneath.
+    r.path = RoadPath::Straight {
+        from: at(-100.0, 0.0),
+        to: at(190.0, 0.0),
+    };
+    r.elevation = ElevationMode::Elevated(4.0);
     let plan = w.run(&r).unwrap();
     assert!(plan.splits.is_empty());
-    assert_eq!(plan.segments.len(), 1);
-    // Elevated heights: ground (100) + 7.
-    assert!((plan.segments[0].curve.p0.y - 107.0).abs() < 0.05);
+    assert_eq!(plan.segments.len(), 4);
+    // Starts at ground level, reaches ground + 4 at the top.
+    assert!((plan.segments[0].curve.p0.y - 100.0).abs() < 0.05);
+    assert!(
+        plan.segments
+            .iter()
+            .any(|s| (s.curve.p3.y - 104.0).abs() < 0.05)
+    );
 }
 
 #[test]
@@ -596,10 +687,17 @@ fn cost_is_cents_per_segment() {
         plan.cost,
         Cost(plan.segments.iter().map(|s| s.cost.0).sum())
     );
-    // Elevated uses the variant price.
-    r.elevation = ElevationMode::Elevated(6.0);
+    // Elevated uses the variant price (on the actual, ramped lengths).
+    r.path = RoadPath::Straight {
+        from: at(-100.0, 0.0),
+        to: at(190.0, 0.0),
+    };
+    r.elevation = ElevationMode::Elevated(2.0);
     let v = w.db.road(r.road).elevated.as_ref().unwrap().cost_per_m;
-    assert_eq!(w.run(&r).unwrap().cost, segment_cost(50.0, v));
+    let plan = w.run(&r).unwrap();
+    for s in &plan.segments {
+        assert_eq!(s.cost, segment_cost(s.length, v));
+    }
 }
 
 #[test]

@@ -19,8 +19,10 @@
 //! rest stays [`Elevation::Elevated`]; a road type without the needed variant is an
 //! error. Raised pieces are grade-separated: they never snap onto or split ground
 //! segments and never create a node where they cross a ground road (same-level
-//! crossings of ground roads still do). Raised nodes only snap to raised nodes, ground
-//! nodes only to ground nodes. Piers are derived data: see [`pier_positions`].
+//! crossings of ground roads still do). An elevated path's **end** vertices may snap to any
+//! node (ground nodes included, that is how a bridge joins the street network); its
+//! interior vertices snap to raised nodes only, and ground paths snap to ground nodes
+//! only. Piers are derived data: see [`pier_positions`].
 //!
 //! **Conventions.** Paths are in the XZ plane (`Vec2` = x, z); heights come from the
 //! terrain. Candidates are scanned in arena order and ties broken by id, so the result is
@@ -176,6 +178,15 @@ pub enum RoadBuildError {
     UnknownRoad(RoadDefId),
     /// `Elevated` requested but the road type has no elevated variant.
     NoElevatedVariant(RoadDefId),
+    /// The elevated path is too short to ramp up to its height and down again within the
+    /// road's `max_slope`.
+    RampTooShort {
+        pos: Vec3,
+    },
+    /// A ramp (or a free path end) would sit over water.
+    RampStartsOverWater {
+        pos: Vec3,
+    },
     /// Part of an `Elevated` path is over water but the road type has no bridge variant.
     NoBridgeVariant(RoadDefId),
     /// Fewer than two distinct points.
@@ -304,11 +315,12 @@ impl Builder<'_> {
         }
     }
 
-    fn nearest_node(&self, p: Vec2) -> Option<NodeId> {
+    /// `any_level`: an elevated path's end vertex may snap to ground nodes too.
+    fn nearest_node(&self, p: Vec2, any_level: bool) -> Option<NodeId> {
         let mut best: Option<(f32, NodeId)> = None;
         let raised = matches!(self.elev, ElevationMode::Elevated(_));
         for (id, n) in self.graph.nodes() {
-            if (n.elevation != Elevation::Ground) != raised {
+            if !(raised && any_level) && (n.elevation != Elevation::Ground) != raised {
                 continue;
             }
             let d = to_xz(n.pos).distance(p);
@@ -473,7 +485,7 @@ pub fn validate_road_path(
         let mut pos = p;
         let mut node = None;
         if req.snap.node
-            && let Some(n) = b.nearest_node(p)
+            && let Some(n) = b.nearest_node(p, i == 0 || i + 1 == distinct.len())
         {
             pos = to_xz(graph.node(n).expect("exists").pos);
             node = Some(NodeRef::Existing(n));
@@ -605,6 +617,76 @@ pub fn validate_road_path(
                 length,
                 cost: segment_cost(length, price),
             });
+        }
+    }
+
+    // --- ramps: an elevated path starts and ends at ground level ---
+    if elevated {
+        let slope = def.max_slope * 0.98;
+        let price = |e: Elevation| match e {
+            Elevation::Bridge => def.bridge.as_ref().map_or(cost_per_m, |v| v.cost_per_m),
+            _ => cost_per_m,
+        };
+        let chain_ok = segments.windows(2).all(|w| w[0].end == w[1].start);
+        if chain_ok && !segments.is_empty() {
+            let mut nodes = vec![segments[0].start];
+            let mut at_s = vec![0.0f32];
+            for sg in &segments {
+                nodes.push(sg.end);
+                at_s.push(at_s.last().copied().unwrap_or(0.0) + sg.length);
+            }
+            let last = nodes.len() - 1;
+            let target: Vec<f32> = nodes.iter().map(|&n| b.node_pos(n).y).collect();
+            let fixed: Vec<Option<f32>> = nodes
+                .iter()
+                .enumerate()
+                .map(|(k, &n)| match n {
+                    NodeRef::Existing(id) => Some(graph.node(id).expect("exists").pos.y),
+                    NodeRef::New(i) if k == 0 || k == last => {
+                        Some(terrain.height(to_xz(b.new_nodes[i])))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let mut ys = vec![0.0f32; nodes.len()];
+            let mut reached = false;
+            for k in 0..nodes.len() {
+                if let Some(y) = fixed[k] {
+                    ys[k] = y;
+                    continue;
+                }
+                let mut y = target[k];
+                for (f, fy) in fixed.iter().enumerate() {
+                    if let Some(fy) = fy {
+                        y = y.min(fy + slope * (at_s[k] - at_s[f]).abs());
+                    }
+                }
+                ys[k] = y;
+                reached |= y >= target[k] - 1e-3;
+            }
+            if !reached {
+                errors.push(RoadBuildError::RampTooShort {
+                    pos: b.node_pos(nodes[0]),
+                });
+            }
+            for k in 0..nodes.len() {
+                if let NodeRef::New(i) = nodes[k] {
+                    let p = to_xz(b.new_nodes[i]);
+                    let on_ramp = fixed[k].is_some() || ys[k] < target[k] - 1e-3;
+                    if on_ramp && terrain.water_depth(p) > 0.0 {
+                        errors.push(RoadBuildError::RampStartsOverWater {
+                            pos: Vec3::new(p.x, ys[k], p.y),
+                        });
+                    }
+                    b.new_nodes[i].y = ys[k];
+                }
+            }
+            for sg in &mut segments {
+                let (pa, pb) = (b.node_pos(sg.start), b.node_pos(sg.end));
+                sg.curve = lift(sg.curve, pa, pb);
+                sg.length = sg.curve.arc_table().length();
+                sg.cost = segment_cost(sg.length, price(sg.elevation));
+            }
         }
     }
 
