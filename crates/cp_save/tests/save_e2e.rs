@@ -404,3 +404,206 @@ fn loading_twice_in_a_row_into_the_same_runner_is_stable() {
         assert_eq!(used.checksum(), continuous);
     }
 }
+
+// ---- m0-data-2: save v4 (CRC over header+body, map_hash) and tile ownership ----
+
+use cp_sim::SimTerrain;
+use cp_terrain::{GRID, MapMeta, Terrain, TileOwnership};
+use std::sync::Arc;
+
+fn map(name: &str) -> Arc<Terrain> {
+    Arc::new(
+        Terrain::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../assets/maps")
+                .join(name),
+        )
+        .unwrap(),
+    )
+}
+
+fn flat_at(start: (u8, u8), tag: u16) -> Arc<Terrain> {
+    let meta = MapMeta {
+        name: format!("flat{tag}"),
+        sea_level: 0.0,
+        start_tile: start,
+        external_connections: vec![],
+    };
+    Arc::new(Terrain::from_samples(meta, &vec![tag; GRID * GRID], &vec![0; GRID * GRID]).unwrap())
+}
+
+fn on_map(t: Arc<Terrain>) -> SimRunner {
+    let mut s = runner(3, 30);
+    s.set_terrain(t);
+    s
+}
+
+#[test]
+fn every_fixture_v0_to_v3_loads_keeps_its_ownership_and_resaves_as_v4() {
+    let tm = map("flatlands");
+    for v in 0..=3u32 {
+        let name = format!("v{v}-basic.sav");
+        let bytes = fixture(&name);
+        let (h, _) = read_header(&bytes).unwrap();
+        assert_eq!(h.format_version, v, "{name}");
+        // With and without a terrain present, an old save never warns about the map.
+        let plain = load(&bytes, h.content_hash).unwrap();
+        let with_map = load_with_map(&bytes, h.content_hash, Some(tm.map_hash())).unwrap();
+        assert_eq!(plain.data, with_map.data);
+        assert!(
+            with_map
+                .warnings
+                .iter()
+                .all(|w| !matches!(w, LoadWarning::MapMismatch { .. })),
+            "{name}"
+        );
+        // Ownership stored in the file is what the sim gets, even after set_terrain.
+        let stored = plain.data.tiles;
+        let mut r = SimRunner::new(0);
+        r.set_terrain(flat_at((0, 0), 10));
+        load_into_runner(&mut r, &bytes, h.content_hash).unwrap();
+        assert_eq!(*r.world().resource::<TileOwnership>(), stored, "{name}");
+        r.set_terrain(flat_at((4, 4), 11));
+        assert_eq!(
+            *r.world().resource::<TileOwnership>(),
+            stored,
+            "{name}: set_terrain after load"
+        );
+        // Re-save is v4 and a fixed point.
+        let a = save(&plain.data, h.content_hash, &h.map_id).unwrap();
+        assert_eq!(read_header(&a).unwrap().0.format_version, FORMAT_VERSION);
+        assert_eq!(FORMAT_VERSION, 4);
+        let b = save(
+            &load(&a, h.content_hash).unwrap().data,
+            h.content_hash,
+            &h.map_id,
+        )
+        .unwrap();
+        assert_eq!(a, b, "{name}");
+    }
+}
+
+#[test]
+fn any_bit_flip_anywhere_in_a_v4_file_is_an_error() {
+    let s = on_map(map("river_valley"));
+    let good = save_runner(&s, HASH, "river_valley").unwrap();
+    assert!(read_header(&good).unwrap().0.map_hash.is_some());
+    assert!(load(&good, HASH).is_ok());
+    for i in 0..good.len() {
+        for bit in 0..8 {
+            let mut b = good.clone();
+            b[i] ^= 1 << bit;
+            let r = std::panic::catch_unwind(|| load(&b, HASH));
+            assert!(
+                matches!(r, Ok(Err(_))),
+                "byte {i} bit {bit} was not rejected: {r:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_different_map_warns_but_loads_and_the_same_map_is_silent() {
+    let a = on_map(map("flatlands"));
+    let bytes = save_runner(&a, HASH, "flatlands").unwrap();
+
+    let mut same = SimRunner::new(0);
+    same.set_terrain(map("flatlands"));
+    let (_, w) = load_into_runner(&mut same, &bytes, HASH).unwrap();
+    assert!(w.is_empty(), "{w:?}");
+
+    let mut other = SimRunner::new(0);
+    other.set_terrain(map("river_valley"));
+    let (h, w) = load_into_runner(&mut other, &bytes, HASH).unwrap();
+    assert_eq!(h.map_id, "flatlands");
+    assert!(
+        matches!(w.as_slice(), [LoadWarning::MapMismatch { .. }]),
+        "{w:?}"
+    );
+    assert_eq!(other.tick(), a.tick(), "state restored despite the warning");
+
+    // No terrain on the loading side: nothing to compare.
+    let mut bare = SimRunner::new(0);
+    let (_, w) = load_into_runner(&mut bare, &bytes, HASH).unwrap();
+    assert!(w.is_empty());
+
+    // Two maps differing only in one height sample hash differently.
+    assert_ne!(
+        flat_at((2, 2), 100).map_hash(),
+        flat_at((2, 2), 101).map_hash()
+    );
+    assert_ne!(
+        flat_at((2, 2), 100).map_hash(),
+        flat_at((2, 3), 100).map_hash()
+    );
+    // A content-hash and a map-hash mismatch are reported separately.
+    let (_, w) = load_into_runner(&mut other, &bytes, !HASH).unwrap();
+    assert_eq!(w.len(), 2);
+}
+
+#[test]
+fn map_hash_zero_and_none_in_a_v4_header() {
+    let s = runner(3, 5);
+    for mh in [None, Some(0u64)] {
+        let bytes = save_with_map(&SaveData::capture(s.world()), HASH, "m", mh).unwrap();
+        let l = load_with_map(&bytes, HASH, Some(12345)).unwrap();
+        println!(
+            "map_hash {mh:?} -> header {:?}, warnings {:?}",
+            l.header.map_hash, l.warnings
+        );
+        assert!(
+            l.warnings
+                .iter()
+                .all(|w| !matches!(w, LoadWarning::MapMismatch { .. })),
+            "unknown map hash ({mh:?}) must not warn: {:?}",
+            l.warnings
+        );
+    }
+}
+
+#[test]
+fn set_terrain_and_load_orderings_on_every_start_tile() {
+    for (start, open) in [
+        ((0, 0), 4),
+        ((4, 0), 4),
+        ((0, 4), 4),
+        ((4, 4), 4),
+        ((2, 0), 6),
+        ((0, 2), 6),
+        ((4, 2), 6),
+        ((2, 4), 6),
+        ((2, 2), 9),
+    ] {
+        let mut r = SimRunner::new(1);
+        assert_eq!(
+            *r.world().resource::<TileOwnership>(),
+            TileOwnership::none()
+        );
+        r.set_terrain(flat_at(start, 5));
+        let t = *r.world().resource::<TileOwnership>();
+        assert_eq!(t.open_count(), open, "{start:?}");
+        assert!(t.is_open(start.0 as usize, start.1 as usize));
+        // Idempotent and not re-centred by a second, different map.
+        r.set_terrain(flat_at(start, 5));
+        assert_eq!(*r.world().resource::<TileOwnership>(), t);
+        r.set_terrain(flat_at((2, 2), 6));
+        assert_eq!(*r.world().resource::<TileOwnership>(), t);
+    }
+    // Load into a used runner that already has a map: the save wins, state matches a
+    // continuous run (BUG-006 re-check, now with terrain).
+    let mut saved = on_map(map("flatlands"));
+    let bytes = save_runner(&saved, HASH, "flatlands").unwrap();
+    let mut used = SimRunner::new(9);
+    used.set_terrain(map("river_valley"));
+    for _ in 0..300 {
+        used.tick_once();
+    }
+    let _ = used.checksum();
+    load_into_runner(&mut used, &bytes, HASH).unwrap();
+    for _ in 0..40 {
+        used.tick_once();
+        saved.tick_once();
+    }
+    assert_eq!(used.checksum(), saved.checksum());
+    assert!(used.world().get_resource::<SimTerrain>().is_some());
+}
