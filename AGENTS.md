@@ -24,7 +24,9 @@ Sim crates are `cp_sim`, every crate it pulls in, and `cp_save` (which sits abov
 `cp_sim`): `cp_core`, `cp_content`, `cp_terrain`,
 `cp_net`, `cp_zone`, `cp_building`, `cp_citizen`, `cp_traffic`, `cp_utility`,
 `cp_service`, `cp_economy`, `cp_transit`, `cp_district`, `cp_industry`, `cp_park`,
-`cp_save` and `cp_sim` itself.
+`cp_save` and `cp_sim` itself. Mechanically, a sim crate is a workspace member with
+`[lints] workspace = true`; `scripts/sim-crates.sh` derives the list from that and fails if it
+disagrees with `cp_sim`'s dependency tree plus `cp_save`.
 
 - **No rendering, windowing or input dependencies.** A sim crate may use `bevy_ecs`,
   `bevy_app`, `bevy_math`, `bevy_reflect`, `bevy_utils` and `bevy_tasks`. It must never depend on
