@@ -5,8 +5,8 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-[lints]
-workspace = true
+[lints.clippy]
+disallowed_types = "allow"
 
 [dependencies]
 cp_core.workspace = true
