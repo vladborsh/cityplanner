@@ -105,9 +105,14 @@ fn sample_to_m(v: u16) -> f32 {
 
 fn read_png16(path: &Path) -> Result<Vec<u16>, TerrainError> {
     let file = File::open(path).map_err(|e| TerrainError::Io(path.into(), e))?;
-    let mut reader = png::Decoder::new(BufReader::new(file))
+    decode_png16(BufReader::new(file), path)
+}
+
+/// Decodes a 16-bit greyscale `GRID`×`GRID` PNG; `name` is only used in error messages.
+fn decode_png16(input: impl std::io::Read, name: &Path) -> Result<Vec<u16>, TerrainError> {
+    let mut reader = png::Decoder::new(input)
         .read_info()
-        .map_err(|e| TerrainError::Png(path.into(), e.to_string()))?;
+        .map_err(|e| TerrainError::Png(name.into(), e.to_string()))?;
     let info = reader.info();
     if info.width as usize != GRID
         || info.height as usize != GRID
@@ -115,7 +120,7 @@ fn read_png16(path: &Path) -> Result<Vec<u16>, TerrainError> {
         || info.bit_depth != png::BitDepth::Sixteen
     {
         return Err(TerrainError::BadImage(
-            path.into(),
+            name.into(),
             format!(
                 "expected 16-bit greyscale {GRID}x{GRID}, got {:?} {:?} {}x{}",
                 info.color_type, info.bit_depth, info.width, info.height
@@ -125,7 +130,7 @@ fn read_png16(path: &Path) -> Result<Vec<u16>, TerrainError> {
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let frame = reader
         .next_frame(&mut buf)
-        .map_err(|e| TerrainError::Png(path.into(), e.to_string()))?;
+        .map_err(|e| TerrainError::Png(name.into(), e.to_string()))?;
     let (pairs, _) = buf[..frame.buffer_size()].as_chunks::<2>();
     Ok(pairs.iter().map(|&c| u16::from_be_bytes(c)).collect())
 }
@@ -140,6 +145,20 @@ impl Terrain {
             ron::from_str(&text).map_err(|e| TerrainError::Ron(ron_path, e.to_string()))?;
         let height = read_png16(&dir.join("height.png"))?;
         let water = read_png16(&dir.join("water.png"))?;
+        Self::from_samples(meta, &height, &water)
+    }
+
+    /// Same as [`Terrain::load`] but from file contents already in memory (`map.ron` text,
+    /// `height.png` and `water.png` bytes); used by the web build, which fetches over HTTP.
+    pub fn from_bytes(
+        map_ron: &str,
+        height_png: &[u8],
+        water_png: &[u8],
+    ) -> Result<Self, TerrainError> {
+        let meta: MapMeta = ron::from_str(map_ron)
+            .map_err(|e| TerrainError::Ron(PathBuf::from("map.ron"), e.to_string()))?;
+        let height = decode_png16(height_png, Path::new("height.png"))?;
+        let water = decode_png16(water_png, Path::new("water.png"))?;
         Self::from_samples(meta, &height, &water)
     }
 

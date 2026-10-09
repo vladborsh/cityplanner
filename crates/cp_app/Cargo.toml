@@ -1,0 +1,21 @@
+[package]
+name = "cp_app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints.clippy]
+# Client crate, not a sim crate: hash containers are fine here (see the workspace lint).
+disallowed_types = "allow"
+
+[dependencies]
+cp_core.workspace = true
+cp_sim.workspace = true
+cp_terrain.workspace = true
+cp_render.workspace = true
+cp_tools.workspace = true
+cp_ui.workspace = true
+cp_prof.workspace = true
+# Rendering features are enabled in client crates only; sim crates never see them.
+bevy = { workspace = true, features = ["3d"] }

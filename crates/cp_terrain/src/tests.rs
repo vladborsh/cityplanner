@@ -239,3 +239,32 @@ fn map_hash_is_stable_and_sensitive() {
     assert_ne!(base(&hs, &ws, m), h0);
     assert_eq!(base(&hs, &ws, meta(0.0)), h0);
 }
+
+#[test]
+fn from_bytes_matches_load() {
+    for name in ["flatlands", "river_valley"] {
+        let dir = map_dir(name);
+        let ron = std::fs::read_to_string(dir.join("map.ron")).unwrap();
+        let h = std::fs::read(dir.join("height.png")).unwrap();
+        let w = std::fs::read(dir.join("water.png")).unwrap();
+        let a = Terrain::from_bytes(&ron, &h, &w).unwrap();
+        let b = Terrain::load(&dir).unwrap();
+        assert_eq!(a.meta(), b.meta());
+        for p in [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(5120.0, 3000.0),
+            Vec2::new(10240.0, 10240.0),
+        ] {
+            assert_eq!(a.height(p), b.height(p));
+            assert_eq!(a.water_depth(p), b.water_depth(p));
+        }
+    }
+}
+
+#[test]
+fn from_bytes_reports_errors() {
+    assert!(Terrain::from_bytes("(", &[], &[]).is_err());
+    let dir = map_dir("flatlands");
+    let ron = std::fs::read_to_string(dir.join("map.ron")).unwrap();
+    assert!(Terrain::from_bytes(&ron, b"not a png", b"not a png").is_err());
+}
