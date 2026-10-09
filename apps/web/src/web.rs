@@ -42,6 +42,7 @@ pub fn run() {
                 phase_timing: false,
                 ui: true,
                 scene,
+                target: None,
             },
             FrameTimeDiagnosticsPlugin::default(),
             // FPS and frame time to the browser console every 5 s.

@@ -15,6 +15,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bevy::camera::RenderTarget;
 use bevy::prelude::*;
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{SimLimits, Tick};
@@ -47,6 +48,8 @@ pub struct GamePlugin {
     pub ui: bool,
     /// Optional test scene, e.g. `grid:10` (see [`scene`]).
     pub scene: Option<String>,
+    /// Render into this image instead of a window (`--hidden`: no window exists).
+    pub target: Option<Handle<Image>>,
 }
 
 #[derive(Resource, Clone)]
@@ -61,6 +64,7 @@ pub(crate) struct GameConfig {
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         let (pos, look) = camera_pose(&self.cam);
+        let target = self.target.clone();
         app.insert_resource(GameConfig {
             map: self.map.clone(),
             limits: self.limits,
@@ -82,7 +86,7 @@ impl Plugin for GamePlugin {
             app.add_plugins((UiPlugin, cp_tools::ToolsPlugin));
         }
         app.add_systems(Startup, move |mut commands: Commands| {
-            commands.spawn((
+            let mut camera = commands.spawn((
                 Camera3d::default(),
                 Projection::Perspective(PerspectiveProjection {
                     far: 40_000.0,
@@ -92,6 +96,9 @@ impl Plugin for GamePlugin {
                 Transform::from_translation(pos).looking_at(look, Vec3::Y),
                 RtsCamera::from_pose(pos, look),
             ));
+            if let Some(image) = target.clone() {
+                camera.insert(RenderTarget::Image(image.into()));
+            }
         });
     }
 }

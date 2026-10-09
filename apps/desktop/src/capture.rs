@@ -22,8 +22,57 @@ pub const EXIT_BLANK: u8 = 3;
 pub const EXIT_WRITE: u8 = 4;
 /// How long to keep trying once armed.
 pub const TIMEOUT: Duration = Duration::from_secs(20);
+/// Exit code of the watchdog (same as a blank result, 3): the whole screenshot job did not finish in time, e.g. because
+/// the window stopped producing frames (so no per-frame check could fire).
+pub const EXIT_HUNG: i32 = EXIT_BLANK as i32;
+/// Wall-clock limit for the whole job, from creating the [`Capture`] (startup, map load,
+/// warm-up and capture), on top of any benchmark time.
+pub const JOB_DEADLINE: Duration = Duration::from_secs(90);
 /// Frames between attempts after a blank capture.
 const RETRY_FRAMES: u32 = 20;
+
+/// `--hidden`: create the window invisible (agents and scripts must not pop windows up on
+/// the user's screen). Rendering, screenshots and benchmarks work the same.
+pub fn hidden_requested(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--hidden")
+}
+
+/// Size of the off-screen render target used by `--hidden`.
+pub const HIDDEN_SIZE: (u32, u32) = (1600, 900);
+
+/// `WindowPlugin` for a windowed run, or for `--hidden`: **no window at all**.
+///
+/// macOS renders nothing for a window that is invisible, unfocused or off-screen (every
+/// capture was blank; tried `visible: false` and an off-screen borderless window at the
+/// bottom of the stack). So `--hidden` creates no window: cameras render into an [`Image`]
+/// ([`offscreen_target`]) which is captured directly. The egui UI needs a window and is
+/// left out of hidden runs.
+pub fn window_plugin(window: Window, hidden: bool) -> WindowPlugin {
+    if hidden {
+        WindowPlugin {
+            primary_window: None,
+            exit_condition: bevy::window::ExitCondition::DontExit,
+            close_when_requested: false,
+            ..default()
+        }
+    } else {
+        WindowPlugin {
+            primary_window: Some(window),
+            ..default()
+        }
+    }
+}
+
+/// The off-screen colour target of a hidden run.
+pub fn offscreen_target(images: &mut Assets<Image>) -> Handle<Image> {
+    use bevy::render::render_resource::TextureFormat;
+    images.add(Image::new_target_texture(
+        HIDDEN_SIZE.0,
+        HIDDEN_SIZE.1,
+        TextureFormat::Rgba8UnormSrgb,
+        None,
+    ))
+}
 
 /// `true` if every pixel is identical (a black, white or otherwise flat frame). Real frames
 /// always contain terrain, roads or UI and so are never uniform.
@@ -64,21 +113,60 @@ pub struct Capture {
     state: State,
     /// Real time at which the job was armed.
     armed_at: Option<Duration>,
+    /// Off-screen target to capture instead of the primary window (`--hidden`).
+    target: Option<Handle<Image>>,
     attempts: u32,
     blanks: u32,
     result: Option<Result<(), (u8, String)>>,
 }
 
+/// Runs `on_expire` on a separate thread if `deadline` passes. The thread is detached; when
+/// the process finishes first it simply dies with it.
+pub fn spawn_watchdog(deadline: Duration, on_expire: impl FnOnce() + Send + 'static) {
+    std::thread::spawn(move || {
+        std::thread::sleep(deadline);
+        on_expire();
+    });
+}
+
 impl Capture {
-    pub fn new(path: PathBuf) -> Self {
+    /// A screenshot job with a process-level watchdog: if the job has not ended after
+    /// [`JOB_DEADLINE`] (plus `extra`, e.g. the benchmark length) the process exits with
+    /// [`EXIT_HUNG`] and a message. This works even when no frames are produced any more.
+    pub fn new(path: PathBuf, extra: Duration) -> Self {
+        let shown = path.clone();
+        // `CP_CAPTURE_DEADLINE_SECS` shortens the limit (used to prove the watchdog).
+        let base = std::env::var("CP_CAPTURE_DEADLINE_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .map_or(JOB_DEADLINE, Duration::from_secs);
+        let limit = base + extra;
+        spawn_watchdog(limit, move || {
+            eprintln!(
+                "screenshot failed: job still running after {} s (window not producing frames?); not writing {shown:?}",
+                limit.as_secs()
+            );
+            std::process::exit(EXIT_HUNG);
+        });
+        Self::without_watchdog(path)
+    }
+
+    fn without_watchdog(path: PathBuf) -> Self {
         Self {
             path,
             state: State::Idle,
             armed_at: None,
+            target: None,
             attempts: 0,
             blanks: 0,
             result: None,
         }
+    }
+
+    /// Capture this image instead of the primary window.
+    pub fn with_target(mut self, target: Handle<Image>) -> Self {
+        self.target = Some(target);
+        self
     }
 
     /// Starts capturing (idempotent).
@@ -163,9 +251,11 @@ fn drive(
         State::Armed => {
             cap.attempts += 1;
             cap.state = State::Pending;
-            commands
-                .spawn(Screenshot::primary_window())
-                .observe(on_captured);
+            let shot = match &cap.target {
+                Some(image) => Screenshot::image(image.clone()),
+                None => Screenshot::primary_window(),
+            };
+            commands.spawn(shot).observe(on_captured);
         }
         State::Backoff(0) => cap.state = State::Armed,
         State::Backoff(n) => cap.state = State::Backoff(n - 1),
@@ -216,6 +306,26 @@ mod tests {
         assert!(is_uniform(&[1, 2, 3, 1, 2, 3], 3));
         // Same bytes read as 1-byte pixels would differ: the stride matters.
         assert!(!is_uniform(&[1, 2, 3, 1, 2, 3], 1));
+    }
+
+    #[test]
+    fn hidden_flag_means_no_window() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(hidden_requested(&args(&["cp", "--hidden", "--bench", "3"])));
+        assert!(!hidden_requested(&args(&["cp", "--bench", "3"])));
+        let w = Window::default();
+        assert!(window_plugin(w.clone(), true).primary_window.is_none());
+        assert!(window_plugin(w, false).primary_window.is_some());
+    }
+
+    #[test]
+    fn watchdog_fires_without_any_frames() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        spawn_watchdog(Duration::from_millis(30), move || {
+            tx.send(()).unwrap();
+        });
+        // Nothing else is running (no app, no frames): it still fires.
+        assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
     }
 
     #[test]

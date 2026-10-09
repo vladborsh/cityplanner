@@ -66,6 +66,10 @@ pub fn layout(entries: &[Entry]) -> Vec<Vec3> {
 }
 
 /// Scene handles still to be loaded before the gallery is photographed.
+/// Off-screen target when running `--hidden`.
+#[derive(Resource)]
+struct GalleryTarget(Option<Handle<Image>>);
+
 #[derive(Resource, Default)]
 struct Loading(Vec<Handle<WorldAsset>>);
 
@@ -78,15 +82,34 @@ pub fn run() -> AppExit {
         .map(PathBuf::from);
 
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(AssetPlugin {
-        file_path: ASSETS_DIR.into(),
-        ..default()
-    }))
+    let hidden = crate::capture::hidden_requested(&args);
+    app.add_plugins(
+        DefaultPlugins
+            .set(AssetPlugin {
+                file_path: ASSETS_DIR.into(),
+                ..default()
+            })
+            .set(crate::capture::window_plugin(
+                Window {
+                    title: "cp_desktop gallery".into(),
+                    ..default()
+                },
+                hidden,
+            )),
+    )
     .init_resource::<Loading>()
     .add_systems(Startup, setup);
+    let target = hidden.then(|| {
+        crate::capture::offscreen_target(&mut app.world_mut().resource_mut::<Assets<Image>>())
+    });
+    app.insert_resource(GalleryTarget(target.clone()));
     if let Some(path) = screenshot {
+        let mut capture = Capture::new(path, std::time::Duration::ZERO);
+        if let Some(t) = target {
+            capture = capture.with_target(t);
+        }
         app.add_plugins(CapturePlugin)
-            .insert_resource(Capture::new(path))
+            .insert_resource(capture)
             .add_systems(Update, arm_when_loaded);
     }
     app.run()
@@ -98,6 +121,7 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut loading: ResMut<Loading>,
+    target: Res<GalleryTarget>,
 ) {
     let entries = discover(Path::new(ASSETS_DIR));
     let positions = layout(&entries);
@@ -119,10 +143,13 @@ fn setup(
         },
         Transform::from_xyz(30.0, 60.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
-    commands.spawn((
+    let mut camera = commands.spawn((
         Camera3d::default(),
         Transform::from_xyz(0.0, 46.0, 40.0).looking_at(Vec3::new(0.0, 0.0, -18.0), Vec3::Y),
     ));
+    if let Some(image) = target.0.clone() {
+        camera.insert(bevy::camera::RenderTarget::Image(image.into()));
+    }
 }
 
 /// Arms the capture once every model is loaded, plus a few frames to render and settle.

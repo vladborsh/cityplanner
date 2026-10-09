@@ -29,6 +29,7 @@ pub struct Options {
     pub vsync: bool,
     pub headless: Option<u64>,
     pub scene: Option<String>,
+    pub hidden: bool,
 }
 
 impl Options {
@@ -48,6 +49,7 @@ impl Options {
             bench,
             headless: value("--headless").and_then(|v| v.parse().ok()),
             scene: value("--scene"),
+            hidden: crate::capture::hidden_requested(args),
             vsync: !args.iter().any(|a| a == "--no-vsync") && bench.is_none(),
         }
     }
@@ -93,8 +95,8 @@ pub fn run(opts: Options) -> AppExit {
                 file_path: ASSETS_DIR.into(),
                 ..default()
             })
-            .set(WindowPlugin {
-                primary_window: Some(Window {
+            .set(crate::capture::window_plugin(
+                Window {
                     title: format!("cityplanner — {}", opts.map),
                     resolution: (1600, 900).into(),
                     present_mode: if opts.vsync {
@@ -103,11 +105,19 @@ pub fn run(opts: Options) -> AppExit {
                         PresentMode::AutoNoVsync
                     },
                     ..default()
-                }),
-                ..default()
-            }),
-    )
-    .add_plugins((
+                },
+                opts.hidden,
+            )),
+    );
+    // `--hidden`: no window; cameras render into an image (see `capture::window_plugin`).
+    let target = opts.hidden.then(|| {
+        crate::capture::offscreen_target(&mut app.world_mut().resource_mut::<Assets<Image>>())
+    });
+    if opts.hidden {
+        // With no window the loop counts as unfocused and would idle at 60 Hz.
+        app.insert_resource(bevy::winit::WinitSettings::continuous());
+    }
+    app.add_plugins((
         GamePlugin {
             map: opts.map,
             limits: SimLimits::desktop(),
@@ -115,8 +125,9 @@ pub fn run(opts: Options) -> AppExit {
             cam: opts.cam,
             // Wall-clock phase timing for the F3 window.
             phase_timing: true,
-            ui: true,
+            ui: !opts.hidden,
             scene: opts.scene,
+            target: target.clone(),
         },
         FrameTimeDiagnosticsPlugin::default(),
         RenderDiagnosticsPlugin,
@@ -131,7 +142,14 @@ pub fn run(opts: Options) -> AppExit {
     })
     .add_systems(Update, (job, exit_on_load_failure));
     if let Some(path) = opts.screenshot {
-        app.insert_resource(Capture::new(path));
+        let mut capture = Capture::new(
+            path,
+            std::time::Duration::from_secs_f32(opts.bench.unwrap_or(0.0)),
+        );
+        if let Some(t) = target {
+            capture = capture.with_target(t);
+        }
+        app.insert_resource(capture);
     }
     app.run()
 }
