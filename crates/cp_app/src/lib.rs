@@ -19,7 +19,7 @@ use bevy::prelude::*;
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{SimLimits, Tick};
 use cp_prof::{PhaseClock, PhaseTiming};
-use cp_render::{RoadRenderPlugin, RtsCamera, RtsCameraPlugin, TerrainRenderPlugin};
+use cp_render::{OverlayPlugin, RoadRenderPlugin, RtsCamera, RtsCameraPlugin, TerrainRenderPlugin};
 use cp_sim::{SimPhase, SimRunner, SimView};
 use cp_terrain::{MAP_SIZE, Terrain};
 use cp_tools::CommandOutbox;
@@ -74,6 +74,7 @@ impl Plugin for GamePlugin {
             map::MapPlugin,
             TerrainRenderPlugin,
             RoadRenderPlugin,
+            OverlayPlugin,
             RtsCameraPlugin,
         ))
         .add_systems(PreUpdate, step_sim);

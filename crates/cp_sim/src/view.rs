@@ -18,6 +18,7 @@ use cp_terrain::{Terrain, TileOwnership};
 
 use crate::checksum::SimChecksum;
 use crate::command::SimCommand;
+use crate::overlay::{OverlayData, zone_snapshot};
 use crate::runner::SimRunner;
 
 /// How full one arena is.
@@ -77,6 +78,8 @@ pub struct SimView {
     /// The content database (road types, ...), for tools and the build menu; `None` for a sim
     /// without content.
     pub content: Option<Arc<ContentDb>>,
+    /// Inputs of the overlays (zones, traffic load, land value, pollution), §13.4.
+    pub overlays: OverlayData,
 }
 
 /// `(junction version, nodes, segments, snapshot)` of the last `SimView::net`.
@@ -124,6 +127,16 @@ impl SimRunner {
         snap
     }
 
+    /// The overlay inputs for `SimView::overlays`. Zones are cached while unchanged; traffic
+    /// load, land value and pollution stay empty until their domains (T-035, T-042) land.
+    fn overlay_data(&self) -> OverlayData {
+        let mut cache = self.zone_cache.lock().expect("zone cache");
+        OverlayData {
+            zones: zone_snapshot(self.world().get_resource::<cp_zone::ZoneGrid>(), &mut cache),
+            ..OverlayData::default()
+        }
+    }
+
     /// Snapshot of the current state for clients.
     pub fn view(&self) -> SimView {
         let tick = self.tick();
@@ -151,6 +164,7 @@ impl SimRunner {
                 .world()
                 .get_resource::<SimContent>()
                 .map(|c| Arc::clone(&c.0)),
+            overlays: self.overlay_data(),
             junctions,
         }
     }

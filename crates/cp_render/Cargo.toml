@@ -17,3 +17,6 @@ cp_net.workspace = true
 cp_content.workspace = true
 bevy_math.workspace = true
 bevy = { workspace = true, features = ["3d"] }
+
+[dev-dependencies]
+cp_zone.workspace = true

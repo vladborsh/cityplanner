@@ -15,5 +15,6 @@ cp_tools.workspace = true
 cp_content.workspace = true
 cp_net.workspace = true
 cp_core.workspace = true
+cp_render.workspace = true
 bevy.workspace = true
 bevy_egui.workspace = true

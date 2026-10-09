@@ -46,6 +46,8 @@ pub struct SimRunner {
     /// `SimView::net` cache: `(junction version, node count, segment count, snapshot)`, so
     /// `view()` clones the graph only when it changed.
     pub(crate) net_cache: std::sync::Mutex<crate::view::NetCache>,
+    /// `SimView::overlays.zones` cache, keyed by a fingerprint of the zone state.
+    pub(crate) zone_cache: std::sync::Mutex<crate::overlay::ZoneCache>,
 }
 
 fn multiplier(speed: SimSpeed) -> u128 {
@@ -165,6 +167,7 @@ impl SimRunner {
             schedule,
             accumulator: 0,
             net_cache: Default::default(),
+            zone_cache: Default::default(),
         }
     }
 

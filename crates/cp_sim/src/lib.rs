@@ -2,6 +2,7 @@
 
 pub mod checksum;
 pub mod command;
+pub mod overlay;
 pub mod phase;
 pub mod plugin;
 pub mod runner;
@@ -9,6 +10,7 @@ pub mod view;
 
 pub use checksum::{Fnv1a, SimChecksum};
 pub use command::{SimCommand, dispatch_commands, init_command_resources};
+pub use overlay::{OverlayData, ScalarGrid, ZoneCellView, ZoneOverlay};
 pub use phase::SimPhase;
 pub use plugin::{SimBuilder, SimPlugin};
 pub use runner::{MAX_TICKS_PER_STEP, SimRunner, run_headless, run_headless_with};

@@ -4,6 +4,7 @@ use bevy::prelude::Resource;
 use bevy_egui::egui;
 use cp_core::SimSpeed;
 use cp_net::ElevationMode;
+use cp_render::{Overlay, OverlayState};
 use cp_sim::SimView;
 use cp_tools::{ActiveTool, CommandOutbox, RoadMode, ToolState, format_money};
 
@@ -84,13 +85,29 @@ pub fn root_ui(ctx: &egui::Context) -> egui::Ui {
     )
 }
 
-/// Top bar: money and population (stubs), date/time, speed buttons. Returns the on-screen
-/// rectangle of each speed button (tests use it to click them). A click pushes
-/// `SetSpeed` into `outbox`.
+/// The overlay switcher: one selectable label per overlay. Returns each label's rectangle
+/// (tests use it to click them). Selecting writes `state`; the render side flips layer
+/// visibility on the same frame.
+pub fn overlay_buttons(ui: &mut egui::Ui, state: &mut OverlayState) -> Vec<(Overlay, egui::Rect)> {
+    let mut rects = Vec::new();
+    for o in Overlay::ALL {
+        let r = ui.selectable_label(state.active == o, o.label());
+        rects.push((o, r.rect));
+        if r.clicked() {
+            state.active = o;
+        }
+    }
+    rects
+}
+
+/// Top bar: money and population (stubs), date/time, speed buttons, overlay switcher.
+/// Returns the on-screen rectangle of each speed button (tests use it to click them). A
+/// click pushes `SetSpeed` into `outbox`.
 pub fn top_bar(
     root: &mut egui::Ui,
     view: &SimView,
     outbox: &mut CommandOutbox,
+    overlay: &mut OverlayState,
 ) -> Vec<(SimSpeed, egui::Rect)> {
     let mut rects = Vec::new();
     egui::Panel::top("top_bar").show(root, |ui| {
@@ -108,6 +125,8 @@ pub fn top_bar(
                     outbox.push(set_speed(speed));
                 }
             }
+            ui.separator();
+            overlay_buttons(ui, overlay);
         });
     });
     rects
@@ -244,7 +263,12 @@ mod tests {
         let ctx = egui::Context::default();
         let mut rects = Vec::new();
         crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
-            rects = top_bar(ui, view, &mut CommandOutbox::default());
+            rects = top_bar(
+                ui,
+                view,
+                &mut CommandOutbox::default(),
+                &mut OverlayState::default(),
+            );
         });
         let pos = rects.iter().find(|(s, _)| *s == speed).unwrap().1.center();
         let button = |pressed| egui::Event::PointerButton {
@@ -258,7 +282,7 @@ mod tests {
             (0.2, vec![button(false)]),
         ] {
             crate::testutil::frame(&ctx, input(t, events), |ui| {
-                top_bar(ui, view, outbox);
+                top_bar(ui, view, outbox, &mut OverlayState::default());
             });
         }
     }
@@ -378,5 +402,34 @@ mod tests {
         draw(&mut tools);
         assert_eq!(tools.active, ActiveTool::Bulldozer);
         assert!(tools.ghost.is_none(), "switching tools clears the ghost");
+    }
+
+    #[test]
+    fn clicking_an_overlay_label_selects_it() {
+        let ctx = egui::Context::default();
+        let mut state = OverlayState::default();
+        let mut rects = Vec::new();
+        crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
+            rects = overlay_buttons(ui, &mut state);
+        });
+        assert_eq!(rects.len(), Overlay::ALL.len());
+        for want in [Overlay::Zones, Overlay::Pollution, Overlay::Off] {
+            let pos = rects.iter().find(|(o, _)| *o == want).unwrap().1.center();
+            let button = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            for (t, events) in [
+                (1.0, vec![egui::Event::PointerMoved(pos), button(true)]),
+                (1.1, vec![button(false)]),
+            ] {
+                crate::testutil::frame(&ctx, input(t, events), |ui| {
+                    overlay_buttons(ui, &mut state);
+                });
+            }
+            assert_eq!(state.active, want);
+        }
     }
 }

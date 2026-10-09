@@ -5,6 +5,7 @@
 pub mod camera;
 pub mod chunk;
 pub mod material;
+pub mod overlay;
 pub mod road;
 pub mod road_render;
 pub mod sun;
@@ -12,6 +13,7 @@ pub mod terrain;
 
 pub use camera::{CameraSettings, RtsCamera, RtsCameraPlugin};
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
+pub use overlay::{Overlay, OverlayPlugin, OverlayState};
 pub use road_render::{RoadRenderPlugin, RoadStats};
 pub use terrain::{Sun, TerrainChunk, TerrainRenderPlugin, TerrainStats};
 
