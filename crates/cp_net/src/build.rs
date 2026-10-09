@@ -554,11 +554,12 @@ pub fn validate_road_path(
             });
             continue;
         }
-        // Cut points: (t, node). Auto-cuts first, then crossings replace close ones.
-        let n = (len / MAX_SEGMENT_LENGTH).ceil().max(1.0) as usize;
-        let mut cuts: Vec<(f32, Option<NodeRef>)> = (1..n)
-            .map(|k| (tab.s_to_t(len * k as f32 / n as f32), None))
-            .collect();
+        // Fixed split points first: crossings with existing ground segments (each becomes a
+        // node). Then every span between fixed points (leg ends included) is cut into equal
+        // pieces of at most MAX_SEGMENT_LENGTH, so an automatic cut can never land a few metres
+        // from a crossing; a span that really is shorter than MIN_SEGMENT_LENGTH_BUILD is
+        // reported by the per-piece check below.
+        let mut fixed: Vec<(f32, NodeRef)> = Vec::new();
         if !elevated {
             for (sid, seg) in graph.segments() {
                 if seg.elevation != Elevation::Ground {
@@ -569,20 +570,29 @@ pub fn validate_road_path(
                         continue;
                     }
                     let r = b.split_at(sid, ts);
-                    let sc = tab.t_to_s(tc);
-                    cuts.retain(|(t, node)| {
-                        node.is_some() || (tab.t_to_s(*t) - sc).abs() > CUT_MERGE
-                    });
-                    if !cuts.iter().any(|(_, nd)| *nd == Some(r)) {
-                        cuts.push((tc, Some(r)));
+                    if !fixed.iter().any(|(_, nd)| *nd == r) {
+                        fixed.push((tc, r));
                     }
                 }
             }
         }
-        cuts.sort_by(|a, c| a.0.total_cmp(&c.0));
-        let mut bounds = vec![(0.0, Some(v0.node))];
-        bounds.extend(cuts);
-        bounds.push((1.0, Some(v1.node)));
+        fixed.sort_by(|a, c| a.0.total_cmp(&c.0));
+        let mut bounds: Vec<(f32, Option<NodeRef>)> = vec![(0.0, Some(v0.node))];
+        let mut span_start = 0.0f32; // arc length of the previous fixed point
+        let ends = fixed
+            .iter()
+            .map(|(t, nd)| (tab.t_to_s(*t), Some(*t), *nd))
+            .chain(std::iter::once((len, None, v1.node)));
+        for (s_end, t_end, node) in ends {
+            let span = s_end - span_start;
+            let pieces = (span / MAX_SEGMENT_LENGTH).ceil().max(1.0) as usize;
+            for k in 1..pieces {
+                let s = span_start + span * k as f32 / pieces as f32;
+                bounds.push((tab.s_to_t(s), None));
+            }
+            bounds.push((t_end.unwrap_or(1.0), Some(node)));
+            span_start = s_end;
+        }
         let mut nodes: Vec<NodeRef> = Vec::with_capacity(bounds.len());
         for (t, nd) in &bounds {
             nodes.push(match nd {
