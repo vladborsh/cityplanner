@@ -88,6 +88,8 @@ pub struct Terrain {
     ground: Vec<f32>,
     /// Water depth per node, metres (`surface - ground`, may be negative).
     depth: Vec<f32>,
+    /// Lazily computed [`Terrain::map_hash`].
+    hash: std::sync::OnceLock<u64>,
 }
 
 fn sample_to_m(v: u16) -> f32 {
@@ -168,6 +170,34 @@ impl Terrain {
             meta,
             ground,
             depth,
+            hash: std::sync::OnceLock::new(),
+        })
+    }
+
+    /// Identity of the map: FNV-1a (64 bit) over the postcard encoding of [`MapMeta`] and the
+    /// bit patterns of every height and water-depth sample. Stable across runs and
+    /// platforms; any change to the meta or a single sample changes it. Never `0` (that
+    /// value means "unknown" in save headers). Computed on first use and cached.
+    pub fn map_hash(&self) -> u64 {
+        *self.hash.get_or_init(|| {
+            const PRIME: u64 = 0x0000_0100_0000_01b3;
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            let mut feed = |bytes: &[u8]| {
+                for &b in bytes {
+                    h ^= u64::from(b);
+                    h = h.wrapping_mul(PRIME);
+                }
+            };
+            let meta = postcard::to_stdvec(&self.meta).expect("MapMeta serialises");
+            feed(&(meta.len() as u64).to_le_bytes());
+            feed(&meta);
+            for field in [&self.ground, &self.depth] {
+                feed(&(field.len() as u64).to_le_bytes());
+                for v in field {
+                    feed(&v.to_bits().to_le_bytes());
+                }
+            }
+            if h == 0 { 1 } else { h }
         })
     }
 

@@ -60,6 +60,13 @@ fn trailing_bytes_are_rejected() {
 fn header_tick_must_match_body() {
     let mut b = good();
     b[16..24].copy_from_slice(&999u64.to_le_bytes());
+    // The v4 CRC covers the header, so a bare edit is a CRC error; recompute it so the
+    // tick check is what fires.
+    assert_eq!(load(&b, HASH).unwrap_err(), SaveError::CrcMismatch);
+    let (_, body) = read_header(&b).unwrap();
+    let n = b.len() - body.len();
+    let crc = crc32_parts(&[&b[..n - 4], body]);
+    b[n - 4..n].copy_from_slice(&crc.to_le_bytes());
     assert_eq!(
         load(&b, HASH).unwrap_err(),
         SaveError::TickMismatch {
@@ -99,7 +106,7 @@ fn every_single_bit_flip_in_the_body_is_detected() {
             c[i] ^= 1 << bit;
             assert_eq!(
                 load(&c, HASH).unwrap_err(),
-                SaveError::Corrupt,
+                SaveError::CrcMismatch,
                 "byte {i} bit {bit}"
             );
         }
@@ -112,7 +119,8 @@ fn new_saves_are_current_version_with_a_crc() {
     let (h, body) = read_header(&b).unwrap();
     assert_eq!(h.format_version, cp_save::FORMAT_VERSION);
     assert!(h.format_version >= 2);
-    assert_eq!(h.body_crc, Some(crc32(body)));
+    let prefix = &b[..b.len() - body.len() - 4];
+    assert_eq!(h.body_crc, Some(crc32_parts(&[prefix, body])));
 }
 
 #[test]

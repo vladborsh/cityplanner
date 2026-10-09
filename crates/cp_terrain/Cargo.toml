@@ -15,3 +15,4 @@ bevy_math.workspace = true
 serde.workspace = true
 png.workspace = true
 ron.workspace = true
+postcard.workspace = true

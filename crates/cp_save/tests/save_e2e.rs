@@ -133,14 +133,17 @@ fn garbage_and_foreign_files_are_rejected() {
     // v2 headers end with the body CRC; make it match so the zstd error path is reached
     // (changed from the original test, which predates the CRC).
     let n = good.len() - body.len();
-    b[n - 4..n].copy_from_slice(&crc32(&garbage).to_le_bytes());
+    // (v4+: the CRC covers the header too.)
+    let crc = crc32_parts(&[&b[..n - 4], &garbage]);
+    b[n - 4..n].copy_from_slice(&crc.to_le_bytes());
     assert!(matches!(
         load(&b, HASH).unwrap_err(),
         SaveError::Compression(_)
     ));
     // Header claims a longer map_id than the file holds.
     let mut b = good.clone();
-    b[24..26].copy_from_slice(&u16::MAX.to_le_bytes());
+    // (v4 layout: the map_id length follows the 8-byte map hash, at offset 32.)
+    b[32..34].copy_from_slice(&u16::MAX.to_le_bytes());
     assert_eq!(load(&b, HASH).unwrap_err(), SaveError::Truncated);
     // Newer and far-future versions are refused with the version in the error.
     for v in [FORMAT_VERSION + 1, u32::MAX] {
@@ -151,10 +154,17 @@ fn garbage_and_foreign_files_are_rejected() {
             SaveError::UnsupportedVersion(v)
         );
     }
-    // Invalid UTF-8 map_id.
+    // Invalid UTF-8 map_id (with a matching CRC, so the decode error is what fires; without
+    // it the CRC mismatch is reported first).
     let mut b = good.clone();
-    b[26] = 0xFF;
+    b[34] = 0xFF;
+    let n = good.len() - body.len();
+    let crc = crc32_parts(&[&b[..n - 4], body]);
+    b[n - 4..n].copy_from_slice(&crc.to_le_bytes());
     assert!(matches!(load(&b, HASH).unwrap_err(), SaveError::Decode(_)));
+    let mut b = good.clone();
+    b[34] = 0xFF;
+    assert_eq!(load(&b, HASH).unwrap_err(), SaveError::CrcMismatch);
 }
 
 #[test]
@@ -231,6 +241,13 @@ fn header_tick_must_agree_with_the_body_in_every_version() {
         let mut b = good.clone();
         let real = read_header(&good).unwrap().0.tick;
         b[16..24].copy_from_slice(&(real + 999).to_le_bytes());
+        let (h, body) = read_header(&good).unwrap();
+        if h.format_version >= 4 {
+            // The CRC covers the header: recompute it so the tick check is what fires.
+            let n = good.len() - body.len();
+            let crc = crc32_parts(&[&b[..n - 4], body]);
+            b[n - 4..n].copy_from_slice(&crc.to_le_bytes());
+        }
         assert!(
             matches!(load(&b, HASH), Err(SaveError::TickMismatch { .. })),
             "v{}",
@@ -255,7 +272,7 @@ fn every_single_bit_flip_in_a_current_body_is_detected() {
             b[i] ^= 1 << bit;
             assert_eq!(
                 load(&b, HASH).unwrap_err(),
-                SaveError::Corrupt,
+                SaveError::CrcMismatch,
                 "byte {i} bit {bit}"
             );
         }

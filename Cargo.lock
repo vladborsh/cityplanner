@@ -2502,6 +2502,7 @@ dependencies = [
  "bevy_math",
  "cp_core",
  "png 0.17.16",
+ "postcard",
  "ron",
  "serde",
 ]

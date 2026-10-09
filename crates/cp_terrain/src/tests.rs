@@ -212,3 +212,30 @@ fn bad_files_report_errors() {
         Err(TerrainError::Io(..))
     ));
 }
+
+#[test]
+fn map_hash_is_stable_and_sensitive() {
+    let dir = map_dir("flatlands");
+    let a = Terrain::load(&dir).unwrap();
+    let b = Terrain::load(&dir).unwrap();
+    assert_eq!(a.map_hash(), b.map_hash());
+    assert_ne!(a.map_hash(), 0);
+
+    // One height sample, one water sample, or the meta changes the hash.
+    let base =
+        |hs: &[u16], ws: &[u16], m: MapMeta| Terrain::from_samples(m, hs, ws).unwrap().map_hash();
+    let hs = vec![enc(50.0); GRID * GRID];
+    let ws = vec![0u16; GRID * GRID];
+    let h0 = base(&hs, &ws, meta(0.0));
+    let mut hs2 = hs.clone();
+    hs2[GRID * 500 + 500] += 1;
+    assert_ne!(base(&hs2, &ws, meta(0.0)), h0);
+    let mut ws2 = ws.clone();
+    ws2[7] = enc(60.0);
+    assert_ne!(base(&hs, &ws2, meta(0.0)), h0);
+    assert_ne!(base(&hs, &ws, meta(1.0)), h0);
+    let mut m = meta(0.0);
+    m.name = "other".into();
+    assert_ne!(base(&hs, &ws, m), h0);
+    assert_eq!(base(&hs, &ws, meta(0.0)), h0);
+}

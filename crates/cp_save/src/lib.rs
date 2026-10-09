@@ -8,13 +8,26 @@
 //! | 4 | `format_version: u32` |
 //! | 8 | `content_hash: u64` (the `ContentDb` hash the save was made with) |
 //! | 8 | `tick: u64` |
+//! | 8 | `map_hash: u64` — `Terrain::map_hash()` of the map the save was made on, `0` = unknown; **version 4 and later only** |
 //! | 2 + n | `map_id`: `u16` length, UTF-8 bytes (at most 65535 bytes) |
-//! | 4 | `body_crc: u32` — CRC-32 (IEEE) of the compressed body; **version 2 and later only** |
+//! | 4 | `crc: u32` — CRC-32 (IEEE); **version 2 and later only** (see below) |
 //! | rest | zstd frame (pure-Rust `ruzstd`) of the postcard-encoded body, nothing after it |
+//!
+//! **Integrity.** Version 4 and later: the CRC covers the whole file except the CRC field
+//! itself (every header byte before it, then the compressed body), so a flipped bit in
+//! `content_hash`, `tick`, `map_hash` or `map_id` is [`SaveError::CrcMismatch`], not a
+//! silent load of another map or a bogus warning. Versions 2 and 3 only covered the
+//! compressed body; version 0/1 have no CRC.
+//!
+//! **Map identity.** `map_hash` is supplied by the caller like `content_hash`
+//! ([`save_with_map`]/[`load_with_map`]); [`save_runner`]/[`load_into_runner`] take it from the
+//! runner's `SimTerrain` when one is set. A different map yields
+//! [`LoadWarning::MapMismatch`], never an error. Saves before version 4, or made/loaded
+//! without a terrain, have an *unknown* map hash and never warn.
 //!
 //! The header is read before the body so a version is known before decoding. The header
 //! `tick` is only a preview: loading fails if it disagrees with the body. Trailing bytes
-//! after the zstd frame, a body CRC mismatch and a map id that does not fit are errors. Output is
+//! after the zstd frame, a CRC mismatch and a map id that does not fit are errors. Output is
 //! deterministic: saving the same state twice gives identical bytes.
 //!
 //! **Versions and migrations.** The body of version `N` is the frozen type for `N` (see
@@ -34,13 +47,13 @@ use std::io::Read;
 use bevy_ecs::world::World;
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
-use cp_sim::{SimCommand, SimRunner};
+use cp_sim::{SimCommand, SimRunner, SimTerrain};
 use cp_terrain::TileOwnership;
 use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -91,7 +104,11 @@ pub struct Header {
     pub content_hash: u64,
     pub tick: u64,
     pub map_id: String,
-    /// CRC-32 of the compressed body; `None` for versions before 2.
+    /// `Terrain::map_hash()` at save time; `None` = unknown (version < 4, or saved without
+    /// a terrain).
+    pub map_hash: Option<u64>,
+    /// The stored CRC-32 field; `None` for versions before 2. Covers the compressed body
+    /// (versions 2–3) or header + body (version 4 and later).
     pub body_crc: Option<u32>,
 }
 
@@ -103,8 +120,8 @@ pub enum SaveError {
     UnsupportedVersion(u32),
     Compression(String),
     Decode(String),
-    /// The body does not match its CRC (bit rot or tampering).
-    Corrupt,
+    /// The file does not match its CRC (bit rot or tampering).
+    CrcMismatch,
     /// Bytes after the end of the compressed body.
     TrailingBytes,
     /// The header's preview tick disagrees with the body.
@@ -124,7 +141,7 @@ impl std::fmt::Display for SaveError {
             Self::UnsupportedVersion(v) => write!(f, "unsupported save format version {v}"),
             Self::Compression(e) => write!(f, "decompression failed: {e}"),
             Self::Decode(e) => write!(f, "save body is corrupt: {e}"),
-            Self::Corrupt => write!(f, "save body failed its integrity check"),
+            Self::CrcMismatch => write!(f, "save file failed its integrity check"),
             Self::TrailingBytes => write!(f, "unexpected data after the save body"),
             Self::TickMismatch { header, body } => {
                 write!(f, "header tick {header} does not match body tick {body}")
@@ -141,6 +158,8 @@ impl std::error::Error for SaveError {}
 pub enum LoadWarning {
     /// The save was made with different content (defs) than what is loaded now.
     ContentHashMismatch { saved: u64, current: u64 },
+    /// The save was made on a different map (terrain) than the one loaded now.
+    MapMismatch { saved: u64, current: u64 },
 }
 
 #[derive(Debug)]
@@ -150,15 +169,27 @@ pub struct Loaded {
     pub warnings: Vec<LoadWarning>,
 }
 
-pub(crate) fn write_header(out: &mut Vec<u8>, h: &Header) -> Result<(), SaveError> {
+/// Header bytes up to (not including) the CRC field.
+pub(crate) fn write_prefix(out: &mut Vec<u8>, h: &Header) -> Result<(), SaveError> {
     let id = h.map_id.as_bytes();
     let len = u16::try_from(id.len()).map_err(|_| SaveError::MapIdTooLong(id.len()))?;
     out.extend_from_slice(&MAGIC);
     out.extend_from_slice(&h.format_version.to_le_bytes());
     out.extend_from_slice(&h.content_hash.to_le_bytes());
     out.extend_from_slice(&h.tick.to_le_bytes());
+    if h.format_version >= 4 {
+        out.extend_from_slice(&h.map_hash.unwrap_or(0).to_le_bytes());
+    }
     out.extend_from_slice(&len.to_le_bytes());
     out.extend_from_slice(id);
+    Ok(())
+}
+
+/// Writes a complete header of a **legacy** version (< 4), whose CRC (if any) is given in
+/// `h.body_crc`. Version 4+ headers are written by [`save_with_map`].
+pub(crate) fn write_header(out: &mut Vec<u8>, h: &Header) -> Result<(), SaveError> {
+    debug_assert!(h.format_version < 4);
+    write_prefix(out, h)?;
     if h.format_version >= 2 {
         let crc = h.body_crc.expect("version 2+ header needs a body CRC");
         out.extend_from_slice(&crc.to_le_bytes());
@@ -168,6 +199,11 @@ pub(crate) fn write_header(out: &mut Vec<u8>, h: &Header) -> Result<(), SaveErro
 
 /// CRC-32 (IEEE 802.3, reflected, as in zlib/PNG) of `bytes`.
 pub fn crc32(bytes: &[u8]) -> u32 {
+    crc32_parts(&[bytes])
+}
+
+/// CRC-32 of the concatenation of `parts`.
+pub fn crc32_parts(parts: &[&[u8]]) -> u32 {
     const TABLE: [u32; 256] = {
         let mut t = [0u32; 256];
         let mut i = 0;
@@ -188,8 +224,10 @@ pub fn crc32(bytes: &[u8]) -> u32 {
         t
     };
     let mut c = !0u32;
-    for &b in bytes {
-        c = TABLE[((c ^ u32::from(b)) & 0xFF) as usize] ^ (c >> 8);
+    for part in parts {
+        for &b in *part {
+            c = TABLE[((c ^ u32::from(b)) & 0xFF) as usize] ^ (c >> 8);
+        }
     }
     !c
 }
@@ -203,8 +241,53 @@ fn take<'a>(bytes: &mut &'a [u8], n: usize) -> Result<&'a [u8], SaveError> {
     Ok(head)
 }
 
-/// Parses the header, returning it and the compressed body.
-pub fn read_header(mut bytes: &[u8]) -> Result<(Header, &[u8]), SaveError> {
+/// A parsed header with the map id still raw (UTF-8 is checked after the CRC).
+struct Parsed<'a> {
+    format_version: u32,
+    content_hash: u64,
+    tick: u64,
+    map_hash: Option<u64>,
+    map_id: &'a [u8],
+    crc: Option<u32>,
+    /// Every byte before the CRC field.
+    prefix: &'a [u8],
+    frame: &'a [u8],
+}
+
+impl Parsed<'_> {
+    /// Checks the stored CRC (if the version has one).
+    fn check_crc(&self) -> Result<(), SaveError> {
+        let Some(stored) = self.crc else {
+            return Ok(());
+        };
+        let actual = if self.format_version >= 4 {
+            crc32_parts(&[self.prefix, self.frame])
+        } else {
+            crc32(self.frame)
+        };
+        if stored == actual {
+            Ok(())
+        } else {
+            Err(SaveError::CrcMismatch)
+        }
+    }
+
+    fn header(&self) -> Result<Header, SaveError> {
+        let map_id = String::from_utf8(self.map_id.to_vec())
+            .map_err(|e| SaveError::Decode(e.to_string()))?;
+        Ok(Header {
+            format_version: self.format_version,
+            content_hash: self.content_hash,
+            tick: self.tick,
+            map_id,
+            map_hash: self.map_hash,
+            body_crc: self.crc,
+        })
+    }
+}
+
+fn parse(all: &[u8]) -> Result<Parsed<'_>, SaveError> {
+    let mut bytes = all;
     if take(&mut bytes, 4)? != MAGIC {
         return Err(SaveError::BadMagic);
     }
@@ -214,24 +297,39 @@ pub fn read_header(mut bytes: &[u8]) -> Result<(Header, &[u8]), SaveError> {
     }
     let content_hash = u64::from_le_bytes(take(&mut bytes, 8)?.try_into().unwrap());
     let tick = u64::from_le_bytes(take(&mut bytes, 8)?.try_into().unwrap());
+    let map_hash = if format_version >= 4 {
+        match u64::from_le_bytes(take(&mut bytes, 8)?.try_into().unwrap()) {
+            0 => None,
+            h => Some(h),
+        }
+    } else {
+        None
+    };
     let len = u16::from_le_bytes(take(&mut bytes, 2)?.try_into().unwrap());
-    let map_id = String::from_utf8(take(&mut bytes, usize::from(len))?.to_vec())
-        .map_err(|e| SaveError::Decode(e.to_string()))?;
-    let body_crc = if format_version >= 2 {
+    let map_id = take(&mut bytes, usize::from(len))?;
+    let prefix = &all[..all.len() - bytes.len()];
+    let crc = if format_version >= 2 {
         Some(u32::from_le_bytes(take(&mut bytes, 4)?.try_into().unwrap()))
     } else {
         None
     };
-    Ok((
-        Header {
-            format_version,
-            content_hash,
-            tick,
-            map_id,
-            body_crc,
-        },
-        bytes,
-    ))
+    Ok(Parsed {
+        format_version,
+        content_hash,
+        tick,
+        map_hash,
+        map_id,
+        crc,
+        prefix,
+        frame: bytes,
+    })
+}
+
+/// Parses the header, returning it and the compressed body. Does **not** verify the CRC
+/// (that is [`load`]'s job), so tools can inspect damaged files.
+pub fn read_header(bytes: &[u8]) -> Result<(Header, &[u8]), SaveError> {
+    let p = parse(bytes)?;
+    Ok((p.header()?, p.frame))
 }
 
 pub(crate) fn compress(body: &[u8]) -> Vec<u8> {
@@ -253,35 +351,58 @@ fn decompress(frame: &[u8]) -> Result<Vec<u8>, SaveError> {
     Ok(out)
 }
 
-/// Encodes `data` as a save file at [`FORMAT_VERSION`]. Fails only if `map_id` is longer
-/// than 65535 bytes.
+/// Encodes `data` as a save file at [`FORMAT_VERSION`] with an unknown map hash. Fails
+/// only if `map_id` is longer than 65535 bytes.
 pub fn save(data: &SaveData, content_hash: u64, map_id: &str) -> Result<Vec<u8>, SaveError> {
+    save_with_map(data, content_hash, map_id, None)
+}
+
+/// Like [`save`], recording `map_hash` (`Terrain::map_hash()`) in the header.
+pub fn save_with_map(
+    data: &SaveData,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(data).expect("save serialization failed");
     let frame = compress(&body);
     let mut out = Vec::new();
-    write_header(
+    write_prefix(
         &mut out,
         &Header {
             format_version: FORMAT_VERSION,
             content_hash,
             tick: data.tick.0,
             map_id: map_id.to_owned(),
-            body_crc: Some(crc32(&frame)),
+            map_hash,
+            body_crc: None,
         },
     )?;
+    let crc = crc32_parts(&[&out, &frame]);
+    out.extend_from_slice(&crc.to_le_bytes());
     out.extend_from_slice(&frame);
     Ok(out)
 }
 
 /// Decodes a save file of any known version, migrating it to the current one.
 /// `current_content_hash` is the hash of the content now loaded; a difference yields a
-/// [`LoadWarning`], not an error.
+/// [`LoadWarning`], not an error. The map is not checked (see [`load_with_map`]).
 pub fn load(bytes: &[u8], current_content_hash: u64) -> Result<Loaded, SaveError> {
-    let (header, frame) = read_header(bytes)?;
-    if header.body_crc.is_some_and(|crc| crc != crc32(frame)) {
-        return Err(SaveError::Corrupt);
-    }
-    let body = decompress(frame)?;
+    load_with_map(bytes, current_content_hash, None)
+}
+
+/// Like [`load`]; `current_map_hash` is the loaded terrain's `map_hash()` (`None` = no
+/// terrain, nothing to compare). A save whose recorded map hash differs gets
+/// [`LoadWarning::MapMismatch`].
+pub fn load_with_map(
+    bytes: &[u8],
+    current_content_hash: u64,
+    current_map_hash: Option<u64>,
+) -> Result<Loaded, SaveError> {
+    let parsed = parse(bytes)?;
+    parsed.check_crc()?;
+    let header = parsed.header()?;
+    let body = decompress(parsed.frame)?;
     let data = migrate::decode_and_migrate(header.format_version, &body)?;
     if header.tick != data.tick.0 {
         return Err(SaveError::TickMismatch {
@@ -296,6 +417,11 @@ pub fn load(bytes: &[u8], current_content_hash: u64) -> Result<Loaded, SaveError
             current: current_content_hash,
         });
     }
+    if let (Some(saved), Some(current)) = (header.map_hash, current_map_hash)
+        && saved != current
+    {
+        warnings.push(LoadWarning::MapMismatch { saved, current });
+    }
     Ok(Loaded {
         header,
         data,
@@ -303,19 +429,31 @@ pub fn load(bytes: &[u8], current_content_hash: u64) -> Result<Loaded, SaveError
     })
 }
 
-/// Saves a runner's state.
+fn runner_map_hash(sim: &SimRunner) -> Option<u64> {
+    sim.world()
+        .get_resource::<SimTerrain>()
+        .map(|t| t.0.map_hash())
+}
+
+/// Saves a runner's state; the map hash comes from its `SimTerrain` if one is set.
 pub fn save_runner(sim: &SimRunner, content_hash: u64, map_id: &str) -> Result<Vec<u8>, SaveError> {
-    save(&SaveData::capture(sim.world()), content_hash, map_id)
+    save_with_map(
+        &SaveData::capture(sim.world()),
+        content_hash,
+        map_id,
+        runner_map_hash(sim),
+    )
 }
 
 /// Loads `bytes` into `sim` (overwriting its sim state) and returns the header and
-/// warnings.
+/// warnings. The map is compared against the runner's `SimTerrain` if one is set.
 pub fn load_into_runner(
     sim: &mut SimRunner,
     bytes: &[u8],
     current_content_hash: u64,
 ) -> Result<(Header, Vec<LoadWarning>), SaveError> {
-    let loaded = load(bytes, current_content_hash)?;
+    let map_hash = runner_map_hash(sim);
+    let loaded = load_with_map(bytes, current_content_hash, map_hash)?;
     loaded.data.restore(sim.world_mut());
     Ok((loaded.header, loaded.warnings))
 }

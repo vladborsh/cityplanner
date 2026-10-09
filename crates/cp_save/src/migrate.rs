@@ -47,8 +47,8 @@ pub fn migrate_v0_to_v1(v0: SaveDataV0) -> SaveDataV2 {
 }
 
 /// v2 → v3: no network was saved; start with an empty one.
-pub fn migrate_v2_to_v3(v2: SaveDataV2) -> SaveData {
-    SaveData {
+pub fn migrate_v2_to_v3(v2: SaveDataV2) -> SaveDataV3 {
+    SaveDataV3 {
         tick: v2.tick,
         rng: v2.rng,
         speed: v2.speed,
@@ -56,6 +56,33 @@ pub fn migrate_v2_to_v3(v2: SaveDataV2) -> SaveData {
         log: v2.log,
         tiles: v2.tiles,
         net: NetGraph::default(),
+    }
+}
+
+/// Version 3: the body of `SaveData` as written by format 3 (body-only CRC, no map hash).
+/// Version 4 changed only the header, so the bodies are identical.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV3 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+}
+
+/// v3 → v4: header-only change (CRC over the whole file, map hash); the body is carried
+/// over unchanged.
+pub fn migrate_v3_to_v4(v3: SaveDataV3) -> SaveData {
+    SaveData {
+        tick: v3.tick,
+        rng: v3.rng,
+        speed: v3.speed,
+        queue: v3.queue,
+        log: v3.log,
+        tiles: v3.tiles,
+        net: v3.net,
     }
 }
 
@@ -72,10 +99,13 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         }
     }
     match version {
-        0 => Ok(migrate_v2_to_v3(migrate_v0_to_v1(dec(body)?))),
+        0 => Ok(migrate_v3_to_v4(migrate_v2_to_v3(migrate_v0_to_v1(dec(
+            body,
+        )?)))),
         // v1 and v2 share the same body; v2 only added the header CRC.
-        1 | 2 => Ok(migrate_v2_to_v3(dec(body)?)),
-        3 => dec(body),
+        1 | 2 => Ok(migrate_v3_to_v4(migrate_v2_to_v3(dec(body)?))),
+        3 => Ok(migrate_v3_to_v4(dec(body)?)),
+        4 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -91,6 +121,7 @@ pub fn encode_v0(v0: &SaveDataV0, content_hash: u64, map_id: &str) -> Result<Vec
             content_hash,
             tick: v0.tick.0,
             map_id: map_id.to_owned(),
+            map_hash: None,
             body_crc: None,
         },
     )?;
@@ -110,6 +141,7 @@ pub fn encode_v1(v1: &SaveDataV2, content_hash: u64, map_id: &str) -> Result<Vec
             content_hash,
             tick: v1.tick.0,
             map_id: map_id.to_owned(),
+            map_hash: None,
             body_crc: None,
         },
     )?;
@@ -131,6 +163,28 @@ pub fn encode_v2(v2: &SaveDataV2, content_hash: u64, map_id: &str) -> Result<Vec
             content_hash,
             tick: v2.tick.0,
             map_id: map_id.to_owned(),
+            map_hash: None,
+            body_crc: Some(crate::crc32(&frame)),
+        },
+    )?;
+    out.extend_from_slice(&frame);
+    Ok(out)
+}
+
+/// Writes a **version 3** file (body-only CRC, no map hash). Legacy writer kept only to
+/// (re)generate and test the v3 fixture; real saves always use [`crate::save`].
+pub fn encode_v3(v3: &SaveDataV3, content_hash: u64, map_id: &str) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v3).expect("serialization failed");
+    let frame = crate::compress(&body);
+    let mut out = Vec::new();
+    crate::write_header(
+        &mut out,
+        &crate::Header {
+            format_version: 3,
+            content_hash,
+            tick: v3.tick.0,
+            map_id: map_id.to_owned(),
+            map_hash: None,
             body_crc: Some(crate::crc32(&frame)),
         },
     )?;
