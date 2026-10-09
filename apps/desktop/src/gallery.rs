@@ -11,8 +11,7 @@ use std::path::{Path, PathBuf};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
-/// The repo's `assets/` directory.
-pub const ASSETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
+use crate::ASSETS_DIR;
 
 /// Rows in display order, with the spacing between models in that row.
 const CATEGORIES: [(&str, f32); 4] = [

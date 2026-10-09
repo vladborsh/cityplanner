@@ -2398,8 +2398,10 @@ name = "cp_desktop"
 version = "0.0.0"
 dependencies = [
  "bevy",
+ "cp_core",
  "cp_render",
  "cp_sim",
+ "cp_terrain",
  "cp_tools",
  "cp_ui",
  "gltf",
@@ -2433,7 +2435,10 @@ name = "cp_render"
 version = "0.0.0"
 dependencies = [
  "bevy",
+ "bevy_math",
+ "cp_core",
  "cp_sim",
+ "cp_terrain",
 ]
 
 [[package]]

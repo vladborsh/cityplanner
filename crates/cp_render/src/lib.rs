@@ -1,12 +1,12 @@
-//! `cp_render` — client crate skeleton. See `architecture/system-design.md` §1.
+//! `cp_render` — client rendering. See `architecture/system-design.md` §13.
+//!
+//! Reads only [`cp_sim::SimView`], never the sim `World`.
+
+pub mod chunk;
+pub mod sun;
+pub mod terrain;
+
+pub use terrain::{Sun, TerrainChunk, TerrainRenderPlugin, TerrainStats};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_render";
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn skeleton_links() {
-        assert_eq!(super::CRATE, "cp_render");
-    }
-}

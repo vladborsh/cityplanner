@@ -1,13 +1,18 @@
 //! `desktop` app skeleton.
 
+mod app;
 mod gallery;
 
+/// The repo's `assets/` directory.
+pub const ASSETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
+
 fn main() {
-    if std::env::args().any(|a| a == "--gallery") {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--gallery") {
         gallery::run();
-        return;
+    } else {
+        app::run(app::Options::parse(&args));
     }
-    println!("cityplanner desktop: skeleton");
 }
 
 #[cfg(test)]
