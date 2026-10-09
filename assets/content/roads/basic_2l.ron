@@ -1,0 +1,21 @@
+Road((
+    id: "basic_2l",
+    name: "Basic street",
+    width: 12.0,
+    lanes: [
+        (kind: Pedestrian, dir: Forward, width: 2.5, offset: 4.75),
+        (kind: Car, dir: Backward, width: 3.5, offset: 1.75),
+        (kind: Car, dir: Forward, width: 3.5, offset: -1.75),
+        (kind: Pedestrian, dir: Forward, width: 2.5, offset: -4.75),
+    ],
+    median_width: 0.0,
+    speed_kmh: 40,
+    cost_per_m: 10.0,
+    upkeep_per_m_week: 0.1,
+    allows_zoning: true,
+    rank: 1,
+    elevated: Some((cost_per_m: 30.0, upkeep_per_m_week: 0.2, mesh: "road/basic_2l_elevated")),
+    bridge: Some((cost_per_m: 60.0, upkeep_per_m_week: 0.30000000000000004, mesh: "road/basic_2l_bridge")),
+    mesh: "road/basic_2l",
+    material: "road/asphalt",
+))

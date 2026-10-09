@@ -1,0 +1,11 @@
+Building((
+    id: "house_low_1",
+    name: "Small house",
+    zone: ResLow,
+    level: 1,
+    lot: (2, 2),
+    households: 1,
+    consumption: {Water: 1.0, Sewage: 1.0, Power: 1.5},
+    tax_base: 10.0,
+    style: (floors: 2, roof: Gabled, palette: "suburb_warm"),
+))

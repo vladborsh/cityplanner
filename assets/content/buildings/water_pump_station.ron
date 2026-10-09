@@ -1,0 +1,12 @@
+Building((
+    id: "water_pump_station",
+    name: "Water pump",
+    zone: Industrial,
+    level: 1,
+    lot: (2, 2),
+    jobs: (2, 2, 0, 0),
+    consumption: {Power: 20.0},
+    tax_base: 0.0,
+    style: (floors: 1, roof: Flat, palette: "utility_grey"),
+    service: Some("water_pump"),
+))

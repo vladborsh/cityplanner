@@ -1,0 +1,23 @@
+Road((
+    id: "medium_4l",
+    name: "Medium street",
+    width: 19.0,
+    lanes: [
+        (kind: Pedestrian, dir: Forward, width: 2.5, offset: 8.25),
+        (kind: Car, dir: Backward, width: 3.5, offset: 5.25),
+        (kind: Car, dir: Backward, width: 3.5, offset: 1.75),
+        (kind: Car, dir: Forward, width: 3.5, offset: -1.75),
+        (kind: Car, dir: Forward, width: 3.5, offset: -5.25),
+        (kind: Pedestrian, dir: Forward, width: 2.5, offset: -8.25),
+    ],
+    median_width: 0.0,
+    speed_kmh: 50,
+    cost_per_m: 16.0,
+    upkeep_per_m_week: 0.16,
+    allows_zoning: true,
+    rank: 2,
+    elevated: Some((cost_per_m: 48.0, upkeep_per_m_week: 0.32, mesh: "road/medium_4l_elevated")),
+    bridge: Some((cost_per_m: 96.0, upkeep_per_m_week: 0.48, mesh: "road/medium_4l_bridge")),
+    mesh: "road/medium_4l",
+    material: "road/asphalt",
+))

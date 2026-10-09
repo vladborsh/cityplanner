@@ -1,15 +1,16 @@
-//! `cp_content` — simulation crate skeleton. See `architecture/system-design.md` §1.
+//! `cp_content` — RON content schemas, loader and [`ContentDb`].
+//! See `architecture/system-design.md` §4, §6, §8, §12.
 
 // Sim code must iterate deterministically: HashMap/HashSet are banned (see clippy.toml).
 #![deny(clippy::disallowed_types)]
 
-/// Crate name, used by the skeleton smoke test.
-pub const CRATE: &str = "cp_content";
+pub mod db;
+pub mod defs;
+pub mod error;
+pub mod kinds;
+mod validate;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn skeleton_links() {
-        assert_eq!(super::CRATE, "cp_content");
-    }
-}
+pub use db::{ContentDb, DEFAULT_CONTENT_ROOT};
+pub use defs::*;
+pub use error::{ContentError, ContentErrors};
+pub use kinds::{ServiceKind, UtilityKind, ZoneType};

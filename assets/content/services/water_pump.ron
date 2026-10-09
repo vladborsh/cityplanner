@@ -1,0 +1,8 @@
+Service((
+    id: "water_pump",
+    name: "Water pumping station",
+    kind: Water,
+    radius_m: 800.0,
+    capacity: 1000,
+    vehicles: [],
+))

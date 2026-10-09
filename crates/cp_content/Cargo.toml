@@ -10,3 +10,5 @@ workspace = true
 
 [dependencies]
 cp_core.workspace = true
+serde.workspace = true
+ron.workspace = true

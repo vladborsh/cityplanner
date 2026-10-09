@@ -1,0 +1,10 @@
+Vehicle((
+    id: "car_basic",
+    name: "Passenger car",
+    kind: Car,
+    length: 4.2,
+    width: 1.8,
+    max_speed_kmh: 120.0,
+    accel: 2.5,
+    mesh: "vehicle/car_basic",
+))
