@@ -315,3 +315,75 @@ fn set_terrain_after_loading_a_fixture_keeps_the_saved_ownership() {
         assert_eq!(r.view().tiles, TileOwnership::m1_around((2, 2)), "{name}");
     }
 }
+
+/// A runner with `n` SetSpeed commands queued at ticks 0..n, run for `ticks` ticks.
+fn used_runner(seed: u64, n: u64, ticks: u64) -> SimRunner {
+    let mut s = SimRunner::new(seed);
+    for i in 0..n {
+        s.push_command(
+            SimCommand::SetSpeed {
+                speed: SimSpeed::X2,
+            },
+            Tick(i),
+        );
+    }
+    for _ in 0..ticks {
+        s.tick_once();
+    }
+    s
+}
+
+/// Loading into a runner that already ran (and already cached its log hash) must give
+/// the checksum of a continuous run from the saved state (BUG-006).
+#[test]
+fn load_into_a_used_runner_matches_a_continuous_run() {
+    let mut saved = SimRunner::new(4);
+    for t in [2, 40] {
+        saved.push_command(
+            SimCommand::SetSpeed {
+                speed: SimSpeed::X3,
+            },
+            Tick(t),
+        );
+    }
+    for _ in 0..10 {
+        saved.tick_once();
+    }
+    let bytes = save_runner(&saved, HASH, "m").unwrap();
+    for _ in 0..50 {
+        saved.tick_once();
+    }
+    let continuous = saved.checksum();
+
+    // Old log longer than the saved one (used to panic), shorter, and equal length.
+    // The 300 ticks cross the periodic checksum at tick 255 as well.
+    for (n, ticks) in [(5, 300), (1, 20), (2, 20)] {
+        let mut used = used_runner(9, n, ticks);
+        used.checksum();
+        load_into_runner(&mut used, &bytes, HASH).unwrap();
+        for _ in 0..50 {
+            used.tick_once();
+        }
+        assert_eq!(used.checksum(), continuous, "n={n} ticks={ticks}");
+    }
+}
+
+#[test]
+fn loading_twice_in_a_row_into_the_same_runner_is_stable() {
+    let mut saved = used_runner(4, 3, 10);
+    let bytes = save_runner(&saved, HASH, "m").unwrap();
+    for _ in 0..30 {
+        saved.tick_once();
+    }
+    let continuous = saved.checksum();
+
+    let mut used = used_runner(9, 8, 300);
+    for _ in 0..2 {
+        used.checksum();
+        load_into_runner(&mut used, &bytes, HASH).unwrap();
+        for _ in 0..30 {
+            used.tick_once();
+        }
+        assert_eq!(used.checksum(), continuous);
+    }
+}

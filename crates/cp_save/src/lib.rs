@@ -75,6 +75,10 @@ impl SaveData {
         world.insert_resource(self.speed);
         world.insert_resource(self.queue);
         world.insert_resource(self.log);
+        // The checksum caches a hash of the old log; it must not outlive the replacement.
+        if let Some(mut cs) = world.get_resource_mut::<cp_sim::SimChecksum>() {
+            cs.reset_log_cache();
+        }
         world.insert_resource(self.tiles);
         world.insert_resource(self.net);
     }

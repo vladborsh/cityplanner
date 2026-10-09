@@ -94,6 +94,17 @@ pub struct SimChecksum {
 }
 
 impl SimChecksum {
+    /// Drops the incremental command-log hash. Call whenever the `CommandLog` resource
+    /// is replaced wholesale (save restore): the cache is only valid for a log that
+    /// has grown append-only since it was folded. `compute` also self-heals if the log
+    /// became shorter than what was folded, but an equal-or-longer replacement can only
+    /// be caught by this explicit reset.
+    pub fn reset_log_cache(&mut self) {
+        self.log_hashed = 0;
+        self.log_hash = Fnv1a::new();
+        self.last = None;
+    }
+
     pub fn register(&mut self, name: &'static str, part: ChecksumFn) {
         self.parts.push((name, part));
     }
@@ -102,6 +113,9 @@ impl SimChecksum {
     /// call into a running hash, so cost stays proportional to new commands.
     pub fn compute(&mut self, world: &World) -> u64 {
         let log = world.resource::<CommandLog<SimCommand>>();
+        if log.len() < self.log_hashed {
+            self.reset_log_cache();
+        }
         for e in &log.entries()[self.log_hashed..] {
             self.log_hash.write_serialized(e);
         }
