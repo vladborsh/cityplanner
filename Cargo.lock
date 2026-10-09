@@ -2399,6 +2399,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cp_app"
+version = "0.0.0"
+dependencies = [
+ "bevy",
+ "cp_core",
+ "cp_prof",
+ "cp_render",
+ "cp_sim",
+ "cp_terrain",
+ "cp_tools",
+ "cp_ui",
+]
+
+[[package]]
 name = "cp_bench"
 version = "0.0.0"
 dependencies = [
@@ -2462,8 +2476,8 @@ name = "cp_desktop"
 version = "0.0.0"
 dependencies = [
  "bevy",
+ "cp_app",
  "cp_core",
- "cp_prof",
  "cp_render",
  "cp_sim",
  "cp_terrain",
@@ -2619,10 +2633,13 @@ name = "cp_web"
 version = "0.0.0"
 dependencies = [
  "bevy",
+ "cp_app",
+ "cp_core",
  "cp_render",
  "cp_sim",
  "cp_tools",
  "cp_ui",
+ "web-sys",
 ]
 
 [[package]]

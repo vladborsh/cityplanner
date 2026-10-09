@@ -46,6 +46,7 @@ cp_save = { path = "crates/cp_save" }
 cp_sim = { path = "crates/cp_sim" }
 cp_prof = { path = "crates/cp_prof" }
 cp_render = { path = "crates/cp_render" }
+cp_app = { path = "crates/cp_app" }
 cp_tools = { path = "crates/cp_tools" }
 cp_ui = { path = "crates/cp_ui" }
 
@@ -58,3 +59,12 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.cp_core]
 opt-level = 3
+
+# Browser build (scripts/build-web.sh): small and fast over pretty, no unwinding.
+[profile.web-release]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
