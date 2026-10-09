@@ -15,8 +15,10 @@ BANNED=(bevy bevy_render bevy_pbr bevy_winit bevy_egui winit cp_prof "$@")
 tree() { cargo tree --target all --edges normal,build,dev --prefix none --format '{p}' "$@"; }
 
 # Sim crate list is shared with the isolated-clippy CI job: scripts/sim-crates.sh.
+# (Command substitution, not `< <(...)`, so a failing sim-crates.sh fails this script too.)
+sim_list=$(scripts/sim-crates.sh)
 SIM_CRATES=()
-while IFS= read -r c; do SIM_CRATES+=("$c"); done < <(scripts/sim-crates.sh)
+while IFS= read -r c; do SIM_CRATES+=("$c"); done <<<"$sim_list"
 
 fail=0
 for crate in "${SIM_CRATES[@]}"; do
