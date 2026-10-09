@@ -1,5 +1,6 @@
 //! Tile ownership: 25 flags for the 5×5 tile grid (`architecture/system-design.md` §5).
 
+use bevy_ecs::resource::Resource;
 use bevy_math::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +8,7 @@ pub const TILES_PER_SIDE: usize = 5;
 pub const TILE_COUNT: usize = TILES_PER_SIDE * TILES_PER_SIDE;
 
 /// Which tiles the player may build on. Bit `tz * 5 + tx` of a `u32`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TileOwnership(u32);
 
 impl TileOwnership {

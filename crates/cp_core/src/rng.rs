@@ -80,6 +80,14 @@ impl SimRng {
     }
 }
 
+/// Equal when seed and stream position are equal (i.e. they will draw the same numbers).
+impl PartialEq for SimRng {
+    fn eq(&self, other: &Self) -> bool {
+        self.seed == other.seed && self.word_pos() == other.word_pos()
+    }
+}
+impl Eq for SimRng {}
+
 #[derive(Serialize, Deserialize)]
 struct SimRngRepr {
     seed: [u8; 32],

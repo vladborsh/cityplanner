@@ -23,6 +23,7 @@ use bevy_ecs::world::World;
 use bevy_tasks::{ComputeTaskPool, TaskPool};
 use cp_core::time::TICK_MILLIS;
 use cp_core::{CommandId, CommandOutcome, CommandQueue, SimLimits, SimRng, SimSpeed, Tick};
+use cp_terrain::TileOwnership;
 
 use crate::checksum::{SimChecksum, update_checksum};
 use crate::command::{SimCommand, dispatch_commands, init_command_resources};
@@ -62,6 +63,7 @@ impl SimRunner {
         init_command_resources(&mut world);
         world.insert_resource(SimRng::seed_from_u64(seed));
         world.insert_resource(SimLimits::desktop());
+        world.insert_resource(TileOwnership::m1_default());
         world.init_resource::<SimChecksum>();
 
         let mut schedule = Schedule::default();
