@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "scenario": "empty",
+  "seed": 1,
+  "ticks": 20000,
+  "warmup_ticks": 500,
+  "runs": 5,
+  "git_sha": "e36069c",
+  "map": null,
+  "checksum": "0ea89edb2a0b6f89",
+  "arenas": [],
+  "phases": [
+    {
+      "name": "Commands",
+      "median_ms": 0.00008,
+      "p95_ms": 0.000085
+    },
+    {
+      "name": "Network",
+      "median_ms": 0.00004,
+      "p95_ms": 0.000042
+    },
+    {
+      "name": "Agents",
+      "median_ms": 0.00004,
+      "p95_ms": 0.000043
+    },
+    {
+      "name": "Paths",
+      "median_ms": 0.00004,
+      "p95_ms": 0.000043
+    },
+    {
+      "name": "Citizens",
+      "median_ms": 0.00004,
+      "p95_ms": 0.000042
+    },
+    {
+      "name": "Buildings",
+      "median_ms": 0.00004,
+      "p95_ms": 0.000043
+    },
+    {
+      "name": "Utilities",
+      "median_ms": 0.00004,
+      "p95_ms": 0.000042
+    },
+    {
+      "name": "Economy",
+      "median_ms": 0.00004,
+      "p95_ms": 0.000042
+    },
+    {
+      "name": "Services",
+      "median_ms": 0.00004,
+      "p95_ms": 0.000043
+    },
+    {
+      "name": "Stats",
+      "median_ms": 0.00004,
+      "p95_ms": 0.000042
+    }
+  ],
+  "total": {
+    "median_ms": 0.000629,
+    "p95_ms": 0.0006659999999999999
+  }
+}
