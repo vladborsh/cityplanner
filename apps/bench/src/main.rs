@@ -11,15 +11,14 @@
 //! only to prove the CI gate fails on a slow phase.
 
 mod report;
-mod timing;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use cp_prof::{History, InjectedSleep, PHASES, PhaseClock, PhaseTiming};
 use cp_sim::{SimPhase, SimRunner};
 use report::{MapInfo, NamedStat, Report, SCHEMA, SaveInfo, stat_of};
-use timing::{InjectedSleep, PHASES, PhaseClock, PhaseTiming};
 
 #[derive(Debug)]
 struct Opts {
@@ -137,6 +136,7 @@ fn run(o: &Opts) -> Result<Report, String> {
         sleep: o
             .inject_sleep
             .map(|(phase, duration)| InjectedSleep { phase, duration }),
+        history: History::Unbounded,
     });
     let save = o
         .save
@@ -154,7 +154,7 @@ fn run(o: &Opts) -> Result<Report, String> {
     }
     let checksum = sim.checksum();
     let clock = sim.world().resource::<PhaseClock>();
-    let samples = &clock.samples[o.warmup as usize..];
+    let samples: Vec<_> = clock.samples.iter().skip(o.warmup as usize).collect();
     let phases = (0..PHASES)
         .map(|p| NamedStat {
             name: format!("{:?}", SimPhase::ORDER[p]),

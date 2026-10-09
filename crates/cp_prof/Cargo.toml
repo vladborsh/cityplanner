@@ -1,0 +1,15 @@
+[package]
+name = "cp_prof"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints.clippy]
+# Not a sim crate: wall-clock timing lives here (see the workspace lint in the root Cargo.toml).
+disallowed_types = "allow"
+
+[dependencies]
+cp_sim.workspace = true
+cp_core.workspace = true
+bevy_ecs.workspace = true

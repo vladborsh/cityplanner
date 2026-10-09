@@ -2405,6 +2405,7 @@ dependencies = [
  "bevy_ecs",
  "cp_content",
  "cp_core",
+ "cp_prof",
  "cp_save",
  "cp_sim",
  "cp_terrain",
@@ -2460,6 +2461,7 @@ version = "0.0.0"
 dependencies = [
  "bevy",
  "cp_core",
+ "cp_prof",
  "cp_render",
  "cp_sim",
  "cp_terrain",
@@ -2491,6 +2493,15 @@ dependencies = [
  "cp_terrain",
  "postcard",
  "serde",
+]
+
+[[package]]
+name = "cp_prof"
+version = "0.0.0"
+dependencies = [
+ "bevy_ecs",
+ "cp_core",
+ "cp_sim",
 ]
 
 [[package]]

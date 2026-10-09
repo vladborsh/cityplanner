@@ -13,7 +13,7 @@ use cp_tools::CommandOutbox;
 pub mod debug;
 pub mod panels;
 
-pub use debug::{DebugData, TickRate};
+pub use debug::{DebugData, PhaseTimes, TickRate};
 pub use panels::{Category, UiState, bottom_bar, root_ui, top_bar};
 
 pub struct UiPlugin;

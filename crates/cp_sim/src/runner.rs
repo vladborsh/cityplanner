@@ -143,12 +143,20 @@ impl SimRunner {
         self.world.resource_mut::<Tick>().advance();
     }
 
-    /// Advances by `dt` of frame time at the current speed. Returns ticks executed
+    /// Advances by `dt` of frame time at the current speed. While paused it still applies
+    /// commands due at the current tick, so a queued `SetSpeed` can unpause. Returns ticks executed
     /// (at most [`MAX_TICKS_PER_STEP`]; surplus time is dropped).
     pub fn step(&mut self, dt: Duration) -> u32 {
-        let mult = multiplier(self.speed());
+        let mut mult = multiplier(self.speed());
         if mult == 0 {
-            return 0;
+            // Paused: no tick runs, but commands due now (e.g. `SetSpeed` to resume) must
+            // still go through the command layer (BUG-005). Same as the start of the next
+            // tick's `Commands` phase, so replay from the log matches.
+            self.apply_due_commands();
+            mult = multiplier(self.speed());
+            if mult == 0 {
+                return 0;
+            }
         }
         self.accumulator += dt.as_nanos() * mult;
         let owed = self.accumulator / TICK_NANOS;
@@ -274,6 +282,58 @@ mod tests {
         // Applying again does nothing: nothing is due.
         sim.apply_due_commands();
         assert_eq!(sim.world().resource::<CommandLog<SimCommand>>().len(), 2);
+    }
+
+    #[test]
+    fn bug_005_paused_step_applies_a_queued_resume() {
+        let resume = |speed| SimCommand::SetSpeed { speed };
+        let mut sim = SimRunner::new(1);
+        sim.push_command(resume(SimSpeed::Pause), Tick(0));
+        assert_eq!(sim.step(FRAME), 1); // tick 0 runs and applies the pause
+        assert_eq!(sim.speed(), SimSpeed::Pause);
+        assert_eq!(sim.step(FRAME * 4), 0); // paused: nothing ticks
+        sim.push_command(resume(SimSpeed::X1), sim.tick());
+        assert_eq!(sim.step(FRAME), 1); // resumed and ticked in the same step
+        assert_eq!(sim.speed(), SimSpeed::X1);
+        assert_eq!(sim.tick(), Tick(2));
+    }
+
+    #[test]
+    fn pause_resume_run_replays_from_its_log_to_the_same_checksum() {
+        let mut live = SimRunner::new(7);
+        let mut frame = 0u64;
+        let push_at = |sim: &mut SimRunner, speed| {
+            sim.push_command(SimCommand::SetSpeed { speed }, sim.tick());
+        };
+        for _ in 0..40 {
+            frame += 1;
+            match frame {
+                5 => push_at(&mut live, SimSpeed::Pause),
+                20 => push_at(&mut live, SimSpeed::X3), // sent while paused
+                30 => push_at(&mut live, SimSpeed::X2),
+                _ => {}
+            }
+            live.step(FRAME);
+        }
+        let ticks = live.tick().0;
+        assert!(ticks > 10);
+        let log = live
+            .world()
+            .resource::<CommandLog<SimCommand>>()
+            .entries()
+            .to_vec();
+        assert_eq!(log.len(), 3);
+        let live_sum = live.checksum();
+
+        let mut replay = SimRunner::new(7);
+        for e in &log {
+            replay.push_command(e.command.clone(), e.tick);
+        }
+        for _ in 0..ticks {
+            replay.tick_once();
+        }
+        assert_eq!(replay.tick(), live.tick());
+        assert_eq!(replay.checksum(), live_sum);
     }
 
     #[test]

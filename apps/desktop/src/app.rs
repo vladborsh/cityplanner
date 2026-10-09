@@ -3,6 +3,8 @@
 //!
 //! `cargo run --release -p cp_desktop -- [--map flatlands|river_valley] [--cam overview|ground|valley]`
 //! `  [--hour 0..24] [--screenshot out.png] [--bench seconds] [--no-vsync]`
+//! `cargo run --release -p cp_desktop -- --map flatlands --headless 512` runs N ticks without a
+//! window and prints the numbers the F3 window shows (for comparing with `cp_bench`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,11 +17,13 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::PresentMode;
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
+use cp_prof::{PhaseClock, PhaseTiming};
 use cp_render::{RtsCamera, RtsCameraPlugin, TerrainRenderPlugin, TerrainStats};
+use cp_sim::SimPhase;
 use cp_sim::{SimRunner, SimView};
 use cp_terrain::{MAP_SIZE, Terrain};
 use cp_tools::CommandOutbox;
-use cp_ui::UiPlugin;
+use cp_ui::{PhaseTimes, UiPlugin};
 
 use crate::ASSETS_DIR;
 
@@ -30,6 +34,7 @@ pub struct Options {
     pub screenshot: Option<PathBuf>,
     pub bench: Option<f32>,
     pub vsync: bool,
+    pub headless: Option<u64>,
 }
 
 impl Options {
@@ -47,6 +52,7 @@ impl Options {
             hour: value("--hour").and_then(|v| v.parse().ok()),
             screenshot: value("--screenshot").map(PathBuf::from),
             bench,
+            headless: value("--headless").and_then(|v| v.parse().ok()),
             vsync: !args.iter().any(|a| a == "--no-vsync") && bench.is_none(),
         }
     }
@@ -76,13 +82,19 @@ pub fn load_sim(map: &str, hour: Option<f32>) -> Result<SimRunner, String> {
 }
 
 pub fn run(opts: Options) {
-    let sim = match load_sim(&opts.map, opts.hour) {
+    let mut sim = match load_sim(&opts.map, opts.hour) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(2);
         }
     };
+    // Wall-clock phase timing for the F3 window; a bounded window so it never grows.
+    sim.add_plugin(&PhaseTiming::window(PHASE_WINDOW_TICKS));
+    if let Some(ticks) = opts.headless {
+        headless(sim, ticks);
+        return;
+    }
     let (pos, look) = camera_pose(&opts.cam, sim.view().terrain.as_deref());
 
     let mut app = App::new();
@@ -114,6 +126,7 @@ pub fn run(opts: Options) {
         RenderDiagnosticsPlugin,
     ))
     .insert_resource(sim.view())
+    .insert_resource(phase_times(&sim))
     .insert_resource(Sim(sim))
     .insert_resource(Job {
         screenshot: opts.screenshot,
@@ -162,11 +175,50 @@ fn step_sim(
     mut sim: ResMut<Sim>,
     mut outbox: ResMut<CommandOutbox>,
     mut view: ResMut<SimView>,
+    mut phases: ResMut<PhaseTimes>,
 ) {
     let submitted = outbox.flush_into(&mut sim.0) > 0;
     let ticks = sim.0.step(Duration::from_secs_f64(time.delta_secs_f64()));
     if submitted || ticks > 0 {
         *view = sim.0.view();
+    }
+    if ticks > 0 {
+        *phases = phase_times(&sim.0);
+    }
+}
+
+/// Median ms per phase over the last [`PHASE_WINDOW_TICKS`] ticks, as the F3 window shows it.
+fn phase_times(sim: &SimRunner) -> PhaseTimes {
+    let means = sim
+        .world()
+        .get_resource::<PhaseClock>()
+        .map(|c| c.median_ms())
+        .unwrap_or_default();
+    PhaseTimes {
+        phases: SimPhase::ORDER.into_iter().zip(means).collect(),
+    }
+}
+
+const PHASE_WINDOW_TICKS: usize = 256;
+
+/// `--headless N`: N ticks without a window, then the F3 window's numbers on stdout:
+/// the periodic checksum from `SimView`, an on-demand checksum, and median ms per phase.
+fn headless(mut sim: SimRunner, ticks: u64) {
+    for _ in 0..ticks {
+        sim.tick_once();
+    }
+    let view = sim.view();
+    match view.stats.checksum {
+        Some((t, c)) => println!("DEBUG periodic_checksum={c:016x} at_tick={}", t.0),
+        None => println!("DEBUG periodic_checksum=none"),
+    }
+    println!(
+        "DEBUG ticks={} checksum={:016x}",
+        sim.tick().0,
+        sim.checksum()
+    );
+    for (phase, ms) in phase_times(&sim).phases {
+        println!("DEBUG phase {phase:?} median_ms={ms:.6}");
     }
 }
 

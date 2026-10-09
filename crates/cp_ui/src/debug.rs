@@ -2,7 +2,7 @@
 
 use bevy::prelude::Resource;
 use bevy_egui::egui;
-use cp_sim::SimView;
+use cp_sim::{SimPhase, SimView};
 
 /// Ticks per real second, measured over ~0.5 s windows from `SimView::tick`.
 #[derive(Resource, Debug, Default)]
@@ -31,11 +31,12 @@ impl TickRate {
     }
 }
 
-/// Per-phase timings, filled by the timing plugin when the app installs it.
+/// Per-phase timings for the debug window. The app fills it from `cp_prof`'s `PhaseClock`
+/// (which lives in the sim world, so the UI can't read it directly).
 #[derive(Resource, Debug, Clone, Default)]
 pub struct PhaseTimes {
-    /// `(phase name, mean ms per tick)` in execution order.
-    pub phases: Vec<(&'static str, f32)>,
+    /// `(phase, median ms per tick)` in execution order.
+    pub phases: Vec<(SimPhase, f64)>,
 }
 
 pub struct DebugData<'a> {
@@ -59,11 +60,11 @@ pub fn debug_window(ctx: &egui::Context, d: &DebugData, open: &mut bool) {
             d.view.stats.commands_applied, d.view.stats.commands_pending
         ));
         ui.separator();
-        ui.strong("Phases (ms/tick)");
+        ui.strong("Phases (median ms/tick)");
         match d.phases {
             Some(p) => {
-                for (name, ms) in &p.phases {
-                    ui.label(format!("{name:<10} {ms:7.3}"));
+                for (phase, ms) in &p.phases {
+                    ui.label(format!("{:<10} {ms:7.3}", format!("{phase:?}")));
                 }
             }
             None => {
@@ -110,7 +111,7 @@ mod tests {
             ..Default::default()
         };
         let phases = PhaseTimes {
-            phases: vec![("Commands", 0.01)],
+            phases: vec![(SimPhase::Commands, 0.01)],
         };
         crate::testutil::frame(&ctx, input, |ui| {
             debug_window(
