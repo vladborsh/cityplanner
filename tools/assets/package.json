@@ -1,0 +1,12 @@
+{
+  "name": "cp-asset-import",
+  "private": true,
+  "type": "module",
+  "description": "Offline CC0 asset import: normalise, strip and decimate source .glb files into assets/models.",
+  "dependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "@gltf-transform/functions": "4.5.1",
+    "meshoptimizer": "1.3.0"
+  }
+}
