@@ -177,3 +177,117 @@ fn hash_mismatch_warns_exactly_once_and_data_is_intact() {
     assert_eq!(l.warnings.len(), 1);
     assert_eq!(l.data, SaveData::capture(s.world()));
 }
+
+fn fixture(name: &str) -> Vec<u8> {
+    std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/saves")
+            .join(name),
+    )
+    .unwrap()
+}
+
+#[test]
+fn committed_fixtures_of_every_old_version_load_and_resume() {
+    for (name, version) in [("v0-basic.sav", 0), ("v1-basic.sav", 1)] {
+        let bytes = fixture(name);
+        let (h, _) = read_header(&bytes).unwrap();
+        assert_eq!(h.format_version, version, "{name}");
+        let l = load(&bytes, h.content_hash).unwrap();
+        assert!(l.warnings.is_empty());
+        let mut r = SimRunner::new(0);
+        l.data.clone().restore(r.world_mut());
+        let t = r.tick();
+        r.tick_once();
+        assert_eq!(r.tick().0, t.0 + 1);
+        // Migrated re-save is current-version and a fixed point.
+        let a = save(&l.data, h.content_hash, &h.map_id).unwrap();
+        assert_eq!(read_header(&a).unwrap().0.format_version, FORMAT_VERSION);
+        assert_eq!(
+            a,
+            save(
+                &load(&a, h.content_hash).unwrap().data,
+                h.content_hash,
+                &h.map_id
+            )
+            .unwrap()
+        );
+    }
+}
+
+#[test]
+fn trailing_bytes_are_rejected_in_every_version() {
+    let current = save_runner(&runner(1, 5), HASH, "m").unwrap();
+    for mut b in [current, fixture("v0-basic.sav"), fixture("v1-basic.sav")] {
+        b.extend_from_slice(b"GARBAGE");
+        assert!(load(&b, HASH).is_err());
+    }
+}
+
+#[test]
+fn header_tick_must_agree_with_the_body_in_every_version() {
+    let current = save_runner(&runner(1, 5), HASH, "m").unwrap();
+    for good in [current, fixture("v0-basic.sav"), fixture("v1-basic.sav")] {
+        let mut b = good.clone();
+        let real = read_header(&good).unwrap().0.tick;
+        b[16..24].copy_from_slice(&(real + 999).to_le_bytes());
+        assert!(
+            matches!(load(&b, HASH), Err(SaveError::TickMismatch { .. })),
+            "v{}",
+            read_header(&good).unwrap().0.format_version
+        );
+    }
+}
+
+#[test]
+fn oversized_map_id_is_an_error_not_a_panic() {
+    let r = catch_unwind(|| save_runner(&runner(1, 1), HASH, &"x".repeat(65_536)));
+    assert!(matches!(r, Ok(Err(SaveError::MapIdTooLong(65_536)))));
+}
+
+#[test]
+fn every_single_bit_flip_in_a_current_body_is_detected() {
+    let good = save_runner(&runner(3, 40), HASH, "m").unwrap();
+    let (_, body) = read_header(&good).unwrap();
+    for i in good.len() - body.len()..good.len() {
+        for bit in 0..8 {
+            let mut b = good.clone();
+            b[i] ^= 1 << bit;
+            assert_eq!(
+                load(&b, HASH).unwrap_err(),
+                SaveError::Corrupt,
+                "byte {i} bit {bit}"
+            );
+        }
+    }
+}
+
+#[test]
+fn checksum_covers_tiles_speed_and_pending_queue() {
+    use cp_terrain::TileOwnership;
+    let base = || runner(7, 10);
+    let c0 = base().checksum();
+    assert_eq!(c0, base().checksum());
+
+    let mut s = base();
+    s.world_mut().insert_resource(TileOwnership::none());
+    assert_ne!(c0, s.checksum(), "tiles");
+
+    let mut s = base();
+    s.world_mut().insert_resource(SimSpeed::X1);
+    assert_ne!(c0, s.checksum(), "speed");
+
+    let mut s = base();
+    s.push_command(
+        SimCommand::SetSpeed {
+            speed: SimSpeed::X1,
+        },
+        Tick(5_000_000),
+    );
+    assert_ne!(c0, s.checksum(), "pending queue");
+
+    // A save/load round trip preserves the checksum, queue included.
+    let mut r = SimRunner::new(0);
+    load_into_runner(&mut r, &save_runner(&base(), HASH, "m").unwrap(), HASH).unwrap();
+    assert_eq!(c0, r.checksum());
+}
