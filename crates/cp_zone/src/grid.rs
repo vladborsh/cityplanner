@@ -82,7 +82,7 @@ pub struct RoadZoning {
 pub struct ZoneBlock {
     pub segment: SegmentId,
     pub side: Side,
-    /// The segment curve this block was built from.
+    /// The stretch of the segment curve this block was built from.
     pub curve: CubicBezier3,
     /// Arc length of the curve (metres).
     pub length: f32,
@@ -145,8 +145,8 @@ struct Fingerprint {
     half_width: u32,
 }
 
-fn fingerprint(seg: &Segment, road: RoadZoning) -> Fingerprint {
-    let c = &seg.curve;
+fn fingerprint(seg: &Segment, road: RoadZoning, zone_curve: &CubicBezier3) -> Fingerprint {
+    let c = zone_curve;
     let mut bits = [0u32; 12];
     for (i, p) in [c.p0, c.p1, c.p2, c.p3].iter().enumerate() {
         bits[i * 3] = p.x.to_bits();
@@ -155,7 +155,7 @@ fn fingerprint(seg: &Segment, road: RoadZoning) -> Fingerprint {
     }
     Fingerprint {
         curve: bits,
-        length: seg.length.to_bits(),
+        length: ArcTable::build(zone_curve).length().to_bits(),
         road: seg.road,
         ground: seg.elevation == Elevation::Ground,
         zoning: road.allows_zoning,
@@ -277,13 +277,25 @@ impl ZoneGrid {
     /// new ones) get new blocks, vanished ones lose theirs, and every cell the change can
     /// affect is revalidated in block-id order. Deterministic: depends only on `net`, the
     /// road lookup and the current blocks.
-    pub fn sync(&mut self, net: &NetGraph, roads: &dyn Fn(RoadDefId) -> RoadZoning) {
+    ///
+    /// `extent` gives the stretch of a segment that is zoned: normally its curve cut at the
+    /// junction setbacks (`JunctionGeometry::trimmed_curve`), so blocks start beside the
+    /// arms instead of inside the junction. Road strips (for cell validity) always use the
+    /// full segment.
+    pub fn sync(
+        &mut self,
+        net: &NetGraph,
+        roads: &dyn Fn(RoadDefId) -> RoadZoning,
+        extent: &dyn Fn(SegmentId, &Segment) -> CubicBezier3,
+    ) {
         if !self.index.built {
             self.rebuild_index(net, roads);
         }
+        let zone_curve: BTreeMap<SegmentId, CubicBezier3> =
+            net.segments().map(|(id, s)| (id, extent(id, s))).collect();
         let current: Vec<(SegmentId, Fingerprint)> = net
             .segments()
-            .map(|(id, s)| (id, fingerprint(s, roads(s.road))))
+            .map(|(id, s)| (id, fingerprint(s, roads(s.road), &zone_curve[&id])))
             .collect();
         let present: BTreeSet<SegmentId> = current.iter().map(|(id, _)| *id).collect();
         let mut dirty: Vec<Bounds> = Vec::new();
@@ -307,7 +319,14 @@ impl ZoneGrid {
                 continue;
             }
             let seg = net.segment(id).expect("listed segment");
-            self.add_segment(id, seg, roads(seg.road), &mut dirty, &mut created);
+            self.add_segment(
+                id,
+                seg,
+                roads(seg.road),
+                &zone_curve[&id],
+                &mut dirty,
+                &mut created,
+            );
             self.fingerprints.insert(id, fp);
         }
 
@@ -443,6 +462,7 @@ impl ZoneGrid {
         id: SegmentId,
         seg: &Segment,
         road: RoadZoning,
+        zone_curve: &CubicBezier3,
         dirty: &mut Vec<Bounds>,
         created: &mut BTreeSet<ZoneBlockId>,
     ) {
@@ -453,19 +473,20 @@ impl ZoneGrid {
         if !road.allows_zoning || seg.elevation != Elevation::Ground {
             return;
         }
-        let cols = (seg.length / CELL_SIZE).floor() as u16;
+        let length = ArcTable::build(zone_curve).length();
+        let cols = (length / CELL_SIZE).floor() as u16;
         if cols == 0 {
             return;
         }
-        let s0 = (seg.length - f32::from(cols) * CELL_SIZE) / 2.0;
+        let s0 = (length - f32::from(cols) * CELL_SIZE) / 2.0;
         let mut ids = [None, None];
         for (slot, side) in [Side::Left, Side::Right].into_iter().enumerate() {
             let n = usize::from(cols) * usize::from(BLOCK_DEPTH);
             let bid = self.blocks.insert(ZoneBlock {
                 segment: id,
                 side,
-                curve: seg.curve,
-                length: seg.length,
+                curve: *zone_curve,
+                length,
                 s0,
                 cols,
                 inner: road.half_width,

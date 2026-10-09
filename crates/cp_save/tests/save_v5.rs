@@ -168,3 +168,58 @@ fn zone_system_follows_net_changes_and_is_deterministic() {
     assert_eq!(a.world().resource::<ZoneGrid>().block_count(), 2);
     assert_eq!(a.checksum(), b.checksum());
 }
+
+#[test]
+fn blocks_at_a_junction_start_beside_the_arms_not_inside_the_junction() {
+    use cp_net::JunctionGeometry;
+    let db = content();
+    let road = db.road_id("basic_2l").unwrap();
+    let def = db.road(road).clone();
+    let mut sim = runner(5);
+    let centre = Vec3::new(4000.0, 0.0, 4000.0);
+    let node_xz = bevy_math::Vec2::new(centre.x, centre.z);
+    {
+        let mut g = sim.world_mut().resource_mut::<NetGraph>();
+        for d in [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z] {
+            g.add_segment(
+                &def,
+                road,
+                CubicBezier3::line(centre, centre + d * 90.0),
+                Elevation::Ground,
+            )
+            .unwrap();
+        }
+    }
+    sim.tick_once();
+    let geo = sim.world().resource::<JunctionGeometry>();
+    let setback = geo
+        .iter()
+        .map(|(_, j)| {
+            j.arms
+                .iter()
+                .map(|a| a.setback)
+                .fold(f32::INFINITY, f32::min)
+        })
+        .fold(f32::INFINITY, f32::min);
+    assert!(setback >= 6.0, "setback {setback}");
+    let grid = sim.world().resource::<ZoneGrid>();
+    assert_eq!(grid.block_count(), 8);
+    let mut cells = 0;
+    for (id, b) in grid.blocks() {
+        cells += b.cell_count();
+        for i in 0..b.cell_count() {
+            let o = grid
+                .cell_footprint(cp_zone::ZoneCellRef {
+                    block: id,
+                    cell: i as u16,
+                })
+                .unwrap();
+            assert!(
+                o.distance_to_point(node_xz) >= setback - 0.01,
+                "cell {i} of {id:?} reaches into the junction"
+            );
+        }
+    }
+    // Each 90 m arm loses its setback, so fewer columns than the untrimmed 11 per side.
+    assert!(cells < 8 * 11 * 4, "{cells}");
+}

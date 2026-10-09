@@ -55,7 +55,7 @@ impl World {
 
     fn sync(&mut self) {
         let db = &self.db;
-        self.grid.sync(&self.net, &zoning(db));
+        self.grid.sync(&self.net, &zoning(db), &|_, s| s.curve);
     }
 }
 
@@ -364,7 +364,7 @@ fn changes_rebuild_blocks_and_match_a_from_scratch_sync() {
 
     // The incremental result equals a from-scratch sync of the same net.
     let mut fresh = ZoneGrid::new();
-    fresh.sync(&w.net, &zoning(&w.db));
+    fresh.sync(&w.net, &zoning(&w.db), &|_, s| s.curve);
     assert_eq!(summary(&w.grid), summary(&fresh));
     assert_no_double_cells(&w.grid);
 }
@@ -379,13 +379,13 @@ fn serde_round_trip_keeps_state_and_resyncs_without_changes() {
     let mut loaded: ZoneGrid = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(loaded, w.grid);
     // A sync of an unchanged net after loading rebuilds the index and changes nothing.
-    loaded.sync(&w.net, &zoning(&w.db));
+    loaded.sync(&w.net, &zoning(&w.db), &|_, s| s.curve);
     assert_eq!(loaded, w.grid);
     assert_eq!(postcard::to_stdvec(&loaded).unwrap(), bytes);
     // And it can still react to changes.
     let s = w.net.segments().next().unwrap().0;
     w.net.remove_segment(s).unwrap();
-    loaded.sync(&w.net, &zoning(&w.db));
+    loaded.sync(&w.net, &zoning(&w.db), &|_, s| s.curve);
     w.sync();
     assert_eq!(summary(&loaded), summary(&w.grid));
 }
@@ -415,4 +415,39 @@ fn bridges_do_not_zone_or_block() {
         w.grid.valid_cells(),
         w.grid.blocks().map(|(_, b)| b.cell_count()).sum::<usize>()
     );
+}
+
+#[test]
+fn blocks_cover_only_the_extent_given_and_rebuild_when_it_changes() {
+    let mut w = World::new();
+    let s = w.line("basic_2l", (1000.0, 1000.0), (1096.0, 1000.0)); // 96 m: 12 columns
+    let zoned = |w: &World| {
+        w.grid
+            .blocks_of(s)
+            .into_iter()
+            .flatten()
+            .map(|id| w.grid.block(id).unwrap().cols)
+            .collect::<Vec<_>>()
+    };
+    w.sync();
+    assert_eq!(zoned(&w), [12, 12]);
+    // A junction takes 20 m off each end: 56 m of road is zoned, 7 columns.
+    let db = &w.db;
+    w.grid.sync(&w.net, &zoning(db), &|_, seg| {
+        seg.curve.sub_curve(20.0 / 96.0, 76.0 / 96.0)
+    });
+    assert_eq!(zoned(&w), [7, 7]);
+    let b = w.grid.block(w.grid.blocks_of(s)[0].unwrap()).unwrap();
+    let first = b.footprints()[0].c;
+    assert!(
+        first.x > 1020.0 && first.x < 1030.0,
+        "starts after the setback: {first:?}"
+    );
+    // Same extent again: nothing is rebuilt.
+    let ids = w.grid.blocks_of(s);
+    let db = &w.db;
+    w.grid.sync(&w.net, &zoning(db), &|_, seg| {
+        seg.curve.sub_curve(20.0 / 96.0, 76.0 / 96.0)
+    });
+    assert_eq!(w.grid.blocks_of(s), ids);
 }
