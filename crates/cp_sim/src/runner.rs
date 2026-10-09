@@ -82,6 +82,7 @@ impl SimRunner {
         world.init_resource::<cp_zone::ZoneGrid>();
         world.init_resource::<cp_building::BuildingGrid>();
         world.init_resource::<cp_building::DemandStub>();
+        world.init_resource::<cp_utility::UtilityGraph>();
         world.init_resource::<cp_citizen::CitizenGrid>();
         world.init_resource::<cp_traffic::PathNetwork>();
         world.init_resource::<cp_traffic::PathService>();
@@ -98,6 +99,9 @@ impl SimRunner {
         world
             .resource_mut::<SimChecksum>()
             .register("buildings", crate::checksum::building_part);
+        world
+            .resource_mut::<SimChecksum>()
+            .register("utilities", crate::checksum::utility_part);
         world
             .resource_mut::<SimChecksum>()
             .register("citizens", crate::checksum::citizen_part);

@@ -1,6 +1,6 @@
 //! Per-definition range checks. Each returns `(field, message)` pairs.
 
-use crate::defs::{BuildingDef, RoadDef, RoadVariant, ServiceDef, VehicleDef};
+use crate::defs::{BuildingDef, RoadDef, RoadVariant, ServiceDef, UtilityDef, VehicleDef};
 use crate::kinds::ZoneType;
 
 pub type Problems = Vec<(String, String)>;
@@ -109,6 +109,20 @@ pub fn vehicle(d: &VehicleDef) -> Problems {
     c.positive("width", d.width);
     c.positive("max_speed_kmh", d.max_speed_kmh);
     c.positive("accel", d.accel);
+    c.not_empty("mesh", &d.mesh);
+    c.0
+}
+
+pub fn utility(d: &UtilityDef) -> Problems {
+    let mut c = Check(Vec::new());
+    c.not_empty("id", &d.id);
+    c.non_negative("cost_per_m", d.cost_per_m);
+    c.non_negative("upkeep_per_m_week", d.upkeep_per_m_week);
+    c.positive("min_link_m", d.min_link_m);
+    c.positive("max_link_m", d.max_link_m);
+    if d.max_link_m < d.min_link_m * 2.0 {
+        c.bad("max_link_m", "must be at least twice min_link_m");
+    }
     c.not_empty("mesh", &d.mesh);
     c.0
 }

@@ -1,0 +1,10 @@
+Utility((
+    id: "power_line",
+    name: "Power line",
+    kind: Power,
+    cost_per_m: 3.0,
+    upkeep_per_m_week: 0.03,
+    min_link_m: 8.0,
+    max_link_m: 200.0,
+    mesh: "utility/power_line",
+))

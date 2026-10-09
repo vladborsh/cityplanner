@@ -53,6 +53,7 @@ pub struct ContentDb {
     buildings: Table<BuildingDef>,
     services: Table<ServiceDef>,
     vehicles: Table<VehicleDef>,
+    utilities: Table<UtilityDef>,
     content_hash: u64,
 }
 
@@ -101,6 +102,22 @@ impl ContentDb {
         vehicle_id,
         vehicles
     );
+    accessors!(
+        utilities,
+        UtilityDef,
+        UtilityDefId,
+        utility,
+        utility_id,
+        utilities
+    );
+
+    /// The utility definition for `kind` (the first by sorted id), if the content has one.
+    pub fn utility_for_kind(
+        &self,
+        kind: crate::kinds::UtilityKind,
+    ) -> Option<(UtilityDefId, &UtilityDef)> {
+        self.utilities().find(|(_, d)| d.kind == kind)
+    }
 
     /// Stable hash of the semantic content (independent of file layout, formatting,
     /// line endings and directory iteration order).
@@ -145,12 +162,14 @@ impl ContentDb {
         let mut buildings: Vec<(String, BuildingDef)> = Vec::new();
         let mut services: Vec<(String, ServiceDef)> = Vec::new();
         let mut vehicles: Vec<(String, VehicleDef)> = Vec::new();
+        let mut utilities: Vec<(String, UtilityDef)> = Vec::new();
         for (path, text) in sources {
             match ron::from_str::<ContentFile>(&text) {
                 Ok(ContentFile::Road(d)) => roads.push((path, d)),
                 Ok(ContentFile::Building(d)) => buildings.push((path, d)),
                 Ok(ContentFile::Service(d)) => services.push((path, d)),
                 Ok(ContentFile::Vehicle(d)) => vehicles.push((path, d)),
+                Ok(ContentFile::Utility(d)) => utilities.push((path, d)),
                 Err(e) => errors.push(ContentError::new(&path, None, format!("parse error: {e}"))),
             }
         }
@@ -158,6 +177,7 @@ impl ContentDb {
         let buildings = table(buildings, |d| &d.id, validate::building, &mut errors);
         let services = table(services, |d| &d.id, validate::service, &mut errors);
         let vehicles = table(vehicles, |d| &d.id, validate::vehicle, &mut errors);
+        let utilities = table(utilities, |d| &d.id, validate::utility, &mut errors);
 
         // Cross references.
         for (i, b) in buildings.defs.iter().enumerate() {
@@ -191,11 +211,13 @@ impl ContentDb {
         hash_table(&mut hash, "building", &buildings.defs, |d| &d.id);
         hash_table(&mut hash, "service", &services.defs, |d| &d.id);
         hash_table(&mut hash, "vehicle", &vehicles.defs, |d| &d.id);
+        hash_table(&mut hash, "utility", &utilities.defs, |d| &d.id);
         Ok(Self {
             roads: roads.strip(),
             buildings: buildings.strip(),
             services: services.strip(),
             vehicles: vehicles.strip(),
+            utilities: utilities.strip(),
             content_hash: hash,
         })
     }

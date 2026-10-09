@@ -1,0 +1,10 @@
+Utility((
+    id: "water_pipe",
+    name: "Water pipe",
+    kind: Water,
+    cost_per_m: 4.0,
+    upkeep_per_m_week: 0.02,
+    min_link_m: 4.0,
+    max_link_m: 100.0,
+    mesh: "utility/water_pipe",
+))

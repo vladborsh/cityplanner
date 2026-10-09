@@ -2643,9 +2643,14 @@ name = "cp_utility"
 version = "0.0.0"
 dependencies = [
  "bevy_ecs",
+ "bevy_math",
  "cp_building",
+ "cp_content",
  "cp_core",
  "cp_net",
+ "cp_terrain",
+ "cp_zone",
+ "postcard",
  "serde",
 ]
 

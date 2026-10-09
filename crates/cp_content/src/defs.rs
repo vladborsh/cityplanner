@@ -37,6 +37,10 @@ def_id!(
     /// Dense index of a vehicle type, assigned in sorted-string-id order.
     VehicleDefId
 );
+def_id!(
+    /// Dense index of a utility (pipe / power line) type, assigned in sorted-string-id order.
+    UtilityDefId
+);
 
 /// Contents of one `.ron` file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -45,6 +49,8 @@ pub enum ContentFile {
     Building(BuildingDef),
     Service(ServiceDef),
     Vehicle(VehicleDef),
+    /// Appended in T-037.
+    Utility(UtilityDef),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -187,5 +193,22 @@ pub struct VehicleDef {
     pub max_speed_kmh: f32,
     /// Acceleration, m/s².
     pub accel: f32,
+    pub mesh: String,
+}
+
+/// A utility link type: pipes (water, sewage) and power lines (`system-design.md` §10).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UtilityDef {
+    pub id: String,
+    pub name: String,
+    /// Which network this link carries. Water and sewage share one pipe network.
+    pub kind: UtilityKind,
+    pub cost_per_m: f32,
+    pub upkeep_per_m_week: f32,
+    /// Shortest link, metres.
+    pub min_link_m: f32,
+    /// Longest link, metres; longer legs of a path are cut into equal pieces.
+    pub max_link_m: f32,
     pub mesh: String,
 }
