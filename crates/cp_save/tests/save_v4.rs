@@ -54,7 +54,7 @@ fn good_with_map() -> Vec<u8> {
 fn every_single_bit_flip_outside_the_crc_field_is_an_error() {
     let b = good_with_map();
     let (h, body) = read_header(&b).unwrap();
-    assert_eq!(h.format_version, 4);
+    assert_eq!(h.format_version, FORMAT_VERSION);
     assert_eq!(h.map_hash, Some(MAP));
     let crc_at = b.len() - body.len() - 4;
     let mut checked = 0;

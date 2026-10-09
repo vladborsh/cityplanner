@@ -74,6 +74,11 @@ impl Fnv1a {
 /// A domain's contribution to the checksum.
 pub type ChecksumFn = fn(&World, &mut Fnv1a);
 
+/// Checksum part of the zone blocks (`cp_zone::ZoneGrid`: blocks, painted types, validity).
+pub(crate) fn zone_part(world: &World, h: &mut Fnv1a) {
+    h.write_serialized(world.resource::<cp_zone::ZoneGrid>());
+}
+
 /// Checksum part of the road network (`cp_net::NetGraph`: arenas and dirty set).
 /// Registered by `SimRunner::new` — `cp_net` cannot depend on `cp_sim`, so built-in
 /// domains register here rather than through a `SimPlugin`.

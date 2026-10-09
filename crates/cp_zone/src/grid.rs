@@ -13,7 +13,9 @@
 //! * (stub) is covered by a building.
 //!
 //! Overlap means interpenetration deeper than [`PENETRATION_EPS`]; touching and grazing
-//! cells are fine, which keeps cells on gentle curves valid.
+//! cells are fine. Squares on the inside of a curve crowd together (neighbouring columns
+//! overlap by about `8 · depth / radius`), so deep rows on the inside of a bend are
+//! invalid: that is where the road geometry leaves no room for them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,7 +34,7 @@ pub const CELL_SIZE: f32 = 8.0;
 /// Rows of cells away from the road.
 pub const BLOCK_DEPTH: u16 = 4;
 /// Cell/cell interpenetration (m) tolerated before a cell is invalid.
-pub const PENETRATION_EPS: f32 = 0.3;
+pub const PENETRATION_EPS: f32 = 1.0;
 /// A cell may overlap a road strip by at most this (m).
 pub const ROAD_EPS: f32 = 0.05;
 
@@ -112,7 +114,9 @@ impl ZoneBlock {
             let s = self.s0 + (f32::from(col) + 0.5) * CELL_SIZE;
             let t = table.s_to_t(s);
             let p = to_xz(self.curve.point(t));
-            let tg = to_xz(self.curve.tangent(t)).normalize_or(Vec2::X);
+            let tg = to_xz(self.curve.tangent(t))
+                .try_normalize()
+                .unwrap_or(Vec2::X);
             let u = tg;
             // Left of the travel direction in XZ is (t.z, -t.x), as in `offset_xz`.
             let v = Vec2::new(tg.y, -tg.x) * self.side.sign();
@@ -127,15 +131,6 @@ impl ZoneBlock {
             }
         }
         out
-    }
-}
-
-trait NormalizeOr {
-    fn normalize_or(self, fallback: Vec2) -> Vec2;
-}
-impl NormalizeOr for Vec2 {
-    fn normalize_or(self, fallback: Vec2) -> Vec2 {
-        self.try_normalize().unwrap_or(fallback)
     }
 }
 
@@ -191,10 +186,6 @@ fn inflate(b: Bounds, by: f32) -> Bounds {
     (b.0 - Vec2::splat(by), b.1 + Vec2::splat(by))
 }
 
-fn overlaps(a: Bounds, b: Bounds) -> bool {
-    a.0.x <= b.1.x && b.0.x <= a.1.x && a.0.y <= b.1.y && b.0.y <= a.1.y
-}
-
 /// Derived lookup structures; rebuilt from the blocks and the net, never saved.
 #[derive(Clone, Debug, Default)]
 struct Index {
@@ -244,7 +235,10 @@ impl ZoneGrid {
 
     /// The `[Left, Right]` blocks of a segment, when it has them.
     pub fn blocks_of(&self, segment: SegmentId) -> [Option<ZoneBlockId>; 2] {
-        self.by_segment.get(&segment).copied().unwrap_or([None, None])
+        self.by_segment
+            .get(&segment)
+            .copied()
+            .unwrap_or([None, None])
     }
 
     /// Footprint of a cell, when the block exists and the cell is in range.
@@ -270,6 +264,11 @@ impl ZoneGrid {
     /// Total number of valid cells (all blocks).
     pub fn valid_cells(&self) -> usize {
         self.blocks.iter().map(|(_, b)| b.valid_count()).sum()
+    }
+
+    /// Whether the lookup structures are built (false after a load until the next `sync`).
+    pub fn index_ready(&self) -> bool {
+        self.index.built
     }
 
     // ----- sync -----
@@ -374,7 +373,11 @@ impl ZoneGrid {
             };
             let b = inflate((w[0].min(w[1]), w[0].max(w[1])), road.half_width);
             for key in bucket_range(b, ROAD_BUCKET) {
-                self.index.road_buckets.entry(key).or_default().push((id, piece));
+                self.index
+                    .road_buckets
+                    .entry(key)
+                    .or_default()
+                    .push((id, piece));
             }
             bounds = Some(bounds.map_or(b, |x| union(x, b)));
         }

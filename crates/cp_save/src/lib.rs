@@ -49,11 +49,12 @@ use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
 use cp_terrain::TileOwnership;
+use cp_zone::ZoneGrid;
 use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 4;
+pub const FORMAT_VERSION: u32 = 5;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -65,6 +66,8 @@ pub struct SaveData {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
+    /// Zone blocks, painted types and cell validity. Added in v5.
+    pub zones: ZoneGrid,
 }
 
 impl SaveData {
@@ -78,6 +81,7 @@ impl SaveData {
             log: world.resource::<CommandLog<SimCommand>>().clone(),
             tiles: *world.resource::<TileOwnership>(),
             net: world.resource::<NetGraph>().clone(),
+            zones: world.resource::<ZoneGrid>().clone(),
         }
     }
 
@@ -96,6 +100,7 @@ impl SaveData {
         world.insert_resource(self.net);
         // Derived from the net; rebuilt by the Network phase.
         world.insert_resource(cp_net::JunctionGeometry::default());
+        world.insert_resource(self.zones);
     }
 }
 
@@ -367,14 +372,34 @@ pub fn save_with_map(
     map_hash: Option<u64>,
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(data).expect("save serialization failed");
-    let frame = compress(&body);
+    assemble(
+        FORMAT_VERSION,
+        data.tick.0,
+        &body,
+        content_hash,
+        map_id,
+        map_hash,
+    )
+}
+
+/// Builds a version >= 4 file (whole-file CRC) around an encoded body.
+pub(crate) fn assemble(
+    format_version: u32,
+    tick: u64,
+    body: &[u8],
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    debug_assert!(format_version >= 4);
+    let frame = compress(body);
     let mut out = Vec::new();
     write_prefix(
         &mut out,
         &Header {
-            format_version: FORMAT_VERSION,
+            format_version,
             content_hash,
-            tick: data.tick.0,
+            tick,
             map_id: map_id.to_owned(),
             map_hash,
             body_crc: None,

@@ -2,7 +2,8 @@
 //! without zone state; it carries a small road network).
 //!
 //! The committed file was produced by the real v4 writer (`save_with_map` at format 4,
-//! before the v5 bump) with exactly this data. Run from the repo root:
+//! before the v5 bump) with exactly this data; `encode_v4` is the frozen equivalent kept
+//! for regeneration and a test asserts they agree byte for byte. Run from the repo root:
 //! `cargo run -p cp_save --example gen_v4_fixture`. The committed file is **never edited or
 //! regenerated** afterwards (AGENTS.md).
 
@@ -11,11 +12,11 @@ use cp_content::ContentDb;
 use cp_core::curve::CubicBezier3;
 use cp_core::{CommandId, CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::{Elevation, NetGraph};
-use cp_save::{SaveData, save_with_map};
+use cp_save::migrate::{SaveDataV4, encode_v4};
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
 
-fn fixture_data() -> SaveData {
+fn fixture_data() -> SaveDataV4 {
     let mut rng = SimRng::seed_from_u64(41);
     for _ in 0..8 {
         rng.next_u64();
@@ -53,7 +54,7 @@ fn fixture_data() -> SaveData {
         )
         .expect("segment");
     net.split_segment(&def, seg, 0.4).expect("split");
-    SaveData {
+    SaveDataV4 {
         tick: Tick(1000),
         rng,
         speed: SimSpeed::X3,
@@ -65,7 +66,7 @@ fn fixture_data() -> SaveData {
 }
 
 fn main() {
-    let bytes = save_with_map(
+    let bytes = encode_v4(
         &fixture_data(),
         0xC17F_0000_0000_0005,
         "flatlands",

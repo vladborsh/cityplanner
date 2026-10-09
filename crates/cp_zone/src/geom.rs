@@ -143,15 +143,23 @@ mod tests {
     fn segment_distance_cases() {
         let a = square(Vec2::ZERO, 0.0);
         // Parallel to the right face, 3 m away.
-        assert!((a.distance_to_segment(Vec2::new(7.0, -20.0), Vec2::new(7.0, 20.0)) - 3.0).abs() < 1e-5);
+        assert!(
+            (a.distance_to_segment(Vec2::new(7.0, -20.0), Vec2::new(7.0, 20.0)) - 3.0).abs() < 1e-5
+        );
         // Crossing the box.
-        assert_eq!(a.distance_to_segment(Vec2::new(-20.0, 1.0), Vec2::new(20.0, 1.0)), 0.0);
+        assert_eq!(
+            a.distance_to_segment(Vec2::new(-20.0, 1.0), Vec2::new(20.0, 1.0)),
+            0.0
+        );
         // Passing the corner (4, 4): the segment lies on x + z = 16, 8/sqrt(2) away.
         let d = a.distance_to_segment(Vec2::new(6.0, 10.0), Vec2::new(10.0, 6.0));
         assert!((d - 8.0 / 2f32.sqrt()).abs() < 1e-4, "{d}");
         // Rotated 45°: the diamond's tip is at x = 4*sqrt(2) ~ 5.66, so x = 5 cuts it.
         let r = square(Vec2::ZERO, std::f32::consts::FRAC_PI_4);
-        assert_eq!(r.distance_to_segment(Vec2::new(5.0, -9.0), Vec2::new(5.0, 9.0)), 0.0);
+        assert_eq!(
+            r.distance_to_segment(Vec2::new(5.0, -9.0), Vec2::new(5.0, 9.0)),
+            0.0
+        );
         let far = r.distance_to_segment(Vec2::new(7.0, -9.0), Vec2::new(7.0, 9.0));
         assert!((far - (7.0 - 4.0 * 2f32.sqrt())).abs() < 1e-4, "{far}");
     }

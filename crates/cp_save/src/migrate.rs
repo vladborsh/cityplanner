@@ -8,6 +8,7 @@ use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
+use cp_zone::ZoneGrid;
 use serde::{Deserialize, Serialize};
 
 use crate::{SaveData, SaveError};
@@ -72,10 +73,37 @@ pub struct SaveDataV3 {
     pub net: NetGraph,
 }
 
+/// Version 4: the body as written by format 4 (before zone state).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV4 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+}
+
+/// v4 → v5: zone state was added; an old save starts with an empty [`ZoneGrid`] and the
+/// `Network` phase builds the blocks from the loaded road network on the first tick.
+pub fn migrate_v4_to_v5(v4: SaveDataV4) -> SaveData {
+    SaveData {
+        tick: v4.tick,
+        rng: v4.rng,
+        speed: v4.speed,
+        queue: v4.queue,
+        log: v4.log,
+        tiles: v4.tiles,
+        net: v4.net,
+        zones: ZoneGrid::default(),
+    }
+}
+
 /// v3 → v4: header-only change (CRC over the whole file, map hash); the body is carried
 /// over unchanged.
-pub fn migrate_v3_to_v4(v3: SaveDataV3) -> SaveData {
-    SaveData {
+pub fn migrate_v3_to_v4(v3: SaveDataV3) -> SaveDataV4 {
+    SaveDataV4 {
         tick: v3.tick,
         rng: v3.rng,
         speed: v3.speed,
@@ -99,13 +127,16 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         }
     }
     match version {
-        0 => Ok(migrate_v3_to_v4(migrate_v2_to_v3(migrate_v0_to_v1(dec(
+        0 => Ok(migrate_v4_to_v5(migrate_v3_to_v4(migrate_v2_to_v3(
+            migrate_v0_to_v1(dec(body)?),
+        )))),
+        // v1 and v2 share the same body; v2 only added the header CRC.
+        1 | 2 => Ok(migrate_v4_to_v5(migrate_v3_to_v4(migrate_v2_to_v3(dec(
             body,
         )?)))),
-        // v1 and v2 share the same body; v2 only added the header CRC.
-        1 | 2 => Ok(migrate_v3_to_v4(migrate_v2_to_v3(dec(body)?))),
-        3 => Ok(migrate_v3_to_v4(dec(body)?)),
-        4 => dec(body),
+        3 => Ok(migrate_v4_to_v5(migrate_v3_to_v4(dec(body)?))),
+        4 => Ok(migrate_v4_to_v5(dec(body)?)),
+        5 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -190,4 +221,16 @@ pub fn encode_v3(v3: &SaveDataV3, content_hash: u64, map_id: &str) -> Result<Vec
     )?;
     out.extend_from_slice(&frame);
     Ok(out)
+}
+
+/// Writes a **version 4** file (whole-file CRC and map hash, no zone state). Legacy writer
+/// kept only to regenerate and test the v4 fixture; real saves always use [`crate::save`].
+pub fn encode_v4(
+    v4: &SaveDataV4,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v4).expect("serialization failed");
+    crate::assemble(4, v4.tick.0, &body, content_hash, map_id, map_hash)
 }
