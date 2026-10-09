@@ -41,7 +41,7 @@ fn bench_checksum(extra: &[&str], tag: &str) -> String {
 /// What `cp_desktop --map M --hour 0 --headless N` does: `cp_app::load_sim`, then N ticks.
 fn client_checksum(map: &str) -> String {
     let terrain = Terrain::load(&root().join("assets/maps").join(map)).unwrap();
-    let mut sim = cp_app::build_sim(terrain, SimLimits::desktop(), 0.0, false);
+    let mut sim = cp_app::build_sim(terrain, SimLimits::desktop(), 0.0, false, None);
     for _ in 0..TICKS {
         sim.tick_once();
     }
