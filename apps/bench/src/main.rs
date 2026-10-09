@@ -4,12 +4,14 @@
 //! cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty] [--content DIR] [--ticks N] [--warmup N]
 //!          [--seed S] [--out FILE.json] [--inject-sleep Phase=MS]
 //! cp_bench aggregate OUT.json RUN.json...        median over runs
+//! cp_bench paths [--grid N] [--requests N] [--threads 1,8] [--seed S]   (pathfinding throughput)
 //! cp_bench compare BASELINE.json CURRENT.json [--threshold 0.2] [--floor-ms 0.05]
 //! ```
 //!
 //! This is an app, not a sim crate, so it may read the wall clock. `--inject-sleep` exists
 //! only to prove the CI gate fails on a slow phase.
 
+mod paths;
 mod report;
 
 use std::path::{Path, PathBuf};
@@ -264,6 +266,7 @@ fn print_table(r: &Report) {
 
 fn real_main(args: Vec<String>) -> Result<ExitCode, String> {
     match args.first().map(String::as_str) {
+        Some("paths") => paths::run(&args[1..]),
         Some("aggregate") => {
             let [_, out, runs @ ..] = args.as_slice() else {
                 return Err(usage().into());

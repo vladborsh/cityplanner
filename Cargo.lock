@@ -2415,12 +2415,16 @@ name = "cp_bench"
 version = "0.0.0"
 dependencies = [
  "bevy_ecs",
+ "bevy_math",
+ "bevy_tasks",
  "cp_content",
  "cp_core",
+ "cp_net",
  "cp_prof",
  "cp_save",
  "cp_sim",
  "cp_terrain",
+ "cp_traffic",
  "serde",
  "serde_json",
 ]
@@ -2606,7 +2610,12 @@ dependencies = [
 name = "cp_traffic"
 version = "0.0.0"
 dependencies = [
+ "bevy_ecs",
+ "bevy_math",
+ "bevy_tasks",
  "cp_citizen",
+ "cp_content",
+ "cp_core",
  "cp_net",
 ]
 

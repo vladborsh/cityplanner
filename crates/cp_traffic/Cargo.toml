@@ -11,3 +11,12 @@ workspace = true
 [dependencies]
 cp_net.workspace = true
 cp_citizen.workspace = true
+cp_core.workspace = true
+cp_content.workspace = true
+bevy_ecs.workspace = true
+bevy_math.workspace = true
+bevy_tasks.workspace = true
+
+[dev-dependencies]
+# Real worker threads for the determinism tests and the bench (feature only, no new crate).
+bevy_tasks = { workspace = true, features = ["multi_threaded"] }

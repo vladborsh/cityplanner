@@ -80,6 +80,9 @@ impl SimRunner {
         world.init_resource::<cp_building::BuildingGrid>();
         world.init_resource::<cp_building::DemandStub>();
         world.init_resource::<cp_citizen::CitizenGrid>();
+        world.init_resource::<cp_traffic::PathNetwork>();
+        world.init_resource::<cp_traffic::PathService>();
+        world.init_resource::<cp_traffic::PathResults>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
@@ -126,6 +129,14 @@ impl SimRunner {
         );
         schedule.add_systems(cp_building::update_buildings.in_set(SimPhase::Buildings));
         schedule.add_systems(cp_citizen::update_citizens.in_set(SimPhase::Citizens));
+        // Path snapshot after the junction links it is built from; results are applied in
+        // the Paths phase (system-design §2: requests from tick t land exactly at t + 8).
+        schedule.add_systems(
+            cp_traffic::update_path_network
+                .in_set(SimPhase::Network)
+                .after(cp_net::update_junctions),
+        );
+        schedule.add_systems(cp_traffic::deliver_paths.in_set(SimPhase::Paths));
         schedule.add_systems(update_checksum.in_set(ChecksumSet));
         Self {
             world,
