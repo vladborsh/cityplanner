@@ -20,9 +20,10 @@ apps/desktop  apps/web  apps/bench(headless)
      ├─ cp_ui ────┤          │
      ├─ cp_tools ─┤          │
      ├─ cp_render ┤          │
-     └────────────┴── cp_sim ┘   ← собирает sim-плагины, SimApp, шаг, снапшот
+     ├────────────┴── cp_save ┤   ← сейв, миграции, реплей (save + CommandLog)
+     └────────────┴── cp_sim ─┘   ← собирает sim-плагины, SimCommand, SimRunner, снапшот
                         │
-   cp_save  cp_economy  cp_service(M2)  cp_transit(M3)  cp_district(M4)  cp_industry(M5)  cp_park(M6)
+   cp_economy  cp_service(M2)  cp_transit(M3)  cp_district(M4)  cp_industry(M5)  cp_park(M6)
    cp_traffic  cp_citizen  cp_utility  cp_building  cp_zone
                         │
                 cp_net   cp_terrain
@@ -30,30 +31,32 @@ apps/desktop  apps/web  apps/bench(headless)
                 cp_content ── cp_core
 ```
 
+Направление зависимостей — строго сверху вниз. `cp_save` стоит **над** `cp_sim`: ему нужны `SimCommand` для лога команд и `SimRunner` для реплея, а `cp_sim` сейвов не знает. Ниже `cp_sim` ни один крейт не может назвать общий тип команды — см. §4.
+
 | Крейт | Отвечает за | Может зависеть от |
 |---|---|---|
-| `cp_core` | id и арены, тик и время, `SimRng`, `SimCommand` и шина, математика кривых (Безье, длина дуги, проекция), фиксированные константы | `bevy_ecs`, `bevy_math`, `serde` |
-| `cp_content` | RON-схемы `RoadDef`, `BuildingDef`, `ServiceDef`, `VehicleDef`, загрузка и валидация, `ContentDb` с хешем | `cp_core` |
-| `cp_terrain` | heightmap, водная маска, высота и нормаль в точке, тайлы и их владение | `cp_core` |
-| `cp_net` | граф узлов и сегментов, полосы и их соединения, геометрия перекрёстков, валидация постройки, светофоры как данные | `cp_core`, `cp_content`, `cp_terrain` |
-| `cp_zone` | зонные блоки и ячейки, кисти зонирования, разрешение пересечений | `cp_net` |
-| `cp_building` | здания, рост, уровни, заброшенность, лоты | `cp_zone`, `cp_net`, `cp_content` |
+| `cp_core` | id и арены, тик и время, `SimRng`, `SimSpeed`, **обобщённая** шина команд (`CommandQueue<C>`, `CommandLog<C>`, `CommandId`, `CommandOutcome`, `CommandError`), математика кривых (Безье, длина дуги, проекция), фиксированные константы. Доменных типов и доменных команд не знает | `bevy_ecs`, `bevy_math`, `serde` |
+| `cp_content` | RON-схемы `RoadDef`, `BuildingDef`, `ServiceDef`, `VehicleDef`, загрузка и валидация, `ContentDb` с типизированными `RoadDefId`, `BuildingDefId`, `ServiceDefId`, `VehicleDefId` и хешем; **словарь контента** `cp_content::kinds` — `ZoneType`, `UtilityKind`, `ServiceKind` (перечисления, на которые ссылаются RON-определения и команды) | `cp_core` |
+| `cp_terrain` | heightmap, водная маска, высота и нормаль в точке, тайлы и их владение (`TileId`, `TileOwnership`); `TerrainCommand` (M2: `BuyTile`) | `cp_core` |
+| `cp_net` | граф узлов и сегментов (`NodeId`, `SegmentId`, `LaneId`), полосы и их соединения, геометрия перекрёстков, валидация постройки, светофоры как данные; `NetCommand` с `RoadPath`, `ElevationMode` | `cp_core`, `cp_content`, `cp_terrain` |
+| `cp_zone` | зонные блоки и ячейки (`ZoneBlockId`, `ZoneCellRef`), кисти зонирования, разрешение пересечений; `ZoneCommand` | `cp_net` |
+| `cp_building` | здания (`BuildingId`), рост, уровни, заброшенность, лоты; `BuildingCommand` | `cp_zone`, `cp_net`, `cp_content` |
 | `cp_citizen` | граждане, домохозяйства, распорядок, генерация поездок, въезд и выезд | `cp_building` |
 | `cp_traffic` | поиск пути, пул агентов, движение машин и пешеходов, перекрёстки, загрузка сегментов | `cp_net`, `cp_citizen` |
-| `cp_utility` | сети воды, канализации и электричества, ёмкость, снабжение зданий | `cp_net`, `cp_building` |
-| `cp_economy` | бюджет, налоги, содержание, спрос RCIO, стоимость земли, загрязнение и шум, вехи | `cp_building`, `cp_citizen`, `cp_utility` |
+| `cp_utility` | сети воды, канализации и электричества, ёмкость, снабжение зданий; `UtilityCommand` | `cp_net`, `cp_building` |
+| `cp_economy` | бюджет, налоги, содержание, спрос RCIO, стоимость земли, загрязнение и шум, вехи; `EconomyCommand` | `cp_building`, `cp_citizen`, `cp_utility` |
 | `cp_service` | M2: покрытие, сервисные машины, образование, здоровье, преступность, пожары, мусор | `cp_traffic`, `cp_economy` |
 | `cp_transit` | M3: линии, остановки, транспорт, пересадки, внешние связи, грузы | `cp_traffic` |
 | `cp_district` | M4: районы, политики, специализации, уникальные здания | `cp_economy` |
 | `cp_industry` | M5: индустриальные зоны, цепочки ресурсов, склады | `cp_district`, `cp_transit` |
 | `cp_park` | M6: парковые зоны, посетители, уровни парка | `cp_district` |
-| `cp_save` | формат сейва, версии и миграции, лог команд и реплей | все sim-крейты |
-| `cp_sim` | `SimPlugin` собирает расписание; `SimRunner` шагает; `SimView` отдаёт снапшот; сценарии-генераторы для тестов | все sim-крейты |
+| `cp_save` | формат сейва, версии и миграции, лог команд и реплей | все sim-крейты и `cp_sim` |
+| `cp_sim` | `SimCommand` — сумма доменных команд — и диспетчер фазы `Commands`; `SimPlugin` собирает расписание; `SimRunner` шагает; `SimView` отдаёт снапшот; сценарии-генераторы для тестов | все sim-крейты (кроме `cp_save`) |
 | `cp_render` | рельеф, дороги, здания, инстансинг агентов, LOD, оверлеи, интерполяция | `cp_sim` (только `SimView`), `bevy` |
 | `cp_tools` | инструменты дорог, зон, размещения и бульдозера: превью и команды | `cp_sim`, `cp_render` |
 | `cp_ui` | панели `bevy_egui` | `cp_sim`, `cp_tools` |
 
-**Жёсткое правило:** крейты до `cp_sim` включительно не зависят от `bevy_render`, `bevy_pbr`, `bevy_winit`, `bevy_egui`. CI проверяет это через `cargo tree`.
+**Жёсткое правило:** крейты до `cp_sim` включительно и `cp_save` не зависят от `bevy_render`, `bevy_pbr`, `bevy_winit`, `bevy_egui`. CI проверяет это через `cargo tree`.
 
 ## 2. Тик, время и исполнение
 
@@ -92,6 +95,8 @@ apps/desktop  apps/web  apps/bench(headless)
 
 ECS используется для расписания и ресурсов, а на стороне клиента — для отражения в рендере.
 
+**Кто владеет id.** `Id<T>` типизирован элементом арены, поэтому id живёт в крейте, который владеет ареной `Arena<T>`: `cp_net` — `NodeId = Id<Node>`, `SegmentId = Id<Segment>`, `LaneId = Id<Lane>`; `cp_zone` — `ZoneBlockId`; `cp_building` — `BuildingId`; `cp_citizen` — `CitizenId`, `HouseholdId`; `cp_traffic` — `VehicleId`, `PedestrianId`; `cp_terrain` — `TileId` (не арена: индекс 0–24 в `TileOwnership`). Id определений контента (`RoadDefId`, `BuildingDefId`, …) — в `cp_content`. `cp_core` не заводит маркерных типов и псевдонимов для чужих арен: крейт, который не может назвать `Id<Segment>`, не должен и хранить его.
+
 | Арена | Ёмкость (десктоп) | Ёмкость (WASM) |
 |---|---|---|
 | `Node` | 32 768 | 8 192 |
@@ -108,25 +113,54 @@ ECS используется для расписания и ресурсов, а
 
 ## 4. Команды
 
+Команда — единственный способ изменить состояние симуляции снаружи. Типы командного слоя лежат на трёх уровнях, чтобы не было цикла «`cp_core` называет типы крейтов, которые зависят от `cp_core`»:
+
+1. **`cp_core` — обобщённая шина, без доменных типов.**
+   - `CommandId(u64)` — порядковый номер, выдаётся очередью.
+   - `CommandQueue<C>` — команды с тиком исполнения; `push(cmd, tick) -> CommandId`, `drain_due(tick)` отдаёт команды в порядке «тик, затем номер».
+   - `CommandLog<C>` — применённые команды `(tick, CommandId, C)` в порядке применения; serde.
+   - `CommandOutcome { id: CommandId, result: Result<Cost, CommandError> }` — событие.
+   - `CommandError` — `InsufficientFunds { needed, available }`, `TileNotOwned`, `Rejected { domain: &'static str, reason: String }` (домен заворачивает свою ошибку валидации в `Rejected`; типизированные ошибки для превью инструменты берут напрямую из чистых функций доменов, не из исхода команды).
+   - `SimSpeed { Pause, X1, X2, X3 }` — в `cp_core::time`.
+   `C` ограничен `Clone + Serialize + DeserializeOwned`. Тесты шины используют собственный тестовый enum.
+
+2. **Доменные крейты — свои команды и свои обработчики.** Каждый крейт, принимающий ввод игрока, объявляет `pub enum <Domain>Command` из типов, которыми он уже владеет, и чистую точку применения `pub fn apply(world: &mut World, cmd: &<Domain>Command) -> Result<Cost, <Domain>Error>`. Вариант добавляет задача домена, которая реализует его обработчик. Состав M1:
+
+   | Крейт | Enum | Варианты M1 | Типы в полях (владелец) |
+   |---|---|---|---|
+   | `cp_net` | `NetCommand` | `BuildRoad { road, path, elevation }`, `UpgradeSegment { seg, road }`, `RemoveSegment { seg }`, `ToggleTrafficLight { node }` | `RoadDefId` (`cp_content`); `RoadPath`, `ElevationMode { Ground, Elevated(f32) }`, `SegmentId`, `NodeId` (`cp_net`) |
+   | `cp_zone` | `ZoneCommand` | `PaintZones { cells: Vec<ZoneCellRef>, zone }` (`ZoneType::None` — стирание) | `ZoneCellRef { block: ZoneBlockId, cell: u16 }` (`cp_zone`); `ZoneType` (`cp_content::kinds`) |
+   | `cp_building` | `BuildingCommand` | `Place { def, pos: Vec2, rot: f32 }`, `Demolish { building }` | `BuildingDefId` (`cp_content`); `BuildingId` (`cp_building`) |
+   | `cp_utility` | `UtilityCommand` | `BuildLink { kind, path: Vec<Vec2> }`, `RemoveLink { link }` | `UtilityKind` (`cp_content::kinds`); `UtilityLinkId` (`cp_utility`) |
+   | `cp_economy` | `EconomyCommand` | `SetTaxRate { zone, percent: u8 }`, `SetBudget { service, percent: u8 }` | `ZoneType`, `ServiceKind` (`cp_content::kinds`) |
+   | `cp_terrain` | `TerrainCommand` | M2: `BuyTile { tile }` | `TileId` (`cp_terrain`) |
+
+   Бульдозер в §4 v1 был одной командой `Bulldoze { target }` с целью из трёх крейтов; такой enum нельзя положить ни в один домен. Поэтому бульдозер — это три команды (`RemoveSegment`, `Demolish`, `RemoveLink`), а инструмент бульдозера в `cp_tools` выбирает нужную по тому, что под курсором. Отдельного `BulldozeTarget` нет.
+
+3. **`cp_sim` — сумма и диспетчер.**
+
 ```rust
+// cp_sim::command
 pub enum SimCommand {
-    BuildRoad { road: RoadDefId, path: RoadPath /* control points, snapped */, elevation: ElevationMode },
-    UpgradeSegment { seg: SegmentId, road: RoadDefId },
-    Bulldoze { target: BulldozeTarget },
-    PaintZones { cells: Vec<ZoneCellRef>, zone: ZoneType },   // ZoneType::None = erase
-    PlaceBuilding { def: BuildingDefId, pos: Vec2, rot: f32 },
-    BuildUtilityLink { kind: UtilityKind, path: Vec<Vec2> },  // pipes, power lines
-    SetTaxRate { zone: ZoneType, percent: u8 },
-    SetBudget { service: ServiceKind, percent: u8 },
-    SetSpeed { speed: SimSpeed },                             // Pause/X1/X2/X3
-    BuyTile { tile: TileId },                                 // M2
-    // M3+: CreateLine, AddStop, ..., M4+: PaintDistrict, SetPolicy, ...
+    SetSpeed { speed: SimSpeed },          // исполняет сам SimRunner, в лог пишется как любая команда
+    Net(NetCommand),
+    Zone(ZoneCommand),
+    Building(BuildingCommand),
+    Utility(UtilityCommand),
+    Economy(EconomyCommand),
+    Terrain(TerrainCommand),               // M2
+    // M3+: Transit(TransitCommand), M4+: District(DistrictCommand), ...
 }
 ```
 
-- Команда ставится в `CommandQueue` с номером тика исполнения. Клиент отправляет её на текущий тик + 1.
-- В фазе `Commands` команда проходит валидацию той же чистой функцией, что используется в превью. Результат приходит событием `CommandOutcome { id, Ok{cost} | Err(CommandError) }`.
-- Лог применённых команд пишется в `CommandLog` и сохраняется вместе с сейвом. Реплей = исходный сейв + лог.
+   Ресурсы симуляции — `CommandQueue<SimCommand>` и `CommandLog<SimCommand>`. Диспетчер — одна эксклюзивная система в фазе `Commands`: `drain_due(tick)`, для каждой команды `match` на вариант → `apply` домена, затем списание стоимости (после задачи бюджета), запись в лог и `CommandOutcome`. `match` без `_` — компилятор не даст забыть новый вариант. «Реестра обработчиков» как структуры данных нет: реестр — это этот `match`. Домены не видят `SimCommand`; headless-тест домена кладёт `NetCommand` в `CommandQueue<NetCommand>` или зовёт `apply` напрямую.
+
+**Правила.**
+- Клиент (`cp_tools`, `cp_ui`) отправляет `SimCommand` на текущий тик + 1. Внутри тика порядок — порядок `CommandId`.
+- В фазе `Commands` команда проходит валидацию той же чистой функцией, что используется в превью (`validate_road_path` и т. п.).
+- Лог применённых команд сохраняется вместе с сейвом; реплей = исходный сейв + лог (`cp_save`, §12).
+- **Стабильность сейвов.** `SimCommand` и доменные enum сериализуются `postcard` по номеру варианта. Новые варианты только добавляются в конец, существующие не переставляются и не удаляются; изменение полей варианта или удаление — это новая версия формата сейва и миграция (§12). Словарные enum в `cp_content::kinds` — `#[repr(u8)]`, те же правила.
+- Общие перечисления, которые нужны и контенту, и командам, живут в `cp_content::kinds`, а не в `cp_core` и не в домене: `ZoneType` нужен `BuildingDef.zone`, `cp_zone` и `cp_economy`; `ServiceKind` — `ServiceDef` и бюджету; `UtilityKind` — потреблению в `BuildingDef` и `cp_utility`. Все домены достигают `cp_content` по графу §1.
 
 ## 5. Рельеф и карта
 
