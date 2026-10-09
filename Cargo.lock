@@ -2382,6 +2382,7 @@ name = "cp_content"
 version = "0.0.0"
 dependencies = [
  "cp_core",
+ "postcard",
  "ron",
  "serde",
 ]

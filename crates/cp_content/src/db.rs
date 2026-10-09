@@ -207,10 +207,11 @@ fn hash_table<T: serde::Serialize>(
         fnv1a(hash, &[0]);
         fnv1a(hash, id(d).as_bytes());
         fnv1a(hash, &[0]);
-        // Struct field order is fixed by the schema, so this text is deterministic.
-        let text = ron::ser::to_string(d).expect("content defs are serialisable");
-        fnv1a(hash, text.as_bytes());
-        fnv1a(hash, b"\n");
+        // postcard: fixed field order from the schema, varint/IEEE-754 bit patterns, no
+        // formatting — independent of the RON text and of the `ron` crate version.
+        let bytes = postcard::to_stdvec(d).expect("content defs are serialisable");
+        fnv1a(hash, &(bytes.len() as u64).to_le_bytes());
+        fnv1a(hash, &bytes);
     }
 }
 
@@ -302,6 +303,8 @@ mod tests {
     use super::*;
     use crate::kinds::{UtilityKind, ZoneType};
 
+    const PINNED_SINGLE_ROAD_HASH: u64 = 4353786976156915245;
+
     const ROAD: &str = r#"Road((id: "r", name: "R", width: 10.0,
         lanes: [(kind: Car, dir: Forward, width: 3.0, offset: 0.0)],
         speed_kmh: 40.0, max_slope: 0.12, cost_per_m: 1.0, upkeep_per_m_week: 0.1,
@@ -355,7 +358,6 @@ mod tests {
         let a = real();
         let b = real();
         assert_eq!(a.content_hash(), b.content_hash());
-        // Pinned value: changes only when content or hashing changes.
         let d1 = ContentDb::from_sources(src(&[("a.ron", ROAD)])).unwrap();
         let swapped = ROAD.replace(r#"id: "r""#, r#"id: "s""#);
         let two = [("a.ron", ROAD), ("b.ron", swapped.as_str())];
@@ -372,6 +374,46 @@ mod tests {
                 .content_hash(),
             d1.content_hash()
         );
+    }
+
+    fn hash_of(files: &[(&str, &str)]) -> u64 {
+        ContentDb::from_sources(src(files)).unwrap().content_hash()
+    }
+
+    #[test]
+    fn hash_ignores_formatting_and_file_layout_but_not_values() {
+        let other = ROAD.replace(r#"id: "r""#, r#"id: "s""#);
+        let base = hash_of(&[("a.ron", ROAD), ("b.ron", &other)]);
+
+        // Different number spellings, whitespace, comments, file names, file order.
+        let respelled = ROAD
+            .replace("width: 10.0", "width: 1e1")
+            .replace("max_slope: 0.12", "max_slope: 0.1200")
+            .replace("cost_per_m: 1.0", "cost_per_m:1.00")
+            .replace(", ", ",\n\t  ");
+        let commented = format!("// a comment\n{respelled}\n\n");
+        assert_eq!(
+            hash_of(&[("z/other.ron", &other), ("deep/dir/r.ron", &commented)]),
+            base
+        );
+
+        // Changing a numeric field changes the hash (even in the last decimal), and so does
+        // changing an id.
+        for changed in [
+            ROAD.replace("speed_kmh: 40.0", "speed_kmh: 41.0"),
+            ROAD.replace("max_slope: 0.12", "max_slope: 0.1201"),
+            ROAD.replace("rank: 1", "rank: 2"),
+            ROAD.replace("allows_zoning: true", "allows_zoning: false"),
+        ] {
+            assert_ne!(hash_of(&[("a.ron", &changed), ("b.ron", &other)]), base);
+        }
+    }
+
+    #[test]
+    fn hash_value_is_pinned() {
+        // Guards the hash algorithm and encoding (FNV-1a over postcard in (kind, id) order):
+        // if this changes, every existing save will show the content-mismatch warning.
+        assert_eq!(hash_of(&[("a.ron", ROAD)]), PINNED_SINGLE_ROAD_HASH);
     }
 
     #[test]
