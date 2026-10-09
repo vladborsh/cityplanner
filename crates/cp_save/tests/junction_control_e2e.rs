@@ -213,7 +213,7 @@ fn old_fixtures_with_priority_nodes_still_load_and_get_the_rule_applied() {
     // v3 and later fixtures carry a small network whose nodes were saved as `Priority`
     // (variant 0): appended enum variants keep old files readable.
     let db = content();
-    for name in ["v3-basic.sav", "v4-basic.sav"] {
+    for name in ["v3-basic.sav", "v4-basic.sav", "v5-basic.sav"] {
         let bytes = std::fs::read(Path::new(ROOT).join("../../fixtures/saves").join(name)).unwrap();
         let h = read_header(&bytes).unwrap().0;
         let mut sim = sim_with(&db);
