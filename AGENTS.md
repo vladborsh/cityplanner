@@ -47,7 +47,7 @@ lockstep multiplayer), so `f32` math is fine. Within that scope:
   are fine.
   The ban is enforced as the workspace clippy lint `disallowed_types = "deny"` on every
   target (lib, tests, benches, examples). A new crate is a sim crate by default; only a
-  non-sim crate (`cp_render`, `cp_tools`, `cp_ui`, `apps/*`, `tools/*`) may opt out, in
+  non-sim crate (`cp_render`, `cp_tools`, `cp_ui`, `cp_prof`, `apps/*`, `tools/*`) may opt out, in
   its own `Cargo.toml`.
 - **No wall clock in sim code.** No `Instant`, `SystemTime` or Bevy's `Time<Real>`/`Time<Virtual>`.
   Sim time is the tick counter from `cp_core`.

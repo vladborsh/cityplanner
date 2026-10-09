@@ -20,6 +20,7 @@ apps/desktop  apps/web  apps/bench(headless)
      ├─ cp_ui ────┤          │
      ├─ cp_tools ─┤          │
      ├─ cp_render ┤          │
+     ├─ cp_prof ──┴──────────┤   ← замер фаз по wall clock (headless, не sim-крейт)
      ├────────────┴── cp_save ┤   ← сейв, миграции, реплей (save + CommandLog)
      └────────────┴── cp_sim ─┘   ← собирает sim-плагины, SimCommand, SimRunner, снапшот
                         │
@@ -55,6 +56,7 @@ apps/desktop  apps/web  apps/bench(headless)
 | `cp_render` | рельеф, дороги, здания, инстансинг агентов, LOD, оверлеи, интерполяция | `cp_sim` (только `SimView`), `bevy`; типы из `cp_core` и `cp_terrain` только для чтения того, что лежит в `SimView` (`Terrain`, `Tick`, `GameTime`) |
 | `cp_tools` | инструменты дорог, зон, размещения и бульдозера: превью и команды | `cp_sim`, `cp_render` |
 | `cp_ui` | панели `bevy_egui` | `cp_sim`, `cp_tools` |
+| `cp_prof` | инструментарий клиента: `PhaseTiming` — `SimPlugin`, который ставит маркер-системы между фазами и пишет wall-clock длительность каждой фазы в ресурс `PhaseClock`. Нужен `apps/bench` и отладочному окну `cp_ui`, поэтому живёт отдельно от рендера. **Не sim-крейт:** единственное место вне `apps/*`, где разрешён `Instant`. Его системы не читают и не пишут состояние симуляции; `PhaseClock` не входит ни в сейв, ни в чексумму, и прогон с `PhaseTiming` и без него даёт одну и ту же чексумму (тест). Ни один sim-крейт не может от него зависеть | `cp_sim`, `cp_core`, `bevy_ecs` |
 
 **Жёсткое правило:** крейты до `cp_sim` включительно и `cp_save` не зависят от `bevy_render`, `bevy_pbr`, `bevy_winit`, `bevy_egui`. CI проверяет это через `cargo tree`.
 
