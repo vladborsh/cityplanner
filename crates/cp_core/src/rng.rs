@@ -1,16 +1,21 @@
-//! The single sim RNG (ChaCha8) with deterministic sub-streams.
+//! The single sim RNG (ChaCha8). Parallel systems take `rng.fork(stream_id, tick)` once per
+//! tick and never share one stream.
 
 use bevy_ecs::resource::Resource;
 use rand_chacha::ChaCha8Rng;
 use rand_core::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
+use crate::time::Tick;
+
 /// Sim RNG. Wraps ChaCha8 and remembers its seed and position so it can be saved.
 ///
-/// [`fork`](Self::fork) is a **pure function of `(self.seed, stream_id)`**: it ignores how
-/// many numbers the parent has already drawn, so the result doesn't depend on call
-/// order. Forks of forks work the same way (a fork's seed is its own derived seed).
-/// Systems that run in parallel must each take their own fork, never share one stream.
+/// Parallel systems take `rng.fork(stream_id, tick)` once per tick and never share one
+/// stream. [`fork`](Self::fork) is a **pure function of `(self.seed, stream_id, tick)`**:
+/// it ignores how many numbers the parent has drawn, so the result doesn't depend on call
+/// order, and it doesn't advance the parent. Forks of forks work the same way (a fork's
+/// seed is its own derived seed). There is deliberately no tick-less fork: it would hand
+/// a system the identical sequence every tick.
 #[derive(Resource, Clone, Debug)]
 pub struct SimRng {
     seed: [u8; 32],
@@ -36,11 +41,14 @@ impl SimRng {
         self.seed
     }
 
-    /// Derives an independent stream: child seed = first 32 keystream bytes of ChaCha8
-    /// keyed with this RNG's seed on ChaCha stream `stream_id`, at word position 0.
-    pub fn fork(&self, stream_id: u64) -> SimRng {
+    /// Derives an independent per-tick stream. The child seed is the 32 keystream bytes
+    /// (8 words) of ChaCha8 keyed with this RNG's seed, on ChaCha stream `stream_id`, at
+    /// word position `tick * 8`. Distinct ticks therefore read disjoint keystream
+    /// windows of the same stream, and distinct stream ids use distinct streams.
+    pub fn fork(&self, stream_id: u64, tick: Tick) -> SimRng {
         let mut keyed = ChaCha8Rng::from_seed(self.seed);
         keyed.set_stream(stream_id);
+        keyed.set_word_pos(u128::from(tick.0) * 8);
         let mut child = [0u8; 32];
         keyed.fill_bytes(&mut child);
         SimRng::from_seed(child)
@@ -108,16 +116,35 @@ mod tests {
         assert_ne!(draw(&mut SimRng::seed_from_u64(42), 8), draw(&mut c, 8));
     }
 
+    const T: Tick = Tick(10);
+
     #[test]
     fn fork_is_deterministic_and_distinct() {
         let a = SimRng::seed_from_u64(7);
         let b = SimRng::seed_from_u64(7);
-        assert_eq!(draw(&mut a.fork(3), 16), draw(&mut b.fork(3), 16));
-        assert_ne!(draw(&mut a.fork(3), 16), draw(&mut a.fork(4), 16));
-        assert_ne!(draw(&mut a.fork(3), 16), draw(&mut a.clone(), 16));
-        // Different parents, same stream id.
+        assert_eq!(draw(&mut a.fork(3, T), 16), draw(&mut b.fork(3, T), 16));
+        // Different streams, same tick.
+        assert_ne!(draw(&mut a.fork(3, T), 16), draw(&mut a.fork(4, T), 16));
+        assert_ne!(draw(&mut a.fork(3, T), 16), draw(&mut a.clone(), 16));
+        // Different parents.
         let other = SimRng::seed_from_u64(8);
-        assert_ne!(draw(&mut a.fork(3), 16), draw(&mut other.fork(3), 16));
+        assert_ne!(draw(&mut a.fork(3, T), 16), draw(&mut other.fork(3, T), 16));
+    }
+
+    #[test]
+    fn consecutive_ticks_differ_on_same_stream() {
+        let r = SimRng::seed_from_u64(7);
+        let seqs: Vec<_> = (0..64).map(|t| draw(&mut r.fork(3, Tick(t)), 4)).collect();
+        for i in 0..seqs.len() {
+            for j in i + 1..seqs.len() {
+                assert_ne!(seqs[i], seqs[j], "ticks {i} and {j} collided");
+            }
+        }
+        // Large ticks still work.
+        assert_ne!(
+            draw(&mut r.fork(3, Tick(u64::MAX)), 4),
+            draw(&mut r.fork(3, Tick(u64::MAX - 1)), 4)
+        );
     }
 
     #[test]
@@ -125,10 +152,13 @@ mod tests {
         let fresh = SimRng::seed_from_u64(9);
         let mut used = SimRng::seed_from_u64(9);
         draw(&mut used, 100);
-        assert_eq!(draw(&mut fresh.fork(1), 8), draw(&mut used.fork(1), 8));
+        assert_eq!(
+            draw(&mut fresh.fork(1, T), 8),
+            draw(&mut used.fork(1, T), 8)
+        );
         // Forking does not advance the parent.
         let mut p1 = SimRng::seed_from_u64(9);
-        let _ = p1.fork(1);
+        let _ = p1.fork(1, T);
         assert_eq!(draw(&mut p1, 8), draw(&mut SimRng::seed_from_u64(9), 8));
     }
 
@@ -136,12 +166,16 @@ mod tests {
     fn nested_forks_deterministic() {
         let r = SimRng::seed_from_u64(1);
         assert_eq!(
-            draw(&mut r.fork(1).fork(2), 8),
-            draw(&mut r.fork(1).fork(2), 8)
+            draw(&mut r.fork(1, T).fork(2, T), 8),
+            draw(&mut r.fork(1, T).fork(2, T), 8)
         );
         assert_ne!(
-            draw(&mut r.fork(1).fork(2), 8),
-            draw(&mut r.fork(2).fork(1), 8)
+            draw(&mut r.fork(1, T).fork(2, T), 8),
+            draw(&mut r.fork(2, T).fork(1, T), 8)
+        );
+        assert_ne!(
+            draw(&mut r.fork(1, T).fork(2, Tick(1)), 8),
+            draw(&mut r.fork(1, T).fork(2, Tick(2)), 8)
         );
     }
 
@@ -152,7 +186,7 @@ mod tests {
         let bytes = postcard::to_stdvec(&a).unwrap();
         let mut b: SimRng = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(draw(&mut a, 64), draw(&mut b, 64));
-        assert_eq!(draw(&mut a.fork(2), 8), draw(&mut b.fork(2), 8));
+        assert_eq!(draw(&mut a.fork(2, T), 8), draw(&mut b.fork(2, T), 8));
     }
 
     #[test]
