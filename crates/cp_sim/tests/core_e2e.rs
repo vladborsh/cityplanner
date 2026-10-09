@@ -162,3 +162,86 @@ fn headless_runs_are_reproducible_and_seed_and_commands_matter() {
     assert_ne!(base, run_headless(5, &cmds[..1], 1200));
     assert_ne!(base, run_headless(5, &cmds, 1199));
 }
+
+// ---- round 2: pause semantics (BUG-005) ----
+
+const FRAME: Duration = Duration::from_millis(50);
+
+#[test]
+fn a_paused_sim_can_be_unpaused_by_a_command_and_ticks_resume() {
+    let mut s = SimRunner::new(1);
+    s.push_command(speed(SimSpeed::Pause), Tick(3));
+    assert_eq!(
+        s.step(FRAME * 10),
+        4,
+        "the pause fires in tick 3, which still completes"
+    );
+    assert_eq!(s.speed(), SimSpeed::Pause);
+    assert_eq!(s.step(FRAME * 10), 0);
+    let at = s.tick();
+    assert_eq!(s.step(FRAME * 10), 0);
+    assert_eq!(s.tick(), at, "paused: the tick counter does not move");
+
+    // Unpause at the current tick, the way cp_tools does.
+    s.push_command(speed(SimSpeed::X1), s.tick());
+    assert_eq!(
+        s.step(FRAME),
+        1,
+        "same step call applies the command and ticks"
+    );
+    assert_eq!(s.speed(), SimSpeed::X1);
+    assert_eq!(s.tick(), Tick(at.0 + 1));
+
+    // Pause again at the current tick: it fires inside the next tick, which completes;
+    // from then on nothing runs.
+    s.push_command(speed(SimSpeed::Pause), s.tick());
+    assert_eq!(s.step(FRAME), 1);
+    assert_eq!(s.step(FRAME * 4), 0);
+    assert_eq!(s.speed(), SimSpeed::Pause);
+    // A command for a future tick stays queued while paused.
+    s.push_command(speed(SimSpeed::X2), Tick(s.tick().0 + 5));
+    assert_eq!(s.step(FRAME * 4), 0);
+    assert_eq!(s.world().resource::<CommandQueue<SimCommand>>().len(), 1);
+    // Several commands due at once while paused apply in push order; last speed wins.
+    s.push_command(speed(SimSpeed::X3), s.tick());
+    s.push_command(speed(SimSpeed::Pause), s.tick());
+    assert_eq!(s.step(FRAME * 4), 0);
+    assert_eq!(s.speed(), SimSpeed::Pause);
+    s.push_command(speed(SimSpeed::X1), s.tick());
+    s.push_command(speed(SimSpeed::X3), s.tick());
+    assert_eq!(s.step(FRAME), 3, "X3 won, one 50 ms frame owes 3 ticks");
+}
+
+#[test]
+fn pausing_and_unpausing_replays_to_the_same_checksum_from_the_log() {
+    // Live: interactive session with pauses, driven by step().
+    let mut live = SimRunner::new(12);
+    for _ in 0..40 {
+        live.step(FRAME);
+    }
+    live.push_command(speed(SimSpeed::Pause), live.tick());
+    live.step(FRAME);
+    for _ in 0..25 {
+        assert_eq!(live.step(FRAME), 0);
+    }
+    live.push_command(speed(SimSpeed::X2), live.tick());
+    for _ in 0..30 {
+        live.step(FRAME);
+    }
+    let end = live.tick();
+    let ids_ok = log(&live).len() == 2;
+    assert!(ids_ok);
+
+    // Replay: a fresh sim fed only the logged commands, stepped with plain ticks.
+    let mut replay = SimRunner::new(12);
+    let mut entries = log(&live);
+    entries.sort_by_key(|e| e.1);
+    for (t, _, c) in entries {
+        replay.push_command(c, t);
+    }
+    while replay.tick() < end {
+        replay.tick_once();
+    }
+    assert_eq!(replay.checksum(), live.checksum());
+    assert_eq!(replay.speed(), live.speed());
+}

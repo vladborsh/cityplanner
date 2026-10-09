@@ -607,3 +607,41 @@ fn set_terrain_and_load_orderings_on_every_start_tile() {
     assert_eq!(used.checksum(), saved.checksum());
     assert!(used.world().get_resource::<SimTerrain>().is_some());
 }
+
+#[test]
+fn saving_while_paused_with_a_pending_unpause_resumes_identically() {
+    use std::time::Duration;
+    let f = Duration::from_millis(50);
+    let mut live = runner(21, 0);
+    for _ in 0..20 {
+        live.step(f);
+    }
+    live.push_command(
+        SimCommand::SetSpeed {
+            speed: SimSpeed::Pause,
+        },
+        live.tick(),
+    );
+    live.step(f);
+    live.step(f);
+    assert_eq!(live.speed(), SimSpeed::Pause);
+    // Unpause is queued but not yet stepped when the game is saved.
+    live.push_command(
+        SimCommand::SetSpeed {
+            speed: SimSpeed::X2,
+        },
+        live.tick(),
+    );
+    let bytes = save_runner(&live, HASH, "m").unwrap();
+
+    // Load into a used runner (longer log than the save), then keep playing both.
+    let mut used = used_runner(9, 8, 300);
+    used.checksum();
+    load_into_runner(&mut used, &bytes, HASH).unwrap();
+    for _ in 0..50 {
+        assert_eq!(used.step(f), live.step(f));
+    }
+    assert_eq!(used.speed(), SimSpeed::X2);
+    assert_eq!(used.tick(), live.tick());
+    assert_eq!(used.checksum(), live.checksum());
+}
