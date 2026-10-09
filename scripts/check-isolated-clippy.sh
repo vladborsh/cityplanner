@@ -7,8 +7,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# (Command substitution, not `< <(...)`, so a failing sim-crates.sh fails this script too.)
+sim_list=$(scripts/sim-crates.sh)
 CRATES=()
-while IFS= read -r c; do CRATES+=("$c"); done < <(scripts/sim-crates.sh)
+while IFS= read -r c; do CRATES+=("$c"); done <<<"$sim_list"
 [ "${#CRATES[@]}" -gt 0 ] || { echo "no sim crates found" >&2; exit 2; }
 
 failed=()
