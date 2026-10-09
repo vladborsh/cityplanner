@@ -1,0 +1,97 @@
+//! Road network data: [`Node`], [`Segment`], [`Lane`] (`system-design.md` §6.1).
+//!
+//! Save stability: these types are serialised with postcard; changing fields is a save
+//! format change. Enums are append-only.
+
+use bevy_math::Vec3;
+use cp_content::{LaneDir, LaneKind, RoadDefId};
+use cp_core::Id;
+use cp_core::curve::CubicBezier3;
+use serde::{Deserialize, Serialize};
+
+pub type NodeId = Id<Node>;
+pub type SegmentId = Id<Segment>;
+pub type LaneId = Id<Lane>;
+
+/// Hard limit of segments meeting at one node (`system-design.md` §6.3).
+pub const MAX_SEGMENTS_PER_NODE: usize = 8;
+
+/// Cubics per lane centre line.
+pub const LANE_CURVE_PIECES: usize = 4;
+
+/// Topological role of a node; derived from its segment count except `Outside`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NodeKind {
+    /// Three or more segments.
+    Junction,
+    /// Zero or one segment (dead end / lone node).
+    End,
+    /// Exactly two segments (a bend or a split point).
+    Middle,
+    /// Connection to the world outside the map; never auto-removed or re-derived.
+    Outside,
+}
+
+/// How traffic is regulated at a node. Variants are appended by later tasks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JunctionControl {
+    #[default]
+    Priority,
+}
+
+/// Vertical treatment of a road piece.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Elevation {
+    Ground,
+    Elevated,
+    Bridge,
+    Tunnel,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Node {
+    /// World position (Y = height).
+    pub pos: Vec3,
+    /// Attached segments in attachment order (at most [`MAX_SEGMENTS_PER_NODE`]).
+    pub segments: Vec<SegmentId>,
+    pub kind: NodeKind,
+    pub control: JunctionControl,
+    pub elevation: Elevation,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Segment {
+    pub start: NodeId,
+    pub end: NodeId,
+    pub curve: CubicBezier3,
+    pub road: RoadDefId,
+    pub elevation: Elevation,
+    /// Lanes in `RoadDef.lanes` order.
+    pub lanes: Vec<LaneId>,
+    /// Arc length of `curve`, metres.
+    pub length: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Lane {
+    pub segment: SegmentId,
+    /// Index in the road profile.
+    pub index: u8,
+    pub kind: LaneKind,
+    pub dir: LaneDir,
+    pub width: f32,
+    /// Lateral offset of the lane centre from the segment axis; positive is left of the
+    /// segment's own direction (start → end).
+    pub offset: f32,
+    /// Speed limit, m/s.
+    pub speed_limit: f32,
+    /// Centre line **in the lane's direction of travel**: the segment curve offset by
+    /// `offset` as a chain of [`LANE_CURVE_PIECES`] cubics (uniform in the segment's `t`),
+    /// reversed for `LaneDir::Backward`.
+    ///
+    /// Accuracy: the chain stays within 2 cm of the true offset (distance `|offset|` from
+    /// the segment axis) for lane offsets up to 13 m on a 80 m S-bend with a minimum
+    /// radius of 35 m; gentler or shorter segments are better. The build limit is 96 m
+    /// per segment.
+    pub curve: [CubicBezier3; LANE_CURVE_PIECES],
+}

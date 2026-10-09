@@ -62,7 +62,7 @@ impl<T> fmt::Debug for Id<T> {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Slot<T> {
     generation: u32,
     value: Option<T>,
@@ -71,7 +71,7 @@ struct Slot<T> {
 /// Dense generational arena. Removing a slot bumps its generation, so stale ids
 /// stop resolving; the slot is reused by later inserts (most recently freed first).
 /// Iteration is strictly ascending by index.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Arena<T> {
     slots: Vec<Slot<T>>,
     free: Vec<u32>,

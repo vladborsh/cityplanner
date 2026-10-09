@@ -33,13 +33,14 @@ use std::io::Read;
 
 use bevy_ecs::world::World;
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
+use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner};
 use cp_terrain::TileOwnership;
 use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -50,6 +51,7 @@ pub struct SaveData {
     pub queue: CommandQueue<SimCommand>,
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
+    pub net: NetGraph,
 }
 
 impl SaveData {
@@ -62,6 +64,7 @@ impl SaveData {
             queue: world.resource::<CommandQueue<SimCommand>>().clone(),
             log: world.resource::<CommandLog<SimCommand>>().clone(),
             tiles: *world.resource::<TileOwnership>(),
+            net: world.resource::<NetGraph>().clone(),
         }
     }
 
@@ -73,6 +76,7 @@ impl SaveData {
         world.insert_resource(self.queue);
         world.insert_resource(self.log);
         world.insert_resource(self.tiles);
+        world.insert_resource(self.net);
     }
 }
 
@@ -448,6 +452,94 @@ mod tests {
         d.clone().restore(sim.world_mut());
         sim.tick_once();
         assert_eq!(sim.tick(), Tick(301));
+    }
+
+    #[test]
+    fn v2_fixture_migrates_and_loads() {
+        let bytes = fixture("v2-basic.sav");
+        let (header, _) = read_header(&bytes).unwrap();
+        assert_eq!(header.format_version, 2);
+        let loaded = load(&bytes, 0xC17F_0000_0000_0003).unwrap();
+        assert!(loaded.warnings.is_empty());
+        let d = &loaded.data;
+        assert_eq!(d.tick, Tick(700));
+        assert_eq!(d.speed, SimSpeed::X3);
+        assert_eq!(d.queue.len(), 1);
+        assert_eq!(d.log.len(), 1);
+        assert_eq!(d.net, NetGraph::default()); // added by the v2 -> v3 migration
+        // The frozen v2 writer reproduces the committed bytes exactly.
+        let v2 = migrate::SaveDataV2 {
+            tick: d.tick,
+            rng: d.rng.clone(),
+            speed: d.speed,
+            queue: d.queue.clone(),
+            log: d.log.clone(),
+            tiles: d.tiles,
+        };
+        assert_eq!(
+            migrate::encode_v2(&v2, header.content_hash, &header.map_id).unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn older_fixtures_reach_current_version_with_empty_net() {
+        for (name, hash) in [
+            ("v0-basic.sav", 0xC17F_0000_0000_0001),
+            ("v1-basic.sav", 0xC17F_0000_0000_0002),
+        ] {
+            let loaded = load(&fixture(name), hash).unwrap();
+            assert_eq!(loaded.data.net, NetGraph::default(), "{name}");
+            let resaved = save(&loaded.data, hash, &loaded.header.map_id).unwrap();
+            assert_eq!(
+                read_header(&resaved).unwrap().0.format_version,
+                FORMAT_VERSION
+            );
+            assert_eq!(load(&resaved, hash).unwrap().data, loaded.data);
+        }
+    }
+
+    #[test]
+    fn network_survives_save_and_load() {
+        use bevy_math::Vec3;
+        use cp_content::ContentDb;
+        use cp_core::curve::CubicBezier3;
+        use cp_net::Elevation;
+
+        let db = ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content"))
+            .unwrap();
+        let road = db.road_id("medium_4l").unwrap();
+        let def = db.road(road).clone();
+        let mut sim = busy_runner(2, 20);
+        {
+            let mut g = sim.world_mut().resource_mut::<NetGraph>();
+            let s = g
+                .add_segment(
+                    &def,
+                    road,
+                    CubicBezier3::new(
+                        Vec3::ZERO,
+                        Vec3::new(30.0, 0.0, 8.0),
+                        Vec3::new(60.0, 0.0, -8.0),
+                        Vec3::new(90.0, 0.0, 0.0),
+                    ),
+                    Elevation::Ground,
+                )
+                .unwrap();
+            g.split_segment(&def, s, 0.4).unwrap();
+        }
+        let before = sim.checksum();
+        let bytes = save_runner(&sim, HASH, "m").unwrap();
+
+        let mut fresh = SimRunner::new(0);
+        load_into_runner(&mut fresh, &bytes, HASH).unwrap();
+        assert_eq!(
+            fresh.world().resource::<NetGraph>(),
+            sim.world().resource::<NetGraph>()
+        );
+        assert_eq!(fresh.world().resource::<NetGraph>().segment_count(), 2);
+        assert_eq!(fresh.checksum(), before);
+        assert_eq!(save_runner(&fresh, HASH, "m").unwrap(), bytes);
     }
 
     #[test]

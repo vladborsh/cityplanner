@@ -107,15 +107,16 @@ fn every_single_bit_flip_in_the_body_is_detected() {
 }
 
 #[test]
-fn new_saves_are_version_2_with_a_crc() {
+fn new_saves_are_current_version_with_a_crc() {
     let b = good();
     let (h, body) = read_header(&b).unwrap();
-    assert_eq!(h.format_version, 2);
+    assert_eq!(h.format_version, cp_save::FORMAT_VERSION);
+    assert!(h.format_version >= 2);
     assert_eq!(h.body_crc, Some(crc32(body)));
 }
 
 #[test]
-fn v1_fixture_loads_without_crc_and_resaves_as_v2() {
+fn v1_fixture_loads_without_crc_and_resaves_as_current() {
     let bytes = fixture("v1-basic.sav");
     let (h, _) = read_header(&bytes).unwrap();
     assert_eq!((h.format_version, h.body_crc, h.tick), (1, None, 500));
@@ -129,7 +130,10 @@ fn v1_fixture_loads_without_crc_and_resaves_as_v2() {
     assert_eq!(l.data.log.len(), 1);
 
     let v2 = save(&l.data, h.content_hash, &h.map_id).unwrap();
-    assert_eq!(read_header(&v2).unwrap().0.format_version, 2);
+    assert_eq!(
+        read_header(&v2).unwrap().0.format_version,
+        cp_save::FORMAT_VERSION
+    );
     assert_eq!(load(&v2, h.content_hash).unwrap().data, l.data);
     assert_eq!(
         v2,

@@ -5,7 +5,7 @@
 //! The committed file is **never edited or regenerated** afterwards (AGENTS.md).
 
 use cp_core::{CommandId, CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
-use cp_save::SaveData;
+use cp_save::migrate::SaveDataV2;
 use cp_save::migrate::encode_v1;
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
@@ -34,7 +34,7 @@ fn main() {
             speed: SimSpeed::Pause,
         },
     );
-    let data = SaveData {
+    let data = SaveDataV2 {
         tick: Tick(TICK),
         rng,
         speed: SimSpeed::X3,

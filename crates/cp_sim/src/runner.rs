@@ -23,6 +23,7 @@ use bevy_ecs::world::World;
 use bevy_tasks::{ComputeTaskPool, TaskPool};
 use cp_core::time::TICK_MILLIS;
 use cp_core::{CommandId, CommandOutcome, CommandQueue, SimLimits, SimRng, SimSpeed, Tick};
+use cp_net::NetGraph;
 use cp_terrain::TileOwnership;
 
 use crate::checksum::{SimChecksum, update_checksum};
@@ -65,6 +66,10 @@ impl SimRunner {
         world.insert_resource(SimLimits::desktop());
         world.insert_resource(TileOwnership::m1_default());
         world.init_resource::<SimChecksum>();
+        world.init_resource::<NetGraph>();
+        world
+            .resource_mut::<SimChecksum>()
+            .register("net", crate::checksum::net_part);
 
         let mut schedule = Schedule::default();
         use SimPhase::*;
@@ -271,6 +276,26 @@ mod tests {
             count(&sim, &mut MessageCursor::<CommandOutcome>::default()),
             0
         );
+    }
+
+    #[test]
+    fn net_state_is_part_of_the_checksum() {
+        use bevy_math::Vec3;
+        use cp_net::{Elevation, NetGraph, NodeKind};
+        let mut a = SimRunner::new(1);
+        let mut b = SimRunner::new(1);
+        assert_eq!(a.checksum(), b.checksum());
+        let add = |s: &mut SimRunner| {
+            s.world_mut().resource_mut::<NetGraph>().add_node(
+                Vec3::ONE,
+                NodeKind::Outside,
+                Elevation::Ground,
+            );
+        };
+        add(&mut a);
+        assert_ne!(a.checksum(), b.checksum());
+        add(&mut b);
+        assert_eq!(a.checksum(), b.checksum());
     }
 
     #[test]

@@ -6,6 +6,7 @@
 //! are bit-identical for identical inputs on the same binary.
 
 use bevy_math::{Vec2, Vec3};
+use serde::{Deserialize, Serialize};
 
 /// Number of cells in an [`ArcTable`]. Chosen for road-scale segments (up to ~1 km).
 ///
@@ -24,7 +25,7 @@ pub fn to_xz(p: Vec3) -> Vec2 {
 }
 
 /// A cubic Bézier curve in 3D.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CubicBezier3 {
     pub p0: Vec3,
     pub p1: Vec3,
@@ -148,40 +149,45 @@ impl CubicBezier3 {
     /// Accuracy: distance from the result to the source stays within `|d| ± 1%` while the
     /// minimum radius of curvature is at least `4·|d|` (the proptest domain).
     pub fn offset_xz(&self, d: f32) -> Vec<CubicBezier3> {
+        self.offset_xz_pieces(d, OFFSET_PIECES)
+    }
+
+    /// Like [`Self::offset_xz`] with `pieces` cubics (uniform in `t`). Fewer pieces cost
+    /// less memory but only suit short or gently curved input (see `lane` users).
+    pub fn offset_xz_pieces(&self, d: f32, pieces: usize) -> Vec<CubicBezier3> {
+        let n = pieces.max(1);
+        (0..n)
+            .map(|i| self.offset_piece_xz(i as f32 / n as f32, (i + 1) as f32 / n as f32, d))
+            .collect()
+    }
+
+    /// Offsets the sub-curve `[t0, t1]` by `d` as one cubic.
+    fn offset_piece_xz(&self, t0: f32, t1: f32, d: f32) -> CubicBezier3 {
         let normal = |t: f32| {
             let tg = self.tangent(t);
             let n = Vec3::new(tg.z, 0.0, -tg.x);
             n.try_normalize().unwrap_or(Vec3::Z)
         };
         let off_point = |t: f32| self.point(t) + normal(t) * d;
-        let mut out = Vec::with_capacity(OFFSET_PIECES);
-        for i in 0..OFFSET_PIECES {
-            let t0 = i as f32 / OFFSET_PIECES as f32;
-            let t1 = (i + 1) as f32 / OFFSET_PIECES as f32;
-            let piece = self.sub_curve(t0, t1);
-            let (q0, q3) = (off_point(t0), off_point(t1));
-            let (d0, d3) = (self.tangent(t0), self.tangent(t1));
-            let orig = chord_len(&piece);
-            let mut shifted = Self::new(q0, q0 + d0, q3 - d3, q3);
-            // Scale handles by the offset-polyline / original length ratio.
-            let off_len = {
-                let mut l = 0.0;
-                let mut prev = q0;
-                for k in 1..=4 {
-                    let p = off_point(t0 + (t1 - t0) * k as f32 / 4.0);
-                    l += prev.distance(p);
-                    prev = p;
-                }
-                l
-            };
-            let ratio = if orig > 1e-6 { off_len / orig } else { 1.0 };
-            let h0 = (piece.p1 - piece.p0).length() * ratio;
-            let h3 = (piece.p3 - piece.p2).length() * ratio;
-            shifted.p1 = q0 + d0 * h0;
-            shifted.p2 = q3 - d3 * h3;
-            out.push(shifted);
-        }
-        out
+        let piece = self.sub_curve(t0, t1);
+        let (q0, q3) = (off_point(t0), off_point(t1));
+        let (d0, d3) = (self.tangent(t0), self.tangent(t1));
+        let orig = chord_len(&piece);
+        // Scale handles by the offset-polyline / original length ratio.
+        let off_len = {
+            let mut l = 0.0;
+            let mut prev = q0;
+            for k in 1..=4 {
+                let p = off_point(t0 + (t1 - t0) * k as f32 / 4.0);
+                l += prev.distance(p);
+                prev = p;
+            }
+            l
+        };
+        let ratio = if orig > 1e-6 { off_len / orig } else { 1.0 };
+        let h0 = (piece.p1 - piece.p0).length() * ratio;
+        let h3 = (piece.p3 - piece.p2).length() * ratio;
+        Self::new(q0, q0 + d0 * h0, q3 - d3 * h3, q3)
     }
 
     /// Intersections with `other` on the XZ projection. Returns `(t_self, t_other)` pairs

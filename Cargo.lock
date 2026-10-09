@@ -2424,9 +2424,11 @@ name = "cp_net"
 version = "0.0.0"
 dependencies = [
  "bevy_ecs",
+ "bevy_math",
  "cp_content",
  "cp_core",
  "cp_terrain",
+ "postcard",
  "serde",
 ]
 
@@ -2446,6 +2448,7 @@ name = "cp_save"
 version = "0.0.0"
 dependencies = [
  "bevy_ecs",
+ "bevy_math",
  "cp_building",
  "cp_citizen",
  "cp_content",
@@ -2467,6 +2470,7 @@ name = "cp_sim"
 version = "0.0.0"
 dependencies = [
  "bevy_ecs",
+ "bevy_math",
  "bevy_tasks",
  "cp_building",
  "cp_citizen",

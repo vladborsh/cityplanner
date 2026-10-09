@@ -1,0 +1,395 @@
+//! [`NetGraph`]: the arenas and the operations on them.
+//!
+//! Operations are all-or-nothing: on `Err` the graph is unchanged. Every node whose
+//! segment set or incident geometry changes is put in the **dirty set**, which a later
+//! system (junction recompute) drains with [`NetGraph::take_dirty`].
+
+use std::collections::BTreeSet;
+use std::fmt;
+
+use bevy_ecs::resource::Resource;
+use bevy_math::Vec3;
+use cp_content::{LaneDir, RoadDef, RoadDefId};
+use cp_core::Arena;
+use cp_core::curve::CubicBezier3;
+use serde::{Deserialize, Serialize};
+
+use crate::model::*;
+
+/// An existing node within this distance (metres, 3D) of a new segment's end point is
+/// reused instead of creating a new node.
+pub const NODE_REUSE_EPS: f32 = 0.1;
+
+/// Segments shorter than this (metres) are rejected.
+pub const MIN_SEGMENT_LENGTH: f32 = 0.5;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NetOpError {
+    /// Both ends resolve to the same node, or the curve is shorter than [`MIN_SEGMENT_LENGTH`].
+    DegenerateSegment,
+    /// The node already has [`MAX_SEGMENTS_PER_NODE`] segments.
+    NodeFull(NodeId),
+    UnknownSegment(SegmentId),
+    /// A split parameter is not strictly inside `(0, 1)` / not strictly increasing, or a
+    /// resulting piece would be shorter than [`MIN_SEGMENT_LENGTH`].
+    BadSplit,
+}
+
+impl fmt::Display for NetOpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DegenerateSegment => write!(f, "segment is degenerate"),
+            Self::NodeFull(n) => {
+                write!(f, "node {n:?} already has {MAX_SEGMENTS_PER_NODE} segments")
+            }
+            Self::UnknownSegment(s) => write!(f, "unknown segment {s:?}"),
+            Self::BadSplit => write!(f, "invalid split position"),
+        }
+    }
+}
+
+impl std::error::Error for NetOpError {}
+
+/// Result of [`NetGraph::split_segments`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SplitResult {
+    /// The new nodes in order along the segment (one per split position).
+    pub nodes: Vec<NodeId>,
+    /// The replacement segments, start to end (`nodes.len() + 1` of them).
+    pub segments: Vec<SegmentId>,
+}
+
+#[derive(Resource, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct NetGraph {
+    nodes: Arena<Node>,
+    segments: Arena<Segment>,
+    lanes: Arena<Lane>,
+    dirty: BTreeSet<NodeId>,
+}
+
+impl NetGraph {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn node(&self, id: NodeId) -> Option<&Node> {
+        self.nodes.get(id)
+    }
+    pub fn segment(&self, id: SegmentId) -> Option<&Segment> {
+        self.segments.get(id)
+    }
+    pub fn lane(&self, id: LaneId) -> Option<&Lane> {
+        self.lanes.get(id)
+    }
+    /// Nodes in arena (index) order.
+    pub fn nodes(&self) -> impl Iterator<Item = (NodeId, &Node)> {
+        self.nodes.iter()
+    }
+    pub fn segments(&self) -> impl Iterator<Item = (SegmentId, &Segment)> {
+        self.segments.iter()
+    }
+    pub fn lanes(&self) -> impl Iterator<Item = (LaneId, &Lane)> {
+        self.lanes.iter()
+    }
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+    pub fn segment_count(&self) -> usize {
+        self.segments.len()
+    }
+    pub fn lane_count(&self) -> usize {
+        self.lanes.len()
+    }
+
+    /// Nodes needing a junction recompute, in id order.
+    pub fn dirty_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.dirty.iter().copied()
+    }
+    pub fn is_dirty(&self, id: NodeId) -> bool {
+        self.dirty.contains(&id)
+    }
+    /// Drains the dirty set (id order). Called by the consumer of the set.
+    pub fn take_dirty(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.dirty).into_iter().collect()
+    }
+
+    /// Adds a node not attached to anything (e.g. an `Outside` connection).
+    pub fn add_node(&mut self, pos: Vec3, kind: NodeKind, elevation: Elevation) -> NodeId {
+        let id = self.nodes.insert(Node {
+            pos,
+            segments: Vec::new(),
+            kind,
+            control: JunctionControl::default(),
+            elevation,
+        });
+        self.dirty.insert(id);
+        id
+    }
+
+    /// Finds an existing node within [`NODE_REUSE_EPS`] of `p` (nearest, ties by id).
+    pub fn find_node(&self, p: Vec3) -> Option<NodeId> {
+        let mut best: Option<(f32, NodeId)> = None;
+        for (id, n) in self.nodes.iter() {
+            let d = n.pos.distance(p);
+            if d <= NODE_REUSE_EPS && best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, id));
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
+    /// Adds a segment along `curve`, reusing a node at either end when one is within
+    /// [`NODE_REUSE_EPS`] and creating it otherwise. The stored curve is snapped to the
+    /// reused nodes' positions. Lanes are built from `def`.
+    pub fn add_segment(
+        &mut self,
+        def: &RoadDef,
+        road: RoadDefId,
+        curve: CubicBezier3,
+        elevation: Elevation,
+    ) -> Result<SegmentId, NetOpError> {
+        let a = self.find_node(curve.p0);
+        let b = self.find_node(curve.p3);
+        if a.is_some() && a == b {
+            return Err(NetOpError::DegenerateSegment);
+        }
+        for n in [a, b].into_iter().flatten() {
+            if self
+                .nodes
+                .get(n)
+                .is_some_and(|n| n.segments.len() >= MAX_SEGMENTS_PER_NODE)
+            {
+                return Err(NetOpError::NodeFull(n));
+            }
+        }
+        let mut curve = curve;
+        if let Some(n) = a {
+            curve.p0 = self.nodes.get(n).expect("found node").pos;
+        }
+        if let Some(n) = b {
+            curve.p3 = self.nodes.get(n).expect("found node").pos;
+        }
+        let length = curve.arc_table().length();
+        if length < MIN_SEGMENT_LENGTH {
+            return Err(NetOpError::DegenerateSegment);
+        }
+        let start = a.unwrap_or_else(|| self.add_node(curve.p0, NodeKind::End, elevation));
+        let end = b.unwrap_or_else(|| self.add_node(curve.p3, NodeKind::End, elevation));
+        Ok(self.insert_segment(def, road, curve, elevation, start, end, length))
+    }
+
+    /// Removes a segment and its lanes. Nodes left with no segments are removed too
+    /// (except `Outside` nodes); the remaining end nodes become dirty.
+    pub fn remove_segment(&mut self, id: SegmentId) -> Result<(), NetOpError> {
+        let seg = self.take_segment(id)?;
+        for n in [seg.start, seg.end] {
+            self.dirty.insert(n);
+            self.prune_node(n);
+        }
+        Ok(())
+    }
+
+    /// Splits a segment at curve parameter `t` (see [`Self::split_segments`]).
+    pub fn split_segment(
+        &mut self,
+        def: &RoadDef,
+        id: SegmentId,
+        t: f32,
+    ) -> Result<SplitResult, NetOpError> {
+        self.split_segments(def, id, &[t])
+    }
+
+    /// Splits a segment at the strictly increasing parameters `ts` (each in `(0, 1)`).
+    /// The old segment and its lanes are replaced by `ts.len() + 1` segments joined by
+    /// new `Middle` nodes. `def` must be the segment's road definition.
+    pub fn split_segments(
+        &mut self,
+        def: &RoadDef,
+        id: SegmentId,
+        ts: &[f32],
+    ) -> Result<SplitResult, NetOpError> {
+        let seg = self
+            .segments
+            .get(id)
+            .ok_or(NetOpError::UnknownSegment(id))?
+            .clone();
+        let mut prev = 0.0;
+        for &t in ts {
+            if !(t > prev && t < 1.0) {
+                return Err(NetOpError::BadSplit);
+            }
+            prev = t;
+        }
+        let mut bounds = vec![0.0];
+        bounds.extend_from_slice(ts);
+        bounds.push(1.0);
+        let pieces: Vec<CubicBezier3> = bounds
+            .windows(2)
+            .map(|w| seg.curve.sub_curve(w[0], w[1]))
+            .collect();
+        let lengths: Vec<f32> = pieces.iter().map(|c| c.arc_table().length()).collect();
+        if lengths.iter().any(|&l| l < MIN_SEGMENT_LENGTH) {
+            return Err(NetOpError::BadSplit);
+        }
+
+        self.take_segment(id).expect("checked above");
+        let mut nodes = Vec::with_capacity(ts.len());
+        let mut chain = vec![seg.start];
+        for piece in &pieces[..pieces.len() - 1] {
+            let n = self.add_node(piece.p3, NodeKind::Middle, seg.elevation);
+            nodes.push(n);
+            chain.push(n);
+        }
+        chain.push(seg.end);
+        let mut segments = Vec::with_capacity(pieces.len());
+        for (i, (piece, length)) in pieces.into_iter().zip(lengths).enumerate() {
+            segments.push(self.insert_segment(
+                def,
+                seg.road,
+                piece,
+                seg.elevation,
+                chain[i],
+                chain[i + 1],
+                length,
+            ));
+        }
+        self.dirty.insert(seg.start);
+        self.dirty.insert(seg.end);
+        Ok(SplitResult { nodes, segments })
+    }
+
+    /// Changes a segment's road type: same nodes and curve, lanes rebuilt from `def`.
+    pub fn upgrade_segment(
+        &mut self,
+        id: SegmentId,
+        def: &RoadDef,
+        road: RoadDefId,
+    ) -> Result<(), NetOpError> {
+        let seg = self
+            .segments
+            .get(id)
+            .ok_or(NetOpError::UnknownSegment(id))?;
+        let old_lanes = seg.lanes.clone();
+        let (curve, start, end) = (seg.curve, seg.start, seg.end);
+        for l in old_lanes {
+            self.lanes.remove(l);
+        }
+        let lanes = self.build_lanes(id, def, &curve);
+        let seg = self.segments.get_mut(id).expect("checked above");
+        seg.road = road;
+        seg.lanes = lanes;
+        self.dirty.insert(start);
+        self.dirty.insert(end);
+        Ok(())
+    }
+
+    // --- internals ---
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_segment(
+        &mut self,
+        def: &RoadDef,
+        road: RoadDefId,
+        curve: CubicBezier3,
+        elevation: Elevation,
+        start: NodeId,
+        end: NodeId,
+        length: f32,
+    ) -> SegmentId {
+        let id = self.segments.insert(Segment {
+            start,
+            end,
+            curve,
+            road,
+            elevation,
+            lanes: Vec::new(),
+            length,
+        });
+        let lanes = self.build_lanes(id, def, &curve);
+        self.segments.get_mut(id).expect("just inserted").lanes = lanes;
+        for n in [start, end] {
+            self.nodes
+                .get_mut(n)
+                .expect("segment ends exist")
+                .segments
+                .push(id);
+            self.refresh_kind(n);
+            self.dirty.insert(n);
+        }
+        id
+    }
+
+    fn build_lanes(&mut self, seg: SegmentId, def: &RoadDef, curve: &CubicBezier3) -> Vec<LaneId> {
+        let speed = def.speed_kmh / 3.6;
+        def.lanes
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let chain = curve.offset_xz_pieces(l.offset, LANE_CURVE_PIECES);
+                let mut travel: [CubicBezier3; LANE_CURVE_PIECES] =
+                    chain.try_into().expect("piece count is fixed");
+                if l.dir == LaneDir::Backward {
+                    travel.reverse();
+                    for c in &mut travel {
+                        *c = CubicBezier3::new(c.p3, c.p2, c.p1, c.p0);
+                    }
+                }
+                self.lanes.insert(Lane {
+                    segment: seg,
+                    index: i as u8,
+                    kind: l.kind,
+                    dir: l.dir,
+                    width: l.width,
+                    offset: l.offset,
+                    speed_limit: speed,
+                    curve: travel,
+                })
+            })
+            .collect()
+    }
+
+    /// Removes the segment, its lanes and its links from the end nodes; does not touch
+    /// dirty flags or prune nodes.
+    fn take_segment(&mut self, id: SegmentId) -> Result<Segment, NetOpError> {
+        let seg = self
+            .segments
+            .remove(id)
+            .ok_or(NetOpError::UnknownSegment(id))?;
+        for &l in &seg.lanes {
+            self.lanes.remove(l);
+        }
+        for n in [seg.start, seg.end] {
+            if let Some(node) = self.nodes.get_mut(n) {
+                node.segments.retain(|&s| s != id);
+            }
+        }
+        Ok(seg)
+    }
+
+    fn prune_node(&mut self, id: NodeId) {
+        let Some(node) = self.nodes.get(id) else {
+            return;
+        };
+        if node.segments.is_empty() && node.kind != NodeKind::Outside {
+            self.nodes.remove(id);
+            self.dirty.remove(&id);
+        } else {
+            self.refresh_kind(id);
+        }
+    }
+
+    fn refresh_kind(&mut self, id: NodeId) {
+        if let Some(n) = self.nodes.get_mut(id)
+            && n.kind != NodeKind::Outside
+        {
+            n.kind = match n.segments.len() {
+                0 | 1 => NodeKind::End,
+                2 => NodeKind::Middle,
+                _ => NodeKind::Junction,
+            };
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

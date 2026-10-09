@@ -24,3 +24,6 @@ bevy_ecs.workspace = true
 serde.workspace = true
 postcard.workspace = true
 ruzstd.workspace = true
+
+[dev-dependencies]
+bevy_math.workspace = true

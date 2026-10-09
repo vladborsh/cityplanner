@@ -25,5 +25,6 @@ postcard.workspace = true
 bevy_tasks.workspace = true
 
 [dev-dependencies]
+bevy_math.workspace = true
 # Real worker threads for the par_iter determinism test (feature only, no new crate).
 bevy_ecs = { workspace = true, features = ["multi_threaded"] }
