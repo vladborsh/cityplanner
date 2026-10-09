@@ -11,6 +11,17 @@
 //! segments (or the previous leg, or the world X axis), when within [`ANGLE_SNAP_TOL_DEG`]
 //! → zone grid (TODO(T-026): needs `cp_zone`; the option exists and does nothing yet).
 //!
+//! **Elevation.** `ElevationMode::Ground` follows the terrain and must not touch water
+//! (`WaterWithoutBridge`). `Elevated(h)` puts every node `h` metres above the ground — or
+//! above the water surface where there is water — so the road is raised end to end;
+//! each piece must stay within the road's `max_slope`. A piece with water under it
+//! automatically becomes [`Elevation::Bridge`] (the road's `bridge` variant price), the
+//! rest stays [`Elevation::Elevated`]; a road type without the needed variant is an
+//! error. Raised pieces are grade-separated: they never snap onto or split ground
+//! segments and never create a node where they cross a ground road (same-level
+//! crossings of ground roads still do). Raised nodes only snap to raised nodes, ground
+//! nodes only to ground nodes. Piers are derived data: see [`pier_positions`].
+//!
 //! **Conventions.** Paths are in the XZ plane (`Vec2` = x, z); heights come from the
 //! terrain. Candidates are scanned in arena order and ties broken by id, so the result is
 //! independent of anything but the inputs.
@@ -23,7 +34,7 @@ use cp_terrain::{Terrain, TileOwnership};
 use serde::{Deserialize, Serialize};
 
 use crate::graph::NetGraph;
-use crate::model::{Elevation, MAX_SEGMENTS_PER_NODE, NodeId, SegmentId};
+use crate::model::{Elevation, MAX_SEGMENTS_PER_NODE, NodeId, Segment, SegmentId};
 
 /// Longest allowed segment, metres. Longer legs are cut into equal pieces.
 pub const MAX_SEGMENT_LENGTH: f32 = 96.0;
@@ -37,6 +48,8 @@ pub const ANGLE_STEP_DEG: f32 = 15.0;
 pub const ANGLE_SNAP_TOL_DEG: f32 = 4.0;
 /// Spacing of terrain/ownership samples along a piece, metres.
 const SAMPLE_STEP: f32 = 4.0;
+/// Distance between bridge/elevated piers, metres.
+pub const PIER_SPACING: f32 = 48.0;
 /// Crossings closer than this (metres) to an auto-cut point replace it.
 const CUT_MERGE: f32 = 0.5;
 
@@ -163,6 +176,8 @@ pub enum RoadBuildError {
     UnknownRoad(RoadDefId),
     /// `Elevated` requested but the road type has no elevated variant.
     NoElevatedVariant(RoadDefId),
+    /// Part of an `Elevated` path is over water but the road type has no bridge variant.
+    NoBridgeVariant(RoadDefId),
     /// Fewer than two distinct points.
     PathTooShort,
     /// A leg's two ends resolve to the same node.
@@ -225,7 +240,8 @@ impl Builder<'_> {
         let y = self.terrain.height(p);
         match self.elev {
             ElevationMode::Ground => y,
-            ElevationMode::Elevated(h) => y + h,
+            // Over water the deck is measured from the water surface.
+            ElevationMode::Elevated(h) => y + self.terrain.water_depth(p).max(0.0) + h,
         }
     }
 
@@ -290,7 +306,11 @@ impl Builder<'_> {
 
     fn nearest_node(&self, p: Vec2) -> Option<NodeId> {
         let mut best: Option<(f32, NodeId)> = None;
+        let raised = matches!(self.elev, ElevationMode::Elevated(_));
         for (id, n) in self.graph.nodes() {
+            if (n.elevation != Elevation::Ground) != raised {
+                continue;
+            }
             let d = to_xz(n.pos).distance(p);
             if d <= NODE_SNAP_RADIUS && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, id));
@@ -368,6 +388,30 @@ fn lift(piece: CubicBezier3, a: Vec3, b: Vec3) -> CubicBezier3 {
         at(piece.p2, a.y + (b.y - a.y) * 2.0 / 3.0),
         b,
     )
+}
+
+/// Whether any sample along a planar-projected piece is over water.
+fn piece_over_water(terrain: &Terrain, curve: &CubicBezier3, length: f32) -> bool {
+    let steps = ((length / SAMPLE_STEP).ceil() as usize).max(1);
+    (0..=steps).any(|k| terrain.is_water(to_xz(curve.point(k as f32 / steps as f32))))
+}
+
+/// Pier positions of an elevated or bridge segment: points on the deck every
+/// [`PIER_SPACING`] metres of arc length from the start, excluding the ends (nodes).
+/// Empty for ground segments. A pure function of the segment, so nothing is stored; the
+/// renderer drops each pier to the terrain.
+pub fn pier_positions(segment: &Segment) -> Vec<Vec3> {
+    if segment.elevation == Elevation::Ground {
+        return Vec::new();
+    }
+    let table = segment.curve.arc_table();
+    let mut out = Vec::new();
+    let mut s = PIER_SPACING;
+    while s < segment.length - 1.0 {
+        out.push(segment.curve.point(table.s_to_t(s)));
+        s += PIER_SPACING;
+    }
+    out
 }
 
 /// Validates `req` against the world and returns the build plan, or every error found.
@@ -540,19 +584,33 @@ pub fn validate_road_path(
             let planar = leg.sub_curve(pair[0].0, pair[1].0);
             let curve = lift(planar, pa, pb);
             let length = curve.arc_table().length();
+            let mut elevation = seg_elevation;
+            let mut price = cost_per_m;
+            if elevated && piece_over_water(terrain, &curve, length) {
+                elevation = Elevation::Bridge;
+                match &def.bridge {
+                    Some(v) => price = v.cost_per_m,
+                    None => {
+                        if !errors.contains(&RoadBuildError::NoBridgeVariant(req.road)) {
+                            errors.push(RoadBuildError::NoBridgeVariant(req.road));
+                        }
+                    }
+                }
+            }
             segments.push(PlannedSegment {
                 start: na,
                 end: nb,
                 curve,
-                elevation: seg_elevation,
+                elevation,
                 length,
-                cost: segment_cost(length, cost_per_m),
+                cost: segment_cost(length, price),
             });
         }
     }
 
     // --- per-piece checks ---
     for s in &segments {
+        let raised = s.elevation != Elevation::Ground;
         let at = b.node_pos(s.start);
         if s.length < MIN_SEGMENT_LENGTH_BUILD {
             errors.push(RoadBuildError::SegmentTooShort {
@@ -567,13 +625,13 @@ pub fn validate_road_path(
         for k in 0..=steps {
             let p3 = s.curve.point(k as f32 / steps as f32);
             let p = to_xz(p3);
-            if water.is_none() && !elevated && terrain.is_water(p) {
+            if water.is_none() && !raised && terrain.is_water(p) {
                 water = Some(p3);
             }
             if foreign.is_none() && !tiles.contains_point(p) {
                 foreign = Some(p3);
             }
-            if !elevated {
+            if !raised {
                 let h = terrain.height(p);
                 if let Some((pp, ph)) = prev {
                     let run = pp.distance(p).max(1e-3);
@@ -585,7 +643,7 @@ pub fn validate_road_path(
                 prev = Some((p, h));
             }
         }
-        if elevated {
+        if raised {
             let run = to_xz(s.curve.p3).distance(to_xz(s.curve.p0)).max(1e-3);
             worst = Some(((s.curve.p3.y - s.curve.p0.y).abs() / run, at));
         }

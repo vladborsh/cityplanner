@@ -100,6 +100,7 @@ fn kinds(e: &[RoadBuildError]) -> Vec<&'static str> {
         .map(|e| match e {
             RoadBuildError::UnknownRoad(_) => "UnknownRoad",
             RoadBuildError::NoElevatedVariant(_) => "NoElevatedVariant",
+            RoadBuildError::NoBridgeVariant(_) => "NoBridgeVariant",
             RoadBuildError::PathTooShort => "PathTooShort",
             RoadBuildError::DegenerateLeg { .. } => "DegenerateLeg",
             RoadBuildError::SegmentTooShort { .. } => "SegmentTooShort",
@@ -241,11 +242,98 @@ fn error_water_without_bridge_but_elevated_is_allowed() {
     assert_eq!(kinds(&e), ["WaterWithoutBridge"], "{e:?}");
     r.elevation = ElevationMode::Elevated(8.0);
     let plan = w.run(&r).unwrap();
-    assert!(
-        plan.segments
-            .iter()
-            .all(|s| s.elevation == Elevation::Elevated)
+    // The piece over the water is a bridge (and priced as one), the rest is elevated.
+    let levels: Vec<_> = plan.segments.iter().map(|s| s.elevation).collect();
+    assert!(levels.contains(&Elevation::Bridge), "{levels:?}");
+    let def = w.db.road(r.road);
+    for s in &plan.segments {
+        let per_m = match s.elevation {
+            Elevation::Bridge => def.bridge.as_ref().unwrap().cost_per_m,
+            _ => def.elevated.as_ref().unwrap().cost_per_m,
+        };
+        assert_eq!(s.cost, segment_cost(s.length, per_m));
+    }
+    // Deck height over the water is measured from the water surface (98 m) + 8.
+    let mid = plan
+        .segments
+        .iter()
+        .find(|s| s.elevation == Elevation::Bridge)
+        .unwrap();
+    let wet_y = |p: Vec3| p.y;
+    assert!(wet_y(mid.curve.point(0.5)) >= 98.0 + 8.0 - 0.5);
+}
+
+#[test]
+fn bridge_needs_a_bridge_variant() {
+    let mut w = W::new();
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/content/roads/basic_2l.ron"
+    ))
+    .unwrap();
+    let stripped: String = text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("bridge:"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    w.db = ContentDb::from_sources(vec![("basic_2l.ron".into(), stripped)]).unwrap();
+    w.terrain = terrain(98.0, |x, _| 97.0 + 0.04 * (x - 5045.0).abs());
+    let mut r = w.straight(at(0.0, 0.0), at(90.0, 0.0));
+    r.snap = no_snap();
+    r.elevation = ElevationMode::Elevated(8.0);
+    let e = w.run(&r).unwrap_err();
+    assert_eq!(kinds(&e), ["NoBridgeVariant"], "{e:?}");
+    // Dry ground needs no bridge variant.
+    w.terrain = flat();
+    assert!(w.run(&r).is_ok());
+}
+
+#[test]
+fn ground_nodes_and_raised_nodes_do_not_snap_to_each_other() {
+    let mut w = W::new();
+    let s = w.add(at(0.0, 0.0), at(0.0, 60.0));
+    let node = w.graph.segment(s).unwrap().end;
+    // A ground path ending 5 m from the node snaps to it ...
+    let r = w.straight(at(60.0, 60.0), at(5.0, 60.0));
+    assert_eq!(
+        w.run(&r).unwrap().segments.last().unwrap().end,
+        NodeRef::Existing(node)
     );
+    // ... an elevated one does not.
+    let mut r = r;
+    r.elevation = ElevationMode::Elevated(6.0);
+    assert_eq!(
+        w.run(&r).unwrap().segments.last().unwrap().end,
+        NodeRef::New(1)
+    );
+}
+
+#[test]
+fn piers_every_48_m_on_raised_segments_only() {
+    use crate::{PIER_SPACING, pier_positions};
+    let mut w = W::new();
+    let mut r = w.straight(at(0.0, 0.0), at(90.0, 0.0));
+    r.snap = no_snap();
+    r.elevation = ElevationMode::Elevated(6.0);
+    let plan = w.run(&r).unwrap();
+    let id = w.road("basic_2l");
+    let def = w.db.road(id).clone();
+    let seg = w
+        .graph
+        .add_segment(&def, id, plan.segments[0].curve, Elevation::Elevated)
+        .unwrap();
+    let segment = w.graph.segment(seg).unwrap();
+    assert!((segment.length - 90.0).abs() < 0.5);
+    let piers = pier_positions(segment);
+    assert_eq!(piers.len(), 1, "{piers:?}");
+    assert!((to_xz(piers[0]).distance(at(0.0, 0.0)) - PIER_SPACING).abs() < 0.5);
+    // A longer deck gets more; ground segments none.
+    let mut long = segment.clone();
+    long.length = 200.0;
+    long.curve = CubicBezier3::line(Vec3::new(0.0, 5.0, 0.0), Vec3::new(200.0, 5.0, 0.0));
+    assert_eq!(pier_positions(&long).len(), 4);
+    long.elevation = Elevation::Ground;
+    assert!(pier_positions(&long).is_empty());
 }
 
 #[test]

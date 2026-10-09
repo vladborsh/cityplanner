@@ -7,9 +7,9 @@ pub mod junction;
 pub mod model;
 
 pub use build::{
-    AppliedSnap, DemolishRef, ElevationMode, NodeRef, PlannedSegment, PlannedSplit, RoadBuildError,
-    RoadBuildPlan, RoadPath, RoadPathRequest, SnapKind, SnapOptions, segment_cost,
-    validate_road_path,
+    AppliedSnap, DemolishRef, ElevationMode, NodeRef, PIER_SPACING, PlannedSegment, PlannedSplit,
+    RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SnapKind, SnapOptions,
+    pier_positions, segment_cost, validate_road_path,
 };
 pub use command::{NetCommand, NetError, apply};
 pub use graph::{MIN_SEGMENT_LENGTH, NODE_REUSE_EPS, NetGraph, NetOpError, SplitResult};

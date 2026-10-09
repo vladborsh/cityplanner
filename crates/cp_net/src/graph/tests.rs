@@ -367,3 +367,28 @@ fn graph_serde_round_trip_is_byte_stable() {
     assert_eq!(back, g);
     assert_eq!(postcard::to_stdvec(&back).unwrap(), bytes);
 }
+
+#[test]
+fn node_level_is_derived_from_its_segments_not_attachment_order() {
+    let db = content();
+    let (id, def) = road(&db, "basic_2l");
+    let line = |a: f32, b: f32| CubicBezier3::line(Vec3::new(a, 5.0, 0.0), Vec3::new(b, 5.0, 0.0));
+    for order in [[G, Elevation::Bridge], [Elevation::Bridge, G]] {
+        let mut g = NetGraph::new();
+        // Segment 1 ends at x = 50, segment 2 starts there.
+        let s = [line(0.0, 50.0), line(50.0, 100.0)];
+        for (e, c) in order.into_iter().zip(s) {
+            g.add_segment(&def, id, c, e).unwrap();
+        }
+        let shared = g.find_node(Vec3::new(50.0, 5.0, 0.0)).unwrap();
+        assert_eq!(g.node(shared).unwrap().elevation, G, "{order:?}");
+    }
+    // Only raised segments: elevated beats bridge.
+    let mut g = NetGraph::new();
+    g.add_segment(&def, id, line(0.0, 50.0), Elevation::Bridge)
+        .unwrap();
+    g.add_segment(&def, id, line(50.0, 100.0), Elevation::Elevated)
+        .unwrap();
+    let shared = g.find_node(Vec3::new(50.0, 5.0, 0.0)).unwrap();
+    assert_eq!(g.node(shared).unwrap().elevation, Elevation::Elevated);
+}

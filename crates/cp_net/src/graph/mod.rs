@@ -387,6 +387,25 @@ impl NetGraph {
                 2 => NodeKind::Middle,
                 _ => NodeKind::Junction,
             };
+            // Level of a node: ground if any ground segment meets there, else elevated if
+            // any elevated one does, else bridge. Independent of attachment order.
+            let mut level: Option<Elevation> = None;
+            for sid in &n.segments {
+                if let Some(seg) = self.segments.get(*sid) {
+                    let rank = |e: Elevation| match e {
+                        Elevation::Ground => 0,
+                        Elevation::Elevated => 1,
+                        Elevation::Bridge => 2,
+                        Elevation::Tunnel => 3,
+                    };
+                    if level.is_none_or(|l| rank(seg.elevation) < rank(l)) {
+                        level = Some(seg.elevation);
+                    }
+                }
+            }
+            if let Some(l) = level {
+                n.elevation = l;
+            }
         }
     }
 }
