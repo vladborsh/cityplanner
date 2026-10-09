@@ -1,8 +1,5 @@
 //! `cp_sim` — simulation crate skeleton. See `architecture/system-design.md` §1.
 
-// Sim code must iterate deterministically: HashMap/HashSet are banned (see clippy.toml).
-#![deny(clippy::disallowed_types)]
-
 pub mod checksum;
 pub mod command;
 pub mod phase;

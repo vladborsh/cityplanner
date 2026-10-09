@@ -1,8 +1,5 @@
 //! `cp_economy` — simulation crate skeleton. See `architecture/system-design.md` §1.
 
-// Sim code must iterate deterministically: HashMap/HashSet are banned (see clippy.toml).
-#![deny(clippy::disallowed_types)]
-
 pub mod command;
 
 pub use command::{EconomyCommand, EconomyError, apply};

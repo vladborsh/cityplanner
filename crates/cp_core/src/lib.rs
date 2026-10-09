@@ -1,9 +1,6 @@
 //! `cp_core` — ids and arenas, tick and game time, `SimRng`, `SimLimits`, generic command bus.
 //! See `architecture/system-design.md` §2–§3.
 
-// Sim code must iterate deterministically: HashMap/HashSet are banned (see clippy.toml).
-#![deny(clippy::disallowed_types)]
-
 pub mod arena;
 pub mod command;
 pub mod curve;

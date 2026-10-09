@@ -5,8 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-[lints]
-workspace = true
+[lints.clippy]
+# Not a sim crate: hash containers are fine here (see the workspace lint in the root Cargo.toml).
+disallowed_types = "allow"
 
 [dependencies]
 cp_sim.workspace = true

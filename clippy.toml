@@ -1,4 +1,5 @@
-# Enforced in sim crates through `#![deny(clippy::disallowed_types)]` in their lib.rs.
+# Denied for all targets of every crate via the workspace lint; non-sim crates opt out
+# in their own Cargo.toml.
 # Iteration order of hash containers is not deterministic; use BTreeMap/IndexMap/sorted Vecs.
 disallowed-types = [
     { path = "std::collections::HashMap", reason = "non-deterministic iteration; use BTreeMap or IndexMap" },
@@ -7,4 +8,8 @@ disallowed-types = [
     { path = "hashbrown::HashSet", reason = "non-deterministic iteration; use BTreeSet or sorted Vec" },
     { path = "bevy_platform::collections::HashMap", reason = "non-deterministic iteration; use BTreeMap or IndexMap" },
     { path = "bevy_platform::collections::HashSet", reason = "non-deterministic iteration; use BTreeSet or sorted Vec" },
+    { path = "bevy_ecs::entity::EntityHashMap", reason = "non-deterministic iteration; use BTreeMap or IndexMap" },
+    { path = "bevy_ecs::entity::EntityHashSet", reason = "non-deterministic iteration; use BTreeSet or sorted Vec" },
+    { path = "bevy_ecs::entity::EntityEquivalentHashMap", reason = "non-deterministic iteration; use BTreeMap or IndexMap" },
+    { path = "bevy_ecs::entity::EntityEquivalentHashSet", reason = "non-deterministic iteration; use BTreeSet or sorted Vec" },
 ]

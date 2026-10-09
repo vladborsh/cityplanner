@@ -19,9 +19,6 @@
 //! is `max(sea_level, mask)` (water is static). `water_depth` is the bilinear
 //! interpolation of the per-node depth `surface - ground`; `<= 0` means dry.
 
-// Sim code must iterate deterministically: HashMap/HashSet are banned (see clippy.toml).
-#![deny(clippy::disallowed_types)]
-
 mod ownership;
 
 use std::fs::File;
