@@ -9,10 +9,45 @@
 use std::sync::Arc;
 
 use bevy_ecs::resource::Resource;
-use cp_core::{GameTime, SimSpeed, Tick};
+use bevy_ecs::world::World;
+use cp_core::{CommandLog, CommandQueue, GameTime, SimSpeed, Tick};
 use cp_terrain::{Terrain, TileOwnership};
 
+use crate::checksum::SimChecksum;
+use crate::command::SimCommand;
 use crate::runner::SimRunner;
+
+/// How full one arena is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArenaFill {
+    pub name: &'static str,
+    pub used: u32,
+    pub capacity: u32,
+}
+
+/// Registered arena size gauges. Domain plugins add one per arena through
+/// `SimBuilder::register_arena_gauge`; `SimView::stats` reports them.
+#[derive(Resource, Default)]
+pub struct ArenaGauges(pub(crate) Vec<(&'static str, u32, fn(&World) -> usize)>);
+
+impl ArenaGauges {
+    pub fn register(&mut self, name: &'static str, capacity: u32, len: fn(&World) -> usize) {
+        self.0.push((name, capacity, len));
+    }
+}
+
+/// Counters for the debug window. Cheap to compute; refreshed with every [`SimView`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SimStats {
+    /// Most recent periodic checksum `(tick it was taken at, value)`; one every 256 ticks.
+    pub checksum: Option<(Tick, u64)>,
+    /// One entry per registered arena, in registration order.
+    pub arenas: Vec<ArenaFill>,
+    /// Commands queued for a future tick.
+    pub commands_pending: usize,
+    /// Commands applied so far (length of the command log).
+    pub commands_applied: usize,
+}
 
 /// The loaded map, as sim state. Immutable for the lifetime of a game.
 #[derive(Resource, Clone)]
@@ -28,6 +63,7 @@ pub struct SimView {
     pub terrain: Option<Arc<Terrain>>,
     /// Which tiles the player owns (client camera bounds, build-area overlays).
     pub tiles: TileOwnership,
+    pub stats: SimStats,
 }
 
 impl SimRunner {
@@ -63,6 +99,26 @@ impl SimRunner {
                 .get_resource::<TileOwnership>()
                 .copied()
                 .unwrap_or_default(),
+            stats: self.stats(),
+        }
+    }
+
+    fn stats(&self) -> SimStats {
+        let world = self.world();
+        SimStats {
+            checksum: world.resource::<SimChecksum>().last,
+            arenas: world
+                .resource::<ArenaGauges>()
+                .0
+                .iter()
+                .map(|&(name, capacity, len)| ArenaFill {
+                    name,
+                    used: len(world) as u32,
+                    capacity,
+                })
+                .collect(),
+            commands_pending: world.resource::<CommandQueue<SimCommand>>().len(),
+            commands_applied: world.resource::<CommandLog<SimCommand>>().len(),
         }
     }
 }
@@ -85,6 +141,51 @@ mod tests {
         };
         let n = GRID * GRID;
         Arc::new(Terrain::from_samples(meta, &vec![1000; n], &vec![0; n]).unwrap())
+    }
+
+    #[test]
+    fn stats_report_gauges_commands_and_checksum() {
+        use crate::plugin::{SimBuilder, SimPlugin};
+        struct P;
+        impl SimPlugin for P {
+            fn build(&self, sim: &mut SimBuilder) {
+                sim.register_arena_gauge("dummy", 10, |_| 3);
+            }
+        }
+        let mut sim = SimRunner::new(1);
+        sim.add_plugin(&P);
+        sim.push_command(
+            SimCommand::SetSpeed {
+                speed: cp_core::SimSpeed::X2,
+            },
+            Tick(1),
+        );
+        sim.push_command(
+            SimCommand::SetSpeed {
+                speed: cp_core::SimSpeed::X1,
+            },
+            Tick(9999),
+        );
+        let v0 = sim.view();
+        assert_eq!(
+            v0.stats.arenas,
+            vec![ArenaFill {
+                name: "dummy",
+                used: 3,
+                capacity: 10
+            }]
+        );
+        assert_eq!(
+            (v0.stats.commands_pending, v0.stats.commands_applied),
+            (2, 0)
+        );
+        assert_eq!(v0.stats.checksum, None);
+        for _ in 0..256 {
+            sim.tick_once();
+        }
+        let s = sim.view().stats;
+        assert_eq!((s.commands_pending, s.commands_applied), (1, 1));
+        assert_eq!(s.checksum.unwrap().0, Tick(255));
     }
 
     #[test]

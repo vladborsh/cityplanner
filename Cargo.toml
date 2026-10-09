@@ -16,6 +16,7 @@ disallowed_types = "deny"
 [workspace.dependencies]
 # Bevy is pinned here and only here. A version bump is its own task.
 bevy = { version = "=0.20.0", default-features = false }
+bevy_egui = { version = "=0.43.0-rc.1", default-features = false, features = ["render", "default_fonts"] }
 bevy_app = { version = "=0.20.0", default-features = false }
 bevy_ecs = { version = "=0.20.0", default-features = false }
 bevy_math = { version = "=0.20.0", default-features = false, features = ["std"] }

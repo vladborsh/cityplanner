@@ -6,6 +6,7 @@ use bevy_ecs::world::World;
 
 use crate::checksum::{ChecksumFn, SimChecksum};
 use crate::phase::SimPhase;
+use crate::view::ArenaGauges;
 
 /// A domain adds its resources, systems and checksum parts to the sim.
 pub trait SimPlugin {
@@ -41,6 +42,20 @@ impl SimBuilder<'_> {
         systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
     ) -> &mut Self {
         self.schedule.add_systems(systems);
+        self
+    }
+
+    /// Reports an arena's fill in `SimView::stats` (debug window). `len` returns the number
+    /// of live elements; `capacity` is normally the matching `SimLimits` field.
+    pub fn register_arena_gauge(
+        &mut self,
+        name: &'static str,
+        capacity: u32,
+        len: fn(&World) -> usize,
+    ) -> &mut Self {
+        self.world
+            .resource_mut::<ArenaGauges>()
+            .register(name, capacity, len);
         self
     }
 

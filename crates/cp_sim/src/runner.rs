@@ -72,6 +72,7 @@ impl SimRunner {
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
+        world.init_resource::<crate::view::ArenaGauges>();
 
         let mut schedule = Schedule::default();
         use SimPhase::*;
@@ -121,6 +122,16 @@ impl SimRunner {
         self.world
             .resource_mut::<CommandQueue<SimCommand>>()
             .push(command, tick)
+    }
+
+    /// Applies every command already due at the current tick without running a tick.
+    ///
+    /// Needed while paused: a command sent at the current tick (e.g. `SetSpeed` to resume)
+    /// would otherwise wait for a tick that never comes. Equivalent to the start of the
+    /// next tick's `Commands` phase (nothing runs before it), so replaying the log gives
+    /// the same state. Outcomes are readable like any others.
+    pub fn apply_due_commands(&mut self) {
+        dispatch_commands(&mut self.world);
     }
 
     /// Runs exactly one tick, ignoring speed and the accumulator.
@@ -235,6 +246,34 @@ mod tests {
         sim.tick_once();
         assert_eq!(sim.tick(), Tick(2));
         assert_eq!(sim.tick().game_time().tick_of_day, 2);
+    }
+
+    #[test]
+    fn paused_sim_can_be_resumed_by_a_command_at_the_current_tick() {
+        let mut sim = SimRunner::new(1);
+        sim.push_command(
+            SimCommand::SetSpeed {
+                speed: SimSpeed::Pause,
+            },
+            sim.tick(),
+        );
+        sim.apply_due_commands();
+        assert_eq!(sim.step(FRAME * 4), 0);
+        sim.push_command(
+            SimCommand::SetSpeed {
+                speed: SimSpeed::X2,
+            },
+            sim.tick(),
+        );
+        sim.apply_due_commands();
+        assert_eq!(sim.speed(), SimSpeed::X2);
+        assert_eq!(sim.step(FRAME), 2);
+        let log = sim.world().resource::<CommandLog<SimCommand>>();
+        assert_eq!(log.len(), 2);
+        assert_eq!(log.entries()[0].tick, Tick(0));
+        // Applying again does nothing: nothing is due.
+        sim.apply_due_commands();
+        assert_eq!(sim.world().resource::<CommandLog<SimCommand>>().len(), 2);
     }
 
     #[test]

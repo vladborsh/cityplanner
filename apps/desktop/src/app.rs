@@ -18,6 +18,8 @@ use cp_core::time::TICKS_PER_DAY;
 use cp_render::{RtsCamera, RtsCameraPlugin, TerrainRenderPlugin, TerrainStats};
 use cp_sim::{SimRunner, SimView};
 use cp_terrain::{MAP_SIZE, Terrain};
+use cp_tools::CommandOutbox;
+use cp_ui::UiPlugin;
 
 use crate::ASSETS_DIR;
 
@@ -107,6 +109,7 @@ pub fn run(opts: Options) {
     .add_plugins((
         TerrainRenderPlugin,
         RtsCameraPlugin,
+        UiPlugin,
         FrameTimeDiagnosticsPlugin::default(),
         RenderDiagnosticsPlugin,
     ))
@@ -152,8 +155,17 @@ fn camera_pose(name: &str, terrain: Option<&Terrain>) -> (Vec3, Vec3) {
     }
 }
 
-fn step_sim(time: Res<Time>, mut sim: ResMut<Sim>, mut view: ResMut<SimView>) {
-    if sim.0.step(Duration::from_secs_f64(time.delta_secs_f64())) > 0 {
+/// The single entry point for player input: UI and tools only fill the `CommandOutbox`;
+/// it is submitted here, before the frame's ticks, then the sim is stepped.
+fn step_sim(
+    time: Res<Time>,
+    mut sim: ResMut<Sim>,
+    mut outbox: ResMut<CommandOutbox>,
+    mut view: ResMut<SimView>,
+) {
+    let submitted = outbox.flush_into(&mut sim.0) > 0;
+    let ticks = sim.0.step(Duration::from_secs_f64(time.delta_secs_f64()));
+    if submitted || ticks > 0 {
         *view = sim.0.view();
     }
 }
