@@ -1,13 +1,342 @@
-//! `bench` app skeleton.
+//! `cp_bench`: headless benchmark harness (`architecture/system-design.md` §14).
+//!
+//! ```text
+//! cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty] [--ticks N] [--warmup N]
+//!          [--seed S] [--out FILE.json] [--inject-sleep Phase=MS]
+//! cp_bench aggregate OUT.json RUN.json...        median over runs
+//! cp_bench compare BASELINE.json CURRENT.json [--threshold 0.2] [--floor-ms 0.05]
+//! ```
+//!
+//! This is an app, not a sim crate, so it may read the wall clock. `--inject-sleep` exists
+//! only to prove the CI gate fails on a slow phase.
 
-fn main() {
-    println!("cityplanner bench: skeleton");
+mod report;
+mod timing;
+
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use std::time::{Duration, Instant};
+
+use cp_sim::{SimPhase, SimRunner};
+use report::{MapInfo, NamedStat, Report, SCHEMA, stat_of};
+use timing::{InjectedSleep, PHASES, PhaseClock, PhaseTiming};
+
+struct Opts {
+    map: Option<String>,
+    save: Option<String>,
+    scenario: String,
+    ticks: u64,
+    warmup: u64,
+    seed: u64,
+    out: Option<PathBuf>,
+    inject_sleep: Option<(SimPhase, Duration)>,
+}
+
+fn usage() -> &'static str {
+    "usage: cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty] [--ticks N] [--warmup N] \
+     [--seed S] [--out FILE.json] [--inject-sleep Phase=MS]\n       \
+     cp_bench aggregate OUT.json RUN.json...\n       \
+     cp_bench compare BASELINE.json CURRENT.json [--threshold 0.2] [--floor-ms 0.05]"
+}
+
+fn parse_phase(name: &str) -> Result<SimPhase, String> {
+    SimPhase::ORDER
+        .into_iter()
+        .find(|p| format!("{p:?}") == name)
+        .ok_or_else(|| format!("unknown phase '{name}'"))
+}
+
+fn parse_opts(args: &[String]) -> Result<Opts, String> {
+    let mut o = Opts {
+        map: None,
+        save: None,
+        scenario: "empty".into(),
+        ticks: 2000,
+        warmup: 100,
+        seed: 1,
+        out: None,
+        inject_sleep: None,
+    };
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        let mut val = || it.next().cloned().ok_or(format!("{flag} needs a value"));
+        let num = |s: String| s.parse::<u64>().map_err(|e| format!("{flag}: {e}"));
+        match flag.as_str() {
+            "--map" => o.map = Some(val()?),
+            "--save" => o.save = Some(val()?),
+            "--scenario" => o.scenario = val()?,
+            "--ticks" => o.ticks = num(val()?)?,
+            "--warmup" => o.warmup = num(val()?)?,
+            "--seed" => o.seed = num(val()?)?,
+            "--out" => o.out = Some(val()?.into()),
+            "--inject-sleep" => {
+                let v = val()?;
+                let (phase, ms) = v.split_once('=').ok_or("--inject-sleep wants Phase=MS")?;
+                let ms: f64 = ms.parse().map_err(|e| format!("--inject-sleep: {e}"))?;
+                o.inject_sleep = Some((parse_phase(phase)?, Duration::from_secs_f64(ms / 1000.0)));
+            }
+            other => return Err(format!("unknown argument '{other}'")),
+        }
+    }
+    if o.ticks == 0 {
+        return Err("--ticks must be > 0".into());
+    }
+    Ok(o)
+}
+
+fn git_sha() -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// `--map NAME` means `assets/maps/NAME`; anything with a path separator is used as is.
+fn map_dir(arg: &str) -> PathBuf {
+    if arg.contains('/') || arg.contains('\\') {
+        PathBuf::from(arg)
+    } else {
+        Path::new("assets/maps").join(arg)
+    }
+}
+
+fn run(o: &Opts) -> Result<Report, String> {
+    if o.save.is_some() {
+        return Err("--save is not supported until T-009 (save/load)".into());
+    }
+    if o.scenario != "empty" {
+        return Err(format!(
+            "unknown scenario '{}' (available: empty)",
+            o.scenario
+        ));
+    }
+    let map = o
+        .map
+        .as_deref()
+        .map(|m| {
+            let dir = map_dir(m);
+            let t = Instant::now();
+            cp_terrain::Terrain::load(&dir).map_err(|e| format!("--map {}: {e}", dir.display()))?;
+            Ok::<_, String>(MapInfo {
+                path: dir.display().to_string(),
+                load_ms: t.elapsed().as_secs_f64() * 1e3,
+            })
+        })
+        .transpose()?;
+
+    let mut sim = SimRunner::new(o.seed);
+    sim.add_plugin(&PhaseTiming {
+        sleep: o
+            .inject_sleep
+            .map(|(phase, duration)| InjectedSleep { phase, duration }),
+    });
+    let mut total_ms = Vec::with_capacity(o.ticks as usize);
+    for i in 0..o.warmup + o.ticks {
+        let t = Instant::now();
+        sim.tick_once();
+        let dt = t.elapsed().as_secs_f64() * 1e3;
+        if i >= o.warmup {
+            total_ms.push(dt);
+        }
+    }
+    let checksum = sim.checksum();
+    let clock = sim.world().resource::<PhaseClock>();
+    let samples = &clock.samples[o.warmup as usize..];
+    let phases = (0..PHASES)
+        .map(|p| NamedStat {
+            name: format!("{:?}", SimPhase::ORDER[p]),
+            stat: stat_of(
+                &samples
+                    .iter()
+                    .map(|row| row[p] as f64 / 1e6)
+                    .collect::<Vec<_>>(),
+            ),
+        })
+        .collect();
+    Ok(Report {
+        schema: SCHEMA,
+        scenario: o.scenario.clone(),
+        seed: o.seed,
+        ticks: o.ticks,
+        warmup_ticks: o.warmup,
+        runs: 1,
+        git_sha: git_sha(),
+        map,
+        checksum: format!("{checksum:016x}"),
+        arenas: Vec::new(),
+        phases,
+        total: stat_of(&total_ms),
+    })
+}
+
+fn read_report(path: &str) -> Result<Report, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))
+}
+
+fn write_report(r: &Report, out: &Path) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(r).map_err(|e| e.to_string())?;
+    std::fs::write(out, json + "\n").map_err(|e| format!("{}: {e}", out.display()))
+}
+
+fn print_table(r: &Report) {
+    println!(
+        "scenario={} seed={} ticks={} (+{} warmup) runs={} checksum={}",
+        r.scenario, r.seed, r.ticks, r.warmup_ticks, r.runs, r.checksum
+    );
+    if let Some(m) = &r.map {
+        println!("map {} loaded in {:.2} ms", m.path, m.load_ms);
+    }
+    println!("{:<10} {:>12} {:>12}", "phase", "median ms", "p95 ms");
+    for p in &r.phases {
+        println!(
+            "{:<10} {:>12.5} {:>12.5}",
+            p.name, p.stat.median_ms, p.stat.p95_ms
+        );
+    }
+    println!(
+        "{:<10} {:>12.5} {:>12.5}",
+        "total", r.total.median_ms, r.total.p95_ms
+    );
+}
+
+fn real_main(args: Vec<String>) -> Result<ExitCode, String> {
+    match args.first().map(String::as_str) {
+        Some("aggregate") => {
+            let [_, out, runs @ ..] = args.as_slice() else {
+                return Err(usage().into());
+            };
+            let runs = runs
+                .iter()
+                .map(|p| read_report(p))
+                .collect::<Result<Vec<_>, _>>()?;
+            let agg = report::aggregate(&runs)?;
+            write_report(&agg, Path::new(out))?;
+            print_table(&agg);
+            Ok(ExitCode::SUCCESS)
+        }
+        Some("compare") => {
+            let [_, base, cur, rest @ ..] = args.as_slice() else {
+                return Err(usage().into());
+            };
+            let (mut threshold, mut floor) = (0.2, 0.05);
+            let mut it = rest.iter();
+            while let Some(f) = it.next() {
+                let v: f64 = it
+                    .next()
+                    .ok_or(format!("{f} needs a value"))?
+                    .parse()
+                    .map_err(|e| format!("{f}: {e}"))?;
+                match f.as_str() {
+                    "--threshold" => threshold = v,
+                    "--floor-ms" => floor = v,
+                    _ => return Err(format!("unknown argument '{f}'")),
+                }
+            }
+            let (b, c) = (read_report(base)?, read_report(cur)?);
+            let regressions = report::compare(&b, &c, threshold, floor)?;
+            if regressions.is_empty() {
+                println!(
+                    "bench OK: no phase or total median above max(baseline, {floor} ms) x {:.2}",
+                    1.0 + threshold
+                );
+                return Ok(ExitCode::SUCCESS);
+            }
+            for r in &regressions {
+                eprintln!(
+                    "REGRESSION {}: {:.5} ms > limit {:.5} ms (baseline {:.5} ms)",
+                    r.name, r.current_ms, r.limit_ms, r.baseline_ms
+                );
+            }
+            Ok(ExitCode::FAILURE)
+        }
+        _ => {
+            if args.iter().any(|a| a == "-h" || a == "--help") {
+                println!("{}", usage());
+                return Ok(ExitCode::SUCCESS);
+            }
+            let opts = parse_opts(&args)?;
+            let report = run(&opts)?;
+            print_table(&report);
+            if let Some(out) = &opts.out {
+                write_report(&report, out)?;
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn main() -> ExitCode {
+    match real_main(std::env::args().skip(1).collect()) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::from(2)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn opts(extra: &[&str]) -> Opts {
+        let args: Vec<String> = ["--ticks", "50", "--warmup", "5"]
+            .iter()
+            .chain(extra)
+            .map(|s| s.to_string())
+            .collect();
+        parse_opts(&args).unwrap()
+    }
+
     #[test]
-    fn skeleton_builds() {
-        assert_eq!(env!("CARGO_PKG_NAME"), "cp_bench");
+    fn empty_scenario_times_every_phase_and_is_deterministic() {
+        let (a, b) = (run(&opts(&[])).unwrap(), run(&opts(&[])).unwrap());
+        assert_eq!(a.phases.len(), SimPhase::ORDER.len());
+        assert_eq!(a.checksum, b.checksum);
+        assert!(a.total.median_ms > 0.0);
+    }
+
+    #[test]
+    fn injected_sleep_lands_in_the_chosen_phase_only() {
+        let r = run(&opts(&["--inject-sleep", "Economy=2"])).unwrap();
+        let ms = |n: &str| {
+            r.phases
+                .iter()
+                .find(|p| p.name == n)
+                .unwrap()
+                .stat
+                .median_ms
+        };
+        assert!(ms("Economy") >= 2.0, "Economy {}", ms("Economy"));
+        assert!(ms("Citizens") < 1.0);
+        assert!(r.total.median_ms >= 2.0);
+    }
+
+    #[test]
+    fn save_and_unknown_scenario_are_rejected() {
+        assert!(
+            run(&opts(&["--save", "x.sav"]))
+                .unwrap_err()
+                .contains("T-009")
+        );
+        assert!(run(&opts(&["--scenario", "boom"])).is_err());
+    }
+
+    #[test]
+    fn map_flag_loads_terrain() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps/flatlands");
+        let r = run(&opts(&["--map", root.to_str().unwrap()])).unwrap();
+        assert!(r.map.unwrap().load_ms >= 0.0);
+        assert!(run(&opts(&["--map", "/nonexistent/map"])).is_err());
+    }
+
+    #[test]
+    fn bad_args_are_errors() {
+        assert!(parse_opts(&["--bogus".into()]).is_err());
+        assert!(parse_opts(&["--inject-sleep".into(), "Nope=1".into()]).is_err());
     }
 }

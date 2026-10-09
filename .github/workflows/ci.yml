@@ -66,3 +66,33 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked -p cp_web --target wasm32-unknown-unknown
+
+  bench:
+    name: bench (headless, regression gate)
+    runs-on: ubuntu-latest
+    env:
+      BENCH_ARGS: --scenario empty --ticks 20000 --warmup 500 --seed 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p cp_bench
+      - name: Run bench 5 times and take the median
+        run: |
+          mkdir -p bench-out
+          for i in 1 2 3 4 5; do
+            target/release/cp_bench $BENCH_ARGS --out bench-out/run-$i.json
+          done
+          target/release/cp_bench aggregate bench-out/result.json bench-out/run-*.json
+      - name: Publish numbers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-result
+          path: bench-out/
+      - name: Compare with bench/baseline.json (fail on >20% regression)
+        run: |
+          if [ ! -f bench/baseline.json ]; then
+            echo "::error::bench/baseline.json is missing. Take bench-out/result.json from this run's bench-result artifact and commit it as bench/baseline.json (see bench/README.md)."
+            exit 1
+          fi
+          target/release/cp_bench compare bench/baseline.json bench-out/result.json --threshold 0.2 --floor-ms 0.05
