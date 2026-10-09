@@ -10,7 +10,7 @@
 //!   creation; arena slots are reused, but ids order by `(index, generation)` — see
 //!   [`ZoneBlockId`]), or
 //! * on a curve, overlaps the previous column of its own block (the later column loses),
-//! * (stub) is covered by a building.
+//! * is covered by a building (see [`ZoneGrid::occupy`]).
 //!
 //! Overlap means interpenetration deeper than [`PENETRATION_EPS`]; touching and grazing
 //! cells are fine. Squares on the inside of a curve crowd together (neighbouring columns
@@ -205,6 +205,11 @@ pub struct ZoneGrid {
     fingerprints: BTreeMap<SegmentId, Fingerprint>,
     #[serde(skip)]
     index: Index,
+    /// Cells covered by a building. Derived from the buildings (which own the truth) and
+    /// rebuilt after a load with [`ZoneGrid::set_occupied`]; the saved `valid` masks
+    /// already account for it.
+    #[serde(skip)]
+    occupied: BTreeSet<ZoneCellRef>,
 }
 
 impl PartialEq for ZoneGrid {
@@ -330,8 +335,7 @@ impl ZoneGrid {
             self.fingerprints.insert(id, fp);
         }
 
-        // Everything near a change is re-examined, oldest first. A block whose validity
-        // changes (or that is new) can only affect newer ones, so ids only grow.
+        // Everything near a change is re-examined, oldest first.
         let mut work: BTreeSet<ZoneBlockId> = created.clone();
         for region in &dirty {
             let region = inflate(*region, REACH);
@@ -341,6 +345,12 @@ impl ZoneGrid {
                 }
             }
         }
+        self.revalidate(work, &created);
+    }
+
+    /// Recomputes validity of `work` oldest first; a block whose validity changes (or that
+    /// is new, per `created`) can only affect newer ones, so ids only grow.
+    fn revalidate(&mut self, mut work: BTreeSet<ZoneBlockId>, created: &BTreeSet<ZoneBlockId>) {
         while let Some(id) = work.pop_first() {
             let Some(new_valid) = self.compute_valid(id) else {
                 continue;
@@ -357,6 +367,58 @@ impl ZoneGrid {
                 }
             }
         }
+    }
+
+    /// Sets the painted type of a cell. Returns `false` when the cell does not exist.
+    /// (`PaintZones`, T-027, is the player-facing way; this is the primitive and what
+    /// headless tests use.)
+    pub fn set_zone(&mut self, cell: ZoneCellRef, zone: ZoneType) -> bool {
+        match self
+            .blocks
+            .get_mut(cell.block)
+            .and_then(|b| b.zones.get_mut(usize::from(cell.cell)))
+        {
+            Some(z) => {
+                *z = zone;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether a building covers the cell.
+    pub fn is_occupied(&self, cell: ZoneCellRef) -> bool {
+        self.occupied.contains(&cell)
+    }
+
+    /// Marks cells as covered by a building: they become invalid, and cells of newer
+    /// blocks that overlap them are re-examined. Needs the index (a tick has run with
+    /// content); without it the cells are only recorded.
+    pub fn occupy(&mut self, cells: &[ZoneCellRef]) {
+        self.occupied.extend(cells.iter().copied());
+        self.revalidate_cells(cells);
+    }
+
+    /// The inverse of [`Self::occupy`] (the building is gone).
+    pub fn release(&mut self, cells: &[ZoneCellRef]) {
+        for c in cells {
+            self.occupied.remove(c);
+        }
+        self.revalidate_cells(cells);
+    }
+
+    /// Replaces the occupancy set without touching validity (after a load: the saved
+    /// `valid` masks already include it).
+    pub fn set_occupied(&mut self, cells: impl IntoIterator<Item = ZoneCellRef>) {
+        self.occupied = cells.into_iter().collect();
+    }
+
+    fn revalidate_cells(&mut self, cells: &[ZoneCellRef]) {
+        if !self.index.built {
+            return;
+        }
+        let work: BTreeSet<ZoneBlockId> = cells.iter().map(|c| c.block).collect();
+        self.revalidate(work, &BTreeSet::new());
     }
 
     fn rebuild_index(&mut self, net: &NetGraph, roads: &dyn Fn(RoadDefId) -> RoadZoning) {
@@ -521,6 +583,14 @@ impl ZoneGrid {
             if !valid[i] {
                 continue;
             }
+            // A building stands here.
+            if self.occupied.contains(&ZoneCellRef {
+                block: id,
+                cell: i as u16,
+            }) {
+                valid[i] = false;
+                continue;
+            }
 
             // The previous column of the same block (curves): the later column loses.
             let (col, row) = (i / depth, i % depth);
@@ -548,13 +618,17 @@ impl ZoneGrid {
                     continue;
                 };
                 for (j, other) in oo.iter().enumerate() {
-                    if ob.valid[j] && other.penetration(o) > PENETRATION_EPS {
+                    let blocking = ob.valid[j]
+                        || self.occupied.contains(&ZoneCellRef {
+                            block: oid,
+                            cell: j as u16,
+                        });
+                    if blocking && other.penetration(o) > PENETRATION_EPS {
                         valid[i] = false;
                         break 'older;
                     }
                 }
             }
-            // TODO(cp_building, T-0xx): a cell covered by a building becomes invalid here.
             let _ = block;
         }
         Some(valid)

@@ -1,0 +1,12 @@
+// PLACEHOLDER numbers for balance tuning (T-028); see README.md.
+Building((
+    id: "ind_2b",
+    name: "Ind L2b",
+    zone: Industrial,
+    level: 2,
+    lot: (3, 4),
+    jobs: (10, 10, 1, 0),
+    consumption: {Water: 12.9, Sewage: 12.9, Power: 22.8},
+    tax_base: 94.5,
+    style: (floors: 1, roof: Flat, palette: "industry_rust"),
+))

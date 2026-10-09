@@ -2418,6 +2418,7 @@ name = "cp_building"
 version = "0.0.0"
 dependencies = [
  "bevy_ecs",
+ "bevy_math",
  "cp_content",
  "cp_core",
  "cp_net",

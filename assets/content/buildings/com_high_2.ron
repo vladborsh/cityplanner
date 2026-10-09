@@ -1,0 +1,12 @@
+// PLACEHOLDER numbers for balance tuning (T-028); see README.md.
+Building((
+    id: "com_high_2",
+    name: "Com High L2",
+    zone: ComHigh,
+    level: 2,
+    lot: (4, 3),
+    jobs: (10, 22, 10, 2),
+    consumption: {Water: 24.4, Sewage: 24.4, Power: 41.2},
+    tax_base: 264.0,
+    style: (floors: 8, roof: Flat, palette: "glass_blue"),
+))

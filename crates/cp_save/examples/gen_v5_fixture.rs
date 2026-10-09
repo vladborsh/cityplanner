@@ -2,7 +2,8 @@
 //! without buildings; it carries a small road network and its derived zone blocks).
 //!
 //! The committed file was produced by the real v5 writer (`save_with_map` at format 5,
-//! before the v6 bump) with exactly this data. Run from the repo root:
+//! before the v6 bump) with exactly this data; `encode_v5` is the frozen equivalent kept
+//! for regeneration and a test asserts they agree byte for byte. Run from the repo root:
 //! `cargo run -p cp_save --example gen_v5_fixture`. The committed file is **never edited or
 //! regenerated** afterwards (AGENTS.md).
 
@@ -12,7 +13,8 @@ use bevy_math::Vec3;
 use cp_content::ContentDb;
 use cp_core::curve::CubicBezier3;
 use cp_net::{Elevation, NetGraph};
-use cp_save::{SaveData, save_with_map};
+use cp_save::SaveData;
+use cp_save::migrate::{SaveDataV5, encode_v5};
 use cp_sim::SimRunner;
 
 fn main() {
@@ -38,14 +40,27 @@ fn main() {
     for _ in 0..3 {
         sim.tick_once();
     }
-    let bytes = save_with_map(
-        &SaveData::capture(sim.world()),
+    let d = SaveData::capture(sim.world());
+    let v5 = SaveDataV5 {
+        tick: d.tick,
+        rng: d.rng,
+        speed: d.speed,
+        queue: d.queue,
+        log: d.log,
+        tiles: d.tiles,
+        net: d.net,
+        zones: d.zones,
+    };
+    let bytes = encode_v5(
+        &v5,
         0xC17F_0000_0000_0006,
         "flatlands",
         Some(0xABCD_0000_0000_0001),
     )
     .unwrap();
-    std::fs::create_dir_all("fixtures/saves").unwrap();
-    std::fs::write("fixtures/saves/v5-basic.sav", &bytes).unwrap();
-    println!("wrote {} bytes", bytes.len());
+    let out = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "fixtures/saves/v5-basic.sav".into());
+    std::fs::write(&out, &bytes).unwrap();
+    println!("wrote {} bytes to {out}", bytes.len());
 }

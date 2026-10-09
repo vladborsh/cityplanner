@@ -71,13 +71,24 @@ impl SimRunner {
         world.init_resource::<NetGraph>();
         world.init_resource::<JunctionGeometry>();
         world.init_resource::<cp_zone::ZoneGrid>();
+        world.init_resource::<cp_building::BuildingGrid>();
+        world.init_resource::<cp_building::DemandStub>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
         world
             .resource_mut::<SimChecksum>()
             .register("zone", crate::checksum::zone_part);
+        world
+            .resource_mut::<SimChecksum>()
+            .register("buildings", crate::checksum::building_part);
         world.init_resource::<crate::view::ArenaGauges>();
+        let building_cap = world.resource::<SimLimits>().buildings;
+        world
+            .resource_mut::<crate::view::ArenaGauges>()
+            .register("buildings", building_cap, |w| {
+                w.resource::<cp_building::BuildingGrid>().len()
+            });
 
         let mut schedule = Schedule::default();
         use SimPhase::*;
@@ -97,6 +108,7 @@ impl SimRunner {
                 .in_set(SimPhase::Network)
                 .after(cp_net::update_junctions),
         );
+        schedule.add_systems(cp_building::update_buildings.in_set(SimPhase::Buildings));
         schedule.add_systems(update_checksum.in_set(ChecksumSet));
         Self {
             world,

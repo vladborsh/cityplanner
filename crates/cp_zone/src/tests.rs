@@ -451,3 +451,37 @@ fn blocks_cover_only_the_extent_given_and_rebuild_when_it_changes() {
     });
     assert_eq!(w.grid.blocks_of(s), ids);
 }
+
+#[test]
+fn occupied_cells_are_invalid_until_released_and_cover_newer_blocks() {
+    let mut w = World::new();
+    // Two crossing roads: the later block overlaps the older one at the corners.
+    w.line("basic_2l", (3000.0, 3000.0), (3200.0, 3000.0));
+    w.line("basic_2l", (3100.0, 2900.0), (3100.0, 3100.0));
+    w.sync();
+    let (id, block) = w.grid.blocks().next().map(|(i, b)| (i, b.clone())).unwrap();
+    let cell = ZoneCellRef { block: id, cell: 0 };
+    assert!(block.valid[0] && !w.grid.is_occupied(cell));
+
+    let before = w.grid.valid_cells();
+    w.grid.occupy(&[cell]);
+    assert!(w.grid.is_occupied(cell) && !w.grid.is_valid(cell));
+    assert!(w.grid.valid_cells() < before);
+    w.grid.release(&[cell]);
+    assert!(w.grid.is_valid(cell));
+    assert_eq!(w.grid.valid_cells(), before);
+
+    // set_zone paints, and refuses cells that do not exist.
+    assert!(w.grid.set_zone(cell, cp_content::ZoneType::ResLow));
+    assert_eq!(
+        w.grid.block(id).unwrap().zones[0],
+        cp_content::ZoneType::ResLow
+    );
+    assert!(!w.grid.set_zone(
+        ZoneCellRef {
+            block: id,
+            cell: 9999
+        },
+        cp_content::ZoneType::ResLow
+    ));
+}

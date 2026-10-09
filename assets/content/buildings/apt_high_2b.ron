@@ -1,0 +1,12 @@
+// PLACEHOLDER numbers for balance tuning (T-028); see README.md.
+Building((
+    id: "apt_high_2b",
+    name: "Apt High L2b",
+    zone: ResHigh,
+    level: 2,
+    lot: (3, 2),
+    households: 12,
+    consumption: {Water: 7.2, Sewage: 7.2, Power: 12.6},
+    tax_base: 72.0,
+    style: (floors: 7, roof: Flat, palette: "city_concrete"),
+))

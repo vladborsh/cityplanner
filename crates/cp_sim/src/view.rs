@@ -186,11 +186,18 @@ mod tests {
         let v0 = sim.view();
         assert_eq!(
             v0.stats.arenas,
-            vec![ArenaFill {
-                name: "dummy",
-                used: 3,
-                capacity: 10
-            }]
+            vec![
+                ArenaFill {
+                    name: "buildings",
+                    used: 0,
+                    capacity: cp_core::SimLimits::desktop().buildings
+                },
+                ArenaFill {
+                    name: "dummy",
+                    used: 3,
+                    capacity: 10
+                }
+            ]
         );
         assert_eq!(
             (v0.stats.commands_pending, v0.stats.commands_applied),

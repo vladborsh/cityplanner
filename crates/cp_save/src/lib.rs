@@ -45,6 +45,7 @@ pub mod migrate;
 use std::io::Read;
 
 use bevy_ecs::world::World;
+use cp_building::BuildingGrid;
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
@@ -54,7 +55,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 5;
+pub const FORMAT_VERSION: u32 = 6;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -68,6 +69,8 @@ pub struct SaveData {
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
     pub zones: ZoneGrid,
+    /// Buildings (lots, state, access points). Added in v6.
+    pub buildings: BuildingGrid,
 }
 
 impl SaveData {
@@ -82,6 +85,7 @@ impl SaveData {
             tiles: *world.resource::<TileOwnership>(),
             net: world.resource::<NetGraph>().clone(),
             zones: world.resource::<ZoneGrid>().clone(),
+            buildings: world.resource::<BuildingGrid>().clone(),
         }
     }
 
@@ -100,7 +104,12 @@ impl SaveData {
         world.insert_resource(self.net);
         // Derived from the net; rebuilt by the Network phase.
         world.insert_resource(cp_net::JunctionGeometry::default());
-        world.insert_resource(self.zones);
+        // The saved `valid` masks already account for buildings; the occupancy set they
+        // derive from is rebuilt from the buildings themselves.
+        let mut zones = self.zones;
+        zones.set_occupied(self.buildings.occupied_cells());
+        world.insert_resource(zones);
+        world.insert_resource(self.buildings);
     }
 }
 

@@ -4,6 +4,7 @@
 //! never change (its postcard encoding is what old files contain; `SimCommand` and the
 //! domain enums are append-only for the same reason).
 
+use cp_building::BuildingGrid;
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
@@ -85,10 +86,39 @@ pub struct SaveDataV4 {
     pub net: NetGraph,
 }
 
+/// Version 5: the body as written by format 5 (zone state, before buildings).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV5 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+}
+
+/// v5 → v6: buildings were added; an old save has none (its zones keep their painted
+/// types and every valid cell is free).
+pub fn migrate_v5_to_v6(v5: SaveDataV5) -> SaveData {
+    SaveData {
+        tick: v5.tick,
+        rng: v5.rng,
+        speed: v5.speed,
+        queue: v5.queue,
+        log: v5.log,
+        tiles: v5.tiles,
+        net: v5.net,
+        zones: v5.zones,
+        buildings: BuildingGrid::default(),
+    }
+}
+
 /// v4 → v5: zone state was added; an old save starts with an empty [`ZoneGrid`] and the
 /// `Network` phase builds the blocks from the loaded road network on the first tick.
-pub fn migrate_v4_to_v5(v4: SaveDataV4) -> SaveData {
-    SaveData {
+pub fn migrate_v4_to_v5(v4: SaveDataV4) -> SaveDataV5 {
+    SaveDataV5 {
         tick: v4.tick,
         rng: v4.rng,
         speed: v4.speed,
@@ -127,16 +157,19 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         }
     }
     match version {
-        0 => Ok(migrate_v4_to_v5(migrate_v3_to_v4(migrate_v2_to_v3(
-            migrate_v0_to_v1(dec(body)?),
+        0 => Ok(migrate_v5_to_v6(migrate_v4_to_v5(migrate_v3_to_v4(
+            migrate_v2_to_v3(migrate_v0_to_v1(dec(body)?)),
         )))),
         // v1 and v2 share the same body; v2 only added the header CRC.
-        1 | 2 => Ok(migrate_v4_to_v5(migrate_v3_to_v4(migrate_v2_to_v3(dec(
+        1 | 2 => Ok(migrate_v5_to_v6(migrate_v4_to_v5(migrate_v3_to_v4(
+            migrate_v2_to_v3(dec(body)?),
+        )))),
+        3 => Ok(migrate_v5_to_v6(migrate_v4_to_v5(migrate_v3_to_v4(dec(
             body,
         )?)))),
-        3 => Ok(migrate_v4_to_v5(migrate_v3_to_v4(dec(body)?))),
-        4 => Ok(migrate_v4_to_v5(dec(body)?)),
-        5 => dec(body),
+        4 => Ok(migrate_v5_to_v6(migrate_v4_to_v5(dec(body)?))),
+        5 => Ok(migrate_v5_to_v6(dec(body)?)),
+        6 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -233,4 +266,16 @@ pub fn encode_v4(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v4).expect("serialization failed");
     crate::assemble(4, v4.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 5** file (zone state, no buildings). Legacy writer kept only to
+/// regenerate and test the v5 fixture; real saves always use [`crate::save`].
+pub fn encode_v5(
+    v5: &SaveDataV5,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v5).expect("serialization failed");
+    crate::assemble(5, v5.tick.0, &body, content_hash, map_id, map_hash)
 }

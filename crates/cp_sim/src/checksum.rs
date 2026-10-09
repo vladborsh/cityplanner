@@ -79,6 +79,11 @@ pub(crate) fn zone_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_zone::ZoneGrid>());
 }
 
+/// Checksum part of the buildings (`cp_building::BuildingGrid`).
+pub(crate) fn building_part(world: &World, h: &mut Fnv1a) {
+    h.write_serialized(world.resource::<cp_building::BuildingGrid>());
+}
+
 /// Checksum part of the road network (`cp_net::NetGraph`: arenas and dirty set).
 /// Registered by `SimRunner::new` — `cp_net` cannot depend on `cp_sim`, so built-in
 /// domains register here rather than through a `SimPlugin`.

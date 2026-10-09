@@ -1,0 +1,12 @@
+// PLACEHOLDER numbers for balance tuning (T-028); see README.md.
+Building((
+    id: "house_low_4",
+    name: "House Low L4",
+    zone: ResLow,
+    level: 4,
+    lot: (3, 3),
+    households: 5,
+    consumption: {Water: 4.3, Sewage: 4.3, Power: 8.5},
+    tax_base: 50.0,
+    style: (floors: 3, roof: Hipped, palette: "suburb_warm"),
+))
