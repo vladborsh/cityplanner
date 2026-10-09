@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Dependency guard (architecture/system-design.md §1, AGENTS.md "Simulation crates are headless").
-# Every crate up to and including cp_sim must not pull in rendering, windowing or UI crates.
+# Every crate up to and including cp_sim (and cp_save) must not pull in rendering, windowing,
+# UI or profiling (cp_prof) crates.
 # Sim crates = cp_sim, every workspace crate it depends on (transitively), and cp_save (above cp_sim).
 # Usage: scripts/check-sim-deps.sh [extra-banned-crate ...]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-BANNED=(bevy bevy_render bevy_pbr bevy_winit bevy_egui winit "$@")
+# cp_prof (phase timing, uses Instant) is a non-sim crate: sim crates must never depend on it.
+# Banning a name that is not in the workspace (yet) is harmless: matching is by exact name.
+BANNED=(bevy bevy_render bevy_pbr bevy_winit bevy_egui winit cp_prof "$@")
 
 # Package names in `cargo tree` output look like "name vX.Y.Z (/path)" for workspace members.
 tree() { cargo tree --target all --edges normal,build,dev --prefix none --format '{p}' "$@"; }
