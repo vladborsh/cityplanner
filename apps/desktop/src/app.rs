@@ -7,23 +7,16 @@
 //! window and prints the numbers the F3 window shows (for comparing with `cp_bench`).
 
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::PresentMode;
-use cp_core::Tick;
-use cp_core::time::TICKS_PER_DAY;
-use cp_prof::{PhaseClock, PhaseTiming};
-use cp_render::{RtsCamera, RtsCameraPlugin, TerrainRenderPlugin, TerrainStats};
-use cp_sim::SimPhase;
-use cp_sim::{SimRunner, SimView};
-use cp_terrain::{MAP_SIZE, Terrain};
-use cp_tools::CommandOutbox;
-use cp_ui::{PhaseTimes, UiPlugin};
+use cp_app::{GamePlugin, MapLoadFailed, phase_times};
+use cp_core::SimLimits;
+use cp_render::TerrainStats;
+use cp_sim::SimRunner;
 
 use crate::ASSETS_DIR;
 
@@ -59,9 +52,6 @@ impl Options {
 }
 
 #[derive(Resource)]
-struct Sim(SimRunner);
-
-#[derive(Resource)]
 struct Job {
     screenshot: Option<PathBuf>,
     bench_secs: Option<f32>,
@@ -69,33 +59,19 @@ struct Job {
     frame_ms: Vec<f32>,
 }
 
-/// Loads `assets/maps/<name>` into a fresh sim.
-pub fn load_sim(map: &str, hour: Option<f32>) -> Result<SimRunner, String> {
-    let dir = PathBuf::from(ASSETS_DIR).join("maps").join(map);
-    let terrain = Terrain::load(&dir).map_err(|e| format!("cannot load map '{map}': {e}"))?;
-    let mut sim = SimRunner::new(1);
-    sim.set_terrain(Arc::new(terrain));
-    let hour = hour.unwrap_or(10.0);
-    sim.world_mut()
-        .insert_resource(Tick((hour / 24.0 * TICKS_PER_DAY as f32) as u64));
-    Ok(sim)
-}
-
 pub fn run(opts: Options) {
-    let mut sim = match load_sim(&opts.map, opts.hour) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(2);
-        }
-    };
-    // Wall-clock phase timing for the F3 window; a bounded window so it never grows.
-    sim.add_plugin(&PhaseTiming::window(PHASE_WINDOW_TICKS));
+    let hour = opts.hour.unwrap_or(10.0);
     if let Some(ticks) = opts.headless {
-        headless(sim, ticks);
+        let dir = PathBuf::from(ASSETS_DIR).join("maps").join(&opts.map);
+        match cp_app::load_sim(&dir, SimLimits::desktop(), hour, true) {
+            Ok(sim) => headless(sim, ticks),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        }
         return;
     }
-    let (pos, look) = camera_pose(&opts.cam, sim.view().terrain.as_deref());
 
     let mut app = App::new();
     app.add_plugins(
@@ -119,87 +95,34 @@ pub fn run(opts: Options) {
             }),
     )
     .add_plugins((
-        TerrainRenderPlugin,
-        RtsCameraPlugin,
-        UiPlugin,
+        GamePlugin {
+            map: opts.map,
+            limits: SimLimits::desktop(),
+            hour,
+            cam: opts.cam,
+            // Wall-clock phase timing for the F3 window.
+            phase_timing: true,
+            ui: true,
+        },
         FrameTimeDiagnosticsPlugin::default(),
         RenderDiagnosticsPlugin,
     ))
-    .insert_resource(sim.view())
-    .insert_resource(phase_times(&sim))
-    .insert_resource(Sim(sim))
     .insert_resource(Job {
         screenshot: opts.screenshot,
         bench_secs: opts.bench,
         frame: 0,
         frame_ms: Vec::new(),
     })
-    .add_systems(Startup, move |mut commands: Commands| {
-        commands.spawn((
-            Camera3d::default(),
-            Projection::Perspective(PerspectiveProjection {
-                far: 40_000.0,
-                near: 1.0,
-                ..default()
-            }),
-            Transform::from_translation(pos).looking_at(look, Vec3::Y),
-            RtsCamera::from_pose(pos, look),
-        ));
-    })
-    .add_systems(PreUpdate, step_sim)
-    .add_systems(Update, job);
+    .add_systems(Update, (job, exit_on_load_failure));
     app.run();
 }
 
-/// Camera start poses for measuring. `overview` is the highest allowed view (4000 m).
-fn camera_pose(name: &str, terrain: Option<&Terrain>) -> (Vec3, Vec3) {
-    let c = MAP_SIZE / 2.0;
-    match name {
-        "ground" => {
-            let (x, z) = (5120.0, 5600.0);
-            let y = terrain.map_or(30.0, |t| t.height(Vec2::new(x, z))) + 60.0;
-            (Vec3::new(x, y, z), Vec3::new(x, y - 25.0, z - 800.0))
-        }
-        "valley" => (
-            Vec3::new(c, 1500.0, c + 2500.0),
-            Vec3::new(c, 0.0, c - 500.0),
-        ),
-        _ => (Vec3::new(c, 4000.0, c + 4200.0), Vec3::new(c, 0.0, c)),
+fn exit_on_load_failure(failed: Option<Res<MapLoadFailed>>, mut exit: MessageWriter<AppExit>) {
+    if let Some(f) = failed {
+        eprintln!("cannot load {}", f.0);
+        exit.write(AppExit::from_code(2));
     }
 }
-
-/// The single entry point for player input: UI and tools only fill the `CommandOutbox`;
-/// it is submitted here, before the frame's ticks, then the sim is stepped.
-fn step_sim(
-    time: Res<Time>,
-    mut sim: ResMut<Sim>,
-    mut outbox: ResMut<CommandOutbox>,
-    mut view: ResMut<SimView>,
-    mut phases: ResMut<PhaseTimes>,
-) {
-    let submitted = outbox.flush_into(&mut sim.0) > 0;
-    let ticks = sim.0.step(Duration::from_secs_f64(time.delta_secs_f64()));
-    if submitted || ticks > 0 {
-        *view = sim.0.view();
-    }
-    if ticks > 0 {
-        *phases = phase_times(&sim.0);
-    }
-}
-
-/// Median ms per phase over the last [`PHASE_WINDOW_TICKS`] ticks, as the F3 window shows it.
-fn phase_times(sim: &SimRunner) -> PhaseTimes {
-    let means = sim
-        .world()
-        .get_resource::<PhaseClock>()
-        .map(|c| c.median_ms())
-        .unwrap_or_default();
-    PhaseTimes {
-        phases: SimPhase::ORDER.into_iter().zip(means).collect(),
-    }
-}
-
-const PHASE_WINDOW_TICKS: usize = 256;
 
 /// `--headless N`: N ticks without a window, then the F3 window's numbers on stdout:
 /// the periodic checksum from `SimView`, an on-demand checksum, and median ms per phase.
@@ -231,9 +154,13 @@ fn job(
     diagnostics: Res<DiagnosticsStore>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    // The map loads through the asset server, so count frames from the first one that has
+    // terrain; then let LOD meshes, asset upload and shadows settle.
+    if stats.chunks == 0 {
+        return;
+    }
     job.frame += 1;
     let frame = job.frame;
-    // Let chunk generation, asset upload and shadows settle first.
     const WARMUP: u32 = 120;
     if let Some(path) = job.screenshot.clone()
         && job.bench_secs.is_none()
@@ -295,11 +222,17 @@ fn job(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cp_core::Tick;
+    use std::time::Duration;
+
+    fn dir(map: &str) -> PathBuf {
+        PathBuf::from(ASSETS_DIR).join("maps").join(map)
+    }
 
     #[test]
     fn both_maps_load_into_the_sim_and_reach_the_view() {
         for map in ["flatlands", "river_valley"] {
-            let mut sim = load_sim(map, Some(12.0)).unwrap();
+            let mut sim = cp_app::load_sim(&dir(map), SimLimits::desktop(), 12.0, true).unwrap();
             let v = sim.view();
             assert_eq!(v.terrain.as_ref().unwrap().meta().name, map);
             assert_eq!(v.game_time.hour(), 12);
@@ -308,12 +241,16 @@ mod tests {
             // PreUpdate stepping: one 50 ms frame at x1 is one tick.
             assert_eq!(sim.step(Duration::from_millis(50)), 1);
             assert_eq!(sim.view().tick, Tick(v.tick.0 + 1));
+            assert_eq!(
+                phase_times(&sim).phases.len(),
+                cp_sim::SimPhase::ORDER.len()
+            );
         }
     }
 
     #[test]
     fn unknown_map_is_an_error_not_a_panic() {
-        assert!(load_sim("nope", None).is_err());
+        assert!(cp_app::load_sim(&dir("nope"), SimLimits::desktop(), 10.0, false).is_err());
     }
 
     #[test]

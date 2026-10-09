@@ -87,7 +87,17 @@ jobs:
       - name: Add wasm32 target to the pinned toolchain
         run: rustup target add wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked -p cp_web --target wasm32-unknown-unknown
+      # Must equal the `wasm-bindgen` crate version in Cargo.lock (scripts/build-web.sh checks).
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.129
+      - name: Build the browser demo (dist/web)
+        run: scripts/build-web.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-demo
+          path: dist/web
+          if-no-files-found: error
 
   bench:
     name: bench (headless, regression gate)

@@ -13,10 +13,10 @@ disallowed_types = "allow"
 cp_sim.workspace = true
 cp_core.workspace = true
 cp_terrain.workspace = true
+cp_app.workspace = true
 cp_render.workspace = true
 cp_tools.workspace = true
 cp_ui.workspace = true
-cp_prof.workspace = true
 # Rendering features are enabled here only; sim crates never see them.
 bevy = { workspace = true, features = ["3d"] }
 

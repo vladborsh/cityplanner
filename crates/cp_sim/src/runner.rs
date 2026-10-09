@@ -57,13 +57,19 @@ fn multiplier(speed: SimSpeed) -> u128 {
 impl SimRunner {
     /// A fresh sim with the given seed, desktop limits, speed ×1 and tick 0.
     pub fn new(seed: u64) -> Self {
+        Self::with_limits(seed, SimLimits::desktop())
+    }
+
+    /// Like [`SimRunner::new`] with explicit capacities, e.g. `SimLimits::wasm()` for the
+    /// browser build (system-design §3, §15).
+    pub fn with_limits(seed: u64, limits: SimLimits) -> Self {
         // `par_iter` in sim systems needs the global compute pool; initialise it here so
         // headless runs (tests, bench) work. Idempotent; apps that set it up first win.
         ComputeTaskPool::get_or_init(TaskPool::default);
         let mut world = World::new();
         init_command_resources(&mut world);
         world.insert_resource(SimRng::seed_from_u64(seed));
-        world.insert_resource(SimLimits::desktop());
+        world.insert_resource(limits);
         // Nothing owned until a map is set (`set_terrain`) or a save is restored; keeps
         // the checksum and `SimView` readers valid on a terrain-less sim.
         world.insert_resource(TileOwnership::none());
@@ -256,6 +262,14 @@ mod tests {
         let mut sim = SimRunner::new(1);
         sim.world_mut().insert_resource(speed);
         (0..frames).map(|_| u64::from(sim.step(dt))).sum()
+    }
+
+    #[test]
+    fn with_limits_sets_the_capacity_resource() {
+        let sim = SimRunner::with_limits(1, SimLimits::wasm());
+        assert_eq!(*sim.world().resource::<SimLimits>(), SimLimits::wasm());
+        let sim = SimRunner::new(1);
+        assert_eq!(*sim.world().resource::<SimLimits>(), SimLimits::desktop());
     }
 
     #[test]

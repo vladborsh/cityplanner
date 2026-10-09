@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cityplanner</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b1220; color: #cfd8e6;
+                 font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+    #game { position: fixed; inset: 0; }
+    #bevy { width: 100%; height: 100%; display: block; outline: none; }
+    #status { position: fixed; inset: 0; display: flex; flex-direction: column;
+              align-items: center; justify-content: center; gap: 8px; pointer-events: none; }
+    #status.done { display: none; }
+    #status.error { color: #ff9b9b; }
+    #help { position: fixed; left: 12px; bottom: 44px; padding: 6px 10px; border-radius: 6px;
+            background: rgba(11, 18, 32, .7); font-size: 12px; pointer-events: none; }
+    #help a { color: #8ab4ff; pointer-events: auto; }
+  </style>
+</head>
+<body>
+  <div id="game"><canvas id="bevy" tabindex="0"></canvas></div>
+  <div id="status"><strong>cityplanner</strong><span id="msg">Loading…</span></div>
+  <div id="help">
+    WASD / middle-drag pan · Q/E or right-drag rotate · wheel zoom ·
+    maps: <a href="?map=flatlands">flatlands</a> · <a href="?map=river_valley">river_valley</a>
+  </div>
+  <script type="module">
+    import init from "./cp_web.js";
+    const status = document.getElementById("status");
+    const msg = document.getElementById("msg");
+    const canvas = document.getElementById("bevy");
+    // The Bevy loop starts once the module is instantiated; hide the splash on first frame.
+    const hide = () => status.classList.add("done");
+    new MutationObserver(hide).observe(canvas, { attributes: true });
+    setTimeout(hide, 600000);
+    try {
+      await init();
+    } catch (e) {
+      // winit unwinds out of `run()` on purpose; that is not an error.
+      if (!String(e).includes("Using exceptions for control flow")) {
+        status.classList.add("error");
+        msg.textContent = "Failed to start: " + e;
+        console.error(e);
+      }
+    }
+    // Chunk generation and asset loading continue after init; drop the splash shortly after.
+    setTimeout(hide, 1500);
+  </script>
+</body>
+</html>

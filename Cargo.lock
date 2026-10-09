@@ -860,8 +860,6 @@ dependencies = [
 [[package]]
 name = "bevy_egui"
 version = "0.43.0-rc.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbe6b787e38d9e781225ba76c86ef8542325cb36058f0a2d6f6bfba23dba88ae"
 dependencies = [
  "bevy_app",
  "bevy_asset",
@@ -2399,6 +2397,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cp_app"
+version = "0.0.0"
+dependencies = [
+ "bevy",
+ "cp_core",
+ "cp_prof",
+ "cp_render",
+ "cp_sim",
+ "cp_terrain",
+ "cp_tools",
+ "cp_ui",
+]
+
+[[package]]
 name = "cp_bench"
 version = "0.0.0"
 dependencies = [
@@ -2462,8 +2474,8 @@ name = "cp_desktop"
 version = "0.0.0"
 dependencies = [
  "bevy",
+ "cp_app",
  "cp_core",
- "cp_prof",
  "cp_render",
  "cp_sim",
  "cp_terrain",
@@ -2619,10 +2631,13 @@ name = "cp_web"
 version = "0.0.0"
 dependencies = [
  "bevy",
+ "cp_app",
+ "cp_core",
  "cp_render",
  "cp_sim",
  "cp_tools",
  "cp_ui",
+ "web-sys",
 ]
 
 [[package]]
