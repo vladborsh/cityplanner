@@ -17,3 +17,6 @@ cp_save.workspace = true
 bevy_ecs.workspace = true
 serde.workspace = true
 serde_json = "1"
+
+[dev-dependencies]
+cp_core.workspace = true
