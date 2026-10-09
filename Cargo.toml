@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.lints.clippy]
+# Denied per sim crate via #![deny] in its lib.rs; see clippy.toml.
+disallowed_types = "allow"
+
+[workspace.dependencies]
+# Bevy is pinned here and only here. A version bump is its own task.
+bevy = { version = "=0.20.0", default-features = false }
+bevy_app = { version = "=0.20.0", default-features = false }
+bevy_ecs = { version = "=0.20.0", default-features = false }
+bevy_math = { version = "=0.20.0", default-features = false, features = ["std"] }
+bevy_reflect = { version = "=0.20.0", default-features = false }
+bevy_utils = { version = "=0.20.0", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive"] }
+
+cp_core = { path = "crates/cp_core" }
+cp_content = { path = "crates/cp_content" }
+cp_terrain = { path = "crates/cp_terrain" }
+cp_net = { path = "crates/cp_net" }
+cp_zone = { path = "crates/cp_zone" }
+cp_building = { path = "crates/cp_building" }
+cp_citizen = { path = "crates/cp_citizen" }
+cp_traffic = { path = "crates/cp_traffic" }
+cp_utility = { path = "crates/cp_utility" }
+cp_economy = { path = "crates/cp_economy" }
+cp_save = { path = "crates/cp_save" }
+cp_sim = { path = "crates/cp_sim" }
+cp_render = { path = "crates/cp_render" }
+cp_tools = { path = "crates/cp_tools" }
+cp_ui = { path = "crates/cp_ui" }

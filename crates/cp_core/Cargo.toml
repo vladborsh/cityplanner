@@ -1,0 +1,14 @@
+[package]
+name = "cp_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy_ecs.workspace = true
+bevy_math.workspace = true
+serde.workspace = true

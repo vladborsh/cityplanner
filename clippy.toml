@@ -1,0 +1,6 @@
+# Enforced in sim crates through `#![deny(clippy::disallowed_types)]` in their lib.rs.
+# Iteration order of hash containers is not deterministic; use BTreeMap/IndexMap/sorted Vecs.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "non-deterministic iteration; use BTreeMap or IndexMap" },
+    { path = "std::collections::HashSet", reason = "non-deterministic iteration; use BTreeSet or sorted Vec" },
+]

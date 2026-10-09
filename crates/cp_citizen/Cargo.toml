@@ -1,0 +1,12 @@
+[package]
+name = "cp_citizen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+cp_building.workspace = true

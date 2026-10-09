@@ -1,0 +1,13 @@
+[package]
+name = "cp_utility"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+cp_net.workspace = true
+cp_building.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "cp_bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+cp_sim.workspace = true
