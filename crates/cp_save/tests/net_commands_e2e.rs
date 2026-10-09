@@ -140,7 +140,17 @@ fn builds_a_5x5_grid_then_upgrades_and_removes() {
     let (segs, nodes) = (g.segment_count(), g.node_count());
     // Pieces are at most 96 m, so every 100 m block is cut at least once.
     assert!(segs >= 40, "{segs}");
-    assert!(g.dirty_nodes().count() >= 25, "junction recompute input");
+    // The Network phase (T-019) consumed the dirty set: every node has junction geometry
+    // and nothing is left dirty. The 9 interior junctions have 4 arms.
+    assert_eq!(
+        g.dirty_nodes().count(),
+        0,
+        "dirty set is drained by the Network phase"
+    );
+    let geo = sim.world().resource::<cp_net::JunctionGeometry>();
+    assert_eq!(geo.len(), g.node_count());
+    let four_arm = geo.iter().filter(|(_, j)| j.arms.len() == 4).count();
+    assert_eq!(four_arm, 9);
 
     let seg = first_segment(&g);
     let lanes_before = g.segment(seg).unwrap().lanes.len();

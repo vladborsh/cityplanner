@@ -18,3 +18,4 @@ serde.workspace = true
 
 [dev-dependencies]
 postcard.workspace = true
+proptest.workspace = true

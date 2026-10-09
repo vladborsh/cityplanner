@@ -12,6 +12,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use cp_content::{ContentDb, SimContent};
 use cp_core::{CommandLog, CommandQueue, GameTime, SimSpeed, Tick};
+use cp_net::JunctionGeometry;
 pub use cp_terrain::SimTerrain;
 use cp_terrain::{Terrain, TileOwnership};
 
@@ -65,6 +66,10 @@ pub struct SimView {
     /// Which tiles the player owns (client camera bounds, build-area overlays).
     pub tiles: TileOwnership,
     pub stats: SimStats,
+    /// Derived junction geometry (shortened-segment cut points and polygons) for mesh
+    /// building. Compare `junctions.version()` with the last built version; junctions with a
+    /// greater `revision` need a rebuild, ids that vanished from the map were removed.
+    pub junctions: JunctionGeometry,
 }
 
 impl SimRunner {
@@ -107,6 +112,11 @@ impl SimRunner {
                 .copied()
                 .unwrap_or_default(),
             stats: self.stats(),
+            junctions: self
+                .world()
+                .get_resource::<JunctionGeometry>()
+                .cloned()
+                .unwrap_or_default(),
         }
     }
 
@@ -228,5 +238,48 @@ mod tests {
         sim.world_mut().insert_resource(TileOwnership::only((4, 4)));
         sim.set_terrain(flat_terrain_at((0, 0)));
         assert_eq!(sim.view().tiles, TileOwnership::only((4, 4)));
+    }
+
+    #[test]
+    fn view_carries_junction_geometry_after_the_network_phase() {
+        use bevy_math::Vec3;
+        use cp_core::curve::CubicBezier3;
+        use cp_net::{Elevation, NetGraph};
+
+        let db = cp_content::ContentDb::load_dir(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/content"
+        ))
+        .unwrap();
+        let road = db.road_id("basic_2l").unwrap();
+        let def = db.road(road).clone();
+        let mut sim = SimRunner::new(1);
+        assert!(sim.view().junctions.is_empty());
+        {
+            let mut g = sim.world_mut().resource_mut::<NetGraph>();
+            for tip in [Vec3::new(80.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 80.0)] {
+                g.add_segment(
+                    &def,
+                    road,
+                    CubicBezier3::line(Vec3::ZERO, tip),
+                    Elevation::Ground,
+                )
+                .unwrap();
+            }
+        }
+        sim.tick_once();
+        let v = sim.view();
+        assert_eq!(v.junctions.len(), 3);
+        assert_eq!(v.junctions.version(), 1);
+        let corner = v
+            .junctions
+            .iter()
+            .map(|(_, j)| j)
+            .find(|j| j.arms.len() == 2)
+            .unwrap();
+        assert_eq!(corner.polygon.len(), 4);
+        // A quiet tick changes nothing; the snapshot shares its data.
+        sim.tick_once();
+        assert_eq!(sim.view().junctions.version(), 1);
     }
 }

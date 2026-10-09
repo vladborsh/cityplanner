@@ -2493,6 +2493,7 @@ dependencies = [
  "cp_core",
  "cp_terrain",
  "postcard",
+ "proptest",
  "serde",
 ]
 

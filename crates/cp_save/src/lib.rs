@@ -94,6 +94,8 @@ impl SaveData {
         }
         world.insert_resource(self.tiles);
         world.insert_resource(self.net);
+        // Derived from the net; rebuilt by the Network phase.
+        world.insert_resource(cp_net::JunctionGeometry::default());
     }
 }
 
@@ -682,6 +684,61 @@ mod tests {
         assert_eq!(fresh.world().resource::<NetGraph>().segment_count(), 2);
         assert_eq!(fresh.checksum(), before);
         assert_eq!(save_runner(&fresh, HASH, "m").unwrap(), bytes);
+    }
+
+    #[test]
+    fn restore_discards_stale_junction_geometry_and_it_is_rebuilt() {
+        use bevy_math::Vec3;
+        use cp_content::ContentDb;
+        use cp_core::curve::CubicBezier3;
+        use cp_net::{Elevation, JunctionGeometry};
+
+        let db = ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content"))
+            .unwrap();
+        let road = db.road_id("basic_2l").unwrap();
+        let def = db.road(road).clone();
+        let mut a = SimRunner::new(1);
+        {
+            let mut g = a.world_mut().resource_mut::<NetGraph>();
+            g.add_segment(
+                &def,
+                road,
+                CubicBezier3::line(Vec3::ZERO, Vec3::new(60.0, 0.0, 0.0)),
+                Elevation::Ground,
+            )
+            .unwrap();
+        }
+        a.tick_once();
+        assert_eq!(a.world().resource::<JunctionGeometry>().len(), 2);
+        let bytes = save_runner(&a, HASH, "m").unwrap();
+
+        // A runner with unrelated geometry: loading must replace it, then rebuild from the net.
+        let mut b = SimRunner::new(2);
+        {
+            let mut g = b.world_mut().resource_mut::<NetGraph>();
+            for tip in [Vec3::new(0.0, 0.0, 50.0), Vec3::new(50.0, 0.0, 0.0)] {
+                g.add_segment(
+                    &def,
+                    road,
+                    CubicBezier3::line(Vec3::new(9.0, 0.0, 9.0), tip + Vec3::new(9.0, 0.0, 9.0)),
+                    Elevation::Ground,
+                )
+                .unwrap();
+            }
+        }
+        b.tick_once();
+        assert_eq!(b.world().resource::<JunctionGeometry>().len(), 3);
+        load_into_runner(&mut b, &bytes, HASH).unwrap();
+        assert!(b.world().resource::<JunctionGeometry>().is_empty());
+        b.tick_once();
+        let geo = b.world().resource::<JunctionGeometry>();
+        assert_eq!(geo.len(), 2);
+        // Same geometry as the original runner computes for the same net.
+        let ga = a.world().resource::<JunctionGeometry>();
+        for (id, j) in geo.iter() {
+            assert_eq!(j.arms.len(), ga.get(*id).unwrap().arms.len());
+            assert_eq!(j.polygon, ga.get(*id).unwrap().polygon);
+        }
     }
 
     #[test]

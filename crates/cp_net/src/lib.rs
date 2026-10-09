@@ -3,6 +3,7 @@
 pub mod build;
 pub mod command;
 pub mod graph;
+pub mod junction;
 pub mod model;
 
 pub use build::{
@@ -12,6 +13,7 @@ pub use build::{
 };
 pub use command::{NetCommand, NetError, apply};
 pub use graph::{MIN_SEGMENT_LENGTH, NODE_REUSE_EPS, NetGraph, NetOpError, SplitResult};
+pub use junction::{Arm, Junction, JunctionGeometry, compute_junction, update_junctions};
 pub use model::*;
 
 /// Crate name, used by the skeleton smoke test.

@@ -23,7 +23,7 @@ use bevy_ecs::world::World;
 use bevy_tasks::{ComputeTaskPool, TaskPool};
 use cp_core::time::TICK_MILLIS;
 use cp_core::{CommandId, CommandOutcome, CommandQueue, SimLimits, SimRng, SimSpeed, Tick};
-use cp_net::NetGraph;
+use cp_net::{JunctionGeometry, NetGraph};
 use cp_terrain::TileOwnership;
 
 use crate::checksum::{SimChecksum, update_checksum};
@@ -69,6 +69,7 @@ impl SimRunner {
         world.insert_resource(TileOwnership::none());
         world.init_resource::<SimChecksum>();
         world.init_resource::<NetGraph>();
+        world.init_resource::<JunctionGeometry>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
@@ -85,6 +86,7 @@ impl SimRunner {
             ChecksumSet.after(Stats),
         ));
         schedule.add_systems(dispatch_commands.in_set(SimPhase::Commands));
+        schedule.add_systems(cp_net::update_junctions.in_set(SimPhase::Network));
         schedule.add_systems(update_checksum.in_set(ChecksumSet));
         Self {
             world,
