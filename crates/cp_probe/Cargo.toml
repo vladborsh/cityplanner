@@ -1,0 +1,12 @@
+[package]
+name = "cp_probe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy_render = { version = "=0.20.0", default-features = false }

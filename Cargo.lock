@@ -2497,6 +2497,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cp_probe"
+version = "0.0.0"
+dependencies = [
+ "bevy_render",
+]
+
+[[package]]
 name = "cp_prof"
 version = "0.0.0"
 dependencies = [
