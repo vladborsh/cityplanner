@@ -52,12 +52,13 @@ use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
 use cp_terrain::TileOwnership;
 use cp_traffic::SavedPaths;
+use cp_utility::UtilityGraph;
 use cp_zone::ZoneGrid;
 use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 8;
+pub const FORMAT_VERSION: u32 = 9;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -79,6 +80,8 @@ pub struct SaveData {
     /// flag). Added in v8; see `cp_traffic::service` for why this makes load + N ticks equal
     /// the continuous run.
     pub paths: SavedPaths,
+    /// Pipe and power-line networks. Added in v9.
+    pub utilities: UtilityGraph,
 }
 
 impl SaveData {
@@ -96,6 +99,7 @@ impl SaveData {
             buildings: world.resource::<BuildingGrid>().clone(),
             citizens: world.resource::<CitizenGrid>().clone(),
             paths: world.resource::<cp_traffic::PathService>().export(),
+            utilities: world.resource::<UtilityGraph>().clone(),
         }
     }
 
@@ -123,6 +127,7 @@ impl SaveData {
         world.insert_resource(self.buildings);
         // Occupancy tables are derived; the citizen system rebuilds them on its next run.
         world.insert_resource(self.citizens);
+        world.insert_resource(self.utilities);
         // Requests in flight continue after the load: re-launched on the snapshot rebuilt from
         // the restored net, which only counts as a network change if the net differs.
         world

@@ -252,7 +252,7 @@ fn v7_fixture_migrates_with_no_requests_and_the_frozen_writer_reproduces_it() {
 
     // Re-saving writes v8 and round-trips; the old save runs and serves requests.
     let v8 = save(d, h.content_hash, &h.map_id).unwrap();
-    assert_eq!(read_header(&v8).unwrap().0.format_version, 8);
+    assert_eq!(read_header(&v8).unwrap().0.format_version, FORMAT_VERSION);
     assert_eq!(load(&v8, h.content_hash).unwrap().data, *d);
     let mut sim = runner(1);
     l.data.clone().restore(sim.world_mut());

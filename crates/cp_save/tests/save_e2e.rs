@@ -472,7 +472,6 @@ fn every_fixture_v0_to_v3_loads_keeps_its_ownership_and_resaves_as_v4() {
         // Re-save is the current version (v7 since T-031) and a fixed point.
         let a = save(&plain.data, h.content_hash, &h.map_id).unwrap();
         assert_eq!(read_header(&a).unwrap().0.format_version, FORMAT_VERSION);
-        assert_eq!(FORMAT_VERSION, 8); // bumped with the v8 (pending path requests) format
         let b = save(
             &load(&a, h.content_hash).unwrap().data,
             h.content_hash,

@@ -11,6 +11,7 @@ use cp_net::NetGraph;
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
 use cp_traffic::SavedPaths;
+use cp_utility::UtilityGraph;
 use cp_zone::ZoneGrid;
 use serde::{Deserialize, Serialize};
 
@@ -130,10 +131,44 @@ pub struct SaveDataV7 {
     pub citizens: CitizenGrid,
 }
 
+/// Version 8: the body as written by format 8 (pending path requests, before utilities).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV8 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+}
+
+/// v8 → v9: the utility networks (pipes, power lines) were added; an old save has none.
+pub fn migrate_v8_to_v9(v8: SaveDataV8) -> SaveData {
+    SaveData {
+        tick: v8.tick,
+        rng: v8.rng,
+        speed: v8.speed,
+        queue: v8.queue,
+        log: v8.log,
+        tiles: v8.tiles,
+        net: v8.net,
+        zones: v8.zones,
+        buildings: v8.buildings,
+        citizens: v8.citizens,
+        paths: v8.paths,
+        utilities: UtilityGraph::default(),
+    }
+}
+
 /// v7 → v8: pending path requests were added; an old save has none in flight and the next
 /// request id restarts at 0.
-pub fn migrate_v7_to_v8(v7: SaveDataV7) -> SaveData {
-    SaveData {
+pub fn migrate_v7_to_v8(v7: SaveDataV7) -> SaveDataV8 {
+    SaveDataV8 {
         tick: v7.tick,
         rng: v7.rng,
         speed: v7.speed,
@@ -222,28 +257,58 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
             Err(SaveError::Decode("trailing bytes after save body".into()))
         }
     }
+    // One linear chain: every arm decodes its version's body and then applies each
+    // remaining `migrate_vN_to_vN1` step in order.
     match version {
-        0 => Ok(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(
-            migrate_v4_to_v5(migrate_v3_to_v4(migrate_v2_to_v3(migrate_v0_to_v1(dec(
-                body,
-            )?)))),
-        )))),
+        0 => {
+            let v = migrate_v0_to_v1(dec(body)?);
+            let v = migrate_v2_to_v3(v);
+            let v = migrate_v3_to_v4(v);
+            let v = migrate_v4_to_v5(v);
+            let v = migrate_v5_to_v6(v);
+            let v = migrate_v6_to_v7(v);
+            let v = migrate_v7_to_v8(v);
+            Ok(migrate_v8_to_v9(v))
+        }
         // v1 and v2 share the same body; v2 only added the header CRC.
-        1 | 2 => Ok(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(
-            migrate_v4_to_v5(migrate_v3_to_v4(migrate_v2_to_v3(dec(body)?))),
-        )))),
-        3 => Ok(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(
-            migrate_v4_to_v5(migrate_v3_to_v4(dec(body)?)),
-        )))),
-        4 => Ok(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(
-            migrate_v4_to_v5(dec(body)?),
-        )))),
-        5 => Ok(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(dec(
-            body,
-        )?)))),
-        6 => Ok(migrate_v7_to_v8(migrate_v6_to_v7(dec(body)?))),
-        7 => Ok(migrate_v7_to_v8(dec(body)?)),
-        8 => dec(body),
+        1 | 2 => {
+            let v = migrate_v2_to_v3(dec(body)?);
+            let v = migrate_v3_to_v4(v);
+            let v = migrate_v4_to_v5(v);
+            let v = migrate_v5_to_v6(v);
+            let v = migrate_v6_to_v7(v);
+            let v = migrate_v7_to_v8(v);
+            Ok(migrate_v8_to_v9(v))
+        }
+        3 => {
+            let v = migrate_v3_to_v4(dec(body)?);
+            let v = migrate_v4_to_v5(v);
+            let v = migrate_v5_to_v6(v);
+            let v = migrate_v6_to_v7(v);
+            let v = migrate_v7_to_v8(v);
+            Ok(migrate_v8_to_v9(v))
+        }
+        4 => {
+            let v = migrate_v4_to_v5(dec(body)?);
+            let v = migrate_v5_to_v6(v);
+            let v = migrate_v6_to_v7(v);
+            let v = migrate_v7_to_v8(v);
+            Ok(migrate_v8_to_v9(v))
+        }
+        5 => {
+            let v = migrate_v5_to_v6(dec(body)?);
+            let v = migrate_v6_to_v7(v);
+            let v = migrate_v7_to_v8(v);
+            Ok(migrate_v8_to_v9(v))
+        }
+        6 => {
+            let v = migrate_v6_to_v7(dec(body)?);
+            let v = migrate_v7_to_v8(v);
+            Ok(migrate_v8_to_v9(v))
+        }
+        7 => Ok(migrate_v8_to_v9(migrate_v7_to_v8(dec(body)?))),
+        8 => Ok(migrate_v8_to_v9(dec(body)?)),
+        9 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -376,4 +441,16 @@ pub fn encode_v7(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v7).expect("serialization failed");
     crate::assemble(7, v7.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 8** file (pending path requests, no utilities). Legacy writer kept
+/// only to (re)generate and test the v8 fixture; real saves always use [`crate::save`].
+pub fn encode_v8(
+    v8: &SaveDataV8,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v8).expect("serialization failed");
+    crate::assemble(8, v8.tick.0, &body, content_hash, map_id, map_hash)
 }
