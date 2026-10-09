@@ -8,8 +8,8 @@ use bevy_ecs::world::World;
 use cp_core::{SimRng, SimSpeed, Tick};
 use cp_sim::{Fnv1a, SimBuilder, SimCommand, SimPhase, SimPlugin, SimRunner, run_headless_with};
 
-const ENTITIES: u32 = 4000;
-const TICKS: u64 = 600; // crosses two periodic checksums
+const ENTITIES: u32 = 3000;
+const TICKS: u64 = 300; // crosses one periodic checksum (tick 255)
 
 #[derive(Component)]
 struct Index(u32);

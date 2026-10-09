@@ -20,6 +20,7 @@ use std::time::Duration;
 use bevy_ecs::message::Messages;
 use bevy_ecs::schedule::{IntoScheduleConfigs, Schedule, SystemSet};
 use bevy_ecs::world::World;
+use bevy_tasks::{ComputeTaskPool, TaskPool};
 use cp_core::time::TICK_MILLIS;
 use cp_core::{CommandId, CommandOutcome, CommandQueue, SimLimits, SimRng, SimSpeed, Tick};
 
@@ -54,6 +55,9 @@ fn multiplier(speed: SimSpeed) -> u128 {
 impl SimRunner {
     /// A fresh sim with the given seed, desktop limits, speed ×1 and tick 0.
     pub fn new(seed: u64) -> Self {
+        // `par_iter` in sim systems needs the global compute pool; initialise it here so
+        // headless runs (tests, bench) work. Idempotent; apps that set it up first win.
+        ComputeTaskPool::get_or_init(TaskPool::default);
         let mut world = World::new();
         init_command_resources(&mut world);
         world.insert_resource(SimRng::seed_from_u64(seed));

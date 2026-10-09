@@ -2457,6 +2457,7 @@ name = "cp_sim"
 version = "0.0.0"
 dependencies = [
  "bevy_ecs",
+ "bevy_tasks",
  "cp_building",
  "cp_citizen",
  "cp_content",

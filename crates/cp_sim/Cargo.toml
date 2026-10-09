@@ -22,6 +22,7 @@ cp_economy.workspace = true
 bevy_ecs.workspace = true
 serde.workspace = true
 postcard.workspace = true
+bevy_tasks.workspace = true
 
 [dev-dependencies]
 # Real worker threads for the par_iter determinism test (feature only, no new crate).
