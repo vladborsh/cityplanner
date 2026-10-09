@@ -1,17 +1,18 @@
 //! `desktop` app skeleton.
 
 mod app;
+mod capture;
 mod gallery;
 
 /// The repo's `assets/` directory.
 pub const ASSETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
 
-fn main() {
+fn main() -> bevy::app::AppExit {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--gallery") {
-        gallery::run();
+        gallery::run()
     } else {
-        app::run(app::Options::parse(&args));
+        app::run(app::Options::parse(&args))
     }
 }
 

@@ -9,9 +9,9 @@
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
 use crate::ASSETS_DIR;
+use crate::capture::{Capture, CapturePlugin};
 
 /// Rows in display order, with the spacing between models in that row.
 const CATEGORIES: [(&str, f32); 4] = [
@@ -65,34 +65,31 @@ pub fn layout(entries: &[Entry]) -> Vec<Vec3> {
     out
 }
 
-#[derive(Resource)]
-struct ScreenshotJob {
-    path: PathBuf,
-    frames: u32,
-}
+/// Scene handles still to be loaded before the gallery is photographed.
+#[derive(Resource, Default)]
+struct Loading(Vec<Handle<WorldAsset>>);
 
-pub fn run() {
+pub fn run() -> AppExit {
     let args: Vec<String> = std::env::args().collect();
     let screenshot = args
         .iter()
         .position(|a| a == "--screenshot")
         .and_then(|i| args.get(i + 1))
-        .map(|p| ScreenshotJob {
-            path: PathBuf::from(p),
-            frames: 0,
-        });
+        .map(PathBuf::from);
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(AssetPlugin {
         file_path: ASSETS_DIR.into(),
         ..default()
     }))
+    .init_resource::<Loading>()
     .add_systems(Startup, setup);
-    if let Some(job) = screenshot {
-        app.insert_resource(job)
-            .add_systems(Update, take_screenshot);
+    if let Some(path) = screenshot {
+        app.add_plugins(CapturePlugin)
+            .insert_resource(Capture::new(path))
+            .add_systems(Update, arm_when_loaded);
     }
-    app.run();
+    app.run()
 }
 
 fn setup(
@@ -100,11 +97,13 @@ fn setup(
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut loading: ResMut<Loading>,
 ) {
     let entries = discover(Path::new(ASSETS_DIR));
     let positions = layout(&entries);
     for (entry, pos) in entries.iter().zip(&positions) {
         let scene = assets.load(GltfAssetLabel::Scene(0).from_asset(entry.asset_path.clone()));
+        loading.0.push(scene.clone());
         commands.spawn((WorldAssetRoot(scene), Transform::from_translation(*pos)));
     }
 
@@ -126,19 +125,26 @@ fn setup(
     ));
 }
 
-/// Waits for assets to load, saves one screenshot, then exits.
-fn take_screenshot(
-    mut commands: Commands,
-    mut job: ResMut<ScreenshotJob>,
-    mut exit: MessageWriter<AppExit>,
+/// Arms the capture once every model is loaded, plus a few frames to render and settle.
+/// (`capture` then retries blank frames and ends the app.)
+fn arm_when_loaded(
+    assets: Res<AssetServer>,
+    loading: Res<Loading>,
+    mut capture: ResMut<Capture>,
+    mut settled: Local<u32>,
 ) {
-    job.frames += 1;
-    if job.frames == 180 {
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(job.path.clone()));
-    } else if job.frames == 240 {
-        exit.write(AppExit::Success);
+    if capture.is_active() {
+        return;
+    }
+    if loading
+        .0
+        .iter()
+        .all(|h| assets.is_loaded_with_dependencies(h))
+    {
+        *settled += 1;
+        if *settled >= 90 {
+            capture.arm();
+        }
     }
 }
 

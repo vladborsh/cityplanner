@@ -11,7 +11,6 @@ use std::path::PathBuf;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
-use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::PresentMode;
 use cp_app::{GamePlugin, MapLoadFailed, phase_times};
 use cp_core::SimLimits;
@@ -19,6 +18,7 @@ use cp_render::{RoadStats, TerrainStats};
 use cp_sim::SimRunner;
 
 use crate::ASSETS_DIR;
+use crate::capture::{Capture, CapturePlugin};
 
 pub struct Options {
     pub map: String,
@@ -55,13 +55,16 @@ impl Options {
 
 #[derive(Resource)]
 struct Job {
-    screenshot: Option<PathBuf>,
+    /// A screenshot was requested (see `capture`).
+    screenshot: bool,
+    /// The benchmark report was printed.
+    done: bool,
     bench_secs: Option<f32>,
     frame: u32,
     frame_ms: Vec<f32>,
 }
 
-pub fn run(opts: Options) {
+pub fn run(opts: Options) -> AppExit {
     let hour = opts.hour.unwrap_or(10.0);
     if let Some(ticks) = opts.headless {
         let dir = PathBuf::from(ASSETS_DIR).join("maps").join(&opts.map);
@@ -72,13 +75,15 @@ pub fn run(opts: Options) {
             true,
             opts.scene.as_deref(),
         ) {
-            Ok(sim) => headless(sim, ticks),
+            Ok(sim) => {
+                headless(sim, ticks);
+                return AppExit::Success;
+            }
             Err(e) => {
                 eprintln!("{e}");
                 std::process::exit(2);
             }
         }
-        return;
     }
 
     let mut app = App::new();
@@ -116,14 +121,19 @@ pub fn run(opts: Options) {
         FrameTimeDiagnosticsPlugin::default(),
         RenderDiagnosticsPlugin,
     ))
+    .add_plugins(CapturePlugin)
     .insert_resource(Job {
-        screenshot: opts.screenshot,
+        screenshot: opts.screenshot.is_some(),
+        done: false,
         bench_secs: opts.bench,
         frame: 0,
         frame_ms: Vec::new(),
     })
     .add_systems(Update, (job, exit_on_load_failure));
-    app.run();
+    if let Some(path) = opts.screenshot {
+        app.insert_resource(Capture::new(path));
+    }
+    app.run()
 }
 
 fn exit_on_load_failure(failed: Option<Res<MapLoadFailed>>, mut exit: MessageWriter<AppExit>) {
@@ -156,14 +166,17 @@ fn headless(mut sim: SimRunner, ticks: u64) {
 
 /// Screenshot and benchmark driver.
 fn job(
-    mut commands: Commands,
     mut job: ResMut<Job>,
     time: Res<Time<Real>>,
     stats: Res<TerrainStats>,
     roads: Res<RoadStats>,
     diagnostics: Res<DiagnosticsStore>,
+    capture: Option<ResMut<Capture>>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    if job.done {
+        return;
+    }
     // The map loads through the asset server, so count frames from the first one that has
     // terrain; then let LOD meshes, asset upload and shadows settle.
     if stats.chunks == 0 {
@@ -172,15 +185,13 @@ fn job(
     job.frame += 1;
     let frame = job.frame;
     const WARMUP: u32 = 120;
-    if let Some(path) = job.screenshot.clone()
-        && job.bench_secs.is_none()
-    {
-        if frame == WARMUP {
-            commands
-                .spawn(Screenshot::primary_window())
-                .observe(save_to_disk(path));
-        } else if frame == WARMUP + 60 {
-            exit.write(AppExit::Success);
+    if job.screenshot && job.bench_secs.is_none() {
+        if frame == WARMUP
+            && let Some(mut capture) = capture
+        {
+            // `capture` retries blank frames and ends the app itself.
+            capture.arm();
+            job.done = true;
         }
         return;
     }
@@ -195,11 +206,6 @@ fn job(
     }
     if total < secs {
         return;
-    }
-    if let Some(path) = job.screenshot.clone() {
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(path));
     }
     let mut sorted = job.frame_ms.clone();
     sorted.sort_by(f32::total_cmp);
@@ -227,9 +233,13 @@ fn job(
             println!("BENCH diag {} = {v:.3}{}", d.path(), d.suffix);
         }
     }
-    // Give a requested screenshot a few frames to be written.
-    if job.screenshot.is_none() || total > secs + 0.5 {
-        exit.write(AppExit::Success);
+    job.done = true;
+    match capture {
+        // The screenshot, if any, is taken after the report and ends the app.
+        Some(mut capture) if job.screenshot => capture.arm(),
+        _ => {
+            exit.write(AppExit::Success);
+        }
     }
 }
 
