@@ -20,7 +20,8 @@ wrong. Project context lives in `PROJECT.md`; system designs live in `architectu
 
 ## Simulation crates are headless
 
-Sim crates are every crate that `cp_sim` pulls in: `cp_core`, `cp_content`, `cp_terrain`,
+Sim crates are `cp_sim`, every crate it pulls in, and `cp_save` (which sits above
+`cp_sim`): `cp_core`, `cp_content`, `cp_terrain`,
 `cp_net`, `cp_zone`, `cp_building`, `cp_citizen`, `cp_traffic`, `cp_utility`,
 `cp_service`, `cp_economy`, `cp_transit`, `cp_district`, `cp_industry`, `cp_park`,
 `cp_save` and `cp_sim` itself.
