@@ -71,7 +71,7 @@ jobs:
     name: bench (headless, regression gate)
     runs-on: ubuntu-latest
     env:
-      BENCH_ARGS: --scenario empty --ticks 20000 --warmup 500 --seed 1
+      BENCH_ARGS: --scenario empty --ticks 20000 --warmup 500 --seed 1 --inject-sleep Economy=0.2
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
