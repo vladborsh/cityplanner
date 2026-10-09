@@ -6,7 +6,10 @@ use cp_core::SimSpeed;
 use cp_net::ElevationMode;
 use cp_render::{Overlay, OverlayState};
 use cp_sim::SimView;
-use cp_tools::{ActiveTool, CommandOutbox, RoadMode, ToolState, format_money};
+use cp_tools::{
+    ActiveTool, CommandOutbox, PALETTE, RoadMode, ToolState, ZoneToolKind, format_money,
+    zone_color, zone_name,
+};
 
 use crate::set_speed;
 
@@ -154,6 +157,10 @@ pub fn bottom_bar(
                 ui.separator();
                 roads_panel(ui, view, tools);
             }
+            Some(Category::Zones) => {
+                ui.separator();
+                zones_panel(ui, tools);
+            }
             Some(c) => {
                 ui.separator();
                 ui.weak(format!("{} — nothing to build here yet", c.label()));
@@ -161,6 +168,57 @@ pub fn bottom_bar(
             None => {}
         }
     });
+}
+
+/// The Zones tab: tool kinds and the zone palette. Picking either activates the zoning tool
+/// (which shows the zone grid); "Off" leaves it.
+pub fn zones_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
+    ui.horizontal(|ui| {
+        for kind in ZoneToolKind::ALL {
+            let selected = tools.active == ActiveTool::Zone && tools.zone.kind == kind;
+            if ui.selectable_label(selected, kind.label()).clicked() {
+                if tools.active != ActiveTool::Zone {
+                    tools.select(ActiveTool::Zone);
+                }
+                tools.zone.set_kind(kind);
+            }
+        }
+        if ui
+            .add_enabled(tools.active == ActiveTool::Zone, egui::Button::new("✖ Off"))
+            .clicked()
+        {
+            tools.select(ActiveTool::None);
+        }
+    });
+    ui.horizontal(|ui| {
+        for zone in PALETTE {
+            let [r, g, b] = zone_color(zone);
+            let color =
+                egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
+            let selected = tools.zone.zone == zone;
+            let text = egui::RichText::new(zone_name(zone)).color(color).strong();
+            if ui.selectable_label(selected, text).clicked() {
+                tools.zone.zone = zone;
+                if tools.active != ActiveTool::Zone {
+                    tools.select(ActiveTool::Zone);
+                }
+            }
+        }
+    });
+    if tools.active == ActiveTool::Zone {
+        let n = tools.zone_preview.len();
+        let what = match tools.zone.kind {
+            ZoneToolKind::Rectangle if tools.zone.corner.is_some() => {
+                "click the opposite corner".to_string()
+            }
+            ZoneToolKind::Rectangle => "click the first corner".to_string(),
+            ZoneToolKind::FillBlock => "click a block to fill it".to_string(),
+            _ => "hold and drag to paint".to_string(),
+        };
+        ui.weak(format!("{what} — {n} cells under the cursor. Esc cancels."));
+    } else {
+        ui.weak("Pick a zoning tool or a zone type to show the zone grid.");
+    }
 }
 
 /// The Roads tab: tool buttons, road mode, road type, elevation and the ghost's verdict.
@@ -235,7 +293,7 @@ pub fn roads_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolSt
         ActiveTool::Bulldozer => {
             ui.weak("Hover a road segment, click to remove it. Esc leaves the tool.");
         }
-        ActiveTool::None => {
+        ActiveTool::None | ActiveTool::Zone => {
             ui.weak("Pick a tool.");
         }
     }
@@ -431,5 +489,27 @@ mod tests {
             }
             assert_eq!(state.active, want);
         }
+    }
+
+    #[test]
+    fn zones_panel_activates_the_zoning_tool_and_shows_the_state() {
+        let ctx = egui::Context::default();
+        let mut tools = ToolState::default();
+        let draw = |tools: &mut ToolState| {
+            crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| zones_panel(ui, tools));
+        };
+        draw(&mut tools);
+        assert_eq!(tools.active, ActiveTool::None);
+        tools.select(ActiveTool::Zone);
+        tools.zone.set_kind(ZoneToolKind::Rectangle);
+        draw(&mut tools);
+        tools.zone.corner = Some(bevy::math::Vec2::ZERO);
+        draw(&mut tools);
+        tools.select(ActiveTool::None);
+        draw(&mut tools);
+        assert!(
+            tools.zone.corner.is_none(),
+            "leaving the tool cancels the rectangle"
+        );
     }
 }

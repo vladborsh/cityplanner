@@ -15,9 +15,11 @@ cp_render.workspace = true
 bevy_ecs.workspace = true
 cp_net.workspace = true
 cp_content.workspace = true
+cp_zone.workspace = true
 cp_core.workspace = true
 bevy_math.workspace = true
 bevy.workspace = true
 
 [dev-dependencies]
 cp_terrain.workspace = true
+cp_save.workspace = true

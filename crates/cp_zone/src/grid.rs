@@ -44,8 +44,18 @@ const BLOCK_BUCKET: f32 = 32.0;
 const REACH: f32 = 12.0;
 /// Spacing of road centre-line samples, metres.
 const ROAD_SAMPLE: f32 = 2.0;
+/// How far (m) a rebuilt cell may be from the old cell whose painted type it inherits.
+const CARRY_RADIUS: f32 = 5.0;
+const CARRY_BUCKET: f32 = 8.0;
 
 pub type ZoneBlockId = Id<ZoneBlock>;
+
+/// Process-wide change counter for [`ZoneGrid::revision`]. Not sim state (never saved or
+/// hashed): it only lets snapshot caches tell grids apart, including a grid replaced by a load.
+fn next_revision() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
 
 /// A cell of a block: `cell = column * BLOCK_DEPTH + row` (row 0 touches the road).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -210,6 +220,10 @@ pub struct ZoneGrid {
     /// already account for it.
     #[serde(skip)]
     occupied: BTreeSet<ZoneCellRef>,
+    /// Bumped on every change (paint, rebuild, validity, occupancy) so snapshots can be
+    /// cached. Not saved, not part of equality.
+    #[serde(skip, default = "next_revision")]
+    revision: u64,
 }
 
 impl PartialEq for ZoneGrid {
@@ -272,6 +286,11 @@ impl ZoneGrid {
     }
 
     /// Whether the lookup structures are built (false after a load until the next `sync`).
+    /// Changes whenever anything in the grid changes.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub fn index_ready(&self) -> bool {
         self.index.built
     }
@@ -314,6 +333,12 @@ impl ZoneGrid {
             })
             .map(|(id, _)| *id)
             .collect();
+        // Painted types of the blocks about to be rebuilt (split, upgrade, retrimmed junction)
+        // are carried over to the new blocks by position.
+        let mut carried: Vec<(Vec2, ZoneType)> = Vec::new();
+        for id in &stale {
+            self.collect_painted(*id, &mut carried);
+        }
         for id in stale {
             self.remove_segment(id, &mut dirty);
         }
@@ -335,6 +360,10 @@ impl ZoneGrid {
             self.fingerprints.insert(id, fp);
         }
 
+        if !carried.is_empty() {
+            self.apply_carried(&carried, &created);
+        }
+
         // Everything near a change is re-examined, oldest first.
         let mut work: BTreeSet<ZoneBlockId> = created.clone();
         for region in &dirty {
@@ -351,6 +380,9 @@ impl ZoneGrid {
     /// Recomputes validity of `work` oldest first; a block whose validity changes (or that
     /// is new, per `created`) can only affect newer ones, so ids only grow.
     fn revalidate(&mut self, mut work: BTreeSet<ZoneBlockId>, created: &BTreeSet<ZoneBlockId>) {
+        if !work.is_empty() {
+            self.revision = next_revision();
+        }
         while let Some(id) = work.pop_first() {
             let Some(new_valid) = self.compute_valid(id) else {
                 continue;
@@ -369,6 +401,154 @@ impl ZoneGrid {
         }
     }
 
+    /// Painted (non-`None`) cells of `segment`'s blocks as `(centre, type)`.
+    fn collect_painted(&self, segment: SegmentId, out: &mut Vec<(Vec2, ZoneType)>) {
+        for id in self.blocks_of(segment).into_iter().flatten() {
+            let (Some(b), Some(obbs)) = (self.blocks.get(id), self.index.obbs.get(&id)) else {
+                continue;
+            };
+            for (z, o) in b.zones.iter().zip(obbs) {
+                if *z != ZoneType::None {
+                    out.push((o.c, *z));
+                }
+            }
+        }
+    }
+
+    /// Gives the cells of the `created` blocks the type of the nearest carried cell within
+    /// [`CARRY_RADIUS`], each carried cell used once. Deterministic: new cells in id order, ties
+    /// broken by the lower carried index.
+    fn apply_carried(&mut self, carried: &[(Vec2, ZoneType)], created: &BTreeSet<ZoneBlockId>) {
+        let mut buckets: BTreeMap<(i32, i32), Vec<usize>> = BTreeMap::new();
+        for (i, (p, _)) in carried.iter().enumerate() {
+            buckets
+                .entry((
+                    (p.x / CARRY_BUCKET).floor() as i32,
+                    (p.y / CARRY_BUCKET).floor() as i32,
+                ))
+                .or_default()
+                .push(i);
+        }
+        let mut used = vec![false; carried.len()];
+        for id in created {
+            let Some(obbs) = self.index.obbs.get(id).cloned() else {
+                continue;
+            };
+            let mut zones = self.blocks.get(*id).expect("created block").zones.clone();
+            for (cell, o) in obbs.iter().enumerate() {
+                let (bx, bz) = (
+                    (o.c.x / CARRY_BUCKET).floor() as i32,
+                    (o.c.y / CARRY_BUCKET).floor() as i32,
+                );
+                let mut best: Option<(f32, usize)> = None;
+                for dx in -1..=1 {
+                    for dz in -1..=1 {
+                        for &i in buckets.get(&(bx + dx, bz + dz)).into_iter().flatten() {
+                            if used[i] {
+                                continue;
+                            }
+                            let d = carried[i].0.distance(o.c);
+                            if d <= CARRY_RADIUS
+                                && best.is_none_or(|(bd, bi)| d < bd || (d == bd && i < bi))
+                            {
+                                best = Some((d, i));
+                            }
+                        }
+                    }
+                }
+                if let Some((_, i)) = best {
+                    used[i] = true;
+                    zones[cell] = carried[i].1;
+                }
+            }
+            self.blocks.get_mut(*id).expect("created block").zones = zones;
+        }
+        self.revision = next_revision();
+    }
+
+    // ----- queries (tools, overlays) -----
+
+    /// Cells (valid or not) whose footprint contains `p`; lowest block id first.
+    pub fn cell_at(&self, p: Vec2) -> Option<ZoneCellRef> {
+        let key = (
+            (p.x / BLOCK_BUCKET).floor() as i32,
+            (p.y / BLOCK_BUCKET).floor() as i32,
+        );
+        let blocks = self.index.block_buckets.get(&key)?;
+        for id in blocks {
+            let Some(obbs) = self.index.obbs.get(id) else {
+                continue;
+            };
+            if let Some(i) = obbs.iter().position(|o| o.distance_to_point(p) <= 1e-3) {
+                return Some(ZoneCellRef {
+                    block: *id,
+                    cell: i as u16,
+                });
+            }
+        }
+        None
+    }
+
+    /// Every cell (valid or not) whose centre satisfies `keep`, among blocks near `bounds`.
+    fn cells_where(&self, bounds: (Vec2, Vec2), keep: impl Fn(Vec2) -> bool) -> Vec<ZoneCellRef> {
+        let mut ids: BTreeSet<ZoneBlockId> = BTreeSet::new();
+        for key in bucket_range(inflate(bounds, REACH), BLOCK_BUCKET) {
+            if let Some(set) = self.index.block_buckets.get(&key) {
+                ids.extend(set.iter().copied());
+            }
+        }
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(obbs) = self.index.obbs.get(&id) {
+                for (i, o) in obbs.iter().enumerate() {
+                    if keep(o.c) {
+                        out.push(ZoneCellRef {
+                            block: id,
+                            cell: i as u16,
+                        });
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Cells whose centre is within `radius` of `p`, in id order.
+    pub fn cells_within(&self, p: Vec2, radius: f32) -> Vec<ZoneCellRef> {
+        self.cells_where((p - Vec2::splat(radius), p + Vec2::splat(radius)), |c| {
+            c.distance(p) <= radius
+        })
+    }
+
+    /// Cells whose centre is inside the axis-aligned rectangle, in id order.
+    pub fn cells_in_rect(&self, a: Vec2, b: Vec2) -> Vec<ZoneCellRef> {
+        let (lo, hi) = (a.min(b), a.max(b));
+        self.cells_where((lo, hi), |c| {
+            c.x >= lo.x && c.x <= hi.x && c.y >= lo.y && c.y <= hi.y
+        })
+    }
+
+    /// All cells of a block.
+    pub fn block_cells(&self, block: ZoneBlockId) -> Vec<ZoneCellRef> {
+        self.blocks
+            .get(block)
+            .map(|b| {
+                (0..b.cell_count() as u16)
+                    .map(|cell| ZoneCellRef { block, cell })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The painted type of a cell.
+    pub fn zone_of(&self, cell: ZoneCellRef) -> Option<ZoneType> {
+        self.blocks
+            .get(cell.block)?
+            .zones
+            .get(usize::from(cell.cell))
+            .copied()
+    }
+
     /// Sets the painted type of a cell. Returns `false` when the cell does not exist.
     /// (`PaintZones`, T-027, is the player-facing way; this is the primitive and what
     /// headless tests use.)
@@ -379,7 +559,10 @@ impl ZoneGrid {
             .and_then(|b| b.zones.get_mut(usize::from(cell.cell)))
         {
             Some(z) => {
-                *z = zone;
+                if *z != zone {
+                    *z = zone;
+                    self.revision = next_revision();
+                }
                 true
             }
             None => false,
@@ -396,6 +579,7 @@ impl ZoneGrid {
     /// content); without it the cells are only recorded.
     pub fn occupy(&mut self, cells: &[ZoneCellRef]) {
         self.occupied.extend(cells.iter().copied());
+        self.revision = next_revision();
         self.revalidate_cells(cells);
     }
 
@@ -404,6 +588,7 @@ impl ZoneGrid {
         for c in cells {
             self.occupied.remove(c);
         }
+        self.revision = next_revision();
         self.revalidate_cells(cells);
     }
 
@@ -411,6 +596,7 @@ impl ZoneGrid {
     /// `valid` masks already include it).
     pub fn set_occupied(&mut self, cells: impl IntoIterator<Item = ZoneCellRef>) {
         self.occupied = cells.into_iter().collect();
+        self.revision = next_revision();
     }
 
     fn revalidate_cells(&mut self, cells: &[ZoneCellRef]) {

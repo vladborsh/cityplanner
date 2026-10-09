@@ -4,7 +4,7 @@ pub mod command;
 pub mod geom;
 pub mod grid;
 
-pub use command::{ZoneCommand, ZoneError, apply};
+pub use command::{ZoneCommand, ZoneError, apply, paint};
 pub use grid::{
     BLOCK_DEPTH, CELL_SIZE, PENETRATION_EPS, RoadZoning, Side, ZoneBlock, ZoneBlockId, ZoneCellRef,
     ZoneGrid,

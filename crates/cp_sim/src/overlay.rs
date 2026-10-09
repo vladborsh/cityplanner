@@ -9,8 +9,6 @@ use cp_content::ZoneType;
 use cp_net::SegmentId;
 use cp_zone::ZoneGrid;
 
-use crate::checksum::Fnv1a;
-
 /// One zone cell as the zone overlay draws it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ZoneCellView {
@@ -53,25 +51,16 @@ pub struct OverlayData {
     pub pollution: Option<Arc<ScalarGrid>>,
 }
 
-/// `(fingerprint of the zone state, overlay)` of the last snapshot.
+/// `(zone grid revision, overlay)` of the last snapshot.
 pub(crate) type ZoneCache = Option<(u64, Arc<ZoneOverlay>)>;
-
-/// Fingerprint of everything the zone overlay shows (blocks with their painted types and
-/// validity).
-fn zone_fingerprint(grid: &ZoneGrid) -> u64 {
-    let mut h = Fnv1a::default();
-    for (_, b) in grid.blocks() {
-        h.write_serialized(b);
-    }
-    h.finish()
-}
 
 /// The zone overlay of `grid`, reusing `cache` while the zone state is unchanged.
 pub(crate) fn zone_snapshot(grid: Option<&ZoneGrid>, cache: &mut ZoneCache) -> Arc<ZoneOverlay> {
     let Some(grid) = grid else {
         return Arc::default();
     };
-    let key = zone_fingerprint(grid);
+    // `revision` changes with every edit of the grid (paint, rebuild, validity, occupancy).
+    let key = grid.revision();
     if let Some((k, snap)) = cache.as_ref()
         && *k == key
     {

@@ -3,6 +3,7 @@ use cp_content::{ContentDb, RoadDefId};
 use cp_core::curve::CubicBezier3;
 use cp_net::{Elevation, NetGraph, SegmentId};
 
+use crate::command::paint;
 use crate::*;
 
 fn db() -> ContentDb {
@@ -484,4 +485,179 @@ fn occupied_cells_are_invalid_until_released_and_cover_newer_blocks() {
         },
         cp_content::ZoneType::ResLow
     ));
+}
+
+// ---------- T-027: painting, queries, carrying painted types across rebuilds ----------
+
+use bevy_math::Vec2;
+use cp_content::ZoneType;
+
+fn first_cells(w: &World, seg: SegmentId, side: Side) -> Vec<ZoneCellRef> {
+    let id = w
+        .grid
+        .blocks_of(seg)
+        .into_iter()
+        .flatten()
+        .find(|id| w.grid.block(*id).unwrap().side == side)
+        .unwrap();
+    w.grid.block_cells(id)
+}
+
+fn paint_side(w: &mut World, seg: SegmentId, side: Side, zone: ZoneType) {
+    let cells = first_cells(w, seg, side);
+    paint(&mut w.grid, &cells, zone).unwrap();
+}
+
+fn painted(w: &World, zone: ZoneType) -> usize {
+    w.grid
+        .blocks()
+        .map(|(_, b)| b.zones.iter().filter(|z| **z == zone).count())
+        .sum()
+}
+
+#[test]
+fn paint_sets_valid_cells_skips_invalid_and_built_on_ones_and_erases() {
+    let mut w = World::new();
+    // Crossing roads: the cross street invalidates some cells of the long road's blocks.
+    let a = w.line("basic_2l", (1000.0, 1000.0), (1090.0, 1000.0));
+    w.line("basic_2l", (1045.0, 940.0), (1045.0, 1060.0));
+    w.sync();
+    let cells = first_cells(&w, a, Side::Right);
+    let valid: Vec<_> = cells
+        .iter()
+        .copied()
+        .filter(|c| w.grid.is_valid(*c))
+        .collect();
+    assert!(
+        !valid.is_empty() && valid.len() < cells.len(),
+        "some cells are under the road"
+    );
+
+    let rev = w.grid.revision();
+    assert_eq!(
+        paint(&mut w.grid, &cells, ZoneType::ResLow),
+        Ok(cp_core::Cost::ZERO)
+    );
+    assert!(w.grid.revision() > rev);
+    for c in &cells {
+        let want = if w.grid.is_valid(*c) {
+            ZoneType::ResLow
+        } else {
+            ZoneType::None
+        };
+        assert_eq!(w.grid.zone_of(*c), Some(want));
+    }
+
+    // Painting the same type again changes nothing.
+    let rev = w.grid.revision();
+    assert!(matches!(
+        paint(&mut w.grid, &cells, ZoneType::ResLow),
+        Err(ZoneError::NothingToPaint { unchanged, .. }) if unchanged == valid.len()
+    ));
+    assert_eq!(w.grid.revision(), rev);
+
+    // A building on a cell protects it from repainting and from erasing.
+    w.grid.occupy(&[valid[0]]);
+    let r = paint(&mut w.grid, &[valid[0]], ZoneType::Industrial);
+    assert!(
+        matches!(r, Err(ZoneError::NothingToPaint { occupied: 1, .. })),
+        "{r:?}"
+    );
+    assert_eq!(w.grid.zone_of(valid[0]), Some(ZoneType::ResLow));
+
+    // Erase the rest.
+    assert!(paint(&mut w.grid, &cells, ZoneType::None).is_ok());
+    assert_eq!(
+        painted(&w, ZoneType::ResLow),
+        1,
+        "only the built-on cell keeps its zone"
+    );
+    assert_eq!(
+        paint(&mut w.grid, &[], ZoneType::ResLow),
+        Err(ZoneError::NoCells)
+    );
+}
+
+#[test]
+fn queries_find_cells_by_point_radius_rectangle_and_block() {
+    let mut w = World::new();
+    let a = w.line("basic_2l", (1000.0, 1000.0), (1096.0, 1000.0));
+    w.sync();
+    let right = first_cells(&w, a, Side::Right);
+    let c0 = w.grid.cell_footprint(right[0]).unwrap();
+    assert_eq!(w.grid.cell_at(c0.c), Some(right[0]));
+    assert_eq!(w.grid.cell_at(Vec2::new(0.0, 0.0)), None);
+    // A radius of one cell's half diagonal around a centre contains at least that cell.
+    let near = w.grid.cells_within(c0.c, 1.0);
+    assert!(near.contains(&right[0]));
+    let bigger = w.grid.cells_within(c0.c, 9.0);
+    assert!(bigger.len() > near.len());
+    assert!(bigger.windows(2).all(|p| p[0] <= p[1]), "id order");
+    // A rectangle around the first column's four cells.
+    let rect = w
+        .grid
+        .cells_in_rect(c0.c - Vec2::new(1.0, 1.0), c0.c + Vec2::new(1.0, 30.0));
+    assert!(rect.contains(&right[0]));
+    assert_eq!(w.grid.block_cells(right[0].block).len(), 12 * 4);
+    assert_eq!(w.grid.zone_of(right[0]), Some(ZoneType::None));
+}
+
+#[test]
+fn painted_types_survive_a_split() {
+    let mut w = World::new();
+    let a = w.line("basic_2l", (1000.0, 1000.0), (1096.0, 1000.0));
+    w.sync();
+    paint_side(&mut w, a, Side::Right, ZoneType::ResLow);
+    paint_side(&mut w, a, Side::Left, ZoneType::Industrial);
+    let (res, ind) = (
+        painted(&w, ZoneType::ResLow),
+        painted(&w, ZoneType::Industrial),
+    );
+    assert!(res > 0 && ind > 0);
+
+    let def = w.db.road(w.road("basic_2l")).clone();
+    let split = w.net.split_segment(&def, a, 0.5).unwrap();
+    w.sync();
+    assert_eq!(w.grid.blocks_of(a), [None, None], "the old blocks are gone");
+    // Cells of the new blocks near the old painted ones inherit the type (positions shift by
+    // up to a few metres because the columns are centred per segment).
+    let (res2, ind2) = (
+        painted(&w, ZoneType::ResLow),
+        painted(&w, ZoneType::Industrial),
+    );
+    assert!(res2 * 10 >= res * 8, "ResLow {res} -> {res2}");
+    assert!(ind2 * 10 >= ind * 8, "Industrial {ind} -> {ind2}");
+    // Each side kept its own type.
+    for seg in &split.segments {
+        for c in first_cells(&w, *seg, Side::Right) {
+            assert_ne!(w.grid.zone_of(c), Some(ZoneType::Industrial));
+        }
+    }
+    assert_no_double_cells(&w.grid);
+}
+
+#[test]
+fn painted_types_survive_an_upgrade() {
+    let mut w = World::new();
+    let a = w.line("basic_2l", (1000.0, 1000.0), (1096.0, 1000.0));
+    w.sync();
+    paint_side(&mut w, a, Side::Right, ZoneType::ComLow);
+    let before = painted(&w, ZoneType::ComLow);
+    let mid = w.road("medium_4l");
+    let mdef = w.db.road(mid).clone();
+    w.net.upgrade_segment(a, &mdef, mid).unwrap();
+    w.sync();
+    let after = painted(&w, ZoneType::ComLow);
+    assert!(after * 10 >= before * 7, "ComLow {before} -> {after}");
+}
+
+#[test]
+fn zone_revision_serde_and_painted_state_round_trip() {
+    let mut w = World::new();
+    let a = w.line("basic_2l", (1000.0, 1000.0), (1090.0, 1000.0));
+    w.sync();
+    paint_side(&mut w, a, Side::Right, ZoneType::Office);
+    let bytes = postcard::to_stdvec(&w.grid).unwrap();
+    let loaded: ZoneGrid = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(loaded, w.grid, "painted types are part of the saved grid");
 }

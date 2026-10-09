@@ -14,11 +14,13 @@ pub mod bulldozer;
 mod outbox;
 pub mod plugin;
 pub mod road;
+pub mod zone;
 
 pub use bulldozer::pick_segment;
 pub use outbox::CommandOutbox;
 pub use plugin::{ActiveTool, Ghost, ToolState, ToolsPlugin, UiCapture};
 pub use road::{ELEVATION_STEP, MAX_ELEVATION_LEVEL, RoadMode, RoadTool, format_money, preview};
+pub use zone::{PALETTE, ZoneTool, ZoneToolKind, zone_color, zone_name};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_tools";

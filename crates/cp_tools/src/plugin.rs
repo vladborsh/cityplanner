@@ -16,6 +16,8 @@ use cp_sim::{SimCommand, SimView};
 use crate::CommandOutbox;
 use crate::bulldozer::{PICK_RADIUS, centre_line, pick_segment};
 use crate::road::{RoadTool, preview, sample_curve};
+use crate::zone::{ZoneTool, zone_color};
+use cp_zone::{ZoneCellRef, ZoneCommand};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ActiveTool {
@@ -23,6 +25,8 @@ pub enum ActiveTool {
     None,
     Road,
     Bulldozer,
+    /// Zoning: fill block, brushes, rectangle, eraser.
+    Zone,
 }
 
 /// Set by the UI each frame: the pointer is over a panel/window, so clicks are not the tool's.
@@ -52,6 +56,9 @@ pub struct ToolState {
     pub hover: Option<Vec2>,
     /// Segment the bulldozer would remove.
     pub highlight: Option<SegmentId>,
+    pub zone: ZoneTool,
+    /// Cells the zoning tool would paint at the cursor (the highlight).
+    pub zone_preview: Vec<ZoneCellRef>,
     /// Inputs the current ghost was computed from; unchanged inputs skip the revalidation.
     ghost_key: Option<GhostKey>,
 }
@@ -70,6 +77,8 @@ impl ToolState {
         self.ghost = None;
         self.highlight = None;
         self.ghost_key = None;
+        self.zone.cancel();
+        self.zone_preview.clear();
     }
 }
 
@@ -101,7 +110,9 @@ fn tool_hotkeys(
         }
     }
     if keys.just_pressed(KeyCode::Escape) {
-        if state.road.points.is_empty() {
+        if state.active == ActiveTool::Zone && state.zone.corner.is_some() {
+            state.zone.cancel();
+        } else if state.road.points.is_empty() {
             state.select(ActiveTool::None);
         } else {
             state.road.cancel();
@@ -160,6 +171,9 @@ fn tool_hover(
         (ActiveTool::Bulldozer, Some(p)) => {
             state.highlight = pick_segment(&view.net, p, PICK_RADIUS);
         }
+        (ActiveTool::Zone, Some(p)) => {
+            state.zone_preview = state.zone.preview(&view.zones, p);
+        }
         (ActiveTool::Road, Some(p)) => {
             let key = GhostKey {
                 hover: (p.x.round() as i32, p.y.round() as i32),
@@ -173,6 +187,7 @@ fn tool_hover(
         }
         _ => {
             state.highlight = None;
+            state.zone_preview.clear();
             if state.active != ActiveTool::Road {
                 state.ghost = None;
             }
@@ -227,9 +242,29 @@ fn raw_polyline(view: &SimView, path: &RoadPath) -> Vec<Vec3> {
 fn tool_click(
     buttons: Res<ButtonInput<MouseButton>>,
     capture: Res<UiCapture>,
+    view: Option<Res<SimView>>,
     mut state: ResMut<ToolState>,
     mut outbox: ResMut<CommandOutbox>,
 ) {
+    if buttons.just_released(MouseButton::Left) {
+        state.zone.end_stroke();
+    }
+    if state.active == ActiveTool::Zone
+        && !capture.pointer_over_ui
+        && let (Some(view), Some(p)) = (view.as_deref(), state.hover)
+    {
+        let painted = if buttons.just_pressed(MouseButton::Left) {
+            state.zone.click(&view.zones, p)
+        } else if buttons.pressed(MouseButton::Left) {
+            state.zone.drag(&view.zones, p)
+        } else {
+            None
+        };
+        if let Some((cells, zone)) = painted {
+            outbox.push(SimCommand::Zone(ZoneCommand::PaintZones { cells, zone }));
+        }
+        return;
+    }
     if !buttons.just_pressed(MouseButton::Left) || capture.pointer_over_ui {
         return;
     }
@@ -249,11 +284,16 @@ fn tool_click(
                 state.highlight = None;
             }
         }
-        ActiveTool::None => {}
+        ActiveTool::None | ActiveTool::Zone => {}
     }
 }
 
 fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Gizmos) {
+    if state.active == ActiveTool::Zone
+        && let Some(view) = view.as_deref()
+    {
+        draw_zone_grid(&state, view, &mut gizmos);
+    }
     if let Some(ghost) = &state.ghost
         && state.active == ActiveTool::Road
     {
@@ -272,5 +312,37 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
             line.iter().map(|p| *p + Vec3::Y * 0.6),
             Color::srgb(1.0, 0.6, 0.1),
         );
+    }
+}
+
+/// Cells drawn around the cursor in zoning mode, metres.
+const OVERLAY_RADIUS: f32 = 400.0;
+
+/// The zone grid in zoning mode: cells around the cursor outlined in their zone colour (grey
+/// for unpainted), painted ones also crossed; the cells the tool would paint are brightened
+/// with the tool's colour. Invalid cells (under roads, built on) are not drawn.
+fn draw_zone_grid(state: &ToolState, view: &SimView, gizmos: &mut Gizmos) {
+    let Some(centre) = state.hover else {
+        return;
+    };
+    let height = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.4;
+    let paint = zone_color(state.zone.paint_type());
+    for c in view.zones.cells_within(centre, OVERLAY_RADIUS) {
+        if !view.zones.is_valid(c) {
+            continue;
+        }
+        let Some(o) = view.zones.cell_footprint(c) else {
+            continue;
+        };
+        let zone = view.zones.zone_of(c).unwrap_or(cp_content::ZoneType::None);
+        let hot = state.zone_preview.contains(&c);
+        let rgb = if hot { paint } else { zone_color(zone) };
+        let color = Color::srgb(rgb[0], rgb[1], rgb[2]);
+        let k = o.corners().map(|q| Vec3::new(q.x, height(q), q.y));
+        gizmos.linestrip([k[0], k[1], k[2], k[3], k[0]], color);
+        if hot || zone != cp_content::ZoneType::None {
+            gizmos.line(k[0], k[2], color);
+            gizmos.line(k[1], k[3], color);
+        }
     }
 }

@@ -84,7 +84,13 @@ pub struct SimView {
     pub content: Option<Arc<ContentDb>>,
     /// Inputs of the overlays (zones, traffic load, land value, pollution), §13.4.
     pub overlays: OverlayData,
+    /// The zone blocks and painted types as of this snapshot (tools, zone overlay). Shared and
+    /// re-cloned only when `ZoneGrid::revision` changed.
+    pub zones: Arc<cp_zone::ZoneGrid>,
 }
+
+/// `(zone revision, snapshot)` of the last `SimView::zones`.
+pub(crate) type ZoneCache = Option<(u64, Arc<cp_zone::ZoneGrid>)>;
 
 /// `(revision, building count, snapshot)` of the last `SimView::buildings`.
 pub(crate) type BuildingsCache = Option<(u64, usize, Arc<BuildingGrid>)>;
@@ -144,6 +150,21 @@ impl SimRunner {
         }
     }
 
+    /// The zone snapshot for `SimView::zones`, cached while the grid's revision is unchanged.
+    fn zone_snapshot(&self) -> Arc<cp_zone::ZoneGrid> {
+        let grid = self.world().get_resource::<cp_zone::ZoneGrid>();
+        let rev = grid.map_or(0, cp_zone::ZoneGrid::revision);
+        let mut cache = self.zone_grid_cache.lock().expect("zone cache");
+        if let Some((r, snap)) = cache.as_ref()
+            && *r == rev
+        {
+            return Arc::clone(snap);
+        }
+        let snap = Arc::new(grid.cloned().unwrap_or_default());
+        *cache = Some((rev, Arc::clone(&snap)));
+        snap
+    }
+
     /// The building snapshot for `SimView::buildings`, cached while the grid is unchanged.
     fn buildings_snapshot(&self) -> Arc<BuildingGrid> {
         let grid = self.world().get_resource::<BuildingGrid>();
@@ -186,6 +207,7 @@ impl SimRunner {
             stats: self.stats(),
             net: self.net_snapshot(&junctions),
             buildings: self.buildings_snapshot(),
+            zones: self.zone_snapshot(),
             content: self
                 .world()
                 .get_resource::<SimContent>()
