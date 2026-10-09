@@ -133,21 +133,31 @@ fn run(o: &Opts) -> Result<Report, String> {
             return Err(format!("unknown scenario '{other}' (available: empty)"));
         }
     };
+    // The map is attached to the sim exactly like `cp_app::build_sim` does (`set_terrain` opens
+    // the start tiles in `TileOwnership`, which is part of the checksum), so a bench run starts
+    // from the same state as `cp_desktop --map M --hour 0 --headless N`.
+    let mut terrain = None;
     let map = o
         .map
         .as_deref()
         .map(|m| {
             let dir = map_dir(m);
             let t = Instant::now();
-            cp_terrain::Terrain::load(&dir).map_err(|e| format!("--map {}: {e}", dir.display()))?;
+            let loaded = cp_terrain::Terrain::load(&dir)
+                .map_err(|e| format!("--map {}: {e}", dir.display()))?;
+            let load_ms = t.elapsed().as_secs_f64() * 1e3;
+            terrain = Some(std::sync::Arc::new(loaded));
             Ok::<_, String>(MapInfo {
                 path: dir.display().to_string(),
-                load_ms: t.elapsed().as_secs_f64() * 1e3,
+                load_ms,
             })
         })
         .transpose()?;
 
     let mut sim = SimRunner::new(o.seed);
+    if let Some(terrain) = terrain {
+        sim.set_terrain(terrain);
+    }
     sim.add_plugin(&PhaseTiming {
         sleep: o
             .inject_sleep

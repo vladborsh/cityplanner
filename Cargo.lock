@@ -2417,6 +2417,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_math",
  "bevy_tasks",
+ "cp_app",
  "cp_content",
  "cp_core",
  "cp_net",

@@ -14,6 +14,19 @@ cp_bench compare bench/baseline.json result.json           # exit 1 on regressio
 `--content DIR`, default `assets/content`), reports the header and any load warnings
 under `save` in the JSON, then runs the ticks. It is mutually exclusive with `--scenario`.
 
+`--map M` loads the terrain **and attaches it to the sim** the way the client does
+(`cp_app::build_sim`: `set_terrain`, which opens the start tiles in `TileOwnership`, part of the
+checksum). So these print the same checksum, as long as the client starts at tick 0:
+
+```
+cp_bench   --map flatlands --ticks 512 --warmup 0 --seed 1
+cp_desktop --map flatlands --hour 0 --headless 512
+```
+
+Note `cp_desktop` defaults to `--hour 10` (it starts at tick 1706, so `--headless 512` ends at
+tick 2218 with another checksum); pass `--hour 0` to compare with the bench, which starts at
+tick 0. Covered by `apps/bench/tests/map_checksum_e2e.rs`.
+
 Phase times come from marker systems that `apps/bench` schedules between the phase sets
 (sim crates never read the clock). Overhead is 11 `Instant::now()` calls plus 11 tiny
 systems per tick, equal in baseline and current, so it cancels in the comparison. `total`

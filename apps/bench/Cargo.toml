@@ -25,3 +25,8 @@ serde.workspace = true
 bevy_math.workspace = true
 serde_json = "1"
 
+
+[dev-dependencies]
+# The client's sim setup (`build_sim`), to prove bench `--map` starts from the same state.
+# Test-only: the bench binary itself never links the render stack.
+cp_app.workspace = true
