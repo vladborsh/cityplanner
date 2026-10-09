@@ -20,6 +20,7 @@ use bevy_math::Vec2;
 use cp_content::{LaneDir, LaneKind};
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_net::{JunctionGeometry, Lane, LaneId, NetGraph, NodeId, SegmentId, Turn};
+use serde::{Deserialize, Serialize};
 
 /// Walking speed used for costs, m/s (pedestrians move at 1.2–1.6 m/s, §9.4).
 pub const PED_SPEED: f32 = 1.4;
@@ -53,14 +54,14 @@ impl SegEnd {
 }
 
 /// Side of the road as seen along the segment's own direction (start → end).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Side {
     Left,
     Right,
 }
 
 /// A place beside a road where a trip starts or ends (a building's access point).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Access {
     pub segment: SegmentId,
     /// Metres from the segment start.
@@ -69,7 +70,7 @@ pub struct Access {
 }
 
 /// Per-segment congestion (smoothed load, `0` = empty), indexed by segment arena slot.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CongestionMap(pub Vec<f32>);
 
 impl CongestionMap {

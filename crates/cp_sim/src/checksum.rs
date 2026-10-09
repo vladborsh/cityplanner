@@ -74,6 +74,11 @@ impl Fnv1a {
 /// A domain's contribution to the checksum.
 pub type ChecksumFn = fn(&World, &mut Fnv1a);
 
+/// Checksum part of the pathfinding requests in flight (`cp_traffic::PathService`).
+pub(crate) fn paths_part(world: &World, h: &mut Fnv1a) {
+    h.write_serialized(&world.resource::<cp_traffic::PathService>().export());
+}
+
 /// Checksum part of the zone blocks (`cp_zone::ZoneGrid`: blocks, painted types, validity).
 pub(crate) fn zone_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_zone::ZoneGrid>());

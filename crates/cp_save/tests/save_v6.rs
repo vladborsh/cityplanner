@@ -89,7 +89,7 @@ fn v5_fixture_migrates_to_no_buildings_and_keeps_its_zones() {
     }
     assert!(!sim.world().resource::<BuildingGrid>().is_empty());
 
-    // Re-saving writes v6 and round-trips.
+    // Re-saving writes the current version and round-trips.
     let v6 = save(&SaveData::capture(sim.world()), h.content_hash, &h.map_id).unwrap();
     assert_eq!(read_header(&v6).unwrap().0.format_version, FORMAT_VERSION);
     assert_eq!(

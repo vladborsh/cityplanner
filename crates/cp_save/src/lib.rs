@@ -118,7 +118,7 @@ impl SaveData {
         world.insert_resource(self.citizens);
         // Requests in flight are not saved; requesters ask again after a load.
         if let Some(mut svc) = world.get_resource_mut::<cp_traffic::PathService>() {
-            svc.clear();
+            svc.import(cp_traffic::SavedPaths::default()); // replaced by saving them in the next commit
         }
     }
 }

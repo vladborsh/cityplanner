@@ -91,6 +91,9 @@ impl SimRunner {
             .register("zone", crate::checksum::zone_part);
         world
             .resource_mut::<SimChecksum>()
+            .register("paths", crate::checksum::paths_part);
+        world
+            .resource_mut::<SimChecksum>()
             .register("buildings", crate::checksum::building_part);
         world
             .resource_mut::<SimChecksum>()

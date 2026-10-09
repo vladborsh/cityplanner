@@ -15,7 +15,7 @@ pub use graph::{
 };
 pub use service::{
     Mode, PATH_DELAY_TICKS, PathNetwork, PathOutcome, PathRequest, PathResult, PathResults,
-    PathService, RequestId, deliver_paths, update_path_network,
+    PathService, RequestId, SavedPaths, SavedRequest, deliver_paths, update_path_network,
 };
 
 /// Crate name, used by the skeleton smoke test.
