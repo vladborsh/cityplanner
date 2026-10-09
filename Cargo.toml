@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "tools/mapgen"]
+# Vendored third-party crates are not workspace members (see vendor/*/PATCH.md).
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.0.0"
@@ -12,6 +14,10 @@ license = "MIT OR Apache-2.0"
 # (cp_render, cp_tools, cp_ui, cp_prof, apps/*, tools/*) opt out in their own [lints.clippy].
 # A new crate is a sim crate by default; see clippy.toml.
 disallowed_types = "deny"
+
+# Temporary: bevy_egui 0.43.0-rc.1 with a WebGL2 shader fix, see vendor/bevy_egui/PATCH.md.
+[patch.crates-io]
+bevy_egui = { path = "vendor/bevy_egui" }
 
 [workspace.dependencies]
 # Bevy is pinned here and only here. A version bump is its own task.

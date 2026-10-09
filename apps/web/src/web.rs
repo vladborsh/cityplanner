@@ -39,8 +39,7 @@ pub fn run() {
                 cam,
                 // std::time::Instant is unavailable in the browser.
                 phase_timing: false,
-                // bevy_egui 0.43.0-rc.1's shader needs a binding-array feature WebGL2 lacks.
-                ui: false,
+                ui: true,
             },
             FrameTimeDiagnosticsPlugin::default(),
             // FPS and frame time to the browser console every 5 s.
