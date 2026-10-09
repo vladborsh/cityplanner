@@ -41,6 +41,12 @@ impl SimRng {
         self.seed
     }
 
+    /// Position in the keystream (32-bit words drawn so far); with [`seed`](Self::seed)
+    /// this is the complete RNG state, used by the sim checksum.
+    pub fn word_pos(&self) -> u128 {
+        self.rng.get_word_pos()
+    }
+
     /// Derives an independent per-tick stream. The child seed is the 32 keystream bytes
     /// (8 words) of ChaCha8 keyed with this RNG's seed, on ChaCha stream `stream_id`, at
     /// word position `tick * 8`. Distinct ticks therefore read disjoint keystream
