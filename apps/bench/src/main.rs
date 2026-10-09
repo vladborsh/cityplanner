@@ -1,7 +1,7 @@
 //! `cp_bench`: headless benchmark harness (`architecture/system-design.md` §14).
 //!
 //! ```text
-//! cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty] [--ticks N] [--warmup N]
+//! cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty] [--content DIR] [--ticks N] [--warmup N]
 //!          [--seed S] [--out FILE.json] [--inject-sleep Phase=MS]
 //! cp_bench aggregate OUT.json RUN.json...        median over runs
 //! cp_bench compare BASELINE.json CURRENT.json [--threshold 0.2] [--floor-ms 0.05]
@@ -18,13 +18,15 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use cp_sim::{SimPhase, SimRunner};
-use report::{MapInfo, NamedStat, Report, SCHEMA, stat_of};
+use report::{MapInfo, NamedStat, Report, SCHEMA, SaveInfo, stat_of};
 use timing::{InjectedSleep, PHASES, PhaseClock, PhaseTiming};
 
+#[derive(Debug)]
 struct Opts {
     map: Option<String>,
     save: Option<String>,
-    scenario: String,
+    scenario: Option<String>,
+    content: PathBuf,
     ticks: u64,
     warmup: u64,
     seed: u64,
@@ -33,7 +35,7 @@ struct Opts {
 }
 
 fn usage() -> &'static str {
-    "usage: cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty] [--ticks N] [--warmup N] \
+    "usage: cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty] [--content DIR] [--ticks N] [--warmup N] \
      [--seed S] [--out FILE.json] [--inject-sleep Phase=MS]\n       \
      cp_bench aggregate OUT.json RUN.json...\n       \
      cp_bench compare BASELINE.json CURRENT.json [--threshold 0.2] [--floor-ms 0.05]"
@@ -50,7 +52,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
     let mut o = Opts {
         map: None,
         save: None,
-        scenario: "empty".into(),
+        scenario: None,
+        content: PathBuf::from("assets/content"),
         ticks: 2000,
         warmup: 100,
         seed: 1,
@@ -64,7 +67,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         match flag.as_str() {
             "--map" => o.map = Some(val()?),
             "--save" => o.save = Some(val()?),
-            "--scenario" => o.scenario = val()?,
+            "--scenario" => o.scenario = Some(val()?),
+            "--content" => o.content = val()?.into(),
             "--ticks" => o.ticks = num(val()?)?,
             "--warmup" => o.warmup = num(val()?)?,
             "--seed" => o.seed = num(val()?)?,
@@ -77,6 +81,9 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             }
             other => return Err(format!("unknown argument '{other}'")),
         }
+    }
+    if o.save.is_some() && o.scenario.is_some() {
+        return Err("--save and --scenario are mutually exclusive".into());
     }
     if o.ticks == 0 {
         return Err("--ticks must be > 0".into());
@@ -104,15 +111,13 @@ fn map_dir(arg: &str) -> PathBuf {
 }
 
 fn run(o: &Opts) -> Result<Report, String> {
-    if o.save.is_some() {
-        return Err("--save is not supported until T-009 (save/load)".into());
-    }
-    if o.scenario != "empty" {
-        return Err(format!(
-            "unknown scenario '{}' (available: empty)",
-            o.scenario
-        ));
-    }
+    let scenario = match (&o.save, o.scenario.as_deref()) {
+        (Some(_), _) => "save",
+        (None, None | Some("empty")) => "empty",
+        (None, Some(other)) => {
+            return Err(format!("unknown scenario '{other}' (available: empty)"));
+        }
+    };
     let map = o
         .map
         .as_deref()
@@ -133,6 +138,11 @@ fn run(o: &Opts) -> Result<Report, String> {
             .inject_sleep
             .map(|(phase, duration)| InjectedSleep { phase, duration }),
     });
+    let save = o
+        .save
+        .as_deref()
+        .map(|path| load_save(&mut sim, path, &o.content))
+        .transpose()?;
     let mut total_ms = Vec::with_capacity(o.ticks as usize);
     for i in 0..o.warmup + o.ticks {
         let t = Instant::now();
@@ -158,17 +168,37 @@ fn run(o: &Opts) -> Result<Report, String> {
         .collect();
     Ok(Report {
         schema: SCHEMA,
-        scenario: o.scenario.clone(),
+        scenario: scenario.into(),
         seed: o.seed,
         ticks: o.ticks,
         warmup_ticks: o.warmup,
         runs: 1,
         git_sha: git_sha(),
         map,
+        save,
         checksum: format!("{checksum:016x}"),
         arenas: Vec::new(),
         phases,
         total: stat_of(&total_ms),
+    })
+}
+
+/// Loads `path` into `sim` through `cp_save`'s public API. The current content hash comes
+/// from the defs in `content_dir`, so a save made against other content yields a warning.
+fn load_save(sim: &mut SimRunner, path: &str, content_dir: &Path) -> Result<SaveInfo, String> {
+    let db = cp_content::ContentDb::load_dir(content_dir)
+        .map_err(|e| format!("--content {}: {e:?}", content_dir.display()))?;
+    let bytes = std::fs::read(path).map_err(|e| format!("--save {path}: {e}"))?;
+    let t = Instant::now();
+    let (header, warnings) = cp_save::load_into_runner(sim, &bytes, db.content_hash())
+        .map_err(|e| format!("--save {path}: {e}"))?;
+    Ok(SaveInfo {
+        path: path.to_string(),
+        format_version: header.format_version,
+        tick: header.tick,
+        map_id: header.map_id,
+        load_ms: t.elapsed().as_secs_f64() * 1e3,
+        warnings: warnings.iter().map(|w| format!("{w:?}")).collect(),
     })
 }
 
@@ -189,6 +219,15 @@ fn print_table(r: &Report) {
     );
     if let Some(m) = &r.map {
         println!("map {} loaded in {:.2} ms", m.path, m.load_ms);
+    }
+    if let Some(sv) = &r.save {
+        println!(
+            "save {} (v{}, tick {}, map {}) loaded in {:.2} ms",
+            sv.path, sv.format_version, sv.tick, sv.map_id, sv.load_ms
+        );
+        for w in &sv.warnings {
+            println!("warning: {w}");
+        }
     }
     println!("{:<10} {:>12} {:>12}", "phase", "median ms", "p95 ms");
     for p in &r.phases {
@@ -316,12 +355,55 @@ mod tests {
         assert!(r.total.median_ms >= 2.0);
     }
 
+    fn repo(rel: &str) -> String {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(rel)
+            .to_str()
+            .unwrap()
+            .to_string()
+    }
+
     #[test]
-    fn save_and_unknown_scenario_are_rejected() {
+    fn save_loads_runs_ticks_and_reports_header() {
+        let save = repo("fixtures/saves/v0-basic.sav");
+        let content = repo("assets/content");
+        let args = ["--save", save.as_str(), "--content", content.as_str()];
+        let (a, b) = (run(&opts(&args)).unwrap(), run(&opts(&args)).unwrap());
+        let info = a.save.as_ref().unwrap();
+        assert_eq!(a.scenario, "save");
+        // The header reports the file's own version; cp_save migrates it on load.
+        assert_eq!(info.format_version, 0);
+        // The fixture was written against other content, so the warning must surface.
         assert!(
-            run(&opts(&["--save", "x.sav"]))
+            info.warnings
+                .iter()
+                .any(|w| w.contains("ContentHashMismatch"))
+        );
+        assert_eq!(a.checksum, b.checksum);
+        assert_eq!(a.phases.len(), SimPhase::ORDER.len());
+    }
+
+    #[test]
+    fn save_errors_are_reported() {
+        let content = repo("assets/content");
+        let c = content.as_str();
+        assert!(run(&opts(&["--save", "/nonexistent.sav", "--content", c])).is_err());
+        let not_a_save = repo("Cargo.toml");
+        let e = run(&opts(&["--save", not_a_save.as_str(), "--content", c])).unwrap_err();
+        assert!(e.contains("CPSV"), "{e}");
+    }
+
+    #[test]
+    fn save_and_scenario_are_mutually_exclusive_and_unknown_scenario_fails() {
+        let args: Vec<String> = ["--save", "x.sav", "--scenario", "empty"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(
+            parse_opts(&args)
                 .unwrap_err()
-                .contains("T-009")
+                .contains("mutually exclusive")
         );
         assert!(run(&opts(&["--scenario", "boom"])).is_err());
     }

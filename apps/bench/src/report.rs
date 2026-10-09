@@ -24,6 +24,17 @@ pub struct MapInfo {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SaveInfo {
+    pub path: String,
+    pub format_version: u32,
+    pub tick: u64,
+    pub map_id: String,
+    pub load_ms: f64,
+    /// Non-fatal load findings from `cp_save` (e.g. content-hash mismatch), as text.
+    pub warnings: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Report {
     pub schema: u32,
     pub scenario: String,
@@ -34,6 +45,9 @@ pub struct Report {
     pub runs: u32,
     pub git_sha: Option<String>,
     pub map: Option<MapInfo>,
+    /// Set when the run started from `--save`.
+    #[serde(default)]
+    pub save: Option<SaveInfo>,
     /// Final state checksum, hex. Identical across runs of the same inputs.
     pub checksum: String,
     /// Arena name → used slots. Empty until the sim has arenas.
@@ -172,6 +186,7 @@ mod tests {
             runs: 1,
             git_sha: None,
             map: None,
+            save: None,
             checksum: "00".into(),
             arenas: vec![],
             phases: vec![NamedStat {

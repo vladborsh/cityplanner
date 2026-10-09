@@ -10,6 +10,10 @@ cp_bench aggregate result.json run-1.json ... run-5.json   # median over runs
 cp_bench compare bench/baseline.json result.json           # exit 1 on regression
 ```
 
+`--save FILE` loads a save through `cp_save`'s public API (content hash taken from
+`--content DIR`, default `assets/content`), reports the header and any load warnings
+under `save` in the JSON, then runs the ticks. It is mutually exclusive with `--scenario`.
+
 Phase times come from marker systems that `apps/bench` schedules between the phase sets
 (sim crates never read the clock). Overhead is 11 `Instant::now()` calls plus 11 tiny
 systems per tick, equal in baseline and current, so it cancels in the comparison. `total`
