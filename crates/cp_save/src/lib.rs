@@ -46,7 +46,7 @@ use std::io::Read;
 
 use bevy_ecs::world::World;
 use cp_building::BuildingGrid;
-use cp_citizen::CitizenGrid;
+use cp_citizen::{CitizenGrid, TripBook};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
@@ -58,7 +58,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 9;
+pub const FORMAT_VERSION: u32 = 10;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -82,6 +82,8 @@ pub struct SaveData {
     pub paths: SavedPaths,
     /// Pipe and power-line networks. Added in v9.
     pub utilities: UtilityGraph,
+    /// Trips in flight and the routine's counters. Added in v10.
+    pub trips: TripBook,
 }
 
 impl SaveData {
@@ -100,6 +102,7 @@ impl SaveData {
             citizens: world.resource::<CitizenGrid>().clone(),
             paths: world.resource::<cp_traffic::PathService>().export(),
             utilities: world.resource::<UtilityGraph>().clone(),
+            trips: world.resource::<TripBook>().clone(),
         }
     }
 
@@ -128,6 +131,7 @@ impl SaveData {
         // Occupancy tables are derived; the citizen system rebuilds them on its next run.
         world.insert_resource(self.citizens);
         world.insert_resource(self.utilities);
+        world.insert_resource(self.trips);
         // Requests in flight continue after the load: re-launched on the snapshot rebuilt from
         // the restored net, which only counts as a network change if the net differs.
         world

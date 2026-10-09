@@ -5,7 +5,7 @@
 //! domain enums are append-only for the same reason).
 
 use cp_building::BuildingGrid;
-use cp_citizen::CitizenGrid;
+use cp_citizen::{CitizenGrid, TripBook};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
@@ -147,9 +147,46 @@ pub struct SaveDataV8 {
     pub paths: SavedPaths,
 }
 
-/// v8 → v9: the utility networks (pipes, power lines) were added; an old save has none.
-pub fn migrate_v8_to_v9(v8: SaveDataV8) -> SaveData {
+/// Version 9: the body as written by format 9 (utility networks, before trips).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV9 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+}
+
+/// v9 → v10: trips were added; an old save has none in flight (citizens simply decide
+/// again at their next visit).
+pub fn migrate_v9_to_v10(v9: SaveDataV9) -> SaveData {
     SaveData {
+        tick: v9.tick,
+        rng: v9.rng,
+        speed: v9.speed,
+        queue: v9.queue,
+        log: v9.log,
+        tiles: v9.tiles,
+        net: v9.net,
+        zones: v9.zones,
+        buildings: v9.buildings,
+        citizens: v9.citizens,
+        paths: v9.paths,
+        utilities: v9.utilities,
+        trips: TripBook::default(),
+    }
+}
+
+/// v8 → v9: the utility networks (pipes, power lines) were added; an old save has none.
+pub fn migrate_v8_to_v9(v8: SaveDataV8) -> SaveDataV9 {
+    SaveDataV9 {
         tick: v8.tick,
         rng: v8.rng,
         speed: v8.speed,
@@ -268,7 +305,7 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
             let v = migrate_v5_to_v6(v);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v8_to_v9(v))
+            Ok(migrate_v9_to_v10(migrate_v8_to_v9(v)))
         }
         // v1 and v2 share the same body; v2 only added the header CRC.
         1 | 2 => {
@@ -278,7 +315,7 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
             let v = migrate_v5_to_v6(v);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v8_to_v9(v))
+            Ok(migrate_v9_to_v10(migrate_v8_to_v9(v)))
         }
         3 => {
             let v = migrate_v3_to_v4(dec(body)?);
@@ -286,29 +323,32 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
             let v = migrate_v5_to_v6(v);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v8_to_v9(v))
+            Ok(migrate_v9_to_v10(migrate_v8_to_v9(v)))
         }
         4 => {
             let v = migrate_v4_to_v5(dec(body)?);
             let v = migrate_v5_to_v6(v);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v8_to_v9(v))
+            Ok(migrate_v9_to_v10(migrate_v8_to_v9(v)))
         }
         5 => {
             let v = migrate_v5_to_v6(dec(body)?);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v8_to_v9(v))
+            Ok(migrate_v9_to_v10(migrate_v8_to_v9(v)))
         }
         6 => {
             let v = migrate_v6_to_v7(dec(body)?);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v8_to_v9(v))
+            Ok(migrate_v9_to_v10(migrate_v8_to_v9(v)))
         }
-        7 => Ok(migrate_v8_to_v9(migrate_v7_to_v8(dec(body)?))),
-        8 => Ok(migrate_v8_to_v9(dec(body)?)),
-        9 => dec(body),
+        7 => Ok(migrate_v9_to_v10(migrate_v8_to_v9(migrate_v7_to_v8(dec(
+            body,
+        )?)))),
+        8 => Ok(migrate_v9_to_v10(migrate_v8_to_v9(dec(body)?))),
+        9 => Ok(migrate_v9_to_v10(dec(body)?)),
+        10 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -453,4 +493,16 @@ pub fn encode_v8(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v8).expect("serialization failed");
     crate::assemble(8, v8.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 9** file (utility networks, no trips). Legacy writer kept only to
+/// regenerate and test the v9 fixture; real saves always use [`crate::save`].
+pub fn encode_v9(
+    v9: &SaveDataV9,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v9).expect("serialization failed");
+    crate::assemble(9, v9.tick.0, &body, content_hash, map_id, map_hash)
 }
