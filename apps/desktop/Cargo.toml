@@ -13,4 +13,8 @@ cp_sim.workspace = true
 cp_render.workspace = true
 cp_tools.workspace = true
 cp_ui.workspace = true
-bevy.workspace = true
+# Rendering features are enabled here only; sim crates never see them.
+bevy = { workspace = true, features = ["3d"] }
+
+[dev-dependencies]
+gltf = { version = "1", default-features = false, features = ["import"] }

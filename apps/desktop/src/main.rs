@@ -1,6 +1,12 @@
 //! `desktop` app skeleton.
 
+mod gallery;
+
 fn main() {
+    if std::env::args().any(|a| a == "--gallery") {
+        gallery::run();
+        return;
+    }
     println!("cityplanner desktop: skeleton");
 }
 
