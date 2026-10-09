@@ -2438,6 +2438,7 @@ dependencies = [
 name = "cp_save"
 version = "0.0.0"
 dependencies = [
+ "bevy_render",
  "cp_building",
  "cp_citizen",
  "cp_content",
