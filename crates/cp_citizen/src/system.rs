@@ -18,7 +18,7 @@
 //!   (`DemandStub`, temporary) receives a household with probability `1/MOVE_IN_ONE_IN`
 //!   per visit. The household is created at once but its members stay `Moving` for
 //!   [`FALLBACK_DELAY`] ticks, or — with a map — [`BASE_DELAY`] plus the time to drive from
-//!   the nearest external connection at [`ARRIVAL_M_PER_TICK`] (15 m/s). Size 1–5; the first
+//!   the nearest external connection at [`ARRIVAL_SPEED_MPS`] (15 m/s, on the movement clock of §2: `ceil(d / 15 / MOVE_SECONDS_PER_TICK)` ticks). Size 1–5; the first
 //!   member is an adult, the others adults with probability 0.7; education of adults
 //!   0/1/2/3 with 20/50/25/5 %; children have education 0; 70 % own a car.
 
@@ -26,7 +26,7 @@ use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use cp_building::{BuildingGrid, BuildingId, BuildingState, DemandStub};
 use cp_content::{ContentDb, SimContent, ZoneType};
-use cp_core::time::TICKS_PER_DAY;
+use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_DAY};
 use cp_core::{SimLimits, SimRng, Tick};
 use cp_terrain::SimTerrain;
 
@@ -47,7 +47,7 @@ pub const FALLBACK_DELAY: u64 = 2048;
 /// Fixed part of the arrival delay with a map, ticks.
 pub const BASE_DELAY: u64 = 256;
 /// Driving speed from the external connection: 15 m/s at 20 ticks/s.
-pub const ARRIVAL_M_PER_TICK: f32 = 0.75;
+pub const ARRIVAL_SPEED_MPS: f32 = 15.0;
 /// A household with no employed adult for this many game days leaves.
 pub const JOBLESS_LEAVE_DAYS: u64 = 20;
 
@@ -66,7 +66,7 @@ fn arrival_delay(terrain: Option<&SimTerrain>, at: Vec2) -> u64 {
             .map(|&(x, z)| Vec2::new(x, z).distance(at))
             .min_by(f32::total_cmp);
     match nearest {
-        Some(d) => BASE_DELAY + (d / ARRIVAL_M_PER_TICK).ceil() as u64,
+        Some(d) => BASE_DELAY + (d / ARRIVAL_SPEED_MPS / MOVE_SECONDS_PER_TICK).ceil() as u64,
         None => FALLBACK_DELAY,
     }
 }

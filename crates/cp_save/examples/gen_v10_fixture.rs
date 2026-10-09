@@ -1,89 +1,40 @@
-//! Generates `fixtures/saves/v10-basic.sav`, the committed version-10 fixture (the last format
+//! About `fixtures/saves/v10-basic.sav`, the committed version-10 fixture (the last format
 //! without agents; a small town with residents, jobs and trips in flight).
 //!
-//! The committed file was produced by the real v10 writer (`save_with_map` at format 10,
-//! before the v11 bump) with exactly this data. Run from the repo root:
-//! `cargo run -p cp_save --example gen_v10_fixture`. The committed file is **never edited or
-//! regenerated** afterwards (AGENTS.md).
+//! The committed file was produced **once** by the real v10 writer (`save_with_map` at
+//! format 10, before the v11 bump) from a ~5-day run of a three-street town and is **never
+//! edited or regenerated** (AGENTS.md). The sim has moved on since, so this tool cannot
+//! rebuild it from scratch: it loads the committed file, re-encodes it with the frozen v10
+//! writer (`encode_v10`) and writes the result to the path given as the first argument, so
+//! the writer can be checked against the original byte for byte:
+//! `cargo run -p cp_save --example gen_v10_fixture -- /tmp/v10.sav && cmp /tmp/v10.sav fixtures/saves/v10-basic.sav`.
 
-use std::sync::Arc;
-
-use bevy_math::Vec3;
-use cp_citizen::{CitizenGrid, Location, TripBook};
-use cp_content::{ContentDb, ZoneType};
-use cp_core::curve::CubicBezier3;
-use cp_core::time::TICKS_PER_DAY;
-use cp_net::{Elevation, NetGraph};
-use cp_save::{SaveData, save_with_map};
-use cp_sim::SimRunner;
-use cp_zone::{ZoneCellRef, ZoneGrid};
+use cp_save::migrate::{SaveDataV10, encode_v10};
+use cp_save::{load, read_header};
 
 fn main() {
-    let db = Arc::new(ContentDb::load_dir("assets/content").expect("content"));
-    let road = db.road_id("basic_2l").expect("road");
-    let def = db.road(road).clone();
-    let mut sim = SimRunner::new(101);
-    sim.set_content(Arc::clone(&db));
-    {
-        let mut g = sim.world_mut().resource_mut::<NetGraph>();
-        for (a, b) in [
-            ((3000.0, 3000.0), (3090.0, 3000.0)),
-            ((3045.0, 2940.0), (3045.0, 3060.0)),
-            ((3000.0, 3090.0), (3090.0, 3090.0)),
-        ] {
-            g.add_segment(
-                &def,
-                road,
-                CubicBezier3::line(Vec3::new(a.0, 0.0, a.1), Vec3::new(b.0, 0.0, b.1)),
-                Elevation::Ground,
-            )
-            .expect("segment");
-        }
-    }
-    sim.tick_once();
-    {
-        let kinds = [ZoneType::ResLow, ZoneType::Industrial, ZoneType::ComLow];
-        let mut grid = sim.world_mut().resource_mut::<ZoneGrid>();
-        let ids: Vec<_> = grid.blocks().map(|(i, b)| (i, b.cell_count())).collect();
-        for (n, (id, cells)) in ids.into_iter().enumerate() {
-            for cell in 0..cells {
-                grid.set_zone(
-                    ZoneCellRef {
-                        block: id,
-                        cell: cell as u16,
-                    },
-                    kinds[n % kinds.len()],
-                );
-            }
-        }
-    }
-    for _ in 0..(5 * TICKS_PER_DAY) {
-        sim.tick_once();
-    }
-    // Mid-morning of a working day with people on their way.
-    for _ in 0..(3 * TICKS_PER_DAY) {
-        sim.tick_once();
-        let moving = sim
-            .world()
-            .resource::<CitizenGrid>()
-            .citizens()
-            .any(|(_, c)| c.location == Location::Moving);
-        if sim.tick().0 % TICKS_PER_DAY > TICKS_PER_DAY / 3
-            && moving
-            && !sim.world().resource::<TripBook>().is_empty()
-        {
-            break;
-        }
-    }
-    assert!(!sim.world().resource::<TripBook>().is_empty(), "trips in flight");
-    let bytes = save_with_map(
-        &SaveData::capture(sim.world()),
-        0xC17F_0000_0000_000B,
-        "flatlands",
-        Some(0xABCD_0000_0000_0005),
-    )
-    .unwrap();
-    std::fs::create_dir_all("fixtures/saves").unwrap();
-    std::fs::write("fixtures/saves/v10-basic.sav", &bytes).unwrap();
-    println!("wrote {} bytes", bytes.len());
+    let out = std::env::args()
+        .nth(1)
+        .expect("usage: gen_v10_fixture <output path>");
+    let bytes = std::fs::read("fixtures/saves/v10-basic.sav").expect("committed fixture");
+    let (h, _) = read_header(&bytes).expect("header");
+    let d = load(&bytes, h.content_hash).expect("load").data;
+    let v10 = SaveDataV10 {
+        tick: d.tick,
+        rng: d.rng,
+        speed: d.speed,
+        queue: d.queue,
+        log: d.log,
+        tiles: d.tiles,
+        net: d.net,
+        zones: d.zones,
+        buildings: d.buildings,
+        citizens: d.citizens,
+        paths: d.paths,
+        utilities: d.utilities,
+        trips: d.trips,
+    };
+    let again = encode_v10(&v10, h.content_hash, &h.map_id, h.map_hash).unwrap();
+    std::fs::write(&out, &again).unwrap();
+    println!("wrote {} bytes to {out}", again.len());
 }

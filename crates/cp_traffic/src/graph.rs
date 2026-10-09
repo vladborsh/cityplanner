@@ -32,7 +32,7 @@ pub const U_TURN_PENALTY: f32 = 15.0;
 pub const CONGESTION_K: f32 = 3.0;
 
 /// Which end of a segment. Pedestrian lane ends are named by the segment end they touch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum SegEnd {
     Start,
     End,
@@ -105,6 +105,15 @@ impl LaneNode {
         let u = (s / self.len.max(1e-3)).clamp(0.0, 1.0) * n as f32;
         let k = (u as usize).min(n - 1);
         to_xz(self.curve[k].point(u - k as f32))
+    }
+
+    /// Lane metres (in travel direction) of the lane end at `end`: `0` or `len`.
+    pub fn end_s(&self, end: SegEnd) -> f32 {
+        if (end == SegEnd::End) == self.forward {
+            self.len
+        } else {
+            0.0
+        }
     }
 
     /// Position of the lane end at `end`.
@@ -271,6 +280,14 @@ impl PathGraph {
     pub(crate) fn car_slot(&self, id: LaneId) -> Option<u32> {
         let l = self.car.get(id.index as usize)?.as_ref()?;
         (l.id == id).then_some(id.index)
+    }
+
+    /// The pedestrian lane `id`, if it is in this snapshot.
+    pub(crate) fn ped_lane(&self, id: LaneId) -> Option<&LaneNode> {
+        self.ped
+            .get(id.index as usize)?
+            .as_ref()
+            .filter(|l| l.id == id)
     }
 
     pub(crate) fn ped_slot(&self, id: LaneId) -> Option<u32> {

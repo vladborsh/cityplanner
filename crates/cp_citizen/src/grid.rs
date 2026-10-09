@@ -226,6 +226,14 @@ impl CitizenGrid {
         }
     }
 
+    /// Moves a citizen to `loc` (the routine and the agents drive this state machine; tests
+    /// and scenarios set it directly).
+    pub fn set_location(&mut self, id: CitizenId, loc: Location) {
+        if let Some(c) = self.citizens.get_mut(id) {
+            c.location = loc;
+        }
+    }
+
     pub(crate) fn citizen_mut(&mut self, id: CitizenId) -> Option<&mut Citizen> {
         self.citizens.get_mut(id)
     }

@@ -273,6 +273,16 @@ mod tests {
                     capacity: cp_core::SimLimits::desktop().citizens
                 },
                 ArenaFill {
+                    name: "pedestrians",
+                    used: 0,
+                    capacity: cp_core::SimLimits::desktop().pedestrians
+                },
+                ArenaFill {
+                    name: "vehicles",
+                    used: 0,
+                    capacity: cp_core::SimLimits::desktop().vehicles
+                },
+                ArenaFill {
                     name: "trips",
                     used: 0,
                     capacity: cp_core::SimLimits::desktop().citizens

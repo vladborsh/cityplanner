@@ -4,10 +4,15 @@
 //! Dependencies: `cp_net` (lanes, junction links) only for now; `cp_citizen` (a §1 edge)
 //! is not needed until trips exist.
 
+pub mod agents;
 pub mod astar;
 pub mod graph;
 pub mod service;
 
+pub use agents::{
+    AgentSettings, AgentStats, Agents, PED_CHUNK, PED_STEP, Pedestrian, PedestrianId, Vehicle,
+    VehicleId, crossing_of, move_agents, receive_paths, route_trips,
+};
 pub use astar::{CarPath, NoPath, PedPath, find_car_path, find_ped_path};
 pub use graph::{
     Access, CONGESTION_K, CongestionMap, LEFT_TURN_PENALTY, PED_SPEED, PathGraph, SegEnd, Side,

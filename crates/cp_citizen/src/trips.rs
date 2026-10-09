@@ -1,11 +1,17 @@
 //! Trips and the trip book (`architecture/system-design.md` §9.2).
 //!
-//! A [`Trip`] is `{ citizen, from, to, purpose, mode }` plus its state. Travel is
-//! **abstract** for now: a trip in transit arrives `distance / speed` ticks after it
-//! departs. The seam for the traffic tasks is [`TripState::InTransit`]: a later task makes
-//! departure ask the path service for a route and spawn an agent, and arrival come from the
-//! agent instead of the timer (add a state variant for "awaiting agent"; the citizen's
-//! location state machine stays as it is).
+//! A [`Trip`] is `{ citizen, from, to, purpose, mode }` plus its state. Life cycle:
+//!
+//! ```text
+//! Scheduled{depart_at} ─depart→ Planned ─cp_traffic submits a path→ AwaitingPath{request}
+//!        ─path found, agent from the pool→ Agent         ─agent arrives→ (done)
+//!        ─path found, pool empty        → InTransit{arrive_at} ─timer→ (done)   [abstract]
+//!        ─no path / building gone       → cancelled (the citizen goes home)
+//! ```
+//!
+//! `Planned`, `AwaitingPath` and `Agent` belong to `cp_traffic` (which finishes the trip
+//! through [`crate::routine::complete_trip`]); `Scheduled` and `InTransit` are handled by
+//! the routine's timer. An abstract trip arrives when its path cost says so (§3, §9.4).
 //!
 //! Save stability: serialised with postcard; changing fields is a save format change and
 //! enums are append-only.
@@ -38,8 +44,14 @@ pub enum TripMode {
 pub enum TripState {
     /// Waiting at `from` until `depart_at` (e.g. the dwell time at a shop).
     Scheduled { depart_at: Tick },
-    /// On the way; arrives at `arrive_at`.
+    /// On the way without an agent (pool exhausted): arrives at `arrive_at`.
     InTransit { arrive_at: Tick },
+    /// Created by the routine; `cp_traffic` asks the path service for a route next tick.
+    Planned,
+    /// A path request is in flight (`cp_traffic::RequestId` as a number).
+    AwaitingPath { request: u64 },
+    /// An agent (pedestrian or vehicle, owned by `cp_traffic`) is carrying out the trip.
+    Agent,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -53,11 +65,13 @@ pub struct Trip {
 }
 
 impl Trip {
-    /// The tick at which something happens next (departure or arrival).
-    pub fn event_at(&self) -> Tick {
+    /// The tick at which the routine's timer acts next (departure or abstract arrival);
+    /// `None` while the trip is in `cp_traffic`'s hands.
+    pub fn event_at(&self) -> Option<Tick> {
         match self.state {
-            TripState::Scheduled { depart_at } => depart_at,
-            TripState::InTransit { arrive_at } => arrive_at,
+            TripState::Scheduled { depart_at } => Some(depart_at),
+            TripState::InTransit { arrive_at } => Some(arrive_at),
+            TripState::Planned | TripState::AwaitingPath { .. } | TripState::Agent => None,
         }
     }
 }
@@ -75,6 +89,9 @@ pub struct TripBook {
     /// `(event tick, id)`; derived from the trips, rebuilt lazily after a load.
     #[serde(skip)]
     events: BTreeSet<(u64, TripId)>,
+    /// Trips in `Planned` (waiting for `cp_traffic` to route them); derived.
+    #[serde(skip)]
+    planned: BTreeSet<TripId>,
     #[serde(skip)]
     by_citizen: BTreeMap<CitizenId, TripId>,
     #[serde(skip)]
@@ -103,7 +120,13 @@ impl TripBook {
         self.events = self
             .trips
             .iter()
-            .map(|(id, t)| (t.event_at().0, id))
+            .filter_map(|(id, t)| t.event_at().map(|e| (e.0, id)))
+            .collect();
+        self.planned = self
+            .trips
+            .iter()
+            .filter(|(_, t)| t.state == TripState::Planned)
+            .map(|(id, _)| id)
             .collect();
         self.by_citizen = self.trips.iter().map(|(id, t)| (t.citizen, id)).collect();
         self.ready = true;
@@ -135,16 +158,28 @@ impl TripBook {
         if self.by_citizen.contains_key(&trip.citizen) {
             return None;
         }
-        let (citizen, at) = (trip.citizen, trip.event_at().0);
+        let (citizen, at, planned) = (
+            trip.citizen,
+            trip.event_at(),
+            trip.state == TripState::Planned,
+        );
         let id = self.trips.insert(trip);
-        self.events.insert((at, id));
+        if let Some(at) = at {
+            self.events.insert((at.0, id));
+        }
+        if planned {
+            self.planned.insert(id);
+        }
         self.by_citizen.insert(citizen, id);
         Some(id)
     }
 
     pub fn remove(&mut self, id: TripId) -> Option<Trip> {
         let t = self.trips.remove(id)?;
-        self.events.remove(&(t.event_at().0, id));
+        if let Some(at) = t.event_at() {
+            self.events.remove(&(at.0, id));
+        }
+        self.planned.remove(&id);
         self.by_citizen.remove(&t.citizen);
         Some(t)
     }
@@ -152,9 +187,17 @@ impl TripBook {
     /// Moves a trip to a new state (re-keying its event).
     pub fn set_state(&mut self, id: TripId, state: TripState) {
         if let Some(t) = self.trips.get_mut(id) {
-            self.events.remove(&(t.event_at().0, id));
+            if let Some(at) = t.event_at() {
+                self.events.remove(&(at.0, id));
+            }
+            self.planned.remove(&id);
             t.state = state;
-            self.events.insert((t.event_at().0, id));
+            if let Some(at) = t.event_at() {
+                self.events.insert((at.0, id));
+            }
+            if state == TripState::Planned {
+                self.planned.insert(id);
+            }
         }
     }
 
@@ -165,6 +208,11 @@ impl TripBook {
             .take_while(|(t, _)| *t <= now)
             .map(|(_, id)| *id)
             .collect()
+    }
+
+    /// Trips waiting to be routed, oldest id first.
+    pub fn planned(&self) -> Vec<TripId> {
+        self.planned.iter().copied().collect()
     }
 
     /// Days since the household last shopped.

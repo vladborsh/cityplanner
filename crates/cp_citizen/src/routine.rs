@@ -45,6 +45,20 @@ use crate::system::CITIZEN_BUCKETS;
 use crate::trips::{Trip, TripBook, TripMode, TripPurpose, TripState};
 
 pub const ROUTINE_STREAM: u64 = 0x2007;
+
+/// Knobs of the routine (not saved).
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct RoutineSettings {
+    /// When `false`, citizens decide nothing new (trips in flight still finish). For tests,
+    /// scenarios and benches that drive trips themselves.
+    pub decide: bool,
+}
+
+impl Default for RoutineSettings {
+    fn default() -> Self {
+        Self { decide: true }
+    }
+}
 /// Walking speed, m/s (real units; applied on the movement clock).
 pub const WALK_SPEED_MPS: f32 = 1.4;
 /// Driving speed, m/s: 50 km/h placeholder until agents and paths exist.
@@ -156,6 +170,64 @@ fn send_home(grid: &mut CitizenGrid, id: CitizenId) {
     set_location(grid, id, Location::Home);
 }
 
+/// Cancels a trip (citizen or destination gone, or no route): the trip is dropped and
+/// counted, and the citizen — if they still exist — is put back at home.
+pub fn cancel_trip(grid: &mut CitizenGrid, book: &mut TripBook, tid: crate::trips::TripId) {
+    let Some(trip) = book.remove(tid) else { return };
+    book.cancelled += 1;
+    if grid.citizen(trip.citizen).is_some() {
+        send_home(grid, trip.citizen);
+    }
+}
+
+/// Finishes a trip that has reached its destination: the citizen's location follows the
+/// purpose, and after a shopping trip the way home is scheduled. A trip whose citizen or
+/// destination is gone is cancelled instead. Used by the routine's timer for abstract trips
+/// and by `cp_traffic` when an agent arrives.
+pub fn complete_trip(
+    grid: &mut CitizenGrid,
+    book: &mut TripBook,
+    buildings: &BuildingGrid,
+    rng: &SimRng,
+    now: u64,
+    tid: crate::trips::TripId,
+) {
+    let Some(trip) = book.get(tid).cloned() else {
+        return;
+    };
+    if grid.citizen(trip.citizen).is_none() || !is_active(buildings, trip.to) {
+        cancel_trip(grid, book, tid);
+        return;
+    }
+    book.remove(tid);
+    book.completed += 1;
+    match trip.purpose {
+        TripPurpose::Work => set_location(grid, trip.citizen, Location::Work),
+        TripPurpose::Home => set_location(grid, trip.citizen, Location::Home),
+        TripPurpose::Shop => {
+            set_location(grid, trip.citizen, Location::Shop);
+            // Dwell, then head home.
+            let mut r = rng.fork(
+                ROUTINE_STREAM ^ 0x5,
+                Tick(now ^ u64::from(trip.citizen.index) << 32),
+            );
+            let dwell = SHOP_DWELL_MIN + u64::from(r.below(SHOP_DWELL_SPAN));
+            if let Some(home) = grid.citizen(trip.citizen).and_then(|c| c.home) {
+                book.add(Trip {
+                    citizen: trip.citizen,
+                    from: trip.to,
+                    to: home,
+                    purpose: TripPurpose::Home,
+                    mode: trip.mode,
+                    state: TripState::Scheduled {
+                        depart_at: Tick(now + dwell),
+                    },
+                });
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn update_routine(
     tick: Res<Tick>,
@@ -165,6 +237,7 @@ pub fn update_routine(
     limits: Res<SimLimits>,
     mut grid: ResMut<CitizenGrid>,
     mut book: ResMut<TripBook>,
+    settings: Option<Res<RoutineSettings>>,
 ) {
     let Some(content) = content else { return };
     let db = &content.0;
@@ -199,57 +272,23 @@ pub fn update_routine(
                 set_location(&mut grid, trip.citizen, Location::Moving);
                 book.departures_by_hour[(hour as usize).min(23)] += 1;
                 book.remove(tid);
+                // `cp_traffic` routes it from here.
                 book.add(Trip {
                     mode,
-                    state: TripState::InTransit {
-                        arrive_at: Tick(now + travel_ticks(d, mode)),
-                    },
+                    state: TripState::Planned,
                     ..trip
                 });
             }
             TripState::InTransit { .. } => {
-                book.remove(tid);
-                if !alive {
-                    book.cancelled += 1;
-                    continue;
-                }
-                if !is_active(&buildings, trip.to) {
-                    book.cancelled += 1;
-                    send_home(&mut grid, trip.citizen);
-                    continue;
-                }
-                book.completed += 1;
-                match trip.purpose {
-                    TripPurpose::Work => set_location(&mut grid, trip.citizen, Location::Work),
-                    TripPurpose::Home => set_location(&mut grid, trip.citizen, Location::Home),
-                    TripPurpose::Shop => {
-                        set_location(&mut grid, trip.citizen, Location::Shop);
-                        // Dwell, then head home.
-                        let mut r = rng.fork(
-                            ROUTINE_STREAM ^ 0x5,
-                            Tick(now ^ u64::from(trip.citizen.index) << 32),
-                        );
-                        let dwell = SHOP_DWELL_MIN + u64::from(r.below(SHOP_DWELL_SPAN));
-                        if let Some(home) = grid.citizen(trip.citizen).and_then(|c| c.home) {
-                            book.add(Trip {
-                                citizen: trip.citizen,
-                                from: trip.to,
-                                to: home,
-                                purpose: TripPurpose::Home,
-                                mode: trip.mode,
-                                state: TripState::Scheduled {
-                                    depart_at: Tick(now + dwell),
-                                },
-                            });
-                        }
-                    }
-                }
+                complete_trip(&mut grid, &mut book, &buildings, &rng, now, tid);
             }
+            // In `cp_traffic`'s hands; it completes them itself.
+            TripState::Planned | TripState::AwaitingPath { .. } | TripState::Agent => {}
         }
     }
 
     // --- decisions for this tick's bucket ---
-    if book.len() < limits.citizens as usize {
+    if settings.is_none_or(|s| s.decide) && book.len() < limits.citizens as usize {
         let bucket = (now % u64::from(CITIZEN_BUCKETS)) as u32;
         let citizens: Vec<CitizenId> = grid
             .citizens_bucket(CITIZEN_BUCKETS, bucket)

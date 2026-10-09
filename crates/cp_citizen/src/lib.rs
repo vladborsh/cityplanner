@@ -13,11 +13,11 @@ pub use model::{
     Location,
 };
 pub use routine::{
-    CAR_SPEED_MPS, ROUTINE_STREAM, Shift, WALK_SPEED_MPS, choose_mode, hour_of_day, shift_for,
-    travel_ticks, update_routine,
+    CAR_SPEED_MPS, ROUTINE_STREAM, RoutineSettings, Shift, WALK_SPEED_MPS, cancel_trip,
+    choose_mode, complete_trip, hour_of_day, shift_for, travel_ticks, update_routine,
 };
 pub use system::{
-    ARRIVAL_M_PER_TICK, BASE_DELAY, FALLBACK_DELAY, JOBLESS_LEAVE_DAYS, MOVE_IN_ONE_IN,
+    ARRIVAL_SPEED_MPS, BASE_DELAY, FALLBACK_DELAY, JOBLESS_LEAVE_DAYS, MOVE_IN_ONE_IN,
     MOVE_IN_STREAM, update_citizens,
 };
 pub use trips::{Trip, TripBook, TripId, TripMode, TripPurpose, TripState};

@@ -156,6 +156,10 @@ fn every_trip_finishes_and_nobody_is_in_two_places() {
                     assert!(arrive_at.0 >= now.saturating_sub(1), "overdue arrival");
                 }
                 TripState::Scheduled { .. } => assert_eq!(loc, Location::Shop),
+                // Routed or being carried by an agent: the citizen is on the move.
+                TripState::Planned | TripState::AwaitingPath { .. } | TripState::Agent => {
+                    assert_eq!(loc, Location::Moving, "{:?} but {loc:?}", t.state)
+                }
             }
         }
         assert!(

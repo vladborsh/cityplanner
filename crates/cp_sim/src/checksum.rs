@@ -99,6 +99,11 @@ pub(crate) fn utility_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_utility::UtilityGraph>());
 }
 
+/// Checksum part of the agent pools (`cp_traffic::Agents`).
+pub(crate) fn agent_part(world: &World, h: &mut Fnv1a) {
+    h.write_serialized(world.resource::<cp_traffic::Agents>());
+}
+
 /// Checksum part of trips (`cp_citizen::TripBook`).
 pub(crate) fn trip_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_citizen::TripBook>());

@@ -10,7 +10,7 @@ use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
-use cp_traffic::SavedPaths;
+use cp_traffic::{Agents, SavedPaths};
 use cp_utility::UtilityGraph;
 use cp_zone::ZoneGrid;
 use serde::{Deserialize, Serialize};
@@ -164,10 +164,50 @@ pub struct SaveDataV9 {
     pub utilities: UtilityGraph,
 }
 
+/// Version 10: the body as written by format 10 (trips, before agents).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV10 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+    pub trips: TripBook,
+}
+
+/// v10 → v11: agents were added. A trip in flight in an old save has no agent: its state
+/// is one the old format knows (`Scheduled` or an abstract `InTransit`), which the routine's
+/// timer still finishes, so nothing needs rerouting.
+pub fn migrate_v10_to_v11(v10: SaveDataV10) -> SaveData {
+    SaveData {
+        tick: v10.tick,
+        rng: v10.rng,
+        speed: v10.speed,
+        queue: v10.queue,
+        log: v10.log,
+        tiles: v10.tiles,
+        net: v10.net,
+        zones: v10.zones,
+        buildings: v10.buildings,
+        citizens: v10.citizens,
+        paths: v10.paths,
+        utilities: v10.utilities,
+        trips: v10.trips,
+        agents: Agents::default(),
+    }
+}
+
 /// v9 → v10: trips were added; an old save has none in flight (citizens simply decide
 /// again at their next visit).
-pub fn migrate_v9_to_v10(v9: SaveDataV9) -> SaveData {
-    SaveData {
+pub fn migrate_v9_to_v10(v9: SaveDataV9) -> SaveDataV10 {
+    SaveDataV10 {
         tick: v9.tick,
         rng: v9.rng,
         speed: v9.speed,
@@ -305,7 +345,7 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
             let v = migrate_v5_to_v6(v);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v9_to_v10(migrate_v8_to_v9(v)))
+            Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(v))))
         }
         // v1 and v2 share the same body; v2 only added the header CRC.
         1 | 2 => {
@@ -315,7 +355,7 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
             let v = migrate_v5_to_v6(v);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v9_to_v10(migrate_v8_to_v9(v)))
+            Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(v))))
         }
         3 => {
             let v = migrate_v3_to_v4(dec(body)?);
@@ -323,32 +363,35 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
             let v = migrate_v5_to_v6(v);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v9_to_v10(migrate_v8_to_v9(v)))
+            Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(v))))
         }
         4 => {
             let v = migrate_v4_to_v5(dec(body)?);
             let v = migrate_v5_to_v6(v);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v9_to_v10(migrate_v8_to_v9(v)))
+            Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(v))))
         }
         5 => {
             let v = migrate_v5_to_v6(dec(body)?);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v9_to_v10(migrate_v8_to_v9(v)))
+            Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(v))))
         }
         6 => {
             let v = migrate_v6_to_v7(dec(body)?);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v9_to_v10(migrate_v8_to_v9(v)))
+            Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(v))))
         }
-        7 => Ok(migrate_v9_to_v10(migrate_v8_to_v9(migrate_v7_to_v8(dec(
-            body,
-        )?)))),
-        8 => Ok(migrate_v9_to_v10(migrate_v8_to_v9(dec(body)?))),
-        9 => Ok(migrate_v9_to_v10(dec(body)?)),
-        10 => dec(body),
+        7 => Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(
+            migrate_v7_to_v8(dec(body)?),
+        )))),
+        8 => Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(
+            dec(body)?,
+        )))),
+        9 => Ok(migrate_v10_to_v11(migrate_v9_to_v10(dec(body)?))),
+        10 => Ok(migrate_v10_to_v11(dec(body)?)),
+        11 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -505,4 +548,16 @@ pub fn encode_v9(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v9).expect("serialization failed");
     crate::assemble(9, v9.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 10** file (trips, no agents). Legacy writer kept only to regenerate
+/// and test the v10 fixture; real saves always use [`crate::save`].
+pub fn encode_v10(
+    v10: &SaveDataV10,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v10).expect("serialization failed");
+    crate::assemble(10, v10.tick.0, &body, content_hash, map_id, map_hash)
 }

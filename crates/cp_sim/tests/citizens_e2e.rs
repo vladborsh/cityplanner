@@ -9,7 +9,7 @@ use bevy_ecs::change_detection::Mut;
 use bevy_math::{Vec2, Vec3};
 use cp_building::{BuildingGrid, BuildingState, demolish_building};
 use cp_citizen::{
-    ARRIVAL_M_PER_TICK, BASE_DELAY, CitizenGrid, FALLBACK_DELAY, JOBLESS_LEAVE_DAYS, Location,
+    ARRIVAL_SPEED_MPS, BASE_DELAY, CitizenGrid, FALLBACK_DELAY, JOBLESS_LEAVE_DAYS, Location,
 };
 use cp_content::{ContentDb, ZoneType};
 use cp_core::curve::CubicBezier3;
@@ -326,7 +326,8 @@ fn arrival_delay_is_fixed_without_a_map_and_distance_based_with_one() {
         .iter()
         .map(|&(x, z)| Vec2::new(x, z).distance(pos))
         .fold(f32::MAX, f32::min);
-    let expected = BASE_DELAY + (nearest / ARRIVAL_M_PER_TICK).ceil() as u64;
+    let expected = BASE_DELAY
+        + (nearest / ARRIVAL_SPEED_MPS / cp_core::time::MOVE_SECONDS_PER_TICK).ceil() as u64;
     assert_eq!(h.arrive_at.0 - created, expected);
     assert!(expected > BASE_DELAY);
 

@@ -58,7 +58,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 10;
+pub const FORMAT_VERSION: u32 = 11;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -84,6 +84,8 @@ pub struct SaveData {
     pub utilities: UtilityGraph,
     /// Trips in flight and the routine's counters. Added in v10.
     pub trips: TripBook,
+    /// Pedestrians and vehicles in the agent pools. Added in v11.
+    pub agents: cp_traffic::Agents,
 }
 
 impl SaveData {
@@ -103,6 +105,7 @@ impl SaveData {
             paths: world.resource::<cp_traffic::PathService>().export(),
             utilities: world.resource::<UtilityGraph>().clone(),
             trips: world.resource::<TripBook>().clone(),
+            agents: world.resource::<cp_traffic::Agents>().clone(),
         }
     }
 
@@ -132,6 +135,7 @@ impl SaveData {
         world.insert_resource(self.citizens);
         world.insert_resource(self.utilities);
         world.insert_resource(self.trips);
+        world.insert_resource(self.agents);
         // Requests in flight continue after the load: re-launched on the snapshot rebuilt from
         // the restored net, which only counts as a network change if the net differs.
         world

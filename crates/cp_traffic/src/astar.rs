@@ -11,6 +11,7 @@ use std::collections::BinaryHeap;
 
 use bevy_math::Vec2;
 use cp_net::LaneId;
+use serde::{Deserialize, Serialize};
 
 use crate::graph::{Access, CONGESTION_K, CongestionMap, PED_SPEED, PathGraph, SegEnd};
 
@@ -20,7 +21,7 @@ pub struct NoPath;
 
 /// A vehicle route: start lane (at `start_s` lane-metres), the junction connections to
 /// cross as stable `(from, to)` lane pairs, and the goal lane (at `goal_s`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CarPath {
     pub start: LaneId,
     pub start_s: f32,
@@ -41,7 +42,7 @@ impl CarPath {
 /// A walking route: start lane position, the lane ends visited in order, goal position.
 /// Consecutive states on the same lane mean walking along it; a change of lane means
 /// crossing a junction link at that node.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PedPath {
     pub start: LaneId,
     pub start_s: f32,

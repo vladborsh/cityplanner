@@ -92,6 +92,9 @@ impl SimRunner {
         world.init_resource::<cp_traffic::PathService>();
         world.init_resource::<cp_traffic::PathResults>();
         world.init_resource::<cp_citizen::TripBook>();
+        world.init_resource::<cp_citizen::RoutineSettings>();
+        world.init_resource::<cp_traffic::Agents>();
+        world.init_resource::<cp_traffic::AgentSettings>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
@@ -113,6 +116,9 @@ impl SimRunner {
         world
             .resource_mut::<SimChecksum>()
             .register("trips", crate::checksum::trip_part);
+        world
+            .resource_mut::<SimChecksum>()
+            .register("agents", crate::checksum::agent_part);
         world.init_resource::<crate::view::ArenaGauges>();
         let building_cap = world.resource::<SimLimits>().buildings;
         let limits = *world.resource::<SimLimits>();
@@ -122,6 +128,12 @@ impl SimRunner {
         });
         gauges.register("citizens", limits.citizens, |w| {
             w.resource::<cp_citizen::CitizenGrid>().citizen_count()
+        });
+        gauges.register("pedestrians", limits.pedestrians, |w| {
+            w.resource::<cp_traffic::Agents>().pedestrian_count()
+        });
+        gauges.register("vehicles", limits.vehicles, |w| {
+            w.resource::<cp_traffic::Agents>().vehicle_count()
         });
         gauges.register("trips", limits.citizens, |w| {
             w.resource::<cp_citizen::TripBook>().len()
@@ -158,6 +170,17 @@ impl SimRunner {
                 .after(cp_net::update_junctions),
         );
         schedule.add_systems(cp_traffic::deliver_paths.in_set(SimPhase::Paths));
+        schedule.add_systems(
+            cp_traffic::receive_paths
+                .in_set(SimPhase::Paths)
+                .after(cp_traffic::deliver_paths),
+        );
+        // Agents move first, then freshly planned trips ask for routes.
+        schedule.add_systems(
+            (cp_traffic::move_agents, cp_traffic::route_trips)
+                .chain()
+                .in_set(SimPhase::Agents),
+        );
         schedule.add_systems(
             cp_citizen::update_routine
                 .in_set(SimPhase::Citizens)
