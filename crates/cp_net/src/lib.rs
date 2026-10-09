@@ -2,6 +2,7 @@
 
 pub mod build;
 pub mod command;
+pub mod connections;
 pub mod graph;
 pub mod junction;
 pub mod model;
@@ -12,6 +13,7 @@ pub use build::{
     pier_positions, segment_cost, validate_road_path,
 };
 pub use command::{NetCommand, NetError, apply};
+pub use connections::{LaneConnection, Links, PedLink, PedLinkKind, Turn};
 pub use graph::{MIN_SEGMENT_LENGTH, NODE_REUSE_EPS, NetGraph, NetOpError, SplitResult};
 pub use junction::{Arm, Junction, JunctionGeometry, compute_junction, update_junctions};
 pub use model::*;

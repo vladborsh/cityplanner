@@ -46,6 +46,7 @@ use bevy_ecs::system::ResMut;
 use bevy_math::{Vec2, Vec3};
 use cp_core::curve::{CubicBezier3, to_xz};
 
+use crate::connections::{Links, compute_links};
 use crate::graph::NetGraph;
 use crate::model::{NodeId, SegmentId};
 
@@ -88,6 +89,8 @@ pub struct Junction {
     pub arms: Vec<Arm>,
     /// Counter-clockwise polygon (XZ); empty for a node without segments.
     pub polygon: Vec<Vec2>,
+    /// Lane connections, conflicts and pedestrian links (see [`crate::connections`]).
+    pub links: Links,
     /// Value of [`JunctionGeometry::version`] when this junction was last recomputed.
     pub revision: u64,
 }
@@ -303,11 +306,13 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
             out
         }
     };
+    let links = compute_links(graph, &arms);
     Some(Junction {
         node,
         pos: n.pos,
         arms,
         polygon,
+        links,
         revision,
     })
 }
