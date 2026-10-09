@@ -87,6 +87,7 @@ impl SimRunner {
         world.init_resource::<cp_traffic::PathNetwork>();
         world.init_resource::<cp_traffic::PathService>();
         world.init_resource::<cp_traffic::PathResults>();
+        world.init_resource::<cp_citizen::TripBook>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
@@ -105,6 +106,9 @@ impl SimRunner {
         world
             .resource_mut::<SimChecksum>()
             .register("citizens", crate::checksum::citizen_part);
+        world
+            .resource_mut::<SimChecksum>()
+            .register("trips", crate::checksum::trip_part);
         world.init_resource::<crate::view::ArenaGauges>();
         let building_cap = world.resource::<SimLimits>().buildings;
         let limits = *world.resource::<SimLimits>();
@@ -114,6 +118,9 @@ impl SimRunner {
         });
         gauges.register("citizens", limits.citizens, |w| {
             w.resource::<cp_citizen::CitizenGrid>().citizen_count()
+        });
+        gauges.register("trips", limits.citizens, |w| {
+            w.resource::<cp_citizen::TripBook>().len()
         });
         gauges.register("households", limits.households, |w| {
             w.resource::<cp_citizen::CitizenGrid>().household_count()
@@ -147,6 +154,11 @@ impl SimRunner {
                 .after(cp_net::update_junctions),
         );
         schedule.add_systems(cp_traffic::deliver_paths.in_set(SimPhase::Paths));
+        schedule.add_systems(
+            cp_citizen::update_routine
+                .in_set(SimPhase::Citizens)
+                .after(cp_citizen::update_citizens),
+        );
         schedule.add_systems(update_checksum.in_set(ChecksumSet));
         Self {
             world,

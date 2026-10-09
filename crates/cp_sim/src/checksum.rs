@@ -99,6 +99,11 @@ pub(crate) fn utility_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_utility::UtilityGraph>());
 }
 
+/// Checksum part of trips (`cp_citizen::TripBook`).
+pub(crate) fn trip_part(world: &World, h: &mut Fnv1a) {
+    h.write_serialized(world.resource::<cp_citizen::TripBook>());
+}
+
 /// Checksum part of the road network (`cp_net::NetGraph`: arenas and dirty set).
 /// Registered by `SimRunner::new` — `cp_net` cannot depend on `cp_sim`, so built-in
 /// domains register here rather than through a `SimPlugin`.

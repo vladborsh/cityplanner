@@ -226,6 +226,11 @@ mod tests {
                     capacity: cp_core::SimLimits::desktop().citizens
                 },
                 ArenaFill {
+                    name: "trips",
+                    used: 0,
+                    capacity: cp_core::SimLimits::desktop().citizens
+                },
+                ArenaFill {
                     name: "households",
                     used: 0,
                     capacity: cp_core::SimLimits::desktop().households

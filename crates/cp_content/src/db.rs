@@ -54,6 +54,7 @@ pub struct ContentDb {
     services: Table<ServiceDef>,
     vehicles: Table<VehicleDef>,
     utilities: Table<UtilityDef>,
+    balance: Balance,
     content_hash: u64,
 }
 
@@ -119,6 +120,11 @@ impl ContentDb {
         self.utilities().find(|(_, d)| d.kind == kind)
     }
 
+    /// The balance knobs (`balance.ron`; defaults when the file is absent).
+    pub fn balance(&self) -> &Balance {
+        &self.balance
+    }
+
     /// Stable hash of the semantic content (independent of file layout, formatting,
     /// line endings and directory iteration order).
     pub fn content_hash(&self) -> u64 {
@@ -163,6 +169,7 @@ impl ContentDb {
         let mut services: Vec<(String, ServiceDef)> = Vec::new();
         let mut vehicles: Vec<(String, VehicleDef)> = Vec::new();
         let mut utilities: Vec<(String, UtilityDef)> = Vec::new();
+        let mut balances: Vec<(String, Balance)> = Vec::new();
         for (path, text) in sources {
             match ron::from_str::<ContentFile>(&text) {
                 Ok(ContentFile::Road(d)) => roads.push((path, d)),
@@ -170,6 +177,7 @@ impl ContentDb {
                 Ok(ContentFile::Service(d)) => services.push((path, d)),
                 Ok(ContentFile::Vehicle(d)) => vehicles.push((path, d)),
                 Ok(ContentFile::Utility(d)) => utilities.push((path, d)),
+                Ok(ContentFile::Balance(d)) => balances.push((path, d)),
                 Err(e) => errors.push(ContentError::new(&path, None, format!("parse error: {e}"))),
             }
         }
@@ -202,6 +210,22 @@ impl ContentDb {
                 }
             }
         }
+        if balances.len() > 1 {
+            errors.push(ContentError::new(
+                &balances[1].0,
+                None,
+                "more than one Balance file".to_string(),
+            ));
+        }
+        if let Some((path, b)) = balances.first()
+            && !(b.walk_limit_m.is_finite() && b.walk_limit_m >= 0.0)
+        {
+            errors.push(ContentError::new(
+                path,
+                Some("walk_limit_m"),
+                "must be finite and >= 0".to_string(),
+            ));
+        }
         if !errors.is_empty() {
             return Err(ContentErrors(errors));
         }
@@ -212,12 +236,19 @@ impl ContentDb {
         hash_table(&mut hash, "service", &services.defs, |d| &d.id);
         hash_table(&mut hash, "vehicle", &vehicles.defs, |d| &d.id);
         hash_table(&mut hash, "utility", &utilities.defs, |d| &d.id);
+        // Absent file = defaults = no contribution, so content sets without one keep their hash.
+        let balance = balances.into_iter().next().map(|(_, b)| b);
+        if let Some(b) = &balance {
+            fnv1a(&mut hash, b"balance");
+            fnv1a(&mut hash, &b.walk_limit_m.to_bits().to_le_bytes());
+        }
         Ok(Self {
             roads: roads.strip(),
             buildings: buildings.strip(),
             services: services.strip(),
             vehicles: vehicles.strip(),
             utilities: utilities.strip(),
+            balance: balance.unwrap_or_default(),
             content_hash: hash,
         })
     }
@@ -481,5 +512,31 @@ mod tests {
     fn unknown_field_is_rejected() {
         let bad = ROAD.replace("rank: 1,", "rank: 1, bogus: 2,");
         assert!(errors(&[("x.ron", &bad)])[0].starts_with("x.ron: parse error"));
+    }
+
+    #[test]
+    fn balance_defaults_without_a_file_and_is_part_of_the_hash() {
+        let none = ContentDb::from_sources(src(&[("a.ron", ROAD)])).unwrap();
+        assert_eq!(none.balance().walk_limit_m, 1000.0);
+        let b = r#"Balance((walk_limit_m: 600.0))"#;
+        let with = ContentDb::from_sources(src(&[("a.ron", ROAD), ("balance.ron", b)])).unwrap();
+        assert_eq!(with.balance().walk_limit_m, 600.0);
+        assert_ne!(none.content_hash(), with.content_hash());
+        let b2 = b.replace("600.0", "700.0");
+        let other = ContentDb::from_sources(src(&[("a.ron", ROAD), ("balance.ron", &b2)])).unwrap();
+        assert_ne!(with.content_hash(), other.content_hash());
+    }
+
+    #[test]
+    fn two_balance_files_or_a_bad_value_are_errors() {
+        let b = r#"Balance((walk_limit_m: 600.0))"#;
+        let e = errors(&[("a.ron", b), ("b.ron", b)]);
+        assert!(
+            e.iter().any(|m| m.contains("more than one Balance")),
+            "{e:?}"
+        );
+        let bad = r#"Balance((walk_limit_m: -1.0))"#;
+        let e = errors(&[("a.ron", bad)]);
+        assert!(e.iter().any(|m| m.contains("walk_limit_m")), "{e:?}");
     }
 }

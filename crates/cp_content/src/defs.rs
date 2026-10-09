@@ -51,6 +51,25 @@ pub enum ContentFile {
     Vehicle(VehicleDef),
     /// Appended in T-037.
     Utility(UtilityDef),
+    /// Global balance knobs (`balance.ron`); at most one file.
+    Balance(Balance),
+}
+
+/// Global balance knobs the Balance Analyst may tune (`assets/content/balance.ron`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Balance {
+    /// Trips with a straight line shorter than this (metres) are walked (§9.2). On the
+    /// movement clock (§2) 1 km on foot is about 2 game hours.
+    pub walk_limit_m: f32,
+}
+
+impl Default for Balance {
+    fn default() -> Self {
+        Self {
+            walk_limit_m: 1000.0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

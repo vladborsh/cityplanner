@@ -1,0 +1,5 @@
+// Global balance knobs (Balance Analyst). See cp_content::Balance.
+Balance((
+    // Trips shorter than this straight-line distance are walked (system-design §9.2).
+    walk_limit_m: 1000.0,
+))

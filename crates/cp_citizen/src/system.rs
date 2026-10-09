@@ -127,6 +127,7 @@ pub fn update_citizens(
     terrain: Option<Res<SimTerrain>>,
     rng: Res<SimRng>,
     limits: Res<SimLimits>,
+    trips: Option<Res<crate::trips::TripBook>>,
     mut grid: ResMut<CitizenGrid>,
 ) {
     let Some(content) = content else { return };
@@ -154,7 +155,10 @@ pub fn update_citizens(
         let arrived = now >= h.arrive_at.0;
         if arrived {
             for cid in h.member_ids() {
-                if let Some(c) = grid.citizen_mut(cid)
+                // A member on a trip is `Moving` for another reason; leave them be.
+                let on_trip = trips.as_ref().is_some_and(|t| t.active_of(cid).is_some());
+                if !on_trip
+                    && let Some(c) = grid.citizen_mut(cid)
                     && c.location == Location::Moving
                 {
                     c.location = Location::Home;

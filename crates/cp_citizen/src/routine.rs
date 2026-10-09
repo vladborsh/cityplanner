@@ -1,0 +1,367 @@
+//! Daily routine and trip generation (`architecture/system-design.md` §9.2).
+//!
+//! Every citizen is visited once per 256 ticks (bucket `index % 256`, §2), about 16 times a
+//! game day, and decides what to do next from where they are:
+//!
+//! * **At home**, adult with a job whose workplace is `Active`: leave for work in time to
+//!   arrive at the shift start, i.e. from `shift_start − travel_ticks − 256` (the last term
+//!   is one visit interval, because the citizen only looks every 256 ticks) until shortly
+//!   before the shift ends. Otherwise, in the evening ([`SHOP_FROM`]..[`SHOP_TO`]), shop with
+//!   a probability that grows with the household's goods need.
+//! * **At work** outside the shift (or without a valid workplace): go home.
+//! * **At a shop**: go home (normally the return trip was scheduled on arrival).
+//!
+//! **Goods need** (balance placeholder): `25 %` per day since the household last shopped,
+//! capped at `100 %`; the chance that a visit in the shopping window turns into a trip.
+//! Shops are `ComLow`/`ComHigh` buildings; the nearest by straight line wins. After arriving
+//! the citizen stays [`SHOP_DWELL_MIN`]..+[`SHOP_DWELL_SPAN`] ticks, then returns.
+//!
+//! **Shifts** (balance placeholders, one table, hours of the day): see [`shift_for`].
+//!
+//! **Mode (M1):** walk if the straight line is shorter than `balance.ron`'s `walk_limit_m`
+//! (1 km), else car if the citizen has one, else walk. **Travel time** is abstract and lives
+//! on the **movement clock** (§2): `ceil(distance / speed / MOVE_SECONDS_PER_TICK)` ticks,
+//! at least one, with content-style real speeds: walking [`WALK_SPEED_MPS`] = 1.4 m/s and
+//! a documented placeholder [`CAR_SPEED_MPS`] = 13.9 m/s (50 km/h, the medium road limit)
+//! until paths exist. Schedules (shifts, "evening", visits) live on the day clock. The path
+//! service is not used yet (see [`crate::trips`]).
+//!
+//! **Invariants.** A citizen's `location` is `Moving` exactly while they have a trip in
+//! transit (or before their household has arrived); it changes only when a trip departs
+//! (`→ Moving`) or arrives (`→ Home|Work|Shop`). A citizen has at most one trip. A trip
+//! whose citizen or destination disappeared is cancelled: the citizen (if still there) is
+//! put back at home.
+
+use bevy_ecs::prelude::*;
+use bevy_math::Vec2;
+use cp_building::{BuildingGrid, BuildingId, BuildingState};
+use cp_content::{ContentDb, SimContent, ZoneType};
+use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_DAY};
+use cp_core::{SimLimits, SimRng, Tick};
+
+use crate::grid::CitizenGrid;
+use crate::model::{CitizenId, Location};
+use crate::system::CITIZEN_BUCKETS;
+use crate::trips::{Trip, TripBook, TripMode, TripPurpose, TripState};
+
+pub const ROUTINE_STREAM: u64 = 0x2007;
+/// Walking speed, m/s (real units; applied on the movement clock).
+pub const WALK_SPEED_MPS: f32 = 1.4;
+/// Driving speed, m/s: 50 km/h placeholder until agents and paths exist.
+pub const CAR_SPEED_MPS: f32 = 13.9;
+/// Shopping window, hours of the day.
+pub const SHOP_FROM: f32 = 16.0;
+pub const SHOP_TO: f32 = 21.0;
+/// Goods need grows by this many percent per day since the last shopping trip.
+pub const NEED_PCT_PER_DAY: u32 = 25;
+/// Time spent at a shop: `SHOP_DWELL_MIN + rng(SHOP_DWELL_SPAN)` ticks.
+pub const SHOP_DWELL_MIN: u64 = 170;
+pub const SHOP_DWELL_SPAN: u32 = 340;
+
+/// A working shift: start and end, hours of the day (`0..24`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shift {
+    pub start: f32,
+    pub end: f32,
+}
+
+/// The shift of a worker at a workplace of `zone`; `salt` (the citizen's slot index)
+/// splits a workforce between shifts. PLACEHOLDERS for balance:
+///
+/// | Zone | Shifts |
+/// |---|---|
+/// | Industrial | 6–14 (even) / 14–22 (odd) |
+/// | ComLow, ComHigh | 9–17 (two thirds) / 12–20 (one third) |
+/// | Office, other | 8–16 |
+pub fn shift_for(zone: ZoneType, salt: u32) -> Shift {
+    let (start, end) = match zone {
+        ZoneType::Industrial => {
+            if salt.is_multiple_of(2) {
+                (6.0, 14.0)
+            } else {
+                (14.0, 22.0)
+            }
+        }
+        ZoneType::ComLow | ZoneType::ComHigh => {
+            if salt % 3 == 2 {
+                (12.0, 20.0)
+            } else {
+                (9.0, 17.0)
+            }
+        }
+        _ => (8.0, 16.0),
+    };
+    Shift { start, end }
+}
+
+/// Hour of the day (`0.0..24.0`) at `tick`.
+pub fn hour_of_day(tick: u64) -> f32 {
+    (tick % TICKS_PER_DAY) as f32 / TICKS_PER_DAY as f32 * 24.0
+}
+
+/// M1 mode rule.
+pub fn choose_mode(distance_m: f32, has_car: bool, walk_limit_m: f32) -> TripMode {
+    if distance_m < walk_limit_m || !has_car {
+        TripMode::Walk
+    } else {
+        TripMode::Car
+    }
+}
+
+/// Abstract travel time, ticks (at least 1).
+pub fn travel_ticks(distance_m: f32, mode: TripMode) -> u64 {
+    let speed = match mode {
+        TripMode::Walk => WALK_SPEED_MPS,
+        TripMode::Car => CAR_SPEED_MPS,
+    };
+    ((distance_m / speed / MOVE_SECONDS_PER_TICK).ceil() as u64).max(1)
+}
+
+fn pos_of(b: &BuildingGrid, id: BuildingId) -> Option<Vec2> {
+    b.get(id).map(|b| b.pos)
+}
+
+fn is_active(b: &BuildingGrid, id: BuildingId) -> bool {
+    b.get(id).is_some_and(|b| b.state == BuildingState::Active)
+}
+
+/// Nearest active shop to `from`, ties to the lower id.
+fn nearest_shop(b: &BuildingGrid, db: &ContentDb, from: Vec2) -> Option<BuildingId> {
+    let mut best: Option<(f32, BuildingId)> = None;
+    for (id, bd) in b.iter() {
+        if bd.state != BuildingState::Active
+            || !matches!(
+                db.building(bd.def).zone,
+                ZoneType::ComLow | ZoneType::ComHigh
+            )
+        {
+            continue;
+        }
+        let d = bd.pos.distance_squared(from);
+        if best.is_none_or(|(bd, _)| d < bd) {
+            best = Some((d, id));
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
+fn set_location(grid: &mut CitizenGrid, id: CitizenId, loc: Location) {
+    if let Some(c) = grid.citizen_mut(id) {
+        c.location = loc;
+    }
+}
+
+/// Puts the citizen back at home (cancelled trip) if they still exist.
+fn send_home(grid: &mut CitizenGrid, id: CitizenId) {
+    set_location(grid, id, Location::Home);
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn update_routine(
+    tick: Res<Tick>,
+    content: Option<Res<SimContent>>,
+    buildings: Res<BuildingGrid>,
+    rng: Res<SimRng>,
+    limits: Res<SimLimits>,
+    mut grid: ResMut<CitizenGrid>,
+    mut book: ResMut<TripBook>,
+) {
+    let Some(content) = content else { return };
+    let db = &content.0;
+    let now = tick.0;
+    grid.ensure_derived();
+    book.ensure_derived();
+    let day = (now / TICKS_PER_DAY) as u32;
+    let hour = hour_of_day(now);
+
+    // --- due events: departures and arrivals ---
+    for tid in book.due(now) {
+        let Some(trip) = book.get(tid).cloned() else {
+            continue;
+        };
+        let alive = grid.citizen(trip.citizen).is_some();
+        match trip.state {
+            TripState::Scheduled { .. } => {
+                // Departure: needs the citizen and a destination.
+                if !alive || !is_active(&buildings, trip.to) {
+                    book.remove(tid);
+                    book.cancelled += 1;
+                    if alive {
+                        send_home(&mut grid, trip.citizen);
+                    }
+                    continue;
+                }
+                let from = pos_of(&buildings, trip.from);
+                let to = pos_of(&buildings, trip.to).expect("active");
+                let d = from.map_or(0.0, |f| f.distance(to));
+                let has_car = grid.citizen(trip.citizen).is_some_and(|c| c.has_car);
+                let mode = choose_mode(d, has_car, db.balance().walk_limit_m);
+                set_location(&mut grid, trip.citizen, Location::Moving);
+                book.departures_by_hour[(hour as usize).min(23)] += 1;
+                book.remove(tid);
+                book.add(Trip {
+                    mode,
+                    state: TripState::InTransit {
+                        arrive_at: Tick(now + travel_ticks(d, mode)),
+                    },
+                    ..trip
+                });
+            }
+            TripState::InTransit { .. } => {
+                book.remove(tid);
+                if !alive {
+                    book.cancelled += 1;
+                    continue;
+                }
+                if !is_active(&buildings, trip.to) {
+                    book.cancelled += 1;
+                    send_home(&mut grid, trip.citizen);
+                    continue;
+                }
+                book.completed += 1;
+                match trip.purpose {
+                    TripPurpose::Work => set_location(&mut grid, trip.citizen, Location::Work),
+                    TripPurpose::Home => set_location(&mut grid, trip.citizen, Location::Home),
+                    TripPurpose::Shop => {
+                        set_location(&mut grid, trip.citizen, Location::Shop);
+                        // Dwell, then head home.
+                        let mut r = rng.fork(
+                            ROUTINE_STREAM ^ 0x5,
+                            Tick(now ^ u64::from(trip.citizen.index) << 32),
+                        );
+                        let dwell = SHOP_DWELL_MIN + u64::from(r.below(SHOP_DWELL_SPAN));
+                        if let Some(home) = grid.citizen(trip.citizen).and_then(|c| c.home) {
+                            book.add(Trip {
+                                citizen: trip.citizen,
+                                from: trip.to,
+                                to: home,
+                                purpose: TripPurpose::Home,
+                                mode: trip.mode,
+                                state: TripState::Scheduled {
+                                    depart_at: Tick(now + dwell),
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- decisions for this tick's bucket ---
+    if book.len() < limits.citizens as usize {
+        let bucket = (now % u64::from(CITIZEN_BUCKETS)) as u32;
+        let citizens: Vec<CitizenId> = grid
+            .citizens_bucket(CITIZEN_BUCKETS, bucket)
+            .map(|(id, _)| id)
+            .collect();
+        let mut r = rng.fork(ROUTINE_STREAM, *tick);
+        for cid in citizens {
+            decide(
+                cid, now, day, hour, &buildings, db, &mut grid, &mut book, &mut r,
+            );
+        }
+    }
+
+    // Households that left take their shopping history with them.
+    if now.is_multiple_of(TICKS_PER_DAY) {
+        let g = &*grid;
+        book.prune_households(|h| g.household(h).is_some());
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decide(
+    cid: CitizenId,
+    now: u64,
+    day: u32,
+    hour: f32,
+    buildings: &BuildingGrid,
+    db: &ContentDb,
+    grid: &mut CitizenGrid,
+    book: &mut TripBook,
+    rng: &mut SimRng,
+) {
+    let Some(c) = grid.citizen(cid).cloned() else {
+        return;
+    };
+    if !c.is_adult() || book.active_of(cid).is_some() {
+        return;
+    }
+    let Some(home) = c.home.filter(|h| is_active(buildings, *h)) else {
+        return;
+    };
+    let workplace = c.work.filter(|w| is_active(buildings, *w));
+    let shift = workplace.map(|w| {
+        let zone = db.building(buildings.get(w).expect("active").def).zone;
+        shift_for(zone, cid.index)
+    });
+    // Leave in time to arrive at the shift start: travel time (movement clock) plus one
+    // visit interval, since the citizen only looks again after CITIZEN_BUCKETS ticks.
+    let lead_ticks = workplace
+        .and_then(|w| Some(pos_of(buildings, home)?.distance(pos_of(buildings, w)?)))
+        .map_or(0, |d| {
+            travel_ticks(d, choose_mode(d, c.has_car, db.balance().walk_limit_m))
+        })
+        + u64::from(CITIZEN_BUCKETS);
+    let to_ticks = |h: f32| (h / 24.0 * TICKS_PER_DAY as f32) as i64;
+    let tod = (now % TICKS_PER_DAY) as i64;
+    let on_shift_window = shift.is_some_and(|s| {
+        tod >= to_ticks(s.start) - lead_ticks as i64 && tod < to_ticks(s.end - 0.5)
+    });
+
+    let go =
+        |purpose, from: BuildingId, to: BuildingId, grid: &mut CitizenGrid, book: &mut TripBook| {
+            let (Some(a), Some(b)) = (pos_of(buildings, from), pos_of(buildings, to)) else {
+                return false;
+            };
+            let d = a.distance(b);
+            let mode = choose_mode(d, c.has_car, db.balance().walk_limit_m);
+            let ok = book
+                .add(Trip {
+                    citizen: cid,
+                    from,
+                    to,
+                    purpose,
+                    mode,
+                    state: TripState::InTransit {
+                        arrive_at: Tick(now + travel_ticks(d, mode)),
+                    },
+                })
+                .is_some();
+            if ok {
+                set_location(grid, cid, Location::Moving);
+                book.departures_by_hour[(hour as usize).min(23)] += 1;
+            }
+            ok
+        };
+
+    match c.location {
+        Location::Home => {
+            if let (Some(w), true) = (workplace, on_shift_window) {
+                go(TripPurpose::Work, home, w, grid, book);
+            } else if (SHOP_FROM..SHOP_TO).contains(&hour) {
+                let need = (NEED_PCT_PER_DAY * book.days_since_shop(c.household, day)).min(100);
+                if rng.below(100) < need
+                    && let Some(shop) =
+                        pos_of(buildings, home).and_then(|p| nearest_shop(buildings, db, p))
+                    && go(TripPurpose::Shop, home, shop, grid, book)
+                {
+                    book.note_shopped(c.household, day);
+                }
+            }
+        }
+        Location::Work => {
+            if !on_shift_window
+                && let Some(from) = c.work.filter(|w| is_active(buildings, *w)).or(Some(home))
+            {
+                go(TripPurpose::Home, from, home, grid, book);
+            }
+        }
+        Location::Shop => {
+            // Stranded at a shop (its return trip was cancelled): go home from home's spot.
+            go(TripPurpose::Home, home, home, grid, book);
+        }
+        Location::Moving | Location::Outside => {}
+    }
+}
