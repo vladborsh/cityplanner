@@ -42,6 +42,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
+  # Each sim crate is linted in its own cargo invocation so features resolve for that crate
+  # alone; `--workspace` unifies features and can hide a crate that doesn't build by itself
+  # (BUG-001). One looping job rather than a matrix: ~12 small crates share one rust-cache
+  # and one toolchain setup, which is cheaper than 12 runners each restoring the cache.
+  # No Bevy system libraries needed: sim crates are headless.
+  isolated-clippy:
+    name: isolated clippy (per sim crate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/check-isolated-clippy.sh
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
