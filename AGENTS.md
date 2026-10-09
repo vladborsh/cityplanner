@@ -11,9 +11,14 @@ wrong. Project context lives in `PROJECT.md`; system designs live in `architectu
 
 ## Build and test
 
-- Green means **both** `cargo test --workspace` and
-  `cargo clippy --workspace --all-targets -- -D warnings` pass, plus `cargo fmt --check`.
-  Report the test count.
+- Green means `scripts/gate.sh` prints `PASS: N tests` (exit 0). It runs, each as its own
+  command and stopping at the first failure: `cargo fmt --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
+  `scripts/check-sim-deps.sh` and `scripts/check-isolated-clippy.sh`, with output in
+  `$CARGO_TARGET_DIR/gate/<step>.log`. Report the test count from its `PASS` line. Never pipe
+  cargo output (`| tail`, `| grep`) when checking green: it hides a failing exit status.
+  Merge only with `scripts/ff-merge.sh <branch>`, which refuses unless the branch contains the
+  coordinator's `master` and the gate passes, then fast-forwards (it never pushes).
 - Never change the Bevy version pinned in the root `Cargo.toml` as a side effect of a
   task. A version bump is its own task.
 - Do not add a dependency to a `cp_*` sim crate without saying so in the review request.

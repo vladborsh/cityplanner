@@ -101,6 +101,18 @@ checkout координатора. Правила:
 - **Перед мёржем — rebase на текущий `master` и зелёный прогон**
   (`cargo test --workspace`, `cargo clippy --workspace -- -D warnings`). Если rebase
   изменил код, одобрение снимается.
+- **Зелёный — это `scripts/gate.sh`, мёрж — это `scripts/ff-merge.sh`.** GitHub CI недоступен,
+  поэтому гейт локальный. `gate.sh` (`set -euo pipefail`) запускает по очереди и останавливается
+  на первом падении: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo test --workspace`, `scripts/check-sim-deps.sh`, `scripts/check-isolated-clippy.sh`; каждый
+  шаг — отдельная команда с выводом в файл `$CARGO_TARGET_DIR/gate/<шаг>.log` (никаких пайпов
+  после cargo: `| tail` прячет код выхода), в конце ровно одна строка `PASS: N tests` (N — сумма
+  по всем `test result:`) или `FAIL: <шаг>` и код 0/1. `ff-merge.sh <ветка>` (запускается из
+  worktree с этой веткой) отказывает с кодом 1, если checkout координатора (`$CITYPLANNER_COORD`,
+  по умолчанию `/Users/Vladyslav_Borsh/Documents/cityplanner`) не на `master` или имеет
+  незакоммиченные изменения (до запуска гейта), если ветка не содержит его `master` («rebase
+  first») или в worktree есть незакоммиченное; затем гоняет `gate.sh` и только при `PASS` делает
+  `git -C $CITYPLANNER_COORD merge --ff-only <ветка>`. Мёржить вручную в обход скрипта нельзя.
 - **Красный `master` важнее любой задачи.** Чинит тот, кто мёржил последним.
 - **Не больше двух отклонений** одной задачи. Третьего раунда нет: Tech Lead возвращает
   задачу Architect или делит её сам.
