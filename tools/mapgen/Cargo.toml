@@ -1,0 +1,14 @@
+[package]
+name = "mapgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+cp_terrain.workspace = true
+png.workspace = true
+ron.workspace = true

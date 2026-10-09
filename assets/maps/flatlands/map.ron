@@ -1,0 +1,10 @@
+(
+    name: "flatlands",
+    sea_level: 20.0,
+    start_tile: (2, 2),
+    external_connections: [
+        (5120.0, 0.0),
+        (10240.0, 5120.0),
+        (5120.0, 10240.0),
+    ],
+)

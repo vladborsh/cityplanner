@@ -1,0 +1,10 @@
+(
+    name: "river_valley",
+    sea_level: 5.0,
+    start_tile: (2, 2),
+    external_connections: [
+        (5120.0, 0.0),
+        (5120.0, 10240.0),
+        (0.0, 5120.0),
+    ],
+)

@@ -10,3 +10,7 @@ workspace = true
 
 [dependencies]
 cp_core.workspace = true
+bevy_math.workspace = true
+serde.workspace = true
+png.workspace = true
+ron.workspace = true
