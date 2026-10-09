@@ -33,6 +33,17 @@ impl SimBuilder<'_> {
         self
     }
 
+    /// Adds systems to the schedule **without** placing them in a phase, so the caller can
+    /// order them against `SimPhase` sets (e.g. `.after(SimPhase::A).before(SimPhase::B)`).
+    /// For tooling such as `apps/bench` phase timing; domain systems use [`Self::add_systems`].
+    pub fn add_systems_unphased<M>(
+        &mut self,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+    ) -> &mut Self {
+        self.schedule.add_systems(systems);
+        self
+    }
+
     /// Registers state to be hashed into `SimChecksum` (see `checksum` module docs).
     pub fn register_checksum(&mut self, name: &'static str, part: ChecksumFn) -> &mut Self {
         self.world
