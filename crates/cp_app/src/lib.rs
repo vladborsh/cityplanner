@@ -20,7 +20,10 @@ use bevy::prelude::*;
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{SimLimits, Tick};
 use cp_prof::{PhaseClock, PhaseTiming};
-use cp_render::{OverlayPlugin, RoadRenderPlugin, RtsCamera, RtsCameraPlugin, TerrainRenderPlugin};
+use cp_render::{
+    BuildingRenderPlugin, OverlayPlugin, RoadRenderPlugin, RtsCamera, RtsCameraPlugin,
+    TerrainRenderPlugin,
+};
 use cp_sim::{SimPhase, SimRunner, SimView};
 use cp_terrain::{MAP_SIZE, Terrain};
 use cp_tools::CommandOutbox;
@@ -79,6 +82,7 @@ impl Plugin for GamePlugin {
             TerrainRenderPlugin,
             RoadRenderPlugin,
             OverlayPlugin,
+            BuildingRenderPlugin,
             RtsCameraPlugin,
         ))
         .add_systems(PreUpdate, step_sim);
@@ -115,6 +119,14 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         // Close to the grid centre, looking along a street (see `scene`).
         "street" => (Vec3::new(c - 140.0, 35.0, c + 60.0), Vec3::new(c, 0.0, c)),
         "junction" => (Vec3::new(c - 30.0, 16.0, c + 38.0), Vec3::new(c, 0.0, c)),
+        "showcase" => (
+            Vec3::new(c + 20.0, 330.0, c + 440.0),
+            Vec3::new(c + 20.0, 0.0, c + 20.0),
+        ),
+        "showcase-close" => (
+            Vec3::new(c - 60.0, 90.0, c + 330.0),
+            Vec3::new(c - 60.0, 0.0, c + 190.0),
+        ),
         "valley" => (
             Vec3::new(c, 1500.0, c + 2500.0),
             Vec3::new(c, 0.0, c - 500.0),
@@ -140,7 +152,13 @@ pub fn build_sim(
     if phase_timing {
         sim.add_plugin(&PhaseTiming::window(PHASE_WINDOW_TICKS));
     }
-    if let Some(n) = scene.and_then(scene::parse_grid) {
+    if scene == Some(scene::SHOWCASE) {
+        let n = scene::build_showcase(&mut sim);
+        info!("scene showcase: {n} buildings");
+    } else if let Some(n) = scene.and_then(scene::parse_city) {
+        let built = scene::build_city(&mut sim, n, 5200, 6000);
+        info!("scene city:{n}: {built} buildings");
+    } else if let Some(n) = scene.and_then(scene::parse_grid) {
         for reason in scene::build_grid(&mut sim, n) {
             warn!("scene command rejected: {reason}");
         }

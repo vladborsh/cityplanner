@@ -2,6 +2,8 @@
 //!
 //! Reads only [`cp_sim::SimView`], never the sim `World`.
 
+pub mod building;
+pub mod building_render;
 pub mod camera;
 pub mod chunk;
 pub mod material;
@@ -11,6 +13,7 @@ pub mod road_render;
 pub mod sun;
 pub mod terrain;
 
+pub use building_render::{BuildingRenderPlugin, BuildingStats};
 pub use camera::{CameraSettings, RtsCamera, RtsCameraPlugin};
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{Overlay, OverlayPlugin, OverlayState};

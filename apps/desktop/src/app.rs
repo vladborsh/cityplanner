@@ -14,7 +14,7 @@ use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::window::PresentMode;
 use cp_app::{GamePlugin, MapLoadFailed, phase_times};
 use cp_core::SimLimits;
-use cp_render::{RoadStats, TerrainStats};
+use cp_render::{BuildingStats, RoadStats, TerrainStats};
 use cp_sim::SimRunner;
 
 use crate::ASSETS_DIR;
@@ -183,11 +183,13 @@ fn headless(mut sim: SimRunner, ticks: u64) {
 }
 
 /// Screenshot and benchmark driver.
+#[allow(clippy::too_many_arguments)]
 fn job(
     mut job: ResMut<Job>,
     time: Res<Time<Real>>,
     stats: Res<TerrainStats>,
     roads: Res<RoadStats>,
+    buildings: Res<BuildingStats>,
     diagnostics: Res<DiagnosticsStore>,
     capture: Option<ResMut<Capture>>,
     mut exit: MessageWriter<AppExit>,
@@ -245,6 +247,16 @@ fn job(
     println!(
         "BENCH roads pieces={} chunks={} near_tris={} last_rebuilt={} last_update_ms={:.2}",
         roads.pieces, roads.chunks, roads.triangles, roads.last_rebuilt, roads.last_update_ms
+    );
+    println!(
+        "BENCH buildings count={} chunks={} constructing={} near_tris={} drawn_tris={} last_rebuilt={} last_update_ms={:.2}",
+        buildings.buildings,
+        buildings.chunks,
+        buildings.constructing,
+        buildings.near_triangles,
+        buildings.drawn_triangles,
+        buildings.last_rebuilt,
+        buildings.last_update_ms
     );
     for d in diagnostics.iter() {
         if let Some(v) = d.smoothed() {

@@ -83,7 +83,7 @@ impl Piece {
 // ---------------------------------------------------------------------------------------
 // Mesh helpers
 
-fn push_vertex(m: &mut MeshData, p: Vec3, n: Vec3, c: [f32; 4]) -> u32 {
+pub(crate) fn push_vertex(m: &mut MeshData, p: Vec3, n: Vec3, c: [f32; 4]) -> u32 {
     m.positions.push(p.to_array());
     m.normals.push(n.to_array());
     m.colors.push(c);
@@ -91,7 +91,7 @@ fn push_vertex(m: &mut MeshData, p: Vec3, n: Vec3, c: [f32; 4]) -> u32 {
 }
 
 /// Adds a triangle wound so that its geometric normal faces `facing`.
-fn tri(m: &mut MeshData, a: u32, b: u32, c: u32, facing: Vec3) {
+pub(crate) fn tri(m: &mut MeshData, a: u32, b: u32, c: u32, facing: Vec3) {
     let p = |i: u32| Vec3::from_array(m.positions[i as usize]);
     let n = (p(b) - p(a)).cross(p(c) - p(a));
     if n.dot(facing) >= 0.0 {
@@ -102,18 +102,18 @@ fn tri(m: &mut MeshData, a: u32, b: u32, c: u32, facing: Vec3) {
 }
 
 /// Quad `a b c d` in order around its boundary, facing `facing`.
-fn quad(m: &mut MeshData, v: [u32; 4], facing: Vec3) {
+pub(crate) fn quad(m: &mut MeshData, v: [u32; 4], facing: Vec3) {
     tri(m, v[0], v[1], v[2], facing);
     tri(m, v[0], v[2], v[3], facing);
 }
 
 /// A flat-coloured quad with its own vertices.
-fn flat_quad(m: &mut MeshData, p: [Vec3; 4], n: Vec3, c: [f32; 4]) {
+pub(crate) fn flat_quad(m: &mut MeshData, p: [Vec3; 4], n: Vec3, c: [f32; 4]) {
     let v = p.map(|p| push_vertex(m, p, n, c));
     quad(m, v, n);
 }
 
-fn append(dst: &mut MeshData, src: &MeshData) {
+pub(crate) fn append(dst: &mut MeshData, src: &MeshData) {
     let base = dst.positions.len() as u32;
     dst.positions.extend_from_slice(&src.positions);
     dst.normals.extend_from_slice(&src.normals);
@@ -121,7 +121,7 @@ fn append(dst: &mut MeshData, src: &MeshData) {
     dst.indices.extend(src.indices.iter().map(|i| i + base));
 }
 
-fn bounds(m: &MeshData) -> (Vec3, Vec3) {
+pub(crate) fn bounds(m: &MeshData) -> (Vec3, Vec3) {
     let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     for p in &m.positions {
         let p = Vec3::from_array(*p);

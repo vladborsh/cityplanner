@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
+use cp_building::BuildingGrid;
 use cp_content::{ContentDb, SimContent};
 use cp_core::{CommandLog, CommandQueue, GameTime, SimSpeed, Tick};
 use cp_net::{JunctionGeometry, NetGraph};
@@ -75,12 +76,18 @@ pub struct SimView {
     /// Shared: it is re-cloned from the sim only when the network changed (detected through
     /// `junctions.version()` and the element counts), so unchanged ticks cost an `Arc` clone.
     pub net: Arc<NetGraph>,
-    /// The content database (road types, ...), for tools and the build menu; `None` for a sim
-    /// without content.
+    /// All buildings as of this snapshot, for mesh building. Shared like `net`: re-cloned
+    /// only when `BuildingGrid::revision` changed.
+    pub buildings: Arc<BuildingGrid>,
+    /// The content database (road types, building styles, ...), for tools, the build menu and
+    /// mesh building; `None` for a sim without content.
     pub content: Option<Arc<ContentDb>>,
     /// Inputs of the overlays (zones, traffic load, land value, pollution), §13.4.
     pub overlays: OverlayData,
 }
+
+/// `(revision, building count, snapshot)` of the last `SimView::buildings`.
+pub(crate) type BuildingsCache = Option<(u64, usize, Arc<BuildingGrid>)>;
 
 /// `(junction version, nodes, segments, snapshot)` of the last `SimView::net`.
 pub(crate) type NetCache = Option<(u64, usize, usize, Arc<NetGraph>)>;
@@ -137,6 +144,24 @@ impl SimRunner {
         }
     }
 
+    /// The building snapshot for `SimView::buildings`, cached while the grid is unchanged.
+    fn buildings_snapshot(&self) -> Arc<BuildingGrid> {
+        let grid = self.world().get_resource::<BuildingGrid>();
+        let key = (
+            grid.map_or(0, BuildingGrid::revision),
+            grid.map_or(0, BuildingGrid::len),
+        );
+        let mut cache = self.buildings_cache.lock().expect("buildings cache");
+        if let Some((r, n, snap)) = cache.as_ref()
+            && (*r, *n) == key
+        {
+            return Arc::clone(snap);
+        }
+        let snap = Arc::new(grid.cloned().unwrap_or_default());
+        *cache = Some((key.0, key.1, Arc::clone(&snap)));
+        snap
+    }
+
     /// Snapshot of the current state for clients.
     pub fn view(&self) -> SimView {
         let tick = self.tick();
@@ -160,6 +185,7 @@ impl SimRunner {
                 .unwrap_or_default(),
             stats: self.stats(),
             net: self.net_snapshot(&junctions),
+            buildings: self.buildings_snapshot(),
             content: self
                 .world()
                 .get_resource::<SimContent>()
@@ -354,5 +380,51 @@ mod tests {
         assert_eq!(sim.view().junctions.version(), 1);
         assert_eq!(v.net.segment_count(), 2);
         assert!(Arc::ptr_eq(&v.net, &sim.view().net));
+    }
+
+    #[test]
+    fn buildings_snapshot_is_shared_until_the_grid_changes() {
+        use cp_building::{AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingState, Lot};
+        use cp_core::{Id, Tick};
+        let mut sim = SimRunner::new(1);
+        let (a, b) = (sim.view().buildings, sim.view().buildings);
+        assert!(Arc::ptr_eq(&a, &b) && a.is_empty());
+        let building = Building {
+            def: cp_content::BuildingDefId(0),
+            lot: Lot {
+                block: Id::new(0, 0),
+                col: 0,
+                w: 1,
+                d: 1,
+            },
+            level: 1,
+            state: BuildingState::Active,
+            ready_at: Tick(0),
+            pos: bevy_math::Vec2::ZERO,
+            rot: 0.0,
+            access: AccessPoint {
+                segment: Id::new(0, 0),
+                t: 0.0,
+            },
+            flags: BuildingFlags::default(),
+            level_progress: 0.0,
+        };
+        let id = sim
+            .world_mut()
+            .resource_mut::<BuildingGrid>()
+            .insert(building);
+        let c = sim.view().buildings;
+        assert!(!Arc::ptr_eq(&a, &c) && c.len() == 1);
+        assert!(Arc::ptr_eq(&c, &sim.view().buildings));
+        // A state change without a count change is noticed through the revision.
+        sim.world_mut()
+            .resource_mut::<BuildingGrid>()
+            .get_mut(id)
+            .unwrap()
+            .state = BuildingState::Burned;
+        let d = sim.view().buildings;
+        assert!(!Arc::ptr_eq(&c, &d));
+        assert_eq!(d.get(id).unwrap().state, BuildingState::Burned);
+        assert!(sim.view().content.is_none());
     }
 }

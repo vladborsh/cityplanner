@@ -10,29 +10,37 @@ use cp_core::{CommandOutcome, Tick};
 use cp_net::{ElevationMode, NetCommand, RoadPath};
 use cp_sim::{SimCommand, SimRunner};
 
-/// Road content the scenes need, compiled in so the browser build needs no extra fetches.
+mod embedded {
+    include!(concat!(env!("OUT_DIR"), "/content_files.rs"));
+}
+
+/// All of `assets/content`, compiled in (the browser build has no file system).
+pub fn embedded_content() -> Arc<ContentDb> {
+    let sources = embedded::FILES
+        .iter()
+        .map(|(name, text)| (format!("content/{name}"), (*text).to_string()))
+        .collect();
+    Arc::new(ContentDb::from_sources(sources).expect("embedded content is valid"))
+}
+
+/// Kept for callers that only need roads.
 pub fn road_content() -> Arc<ContentDb> {
-    macro_rules! road {
-        ($name:literal) => {
-            (
-                concat!("roads/", $name, ".ron").to_string(),
-                include_str!(concat!("../../../assets/content/roads/", $name, ".ron")).to_string(),
-            )
-        };
-    }
-    Arc::new(
-        ContentDb::from_sources(vec![
-            road!("basic_2l"),
-            road!("medium_4l"),
-            road!("large_6l"),
-            road!("highway_1w_3l"),
-        ])
-        .expect("embedded road content is valid"),
-    )
+    embedded_content()
 }
 
 /// Distance between streets, metres (below the 96 m segment limit).
 pub const SPACING: f32 = 100.0;
+
+/// Parses `city:N` (a grid of N streets with zoning and buildings).
+pub fn parse_city(spec: &str) -> Option<usize> {
+    spec.strip_prefix("city:")?
+        .parse()
+        .ok()
+        .filter(|n| (2..=60).contains(n))
+}
+
+/// Showcase scene: every building def in rows by zone, then a row of states.
+pub const SHOWCASE: &str = "showcase";
 
 /// Parses `grid:N`.
 pub fn parse_grid(spec: &str) -> Option<usize> {
@@ -159,4 +167,232 @@ mod tests {
         assert_eq!(parse_grid("grid:99"), None);
         assert_eq!(parse_grid("nope"), None);
     }
+}
+
+/// Zone painted on a block for a city scene: dense and tall in the middle, low and
+/// industrial at the edge, mixed in between (deterministic from the block).
+fn zone_for(block_index: u32, dist: f32) -> cp_content::ZoneType {
+    use cp_content::ZoneType::*;
+    let h = block_index.wrapping_mul(2_654_435_761) >> 16;
+    match dist {
+        d if d < 400.0 => [ComHigh, Office, ResHigh, Office][(h % 4) as usize],
+        d if d < 900.0 => [ResHigh, ComLow, ResHigh, ComHigh, ResLow][(h % 5) as usize],
+        d if d < 1500.0 => [ResLow, ResLow, ComLow, ResHigh, Industrial][(h % 5) as usize],
+        _ => [ResLow, Industrial, Industrial, ResLow][(h % 4) as usize],
+    }
+}
+
+/// Builds an `n`×`n` street grid, paints zones on every block and lets the spawner run
+/// until `target` buildings exist (or `max_ticks` passed). Then dresses the result for a
+/// showcase: higher-level variants where the lot allows, some buildings still under
+/// construction (at all stages), a few abandoned and burned. Returns the building count.
+pub fn build_city(sim: &mut SimRunner, n: usize, target: usize, max_ticks: u64) -> usize {
+    use cp_building::{BuildingGrid, BuildingState};
+    use cp_zone::{ZoneCellRef, ZoneGrid};
+    let _ = build_grid_with(sim, n, 5);
+    // Zone blocks exist after a few quiet ticks.
+    for _ in 0..4 {
+        sim.tick_once();
+    }
+    let centre = Vec2::splat(cp_terrain::MAP_SIZE / 2.0);
+    let paint: Vec<(ZoneCellRef, cp_content::ZoneType)> = {
+        let zones = sim.world().resource::<ZoneGrid>();
+        zones
+            .blocks()
+            .flat_map(|(id, b)| {
+                let p = b.curve.point(0.5);
+                let d = Vec2::new(p.x, p.z).distance(centre);
+                let zone = zone_for(id.index, d);
+                (0..b.cell_count() as u16).map(move |cell| (ZoneCellRef { block: id, cell }, zone))
+            })
+            .collect()
+    };
+    {
+        let mut zones = sim.world_mut().resource_mut::<ZoneGrid>();
+        for (cell, zone) in paint {
+            zones.set_zone(cell, zone);
+        }
+    }
+    for _ in 0..max_ticks {
+        sim.tick_once();
+        if sim.world().resource::<BuildingGrid>().len() >= target {
+            break;
+        }
+    }
+    dress_city(sim);
+    let _ = BuildingState::Active;
+    sim.world().resource::<BuildingGrid>().len()
+}
+
+/// Showcase dressing (see [`build_city`]), deterministic from the building ids.
+fn dress_city(sim: &mut SimRunner) {
+    use cp_building::{BuildingGrid, BuildingState};
+    let db = sim.world().resource::<cp_content::SimContent>().0.clone();
+    let now = sim.tick().0;
+    let ids: Vec<_> = sim
+        .world()
+        .resource::<BuildingGrid>()
+        .iter()
+        .map(|(id, _)| id)
+        .collect();
+    let mut grid = sim.world_mut().resource_mut::<BuildingGrid>();
+    for id in ids {
+        let h = id.index.wrapping_mul(2_246_822_519) >> 8;
+        let Some(b) = grid.get(id).cloned() else {
+            continue;
+        };
+        let def = db.building(b.def);
+        // A taller variant of the same zone that fits the lot exactly.
+        let want = 1 + (h % 3) as u8;
+        let better = db
+            .buildings()
+            .filter(|(_, d)| {
+                d.zone == def.zone && d.level == want && d.lot == def.lot && d.service.is_none()
+            })
+            .map(|(i, _)| i)
+            .nth((h >> 4) as usize % 2);
+        let state = match h % 100 {
+            0..=11 => BuildingState::UnderConstruction,
+            12..=14 => BuildingState::Abandoned,
+            15 => BuildingState::Burned,
+            _ => BuildingState::Active,
+        };
+        if let Some(m) = grid.get_mut(id) {
+            if let Some(d) = better {
+                m.def = d;
+                m.level = want;
+            }
+            m.state = state;
+            if state == BuildingState::UnderConstruction {
+                // Spread over the construction stages.
+                m.ready_at = cp_core::Tick(now + 200 + u64::from(h % 4) * 1000);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod city_tests {
+    use super::*;
+    use cp_terrain::Terrain;
+
+    #[test]
+    fn city_scene_spawns_and_dresses_buildings() {
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps/flatlands");
+        let mut sim = SimRunner::new(1);
+        sim.set_terrain(Arc::new(Terrain::load(&dir).unwrap()));
+        sim.set_content(embedded_content());
+        let t = std::time::Instant::now();
+        let n = build_city(&mut sim, 6, 150, 800);
+        eprintln!("CITY n={n} in {:?}", t.elapsed());
+        assert!(n >= 100, "{n}");
+        let v = sim.view();
+        let states: std::collections::BTreeSet<_> =
+            v.buildings.iter().map(|(_, b)| b.state as u8).collect();
+        assert!(states.len() >= 3, "{states:?}");
+        assert_eq!(parse_city("city:12"), Some(12));
+        assert_eq!(parse_city("city:1"), None);
+    }
+}
+
+/// Places one of every building def (rows by zone family, levels left to right, variants
+/// together) plus a row showing construction stages, abandoned and burned. Positions are
+/// centred on the map; `rot` is 0 so every front faces -z (towards the default camera).
+pub fn build_showcase(sim: &mut SimRunner) -> usize {
+    use cp_building::{AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingState, Lot};
+    use cp_content::ZoneType::*;
+    let db = embedded_content();
+    // One road to borrow a real segment id from (the access point is only a hint).
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    sim.push_command(
+        SimCommand::Net(NetCommand::BuildRoad {
+            road: basic,
+            path: RoadPath::Straight {
+                from: Vec2::new(c - 400.0, c - 600.0),
+                to: Vec2::new(c - 330.0, c - 600.0),
+            },
+            elevation: ElevationMode::Ground,
+        }),
+        sim.tick(),
+    );
+    sim.tick_once();
+    sim.tick_once();
+    let segment = sim
+        .world()
+        .resource::<cp_net::NetGraph>()
+        .segments()
+        .next()
+        .map(|(id, _)| id)
+        .expect("a segment");
+    let spacing = 44.0;
+    let mut placed = 0;
+    let mut grid = sim.world_mut().resource_mut::<BuildingGrid>();
+    let add = |grid: &mut BuildingGrid, def_id, col: usize, row: usize, state, ready: u64| {
+        let d = db.building(def_id);
+        let b = Building {
+            def: def_id,
+            lot: Lot {
+                block: cp_core::Id::new(0, 0),
+                col: 0,
+                w: d.lot.0,
+                d: d.lot.1,
+            },
+            level: d.level,
+            state,
+            ready_at: cp_core::Tick(ready),
+            pos: Vec2::new(
+                c - 200.0 + col as f32 * spacing,
+                c - 130.0 + row as f32 * spacing,
+            ),
+            rot: 0.0,
+            access: AccessPoint { segment, t: 0.5 },
+            flags: BuildingFlags::default(),
+            level_progress: 0.0,
+        };
+        grid.insert(b);
+    };
+    let zones = [ResLow, ResHigh, ComLow, ComHigh, Industrial, Office];
+    for (row, zone) in zones.into_iter().enumerate() {
+        let mut defs: Vec<_> = db
+            .buildings()
+            .filter(|(_, d)| d.zone == zone && d.service.is_none())
+            .map(|(i, d)| (d.level, i))
+            .collect();
+        defs.sort();
+        for (col, (_, id)) in defs.into_iter().enumerate() {
+            add(&mut grid, id, col, row, BuildingState::Active, 0);
+            placed += 1;
+        }
+    }
+    // States: a 4-floor-ish office and a house, at every construction stage, abandoned, burned.
+    let row = zones.len();
+    for (k, zone) in [ResHigh, Office].into_iter().enumerate() {
+        let id = db
+            .buildings()
+            .find(|(_, d)| d.zone == zone && d.level == 3 && d.service.is_none())
+            .map(|(i, _)| i)
+            .expect("def");
+        let now = sim.tick().0;
+        let day = cp_core::time::TICKS_PER_DAY;
+        let mut grid = sim.world_mut().resource_mut::<BuildingGrid>();
+        for stage in 0..4u64 {
+            // `ready_at` such that progress lands in the middle of `stage`.
+            let left = day - (stage * day / 4 + day / 8);
+            add(
+                &mut grid,
+                id,
+                stage as usize,
+                row + k,
+                BuildingState::UnderConstruction,
+                now + left,
+            );
+        }
+        add(&mut grid, id, 4, row + k, BuildingState::Abandoned, 0);
+        add(&mut grid, id, 5, row + k, BuildingState::Burned, 0);
+        add(&mut grid, id, 6, row + k, BuildingState::Active, 0);
+        placed += 7;
+    }
+    placed
 }

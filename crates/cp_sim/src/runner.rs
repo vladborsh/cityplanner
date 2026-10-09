@@ -48,6 +48,8 @@ pub struct SimRunner {
     pub(crate) net_cache: std::sync::Mutex<crate::view::NetCache>,
     /// `SimView::overlays.zones` cache, keyed by a fingerprint of the zone state.
     pub(crate) zone_cache: std::sync::Mutex<crate::overlay::ZoneCache>,
+    /// `SimView::buildings` cache, keyed by the grid's revision.
+    pub(crate) buildings_cache: std::sync::Mutex<crate::view::BuildingsCache>,
 }
 
 fn multiplier(speed: SimSpeed) -> u128 {
@@ -168,6 +170,7 @@ impl SimRunner {
             accumulator: 0,
             net_cache: Default::default(),
             zone_cache: Default::default(),
+            buildings_cache: Default::default(),
         }
     }
 
