@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use bevy_ecs::resource::Resource;
 use cp_core::{GameTime, SimSpeed, Tick};
-use cp_terrain::Terrain;
+use cp_terrain::{Terrain, TileOwnership};
 
 use crate::runner::SimRunner;
 
@@ -26,6 +26,8 @@ pub struct SimView {
     pub speed: SimSpeed,
     /// Shared handle to the terrain; `None` for a sim without a map (headless tests).
     pub terrain: Option<Arc<Terrain>>,
+    /// Which tiles the player owns (client camera bounds, build-area overlays).
+    pub tiles: TileOwnership,
 }
 
 impl SimRunner {
@@ -45,6 +47,11 @@ impl SimRunner {
                 .world()
                 .get_resource::<SimTerrain>()
                 .map(|t| Arc::clone(&t.0)),
+            tiles: self
+                .world()
+                .get_resource::<TileOwnership>()
+                .copied()
+                .unwrap_or_default(),
         }
     }
 }
@@ -77,5 +84,6 @@ mod tests {
         assert_eq!(v.tick, Tick(2));
         assert_eq!(v.game_time.tick_of_day, 2);
         assert!(Arc::ptr_eq(v.terrain.as_ref().unwrap(), &t));
+        assert_eq!(v.tiles, TileOwnership::m1_default());
     }
 }

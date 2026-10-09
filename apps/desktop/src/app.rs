@@ -1,7 +1,7 @@
 //! The game app: SimRunner stepped in `PreUpdate`, `SimView` published as a resource,
-//! terrain rendering from `cp_render`, and a temporary free-fly camera (the RTS camera is T-012).
+//! terrain rendering and the RTS camera from `cp_render`.
 //!
-//! `cargo run --release -p cp_desktop -- [--map flatlands|river_valley] [--cam overview|ground]`
+//! `cargo run --release -p cp_desktop -- [--map flatlands|river_valley] [--cam overview|ground|valley]`
 //! `  [--hour 0..24] [--screenshot out.png] [--bench seconds] [--no-vsync]`
 
 use std::path::PathBuf;
@@ -9,14 +9,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
-use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::PresentMode;
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
-use cp_render::{TerrainRenderPlugin, TerrainStats};
+use cp_render::{RtsCamera, RtsCameraPlugin, TerrainRenderPlugin, TerrainStats};
 use cp_sim::{SimRunner, SimView};
 use cp_terrain::{MAP_SIZE, Terrain};
 
@@ -107,6 +106,7 @@ pub fn run(opts: Options) {
     )
     .add_plugins((
         TerrainRenderPlugin,
+        RtsCameraPlugin,
         FrameTimeDiagnosticsPlugin::default(),
         RenderDiagnosticsPlugin,
     ))
@@ -127,15 +127,15 @@ pub fn run(opts: Options) {
                 ..default()
             }),
             Transform::from_translation(pos).looking_at(look, Vec3::Y),
-            FlyCam,
+            RtsCamera::from_pose(pos, look),
         ));
     })
     .add_systems(PreUpdate, step_sim)
-    .add_systems(Update, (fly_camera, job));
+    .add_systems(Update, job);
     app.run();
 }
 
-/// Camera start poses for measuring. `overview` sees the whole map.
+/// Camera start poses for measuring. `overview` is the highest allowed view (4000 m).
 fn camera_pose(name: &str, terrain: Option<&Terrain>) -> (Vec3, Vec3) {
     let c = MAP_SIZE / 2.0;
     match name {
@@ -148,7 +148,7 @@ fn camera_pose(name: &str, terrain: Option<&Terrain>) -> (Vec3, Vec3) {
             Vec3::new(c, 1500.0, c + 2500.0),
             Vec3::new(c, 0.0, c - 500.0),
         ),
-        _ => (Vec3::new(c, 9000.0, c + 9500.0), Vec3::new(c, 0.0, c)),
+        _ => (Vec3::new(c, 4000.0, c + 4200.0), Vec3::new(c, 0.0, c)),
     }
 }
 
@@ -156,50 +156,6 @@ fn step_sim(time: Res<Time>, mut sim: ResMut<Sim>, mut view: ResMut<SimView>) {
     if sim.0.step(Duration::from_secs_f64(time.delta_secs_f64())) > 0 {
         *view = sim.0.view();
     }
-}
-
-#[derive(Component)]
-struct FlyCam;
-
-/// WASD to move (Shift = fast, Space/Ctrl = up/down), right mouse button to look.
-fn fly_camera(
-    time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    mut motion: MessageReader<MouseMotion>,
-    mut cam: Query<&mut Transform, With<FlyCam>>,
-) {
-    let Ok(mut tf) = cam.single_mut() else { return };
-    if buttons.pressed(MouseButton::Right) {
-        let d: Vec2 = motion.read().map(|m| m.delta).sum();
-        let (mut yaw, mut pitch, _) = tf.rotation.to_euler(EulerRot::YXZ);
-        yaw -= d.x * 0.003;
-        pitch = (pitch - d.y * 0.003).clamp(-1.55, 1.55);
-        tf.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
-    } else {
-        motion.clear();
-    }
-    let mut dir = Vec3::ZERO;
-    let (f, r) = (tf.forward().as_vec3(), tf.right().as_vec3());
-    for (key, v) in [
-        (KeyCode::KeyW, f),
-        (KeyCode::KeyS, -f),
-        (KeyCode::KeyD, r),
-        (KeyCode::KeyA, -r),
-        (KeyCode::Space, Vec3::Y),
-        (KeyCode::ControlLeft, -Vec3::Y),
-    ] {
-        if keys.pressed(key) {
-            dir += v;
-        }
-    }
-    let fast = if keys.pressed(KeyCode::ShiftLeft) {
-        4.0
-    } else {
-        1.0
-    };
-    let speed = (tf.translation.y * 0.8).clamp(40.0, 4000.0) * fast;
-    tf.translation += dir.normalize_or_zero() * speed * time.delta_secs();
 }
 
 /// Screenshot and benchmark driver.
