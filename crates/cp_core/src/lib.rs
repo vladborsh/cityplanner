@@ -1,7 +1,18 @@
-//! `cp_core` — simulation crate skeleton. See `architecture/system-design.md` §1.
+//! `cp_core` — ids and arenas, tick and game time, `SimRng`, `SimLimits`.
+//! See `architecture/system-design.md` §2–§3.
 
 // Sim code must iterate deterministically: HashMap/HashSet are banned (see clippy.toml).
 #![deny(clippy::disallowed_types)]
+
+pub mod arena;
+pub mod limits;
+pub mod rng;
+pub mod time;
+
+pub use arena::{Arena, Id};
+pub use limits::SimLimits;
+pub use rng::SimRng;
+pub use time::{GameTime, Tick};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_core";
