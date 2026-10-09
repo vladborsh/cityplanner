@@ -17,6 +17,7 @@
 ```
 apps/desktop  apps/web  apps/bench(headless)
      │            │          │
+     ├─ cp_app ───┤          │   ← GamePlugin: владеет SimRunner, шагает его, публикует SimView
      ├─ cp_ui ────┤          │
      ├─ cp_tools ─┤          │
      ├─ cp_render ┤          │
@@ -57,6 +58,7 @@ apps/desktop  apps/web  apps/bench(headless)
 | `cp_tools` | инструменты дорог, зон, размещения и бульдозера: превью и команды | `cp_sim`, `cp_render` |
 | `cp_ui` | панели `bevy_egui` | `cp_sim`, `cp_tools` |
 | `cp_prof` | инструментарий клиента: `PhaseTiming` — `SimPlugin`, который ставит маркер-системы между фазами и пишет wall-clock длительность каждой фазы в ресурс `PhaseClock`. Нужен `apps/bench` и отладочному окну `cp_ui`, поэтому живёт отдельно от рендера. **Не sim-крейт:** единственное место вне `apps/*`, где разрешён `Instant`. Его системы не читают и не пишут состояние симуляции; `PhaseClock` не входит ни в сейв, ни в чексумму, и прогон с `PhaseTiming` и без него даёт одну и ту же чексумму (тест). Ни один sim-крейт не может от него зависеть | `cp_sim`, `cp_core`, `bevy_ecs` |
+| `cp_app` | композиционный корень клиента: `GamePlugin` для `apps/desktop` и `apps/web` — загрузка карты через `AssetServer` (файлы нативно, HTTP в браузере), шаг `SimRunner` в `PreUpdate`, публикация `SimView`, `CommandOutbox` → `CommandQueue`, подключение камеры, рендера, инструментов, UI и `cp_prof`. **Единственный клиентский крейт, который держит `SimRunner`:** `cp_render`, `cp_tools`, `cp_ui` видят только `SimView` и `CommandOutbox`. Не sim-крейт. Приложения в `apps/*` — тонкие обёртки: аргументы, платформа, `--gallery`/`--headless` | `cp_sim` (`SimRunner`, `SimView`), `cp_core`, `cp_terrain`, `cp_render`, `cp_tools`, `cp_ui`, `cp_prof`, `bevy` |
 
 **Жёсткое правило:** крейты до `cp_sim` включительно и `cp_save` не зависят от `bevy_render`, `bevy_pbr`, `bevy_winit`, `bevy_egui`. CI проверяет это через `cargo tree`. Список sim-крейтов для проверок выводится из манифестов: sim-крейт — это член workspace с `[lints] workspace = true` (запрет `HashMap` по умолчанию); не-sim-крейт явно отказывается от линта в своём `Cargo.toml`. Скрипт сверяет этот список с деревом `cp_sim` + `cp_save` и падает при расхождении в любую сторону: новый крейт попадает под стража сразу, а крейт из дерева `cp_sim` не может тихо отказаться от линта.
 
