@@ -27,7 +27,7 @@ Sim crates are `cp_sim`, every crate it pulls in, and `cp_save` (which sits abov
 `cp_save` and `cp_sim` itself.
 
 - **No rendering, windowing or input dependencies.** A sim crate may use `bevy_ecs`,
-  `bevy_app`, `bevy_math`, `bevy_reflect` and `bevy_utils`. It must never depend on
+  `bevy_app`, `bevy_math`, `bevy_reflect`, `bevy_utils` and `bevy_tasks`. It must never depend on
   `bevy_render`, `bevy_pbr`, `bevy_asset` loaders, `winit`, `bevy_egui` or the `bevy`
   umbrella crate. `cargo tree -p <crate>` is the check.
 - **Player input enters the sim only as commands** (the `cp_core` command queue).
@@ -45,6 +45,10 @@ lockstep multiplayer), so `f32` math is fine. Within that scope:
 - **No iteration over `HashMap` or `HashSet` in sim code.** Use `BTreeMap`, `IndexMap`,
   dense `Vec`s keyed by id, or collect and sort before iterating. Lookups without iteration
   are fine.
+  The ban is enforced as the workspace clippy lint `disallowed_types = "deny"` on every
+  target (lib, tests, benches, examples). A new crate is a sim crate by default; only a
+  non-sim crate (`cp_render`, `cp_tools`, `cp_ui`, `apps/*`, `tools/*`) may opt out, in
+  its own `Cargo.toml`.
 - **No wall clock in sim code.** No `Instant`, `SystemTime` or Bevy's `Time<Real>`/`Time<Virtual>`.
   Sim time is the tick counter from `cp_core`.
 - **RNG only from the sim RNG resource** in `cp_core`. Never `rand::thread_rng()` and never
