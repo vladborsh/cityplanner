@@ -40,7 +40,7 @@ fn main() {
         log,
         tiles: TileOwnership::m1_default(),
     };
-    let bytes = encode_v0(&v0, FIXTURE_HASH, "flatlands");
+    let bytes = encode_v0(&v0, FIXTURE_HASH, "flatlands").unwrap();
     std::fs::create_dir_all("fixtures/saves").unwrap();
     std::fs::write("fixtures/saves/v0-basic.sav", &bytes).unwrap();
     println!("wrote {} bytes", bytes.len());

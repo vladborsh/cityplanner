@@ -37,18 +37,25 @@ pub fn migrate_v0_to_v1(v0: SaveDataV0) -> SaveData {
 /// [`crate::FORMAT_VERSION`]. Add one `match` arm per version and one chain step per bump.
 pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveError> {
     fn dec<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, SaveError> {
-        postcard::from_bytes(body).map_err(|e| SaveError::Decode(e.to_string()))
+        let (value, rest) =
+            postcard::take_from_bytes(body).map_err(|e| SaveError::Decode(e.to_string()))?;
+        if rest.is_empty() {
+            Ok(value)
+        } else {
+            Err(SaveError::Decode("trailing bytes after save body".into()))
+        }
     }
     match version {
         0 => Ok(migrate_v0_to_v1(dec(body)?)),
-        1 => dec(body),
+        // v1 and v2 share the same body; v2 only added the header CRC.
+        1 | 2 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
 
 /// Writes a **version 0** file. Legacy writer kept only to (re)generate and test the v0
 /// fixture; real saves always use [`crate::save`].
-pub fn encode_v0(v0: &SaveDataV0, content_hash: u64, map_id: &str) -> Vec<u8> {
+pub fn encode_v0(v0: &SaveDataV0, content_hash: u64, map_id: &str) -> Result<Vec<u8>, SaveError> {
     let mut out = Vec::new();
     crate::write_header(
         &mut out,
@@ -57,9 +64,29 @@ pub fn encode_v0(v0: &SaveDataV0, content_hash: u64, map_id: &str) -> Vec<u8> {
             content_hash,
             tick: v0.tick.0,
             map_id: map_id.to_owned(),
+            body_crc: None,
         },
-    );
+    )?;
     let body = postcard::to_stdvec(v0).expect("serialization failed");
     out.extend_from_slice(&crate::compress(&body));
-    out
+    Ok(out)
+}
+
+/// Writes a **version 1** file (no body CRC). Legacy writer kept only to (re)generate and
+/// test the v1 fixture; real saves always use [`crate::save`].
+pub fn encode_v1(v1: &SaveData, content_hash: u64, map_id: &str) -> Result<Vec<u8>, SaveError> {
+    let mut out = Vec::new();
+    crate::write_header(
+        &mut out,
+        &crate::Header {
+            format_version: 1,
+            content_hash,
+            tick: v1.tick.0,
+            map_id: map_id.to_owned(),
+            body_crc: None,
+        },
+    )?;
+    let body = postcard::to_stdvec(v1).expect("serialization failed");
+    out.extend_from_slice(&crate::compress(&body));
+    Ok(out)
 }

@@ -41,13 +41,13 @@ fn migrated_v0_fixture_resaves_stably_and_resumes() {
     let (h, _) = read_header(&old).unwrap();
     assert_eq!(h.format_version, 0);
     let l1 = load(&old, h.content_hash).unwrap();
-    let a = save(&l1.data, h.content_hash, &h.map_id);
+    let a = save(&l1.data, h.content_hash, &h.map_id).unwrap();
     let l2 = load(&a, h.content_hash).unwrap();
     assert_eq!(l1.data, l2.data);
     assert_eq!(
         a,
-        save(&l2.data, h.content_hash, &h.map_id),
-        "v1 re-save is a fixed point"
+        save(&l2.data, h.content_hash, &h.map_id).unwrap(),
+        "re-save is a fixed point"
     );
     // Migrated state resumes like a continuous run: load twice, step both, same checksum.
     let (mut x, mut y) = (SimRunner::new(0), SimRunner::new(1));
@@ -68,11 +68,11 @@ fn save_at_tick_zero_and_large_tick_round_trip() {
         if let Some(t) = big {
             s.world_mut().insert_resource(Tick(t));
         }
-        let a = save_runner(&s, HASH, "flatlands");
+        let a = save_runner(&s, HASH, "flatlands").unwrap();
         let l = load(&a, HASH).unwrap();
         assert_eq!(l.header.tick, big.unwrap_or(ticks));
         assert_eq!(l.data.tick.0, l.header.tick);
-        assert_eq!(a, save(&l.data, HASH, "flatlands"));
+        assert_eq!(a, save(&l.data, HASH, "flatlands").unwrap());
         let mut r = SimRunner::new(0);
         load_into_runner(&mut r, &a, HASH).unwrap();
         assert_eq!(r.checksum(), s.checksum());
@@ -82,14 +82,14 @@ fn save_at_tick_zero_and_large_tick_round_trip() {
 #[test]
 fn map_id_edge_values_round_trip() {
     for id in ["", "a", "река-долина", &"x".repeat(65_535)] {
-        let a = save_runner(&runner(1, 2), HASH, id);
+        let a = save_runner(&runner(1, 2), HASH, id).unwrap();
         assert_eq!(load(&a, HASH).unwrap().header.map_id, id);
     }
 }
 
 #[test]
 fn every_truncation_is_rejected_without_panicking() {
-    for good in [save_runner(&runner(3, 40), HASH, "m"), v0()] {
+    for good in [save_runner(&runner(3, 40), HASH, "m").unwrap(), v0()] {
         for n in 0..good.len() {
             let r = catch_unwind(|| load(&good[..n], HASH));
             assert!(
@@ -103,7 +103,7 @@ fn every_truncation_is_rejected_without_panicking() {
 
 #[test]
 fn corrupt_bytes_never_panic() {
-    for good in [save_runner(&runner(3, 40), HASH, "m"), v0()] {
+    for good in [save_runner(&runner(3, 40), HASH, "m").unwrap(), v0()] {
         for i in 0..good.len() {
             for mask in [0x01u8, 0x80, 0xFF] {
                 let mut b = good.clone();
@@ -125,10 +125,15 @@ fn garbage_and_foreign_files_are_rejected() {
         SaveError::BadMagic
     );
     // Valid header, body that is not zstd.
-    let good = save_runner(&runner(1, 1), HASH, "m");
+    let good = save_runner(&runner(1, 1), HASH, "m").unwrap();
     let (_, body) = read_header(&good).unwrap();
     let mut b = good[..good.len() - body.len()].to_vec();
-    b.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF, 1, 2, 3]);
+    let garbage = [0xDE, 0xAD, 0xBE, 0xEF, 1, 2, 3];
+    b.extend_from_slice(&garbage);
+    // v2 headers end with the body CRC; make it match so the zstd error path is reached
+    // (changed from the original test, which predates the CRC).
+    let n = good.len() - body.len();
+    b[n - 4..n].copy_from_slice(&crc32(&garbage).to_le_bytes());
     assert!(matches!(
         load(&b, HASH).unwrap_err(),
         SaveError::Compression(_)
@@ -156,7 +161,7 @@ fn garbage_and_foreign_files_are_rejected() {
 fn failed_load_leaves_the_runner_untouched() {
     let mut r = runner(5, 30);
     let before = r.checksum();
-    let mut bad = save_runner(&runner(9, 10), HASH, "m");
+    let mut bad = save_runner(&runner(9, 10), HASH, "m").unwrap();
     let n = bad.len();
     bad.truncate(n - 3);
     assert!(load_into_runner(&mut r, &bad, HASH).is_err());
@@ -167,7 +172,7 @@ fn failed_load_leaves_the_runner_untouched() {
 #[test]
 fn hash_mismatch_warns_exactly_once_and_data_is_intact() {
     let s = runner(2, 15);
-    let a = save_runner(&s, HASH, "m");
+    let a = save_runner(&s, HASH, "m").unwrap();
     let l = load(&a, !HASH).unwrap();
     assert_eq!(l.warnings.len(), 1);
     assert_eq!(l.data, SaveData::capture(s.world()));

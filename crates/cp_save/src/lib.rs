@@ -8,10 +8,13 @@
 //! | 4 | `format_version: u32` |
 //! | 8 | `content_hash: u64` (the `ContentDb` hash the save was made with) |
 //! | 8 | `tick: u64` |
-//! | 2 + n | `map_id`: `u16` length, UTF-8 bytes |
-//! | rest | zstd frame (pure-Rust `ruzstd`) of the postcard-encoded body |
+//! | 2 + n | `map_id`: `u16` length, UTF-8 bytes (at most 65535 bytes) |
+//! | 4 | `body_crc: u32` — CRC-32 (IEEE) of the compressed body; **version 2 and later only** |
+//! | rest | zstd frame (pure-Rust `ruzstd`) of the postcard-encoded body, nothing after it |
 //!
-//! The header is read before the body so a version is known before decoding. Output is
+//! The header is read before the body so a version is known before decoding. The header
+//! `tick` is only a preview: loading fails if it disagrees with the body. Trailing bytes
+//! after the zstd frame, a body CRC mismatch and a map id that does not fit are errors. Output is
 //! deterministic: saving the same state twice gives identical bytes.
 //!
 //! **Versions and migrations.** The body of version `N` is the frozen type for `N` (see
@@ -36,7 +39,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -80,6 +83,8 @@ pub struct Header {
     pub content_hash: u64,
     pub tick: u64,
     pub map_id: String,
+    /// CRC-32 of the compressed body; `None` for versions before 2.
+    pub body_crc: Option<u32>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -90,6 +95,17 @@ pub enum SaveError {
     UnsupportedVersion(u32),
     Compression(String),
     Decode(String),
+    /// The body does not match its CRC (bit rot or tampering).
+    Corrupt,
+    /// Bytes after the end of the compressed body.
+    TrailingBytes,
+    /// The header's preview tick disagrees with the body.
+    TickMismatch {
+        header: u64,
+        body: u64,
+    },
+    /// `map_id` is longer than 65535 bytes (save only).
+    MapIdTooLong(usize),
 }
 
 impl std::fmt::Display for SaveError {
@@ -100,6 +116,12 @@ impl std::fmt::Display for SaveError {
             Self::UnsupportedVersion(v) => write!(f, "unsupported save format version {v}"),
             Self::Compression(e) => write!(f, "decompression failed: {e}"),
             Self::Decode(e) => write!(f, "save body is corrupt: {e}"),
+            Self::Corrupt => write!(f, "save body failed its integrity check"),
+            Self::TrailingBytes => write!(f, "unexpected data after the save body"),
+            Self::TickMismatch { header, body } => {
+                write!(f, "header tick {header} does not match body tick {body}")
+            }
+            Self::MapIdTooLong(n) => write!(f, "map id is {n} bytes, the limit is 65535"),
         }
     }
 }
@@ -120,15 +142,48 @@ pub struct Loaded {
     pub warnings: Vec<LoadWarning>,
 }
 
-pub(crate) fn write_header(out: &mut Vec<u8>, h: &Header) {
+pub(crate) fn write_header(out: &mut Vec<u8>, h: &Header) -> Result<(), SaveError> {
+    let id = h.map_id.as_bytes();
+    let len = u16::try_from(id.len()).map_err(|_| SaveError::MapIdTooLong(id.len()))?;
     out.extend_from_slice(&MAGIC);
     out.extend_from_slice(&h.format_version.to_le_bytes());
     out.extend_from_slice(&h.content_hash.to_le_bytes());
     out.extend_from_slice(&h.tick.to_le_bytes());
-    let id = h.map_id.as_bytes();
-    let len = u16::try_from(id.len()).expect("map_id longer than 65535 bytes");
     out.extend_from_slice(&len.to_le_bytes());
     out.extend_from_slice(id);
+    if h.format_version >= 2 {
+        let crc = h.body_crc.expect("version 2+ header needs a body CRC");
+        out.extend_from_slice(&crc.to_le_bytes());
+    }
+    Ok(())
+}
+
+/// CRC-32 (IEEE 802.3, reflected, as in zlib/PNG) of `bytes`.
+pub fn crc32(bytes: &[u8]) -> u32 {
+    const TABLE: [u32; 256] = {
+        let mut t = [0u32; 256];
+        let mut i = 0;
+        while i < 256 {
+            let mut c = i as u32;
+            let mut k = 0;
+            while k < 8 {
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
+                k += 1;
+            }
+            t[i] = c;
+            i += 1;
+        }
+        t
+    };
+    let mut c = !0u32;
+    for &b in bytes {
+        c = TABLE[((c ^ u32::from(b)) & 0xFF) as usize] ^ (c >> 8);
+    }
+    !c
 }
 
 fn take<'a>(bytes: &mut &'a [u8], n: usize) -> Result<&'a [u8], SaveError> {
@@ -146,17 +201,26 @@ pub fn read_header(mut bytes: &[u8]) -> Result<(Header, &[u8]), SaveError> {
         return Err(SaveError::BadMagic);
     }
     let format_version = u32::from_le_bytes(take(&mut bytes, 4)?.try_into().unwrap());
+    if format_version > FORMAT_VERSION {
+        return Err(SaveError::UnsupportedVersion(format_version));
+    }
     let content_hash = u64::from_le_bytes(take(&mut bytes, 8)?.try_into().unwrap());
     let tick = u64::from_le_bytes(take(&mut bytes, 8)?.try_into().unwrap());
     let len = u16::from_le_bytes(take(&mut bytes, 2)?.try_into().unwrap());
     let map_id = String::from_utf8(take(&mut bytes, usize::from(len))?.to_vec())
         .map_err(|e| SaveError::Decode(e.to_string()))?;
+    let body_crc = if format_version >= 2 {
+        Some(u32::from_le_bytes(take(&mut bytes, 4)?.try_into().unwrap()))
+    } else {
+        None
+    };
     Ok((
         Header {
             format_version,
             content_hash,
             tick,
             map_id,
+            body_crc,
         },
         bytes,
     ))
@@ -167,16 +231,25 @@ pub(crate) fn compress(body: &[u8]) -> Vec<u8> {
 }
 
 fn decompress(frame: &[u8]) -> Result<Vec<u8>, SaveError> {
-    let mut dec = ruzstd::decoding::StreamingDecoder::new(frame)
-        .map_err(|e| SaveError::Compression(e.to_string()))?;
+    let mut src = frame;
     let mut out = Vec::new();
-    dec.read_to_end(&mut out)
-        .map_err(|e| SaveError::Compression(e.to_string()))?;
+    {
+        let mut dec = ruzstd::decoding::StreamingDecoder::new(&mut src)
+            .map_err(|e| SaveError::Compression(e.to_string()))?;
+        dec.read_to_end(&mut out)
+            .map_err(|e| SaveError::Compression(e.to_string()))?;
+    }
+    if !src.is_empty() {
+        return Err(SaveError::TrailingBytes);
+    }
     Ok(out)
 }
 
-/// Encodes `data` as a save file at [`FORMAT_VERSION`].
-pub fn save(data: &SaveData, content_hash: u64, map_id: &str) -> Vec<u8> {
+/// Encodes `data` as a save file at [`FORMAT_VERSION`]. Fails only if `map_id` is longer
+/// than 65535 bytes.
+pub fn save(data: &SaveData, content_hash: u64, map_id: &str) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(data).expect("save serialization failed");
+    let frame = compress(&body);
     let mut out = Vec::new();
     write_header(
         &mut out,
@@ -185,11 +258,11 @@ pub fn save(data: &SaveData, content_hash: u64, map_id: &str) -> Vec<u8> {
             content_hash,
             tick: data.tick.0,
             map_id: map_id.to_owned(),
+            body_crc: Some(crc32(&frame)),
         },
-    );
-    let body = postcard::to_stdvec(data).expect("save serialization failed");
-    out.extend_from_slice(&compress(&body));
-    out
+    )?;
+    out.extend_from_slice(&frame);
+    Ok(out)
 }
 
 /// Decodes a save file of any known version, migrating it to the current one.
@@ -197,11 +270,17 @@ pub fn save(data: &SaveData, content_hash: u64, map_id: &str) -> Vec<u8> {
 /// [`LoadWarning`], not an error.
 pub fn load(bytes: &[u8], current_content_hash: u64) -> Result<Loaded, SaveError> {
     let (header, frame) = read_header(bytes)?;
-    if header.format_version > FORMAT_VERSION {
-        return Err(SaveError::UnsupportedVersion(header.format_version));
+    if header.body_crc.is_some_and(|crc| crc != crc32(frame)) {
+        return Err(SaveError::Corrupt);
     }
     let body = decompress(frame)?;
     let data = migrate::decode_and_migrate(header.format_version, &body)?;
+    if header.tick != data.tick.0 {
+        return Err(SaveError::TickMismatch {
+            header: header.tick,
+            body: data.tick.0,
+        });
+    }
     let mut warnings = Vec::new();
     if header.content_hash != current_content_hash {
         warnings.push(LoadWarning::ContentHashMismatch {
@@ -217,7 +296,7 @@ pub fn load(bytes: &[u8], current_content_hash: u64) -> Result<Loaded, SaveError
 }
 
 /// Saves a runner's state.
-pub fn save_runner(sim: &SimRunner, content_hash: u64, map_id: &str) -> Vec<u8> {
+pub fn save_runner(sim: &SimRunner, content_hash: u64, map_id: &str) -> Result<Vec<u8>, SaveError> {
     save(&SaveData::capture(sim.world()), content_hash, map_id)
 }
 
@@ -273,15 +352,15 @@ mod tests {
     #[test]
     fn save_load_save_is_byte_identical() {
         let sim = busy_runner(3, 50);
-        let a = save_runner(&sim, HASH, "flatlands");
-        assert_eq!(a, save_runner(&sim, HASH, "flatlands"));
+        let a = save_runner(&sim, HASH, "flatlands").unwrap();
+        assert_eq!(a, save_runner(&sim, HASH, "flatlands").unwrap());
 
         let loaded = load(&a, HASH).unwrap();
         assert!(loaded.warnings.is_empty());
         assert_eq!(loaded.header.format_version, FORMAT_VERSION);
         assert_eq!(loaded.header.map_id, "flatlands");
         assert_eq!(loaded.header.tick, 50);
-        let b = save(&loaded.data, HASH, "flatlands");
+        let b = save(&loaded.data, HASH, "flatlands").unwrap();
         assert_eq!(a, b);
         assert_eq!(loaded.data, SaveData::capture(sim.world()));
         assert_eq!(loaded.data.speed, SimSpeed::X3);
@@ -293,7 +372,7 @@ mod tests {
     fn load_then_run_matches_a_fresh_run() {
         let (a, n) = (100, 150);
         let mut first = busy_runner(9, a);
-        let bytes = save_runner(&first, HASH, "m");
+        let bytes = save_runner(&first, HASH, "m").unwrap();
 
         let mut resumed = SimRunner::new(0); // seed is overwritten by the save
         load_into_runner(&mut resumed, &bytes, HASH).unwrap();
@@ -323,7 +402,7 @@ mod tests {
 
     #[test]
     fn content_hash_mismatch_warns_but_loads() {
-        let bytes = save_runner(&busy_runner(1, 3), HASH, "m");
+        let bytes = save_runner(&busy_runner(1, 3), HASH, "m").unwrap();
         let loaded = load(&bytes, HASH + 1).unwrap();
         assert_eq!(
             loaded.warnings,
@@ -357,7 +436,7 @@ mod tests {
         assert_eq!(d.rng, expect);
 
         // Re-saving writes the current version, which round-trips.
-        let resaved = save(d, header.content_hash, &header.map_id);
+        let resaved = save(d, header.content_hash, &header.map_id).unwrap();
         assert_eq!(
             read_header(&resaved).unwrap().0.format_version,
             FORMAT_VERSION
@@ -375,13 +454,13 @@ mod tests {
     fn rejects_bad_input() {
         assert_eq!(load(b"NOPE", 0).unwrap_err(), SaveError::BadMagic);
         assert_eq!(load(b"CPS", 0).unwrap_err(), SaveError::Truncated);
-        let mut bytes = save_runner(&busy_runner(1, 1), HASH, "m");
+        let mut bytes = save_runner(&busy_runner(1, 1), HASH, "m").unwrap();
         bytes[4..8].copy_from_slice(&(FORMAT_VERSION + 1).to_le_bytes());
         assert_eq!(
             load(&bytes, HASH).unwrap_err(),
             SaveError::UnsupportedVersion(FORMAT_VERSION + 1)
         );
-        let mut bytes = save_runner(&busy_runner(1, 1), HASH, "m");
+        let mut bytes = save_runner(&busy_runner(1, 1), HASH, "m").unwrap();
         let n = bytes.len();
         bytes.truncate(n - 5);
         assert!(load(&bytes, HASH).is_err());
