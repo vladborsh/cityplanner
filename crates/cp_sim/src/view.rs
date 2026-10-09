@@ -28,7 +28,10 @@ pub struct ArenaFill {
 /// Registered arena size gauges. Domain plugins add one per arena through
 /// `SimBuilder::register_arena_gauge`; `SimView::stats` reports them.
 #[derive(Resource, Default)]
-pub struct ArenaGauges(pub(crate) Vec<(&'static str, u32, fn(&World) -> usize)>);
+pub struct ArenaGauges(pub(crate) Vec<Gauge>);
+
+/// `(name, capacity, live-element count)`.
+pub(crate) type Gauge = (&'static str, u32, fn(&World) -> usize);
 
 impl ArenaGauges {
     pub fn register(&mut self, name: &'static str, capacity: u32, len: fn(&World) -> usize) {
