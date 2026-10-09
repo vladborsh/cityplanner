@@ -40,6 +40,21 @@ fn usage() -> &'static str {
      cp_bench compare BASELINE.json CURRENT.json [--threshold 0.2] [--floor-ms 0.05]"
 }
 
+/// Milliseconds → `Duration`, rejecting anything `Duration` cannot hold (negative, NaN,
+/// infinite, overflowing) instead of panicking.
+fn parse_sleep_ms(text: &str) -> Result<Duration, String> {
+    let ms: f64 = text
+        .parse()
+        .map_err(|e| format!("--inject-sleep: '{text}' is not a number ({e})"))?;
+    if !ms.is_finite() || ms < 0.0 {
+        return Err(format!(
+            "--inject-sleep: '{text}' must be a finite, non-negative number of milliseconds"
+        ));
+    }
+    Duration::try_from_secs_f64(ms / 1000.0)
+        .map_err(|e| format!("--inject-sleep: '{text}' is out of range ({e})"))
+}
+
 fn parse_phase(name: &str) -> Result<SimPhase, String> {
     SimPhase::ORDER
         .into_iter()
@@ -75,8 +90,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--inject-sleep" => {
                 let v = val()?;
                 let (phase, ms) = v.split_once('=').ok_or("--inject-sleep wants Phase=MS")?;
-                let ms: f64 = ms.parse().map_err(|e| format!("--inject-sleep: {e}"))?;
-                o.inject_sleep = Some((parse_phase(phase)?, Duration::from_secs_f64(ms / 1000.0)));
+                o.inject_sleep = Some((parse_phase(phase)?, parse_sleep_ms(ms)?));
             }
             other => return Err(format!("unknown argument '{other}'")),
         }
@@ -186,8 +200,14 @@ fn run(o: &Opts) -> Result<Report, String> {
 /// Loads `path` into `sim` through `cp_save`'s public API. The current content hash comes
 /// from the defs in `content_dir`, so a save made against other content yields a warning.
 fn load_save(sim: &mut SimRunner, path: &str, content_dir: &Path) -> Result<SaveInfo, String> {
-    let db = cp_content::ContentDb::load_dir(content_dir)
-        .map_err(|e| format!("--content {}: {e:?}", content_dir.display()))?;
+    let db = cp_content::ContentDb::load_dir(content_dir).map_err(|e| {
+        // One `error:`-prefixed line per problem: "file: field: message".
+        let dir = content_dir.display();
+        e.0.iter()
+            .map(|err| format!("--content {dir}: {err}"))
+            .collect::<Vec<_>>()
+            .join("\nerror: ")
+    })?;
     let bytes = std::fs::read(path).map_err(|e| format!("--save {path}: {e}"))?;
     let t = Instant::now();
     let (header, warnings) = cp_save::load_into_runner(sim, &bytes, db.content_hash())
