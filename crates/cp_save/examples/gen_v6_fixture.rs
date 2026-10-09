@@ -3,7 +3,8 @@
 //! both finished and under construction).
 //!
 //! The committed file was produced by the real v6 writer (`save_with_map` at format 6,
-//! before the v7 bump) with exactly this data. Run from the repo root:
+//! before the v7 bump) with exactly this data; `encode_v6` is the frozen equivalent kept
+//! for regeneration and a test asserts they agree byte for byte. Run from the repo root:
 //! `cargo run -p cp_save --example gen_v6_fixture`. The committed file is **never edited or
 //! regenerated** afterwards (AGENTS.md).
 
@@ -14,7 +15,8 @@ use cp_building::{BuildingGrid, BuildingState};
 use cp_content::{ContentDb, ZoneType};
 use cp_core::curve::CubicBezier3;
 use cp_net::{Elevation, NetGraph};
-use cp_save::{SaveData, save_with_map};
+use cp_save::SaveData;
+use cp_save::migrate::{SaveDataV6, encode_v6};
 use cp_sim::SimRunner;
 use cp_zone::{ZoneCellRef, ZoneGrid};
 
@@ -71,14 +73,28 @@ fn main() {
             break;
         }
     }
-    let bytes = save_with_map(
-        &SaveData::capture(sim.world()),
+    let d = SaveData::capture(sim.world());
+    let v6 = SaveDataV6 {
+        tick: d.tick,
+        rng: d.rng,
+        speed: d.speed,
+        queue: d.queue,
+        log: d.log,
+        tiles: d.tiles,
+        net: d.net,
+        zones: d.zones,
+        buildings: d.buildings,
+    };
+    let bytes = encode_v6(
+        &v6,
         0xC17F_0000_0000_0007,
         "flatlands",
         Some(0xABCD_0000_0000_0001),
     )
     .unwrap();
-    std::fs::create_dir_all("fixtures/saves").unwrap();
-    std::fs::write("fixtures/saves/v6-basic.sav", &bytes).unwrap();
-    println!("wrote {} bytes", bytes.len());
+    let out = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "fixtures/saves/v6-basic.sav".into());
+    std::fs::write(&out, &bytes).unwrap();
+    println!("wrote {} bytes to {out}", bytes.len());
 }

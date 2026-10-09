@@ -193,6 +193,16 @@ mod tests {
                     capacity: cp_core::SimLimits::desktop().buildings
                 },
                 ArenaFill {
+                    name: "citizens",
+                    used: 0,
+                    capacity: cp_core::SimLimits::desktop().citizens
+                },
+                ArenaFill {
+                    name: "households",
+                    used: 0,
+                    capacity: cp_core::SimLimits::desktop().households
+                },
+                ArenaFill {
                     name: "dummy",
                     used: 3,
                     capacity: 10

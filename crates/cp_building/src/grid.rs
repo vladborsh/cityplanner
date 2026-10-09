@@ -40,6 +40,15 @@ impl BuildingGrid {
         self.buildings.iter()
     }
 
+    /// Buildings of one bucket (`index % buckets == bucket`), ascending.
+    pub fn iter_bucket(
+        &self,
+        buckets: u32,
+        bucket: u32,
+    ) -> impl Iterator<Item = (BuildingId, &Building)> {
+        self.buildings.iter_bucket(buckets, bucket)
+    }
+
     pub fn len(&self) -> usize {
         self.buildings.len()
     }
@@ -94,5 +103,22 @@ impl BuildingGrid {
             }
         }
         done
+    }
+}
+
+/// Removes a building and frees its lot cells in the zone grid. The future `Demolish`
+/// command uses this; citizens living or working there leave on their next update.
+pub fn demolish_building(
+    buildings: &mut BuildingGrid,
+    zones: &mut cp_zone::ZoneGrid,
+    id: BuildingId,
+) -> bool {
+    match buildings.remove(id) {
+        Some(b) => {
+            let cells: Vec<ZoneCellRef> = b.lot.cells().collect();
+            zones.release(&cells);
+            true
+        }
+        None => false,
     }
 }

@@ -7,7 +7,7 @@ pub mod model;
 pub mod spawn;
 
 pub use command::{BuildingCommand, BuildingError, apply};
-pub use grid::BuildingGrid;
+pub use grid::{BuildingGrid, demolish_building};
 pub use model::{AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Lot};
 pub use spawn::{BLOCK_BUCKETS, DemandStub, SPAWN_ONE_IN, SPAWN_STREAM, update_buildings};
 

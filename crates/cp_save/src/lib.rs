@@ -46,6 +46,7 @@ use std::io::Read;
 
 use bevy_ecs::world::World;
 use cp_building::BuildingGrid;
+use cp_citizen::CitizenGrid;
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
@@ -55,7 +56,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = 7;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -71,6 +72,8 @@ pub struct SaveData {
     pub zones: ZoneGrid,
     /// Buildings (lots, state, access points). Added in v6.
     pub buildings: BuildingGrid,
+    /// Citizens and households. Added in v7.
+    pub citizens: CitizenGrid,
 }
 
 impl SaveData {
@@ -86,6 +89,7 @@ impl SaveData {
             net: world.resource::<NetGraph>().clone(),
             zones: world.resource::<ZoneGrid>().clone(),
             buildings: world.resource::<BuildingGrid>().clone(),
+            citizens: world.resource::<CitizenGrid>().clone(),
         }
     }
 
@@ -110,6 +114,8 @@ impl SaveData {
         zones.set_occupied(self.buildings.occupied_cells());
         world.insert_resource(zones);
         world.insert_resource(self.buildings);
+        // Occupancy tables are derived; the citizen system rebuilds them on its next run.
+        world.insert_resource(self.citizens);
     }
 }
 

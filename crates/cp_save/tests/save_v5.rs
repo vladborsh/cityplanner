@@ -68,7 +68,7 @@ fn v4_fixture_migrates_to_empty_zones_and_the_network_phase_builds_them() {
     assert_eq!(grid.block_count(), 4, "two segments, two sides each");
     assert!(grid.valid_cells() > 0);
 
-    // Re-saving writes the current version (v6 since T-028) and round-trips the zones.
+    // Re-saving writes the current version (v7 since T-031) and round-trips the zones.
     let v5 = save(&SaveData::capture(sim.world()), h.content_hash, &h.map_id).unwrap();
     assert_eq!(read_header(&v5).unwrap().0.format_version, FORMAT_VERSION);
     assert_eq!(

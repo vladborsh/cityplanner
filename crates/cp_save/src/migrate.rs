@@ -5,6 +5,7 @@
 //! domain enums are append-only for the same reason).
 
 use cp_building::BuildingGrid;
+use cp_citizen::CitizenGrid;
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
@@ -99,10 +100,41 @@ pub struct SaveDataV5 {
     pub zones: ZoneGrid,
 }
 
+/// Version 6: the body as written by format 6 (buildings, before citizens).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV6 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+}
+
+/// v6 → v7: citizens and households were added; an old save has none (its homes are
+/// empty and move-ins start again).
+pub fn migrate_v6_to_v7(v6: SaveDataV6) -> SaveData {
+    SaveData {
+        tick: v6.tick,
+        rng: v6.rng,
+        speed: v6.speed,
+        queue: v6.queue,
+        log: v6.log,
+        tiles: v6.tiles,
+        net: v6.net,
+        zones: v6.zones,
+        buildings: v6.buildings,
+        citizens: CitizenGrid::default(),
+    }
+}
+
 /// v5 → v6: buildings were added; an old save has none (its zones keep their painted
 /// types and every valid cell is free).
-pub fn migrate_v5_to_v6(v5: SaveDataV5) -> SaveData {
-    SaveData {
+pub fn migrate_v5_to_v6(v5: SaveDataV5) -> SaveDataV6 {
+    SaveDataV6 {
         tick: v5.tick,
         rng: v5.rng,
         speed: v5.speed,
@@ -157,19 +189,22 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         }
     }
     match version {
-        0 => Ok(migrate_v5_to_v6(migrate_v4_to_v5(migrate_v3_to_v4(
-            migrate_v2_to_v3(migrate_v0_to_v1(dec(body)?)),
+        0 => Ok(migrate_v6_to_v7(migrate_v5_to_v6(migrate_v4_to_v5(
+            migrate_v3_to_v4(migrate_v2_to_v3(migrate_v0_to_v1(dec(body)?))),
         )))),
         // v1 and v2 share the same body; v2 only added the header CRC.
-        1 | 2 => Ok(migrate_v5_to_v6(migrate_v4_to_v5(migrate_v3_to_v4(
-            migrate_v2_to_v3(dec(body)?),
+        1 | 2 => Ok(migrate_v6_to_v7(migrate_v5_to_v6(migrate_v4_to_v5(
+            migrate_v3_to_v4(migrate_v2_to_v3(dec(body)?)),
         )))),
-        3 => Ok(migrate_v5_to_v6(migrate_v4_to_v5(migrate_v3_to_v4(dec(
+        3 => Ok(migrate_v6_to_v7(migrate_v5_to_v6(migrate_v4_to_v5(
+            migrate_v3_to_v4(dec(body)?),
+        )))),
+        4 => Ok(migrate_v6_to_v7(migrate_v5_to_v6(migrate_v4_to_v5(dec(
             body,
         )?)))),
-        4 => Ok(migrate_v5_to_v6(migrate_v4_to_v5(dec(body)?))),
-        5 => Ok(migrate_v5_to_v6(dec(body)?)),
-        6 => dec(body),
+        5 => Ok(migrate_v6_to_v7(migrate_v5_to_v6(dec(body)?))),
+        6 => Ok(migrate_v6_to_v7(dec(body)?)),
+        7 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -278,4 +313,16 @@ pub fn encode_v5(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v5).expect("serialization failed");
     crate::assemble(5, v5.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 6** file (buildings, no citizens). Legacy writer kept only to
+/// regenerate and test the v6 fixture; real saves always use [`crate::save`].
+pub fn encode_v6(
+    v6: &SaveDataV6,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v6).expect("serialization failed");
+    crate::assemble(6, v6.tick.0, &body, content_hash, map_id, map_hash)
 }

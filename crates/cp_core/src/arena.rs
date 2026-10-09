@@ -169,6 +169,21 @@ impl<T> Arena<T> {
         })
     }
 
+    /// Live elements whose slot index is `bucket` modulo `buckets`, ascending (the §2
+    /// bucketing: bucket = `id.index % N`), without scanning the other slots.
+    pub fn iter_bucket(&self, buckets: u32, bucket: u32) -> impl Iterator<Item = (Id<T>, &T)> {
+        let start = (bucket as usize).min(self.slots.len());
+        self.slots[start..]
+            .iter()
+            .enumerate()
+            .step_by(buckets.max(1) as usize)
+            .filter_map(move |(k, slot)| {
+                slot.value
+                    .as_ref()
+                    .map(|v| (Id::new((start + k) as u32, slot.generation), v))
+            })
+    }
+
     /// Live elements in ascending index order, mutable.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (Id<T>, &mut T)> {
         self.slots.iter_mut().enumerate().filter_map(|(i, slot)| {
@@ -214,6 +229,24 @@ mod tests {
         assert!(a.remove(old).is_none());
         assert_eq!(a.get(new).unwrap().0, 2);
         assert_eq!(a.len(), 1);
+    }
+
+    #[test]
+    fn buckets_partition_the_live_elements() {
+        let mut a = Arena::new();
+        let ids: Vec<_> = (0..23u32).map(|i| a.insert(Plain(i))).collect();
+        a.remove(ids[5]);
+        let mut seen = Vec::new();
+        for b in 0..4 {
+            let part: Vec<u32> = a.iter_bucket(4, b).map(|(id, _)| id.index).collect();
+            assert!(part.iter().all(|i| i % 4 == b));
+            assert!(part.windows(2).all(|w| w[0] < w[1]));
+            seen.extend(part);
+        }
+        seen.sort();
+        let all: Vec<u32> = a.iter().map(|(id, _)| id.index).collect();
+        assert_eq!(seen, all);
+        assert_eq!(a.iter_bucket(4, 99).count(), 0);
     }
 
     #[test]
