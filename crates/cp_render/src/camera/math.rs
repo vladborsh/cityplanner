@@ -204,10 +204,10 @@ mod tests {
 
     #[test]
     fn bounds_are_owned_tiles_plus_one_km() {
-        let b = owned_bounds(&TileOwnership::m1_default());
+        let b = owned_bounds(&TileOwnership::m1_around((2, 2)));
         assert_eq!(b.min, Vec2::splat(TILE_SIZE - 1000.0));
         assert_eq!(b.max, Vec2::splat(4.0 * TILE_SIZE + 1000.0));
-        let one = owned_bounds(&TileOwnership::only(0, 4));
+        let one = owned_bounds(&TileOwnership::only((0, 4)));
         assert_eq!(one.min, Vec2::new(-1000.0, 4.0 * TILE_SIZE - 1000.0));
         assert_eq!(one.max, Vec2::new(TILE_SIZE + 1000.0, MAP_SIZE + 1000.0));
         let none = owned_bounds(&TileOwnership::none());
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn focus_is_clamped_into_bounds() {
-        let b = owned_bounds(&TileOwnership::m1_default());
+        let b = owned_bounds(&TileOwnership::m1_around((2, 2)));
         assert_eq!(
             clamp_to_bounds(Vec2::new(-9e3, 5000.0), &b),
             Vec2::new(b.min.x, 5000.0)
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn constrain_applies_all_limits() {
         let t = terrain(100.0, false);
-        let b = owned_bounds(&TileOwnership::m1_default());
+        let b = owned_bounds(&TileOwnership::m1_around((2, 2)));
         let mut r = Rig {
             focus: Vec2::splat(-1e6),
             yaw: 0.0,

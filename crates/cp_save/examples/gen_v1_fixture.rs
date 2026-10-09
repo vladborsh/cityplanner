@@ -40,7 +40,7 @@ fn main() {
         speed: SimSpeed::X3,
         queue,
         log,
-        tiles: TileOwnership::m1_default(),
+        tiles: TileOwnership::m1_around((2, 2)),
     };
     let bytes = encode_v1(&data, HASH, "river_valley").unwrap();
     std::fs::create_dir_all("fixtures/saves").unwrap();

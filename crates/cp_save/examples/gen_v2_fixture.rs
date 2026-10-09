@@ -38,7 +38,7 @@ fn main() {
         speed: SimSpeed::X3,
         queue,
         log,
-        tiles: TileOwnership::m1_default(),
+        tiles: TileOwnership::m1_around((2, 2)),
     };
     let bytes = encode_v2(&data, 0xC17F_0000_0000_0003, "flatlands").unwrap();
     std::fs::create_dir_all("fixtures/saves").unwrap();

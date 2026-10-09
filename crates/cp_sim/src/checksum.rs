@@ -161,7 +161,7 @@ mod tests {
     fn covers_tile_ownership() {
         let mut a = SimRunner::new(3);
         let c1 = a.checksum();
-        a.world_mut().insert_resource(TileOwnership::none());
+        a.world_mut().insert_resource(TileOwnership::only((1, 1)));
         assert_ne!(c1, a.checksum());
     }
 

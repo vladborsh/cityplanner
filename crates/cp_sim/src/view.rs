@@ -31,9 +31,20 @@ pub struct SimView {
 }
 
 impl SimRunner {
-    /// Puts the loaded map into the sim world.
+    /// Puts the loaded map into the sim world. If nothing is owned yet (fresh sim),
+    /// ownership starts as `TileOwnership::m1_around(meta.start_tile)`; ownership that
+    /// is already set (e.g. restored from a save) is left alone. A save restored
+    /// afterwards overwrites it, so call this before `load_into_runner`.
     pub fn set_terrain(&mut self, terrain: Arc<Terrain>) {
-        self.world_mut().insert_resource(SimTerrain(terrain));
+        let start = terrain.meta().start_tile;
+        let world = self.world_mut();
+        world.insert_resource(SimTerrain(terrain));
+        if world
+            .get_resource::<TileOwnership>()
+            .is_none_or(|t| *t == TileOwnership::none())
+        {
+            world.insert_resource(TileOwnership::m1_around(start));
+        }
     }
 
     /// Snapshot of the current state for clients.
@@ -62,10 +73,14 @@ mod tests {
     use cp_terrain::{GRID, MapMeta};
 
     fn flat_terrain() -> Arc<Terrain> {
+        flat_terrain_at((2, 2))
+    }
+
+    fn flat_terrain_at(start_tile: (u8, u8)) -> Arc<Terrain> {
         let meta = MapMeta {
             name: "t".into(),
             sea_level: 1.0,
-            start_tile: (2, 2),
+            start_tile,
             external_connections: vec![],
         };
         let n = GRID * GRID;
@@ -84,6 +99,26 @@ mod tests {
         assert_eq!(v.tick, Tick(2));
         assert_eq!(v.game_time.tick_of_day, 2);
         assert!(Arc::ptr_eq(v.terrain.as_ref().unwrap(), &t));
-        assert_eq!(v.tiles, TileOwnership::m1_default());
+        assert_eq!(v.tiles, TileOwnership::m1_around((2, 2)));
+    }
+
+    #[test]
+    fn set_terrain_opens_the_start_tile_and_its_neighbours() {
+        for (start, open) in [((0, 0), 4), ((2, 2), 9), ((4, 2), 6), ((4, 4), 4)] {
+            let mut sim = SimRunner::new(1);
+            assert_eq!(sim.view().tiles, TileOwnership::none());
+            sim.set_terrain(flat_terrain_at(start));
+            let tiles = sim.view().tiles;
+            assert_eq!(tiles.open_count(), open, "{start:?}");
+            assert!(tiles.is_open(start.0 as usize, start.1 as usize));
+        }
+    }
+
+    #[test]
+    fn set_terrain_keeps_existing_ownership() {
+        let mut sim = SimRunner::new(1);
+        sim.world_mut().insert_resource(TileOwnership::only((4, 4)));
+        sim.set_terrain(flat_terrain_at((0, 0)));
+        assert_eq!(sim.view().tiles, TileOwnership::only((4, 4)));
     }
 }

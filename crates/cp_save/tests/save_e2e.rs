@@ -270,7 +270,7 @@ fn checksum_covers_tiles_speed_and_pending_queue() {
     assert_eq!(c0, base().checksum());
 
     let mut s = base();
-    s.world_mut().insert_resource(TileOwnership::none());
+    s.world_mut().insert_resource(TileOwnership::only((1, 1)));
     assert_ne!(c0, s.checksum(), "tiles");
 
     let mut s = base();
@@ -290,4 +290,28 @@ fn checksum_covers_tiles_speed_and_pending_queue() {
     let mut r = SimRunner::new(0);
     load_into_runner(&mut r, &save_runner(&base(), HASH, "m").unwrap(), HASH).unwrap();
     assert_eq!(c0, r.checksum());
+}
+
+#[test]
+fn set_terrain_after_loading_a_fixture_keeps_the_saved_ownership() {
+    use cp_terrain::{GRID, MapMeta, Terrain, TileOwnership};
+    use std::sync::Arc;
+    let n = GRID * GRID;
+    let meta = MapMeta {
+        name: "t".into(),
+        sea_level: 1.0,
+        start_tile: (0, 0),
+        external_connections: vec![],
+    };
+    let terrain = Arc::new(Terrain::from_samples(meta, &vec![1000; n], &vec![0; n]).unwrap());
+    for name in ["v0-basic.sav", "v1-basic.sav", "v2-basic.sav"] {
+        let bytes = fixture(name);
+        let (h, _) = read_header(&bytes).unwrap();
+        let mut r = SimRunner::new(0);
+        load_into_runner(&mut r, &bytes, h.content_hash).unwrap();
+        // The fixtures store the 3x3 centre, whatever the map's start tile says.
+        assert_eq!(r.view().tiles, TileOwnership::m1_around((2, 2)), "{name}");
+        r.set_terrain(Arc::clone(&terrain));
+        assert_eq!(r.view().tiles, TileOwnership::m1_around((2, 2)), "{name}");
+    }
 }

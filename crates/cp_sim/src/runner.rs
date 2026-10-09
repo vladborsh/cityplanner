@@ -64,7 +64,9 @@ impl SimRunner {
         init_command_resources(&mut world);
         world.insert_resource(SimRng::seed_from_u64(seed));
         world.insert_resource(SimLimits::desktop());
-        world.insert_resource(TileOwnership::m1_default());
+        // Nothing owned until a map is set (`set_terrain`) or a save is restored; keeps
+        // the checksum and `SimView` readers valid on a terrain-less sim.
+        world.insert_resource(TileOwnership::none());
         world.init_resource::<SimChecksum>();
         world.init_resource::<NetGraph>();
         world

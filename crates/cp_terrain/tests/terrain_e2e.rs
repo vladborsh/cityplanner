@@ -133,7 +133,7 @@ fn tile_of_is_exact_on_tile_edges() {
     assert_eq!(Terrain::tile_of(Vec2::new(TILE_SIZE, 0.0)), (1, 0));
     assert_eq!(Terrain::tile_of(Vec2::new(MAP_SIZE, MAP_SIZE)), (4, 4));
     assert_eq!(Terrain::tile_of(Vec2::new(-5.0, MAP_SIZE * 2.0)), (0, 4));
-    let own = TileOwnership::m1_default();
+    let own = TileOwnership::m1_around((2, 2));
     assert!(own.contains_point(Vec2::new(TILE_SIZE, TILE_SIZE)));
     assert!(!own.contains_point(Vec2::new(TILE_SIZE - 0.01, TILE_SIZE)));
     assert!(own.contains_point(Vec2::new(TILE_SIZE * 4.0 - 0.01, TILE_SIZE * 4.0 - 0.01)));
@@ -173,8 +173,8 @@ fn ownership_boundaries() {
     assert!(!o.is_open(5, 4) && !o.is_open(0, 5) && !o.is_open(usize::MAX, 0));
     o.set(4, 4, false);
     assert_eq!(o, TileOwnership::none());
-    assert_eq!(TileOwnership::m1_default().open_count(), 9);
-    assert_eq!(TileOwnership::only(2, 2).open_count(), 1);
+    assert_eq!(TileOwnership::m1_around((2, 2)).open_count(), 9);
+    assert_eq!(TileOwnership::only((2, 2)).open_count(), 1);
     assert!(std::panic::catch_unwind(|| TileOwnership::none().set(5, 0, true)).is_err());
 }
 

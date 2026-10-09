@@ -105,8 +105,8 @@ fn water_mask_overrides_sea_when_higher() {
 }
 
 #[test]
-fn tile_ownership_m1_default() {
-    let o = TileOwnership::m1_default();
+fn tile_ownership_m1_around_centre() {
+    let o = TileOwnership::m1_around((2, 2));
     assert_eq!(o.open_count(), 9);
     for tz in 0..5 {
         for tx in 0..5 {
@@ -123,8 +123,37 @@ fn tile_ownership_m1_default() {
 }
 
 #[test]
+fn tile_ownership_m1_around_clips_at_the_edge() {
+    for (start, open) in [
+        ((0, 0), 4),
+        ((2, 2), 9),
+        ((4, 2), 6),
+        ((4, 4), 4),
+        ((0, 3), 6),
+    ] {
+        let o = TileOwnership::m1_around(start);
+        assert_eq!(o.open_count(), open, "{start:?}");
+        assert!(o.is_open(start.0 as usize, start.1 as usize));
+    }
+    assert_eq!(TileOwnership::only((3, 1)).open_count(), 1);
+    assert!(TileOwnership::only((3, 1)).is_open(3, 1));
+    assert!(std::panic::catch_unwind(|| TileOwnership::m1_around((5, 0))).is_err());
+}
+
+#[test]
+fn committed_maps_start_with_the_3x3_centre() {
+    for name in ["flatlands", "river_valley"] {
+        let t = Terrain::load(&map_dir(name)).unwrap();
+        assert_eq!(t.meta().start_tile, (2, 2));
+        let o = TileOwnership::m1_around(t.meta().start_tile);
+        assert_eq!(o.open_count(), 9);
+        assert!(o.contains_point(Vec2::new(5120.0, 5120.0)));
+    }
+}
+
+#[test]
 fn tile_ownership_set_and_serde_roundtrip() {
-    let mut o = TileOwnership::only(2, 2);
+    let mut o = TileOwnership::only((2, 2));
     assert_eq!(o.open_count(), 1);
     o.set(4, 4, true);
     o.set(2, 2, false);

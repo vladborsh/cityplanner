@@ -17,21 +17,27 @@ impl TileOwnership {
         Self(0)
     }
 
-    /// M1 default: the centre tile and its 8 neighbours.
-    pub fn m1_default() -> Self {
+    /// M1 start: the `start` tile and its neighbours, clipped at the map edge (4 tiles
+    /// in a corner, 6 on an edge, 9 inside). `start` is `MapMeta::start_tile`.
+    pub fn m1_around(start: (u8, u8)) -> Self {
+        let (sx, sz) = (start.0 as usize, start.1 as usize);
+        assert!(
+            sx < TILES_PER_SIDE && sz < TILES_PER_SIDE,
+            "start tile out of range"
+        );
         let mut o = Self::none();
-        for tz in 1..=3 {
-            for tx in 1..=3 {
+        for tz in sz.saturating_sub(1)..=(sz + 1).min(TILES_PER_SIDE - 1) {
+            for tx in sx.saturating_sub(1)..=(sx + 1).min(TILES_PER_SIDE - 1) {
                 o.set(tx, tz, true);
             }
         }
         o
     }
 
-    /// M2 default: only the given start tile.
-    pub fn only(tx: usize, tz: usize) -> Self {
+    /// M2 start: only the `start` tile (`MapMeta::start_tile`).
+    pub fn only(start: (u8, u8)) -> Self {
         let mut o = Self::none();
-        o.set(tx, tz, true);
+        o.set(start.0 as usize, start.1 as usize, true);
         o
     }
 

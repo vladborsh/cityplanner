@@ -239,6 +239,8 @@ mod tests {
             let v = sim.view();
             assert_eq!(v.terrain.as_ref().unwrap().meta().name, map);
             assert_eq!(v.game_time.hour(), 12);
+            // The camera bounds read these: both maps open the 3x3 around (2, 2).
+            assert_eq!(v.tiles, cp_terrain::TileOwnership::m1_around((2, 2)));
             // PreUpdate stepping: one 50 ms frame at x1 is one tick.
             assert_eq!(sim.step(Duration::from_millis(50)), 1);
             assert_eq!(sim.view().tick, Tick(v.tick.0 + 1));

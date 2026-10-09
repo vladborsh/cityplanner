@@ -54,7 +54,7 @@ impl W {
             db: content(),
             graph: NetGraph::new(),
             terrain: flat(),
-            tiles: TileOwnership::m1_default(),
+            tiles: TileOwnership::m1_around((2, 2)),
         }
     }
 
@@ -269,7 +269,7 @@ fn error_too_many_segments_at_a_node() {
 #[test]
 fn error_tile_not_owned() {
     let mut w = W::new();
-    w.tiles = TileOwnership::only(2, 2);
+    w.tiles = TileOwnership::only((2, 2));
     // Centre tile spans x 4096..6144; this leg leaves it.
     let mut r = w.straight(at(900.0, 0.0), at(1200.0, 0.0));
     r.snap = no_snap();
@@ -289,7 +289,7 @@ fn error_tile_not_owned() {
 #[test]
 fn all_errors_are_reported_together() {
     let mut w = W::new();
-    w.tiles = TileOwnership::only(2, 2);
+    w.tiles = TileOwnership::only((2, 2));
     w.terrain = terrain(10.0, |x, _| {
         if (6000.0..6100.0).contains(&x) {
             0.0

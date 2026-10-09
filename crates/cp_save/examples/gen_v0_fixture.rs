@@ -38,7 +38,7 @@ fn main() {
         rng,
         queue,
         log,
-        tiles: TileOwnership::m1_default(),
+        tiles: TileOwnership::m1_around((2, 2)),
     };
     let bytes = encode_v0(&v0, FIXTURE_HASH, "flatlands").unwrap();
     std::fs::create_dir_all("fixtures/saves").unwrap();

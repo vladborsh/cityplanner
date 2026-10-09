@@ -429,7 +429,7 @@ mod tests {
         let d = &loaded.data;
         assert_eq!(d.tick, Tick(300));
         assert_eq!(d.speed, SimSpeed::X1); // added by the v0 -> v1 migration
-        assert_eq!(d.tiles, TileOwnership::m1_default());
+        assert_eq!(d.tiles, TileOwnership::m1_around((2, 2)));
         assert_eq!(d.queue.len(), 1);
         assert_eq!(d.log.len(), 1);
         assert_eq!(d.log.entries()[0].id, CommandId(0));
