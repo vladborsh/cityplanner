@@ -11,20 +11,9 @@ BANNED=(bevy bevy_render bevy_pbr bevy_winit bevy_egui winit "$@")
 # Package names in `cargo tree` output look like "name vX.Y.Z (/path)" for workspace members.
 tree() { cargo tree --target all --edges normal,build,dev --prefix none --format '{p}' "$@"; }
 
-# Workspace members that cp_sim reaches (path deps carry a "(/...)" suffix).
+# Sim crate list is shared with the isolated-clippy CI job: scripts/sim-crates.sh.
 SIM_CRATES=()
-while IFS= read -r c; do SIM_CRATES+=("$c"); done < <(tree -p cp_sim | awk '$3 ~ /^\(\// {print $1}' | sort -u)
-case " ${SIM_CRATES[*]} " in *" cp_sim "*) ;; *) echo "guard error: cp_sim not found in its own tree" >&2; exit 2;; esac
-
-# Sim crates that sit above cp_sim (system-design §1) and so are not in its tree. Checked explicitly.
-EXTRA_SIM_CRATES=(cp_save)
-for crate in "${EXTRA_SIM_CRATES[@]}"; do
-  cargo metadata --no-deps --format-version 1 | grep -q "\"name\":\"$crate\"" \
-    || { echo "guard error: $crate is not a workspace member" >&2; exit 2; }
-done
-SORTED=()
-while IFS= read -r c; do SORTED+=("$c"); done < <(printf '%s\n' "${SIM_CRATES[@]}" "${EXTRA_SIM_CRATES[@]}" | sort -u)
-SIM_CRATES=("${SORTED[@]}")
+while IFS= read -r c; do SIM_CRATES+=("$c"); done < <(scripts/sim-crates.sh)
 
 fail=0
 for crate in "${SIM_CRATES[@]}"; do
