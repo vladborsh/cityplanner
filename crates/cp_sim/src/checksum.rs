@@ -1,8 +1,9 @@
 //! Deterministic state checksum.
 //!
 //! The hash is FNV-1a (64 bit), implemented here — never `DefaultHasher`. It covers the
-//! tick, the full `SimRng` state, the command log, and every *part* that domains
-//! register. Parts are hashed in registration order (plugin order is fixed), each
+//! tick, the full `SimRng` state, the command log, the pending `CommandQueue` (incl.
+//! `next_id`), `SimSpeed`, `TileOwnership` (all three hashed via postcard, the same
+//! serialized form as in saves), and every *part* that domains register. Parts are hashed in registration order (plugin order is fixed), each
 //! preceded by its name.
 //!
 //! **Extending it:** a domain registers a function `fn(&World, &mut Fnv1a)` from its
@@ -16,7 +17,8 @@
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
-use cp_core::{CommandLog, SimRng, Tick};
+use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
+use cp_terrain::TileOwnership;
 use serde::Serialize;
 
 use crate::command::SimCommand;
@@ -105,6 +107,9 @@ impl SimChecksum {
         h.write_u128(rng.word_pos());
         h.write_u64(log.len() as u64);
         h.write_u64(self.log_hash.finish());
+        h.write_serialized(world.resource::<CommandQueue<SimCommand>>());
+        h.write_serialized(world.resource::<SimSpeed>());
+        h.write_serialized(world.resource::<TileOwnership>());
         for (name, part) in &self.parts {
             h.write_bytes(name.as_bytes());
             part(world, &mut h);
@@ -140,5 +145,47 @@ mod tests {
         let mut h = Fnv1a::new();
         h.write_bytes(b"foobar");
         assert_eq!(h.finish(), 0x8594_4171_f739_67e8);
+    }
+
+    use crate::command::SimCommand;
+    use crate::runner::SimRunner;
+
+    #[test]
+    fn covers_tile_ownership() {
+        let mut a = SimRunner::new(3);
+        let c1 = a.checksum();
+        a.world_mut().insert_resource(TileOwnership::none());
+        assert_ne!(c1, a.checksum());
+    }
+
+    #[test]
+    fn covers_sim_speed() {
+        let mut a = SimRunner::new(3);
+        let c1 = a.checksum();
+        a.world_mut().insert_resource(SimSpeed::X3);
+        assert_ne!(c1, a.checksum());
+    }
+
+    #[test]
+    fn covers_pending_commands() {
+        let mut a = SimRunner::new(3);
+        let mut b = SimRunner::new(3);
+        assert_eq!(a.checksum(), b.checksum());
+        let c0 = a.checksum();
+        a.push_command(
+            SimCommand::SetSpeed {
+                speed: SimSpeed::X2,
+            },
+            Tick(5),
+        );
+        let c1 = a.checksum();
+        assert_ne!(c0, c1);
+        b.push_command(
+            SimCommand::SetSpeed {
+                speed: SimSpeed::X2,
+            },
+            Tick(6),
+        );
+        assert_ne!(c1, b.checksum());
     }
 }
