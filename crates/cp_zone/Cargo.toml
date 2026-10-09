@@ -13,3 +13,8 @@ cp_net.workspace = true
 cp_core.workspace = true
 bevy_ecs.workspace = true
 serde.workspace = true
+cp_content.workspace = true
+bevy_math.workspace = true
+
+[dev-dependencies]
+postcard.workspace = true
