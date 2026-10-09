@@ -42,6 +42,9 @@ pub fn road(d: &RoadDef) -> Problems {
     c.positive("width", d.width);
     c.non_negative("median_width", d.median_width);
     c.positive("speed_kmh", d.speed_kmh);
+    if !(d.max_slope > 0.0 && d.max_slope <= 1.0) {
+        c.bad("max_slope", "must be in (0, 1]");
+    }
     c.non_negative("cost_per_m", d.cost_per_m);
     c.non_negative("upkeep_per_m_week", d.upkeep_per_m_week);
     if d.lanes.is_empty() {

@@ -304,7 +304,7 @@ mod tests {
 
     const ROAD: &str = r#"Road((id: "r", name: "R", width: 10.0,
         lanes: [(kind: Car, dir: Forward, width: 3.0, offset: 0.0)],
-        speed_kmh: 40.0, cost_per_m: 1.0, upkeep_per_m_week: 0.1,
+        speed_kmh: 40.0, max_slope: 0.12, cost_per_m: 1.0, upkeep_per_m_week: 0.1,
         allows_zoning: true, rank: 1, mesh: "m", material: "x"))"#;
 
     fn src(files: &[(&str, &str)]) -> Vec<(String, String)> {

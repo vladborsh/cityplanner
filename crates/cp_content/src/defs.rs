@@ -96,6 +96,8 @@ pub struct RoadDef {
     #[serde(default)]
     pub median_width: f32,
     pub speed_kmh: f32,
+    /// Steepest allowed grade (rise / run), e.g. `0.12` for streets, `0.06` for highways.
+    pub max_slope: f32,
     pub cost_per_m: f32,
     pub upkeep_per_m_week: f32,
     pub allows_zoning: bool,
