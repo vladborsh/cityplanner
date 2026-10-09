@@ -11,3 +11,6 @@ workspace = true
 [dependencies]
 cp_net.workspace = true
 cp_building.workspace = true
+cp_core.workspace = true
+bevy_ecs.workspace = true
+serde.workspace = true

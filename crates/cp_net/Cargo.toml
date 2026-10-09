@@ -12,3 +12,5 @@ workspace = true
 cp_core.workspace = true
 cp_content.workspace = true
 cp_terrain.workspace = true
+bevy_ecs.workspace = true
+serde.workspace = true

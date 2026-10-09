@@ -3,6 +3,10 @@
 // Sim code must iterate deterministically: HashMap/HashSet are banned (see clippy.toml).
 #![deny(clippy::disallowed_types)]
 
+pub mod command;
+
+pub use command::{UtilityCommand, UtilityError, apply};
+
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_utility";
 

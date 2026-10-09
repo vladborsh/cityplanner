@@ -9,6 +9,16 @@ pub const TICKS_PER_DAY: u64 = 4096;
 pub const DAYS_PER_WEEK: u64 = 7;
 pub const TICKS_PER_WEEK: u64 = TICKS_PER_DAY * DAYS_PER_WEEK;
 
+/// Game speed. Which one is active is sim state (a resource set by `SetSpeed`).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SimSpeed {
+    Pause,
+    #[default]
+    X1,
+    X2,
+    X3,
+}
+
 /// The sim clock. The only source of time in sim code.
 #[derive(
     Resource,

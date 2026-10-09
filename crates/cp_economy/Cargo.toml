@@ -12,3 +12,6 @@ workspace = true
 cp_building.workspace = true
 cp_citizen.workspace = true
 cp_utility.workspace = true
+cp_core.workspace = true
+bevy_ecs.workspace = true
+serde.workspace = true
