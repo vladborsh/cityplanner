@@ -1,5 +1,7 @@
 //! The citizen and household arenas, plus derived occupancy tables.
 
+use std::collections::BTreeMap;
+
 use bevy_ecs::resource::Resource;
 use cp_building::BuildingId;
 use cp_core::{Arena, Tick};
@@ -7,14 +9,43 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{Citizen, CitizenId, HOUSEHOLD_MAX, Household, HouseholdId, Location};
 
-/// Per-building counts derived from the arenas (indexed by building slot index).
+/// Per-building counts derived from the arenas, keyed by the full `BuildingId` (index
+/// **and generation**), so a building that reuses a removed building's slot starts empty.
 #[derive(Clone, Debug, Default)]
 struct Derived {
     ready: bool,
     /// Households living in the building.
-    homes: Vec<u16>,
+    homes: BTreeMap<BuildingId, u16>,
     /// Filled job slots per education level.
-    jobs: Vec<[u16; 4]>,
+    jobs: BTreeMap<BuildingId, [u16; 4]>,
+}
+
+impl Derived {
+    fn add_home(&mut self, b: BuildingId) {
+        *self.homes.entry(b).or_default() += 1;
+    }
+
+    fn remove_home(&mut self, b: BuildingId) {
+        if let Some(n) = self.homes.get_mut(&b) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                self.homes.remove(&b);
+            }
+        }
+    }
+
+    fn add_job(&mut self, b: BuildingId, level: usize) {
+        self.jobs.entry(b).or_default()[level] += 1;
+    }
+
+    fn remove_job(&mut self, b: BuildingId, level: usize) {
+        if let Some(j) = self.jobs.get_mut(&b) {
+            j[level] = j[level].saturating_sub(1);
+            if *j == [0; 4] {
+                self.jobs.remove(&b);
+            }
+        }
+    }
 }
 
 /// All citizens and households.
@@ -30,13 +61,6 @@ impl PartialEq for CitizenGrid {
     fn eq(&self, other: &Self) -> bool {
         self.citizens == other.citizens && self.households == other.households
     }
-}
-
-fn bump<T: Default + Clone>(v: &mut Vec<T>, i: usize) -> &mut T {
-    if v.len() <= i {
-        v.resize(i + 1, T::default());
-    }
-    &mut v[i]
 }
 
 impl CitizenGrid {
@@ -110,11 +134,11 @@ impl CitizenGrid {
         }
         let mut d = Derived::default();
         for (_, h) in self.households.iter() {
-            *bump(&mut d.homes, h.home.index as usize) += 1;
+            d.add_home(h.home);
         }
         for (_, c) in self.citizens.iter() {
             if let Some(w) = c.work {
-                bump(&mut d.jobs, w.index as usize)[usize::from(c.work_level)] += 1;
+                d.add_job(w, usize::from(c.work_level));
             }
         }
         d.ready = true;
@@ -123,19 +147,12 @@ impl CitizenGrid {
 
     /// Households living in `building` (needs [`Self::ensure_derived`]).
     pub fn households_in(&self, building: BuildingId) -> u16 {
-        self.derived
-            .homes
-            .get(building.index as usize)
-            .copied()
-            .unwrap_or(0)
+        self.derived.homes.get(&building).copied().unwrap_or(0)
     }
 
     /// Filled job slots of `level` in `building`.
     pub fn jobs_filled(&self, building: BuildingId, level: usize) -> u16 {
-        self.derived
-            .jobs
-            .get(building.index as usize)
-            .map_or(0, |j| j[level])
+        self.derived.jobs.get(&building).map_or(0, |j| j[level])
     }
 
     /// Creates a household and its members. `members` are `(age_days, education, has_car)`
@@ -170,7 +187,7 @@ impl CitizenGrid {
             }));
         }
         self.households.get_mut(hid).expect("just inserted").members = slots;
-        *bump(&mut self.derived.homes, home.index as usize) += 1;
+        self.derived.add_home(home);
         hid
     }
 
@@ -183,13 +200,10 @@ impl CitizenGrid {
             if let Some(c) = self.citizens.remove(cid)
                 && let Some(w) = c.work
             {
-                let j = bump(&mut self.derived.jobs, w.index as usize);
-                let slot = &mut j[usize::from(c.work_level)];
-                *slot = slot.saturating_sub(1);
+                self.derived.remove_job(w, usize::from(c.work_level));
             }
         }
-        let slot = bump(&mut self.derived.homes, h.home.index as usize);
-        *slot = slot.saturating_sub(1);
+        self.derived.remove_home(h.home);
         true
     }
 
@@ -199,7 +213,7 @@ impl CitizenGrid {
         if let Some(c) = self.citizens.get_mut(id) {
             c.work = Some(building);
             c.work_level = level;
-            bump(&mut self.derived.jobs, building.index as usize)[usize::from(level)] += 1;
+            self.derived.add_job(building, usize::from(level));
         }
     }
 
@@ -208,9 +222,7 @@ impl CitizenGrid {
             return;
         };
         if let Some(w) = c.work.take() {
-            let level = usize::from(c.work_level);
-            let slot = &mut bump(&mut self.derived.jobs, w.index as usize)[level];
-            *slot = slot.saturating_sub(1);
+            self.derived.remove_job(w, usize::from(c.work_level));
         }
     }
 

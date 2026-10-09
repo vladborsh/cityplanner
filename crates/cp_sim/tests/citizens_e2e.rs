@@ -371,3 +371,107 @@ fn same_seed_same_population_and_the_arenas_are_checksummed() {
         assert!(fill.used > 0, "{name} gauge");
     }
 }
+
+/// Demolishes `old` and immediately puts a copy of it into the freed slot (what a new
+/// spawn would do within the eviction window). Returns the new id.
+fn replace_in_place(sim: &mut SimRunner, old: cp_building::BuildingId) -> cp_building::BuildingId {
+    let copy = sim
+        .world()
+        .resource::<BuildingGrid>()
+        .get(old)
+        .unwrap()
+        .clone();
+    let cells: Vec<ZoneCellRef> = copy.lot.cells().collect();
+    sim.world_mut()
+        .resource_scope(|w, mut b: Mut<BuildingGrid>| {
+            let mut z = w.resource_mut::<ZoneGrid>();
+            assert!(demolish_building(&mut b, &mut z, old));
+            let new = b.insert(copy);
+            z.occupy(&cells);
+            new
+        })
+}
+
+#[test]
+fn a_building_reusing_a_removed_slot_starts_with_no_residents() {
+    let content = content();
+    let mut sim = working_town(&content, 5);
+    run_days(&mut sim, 6.0);
+    let (hid, home) = {
+        let c = sim.world().resource::<CitizenGrid>();
+        let (hid, h) = c.households().next().unwrap();
+        (hid, h.home)
+    };
+    let apartments = content
+        .building(
+            sim.world()
+                .resource::<BuildingGrid>()
+                .get(home)
+                .unwrap()
+                .def,
+        )
+        .households;
+    let new = replace_in_place(&mut sim, home);
+    assert_eq!(new.index, home.index, "same slot");
+    assert_ne!(new.generation, home.generation);
+    {
+        let c = sim.world().resource::<CitizenGrid>();
+        // Not evicted yet, but the new building does not inherit the old residents.
+        assert!(c.household(hid).is_some());
+        assert_eq!(c.households_in(new), 0);
+        assert!(
+            c.households_in(home) >= 1,
+            "the old id still counts its household"
+        );
+    }
+    for _ in 0..400 {
+        sim.tick_once();
+        let c = sim.world().resource::<CitizenGrid>();
+        assert!(c.households_in(new) <= apartments, "over capacity");
+    }
+    let c = sim.world().resource::<CitizenGrid>();
+    assert!(c.household(hid).is_none(), "the old household was evicted");
+    assert!(c.households().all(|(_, h)| h.home != home));
+}
+
+#[test]
+fn a_workplace_reusing_a_removed_slot_starts_with_no_workers() {
+    let content = content();
+    let mut sim = working_town(&content, 5);
+    run_days(&mut sim, 6.0);
+    let work = sim
+        .world()
+        .resource::<CitizenGrid>()
+        .citizens()
+        .find_map(|(_, z)| z.work)
+        .unwrap();
+    let jobs = content
+        .building(
+            sim.world()
+                .resource::<BuildingGrid>()
+                .get(work)
+                .unwrap()
+                .def,
+        )
+        .jobs;
+    let new = replace_in_place(&mut sim, work);
+    assert_eq!(new.index, work.index);
+    {
+        let c = sim.world().resource::<CitizenGrid>();
+        for l in 0..4 {
+            assert_eq!(c.jobs_filled(new, l), 0, "level {l} starts empty");
+        }
+    }
+    for _ in 0..400 {
+        sim.tick_once();
+        let c = sim.world().resource::<CitizenGrid>();
+        for (l, &slots) in jobs.iter().enumerate() {
+            assert!(c.jobs_filled(new, l) <= slots, "level {l} over-filled");
+        }
+    }
+    let c = sim.world().resource::<CitizenGrid>();
+    assert!(
+        c.citizens().all(|(_, z)| z.work != Some(work)),
+        "no one works at the removed building"
+    );
+}
