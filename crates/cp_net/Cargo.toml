@@ -12,3 +12,4 @@ workspace = true
 cp_core.workspace = true
 cp_content.workspace = true
 cp_terrain.workspace = true
+bevy_render = { version = "=0.20.0", default-features = false }
