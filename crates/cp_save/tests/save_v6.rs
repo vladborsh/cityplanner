@@ -206,3 +206,24 @@ fn buildings_survive_save_load_with_occupancy_checksum_and_construction_schedule
         b.world().resource::<ZoneGrid>()
     );
 }
+
+#[test]
+fn v6_fixture_has_finished_and_unfinished_buildings() {
+    let bytes = fixture("v6-basic.sav");
+    let (h, _) = read_header(&bytes).unwrap();
+    assert_eq!(h.format_version, 6);
+    let l = load(&bytes, h.content_hash).unwrap();
+    let states: Vec<_> = l.data.buildings.iter().map(|(_, b)| b.state).collect();
+    assert!(
+        states
+            .iter()
+            .filter(|s| **s == BuildingState::Active)
+            .count()
+            >= 2,
+        "{states:?}"
+    );
+    assert!(
+        states.contains(&BuildingState::UnderConstruction),
+        "{states:?}"
+    );
+}
