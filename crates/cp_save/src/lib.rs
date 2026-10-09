@@ -51,12 +51,13 @@ use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
 use cp_terrain::TileOwnership;
+use cp_traffic::SavedPaths;
 use cp_zone::ZoneGrid;
 use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 7;
+pub const FORMAT_VERSION: u32 = 8;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -74,6 +75,10 @@ pub struct SaveData {
     pub buildings: BuildingGrid,
     /// Citizens and households. Added in v7.
     pub citizens: CitizenGrid,
+    /// Pathfinding requests in flight (id, submit tick, request, congestion read, stale
+    /// flag). Added in v8; see `cp_traffic::service` for why this makes load + N ticks equal
+    /// the continuous run.
+    pub paths: SavedPaths,
 }
 
 impl SaveData {
@@ -90,6 +95,7 @@ impl SaveData {
             zones: world.resource::<ZoneGrid>().clone(),
             buildings: world.resource::<BuildingGrid>().clone(),
             citizens: world.resource::<CitizenGrid>().clone(),
+            paths: world.resource::<cp_traffic::PathService>().export(),
         }
     }
 
@@ -105,6 +111,7 @@ impl SaveData {
             cs.reset_log_cache();
         }
         world.insert_resource(self.tiles);
+        let restored_net = self.net.clone();
         world.insert_resource(self.net);
         // Derived from the net; rebuilt by the Network phase.
         world.insert_resource(cp_net::JunctionGeometry::default());
@@ -116,10 +123,14 @@ impl SaveData {
         world.insert_resource(self.buildings);
         // Occupancy tables are derived; the citizen system rebuilds them on its next run.
         world.insert_resource(self.citizens);
-        // Requests in flight are not saved; requesters ask again after a load.
-        if let Some(mut svc) = world.get_resource_mut::<cp_traffic::PathService>() {
-            svc.import(cp_traffic::SavedPaths::default()); // replaced by saving them in the next commit
-        }
+        // Requests in flight continue after the load: re-launched on the snapshot rebuilt from
+        // the restored net, which only counts as a network change if the net differs.
+        world
+            .resource_mut::<cp_traffic::PathService>()
+            .import(self.paths);
+        world
+            .resource_mut::<cp_traffic::PathNetwork>()
+            .mark_restored(&restored_net);
     }
 }
 

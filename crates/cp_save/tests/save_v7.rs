@@ -74,7 +74,7 @@ fn v6_fixture_migrates_to_no_citizens_and_keeps_its_buildings() {
 
     // Re-saving writes v7 and round-trips the citizens.
     let v7 = save(&SaveData::capture(sim.world()), h.content_hash, &h.map_id).unwrap();
-    assert_eq!(read_header(&v7).unwrap().0.format_version, 7);
+    assert_eq!(read_header(&v7).unwrap().0.format_version, FORMAT_VERSION);
     assert_eq!(
         load(&v7, h.content_hash).unwrap().data.citizens,
         *sim.world().resource::<CitizenGrid>()

@@ -10,6 +10,7 @@ use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
+use cp_traffic::SavedPaths;
 use cp_zone::ZoneGrid;
 use serde::{Deserialize, Serialize};
 
@@ -114,10 +115,43 @@ pub struct SaveDataV6 {
     pub buildings: BuildingGrid,
 }
 
+/// Version 7: the body as written by format 7 (citizens, before pending path requests).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV7 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGrid,
+}
+
+/// v7 → v8: pending path requests were added; an old save has none in flight and the next
+/// request id restarts at 0.
+pub fn migrate_v7_to_v8(v7: SaveDataV7) -> SaveData {
+    SaveData {
+        tick: v7.tick,
+        rng: v7.rng,
+        speed: v7.speed,
+        queue: v7.queue,
+        log: v7.log,
+        tiles: v7.tiles,
+        net: v7.net,
+        zones: v7.zones,
+        buildings: v7.buildings,
+        citizens: v7.citizens,
+        paths: SavedPaths::default(),
+    }
+}
+
 /// v6 → v7: citizens and households were added; an old save has none (its homes are
 /// empty and move-ins start again).
-pub fn migrate_v6_to_v7(v6: SaveDataV6) -> SaveData {
-    SaveData {
+pub fn migrate_v6_to_v7(v6: SaveDataV6) -> SaveDataV7 {
+    SaveDataV7 {
         tick: v6.tick,
         rng: v6.rng,
         speed: v6.speed,
@@ -189,22 +223,27 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         }
     }
     match version {
-        0 => Ok(migrate_v6_to_v7(migrate_v5_to_v6(migrate_v4_to_v5(
-            migrate_v3_to_v4(migrate_v2_to_v3(migrate_v0_to_v1(dec(body)?))),
+        0 => Ok(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(
+            migrate_v4_to_v5(migrate_v3_to_v4(migrate_v2_to_v3(migrate_v0_to_v1(dec(
+                body,
+            )?)))),
         )))),
         // v1 and v2 share the same body; v2 only added the header CRC.
-        1 | 2 => Ok(migrate_v6_to_v7(migrate_v5_to_v6(migrate_v4_to_v5(
-            migrate_v3_to_v4(migrate_v2_to_v3(dec(body)?)),
+        1 | 2 => Ok(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(
+            migrate_v4_to_v5(migrate_v3_to_v4(migrate_v2_to_v3(dec(body)?))),
         )))),
-        3 => Ok(migrate_v6_to_v7(migrate_v5_to_v6(migrate_v4_to_v5(
-            migrate_v3_to_v4(dec(body)?),
+        3 => Ok(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(
+            migrate_v4_to_v5(migrate_v3_to_v4(dec(body)?)),
         )))),
-        4 => Ok(migrate_v6_to_v7(migrate_v5_to_v6(migrate_v4_to_v5(dec(
+        4 => Ok(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(
+            migrate_v4_to_v5(dec(body)?),
+        )))),
+        5 => Ok(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(dec(
             body,
         )?)))),
-        5 => Ok(migrate_v6_to_v7(migrate_v5_to_v6(dec(body)?))),
-        6 => Ok(migrate_v6_to_v7(dec(body)?)),
-        7 => dec(body),
+        6 => Ok(migrate_v7_to_v8(migrate_v6_to_v7(dec(body)?))),
+        7 => Ok(migrate_v7_to_v8(dec(body)?)),
+        8 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -325,4 +364,16 @@ pub fn encode_v6(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v6).expect("serialization failed");
     crate::assemble(6, v6.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 7** file (citizens, no pending path requests). Legacy writer kept only
+/// to regenerate and test the v7 fixture; real saves always use [`crate::save`].
+pub fn encode_v7(
+    v7: &SaveDataV7,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v7).expect("serialization failed");
+    crate::assemble(7, v7.tick.0, &body, content_hash, map_id, map_hash)
 }

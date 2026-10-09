@@ -3,7 +3,8 @@
 //! building and citizen grids).
 //!
 //! The committed file was produced by the real v7 writer (`save_with_map` at format 7, before
-//! the v8 bump) with exactly this data. Run from the repo root:
+//! the v8 bump) with exactly this data; `encode_v7` is the frozen equivalent kept for
+//! regeneration and a test asserts they agree byte for byte. Run from the repo root:
 //! `cargo run -p cp_save --example gen_v7_fixture`. The committed file is **never edited or
 //! regenerated** afterwards (AGENTS.md).
 
@@ -13,7 +14,8 @@ use bevy_math::Vec3;
 use cp_content::ContentDb;
 use cp_core::curve::CubicBezier3;
 use cp_net::{Elevation, NetGraph};
-use cp_save::{SaveData, save_with_map};
+use cp_save::SaveData;
+use cp_save::migrate::{SaveDataV7, encode_v7};
 use cp_sim::SimRunner;
 
 fn main() {
@@ -41,8 +43,21 @@ fn main() {
     for _ in 0..3 {
         sim.tick_once();
     }
-    let bytes = save_with_map(
-        &SaveData::capture(sim.world()),
+    let d = SaveData::capture(sim.world());
+    let v7 = SaveDataV7 {
+        tick: d.tick,
+        rng: d.rng,
+        speed: d.speed,
+        queue: d.queue,
+        log: d.log,
+        tiles: d.tiles,
+        net: d.net,
+        zones: d.zones,
+        buildings: d.buildings,
+        citizens: d.citizens,
+    };
+    let bytes = encode_v7(
+        &v7,
         0xC17F_0000_0000_0008,
         "flatlands",
         Some(0xABCD_0000_0000_0001),
