@@ -5,6 +5,7 @@
 #![deny(clippy::disallowed_types)]
 
 pub mod arena;
+pub mod curve;
 pub mod limits;
 pub mod rng;
 pub mod time;
