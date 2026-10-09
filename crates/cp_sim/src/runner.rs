@@ -43,6 +43,9 @@ pub struct SimRunner {
     schedule: Schedule,
     /// Owed sim time in "×1-nanoseconds" (real nanos × speed multiplier).
     accumulator: u128,
+    /// `SimView::net` cache: `(junction version, node count, segment count, snapshot)`, so
+    /// `view()` clones the graph only when it changed.
+    pub(crate) net_cache: std::sync::Mutex<crate::view::NetCache>,
 }
 
 fn multiplier(speed: SimSpeed) -> u128 {
@@ -145,6 +148,7 @@ impl SimRunner {
             world,
             schedule,
             accumulator: 0,
+            net_cache: Default::default(),
         }
     }
 

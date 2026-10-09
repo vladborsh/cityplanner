@@ -94,7 +94,13 @@ fn finish_loading(
         .and_then(|text| Terrain::from_bytes(text, &height.0, &water.0).map_err(|e| e.to_string()));
     match terrain {
         Ok(terrain) => {
-            let sim = build_sim(terrain, cfg.limits, cfg.hour, cfg.phase_timing);
+            let sim = build_sim(
+                terrain,
+                cfg.limits,
+                cfg.hour,
+                cfg.phase_timing,
+                cfg.scene.as_deref(),
+            );
             commands.insert_resource(sim.view());
             commands.insert_resource(Sim(sim));
         }
@@ -126,6 +132,7 @@ mod tests {
             limits,
             hour: 12.0,
             phase_timing: false,
+            scene: None,
         })
         .add_plugins(MapPlugin);
         for _ in 0..2000 {

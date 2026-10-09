@@ -5,11 +5,14 @@
 pub mod camera;
 pub mod chunk;
 pub mod material;
+pub mod road;
+pub mod road_render;
 pub mod sun;
 pub mod terrain;
 
 pub use camera::{CameraSettings, RtsCamera, RtsCameraPlugin};
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
+pub use road_render::{RoadRenderPlugin, RoadStats};
 pub use terrain::{Sun, TerrainChunk, TerrainRenderPlugin, TerrainStats};
 
 /// Crate name, used by the skeleton smoke test.

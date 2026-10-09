@@ -19,6 +19,7 @@ pub fn run() {
     let hour = query_param("hour")
         .and_then(|h| h.parse().ok())
         .unwrap_or(10.0);
+    let scene = query_param("scene");
     let cam = query_param("cam").unwrap_or_else(|| "overview".into());
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -40,6 +41,7 @@ pub fn run() {
                 // std::time::Instant is unavailable in the browser.
                 phase_timing: false,
                 ui: true,
+                scene,
             },
             FrameTimeDiagnosticsPlugin::default(),
             // FPS and frame time to the browser console every 5 s.

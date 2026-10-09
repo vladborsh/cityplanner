@@ -15,7 +15,7 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::PresentMode;
 use cp_app::{GamePlugin, MapLoadFailed, phase_times};
 use cp_core::SimLimits;
-use cp_render::TerrainStats;
+use cp_render::{RoadStats, TerrainStats};
 use cp_sim::SimRunner;
 
 use crate::ASSETS_DIR;
@@ -28,6 +28,7 @@ pub struct Options {
     pub bench: Option<f32>,
     pub vsync: bool,
     pub headless: Option<u64>,
+    pub scene: Option<String>,
 }
 
 impl Options {
@@ -46,6 +47,7 @@ impl Options {
             screenshot: value("--screenshot").map(PathBuf::from),
             bench,
             headless: value("--headless").and_then(|v| v.parse().ok()),
+            scene: value("--scene"),
             vsync: !args.iter().any(|a| a == "--no-vsync") && bench.is_none(),
         }
     }
@@ -63,7 +65,13 @@ pub fn run(opts: Options) {
     let hour = opts.hour.unwrap_or(10.0);
     if let Some(ticks) = opts.headless {
         let dir = PathBuf::from(ASSETS_DIR).join("maps").join(&opts.map);
-        match cp_app::load_sim(&dir, SimLimits::desktop(), hour, true) {
+        match cp_app::load_sim(
+            &dir,
+            SimLimits::desktop(),
+            hour,
+            true,
+            opts.scene.as_deref(),
+        ) {
             Ok(sim) => headless(sim, ticks),
             Err(e) => {
                 eprintln!("{e}");
@@ -103,6 +111,7 @@ pub fn run(opts: Options) {
             // Wall-clock phase timing for the F3 window.
             phase_timing: true,
             ui: true,
+            scene: opts.scene,
         },
         FrameTimeDiagnosticsPlugin::default(),
         RenderDiagnosticsPlugin,
@@ -151,6 +160,7 @@ fn job(
     mut job: ResMut<Job>,
     time: Res<Time<Real>>,
     stats: Res<TerrainStats>,
+    roads: Res<RoadStats>,
     diagnostics: Res<DiagnosticsStore>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -208,6 +218,10 @@ fn job(
         "BENCH terrain chunks={} visible={} by_lod={:?} terrain_tris={}",
         stats.chunks, stats.visible_chunks, stats.visible_by_lod, stats.terrain_triangles
     );
+    println!(
+        "BENCH roads pieces={} chunks={} near_tris={} last_rebuilt={} last_update_ms={:.2}",
+        roads.pieces, roads.chunks, roads.triangles, roads.last_rebuilt, roads.last_update_ms
+    );
     for d in diagnostics.iter() {
         if let Some(v) = d.smoothed() {
             println!("BENCH diag {} = {v:.3}{}", d.path(), d.suffix);
@@ -232,7 +246,8 @@ mod tests {
     #[test]
     fn both_maps_load_into_the_sim_and_reach_the_view() {
         for map in ["flatlands", "river_valley"] {
-            let mut sim = cp_app::load_sim(&dir(map), SimLimits::desktop(), 12.0, true).unwrap();
+            let mut sim =
+                cp_app::load_sim(&dir(map), SimLimits::desktop(), 12.0, true, None).unwrap();
             let v = sim.view();
             assert_eq!(v.terrain.as_ref().unwrap().meta().name, map);
             assert_eq!(v.game_time.hour(), 12);
@@ -250,7 +265,7 @@ mod tests {
 
     #[test]
     fn unknown_map_is_an_error_not_a_panic() {
-        assert!(cp_app::load_sim(&dir("nope"), SimLimits::desktop(), 10.0, false).is_err());
+        assert!(cp_app::load_sim(&dir("nope"), SimLimits::desktop(), 10.0, false, None).is_err());
     }
 
     #[test]

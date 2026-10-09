@@ -12,7 +12,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use cp_content::{ContentDb, SimContent};
 use cp_core::{CommandLog, CommandQueue, GameTime, SimSpeed, Tick};
-use cp_net::JunctionGeometry;
+use cp_net::{JunctionGeometry, NetGraph};
 pub use cp_terrain::SimTerrain;
 use cp_terrain::{Terrain, TileOwnership};
 
@@ -70,7 +70,14 @@ pub struct SimView {
     /// building. Compare `junctions.version()` with the last built version; junctions with a
     /// greater `revision` need a rebuild, ids that vanished from the map were removed.
     pub junctions: JunctionGeometry,
+    /// The road network (nodes, segments, lanes) as of this snapshot, for mesh building.
+    /// Shared: it is re-cloned from the sim only when the network changed (detected through
+    /// `junctions.version()` and the element counts), so unchanged ticks cost an `Arc` clone.
+    pub net: Arc<NetGraph>,
 }
+
+/// `(junction version, nodes, segments, snapshot)` of the last `SimView::net`.
+pub(crate) type NetCache = Option<(u64, usize, usize, Arc<NetGraph>)>;
 
 impl SimRunner {
     /// Puts the loaded map into the sim world. If nothing is owned yet (fresh sim),
@@ -95,9 +102,33 @@ impl SimRunner {
         self.world_mut().insert_resource(SimContent(content));
     }
 
+    /// The network snapshot for `SimView::net`, cached while the network is unchanged.
+    fn net_snapshot(&self, junctions: &JunctionGeometry) -> Arc<NetGraph> {
+        let graph = self.world().get_resource::<NetGraph>();
+        let key = (
+            junctions.version(),
+            graph.map_or(0, NetGraph::node_count),
+            graph.map_or(0, NetGraph::segment_count),
+        );
+        let mut cache = self.net_cache.lock().expect("net cache");
+        if let Some((v, n, s, snap)) = cache.as_ref()
+            && (*v, *n, *s) == key
+        {
+            return Arc::clone(snap);
+        }
+        let snap = Arc::new(graph.cloned().unwrap_or_default());
+        *cache = Some((key.0, key.1, key.2, Arc::clone(&snap)));
+        snap
+    }
+
     /// Snapshot of the current state for clients.
     pub fn view(&self) -> SimView {
         let tick = self.tick();
+        let junctions = self
+            .world()
+            .get_resource::<JunctionGeometry>()
+            .cloned()
+            .unwrap_or_default();
         SimView {
             tick,
             game_time: tick.game_time(),
@@ -112,11 +143,8 @@ impl SimRunner {
                 .copied()
                 .unwrap_or_default(),
             stats: self.stats(),
-            junctions: self
-                .world()
-                .get_resource::<JunctionGeometry>()
-                .cloned()
-                .unwrap_or_default(),
+            net: self.net_snapshot(&junctions),
+            junctions,
         }
     }
 
@@ -298,5 +326,7 @@ mod tests {
         // A quiet tick changes nothing; the snapshot shares its data.
         sim.tick_once();
         assert_eq!(sim.view().junctions.version(), 1);
+        assert_eq!(v.net.segment_count(), 2);
+        assert!(Arc::ptr_eq(&v.net, &sim.view().net));
     }
 }

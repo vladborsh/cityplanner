@@ -6,6 +6,7 @@
 //! what is platform specific: windowing, CLI, screenshots and benchmarks.
 
 mod map;
+pub mod scene;
 
 pub use map::{MapLoadFailed, RawFile};
 
@@ -18,7 +19,7 @@ use bevy::prelude::*;
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{SimLimits, Tick};
 use cp_prof::{PhaseClock, PhaseTiming};
-use cp_render::{RtsCamera, RtsCameraPlugin, TerrainRenderPlugin};
+use cp_render::{RoadRenderPlugin, RtsCamera, RtsCameraPlugin, TerrainRenderPlugin};
 use cp_sim::{SimPhase, SimRunner, SimView};
 use cp_terrain::{MAP_SIZE, Terrain};
 use cp_tools::CommandOutbox;
@@ -44,6 +45,8 @@ pub struct GamePlugin {
     pub phase_timing: bool,
     /// Add the egui UI (`cp_ui`). The browser build cannot yet: see `apps/web/README.md`.
     pub ui: bool,
+    /// Optional test scene, e.g. `grid:10` (see [`scene`]).
+    pub scene: Option<String>,
 }
 
 #[derive(Resource, Clone)]
@@ -52,6 +55,7 @@ pub(crate) struct GameConfig {
     pub limits: SimLimits,
     pub hour: f32,
     pub phase_timing: bool,
+    pub scene: Option<String>,
 }
 
 impl Plugin for GamePlugin {
@@ -62,10 +66,16 @@ impl Plugin for GamePlugin {
             limits: self.limits,
             hour: self.hour,
             phase_timing: self.phase_timing,
+            scene: self.scene.clone(),
         })
         .init_resource::<PhaseTimes>()
         .init_resource::<CommandOutbox>()
-        .add_plugins((map::MapPlugin, TerrainRenderPlugin, RtsCameraPlugin))
+        .add_plugins((
+            map::MapPlugin,
+            TerrainRenderPlugin,
+            RoadRenderPlugin,
+            RtsCameraPlugin,
+        ))
         .add_systems(PreUpdate, step_sim);
         if self.ui {
             app.add_plugins(UiPlugin);
@@ -94,6 +104,9 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(5120.0, 90.0, 5600.0),
             Vec3::new(5120.0, 65.0, 4800.0),
         ),
+        // Close to the grid centre, looking along a street (see `scene`).
+        "street" => (Vec3::new(c - 140.0, 35.0, c + 60.0), Vec3::new(c, 0.0, c)),
+        "junction" => (Vec3::new(c - 30.0, 16.0, c + 38.0), Vec3::new(c, 0.0, c)),
         "valley" => (
             Vec3::new(c, 1500.0, c + 2500.0),
             Vec3::new(c, 0.0, c - 500.0),
@@ -104,13 +117,25 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
 
 /// A sim for `terrain` at the given hour of day. Both the native and the asset-server
 /// loading paths end here.
-pub fn build_sim(terrain: Terrain, limits: SimLimits, hour: f32, phase_timing: bool) -> SimRunner {
+pub fn build_sim(
+    terrain: Terrain,
+    limits: SimLimits,
+    hour: f32,
+    phase_timing: bool,
+    scene: Option<&str>,
+) -> SimRunner {
     let mut sim = SimRunner::with_limits(1, limits);
     sim.set_terrain(Arc::new(terrain));
+    sim.set_content(scene::road_content());
     sim.world_mut()
         .insert_resource(Tick((hour / 24.0 * TICKS_PER_DAY as f32) as u64));
     if phase_timing {
         sim.add_plugin(&PhaseTiming::window(PHASE_WINDOW_TICKS));
+    }
+    if let Some(n) = scene.and_then(scene::parse_grid) {
+        for reason in scene::build_grid(&mut sim, n) {
+            warn!("scene command rejected: {reason}");
+        }
     }
     sim
 }
@@ -123,9 +148,10 @@ pub fn load_sim(
     limits: SimLimits,
     hour: f32,
     phase_timing: bool,
+    scene: Option<&str>,
 ) -> Result<SimRunner, String> {
     let terrain = Terrain::load(dir).map_err(|e| format!("cannot load map {dir:?}: {e}"))?;
-    Ok(build_sim(terrain, limits, hour, phase_timing))
+    Ok(build_sim(terrain, limits, hour, phase_timing, scene))
 }
 
 /// Median ms per phase over the last [`PHASE_WINDOW_TICKS`] ticks, as the F3 window shows it.

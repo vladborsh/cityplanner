@@ -2401,7 +2401,11 @@ name = "cp_app"
 version = "0.0.0"
 dependencies = [
  "bevy",
+ "bevy_ecs",
+ "bevy_math",
+ "cp_content",
  "cp_core",
+ "cp_net",
  "cp_prof",
  "cp_render",
  "cp_sim",
@@ -2536,7 +2540,9 @@ version = "0.0.0"
 dependencies = [
  "bevy",
  "bevy_math",
+ "cp_content",
  "cp_core",
+ "cp_net",
  "cp_sim",
  "cp_terrain",
 ]
