@@ -155,7 +155,8 @@ impl SimRunner {
         self.world.resource_mut::<Tick>().advance();
     }
 
-    /// Advances by `dt` of frame time at the current speed. While paused it still applies
+    /// Advances by `dt` of frame time at the current speed, stopping as soon as a command
+    /// pauses the sim (`system-design.md` §2 "Пауза"). While paused it still applies
     /// commands due at the current tick, so a queued `SetSpeed` can unpause. Returns ticks executed
     /// (at most [`MAX_TICKS_PER_STEP`]; surplus time is dropped).
     pub fn step(&mut self, dt: Duration) -> u32 {
@@ -167,6 +168,7 @@ impl SimRunner {
             self.apply_due_commands();
             mult = multiplier(self.speed());
             if mult == 0 {
+                self.accumulator = 0;
                 return 0;
             }
         }
@@ -179,10 +181,23 @@ impl SimRunner {
             self.accumulator -= owed * TICK_NANOS;
             owed as u32
         };
+        // The speed is re-read before every tick: once a command made it `Pause`, the rest
+        // of this call does not run and the accumulator is dropped, so a pause costs at most
+        // the tick that applied it. Switching between running speeds does not change `n`
+        // (it was fixed from the speed at entry).
+        let mut ran = 0;
         for _ in 0..n {
+            if self.speed() == SimSpeed::Pause {
+                self.accumulator = 0;
+                break;
+            }
             self.tick_once();
+            ran += 1;
         }
-        n
+        if self.speed() == SimSpeed::Pause {
+            self.accumulator = 0;
+        }
+        ran
     }
 
     /// Checksum of the current state (see `checksum` module).
@@ -297,6 +312,38 @@ mod tests {
     }
 
     #[test]
+    fn t056_pause_in_the_first_tick_of_a_multi_tick_step_stops_the_call() {
+        let set = |speed| SimCommand::SetSpeed { speed };
+        let mut sim = SimRunner::new(1);
+        sim.world_mut().insert_resource(SimSpeed::X3);
+        sim.push_command(set(SimSpeed::Pause), Tick(0));
+        // 4 ticks owed (capped), but the pause applied by the first one stops the rest.
+        assert_eq!(sim.step(FRAME * 2), 1);
+        assert_eq!(sim.tick(), Tick(1));
+        assert_eq!(sim.speed(), SimSpeed::Pause);
+        // On pause nothing runs and the accumulator is empty...
+        assert_eq!(sim.step(FRAME * 10), 0);
+        assert_eq!(sim.tick(), Tick(1));
+        // ...so after resuming at x1 a 30 ms frame owes nothing (a leftover would tick).
+        sim.push_command(set(SimSpeed::X1), sim.tick());
+        assert_eq!(sim.step(Duration::from_millis(30)), 0);
+        assert_eq!(sim.speed(), SimSpeed::X1);
+        assert_eq!(sim.step(Duration::from_millis(20)), 1);
+    }
+
+    #[test]
+    fn t056_changing_between_running_speeds_inside_a_call_keeps_the_tick_count() {
+        let set = |speed| SimCommand::SetSpeed { speed };
+        for (from, to) in [(SimSpeed::X1, SimSpeed::X3), (SimSpeed::X3, SimSpeed::X1)] {
+            let mut sim = SimRunner::new(1);
+            sim.world_mut().insert_resource(from);
+            sim.push_command(set(to), Tick(0));
+            let expected = if from == SimSpeed::X3 { 3 } else { 1 };
+            assert_eq!(sim.step(FRAME), expected, "{from:?} -> {to:?}");
+        }
+    }
+
+    #[test]
     fn bug_005_paused_step_applies_a_queued_resume() {
         let resume = |speed| SimCommand::SetSpeed { speed };
         let mut sim = SimRunner::new(1);
@@ -357,7 +404,10 @@ mod tests {
             },
             Tick(2),
         );
-        assert_eq!(sim.step(FRAME * 10), 4); // ticks 0..4 run; command fires at tick 2
+        // Ticks 0, 1, 2 run; the pause fires in tick 2 and the 4th owed tick is dropped
+        // (T-056; this used to assert 4).
+        assert_eq!(sim.step(FRAME * 10), 3);
+        assert_eq!(sim.tick(), Tick(3));
         assert_eq!(sim.speed(), SimSpeed::Pause);
         assert_eq!(sim.step(FRAME * 10), 0);
         assert_eq!(sim.world().resource::<CommandLog<SimCommand>>().len(), 1);
