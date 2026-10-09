@@ -32,11 +32,29 @@ pub enum NodeKind {
     Outside,
 }
 
-/// How traffic is regulated at a node. Variants are appended by later tasks.
+/// How traffic is regulated at a node. Saved by variant number: variants are only
+/// appended (no save version bump needed for that, `system-design.md` §4).
+///
+/// `Priority` and `TrafficLight` are the *automatic* states: the §6.5 rule decides between
+/// them whenever the junction is recomputed. `ManualPriority` / `ManualTrafficLight` are
+/// the player's choice (`ToggleTrafficLight`) and the rule never changes them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum JunctionControl {
     #[default]
     Priority,
+    TrafficLight,
+    ManualPriority,
+    ManualTrafficLight,
+}
+
+impl JunctionControl {
+    pub fn has_light(self) -> bool {
+        matches!(self, Self::TrafficLight | Self::ManualTrafficLight)
+    }
+    /// Set by the player, not by the auto-install rule.
+    pub fn is_manual(self) -> bool {
+        matches!(self, Self::ManualPriority | Self::ManualTrafficLight)
+    }
 }
 
 /// Vertical treatment of a road piece.

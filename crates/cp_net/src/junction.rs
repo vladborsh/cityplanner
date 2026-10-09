@@ -42,11 +42,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::ResMut;
+use bevy_ecs::system::{Res, ResMut};
 use bevy_math::{Vec2, Vec3};
+use cp_content::{RoadDefId, SimContent};
 use cp_core::curve::{CubicBezier3, to_xz};
 
 use crate::connections::{Links, compute_links};
+use crate::control::{ControlPlan, auto_control, plan_control};
 use crate::graph::NetGraph;
 use crate::model::{NodeId, SegmentId};
 
@@ -91,6 +93,9 @@ pub struct Junction {
     pub polygon: Vec<Vec2>,
     /// Lane connections, conflicts and pedestrian links (see [`crate::connections`]).
     pub links: Links,
+    /// Priority and traffic-light plan (see [`crate::control`]). Filled in by
+    /// [`update_junctions`]; empty when the junction comes straight from [`compute_junction`].
+    pub control: ControlPlan,
     /// Value of [`JunctionGeometry::version`] when this junction was last recomputed.
     pub revision: u64,
 }
@@ -313,6 +318,7 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
         arms,
         polygon,
         links,
+        control: ControlPlan::default(),
         revision,
     })
 }
@@ -320,16 +326,38 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
 /// The `Network`-phase system: recomputes dirty nodes (draining the graph's dirty set),
 /// nodes that have no geometry yet (after a load), and drops junctions of removed nodes.
 /// Does nothing — and bumps no version — when everything is up to date.
-pub fn update_junctions(mut graph: ResMut<NetGraph>, mut geo: ResMut<JunctionGeometry>) {
+pub fn update_junctions(
+    mut graph: ResMut<NetGraph>,
+    mut geo: ResMut<JunctionGeometry>,
+    content: Option<Res<SimContent>>,
+) {
     let complete = geo.junctions.len() == graph.node_count();
     if graph.dirty_nodes().next().is_none() && complete {
         return;
     }
+    let rank_of = |road: RoadDefId| {
+        content.as_ref().map_or(0, |c| {
+            if road.index() < c.0.roads().count() {
+                c.0.road(road).rank
+            } else {
+                0
+            }
+        })
+    };
+    // Geometry, auto-installed lights, then the control plan, for one node.
+    let build = |graph: &mut NetGraph, id: NodeId, version: u64| {
+        let mut j = compute_junction(graph, id, version)?;
+        if let Some(c) = auto_control(graph, &j) {
+            graph.set_auto_control(id, c);
+        }
+        j.control = plan_control(graph, &j, &rank_of);
+        Some(j)
+    };
     let dirty = graph.take_dirty();
     let version = geo.version + 1;
     let map = Arc::make_mut(&mut geo.junctions);
     for id in dirty {
-        match compute_junction(&graph, id, version) {
+        match build(&mut graph, id, version) {
             Some(j) => {
                 map.insert(id, j);
             }
@@ -338,9 +366,14 @@ pub fn update_junctions(mut graph: ResMut<NetGraph>, mut geo: ResMut<JunctionGeo
             }
         }
     }
-    for (id, _) in graph.nodes() {
-        map.entry(id)
-            .or_insert_with(|| compute_junction(&graph, id, version).expect("node exists"));
+    let missing: Vec<NodeId> = graph
+        .nodes()
+        .map(|(id, _)| id)
+        .filter(|id| !map.contains_key(id))
+        .collect();
+    for id in missing {
+        let j = build(&mut graph, id, version).expect("node exists");
+        map.insert(id, j);
     }
     map.retain(|id, _| graph.node(*id).is_some());
     geo.version = version;

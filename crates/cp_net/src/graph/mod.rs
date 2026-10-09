@@ -30,6 +30,9 @@ pub enum NetOpError {
     /// The node already has [`MAX_SEGMENTS_PER_NODE`] segments.
     NodeFull(NodeId),
     UnknownSegment(SegmentId),
+    UnknownNode(NodeId),
+    /// Fewer than 3 segments meet at the node: a traffic light makes no sense there.
+    NotAJunction(NodeId),
     /// A split parameter is not strictly inside `(0, 1)` / not strictly increasing, or a
     /// resulting piece would be shorter than [`MIN_SEGMENT_LENGTH`].
     BadSplit,
@@ -43,6 +46,8 @@ impl fmt::Display for NetOpError {
                 write!(f, "node {n:?} already has {MAX_SEGMENTS_PER_NODE} segments")
             }
             Self::UnknownSegment(s) => write!(f, "unknown segment {s:?}"),
+            Self::UnknownNode(n) => write!(f, "unknown node {n:?}"),
+            Self::NotAJunction(n) => write!(f, "node {n:?} has fewer than 3 segments"),
             Self::BadSplit => write!(f, "invalid split position"),
         }
     }
@@ -281,6 +286,35 @@ impl NetGraph {
         self.dirty.insert(start);
         self.dirty.insert(end);
         Ok(())
+    }
+
+    /// The player's `ToggleTrafficLight`: a node with a light (automatic or not) becomes
+    /// `ManualPriority`, any other `ManualTrafficLight`. Needs a junction (>= 3 segments).
+    /// Marks the node dirty so the Network phase rebuilds its plan. Returns the new control.
+    pub fn toggle_traffic_light(&mut self, id: NodeId) -> Result<JunctionControl, NetOpError> {
+        let node = self.nodes.get_mut(id).ok_or(NetOpError::UnknownNode(id))?;
+        if node.segments.len() < 3 {
+            return Err(NetOpError::NotAJunction(id));
+        }
+        node.control = if node.control.has_light() {
+            JunctionControl::ManualPriority
+        } else {
+            JunctionControl::ManualTrafficLight
+        };
+        let c = node.control;
+        self.dirty.insert(id);
+        Ok(c)
+    }
+
+    /// Sets an *automatic* control state (the §6.5 rule) without marking the node dirty.
+    /// Manual states are never overwritten.
+    pub fn set_auto_control(&mut self, id: NodeId, control: JunctionControl) {
+        if let Some(n) = self.nodes.get_mut(id)
+            && !n.control.is_manual()
+            && !control.is_manual()
+        {
+            n.control = control;
+        }
     }
 
     // --- internals ---

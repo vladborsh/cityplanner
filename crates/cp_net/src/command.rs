@@ -25,7 +25,7 @@ use crate::build::{
     segment_cost, validate_road_path,
 };
 use crate::graph::{NetGraph, NetOpError};
-use crate::model::{Elevation, SegmentId};
+use crate::model::{Elevation, NodeId, SegmentId};
 
 /// Commands handled by this crate.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -41,6 +41,9 @@ pub enum NetCommand {
     UpgradeSegment { seg: SegmentId, road: RoadDefId },
     /// Removes a segment (nodes left without segments disappear with it).
     RemoveSegment { seg: SegmentId },
+    /// Installs or removes a traffic light at a junction (>= 3 segments). The choice is
+    /// then manual: the auto-install rule leaves the node alone.
+    ToggleTrafficLight { node: NodeId },
 }
 
 /// Validation failure of a NetCommand; wrapped into `CommandError::Rejected` by the dispatcher.
@@ -165,6 +168,12 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
                 return Err(NetError::UnknownSegment(*seg));
             }
             graph.remove_segment(*seg)?;
+            Ok(Cost::ZERO)
+        }
+        NetCommand::ToggleTrafficLight { node } => {
+            world
+                .resource_mut::<NetGraph>()
+                .toggle_traffic_light(*node)?;
             Ok(Cost::ZERO)
         }
     }

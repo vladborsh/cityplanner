@@ -3,6 +3,7 @@
 pub mod build;
 pub mod command;
 pub mod connections;
+pub mod control;
 pub mod graph;
 pub mod junction;
 pub mod model;
@@ -14,6 +15,7 @@ pub use build::{
 };
 pub use command::{NetCommand, NetError, apply};
 pub use connections::{LaneConnection, Links, PedLink, PedLinkKind, Turn};
+pub use control::{ControlPlan, LightPlan, Phase, Priority, Signal};
 pub use graph::{MIN_SEGMENT_LENGTH, NODE_REUSE_EPS, NetGraph, NetOpError, SplitResult};
 pub use junction::{Arm, Junction, JunctionGeometry, compute_junction, update_junctions};
 pub use model::*;
