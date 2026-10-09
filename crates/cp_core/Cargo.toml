@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 bevy_ecs.workspace = true
-bevy_math = { workspace = true, features = ["serialize"] }
+bevy_math.workspace = true
 serde = { workspace = true, features = ["std"] }
 rand_core.workspace = true
 rand_chacha.workspace = true
