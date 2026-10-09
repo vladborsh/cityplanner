@@ -3,4 +3,8 @@
 disallowed-types = [
     { path = "std::collections::HashMap", reason = "non-deterministic iteration; use BTreeMap or IndexMap" },
     { path = "std::collections::HashSet", reason = "non-deterministic iteration; use BTreeSet or sorted Vec" },
+    { path = "hashbrown::HashMap", reason = "non-deterministic iteration; use BTreeMap or IndexMap" },
+    { path = "hashbrown::HashSet", reason = "non-deterministic iteration; use BTreeSet or sorted Vec" },
+    { path = "bevy_platform::collections::HashMap", reason = "non-deterministic iteration; use BTreeMap or IndexMap" },
+    { path = "bevy_platform::collections::HashSet", reason = "non-deterministic iteration; use BTreeSet or sorted Vec" },
 ]
