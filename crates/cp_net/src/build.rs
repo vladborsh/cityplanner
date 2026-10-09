@@ -173,6 +173,44 @@ pub struct RoadBuildPlan {
     pub cost: Cost,
 }
 
+impl std::fmt::Display for RoadBuildError {
+    /// Short player-facing text (shown next to the ghost).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownRoad(_) => write!(f, "unknown road type"),
+            Self::NoElevatedVariant(_) => write!(f, "this road type cannot be raised"),
+            Self::RampTooShort { .. } => write!(f, "too short to ramp up and down"),
+            Self::RampStartsOverWater { .. } => write!(f, "ramp would start over water"),
+            Self::NoBridgeVariant(_) => write!(f, "this road type has no bridge"),
+            Self::PathTooShort => write!(f, "path too short"),
+            Self::DegenerateLeg { .. } => write!(f, "both ends are the same point"),
+            Self::SegmentTooShort { length, .. } => {
+                write!(
+                    f,
+                    "piece too short ({length:.1} m, min {MIN_SEGMENT_LENGTH_BUILD:.0} m)"
+                )
+            }
+            Self::SharpAngle { degrees, .. } => {
+                write!(
+                    f,
+                    "angle too sharp ({degrees:.0}°, min {MIN_JUNCTION_ANGLE_DEG:.0}°)"
+                )
+            }
+            Self::TooSteep { slope, max, .. } => {
+                write!(
+                    f,
+                    "too steep ({:.0}%, max {:.0}%)",
+                    slope * 100.0,
+                    max * 100.0
+                )
+            }
+            Self::WaterWithoutBridge { .. } => write!(f, "water: raise the road to bridge it"),
+            Self::TooManySegments { .. } => write!(f, "too many roads meet here"),
+            Self::TileNotOwned { .. } => write!(f, "tile not owned"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum RoadBuildError {
     UnknownRoad(RoadDefId),

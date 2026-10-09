@@ -2607,10 +2607,15 @@ dependencies = [
 name = "cp_tools"
 version = "0.0.0"
 dependencies = [
+ "bevy",
  "bevy_ecs",
+ "bevy_math",
+ "cp_content",
  "cp_core",
+ "cp_net",
  "cp_render",
  "cp_sim",
+ "cp_terrain",
 ]
 
 [[package]]
@@ -2633,7 +2638,9 @@ version = "0.0.0"
 dependencies = [
  "bevy",
  "bevy_egui",
+ "cp_content",
  "cp_core",
+ "cp_net",
  "cp_sim",
  "cp_tools",
 ]

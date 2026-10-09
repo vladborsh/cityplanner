@@ -3,8 +3,9 @@
 use bevy::prelude::Resource;
 use bevy_egui::egui;
 use cp_core::SimSpeed;
+use cp_net::ElevationMode;
 use cp_sim::SimView;
-use cp_tools::CommandOutbox;
+use cp_tools::{ActiveTool, CommandOutbox, RoadMode, ToolState, format_money};
 
 use crate::set_speed;
 
@@ -112,9 +113,14 @@ pub fn top_bar(
     rects
 }
 
-/// Bottom category bar. Clicking a tab selects it (click again to close); the panel
-/// content is empty for now.
-pub fn bottom_bar(root: &mut egui::Ui, state: &mut UiState) {
+/// Bottom category bar. Clicking a tab selects it (click again to close). The Roads tab holds
+/// the road tool and the bulldozer ([`roads_panel`]); the others are empty for now.
+pub fn bottom_bar(
+    root: &mut egui::Ui,
+    state: &mut UiState,
+    view: Option<&SimView>,
+    tools: &mut ToolState,
+) {
     egui::Panel::bottom("categories").show(root, |ui| {
         ui.horizontal(|ui| {
             for c in Category::ALL {
@@ -124,11 +130,96 @@ pub fn bottom_bar(root: &mut egui::Ui, state: &mut UiState) {
                 }
             }
         });
-        if let Some(c) = state.category {
-            ui.separator();
-            ui.weak(format!("{} — nothing to build here yet", c.label()));
+        match state.category {
+            Some(Category::Roads) => {
+                ui.separator();
+                roads_panel(ui, view, tools);
+            }
+            Some(c) => {
+                ui.separator();
+                ui.weak(format!("{} — nothing to build here yet", c.label()));
+            }
+            None => {}
         }
     });
+}
+
+/// The Roads tab: tool buttons, road mode, road type, elevation and the ghost's verdict.
+pub fn roads_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
+    ui.horizontal(|ui| {
+        for (tool, label) in [
+            (ActiveTool::Road, "🛣 Road"),
+            (ActiveTool::Bulldozer, "🚜 Bulldozer"),
+        ] {
+            if ui.selectable_label(tools.active == tool, label).clicked() {
+                let next = if tools.active == tool {
+                    ActiveTool::None
+                } else {
+                    tool
+                };
+                tools.select(next);
+            }
+        }
+        if tools.active == ActiveTool::Road {
+            ui.separator();
+            for (mode, label) in [
+                (RoadMode::Straight, "Straight"),
+                (RoadMode::Curve, "Curve (3 clicks)"),
+                (RoadMode::Free, "Free (Enter ends)"),
+            ] {
+                if ui
+                    .selectable_label(tools.road.mode == mode, label)
+                    .clicked()
+                {
+                    tools.road.set_mode(mode);
+                }
+            }
+            ui.separator();
+            if let Some(content) = view.and_then(|v| v.content.as_ref()) {
+                if tools.road.road.is_none() {
+                    tools.road.road = content.roads().next().map(|(id, _)| id);
+                }
+                let current = tools
+                    .road
+                    .road
+                    .map_or("—".to_string(), |id| content.road(id).name.clone());
+                egui::ComboBox::from_id_salt("road_type")
+                    .selected_text(current)
+                    .show_ui(ui, |ui| {
+                        for (id, def) in content.roads() {
+                            ui.selectable_value(&mut tools.road.road, Some(id), &def.name);
+                        }
+                    });
+            }
+            ui.separator();
+            ui.label(match tools.road.elevation() {
+                ElevationMode::Ground => "Ground (PgUp raises)".to_string(),
+                ElevationMode::Elevated(h) => format!("Raised {h:.0} m (PgUp / PgDn)"),
+            });
+        }
+    });
+    match tools.active {
+        ActiveTool::Road => match &tools.ghost {
+            Some(g) if g.valid => {
+                let cost = g.cost.map_or(String::new(), format_money);
+                ui.colored_label(egui::Color32::LIGHT_GREEN, format!("✔ can build — {cost}"));
+            }
+            Some(g) => {
+                for e in &g.errors {
+                    ui.colored_label(egui::Color32::LIGHT_RED, format!("✖ {e}"));
+                }
+            }
+            None => {
+                ui.weak("Click to start a road. Esc cancels.");
+            }
+        },
+        ActiveTool::Bulldozer => {
+            ui.weak("Hover a road segment, click to remove it. Esc leaves the tool.");
+        }
+        ActiveTool::None => {
+            ui.weak("Pick a tool.");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -234,7 +325,58 @@ mod tests {
     fn bottom_bar_draws_with_no_category_selected() {
         let ctx = egui::Context::default();
         let mut state = UiState::default();
-        crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| bottom_bar(ui, &mut state));
+        crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
+            bottom_bar(ui, &mut state, None, &mut ToolState::default())
+        });
         assert_eq!(state.category, None);
+    }
+
+    #[test]
+    fn roads_panel_picks_a_default_road_and_shows_the_ghost_verdict() {
+        use cp_core::Cost;
+        use cp_tools::Ghost;
+        let mut sim = SimRunner::new(1);
+        sim.set_content(std::sync::Arc::new(
+            cp_content::ContentDb::load_dir(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/content"
+            ))
+            .unwrap(),
+        ));
+        let view = sim.view();
+        let ctx = egui::Context::default();
+        let mut tools = ToolState::default();
+        tools.select(ActiveTool::Road);
+        assert!(tools.road.road.is_none());
+        let draw = |tools: &mut ToolState| {
+            crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
+                roads_panel(ui, Some(&view), tools);
+            });
+        };
+        draw(&mut tools);
+        assert!(
+            tools.road.road.is_some(),
+            "the first road type is preselected"
+        );
+
+        // Valid and invalid ghosts both render.
+        tools.ghost = Some(Ghost {
+            polylines: vec![],
+            valid: true,
+            cost: Some(Cost(123_456)),
+            errors: vec![],
+        });
+        draw(&mut tools);
+        tools.ghost = Some(Ghost {
+            polylines: vec![],
+            valid: false,
+            cost: None,
+            errors: vec!["too steep (20%, max 12%)".into()],
+        });
+        draw(&mut tools);
+        tools.select(ActiveTool::Bulldozer);
+        draw(&mut tools);
+        assert_eq!(tools.active, ActiveTool::Bulldozer);
+        assert!(tools.ghost.is_none(), "switching tools clears the ghost");
     }
 }

@@ -78,7 +78,7 @@ impl Plugin for GamePlugin {
         ))
         .add_systems(PreUpdate, step_sim);
         if self.ui {
-            app.add_plugins(UiPlugin);
+            app.add_plugins((UiPlugin, cp_tools::ToolsPlugin));
         }
         app.add_systems(Startup, move |mut commands: Commands| {
             commands.spawn((

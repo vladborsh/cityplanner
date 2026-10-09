@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use cp_core::SimSpeed;
 use cp_sim::{SimCommand, SimView};
-use cp_tools::CommandOutbox;
+use cp_tools::{CommandOutbox, ToolState, UiCapture};
 
 pub mod debug;
 pub mod panels;
@@ -24,6 +24,8 @@ impl Plugin for UiPlugin {
             .init_resource::<UiState>()
             .init_resource::<TickRate>()
             .init_resource::<CommandOutbox>()
+            .init_resource::<ToolState>()
+            .init_resource::<UiCapture>()
             .add_systems(Update, (toggle_debug, measure_tick_rate))
             .add_systems(EguiPrimaryContextPass, draw_ui);
     }
@@ -45,6 +47,7 @@ fn measure_tick_rate(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_ui(
     mut contexts: EguiContexts,
     view: Option<Res<SimView>>,
@@ -52,6 +55,8 @@ fn draw_ui(
     mut outbox: ResMut<CommandOutbox>,
     rate: Res<TickRate>,
     extra: Option<Res<debug::PhaseTimes>>,
+    mut tools: ResMut<ToolState>,
+    mut capture: ResMut<UiCapture>,
 ) -> Result {
     let Some(view) = view else {
         return Ok(());
@@ -59,7 +64,7 @@ fn draw_ui(
     let ctx = contexts.ctx_mut()?;
     let mut root = root_ui(ctx);
     top_bar(&mut root, &view, &mut outbox);
-    bottom_bar(&mut root, &mut state);
+    bottom_bar(&mut root, &mut state, Some(&view), &mut tools);
     if state.debug_open {
         debug::debug_window(
             ctx,
@@ -71,6 +76,8 @@ fn draw_ui(
             &mut state.debug_open,
         );
     }
+    // Clicks over a panel or window belong to the UI, not to the tools.
+    capture.pointer_over_ui = ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
     Ok(())
 }
 

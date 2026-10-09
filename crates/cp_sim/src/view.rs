@@ -74,6 +74,9 @@ pub struct SimView {
     /// Shared: it is re-cloned from the sim only when the network changed (detected through
     /// `junctions.version()` and the element counts), so unchanged ticks cost an `Arc` clone.
     pub net: Arc<NetGraph>,
+    /// The content database (road types, ...), for tools and the build menu; `None` for a sim
+    /// without content.
+    pub content: Option<Arc<ContentDb>>,
 }
 
 /// `(junction version, nodes, segments, snapshot)` of the last `SimView::net`.
@@ -144,6 +147,10 @@ impl SimRunner {
                 .unwrap_or_default(),
             stats: self.stats(),
             net: self.net_snapshot(&junctions),
+            content: self
+                .world()
+                .get_resource::<SimContent>()
+                .map(|c| Arc::clone(&c.0)),
             junctions,
         }
     }
