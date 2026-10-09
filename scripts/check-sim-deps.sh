@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Dependency guard (architecture/system-design.md §1, AGENTS.md "Simulation crates are headless").
 # Every crate up to and including cp_sim must not pull in rendering, windowing or UI crates.
-# Sim crates = cp_sim plus every workspace crate that cp_sim depends on (transitively).
+# Sim crates = cp_sim, every workspace crate it depends on (transitively), and cp_save (above cp_sim).
 # Usage: scripts/check-sim-deps.sh [extra-banned-crate ...]
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -15,6 +15,16 @@ tree() { cargo tree --target all --edges normal,build,dev --prefix none --format
 SIM_CRATES=()
 while IFS= read -r c; do SIM_CRATES+=("$c"); done < <(tree -p cp_sim | awk '$3 ~ /^\(\// {print $1}' | sort -u)
 case " ${SIM_CRATES[*]} " in *" cp_sim "*) ;; *) echo "guard error: cp_sim not found in its own tree" >&2; exit 2;; esac
+
+# Sim crates that sit above cp_sim (system-design §1) and so are not in its tree. Checked explicitly.
+EXTRA_SIM_CRATES=(cp_save)
+for crate in "${EXTRA_SIM_CRATES[@]}"; do
+  cargo metadata --no-deps --format-version 1 | grep -q "\"name\":\"$crate\"" \
+    || { echo "guard error: $crate is not a workspace member" >&2; exit 2; }
+done
+SORTED=()
+while IFS= read -r c; do SORTED+=("$c"); done < <(printf '%s\n' "${SIM_CRATES[@]}" "${EXTRA_SIM_CRATES[@]}" | sort -u)
+SIM_CRATES=("${SORTED[@]}")
 
 fail=0
 for crate in "${SIM_CRATES[@]}"; do
