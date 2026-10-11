@@ -59,7 +59,7 @@ fn run(sim: &mut SimRunner, cmd: BuildingCommand) -> Result<(), String> {
 }
 
 fn pump(c: &ContentDb) -> BuildingDefId {
-    c.building_id("water_pump_station").unwrap()
+    c.building_id("wind_turbine").unwrap()
 }
 
 /// Centre of a valid cell in row 1 of the first block, column `col`.
@@ -216,4 +216,50 @@ fn overlapping_buildings_are_rejected_but_neighbours_fit() {
     )
     .unwrap();
     assert_eq!(sim.world().resource::<BuildingGrid>().len(), 2);
+}
+
+/// Flat dry land at 10 m with a lake (ground at 0 m, sea level 5 m) around x 3080..3140.
+fn lake_terrain() -> cp_terrain::Terrain {
+    use cp_terrain::{GRID, MapMeta, SPACING, Terrain};
+    let mut height = vec![655u16; GRID * GRID]; // about 10 m
+    for iz in 280..320 {
+        for ix in 308..314 {
+            height[iz * GRID + ix] = 0;
+        }
+    }
+    let meta = MapMeta {
+        name: "lake".into(),
+        sea_level: 5.0,
+        start_tile: (1, 1),
+        external_connections: vec![],
+    };
+    let _ = SPACING;
+    Terrain::from_samples(meta, &height, &vec![0u16; GRID * GRID]).unwrap()
+}
+
+#[test]
+fn a_pump_needs_water_and_other_buildings_cannot_stand_in_it() {
+    let c = content();
+    let mut sim = world(&c);
+    sim.world_mut()
+        .insert_resource(cp_terrain::SimTerrain(Arc::new(lake_terrain())));
+    let cols = sim
+        .world()
+        .resource::<ZoneGrid>()
+        .blocks()
+        .next()
+        .unwrap()
+        .1
+        .cols;
+    let (dry, wet) = (spot(&sim, 3), spot(&sim, 13));
+    assert!(cols > 20);
+    let pump = c.building_id("water_pump_station").unwrap();
+    let turbine = c.building_id("wind_turbine").unwrap();
+    let place = |pos, def| BuildingCommand::Place { def, pos, rot: 0.0 };
+    let e = run(&mut sim, place(dry, pump)).unwrap_err();
+    assert!(e.contains("on or beside water"), "{e}");
+    let e = run(&mut sim, place(wet, turbine)).unwrap_err();
+    assert!(e.contains("on water"), "{e}");
+    run(&mut sim, place(wet, pump)).unwrap();
+    run(&mut sim, place(dry, turbine)).unwrap();
 }

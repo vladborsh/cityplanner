@@ -1,12 +1,13 @@
 //! `cp_utility` — pipe and power-line networks. See `architecture/system-design.md` §10.
 //!
-//! This crate holds the network *graphs*, their validation and the `BuildLink` /
-//! `RemoveLink` commands. Capacity distribution, supply flags and overlays come later
-//! (T-038…); [`UtilityGraph::components`] is the BFS-ready derivation they build on.
+//! This crate holds the network *graphs*, their validation, the `BuildLink` / `RemoveLink`
+//! commands and the supply computation ([`supply`]): capacity distribution and the
+//! `NO_WATER` / `NO_SEWAGE` / `NO_POWER` building flags.
 
 pub mod command;
 pub mod graph;
 pub mod plan;
+pub mod supply;
 
 pub use command::{UtilityCommand, UtilityError, apply};
 pub use graph::{
@@ -17,9 +18,13 @@ pub use plan::{
     LinkPlan, PathProblem, PlanInputs, PlanNode, PlannedLink, PlannedSplit, apply_plan,
     plan_link_path,
 };
+pub use supply::{LINE_REACH_M, POWER_HOP_M, SUPPLY_PERIOD, compute_supply, update_supply};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_utility";
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod supply_tests;

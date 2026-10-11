@@ -170,6 +170,7 @@ impl SimRunner {
                 .in_set(SimPhase::Citizens)
                 .before(cp_citizen::update_citizens),
         );
+        schedule.add_systems(cp_utility::update_supply.in_set(SimPhase::Utilities));
         schedule.add_systems(cp_citizen::update_citizens.in_set(SimPhase::Citizens));
         // Path snapshot after the junction links it is built from; results are applied in
         // the Paths phase (system-design §2: requests from tick t land exactly at t + 8).

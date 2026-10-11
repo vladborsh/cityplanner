@@ -12,7 +12,9 @@ Every zone type has levels and **two variants per level** (`<name>_<level>` and
 | `ind_N` | Industrial | 1–3 |
 | `office_N` | Office | 1–3 |
 
-Service buildings (`water_pump_station`, …) carry `service: Some(..)` and are never spawned by
+Service buildings (`water_pump_station` on water, `sewage_outflow_station` at the shore,
+`coal_power_plant`, `wind_turbine`; `ServiceDef.capacity` is their supply per game day, `site` where
+they may stand) carry `service: Some(..)` and are never spawned by
 the zone system.
 
 **All numbers below the lot size are PLACEHOLDERS for balance tuning** (T-028):

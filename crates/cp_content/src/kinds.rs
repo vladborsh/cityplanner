@@ -34,4 +34,26 @@ pub enum ServiceKind {
     Water = 0,
     Power = 1,
     Roads = 2,
+    /// Appended in T-038: sewage outflow.
+    Sewage = 3,
+}
+
+/// Where a service building may stand (checked by `cp_building::validate_placement`).
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[repr(u8)]
+pub enum ServiceSite {
+    /// On dry land.
+    #[default]
+    Land = 0,
+    /// At least one footprint cell in water (a water pump).
+    OnWater = 1,
+    /// On dry land, with water within [`ServiceSite::SHORE_REACH_M`] (a sewage outflow).
+    Shore = 2,
+}
+
+impl ServiceSite {
+    /// How close water must be for [`ServiceSite::Shore`], metres.
+    pub const SHORE_REACH_M: f32 = 16.0;
 }

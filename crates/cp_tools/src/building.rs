@@ -131,7 +131,7 @@ mod tests {
     fn ghost_is_valid_beside_the_road_and_red_elsewhere() {
         let (mut sim, c) = sim();
         let tool = BuildingTool {
-            def: c.building_id("water_pump_station"),
+            def: c.building_id("wind_turbine"),
             quarters: 0,
         };
         let view = sim.view();
@@ -152,7 +152,7 @@ mod tests {
     fn rotation_cycles_and_picking_finds_the_building() {
         let (mut sim, c) = sim();
         let mut tool = BuildingTool {
-            def: c.building_id("water_pump_station"),
+            def: c.building_id("wind_turbine"),
             quarters: 0,
         };
         for _ in 0..4 {

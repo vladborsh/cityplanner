@@ -1,0 +1,8 @@
+Service((
+    id: "coal_plant",
+    name: "Coal power plant",
+    kind: Power,
+    radius_m: 800.0,
+    capacity: 4000,
+    vehicles: [],
+))

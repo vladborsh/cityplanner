@@ -64,6 +64,10 @@ impl BuildingFlags {
     pub const NO_WORKERS: u8 = 4;
     pub const NO_CUSTOMERS: u8 = 8;
     pub const NO_GOODS: u8 = 16;
+    /// Appended in T-038.
+    pub const NO_SEWAGE: u8 = 32;
+    /// The utility bits (water, power, sewage), which `cp_utility` recomputes every 64 ticks.
+    pub const UTILITY_MASK: u8 = Self::NO_WATER | Self::NO_POWER | Self::NO_SEWAGE;
 
     pub fn has(self, bit: u8) -> bool {
         self.0 & bit != 0

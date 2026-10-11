@@ -1,0 +1,8 @@
+Service((
+    id: "wind_turbine",
+    name: "Wind turbine",
+    kind: Power,
+    radius_m: 800.0,
+    capacity: 300,
+    vehicles: [],
+))

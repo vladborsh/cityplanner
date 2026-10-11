@@ -10,4 +10,4 @@ mod validate;
 pub use db::{ContentDb, DEFAULT_CONTENT_ROOT, SimContent};
 pub use defs::*;
 pub use error::{ContentError, ContentErrors};
-pub use kinds::{ServiceKind, UtilityKind, ZoneType};
+pub use kinds::{ServiceKind, ServiceSite, UtilityKind, ZoneType};

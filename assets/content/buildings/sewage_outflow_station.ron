@@ -1,0 +1,12 @@
+Building((
+    id: "sewage_outflow_station",
+    name: "Sewage outflow",
+    zone: Industrial,
+    level: 1,
+    lot: (2, 1),
+    jobs: (1, 1, 0, 0),
+    consumption: {Power: 5.0},
+    tax_base: 0.0,
+    style: (floors: 1, roof: Flat, palette: "utility_grey"),
+    service: Some("sewage_outflow"),
+))

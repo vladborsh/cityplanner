@@ -4,5 +4,6 @@ Service((
     kind: Water,
     radius_m: 800.0,
     capacity: 1000,
+    site: OnWater,
     vehicles: [],
 ))

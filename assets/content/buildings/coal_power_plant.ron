@@ -1,0 +1,12 @@
+Building((
+    id: "coal_power_plant",
+    name: "Coal power plant",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 3),
+    jobs: (6, 6, 2, 0),
+    consumption: {},
+    tax_base: 0.0,
+    style: (floors: 1, roof: Flat, palette: "utility_grey"),
+    service: Some("coal_plant"),
+))

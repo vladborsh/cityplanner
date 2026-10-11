@@ -16,7 +16,7 @@ use std::fmt;
 
 use bevy_ecs::world::World;
 use bevy_math::Vec2;
-use cp_content::{BuildingDef, BuildingDefId, ContentDb, SimContent};
+use cp_content::{BuildingDef, BuildingDefId, ContentDb, ServiceSite, SimContent};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{Cost, SimLimits, Tick};
 use cp_net::NetGraph;
@@ -61,6 +61,8 @@ pub enum BuildingError {
     /// Part of the footprint is on a tile the player does not own.
     NotOwned,
     Water,
+    /// The type must stand on water (a pump) or on the shore (an outflow).
+    NeedsWater,
     LimitReached,
     UnknownBuilding,
 }
@@ -76,6 +78,7 @@ impl fmt::Display for BuildingError {
             Self::Blocked => "blocked by a road or another building",
             Self::NotOwned => "tile not owned",
             Self::Water => "cannot build on water",
+            Self::NeedsWater => "must be built on or beside water",
             Self::LimitReached => "building limit reached",
             Self::UnknownBuilding => "no such building",
         })
@@ -158,10 +161,37 @@ pub fn validate_placement(
     {
         return Err(BuildingError::NotOwned);
     }
-    if let Some(terrain) = terrain
-        && centres.iter().any(|&c| terrain.is_water(c))
-    {
-        return Err(BuildingError::Water);
+    let site = def
+        .service
+        .as_deref()
+        .and_then(|s| db.service_id(s))
+        .map_or(ServiceSite::Land, |s| db.service(s).site);
+    let wet = |c: Vec2| terrain.is_some_and(|t| t.is_water(c));
+    match site {
+        ServiceSite::Land => {
+            if centres.iter().any(|&c| wet(c)) {
+                return Err(BuildingError::Water);
+            }
+        }
+        ServiceSite::OnWater => {
+            if !centres.iter().any(|&c| wet(c)) {
+                return Err(BuildingError::NeedsWater);
+            }
+        }
+        ServiceSite::Shore => {
+            if centres.iter().any(|&c| wet(c)) {
+                return Err(BuildingError::Water);
+            }
+            let r = ServiceSite::SHORE_REACH_M;
+            let near = centres.iter().any(|&c| {
+                [(r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r)]
+                    .iter()
+                    .any(|&(dx, dz)| wet(c + Vec2::new(dx, dz)))
+            });
+            if !near {
+                return Err(BuildingError::NeedsWater);
+            }
+        }
     }
     let (pos, rot, access) = place(zones, net, under.block, &lot).ok_or(BuildingError::NoRoad)?;
     Ok(PlacementPlan {

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::kinds::{ServiceKind, UtilityKind, ZoneType};
+use crate::kinds::{ServiceKind, ServiceSite, UtilityKind, ZoneType};
 
 macro_rules! def_id {
     ($(#[$m:meta])* $name:ident) => {
@@ -186,7 +186,11 @@ pub struct ServiceDef {
     pub kind: ServiceKind,
     /// Coverage radius along roads, metres.
     pub radius_m: f32,
+    /// Supply per game day for utility services (same unit as `BuildingDef.consumption`).
     pub capacity: u32,
+    /// Where it may stand.
+    #[serde(default)]
+    pub site: ServiceSite,
     /// Vehicle ids (`VehicleDef`) the service dispatches.
     #[serde(default)]
     pub vehicles: Vec<String>,
