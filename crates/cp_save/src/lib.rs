@@ -58,7 +58,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 11;
+pub const FORMAT_VERSION: u32 = 12;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -84,7 +84,8 @@ pub struct SaveData {
     pub utilities: UtilityGraph,
     /// Trips in flight and the routine's counters. Added in v10.
     pub trips: TripBook,
-    /// Pedestrians and vehicles in the agent pools. Added in v11.
+    /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
+    /// agents carry the segment load since v12.
     pub agents: cp_traffic::Agents,
 }
 
@@ -135,6 +136,8 @@ impl SaveData {
         world.insert_resource(self.citizens);
         world.insert_resource(self.utilities);
         world.insert_resource(self.trips);
+        // The pathfinder reads the segment load last published to it (saved with the agents).
+        let published = cp_traffic::CongestionMap(self.agents.load.published.clone());
         world.insert_resource(self.agents);
         // Requests in flight continue after the load: re-launched on the snapshot rebuilt from
         // the restored net, which only counts as a network change if the net differs.
@@ -144,6 +147,9 @@ impl SaveData {
         world
             .resource_mut::<cp_traffic::PathNetwork>()
             .mark_restored(&restored_net);
+        world
+            .resource_mut::<cp_traffic::PathNetwork>()
+            .set_congestion(published);
     }
 }
 

@@ -1,0 +1,426 @@
+//! Vehicle movement: no overlaps, signals, jams, determinism across thread counts.
+
+use std::sync::Arc;
+
+use bevy_tasks::{TaskPool, TaskPoolBuilder};
+use cp_citizen::{CitizenId, TripId};
+use cp_core::Arena;
+use cp_net::{SegmentId, Signal};
+
+use crate::astar::find_car_path;
+use crate::drive::*;
+use crate::graph::{Access, CongestionMap, PathGraph, Side};
+use crate::service::PathNetwork;
+use crate::tests::{Sim, acc, sim};
+use crate::{Vehicle, VehicleId};
+
+struct Rig {
+    sim: Sim,
+    graph: Arc<PathGraph>,
+    veh: Arena<Vehicle>,
+    st: DriveState,
+    arrived: usize,
+    invalid: usize,
+    stuck: usize,
+    stuck_list: Vec<Vehicle>,
+}
+
+impl Rig {
+    fn new(mut s: Sim) -> Self {
+        s.tick();
+        let graph = Arc::clone(s.world.resource::<PathNetwork>().graph());
+        let mut st = DriveState::default();
+        let veh = Arena::new();
+        assert!(st.rebuild(&veh, &graph, 0).is_empty());
+        Self {
+            sim: s,
+            graph,
+            veh,
+            st,
+            arrived: 0,
+            invalid: 0,
+            stuck: 0,
+            stuck_list: Vec::new(),
+        }
+    }
+
+    fn add(&mut self, from: Access, to: Access) -> VehicleId {
+        let path = find_car_path(&self.graph, &CongestionMap::default(), &from, &to)
+            .expect("a route exists");
+        let s = path.start_s;
+        let id = self.veh.insert(Vehicle {
+            trip: TripId::new(0, 0),
+            citizen: CitizenId::new(0, 0),
+            path,
+            kind: 0,
+            hop: 0,
+            in_conn: false,
+            spawned: false,
+            s,
+            speed: 0.0,
+            stuck_timer: 0,
+        });
+        self.st.waiting.push(id);
+        id
+    }
+
+    fn tick(&mut self, tick: u64, pool: Option<&TaskPool>, stuck_ticks: u32) {
+        let f = drive_tick(
+            &mut self.veh,
+            &mut self.st,
+            &self.graph,
+            tick,
+            pool,
+            stuck_ticks,
+        );
+        self.arrived += f.arrived.len();
+        self.invalid += f.invalid.len();
+        self.stuck += f.stuck.len();
+        self.stuck_list.extend(f.stuck);
+    }
+
+    /// Runs until no vehicle is left or `max` ticks passed; returns the ticks used.
+    fn run_dry(&mut self, max: u64, pool: Option<&TaskPool>) -> u64 {
+        for t in 0..max {
+            self.tick(t, pool, STUCK_TICKS);
+            self.check_invariants();
+            if self.veh.is_empty() {
+                return t + 1;
+            }
+        }
+        max
+    }
+
+    /// No two cars overlap in a place, and no two vehicles occupy conflicting connections.
+    fn check_invariants(&self) {
+        let gap = CAR_LENGTH + HARD_GAP - 1e-2;
+        let lists = self.st.lanes.iter().chain(self.st.conns.values());
+        for l in lists {
+            for w in l.windows(2) {
+                let (a, b) = (self.veh.get(w[0]).unwrap(), self.veh.get(w[1]).unwrap());
+                assert!(a.s - b.s >= gap, "cars overlap: {} behind {}", b.s, a.s);
+            }
+        }
+        for (&(fs, ts), l) in &self.st.conns {
+            if l.is_empty() {
+                continue;
+            }
+            let ex = self.graph.exits[fs as usize]
+                .iter()
+                .find(|e| e.to_slot == ts)
+                .expect("exit");
+            for c in &ex.conflicts {
+                assert!(
+                    self.st
+                        .conns
+                        .get(&(c.from_slot, c.to.index))
+                        .is_none_or(Vec::is_empty),
+                    "two cars in conflicting connections"
+                );
+            }
+        }
+    }
+
+    fn snapshot(&self) -> Vec<(VehicleId, u32, u32, u16, bool)> {
+        self.veh
+            .iter()
+            .map(|(id, v)| (id, v.s.to_bits(), v.speed.to_bits(), v.hop, v.in_conn))
+            .collect()
+    }
+}
+
+/// Four arms of `road`, each directed towards the centre; returns W, E, N, S.
+fn cross(s: &mut Sim, road: &str) -> [SegmentId; 4] {
+    [
+        s.seg_with(road, (880.0, 1000.0), (1000.0, 1000.0)),
+        s.seg_with(road, (1120.0, 1000.0), (1000.0, 1000.0)),
+        s.seg_with(road, (1000.0, 880.0), (1000.0, 1000.0)),
+        s.seg_with(road, (1000.0, 1120.0), (1000.0, 1000.0)),
+    ]
+}
+
+fn from_arm(seg: SegmentId, s: f32) -> Access {
+    acc(seg, s, Side::Right)
+}
+
+fn to_arm(seg: SegmentId, s: f32) -> Access {
+    acc(seg, s, Side::Left)
+}
+
+fn crossing_traffic(rig: &mut Rig, arms: &[SegmentId; 4], per_arm: usize) {
+    for k in 0..per_arm {
+        for (i, &a) in arms.iter().enumerate() {
+            // Straight, right and left in turn.
+            let to = arms[(i + 1 + k % 3) % 4];
+            rig.add(from_arm(a, 5.0 + (k as f32)), to_arm(to, 60.0));
+        }
+    }
+}
+
+#[test]
+fn cars_never_overlap_nor_share_conflicting_connections_and_all_arrive() {
+    let mut s = sim();
+    let arms = cross(&mut s, "basic_2l");
+    let mut rig = Rig::new(s);
+    crossing_traffic(&mut rig, &arms, 10);
+    let n = rig.veh.len();
+    assert_eq!(n, 40);
+    let used = rig.run_dry(800, None);
+    assert!(used < 800, "everybody gets through");
+    assert_eq!((rig.arrived, rig.invalid, rig.stuck), (n, 0, 0));
+}
+
+#[test]
+fn nobody_enters_the_junction_on_red() {
+    let mut s = sim();
+    let arms = cross(&mut s, "medium_4l");
+    let mut rig = Rig::new(s);
+    assert!(!rig.graph.lights.is_empty(), "the crossing has a light");
+    crossing_traffic(&mut rig, &arms, 8);
+    let n = rig.veh.len();
+    let (mut entries, mut waited) = (0u32, 0u32);
+    let mut tick = 0u64;
+    let mut finished = Finished::default();
+    while !rig.veh.is_empty() && tick < 3000 {
+        spawn_waiting(&mut rig.veh, &mut rig.st, &rig.graph, &mut finished);
+        for sub in 0..cp_core::time::MOVE_SUBSTEPS {
+            let before: Vec<(VehicleId, bool)> =
+                rig.veh.iter().map(|(id, v)| (id, v.in_conn)).collect();
+            let signal = signal_tick(tick, sub);
+            substep(
+                &mut rig.veh,
+                &mut rig.st,
+                &rig.graph,
+                signal,
+                None,
+                &mut finished,
+            );
+            for (id, was) in before {
+                let Some(v) = rig.veh.get(id) else { continue };
+                if v.speed < 0.1 && !v.in_conn {
+                    waited += 1;
+                }
+                if !was && v.in_conn {
+                    entries += 1;
+                    let (from, to) = v.path.steps[v.hop as usize];
+                    let ex = find_exit(&rig.graph, from, to).unwrap();
+                    if ex.light != u32::MAX {
+                        let sig =
+                            rig.graph.lights[ex.light as usize].connection_signal(ex.index, signal);
+                        assert_ne!(sig, Signal::Red, "entered on red");
+                    }
+                }
+            }
+            rig.check_invariants();
+        }
+        tick += 1;
+    }
+    assert!(rig.veh.is_empty(), "traffic cleared");
+    assert_eq!(
+        finished.arrived.len() + finished.stuck.len() + finished.invalid.len(),
+        n
+    );
+    assert!(finished.stuck.is_empty() && finished.invalid.is_empty());
+    assert!(entries as usize >= n);
+    assert!(waited > 0, "some cars really waited for the light");
+}
+
+#[test]
+fn a_queue_builds_at_the_light_and_clears_when_the_load_stops() {
+    let mut s = sim();
+    let arms = cross(&mut s, "medium_4l");
+    let w = arms[0];
+    let e = arms[1];
+    let mut rig = Rig::new(s);
+    for k in 0..8 {
+        rig.add(from_arm(w, 5.0 + (k % 3) as f32), to_arm(e, 100.0));
+    }
+    let n = rig.veh.len();
+    let (mut peak_standing, mut last_tick) = (0usize, 0);
+    for t in 0..2000u64 {
+        rig.tick(t, None, STUCK_TICKS);
+        rig.check_invariants();
+        let standing = rig.veh.iter().filter(|(_, v)| v.speed < 0.1).count();
+        peak_standing = peak_standing.max(standing);
+        last_tick = t;
+        if rig.veh.is_empty() {
+            break;
+        }
+    }
+    assert!(
+        peak_standing >= 4,
+        "a queue formed ({peak_standing} standing)"
+    );
+    assert!(
+        rig.veh.is_empty(),
+        "the queue dissolved by tick {last_tick}"
+    );
+    assert_eq!((rig.arrived, rig.stuck, rig.invalid), (n, 0, 0));
+}
+
+#[test]
+fn cars_standing_too_long_disappear() {
+    let mut s = sim();
+    let arms = cross(&mut s, "medium_4l");
+    let mut rig = Rig::new(s);
+    crossing_traffic(&mut rig, &arms, 10);
+    for t in 0..400 {
+        rig.tick(t, None, 2);
+        if rig.veh.is_empty() {
+            break;
+        }
+    }
+    assert!(
+        rig.stuck > 0,
+        "a car waiting for a red is removed at a tiny threshold"
+    );
+    assert!(rig.veh.is_empty() || rig.arrived + rig.stuck < 40);
+}
+
+fn lattice(lines: usize) -> (Sim, Vec<SegmentId>) {
+    let mut s = sim();
+    let mut segs = Vec::new();
+    for line in 0..lines {
+        let o = 1000.0 + line as f32 * 90.0;
+        for piece in 0..lines - 1 {
+            let a = 1000.0 + piece as f32 * 90.0;
+            segs.push(s.seg((a, o), (a + 90.0, o)));
+            segs.push(s.seg((o, a), (o, a + 90.0)));
+        }
+    }
+    (s, segs)
+}
+
+fn crowd(rig: &mut Rig, segs: &[SegmentId], n: usize) {
+    for i in 0..n {
+        let a = segs[(i * 7) % segs.len()];
+        let b = segs[(i * 11 + 7) % segs.len()];
+        let from = from_arm(a, 6.0 + ((i / segs.len()) % 5) as f32 * 14.0);
+        let to = if i % 2 == 0 {
+            from_arm(b, 70.0)
+        } else {
+            to_arm(b, 20.0)
+        };
+        if let Ok(path) = find_car_path(&rig.graph, &CongestionMap::default(), &from, &to) {
+            let _ = path;
+            rig.add(from, to);
+        }
+    }
+}
+
+#[test]
+fn one_and_eight_threads_and_sequential_runs_are_identical() {
+    let run = |pool: Option<TaskPool>| {
+        let (s, segs) = lattice(6);
+        let mut rig = Rig::new(s);
+        crowd(&mut rig, &segs, 1500);
+        assert!(rig.veh.len() > 1000);
+        for t in 0..150 {
+            rig.tick(t, pool.as_ref(), STUCK_TICKS);
+            rig.check_invariants();
+        }
+        (rig.snapshot(), rig.arrived, rig.invalid, rig.stuck)
+    };
+    let seq = run(None);
+    let one = run(Some(TaskPoolBuilder::new().num_threads(1).build()));
+    let eight = run(Some(TaskPoolBuilder::new().num_threads(8).build()));
+    assert!(seq.1 > 0, "some cars arrived");
+    assert_eq!(seq, one);
+    assert_eq!(seq, eight);
+}
+
+#[test]
+fn a_car_accelerates_to_the_limit_and_follows_a_slow_leader_without_touching() {
+    let mut s = sim();
+    let a = s.seg((1000.0, 1000.0), (1090.0, 1000.0));
+    let b = s.seg((1090.0, 1000.0), (1180.0, 1000.0));
+    let mut rig = Rig::new(s);
+    let lead = rig.add(from_arm(a, 40.0), from_arm(b, 85.0));
+    let chaser = rig.add(from_arm(a, 5.0), from_arm(b, 85.0));
+    let limit = rig
+        .graph
+        .car
+        .iter()
+        .flatten()
+        .map(|l| l.speed)
+        .fold(0.0, f32::max);
+    let mut top = 0.0f32;
+    for t in 0..60 {
+        rig.tick(t, None, STUCK_TICKS);
+        rig.check_invariants();
+        if let Some(v) = rig.veh.get(chaser) {
+            top = top.max(v.speed);
+        }
+        let _ = lead;
+    }
+    assert!(
+        top > 0.9 * limit && top <= limit + 1e-3,
+        "top speed {top} vs {limit}"
+    );
+    assert_eq!(rig.arrived, 2);
+}
+
+/// 16k cars on a 41×41 lattice; prints ms per tick (all four substeps). Run in release:
+/// `cargo test -p cp_traffic --release bench_16k_cars -- --ignored --nocapture`.
+#[test]
+#[ignore = "benchmark: run in release with --nocapture"]
+fn bench_16k_cars() {
+    let (s, segs) = lattice(41);
+    let mut rig = Rig::new(s);
+    crowd(&mut rig, &segs, 16_000);
+    let pool = TaskPoolBuilder::new().build();
+    let (mut total, mut ticks, mut on_road) = (std::time::Duration::ZERO, 0u32, 0usize);
+    for t in 0..80u64 {
+        let t0 = std::time::Instant::now();
+        rig.tick(t, Some(&pool), STUCK_TICKS);
+        if t >= 20 {
+            total += t0.elapsed();
+            ticks += 1;
+            on_road += rig.veh.iter().filter(|(_, v)| v.spawned).count();
+        }
+    }
+    eprintln!(
+        "bench: {} cars on the road on average, {:.2} ms/tick over {ticks} ticks ({} threads), arrived {}, stuck {}",
+        on_road / ticks as usize,
+        total.as_secs_f64() * 1000.0 / f64::from(ticks),
+        pool.thread_num(),
+        rig.arrived,
+        rig.stuck
+    );
+}
+
+#[test]
+fn cars_whose_road_disappears_are_dropped_without_stale_ids() {
+    let mut s = sim();
+    let a = s.seg((1000.0, 1000.0), (1090.0, 1000.0));
+    s.seg((1090.0, 1000.0), (1180.0, 1000.0));
+    let c = s.seg((1180.0, 1000.0), (1270.0, 1000.0));
+    let mut rig = Rig::new(s);
+    for k in 0..4 {
+        rig.add(from_arm(a, 8.0 + 12.0 * k as f32), from_arm(c, 80.0));
+    }
+    for t in 0..12 {
+        rig.tick(t, None, STUCK_TICKS);
+    }
+    assert!(!rig.veh.is_empty(), "cars are under way");
+    // The last street is demolished while they drive; the snapshot is rebuilt.
+    rig.sim
+        .world
+        .resource_mut::<cp_net::NetGraph>()
+        .remove_segment(c)
+        .unwrap();
+    rig.sim.tick();
+    rig.graph = Arc::clone(rig.sim.world.resource::<PathNetwork>().graph());
+    let gone = rig.st.rebuild(&rig.veh, &rig.graph, 1);
+    for id in gone {
+        rig.veh.remove(id);
+        rig.invalid += 1;
+    }
+    for t in 12..300 {
+        rig.tick(t, None, STUCK_TICKS);
+        rig.check_invariants();
+    }
+    assert!(rig.veh.is_empty(), "nobody is left driving on a dead route");
+    assert_eq!(rig.arrived + rig.invalid + rig.stuck, 4);
+    assert!(rig.invalid > 0);
+}

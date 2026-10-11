@@ -19,7 +19,9 @@ use std::collections::BTreeMap;
 use bevy_math::Vec2;
 use cp_content::{LaneDir, LaneKind};
 use cp_core::curve::{CubicBezier3, to_xz};
-use cp_net::{JunctionGeometry, Lane, LaneId, NetGraph, NodeId, SegmentId, Turn};
+use cp_net::{
+    JunctionGeometry, Lane, LaneId, LightPlan, NetGraph, NodeId, Priority, SegmentId, Turn,
+};
 use serde::{Deserialize, Serialize};
 
 /// Walking speed used for costs, m/s (pedestrians move at 1.2–1.6 m/s, §9.4).
@@ -30,6 +32,11 @@ pub const LEFT_TURN_PENALTY: f32 = 4.0;
 pub const U_TURN_PENALTY: f32 = 15.0;
 /// Congestion weight `k` in `length / speed × (1 + k × congestion)`.
 pub const CONGESTION_K: f32 = 3.0;
+
+/// Speed through a left or right turn, m/s (about 22 km/h).
+pub const TURN_SPEED: f32 = 6.0;
+/// Speed through a U-turn, m/s.
+pub const U_TURN_SPEED: f32 = 3.0;
 
 /// Which end of a segment. Pedestrian lane ends are named by the segment end they touch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -88,6 +95,10 @@ pub(crate) struct LaneNode {
     pub forward: bool,
     pub seg_len: f32,
     pub curve: [CubicBezier3; cp_net::LANE_CURVE_PIECES],
+    /// Lane metres where the lane leaves the junction it comes from (the inbound setback).
+    pub s_in: f32,
+    /// Lane metres where the lane reaches the stop line of the junction it runs into.
+    pub s_out: f32,
 }
 
 impl LaneNode {
@@ -138,6 +149,32 @@ impl LaneNode {
     }
 }
 
+/// A connection that conflicts with an [`ExitConn`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Conflict {
+    pub from_slot: u32,
+    pub to: LaneId,
+    /// The other connection has priority over this one (no light at the node).
+    pub higher: bool,
+}
+
+/// A junction connection leaving a vehicle lane, resolved for movement. Looked up by
+/// `(from, to)` lane pair, never by connection index (indices change when a node is
+/// recomputed, T-020).
+#[derive(Clone, Debug)]
+pub(crate) struct ExitConn {
+    pub to: LaneId,
+    pub to_slot: u32,
+    /// Index in `Links::connections` of its node (valid for this snapshot only).
+    pub index: u16,
+    pub length: f32,
+    /// Speed on the connection, m/s.
+    pub speed: f32,
+    /// Index into `PathGraph::lights`, or `u32::MAX` when the node has no light.
+    pub light: u32,
+    pub conflicts: Vec<Conflict>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CarEdge {
     pub to: u32,
@@ -166,6 +203,12 @@ pub struct PathGraph {
     pub(crate) ped: Vec<Option<LaneNode>>,
     pub(crate) ped_edges: Vec<Vec<PedEdge>>,
     pub(crate) max_car_speed: f32,
+    /// Per vehicle-lane slot: the connections leaving it.
+    pub(crate) exits: Vec<Vec<ExitConn>>,
+    /// Signal plans of the nodes with a light, as referenced by [`ExitConn::light`].
+    pub(crate) lights: Vec<LightPlan>,
+    /// Per segment slot: total vehicle-lane length, metres (the denominator of the load).
+    pub(crate) seg_capacity: Vec<f32>,
     segments: BTreeMap<SegmentId, SegLanes>,
 }
 
@@ -182,16 +225,59 @@ fn path_len(c: &[CubicBezier3]) -> f32 {
     len
 }
 
-fn node_of(lane: &Lane, id: LaneId, net: &NetGraph) -> Option<LaneNode> {
+/// Lane metres from the lane start to parameter `u` (`0..=1`, uniform per piece).
+fn s_at_param(c: &[CubicBezier3], u: f32) -> f32 {
+    let n = c.len();
+    let x = u.clamp(0.0, 1.0) * n as f32;
+    let k = (x as usize).min(n - 1);
+    let mut len = if k == 0 { 0.0 } else { path_len(&c[..k]) };
+    let frac = x - k as f32;
+    let steps = 8;
+    let mut prev = c[k].p0;
+    for i in 1..=steps {
+        let p = c[k].point(frac * i as f32 / steps as f32);
+        len += prev.distance(p);
+        prev = p;
+    }
+    len
+}
+
+fn node_of(lane: &Lane, id: LaneId, net: &NetGraph, geo: &JunctionGeometry) -> Option<LaneNode> {
     let seg = net.segment(lane.segment)?;
+    let len = path_len(&lane.curve);
+    let forward = lane.dir == LaneDir::Forward;
+    // Trim parameter of the arm of this segment at `node`, if the node has a junction.
+    let trim = |node: NodeId, at_start: bool| {
+        geo.get(node)?
+            .arms
+            .iter()
+            .find(|a| a.segment == lane.segment && a.at_start == at_start)
+            .map(|a| a.trim_t)
+    };
+    let (entry, exit) = if forward {
+        (trim(seg.start, true), trim(seg.end, false))
+    } else {
+        (
+            trim(seg.end, false).map(|t| 1.0 - t),
+            trim(seg.start, true).map(|t| 1.0 - t),
+        )
+    };
+    let mut s_in = entry.map_or(0.0, |u| s_at_param(&lane.curve, u));
+    let mut s_out = exit.map_or(len, |u| s_at_param(&lane.curve, u));
+    if s_out - s_in < 1.0 {
+        s_in = 0.0;
+        s_out = len;
+    }
     Some(LaneNode {
         id,
         segment: lane.segment,
-        len: path_len(&lane.curve),
+        len,
         speed: lane.speed_limit.max(0.1),
-        forward: lane.dir == LaneDir::Forward,
+        forward,
         seg_len: seg.length,
         curve: lane.curve,
+        s_in,
+        s_out,
     })
 }
 
@@ -212,14 +298,20 @@ impl PathGraph {
             car_edges: vec![Vec::new(); slots],
             ped: vec![None; slots],
             ped_edges: vec![Vec::new(); slots * 2],
+            exits: vec![Vec::new(); slots],
             ..Default::default()
         };
         for (id, lane) in net.lanes() {
-            let Some(node) = node_of(lane, id, net) else {
+            let Some(node) = node_of(lane, id, net, geo) else {
                 continue;
             };
             let sl = g.segments.entry(lane.segment).or_default();
             if is_vehicle(lane.kind) {
+                let si = lane.segment.index as usize;
+                if g.seg_capacity.len() <= si {
+                    g.seg_capacity.resize(si + 1, 0.0);
+                }
+                g.seg_capacity[si] += node.s_out - node.s_in;
                 g.max_car_speed = g.max_car_speed.max(node.speed);
                 sl.car.push((id, lane.offset));
                 g.car[id.index as usize] = Some(node);
@@ -233,10 +325,63 @@ impl PathGraph {
             if net.node(*node).is_none() {
                 continue;
             }
-            for c in &junction.links.connections {
+            let light = junction.control.light.as_ref().map_or(u32::MAX, |plan| {
+                g.lights.push(plan.clone());
+                g.lights.len() as u32 - 1
+            });
+            let links = &junction.links;
+            for (ci, c) in links.connections.iter().enumerate() {
                 let (Some(from), Some(to)) = (g.car_slot(c.from), g.car_slot(c.to)) else {
                     continue;
                 };
+                let prio = |i: usize| {
+                    junction
+                        .control
+                        .priority
+                        .get(i)
+                        .copied()
+                        .unwrap_or(Priority::Main)
+                };
+                let conflicts = links
+                    .conflicts
+                    .iter()
+                    .filter_map(|&(a, b)| {
+                        let other = if usize::from(a) == ci {
+                            usize::from(b)
+                        } else if usize::from(b) == ci {
+                            usize::from(a)
+                        } else {
+                            return None;
+                        };
+                        let o = links.connections.get(other)?;
+                        let from_slot = g.car_slot(o.from)?;
+                        g.car_slot(o.to)?;
+                        Some(Conflict {
+                            from_slot,
+                            to: o.to,
+                            higher: light == u32::MAX
+                                && prio(ci) == Priority::Yield
+                                && prio(other) == Priority::Main,
+                        })
+                    })
+                    .collect();
+                let turn_speed = match c.turn {
+                    Turn::Straight => f32::MAX,
+                    Turn::Right | Turn::Left => TURN_SPEED,
+                    Turn::UTurn => U_TURN_SPEED,
+                };
+                let lane_speed =
+                    |slot: u32| g.car[slot as usize].as_ref().map_or(10.0, |l| l.speed);
+                let conn_speed = lane_speed(from).min(lane_speed(to)).min(turn_speed);
+                g.exits[from as usize].push(ExitConn {
+                    to: c.to,
+                    to_slot: to,
+                    index: ci as u16,
+                    length: c.length,
+                    speed: conn_speed,
+                    light,
+                    conflicts,
+                });
                 let speed = g.car[to as usize].as_ref().map_or(10.0, |l| l.speed);
                 let penalty = match c.turn {
                     Turn::Left => LEFT_TURN_PENALTY,

@@ -6,11 +6,14 @@
 
 use cp_building::BuildingGrid;
 use cp_citizen::{CitizenGrid, TripBook};
+use cp_citizen::{CitizenId, TripId};
+use cp_core::Arena;
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
-use cp_traffic::{Agents, SavedPaths};
+use cp_traffic::CarPath;
+use cp_traffic::{AgentStats, Agents, Pedestrian, SavedPaths, SegmentLoad, Vehicle};
 use cp_utility::UtilityGraph;
 use cp_zone::ZoneGrid;
 use serde::{Deserialize, Serialize};
@@ -182,11 +185,111 @@ pub struct SaveDataV10 {
     pub trips: TripBook,
 }
 
+/// Counters of the agent pools as written by format 11.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentStatsV11 {
+    pub abstract_trips: u64,
+    pub walked: u64,
+    pub driven: u64,
+    pub no_path: u64,
+    pub invalid_routes: u64,
+    pub red_waits: u64,
+}
+
+/// A vehicle as written by format 11: placeholder motion (an arrival tick, no lane state).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VehicleV11 {
+    pub trip: TripId,
+    pub citizen: CitizenId,
+    pub path: CarPath,
+    pub arrive_at: Tick,
+    pub stuck_timer: u32,
+}
+
+/// The agent pools as written by format 11.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AgentsV11 {
+    pub pedestrians: Arena<Pedestrian>,
+    pub vehicles: Arena<VehicleV11>,
+    pub stats: AgentStatsV11,
+}
+
+/// Version 11: the body as written by format 11 (agents with placeholder vehicle motion).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV11 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+    pub trips: TripBook,
+    pub agents: AgentsV11,
+}
+
+/// v11 → v12: vehicles got lane state and segment load was added. A v11 car had no
+/// position, only an arrival tick: it starts over at the beginning of its path (it waits for
+/// room there like a new car); if its start lane is gone the drive code completes the trip
+/// abstractly. Pedestrians are unchanged; the load starts empty.
+pub fn migrate_v11_to_v12(v11: SaveDataV11) -> SaveData {
+    let mut vehicles = Arena::new();
+    for (_, v) in v11.agents.vehicles.iter() {
+        vehicles.insert(Vehicle {
+            trip: v.trip,
+            citizen: v.citizen,
+            path: v.path.clone(),
+            kind: 0,
+            hop: 0,
+            in_conn: false,
+            spawned: false,
+            s: v.path.start_s,
+            speed: 0.0,
+            stuck_timer: 0,
+        });
+    }
+    let s = v11.agents.stats;
+    SaveData {
+        tick: v11.tick,
+        rng: v11.rng,
+        speed: v11.speed,
+        queue: v11.queue,
+        log: v11.log,
+        tiles: v11.tiles,
+        net: v11.net,
+        zones: v11.zones,
+        buildings: v11.buildings,
+        citizens: v11.citizens,
+        paths: v11.paths,
+        utilities: v11.utilities,
+        trips: v11.trips,
+        agents: Agents::from_parts(
+            v11.agents.pedestrians,
+            vehicles,
+            AgentStats {
+                abstract_trips: s.abstract_trips,
+                walked: s.walked,
+                driven: s.driven,
+                no_path: s.no_path,
+                invalid_routes: s.invalid_routes,
+                red_waits: s.red_waits,
+                ..AgentStats::default()
+            },
+            SegmentLoad::default(),
+        ),
+    }
+}
+
 /// v10 → v11: agents were added. A trip in flight in an old save has no agent: its state
 /// is one the old format knows (`Scheduled` or an abstract `InTransit`), which the routine's
 /// timer still finishes, so nothing needs rerouting.
-pub fn migrate_v10_to_v11(v10: SaveDataV10) -> SaveData {
-    SaveData {
+pub fn migrate_v10_to_v11(v10: SaveDataV10) -> SaveDataV11 {
+    SaveDataV11 {
         tick: v10.tick,
         rng: v10.rng,
         speed: v10.speed,
@@ -200,7 +303,7 @@ pub fn migrate_v10_to_v11(v10: SaveDataV10) -> SaveData {
         paths: v10.paths,
         utilities: v10.utilities,
         trips: v10.trips,
-        agents: Agents::default(),
+        agents: AgentsV11::default(),
     }
 }
 
@@ -322,6 +425,11 @@ pub fn migrate_v3_to_v4(v3: SaveDataV3) -> SaveDataV4 {
     }
 }
 
+/// The last two chain steps, shared by every arm.
+fn up(v: SaveDataV10) -> SaveData {
+    migrate_v11_to_v12(migrate_v10_to_v11(v))
+}
+
 /// Decodes a body written at `version` and runs the migration chain up to
 /// [`crate::FORMAT_VERSION`]. Add one `match` arm per version and one chain step per bump.
 pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveError> {
@@ -345,7 +453,7 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
             let v = migrate_v5_to_v6(v);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(v))))
+            Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(v))))
         }
         // v1 and v2 share the same body; v2 only added the header CRC.
         1 | 2 => {
@@ -355,7 +463,7 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
             let v = migrate_v5_to_v6(v);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(v))))
+            Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(v))))
         }
         3 => {
             let v = migrate_v3_to_v4(dec(body)?);
@@ -363,35 +471,34 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
             let v = migrate_v5_to_v6(v);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(v))))
+            Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(v))))
         }
         4 => {
             let v = migrate_v4_to_v5(dec(body)?);
             let v = migrate_v5_to_v6(v);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(v))))
+            Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(v))))
         }
         5 => {
             let v = migrate_v5_to_v6(dec(body)?);
             let v = migrate_v6_to_v7(v);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(v))))
+            Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(v))))
         }
         6 => {
             let v = migrate_v6_to_v7(dec(body)?);
             let v = migrate_v7_to_v8(v);
-            Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(v))))
+            Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(v))))
         }
-        7 => Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(
-            migrate_v7_to_v8(dec(body)?),
-        )))),
-        8 => Ok(migrate_v10_to_v11(migrate_v9_to_v10(migrate_v8_to_v9(
+        7 => Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(migrate_v7_to_v8(
             dec(body)?,
-        )))),
-        9 => Ok(migrate_v10_to_v11(migrate_v9_to_v10(dec(body)?))),
-        10 => Ok(migrate_v10_to_v11(dec(body)?)),
-        11 => dec(body),
+        ))))),
+        8 => Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(dec(body)?)))),
+        9 => Ok(up(migrate_v9_to_v10(dec(body)?))),
+        10 => Ok(up(dec(body)?)),
+        11 => Ok(migrate_v11_to_v12(dec(body)?)),
+        12 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -560,4 +667,16 @@ pub fn encode_v10(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v10).expect("serialization failed");
     crate::assemble(10, v10.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 11** file (agents, placeholder vehicle motion). Legacy writer kept only
+/// to regenerate and test the v11 fixture; real saves always use [`crate::save`].
+pub fn encode_v11(
+    v11: &SaveDataV11,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v11).expect("serialization failed");
+    crate::assemble(11, v11.tick.0, &body, content_hash, map_id, map_hash)
 }

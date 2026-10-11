@@ -365,6 +365,7 @@ fn demolish_occupied_buildings(content: &Arc<ContentDb>, seed: u64) -> SimRunner
         for (_, v) in agents.vehicles() {
             assert!(book.get(v.trip).is_some(), "vehicle of a missing trip");
         }
+        assert!(agents.occupancy_is_live(), "no dead vehicle left in a lane");
         if done_at.is_some_and(|d| sim.tick().0 >= d + 2 * TICKS_PER_DAY) {
             break;
         }

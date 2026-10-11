@@ -10,14 +10,14 @@ use cp_net::{Elevation, JunctionGeometry, NetGraph, SegmentId, update_junctions}
 use crate::*;
 
 /// A small sim: net + junction geometry + path snapshot + service, stepped by hand.
-struct Sim {
-    db: ContentDb,
-    world: World,
+pub(crate) struct Sim {
+    pub(crate) db: ContentDb,
+    pub(crate) world: World,
     schedule: Schedule,
 }
 
 impl Sim {
-    fn new(service: PathService) -> Self {
+    pub(crate) fn new(service: PathService) -> Self {
         let mut world = World::new();
         world.init_resource::<NetGraph>();
         world.init_resource::<JunctionGeometry>();
@@ -39,11 +39,11 @@ impl Sim {
         }
     }
 
-    fn road(&self, name: &str) -> RoadDefId {
+    pub(crate) fn road(&self, name: &str) -> RoadDefId {
         self.db.road_id(name).unwrap()
     }
 
-    fn seg_with(&mut self, road: &str, a: (f32, f32), b: (f32, f32)) -> SegmentId {
+    pub(crate) fn seg_with(&mut self, road: &str, a: (f32, f32), b: (f32, f32)) -> SegmentId {
         let id = self.road(road);
         let def = self.db.road(id).clone();
         self.world
@@ -57,19 +57,19 @@ impl Sim {
             .unwrap()
     }
 
-    fn seg(&mut self, a: (f32, f32), b: (f32, f32)) -> SegmentId {
+    pub(crate) fn seg(&mut self, a: (f32, f32), b: (f32, f32)) -> SegmentId {
         self.seg_with("basic_2l", a, b)
     }
 
     /// Runs the schedule for the current tick, then advances it.
-    fn tick(&mut self) -> Vec<PathOutcome> {
+    pub(crate) fn tick(&mut self) -> Vec<PathOutcome> {
         self.schedule.run(&mut self.world);
         let out = self.world.resource::<PathResults>().0.clone();
         self.world.resource_mut::<Tick>().advance();
         out
     }
 
-    fn now(&self) -> Tick {
+    pub(crate) fn now(&self) -> Tick {
         *self.world.resource::<Tick>()
     }
 
@@ -82,7 +82,7 @@ impl Sim {
     }
 
     /// Submit and run until the outcome arrives.
-    fn solve(&mut self, req: PathRequest) -> PathResult {
+    pub(crate) fn solve(&mut self, req: PathRequest) -> PathResult {
         self.tick(); // let the snapshot catch up with the roads built so far
         let id = self.submit(req);
         for _ in 0..=PATH_DELAY_TICKS + 1 {
@@ -109,15 +109,15 @@ impl Sim {
     }
 }
 
-fn sim() -> Sim {
+pub(crate) fn sim() -> Sim {
     Sim::new(PathService::new())
 }
 
-fn acc(segment: SegmentId, s: f32, side: Side) -> Access {
+pub(crate) fn acc(segment: SegmentId, s: f32, side: Side) -> Access {
     Access { segment, s, side }
 }
 
-fn car(from: Access, to: Access) -> PathRequest {
+pub(crate) fn car(from: Access, to: Access) -> PathRequest {
     PathRequest {
         mode: Mode::Car,
         from,
@@ -133,7 +133,7 @@ fn ped(from: Access, to: Access) -> PathRequest {
     }
 }
 
-fn car_path(r: PathResult) -> Result<CarPath, NoPath> {
+pub(crate) fn car_path(r: PathResult) -> Result<CarPath, NoPath> {
     match r {
         PathResult::Car(p) => p,
         other => panic!("{other:?}"),

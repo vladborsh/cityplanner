@@ -40,8 +40,8 @@ impl ScalarGrid {
     }
 }
 
-/// The overlay inputs of one snapshot. Empty until the owning domain lands: traffic load
-/// (T-035) fills `road_load`, land value and pollution (T-042) fill their grids.
+/// The overlay inputs of one snapshot. Land value and pollution (T-042) fill their grids when
+/// that domain lands; `road_load` comes from the traffic simulation.
 #[derive(Clone, Debug, Default)]
 pub struct OverlayData {
     pub zones: Arc<ZoneOverlay>,

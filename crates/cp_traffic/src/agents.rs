@@ -24,9 +24,13 @@
 //! the step runs in parallel over fixed-size chunks and is applied in id order (identical for
 //! any thread count; [`AgentSettings::parallel`] switches to a sequential run for tests).
 //!
-//! **Vehicles** are a pool slot plus the car path and an arrival tick from its cost —
-//! PLACEHOLDER motion until the car task (T-035) adds lanes, leaders and junctions; the slot
-//! is held until the trip ends.
+//! **Vehicles** drive their path lane by lane and through the junction connections
+//! ([`crate::drive`]): leader following, junction gates, parallel lane updates, removal of
+//! stuck cars. Arrival, an invalid route and the stuck timeout all complete the trip.
+//!
+//! **Clocks (§2).** The traffic-light plan counts 50 ms game ticks; vehicles and pedestrians
+//! read it on the *movement* clock ([`crate::drive::signal_tick`]), so a 20 s green is 20
+//! seconds of movement, not 13 minutes of it.
 
 use std::collections::BTreeMap;
 
@@ -44,7 +48,8 @@ use cp_net::{JunctionGeometry, LaneId, NetGraph, NodeId};
 use serde::{Deserialize, Serialize};
 
 use crate::astar::{CarPath, NoPath, PedPath};
-use crate::graph::{Access, PED_SPEED, PathGraph, SegEnd, Side};
+use crate::drive::{DriveState, STUCK_TICKS, drive_tick, signal_tick};
+use crate::graph::{Access, CongestionMap, PED_SPEED, PathGraph, SegEnd, Side};
 use crate::service::{
     Mode, PathNetwork, PathRequest, PathResult, PathResults, PathService, RequestId,
 };
@@ -81,10 +86,33 @@ pub struct Vehicle {
     pub trip: TripId,
     pub citizen: CitizenId,
     pub path: CarPath,
-    /// Placeholder motion: the tick the car reaches its destination.
-    pub arrive_at: Tick,
-    /// Ticks without moving (used by the car task; the despawn threshold is a setting).
+    /// `cp_content::VehicleKind` as a number.
+    pub kind: u8,
+    /// Index of the current lane in the path (`0` = start lane); while `in_conn`, the
+    /// connection `path.steps[hop]` is being crossed.
+    pub hop: u16,
+    pub in_conn: bool,
+    /// On the road (a new car waits until its start has room).
+    pub spawned: bool,
+    /// Front bumper, metres along the lane (or the connection curve).
+    pub s: f32,
+    /// Metres per second.
+    pub speed: f32,
+    /// Ticks without moving; the car disappears past [`AgentSettings::stuck_ticks`].
     pub stuck_timer: u32,
+}
+
+impl Vehicle {
+    /// The lane it is on, or — inside a junction — the lane it came from.
+    pub fn lane(&self) -> LaneId {
+        if self.hop == 0 {
+            self.path.start
+        } else if self.in_conn {
+            self.path.steps[usize::from(self.hop)].0
+        } else {
+            self.path.steps[usize::from(self.hop) - 1].1
+        }
+    }
 }
 
 /// Counters for the debug window and for balance.
@@ -100,6 +128,31 @@ pub struct AgentStats {
     pub invalid_routes: u64,
     /// Pedestrian-ticks spent waiting at a red crossing.
     pub red_waits: u64,
+    /// Cars removed after standing still for too long (trip completed abstractly).
+    pub despawned_stuck: u64,
+    /// Cars removed because the network changed under their route.
+    pub invalid_vehicles: u64,
+}
+
+/// Load of every road segment, indexed by segment arena slot: the length of cars over the
+/// length of vehicle lanes, `0..=1`. `inst` is the last tick's value (overlay), `ema` the
+/// average over ~2 game hours (path costs, `CongestionMap`). Saved with the agents.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SegmentLoad {
+    pub inst: Vec<f32>,
+    pub ema: Vec<f32>,
+    /// The `ema` last handed to the pathfinder (refreshed every [`LOAD_PUSH_TICKS`] ticks);
+    /// kept so a load restores the exact congestion map the continuous run is using.
+    pub published: Vec<f32>,
+}
+
+impl SegmentLoad {
+    pub fn inst(&self, segment: cp_net::SegmentId) -> f32 {
+        self.inst
+            .get(segment.index as usize)
+            .copied()
+            .unwrap_or(0.0)
+    }
 }
 
 /// Knobs (not saved).
@@ -107,11 +160,16 @@ pub struct AgentStats {
 pub struct AgentSettings {
     /// Step pedestrians on the compute pool (the result is the same either way).
     pub parallel: bool,
+    /// Ticks a car may stand still before it disappears (§9.4: 60 ticks = 120 s of movement).
+    pub stuck_ticks: u32,
 }
 
 impl Default for AgentSettings {
     fn default() -> Self {
-        Self { parallel: true }
+        Self {
+            parallel: true,
+            stuck_ticks: STUCK_TICKS,
+        }
     }
 }
 
@@ -121,6 +179,10 @@ pub struct Agents {
     pedestrians: Arena<Pedestrian>,
     vehicles: Arena<Vehicle>,
     pub stats: AgentStats,
+    pub load: SegmentLoad,
+    /// Lane/connection occupancy; derived from the vehicles, rebuilt lazily.
+    #[serde(skip)]
+    drive: DriveState,
     /// Path request -> trip; derived from the trips, rebuilt lazily after a load.
     #[serde(skip)]
     requests: BTreeMap<u64, TripId>,
@@ -133,10 +195,27 @@ impl PartialEq for Agents {
         self.pedestrians == other.pedestrians
             && self.vehicles == other.vehicles
             && self.stats == other.stats
+            && self.load == other.load
     }
 }
 
+/// Rebuilds [`Agents`] from saved parts (loads and migrations).
 impl Agents {
+    pub fn from_parts(
+        pedestrians: Arena<Pedestrian>,
+        vehicles: Arena<Vehicle>,
+        stats: AgentStats,
+        load: SegmentLoad,
+    ) -> Self {
+        Self {
+            pedestrians,
+            vehicles,
+            stats,
+            load,
+            ..Self::default()
+        }
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -158,7 +237,16 @@ impl Agents {
     }
 
     /// Frees the agents and pending path requests of cancelled trips.
-    fn drop_trips(&mut self, trips: &[TripId]) {
+    /// Every id in the lane/connection lists and the spawn queue is a live vehicle (a debug
+    /// check for tests that remove vehicles from outside the driving code).
+    pub fn occupancy_is_live(&self) -> bool {
+        let live = |id: &VehicleId| self.vehicles.contains(*id);
+        self.drive.lanes.iter().flatten().all(live)
+            && self.drive.conns.values().flatten().all(live)
+            && self.drive.waiting.iter().all(live)
+    }
+
+    pub(crate) fn drop_trips(&mut self, trips: &[TripId]) {
         let ped: Vec<PedestrianId> = self
             .pedestrians
             .iter()
@@ -175,7 +263,10 @@ impl Agents {
             .map(|(id, _)| id)
             .collect();
         for id in veh {
-            self.vehicles.remove(id);
+            if let Some(v) = self.vehicles.remove(id) {
+                // Also leave the lane/connection lists, or the dead id would block them.
+                self.drive.remove(&v, id);
+            }
         }
         self.requests.retain(|_, t| !trips.contains(t));
     }
@@ -330,19 +421,29 @@ pub fn receive_paths(
                 }
             }
             PathResult::Car(Ok(path)) if trip.mode == TripMode::Car => {
-                let arrive_at = Tick(now + travel_ticks(path.cost));
                 if agents.vehicles.len() < limits.vehicles as usize {
-                    agents.vehicles.insert(Vehicle {
+                    let id = agents.vehicles.insert(Vehicle {
                         trip: tid,
                         citizen: trip.citizen,
                         path: path.clone(),
-                        arrive_at,
+                        kind: 0,
+                        hop: 0,
+                        in_conn: false,
+                        spawned: false,
+                        s: path.start_s,
+                        speed: 0.0,
                         stuck_timer: 0,
                     });
+                    agents.drive.waiting.push(id);
                     book.set_state(tid, TripState::Agent);
                 } else {
                     agents.stats.abstract_trips += 1;
-                    book.set_state(tid, TripState::InTransit { arrive_at });
+                    book.set_state(
+                        tid,
+                        TripState::InTransit {
+                            arrive_at: Tick(now + travel_ticks(path.cost)),
+                        },
+                    );
                 }
             }
             // A result of the wrong mode cannot happen for a request we submitted.
@@ -570,9 +671,11 @@ pub fn move_agents(
         net: &net,
         graph: pnet.graph(),
         geo: &geo,
-        tick: now,
+        // Plan time on the movement clock (§2, three clocks).
+        tick: signal_tick(now, 0),
     };
-    let parallel = settings.is_none_or(|s| s.parallel);
+    let (parallel, stuck_ticks) =
+        settings.map_or((true, STUCK_TICKS), |s| (s.parallel, s.stuck_ticks));
 
     // Pedestrians: read-only shared state, each writes only itself.
     let mut refs: Vec<(PedestrianId, &mut Pedestrian)> = agents.pedestrians.iter_mut().collect();
@@ -619,17 +722,75 @@ pub fn move_agents(
     }
     agents.stats.red_waits += red;
 
-    // Vehicles (placeholder motion): arrive when the path cost says so.
-    let due: Vec<VehicleId> = agents
-        .vehicles
-        .iter()
-        .filter(|(_, v)| v.arrive_at.0 <= now)
-        .map(|(id, _)| id)
-        .collect();
-    for id in due {
-        if let Some(v) = agents.vehicles.remove(id) {
-            agents.stats.driven += 1;
-            complete_trip(&mut grid, &mut book, &buildings, &rng, now, v.trip);
+    // Vehicles.
+    let graph = pnet.graph();
+    let Agents {
+        vehicles,
+        drive,
+        stats,
+        ..
+    } = &mut *agents;
+    let mut gone: Vec<Vehicle> = Vec::new();
+    if !drive.ready || drive.generation != pnet.generation() {
+        for id in drive.rebuild(vehicles, graph, pnet.generation()) {
+            if let Some(v) = vehicles.remove(id) {
+                stats.invalid_vehicles += 1;
+                gone.push(v);
+            }
         }
     }
+    let pool = parallel.then(|| ComputeTaskPool::get_or_init(TaskPool::default));
+    let fin = drive_tick(vehicles, drive, graph, now, pool.map(|p| &**p), stuck_ticks);
+    stats.driven += fin.arrived.len() as u64;
+    stats.invalid_vehicles += fin.invalid.len() as u64;
+    stats.despawned_stuck += fin.stuck.len() as u64;
+    for v in fin
+        .arrived
+        .into_iter()
+        .chain(gone)
+        .chain(fin.invalid)
+        .chain(fin.stuck)
+    {
+        complete_trip(&mut grid, &mut book, &buildings, &rng, now, v.trip);
+    }
 }
+
+/// `Stats` phase: segment load (instantaneous and EMA over ~2 game hours) from the lane
+/// occupancy; every [`LOAD_PUSH_TICKS`] ticks the EMA becomes the pathfinder's congestion.
+pub fn update_traffic_load(
+    tick: Res<Tick>,
+    mut pnet: ResMut<PathNetwork>,
+    mut agents: ResMut<Agents>,
+) {
+    let graph = std::sync::Arc::clone(pnet.graph());
+    let Agents { drive, load, .. } = &mut *agents;
+    let n = graph.seg_capacity.len();
+    load.inst.clear();
+    load.inst.resize(n, 0.0);
+    load.ema.resize(n, 0.0);
+    for (slot, l) in drive.lanes.iter().enumerate() {
+        if let (false, Some(node)) = (l.is_empty(), graph.car.get(slot).and_then(Option::as_ref)) {
+            load.inst[node.segment.index as usize] += l.len() as f32 * crate::drive::CAR_LENGTH;
+        }
+    }
+    let alpha = 1.0 / EMA_TICKS;
+    for i in 0..n {
+        let cap = graph.seg_capacity[i];
+        let x = if cap > 1.0 {
+            (load.inst[i] / cap).min(1.0)
+        } else {
+            0.0
+        };
+        load.inst[i] = x;
+        load.ema[i] += (x - load.ema[i]) * alpha;
+    }
+    if tick.0.is_multiple_of(LOAD_PUSH_TICKS) {
+        load.published = load.ema.clone();
+        pnet.set_congestion(CongestionMap(load.published.clone()));
+    }
+}
+
+/// Averaging window of the segment load: 2 game hours of 170.67 ticks.
+const EMA_TICKS: f32 = 341.0;
+/// How often the pathfinder's congestion map is refreshed.
+const LOAD_PUSH_TICKS: u64 = 32;

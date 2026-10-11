@@ -63,10 +63,8 @@ fn main() {
     // Run on until somebody is on the road (the three-street town is small: trips walk).
     for _ in 0..(6 * TICKS_PER_DAY) {
         sim.tick_once();
-        if {
-            let a = sim.world().resource::<Agents>();
-            a.vehicle_count() + a.pedestrian_count() > 0
-        } {
+        let a = sim.world().resource::<Agents>();
+        if a.vehicle_count() + a.pedestrian_count() > 0 {
             break;
         }
     }

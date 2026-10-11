@@ -141,11 +141,22 @@ impl SimRunner {
     }
 
     /// The overlay inputs for `SimView::overlays`. Zones are cached while unchanged; traffic
-    /// load, land value and pollution stay empty until their domains (T-035, T-042) land.
+    /// load comes from the agents' instantaneous segment load; land value and pollution stay
+    /// empty until their domain (T-042) lands.
     fn overlay_data(&self) -> OverlayData {
         let mut cache = self.zone_cache.lock().expect("zone cache");
+        let mut road_load = std::collections::BTreeMap::new();
+        if let (Some(net), Some(agents)) = (
+            self.world().get_resource::<cp_net::NetGraph>(),
+            self.world().get_resource::<cp_traffic::Agents>(),
+        ) {
+            for (id, _) in net.segments() {
+                road_load.insert(id, agents.load.inst(id));
+            }
+        }
         OverlayData {
             zones: zone_snapshot(self.world().get_resource::<cp_zone::ZoneGrid>(), &mut cache),
+            road_load: Arc::new(road_load),
             ..OverlayData::default()
         }
     }

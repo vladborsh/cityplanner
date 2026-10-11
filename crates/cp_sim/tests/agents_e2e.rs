@@ -266,7 +266,7 @@ fn pedestrians_wait_for_the_walk_signal_before_crossing() {
                     if let Some(plan) = &j.control.light
                         && j.links.pedestrian[usize::from(link)].kind
                             == cp_net::PedLinkKind::Crossing
-                        && !plan.walk(link, now)
+                        && !plan.walk(link, cp_traffic::drive::signal_tick(now, 0))
                     {
                         starts_on_red += 1;
                     }
@@ -344,4 +344,49 @@ fn agents_and_trips_stay_consistent_over_two_days_of_the_real_routine() {
     let a = sim.world().resource::<Agents>();
     assert!(a.stats.walked + a.stats.driven > 100);
     assert_eq!(a.stats.no_path, 0, "the lattice is connected");
+}
+
+#[test]
+fn cars_drive_the_lattice_finish_their_trips_and_light_the_load_overlay() {
+    let content = content();
+    let mut sim = quiet_town(&content, 5, 5, "basic_2l", 300);
+    let before = sim.world().resource::<TripBook>().completed;
+    let made = inject(&mut sim, 100, |_| TripMode::Car);
+    assert!(made >= 50);
+    let mut peak_load = 0.0f32;
+    let mut peak_cars = 0;
+    for _ in 0..(2 * TICKS_PER_DAY) {
+        sim.tick_once();
+        peak_cars = peak_cars.max(sim.world().resource::<Agents>().vehicle_count());
+        let view = sim.view();
+        peak_load = peak_load.max(
+            view.overlays
+                .road_load
+                .values()
+                .copied()
+                .fold(0.0, f32::max),
+        );
+        if sim.world().resource::<TripBook>().is_empty() {
+            break;
+        }
+    }
+    let book = sim.world().resource::<TripBook>();
+    let a = sim.world().resource::<Agents>();
+    assert!(book.is_empty(), "every car trip ended");
+    assert_eq!(book.completed - before, made as u64);
+    assert!(
+        peak_cars > 5,
+        "several cars were on the road at once ({peak_cars})"
+    );
+    assert!(a.stats.driven > 0);
+    assert_eq!(a.stats.invalid_vehicles, 0);
+    assert!(peak_load > 0.0, "the traffic overlay sees the cars");
+    assert!(
+        a.load.ema.iter().any(|&x| x > 0.0),
+        "the smoothed load follows"
+    );
+    assert!(
+        sim.view().overlays.road_load.values().all(|&x| x == 0.0),
+        "an empty road shows no load"
+    );
 }

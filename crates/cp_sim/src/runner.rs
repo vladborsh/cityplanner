@@ -190,6 +190,7 @@ impl SimRunner {
                 .chain()
                 .in_set(SimPhase::Agents),
         );
+        schedule.add_systems(cp_traffic::update_traffic_load.in_set(SimPhase::Stats));
         schedule.add_systems(
             cp_citizen::update_routine
                 .in_set(SimPhase::Citizens)
