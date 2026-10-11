@@ -98,7 +98,10 @@ pub struct Vehicle {
     pub s: f32,
     /// Metres per second.
     pub speed: f32,
-    /// Ticks without moving; the car disappears past [`AgentSettings::stuck_ticks`].
+    /// Standstill counters packed in one `u32` (save format unchanged): the high 16 bits count
+    /// ticks standing for any reason (hard cap 10 × the threshold), the low 16 bits ticks
+    /// standing for a suspicious reason; the car disappears past [`AgentSettings::stuck_ticks`]
+    /// of the latter (§9.4 v1.1).
     pub stuck_timer: u32,
 }
 

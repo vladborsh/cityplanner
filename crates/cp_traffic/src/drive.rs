@@ -55,8 +55,13 @@ pub const DECEL: f32 = 4.0;
 pub const REACTION: f32 = 1.0;
 /// Distance before a stop line inside which a car with priority blocks yielding traffic.
 pub const PRIORITY_ZONE: f32 = 30.0;
-/// Ticks without moving before a car is removed (§9.4: 120 s of movement).
+/// Ticks standing for a suspicious reason (no room beyond the junction, or behind such a car)
+/// before a car is removed (§9.4: 120 s of movement). A red light or yielding does not count.
 pub const STUCK_TICKS: u32 = 60;
+/// Hard cap on a standstill for any reason, in multiples of the stuck threshold (§9.4 v1.1).
+pub const HARD_CAP_FACTOR: u32 = 10;
+/// How many full lanes ahead the suspicion of a blocked car is followed.
+const LEADER_CHAIN: u32 = 8;
 /// Vehicles per parallel chunk of places.
 const CHUNK: usize = 64;
 /// Fewer vehicles than this are stepped on the calling thread.
@@ -473,6 +478,127 @@ pub(crate) fn spawn_waiting(
     }
 }
 
+/// Is the front car `v` of its lane held by something that should not last: no room beyond the
+/// junction, or a conflicting car that itself stands? A red light, or yielding to a car that
+/// is moving, is legitimate waiting.
+fn front_suspicious(
+    g: &PathGraph,
+    veh: &Arena<Vehicle>,
+    st: &DriveState,
+    signal: u64,
+    v: &Vehicle,
+    node: &LaneNode,
+    depth: u32,
+) -> bool {
+    let Some((_, to)) = v.path.steps.get(v.hop as usize).copied() else {
+        return false;
+    };
+    let Some(ex) = find_exit(g, node.id, to) else {
+        return false;
+    };
+    if gate_open(g, veh, st, signal, v, ex, node.s_out) {
+        return false;
+    }
+    if ex.light != u32::MAX
+        && g.lights[ex.light as usize].connection_signal(ex.index, signal) != Signal::Green
+    {
+        return false;
+    }
+    let (mut legit, mut stuck_behind) = (false, false);
+    for c in &ex.conflicts {
+        let inside = st.conns.get(&(c.from_slot, c.to.index));
+        if let Some(l) = inside.filter(|l| !l.is_empty()) {
+            let standing = l
+                .iter()
+                .any(|&id| veh.get(id).is_some_and(|o| o.speed < 0.1));
+            legit |= !standing;
+            stuck_behind |= standing;
+        }
+        if c.higher
+            && let Some(n) = g.car[c.from_slot as usize].as_ref()
+            && let Some(o) = st.lanes[c.from_slot as usize]
+                .first()
+                .and_then(|&id| veh.get(id))
+            && n.s_out - o.s <= PRIORITY_ZONE
+            && o.path
+                .steps
+                .get(o.hop as usize)
+                .is_some_and(|x| x.1 == c.to)
+        {
+            legit |= o.speed >= 0.1;
+            stuck_behind |= o.speed < 0.1;
+        }
+    }
+    if stuck_behind {
+        return true;
+    }
+    if legit || has_room(g, veh, st, ex.to_slot, 0) {
+        return false;
+    }
+    // No room beyond the junction: gridlock, unless the lane ahead is only backed up behind a
+    // legitimate wait (a red light further on). A ring of full lanes runs out of depth.
+    let Some(front) = st.lanes[ex.to_slot as usize]
+        .first()
+        .and_then(|&id| veh.get(id))
+    else {
+        return false;
+    };
+    if front.speed >= 0.1 {
+        return false;
+    }
+    match g.car[ex.to_slot as usize].as_ref() {
+        Some(t) if depth < LEADER_CHAIN => {
+            front_suspicious(g, veh, st, signal, front, t, depth + 1)
+        }
+        _ => true,
+    }
+}
+
+/// For every standing vehicle: is it standing for a suspicious reason? Front to back per place,
+/// one pass; a car behind a standing leader inherits the leader's reason.
+fn suspicious_flags(
+    veh: &Arena<Vehicle>,
+    st: &DriveState,
+    g: &PathGraph,
+    signal: u64,
+) -> Vec<(VehicleId, bool)> {
+    let mut out = Vec::with_capacity(veh.len());
+    let mut walk = |list: &[VehicleId], front: Option<bool>| {
+        let mut lead: Option<bool> = None;
+        for (i, &id) in list.iter().enumerate() {
+            let Some(v) = veh.get(id) else { continue };
+            let standing = v.speed < 0.1;
+            let sus = match (i, lead) {
+                (0, _) => standing && front.unwrap_or(false),
+                (_, Some(l)) => standing && l,
+                (_, None) => false,
+            };
+            out.push((id, sus));
+            lead = standing.then_some(sus);
+        }
+    };
+    for (slot, list) in st.lanes.iter().enumerate() {
+        let Some(&first) = list.first() else { continue };
+        let front = match (veh.get(first), g.car[slot].as_ref()) {
+            (Some(v), Some(node)) if v.speed < 0.1 => {
+                Some(front_suspicious(g, veh, st, signal, v, node, 0))
+            }
+            _ => Some(false),
+        };
+        walk(list, front);
+    }
+    for list in st.conns.values() {
+        // A car standing inside a junction waits for room beyond it.
+        walk(list, Some(true));
+    }
+    for &id in &st.waiting {
+        if veh.contains(id) {
+            out.push((id, false));
+        }
+    }
+    out
+}
+
 /// One tick of driving: [`MOVE_SUBSTEPS`] substeps. `pool` runs the place chunks in parallel
 /// (the result is the same for any pool size, or none).
 pub(crate) fn drive_tick(
@@ -488,16 +614,21 @@ pub(crate) fn drive_tick(
     for sub in 0..MOVE_SUBSTEPS {
         substep(vehicles, st, g, signal_tick(tick, sub), pool, &mut finished);
     }
-    // Stuck timers (ticks without moving).
+    // Stuck timers (§9.4 v1.1): only a standstill for a suspicious reason counts.
+    let flags = suspicious_flags(vehicles, st, g, signal_tick(tick, MOVE_SUBSTEPS - 1));
     let mut stuck = Vec::new();
-    for (id, v) in vehicles.iter_mut() {
-        if v.speed < 0.1 {
-            v.stuck_timer += 1;
-            if v.stuck_timer > stuck_ticks {
-                stuck.push(id);
-            }
-        } else {
+    for (id, suspicious) in flags {
+        let v = vehicles.get_mut(id).expect("flagged vehicle");
+        if v.speed >= 0.1 {
             v.stuck_timer = 0;
+            continue;
+        }
+        let (still, sus) = (v.stuck_timer >> 16, v.stuck_timer & 0xFFFF);
+        let still = (still + 1).min(0xFFFF);
+        let sus = if suspicious { (sus + 1).min(0xFFFF) } else { 0 };
+        v.stuck_timer = still << 16 | sus;
+        if sus > stuck_ticks || still > stuck_ticks.saturating_mul(HARD_CAP_FACTOR) {
+            stuck.push(id);
         }
     }
     for id in stuck {

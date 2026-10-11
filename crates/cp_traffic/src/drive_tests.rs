@@ -259,7 +259,7 @@ fn a_queue_builds_at_the_light_and_clears_when_the_load_stops() {
 }
 
 #[test]
-fn cars_standing_too_long_disappear() {
+fn the_hard_cap_removes_cars_waiting_at_a_red_at_a_tiny_threshold() {
     let mut s = sim();
     let arms = cross(&mut s, "medium_4l");
     let mut rig = Rig::new(s);
@@ -275,6 +275,90 @@ fn cars_standing_too_long_disappear() {
         "a car waiting for a red is removed at a tiny threshold"
     );
     assert!(rig.veh.is_empty() || rig.arrived + rig.stuck < 40);
+}
+
+/// Packs `stuck_timer` (standing ticks << 16 | suspicious ticks), see `drive_tick`.
+fn timer(standing: u32, suspicious: u32) -> u32 {
+    standing << 16 | suspicious
+}
+
+#[test]
+fn a_car_blocked_for_the_hard_cap_disappears_whatever_the_reason() {
+    let mut s = sim();
+    let arms = cross(&mut s, "medium_4l");
+    let mut rig = Rig::new(s);
+    crossing_traffic(&mut rig, &arms, 10);
+    let cap = 10 * STUCK_TICKS;
+    for t in 0..400 {
+        if rig.veh.is_empty() {
+            break;
+        }
+        for (_, v) in rig.veh.iter_mut() {
+            if v.speed < 0.1 {
+                // 600 ticks standing for a legitimate reason: the 601st removes the car.
+                v.stuck_timer = timer(cap, 0);
+            }
+        }
+        rig.tick(t, None, STUCK_TICKS);
+    }
+    assert!(
+        rig.stuck > 0,
+        "the cap clears a car that stood {cap} ticks and one more"
+    );
+}
+
+#[test]
+fn a_long_queue_at_a_red_light_loses_nobody() {
+    let mut s = sim();
+    let w = s.seg_with("medium_4l", (-600.0, 1000.0), (1000.0, 1000.0));
+    let e = s.seg_with("medium_4l", (1120.0, 1000.0), (1000.0, 1000.0));
+    s.seg_with("medium_4l", (1000.0, 880.0), (1000.0, 1000.0));
+    s.seg_with("medium_4l", (1000.0, 1120.0), (1000.0, 1000.0));
+    let mut rig = Rig::new(s);
+    assert!(!rig.graph.lights.is_empty());
+    for k in 0..200 {
+        rig.add(from_arm(w, 5.0 + 7.0 * k as f32), to_arm(e, 100.0));
+    }
+    for t in 0..2000 {
+        rig.tick(t, None, STUCK_TICKS);
+        if rig.veh.is_empty() {
+            break;
+        }
+    }
+    assert_eq!((rig.arrived, rig.stuck, rig.invalid), (200, 0, 0));
+}
+
+#[test]
+fn a_ring_of_full_lanes_is_a_gridlock_and_clears() {
+    let mut s = sim();
+    let pts = [
+        (1000.0, 1000.0),
+        (1090.0, 1000.0),
+        (1090.0, 1090.0),
+        (1000.0, 1090.0),
+    ];
+    let segs: Vec<SegmentId> = (0..4)
+        .map(|i| s.seg_with("basic_2l", pts[i], pts[(i + 1) % 4]))
+        .collect();
+    let mut rig = Rig::new(s);
+    for k in 0..4 {
+        for j in 0..12 {
+            // Two sides further round the ring: the car must go through the next lane.
+            rig.add(
+                from_arm(segs[k], 5.0 + 7.0 * j as f32),
+                from_arm(segs[(k + 2) % 4], 60.0),
+            );
+        }
+    }
+    let n = rig.veh.len();
+    for t in 0..400 {
+        rig.tick(t, None, STUCK_TICKS);
+        if rig.veh.is_empty() {
+            break;
+        }
+    }
+    println!("ring: arrived {} stuck {}", rig.arrived, rig.stuck);
+    assert!(rig.stuck > 0 && rig.arrived + rig.stuck + rig.invalid == n);
 }
 
 fn lattice(lines: usize) -> (Sim, Vec<SegmentId>) {
