@@ -122,6 +122,25 @@ impl BuildingGrid {
         Some(b)
     }
 
+    /// Sets or clears flag bit(s) `bit` of a building; counts as a change only when the flags
+    /// really differ. Returns whether they did.
+    pub fn set_flag(&mut self, id: BuildingId, bit: u8, on: bool) -> bool {
+        let Some(b) = self.buildings.get(id) else {
+            return false;
+        };
+        let new = if on {
+            b.flags.0 | bit
+        } else {
+            b.flags.0 & !bit
+        };
+        if new == b.flags.0 {
+            return false;
+        }
+        self.revision = next_revision();
+        self.buildings.get_mut(id).expect("building").flags.0 = new;
+        true
+    }
+
     pub fn has_removed(&self) -> bool {
         !self.removed.is_empty()
     }

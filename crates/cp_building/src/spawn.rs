@@ -128,6 +128,45 @@ pub(crate) fn place(
     ))
 }
 
+/// Buildings stay when their road is removed (§8 v1.1): the access point is checked once per
+/// bucket (`index % 32 == tick % 32`). A building whose segment is gone gets `NO_ROAD`, unless
+/// a road now runs along its lot (rebuilt along the old one): then its access point moves
+/// there and the flag clears.
+fn revalidate_access(net: &NetGraph, buildings: &mut BuildingGrid, tick: u64) {
+    let mut changes: Vec<(crate::BuildingId, Option<AccessPoint>)> = Vec::new();
+    for (id, b) in buildings.iter_bucket(BLOCK_BUCKETS as u32, (tick % BLOCK_BUCKETS) as u32) {
+        let alive = net.segment(b.access.segment).is_some();
+        if alive && !b.flags.has(BuildingFlags::NO_ROAD) {
+            continue;
+        }
+        if alive {
+            changes.push((id, Some(b.access)));
+            continue;
+        }
+        // Nearest road within reach of the lot's front; lowest segment id wins a tie.
+        let reach = f32::from(b.lot.d) * CELL_SIZE + ACCESS_SLACK;
+        let mut best: Option<(f32, AccessPoint)> = None;
+        for (sid, seg) in net.segments() {
+            let (t, d) = seg.curve.nearest_xz(b.pos);
+            if d <= reach && best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, AccessPoint { segment: sid, t }));
+            }
+        }
+        changes.push((id, best.map(|(_, a)| a)));
+    }
+    for (id, access) in changes {
+        if let Some(a) = access
+            && buildings.get(id).is_some_and(|b| b.access != a)
+        {
+            buildings.get_mut(id).expect("building").access = a;
+        }
+        buildings.set_flag(id, BuildingFlags::NO_ROAD, access.is_none());
+    }
+}
+
+/// Slack beyond the lot depth when looking for a road again, metres (half a wide road).
+const ACCESS_SLACK: f32 = 12.0;
+
 /// `Buildings`-phase system: finishes construction and spawns new buildings.
 #[allow(clippy::too_many_arguments)]
 pub fn update_buildings(
@@ -141,6 +180,7 @@ pub fn update_buildings(
     mut buildings: ResMut<BuildingGrid>,
 ) {
     buildings.finish_construction(tick.0);
+    revalidate_access(&net, &mut buildings, tick.0);
     let Some(content) = content else { return };
     if !zones.index_ready() {
         return;

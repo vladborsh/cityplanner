@@ -66,6 +66,10 @@ impl BuildingFlags {
     pub const NO_GOODS: u8 = 16;
     /// Appended in T-038.
     pub const NO_SEWAGE: u8 = 32;
+    /// Appended in T-061: the road the access point stood on is gone and no other is near.
+    pub const NO_ROAD: u8 = 64;
+    /// Appended in T-061: `cp_traffic` found no route from/to the building (last trip result).
+    pub const NO_PATH: u8 = 128;
     /// The utility bits (water, power, sewage), which `cp_utility` recomputes every 64 ticks.
     pub const UTILITY_MASK: u8 = Self::NO_WATER | Self::NO_POWER | Self::NO_SEWAGE;
 

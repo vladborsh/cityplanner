@@ -37,7 +37,7 @@ use std::collections::BTreeMap;
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use bevy_tasks::{ComputeTaskPool, TaskPool};
-use cp_building::{Building, BuildingGrid};
+use cp_building::{Building, BuildingFlags, BuildingGrid};
 use cp_citizen::{
     CitizenGrid, CitizenId, TripBook, TripId, TripMode, TripState, cancel_trip, complete_trip,
 };
@@ -385,6 +385,7 @@ pub fn receive_paths(
     tick: Res<Tick>,
     results: Res<PathResults>,
     limits: Res<SimLimits>,
+    mut buildings: ResMut<BuildingGrid>,
     mut book: ResMut<TripBook>,
     mut grid: ResMut<CitizenGrid>,
     mut agents: ResMut<Agents>,
@@ -404,10 +405,22 @@ pub fn receive_paths(
             book.cancelled += 1;
             continue;
         }
+        if matches!(
+            outcome.result,
+            PathResult::Pedestrian(Ok(_)) | PathResult::Car(Ok(_))
+        ) {
+            for b in [trip.from, trip.to] {
+                buildings.set_flag(b, BuildingFlags::NO_PATH, false);
+            }
+        }
         match &outcome.result {
             PathResult::Stale => book.set_state(tid, TripState::Planned),
             PathResult::Pedestrian(Err(NoPath)) | PathResult::Car(Err(NoPath)) => {
                 agents.stats.no_path += 1;
+                // Either end may be the cut-off one; a later successful trip clears the other.
+                for b in [trip.from, trip.to] {
+                    buildings.set_flag(b, BuildingFlags::NO_PATH, true);
+                }
                 cancel_trip(&mut grid, &mut book, tid);
             }
             PathResult::Pedestrian(Ok(path)) if trip.mode == TripMode::Walk => {
