@@ -2412,6 +2412,7 @@ dependencies = [
  "cp_sim",
  "cp_terrain",
  "cp_tools",
+ "cp_traffic",
  "cp_ui",
  "cp_zone",
 ]
@@ -2544,6 +2545,7 @@ version = "0.0.0"
 dependencies = [
  "bevy",
  "bevy_math",
+ "bytemuck",
  "cp_building",
  "cp_content",
  "cp_core",

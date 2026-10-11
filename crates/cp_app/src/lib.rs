@@ -21,8 +21,8 @@ use cp_core::time::TICKS_PER_DAY;
 use cp_core::{SimLimits, Tick};
 use cp_prof::{PhaseClock, PhaseTiming};
 use cp_render::{
-    BuildingRenderPlugin, OverlayPlugin, RoadRenderPlugin, RtsCamera, RtsCameraPlugin,
-    TerrainRenderPlugin,
+    AgentRenderPlugin, AgentRenderStats, BuildingRenderPlugin, OverlayPlugin, RoadRenderPlugin,
+    RtsCamera, RtsCameraPlugin, TerrainRenderPlugin, TickFraction,
 };
 use cp_sim::{SimPhase, SimRunner, SimView};
 use cp_terrain::{MAP_SIZE, Terrain};
@@ -83,6 +83,7 @@ impl Plugin for GamePlugin {
             RoadRenderPlugin,
             OverlayPlugin,
             BuildingRenderPlugin,
+            AgentRenderPlugin,
             RtsCameraPlugin,
         ))
         .add_systems(PreUpdate, step_sim);
@@ -99,6 +100,8 @@ impl Plugin for GamePlugin {
                 }),
                 Transform::from_translation(pos).looking_at(look, Vec3::Y),
                 RtsCamera::from_pose(pos, look),
+                // Agents are drawn with a custom instanced draw (cp_render::agent_render).
+                bevy::render::view::NoIndirectDrawing,
             ));
             if let Some(image) = target.clone() {
                 camera.insert(RenderTarget::Image(image.into()));
@@ -127,6 +130,10 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c - 60.0, 90.0, c + 330.0),
             Vec3::new(c - 60.0, 0.0, c + 190.0),
         ),
+        // Above the grid centre, wide enough to see many streets of the traffic scene.
+        "traffic" => (Vec3::new(c, 190.0, c + 230.0), Vec3::new(c, 0.0, c - 20.0)),
+        // Straight down on the centre of a small traffic grid: everything in view.
+        "traffic-top" => (Vec3::new(c, 240.0, c + 40.0), Vec3::new(c, 0.0, c)),
         "valley" => (
             Vec3::new(c, 1500.0, c + 2500.0),
             Vec3::new(c, 0.0, c - 500.0),
@@ -152,7 +159,18 @@ pub fn build_sim(
     if phase_timing {
         sim.add_plugin(&PhaseTiming::window(PHASE_WINDOW_TICKS));
     }
-    if scene == Some(scene::SHOWCASE) {
+    if let Some((n, cars, peds)) = scene.and_then(scene::parse_traffic) {
+        for reason in scene::build_grid(&mut sim, n) {
+            warn!("scene command rejected: {reason}");
+        }
+        sim.world_mut().insert_resource(scene::DemoTraffic {
+            cars,
+            peds,
+            batch: 0,
+        });
+        scene::top_up_traffic(&mut sim);
+        info!("scene traffic:{n}: up to {cars} cars, {peds} pedestrians");
+    } else if scene == Some(scene::SHOWCASE) {
         let n = scene::build_showcase(&mut sim);
         info!("scene showcase: {n} buildings");
     } else if let Some(n) = scene.and_then(scene::parse_city) {
@@ -201,16 +219,24 @@ fn step_sim(
     view: Option<ResMut<SimView>>,
     mut outbox: ResMut<CommandOutbox>,
     mut phases: ResMut<PhaseTimes>,
+    mut fraction: ResMut<TickFraction>,
+    mut agent_stats: ResMut<AgentRenderStats>,
 ) {
     let (Some(mut sim), Some(mut view)) = (sim, view) else {
         return;
     };
     let submitted = outbox.flush_into(&mut sim.0) > 0;
     let ticks = sim.0.step(Duration::from_secs_f64(time.delta_secs_f64()));
+    if ticks > 0 {
+        scene::top_up_traffic(&mut sim.0);
+    }
     if submitted || ticks > 0 {
+        let start = bevy::platform::time::Instant::now();
         *view = sim.0.view();
+        agent_stats.view_ms = start.elapsed().as_secs_f32() * 1000.0;
     }
     if ticks > 0 {
         *phases = phase_times(&sim.0);
     }
+    fraction.0 = sim.0.tick_fraction();
 }

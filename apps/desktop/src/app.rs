@@ -14,7 +14,7 @@ use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::window::PresentMode;
 use cp_app::{GamePlugin, MapLoadFailed, phase_times};
 use cp_core::SimLimits;
-use cp_render::{BuildingStats, RoadStats, TerrainStats};
+use cp_render::{AgentRenderStats, BuildingStats, RoadStats, TerrainStats};
 use cp_sim::SimRunner;
 
 use crate::ASSETS_DIR;
@@ -190,6 +190,7 @@ fn job(
     stats: Res<TerrainStats>,
     roads: Res<RoadStats>,
     buildings: Res<BuildingStats>,
+    agents: Res<AgentRenderStats>,
     diagnostics: Res<DiagnosticsStore>,
     capture: Option<ResMut<Capture>>,
     mut exit: MessageWriter<AppExit>,
@@ -257,6 +258,16 @@ fn job(
         buildings.drawn_triangles,
         buildings.last_rebuilt,
         buildings.last_update_ms
+    );
+    println!(
+        "BENCH agents vehicles_in_sim={} pedestrians_in_sim={} vehicles_drawn={} pedestrians_drawn={} draws={} prepare_ms={:.2} view_ms={:.2}",
+        agents.vehicles_in_sim,
+        agents.pedestrians_in_sim,
+        agents.vehicles_drawn,
+        agents.pedestrians_drawn,
+        agents.draws,
+        agents.prepare_ms,
+        agents.view_ms
     );
     for d in diagnostics.iter() {
         if let Some(v) = d.smoothed() {

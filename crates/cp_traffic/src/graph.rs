@@ -118,6 +118,14 @@ impl LaneNode {
         to_xz(self.curve[k].point(u - k as f32))
     }
 
+    /// Like [`Self::point_at`] with the height.
+    pub fn point3_at(&self, s: f32) -> bevy_math::Vec3 {
+        let n = self.curve.len();
+        let u = (s / self.len.max(1e-3)).clamp(0.0, 1.0) * n as f32;
+        let k = (u as usize).min(n - 1);
+        self.curve[k].point(u - k as f32)
+    }
+
     /// Lane metres (in travel direction) of the lane end at `end`: `0` or `len`.
     pub fn end_s(&self, end: SegEnd) -> f32 {
         if (end == SegEnd::End) == self.forward {
@@ -428,6 +436,18 @@ impl PathGraph {
     }
 
     /// The pedestrian lane `id`, if it is in this snapshot.
+    pub(crate) fn car_lane(&self, id: LaneId) -> Option<&LaneNode> {
+        self.car
+            .get(id.index as usize)?
+            .as_ref()
+            .filter(|l| l.id == id)
+    }
+
+    /// Whether the vehicle lane runs with its segment (start to end).
+    pub(crate) fn lane_forward(&self, id: LaneId) -> Option<bool> {
+        self.car_lane(id).map(|l| l.forward)
+    }
+
     pub(crate) fn ped_lane(&self, id: LaneId) -> Option<&LaneNode> {
         self.ped
             .get(id.index as usize)?

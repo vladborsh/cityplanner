@@ -16,6 +16,7 @@ use cp_core::{CommandLog, CommandQueue, GameTime, SimSpeed, Tick};
 use cp_net::{JunctionGeometry, NetGraph};
 pub use cp_terrain::SimTerrain;
 use cp_terrain::{Terrain, TileOwnership};
+use cp_traffic::AgentFrame;
 
 use crate::checksum::SimChecksum;
 use crate::command::SimCommand;
@@ -87,7 +88,23 @@ pub struct SimView {
     /// The zone blocks and painted types as of this snapshot (tools, zone overlay). Shared and
     /// re-cloned only when `ZoneGrid::revision` changed.
     pub zones: Arc<cp_zone::ZoneGrid>,
+    /// Poses of vehicles and pedestrians after this tick and after the previously published
+    /// one, for the client to interpolate between. Shared; rebuilt only when the tick advanced.
+    pub agents: Arc<AgentSnapshot>,
 }
+
+/// Agent poses of two consecutive snapshots. `prev` is the frame of the previous published
+/// view (equal to `cur` the first time), so a client draws `lerp(prev, cur, fraction)` where
+/// `fraction` is how far real time is into the tick that follows the snapshot.
+#[derive(Debug, Default)]
+pub struct AgentSnapshot {
+    pub tick: Tick,
+    pub prev: Arc<AgentFrame>,
+    pub cur: Arc<AgentFrame>,
+}
+
+/// Last `SimView::agents`.
+pub(crate) type AgentCache = Option<Arc<AgentSnapshot>>;
 
 /// `(zone revision, snapshot)` of the last `SimView::zones`.
 pub(crate) type ZoneCache = Option<(u64, Arc<cp_zone::ZoneGrid>)>;
@@ -194,6 +211,34 @@ impl SimRunner {
         snap
     }
 
+    /// The agent poses for `SimView::agents`, rebuilt only when the tick advanced.
+    fn agent_snapshot(&self, tick: Tick) -> Arc<AgentSnapshot> {
+        let mut cache = self.agents_cache.lock().expect("agents cache");
+        if let Some(snap) = cache.as_ref()
+            && snap.tick == tick
+        {
+            return Arc::clone(snap);
+        }
+        let world = self.world();
+        let cur = match (
+            world.get_resource::<cp_traffic::Agents>(),
+            world.get_resource::<cp_traffic::PathNetwork>(),
+            world.get_resource::<NetGraph>(),
+            world.get_resource::<JunctionGeometry>(),
+        ) {
+            (Some(agents), Some(pnet), Some(net), Some(geo)) => {
+                Arc::new(agents.frame(pnet.graph(), net, geo))
+            }
+            _ => Arc::default(),
+        };
+        let prev = cache
+            .as_ref()
+            .map_or_else(|| Arc::clone(&cur), |s| Arc::clone(&s.cur));
+        let snap = Arc::new(AgentSnapshot { tick, prev, cur });
+        *cache = Some(Arc::clone(&snap));
+        snap
+    }
+
     /// Snapshot of the current state for clients.
     pub fn view(&self) -> SimView {
         let tick = self.tick();
@@ -224,6 +269,7 @@ impl SimRunner {
                 .get_resource::<SimContent>()
                 .map(|c| Arc::clone(&c.0)),
             overlays: self.overlay_data(),
+            agents: self.agent_snapshot(tick),
             junctions,
         }
     }

@@ -228,6 +228,17 @@ impl Agents {
         self.vehicles.iter()
     }
 
+    /// Adds a vehicle that is not tied to a trip ([`crate::demo`]).
+    pub(crate) fn insert_demo_vehicle(&mut self, v: Vehicle) {
+        let id = self.vehicles.insert(v);
+        self.drive.waiting.push(id);
+    }
+
+    /// Adds a pedestrian that is not tied to a trip ([`crate::demo`]).
+    pub(crate) fn insert_demo_pedestrian(&mut self, p: Pedestrian) {
+        self.pedestrians.insert(p);
+    }
+
     pub fn pedestrian_count(&self) -> usize {
         self.pedestrians.len()
     }

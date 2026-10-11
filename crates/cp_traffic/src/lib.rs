@@ -6,8 +6,10 @@
 
 pub mod agents;
 pub mod astar;
+pub mod demo;
 pub mod drive;
 pub mod graph;
+pub mod pose;
 pub mod service;
 
 pub use agents::{
@@ -20,6 +22,7 @@ pub use graph::{
     Access, CONGESTION_K, CongestionMap, LEFT_TURN_PENALTY, PED_SPEED, PathGraph, SegEnd, Side,
     U_TURN_PENALTY,
 };
+pub use pose::{AgentFrame, AgentKey, PedestrianPose, VehiclePose};
 pub use service::{
     Mode, PATH_DELAY_TICKS, PathNetwork, PathOutcome, PathRequest, PathResult, PathResults,
     PathService, RequestId, SavedPaths, SavedRequest, deliver_paths, update_path_network,

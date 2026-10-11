@@ -10,11 +10,12 @@ pub mod view;
 
 pub use checksum::{Fnv1a, SimChecksum};
 pub use command::{SimCommand, dispatch_commands, init_command_resources};
+pub use cp_traffic::{AgentFrame, PedestrianPose, VehiclePose};
 pub use overlay::{OverlayData, ScalarGrid, ZoneCellView, ZoneOverlay};
 pub use phase::SimPhase;
 pub use plugin::{SimBuilder, SimPlugin};
 pub use runner::{MAX_TICKS_PER_STEP, SimRunner, run_headless, run_headless_with};
-pub use view::{ArenaFill, ArenaGauges, SimStats, SimTerrain, SimView};
+pub use view::{AgentSnapshot, ArenaFill, ArenaGauges, SimStats, SimTerrain, SimView};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_sim";
