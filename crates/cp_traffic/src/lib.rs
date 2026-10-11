@@ -11,7 +11,7 @@ pub mod service;
 
 pub use agents::{
     AgentSettings, AgentStats, Agents, PED_CHUNK, PED_STEP, Pedestrian, PedestrianId, Vehicle,
-    VehicleId, crossing_of, move_agents, receive_paths, route_trips,
+    VehicleId, crossing_of, move_agents, purge_removed_buildings, receive_paths, route_trips,
 };
 pub use astar::{CarPath, NoPath, PedPath, find_car_path, find_ped_path};
 pub use graph::{

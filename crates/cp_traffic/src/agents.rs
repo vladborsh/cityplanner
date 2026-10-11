@@ -157,6 +157,29 @@ impl Agents {
         self.vehicles.len()
     }
 
+    /// Frees the agents and pending path requests of cancelled trips.
+    fn drop_trips(&mut self, trips: &[TripId]) {
+        let ped: Vec<PedestrianId> = self
+            .pedestrians
+            .iter()
+            .filter(|(_, p)| trips.contains(&p.trip))
+            .map(|(id, _)| id)
+            .collect();
+        for id in ped {
+            self.pedestrians.remove(id);
+        }
+        let veh: Vec<VehicleId> = self
+            .vehicles
+            .iter()
+            .filter(|(_, v)| trips.contains(&v.trip))
+            .map(|(id, _)| id)
+            .collect();
+        for id in veh {
+            self.vehicles.remove(id);
+        }
+        self.requests.retain(|_, t| !trips.contains(t));
+    }
+
     fn ensure_derived(&mut self, book: &TripBook) {
         if self.ready {
             return;
@@ -170,6 +193,25 @@ impl Agents {
             .collect();
         self.ready = true;
     }
+}
+
+/// `Citizens` phase, before `update_citizens`: reacts to buildings removed this tick (the
+/// `Demolish` command, later abandonment) by dropping what pointed at them — households,
+/// jobs, trips — and freeing the agents of the cancelled trips, so pools stay consistent.
+pub fn purge_removed_buildings(
+    mut buildings: ResMut<BuildingGrid>,
+    mut grid: ResMut<CitizenGrid>,
+    mut book: ResMut<TripBook>,
+    mut agents: ResMut<Agents>,
+) {
+    if !buildings.has_removed() {
+        return;
+    }
+    let removed = buildings.take_removed();
+    book.ensure_derived();
+    agents.ensure_derived(&book);
+    let cancelled = cp_citizen::purge_buildings(&mut grid, &mut book, &removed);
+    agents.drop_trips(&cancelled);
 }
 
 /// The access point of a building as the path service wants it.

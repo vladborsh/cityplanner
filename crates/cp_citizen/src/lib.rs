@@ -14,7 +14,8 @@ pub use model::{
 };
 pub use routine::{
     CAR_SPEED_MPS, ROUTINE_STREAM, RoutineSettings, Shift, WALK_SPEED_MPS, cancel_trip,
-    choose_mode, complete_trip, hour_of_day, shift_for, travel_ticks, update_routine,
+    choose_mode, complete_trip, hour_of_day, purge_buildings, shift_for, travel_ticks,
+    update_routine,
 };
 pub use system::{
     ARRIVAL_SPEED_MPS, BASE_DELAY, FALLBACK_DELAY, JOBLESS_LEAVE_DAYS, MOVE_IN_ONE_IN,

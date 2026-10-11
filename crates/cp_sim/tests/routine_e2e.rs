@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use bevy_ecs::change_detection::Mut;
 use bevy_math::Vec3;
-use cp_building::{BuildingGrid, BuildingState, demolish_building};
+use cp_building::{BuildingCommand, BuildingGrid, BuildingState, demolish_building};
 use cp_citizen::{
     CitizenGrid, Location, TripBook, TripMode, TripState, choose_mode, hour_of_day, shift_for,
     travel_ticks,
@@ -16,7 +16,7 @@ use cp_content::{ContentDb, ZoneType};
 use cp_core::curve::CubicBezier3;
 use cp_core::time::TICKS_PER_DAY;
 use cp_net::{Elevation, NetGraph};
-use cp_sim::SimRunner;
+use cp_sim::{SimCommand, SimRunner};
 use cp_zone::{ZoneCellRef, ZoneGrid};
 
 fn content() -> Arc<ContentDb> {
@@ -281,4 +281,103 @@ fn same_seed_same_trips_and_trips_are_checksummed() {
     assert_ne!(a.checksum(), before);
     let g = a.view().stats;
     assert!(g.arenas.iter().any(|x| x.name == "trips"));
+}
+
+/// Runs a town and, as the chance arises, demolishes the workplace a commuter is heading to
+/// and the home a walker (carried by an agent) is heading to, with `Demolish` commands. Runs
+/// on for two game days, checking after every tick that nothing points at a missing
+/// building and the agent pools match the trips.
+fn demolish_occupied_buildings(content: &Arc<ContentDb>, seed: u64) -> SimRunner {
+    let mut sim = grown(content, seed, 5, 400);
+    let (mut home, mut work) = (None, None);
+    let mut done_at = None;
+    for _ in 0..(6 * TICKS_PER_DAY) {
+        let book = sim.world().resource::<TripBook>();
+        let c = sim.world().resource::<CitizenGrid>();
+        let at = sim.tick();
+        let mut pick = None;
+        if work.is_none() {
+            pick = book
+                .iter()
+                .find(|(_, t)| t.purpose == cp_citizen::TripPurpose::Work)
+                .map(|(_, t)| (t.to, true));
+        } else if home.is_none() {
+            pick = book
+                .iter()
+                .find(|(_, t)| {
+                    t.purpose == cp_citizen::TripPurpose::Home && t.state == TripState::Agent
+                })
+                .map(|(_, t)| (t.to, false));
+        }
+        if let Some((building, is_work)) = pick {
+            let occupied = if is_work {
+                (0..4).map(|l| c.jobs_filled(building, l)).sum::<u16>() > 0
+            } else {
+                c.households_in(building) > 0
+            };
+            if occupied {
+                sim.push_command(
+                    SimCommand::Building(BuildingCommand::Demolish { building }),
+                    at,
+                );
+                if is_work {
+                    work = Some(building);
+                } else {
+                    home = Some(building);
+                    done_at = Some(at.0);
+                }
+            }
+        }
+        sim.tick_once();
+        let b = sim.world().resource::<BuildingGrid>();
+        let c = sim.world().resource::<CitizenGrid>();
+        let book = sim.world().resource::<TripBook>();
+        let agents = sim.world().resource::<cp_traffic::Agents>();
+        let gone: Vec<_> = [home, work].into_iter().flatten().collect();
+        for &g in &gone {
+            assert!(b.get(g).is_none());
+            assert_eq!(c.households_in(g), 0, "residents of a demolished home");
+            assert!(
+                (0..4).all(|l| c.jobs_filled(g, l) == 0),
+                "workers of a demolished workplace"
+            );
+        }
+        for (_, cz) in c.citizens() {
+            assert!(cz.home.is_none_or(|h| !gone.contains(&h)));
+            assert!(cz.work.is_none_or(|w| !gone.contains(&w)));
+        }
+        for (_, t) in book.iter() {
+            assert!(c.citizen(t.citizen).is_some(), "trip of a missing citizen");
+            assert!(!gone.contains(&t.to) && !gone.contains(&t.from));
+        }
+        let agent_trips = book
+            .iter()
+            .filter(|(_, t)| t.state == TripState::Agent)
+            .count();
+        assert_eq!(
+            agent_trips,
+            agents.pedestrian_count() + agents.vehicle_count(),
+            "pools match the trips"
+        );
+        for (_, p) in agents.pedestrians() {
+            assert!(book.get(p.trip).is_some(), "pedestrian of a missing trip");
+        }
+        for (_, v) in agents.vehicles() {
+            assert!(book.get(v.trip).is_some(), "vehicle of a missing trip");
+        }
+        if done_at.is_some_and(|d| sim.tick().0 >= d + 2 * TICKS_PER_DAY) {
+            break;
+        }
+    }
+    assert!(home.is_some() && work.is_some(), "both were demolished");
+    sim
+}
+
+#[test]
+fn demolishing_an_occupied_home_and_workplace_leaves_nothing_dangling() {
+    let content = content();
+    let mut a = demolish_occupied_buildings(&content, 5);
+    let mut b = demolish_occupied_buildings(&content, 5);
+    assert_eq!(a.checksum(), b.checksum(), "same command log, same state");
+    assert!(a.world().resource::<TripBook>().cancelled > 0);
 }

@@ -14,9 +14,11 @@ use cp_render::camera::math::ray_terrain_hit;
 use cp_sim::{SimCommand, SimView};
 
 use crate::CommandOutbox;
+use crate::building::{BuildingTool, PlacementGhost, pick_building, preview as place_preview};
 use crate::bulldozer::{PICK_RADIUS, centre_line, pick_segment};
 use crate::road::{RoadTool, preview, sample_curve};
 use crate::zone::{ZoneTool, zone_color};
+use cp_building::{BuildingCommand, BuildingId};
 use cp_zone::{ZoneCellRef, ZoneCommand};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -27,6 +29,8 @@ pub enum ActiveTool {
     Bulldozer,
     /// Zoning: fill block, brushes, rectangle, eraser.
     Zone,
+    /// Placing a service building (type chosen in the Services tab, R rotates).
+    Place,
 }
 
 /// Set by the UI each frame: the pointer is over a panel/window, so clicks are not the tool's.
@@ -57,6 +61,11 @@ pub struct ToolState {
     /// Segment the bulldozer would remove.
     pub highlight: Option<SegmentId>,
     pub zone: ZoneTool,
+    pub building: BuildingTool,
+    /// What the placement tool would put under the cursor.
+    pub place_ghost: Option<PlacementGhost>,
+    /// Building the bulldozer would remove (preferred over a segment).
+    pub building_highlight: Option<BuildingId>,
     /// Cells the zoning tool would paint at the cursor (the highlight).
     pub zone_preview: Vec<ZoneCellRef>,
     /// Inputs the current ghost was computed from; unchanged inputs skip the revalidation.
@@ -79,6 +88,8 @@ impl ToolState {
         self.ghost_key = None;
         self.zone.cancel();
         self.zone_preview.clear();
+        self.place_ghost = None;
+        self.building_highlight = None;
     }
 }
 
@@ -108,6 +119,9 @@ fn tool_hotkeys(
         if keys.just_pressed(KeyCode::PageDown) {
             state.road.lower();
         }
+    }
+    if state.active == ActiveTool::Place && keys.just_pressed(KeyCode::KeyR) {
+        state.building.rotate();
     }
     if keys.just_pressed(KeyCode::Escape) {
         if state.active == ActiveTool::Zone && state.zone.corner.is_some() {
@@ -169,7 +183,15 @@ fn tool_hover(
     let hover = state.hover;
     match (state.active, hover) {
         (ActiveTool::Bulldozer, Some(p)) => {
-            state.highlight = pick_segment(&view.net, p, PICK_RADIUS);
+            state.building_highlight = pick_building(&view, p);
+            state.highlight = if state.building_highlight.is_some() {
+                None
+            } else {
+                pick_segment(&view.net, p, PICK_RADIUS)
+            };
+        }
+        (ActiveTool::Place, Some(p)) => {
+            state.place_ghost = place_preview(&view, &state.building, p);
         }
         (ActiveTool::Zone, Some(p)) => {
             state.zone_preview = state.zone.preview(&view.zones, p);
@@ -187,6 +209,8 @@ fn tool_hover(
         }
         _ => {
             state.highlight = None;
+            state.building_highlight = None;
+            state.place_ghost = None;
             state.zone_preview.clear();
             if state.active != ActiveTool::Road {
                 state.ghost = None;
@@ -279,9 +303,23 @@ fn tool_click(
             state.ghost_key = None;
         }
         ActiveTool::Bulldozer => {
-            if let Some(seg) = state.highlight {
+            if let Some(building) = state.building_highlight {
+                outbox.push(SimCommand::Building(BuildingCommand::Demolish { building }));
+                state.building_highlight = None;
+            } else if let Some(seg) = state.highlight {
                 outbox.push(SimCommand::Net(NetCommand::RemoveSegment { seg }));
                 state.highlight = None;
+            }
+        }
+        ActiveTool::Place => {
+            if let Some(def) = state.building.def
+                && state.place_ghost.as_ref().is_some_and(|g| g.valid)
+            {
+                outbox.push(SimCommand::Building(BuildingCommand::Place {
+                    def,
+                    pos: p,
+                    rot: state.building.rot(),
+                }));
             }
         }
         ActiveTool::None | ActiveTool::Zone => {}
@@ -306,12 +344,42 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
             gizmos.linestrip(line.iter().map(|p| *p + Vec3::Y * 0.4), color);
         }
     }
+    if let (Some(view), Some(g)) = (view.as_deref(), &state.place_ghost)
+        && state.active == ActiveTool::Place
+    {
+        let color = if g.valid {
+            Color::srgb(0.2, 0.9, 0.3)
+        } else {
+            Color::srgb(0.95, 0.2, 0.2)
+        };
+        draw_cells(view, &g.cells, color, &mut gizmos);
+    }
+    if let (Some(view), Some(id)) = (view.as_deref(), state.building_highlight)
+        && let Some(b) = view.buildings.get(id)
+    {
+        let cells: Vec<ZoneCellRef> = b.lot.cells().collect();
+        draw_cells(view, &cells, Color::srgb(1.0, 0.6, 0.1), &mut gizmos);
+    }
     if let (Some(seg), Some(view)) = (state.highlight, view) {
         let line = centre_line(&view.net, seg, 3.0);
         gizmos.linestrip(
             line.iter().map(|p| *p + Vec3::Y * 0.6),
             Color::srgb(1.0, 0.6, 0.1),
         );
+    }
+}
+
+/// Outlines (crossed) the footprints of `cells`.
+fn draw_cells(view: &SimView, cells: &[ZoneCellRef], color: Color, gizmos: &mut Gizmos) {
+    let height = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.6;
+    for c in cells {
+        let Some(o) = view.zones.cell_footprint(*c) else {
+            continue;
+        };
+        let k = o.corners().map(|q| Vec3::new(q.x, height(q), q.y));
+        gizmos.linestrip([k[0], k[1], k[2], k[3], k[0]], color);
+        gizmos.line(k[0], k[2], color);
+        gizmos.line(k[1], k[3], color);
     }
 }
 

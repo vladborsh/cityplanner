@@ -265,7 +265,12 @@ pub fn update_routine(
                     continue;
                 }
                 let from = pos_of(&buildings, trip.from);
-                let to = pos_of(&buildings, trip.to).expect("active");
+                let Some(to) = pos_of(&buildings, trip.to) else {
+                    book.remove(tid);
+                    book.cancelled += 1;
+                    send_home(&mut grid, trip.citizen);
+                    continue;
+                };
                 let d = from.map_or(0.0, |f| f.distance(to));
                 let has_car = grid.citizen(trip.citizen).is_some_and(|c| c.has_car);
                 let mode = choose_mode(d, has_car, db.balance().walk_limit_m);
@@ -331,10 +336,9 @@ fn decide(
         return;
     };
     let workplace = c.work.filter(|w| is_active(buildings, *w));
-    let shift = workplace.map(|w| {
-        let zone = db.building(buildings.get(w).expect("active").def).zone;
-        shift_for(zone, cid.index)
-    });
+    let shift = workplace
+        .and_then(|w| buildings.get(w))
+        .map(|b| shift_for(db.building(b.def).zone, cid.index));
     // Leave in time to arrive at the shift start: travel time (movement clock) plus one
     // visit interval, since the citizen only looks again after CITIZEN_BUCKETS ticks.
     let lead_ticks = workplace
@@ -403,4 +407,63 @@ fn decide(
         }
         Location::Moving | Location::Outside => {}
     }
+}
+
+/// Drops everything that pointed at buildings that no longer exist (`removed`), at once:
+///
+/// * households living there are gone (they leave the city, the same path as an eviction),
+///   with their members, jobs and trips;
+/// * workers lose the job (the job search resumes), and a citizen inside a removed workplace
+///   or shop is sent home;
+/// * trips from or to a removed building, or of a citizen that no longer exists, are
+///   cancelled (the citizen, if still there, is put back at home).
+///
+/// Returns the cancelled trips so `cp_traffic` can free their agents.
+pub fn purge_buildings(
+    grid: &mut CitizenGrid,
+    book: &mut TripBook,
+    removed: &[BuildingId],
+) -> Vec<crate::trips::TripId> {
+    if removed.is_empty() {
+        return Vec::new();
+    }
+    grid.ensure_derived();
+    book.ensure_derived();
+    let gone = |b: BuildingId| removed.contains(&b);
+    let homes: Vec<_> = grid
+        .households()
+        .filter(|(_, h)| gone(h.home))
+        .map(|(id, _)| id)
+        .collect();
+    for hid in homes {
+        grid.remove_household(hid);
+    }
+    let affected: Vec<(CitizenId, bool, bool)> = grid
+        .citizens()
+        .filter_map(|(id, c)| {
+            let job = c.work.is_some_and(gone);
+            let inside = match c.location {
+                Location::Work => c.work.is_some_and(gone),
+                _ => false,
+            };
+            (job || inside).then_some((id, job, inside))
+        })
+        .collect();
+    for (cid, job, inside) in affected {
+        if job {
+            grid.clear_job(cid);
+        }
+        if inside {
+            send_home(grid, cid);
+        }
+    }
+    let doomed: Vec<crate::trips::TripId> = book
+        .iter()
+        .filter(|(_, t)| gone(t.from) || gone(t.to) || grid.citizen(t.citizen).is_none())
+        .map(|(id, _)| id)
+        .collect();
+    for &tid in &doomed {
+        cancel_trip(grid, book, tid);
+    }
+    doomed
 }

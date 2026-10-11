@@ -33,6 +33,11 @@ pub struct BuildingGrid {
     /// notice changes cheaply. Not saved, not hashed.
     #[serde(skip, default = "next_revision")]
     revision: u64,
+    /// Ids removed since the last [`BuildingGrid::take_removed`]: lets other domains drop
+    /// their references (citizens, trips, agents) without `cp_building` depending on them.
+    /// Transient: not saved, not hashed, not part of equality.
+    #[serde(skip)]
+    removed: Vec<BuildingId>,
 }
 
 impl Default for BuildingGrid {
@@ -42,6 +47,7 @@ impl Default for BuildingGrid {
             pending: BTreeSet::new(),
             pending_ready: false,
             revision: next_revision(),
+            removed: Vec::new(),
         }
     }
 }
@@ -112,7 +118,18 @@ impl BuildingGrid {
         let b = self.buildings.remove(id)?;
         self.revision = next_revision();
         self.pending.remove(&(b.ready_at.0, id));
+        self.removed.push(id);
         Some(b)
+    }
+
+    pub fn has_removed(&self) -> bool {
+        !self.removed.is_empty()
+    }
+
+    /// The ids removed since the last call, in removal order (drained by the system that
+    /// cleans up what pointed at them).
+    pub fn take_removed(&mut self) -> Vec<BuildingId> {
+        std::mem::take(&mut self.removed)
     }
 
     /// Every cell covered by a building, in building order.

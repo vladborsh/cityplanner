@@ -42,7 +42,7 @@ impl Category {
             Category::Zones => "Zones",
             Category::Water => "Water",
             Category::Power => "Power",
-            Category::Services => "Services (M2)",
+            Category::Services => "Services",
             Category::Transit => "Transit (M3)",
             Category::Districts => "Districts (M4)",
         }
@@ -161,6 +161,10 @@ pub fn bottom_bar(
                 ui.separator();
                 zones_panel(ui, tools);
             }
+            Some(Category::Services) => {
+                ui.separator();
+                services_panel(ui, view, tools);
+            }
             Some(c) => {
                 ui.separator();
                 ui.weak(format!("{} — nothing to build here yet", c.label()));
@@ -168,6 +172,49 @@ pub fn bottom_bar(
             None => {}
         }
     });
+}
+
+/// The Services tab: the placeable service buildings of the content, the bulldozer, and the
+/// placement ghost's verdict. R rotates the building.
+pub fn services_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
+    ui.horizontal(|ui| {
+        if let Some(content) = view.and_then(|v| v.content.as_deref()) {
+            for (id, def) in content.buildings().filter(|(_, d)| d.service.is_some()) {
+                let selected = tools.active == ActiveTool::Place && tools.building.def == Some(id);
+                if ui.selectable_label(selected, &def.name).clicked() {
+                    if tools.active != ActiveTool::Place {
+                        tools.select(ActiveTool::Place);
+                    }
+                    tools.building.def = Some(id);
+                }
+            }
+        }
+        let bulldozing = tools.active == ActiveTool::Bulldozer;
+        if ui.selectable_label(bulldozing, "🚜 Bulldozer").clicked() {
+            tools.select(if bulldozing {
+                ActiveTool::None
+            } else {
+                ActiveTool::Bulldozer
+            });
+        }
+    });
+    if tools.active == ActiveTool::Place {
+        match &tools.place_ghost {
+            Some(g) if g.valid => {
+                let cost = g.cost.map_or(String::new(), format_money);
+                ui.colored_label(egui::Color32::LIGHT_GREEN, format!("✔ can place — {cost}"));
+            }
+            Some(g) => {
+                ui.colored_label(
+                    egui::Color32::LIGHT_RED,
+                    format!("✖ {}", g.error.as_deref().unwrap_or("cannot place here")),
+                );
+            }
+            None => {
+                ui.weak("Hover a spot beside a road. R rotates, Esc leaves the tool.");
+            }
+        }
+    }
 }
 
 /// The Zones tab: tool kinds and the zone palette. Picking either activates the zoning tool
@@ -291,9 +338,9 @@ pub fn roads_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolSt
             }
         },
         ActiveTool::Bulldozer => {
-            ui.weak("Hover a road segment, click to remove it. Esc leaves the tool.");
+            ui.weak("Hover a building or road segment, click to remove it. Esc leaves the tool.");
         }
-        ActiveTool::None | ActiveTool::Zone => {
+        ActiveTool::None | ActiveTool::Zone | ActiveTool::Place => {
             ui.weak("Pick a tool.");
         }
     }
