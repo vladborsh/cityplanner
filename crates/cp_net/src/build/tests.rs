@@ -104,6 +104,7 @@ fn kinds(e: &[RoadBuildError]) -> Vec<&'static str> {
             RoadBuildError::RampTooShort { .. } => "RampTooShort",
             RoadBuildError::RampStartsOverWater { .. } => "RampStartsOverWater",
             RoadBuildError::PathTooShort => "PathTooShort",
+            RoadBuildError::BadCoordinates => "BadCoordinates",
             RoadBuildError::DegenerateLeg { .. } => "DegenerateLeg",
             RoadBuildError::SegmentTooShort { .. } => "SegmentTooShort",
             RoadBuildError::SharpAngle { .. } => "SharpAngle",

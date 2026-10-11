@@ -277,3 +277,18 @@ fn planning_is_pure() {
     assert_eq!(a, b);
     assert_eq!(t.graph, before);
 }
+
+#[test]
+fn non_finite_link_paths_are_rejected_next_to_existing_links() {
+    let t = T::new();
+    let r = t
+        .plan(UtilityKind::Water, &[v(0.0, 0.0), v(60.0, 0.0)])
+        .unwrap();
+    let _ = r;
+    for bad in [f32::NAN, f32::INFINITY, 1e30] {
+        let e = t
+            .plan(UtilityKind::Water, &[v(0.0, 0.0), Vec2::new(bad, 5000.0)])
+            .unwrap_err();
+        assert_eq!(e, vec![PathProblem::BadCoordinates]);
+    }
+}

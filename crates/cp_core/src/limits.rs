@@ -3,6 +3,19 @@
 use bevy_ecs::resource::Resource;
 use serde::{Deserialize, Serialize};
 
+/// Largest absolute world coordinate (metres) a command may carry; the map is ~10 km wide.
+pub const MAX_COORD: f32 = 100_000.0;
+
+/// Whether `v` is a usable world coordinate: finite and within [`MAX_COORD`].
+pub fn sane_coord(v: f32) -> bool {
+    v.is_finite() && v.abs() <= MAX_COORD
+}
+
+/// [`sane_coord`] for both components of a point.
+pub fn sane_point(p: bevy_math::Vec2) -> bool {
+    sane_coord(p.x) && sane_coord(p.y)
+}
+
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimLimits {
     pub nodes: u32,

@@ -263,3 +263,22 @@ fn a_pump_needs_water_and_other_buildings_cannot_stand_in_it() {
     run(&mut sim, place(wet, pump)).unwrap();
     run(&mut sim, place(dry, turbine)).unwrap();
 }
+
+#[test]
+fn non_finite_positions_and_rotations_are_rejected() {
+    let c = content();
+    let mut sim = world(&c);
+    let at = spot(&sim, 5);
+    let def = c.building_id("wind_turbine").unwrap();
+    for (pos, rot) in [
+        (at, f32::NAN),
+        (at, f32::INFINITY),
+        (Vec2::new(f32::NAN, at.y), 0.0),
+        (Vec2::new(at.x, f32::INFINITY), 0.0),
+        (Vec2::new(1e30, at.y), 0.0),
+    ] {
+        let e = run(&mut sim, BuildingCommand::Place { def, pos, rot }).unwrap_err();
+        assert!(e.contains("invalid"), "{e}");
+    }
+    assert!(sim.world().resource::<BuildingGrid>().is_empty());
+}

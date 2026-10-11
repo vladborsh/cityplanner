@@ -38,6 +38,8 @@ const BUILDING_REACH: f32 = 40.0;
 pub enum PathProblem {
     /// Fewer than two distinct points.
     PathTooShort,
+    /// A coordinate is NaN, infinite or absurdly large.
+    BadCoordinates,
     LinkTooShort {
         pos: Vec2,
         length: f32,
@@ -127,6 +129,9 @@ pub fn plan_link_path(
     def: &UtilityDef,
     path: &[Vec2],
 ) -> Result<LinkPlan, Vec<PathProblem>> {
+    if !path.iter().all(|p| cp_core::sane_point(*p)) {
+        return Err(vec![PathProblem::BadCoordinates]);
+    }
     let net = UtilityNet::of(def.kind);
     let mut pts: Vec<Vec2> = path.to_vec();
     pts.dedup_by(|a, b| a.distance(*b) < 0.01);

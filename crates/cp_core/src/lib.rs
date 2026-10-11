@@ -12,7 +12,7 @@ pub use arena::{Arena, Id};
 pub use command::{
     CommandError, CommandId, CommandLog, CommandOutcome, CommandQueue, Cost, LogEntry,
 };
-pub use limits::SimLimits;
+pub use limits::{MAX_COORD, SimLimits, sane_coord, sane_point};
 pub use rng::SimRng;
 pub use time::{GameTime, SimSpeed, Tick};
 

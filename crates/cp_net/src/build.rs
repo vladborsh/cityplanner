@@ -183,6 +183,7 @@ impl std::fmt::Display for RoadBuildError {
             Self::RampStartsOverWater { .. } => write!(f, "ramp would start over water"),
             Self::NoBridgeVariant(_) => write!(f, "this road type has no bridge"),
             Self::PathTooShort => write!(f, "path too short"),
+            Self::BadCoordinates => write!(f, "invalid coordinates"),
             Self::DegenerateLeg { .. } => write!(f, "both ends are the same point"),
             Self::SegmentTooShort { length, .. } => {
                 write!(
@@ -229,6 +230,8 @@ pub enum RoadBuildError {
     NoBridgeVariant(RoadDefId),
     /// Fewer than two distinct points.
     PathTooShort,
+    /// A coordinate or the height is NaN, infinite or absurdly large.
+    BadCoordinates,
     /// A leg's two ends resolve to the same node.
     DegenerateLeg {
         pos: Vec2,
@@ -476,6 +479,20 @@ pub fn validate_road_path(
 ) -> Result<RoadBuildPlan, Vec<RoadBuildError>> {
     if req.road.index() >= content.roads().count() {
         return Err(vec![RoadBuildError::UnknownRoad(req.road)]);
+    }
+    let points_ok = match &req.path {
+        RoadPath::Straight { from, to } => cp_core::sane_point(*from) && cp_core::sane_point(*to),
+        RoadPath::Curve { from, control, to } => {
+            [from, control, to].iter().all(|p| cp_core::sane_point(**p))
+        }
+        RoadPath::Free(pts) => pts.iter().all(|p| cp_core::sane_point(*p)),
+    };
+    let height_ok = match req.elevation {
+        ElevationMode::Ground => true,
+        ElevationMode::Elevated(h) => cp_core::sane_coord(h),
+    };
+    if !points_ok || !height_ok {
+        return Err(vec![RoadBuildError::BadCoordinates]);
     }
     let def = content.road(req.road);
     let mut errors = Vec::new();

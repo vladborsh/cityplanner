@@ -50,6 +50,8 @@ pub enum BuildingError {
     /// A resource the command needs is missing from the world.
     Missing,
     UnknownDef,
+    /// The position or rotation is NaN, infinite or absurdly large.
+    BadCoordinates,
     /// Zoned buildings spawn by themselves; only service buildings are placed.
     NotPlaceable,
     /// No road side next to the position.
@@ -72,6 +74,7 @@ impl fmt::Display for BuildingError {
         f.write_str(match self {
             Self::Missing => "no map or content in the sim world",
             Self::UnknownDef => "unknown building type",
+            Self::BadCoordinates => "invalid position or rotation",
             Self::NotPlaceable => "this building cannot be placed by hand",
             Self::NoRoad => "must be next to a road",
             Self::DoesNotFit => "does not fit along the road",
@@ -127,6 +130,9 @@ pub fn validate_placement(
     pos: Vec2,
     rot: f32,
 ) -> Result<PlacementPlan, BuildingError> {
+    if !cp_core::sane_point(pos) || !rot.is_finite() {
+        return Err(BuildingError::BadCoordinates);
+    }
     let def = db
         .buildings()
         .find(|(id, _)| *id == def)

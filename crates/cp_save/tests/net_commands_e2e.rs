@@ -292,3 +292,76 @@ fn the_built_network_survives_save_and_load() {
     run(&mut loaded, vec![cmd]);
     assert_eq!(loaded.checksum(), sim.checksum());
 }
+
+/// BUG-014: a non-finite or absurd coordinate next to an existing road used to hang the sim
+/// in `intersect_xz`; every such command is rejected within the tick instead.
+#[test]
+fn non_finite_and_absurd_coordinates_are_rejected_next_to_existing_roads() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let content = content();
+        let road = content.road_id("basic_2l").unwrap();
+        let mut sim = sim_with(&content);
+        sim.push_command(
+            build(road, Vec2::new(5116.0, 5000.0), Vec2::new(5124.0, 5000.0)),
+            Tick(0),
+        );
+        sim.tick_once();
+        let ok = |sim: &mut SimRunner| {
+            sim.world_mut()
+                .resource_mut::<Messages<CommandOutcome>>()
+                .drain()
+                .all(|o| o.result.is_ok())
+        };
+        assert!(ok(&mut sim), "the first road is built");
+        let before = sim.world().resource::<NetGraph>().clone();
+        let bad = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1e30];
+        let mut cmds = Vec::new();
+        for v in bad {
+            cmds.push(build(road, Vec2::new(v, 5000.0), Vec2::new(5120.0, 5000.0)));
+            cmds.push(build(road, Vec2::new(5000.0, 5000.0), Vec2::new(5120.0, v)));
+            cmds.push(SimCommand::Net(NetCommand::BuildRoad {
+                road,
+                path: RoadPath::Curve {
+                    from: Vec2::new(5000.0, 5000.0),
+                    control: Vec2::new(5060.0, v),
+                    to: Vec2::new(5120.0, 5000.0),
+                },
+                elevation: ElevationMode::Ground,
+            }));
+            cmds.push(SimCommand::Net(NetCommand::BuildRoad {
+                road,
+                path: RoadPath::Free(vec![Vec2::new(5000.0, 5000.0), Vec2::new(v, 5100.0)]),
+                elevation: ElevationMode::Ground,
+            }));
+            cmds.push(SimCommand::Net(NetCommand::BuildRoad {
+                road,
+                path: RoadPath::Straight {
+                    from: Vec2::new(5000.0, 5000.0),
+                    to: Vec2::new(5120.0, 5000.0),
+                },
+                elevation: ElevationMode::Elevated(v),
+            }));
+        }
+        let n = cmds.len();
+        for c in cmds {
+            sim.push_command(c, sim.tick());
+        }
+        sim.tick_once();
+        let outcomes: Vec<_> = sim
+            .world_mut()
+            .resource_mut::<Messages<CommandOutcome>>()
+            .drain()
+            .collect();
+        assert_eq!(outcomes.len(), n);
+        assert!(outcomes.iter().all(|o| o.result.is_err()), "{outcomes:?}");
+        assert_eq!(
+            *sim.world().resource::<NetGraph>(),
+            before,
+            "graph untouched"
+        );
+        tx.send(()).unwrap();
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the commands finished (no hang) and were all rejected");
+}

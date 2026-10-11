@@ -193,8 +193,20 @@ impl CubicBezier3 {
     /// Intersections with `other` on the XZ projection. Returns `(t_self, t_other)` pairs
     /// sorted by `t_self`. Tangential touches may be missed; overlapping curves are not
     /// supported (results capped at 16).
+    /// Whether every control point is finite.
+    pub fn is_finite(&self) -> bool {
+        [self.p0, self.p1, self.p2, self.p3]
+            .iter()
+            .all(|p| p.is_finite())
+    }
+
     pub fn intersect_xz(&self, other: &Self) -> Vec<(f32, f32)> {
         let mut hits: Vec<(f32, f32)> = Vec::new();
+        // NaN bounding boxes always "overlap" and would recurse to the depth cap in every
+        // branch; non-finite curves intersect nothing.
+        if !self.is_finite() || !other.is_finite() {
+            return hits;
+        }
         intersect_rec(self, (0.0, 1.0), other, (0.0, 1.0), 0, &mut hits);
         // Refine with Newton on f(ta, tb) = A(ta) - B(tb) in XZ.
         for h in &mut hits {
@@ -383,6 +395,16 @@ mod tests {
         let c = CubicBezier3::line(Vec3::ZERO, Vec3::new(100.0, 0.0, 0.0));
         let (t, d) = c.nearest_xz(Vec2::new(25.0, 7.0));
         assert!((t - 0.25).abs() < 1e-3 && (d - 7.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn non_finite_curves_intersect_nothing_and_return_at_once() {
+        let good = CubicBezier3::line(Vec3::new(-10.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0));
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let c = CubicBezier3::line(Vec3::new(bad, 0.0, 0.0), Vec3::new(10.0, 0.0, 5.0));
+            assert!(good.intersect_xz(&c).is_empty());
+            assert!(c.intersect_xz(&good).is_empty());
+        }
     }
 
     #[test]
