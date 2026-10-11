@@ -30,6 +30,8 @@ pub const PED_SPEED: f32 = 1.4;
 pub const LEFT_TURN_PENALTY: f32 = 4.0;
 /// Extra seconds for a U-turn (§9.3).
 pub const U_TURN_PENALTY: f32 = 15.0;
+/// Extra seconds for a lateral hop to the neighbouring lane of the same direction.
+pub const LANE_CHANGE_COST: f32 = 2.0;
 /// Congestion weight `k` in `length / speed × (1 + k × congestion)`.
 pub const CONGESTION_K: f32 = 3.0;
 
@@ -186,8 +188,10 @@ pub(crate) struct ExitConn {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CarEdge {
     pub to: u32,
-    /// Connection travel time plus turn penalty, seconds.
+    /// Connection travel time plus turn penalty (or [`LANE_CHANGE_COST`]), seconds.
     pub cost: f32,
+    /// A lateral hop to the neighbouring lane of the same segment, not a junction connection.
+    pub lane_change: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -399,6 +403,7 @@ impl PathGraph {
                 g.car_edges[from as usize].push(CarEdge {
                     to,
                     cost: c.length / speed + penalty,
+                    lane_change: false,
                 });
             }
             for link in &junction.links.pedestrian {
@@ -411,6 +416,29 @@ impl PathGraph {
                 let cost = path_len(std::slice::from_ref(&link.curve)) / PED_SPEED;
                 g.ped_edges[a as usize].push(PedEdge { to: b, cost });
                 g.ped_edges[b as usize].push(PedEdge { to: a, cost });
+            }
+        }
+        // Lane changes: neighbouring vehicle lanes of one direction on a segment, both ways.
+        for sl in g.segments.values() {
+            for forward in [true, false] {
+                let mut lanes: Vec<(f32, u32)> = sl
+                    .car
+                    .iter()
+                    .filter_map(|&(id, off)| {
+                        let slot = g.car_slot(id)?;
+                        (g.car[slot as usize].as_ref()?.forward == forward).then_some((off, slot))
+                    })
+                    .collect();
+                lanes.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                for w in lanes.windows(2) {
+                    for (a, b) in [(w[0].1, w[1].1), (w[1].1, w[0].1)] {
+                        g.car_edges[a as usize].push(CarEdge {
+                            to: b,
+                            cost: LANE_CHANGE_COST,
+                            lane_change: true,
+                        });
+                    }
+                }
             }
         }
         // Walking along a lane joins its two ends.

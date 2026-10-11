@@ -362,14 +362,22 @@ fn a_ring_of_full_lanes_is_a_gridlock_and_clears() {
 }
 
 fn lattice(lines: usize) -> (Sim, Vec<SegmentId>) {
+    lattice_of(None, lines)
+}
+
+fn lattice_of(road: Option<&str>, lines: usize) -> (Sim, Vec<SegmentId>) {
     let mut s = sim();
     let mut segs = Vec::new();
     for line in 0..lines {
         let o = 1000.0 + line as f32 * 90.0;
         for piece in 0..lines - 1 {
             let a = 1000.0 + piece as f32 * 90.0;
-            segs.push(s.seg((a, o), (a + 90.0, o)));
-            segs.push(s.seg((o, a), (o, a + 90.0)));
+            for (p, q) in [((a, o), (a + 90.0, o)), ((o, a), (o, a + 90.0))] {
+                segs.push(match road {
+                    Some(r) => s.seg_with(r, p, q),
+                    None => s.seg(p, q),
+                });
+            }
         }
     }
     (s, segs)
@@ -507,4 +515,43 @@ fn cars_whose_road_disappears_are_dropped_without_stale_ids() {
     assert!(rig.veh.is_empty(), "nobody is left driving on a dead route");
     assert_eq!(rig.arrived + rig.invalid + rig.stuck, 4);
     assert!(rig.invalid > 0);
+}
+
+/// BUG-018: on roads with 2+ lanes per direction every ordered pair of segments of a connected
+/// lattice has a car path (lane-change edges), and cars drive them, changing lanes.
+#[test]
+fn multilane_lattices_have_a_path_between_every_pair_and_cars_arrive() {
+    for road in ["medium_4l", "large_6l", "basic_2l"] {
+        let (s, segs) = lattice_of(Some(road), 4);
+        let mut rig = Rig::new(s);
+        let mut no_path = 0;
+        for &a in &segs {
+            for &b in &segs {
+                if a == b {
+                    continue;
+                }
+                let (from, to) = (acc(a, 45.0, Side::Right), acc(b, 45.0, Side::Right));
+                if find_car_path(&rig.graph, &CongestionMap::default(), &from, &to).is_err() {
+                    no_path += 1;
+                }
+            }
+        }
+        assert_eq!(no_path, 0, "{road}: pairs without a path");
+        let n = 60;
+        for i in 0..n {
+            let a = segs[(i * 5) % segs.len()];
+            let b = segs[(i * 7 + 3) % segs.len()];
+            if a != b {
+                rig.add(acc(a, 20.0, Side::Right), acc(b, 45.0, Side::Right));
+            }
+        }
+        let total = rig.veh.len();
+        rig.run_dry(600, None);
+        assert_eq!(rig.arrived + rig.stuck + rig.invalid, total, "{road}");
+        assert!(
+            rig.arrived * 10 >= total * 9,
+            "{road}: {} of {total}",
+            rig.arrived
+        );
+    }
 }

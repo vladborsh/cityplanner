@@ -18,6 +18,11 @@
 //! count. The junction gate is re-checked against live state while applying, so two vehicles
 //! cannot both enter conflicting connections in the same substep.
 //!
+//! **Lane changes.** A path step `(a, b)` that is not a junction connection but joins two
+//! neighbouring lanes of one segment is a lateral hop: before each substep a car whose next
+//! step is a hop moves to the target lane at the same `s` when that lane has room there
+//! (no car within a car length plus the standstill gap), else it keeps driving and retries.
+//!
 //! **Following** is a Krauss-style safe speed behind the leader: the next vehicle on the
 //! place, else the rear-most vehicle of the connection / next lane (when the junction gate
 //! is open), else a virtual standing obstacle at the stop line (gate closed). Positions never
@@ -71,6 +76,54 @@ const PARALLEL_MIN: usize = 512;
 /// is 0.5 s of movement = 10 plan ticks.
 pub fn signal_tick(tick: u64, substep: u32) -> u64 {
     (tick * u64::from(MOVE_SUBSTEPS) + u64::from(substep)) * 10
+}
+
+/// Is `(from, to)` a lateral hop between two lanes of one segment (not a junction connection)?
+pub(crate) fn is_lane_change(g: &PathGraph, from: LaneId, to: LaneId) -> bool {
+    match (lane_node(g, from), lane_node(g, to)) {
+        (Some(a), Some(b)) => a.segment == b.segment && find_exit(g, from, to).is_none(),
+        _ => false,
+    }
+}
+
+/// Performs the lateral hops that have room, in lane-slot then queue order (deterministic).
+fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGraph) {
+    for slot in 0..st.lanes.len() {
+        if st.lanes[slot].is_empty() {
+            continue;
+        }
+        let ids = st.lanes[slot].clone();
+        for id in ids {
+            while let Some(v) = vehicles.get(id) {
+                let Some((from, to)) = v.path.steps.get(usize::from(v.hop)).copied() else {
+                    break;
+                };
+                if !is_lane_change(g, from, to) {
+                    break;
+                }
+                let (Some(fs), Some(ts)) = (g.car_slot(from), g.car_slot(to)) else {
+                    break;
+                };
+                let t = g.car[ts as usize].as_ref().expect("lane");
+                let s = v.s.clamp(t.s_in, t.s_out);
+                let clear = st.lanes[ts as usize].iter().all(|&o| {
+                    vehicles
+                        .get(o)
+                        .is_none_or(|o| (o.s - s).abs() >= CAR_LENGTH + MIN_GAP)
+                });
+                if !clear {
+                    break;
+                }
+                st.lanes[fs as usize].retain(|w| *w != id);
+                let at = st.lanes[ts as usize]
+                    .partition_point(|&o| vehicles.get(o).is_some_and(|o| o.s > s));
+                st.lanes[ts as usize].insert(at, id);
+                let v = vehicles.get_mut(id).expect("vehicle");
+                v.s = s;
+                v.hop += 1;
+            }
+        }
+    }
 }
 
 /// Derived occupancy of lanes and connections.
@@ -320,6 +373,10 @@ fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
             None => match v.path.steps.get(v.hop as usize).copied() {
                 None => None,
                 Some((_, to)) => match find_exit(ctx.g, node.id, to) {
+                    None if is_lane_change(ctx.g, node.id, to) => {
+                        // Waiting for a gap in the next lane: stop at the stop line.
+                        Some((node.s_out + HARD_GAP, 0.0, HARD_GAP))
+                    }
                     None => {
                         out.push(Upd {
                             id,
@@ -494,7 +551,8 @@ fn front_suspicious(
         return false;
     };
     let Some(ex) = find_exit(g, node.id, to) else {
-        return false;
+        // Held at the stop line by a lane change that finds no gap.
+        return is_lane_change(g, node.id, to);
     };
     if gate_open(g, veh, st, signal, v, ex, node.s_out) {
         return false;
@@ -649,6 +707,7 @@ pub(crate) fn substep(
     pool: Option<&TaskPool>,
     finished: &mut Finished,
 ) {
+    lane_changes(vehicles, st, g);
     let mut places: Vec<Place> = Vec::new();
     for (slot, l) in st.lanes.iter().enumerate() {
         if !l.is_empty() {

@@ -106,7 +106,12 @@ pub fn find_car_path(
             let v = e.to;
             if v == goal {
                 let l = lane(v);
-                let total = g[u as usize] + e.cost + lane_time(s1, l.speed, c(v));
+                let tail = if e.lane_change {
+                    0.0
+                } else {
+                    lane_time(s1, l.speed, c(v))
+                };
+                let total = g[u as usize] + e.cost + tail;
                 if best.is_none_or(|(b, _)| total < b) {
                     best = Some((total, u));
                 }
@@ -116,7 +121,13 @@ pub fn find_car_path(
                 continue;
             }
             let l = lane(v);
-            let ng = g[u as usize] + e.cost + lane_time(l.len, l.speed, c(v));
+            // A lateral hop stays on the same stretch of road: no second lane travel time.
+            let body = if e.lane_change {
+                0.0
+            } else {
+                lane_time(l.len, l.speed, c(v))
+            };
+            let ng = g[u as usize] + e.cost + body;
             if ng < g[v as usize] {
                 g[v as usize] = ng;
                 parent[v as usize] = u;
