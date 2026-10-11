@@ -5,7 +5,7 @@
 # Refuses (exit 1) unless ALL of these hold, checked in this order, merging only on PASS:
 #   1. the coordinator checkout ($CITYPLANNER_COORD) is on master with a clean tree
 #      (tracked files; this runs before the gate, so a refusal costs nothing);
-#   2. <branch> is checked out in THIS worktree, with a clean tree, so the gate tests exactly
+#   2. <branch> is checked out in THIS worktree, with a clean tree (untracked, non-ignored files count as dirty), so the gate tests exactly
 #      the commit that will land;
 #   3. <branch> contains the coordinator's current master ("rebase first" otherwise);
 #   4. scripts/gate.sh prints PASS;
@@ -36,8 +36,9 @@ coord_dirty=$(git -C "$COORD" status --porcelain --untracked-files=no)
 git rev-parse --verify --quiet "refs/heads/$branch" >/dev/null || die "no local branch '$branch'"
 [ "$(git symbolic-ref --short HEAD 2>/dev/null || true)" = "$branch" ] \
   || die "check out '$branch' in this worktree first (the gate tests this worktree)"
-here_dirty=$(git status --porcelain --untracked-files=no)
-[ -z "$here_dirty" ] || die "this worktree has uncommitted changes; commit them so the gate tests what lands"
+here_dirty=$(git status --porcelain)
+[ -z "$here_dirty" ] || die "this worktree has uncommitted or untracked files (git add/commit or gitignore them) so the gate tests what lands:
+$here_dirty"
 
 master_sha=$(git -C "$COORD" rev-parse HEAD)
 git merge-base --is-ancestor "$master_sha" "$branch" \

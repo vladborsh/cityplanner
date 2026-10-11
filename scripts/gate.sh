@@ -10,6 +10,10 @@
 # pipeline such as `cargo test | tail` cannot hide a non-zero exit status. Do not add a `|`
 # after a cargo command here. Logs: $CARGO_TARGET_DIR/gate/<step>.log (target/ if unset).
 #
+# It also refuses (FAIL: untracked) when the tree has untracked, non-ignored files: a file the
+# branch needs but forgot to `git add` would pass here and break master after the merge. Add it
+# or gitignore it. (Run in a clean checkout instead? Rejected: a new path rebuilds everything.)
+#
 # Portable bash (macOS 3.2 and Linux 5). Uses the caller's CARGO_TARGET_DIR; hardcodes none.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -37,6 +41,13 @@ run_step() {
     fail "$name"
   fi
 }
+
+untracked=$(git ls-files --others --exclude-standard)
+if [ -n "$untracked" ]; then
+  echo "-- untracked files (git add them, or gitignore them); the gate must test what is committed:"
+  echo "$untracked"
+  fail "untracked"
+fi
 
 run_step fmt cargo fmt --check
 run_step clippy cargo clippy --workspace --all-targets -- -D warnings

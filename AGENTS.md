@@ -15,7 +15,8 @@ wrong. Project context lives in `PROJECT.md`; system designs live in `architectu
   command and stopping at the first failure: `cargo fmt --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
   `scripts/check-sim-deps.sh` and `scripts/check-isolated-clippy.sh`, with output in
-  `$CARGO_TARGET_DIR/gate/<step>.log`. Report the test count from its `PASS` line. Never pipe
+  `$CARGO_TARGET_DIR/gate/<step>.log`. Report the test count from its `PASS` line. Untracked, non-ignored files make it
+  `FAIL: untracked` (`git add` or gitignore them). Never pipe
   cargo output (`| tail`, `| grep`) when checking green: it hides a failing exit status.
   Merge only with `scripts/ff-merge.sh <branch>`, which refuses unless the branch contains the
   coordinator's `master` and the gate passes, then fast-forwards (it never pushes).
