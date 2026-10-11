@@ -50,6 +50,31 @@ const CARRY_BUCKET: f32 = 8.0;
 
 pub type ZoneBlockId = Id<ZoneBlock>;
 
+/// A painted cell of a block that is about to be rebuilt, identified by its foot point on
+/// the road axis, its row and its side direction (not by its own position, which moves when
+/// the road gets wider or narrower).
+struct Carried {
+    axis: Vec2,
+    v: Vec2,
+    row: u16,
+    zone: ZoneType,
+}
+
+impl Carried {
+    fn axis_of(o: &Obb, inner: f32, row: u16) -> Vec2 {
+        o.c - o.v * (inner + (f32::from(row) + 0.5) * CELL_SIZE)
+    }
+
+    fn new(o: &Obb, inner: f32, row: u16, zone: ZoneType) -> Self {
+        Self {
+            axis: Self::axis_of(o, inner, row),
+            v: o.v,
+            row,
+            zone,
+        }
+    }
+}
+
 /// Process-wide change counter for [`ZoneGrid::revision`]. Not sim state (never saved or
 /// hashed): it only lets snapshot caches tell grids apart, including a grid replaced by a load.
 fn next_revision() -> u64 {
@@ -335,7 +360,7 @@ impl ZoneGrid {
             .collect();
         // Painted types of the blocks about to be rebuilt (split, upgrade, retrimmed junction)
         // are carried over to the new blocks by position.
-        let mut carried: Vec<(Vec2, ZoneType)> = Vec::new();
+        let mut carried: Vec<Carried> = Vec::new();
         for id in &stale {
             self.collect_painted(*id, &mut carried);
         }
@@ -401,30 +426,34 @@ impl ZoneGrid {
         }
     }
 
-    /// Painted (non-`None`) cells of `segment`'s blocks as `(centre, type)`.
-    fn collect_painted(&self, segment: SegmentId, out: &mut Vec<(Vec2, ZoneType)>) {
+    /// Painted (non-`None`) cells of `segment`'s blocks, remembered by where they stand along
+    /// the road, not where they were: see [`Carried`].
+    fn collect_painted(&self, segment: SegmentId, out: &mut Vec<Carried>) {
         for id in self.blocks_of(segment).into_iter().flatten() {
             let (Some(b), Some(obbs)) = (self.blocks.get(id), self.index.obbs.get(&id)) else {
                 continue;
             };
-            for (z, o) in b.zones.iter().zip(obbs) {
+            for (i, (z, o)) in b.zones.iter().zip(obbs).enumerate() {
                 if *z != ZoneType::None {
-                    out.push((o.c, *z));
+                    let row = (i as u16) % BLOCK_DEPTH;
+                    out.push(Carried::new(o, b.inner, row, *z));
                 }
             }
         }
     }
 
-    /// Gives the cells of the `created` blocks the type of the nearest carried cell within
-    /// [`CARRY_RADIUS`], each carried cell used once. Deterministic: new cells in id order, ties
-    /// broken by the lower carried index.
-    fn apply_carried(&mut self, carried: &[(Vec2, ZoneType)], created: &BTreeSet<ZoneBlockId>) {
+    /// Gives the cells of the `created` blocks the type of the nearest carried cell in the same
+    /// row and on the same side of the road, within [`CARRY_RADIUS`] along it, each carried
+    /// cell used once. Deterministic: new cells in id order, ties broken by the lower carried
+    /// index. Matching is by the cell's foot point on the road axis, so a wider or narrower
+    /// road (which moves the whole block outward or inward) keeps the painting.
+    fn apply_carried(&mut self, carried: &[Carried], created: &BTreeSet<ZoneBlockId>) {
         let mut buckets: BTreeMap<(i32, i32), Vec<usize>> = BTreeMap::new();
-        for (i, (p, _)) in carried.iter().enumerate() {
+        for (i, c) in carried.iter().enumerate() {
             buckets
                 .entry((
-                    (p.x / CARRY_BUCKET).floor() as i32,
-                    (p.y / CARRY_BUCKET).floor() as i32,
+                    (c.axis.x / CARRY_BUCKET).floor() as i32,
+                    (c.axis.y / CARRY_BUCKET).floor() as i32,
                 ))
                 .or_default()
                 .push(i);
@@ -434,20 +463,24 @@ impl ZoneGrid {
             let Some(obbs) = self.index.obbs.get(id).cloned() else {
                 continue;
             };
+            let inner = self.blocks.get(*id).expect("created block").inner;
             let mut zones = self.blocks.get(*id).expect("created block").zones.clone();
             for (cell, o) in obbs.iter().enumerate() {
+                let row = (cell as u16) % BLOCK_DEPTH;
+                let axis = Carried::axis_of(o, inner, row);
                 let (bx, bz) = (
-                    (o.c.x / CARRY_BUCKET).floor() as i32,
-                    (o.c.y / CARRY_BUCKET).floor() as i32,
+                    (axis.x / CARRY_BUCKET).floor() as i32,
+                    (axis.y / CARRY_BUCKET).floor() as i32,
                 );
                 let mut best: Option<(f32, usize)> = None;
                 for dx in -1..=1 {
                     for dz in -1..=1 {
                         for &i in buckets.get(&(bx + dx, bz + dz)).into_iter().flatten() {
-                            if used[i] {
+                            let c = &carried[i];
+                            if used[i] || c.row != row || c.v.dot(o.v) < 0.7 {
                                 continue;
                             }
-                            let d = carried[i].0.distance(o.c);
+                            let d = c.axis.distance(axis);
                             if d <= CARRY_RADIUS
                                 && best.is_none_or(|(bd, bi)| d < bd || (d == bd && i < bi))
                             {
@@ -458,7 +491,7 @@ impl ZoneGrid {
                 }
                 if let Some((_, i)) = best {
                     used[i] = true;
-                    zones[cell] = carried[i].1;
+                    zones[cell] = carried[i].zone;
                 }
             }
             self.blocks.get_mut(*id).expect("created block").zones = zones;

@@ -661,3 +661,46 @@ fn zone_revision_serde_and_painted_state_round_trip() {
     let loaded: ZoneGrid = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(loaded, w.grid, "painted types are part of the saved grid");
 }
+
+/// Paints every cell of a street of `from`, changes the road to `to` and returns
+/// `(valid cells afterwards, of which painted)`.
+fn repaint_after_road_change(from: &str, to: &str) -> (usize, usize) {
+    let mut w = World::new();
+    let a = w.line(from, (1000.0, 1000.0), (1090.0, 1000.0));
+    w.sync();
+    for side in [Side::Left, Side::Right] {
+        paint_side(&mut w, a, side, ZoneType::ResLow);
+    }
+    assert!(painted(&w, ZoneType::ResLow) > 50);
+    let to_id = w.road(to);
+    let def = w.db.road(to_id).clone();
+    w.net.upgrade_segment(a, &def, to_id).unwrap();
+    w.sync();
+    let (mut valid, mut kept) = (0, 0);
+    for (_, b) in w.grid.blocks() {
+        for (z, v) in b.zones.iter().zip(&b.valid) {
+            if *v {
+                valid += 1;
+                kept += usize::from(*z == ZoneType::ResLow);
+            }
+        }
+    }
+    (valid, kept)
+}
+
+#[test]
+fn an_upgrade_or_downgrade_keeps_the_painting_of_the_cells_that_stay_valid() {
+    for (from, to) in [
+        ("basic_2l", "medium_4l"),
+        ("basic_2l", "large_6l"),
+        ("medium_4l", "basic_2l"),
+        ("large_6l", "basic_2l"),
+    ] {
+        let (valid, kept) = repaint_after_road_change(from, to);
+        assert!(valid > 40, "{from}->{to}: {valid} valid cells");
+        assert!(
+            kept * 100 >= valid * 90,
+            "{from}->{to}: only {kept} of {valid} valid cells stay painted"
+        );
+    }
+}
