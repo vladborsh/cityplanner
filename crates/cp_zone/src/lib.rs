@@ -43,8 +43,36 @@ pub fn update_zones(
                 half_width: d.width / 2.0,
             }
         },
-        &|id, seg| junctions.trimmed_curve(&net, id).unwrap_or(seg.curve),
+        &|id, seg| zoned_curve(&junctions, id, seg),
     );
+}
+
+/// The stretch of a segment that is zoned: its curve cut at the setback of every end that
+/// meets a real junction (three or more arms). Dead ends and plain bends (degree <= 2) have
+/// no setback, so blocks run to the end of the segment (BUG-016, §7 `floor(len / 8)`).
+fn zoned_curve(
+    junctions: &JunctionGeometry,
+    id: cp_net::SegmentId,
+    seg: &cp_net::Segment,
+) -> cp_core::curve::CubicBezier3 {
+    let t_of = |node, at_start: bool, default: f32| {
+        junctions
+            .get(node)
+            .filter(|j| j.arms.len() >= 3)
+            .and_then(|j| {
+                j.arms
+                    .iter()
+                    .find(|a| a.segment == id && a.at_start == at_start)
+            })
+            .map_or(default, |a| a.trim_t)
+    };
+    let t0 = t_of(seg.start, true, 0.0);
+    let t1 = t_of(seg.end, false, 1.0);
+    if t1 > t0 {
+        seg.curve.sub_curve(t0, t1)
+    } else {
+        seg.curve
+    }
 }
 
 /// Crate name, used by the skeleton smoke test.
