@@ -35,8 +35,8 @@ pub struct BuildingGrid {
     revision: u64,
     /// Ids removed since the last [`BuildingGrid::take_removed`]: lets other domains drop
     /// their references (citizens, trips, agents) without `cp_building` depending on them.
-    /// Transient: not saved, not hashed, not part of equality.
-    #[serde(skip)]
+    /// Produced by the `Commands` phase and drained a phase later, so a save taken on pause
+    /// right after a `Demolish` still holds it: it is saved (since format 13) and hashed.
     removed: Vec<BuildingId>,
 }
 
@@ -54,7 +54,7 @@ impl Default for BuildingGrid {
 
 impl PartialEq for BuildingGrid {
     fn eq(&self, other: &Self) -> bool {
-        self.buildings == other.buildings
+        self.buildings == other.buildings && self.removed == other.removed
     }
 }
 
@@ -139,6 +139,25 @@ impl BuildingGrid {
         self.revision = next_revision();
         self.buildings.get_mut(id).expect("building").flags.0 = new;
         true
+    }
+
+    /// The saved parts: the building arena and the pending removed ids.
+    pub fn arena(&self) -> &Arena<Building> {
+        &self.buildings
+    }
+
+    /// Ids removed and not yet drained (see [`BuildingGrid::take_removed`]).
+    pub fn removed(&self) -> &[BuildingId] {
+        &self.removed
+    }
+
+    /// Rebuilds a grid from its saved parts (migrations, tests).
+    pub fn from_parts(buildings: Arena<Building>, removed: Vec<BuildingId>) -> Self {
+        Self {
+            buildings,
+            removed,
+            ..Self::default()
+        }
     }
 
     pub fn has_removed(&self) -> bool {

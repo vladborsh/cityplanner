@@ -58,7 +58,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 12;
+pub const FORMAT_VERSION: u32 = 13;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -73,6 +73,7 @@ pub struct SaveData {
     /// Zone blocks, painted types and cell validity. Added in v5.
     pub zones: ZoneGrid,
     /// Buildings (lots, state, access points). Added in v6.
+    /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
     /// Citizens and households. Added in v7.
     pub citizens: CitizenGrid,

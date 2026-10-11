@@ -73,7 +73,7 @@ fn v11_fixture_migrates_and_keeps_running() {
         tiles: l.data.tiles,
         net: l.data.net.clone(),
         zones: l.data.zones.clone(),
-        buildings: l.data.buildings.clone(),
+        buildings: cp_save::migrate::BuildingGridV12::from(&l.data.buildings),
         citizens: l.data.citizens.clone(),
         paths: l.data.paths.clone(),
         utilities: l.data.utilities.clone(),
@@ -108,7 +108,6 @@ fn v11_fixture_migrates_and_keeps_running() {
     }
     let v12 = save(&SaveData::capture(sim.world()), h.content_hash, &h.map_id).unwrap();
     assert_eq!(read_header(&v12).unwrap().0.format_version, FORMAT_VERSION);
-    assert_eq!(FORMAT_VERSION, 12);
     assert!(load(&v12, h.content_hash).unwrap().data.agents == *sim.world().resource::<Agents>());
 }
 

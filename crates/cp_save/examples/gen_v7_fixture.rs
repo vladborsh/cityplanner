@@ -53,7 +53,7 @@ fn main() {
         tiles: d.tiles,
         net: d.net,
         zones: d.zones,
-        buildings: d.buildings,
+        buildings: cp_save::migrate::BuildingGridV12::from(&d.buildings),
         citizens: d.citizens,
     };
     let bytes = encode_v7(

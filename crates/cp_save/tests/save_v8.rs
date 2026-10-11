@@ -242,7 +242,7 @@ fn v7_fixture_migrates_with_no_requests_and_the_frozen_writer_reproduces_it() {
         tiles: d.tiles,
         net: d.net.clone(),
         zones: d.zones.clone(),
-        buildings: d.buildings.clone(),
+        buildings: cp_save::migrate::BuildingGridV12::from(&d.buildings),
         citizens: d.citizens.clone(),
     };
     assert_eq!(

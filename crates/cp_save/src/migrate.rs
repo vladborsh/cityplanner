@@ -4,7 +4,7 @@
 //! never change (its postcard encoding is what old files contain; `SimCommand` and the
 //! domain enums are append-only for the same reason).
 
-use cp_building::BuildingGrid;
+use cp_building::{Building, BuildingGrid};
 use cp_citizen::{CitizenGrid, TripBook};
 use cp_citizen::{CitizenId, TripId};
 use cp_core::Arena;
@@ -116,7 +116,7 @@ pub struct SaveDataV6 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     pub zones: ZoneGrid,
-    pub buildings: BuildingGrid,
+    pub buildings: BuildingGridV12,
 }
 
 /// Version 7: the body as written by format 7 (citizens, before pending path requests).
@@ -130,7 +130,7 @@ pub struct SaveDataV7 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     pub zones: ZoneGrid,
-    pub buildings: BuildingGrid,
+    pub buildings: BuildingGridV12,
     pub citizens: CitizenGrid,
 }
 
@@ -145,7 +145,7 @@ pub struct SaveDataV8 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     pub zones: ZoneGrid,
-    pub buildings: BuildingGrid,
+    pub buildings: BuildingGridV12,
     pub citizens: CitizenGrid,
     pub paths: SavedPaths,
 }
@@ -161,7 +161,7 @@ pub struct SaveDataV9 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     pub zones: ZoneGrid,
-    pub buildings: BuildingGrid,
+    pub buildings: BuildingGridV12,
     pub citizens: CitizenGrid,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
@@ -178,7 +178,7 @@ pub struct SaveDataV10 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     pub zones: ZoneGrid,
-    pub buildings: BuildingGrid,
+    pub buildings: BuildingGridV12,
     pub citizens: CitizenGrid,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
@@ -225,7 +225,7 @@ pub struct SaveDataV11 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     pub zones: ZoneGrid,
-    pub buildings: BuildingGrid,
+    pub buildings: BuildingGridV12,
     pub citizens: CitizenGrid,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
@@ -233,11 +233,66 @@ pub struct SaveDataV11 {
     pub agents: AgentsV11,
 }
 
+/// The building arena as written by formats 1–12 (before the removed-ids list).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BuildingGridV12 {
+    pub buildings: Arena<Building>,
+}
+
+impl From<&BuildingGrid> for BuildingGridV12 {
+    fn from(g: &BuildingGrid) -> Self {
+        Self {
+            buildings: g.arena().clone(),
+        }
+    }
+}
+
+/// Version 12: the body as written by format 12 (vehicle lane state; buildings without the
+/// removed-ids list).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV12 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGridV12,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+    pub trips: TripBook,
+    pub agents: Agents,
+}
+
+/// v12 → v13: the building grid also saves the ids removed and not yet drained (a save on
+/// pause right after a `Demolish` used to lose them). An old save had none pending.
+pub fn migrate_v12_to_v13(v12: SaveDataV12) -> SaveData {
+    SaveData {
+        tick: v12.tick,
+        rng: v12.rng,
+        speed: v12.speed,
+        queue: v12.queue,
+        log: v12.log,
+        tiles: v12.tiles,
+        net: v12.net,
+        zones: v12.zones,
+        buildings: BuildingGrid::from_parts(v12.buildings.buildings, Vec::new()),
+        citizens: v12.citizens,
+        paths: v12.paths,
+        utilities: v12.utilities,
+        trips: v12.trips,
+        agents: v12.agents,
+    }
+}
+
 /// v11 → v12: vehicles got lane state and segment load was added. A v11 car had no
 /// position, only an arrival tick: it starts over at the beginning of its path (it waits for
 /// room there like a new car); if its start lane is gone the drive code completes the trip
 /// abstractly. Pedestrians are unchanged; the load starts empty.
-pub fn migrate_v11_to_v12(v11: SaveDataV11) -> SaveData {
+pub fn migrate_v11_to_v12(v11: SaveDataV11) -> SaveDataV12 {
     let mut vehicles = Arena::new();
     for (_, v) in v11.agents.vehicles.iter() {
         vehicles.insert(Vehicle {
@@ -254,7 +309,7 @@ pub fn migrate_v11_to_v12(v11: SaveDataV11) -> SaveData {
         });
     }
     let s = v11.agents.stats;
-    SaveData {
+    SaveDataV12 {
         tick: v11.tick,
         rng: v11.rng,
         speed: v11.speed,
@@ -392,7 +447,7 @@ pub fn migrate_v5_to_v6(v5: SaveDataV5) -> SaveDataV6 {
         tiles: v5.tiles,
         net: v5.net,
         zones: v5.zones,
-        buildings: BuildingGrid::default(),
+        buildings: BuildingGridV12::default(),
     }
 }
 
@@ -427,7 +482,7 @@ pub fn migrate_v3_to_v4(v3: SaveDataV3) -> SaveDataV4 {
 
 /// The last two chain steps, shared by every arm.
 fn up(v: SaveDataV10) -> SaveData {
-    migrate_v11_to_v12(migrate_v10_to_v11(v))
+    migrate_v12_to_v13(migrate_v11_to_v12(migrate_v10_to_v11(v)))
 }
 
 /// Decodes a body written at `version` and runs the migration chain up to
@@ -497,8 +552,9 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         8 => Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(dec(body)?)))),
         9 => Ok(up(migrate_v9_to_v10(dec(body)?))),
         10 => Ok(up(dec(body)?)),
-        11 => Ok(migrate_v11_to_v12(dec(body)?)),
-        12 => dec(body),
+        11 => Ok(migrate_v12_to_v13(migrate_v11_to_v12(dec(body)?))),
+        12 => Ok(migrate_v12_to_v13(dec(body)?)),
+        13 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -679,4 +735,16 @@ pub fn encode_v11(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v11).expect("serialization failed");
     crate::assemble(11, v11.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 12** file (vehicle lane state, no removed-ids list). Legacy writer kept
+/// only to test the v12 fixture; real saves always use [`crate::save`].
+pub fn encode_v12(
+    v12: &SaveDataV12,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v12).expect("serialization failed");
+    crate::assemble(12, v12.tick.0, &body, content_hash, map_id, map_hash)
 }
