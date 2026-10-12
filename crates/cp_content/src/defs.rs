@@ -272,7 +272,21 @@ pub struct VehicleDef {
     pub max_speed_kmh: f32,
     /// Acceleration, m/s².
     pub accel: f32,
+    /// Braking, m/s² (§9.4).
+    #[serde(default = "default_decel")]
+    pub decel: f32,
+    /// Standstill bumper-to-bumper gap to the car ahead, metres.
+    #[serde(default = "default_min_gap")]
+    pub min_gap: f32,
     pub mesh: String,
+}
+
+fn default_decel() -> f32 {
+    4.0
+}
+
+fn default_min_gap() -> f32 {
+    2.0
 }
 
 /// A utility link type: pipes (water, sewage) and power lines (`system-design.md` §10).

@@ -112,6 +112,8 @@ pub fn vehicle(d: &VehicleDef) -> Problems {
     c.positive("width", d.width);
     c.positive("max_speed_kmh", d.max_speed_kmh);
     c.positive("accel", d.accel);
+    c.positive("decel", d.decel);
+    c.non_negative("min_gap", d.min_gap);
     c.not_empty("mesh", &d.mesh);
     c.0
 }

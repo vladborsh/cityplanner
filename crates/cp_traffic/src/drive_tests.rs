@@ -23,6 +23,8 @@ struct Rig {
     invalid: usize,
     stuck: usize,
     stuck_list: Vec<Vehicle>,
+    /// Vehicle dimensions: the defaults unless a test installs its own.
+    specs: VehicleSpecs,
 }
 
 impl Rig {
@@ -41,10 +43,15 @@ impl Rig {
             invalid: 0,
             stuck: 0,
             stuck_list: Vec::new(),
+            specs: VehicleSpecs::default(),
         }
     }
 
     fn add(&mut self, from: Access, to: Access) -> VehicleId {
+        self.add_kind(0, from, to)
+    }
+
+    fn add_kind(&mut self, kind: u8, from: Access, to: Access) -> VehicleId {
         let path = find_car_path(&self.graph, &CongestionMap::default(), &from, &to)
             .expect("a route exists");
         let s = path.start_s;
@@ -52,7 +59,7 @@ impl Rig {
             trip: TripId::new(0, 0),
             citizen: CitizenId::new(0, 0),
             path,
-            kind: 0,
+            kind,
             hop: 0,
             in_conn: false,
             spawned: false,
@@ -72,6 +79,7 @@ impl Rig {
             tick,
             pool,
             stuck_ticks,
+            &self.specs,
         );
         self.arrived += f.arrived.len();
         self.invalid += f.invalid.len();
@@ -93,12 +101,24 @@ impl Rig {
 
     /// No two cars overlap in a place, and no two vehicles occupy conflicting connections.
     fn check_invariants(&self) {
-        let gap = CAR_LENGTH + HARD_GAP - 1e-2;
         let lists = self.st.lanes.iter().chain(self.st.conns.values());
         for l in lists {
             for w in l.windows(2) {
                 let (a, b) = (self.veh.get(w[0]).unwrap(), self.veh.get(w[1]).unwrap());
-                assert!(a.s - b.s >= gap, "cars overlap: {} behind {}", b.s, a.s);
+                // The leader's length, not the follower's, separates the two front bumpers.
+                let gap = self.specs.of(a).length + HARD_GAP - 1e-2;
+                assert!(
+                    a.s - b.s >= gap,
+                    "cars overlap: {} (kind {}, in_conn {}) behind {} (kind {}, in_conn {}), hop {} / {}",
+                    b.s,
+                    b.kind,
+                    b.in_conn,
+                    a.s,
+                    a.kind,
+                    a.in_conn,
+                    b.hop,
+                    a.hop
+                );
             }
         }
         for (&(fs, ts), l) in &self.st.conns {
@@ -452,29 +472,28 @@ fn a_car_accelerates_to_the_limit_and_follows_a_slow_leader_without_touching() {
     assert_eq!(rig.arrived, 2);
 }
 
-/// 16k cars on a 41×41 lattice; prints ms per tick (all four substeps). Run in release:
-/// `cargo test -p cp_traffic --release bench_16k_cars -- --ignored --nocapture`.
+/// The 16k-car workload of the driving benchmark: 16k cars on a 41×41 lattice for 80 ticks on
+/// the compute pool. No clock in a sim crate: time it from outside, e.g.
+/// `time cargo test -p cp_traffic --release drive_16k_cars_workload -- --ignored --nocapture`
+/// (the setup, mostly path finding, is part of the wall time; compare two builds the same way).
 #[test]
-#[ignore = "benchmark: run in release with --nocapture"]
-fn bench_16k_cars() {
+#[ignore = "workload for external timing: run in release with --nocapture"]
+fn drive_16k_cars_workload() {
     let (s, segs) = lattice(41);
     let mut rig = Rig::new(s);
     crowd(&mut rig, &segs, 16_000);
     let pool = TaskPoolBuilder::new().build();
-    let (mut total, mut ticks, mut on_road) = (std::time::Duration::ZERO, 0u32, 0usize);
+    let (mut ticks, mut on_road) = (0u32, 0usize);
     for t in 0..80u64 {
-        let t0 = std::time::Instant::now();
         rig.tick(t, Some(&pool), STUCK_TICKS);
         if t >= 20 {
-            total += t0.elapsed();
             ticks += 1;
             on_road += rig.veh.iter().filter(|(_, v)| v.spawned).count();
         }
     }
     eprintln!(
-        "bench: {} cars on the road on average, {:.2} ms/tick over {ticks} ticks ({} threads), arrived {}, stuck {}",
+        "workload: {} cars on the road on average over {ticks} ticks ({} threads), arrived {}, stuck {}",
         on_road / ticks as usize,
-        total.as_secs_f64() * 1000.0 / f64::from(ticks),
         pool.thread_num(),
         rig.arrived,
         rig.stuck
@@ -556,16 +575,19 @@ fn multilane_lattices_have_a_path_between_every_pair_and_cars_arrive() {
     }
 }
 
-/// Closest centre-to-centre distance (m) between two cars in *different* places that share a
-/// source lane: one on the lane and one in a connection leaving it, or both in different
-/// connections leaving it. Cars in one place are ordered by `s` (`check_invariants`); their
-/// centre distance on a tight curve is a chord, shorter than the arc. `None` if no pair exists.
+/// Smallest clearance (m) between two cars in *different* places that share a source lane:
+/// their centre distance minus half the sum of their lengths, so a positive value means the
+/// bodies are apart. The pairs are one car on the lane and one in a connection leaving it, or
+/// two in different connections leaving it. Cars in one place are ordered by `s`
+/// (`check_invariants`); their centre distance on a tight curve is a chord, shorter than the
+/// arc. `None` if no such pair exists right now.
 fn min_shared_lane_distance(rig: &Rig) -> Option<f32> {
     let net = rig.sim.world.resource::<cp_net::NetGraph>();
     let geo = rig.sim.world.resource::<cp_net::JunctionGeometry>();
     let pos = |id: VehicleId| {
         let v = rig.veh.get(id)?;
-        crate::pose::vehicle_pose(v, &rig.graph, net, geo).map(|(p, _)| p)
+        crate::pose::vehicle_pose(v, rig.st.specs.of(v).length * 0.5, &rig.graph, net, geo)
+            .map(|(p, _)| p)
     };
     let mut best: Option<f32> = None;
     for slot in 0..rig.st.lanes.len() as u32 {
@@ -583,7 +605,10 @@ fn min_shared_lane_distance(rig: &Rig) -> Option<f32> {
                 for &a in pa.iter() {
                     for &b in pb.iter() {
                         if let (Some(p), Some(q)) = (pos(a), pos(b)) {
-                            let d = p.distance(q);
+                            let d = p.distance(q)
+                                - 0.5
+                                    * (rig.st.specs.of(rig.veh.get(a).unwrap()).length
+                                        + rig.st.specs.of(rig.veh.get(b).unwrap()).length);
                             best = Some(best.map_or(d, |m| m.min(d)));
                         }
                     }
@@ -594,61 +619,176 @@ fn min_shared_lane_distance(rig: &Rig) -> Option<f32> {
     best
 }
 
-/// BUG-020: after a lane hop cars keep a car length between centres, also towards cars that
-/// have just left the target lane into a junction connection.
-#[test]
-fn cars_sharing_a_lane_or_its_connections_never_close_to_a_car_length() {
-    let mut worst = f32::MAX;
-    for seed in [5u64, 7] {
-        let (s, segs) = lattice_of(Some("medium_4l"), 5);
-        let mut rig = Rig::new(s);
-        let mut rng = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-        let mut next = |n: usize| {
-            rng ^= rng << 13;
-            rng ^= rng >> 7;
-            rng ^= rng << 17;
-            (rng >> 11) as usize % n
+/// Smallest gap (m) in the lane's own coordinates between a car on a lane and the rear bumper of
+/// a car that has left it into a connection (positive: the lane car is behind the other's rear).
+/// Unlike centre distances this is exact for long vehicles, whose bodies do not follow a turn.
+fn min_lane_to_connection_gap(rig: &Rig) -> Option<f32> {
+    let mut best: Option<f32> = None;
+    for (&(slot, _), conn) in &rig.st.conns {
+        let Some(node) = rig.graph.car[slot as usize].as_ref() else {
+            continue;
         };
-        let mut trips = 0;
-        while trips < 300 {
-            let (a, b) = (segs[next(segs.len())], segs[next(segs.len())]);
-            if a == b {
-                continue;
-            }
-            let side = |k: usize| {
-                if k.is_multiple_of(2) {
-                    Side::Right
-                } else {
-                    Side::Left
-                }
-            };
-            let from = acc(a, 8.0 + next(70) as f32, side(next(2)));
-            let to = acc(b, 8.0 + next(70) as f32, side(next(2)));
-            if find_car_path(&rig.graph, &CongestionMap::default(), &from, &to).is_ok() {
-                rig.add(from, to);
-                trips += 1;
+        for &c in conn {
+            let c = rig.veh.get(c).unwrap();
+            let rear = node.s_out + c.s - rig.st.specs.of(c).length;
+            for &l in &rig.st.lanes[slot as usize] {
+                let l = rig.veh.get(l).unwrap();
+                let gap = rear - l.s;
+                best = Some(best.map_or(gap, |b| b.min(gap)));
             }
         }
-        let mut closest = f32::MAX;
-        for t in 0..cp_core::time::TICKS_PER_DAY {
-            rig.tick(t, None, STUCK_TICKS);
-            rig.check_invariants();
-            if let Some(d) = min_shared_lane_distance(&rig) {
-                closest = closest.min(d);
-            }
-            if rig.veh.is_empty() {
-                break;
-            }
-        }
-        println!(
-            "seed {seed}: closest {closest:.2} m, arrived {} stuck {} invalid {}",
-            rig.arrived, rig.stuck, rig.invalid
-        );
-        assert_eq!(rig.stuck + rig.invalid, 0, "seed {seed}: cars were removed");
-        worst = worst.min(closest);
     }
-    assert!(
-        worst > CAR_LENGTH,
-        "two cars sharing a lane came {worst:.2} m apart"
+    best
+}
+
+/// `car_basic` plus a 12 m truck (second `VehicleDef`, kind `Truck`), as the specs of a run.
+fn mixed_specs() -> VehicleSpecs {
+    let car = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/content/vehicles/car_basic.ron"
+    ))
+    .unwrap();
+    let truck = r#"Vehicle((id: "truck_12", name: "Truck", kind: Truck, length: 12.0,
+        width: 2.5, max_speed_kmh: 80.0, accel: 1.0, decel: 3.0, min_gap: 3.0, mesh: "vehicle/truck"))"#;
+    let db = cp_content::ContentDb::from_sources(vec![
+        ("content/vehicles/car_basic.ron".into(), car),
+        ("content/vehicles/truck_12.ron".into(), truck.into()),
+    ])
+    .unwrap();
+    VehicleSpecs::from_content(&db)
+}
+
+/// 300 random trips on a 5x5 medium_4l lattice for a game day; every third vehicle is a truck
+/// when `mixed`. Returns the smallest clearance between cars sharing a source lane.
+fn shared_lane_run(seed: u64, mixed: bool) -> f32 {
+    let (s, segs) = lattice_of(Some("medium_4l"), 5);
+    let mut rig = Rig::new(s);
+    if mixed {
+        rig.specs = mixed_specs();
+    }
+    let mut rng = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    let mut next = |n: usize| {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        (rng >> 11) as usize % n
+    };
+    let mut trips = 0;
+    while trips < 300 {
+        let (a, b) = (segs[next(segs.len())], segs[next(segs.len())]);
+        if a == b {
+            continue;
+        }
+        let side = |k: usize| {
+            if k.is_multiple_of(2) {
+                Side::Right
+            } else {
+                Side::Left
+            }
+        };
+        let from = acc(a, 8.0 + next(70) as f32, side(next(2)));
+        let to = acc(b, 8.0 + next(70) as f32, side(next(2)));
+        if find_car_path(&rig.graph, &CongestionMap::default(), &from, &to).is_ok() {
+            rig.add_kind(u8::from(mixed && trips % 3 == 0), from, to);
+            trips += 1;
+        }
+    }
+    let mut closest = f32::MAX;
+    for t in 0..cp_core::time::TICKS_PER_DAY {
+        rig.tick(t, None, STUCK_TICKS);
+        rig.check_invariants();
+        let d = if mixed {
+            min_lane_to_connection_gap(&rig)
+        } else {
+            min_shared_lane_distance(&rig)
+        };
+        if let Some(d) = d {
+            closest = closest.min(d);
+        }
+        if rig.veh.is_empty() {
+            break;
+        }
+    }
+    println!(
+        "seed {seed} mixed {mixed}: clearance {closest:.2} m, arrived {} stuck {} invalid {}",
+        rig.arrived, rig.stuck, rig.invalid
     );
+    // Long trucks need 15 m of free lane to enter and can jam a dense lattice for good; only
+    // the uniform run must lose nobody.
+    if mixed {
+        assert!(
+            rig.arrived * 10 >= 300 * 9,
+            "seed {seed}: {} arrived",
+            rig.arrived
+        );
+    } else {
+        assert_eq!(rig.stuck + rig.invalid, 0, "seed {seed}: cars were removed");
+    }
+    closest
+}
+
+/// BUG-020: after a lane hop cars keep their bumpers apart, also towards cars that have just
+/// left the target lane into a junction connection.
+#[test]
+fn cars_sharing_a_lane_or_its_connections_never_touch() {
+    for seed in [5u64, 7] {
+        let clearance = shared_lane_run(seed, false);
+        assert!(
+            clearance > 0.0,
+            "seed {seed}: bodies overlap by {clearance}"
+        );
+    }
+}
+
+/// T-065: the same with a mix of 4.2 m cars and 12 m trucks, each with its own gap.
+#[test]
+fn cars_and_trucks_sharing_a_lane_or_its_connections_never_touch() {
+    for seed in [5u64, 7] {
+        let clearance = shared_lane_run(seed, true);
+        assert!(
+            clearance > 0.0,
+            "seed {seed}: bodies overlap by {clearance}"
+        );
+    }
+}
+
+/// T-065: a second `VehicleDef` of 12 m queues with 12 m of leader length (+ its own gap), not
+/// with the constants.
+#[test]
+fn a_queue_of_twelve_metre_trucks_is_spaced_by_their_length() {
+    let mut s = sim();
+    let arms = cross(&mut s, "medium_4l");
+    let (w, e) = (arms[0], arms[1]);
+    let mut rig = Rig::new(s);
+    rig.specs = mixed_specs();
+    for k in 0..4 {
+        rig.add_kind(1, from_arm(w, 5.0 + 14.0 * k as f32), to_arm(e, 100.0));
+    }
+    let mut gaps: Vec<f32> = Vec::new();
+    for t in 0..2000u64 {
+        rig.tick(t, None, STUCK_TICKS);
+        rig.check_invariants();
+        // Neighbouring trucks of one lane that both stand: a queue.
+        for l in &rig.st.lanes {
+            let v: Vec<&Vehicle> = l.iter().filter_map(|&id| rig.veh.get(id)).collect();
+            gaps.extend(
+                v.windows(2)
+                    .filter(|w| w[0].speed < 0.1 && w[1].speed < 0.1)
+                    .map(|w| w[0].s - w[1].s),
+            );
+        }
+        if rig.veh.is_empty() {
+            break;
+        }
+    }
+    assert!(!gaps.is_empty(), "trucks queued at the light");
+    for g in gaps {
+        // Front bumper to front bumper: the 12 m body plus a standstill gap of 3 m (and some
+        // braking slack), never the 4.2 m of a car.
+        assert!(
+            (12.0 + HARD_GAP..=12.0 + 3.0 + 4.0).contains(&g),
+            "spacing {g}"
+        );
+    }
+    assert_eq!((rig.stuck, rig.invalid), (0, 0));
 }

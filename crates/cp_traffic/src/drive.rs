@@ -51,15 +51,16 @@ use crate::graph::{ExitConn, LaneNode, PathGraph};
 
 /// Seconds of movement per substep.
 pub const DT: f32 = MOVE_SECONDS_PER_TICK / MOVE_SUBSTEPS as f32;
-/// Vehicle length, metres (`car_basic`).
+/// Default vehicle length, metres: only for runs without content (tests); the game reads
+/// `VehicleDef::length` ([`VehicleSpecs`]).
 pub const CAR_LENGTH: f32 = 4.2;
-/// Standstill bumper-to-bumper gap, metres.
+/// Default standstill bumper-to-bumper gap, metres (see [`CAR_LENGTH`]).
 pub const MIN_GAP: f32 = 2.0;
 /// Closest two cars may ever get, metres (hard clamp).
 pub const HARD_GAP: f32 = 0.5;
-/// Acceleration, m/s² (§9.4).
+/// Default acceleration, m/s² (§9.4; see [`CAR_LENGTH`]).
 pub const ACCEL: f32 = 2.0;
-/// Braking, m/s² (§9.4).
+/// Default braking, m/s² (§9.4; see [`CAR_LENGTH`]).
 pub const DECEL: f32 = 4.0;
 /// Reaction time in the safe-speed formula, seconds.
 pub const REACTION: f32 = 1.0;
@@ -77,6 +78,71 @@ const CHUNK: usize = 64;
 /// Fewer vehicles than this are stepped on the calling thread.
 const PARALLEL_MIN: usize = 512;
 
+/// Dimensions and dynamics of one vehicle kind, from its `VehicleDef`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VehicleSpec {
+    /// Bumper to bumper, metres.
+    pub length: f32,
+    /// Standstill gap to the car ahead, metres.
+    pub min_gap: f32,
+    /// Acceleration, m/s².
+    pub accel: f32,
+    /// Braking, m/s².
+    pub decel: f32,
+    /// Top speed, m/s.
+    pub max_speed: f32,
+}
+
+impl Default for VehicleSpec {
+    /// The stand-in for runs without content.
+    fn default() -> Self {
+        Self {
+            length: CAR_LENGTH,
+            min_gap: MIN_GAP,
+            accel: ACCEL,
+            decel: DECEL,
+            max_speed: f32::MAX,
+        }
+    }
+}
+
+/// [`VehicleSpec`] per `cp_content::VehicleKind` number (`Vehicle::kind`): the first definition
+/// of a kind, in id order, sets it (same rule as the render looks); a kind without a definition
+/// keeps the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct VehicleSpecs {
+    by_kind: [VehicleSpec; VEHICLE_KINDS],
+}
+
+/// Number of `cp_content::VehicleKind` variants.
+pub const VEHICLE_KINDS: usize = 4;
+
+impl VehicleSpecs {
+    pub fn from_content(db: &cp_content::ContentDb) -> Self {
+        let mut specs = Self::default();
+        let mut seen = [false; VEHICLE_KINDS];
+        for (_, def) in db.vehicles() {
+            let k = def.kind as usize;
+            if k < VEHICLE_KINDS && !seen[k] {
+                seen[k] = true;
+                specs.by_kind[k] = VehicleSpec {
+                    length: def.length,
+                    min_gap: def.min_gap,
+                    accel: def.accel,
+                    decel: def.decel,
+                    max_speed: def.max_speed_kmh / 3.6,
+                };
+            }
+        }
+        specs
+    }
+
+    /// The spec of `v`'s kind.
+    pub fn of(&self, v: &Vehicle) -> &VehicleSpec {
+        &self.by_kind[usize::from(v.kind).min(VEHICLE_KINDS - 1)]
+    }
+}
+
 /// Plan time of the signal at `substep` of `tick`: the plan counts 50 ms ticks, one substep
 /// is 0.5 s of movement = 10 plan ticks.
 pub fn signal_tick(tick: u64, substep: u32) -> u64 {
@@ -91,13 +157,14 @@ pub(crate) fn is_lane_change(g: &PathGraph, from: LaneId, to: LaneId) -> bool {
     }
 }
 
-/// Cars that keep a hop to lane `to` at position `s` shut: cars of that lane within a car length
-/// plus the gap, and cars that have just left it into a junction connection and still cover its
-/// stop line.
+/// Cars that keep a hop of `me` to lane `to` at position `s` shut: cars of that lane too close
+/// for either bumper gap, and cars that have just left it into a junction connection and still
+/// cover its stop line.
 fn hop_blockers<'a>(
     g: &PathGraph,
     veh: &'a Arena<Vehicle>,
     st: &DriveState,
+    me: &Vehicle,
     to: LaneId,
     s: f32,
 ) -> Vec<&'a Vehicle> {
@@ -108,19 +175,43 @@ fn hop_blockers<'a>(
         return Vec::new();
     };
     let s = s.clamp(t.s_in, t.s_out);
+    let mine = st.specs.of(me);
     let mut out: Vec<&Vehicle> = st.lanes[ts as usize]
         .iter()
         .filter_map(|&o| veh.get(o))
-        .filter(|o| (o.s - s).abs() < CAR_LENGTH + MIN_GAP)
+        .filter(|o| {
+            let theirs = st.specs.of(o);
+            if o.s >= s {
+                // Ahead: its rear against my front.
+                o.s - theirs.length - s < mine.min_gap
+            } else {
+                // Behind: my rear against its front.
+                s - mine.length - o.s < theirs.min_gap
+            }
+        })
         .collect();
-    out.extend(
-        st.conns
-            .range((ts, 0)..=(ts, u32::MAX))
-            .flat_map(|(_, l)| l.iter())
-            .filter_map(|&o| veh.get(o))
-            .filter(|o| t.s_out + o.s - CAR_LENGTH < s + MIN_GAP),
-    );
+    out.extend(left_the_lane(veh, st, ts, t.s_out, s, mine.min_gap));
     out
+}
+
+/// Cars that have left lane slot `slot` (stop line at `s_out`) into a junction connection and
+/// whose rear still comes closer than `gap` to position `s` on the lane.
+fn left_the_lane<'v, 's>(
+    veh: &'v Arena<Vehicle>,
+    st: &'s DriveState,
+    slot: u32,
+    s_out: f32,
+    s: f32,
+    gap: f32,
+) -> impl Iterator<Item = &'v Vehicle> + 's
+where
+    'v: 's,
+{
+    st.conns
+        .range((slot, 0)..=(slot, u32::MAX))
+        .flat_map(|(_, l)| l.iter())
+        .filter_map(move |&o| veh.get(o))
+        .filter(move |o| s_out + o.s - st.specs.of(o).length < s + gap)
 }
 
 /// Performs the lateral hops that have room, in lane-slot then queue order (deterministic).
@@ -143,7 +234,7 @@ fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGrap
                 };
                 let t = g.car[ts as usize].as_ref().expect("lane");
                 let s = v.s.clamp(t.s_in, t.s_out);
-                if !hop_blockers(g, vehicles, st, to, s).is_empty() {
+                if !hop_blockers(g, vehicles, st, v, to, s).is_empty() {
                     break;
                 }
                 st.lanes[fs as usize].retain(|w| *w != id);
@@ -171,6 +262,8 @@ pub(crate) struct DriveState {
     pub waiting: Vec<VehicleId>,
     pub ready: bool,
     pub generation: u64,
+    /// Vehicle dimensions and dynamics of the current tick (set by [`drive_tick`]).
+    pub specs: VehicleSpecs,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -304,15 +397,16 @@ impl DriveState {
 /// in the coordinates of the place it is on.
 type Leader = (f32, f32, f32);
 
-fn follow(v: &Vehicle, limit: f32, leader: Option<Leader>) -> (f32, f32) {
-    let mut vt = (v.speed + ACCEL * DT).min(limit);
+fn follow(v: &Vehicle, spec: &VehicleSpec, limit: f32, leader: Option<Leader>) -> (f32, f32) {
+    let (accel, decel) = (spec.accel, spec.decel);
+    let mut vt = (v.speed + accel * DT).min(limit.min(spec.max_speed));
     if let Some((rear, vl, g0)) = leader {
         let gap = (rear - v.s - g0).max(0.0);
-        let bt = DECEL * REACTION;
-        let safe = -bt + (bt * bt + vl * vl + 2.0 * DECEL * gap).sqrt();
+        let bt = decel * REACTION;
+        let safe = -bt + (bt * bt + vl * vl + 2.0 * decel * gap).sqrt();
         vt = vt.min(safe);
     }
-    vt = vt.max(v.speed - DECEL * DT).max(0.0);
+    vt = vt.max(v.speed - decel * DT).max(0.0);
     let mut ds = 0.5 * (v.speed + vt) * DT;
     if let Some((rear, _, _)) = leader {
         let room = (rear - HARD_GAP - v.s).max(0.0);
@@ -326,17 +420,29 @@ fn follow(v: &Vehicle, limit: f32, leader: Option<Leader>) -> (f32, f32) {
 
 /// Room for one more car at the start of lane `slot`, given cars already inside junctions
 /// heading there (`extra` of them are about to arrive).
-fn has_room(g: &PathGraph, veh: &Arena<Vehicle>, st: &DriveState, slot: u32, extra: u16) -> bool {
+fn has_room(
+    g: &PathGraph,
+    veh: &Arena<Vehicle>,
+    st: &DriveState,
+    me: &Vehicle,
+    slot: u32,
+    extra: u16,
+) -> bool {
     let Some(t) = g.car[slot as usize].as_ref() else {
         return false;
     };
     let span = t.s_out - t.s_in;
     let free = match st.lanes[slot as usize].last().and_then(|&id| veh.get(id)) {
-        Some(o) => o.s - CAR_LENGTH - t.s_in,
+        Some(o) => o.s - st.specs.of(o).length - t.s_in,
         None => span,
     };
-    let need = (CAR_LENGTH + MIN_GAP).min(0.5 * span);
-    free - f32::from(st.entering[slot as usize] + extra) * (CAR_LENGTH + MIN_GAP) >= need
+    // Room for `me`, and for each car already on its way, taken to be like `me`.
+    let slot_len = {
+        let m = st.specs.of(me);
+        m.length + m.min_gap
+    };
+    let need = slot_len.min(0.5 * span);
+    free - f32::from(st.entering[slot as usize] + extra) * slot_len >= need
 }
 
 /// May the front vehicle `v` of its lane (`s_out` = its stop line) enter connection `ex`?
@@ -354,7 +460,7 @@ fn gate_open(
             Signal::Green => {}
             Signal::Yellow => {
                 // Only a car that cannot stop any more goes on.
-                if v.speed * v.speed / (2.0 * DECEL) <= s_out - v.s {
+                if v.speed * v.speed / (2.0 * st.specs.of(v).decel) <= s_out - v.s {
                     return false;
                 }
             }
@@ -369,7 +475,10 @@ fn gate_open(
             .range((from_slot, 0)..=(from_slot, u32::MAX))
             .filter(|((_, to), _)| *to != ex.to_slot)
             .flat_map(|(_, l)| l.iter())
-            .any(|&o| veh.get(o).is_some_and(|o| o.s - CAR_LENGTH < MIN_GAP));
+            .any(|&o| {
+                veh.get(o)
+                    .is_some_and(|o| o.s - st.specs.of(o).length < st.specs.of(v).min_gap)
+            });
         if sibling_in_the_way {
             return false;
         }
@@ -400,7 +509,11 @@ fn gate_open(
             }
         }
     }
-    has_room(g, veh, st, ex.to_slot, 0)
+    has_room(g, veh, st, v, ex.to_slot, 0)
+}
+
+fn spec_of<'a>(ctx: &'a Ctx, v: &Vehicle) -> &'a VehicleSpec {
+    ctx.st.specs.of(v)
 }
 
 fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
@@ -414,7 +527,11 @@ fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
         let mut ev = Ev::Stay;
         let mut open = false;
         let leader: Option<Leader> = match prev {
-            Some(l) => Some((l.s - CAR_LENGTH, l.speed, MIN_GAP)),
+            Some(l) => Some((
+                l.s - spec_of(ctx, l).length,
+                l.speed,
+                spec_of(ctx, v).min_gap,
+            )),
             None => match v.path.steps.get(v.hop as usize).copied() {
                 None => None,
                 Some((_, to)) => match find_exit(ctx.g, node.id, to) {
@@ -435,7 +552,7 @@ fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
                     Some(ex) => {
                         open = gate_open(ctx.g, ctx.veh, ctx.st, ctx.signal, v, ex, node.s_out);
                         if open {
-                            ahead_of_stop_line(ctx, node, ex)
+                            ahead_of_stop_line(ctx, v, node, ex)
                         } else {
                             Some((node.s_out + HARD_GAP, 0.0, HARD_GAP))
                         }
@@ -443,7 +560,13 @@ fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
                 },
             },
         };
-        let (mut s, nv) = follow(v, node.speed, leader);
+        // The front car also keeps clear of cars that left the lane into a connection, whichever
+        // one: a long vehicle still covers the stop line while its front is already inside.
+        let leader = match (prev, conn_leader(ctx, v, slot, node)) {
+            (None, Some(c)) if leader.is_none_or(|l| c.0 < l.0) => Some(c),
+            _ => leader,
+        };
+        let (mut s, nv) = follow(v, spec_of(ctx, v), node.speed, leader);
         let next = v.path.steps.get(v.hop as usize);
         match next {
             Some(_) if open && s >= node.s_out => ev = Ev::Cross,
@@ -460,22 +583,41 @@ fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
     }
 }
 
+/// The rear-most car among those that have left lane `slot` into any connection, as the leader
+/// of the lane's front car `v`.
+fn conn_leader(ctx: &Ctx, v: &Vehicle, slot: u32, node: &LaneNode) -> Option<Leader> {
+    ctx.st
+        .conns
+        .range((slot, 0)..=(slot, u32::MAX))
+        .flat_map(|(_, l)| l.iter())
+        .filter_map(|&id| ctx.veh.get(id))
+        .map(|o| {
+            (
+                node.s_out + o.s - spec_of(ctx, o).length,
+                o.speed,
+                spec_of(ctx, v).min_gap,
+            )
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+}
+
 /// The nearest thing past the stop line when the gate is open, in lane coordinates.
-fn ahead_of_stop_line(ctx: &Ctx, node: &LaneNode, ex: &ExitConn) -> Option<Leader> {
+fn ahead_of_stop_line(ctx: &Ctx, v: &Vehicle, node: &LaneNode, ex: &ExitConn) -> Option<Leader> {
+    let gap = spec_of(ctx, v).min_gap;
     let fs = ctx.g.car_slot(node.id)?;
     if let Some(l) = ctx.st.conns.get(&(fs, ex.to_slot))
         && let Some(o) = l.last().and_then(|&id| ctx.veh.get(id))
     {
-        return Some((node.s_out + o.s - CAR_LENGTH, o.speed, MIN_GAP));
+        return Some((node.s_out + o.s - spec_of(ctx, o).length, o.speed, gap));
     }
     let t = ctx.g.car[ex.to_slot as usize].as_ref()?;
     let o = ctx.st.lanes[ex.to_slot as usize]
         .last()
         .and_then(|&id| ctx.veh.get(id))?;
     Some((
-        node.s_out + ex.length + o.s - CAR_LENGTH - t.s_in,
+        node.s_out + ex.length + o.s - spec_of(ctx, o).length - t.s_in,
         o.speed,
-        MIN_GAP,
+        gap,
     ))
 }
 
@@ -506,13 +648,23 @@ fn step_conn(ctx: &Ctx, key: (u32, u32), out: &mut Vec<Upd>) {
     for &id in list {
         let Some(v) = ctx.veh.get(id) else { continue };
         let leader: Option<Leader> = match prev {
-            Some(l) => Some((l.s - CAR_LENGTH, l.speed, MIN_GAP)),
+            Some(l) => Some((
+                l.s - spec_of(ctx, l).length,
+                l.speed,
+                spec_of(ctx, v).min_gap,
+            )),
             None => ctx.st.lanes[ex.to_slot as usize]
                 .last()
                 .and_then(|&id| ctx.veh.get(id))
-                .map(|o| (ex.length + o.s - CAR_LENGTH - target.s_in, o.speed, MIN_GAP)),
+                .map(|o| {
+                    (
+                        ex.length + o.s - spec_of(ctx, o).length - target.s_in,
+                        o.speed,
+                        spec_of(ctx, v).min_gap,
+                    )
+                }),
         };
-        let (s, nv) = follow(v, limit, leader);
+        let (s, nv) = follow(v, spec_of(ctx, v), limit, leader);
         let ev = if prev.is_none() && s >= ex.length {
             Ev::Cross
         } else {
@@ -559,15 +711,20 @@ pub(crate) fn spawn_waiting(
         let list = &st.lanes[slot as usize];
         // Index of the first vehicle behind `s`.
         let at = list.partition_point(|&o| vehicles.get(o).is_some_and(|o| o.s > s));
+        let mine = *st.specs.of(v);
         let ahead_ok = at == 0
             || vehicles
                 .get(list[at - 1])
-                .is_some_and(|o| o.s - CAR_LENGTH - MIN_GAP >= s);
+                .is_some_and(|o| o.s - st.specs.of(o).length - mine.min_gap >= s);
         let behind_ok = at == list.len()
             || vehicles
                 .get(list[at])
-                .is_some_and(|o| o.s + CAR_LENGTH + MIN_GAP <= s);
-        if ahead_ok && behind_ok {
+                .is_some_and(|o| o.s + mine.length + st.specs.of(o).min_gap <= s);
+        // A car that has just crossed the stop line into a connection still covers it.
+        let clear_of_junction = left_the_lane(vehicles, st, slot, node.s_out, s, mine.min_gap)
+            .next()
+            .is_none();
+        if ahead_ok && behind_ok && clear_of_junction {
             st.lanes[slot as usize].insert(at, id);
             let v = vehicles.get_mut(id).expect("vehicle");
             v.spawned = true;
@@ -599,7 +756,7 @@ fn front_suspicious(
         // Held at the stop line by a lane change that finds no gap: only a gap kept shut by
         // cars that stand is suspicious; cars that are moving will clear it.
         return is_lane_change(g, node.id, to)
-            && hop_blockers(g, veh, st, to, node.s_out)
+            && hop_blockers(g, veh, st, v, to, node.s_out)
                 .into_iter()
                 .any(|o| o.speed < 0.1);
     };
@@ -639,7 +796,7 @@ fn front_suspicious(
     if stuck_behind {
         return true;
     }
-    if legit || has_room(g, veh, st, ex.to_slot, 0) {
+    if legit || has_room(g, veh, st, v, ex.to_slot, 0) {
         return false;
     }
     // No room beyond the junction: gridlock, unless the lane ahead is only backed up behind a
@@ -715,7 +872,9 @@ pub(crate) fn drive_tick(
     tick: u64,
     pool: Option<&TaskPool>,
     stuck_ticks: u32,
+    specs: &VehicleSpecs,
 ) -> Finished {
+    st.specs = *specs;
     let mut finished = Finished::default();
     spawn_waiting(vehicles, st, g, &mut finished);
     for sub in 0..MOVE_SUBSTEPS {
@@ -867,7 +1026,7 @@ fn apply(
                 let clear = st.lanes[ex.to_slot as usize]
                     .last()
                     .and_then(|&id| vehicles.get(id))
-                    .is_none_or(|o| s_new <= o.s - CAR_LENGTH - HARD_GAP);
+                    .is_none_or(|o| s_new <= o.s - st.specs.of(o).length - HARD_GAP);
                 let v = vehicles.get_mut(u.id).expect("vehicle");
                 if !clear {
                     v.s = (ex.length - 0.01).max(0.0);

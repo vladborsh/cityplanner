@@ -48,7 +48,7 @@ use cp_net::{JunctionGeometry, LaneId, NetGraph, NodeId};
 use serde::{Deserialize, Serialize};
 
 use crate::astar::{CarPath, NoPath, PedPath};
-use crate::drive::{DriveState, STUCK_TICKS, drive_tick, signal_tick};
+use crate::drive::{DriveState, STUCK_TICKS, VehicleSpecs, drive_tick, signal_tick};
 use crate::graph::{Access, CongestionMap, PED_SPEED, PathGraph, SegEnd, Side};
 use crate::service::{
     Mode, PathNetwork, PathRequest, PathResult, PathResults, PathService, RequestId,
@@ -204,6 +204,11 @@ impl PartialEq for Agents {
 
 /// Rebuilds [`Agents`] from saved parts (loads and migrations).
 impl Agents {
+    /// Vehicle dimensions of the last driven tick (defaults before the first one).
+    pub(crate) fn specs(&self) -> &VehicleSpecs {
+        &self.drive.specs
+    }
+
     pub fn from_parts(
         pedestrians: Arena<Pedestrian>,
         vehicles: Arena<Vehicle>,
@@ -687,6 +692,7 @@ pub fn move_agents(
     buildings: Res<BuildingGrid>,
     rng: Res<SimRng>,
     settings: Option<Res<AgentSettings>>,
+    content: Option<Res<cp_content::SimContent>>,
     mut agents: ResMut<Agents>,
     mut grid: ResMut<CitizenGrid>,
     mut book: ResMut<TripBook>,
@@ -767,7 +773,16 @@ pub fn move_agents(
         }
     }
     let pool = parallel.then(|| ComputeTaskPool::get_or_init(TaskPool::default));
-    let fin = drive_tick(vehicles, drive, graph, now, pool.map(|p| &**p), stuck_ticks);
+    let specs = content.map_or_else(VehicleSpecs::default, |c| VehicleSpecs::from_content(&c.0));
+    let fin = drive_tick(
+        vehicles,
+        drive,
+        graph,
+        now,
+        pool.map(|p| &**p),
+        stuck_ticks,
+        &specs,
+    );
     stats.driven += fin.arrived.len() as u64;
     stats.invalid_vehicles += fin.invalid.len() as u64;
     stats.despawned_stuck += fin.stuck.len() as u64;
@@ -790,14 +805,25 @@ pub fn update_traffic_load(
     mut agents: ResMut<Agents>,
 ) {
     let graph = std::sync::Arc::clone(pnet.graph());
-    let Agents { drive, load, .. } = &mut *agents;
+    let Agents {
+        drive,
+        load,
+        vehicles,
+        ..
+    } = &mut *agents;
     let n = graph.seg_capacity.len();
     load.inst.clear();
     load.inst.resize(n, 0.0);
     load.ema.resize(n, 0.0);
     for (slot, l) in drive.lanes.iter().enumerate() {
         if let (false, Some(node)) = (l.is_empty(), graph.car.get(slot).and_then(Option::as_ref)) {
-            load.inst[node.segment.index as usize] += l.len() as f32 * crate::drive::CAR_LENGTH;
+            // Road length the queue covers: the sum of the cars' lengths.
+            let covered: f32 = l
+                .iter()
+                .filter_map(|&id| vehicles.get(id))
+                .map(|v| drive.specs.of(v).length)
+                .sum();
+            load.inst[node.segment.index as usize] += covered;
         }
     }
     let alpha = 1.0 / EMA_TICKS;

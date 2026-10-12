@@ -8,10 +8,6 @@ use cp_net::{JunctionGeometry, NetGraph};
 use crate::agents::{Agents, Vehicle};
 use crate::graph::PathGraph;
 
-/// Vehicle length used to place the centre from the front bumper when the content length is
-/// not at hand (`car_basic`).
-const HALF_LENGTH: f32 = 2.1;
-
 /// Stable key of an agent: arena `(index, generation)`. Ascending by index within a frame.
 pub type AgentKey = u64;
 
@@ -53,6 +49,7 @@ fn yaw_of(d: Vec3) -> f32 {
 /// Pose `(centre, yaw)` of a vehicle, or `None` for one not yet on the road / off the network.
 pub(crate) fn vehicle_pose(
     v: &Vehicle,
+    half_length: f32,
     graph: &PathGraph,
     net: &NetGraph,
     geo: &JunctionGeometry,
@@ -77,14 +74,14 @@ pub(crate) fn vehicle_pose(
             .find(|c| c.from == from && c.to == to)?;
         let curve: &CubicBezier3 = &c.curve;
         let t = if c.length > 1e-3 {
-            ((v.s - HALF_LENGTH) / c.length).clamp(0.0, 1.0)
+            ((v.s - half_length) / c.length).clamp(0.0, 1.0)
         } else {
             1.0
         };
         return Some((curve.point(t), yaw_of(curve.tangent(t))));
     }
     let lane = graph.car_lane(v.lane())?;
-    let s = (v.s - HALF_LENGTH).max(0.0);
+    let s = (v.s - half_length).max(0.0);
     let p = lane.point3_at(s);
     let ahead = lane.point3_at(s + 1.0);
     let behind = lane.point3_at((s - 1.0).max(0.0));
@@ -97,7 +94,7 @@ impl Agents {
         let vehicles = self
             .vehicles()
             .filter_map(|(id, v)| {
-                let (pos, yaw) = vehicle_pose(v, graph, net, geo)?;
+                let (pos, yaw) = vehicle_pose(v, self.specs().of(v).length * 0.5, graph, net, geo)?;
                 Some(VehiclePose {
                     key: key(id.index, id.generation),
                     kind: v.kind,
