@@ -19,8 +19,8 @@ pub const BAND_STEP: f32 = 4.0;
 /// Default height above the ground, metres.
 pub const BAND_LIFT: f32 = 0.3;
 
-/// A band of `half_width` either side of the polyline `points` (XZ used; Y only when there is no
-/// terrain). `colour` is linear RGBA for every vertex.
+/// A band of `half_width` either side of the polyline `points`, draped on the terrain but never
+/// below the polyline's own height (elevated and bridge pieces). `colour` is linear RGBA for every vertex.
 pub fn band_polyline(
     points: &[Vec3],
     half_width: f32,
@@ -39,7 +39,9 @@ pub fn band_polyline(
         let left = left_of(b - a);
         let c = to_xz(*p);
         let at = |q: Vec2| {
-            let y = terrain.map_or(p.y, |t| t.height(q));
+            // Ground pieces follow the terrain; an elevated piece keeps its own height (the
+            // polyline already carries it), so it never drops to the ground.
+            let y = terrain.map_or(p.y, |t| t.height(q).max(p.y));
             Vec3::new(q.x, y + lift, q.y)
         };
         let l = push_vertex(&mut m, at(c + left * half_width), Vec3::Y, colour);
@@ -168,5 +170,39 @@ mod tests {
             C,
         );
         assert!(mesh.count_vertices() > 0);
+    }
+
+    #[test]
+    fn an_elevated_polyline_keeps_its_height_and_a_ground_one_follows_the_terrain() {
+        use cp_terrain::{GRID, MapMeta};
+        let meta = MapMeta {
+            name: "t".into(),
+            sea_level: 1.0,
+            start_tile: (2, 2),
+            external_connections: vec![],
+        };
+        let n = GRID * GRID;
+        let terrain = Terrain::from_samples(meta, &vec![1000; n], &vec![0; n]).unwrap();
+        let ground = terrain.height(Vec2::new(500.0, 500.0));
+        let line = |y: f32| {
+            [
+                Vec3::new(500.0, y, 500.0),
+                Vec3::new(500.0, y, 540.0),
+                Vec3::new(500.0, y, 580.0),
+            ]
+        };
+        let low = band_polyline(&line(ground), 6.0, Some(&terrain), BAND_LIFT, C);
+        assert!(
+            low.positions
+                .iter()
+                .all(|p| (p[1] - ground - BAND_LIFT).abs() < 1e-3)
+        );
+        let high = band_polyline(&line(ground + 5.0), 6.0, Some(&terrain), BAND_LIFT, C);
+        assert!(
+            high.positions
+                .iter()
+                .all(|p| (p[1] - (ground + 5.0 + BAND_LIFT)).abs() < 1e-3),
+            "an elevated piece keeps y + lift"
+        );
     }
 }
