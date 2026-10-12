@@ -502,6 +502,7 @@ fn drop_vehicle(
 }
 
 /// `Paths` phase (after `deliver_paths`): turns results into agents or abstract trips.
+#[allow(clippy::too_many_arguments)]
 pub fn receive_paths(
     tick: Res<Tick>,
     results: Res<PathResults>,
