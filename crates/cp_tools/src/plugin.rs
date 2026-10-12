@@ -8,7 +8,7 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use cp_core::Cost;
-use cp_net::{NetCommand, RoadBuildError, RoadPath, SegmentId, road_run};
+use cp_net::{NetCommand, RoadBuildError, RoadPath, SegmentId, SnapReport, road_run};
 use cp_render::RtsCamera;
 use cp_render::camera::math::ray_terrain_hit;
 use cp_sim::{SimCommand, SimView};
@@ -17,7 +17,7 @@ use crate::CommandOutbox;
 use crate::band::{BandState, sync_bands};
 use crate::building::{BuildingTool, PlacementGhost, pick_building, preview as place_preview};
 use crate::bulldozer::{PICK_RADIUS, pick_segment, remove_run_commands};
-use crate::road::{RoadTool, preview, sample_curve};
+use crate::road::{RoadTool, preview_report, sample_curve};
 use crate::utility::{
     LINK_PICK_RADIUS, UtilityTool, link_line, pick_link, plan_polylines, preview as utility_preview,
 };
@@ -60,6 +60,8 @@ pub struct Ghost {
     pub errors: Vec<String>,
     /// Half the road width, metres: drawn as a band. `0.0` draws the polylines as lines.
     pub half_width: f32,
+    /// What snapped the cursor point, with its guide line (road ghost only).
+    pub snap: SnapReport,
 }
 
 #[derive(Resource, Default, Debug)]
@@ -301,7 +303,8 @@ pub fn compute_ghost(view: &SimView, tool: &RoadTool, hover: Vec2) -> Option<Gho
         .content
         .as_deref()
         .map_or(0.0, |c| c.road(req.road).width * 0.5);
-    Some(match preview(view, &req)? {
+    let (result, report) = preview_report(view, &req)?;
+    Some(match result {
         Ok(plan) => Ghost {
             polylines: plan
                 .segments
@@ -312,6 +315,7 @@ pub fn compute_ghost(view: &SimView, tool: &RoadTool, hover: Vec2) -> Option<Gho
             cost: Some(plan.cost),
             errors: Vec::new(),
             half_width,
+            snap: report,
         },
         Err(errors) => Ghost {
             polylines: vec![raw_polyline(view, &path)],
@@ -319,6 +323,7 @@ pub fn compute_ghost(view: &SimView, tool: &RoadTool, hover: Vec2) -> Option<Gho
             cost: None,
             errors: errors.iter().map(RoadBuildError::to_string).collect(),
             half_width,
+            snap: report,
         },
     })
 }
@@ -334,6 +339,7 @@ pub fn compute_utility_ghost(view: &SimView, tool: &UtilityTool, hover: Vec2) ->
             cost: Some(plan.cost),
             errors: Vec::new(),
             half_width: 0.0,
+            snap: SnapReport::default(),
         },
         Err(problems) => Ghost {
             polylines: vec![
@@ -348,6 +354,7 @@ pub fn compute_utility_ghost(view: &SimView, tool: &UtilityTool, hover: Vec2) ->
             cost: None,
             errors: problems.iter().map(ToString::to_string).collect(),
             half_width: 0.0,
+            snap: SnapReport::default(),
         },
     })
 }
@@ -465,6 +472,22 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
         gizmos.linestrip(
             line.iter().map(|p| *p + Vec3::Y * 0.8),
             Color::srgb(1.0, 0.6, 0.1),
+        );
+    }
+    if let Some(ghost) = &state.ghost
+        && state.active == ActiveTool::Road
+        && let Some((a, b)) = ghost.snap.guide
+    {
+        let y = |p: Vec2| {
+            view.as_deref()
+                .and_then(|v| v.terrain.as_deref())
+                .map_or(0.0, |t| t.height(p))
+                + 0.5
+        };
+        gizmos.line(
+            Vec3::new(a.x, y(a), a.y),
+            Vec3::new(b.x, y(b), b.y),
+            Color::srgba(0.4, 0.8, 1.0, 0.8),
         );
     }
     if let (Some(view), Some(g)) = (view.as_deref(), &state.place_ghost)

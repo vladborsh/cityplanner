@@ -25,7 +25,10 @@ pub use building::{BuildingTool, PlacementGhost, pick_building};
 pub use bulldozer::pick_segment;
 pub use outbox::CommandOutbox;
 pub use plugin::{ActiveTool, Ghost, ToolState, ToolsPlugin, UiCapture, compute_utility_ghost};
-pub use road::{ELEVATION_STEP, MAX_ELEVATION_LEVEL, RoadMode, RoadTool, format_money, preview};
+pub use road::{
+    ELEVATION_STEP, MAX_ELEVATION_LEVEL, RoadMode, RoadTool, format_money, preview, preview_report,
+    snap_label,
+};
 pub use utility::{LINK_PICK_RADIUS, UtilityMode, UtilityTool, pick_link};
 pub use zone::{PALETTE, ZoneTool, ZoneToolKind, zone_color, zone_name};
 

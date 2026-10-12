@@ -6,7 +6,7 @@ use cp_core::Cost;
 use cp_core::curve::CubicBezier3;
 use cp_net::{
     ElevationMode, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SnapOptions,
-    validate_road_path,
+    SnapReport, SnapReportKind, validate_road_path, validate_road_path_report,
 };
 use cp_sim::SimView;
 
@@ -159,6 +159,33 @@ pub fn preview(
     ))
 }
 
+/// [`preview`] plus the snap at the cursor (also for an invalid path).
+pub fn preview_report(
+    view: &SimView,
+    req: &RoadPathRequest,
+) -> Option<(Result<RoadBuildPlan, Vec<RoadBuildError>>, SnapReport)> {
+    let terrain = view.terrain.as_deref()?;
+    let content = view.content.as_deref()?;
+    Some(validate_road_path_report(
+        &view.net,
+        terrain,
+        &view.tiles,
+        content,
+        req,
+    ))
+}
+
+/// The tool's label for a snap: `90°`, `45°`, `∥` or `⊥`; steps and plain snaps show none.
+pub fn snap_label(kind: SnapReportKind) -> Option<String> {
+    match kind {
+        SnapReportKind::KeyAngle(d) => Some(format!("{d}°")),
+        SnapReportKind::Guide { perpendicular } => {
+            Some(if perpendicular { "⊥" } else { "∥" }.to_string())
+        }
+        _ => None,
+    }
+}
+
 /// Cost as a money string: cents → `$1,234.56`.
 pub fn format_money(cost: Cost) -> String {
     let cents = cost.0;
@@ -192,6 +219,34 @@ mod tests {
             road: Some(RoadDefId(0)),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn snap_labels_show_key_angles_and_guides_only() {
+        assert_eq!(
+            snap_label(SnapReportKind::KeyAngle(90)).as_deref(),
+            Some("90°")
+        );
+        assert_eq!(
+            snap_label(SnapReportKind::KeyAngle(45)).as_deref(),
+            Some("45°")
+        );
+        assert_eq!(
+            snap_label(SnapReportKind::Guide {
+                perpendicular: false
+            })
+            .as_deref(),
+            Some("∥")
+        );
+        assert_eq!(
+            snap_label(SnapReportKind::Guide {
+                perpendicular: true
+            })
+            .as_deref(),
+            Some("⊥")
+        );
+        assert_eq!(snap_label(SnapReportKind::Step(15)), None);
+        assert_eq!(snap_label(SnapReportKind::Node), None);
     }
 
     #[test]

@@ -720,3 +720,172 @@ fn validation_is_pure_and_deterministic() {
     assert_eq!(a, b);
     assert_eq!(w.graph, before);
 }
+
+// ---------- key angles and guides (T-072) ----------
+
+fn polar(len: f32, deg: f32) -> Vec2 {
+    let a = deg.to_radians();
+    Vec2::new(len * a.cos(), len * a.sin())
+}
+
+/// A two-leg path 0 -> 80 m along +X -> 80 m at `deg` to the first leg; returns the plan and
+/// the direction of the last piece in degrees from +X.
+fn second_leg(w: &W, deg: f32) -> (RoadBuildPlan, f32) {
+    let b = at(80.0, 0.0);
+    let mut r = w.straight(b, b);
+    r.path = RoadPath::Free(vec![at(0.0, 0.0), b, b + polar(80.0, deg)]);
+    let plan = w.run(&r).unwrap();
+    let seg = plan.segments.last().unwrap();
+    let d = to_xz(seg.curve.p3) - to_xz(seg.curve.p0);
+    (plan, d.y.atan2(d.x).to_degrees())
+}
+
+#[test]
+fn key_angles_90_and_45_win_over_the_15_degree_step() {
+    let w = W::new();
+    let (plan, ang) = second_leg(&w, 84.0);
+    assert!((ang - 90.0).abs() < 0.01, "{ang}");
+    assert_eq!(plan.report.kind, SnapReportKind::KeyAngle(90));
+    assert!(
+        plan.snaps
+            .iter()
+            .any(|s| s.vertex == 2 && s.kind == SnapKind::KeyAngle(90))
+    );
+    let (plan, ang) = second_leg(&w, 51.0);
+    assert!((ang - 45.0).abs() < 0.01, "{ang}");
+    assert_eq!(plan.report.kind, SnapReportKind::KeyAngle(45));
+    // Length is kept.
+    let seg = plan.segments.last().unwrap();
+    assert!((seg.length - 80.0).abs() < 0.01);
+}
+
+#[test]
+fn the_15_degree_step_still_applies_outside_the_key_angles() {
+    let w = W::new();
+    // 73 is 17 off 90 and 28 off 45, but 2 off 75: the step takes it.
+    let (plan, ang) = second_leg(&w, 73.0);
+    assert!((ang - 75.0).abs() < 0.01, "{ang}");
+    assert_eq!(plan.report.kind, SnapReportKind::Step(75));
+    assert!(plan.report.guide.is_none(), "steps show no guide");
+    // 70 is 5 off the step: beyond ANGLE_SNAP_TOL_DEG (4), so it stays as drawn.
+    let (plan, ang) = second_leg(&w, 70.0);
+    assert!((ang - 70.0).abs() < 0.01, "{ang}");
+    assert_eq!(plan.report.kind, SnapReportKind::None);
+}
+
+/// A 300 m road at 30 degrees whose centre line passes `offset` metres from `cursor`, on the
+/// left of its direction.
+fn road_near(w: &mut W, cursor: Vec2, offset: f32) {
+    let u = polar(1.0, 30.0);
+    let q = cursor + Vec2::new(-u.y, u.x) * offset;
+    w.add(q - u * 150.0, q + u * 150.0);
+}
+
+#[test]
+fn a_nearby_road_gives_a_parallel_guide_within_60_m_only() {
+    // 36 degrees from X is 9 off the 45 key and 6 off the step: nothing snaps without a road.
+    let cursor = at(0.0, 0.0) + polar(80.0, 36.0);
+    let draw = |w: &W| {
+        let r = w.straight(at(0.0, 0.0), cursor);
+        let plan = w.run(&r).unwrap();
+        let seg = plan.segments.last().unwrap();
+        let d = to_xz(seg.curve.p3) - to_xz(seg.curve.p0);
+        (plan.report, d.y.atan2(d.x).to_degrees())
+    };
+    let mut w = W::new();
+    assert_eq!(draw(&w).0.kind, SnapReportKind::None);
+
+    road_near(&mut w, cursor, 30.0);
+    let (report, ang) = draw(&w);
+    assert!((ang - 30.0).abs() < 0.01, "parallel: {ang}");
+    assert_eq!(
+        report.kind,
+        SnapReportKind::Guide {
+            perpendicular: false
+        }
+    );
+    let (a, b) = report.guide.expect("guide line");
+    assert!((a.distance(b) - 240.0).abs() < 0.1, "±120 m");
+
+    let mut far = W::new();
+    road_near(&mut far, cursor, 80.0);
+    let (report, ang) = draw(&far);
+    assert!((ang - 36.0).abs() < 0.01, "80 m away is too far: {ang}");
+    assert_eq!(report.kind, SnapReportKind::None);
+}
+
+#[test]
+fn a_nearby_road_also_gives_a_perpendicular_guide() {
+    let mut w = W::new();
+    let cursor = at(0.0, 0.0) + polar(80.0, 126.0); // 6 off the perpendicular (120)
+    road_near(&mut w, cursor, 30.0);
+    let plan = w.run(&w.straight(at(0.0, 0.0), cursor)).unwrap();
+    let seg = plan.segments.last().unwrap();
+    let d = to_xz(seg.curve.p3) - to_xz(seg.curve.p0);
+    assert!((d.y.atan2(d.x).to_degrees() - 120.0).abs() < 0.01);
+    assert_eq!(
+        plan.report.kind,
+        SnapReportKind::Guide {
+            perpendicular: true
+        }
+    );
+}
+
+#[test]
+fn a_node_within_reach_beats_a_guide() {
+    let mut w = W::new();
+    let cursor = at(0.0, 0.0) + polar(80.0, 36.0);
+    road_near(&mut w, cursor, 30.0);
+    let node = cursor + Vec2::new(10.0, 0.0);
+    w.add(node, node + Vec2::new(0.0, 60.0));
+    let plan = w.run(&w.straight(at(0.0, 0.0), cursor)).unwrap();
+    assert_eq!(plan.report.kind, SnapReportKind::Node);
+    assert!(plan.report.guide.is_none());
+    let end = to_xz(plan.segments.last().unwrap().curve.p3);
+    assert!(end.distance(node) < 0.01, "snapped to the node");
+}
+
+#[test]
+fn curve_mode_leaves_the_angle_alone() {
+    let w = W::new();
+    let (a, c) = (at(0.0, 0.0), at(80.0, 0.0));
+    let to = c + polar(80.0, 84.0);
+    let mut r = w.straight(a, to);
+    r.path = RoadPath::Curve {
+        from: a,
+        control: c,
+        to,
+    };
+    let plan = w.run(&r).unwrap();
+    assert_eq!(plan.report.kind, SnapReportKind::None);
+    assert!(
+        !plan
+            .snaps
+            .iter()
+            .any(|s| matches!(s.kind, SnapKind::KeyAngle(_) | SnapKind::Guide { .. }))
+    );
+    assert!(to_xz(plan.segments.last().unwrap().curve.p3).distance(to) < 0.01);
+}
+
+#[test]
+fn the_report_is_available_for_an_invalid_path_and_matches_the_plan() {
+    let w = W::new();
+    let b = at(80.0, 0.0);
+    // The second leg is too short: invalid, but the cursor snap is still reported.
+    let mut r = w.straight(b, b);
+    r.path = RoadPath::Free(vec![at(0.0, 0.0), b, b + polar(3.0, 84.0)]);
+    let (res, report) = validate_road_path_report(&w.graph, &w.terrain, &w.tiles, &w.db, &r);
+    assert!(res.is_err());
+    assert_eq!(report.kind, SnapReportKind::KeyAngle(90));
+
+    // For a valid path the plan carries the same report.
+    let (plan, _) = second_leg(&w, 84.0);
+    let r2 = {
+        let mut r = w.straight(b, b);
+        r.path = RoadPath::Free(vec![at(0.0, 0.0), b, b + polar(80.0, 84.0)]);
+        r
+    };
+    let (res, report) = validate_road_path_report(&w.graph, &w.terrain, &w.tiles, &w.db, &r2);
+    assert_eq!(res.unwrap().report, report);
+    assert_eq!(plan.report, report);
+}

@@ -11,8 +11,8 @@ pub mod run;
 
 pub use build::{
     AppliedSnap, DemolishRef, ElevationMode, NodeRef, PIER_SPACING, PlannedSegment, PlannedSplit,
-    RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SnapKind, SnapOptions,
-    pier_positions, segment_cost, validate_road_path,
+    RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SnapKind, SnapOptions, SnapReport,
+    SnapReportKind, pier_positions, segment_cost, validate_road_path, validate_road_path_report,
 };
 pub use command::{NetCommand, NetError, apply};
 pub use connections::{LaneConnection, Links, PedLink, PedLinkKind, Turn};

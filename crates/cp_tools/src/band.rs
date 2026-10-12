@@ -191,6 +191,7 @@ mod tests {
             cost: None,
             errors: vec![],
             half_width,
+            snap: Default::default(),
         };
         let view = sim.view();
         let ok = band_geometry(&view, Some(&ghost(true, 6.0)), &[]);

@@ -48,6 +48,15 @@ pub const NODE_SNAP_RADIUS: f32 = 12.0;
 pub const SEGMENT_SNAP_RADIUS: f32 = 6.0;
 pub const ANGLE_STEP_DEG: f32 = 15.0;
 pub const ANGLE_SNAP_TOL_DEG: f32 = 4.0;
+/// Tolerance of the key angles (45°, 90°, 135° from a neighbour) and of the guides; wider than
+/// the 15° step tolerance so that a right angle is caught early.
+pub const KEY_ANGLE_TOL_DEG: f32 = 8.0;
+/// Ground segments within this distance of the cursor give parallel / perpendicular guides.
+pub const GUIDE_RADIUS: f32 = 60.0;
+/// Half length of the guide line reported to the tool, metres.
+pub const GUIDE_HALF_LENGTH: f32 = 120.0;
+/// The key angles, degrees from a reference direction.
+const KEY_ANGLES_DEG: [f32; 6] = [45.0, -45.0, 90.0, -90.0, 135.0, -135.0];
 /// Spacing of terrain/ownership samples along a piece, metres.
 const SAMPLE_STEP: f32 = 4.0;
 /// Distance between bridge/elevated piers, metres.
@@ -144,8 +153,36 @@ pub enum SnapKind {
     Segment(SegmentId),
     /// Direction snapped to this many degrees from the reference direction.
     Angle(i32),
+    /// Direction snapped to a key angle (45, 90 or 135) from a neighbouring direction.
+    KeyAngle(i32),
+    /// Direction snapped parallel (or perpendicular) to a nearby ground segment.
+    Guide {
+        perpendicular: bool,
+    },
     /// TODO(T-026): never produced yet.
     ZoneGrid,
+}
+
+/// What snapped the vertex at the cursor (the last path vertex), for the tool's label.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum SnapReportKind {
+    #[default]
+    None,
+    Node,
+    Segment,
+    KeyAngle(i32),
+    Guide {
+        perpendicular: bool,
+    },
+    Step(i32),
+}
+
+/// The snap at the cursor and, for angle and guide snaps, the guide line through the snapped
+/// point (±[`GUIDE_HALF_LENGTH`] m along the chosen direction).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SnapReport {
+    pub kind: SnapReportKind,
+    pub guide: Option<(Vec2, Vec2)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -168,6 +205,8 @@ pub struct RoadBuildPlan {
     pub new_nodes: Vec<Vec3>,
     pub splits: Vec<PlannedSplit>,
     pub snaps: Vec<AppliedSnap>,
+    /// The snap at the last vertex (the cursor), with its guide line.
+    pub report: SnapReport,
     /// Buildings to demolish (with player confirmation). TODO(T-028): always empty now.
     pub demolish: Vec<DemolishRef>,
     pub cost: Cost,
@@ -417,6 +456,80 @@ fn snap_angle(d: Vec2, refs: &[Vec2]) -> Option<(Vec2, i32)> {
     best.map(|(_, v, s)| (v, s))
 }
 
+/// Result of the angle snaps of one vertex.
+struct AngleSnap {
+    pos: Vec2,
+    kind: SnapKind,
+    guide: Option<(Vec2, Vec2)>,
+}
+
+/// Signed angle in degrees from `a` to `b`, in `(-180, 180]`.
+fn signed_deg(a: Vec2, b: Vec2) -> f32 {
+    let ang = (b.y.atan2(b.x) - a.y.atan2(a.x)).to_degrees();
+    (ang + 180.0).rem_euclid(360.0) - 180.0
+}
+
+/// The direction snaps of a leg from `prev` towards the cursor `p`, in priority order:
+/// key angles (45°/90°/135° from a neighbouring direction) and guides (parallel or perpendicular
+/// to a ground segment within [`GUIDE_RADIUS`] of the cursor), both within
+/// [`KEY_ANGLE_TOL_DEG`] — the smaller deviation wins, a key angle on a tie — then the
+/// [`ANGLE_STEP_DEG`] step. Segments are visited in id order, so the result is deterministic.
+/// Key angles keep the leg's length; a guide uses the projection of the cursor on its line.
+fn angle_snap(graph: &NetGraph, p: Vec2, prev: Vec2, refs: &[Vec2]) -> Option<AngleSnap> {
+    let d = p - prev;
+    if d.length() < 1e-3 {
+        return None;
+    }
+    let len = d.length();
+    // (deviation, new offset from `prev`, unit direction, kind)
+    let mut best: Option<(f32, Vec2, Vec2, SnapKind)> = None;
+    for &r in refs {
+        let rel = signed_deg(r, d);
+        for target in KEY_ANGLES_DEG {
+            let dev = (rel - target).abs();
+            if dev <= KEY_ANGLE_TOL_DEG && best.is_none_or(|(bd, ..)| dev < bd) {
+                let dir = rotate(r, target);
+                best = Some((dev, dir * len, dir, SnapKind::KeyAngle(target.abs() as i32)));
+            }
+        }
+    }
+    for (_, s) in graph.segments() {
+        if s.elevation != Elevation::Ground {
+            continue;
+        }
+        let (t, dist) = s.curve.nearest_xz(p);
+        if dist > GUIDE_RADIUS {
+            continue;
+        }
+        let tan = dir_xz(s.curve.tangent(t));
+        if tan == Vec2::ZERO {
+            continue;
+        }
+        for (dir, perpendicular) in [(tan, false), (Vec2::new(-tan.y, tan.x), true)] {
+            // A guide is a line: take the end of it the cursor points to.
+            let dir = if d.dot(dir) >= 0.0 { dir } else { -dir };
+            let dev = signed_deg(dir, d).abs();
+            if dev <= KEY_ANGLE_TOL_DEG && best.is_none_or(|(bd, ..)| dev < bd) {
+                let along = d.dot(dir);
+                best = Some((dev, dir * along, dir, SnapKind::Guide { perpendicular }));
+            }
+        }
+    }
+    if let Some((_, off, dir, kind)) = best {
+        let pos = prev + off;
+        return Some(AngleSnap {
+            pos,
+            kind,
+            guide: Some((pos - dir * GUIDE_HALF_LENGTH, pos + dir * GUIDE_HALF_LENGTH)),
+        });
+    }
+    snap_angle(d, refs).map(|(v, step)| AngleSnap {
+        pos: prev + v,
+        kind: SnapKind::Angle(step),
+        guide: None,
+    })
+}
+
 /// Control points of a leg as a planar (Y = 0) cubic.
 fn flat_curve(a: Vec2, b: Vec2, control: Option<Vec2>) -> CubicBezier3 {
     let v3 = |p: Vec2| Vec3::new(p.x, 0.0, p.y);
@@ -475,6 +588,31 @@ pub fn validate_road_path(
     tiles: &TileOwnership,
     content: &ContentDb,
     req: &RoadPathRequest,
+) -> Result<RoadBuildPlan, Vec<RoadBuildError>> {
+    validate_road_path_report(graph, terrain, tiles, content, req).0
+}
+
+/// [`validate_road_path`] plus the [`SnapReport`], which is also available when the path is
+/// invalid (the tool still draws the guide under a red ghost).
+pub fn validate_road_path_report(
+    graph: &NetGraph,
+    terrain: &Terrain,
+    tiles: &TileOwnership,
+    content: &ContentDb,
+    req: &RoadPathRequest,
+) -> (Result<RoadBuildPlan, Vec<RoadBuildError>>, SnapReport) {
+    let mut report = SnapReport::default();
+    let result = validate_inner(graph, terrain, tiles, content, req, &mut report);
+    (result, report)
+}
+
+fn validate_inner(
+    graph: &NetGraph,
+    terrain: &Terrain,
+    tiles: &TileOwnership,
+    content: &ContentDb,
+    req: &RoadPathRequest,
+    report: &mut SnapReport,
 ) -> Result<RoadBuildPlan, Vec<RoadBuildError>> {
     if req.road.index() >= content.roads().count() {
         return Err(vec![RoadBuildError::UnknownRoad(req.road)]);
@@ -538,6 +676,7 @@ pub fn validate_road_path(
     for (i, &p) in distinct.iter().enumerate() {
         let mut pos = p;
         let mut node = None;
+        *report = SnapReport::default();
         if req.snap.node
             && let Some(n) = b.nearest_node(p, i == 0 || i + 1 == distinct.len())
         {
@@ -548,6 +687,7 @@ pub fn validate_road_path(
                 kind: SnapKind::Node(n),
                 pos,
             });
+            report.kind = SnapReportKind::Node;
         }
         if node.is_none()
             && req.snap.segment
@@ -562,16 +702,28 @@ pub fn validate_road_path(
                 kind: SnapKind::Segment(s),
                 pos,
             });
+            report.kind = SnapReportKind::Segment;
         }
         if node.is_none() && angle_ok && i > 0 {
             let prev = &verts[i - 1];
-            if let Some((v, step)) = snap_angle(p - prev.pos, &prev.refs) {
-                pos = prev.pos + v;
+            if let Some(a) = angle_snap(graph, p, prev.pos, &prev.refs) {
+                pos = a.pos;
                 snaps.push(AppliedSnap {
                     vertex: i,
-                    kind: SnapKind::Angle(step),
+                    kind: a.kind,
                     pos,
                 });
+                *report = SnapReport {
+                    kind: match a.kind {
+                        SnapKind::KeyAngle(d) => SnapReportKind::KeyAngle(d),
+                        SnapKind::Guide { perpendicular } => {
+                            SnapReportKind::Guide { perpendicular }
+                        }
+                        SnapKind::Angle(d) => SnapReportKind::Step(d),
+                        _ => SnapReportKind::None,
+                    },
+                    guide: a.guide,
+                };
             }
         }
         // TODO(T-026): `req.snap.zone_grid` — snap to the zone grid once `cp_zone` exists.
@@ -858,6 +1010,7 @@ pub fn validate_road_path(
         new_nodes: b.new_nodes,
         splits: b.splits,
         snaps,
+        report: *report,
         demolish: Vec::new(),
         cost,
     })
