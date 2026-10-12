@@ -2,4 +2,6 @@
 Balance((
     // Trips shorter than this straight-line distance are walked (system-design §9.2).
     walk_limit_m: 1000.0,
+    // A spawn attempt on a zone block proceeds with probability 1 / spawn_one_in (§8).
+    spawn_one_in: 4,
 ))

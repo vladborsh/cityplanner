@@ -4,7 +4,8 @@
 //! enums are append-only.
 
 use bevy_math::Vec2;
-use cp_content::BuildingDefId;
+use cp_content::{BuildingDef, BuildingDefId};
+use cp_core::time::TICKS_PER_HOUR;
 use cp_core::{Id, Tick};
 use cp_net::SegmentId;
 use cp_zone::{BLOCK_DEPTH, ZoneBlockId, ZoneCellRef};
@@ -76,6 +77,11 @@ impl BuildingFlags {
     pub fn has(self, bit: u8) -> bool {
         self.0 & bit != 0
     }
+}
+
+/// Ticks a building of `def` stays under construction: `round(build_hours × TICKS_PER_HOUR)`.
+pub fn build_ticks(def: &BuildingDef) -> u64 {
+    (def.build_hours() * TICKS_PER_HOUR).round() as u64
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

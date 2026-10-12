@@ -226,6 +226,15 @@ impl ContentDb {
                 "must be finite and >= 0".to_string(),
             ));
         }
+        if let Some((path, b)) = balances.first()
+            && b.spawn_one_in == 0
+        {
+            errors.push(ContentError::new(
+                path,
+                Some("spawn_one_in"),
+                "must be >= 1".to_string(),
+            ));
+        }
         if !errors.is_empty() {
             return Err(ContentErrors(errors));
         }
@@ -241,6 +250,7 @@ impl ContentDb {
         if let Some(b) = &balance {
             fnv1a(&mut hash, b"balance");
             fnv1a(&mut hash, &b.walk_limit_m.to_bits().to_le_bytes());
+            fnv1a(&mut hash, &b.spawn_one_in.to_le_bytes());
         }
         Ok(Self {
             roads: roads.strip(),

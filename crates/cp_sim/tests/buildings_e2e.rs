@@ -1,11 +1,11 @@
 //! T-028 acceptance: zoned blocks fill with buildings of every kind, lots never overlap,
-//! every building has an access point, construction takes exactly one game day, and the
+//! every building has an access point, construction takes exactly `build_hours`, and the
 //! whole thing is deterministic.
 
 use std::sync::Arc;
 
 use bevy_math::Vec3;
-use cp_building::{BuildingGrid, BuildingState, DemandStub};
+use cp_building::{BuildingGrid, BuildingState, DemandStub, build_ticks};
 use cp_content::{ContentDb, ZoneType};
 use cp_core::curve::CubicBezier3;
 use cp_core::time::TICKS_PER_DAY;
@@ -151,7 +151,7 @@ fn zoned_blocks_fill_with_all_four_kinds_without_overlap() {
 }
 
 #[test]
-fn construction_takes_exactly_one_game_day() {
+fn construction_takes_exactly_build_hours() {
     let content = content();
     let mut sim = city(&content, 5);
     // Run until the first building appears.
@@ -180,7 +180,8 @@ fn construction_takes_exactly_one_game_day() {
     assert_eq!(b.state, BuildingState::UnderConstruction);
     // Spawned during the tick before the current one.
     let spawn_tick = sim.tick().0 - 1;
-    assert_eq!(b.ready_at.0, spawn_tick + TICKS_PER_DAY);
+    let def = content.building(b.def);
+    assert_eq!(b.ready_at.0, spawn_tick + build_ticks(def));
 
     // Still under construction after the schedule of tick ready_at - 1 ...
     while sim.tick().0 < b.ready_at.0 {

@@ -103,7 +103,10 @@ fn buildings_keep_their_lots_and_get_no_road_until_a_road_runs_along_them_again(
         .unwrap();
     ticks(&mut sim, 40);
     let after = active(&sim);
-    assert_eq!(before, after, "nobody is demolished");
+    assert!(
+        before.iter().all(|b| after.contains(b)),
+        "nobody is demolished"
+    );
     let zones = sim.world().resource::<ZoneGrid>();
     for &b in &after {
         let bd = sim.world().resource::<BuildingGrid>().get(b).unwrap();

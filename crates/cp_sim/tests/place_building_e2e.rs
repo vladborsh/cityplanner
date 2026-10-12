@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use bevy_ecs::message::Messages;
 use bevy_math::{Vec2, Vec3};
-use cp_building::{BuildingCommand, BuildingGrid, BuildingState};
+use cp_building::{BuildingCommand, BuildingGrid, BuildingState, build_ticks};
 use cp_content::{BuildingDefId, ContentDb};
 use cp_core::curve::CubicBezier3;
 use cp_core::{CommandError, CommandLog, CommandOutcome};
@@ -119,8 +119,9 @@ fn place_then_demolish_round_trip() {
     assert!(err.unwrap_err().contains("blocked"));
     assert_eq!(sim.world().resource::<BuildingGrid>().len(), 1);
 
-    // Finishes construction after a day.
-    for _ in 0..=cp_core::time::TICKS_PER_DAY {
+    // Finishes construction after its `build_hours`.
+    let build = build_ticks(c.building(c.building_id("wind_turbine").unwrap()));
+    for _ in 0..=build {
         sim.tick_once();
     }
     let g = sim.world().resource::<BuildingGrid>();

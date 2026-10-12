@@ -17,7 +17,6 @@ use std::fmt;
 use bevy_ecs::world::World;
 use bevy_math::Vec2;
 use cp_content::{BuildingDef, BuildingDefId, ContentDb, ServiceSite, SimContent};
-use cp_core::time::TICKS_PER_DAY;
 use cp_core::treasury::{charge_funds, check_funds};
 use cp_core::{Cost, InsufficientFunds, SimLimits, Tick};
 use cp_net::NetGraph;
@@ -26,7 +25,9 @@ use cp_zone::{BLOCK_DEPTH, ZoneCellRef, ZoneGrid};
 use serde::{Deserialize, Serialize};
 
 use crate::grid::BuildingGrid;
-use crate::model::{AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Lot};
+use crate::model::{
+    AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Lot, build_ticks,
+};
 use crate::spawn::place;
 
 /// Commands handled by this crate.
@@ -238,7 +239,7 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
             let limit = world
                 .get_resource::<SimLimits>()
                 .map_or(u32::MAX, |l| l.buildings);
-            let (plan, level) = {
+            let (plan, level, build) = {
                 let (Some(content), Some(zones), Some(net)) = (
                     world.get_resource::<SimContent>(),
                     world.get_resource::<ZoneGrid>(),
@@ -256,7 +257,11 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
                     *pos,
                     *rot,
                 )?;
-                (plan, content.0.building(*def).level)
+                (
+                    plan,
+                    content.0.building(*def).level,
+                    build_ticks(content.0.building(*def)),
+                )
             };
             check_funds(world, plan.cost).map_err(BuildingError::Funds)?;
             let mut buildings = world
@@ -270,7 +275,7 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
                 lot: plan.lot,
                 level,
                 state: BuildingState::UnderConstruction,
-                ready_at: Tick(tick.0 + TICKS_PER_DAY),
+                ready_at: Tick(tick.0 + build),
                 pos: plan.pos,
                 rot: plan.rot,
                 access: plan.access,

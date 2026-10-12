@@ -4,30 +4,28 @@
 //! spawn attempt each, in block order, with an RNG forked from the sim RNG for that tick
 //! (`SimRng::fork`), so the result depends only on the state. An attempt:
 //!
-//! 1. is skipped with probability 3/4 (buildings appear gradually);
+//! 1. is skipped with probability `1 - 1/spawn_one_in` (`balance.ron`; buildings appear gradually);
 //! 2. picks a random column; the row-0 cell there must be valid, painted and have demand;
 //! 3. collects the level-1 defs of that zone (service buildings excluded) whose lot — `lot.0`
 //!    columns along the road by `lot.1` rows deep, starting at the chosen column and the road
 //!    edge — fits: inside the block, every cell valid and painted with that zone;
-//! 4. picks one of them at random and builds it: `UnderConstruction`, ready one game day later.
+//! 4. picks one of them at random and builds it: `UnderConstruction`, ready `build_hours` of game time later (`BuildingDef::build_hours`).
 
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use cp_content::{BuildingDefId, ContentDb, SimContent, ZoneType};
-use cp_core::time::TICKS_PER_DAY;
 use cp_core::{SimLimits, SimRng, Tick};
 use cp_net::NetGraph;
 use cp_zone::{BLOCK_DEPTH, CELL_SIZE, ZoneBlock, ZoneBlockId, ZoneCellRef, ZoneGrid};
 
 use crate::grid::BuildingGrid;
+use crate::model::build_ticks;
 use crate::model::{AccessPoint, Building, BuildingFlags, BuildingState, Lot};
 
 /// Zone blocks are visited in 32 buckets (§2).
 pub const BLOCK_BUCKETS: u64 = 32;
 /// ChaCha stream of the spawn RNG.
 pub const SPAWN_STREAM: u64 = 0xB01D;
-/// An attempt proceeds with probability `1 / SPAWN_ONE_IN`.
-pub const SPAWN_ONE_IN: u32 = 4;
 
 /// TEMPORARY demand per zone type until the demand task lands: a value `> 0` allows
 /// spawning. Default: everything allowed. Not saved and not checksummed.
@@ -195,10 +193,11 @@ pub fn update_buildings(
     if ids.is_empty() {
         return;
     }
+    let one_in = db.balance().spawn_one_in.max(1);
     let mut rng = rng.fork(SPAWN_STREAM, *tick);
     for id in ids {
         // Draw first so the stream consumed per block does not depend on the outcome.
-        let gate = rng.below(SPAWN_ONE_IN);
+        let gate = rng.below(one_in);
         let pick = rng.next_u32();
         let choose = rng.next_u32();
         if gate != 0 || buildings.len() >= limits.buildings as usize {
@@ -243,7 +242,7 @@ pub fn update_buildings(
             lot,
             level: def.level,
             state: BuildingState::UnderConstruction,
-            ready_at: Tick(tick.0 + TICKS_PER_DAY),
+            ready_at: Tick(tick.0 + build_ticks(def)),
             pos,
             rot,
             access,

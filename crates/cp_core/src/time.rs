@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 /// One tick is 50 ms of game time.
 pub const TICK_MILLIS: u32 = 50;
 pub const TICKS_PER_DAY: u64 = 4096;
+/// Ticks in one game hour (`TICKS_PER_DAY / 24`, not an integer: 170.67).
+pub const TICKS_PER_HOUR: f32 = TICKS_PER_DAY as f32 / 24.0;
 
 /// The **movement clock** (`architecture/system-design.md` §2): one tick is this many
 /// seconds of agent movement. Kinematics, path costs and abstract trip durations use it,

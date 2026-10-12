@@ -10,8 +10,10 @@ pub use command::{
     BuildingCommand, BuildingError, PlacementPlan, apply, oriented_lot, validate_placement,
 };
 pub use grid::{BuildingGrid, demolish_building};
-pub use model::{AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Lot};
-pub use spawn::{BLOCK_BUCKETS, DemandStub, SPAWN_ONE_IN, SPAWN_STREAM, update_buildings};
+pub use model::{
+    AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Lot, build_ticks,
+};
+pub use spawn::{BLOCK_BUCKETS, DemandStub, SPAWN_STREAM, update_buildings};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_building";

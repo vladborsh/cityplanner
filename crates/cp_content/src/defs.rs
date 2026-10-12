@@ -62,12 +62,20 @@ pub struct Balance {
     /// Trips with a straight line shorter than this (metres) are walked (§9.2). On the
     /// movement clock (§2) 1 km on foot is about 2 game hours.
     pub walk_limit_m: f32,
+    /// A spawn attempt on a zone block proceeds with probability `1 / spawn_one_in` (§8).
+    #[serde(default = "default_spawn_one_in")]
+    pub spawn_one_in: u32,
+}
+
+fn default_spawn_one_in() -> u32 {
+    4
 }
 
 impl Default for Balance {
     fn default() -> Self {
         Self {
             walk_limit_m: 1000.0,
+            spawn_one_in: default_spawn_one_in(),
         }
     }
 }
@@ -182,6 +190,32 @@ pub struct BuildingDef {
     /// Service this building provides (id of a `ServiceDef`), for service buildings.
     #[serde(default)]
     pub service: Option<String>,
+    /// Construction time in game hours (§8). `0` (absent in the RON) means
+    /// [`default_build_hours`] of the lot.
+    #[serde(default)]
+    pub build_hours: f32,
+}
+
+impl BuildingDef {
+    /// Construction time in game hours: `build_hours`, or the lot-area default when unset.
+    pub fn build_hours(&self) -> f32 {
+        if self.build_hours > 0.0 {
+            self.build_hours
+        } else {
+            default_build_hours(self.lot)
+        }
+    }
+}
+
+/// Default construction time in game hours by lot area in cells: 1 → 2 h, ≤ 4 → 3 h,
+/// ≤ 9 → 4 h, larger → 6 h.
+pub fn default_build_hours(lot: (u8, u8)) -> f32 {
+    match u16::from(lot.0) * u16::from(lot.1) {
+        0..=1 => 2.0,
+        2..=4 => 3.0,
+        5..=9 => 4.0,
+        _ => 6.0,
+    }
 }
 
 /// M1 stub; fields grow in M2 (`cp_service`).
