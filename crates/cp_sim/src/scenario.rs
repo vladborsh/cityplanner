@@ -363,6 +363,56 @@ pub fn grid_city(
     (sim, report)
 }
 
+/// Sends up to `count` adults who are at home on a trip each, to `destinations` in turn
+/// (a destination equal to the citizen's home is skipped for the next one); `mode(i)` picks the
+/// mode of the i-th trip. The trips start `Planned`, so the traffic domain routes them like any
+/// other. Returns how many were made. For scenarios that need cars and pedestrians on the
+/// road at a given moment (a jam fixture), whatever the time of day.
+pub fn send_citizens(
+    sim: &mut SimRunner,
+    count: usize,
+    destinations: &[cp_building::BuildingId],
+    mode: impl Fn(usize) -> cp_citizen::TripMode,
+) -> usize {
+    use cp_citizen::{CitizenGrid, Location, Trip, TripBook, TripPurpose, TripState};
+    if destinations.is_empty() {
+        return 0;
+    }
+    let movers: Vec<_> = sim
+        .world()
+        .resource::<CitizenGrid>()
+        .citizens()
+        .filter(|(_, c)| c.is_adult() && c.location == Location::Home)
+        .filter_map(|(id, c)| c.home.map(|h| (id, h)))
+        .take(count)
+        .collect();
+    let mut made = 0;
+    sim.world_mut()
+        .resource_scope(|w, mut book: bevy_ecs::change_detection::Mut<TripBook>| {
+            book.ensure_derived();
+            let mut grid = w.resource_mut::<CitizenGrid>();
+            for (i, (citizen, home)) in movers.into_iter().enumerate() {
+                let mut to = destinations[i % destinations.len()];
+                if to == home {
+                    to = destinations[(i + 1) % destinations.len()];
+                }
+                let trip = Trip {
+                    citizen,
+                    from: home,
+                    to,
+                    purpose: TripPurpose::Work,
+                    mode: mode(i),
+                    state: TripState::Planned,
+                };
+                if book.add(trip).is_some() {
+                    grid.set_location(citizen, Location::Moving);
+                    made += 1;
+                }
+            }
+        });
+    made
+}
+
 /// Citizens living in the sim.
 pub fn population(sim: &SimRunner) -> usize {
     sim.world()

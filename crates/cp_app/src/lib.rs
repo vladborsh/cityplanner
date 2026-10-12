@@ -6,6 +6,7 @@
 //! what is platform specific: windowing, CLI, screenshots and benchmarks.
 
 mod map;
+pub mod saves;
 pub mod scene;
 
 pub use map::{MapLoadFailed, RawFile};
@@ -94,7 +95,8 @@ impl Plugin for GamePlugin {
         ))
         .add_systems(PreUpdate, step_sim);
         if self.ui {
-            app.add_plugins((UiPlugin, cp_tools::ToolsPlugin));
+            app.add_plugins((UiPlugin, cp_tools::ToolsPlugin))
+                .add_systems(Update, file_requests);
         }
         app.add_systems(Startup, move |mut commands: Commands| {
             let mut camera = commands.spawn((
@@ -245,4 +247,71 @@ fn step_sim(
         *phases = phase_times(&sim.0);
     }
     fraction.0 = sim.0.tick_fraction();
+}
+
+/// The system behind the save / load window: see [`handle_file_request`].
+fn file_requests(
+    mut menu: ResMut<cp_ui::FileMenu>,
+    sim: Option<ResMut<Sim>>,
+    view: Option<ResMut<SimView>>,
+    cfg: Option<Res<GameConfig>>,
+) {
+    let (Some(mut sim), Some(mut view)) = (sim, view) else {
+        return;
+    };
+    let map = cfg.map_or_else(|| "unknown".to_string(), |c| c.map.clone());
+    handle_file_request(&mut menu, &mut sim.0, &mut view, &saves::data_dir(), &map);
+}
+
+/// Carries out what the save / load window asked for (see [`saves`]): the list of files, a
+/// save, or a load, which replaces the whole `SimRunner` and the published view. A failure
+/// only writes the status line; the running game stays as it was.
+pub fn handle_file_request(
+    menu: &mut cp_ui::FileMenu,
+    sim: &mut SimRunner,
+    view: &mut SimView,
+    data: &std::path::Path,
+    map: &str,
+) {
+    use cp_ui::{FileRequest, SaveEntry};
+    if menu.dir.is_empty() {
+        menu.dir = saves::saves_dir(data).display().to_string();
+    }
+    let Some(request) = menu.request.take() else {
+        return;
+    };
+    let refresh = |menu: &mut cp_ui::FileMenu| {
+        menu.files = saves::list_saves(data)
+            .into_iter()
+            .map(|e| SaveEntry {
+                name: e.name,
+                bytes: e.bytes,
+                tick: e.tick,
+            })
+            .collect();
+    };
+    match request {
+        FileRequest::Refresh => refresh(menu),
+        FileRequest::Save(name) => {
+            menu.status = match saves::save_game(sim, data, &name, map) {
+                Ok(path) => format!("Saved {}", path.display()),
+                Err(e) => format!("Save failed: {e}"),
+            };
+            refresh(menu);
+        }
+        FileRequest::Load(name) => {
+            menu.status = match saves::load_game(sim, data, &name) {
+                Ok((loaded, warnings)) => {
+                    *sim = loaded;
+                    *view = sim.view();
+                    if warnings.is_empty() {
+                        format!("Loaded {name}")
+                    } else {
+                        format!("Loaded {name} ({})", warnings.join(", "))
+                    }
+                }
+                Err(e) => format!("Load failed: {e}"),
+            };
+        }
+    }
 }

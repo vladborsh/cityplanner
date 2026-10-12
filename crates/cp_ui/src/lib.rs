@@ -12,9 +12,11 @@ use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, ToolState, UiCapture};
 
 pub mod debug;
+pub mod files;
 pub mod panels;
 
 pub use debug::{DebugData, PhaseTimes, TickRate};
+pub use files::{FileMenu, FileRequest, SaveEntry, file_window};
 pub use panels::{Category, UiState, bottom_bar, overlay_buttons, root_ui, top_bar};
 
 pub struct UiPlugin;
@@ -29,6 +31,7 @@ impl Plugin for UiPlugin {
             .init_resource::<CommandOutbox>()
             .init_resource::<ToolState>()
             .init_resource::<UiCapture>()
+            .init_resource::<FileMenu>()
             .add_systems(Update, (toggle_debug, measure_tick_rate))
             .add_systems(EguiPrimaryContextPass, draw_ui);
     }
@@ -62,6 +65,7 @@ fn draw_ui(
     extra: Option<Res<debug::PhaseTimes>>,
     mut tools: ResMut<ToolState>,
     mut capture: ResMut<UiCapture>,
+    mut files: ResMut<FileMenu>,
 ) -> Result {
     let Some(view) = view else {
         return Ok(());
@@ -81,6 +85,7 @@ fn draw_ui(
             &mut state.debug_open,
         );
     }
+    file_window(ctx, &mut files);
     // Clicks over a panel or window belong to the UI, not to the tools.
     capture.pointer_over_ui = ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
     Ok(())

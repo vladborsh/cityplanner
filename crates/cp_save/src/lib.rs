@@ -35,6 +35,22 @@
 //! `migrate_vN_to_vN1` steps until it reaches [`FORMAT_VERSION`]. Shipped fixtures in
 //! `fixtures/saves/` must keep loading; never edit them.
 //!
+//! **What is saved, what is rebuilt (audit, T-046).** Every resource `SimRunner::new` creates:
+//!
+//! | resource | in the save? |
+//! |---|---|
+//! | `Tick`, `SimRng`, `SimSpeed`, `CommandQueue`, `CommandLog` | yes |
+//! | `TileOwnership`, `NetGraph`, `ZoneGrid` (occupancy is rebuilt from the buildings), `BuildingGrid` (incl. the removed ids), `UtilityGraph`, `CitizenGrid` (occupancy tables rebuilt), `TripBook`, `Agents` (pools, lane state, segment load; drive tables rebuilt) | yes |
+//! | `PathService` (requests in flight) | yes, as `SavedPaths` |
+//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay` | yes |
+//! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
+//! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
+//! | `SimLimits`, `RoutineSettings`, `AgentSettings`, `SimContent`, `SimTerrain` | configuration of the runner, not of the game |
+//!
+//! Nothing is missing: the fixtures `m1-small` and `m1-traffic` (cars and pedestrians in
+//! flight, removed ids pending) load and continue to a recorded checksum, and the mid-run
+//! save tests compare a loaded run with the continuous one.
+//!
 //! **Adding state** (a domain's arenas, etc.): add a field to [`SaveData`], bump
 //! [`FORMAT_VERSION`], freeze the previous `SaveData` as `SaveDataV<old>` in
 //! [`migrate`], write `migrate_v<old>_to_v<new>` giving the new field a value, extend
