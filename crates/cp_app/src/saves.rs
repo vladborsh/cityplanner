@@ -139,6 +139,12 @@ pub fn load_game(
         .map(|w| match w {
             LoadWarning::ContentHashMismatch { .. } => "saved with different content".to_string(),
             LoadWarning::MapMismatch { .. } => "saved on a different map".to_string(),
+            LoadWarning::UnknownDef { kind, name } => {
+                format!(
+                    "unknown {} type `{name}` replaced by a placeholder",
+                    kind.label()
+                )
+            }
         })
         .collect();
     Ok((sim, warnings))

@@ -428,8 +428,62 @@ pub struct SaveDataV16 {
     pub decay: Decay,
 }
 
+/// Version 17: the body as written by format 17 (re-route ids; no definition names).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV17 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+    pub trips: TripBook,
+    pub agents: Agents,
+    pub treasury: Treasury,
+    pub economy: EconomyState,
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    pub land: LandGrids,
+    pub decay: Decay,
+}
+
+/// v17 → v18: definition names were added. An old save has none, so they come from the frozen
+/// tables of the content that wrote it ([`crate::def_tables`]); this step assumes a v17 writer,
+/// `decode_and_migrate` replaces the names for files from before T-038 (v11 and older).
+pub fn migrate_v17_to_v18(v17: SaveDataV17) -> SaveData {
+    SaveData {
+        tick: v17.tick,
+        rng: v17.rng,
+        speed: v17.speed,
+        queue: v17.queue,
+        log: v17.log,
+        tiles: v17.tiles,
+        net: v17.net,
+        zones: v17.zones,
+        buildings: v17.buildings,
+        citizens: v17.citizens,
+        paths: v17.paths,
+        utilities: v17.utilities,
+        trips: v17.trips,
+        agents: v17.agents,
+        treasury: v17.treasury,
+        economy: v17.economy,
+        demand: v17.demand,
+        demand_acc: v17.demand_acc,
+        land: v17.land,
+        decay: v17.decay,
+        def_names: crate::def_tables::def_names_before_v18(17),
+    }
+}
+
 /// v16 → v17: a car may carry the id of its re-route request. Nobody has one in an old save.
-pub fn migrate_v16_to_v17(v16: SaveDataV16) -> SaveData {
+pub fn migrate_v16_to_v17(v16: SaveDataV16) -> SaveDataV17 {
     // Slots and generations are kept, so every vehicle id stays what it was.
     let vehicles = v16.agents.vehicles.map(|v| Vehicle {
         trip: v.trip,
@@ -461,7 +515,7 @@ pub fn migrate_v16_to_v17(v16: SaveDataV16) -> SaveData {
         },
         v16.agents.load,
     );
-    SaveData {
+    SaveDataV17 {
         tick: v16.tick,
         rng: v16.rng,
         speed: v16.speed,
@@ -778,14 +832,24 @@ pub fn migrate_v3_to_v4(v3: SaveDataV3) -> SaveDataV4 {
 
 /// The last two chain steps, shared by every arm.
 fn up(v: SaveDataV10) -> SaveData {
-    migrate_v16_to_v17(migrate_v15_to_v16(migrate_v14_to_v15(migrate_v13_to_v14(
-        migrate_v12_to_v13(migrate_v11_to_v12(migrate_v10_to_v11(v))),
+    migrate_v17_to_v18(migrate_v16_to_v17(migrate_v15_to_v16(migrate_v14_to_v15(
+        migrate_v13_to_v14(migrate_v12_to_v13(migrate_v11_to_v12(migrate_v10_to_v11(
+            v,
+        )))),
     ))))
 }
 
 /// Decodes a body written at `version` and runs the migration chain up to
 /// [`crate::FORMAT_VERSION`]. Add one `match` arm per version and one chain step per bump.
 pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveError> {
+    let mut data = decode_and_migrate_ids(version, body)?;
+    if version < 18 {
+        data.def_names = crate::def_tables::def_names_before_v18(version);
+    }
+    Ok(data)
+}
+
+fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveError> {
     fn dec<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, SaveError> {
         let (value, rest) =
             postcard::take_from_bytes(body).map_err(|e| SaveError::Decode(e.to_string()))?;
@@ -850,21 +914,26 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         8 => Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(dec(body)?)))),
         9 => Ok(up(migrate_v9_to_v10(dec(body)?))),
         10 => Ok(up(dec(body)?)),
-        11 => Ok(migrate_v16_to_v17(migrate_v15_to_v16(migrate_v14_to_v15(
-            migrate_v13_to_v14(migrate_v12_to_v13(migrate_v11_to_v12(dec(body)?))),
+        11 => Ok(migrate_v17_to_v18(migrate_v16_to_v17(migrate_v15_to_v16(
+            migrate_v14_to_v15(migrate_v13_to_v14(migrate_v12_to_v13(migrate_v11_to_v12(
+                dec(body)?,
+            )))),
         )))),
-        12 => Ok(migrate_v16_to_v17(migrate_v15_to_v16(migrate_v14_to_v15(
-            migrate_v13_to_v14(migrate_v12_to_v13(dec(body)?)),
+        12 => Ok(migrate_v17_to_v18(migrate_v16_to_v17(migrate_v15_to_v16(
+            migrate_v14_to_v15(migrate_v13_to_v14(migrate_v12_to_v13(dec(body)?))),
         )))),
-        13 => Ok(migrate_v16_to_v17(migrate_v15_to_v16(migrate_v14_to_v15(
-            migrate_v13_to_v14(dec(body)?),
+        13 => Ok(migrate_v17_to_v18(migrate_v16_to_v17(migrate_v15_to_v16(
+            migrate_v14_to_v15(migrate_v13_to_v14(dec(body)?)),
         )))),
-        14 => Ok(migrate_v16_to_v17(migrate_v15_to_v16(migrate_v14_to_v15(
+        14 => Ok(migrate_v17_to_v18(migrate_v16_to_v17(migrate_v15_to_v16(
+            migrate_v14_to_v15(dec(body)?),
+        )))),
+        15 => Ok(migrate_v17_to_v18(migrate_v16_to_v17(migrate_v15_to_v16(
             dec(body)?,
         )))),
-        15 => Ok(migrate_v16_to_v17(migrate_v15_to_v16(dec(body)?))),
-        16 => Ok(migrate_v16_to_v17(dec(body)?)),
-        17 => dec(body),
+        16 => Ok(migrate_v17_to_v18(migrate_v16_to_v17(dec(body)?))),
+        17 => Ok(migrate_v17_to_v18(dec(body)?)),
+        18 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -1105,4 +1174,16 @@ pub fn encode_v16(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v16).expect("serialization failed");
     crate::assemble(16, v16.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 17** file (re-route ids; no definition names). Legacy writer kept only
+/// to test the v17 fixture; real saves always use [`crate::save`].
+pub fn encode_v17(
+    v17: &SaveDataV17,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v17).expect("serialization failed");
+    crate::assemble(17, v17.tick.0, &body, content_hash, map_id, map_hash)
 }

@@ -46,6 +46,109 @@ impl<T> Table<T> {
 #[derive(bevy_ecs::resource::Resource, Clone)]
 pub struct SimContent(pub std::sync::Arc<ContentDb>);
 
+/// Which definition table a placeholder belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DefKind {
+    Road,
+    Building,
+    Service,
+    Vehicle,
+    Utility,
+}
+
+impl DefKind {
+    pub const ALL: [DefKind; 5] = [
+        DefKind::Road,
+        DefKind::Building,
+        DefKind::Service,
+        DefKind::Vehicle,
+        DefKind::Utility,
+    ];
+
+    /// Lower-case name for messages.
+    pub fn label(self) -> &'static str {
+        match self {
+            DefKind::Road => "road",
+            DefKind::Building => "building",
+            DefKind::Service => "service",
+            DefKind::Vehicle => "vehicle",
+            DefKind::Utility => "utility",
+        }
+    }
+}
+
+/// The index every `*DefId` of an unknown definition gets: past the end of every table, so it
+/// never collides with a real definition. The accessors (`road(id)`, ...) answer it with the
+/// built-in placeholder; `roads()` and the other iterators never list it.
+pub const PLACEHOLDER_INDEX: u32 = u32::MAX;
+
+/// Built-in stand-ins for definitions a save names but the loaded content does not have
+/// (`system-design.md` §12). Not part of the content hash.
+#[derive(Clone, Debug, PartialEq)]
+struct Placeholders {
+    road: RoadDef,
+    building: BuildingDef,
+    service: ServiceDef,
+    vehicle: VehicleDef,
+    utility: UtilityDef,
+}
+
+impl Placeholders {
+    fn builtin() -> Self {
+        fn parse(text: &str) -> ContentFile {
+            ron::from_str(text).expect("built-in placeholder definition")
+        }
+        let ContentFile::Road(road) = parse(
+            r#"Road((id: "placeholder_road", name: "Missing road type", width: 12.0,
+                lanes: [
+                    (kind: Pedestrian, dir: Forward, width: 2.5, offset: 4.75),
+                    (kind: Car, dir: Backward, width: 3.5, offset: 1.75),
+                    (kind: Car, dir: Forward, width: 3.5, offset: -1.75),
+                    (kind: Pedestrian, dir: Forward, width: 2.5, offset: -4.75),
+                ],
+                median_width: 0.0, speed_kmh: 40, max_slope: 0.12, cost_per_m: 10.0,
+                upkeep_per_m_week: 0.1, allows_zoning: true, rank: 1, elevated: None,
+                bridge: None, mesh: "road/basic_2l", material: "road/asphalt"))"#,
+        ) else {
+            unreachable!()
+        };
+        let ContentFile::Building(building) = parse(
+            r#"Building((id: "placeholder_building", name: "Missing building", zone: None,
+                level: 1, lot: (1, 1), consumption: {}, tax_base: 0.0,
+                style: (floors: 1, roof: Flat, palette: "placeholder"), service: None))"#,
+        ) else {
+            unreachable!()
+        };
+        let ContentFile::Service(service) = parse(
+            r#"Service((id: "placeholder_service", name: "Missing service", kind: Roads,
+                radius_m: 0.0, capacity: 0, vehicles: []))"#,
+        ) else {
+            unreachable!()
+        };
+        let ContentFile::Vehicle(vehicle) = parse(
+            r#"Vehicle((id: "placeholder_vehicle", name: "Missing vehicle", kind: Car,
+                length: 4.2, width: 1.8, max_speed_kmh: 120.0, accel: 2.0, decel: 4.0,
+                min_gap: 2.0, mesh: "vehicle/car_basic"))"#,
+        ) else {
+            unreachable!()
+        };
+        let ContentFile::Utility(utility) = parse(
+            r#"Utility((id: "placeholder_utility", name: "Missing pipe", kind: Water,
+                cost_per_m: 0.0, upkeep_per_m_week: 0.0, min_link_m: 4.0, max_link_m: 100.0,
+                mesh: "utility/water_pipe"))"#,
+        ) else {
+            unreachable!()
+        };
+        Self {
+            road,
+            building,
+            service,
+            vehicle,
+            utility,
+        }
+    }
+}
+
 /// The validated, immutable content set.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContentDb {
@@ -54,14 +157,19 @@ pub struct ContentDb {
     services: Table<ServiceDef>,
     vehicles: Table<VehicleDef>,
     utilities: Table<UtilityDef>,
+    placeholders: Placeholders,
     balance: Balance,
     content_hash: u64,
 }
 
 macro_rules! accessors {
-    ($field:ident, $def:ty, $id:ident, $get:ident, $by:ident, $iter:ident) => {
+    ($field:ident, $ph:ident, $def:ty, $id:ident, $get:ident, $by:ident, $iter:ident) => {
+        /// The definition, or the built-in placeholder for [`PLACEHOLDER_INDEX`].
         pub fn $get(&self, id: $id) -> &$def {
-            &self.$field.defs[id.index()]
+            self.$field
+                .defs
+                .get(id.index())
+                .unwrap_or(&self.placeholders.$ph)
         }
         pub fn $by(&self, name: &str) -> Option<$id> {
             self.$field.get_id(name).map($id)
@@ -78,9 +186,10 @@ macro_rules! accessors {
 }
 
 impl ContentDb {
-    accessors!(roads, RoadDef, RoadDefId, road, road_id, roads);
+    accessors!(roads, road, RoadDef, RoadDefId, road, road_id, roads);
     accessors!(
         buildings,
+        building,
         BuildingDef,
         BuildingDefId,
         building,
@@ -89,6 +198,7 @@ impl ContentDb {
     );
     accessors!(
         services,
+        service,
         ServiceDef,
         ServiceDefId,
         service,
@@ -97,6 +207,7 @@ impl ContentDb {
     );
     accessors!(
         vehicles,
+        vehicle,
         VehicleDef,
         VehicleDefId,
         vehicle,
@@ -105,12 +216,42 @@ impl ContentDb {
     );
     accessors!(
         utilities,
+        utility,
         UtilityDef,
         UtilityDefId,
         utility,
         utility_id,
         utilities
     );
+
+    /// The `*DefId` index of the built-in placeholder of `kind` ([`PLACEHOLDER_INDEX`]): what a
+    /// save's unknown definition name becomes on load.
+    pub fn placeholder(kind: DefKind) -> u32 {
+        let _ = kind;
+        PLACEHOLDER_INDEX
+    }
+
+    /// The string ids of one table in id order: the names a save records for the dense indices.
+    pub fn def_names(&self, kind: DefKind) -> Vec<String> {
+        match kind {
+            DefKind::Road => self.roads.defs.iter().map(|d| d.id.clone()).collect(),
+            DefKind::Building => self.buildings.defs.iter().map(|d| d.id.clone()).collect(),
+            DefKind::Service => self.services.defs.iter().map(|d| d.id.clone()).collect(),
+            DefKind::Vehicle => self.vehicles.defs.iter().map(|d| d.id.clone()).collect(),
+            DefKind::Utility => self.utilities.defs.iter().map(|d| d.id.clone()).collect(),
+        }
+    }
+
+    /// The index of definition `name` in `kind`'s table, if the content has it.
+    pub fn def_index(&self, kind: DefKind, name: &str) -> Option<u32> {
+        match kind {
+            DefKind::Road => self.roads.get_id(name),
+            DefKind::Building => self.buildings.get_id(name),
+            DefKind::Service => self.services.get_id(name),
+            DefKind::Vehicle => self.vehicles.get_id(name),
+            DefKind::Utility => self.utilities.get_id(name),
+        }
+    }
 
     /// The utility definition for `kind` (the first by sorted id), if the content has one.
     pub fn utility_for_kind(
@@ -334,6 +475,7 @@ impl ContentDb {
             services: services.strip(),
             vehicles: vehicles.strip(),
             utilities: utilities.strip(),
+            placeholders: Placeholders::builtin(),
             balance: balance.unwrap_or_default(),
             content_hash: hash,
         })
@@ -445,6 +587,43 @@ fn collect(root: &Path, rel: &str, out: &mut Vec<String>) -> std::io::Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placeholders_answer_the_reserved_index_and_never_appear_in_the_tables() {
+        let db = ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content"))
+            .unwrap();
+        for kind in DefKind::ALL {
+            assert_eq!(ContentDb::placeholder(kind), PLACEHOLDER_INDEX);
+        }
+        assert_eq!(db.road(RoadDefId(PLACEHOLDER_INDEX)).id, "placeholder_road");
+        assert_eq!(
+            db.building(BuildingDefId(PLACEHOLDER_INDEX)).id,
+            "placeholder_building"
+        );
+        assert_eq!(
+            db.service(ServiceDefId(PLACEHOLDER_INDEX)).id,
+            "placeholder_service"
+        );
+        assert_eq!(
+            db.vehicle(VehicleDefId(PLACEHOLDER_INDEX)).id,
+            "placeholder_vehicle"
+        );
+        assert_eq!(
+            db.utility(UtilityDefId(PLACEHOLDER_INDEX)).id,
+            "placeholder_utility"
+        );
+        assert!(
+            db.roads()
+                .all(|(id, d)| id.0 != PLACEHOLDER_INDEX && d.id != "placeholder_road")
+        );
+        // The names of a table are its ids in index order, and look up to the same index.
+        for kind in DefKind::ALL {
+            for (i, n) in db.def_names(kind).iter().enumerate() {
+                assert_eq!(db.def_index(kind, n), Some(i as u32));
+            }
+        }
+        assert_eq!(db.def_index(DefKind::Road, "nope"), None);
+    }
     use crate::kinds::{UtilityKind, ZoneType};
 
     const PINNED_SINGLE_ROAD_HASH: u64 = 4353786976156915245;

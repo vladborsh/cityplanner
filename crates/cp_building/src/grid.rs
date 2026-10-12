@@ -67,6 +67,18 @@ impl BuildingGrid {
         self.buildings.get(id)
     }
 
+    /// Replaces every building's definition id by `f(old)` (a save loaded against content
+    /// whose definitions sit at other indices).
+    pub fn remap_defs(
+        &mut self,
+        f: impl Fn(cp_content::BuildingDefId) -> cp_content::BuildingDefId,
+    ) {
+        for (_, b) in self.buildings.iter_mut() {
+            b.def = f(b.def);
+        }
+        self.revision = next_revision();
+    }
+
     /// Mutable access; counts as a change for [`BuildingGrid::revision`].
     pub fn get_mut(&mut self, id: BuildingId) -> Option<&mut Building> {
         self.revision = next_revision();

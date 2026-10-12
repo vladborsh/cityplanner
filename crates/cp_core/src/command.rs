@@ -155,6 +155,14 @@ impl<C: Send + Sync + 'static> CommandQueue<C> {
             .collect()
     }
 
+    /// Applies `f` to every waiting command (for load-time id remapping; the order and ids of
+    /// the queue are untouched).
+    pub fn map_commands(&mut self, mut f: impl FnMut(&mut C)) {
+        for q in &mut self.pending {
+            f(&mut q.command);
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.pending.len()
     }
@@ -198,6 +206,13 @@ impl<C: Send + Sync + 'static> CommandLog<C> {
 
     pub fn entries(&self) -> &[LogEntry<C>] {
         &self.entries
+    }
+
+    /// Applies `f` to every logged command (for load-time id remapping).
+    pub fn map_commands(&mut self, mut f: impl FnMut(&mut C)) {
+        for e in &mut self.entries {
+            f(&mut e.command);
+        }
     }
 
     pub fn len(&self) -> usize {

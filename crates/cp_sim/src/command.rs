@@ -39,6 +39,31 @@ pub enum DebugCommand {
     TopUpTraffic { cars: u32, peds: u32 },
 }
 
+impl SimCommand {
+    /// Replaces the road and building definition ids inside the command (a save loaded against
+    /// content whose definitions sit at other indices). Every variant is listed on purpose: a
+    /// new command that carries a definition id has to be handled here.
+    pub fn remap_defs(
+        &mut self,
+        road: &dyn Fn(cp_content::RoadDefId) -> cp_content::RoadDefId,
+        building: &dyn Fn(cp_content::BuildingDefId) -> cp_content::BuildingDefId,
+    ) {
+        match self {
+            SimCommand::Net(NetCommand::BuildRoad { road: r, .. })
+            | SimCommand::Net(NetCommand::UpgradeSegment { road: r, .. }) => *r = road(*r),
+            SimCommand::Building(BuildingCommand::Place { def, .. }) => *def = building(*def),
+            SimCommand::SetSpeed { .. }
+            | SimCommand::Net(NetCommand::RemoveSegment { .. })
+            | SimCommand::Net(NetCommand::ToggleTrafficLight { .. })
+            | SimCommand::Building(BuildingCommand::Demolish { .. })
+            | SimCommand::Zone(_)
+            | SimCommand::Utility(_)
+            | SimCommand::Economy(_)
+            | SimCommand::Debug(_) => {}
+        }
+    }
+}
+
 fn rejected(domain: &'static str, e: impl std::fmt::Display) -> CommandError {
     CommandError::Rejected {
         domain,

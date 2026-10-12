@@ -313,6 +313,15 @@ impl ZoneGrid {
         (1.0 - ny * ny).max(0.0).sqrt() <= MAX_CELL_SLOPE * ny
     }
 
+    /// Replaces the road type ids remembered in the segment fingerprints by `f(old)` (a save
+    /// loaded against content whose definitions sit at other indices), so the blocks are not
+    /// rebuilt just because the ids moved.
+    pub fn remap_roads(&mut self, f: impl Fn(RoadDefId) -> RoadDefId) {
+        for fp in self.fingerprints.values_mut() {
+            fp.road = f(fp.road);
+        }
+    }
+
     pub fn block(&self, id: ZoneBlockId) -> Option<&ZoneBlock> {
         self.blocks.get(id)
     }

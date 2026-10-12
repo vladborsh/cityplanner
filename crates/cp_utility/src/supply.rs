@@ -296,7 +296,8 @@ pub fn compute_supply_cached(
         .iter()
         .filter(|(_, b)| b.state == BuildingState::Active)
         .map(|(id, b)| {
-            let (needs, source) = defs[b.def.index()];
+            // A placeholder (a def the save named and the content lacks) needs and gives nothing.
+            let (needs, source) = defs.get(b.def.index()).copied().unwrap_or(([0.0; 3], None));
             Site {
                 id,
                 pos: b.pos,

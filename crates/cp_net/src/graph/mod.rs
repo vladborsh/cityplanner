@@ -80,6 +80,14 @@ impl NetGraph {
     pub fn node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id)
     }
+    /// Replaces every segment's road type id by `f(old)` (a save loaded against content whose
+    /// definitions sit at other indices). Lanes are kept as saved.
+    pub fn remap_roads(&mut self, f: impl Fn(RoadDefId) -> RoadDefId) {
+        for (_, s) in self.segments.iter_mut() {
+            s.road = f(s.road);
+        }
+    }
+
     pub fn segment(&self, id: SegmentId) -> Option<&Segment> {
         self.segments.get(id)
     }

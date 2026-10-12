@@ -56,6 +56,7 @@
 //! [`migrate`], write `migrate_v<old>_to_v<new>` giving the new field a value, extend
 //! `capture`/`restore`, and add a fixture for the old version plus a load test.
 
+pub mod def_tables;
 pub mod migrate;
 
 use std::io::Read;
@@ -63,6 +64,7 @@ use std::io::Read;
 use bevy_ecs::world::World;
 use cp_building::{BuildingGrid, Demand};
 use cp_citizen::{CitizenGrid, TripBook};
+use cp_content::{BuildingDefId, ContentDb, DefKind, RoadDefId};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
 use cp_economy::{Decay, DemandAcc, EconomyState, LandGrids};
 use cp_net::NetGraph;
@@ -75,7 +77,84 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 17;
+pub const FORMAT_VERSION: u32 = 18;
+
+/// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
+/// definition that index `i` meant when the file was written (`system-design.md` §12).
+/// Empty lists (saves older than v18, or saved without content) mean "the indices already match
+/// the content that loads them".
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DefNames {
+    pub roads: Vec<String>,
+    pub buildings: Vec<String>,
+    pub services: Vec<String>,
+    pub vehicles: Vec<String>,
+    pub utilities: Vec<String>,
+}
+
+impl DefNames {
+    /// The names of `db`'s tables, in id order.
+    pub fn from_content(db: &ContentDb) -> Self {
+        Self {
+            roads: db.def_names(DefKind::Road),
+            buildings: db.def_names(DefKind::Building),
+            services: db.def_names(DefKind::Service),
+            vehicles: db.def_names(DefKind::Vehicle),
+            utilities: db.def_names(DefKind::Utility),
+        }
+    }
+}
+
+/// Saved index -> index in the loading content, for one table.
+struct IdMap {
+    kind: DefKind,
+    /// `None`: the saved table is the current one (or absent); ids stay.
+    table: Option<Vec<u32>>,
+    used: std::cell::RefCell<std::collections::BTreeSet<u32>>,
+}
+
+impl IdMap {
+    fn new(kind: DefKind, saved: &[String], db: &ContentDb) -> Self {
+        let table: Vec<u32> = saved
+            .iter()
+            .map(|n| {
+                db.def_index(kind, n)
+                    .unwrap_or_else(|| ContentDb::placeholder(kind))
+            })
+            .collect();
+        let identity = table.iter().enumerate().all(|(i, t)| *t == i as u32);
+        Self {
+            kind,
+            table: (!saved.is_empty() && !identity).then_some(table),
+            used: Default::default(),
+        }
+    }
+
+    fn map(&self, old: u32) -> u32 {
+        let Some(table) = &self.table else {
+            return old;
+        };
+        self.used.borrow_mut().insert(old);
+        table
+            .get(old as usize)
+            .copied()
+            .unwrap_or_else(|| ContentDb::placeholder(self.kind))
+    }
+
+    /// One warning per saved name that was used and is not in the current content.
+    fn warnings(&self, saved: &[String], db: &ContentDb) -> Vec<LoadWarning> {
+        self.used
+            .borrow()
+            .iter()
+            .filter_map(|&i| saved.get(i as usize))
+            .filter(|n| db.def_index(self.kind, n).is_none())
+            .map(|n| LoadWarning::UnknownDef {
+                kind: self.kind,
+                name: n.clone(),
+            })
+            .collect()
+    }
+}
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -117,9 +196,42 @@ pub struct SaveData {
     pub land: LandGrids,
     /// Abandonment timers. Added in v16.
     pub decay: Decay,
+    /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
+    /// [`DefNames`] and [`SaveData::remap_defs`].
+    pub def_names: DefNames,
 }
 
 impl SaveData {
+    /// Re-assigns every road and building definition id in the data (segments, zone
+    /// fingerprints, buildings, the command log and queue) from the saved names to the indices
+    /// of `db`. A name `db` does not have becomes the built-in placeholder and is returned as
+    /// a [`LoadWarning::UnknownDef`]. Afterwards `def_names` is `db`'s own table. Saves
+    /// without names keep their ids. The order of everything is by saved index, so the result
+    /// does not depend on anything but the save and `db`.
+    pub fn remap_defs(&mut self, db: &ContentDb) -> Vec<LoadWarning> {
+        let roads = IdMap::new(DefKind::Road, &self.def_names.roads, db);
+        let buildings = IdMap::new(DefKind::Building, &self.def_names.buildings, db);
+        if roads.table.is_some() {
+            let f = |r: RoadDefId| RoadDefId(roads.map(r.0));
+            self.net.remap_roads(f);
+            self.zones.remap_roads(f);
+        }
+        if buildings.table.is_some() {
+            self.buildings
+                .remap_defs(|b| BuildingDefId(buildings.map(b.0)));
+        }
+        if roads.table.is_some() || buildings.table.is_some() {
+            let rf = |r: RoadDefId| RoadDefId(roads.map(r.0));
+            let bf = |b: BuildingDefId| BuildingDefId(buildings.map(b.0));
+            self.log.map_commands(|c| c.remap_defs(&rf, &bf));
+            self.queue.map_commands(|c| c.remap_defs(&rf, &bf));
+        }
+        let mut warnings = roads.warnings(&self.def_names.roads, db);
+        warnings.extend(buildings.warnings(&self.def_names.buildings, db));
+        self.def_names = DefNames::from_content(db);
+        warnings
+    }
+
     /// Snapshots a runner's sim state.
     pub fn capture(world: &World) -> Self {
         Self {
@@ -143,6 +255,9 @@ impl SaveData {
             demand_acc: *world.resource::<DemandAcc>(),
             land: world.resource::<LandGrids>().clone(),
             decay: world.resource::<Decay>().clone(),
+            def_names: world
+                .get_resource::<cp_content::SimContent>()
+                .map_or_else(DefNames::default, |c| DefNames::from_content(&c.0)),
         }
     }
 
@@ -258,6 +373,9 @@ pub enum LoadWarning {
     ContentHashMismatch { saved: u64, current: u64 },
     /// The save was made on a different map (terrain) than the one loaded now.
     MapMismatch { saved: u64, current: u64 },
+    /// The save uses a definition (by name) the loaded content does not have; its things
+    /// were given the built-in placeholder.
+    UnknownDef { kind: DefKind, name: String },
 }
 
 #[derive(Debug)]
@@ -571,7 +689,16 @@ pub fn load_into_runner(
     current_content_hash: u64,
 ) -> Result<(Header, Vec<LoadWarning>), SaveError> {
     let map_hash = runner_map_hash(sim);
-    let loaded = load_with_map(bytes, current_content_hash, map_hash)?;
+    let mut loaded = load_with_map(bytes, current_content_hash, map_hash)?;
+    // Ids are re-assigned by name against the content this runner has.
+    if let Some(db) = sim
+        .world()
+        .get_resource::<cp_content::SimContent>()
+        .map(|c| std::sync::Arc::clone(&c.0))
+    {
+        let more = loaded.data.remap_defs(&db);
+        loaded.warnings.extend(more);
+    }
     loaded.data.restore(sim.world_mut());
     Ok((loaded.header, loaded.warnings))
 }
