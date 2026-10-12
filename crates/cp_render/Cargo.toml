@@ -17,6 +17,7 @@ cp_net.workspace = true
 cp_building.workspace = true
 cp_zone.workspace = true
 cp_content.workspace = true
+cp_utility.workspace = true
 bevy_math.workspace = true
 bytemuck = { version = "1", features = ["derive"] }
 bevy = { workspace = true, features = ["3d"] }

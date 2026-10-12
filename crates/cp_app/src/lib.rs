@@ -22,7 +22,7 @@ use cp_core::{SimLimits, Tick};
 use cp_prof::{PhaseClock, PhaseTiming};
 use cp_render::{
     AgentRenderPlugin, AgentRenderStats, BuildingRenderPlugin, OverlayPlugin, RoadRenderPlugin,
-    RtsCamera, RtsCameraPlugin, TerrainRenderPlugin, TickFraction,
+    RtsCamera, RtsCameraPlugin, TerrainRenderPlugin, TickFraction, UtilityRenderPlugin,
 };
 use cp_sim::{SimPhase, SimRunner, SimView};
 use cp_terrain::{MAP_SIZE, Terrain};
@@ -82,6 +82,7 @@ impl Plugin for GamePlugin {
             TerrainRenderPlugin,
             RoadRenderPlugin,
             OverlayPlugin,
+            UtilityRenderPlugin,
             BuildingRenderPlugin,
             AgentRenderPlugin,
             RtsCameraPlugin,

@@ -14,6 +14,7 @@ pub mod road;
 pub mod road_render;
 pub mod sun;
 pub mod terrain;
+pub mod utility_render;
 
 pub use agent_render::{AgentRenderPlugin, AgentRenderStats, TickFraction};
 pub use building_render::{BuildingRenderPlugin, BuildingStats};
@@ -22,6 +23,7 @@ pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{Overlay, OverlayPlugin, OverlayState};
 pub use road_render::{RoadRenderPlugin, RoadStats};
 pub use terrain::{Sun, TerrainChunk, TerrainRenderPlugin, TerrainStats};
+pub use utility_render::UtilityRenderPlugin;
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_render";

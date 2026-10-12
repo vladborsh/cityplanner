@@ -7,6 +7,7 @@
 //!
 //! * [`road`] — the road tool: straight, curve (3 clicks) and free modes, road type,
 //!   elevation, ghost.
+//! * [`utility`] — the pipe and power-line tools (ghost from `plan_link_path`) and link picking.
 //! * [`bulldozer`] — picks the segment under the cursor.
 //! * [`plugin`] — the Bevy glue: cursor ray → terrain point, hotkeys, clicks, ghost drawing.
 
@@ -15,13 +16,15 @@ pub mod bulldozer;
 mod outbox;
 pub mod plugin;
 pub mod road;
+pub mod utility;
 pub mod zone;
 
 pub use building::{BuildingTool, PlacementGhost, pick_building};
 pub use bulldozer::pick_segment;
 pub use outbox::CommandOutbox;
-pub use plugin::{ActiveTool, Ghost, ToolState, ToolsPlugin, UiCapture};
+pub use plugin::{ActiveTool, Ghost, ToolState, ToolsPlugin, UiCapture, compute_utility_ghost};
 pub use road::{ELEVATION_STEP, MAX_ELEVATION_LEVEL, RoadMode, RoadTool, format_money, preview};
+pub use utility::{LINK_PICK_RADIUS, UtilityMode, UtilityTool, pick_link};
 pub use zone::{PALETTE, ZoneTool, ZoneToolKind, zone_color, zone_name};
 
 /// Crate name, used by the skeleton smoke test.

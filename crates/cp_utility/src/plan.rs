@@ -57,6 +57,19 @@ pub enum PathProblem {
     },
 }
 
+impl std::fmt::Display for PathProblem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PathTooShort => write!(f, "needs at least two distinct points"),
+            Self::BadCoordinates => write!(f, "invalid coordinates"),
+            Self::LinkTooShort { length, .. } => write!(f, "piece too short ({length:.0} m)"),
+            Self::TileNotOwned { .. } => write!(f, "outside the land you own"),
+            Self::CrossesBuilding { .. } => write!(f, "would run through a building"),
+            Self::DegenerateLeg { .. } => write!(f, "both ends are the same point"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanNode {
     Existing(UtilityNodeId),

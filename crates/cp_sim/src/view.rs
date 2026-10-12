@@ -17,8 +17,9 @@ use cp_net::{JunctionGeometry, NetGraph};
 pub use cp_terrain::SimTerrain;
 use cp_terrain::{Terrain, TileOwnership};
 use cp_traffic::AgentFrame;
+use cp_utility::UtilityGraph;
 
-use crate::checksum::SimChecksum;
+use crate::checksum::{Fnv1a, SimChecksum};
 use crate::command::SimCommand;
 use crate::overlay::{OverlayData, zone_snapshot};
 use crate::runner::SimRunner;
@@ -88,6 +89,9 @@ pub struct SimView {
     /// The zone blocks and painted types as of this snapshot (tools, zone overlay). Shared and
     /// re-cloned only when `ZoneGrid::revision` changed.
     pub zones: Arc<cp_zone::ZoneGrid>,
+    /// The pipe and power-line networks as of this snapshot (tools, power-line and overlay
+    /// meshes). Shared: re-cloned only when a link was added or removed.
+    pub utilities: Arc<UtilityGraph>,
     /// Poses of vehicles and pedestrians after this tick and after the previously published
     /// one, for the client to interpolate between. Shared; rebuilt only when the tick advanced.
     pub agents: Arc<AgentSnapshot>,
@@ -111,6 +115,9 @@ pub(crate) type ZoneCache = Option<(u64, Arc<cp_zone::ZoneGrid>)>;
 
 /// `(revision, building count, snapshot)` of the last `SimView::buildings`.
 pub(crate) type BuildingsCache = Option<(u64, usize, Arc<BuildingGrid>)>;
+
+/// `(fingerprint of the links, snapshot)` of the last `SimView::utilities`.
+pub(crate) type UtilitiesCache = Option<(u64, Arc<UtilityGraph>)>;
 
 /// `(junction version, nodes, segments, snapshot)` of the last `SimView::net`.
 pub(crate) type NetCache = Option<(u64, usize, usize, Arc<NetGraph>)>;
@@ -211,6 +218,32 @@ impl SimRunner {
         snap
     }
 
+    /// The utility snapshot for `SimView::utilities`. The key hashes the id (index and
+    /// generation, so a removed-then-reused slot differs) and ends of every link and the node
+    /// count: links are immutable once built, so any change shows up in it.
+    fn utilities_snapshot(&self) -> Arc<UtilityGraph> {
+        let graph = self.world().get_resource::<UtilityGraph>();
+        let mut h = Fnv1a::new();
+        if let Some(g) = graph {
+            h.write_u64(g.node_count() as u64);
+            for (id, l) in g.links() {
+                for v in [id.index, id.generation, l.a.index, l.b.index] {
+                    h.write_u64(u64::from(v));
+                }
+            }
+        }
+        let key = h.finish();
+        let mut cache = self.utilities_cache.lock().expect("utilities cache");
+        if let Some((k, snap)) = cache.as_ref()
+            && *k == key
+        {
+            return Arc::clone(snap);
+        }
+        let snap = Arc::new(graph.cloned().unwrap_or_default());
+        *cache = Some((key, Arc::clone(&snap)));
+        snap
+    }
+
     /// The agent poses for `SimView::agents`, rebuilt only when the tick advanced.
     fn agent_snapshot(&self, tick: Tick) -> Arc<AgentSnapshot> {
         let mut cache = self.agents_cache.lock().expect("agents cache");
@@ -270,6 +303,7 @@ impl SimRunner {
                 .map(|c| Arc::clone(&c.0)),
             overlays: self.overlay_data(),
             agents: self.agent_snapshot(tick),
+            utilities: self.utilities_snapshot(),
             junctions,
         }
     }

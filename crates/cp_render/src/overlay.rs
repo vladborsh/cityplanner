@@ -23,6 +23,12 @@ use cp_terrain::{MAP_SIZE, Terrain};
 use crate::chunk::MeshData;
 use crate::material::VertexColorMaterial;
 
+mod utility;
+pub use utility::{
+    BuildingStatus, UtilityLayer, building_status, coverage_counts, status_color,
+    utility_overlay_mesh,
+};
+
 /// Which overlay is shown.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Overlay {
@@ -32,15 +38,21 @@ pub enum Overlay {
     Zones,
     LandValue,
     Pollution,
+    /// Pipes (underground), their reach and the water / sewage state of buildings.
+    Water,
+    /// Power lines, their reach and the power state of buildings.
+    Power,
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 5] = [
+    pub const ALL: [Overlay; 7] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
         Overlay::LandValue,
         Overlay::Pollution,
+        Overlay::Water,
+        Overlay::Power,
     ];
 
     pub fn label(self) -> &'static str {
@@ -50,6 +62,8 @@ impl Overlay {
             Overlay::Zones => "Zones",
             Overlay::LandValue => "Land value",
             Overlay::Pollution => "Pollution",
+            Overlay::Water => "Water",
+            Overlay::Power => "Power",
         }
     }
 }
@@ -302,6 +316,8 @@ struct OverlayLayers {
     zones: LayerSource,
     land: LayerSource,
     pollution: LayerSource,
+    water: LayerSource,
+    power: LayerSource,
     material: Option<Handle<VertexColorMaterial>>,
     terrain_key: usize,
 }
@@ -432,6 +448,37 @@ fn sync_overlay_meshes(
         &mut meshes,
         terrain_changed,
     );
+    if let Some(db) = view.content.as_deref() {
+        // The utility layers depend on the network, the buildings (flags) and the zone grid
+        // (lot footprints).
+        let key = ptr(&view.utilities)
+            ^ ptr(&view.buildings).rotate_left(13)
+            ^ ptr(&view.zones).rotate_left(29);
+        for (src, layer, which) in [
+            (&mut l.water, UtilityLayer::Water, Overlay::Water),
+            (&mut l.power, UtilityLayer::Power, Overlay::Power),
+        ] {
+            upsert(
+                src,
+                key,
+                which,
+                || {
+                    utility_overlay_mesh(
+                        layer,
+                        &view.utilities,
+                        &view.buildings,
+                        &view.zones,
+                        db,
+                        terrain,
+                    )
+                },
+                &material,
+                &mut commands,
+                &mut meshes,
+                terrain_changed,
+            );
+        }
+    }
 }
 
 /// Shows exactly the active layer. Runs every frame after the sync (cheap: a handful of

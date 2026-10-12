@@ -103,7 +103,7 @@ fn overlay_state_defaults_to_off_and_lists_every_overlay_once() {
     let mut all = Overlay::ALL.to_vec();
     all.sort_by_key(|o| o.label());
     all.dedup();
-    assert_eq!(all.len(), 5);
+    assert_eq!(all.len(), 7);
 }
 
 #[test]
@@ -218,6 +218,8 @@ fn layer_app() -> (App, Vec<(Overlay, Entity)>) {
         Overlay::Zones,
         Overlay::LandValue,
         Overlay::Pollution,
+        Overlay::Water,
+        Overlay::Power,
     ]
     .map(|o| {
         (
@@ -249,5 +251,224 @@ fn switching_overlays_flips_exactly_one_layer_within_one_update() {
         app.update(); // one frame
         let want: Vec<_> = if o == Overlay::Off { vec![] } else { vec![o] };
         assert_eq!(visible(&app, &layers), want, "{o:?}");
+    }
+}
+
+// ---- water / power overlays ----
+
+mod utility_overlays {
+    use super::*;
+    use crate::overlay::utility::{LINE, PIPE, POWER_BAND, WATER_BAND};
+    use cp_building::{AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingState, Lot};
+    use cp_content::UtilityKind;
+    use cp_core::{Id, Tick};
+    use cp_sim::SimCommand;
+    use cp_utility::{LINE_REACH_M, UtilityCommand};
+
+    fn put(sim: &mut SimRunner, def: &str, x: f32, z: f32, lot: Lot) {
+        let db = sim.view().content.unwrap();
+        sim.world_mut()
+            .resource_mut::<BuildingGrid>()
+            .insert(Building {
+                def: db.building_id(def).unwrap(),
+                lot,
+                level: 1,
+                state: BuildingState::Active,
+                ready_at: Tick(0),
+                pos: bevy_math::Vec2::new(x, z),
+                rot: 0.0,
+                access: AccessPoint {
+                    segment: Id::new(0, 0),
+                    t: 0.0,
+                },
+                flags: BuildingFlags::default(),
+                level_progress: 0.0,
+            });
+    }
+
+    fn build(sim: &mut SimRunner, kind: UtilityKind, path: &[(f32, f32)]) {
+        let path = path
+            .iter()
+            .map(|p| bevy_math::Vec2::new(p.0, p.1))
+            .collect();
+        sim.push_command(
+            SimCommand::Utility(UtilityCommand::BuildLink { kind, path }),
+            sim.tick(),
+        );
+        sim.apply_due_commands();
+    }
+
+    /// A wind turbine (300 power) and 205 houses (1.5 each) beside a power line: five do not fit.
+    /// The first two houses stand on real zone cells, so the overlay has quads for them.
+    fn district() -> SimRunner {
+        let mut sim = city();
+        let block = sim
+            .world()
+            .resource::<ZoneGrid>()
+            .blocks()
+            .map(|(id, _)| id)
+            .next()
+            .unwrap();
+        let lot = |block, col| Lot {
+            block,
+            col,
+            w: 1,
+            d: 1,
+        };
+        put(
+            &mut sim,
+            "wind_turbine",
+            5010.0,
+            5030.0,
+            lot(Id::new(99, 0), 0),
+        );
+        for i in 0..205 {
+            let real = if i < 2 { block } else { Id::new(99, 0) };
+            put(
+                &mut sim,
+                "house_low_1",
+                5000.0 + (i % 40) as f32 * 2.0,
+                5035.0 + (i / 40) as f32 * 2.0,
+                lot(real, i as u16),
+            );
+        }
+        build(
+            &mut sim,
+            UtilityKind::Power,
+            &[(5000.0, 5020.0), (5090.0, 5020.0)],
+        );
+        build(
+            &mut sim,
+            UtilityKind::Water,
+            &[(5000.0, 5060.0), (5090.0, 5060.0)],
+        );
+        for _ in 0..70 {
+            sim.tick_once();
+        }
+        sim
+    }
+
+    #[test]
+    fn a_powered_district_shows_supplied_sources_and_the_deficit() {
+        let sim = district();
+        let view = sim.view();
+        let db = view.content.as_deref().unwrap();
+        let status = |layer| -> Vec<_> {
+            view.buildings
+                .iter()
+                .map(|(_, b)| building_status(layer, db, b))
+                .collect()
+        };
+        let power = status(UtilityLayer::Power);
+        let count = |s| power.iter().filter(|x| **x == Some(s)).count();
+        assert_eq!(count(BuildingStatus::Source), 1);
+        assert_eq!(count(BuildingStatus::Supplied), 200);
+        assert_eq!(count(BuildingStatus::NoPower), 5, "the deficit is visible");
+
+        // The deficit cuts the highest ids first: every unpowered building has a higher id
+        // than every supplied house.
+        let ids = |want| -> Vec<_> {
+            view.buildings
+                .iter()
+                .filter(|(_, b)| building_status(UtilityLayer::Power, db, b) == Some(want))
+                .map(|(id, _)| id)
+                .collect()
+        };
+        let (cut, fed) = (ids(BuildingStatus::NoPower), ids(BuildingStatus::Supplied));
+        assert!(cut.iter().min() > fed.iter().max(), "{cut:?} vs {fed:?}");
+
+        // Water: no pump anywhere, so every house lacks water and nobody is a source.
+        let water = status(UtilityLayer::Water);
+        assert!(
+            water
+                .iter()
+                .filter_map(|s| *s)
+                .all(|s| s == BuildingStatus::NoWater)
+        );
+        assert_eq!(water.iter().flatten().count(), 205);
+    }
+
+    #[test]
+    fn the_layers_hold_the_network_the_reach_band_and_the_state_colours() {
+        let sim = district();
+        let view = sim.view();
+        let (db, t) = (
+            view.content.as_deref().unwrap(),
+            view.terrain.as_ref().unwrap(),
+        );
+        let mesh = |layer| {
+            utility_overlay_mesh(layer, &view.utilities, &view.buildings, &view.zones, db, t)
+        };
+
+        let power = mesh(UtilityLayer::Power);
+        assert!(faces_up(&power));
+        assert!(power.colors.contains(&LINE) && power.colors.contains(&POWER_BAND));
+        assert!(!power.colors.contains(&PIPE), "no pipes on the power layer");
+        // The deficit shows red, the supplied house green (houses 0 and 1 have real cells).
+        assert!(
+            power
+                .colors
+                .contains(&status_color(UtilityLayer::Power, BuildingStatus::Supplied))
+        );
+        // The band reaches LINE_REACH_M either side of the line.
+        let z_max = power
+            .positions
+            .iter()
+            .map(|p| p[2])
+            .fold(f32::MIN, f32::max);
+        assert!((z_max - (5020.0 + LINE_REACH_M)).abs() < 1.0, "{z_max}");
+
+        // The water layer is the pipe, not the power line; pipes are drawn here only.
+        let water = mesh(UtilityLayer::Water);
+        assert!(faces_up(&water));
+        assert!(water.colors.contains(&PIPE) && water.colors.contains(&WATER_BAND));
+        assert!(!water.colors.contains(&LINE));
+        assert!(
+            water
+                .colors
+                .contains(&status_color(UtilityLayer::Water, BuildingStatus::NoWater)),
+            "houses without a pump are marked"
+        );
+    }
+
+    #[test]
+    fn coverage_counts_split_buildings_by_reach_of_their_network() {
+        let mut sim = district();
+        // One more house far from every line.
+        put(
+            &mut sim,
+            "house_low_1",
+            5400.0,
+            5400.0,
+            Lot {
+                block: Id::new(99, 0),
+                col: 0,
+                w: 1,
+                d: 1,
+            },
+        );
+        let view = sim.view();
+        let db = view.content.as_deref().unwrap();
+        let (yes, no) = coverage_counts(UtilityLayer::Power, &view.utilities, &view.buildings, db);
+        // 205 houses + the far one are concerned (the turbine is a source: also concerned).
+        assert_eq!((yes, no), (206, 1));
+        let (yes, no) = coverage_counts(UtilityLayer::Water, &view.utilities, &view.buildings, db);
+        // Pipe at z = 5060 reaches the houses (z 5035..5043) within 40 m; the turbine is not a
+        // water source or consumer.
+        assert_eq!((yes, no), (205, 1));
+    }
+
+    #[test]
+    fn layers_rebuild_only_when_the_network_or_buildings_change() {
+        let mut sim = district();
+        let (a, b) = (sim.view(), sim.view());
+        assert!(Arc::ptr_eq(&a.utilities, &b.utilities));
+        assert!(Arc::ptr_eq(&a.buildings, &b.buildings));
+        build(
+            &mut sim,
+            UtilityKind::Power,
+            &[(5000.0, 5100.0), (5050.0, 5100.0)],
+        );
+        assert!(!Arc::ptr_eq(&a.utilities, &sim.view().utilities));
     }
 }

@@ -62,13 +62,13 @@ fn bucket(p: Vec2, size: f32) -> (i32, i32) {
 }
 
 /// Link lookup of one network: which component a position is attached to.
-struct Attach {
+pub(crate) struct Attach {
     buckets: BTreeMap<(i32, i32), Vec<UtilityLinkId>>,
     comp_of_link: BTreeMap<UtilityLinkId, u32>,
 }
 
 impl Attach {
-    fn build(graph: &UtilityGraph, net: UtilityNet) -> Self {
+    pub(crate) fn build(graph: &UtilityGraph, net: UtilityNet) -> Self {
         let comps = graph.components(net);
         let label: BTreeMap<_, _> = comps.labels.iter().copied().collect();
         let mut buckets: BTreeMap<(i32, i32), Vec<UtilityLinkId>> = BTreeMap::new();
@@ -91,7 +91,7 @@ impl Attach {
     }
 
     /// The component of the nearest link within [`LINE_REACH_M`] of `p`.
-    fn comp_at(&self, graph: &UtilityGraph, p: Vec2) -> Option<u32> {
+    pub(crate) fn comp_at(&self, graph: &UtilityGraph, p: Vec2) -> Option<u32> {
         let (bx, bz) = bucket(p, BUCKET_M);
         let mut cand = BTreeSet::new();
         for dx in -1..=1 {
@@ -294,5 +294,24 @@ pub fn update_supply(
         if let Some(b) = buildings.get_mut(id) {
             b.flags.0 = (b.flags.0 & !BuildingFlags::UTILITY_MASK) | want;
         }
+    }
+}
+
+/// Which positions a network reaches (within [`LINE_REACH_M`] of one of its links), for the
+/// coverage overlay. Built once per graph, then asked per position.
+pub struct Coverage {
+    attach: Attach,
+}
+
+impl Coverage {
+    pub fn new(graph: &UtilityGraph, net: UtilityNet) -> Self {
+        Self {
+            attach: Attach::build(graph, net),
+        }
+    }
+
+    /// Whether `p` (XZ) is within reach of the network, the rule buildings use to attach.
+    pub fn covers(&self, graph: &UtilityGraph, p: Vec2) -> bool {
+        self.attach.comp_at(graph, p).is_some()
     }
 }

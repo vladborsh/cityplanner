@@ -2,14 +2,16 @@
 
 use bevy::prelude::Resource;
 use bevy_egui::egui;
+use cp_content::UtilityKind;
 use cp_core::SimSpeed;
 use cp_net::ElevationMode;
 use cp_render::{Overlay, OverlayState};
 use cp_sim::SimView;
 use cp_tools::{
-    ActiveTool, CommandOutbox, PALETTE, RoadMode, ToolState, ZoneToolKind, format_money,
-    zone_color, zone_name,
+    ActiveTool, CommandOutbox, PALETTE, RoadMode, ToolState, UtilityMode, ZoneToolKind,
+    format_money, zone_color, zone_name,
 };
+use cp_utility::UtilityNet;
 
 use crate::set_speed;
 
@@ -142,6 +144,7 @@ pub fn bottom_bar(
     state: &mut UiState,
     view: Option<&SimView>,
     tools: &mut ToolState,
+    overlay: &mut OverlayState,
 ) {
     egui::Panel::bottom("categories").show(root, |ui| {
         ui.horizontal(|ui| {
@@ -164,6 +167,10 @@ pub fn bottom_bar(
             Some(Category::Services) => {
                 ui.separator();
                 services_panel(ui, view, tools);
+            }
+            Some(c @ (Category::Water | Category::Power)) => {
+                ui.separator();
+                utility_panel(ui, tools, overlay, c);
             }
             Some(c) => {
                 ui.separator();
@@ -213,6 +220,93 @@ pub fn services_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut Too
             None => {
                 ui.weak("Hover a spot beside a road. R rotates, Esc leaves the tool.");
             }
+        }
+    }
+}
+
+/// The Water and Power tabs (`tab` picks which): the pipe or power-line tools, the remove tool
+/// and the ghost's verdict. Picking a tool also switches the map overlay to that network (pipes
+/// are underground and only the Water overlay shows them).
+pub fn utility_panel(
+    ui: &mut egui::Ui,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+    tab: Category,
+) {
+    let (kinds, net, shown): (&[(UtilityKind, &str)], _, _) = if tab == Category::Power {
+        (
+            &[(UtilityKind::Power, "⚡ Power line")],
+            UtilityNet::Power,
+            Overlay::Power,
+        )
+    } else {
+        (
+            &[
+                (UtilityKind::Water, "💧 Water pipe"),
+                (UtilityKind::Sewage, "🚰 Sewage pipe"),
+            ],
+            UtilityNet::Pipe,
+            Overlay::Water,
+        )
+    };
+    ui.horizontal(|ui| {
+        for &(kind, label) in kinds {
+            let selected = tools.active == ActiveTool::Utility && tools.utility.kind == kind;
+            if ui.selectable_label(selected, label).clicked() {
+                if selected {
+                    tools.select(ActiveTool::None);
+                } else {
+                    tools.select(ActiveTool::Utility);
+                    tools.utility.set_kind(kind);
+                    overlay.active = shown;
+                }
+            }
+        }
+        let removing = tools.active == ActiveTool::UtilityRemove && tools.remove_net == Some(net);
+        if ui.selectable_label(removing, "🚜 Remove").clicked() {
+            if removing {
+                tools.select(ActiveTool::None);
+            } else {
+                tools.select(ActiveTool::UtilityRemove);
+                tools.remove_net = Some(net);
+                overlay.active = shown;
+            }
+        }
+        if tools.active == ActiveTool::Utility {
+            ui.separator();
+            for (mode, label) in [
+                (UtilityMode::Straight, "Straight (2 clicks)"),
+                (UtilityMode::Polyline, "Polyline (Enter ends)"),
+            ] {
+                if ui
+                    .selectable_label(tools.utility.mode == mode, label)
+                    .clicked()
+                {
+                    tools.utility.set_mode(mode);
+                }
+            }
+        }
+    });
+    match tools.active {
+        ActiveTool::Utility => match &tools.utility_ghost {
+            Some(g) if g.valid => {
+                let cost = g.cost.map_or(String::new(), format_money);
+                ui.colored_label(egui::Color32::LIGHT_GREEN, format!("✔ can build — {cost}"));
+            }
+            Some(g) => {
+                for e in &g.errors {
+                    ui.colored_label(egui::Color32::LIGHT_RED, format!("✖ {e}"));
+                }
+            }
+            None => {
+                ui.weak("Click to start. Buildings within 40 m of the network are connected. Esc cancels.");
+            }
+        },
+        ActiveTool::UtilityRemove => {
+            ui.weak("Hover a piece and click to remove it. Esc leaves the tool.");
+        }
+        _ => {
+            ui.weak("Pick a tool; the overlay shows the network and which buildings lack supply.");
         }
     }
 }
@@ -340,7 +434,11 @@ pub fn roads_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolSt
         ActiveTool::Bulldozer => {
             ui.weak("Hover a building or road segment, click to remove it. Esc leaves the tool.");
         }
-        ActiveTool::None | ActiveTool::Zone | ActiveTool::Place => {
+        ActiveTool::None
+        | ActiveTool::Zone
+        | ActiveTool::Place
+        | ActiveTool::Utility
+        | ActiveTool::UtilityRemove => {
             ui.weak("Pick a tool.");
         }
     }
@@ -455,7 +553,13 @@ mod tests {
         let ctx = egui::Context::default();
         let mut state = UiState::default();
         crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
-            bottom_bar(ui, &mut state, None, &mut ToolState::default())
+            bottom_bar(
+                ui,
+                &mut state,
+                None,
+                &mut ToolState::default(),
+                &mut OverlayState::default(),
+            )
         });
         assert_eq!(state.category, None);
     }
@@ -557,6 +661,42 @@ mod tests {
         assert!(
             tools.zone.corner.is_none(),
             "leaving the tool cancels the rectangle"
+        );
+    }
+
+    #[test]
+    fn utility_tabs_activate_their_tools_and_switch_the_overlay() {
+        let ctx = egui::Context::default();
+        let mut tools = ToolState::default();
+        let mut overlay = OverlayState::default();
+        let draw = |tools: &mut ToolState, overlay: &mut OverlayState, tab| {
+            crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
+                utility_panel(ui, tools, overlay, tab);
+            });
+        };
+        draw(&mut tools, &mut overlay, Category::Water);
+        assert_eq!(tools.active, ActiveTool::None);
+        assert_eq!(overlay.active, Overlay::Off);
+
+        // What a click on "Power line" does, then the panel draws with and without a ghost.
+        tools.select(ActiveTool::Utility);
+        tools.utility.set_kind(cp_content::UtilityKind::Power);
+        overlay.active = Overlay::Power;
+        draw(&mut tools, &mut overlay, Category::Power);
+        tools.utility_ghost = Some(cp_tools::Ghost {
+            polylines: vec![],
+            valid: false,
+            cost: None,
+            errors: vec!["outside the land you own".into()],
+        });
+        draw(&mut tools, &mut overlay, Category::Power);
+        tools.select(ActiveTool::UtilityRemove);
+        tools.remove_net = Some(UtilityNet::Power);
+        draw(&mut tools, &mut overlay, Category::Power);
+        tools.select(ActiveTool::None);
+        assert!(
+            tools.utility_ghost.is_none(),
+            "leaving the tool clears the ghost"
         );
     }
 }

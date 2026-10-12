@@ -2,7 +2,7 @@
 //!
 //! All decisions live in the pure modules; this file only moves data between Bevy and them.
 //! Keys: PgUp / PgDn raise / lower the road, Esc cancels the drawing (then deselects the tool),
-//! Enter finishes a free-mode road. The left mouse button clicks (ignored while the pointer is
+//! Enter finishes a free-mode road or a pipe / power-line polyline. The left mouse button clicks (ignored while the pointer is
 //! over the UI, see [`UiCapture`]).
 
 use bevy::prelude::*;
@@ -17,8 +17,12 @@ use crate::CommandOutbox;
 use crate::building::{BuildingTool, PlacementGhost, pick_building, preview as place_preview};
 use crate::bulldozer::{PICK_RADIUS, centre_line, pick_segment};
 use crate::road::{RoadTool, preview, sample_curve};
+use crate::utility::{
+    LINK_PICK_RADIUS, UtilityTool, link_line, pick_link, plan_polylines, preview as utility_preview,
+};
 use crate::zone::{ZoneTool, zone_color};
 use cp_building::{BuildingCommand, BuildingId};
+use cp_utility::{UtilityCommand, UtilityLinkId, UtilityNet};
 use cp_zone::{ZoneCellRef, ZoneCommand};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -31,6 +35,10 @@ pub enum ActiveTool {
     Zone,
     /// Placing a service building (type chosen in the Services tab, R rotates).
     Place,
+    /// Drawing pipes or power lines (Water / Power tabs).
+    Utility,
+    /// Removing the pipe or power-line piece under the cursor.
+    UtilityRemove,
 }
 
 /// Set by the UI each frame: the pointer is over a panel/window, so clicks are not the tool's.
@@ -62,6 +70,13 @@ pub struct ToolState {
     pub highlight: Option<SegmentId>,
     pub zone: ZoneTool,
     pub building: BuildingTool,
+    pub utility: UtilityTool,
+    /// Which network the remove tool picks from.
+    pub remove_net: Option<UtilityNet>,
+    /// The pipe / power-line ghost (separate from the road ghost).
+    pub utility_ghost: Option<Ghost>,
+    /// Link the remove tool would delete.
+    pub link_highlight: Option<UtilityLinkId>,
     /// What the placement tool would put under the cursor.
     pub place_ghost: Option<PlacementGhost>,
     /// Building the bulldozer would remove (preferred over a segment).
@@ -70,6 +85,14 @@ pub struct ToolState {
     pub zone_preview: Vec<ZoneCellRef>,
     /// Inputs the current ghost was computed from; unchanged inputs skip the revalidation.
     ghost_key: Option<GhostKey>,
+    utility_key: Option<UtilityGhostKey>,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+struct UtilityGhostKey {
+    hover: (i32, i32),
+    tool: UtilityTool,
+    graph_ptr: usize,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -90,6 +113,10 @@ impl ToolState {
         self.zone_preview.clear();
         self.place_ghost = None;
         self.building_highlight = None;
+        self.utility.cancel();
+        self.utility_ghost = None;
+        self.utility_key = None;
+        self.link_highlight = None;
     }
 }
 
@@ -120,12 +147,22 @@ fn tool_hotkeys(
             state.road.lower();
         }
     }
+    if state.active == ActiveTool::Utility
+        && keys.just_pressed(KeyCode::Enter)
+        && let Some(path) = state.utility.finish()
+    {
+        state.utility_key = None;
+        outbox.push(state.utility.command(path));
+    }
     if state.active == ActiveTool::Place && keys.just_pressed(KeyCode::KeyR) {
         state.building.rotate();
     }
     if keys.just_pressed(KeyCode::Escape) {
         if state.active == ActiveTool::Zone && state.zone.corner.is_some() {
             state.zone.cancel();
+        } else if state.active == ActiveTool::Utility && !state.utility.points.is_empty() {
+            state.utility.cancel();
+            state.utility_key = None;
         } else if state.road.points.is_empty() {
             state.select(ActiveTool::None);
         } else {
@@ -196,6 +233,22 @@ fn tool_hover(
         (ActiveTool::Zone, Some(p)) => {
             state.zone_preview = state.zone.preview(&view.zones, p);
         }
+        (ActiveTool::Utility, Some(p)) => {
+            let key = UtilityGhostKey {
+                hover: (p.x.round() as i32, p.y.round() as i32),
+                tool: state.utility.clone(),
+                graph_ptr: std::sync::Arc::as_ptr(&view.utilities) as usize,
+            };
+            if state.utility_key.as_ref() != Some(&key) {
+                state.utility_ghost = compute_utility_ghost(&view, &state.utility, p);
+                state.utility_key = Some(key);
+            }
+        }
+        (ActiveTool::UtilityRemove, Some(p)) => {
+            state.link_highlight = state
+                .remove_net
+                .and_then(|net| pick_link(&view.utilities, net, p, LINK_PICK_RADIUS));
+        }
         (ActiveTool::Road, Some(p)) => {
             let key = GhostKey {
                 hover: (p.x.round() as i32, p.y.round() as i32),
@@ -212,6 +265,11 @@ fn tool_hover(
             state.building_highlight = None;
             state.place_ghost = None;
             state.zone_preview.clear();
+            state.link_highlight = None;
+            if state.active != ActiveTool::Utility {
+                state.utility_ghost = None;
+                state.utility_key = None;
+            }
             if state.active != ActiveTool::Road {
                 state.ghost = None;
             }
@@ -240,6 +298,33 @@ pub fn compute_ghost(view: &SimView, tool: &RoadTool, hover: Vec2) -> Option<Gho
             valid: false,
             cost: None,
             errors: errors.iter().map(RoadBuildError::to_string).collect(),
+        },
+    })
+}
+
+/// The ghost for the pipe / power-line tool with the cursor at `hover`: green pieces of the
+/// plan when `BuildLink` would accept the path, the raw red path with every problem otherwise.
+pub fn compute_utility_ghost(view: &SimView, tool: &UtilityTool, hover: Vec2) -> Option<Ghost> {
+    let path = tool.path_with_hover(hover)?;
+    Some(match utility_preview(view, tool.kind, &path)? {
+        Ok(plan) => Ghost {
+            polylines: plan_polylines(&view.utilities, &plan),
+            valid: true,
+            cost: Some(plan.cost),
+            errors: Vec::new(),
+        },
+        Err(problems) => Ghost {
+            polylines: vec![
+                path.iter()
+                    .map(|p| {
+                        let y = view.terrain.as_deref().map_or(0.0, |t| t.height(*p));
+                        Vec3::new(p.x, y + 0.5, p.y)
+                    })
+                    .collect(),
+            ],
+            valid: false,
+            cost: None,
+            errors: problems.iter().map(ToString::to_string).collect(),
         },
     })
 }
@@ -322,6 +407,17 @@ fn tool_click(
                 }));
             }
         }
+        ActiveTool::Utility => {
+            if let Some(path) = state.utility.click(p) {
+                outbox.push(state.utility.command(path));
+            }
+            state.utility_key = None;
+        }
+        ActiveTool::UtilityRemove => {
+            if let Some(link) = state.link_highlight.take() {
+                outbox.push(SimCommand::Utility(UtilityCommand::RemoveLink { link }));
+            }
+        }
         ActiveTool::None | ActiveTool::Zone => {}
     }
 }
@@ -331,6 +427,25 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
         && let Some(view) = view.as_deref()
     {
         draw_zone_grid(&state, view, &mut gizmos);
+    }
+    if let Some(ghost) = &state.utility_ghost
+        && state.active == ActiveTool::Utility
+    {
+        let color = if ghost.valid {
+            Color::srgb(0.2, 0.9, 0.3)
+        } else {
+            Color::srgb(0.95, 0.2, 0.2)
+        };
+        for line in &ghost.polylines {
+            gizmos.linestrip(line.iter().map(|p| *p + Vec3::Y * 0.6), color);
+        }
+    }
+    if let (Some(view), Some(link)) = (view.as_deref(), state.link_highlight) {
+        let line = link_line(&view.utilities, link);
+        gizmos.linestrip(
+            line.iter().map(|p| *p + Vec3::Y * 0.8),
+            Color::srgb(1.0, 0.6, 0.1),
+        );
     }
     if let Some(ghost) = &state.ghost
         && state.active == ActiveTool::Road

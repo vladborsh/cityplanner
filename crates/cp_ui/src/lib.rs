@@ -67,7 +67,7 @@ fn draw_ui(
     let ctx = contexts.ctx_mut()?;
     let mut root = root_ui(ctx);
     top_bar(&mut root, &view, &mut outbox, &mut overlay);
-    bottom_bar(&mut root, &mut state, Some(&view), &mut tools);
+    bottom_bar(&mut root, &mut state, Some(&view), &mut tools, &mut overlay);
     if state.debug_open {
         debug::debug_window(
             ctx,

@@ -2552,6 +2552,7 @@ dependencies = [
  "cp_net",
  "cp_sim",
  "cp_terrain",
+ "cp_utility",
  "cp_zone",
 ]
 
@@ -2626,6 +2627,7 @@ dependencies = [
  "cp_save",
  "cp_sim",
  "cp_terrain",
+ "cp_utility",
  "cp_zone",
 ]
 
@@ -2656,6 +2658,7 @@ dependencies = [
  "cp_render",
  "cp_sim",
  "cp_tools",
+ "cp_utility",
 ]
 
 [[package]]
