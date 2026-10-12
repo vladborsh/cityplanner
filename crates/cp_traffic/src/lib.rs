@@ -17,7 +17,7 @@ pub use agents::{
     Vehicle, VehicleId, crossing_of, move_agents, purge_removed_buildings, receive_paths,
     route_trips, update_traffic_load,
 };
-pub use astar::{CarPath, NoPath, PedPath, find_car_path, find_ped_path};
+pub use astar::{CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_ped_path};
 pub use graph::{
     Access, CONGESTION_K, CongestionMap, LEFT_TURN_PENALTY, PED_SPEED, PathGraph, SegEnd, Side,
     U_TURN_PENALTY,

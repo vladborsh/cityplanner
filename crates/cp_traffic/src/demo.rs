@@ -65,6 +65,7 @@ pub fn top_up(
                 spawned: false,
                 speed: 0.0,
                 stuck_timer: 0,
+                reroute: None,
             });
             added += 1;
         }

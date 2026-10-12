@@ -38,7 +38,7 @@ use cp_core::Tick;
 use cp_net::{JunctionGeometry, NetGraph};
 use serde::{Deserialize, Serialize};
 
-use crate::astar::{CarPath, NoPath, PedPath, find_car_path, find_ped_path};
+use crate::astar::{CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_ped_path};
 use crate::graph::{Access, CongestionMap, PathGraph};
 
 /// Ticks between submitting a request and applying its result.
@@ -51,6 +51,13 @@ pub struct RequestId(pub u64);
 pub enum Mode {
     Car,
     Pedestrian,
+    /// A car already on the road asks for a new route from lane `from` to lane `to`
+    /// (appended in T-066). `PathRequest::from.s` / `to.s` are lane-metres; the other `Access`
+    /// fields are unused.
+    CarLanes {
+        from: cp_net::LaneId,
+        to: cp_net::LaneId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -148,6 +155,12 @@ fn compute(graph: &PathGraph, cong: &CongestionMap, req: &PathRequest) -> PathRe
     match req.mode {
         Mode::Car => PathResult::Car(find_car_path(graph, cong, &req.from, &req.to)),
         Mode::Pedestrian => PathResult::Pedestrian(find_ped_path(graph, &req.from, &req.to)),
+        Mode::CarLanes { from, to } => PathResult::Car(find_car_path_lanes(
+            graph,
+            cong,
+            (from, req.from.s),
+            (to, req.to.s),
+        )),
     }
 }
 

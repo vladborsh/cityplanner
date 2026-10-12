@@ -157,6 +157,19 @@ pub(crate) fn is_lane_change(g: &PathGraph, from: LaneId, to: LaneId) -> bool {
     }
 }
 
+/// Whether the rest of the vehicle's route still exists in `g`: every lane ahead, every junction
+/// connection (or lane change) between them, and the destination lane. The place it is on
+/// now is not checked here (a missing place removes the car, see [`DriveState::rebuild`]).
+pub(crate) fn path_ok(g: &PathGraph, v: &Vehicle) -> bool {
+    let ahead = usize::from(v.hop) + usize::from(v.in_conn);
+    g.car_slot(v.path.goal).is_some()
+        && v.path.steps.iter().skip(ahead).all(|&(a, b)| {
+            g.car_slot(a).is_some()
+                && g.car_slot(b).is_some()
+                && (find_exit(g, a, b).is_some() || is_lane_change(g, a, b))
+        })
+}
+
 /// Cars that keep a hop of `me` to lane `to` at position `s` shut: cars of that lane too close
 /// for either bumper gap, and cars that have just left it into a junction connection and still
 /// cover its stop line.
@@ -539,6 +552,9 @@ fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
                         // Waiting for a gap in the next lane: stop at the stop line.
                         Some((node.s_out + HARD_GAP, 0.0, HARD_GAP))
                     }
+                    // The connection is gone but a new route is on its way: wait at the stop
+                    // line (T-066).
+                    None if v.reroute.is_some() => Some((node.s_out + HARD_GAP, 0.0, HARD_GAP)),
                     None => {
                         out.push(Upd {
                             id,

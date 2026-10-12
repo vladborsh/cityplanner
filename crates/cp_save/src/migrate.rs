@@ -215,6 +215,77 @@ pub struct AgentsV11 {
     pub stats: AgentStatsV11,
 }
 
+/// Counters of the agent pools as written by formats 12–16 (before the re-route counters).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentStatsV16 {
+    pub abstract_trips: u64,
+    pub walked: u64,
+    pub driven: u64,
+    pub no_path: u64,
+    pub invalid_routes: u64,
+    pub red_waits: u64,
+    pub despawned_stuck: u64,
+    pub invalid_vehicles: u64,
+}
+
+/// A vehicle as written by formats 12–16 (before the re-route request id).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VehicleV16 {
+    pub trip: TripId,
+    pub citizen: CitizenId,
+    pub path: CarPath,
+    pub kind: u8,
+    pub hop: u16,
+    pub in_conn: bool,
+    pub spawned: bool,
+    pub s: f32,
+    pub speed: f32,
+    pub stuck_timer: u32,
+}
+
+/// The agent pools as written by formats 12–16.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AgentsV16 {
+    pub pedestrians: Arena<Pedestrian>,
+    pub vehicles: Arena<VehicleV16>,
+    pub stats: AgentStatsV16,
+    pub load: SegmentLoad,
+}
+
+impl From<&Agents> for AgentsV16 {
+    /// The pools as an old writer would have saved them (tests of the frozen writers).
+    fn from(a: &Agents) -> Self {
+        let vehicles = a.vehicle_arena().map(|v| VehicleV16 {
+            trip: v.trip,
+            citizen: v.citizen,
+            path: v.path.clone(),
+            kind: v.kind,
+            hop: v.hop,
+            in_conn: v.in_conn,
+            spawned: v.spawned,
+            s: v.s,
+            speed: v.speed,
+            stuck_timer: v.stuck_timer,
+        });
+        let s = &a.stats;
+        Self {
+            pedestrians: a.pedestrian_arena().clone(),
+            vehicles,
+            stats: AgentStatsV16 {
+                abstract_trips: s.abstract_trips,
+                walked: s.walked,
+                driven: s.driven,
+                no_path: s.no_path,
+                invalid_routes: s.invalid_routes,
+                red_waits: s.red_waits,
+                despawned_stuck: s.despawned_stuck,
+                invalid_vehicles: s.invalid_vehicles,
+            },
+            load: a.load.clone(),
+        }
+    }
+}
+
 /// Version 11: the body as written by format 11 (agents with placeholder vehicle motion).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SaveDataV11 {
@@ -265,7 +336,7 @@ pub struct SaveDataV12 {
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
-    pub agents: Agents,
+    pub agents: AgentsV16,
 }
 
 /// Version 13: the body as written by format 13 (removed-building ids; no treasury).
@@ -284,7 +355,7 @@ pub struct SaveDataV13 {
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
-    pub agents: Agents,
+    pub agents: AgentsV16,
 }
 
 /// Version 14: the body as written by format 14 (treasury and economy settings; no demand).
@@ -303,7 +374,7 @@ pub struct SaveDataV14 {
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
-    pub agents: Agents,
+    pub agents: AgentsV16,
     pub treasury: Treasury,
     pub economy: EconomyState,
 }
@@ -324,18 +395,101 @@ pub struct SaveDataV15 {
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
-    pub agents: Agents,
+    pub agents: AgentsV16,
     pub treasury: Treasury,
     pub economy: EconomyState,
     pub demand: Demand,
     pub demand_acc: DemandAcc,
 }
 
+/// Version 16: the body as written by format 16 (land grids and decay timers; vehicles without
+/// the re-route request id).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV16 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+    pub trips: TripBook,
+    pub agents: AgentsV16,
+    pub treasury: Treasury,
+    pub economy: EconomyState,
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    pub land: LandGrids,
+    pub decay: Decay,
+}
+
+/// v16 → v17: a car may carry the id of its re-route request. Nobody has one in an old save.
+pub fn migrate_v16_to_v17(v16: SaveDataV16) -> SaveData {
+    // Slots and generations are kept, so every vehicle id stays what it was.
+    let vehicles = v16.agents.vehicles.map(|v| Vehicle {
+        trip: v.trip,
+        citizen: v.citizen,
+        path: v.path.clone(),
+        kind: v.kind,
+        hop: v.hop,
+        in_conn: v.in_conn,
+        spawned: v.spawned,
+        s: v.s,
+        speed: v.speed,
+        stuck_timer: v.stuck_timer,
+        reroute: None,
+    });
+    let s = &v16.agents.stats;
+    let agents = Agents::from_parts(
+        v16.agents.pedestrians,
+        vehicles,
+        AgentStats {
+            abstract_trips: s.abstract_trips,
+            walked: s.walked,
+            driven: s.driven,
+            no_path: s.no_path,
+            invalid_routes: s.invalid_routes,
+            red_waits: s.red_waits,
+            despawned_stuck: s.despawned_stuck,
+            invalid_vehicles: s.invalid_vehicles,
+            ..AgentStats::default()
+        },
+        v16.agents.load,
+    );
+    SaveData {
+        tick: v16.tick,
+        rng: v16.rng,
+        speed: v16.speed,
+        queue: v16.queue,
+        log: v16.log,
+        tiles: v16.tiles,
+        net: v16.net,
+        zones: v16.zones,
+        buildings: v16.buildings,
+        citizens: v16.citizens,
+        paths: v16.paths,
+        utilities: v16.utilities,
+        trips: v16.trips,
+        agents,
+        treasury: v16.treasury,
+        economy: v16.economy,
+        demand: v16.demand,
+        demand_acc: v16.demand_acc,
+        land: v16.land,
+        decay: v16.decay,
+    }
+}
+
 /// v15 → v16: the land grids and the decay timers were added. An old city starts with empty
 /// grids (the first 256-tick pass computes the real ones before anything reads them) and no
 /// timers: buildings in trouble start their week then.
-pub fn migrate_v15_to_v16(v15: SaveDataV15) -> SaveData {
-    SaveData {
+pub fn migrate_v15_to_v16(v15: SaveDataV15) -> SaveDataV16 {
+    SaveDataV16 {
         tick: v15.tick,
         rng: v15.rng,
         speed: v15.speed,
@@ -437,7 +591,7 @@ pub fn migrate_v12_to_v13(v12: SaveDataV12) -> SaveDataV13 {
 pub fn migrate_v11_to_v12(v11: SaveDataV11) -> SaveDataV12 {
     let mut vehicles = Arena::new();
     for (_, v) in v11.agents.vehicles.iter() {
-        vehicles.insert(Vehicle {
+        vehicles.insert(VehicleV16 {
             trip: v.trip,
             citizen: v.citizen,
             path: v.path.clone(),
@@ -465,20 +619,20 @@ pub fn migrate_v11_to_v12(v11: SaveDataV11) -> SaveDataV12 {
         paths: v11.paths,
         utilities: v11.utilities,
         trips: v11.trips,
-        agents: Agents::from_parts(
-            v11.agents.pedestrians,
+        agents: AgentsV16 {
+            pedestrians: v11.agents.pedestrians,
             vehicles,
-            AgentStats {
+            stats: AgentStatsV16 {
                 abstract_trips: s.abstract_trips,
                 walked: s.walked,
                 driven: s.driven,
                 no_path: s.no_path,
                 invalid_routes: s.invalid_routes,
                 red_waits: s.red_waits,
-                ..AgentStats::default()
+                ..AgentStatsV16::default()
             },
-            SegmentLoad::default(),
-        ),
+            load: SegmentLoad::default(),
+        },
     }
 }
 
@@ -624,8 +778,8 @@ pub fn migrate_v3_to_v4(v3: SaveDataV3) -> SaveDataV4 {
 
 /// The last two chain steps, shared by every arm.
 fn up(v: SaveDataV10) -> SaveData {
-    migrate_v15_to_v16(migrate_v14_to_v15(migrate_v13_to_v14(migrate_v12_to_v13(
-        migrate_v11_to_v12(migrate_v10_to_v11(v)),
+    migrate_v16_to_v17(migrate_v15_to_v16(migrate_v14_to_v15(migrate_v13_to_v14(
+        migrate_v12_to_v13(migrate_v11_to_v12(migrate_v10_to_v11(v))),
     ))))
 }
 
@@ -696,18 +850,21 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         8 => Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(dec(body)?)))),
         9 => Ok(up(migrate_v9_to_v10(dec(body)?))),
         10 => Ok(up(dec(body)?)),
-        11 => Ok(migrate_v15_to_v16(migrate_v14_to_v15(migrate_v13_to_v14(
-            migrate_v12_to_v13(migrate_v11_to_v12(dec(body)?)),
+        11 => Ok(migrate_v16_to_v17(migrate_v15_to_v16(migrate_v14_to_v15(
+            migrate_v13_to_v14(migrate_v12_to_v13(migrate_v11_to_v12(dec(body)?))),
         )))),
-        12 => Ok(migrate_v15_to_v16(migrate_v14_to_v15(migrate_v13_to_v14(
-            migrate_v12_to_v13(dec(body)?),
+        12 => Ok(migrate_v16_to_v17(migrate_v15_to_v16(migrate_v14_to_v15(
+            migrate_v13_to_v14(migrate_v12_to_v13(dec(body)?)),
         )))),
-        13 => Ok(migrate_v15_to_v16(migrate_v14_to_v15(migrate_v13_to_v14(
+        13 => Ok(migrate_v16_to_v17(migrate_v15_to_v16(migrate_v14_to_v15(
+            migrate_v13_to_v14(dec(body)?),
+        )))),
+        14 => Ok(migrate_v16_to_v17(migrate_v15_to_v16(migrate_v14_to_v15(
             dec(body)?,
         )))),
-        14 => Ok(migrate_v15_to_v16(migrate_v14_to_v15(dec(body)?))),
-        15 => Ok(migrate_v15_to_v16(dec(body)?)),
-        16 => dec(body),
+        15 => Ok(migrate_v16_to_v17(migrate_v15_to_v16(dec(body)?))),
+        16 => Ok(migrate_v16_to_v17(dec(body)?)),
+        17 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -936,4 +1093,16 @@ pub fn encode_v15(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v15).expect("serialization failed");
     crate::assemble(15, v15.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 16** file (land grids and decay timers; vehicles without a re-route
+/// id). Legacy writer kept only to test the v16 fixture; real saves always use [`crate::save`].
+pub fn encode_v16(
+    v16: &SaveDataV16,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v16).expect("serialization failed");
+    crate::assemble(16, v16.tick.0, &body, content_hash, map_id, map_hash)
 }

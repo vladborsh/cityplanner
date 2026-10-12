@@ -73,6 +73,28 @@ pub fn find_car_path(
 ) -> Result<CarPath, NoPath> {
     let (start, s0) = graph.resolve_car(from).ok_or(NoPath)?;
     let (goal, s1) = graph.resolve_car(to).ok_or(NoPath)?;
+    car_route(graph, cong, (start, s0), (goal, s1))
+}
+
+/// Fastest route from lane `from` (at `from_s` lane-metres) to lane `to` (at `to_s`): the
+/// re-route of a car that is already on the road (`Mode::CarLanes`).
+pub fn find_car_path_lanes(
+    graph: &PathGraph,
+    cong: &CongestionMap,
+    (from, from_s): (LaneId, f32),
+    (to, to_s): (LaneId, f32),
+) -> Result<CarPath, NoPath> {
+    let start = graph.car_slot(from).ok_or(NoPath)?;
+    let goal = graph.car_slot(to).ok_or(NoPath)?;
+    car_route(graph, cong, (start, from_s), (goal, to_s))
+}
+
+fn car_route(
+    graph: &PathGraph,
+    cong: &CongestionMap,
+    (start, s0): (u32, f32),
+    (goal, s1): (u32, f32),
+) -> Result<CarPath, NoPath> {
     let lane = |i: u32| graph.car[i as usize].as_ref().expect("car lane");
     let c = |i: u32| cong.get(lane(i).segment);
     let vmax = graph.max_car_speed.max(0.1);

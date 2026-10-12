@@ -66,6 +66,7 @@ impl Rig {
             s,
             speed: 0.0,
             stuck_timer: 0,
+            reroute: None,
         });
         self.st.waiting.push(id);
         id

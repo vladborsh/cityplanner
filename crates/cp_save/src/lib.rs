@@ -75,7 +75,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 16;
+pub const FORMAT_VERSION: u32 = 17;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -103,7 +103,8 @@ pub struct SaveData {
     /// Trips in flight and the routine's counters. Added in v10.
     pub trips: TripBook,
     /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
-    /// agents carry the segment load since v12.
+    /// agents carry the segment load since v12; vehicles carry their re-route request id
+    /// since v17.
     pub agents: cp_traffic::Agents,
     /// The city's money. Added in v14.
     pub treasury: Treasury,

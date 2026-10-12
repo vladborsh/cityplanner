@@ -110,6 +110,23 @@ impl<T> Arena<T> {
         self.len == 0
     }
 
+    /// The same arena with every live value converted (slots, generations and the free list
+    /// are kept, so every id still resolves): for migrating saved arenas.
+    pub fn map<U>(&self, mut f: impl FnMut(&T) -> U) -> Arena<U> {
+        Arena {
+            slots: self
+                .slots
+                .iter()
+                .map(|s| Slot {
+                    generation: s.generation,
+                    value: s.value.as_ref().map(&mut f),
+                })
+                .collect(),
+            free: self.free.clone(),
+            len: self.len,
+        }
+    }
+
     pub fn insert(&mut self, value: T) -> Id<T> {
         self.len += 1;
         if let Some(index) = self.free.pop() {

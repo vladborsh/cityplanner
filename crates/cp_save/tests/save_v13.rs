@@ -12,7 +12,7 @@ use cp_content::{ContentDb, ZoneType};
 use cp_core::curve::CubicBezier3;
 use cp_core::time::TICKS_PER_DAY;
 use cp_net::{Elevation, NetGraph};
-use cp_save::migrate::{BuildingGridV12, SaveDataV12, encode_v12};
+use cp_save::migrate::{AgentsV16, BuildingGridV12, SaveDataV12, encode_v12};
 use cp_save::*;
 use cp_sim::{SimCommand, SimRunner};
 use cp_zone::{ZoneCellRef, ZoneGrid};
@@ -57,7 +57,7 @@ fn v12_fixture_migrates_with_an_empty_removed_list_and_round_trips() {
         paths: l.data.paths.clone(),
         utilities: l.data.utilities.clone(),
         trips: l.data.trips.clone(),
-        agents: l.data.agents.clone(),
+        agents: AgentsV16::from(&l.data.agents),
     };
     let again = encode_v12(&v12, h.content_hash, &h.map_id, h.map_hash).unwrap();
     assert_eq!(again, bytes, "frozen v12 writer matches the fixture");

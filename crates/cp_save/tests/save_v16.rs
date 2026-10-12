@@ -11,7 +11,7 @@ use cp_core::curve::CubicBezier3;
 use cp_core::time::TICKS_PER_DAY;
 use cp_economy::{Decay, LandGrids};
 use cp_net::{Elevation, NetGraph};
-use cp_save::migrate::{SaveDataV15, encode_v15};
+use cp_save::migrate::{AgentsV16, SaveDataV15, encode_v15};
 use cp_save::*;
 use cp_sim::SimRunner;
 use cp_zone::{ZoneCellRef, ZoneGrid};
@@ -62,7 +62,7 @@ fn v15_fixture_migrates_with_empty_grids_and_no_timers_and_round_trips() {
         paths: l.data.paths.clone(),
         utilities: l.data.utilities.clone(),
         trips: l.data.trips.clone(),
-        agents: l.data.agents.clone(),
+        agents: AgentsV16::from(&l.data.agents),
         treasury: l.data.treasury,
         economy: l.data.economy,
         demand: l.data.demand,

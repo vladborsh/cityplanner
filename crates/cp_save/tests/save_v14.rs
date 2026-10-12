@@ -12,7 +12,7 @@ use cp_core::time::TICKS_PER_WEEK;
 use cp_core::{Cost, Treasury};
 use cp_economy::{EconomyCommand, EconomyState};
 use cp_net::{Elevation, NetGraph};
-use cp_save::migrate::{SaveDataV13, encode_v13};
+use cp_save::migrate::{AgentsV16, SaveDataV13, encode_v13};
 use cp_save::*;
 use cp_sim::{SimCommand, SimRunner};
 
@@ -58,7 +58,7 @@ fn v13_fixture_migrates_with_the_default_economy_and_round_trips() {
         paths: l.data.paths.clone(),
         utilities: l.data.utilities.clone(),
         trips: l.data.trips.clone(),
-        agents: l.data.agents.clone(),
+        agents: AgentsV16::from(&l.data.agents),
     };
     let again = encode_v13(&v13, h.content_hash, &h.map_id, h.map_hash).unwrap();
     assert_eq!(again, bytes, "frozen v13 writer matches the fixture");

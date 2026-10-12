@@ -48,7 +48,9 @@ use cp_net::{JunctionGeometry, LaneId, NetGraph, NodeId};
 use serde::{Deserialize, Serialize};
 
 use crate::astar::{CarPath, NoPath, PedPath};
-use crate::drive::{DriveState, STUCK_TICKS, VehicleSpecs, drive_tick, signal_tick};
+use crate::drive::{
+    DriveState, STUCK_TICKS, VehicleSpecs, drive_tick, lane_node, path_ok, signal_tick,
+};
 use crate::graph::{Access, CongestionMap, PED_SPEED, PathGraph, SegEnd, Side};
 use crate::service::{
     Mode, PathNetwork, PathRequest, PathResult, PathResults, PathService, RequestId,
@@ -103,6 +105,10 @@ pub struct Vehicle {
     /// standing for a suspicious reason; the car disappears past [`AgentSettings::stuck_ticks`]
     /// of the latter (§9.4 v1.1).
     pub stuck_timer: u32,
+    /// Id of the re-route request in flight (T-066): the network changed under the rest of
+    /// the route, the car keeps to its lane (and stops at the end of the valid part) until the
+    /// new route arrives.
+    pub reroute: Option<u64>,
 }
 
 impl Vehicle {
@@ -133,8 +139,13 @@ pub struct AgentStats {
     pub red_waits: u64,
     /// Cars removed after standing still for too long (trip completed abstractly).
     pub despawned_stuck: u64,
-    /// Cars removed because the network changed under their route.
+    /// Cars removed because the lane or junction connection they were on is gone, or the
+    /// trip's destination lane no longer exists.
     pub invalid_vehicles: u64,
+    /// Cars whose route changed under them and got a new one (T-066).
+    pub rerouted: u64,
+    /// Cars that asked for a new route and were told there is none (trip completed abstractly).
+    pub reroute_failed: u64,
 }
 
 /// Load of every road segment, indexed by segment arena slot: the length of cars over the
@@ -189,6 +200,9 @@ pub struct Agents {
     /// Path request -> trip; derived from the trips, rebuilt lazily after a load.
     #[serde(skip)]
     requests: BTreeMap<u64, TripId>,
+    /// Re-route request -> car; derived from `Vehicle::reroute`, rebuilt lazily after a load.
+    #[serde(skip)]
+    reroutes: BTreeMap<u64, VehicleId>,
     #[serde(skip)]
     ready: bool,
 }
@@ -247,6 +261,16 @@ impl Agents {
         self.pedestrians.insert(p);
     }
 
+    /// The vehicle arena (frozen save writers read it).
+    pub fn vehicle_arena(&self) -> &Arena<Vehicle> {
+        &self.vehicles
+    }
+
+    /// The pedestrian arena (frozen save writers read it).
+    pub fn pedestrian_arena(&self) -> &Arena<Pedestrian> {
+        &self.pedestrians
+    }
+
     pub fn pedestrian_count(&self) -> usize {
         self.pedestrians.len()
     }
@@ -300,6 +324,11 @@ impl Agents {
                 TripState::AwaitingPath { request } => Some((request, id)),
                 _ => None,
             })
+            .collect();
+        self.reroutes = self
+            .vehicles
+            .iter()
+            .filter_map(|(id, v)| v.reroute.map(|r| (r, id)))
             .collect();
         self.ready = true;
     }
@@ -385,11 +414,101 @@ pub fn route_trips(
     }
 }
 
+/// Submits the re-route request of `v`: from the lane it is on (or, inside a junction, the lane
+/// it is entering) to its destination lane. `None` when either lane is gone from `g`.
+fn submit_reroute(
+    service: &mut PathService,
+    pnet: &PathNetwork,
+    now: Tick,
+    v: &Vehicle,
+) -> Option<u64> {
+    let g = pnet.graph();
+    let (from, from_s) = if v.in_conn {
+        let to = v.path.steps.get(usize::from(v.hop))?.1;
+        (to, lane_node(g, to)?.s_in)
+    } else {
+        (v.lane(), v.s)
+    };
+    g.car_slot(from)?;
+    g.car_slot(v.path.goal)?;
+    let access = |s: f32| Access {
+        segment: Id::new(u32::MAX, 0),
+        s,
+        side: Side::Right,
+    };
+    let request = PathRequest {
+        mode: Mode::CarLanes {
+            from,
+            to: v.path.goal,
+        },
+        from: access(from_s),
+        to: access(v.path.goal_s),
+    };
+    Some(service.submit(pnet, now, request).0)
+}
+
+/// Swaps the vehicle onto `p` when `p` passes through the place it is at now. A route computed
+/// from the lane it was on 8 ticks ago contains the lane (or junction connection) it has driven
+/// on to since; a route that starts at the lane the car is entering gets that connection put in
+/// front of it.
+fn adopt_route(v: &mut Vehicle, p: CarPath) -> bool {
+    if v.in_conn {
+        let cur = v.path.steps[usize::from(v.hop)];
+        if let Some(i) = p.steps.iter().position(|s| *s == cur) {
+            v.hop = i as u16;
+            v.path = p;
+        } else if p.start == cur.1 {
+            let mut steps = vec![cur];
+            steps.extend(p.steps.iter().copied());
+            v.hop = 0;
+            v.path = CarPath {
+                start: cur.0,
+                start_s: v.path.start_s,
+                steps,
+                goal: p.goal,
+                goal_s: p.goal_s,
+                cost: p.cost,
+            };
+        } else {
+            return false;
+        }
+    } else {
+        let lane = v.lane();
+        let Some(i) = p.lanes().position(|l| l == lane) else {
+            return false;
+        };
+        v.hop = i as u16;
+        v.path = p;
+    }
+    v.reroute = None;
+    true
+}
+
+/// Removes a car that cannot go on and ends its trip abstractly.
+#[allow(clippy::too_many_arguments)]
+fn drop_vehicle(
+    agents: &mut Agents,
+    id: VehicleId,
+    grid: &mut CitizenGrid,
+    book: &mut TripBook,
+    buildings: &BuildingGrid,
+    rng: &SimRng,
+    now: u64,
+) {
+    if let Some(v) = agents.vehicles.remove(id) {
+        agents.drive.remove(&v, id);
+        complete_trip(grid, book, buildings, rng, now, v.trip);
+    }
+}
+
 /// `Paths` phase (after `deliver_paths`): turns results into agents or abstract trips.
 pub fn receive_paths(
     tick: Res<Tick>,
     results: Res<PathResults>,
     limits: Res<SimLimits>,
+    pnet: Res<PathNetwork>,
+    rng: Res<SimRng>,
+    mut service: ResMut<PathService>,
     mut buildings: ResMut<BuildingGrid>,
     mut book: ResMut<TripBook>,
     mut grid: ResMut<CitizenGrid>,
@@ -399,6 +518,62 @@ pub fn receive_paths(
     agents.ensure_derived(&book);
     let now = tick.0;
     for outcome in &results.0 {
+        if let Some(vid) = agents.reroutes.remove(&outcome.id.0) {
+            let live = agents
+                .vehicles
+                .get(vid)
+                .is_some_and(|v| v.reroute == Some(outcome.id.0));
+            if !live {
+                continue;
+            }
+            // A route: adopt it if it passes through where the car is. No route: the trip
+            // ends. Stale, or a route that misses the car: ask again from where it is now.
+            let adopted = match &outcome.result {
+                PathResult::Car(Ok(p)) => {
+                    let v = agents.vehicles.get_mut(vid).expect("live vehicle");
+                    adopt_route(v, p.clone())
+                }
+                _ => false,
+            };
+            if adopted {
+                agents.stats.rerouted += 1;
+            } else if matches!(outcome.result, PathResult::Car(Err(NoPath))) {
+                agents.stats.reroute_failed += 1;
+                drop_vehicle(
+                    &mut agents,
+                    vid,
+                    &mut grid,
+                    &mut book,
+                    &buildings,
+                    &rng,
+                    now,
+                );
+            } else {
+                let again = agents
+                    .vehicles
+                    .get(vid)
+                    .and_then(|v| submit_reroute(&mut service, &pnet, *tick, v));
+                match again {
+                    Some(r) => {
+                        agents.vehicles.get_mut(vid).expect("vehicle").reroute = Some(r);
+                        agents.reroutes.insert(r, vid);
+                    }
+                    None => {
+                        agents.stats.reroute_failed += 1;
+                        drop_vehicle(
+                            &mut agents,
+                            vid,
+                            &mut grid,
+                            &mut book,
+                            &buildings,
+                            &rng,
+                            now,
+                        );
+                    }
+                }
+            }
+            continue;
+        }
         let Some(tid) = agents.requests.remove(&outcome.id.0) else {
             continue;
         };
@@ -465,6 +640,7 @@ pub fn receive_paths(
                         s: path.start_s,
                         speed: 0.0,
                         stuck_timer: 0,
+                        reroute: None,
                     });
                     agents.drive.waiting.push(id);
                     book.set_state(tid, TripState::Agent);
@@ -689,6 +865,7 @@ pub fn move_agents(
     net: Res<NetGraph>,
     geo: Res<JunctionGeometry>,
     pnet: Res<PathNetwork>,
+    mut service: ResMut<PathService>,
     buildings: Res<BuildingGrid>,
     rng: Res<SimRng>,
     settings: Option<Res<AgentSettings>>,
@@ -761,14 +938,41 @@ pub fn move_agents(
         vehicles,
         drive,
         stats,
+        reroutes,
         ..
     } = &mut *agents;
     let mut gone: Vec<Vehicle> = Vec::new();
     if !drive.ready || drive.generation != pnet.generation() {
+        // Cars whose own place is gone vanish; cars whose route ahead is gone ask for a new
+        // one from where they are and carry on meanwhile (T-066).
         for id in drive.rebuild(vehicles, graph, pnet.generation()) {
             if let Some(v) = vehicles.remove(id) {
                 stats.invalid_vehicles += 1;
                 gone.push(v);
+            }
+        }
+        let broken: Vec<VehicleId> = vehicles
+            .iter()
+            .filter(|(_, v)| v.reroute.is_none() && !path_ok(graph, v))
+            .map(|(id, _)| id)
+            .collect();
+        for id in broken {
+            let request = vehicles
+                .get(id)
+                .and_then(|v| submit_reroute(&mut service, &pnet, *tick, v));
+            match request {
+                Some(r) => {
+                    vehicles.get_mut(id).expect("vehicle").reroute = Some(r);
+                    reroutes.insert(r, id);
+                }
+                None => {
+                    // The destination lane itself is gone.
+                    if let Some(v) = vehicles.remove(id) {
+                        drive.remove(&v, id);
+                        stats.invalid_vehicles += 1;
+                        gone.push(v);
+                    }
+                }
             }
         }
     }
