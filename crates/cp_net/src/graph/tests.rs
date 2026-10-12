@@ -392,3 +392,102 @@ fn node_level_is_derived_from_its_segments_not_attachment_order() {
     let shared = g.find_node(Vec3::new(50.0, 5.0, 0.0)).unwrap();
     assert_eq!(g.node(shared).unwrap().elevation, Elevation::Elevated);
 }
+
+/// Applies the batch the way `apply_plan` does, on a copy, and says whether every step worked.
+fn apply_batch(
+    g: &mut NetGraph,
+    def: &RoadDef,
+    id: RoadDefId,
+    splits: &[(SegmentId, Vec<f32>)],
+    segments: &[CubicBezier3],
+) -> Result<(), NetOpError> {
+    for (seg, ts) in splits {
+        g.split_segments(def, *seg, ts)?;
+    }
+    for c in segments {
+        g.add_segment(def, id, *c, G)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn check_build_agrees_with_applying_and_leaves_the_graph_alone() {
+    let db = content();
+    let (id, def) = road(&db, "basic_2l");
+    let mut g = NetGraph::new();
+    let main = g
+        .add_segment(
+            &def,
+            id,
+            CubicBezier3::line(Vec3::ZERO, Vec3::new(100.0, 0.0, 0.0)),
+            G,
+        )
+        .unwrap();
+    // A hub with the most segments a node may carry.
+    let hub = Vec3::new(0.0, 0.0, 200.0);
+    for k in 0..MAX_SEGMENTS_PER_NODE {
+        let a = k as f32 * std::f32::consts::TAU / MAX_SEGMENTS_PER_NODE as f32;
+        let far = hub + Vec3::new(a.cos(), 0.0, a.sin()) * 60.0;
+        g.add_segment(&def, id, CubicBezier3::line(hub, far), G)
+            .unwrap();
+    }
+    let line = |a: Vec3, b: Vec3| CubicBezier3::line(a, b);
+    type Batch = (Vec<(SegmentId, Vec<f32>)>, Vec<CubicBezier3>);
+    let batches: Vec<Batch> = vec![
+        // Fine: split the main road and branch off the split point.
+        (
+            vec![(main, vec![0.5])],
+            vec![line(Vec3::new(50.0, 0.0, 0.0), Vec3::new(50.0, 0.0, 40.0))],
+        ),
+        // Fine: no splits, a new piece joining the road end.
+        (
+            vec![],
+            vec![line(Vec3::new(100.0, 0.0, 0.0), Vec3::new(160.0, 0.0, 0.0))],
+        ),
+        // Second piece is degenerate (0.2 m): the first one must not be left behind.
+        (
+            vec![],
+            vec![
+                line(Vec3::new(300.0, 0.0, 0.0), Vec3::new(340.0, 0.0, 0.0)),
+                line(Vec3::new(340.0, 0.0, 0.0), Vec3::new(340.2, 0.0, 0.0)),
+            ],
+        ),
+        // Both ends on one node.
+        (
+            vec![],
+            vec![line(Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.05, 0.0, 0.0))],
+        ),
+        // The hub is full.
+        (vec![], vec![line(hub, Vec3::new(0.0, 0.0, 300.0))]),
+        // A piece joining two new pieces at a shared new node, then closing back on it.
+        (
+            vec![],
+            vec![
+                line(Vec3::new(500.0, 0.0, 0.0), Vec3::new(540.0, 0.0, 0.0)),
+                line(Vec3::new(540.0, 0.0, 0.0), Vec3::new(540.0, 0.0, 40.0)),
+                line(Vec3::new(540.0, 0.0, 40.0), Vec3::new(500.0, 0.0, 0.0)),
+            ],
+        ),
+        // Bad split parameters, an unknown segment, a split leaving a sliver.
+        (vec![(main, vec![0.6, 0.4])], vec![]),
+        (vec![(SegmentId::new(999, 0), vec![0.5])], vec![]),
+        (vec![(main, vec![0.001])], vec![]),
+        // The same segment split twice in one batch (not what a plan produces).
+        (vec![(main, vec![0.3]), (main, vec![0.7])], vec![]),
+    ];
+    for (n, (splits, segments)) in batches.iter().enumerate() {
+        let before = g.clone();
+        let checked = g.check_build(splits, segments);
+        assert_eq!(g, before, "batch {n}: the check changed the graph");
+        let mut copy = g.clone();
+        let applied = apply_batch(&mut copy, &def, id, splits, segments);
+        assert_eq!(
+            checked.is_ok(),
+            applied.is_ok(),
+            "batch {n}: check {checked:?} vs applying {applied:?}"
+        );
+        if let (Err(a), Err(b)) = (&checked, &applied) {
+            assert_eq!(a, b, "batch {n}: same error");
+        }
+    }
+}

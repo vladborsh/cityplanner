@@ -315,6 +315,92 @@ fn make_fixture(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `cp_bench netcmd --save FILE [--map M] [--content DIR] [--n N]`: time of one `BuildRoad`
+/// (a new 60 m street piece at the edge of the city) and one `UpgradeSegment` (a lattice
+/// street between its two road types) applied by the dispatcher's `cp_net::apply`, on the
+/// loaded city. Prints the mean and the slowest of `N` commands each (default 200).
+fn netcmd(args: &[String]) -> Result<(), String> {
+    use cp_net::{ElevationMode, NetCommand, RoadPath};
+    let (mut save, mut map, mut content_dir, mut n) =
+        (None, "flatlands".to_string(), None, 200usize);
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        let mut val = || it.next().cloned().ok_or(format!("{flag} needs a value"));
+        match flag.as_str() {
+            "--save" => save = Some(val()?),
+            "--map" => map = val()?,
+            "--content" => content_dir = Some(PathBuf::from(val()?)),
+            "--n" => n = val()?.parse().map_err(|e| format!("--n: {e}"))?,
+            other => return Err(format!("unknown argument '{other}'")),
+        }
+    }
+    let save = save.ok_or("netcmd needs --save FILE")?;
+    let content = load_content(&content_dir.unwrap_or_else(|| PathBuf::from("assets/content")))?;
+    let dir = map_dir(&map);
+    let terrain = std::sync::Arc::new(
+        cp_terrain::Terrain::load(&dir).map_err(|e| format!("--map {}: {e}", dir.display()))?,
+    );
+    let mut sim = SimRunner::new(1);
+    sim.set_terrain(terrain);
+    sim.set_content(std::sync::Arc::clone(&content));
+    let bytes = std::fs::read(&save).map_err(|e| format!("--save {save}: {e}"))?;
+    cp_save::load_into_runner(&mut sim, &bytes, content.content_hash())
+        .map_err(|e| format!("--save {save}: {e}"))?;
+    sim.tick_once();
+    let basic = content.road_id("basic_2l").ok_or("basic_2l")?;
+    let medium = content.road_id("medium_4l").ok_or("medium_4l")?;
+    let segs: Vec<_> = sim
+        .world()
+        .resource::<cp_net::NetGraph>()
+        .segments()
+        .map(|(id, s)| (id, s.road))
+        .collect();
+    let mut time = |label: &str, cmds: Vec<NetCommand>| {
+        let (mut total, mut worst, mut ok) = (Duration::ZERO, Duration::ZERO, 0usize);
+        for c in &cmds {
+            let t = Instant::now();
+            let r = cp_net::apply(sim.world_mut(), c);
+            let dt = t.elapsed();
+            total += dt;
+            worst = worst.max(dt);
+            ok += usize::from(r.is_ok());
+        }
+        println!(
+            "{label}: {} commands ({ok} ok): mean {:.3} ms, max {:.3} ms ({} segments in the net)",
+            cmds.len(),
+            total.as_secs_f64() * 1e3 / cmds.len().max(1) as f64,
+            worst.as_secs_f64() * 1e3,
+            segs.len()
+        );
+    };
+    let build: Vec<NetCommand> = (0..n)
+        .map(|i| {
+            let z = 2800.0 + (i as f32) * 20.0;
+            NetCommand::BuildRoad {
+                road: basic,
+                path: RoadPath::Straight {
+                    from: bevy_math::Vec2::new(7700.0, z),
+                    to: bevy_math::Vec2::new(7760.0, z),
+                },
+                elevation: ElevationMode::Ground,
+            }
+        })
+        .collect();
+    time("BuildRoad", build);
+    let upgrade: Vec<NetCommand> = segs
+        .iter()
+        .step_by((segs.len() / n.max(1)).max(1))
+        .take(n)
+        .map(|&(seg, road)| NetCommand::UpgradeSegment {
+            seg,
+            road: if road == basic { medium } else { basic },
+        })
+        .collect();
+    time("UpgradeSegment", upgrade);
+    println!("checksum {:016x}", sim.checksum());
+    Ok(())
+}
+
 /// Loads `path` into `sim` through `cp_save`'s public API. The current content hash comes
 /// from the defs in `content_dir`, so a save made against other content yields a warning.
 fn load_save(sim: &mut SimRunner, path: &str, content_dir: &Path) -> Result<SaveInfo, String> {
@@ -387,6 +473,7 @@ fn real_main(args: Vec<String>) -> Result<ExitCode, String> {
     match args.first().map(String::as_str) {
         Some("paths") => paths::run(&args[1..]),
         Some("fixture") => make_fixture(&args[1..]).map(|()| ExitCode::SUCCESS),
+        Some("netcmd") => netcmd(&args[1..]).map(|()| ExitCode::SUCCESS),
         Some("aggregate") => {
             let [_, out, runs @ ..] = args.as_slice() else {
                 return Err(usage().into());

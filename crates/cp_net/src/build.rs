@@ -416,6 +416,10 @@ impl Builder<'_> {
             if s.elevation != Elevation::Ground {
                 continue;
             }
+            // The box of the control points bounds the curve: far segments are not searched.
+            if s.curve.bounds_distance_xz(p) > SEGMENT_SNAP_RADIUS + 1e-3 {
+                continue;
+            }
             let (t, d) = s.curve.nearest_xz(p);
             if d <= SEGMENT_SNAP_RADIUS && best.is_none_or(|(bd, ..)| d < bd) {
                 best = Some((d, id, t));
@@ -495,6 +499,9 @@ fn angle_snap(graph: &NetGraph, p: Vec2, prev: Vec2, refs: &[Vec2]) -> Option<An
     }
     for (_, s) in graph.segments() {
         if s.elevation != Elevation::Ground {
+            continue;
+        }
+        if s.curve.bounds_distance_xz(p) > GUIDE_RADIUS + 1e-3 {
             continue;
         }
         let (t, dist) = s.curve.nearest_xz(p);

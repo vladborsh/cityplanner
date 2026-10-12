@@ -183,6 +183,137 @@ impl NetGraph {
         Ok(self.insert_segment(def, road, curve, elevation, start, end, length))
     }
 
+    /// Dry run of [`Self::split_segments`] for every `(segment, ts)` of `splits` followed by
+    /// [`Self::add_segment`] for every curve of `segments`: `Ok` exactly when all of them
+    /// would succeed, decided without changing anything (so a batch can be applied without a
+    /// backup of the graph). It tracks the nodes and node degrees the earlier steps of the
+    /// batch would create, and applies the same rules in the same order as the real
+    /// operations (a test compares the two on crafted batches).
+    pub fn check_build(
+        &self,
+        splits: &[(SegmentId, Vec<f32>)],
+        segments: &[CubicBezier3],
+    ) -> Result<(), NetOpError> {
+        // Nodes the batch creates: position and number of segments on them.
+        let mut fresh: Vec<(Vec3, usize)> = Vec::new();
+        // Segments added to existing nodes by the batch.
+        let mut extra: Vec<(NodeId, usize)> = Vec::new();
+        let mut taken: Vec<SegmentId> = Vec::new();
+        for (id, ts) in splits {
+            if taken.contains(id) {
+                return Err(NetOpError::UnknownSegment(*id));
+            }
+            let seg = self
+                .segments
+                .get(*id)
+                .ok_or(NetOpError::UnknownSegment(*id))?;
+            let mut prev = 0.0;
+            for &t in ts {
+                if !(t > prev && t < 1.0) {
+                    return Err(NetOpError::BadSplit);
+                }
+                prev = t;
+            }
+            let mut bounds = vec![0.0];
+            bounds.extend_from_slice(ts);
+            bounds.push(1.0);
+            let pieces: Vec<CubicBezier3> = bounds
+                .windows(2)
+                .map(|w| seg.curve.sub_curve(w[0], w[1]))
+                .collect();
+            if pieces
+                .iter()
+                .any(|c| c.arc_table().length() < MIN_SEGMENT_LENGTH)
+            {
+                return Err(NetOpError::BadSplit);
+            }
+            taken.push(*id);
+            // The pieces replace the segment on its end nodes; the joints are new nodes.
+            for piece in &pieces[..pieces.len() - 1] {
+                fresh.push((piece.p3, 2));
+            }
+        }
+        // The node a position resolves to: the nearest within the reuse distance, an
+        // existing one before one made by the batch on a tie.
+        enum Found {
+            Old(NodeId),
+            New(usize),
+        }
+        let find = |fresh: &[(Vec3, usize)], p: Vec3| -> Option<Found> {
+            let mut best: Option<(f32, Found)> = None;
+            for (id, n) in self.nodes.iter() {
+                let d = n.pos.distance(p);
+                if d <= NODE_REUSE_EPS && best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+                    best = Some((d, Found::Old(id)));
+                }
+            }
+            for (i, (pos, _)) in fresh.iter().enumerate() {
+                let d = pos.distance(p);
+                if d <= NODE_REUSE_EPS && best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+                    best = Some((d, Found::New(i)));
+                }
+            }
+            best.map(|(_, f)| f)
+        };
+        for curve in segments {
+            let (a, b) = (find(&fresh, curve.p0), find(&fresh, curve.p3));
+            let same = match (&a, &b) {
+                (Some(Found::Old(x)), Some(Found::Old(y))) => x == y,
+                (Some(Found::New(x)), Some(Found::New(y))) => x == y,
+                _ => false,
+            };
+            if same {
+                return Err(NetOpError::DegenerateSegment);
+            }
+            for f in [&a, &b].into_iter().flatten() {
+                match f {
+                    Found::Old(n) => {
+                        let node = self.nodes.get(*n);
+                        let added = extra.iter().find(|(m, _)| m == n).map_or(0, |e| e.1);
+                        if node.is_some_and(|n| n.segments.len() + added >= MAX_SEGMENTS_PER_NODE) {
+                            return Err(NetOpError::NodeFull(*n));
+                        }
+                    }
+                    Found::New(i) => {
+                        if fresh[*i].1 >= MAX_SEGMENTS_PER_NODE {
+                            // A node made by this batch: it has no id yet. Cannot happen with
+                            // fewer than MAX_SEGMENTS_PER_NODE segments in a batch.
+                            return Err(NetOpError::DegenerateSegment);
+                        }
+                    }
+                }
+            }
+            let mut snapped = *curve;
+            if let Some(f) = &a {
+                snapped.p0 = match f {
+                    Found::Old(n) => self.nodes.get(*n).expect("found node").pos,
+                    Found::New(i) => fresh[*i].0,
+                };
+            }
+            if let Some(f) = &b {
+                snapped.p3 = match f {
+                    Found::Old(n) => self.nodes.get(*n).expect("found node").pos,
+                    Found::New(i) => fresh[*i].0,
+                };
+            }
+            if snapped.arc_table().length() < MIN_SEGMENT_LENGTH {
+                return Err(NetOpError::DegenerateSegment);
+            }
+            // Both ends now carry one more segment; an end that finds no node makes one.
+            for (f, p) in [(a, snapped.p0), (b, snapped.p3)] {
+                match f {
+                    Some(Found::Old(n)) => match extra.iter_mut().find(|(m, _)| *m == n) {
+                        Some(e) => e.1 += 1,
+                        None => extra.push((n, 1)),
+                    },
+                    Some(Found::New(i)) => fresh[i].1 += 1,
+                    None => fresh.push((p, 1)),
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Removes a segment and its lanes. Nodes left with no segments are removed too
     /// (except `Outside` nodes); the remaining end nodes become dirty.
     pub fn remove_segment(&mut self, id: SegmentId) -> Result<(), NetOpError> {

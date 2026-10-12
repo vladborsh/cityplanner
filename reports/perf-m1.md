@@ -180,3 +180,29 @@ The machine runs with other loads and the GPU is an M4 Pro: on a GTX 1660 / M1 t
 4. **Periodic checksum 30 ms** when it is on (tests/replays); a parallel per-part hash would
    fix it at the price of changing every checksum.
 5. Render tail (p99 107 ms): road/building mesh rebuild at load.
+
+---
+
+# T-063: BuildRoad on a 100k city
+
+`cp_bench netcmd --save fixtures/saves/bench-100k.sav` times the dispatcher's `cp_net::apply` for
+200 `BuildRoad` (a new 60 m street piece at the city edge) and 200 `UpgradeSegment`. Release,
+shared machine; the 10k/100k save checksums after the commands are `68b421e23c01dbc8` /
+`3e2e19d0bd5d1df7` before and after (bit-identical).
+
+| step | 10k (897 segments) | 100k (9176 segments) |
+|---|---|---|
+| before (master) | 4.5 ms mean, 32 ms max | **15.5 ms** mean, 26 ms max |
+| + bounding-box prefilter in snapping | 0.131 ms | 1.14 ms |
+| + no graph clone (`check_build` dry run) | 0.04-0.05 ms | **0.30-0.53 ms** (one run had a 21 ms outlier) |
+| `UpgradeSegment` | 0.002 ms | 0.005-0.011 ms (never cloned) |
+
+The profile showed the graph copy was *not* the cost (0.5 % of the time): 96 % went to
+`CubicBezier3::nearest_xz` (200 curve evaluations) run against **every** segment by the snap
+(`nearest_segment`) and the guide search. Both now skip a segment whose control-point box is
+farther than the radius (exact: a Bézier curve lies inside it). The copy was then 30-40 % of what
+was left, and is gone: `apply` decides everything before the first change
+(`NetGraph::check_build` replays splits and segment additions on a virtual overlay, same rules and
+order, error for error), and keeps a copy of the graph only under `debug_assertions` to restore and
+fail loudly if a checked plan ever fails to apply. The remaining ~0.3 ms is the O(nodes) `find_node`
+scans and `intersect_xz` against all segments; a spatial index would get it below 0.1 ms.

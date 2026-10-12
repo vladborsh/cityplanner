@@ -365,3 +365,62 @@ fn non_finite_and_absurd_coordinates_are_rejected_next_to_existing_roads() {
     rx.recv_timeout(std::time::Duration::from_secs(60))
         .expect("the commands finished (no hang) and were all rejected");
 }
+
+/// T-063: a path whose first piece is fine and whose second piece enters water without a
+/// bridge is rejected as a whole: nothing of the first piece is built, and the graph and the
+/// checksum are untouched (the plan is decided before the first change; there is no backup
+/// of the graph to restore).
+#[test]
+fn a_path_whose_second_piece_crosses_water_leaves_everything_untouched() {
+    let content = content();
+    let basic = content.road_id("basic_2l").unwrap();
+    let terrain = Terrain::load(&Path::new(ROOT).join("../../assets/maps/river_valley")).unwrap();
+    let terrain = Arc::new(terrain);
+    let wet = |p: Vec2| terrain.water_depth(p) > 0.5;
+    let mut sim = SimRunner::new(5);
+    sim.set_terrain(Arc::clone(&terrain));
+    sim.set_content(Arc::clone(&content));
+    // Some buildable street first, so the graph is not empty.
+    let (before_graph, before) = {
+        run(
+            &mut sim,
+            vec![build(
+                basic,
+                Vec2::new(5000.0, 5000.0),
+                Vec2::new(5090.0, 5000.0),
+            )],
+        );
+        (graph(&sim), sim.checksum())
+    };
+    let mut tried = 0;
+    let mut z = 4600.0;
+    while z < 6200.0 {
+        let mut x = 4400.0;
+        while x < 6200.0 {
+            let (a, b, c) = (
+                Vec2::new(x, z),
+                Vec2::new(x + 60.0, z),
+                Vec2::new(x + 120.0, z),
+            );
+            if !wet(a) && !wet(b) && wet(c) {
+                let cmd = NetCommand::BuildRoad {
+                    road: basic,
+                    path: RoadPath::Free(vec![a, b, c]),
+                    elevation: ElevationMode::Ground,
+                };
+                if let Err(cp_net::NetError::Build(errs)) = cp_net::apply(sim.world_mut(), &cmd)
+                    && errs
+                        .iter()
+                        .any(|e| matches!(e, cp_net::RoadBuildError::WaterWithoutBridge { .. }))
+                {
+                    tried += 1;
+                    assert_eq!(sim.checksum(), before, "{cmd:?}");
+                    assert_eq!(graph(&sim), before_graph, "{cmd:?}");
+                }
+            }
+            x += 40.0;
+        }
+        z += 40.0;
+    }
+    assert!(tried > 0, "no path into the river found on the map");
+}

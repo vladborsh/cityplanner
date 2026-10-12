@@ -150,11 +150,19 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
                     let plan = validate_road_path(&graph, &terrain, &tiles, &content, &req)
                         .map_err(NetError::Build)?;
                     check_funds(world, plan.cost).map_err(NetError::Funds)?;
+                    // Everything is decided before the first change; a copy of the graph exists
+                    // only in debug builds, to prove the check and the application agree.
+                    check_plan(&graph, &plan).map_err(NetError::from)?;
+                    #[cfg(debug_assertions)]
                     let backup = graph.clone();
                     match apply_plan(&mut graph, &content, &plan) {
                         Ok(()) => Ok(plan.cost),
                         Err(e) => {
-                            *graph = backup;
+                            #[cfg(debug_assertions)]
+                            {
+                                *graph = backup;
+                                debug_assert!(false, "a checked plan failed to apply: {e}");
+                            }
                             Err(NetError::from(e))
                         }
                     }
@@ -206,6 +214,30 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
     }
 }
 
+/// The plan's splits grouped by original segment (plan order of first appearance), each
+/// group's parameters sorted and deduplicated.
+fn grouped_splits(plan: &RoadBuildPlan) -> Vec<(SegmentId, Vec<f32>)> {
+    let mut by_seg: Vec<(SegmentId, Vec<f32>)> = Vec::new();
+    for sp in &plan.splits {
+        match by_seg.iter_mut().find(|(s, _)| *s == sp.segment) {
+            Some((_, ts)) => ts.push(sp.t),
+            None => by_seg.push((sp.segment, vec![sp.t])),
+        }
+    }
+    for (_, ts) in &mut by_seg {
+        ts.sort_by(f32::total_cmp);
+        ts.dedup();
+    }
+    by_seg
+}
+
+/// Dry run of [`apply_plan`]: `Ok` exactly when applying the plan would succeed. Nothing is
+/// changed, so no backup of the graph is needed to undo a half-applied plan.
+pub(crate) fn check_plan(graph: &NetGraph, plan: &RoadBuildPlan) -> Result<(), NetOpError> {
+    let curves: Vec<_> = plan.segments.iter().map(|s| s.curve).collect();
+    graph.check_build(&grouped_splits(plan), &curves)
+}
+
 /// Applies a validated plan: splits first (per segment, ascending `t`), then the new
 /// segments. Nodes are matched by position (`NetGraph::add_segment` reuses nodes within
 /// `NODE_REUSE_EPS`, which covers existing, split and new nodes alike).
@@ -214,17 +246,8 @@ fn apply_plan(
     content: &cp_content::ContentDb,
     plan: &RoadBuildPlan,
 ) -> Result<(), NetOpError> {
-    // Group the splits by original segment, in plan order of first appearance.
-    let mut by_seg: Vec<(SegmentId, Vec<f32>)> = Vec::new();
-    for sp in &plan.splits {
-        match by_seg.iter_mut().find(|(s, _)| *s == sp.segment) {
-            Some((_, ts)) => ts.push(sp.t),
-            None => by_seg.push((sp.segment, vec![sp.t])),
-        }
-    }
-    for (seg, mut ts) in by_seg {
-        ts.sort_by(f32::total_cmp);
-        ts.dedup();
+    let by_seg = grouped_splits(plan);
+    for (seg, ts) in by_seg {
         let road = graph
             .segment(seg)
             .ok_or(NetOpError::UnknownSegment(seg))?

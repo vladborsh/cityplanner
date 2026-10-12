@@ -105,6 +105,17 @@ impl CubicBezier3 {
         ArcTable::build(self)
     }
 
+    /// Distance in XZ from `q` to the bounding box of the control points. A Bézier curve lies
+    /// inside that box, so this never exceeds the distance to the curve itself: a curve whose
+    /// box is farther than some radius from `q` has nothing within that radius, and the search
+    /// of [`Self::nearest_xz`] can be skipped.
+    pub fn bounds_distance_xz(&self, q: Vec2) -> f32 {
+        let c = [self.p0, self.p1, self.p2, self.p3].map(to_xz);
+        let lo = c[1..].iter().fold(c[0], |a, p| a.min(*p));
+        let hi = c[1..].iter().fold(c[0], |a, p| a.max(*p));
+        (lo - q).max(q - hi).max(Vec2::ZERO).length()
+    }
+
     /// Closest point to `q` on the XZ projection. Returns `(t, distance_xz)`.
     pub fn nearest_xz(&self, q: Vec2) -> (f32, f32) {
         let dist2 = |t: f32| to_xz(self.point(t)).distance_squared(q);
