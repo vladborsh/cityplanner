@@ -65,7 +65,6 @@ fn v12_fixture_migrates_with_an_empty_removed_list_and_round_trips() {
     // Re-saved at v13 it round-trips byte for byte.
     let v13 = save_with_map(&l.data, h.content_hash, &h.map_id, h.map_hash).unwrap();
     assert_eq!(read_header(&v13).unwrap().0.format_version, FORMAT_VERSION);
-    assert_eq!(FORMAT_VERSION, 13);
     let l2 = load(&v13, h.content_hash).unwrap();
     assert_eq!(l2.data, l.data);
     assert_eq!(

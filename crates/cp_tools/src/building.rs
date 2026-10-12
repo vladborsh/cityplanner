@@ -138,7 +138,7 @@ mod tests {
         let near = Vec2::new(3100.0, 3012.0);
         let g = preview(&view, &tool, near).unwrap();
         assert!(
-            g.valid && g.cells.len() == 4 && g.cost == Some(Cost::ZERO),
+            g.valid && g.cells.len() == 4 && g.cost == Some(Cost::from_units(6000.0)),
             "{g:?}"
         );
         let far = preview(&view, &tool, Vec2::new(3100.0, 3300.0)).unwrap();

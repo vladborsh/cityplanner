@@ -171,6 +171,13 @@ pub struct BuildingDef {
     #[serde(default)]
     pub consumption: BTreeMap<UtilityKind, f32>,
     pub tax_base: f32,
+    /// Price of a service building placed by the player, currency units (zoned buildings
+    /// spawn for free).
+    #[serde(default)]
+    pub cost: f32,
+    /// Weekly upkeep of a service building at a 100% budget, currency units.
+    #[serde(default)]
+    pub upkeep_week: f32,
     pub style: BuildingStyle,
     /// Service this building provides (id of a `ServiceDef`), for service buildings.
     #[serde(default)]

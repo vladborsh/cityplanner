@@ -13,5 +13,10 @@ cp_building.workspace = true
 cp_citizen.workspace = true
 cp_utility.workspace = true
 cp_core.workspace = true
+cp_content.workspace = true
+cp_net.workspace = true
 bevy_ecs.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+bevy_math.workspace = true

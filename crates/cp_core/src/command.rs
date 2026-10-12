@@ -15,7 +15,6 @@ use crate::time::Tick;
 pub struct CommandId(pub u64);
 
 /// Money in integer cents. Signed so refunds and balances share one type.
-/// Budgets and the actual deduction come with the economy task.
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
@@ -23,6 +22,46 @@ pub struct Cost(pub i64);
 
 impl Cost {
     pub const ZERO: Cost = Cost(0);
+
+    /// `units` of currency (how content RON writes money, `cost_per_m: 12.5`) as cents:
+    /// times 100, rounded half away from zero.
+    pub fn from_units(units: f32) -> Cost {
+        Cost::scaled(units, 1.0)
+    }
+
+    /// `units × factor` of currency as cents (`architecture/system-design.md` §11). The
+    /// product is taken in `f64` and rounded **once**, half away from zero; callers pass the
+    /// whole transaction's factor (length, quantity, percent) rather than summing rounded
+    /// parts.
+    pub fn scaled(units: f32, factor: f64) -> Cost {
+        Cost((f64::from(units) * factor * 100.0).round() as i64)
+    }
+}
+
+impl std::ops::Add for Cost {
+    type Output = Cost;
+    fn add(self, rhs: Cost) -> Cost {
+        Cost(self.0 + rhs.0)
+    }
+}
+
+impl std::ops::AddAssign for Cost {
+    fn add_assign(&mut self, rhs: Cost) {
+        self.0 += rhs.0;
+    }
+}
+
+impl std::ops::Sub for Cost {
+    type Output = Cost;
+    fn sub(self, rhs: Cost) -> Cost {
+        Cost(self.0 - rhs.0)
+    }
+}
+
+impl std::iter::Sum for Cost {
+    fn sum<I: Iterator<Item = Cost>>(iter: I) -> Cost {
+        Cost(iter.map(|c| c.0).sum())
+    }
 }
 
 /// Why a command was not applied.
@@ -254,6 +293,25 @@ mod tests {
             postcard::from_bytes::<CommandLog<TestCmd>>(&bytes).unwrap(),
             log
         );
+    }
+
+    #[test]
+    fn cost_rounds_once_half_away_from_zero() {
+        // 12.5 per metre over 96 m is exactly 1200.00.
+        assert_eq!(Cost::scaled(12.5, 96.0), Cost(120_000));
+        assert_eq!(Cost::from_units(12.5), Cost(1_250));
+        assert_eq!(Cost::from_units(0.0), Cost::ZERO);
+        // Exactly half a cent rounds away from zero, in both directions.
+        assert_eq!(Cost::scaled(1.0, 0.005), Cost(1));
+        assert_eq!(Cost::scaled(-1.0, 0.005), Cost(-1));
+        assert_eq!(Cost::scaled(1.0, 0.004), Cost(0));
+        assert_eq!(Cost::scaled(-1.0, 0.004), Cost(0));
+        assert_eq!(Cost::from_units(-12.5), Cost(-1_250));
+        assert_eq!(Cost::scaled(-12.5, 96.0), Cost(-120_000));
+        // One rounding per transaction: 3 × 0.333 m at 1.0/m is 99.9 → 100, not 3 × 33.
+        assert_eq!(Cost::scaled(1.0, 0.999), Cost(100));
+        assert_eq!(Cost(5) + Cost(7) - Cost(2), Cost(10));
+        assert_eq!([Cost(1), Cost(2)].into_iter().sum::<Cost>(), Cost(3));
     }
 
     #[test]

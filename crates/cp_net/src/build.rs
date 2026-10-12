@@ -260,10 +260,9 @@ pub enum RoadBuildError {
     },
 }
 
-/// Money for one segment: `(metres * cost_per_m * 100).round()` cents. One helper so the
-/// conversion is easy to change when the Architect rules on money.
+/// Money for one segment: `metres × cost_per_m` as cents, rounded once ([`Cost::scaled`], §11).
 pub fn segment_cost(length_m: f32, cost_per_m: f32) -> Cost {
-    Cost((f64::from(length_m) * f64::from(cost_per_m) * 100.0).round() as i64)
+    Cost::scaled(cost_per_m, f64::from(length_m))
 }
 
 fn dir_xz(v: Vec3) -> Vec2 {

@@ -14,7 +14,8 @@ Every zone type has levels and **two variants per level** (`<name>_<level>` and
 
 Service buildings (`water_pump_station` on water, `sewage_outflow_station` at the shore,
 `coal_power_plant`, `wind_turbine`; `ServiceDef.capacity` is their supply per game day, `site` where
-they may stand) carry `service: Some(..)` and are never spawned by
+they may stand) carry `service: Some(..)`, a `cost` (what the player pays to place one) and an
+`upkeep_week` (per game week at a 100% budget; both in currency units) and are never spawned by
 the zone system.
 
 **All numbers below the lot size are PLACEHOLDERS for balance tuning** (T-028):

@@ -104,6 +104,12 @@ pub(crate) fn agent_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_traffic::Agents>());
 }
 
+/// Checksum part of the economy: treasury, tax rates, budgets and the last weekly report.
+pub(crate) fn economy_part(world: &World, h: &mut Fnv1a) {
+    h.write_serialized(world.resource::<cp_core::Treasury>());
+    h.write_serialized(world.resource::<cp_economy::EconomyState>());
+}
+
 /// Checksum part of trips (`cp_citizen::TripBook`).
 pub(crate) fn trip_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_citizen::TripBook>());

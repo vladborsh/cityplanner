@@ -85,6 +85,8 @@ pub fn building(d: &BuildingDef) -> Problems {
         c.non_negative(format!("consumption.{k:?}"), *v);
     }
     c.non_negative("tax_base", d.tax_base);
+    c.non_negative("cost", d.cost);
+    c.non_negative("upkeep_week", d.upkeep_week);
     if !(1..=60).contains(&d.style.floors) {
         c.bad("style.floors", "must be in 1..=60");
     }

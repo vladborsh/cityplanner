@@ -101,6 +101,8 @@ impl SimRunner {
         world.init_resource::<cp_citizen::RoutineSettings>();
         world.init_resource::<cp_traffic::Agents>();
         world.init_resource::<cp_traffic::AgentSettings>();
+        world.init_resource::<cp_core::Treasury>();
+        world.init_resource::<cp_economy::EconomyState>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
@@ -125,6 +127,9 @@ impl SimRunner {
         world
             .resource_mut::<SimChecksum>()
             .register("agents", crate::checksum::agent_part);
+        world
+            .resource_mut::<SimChecksum>()
+            .register("economy", crate::checksum::economy_part);
         world.init_resource::<crate::view::ArenaGauges>();
         let building_cap = world.resource::<SimLimits>().buildings;
         let limits = *world.resource::<SimLimits>();
@@ -175,6 +180,7 @@ impl SimRunner {
                 .before(cp_citizen::update_citizens),
         );
         schedule.add_systems(cp_utility::update_supply.in_set(SimPhase::Utilities));
+        schedule.add_systems(cp_economy::settle_week.in_set(SimPhase::Economy));
         schedule.add_systems(cp_citizen::update_citizens.in_set(SimPhase::Citizens));
         // Path snapshot after the junction links it is built from; results are applied in
         // the Paths phase (system-design §2: requests from tick t land exactly at t + 8).

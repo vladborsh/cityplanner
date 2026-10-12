@@ -8,8 +8,8 @@
 //! placed by the player: they spawn. `Demolish` removes any building.
 //!
 //! [`validate_placement`] is the pure check the placement tool previews with and `apply`
-//! commits with. Money is not deducted (budget task); content has no building price yet, so
-//! the cost is zero.
+//! commits with. The price is `BuildingDef::cost` ([`Cost::from_units`]); `apply` checks the
+//! treasury before placing and charges it after ([`BuildingError::Funds`]).
 
 use std::f32::consts::FRAC_PI_2;
 use std::fmt;
@@ -18,7 +18,8 @@ use bevy_ecs::world::World;
 use bevy_math::Vec2;
 use cp_content::{BuildingDef, BuildingDefId, ContentDb, ServiceSite, SimContent};
 use cp_core::time::TICKS_PER_DAY;
-use cp_core::{Cost, SimLimits, Tick};
+use cp_core::treasury::{charge_funds, check_funds};
+use cp_core::{Cost, InsufficientFunds, SimLimits, Tick};
 use cp_net::NetGraph;
 use cp_terrain::{SimTerrain, Terrain, TileOwnership};
 use cp_zone::{BLOCK_DEPTH, ZoneCellRef, ZoneGrid};
@@ -47,6 +48,8 @@ pub enum BuildingCommand {
 /// Validation failure of a BuildingCommand; wrapped into `CommandError::Rejected` by the dispatcher.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BuildingError {
+    /// The treasury cannot pay for the building.
+    Funds(InsufficientFunds),
     /// A resource the command needs is missing from the world.
     Missing,
     UnknownDef,
@@ -69,9 +72,27 @@ pub enum BuildingError {
     UnknownBuilding,
 }
 
+impl BuildingError {
+    /// The shortfall, if that is why the command failed.
+    pub fn insufficient_funds(&self) -> Option<InsufficientFunds> {
+        match self {
+            Self::Funds(f) => Some(*f),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Display for BuildingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Self::Funds(e) = self {
+            return write!(
+                f,
+                "insufficient funds: need {}, can spend {}",
+                e.needed.0, e.available.0
+            );
+        }
         f.write_str(match self {
+            Self::Funds(_) => unreachable!(),
             Self::Missing => "no map or content in the sim world",
             Self::UnknownDef => "unknown building type",
             Self::BadCoordinates => "invalid position or rotation",
@@ -205,7 +226,7 @@ pub fn validate_placement(
         pos,
         rot,
         access,
-        cost: Cost::ZERO,
+        cost: Cost::from_units(def.cost),
     })
 }
 
@@ -237,6 +258,7 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
                 )?;
                 (plan, content.0.building(*def).level)
             };
+            check_funds(world, plan.cost).map_err(BuildingError::Funds)?;
             let mut buildings = world
                 .get_resource_mut::<BuildingGrid>()
                 .ok_or(BuildingError::Missing)?;
@@ -256,6 +278,7 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
                 level_progress: 0.0,
             });
             world.resource_mut::<ZoneGrid>().occupy(&plan.cells());
+            charge_funds(world, plan.cost);
             Ok(plan.cost)
         }
         BuildingCommand::Demolish { building } => {

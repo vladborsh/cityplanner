@@ -1,16 +1,24 @@
-//! `cp_economy` — simulation crate skeleton. See `architecture/system-design.md` §1.
+//! `cp_economy` — treasury rules, taxes, upkeep and the weekly settlement. See
+//! `architecture/system-design.md` §11.
+//!
+//! The [`Treasury`](cp_core::Treasury) itself lives in `cp_core` (the command paths of the
+//! road, building and utility crates charge it); this crate owns the settings
+//! ([`EconomyState`]: tax rates, budgets, last report), the `SetTaxRate`/`SetBudget` commands
+//! and [`settle_week`].
 
 pub mod command;
+pub mod state;
+pub mod week;
 
 pub use command::{EconomyCommand, EconomyError, apply};
+pub use state::{
+    BUDGET_DEFAULT, BUDGET_MAX, BUDGET_MIN, BUDGETED, Budgets, EconomyState, TAX_DEFAULT, TAX_MAX,
+    TAX_MIN, TAXED_ZONES, TaxRates, WeekReport,
+};
+pub use week::{WeekInputs, segment_upkeep, settle_week, week_report};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_economy";
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn skeleton_links() {
-        assert_eq!(super::CRATE, "cp_economy");
-    }
-}
+mod tests;

@@ -31,6 +31,16 @@ fn rejected(domain: &'static str, e: impl std::fmt::Display) -> CommandError {
     }
 }
 
+/// [`rejected`], except that a shortfall in the treasury becomes the typed
+/// [`CommandError::InsufficientFunds`].
+fn rejected_or_funds(
+    domain: &'static str,
+    e: impl std::fmt::Display,
+    funds: Option<cp_core::InsufficientFunds>,
+) -> CommandError {
+    funds.map_or_else(|| rejected(domain, e), CommandError::from)
+}
+
 /// Applies one command. The `match` has no wildcard: a new variant won't compile until
 /// it is routed here.
 fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
@@ -39,12 +49,13 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
             world.insert_resource(*speed);
             Ok(Cost::ZERO)
         }
-        SimCommand::Net(c) => cp_net::apply(world, c).map_err(|e| rejected("net", e)),
+        SimCommand::Net(c) => cp_net::apply(world, c)
+            .map_err(|e| rejected_or_funds("net", &e, e.insufficient_funds())),
         SimCommand::Zone(c) => cp_zone::apply(world, c).map_err(|e| rejected("zone", e)),
-        SimCommand::Building(c) => {
-            cp_building::apply(world, c).map_err(|e| rejected("building", e))
-        }
-        SimCommand::Utility(c) => cp_utility::apply(world, c).map_err(|e| rejected("utility", e)),
+        SimCommand::Building(c) => cp_building::apply(world, c)
+            .map_err(|e| rejected_or_funds("building", &e, e.insufficient_funds())),
+        SimCommand::Utility(c) => cp_utility::apply(world, c)
+            .map_err(|e| rejected_or_funds("utility", &e, e.insufficient_funds())),
         SimCommand::Economy(c) => cp_economy::apply(world, c).map_err(|e| rejected("economy", e)),
     }
 }
@@ -62,7 +73,8 @@ pub fn init_command_resources(world: &mut World) {
 /// current [`Tick`] in `(tick, CommandId)` order, applies it, appends **successfully
 /// applied** commands to the [`CommandLog`] (rejected ones changed nothing, so replay
 /// doesn't need them) and writes a [`CommandOutcome`] for every command.
-/// Cost deduction lands with the budget task.
+/// The domains check the treasury and charge it themselves (the change and its price are one
+/// step: a rejected command costs nothing); the returned [`Cost`] is what they charged.
 pub fn dispatch_commands(world: &mut World) {
     let tick = *world.resource::<Tick>();
     let due = world

@@ -47,7 +47,8 @@ use std::io::Read;
 use bevy_ecs::world::World;
 use cp_building::BuildingGrid;
 use cp_citizen::{CitizenGrid, TripBook};
-use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
+use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
+use cp_economy::EconomyState;
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
 use cp_terrain::TileOwnership;
@@ -58,7 +59,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 13;
+pub const FORMAT_VERSION: u32 = 14;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -88,6 +89,10 @@ pub struct SaveData {
     /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
     /// agents carry the segment load since v12.
     pub agents: cp_traffic::Agents,
+    /// The city's money. Added in v14.
+    pub treasury: Treasury,
+    /// Tax rates, budgets and the last weekly report. Added in v14.
+    pub economy: EconomyState,
 }
 
 impl SaveData {
@@ -108,6 +113,8 @@ impl SaveData {
             utilities: world.resource::<UtilityGraph>().clone(),
             trips: world.resource::<TripBook>().clone(),
             agents: world.resource::<cp_traffic::Agents>().clone(),
+            treasury: *world.resource::<Treasury>(),
+            economy: *world.resource::<EconomyState>(),
         }
     }
 
@@ -137,6 +144,8 @@ impl SaveData {
         world.insert_resource(self.citizens);
         world.insert_resource(self.utilities);
         world.insert_resource(self.trips);
+        world.insert_resource(self.treasury);
+        world.insert_resource(self.economy);
         // The pathfinder reads the segment load last published to it (saved with the agents).
         let published = cp_traffic::CongestionMap(self.agents.load.published.clone());
         world.insert_resource(self.agents);

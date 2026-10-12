@@ -8,7 +8,8 @@ use cp_building::{Building, BuildingGrid};
 use cp_citizen::{CitizenGrid, TripBook};
 use cp_citizen::{CitizenId, TripId};
 use cp_core::Arena;
-use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick};
+use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
+use cp_economy::EconomyState;
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
@@ -267,10 +268,52 @@ pub struct SaveDataV12 {
     pub agents: Agents,
 }
 
+/// Version 13: the body as written by format 13 (removed-building ids; no treasury).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV13 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+    pub trips: TripBook,
+    pub agents: Agents,
+}
+
+/// v13 → v14: the treasury and the economy settings were added. An old city starts with the
+/// default treasury (70 000.00), 9% taxes, 100% budgets and no weekly report.
+pub fn migrate_v13_to_v14(v13: SaveDataV13) -> SaveData {
+    SaveData {
+        tick: v13.tick,
+        rng: v13.rng,
+        speed: v13.speed,
+        queue: v13.queue,
+        log: v13.log,
+        tiles: v13.tiles,
+        net: v13.net,
+        zones: v13.zones,
+        buildings: v13.buildings,
+        citizens: v13.citizens,
+        paths: v13.paths,
+        utilities: v13.utilities,
+        trips: v13.trips,
+        agents: v13.agents,
+        treasury: Treasury::default(),
+        economy: EconomyState::default(),
+    }
+}
+
 /// v12 → v13: the building grid also saves the ids removed and not yet drained (a save on
 /// pause right after a `Demolish` used to lose them). An old save had none pending.
-pub fn migrate_v12_to_v13(v12: SaveDataV12) -> SaveData {
-    SaveData {
+pub fn migrate_v12_to_v13(v12: SaveDataV12) -> SaveDataV13 {
+    SaveDataV13 {
         tick: v12.tick,
         rng: v12.rng,
         speed: v12.speed,
@@ -482,7 +525,9 @@ pub fn migrate_v3_to_v4(v3: SaveDataV3) -> SaveDataV4 {
 
 /// The last two chain steps, shared by every arm.
 fn up(v: SaveDataV10) -> SaveData {
-    migrate_v12_to_v13(migrate_v11_to_v12(migrate_v10_to_v11(v)))
+    migrate_v13_to_v14(migrate_v12_to_v13(migrate_v11_to_v12(migrate_v10_to_v11(
+        v,
+    ))))
 }
 
 /// Decodes a body written at `version` and runs the migration chain up to
@@ -552,9 +597,12 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         8 => Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(dec(body)?)))),
         9 => Ok(up(migrate_v9_to_v10(dec(body)?))),
         10 => Ok(up(dec(body)?)),
-        11 => Ok(migrate_v12_to_v13(migrate_v11_to_v12(dec(body)?))),
-        12 => Ok(migrate_v12_to_v13(dec(body)?)),
-        13 => dec(body),
+        11 => Ok(migrate_v13_to_v14(migrate_v12_to_v13(migrate_v11_to_v12(
+            dec(body)?,
+        )))),
+        12 => Ok(migrate_v13_to_v14(migrate_v12_to_v13(dec(body)?))),
+        13 => Ok(migrate_v13_to_v14(dec(body)?)),
+        14 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -747,4 +795,16 @@ pub fn encode_v12(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v12).expect("serialization failed");
     crate::assemble(12, v12.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 13** file (removed-building ids, no treasury). Legacy writer kept only
+/// to test the v13 fixture; real saves always use [`crate::save`].
+pub fn encode_v13(
+    v13: &SaveDataV13,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v13).expect("serialization failed");
+    crate::assemble(13, v13.tick.0, &body, content_hash, map_id, map_hash)
 }

@@ -9,14 +9,16 @@
 //!
 //! Reads from the world: [`NetGraph`], [`TileOwnership`], [`SimTerrain`] and
 //! [`SimContent`] (all must be present; a sim without a map or content rejects build
-//! commands with [`NetError::Missing`]). Money is not deducted here (budget task);
-//! the cost is only returned.
+//! commands with [`NetError::Missing`]). Building and upgrading check the treasury after
+//! validation and charge it once the change is applied ([`NetError::Funds`]: nothing changes,
+//! nothing is charged).
 
 use std::fmt;
 
 use bevy_ecs::world::World;
 use cp_content::{RoadDefId, SimContent};
-use cp_core::Cost;
+use cp_core::treasury::{charge_funds, check_funds};
+use cp_core::{Cost, InsufficientFunds};
 use cp_terrain::{SimTerrain, TileOwnership};
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +63,18 @@ pub enum NetError {
     NoElevatedVariant(RoadDefId),
     /// A graph operation failed while applying a validated plan (state was restored).
     Op(NetOpError),
+    /// The treasury cannot pay for the change.
+    Funds(InsufficientFunds),
+}
+
+impl NetError {
+    /// The shortfall, if that is why the command failed.
+    pub fn insufficient_funds(&self) -> Option<InsufficientFunds> {
+        match self {
+            Self::Funds(f) => Some(*f),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for NetError {
@@ -82,6 +96,11 @@ impl fmt::Display for NetError {
             Self::SameRoad => write!(f, "segment already has this road type"),
             Self::NoElevatedVariant(r) => write!(f, "road type {r:?} has no elevated variant"),
             Self::Op(e) => write!(f, "{e}"),
+            Self::Funds(e) => write!(
+                f,
+                "insufficient funds: need {}, can spend {}",
+                e.needed.0, e.available.0
+            ),
         }
     }
 }
@@ -120,24 +139,29 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
                 .get_resource::<TileOwnership>()
                 .copied()
                 .ok_or(NetError::Missing("tile ownership"))?;
-            world.resource_scope(|_, mut graph: bevy_ecs::change_detection::Mut<NetGraph>| {
-                let req = RoadPathRequest {
-                    road: *road,
-                    path: path.clone(),
-                    elevation: *elevation,
-                    snap: SnapOptions::default(),
-                };
-                let plan = validate_road_path(&graph, &terrain, &tiles, &content, &req)
-                    .map_err(NetError::Build)?;
-                let backup = graph.clone();
-                match apply_plan(&mut graph, &content, &plan) {
-                    Ok(()) => Ok(plan.cost),
-                    Err(e) => {
-                        *graph = backup;
-                        Err(e.into())
+            let cost = world.resource_scope(
+                |world, mut graph: bevy_ecs::change_detection::Mut<NetGraph>| {
+                    let req = RoadPathRequest {
+                        road: *road,
+                        path: path.clone(),
+                        elevation: *elevation,
+                        snap: SnapOptions::default(),
+                    };
+                    let plan = validate_road_path(&graph, &terrain, &tiles, &content, &req)
+                        .map_err(NetError::Build)?;
+                    check_funds(world, plan.cost).map_err(NetError::Funds)?;
+                    let backup = graph.clone();
+                    match apply_plan(&mut graph, &content, &plan) {
+                        Ok(()) => Ok(plan.cost),
+                        Err(e) => {
+                            *graph = backup;
+                            Err(NetError::from(e))
+                        }
                     }
-                }
-            })
+                },
+            )?;
+            charge_funds(world, cost);
+            Ok(cost)
         }
         NetCommand::UpgradeSegment { seg, road } => {
             let content = content()?;
@@ -145,7 +169,7 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
                 return Err(NetError::UnknownRoad(*road));
             }
             let def = content.road(*road);
-            let mut graph = world.resource_mut::<NetGraph>();
+            let graph = world.resource::<NetGraph>();
             let s = graph.segment(*seg).ok_or(NetError::UnknownSegment(*seg))?;
             if s.road == *road {
                 return Err(NetError::SameRoad);
@@ -159,7 +183,10 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
                 def.cost_per_m
             };
             let cost = segment_cost(s.length, cost_per_m);
+            check_funds(world, cost).map_err(NetError::Funds)?;
+            let mut graph = world.resource_mut::<NetGraph>();
             graph.upgrade_segment(*seg, def, *road)?;
+            charge_funds(world, cost);
             Ok(cost)
         }
         NetCommand::RemoveSegment { seg } => {

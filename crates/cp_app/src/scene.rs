@@ -122,6 +122,9 @@ pub fn build_grid_with(sim: &mut SimRunner, n: usize, arterial_every: usize) -> 
     let c = cp_terrain::MAP_SIZE / 2.0;
     let span = (n - 1) as f32 * SPACING;
     let (x0, z0) = (c - span / 2.0, c - span / 2.0);
+    // A scripted scene is not paid for: fund it, and put the treasury back afterwards.
+    let treasury = sim.world().resource::<cp_core::Treasury>().balance;
+    sim.world_mut().resource_mut::<cp_core::Treasury>().balance = cp_core::Cost(i64::MAX / 2);
     let start = sim.tick().0;
     let mut k = 0;
     // Each street is built in runs of two blocks: one long command would be cut into equal
@@ -176,6 +179,7 @@ pub fn build_grid_with(sim: &mut SimRunner, n: usize, arterial_every: usize) -> 
                 .filter_map(|o| o.result.err().map(|e| e.to_string())),
         );
     }
+    sim.world_mut().resource_mut::<cp_core::Treasury>().balance = treasury;
     rejected
 }
 

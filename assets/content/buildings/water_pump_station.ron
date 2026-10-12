@@ -7,6 +7,8 @@ Building((
     jobs: (2, 2, 0, 0),
     consumption: {Power: 20.0},
     tax_base: 0.0,
+    cost: 12000.0,
+    upkeep_week: 300.0,
     style: (floors: 1, roof: Flat, palette: "utility_grey"),
     service: Some("water_pump"),
 ))

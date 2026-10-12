@@ -4,8 +4,8 @@
 //! `BuildLink` plans with [`plan_link_path`] and applies the plan only if it passed; an
 //! `Err` leaves the world untouched. Reads: [`UtilityGraph`], [`SimContent`],
 //! [`TileOwnership`] (all required), and optionally [`SimTerrain`] (heights), the
-//! [`BuildingGrid`] and [`ZoneGrid`] (power lines avoid buildings). Money is not deducted
-//! here (budget task); the cost is returned.
+//! [`BuildingGrid`] and [`ZoneGrid`] (power lines avoid buildings). `BuildLink` checks the
+//! treasury after planning and charges it once applied ([`UtilityError::Funds`]).
 
 use std::fmt;
 
@@ -13,7 +13,8 @@ use bevy_ecs::world::World;
 use bevy_math::Vec2;
 use cp_building::BuildingGrid;
 use cp_content::{SimContent, UtilityKind};
-use cp_core::Cost;
+use cp_core::treasury::{charge_funds, check_funds};
+use cp_core::{Cost, InsufficientFunds};
 use cp_terrain::{SimTerrain, TileOwnership};
 use cp_zone::ZoneGrid;
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,18 @@ pub enum UtilityError {
     Invalid(Vec<PathProblem>),
     UnknownLink(UtilityLinkId),
     Graph(GraphError),
+    /// The treasury cannot pay for the link.
+    Funds(InsufficientFunds),
+}
+
+impl UtilityError {
+    /// The shortfall, if that is why the command failed.
+    pub fn insufficient_funds(&self) -> Option<InsufficientFunds> {
+        match self {
+            Self::Funds(f) => Some(*f),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for UtilityError {
@@ -61,6 +74,11 @@ impl fmt::Display for UtilityError {
             }
             Self::UnknownLink(l) => write!(f, "unknown utility link {l:?}"),
             Self::Graph(e) => write!(f, "{e}"),
+            Self::Funds(e) => write!(
+                f,
+                "insufficient funds: need {}, can spend {}",
+                e.needed.0, e.available.0
+            ),
         }
     }
 }
@@ -93,7 +111,7 @@ pub fn apply(world: &mut World, cmd: &UtilityCommand) -> Result<Cost, UtilityErr
                 .ok_or(UtilityError::Missing("tile ownership"))?;
             let terrain = world.get_resource::<SimTerrain>().map(|t| t.0.clone());
             let def = def.clone();
-            world.resource_scope(
+            let cost = world.resource_scope(
                 |world, mut graph: bevy_ecs::change_detection::Mut<UtilityGraph>| {
                     let buildings = world
                         .get_resource::<BuildingGrid>()
@@ -105,16 +123,19 @@ pub fn apply(world: &mut World, cmd: &UtilityCommand) -> Result<Cost, UtilityErr
                     };
                     let plan =
                         plan_link_path(&graph, &view, &def, path).map_err(UtilityError::Invalid)?;
+                    check_funds(world, plan.cost).map_err(UtilityError::Funds)?;
                     let backup = graph.clone();
                     match apply_plan(&mut graph, &plan) {
                         Ok(()) => Ok(plan.cost),
                         Err(e) => {
                             *graph = backup;
-                            Err(e.into())
+                            Err(UtilityError::from(e))
                         }
                     }
                 },
-            )
+            )?;
+            charge_funds(world, cost);
+            Ok(cost)
         }
         UtilityCommand::RemoveLink { link } => {
             let mut graph = world.resource_mut::<UtilityGraph>();
