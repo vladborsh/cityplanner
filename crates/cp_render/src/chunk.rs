@@ -169,6 +169,29 @@ pub fn build_chunk_mesh(terrain: &Terrain, cx: usize, cz: usize, lod: usize) -> 
     m
 }
 
+/// Height of the **rendered** terrain at `p`: the LOD0 chunk mesh is two flat triangles per
+/// 10 m cell, split along the diagonal from the cell's `(+x, -z)` corner to its `(-x, +z)`
+/// corner (see the index order in [`build_chunk_mesh`]), not the bilinear
+/// [`Terrain::height`]. At the nodes both agree; between them this follows the triangles, so
+/// things draped with it sit on the visible surface. Clamped to the map.
+pub fn terrain_mesh_height(terrain: &Terrain, p: bevy_math::Vec2) -> f32 {
+    let g = |v: f32| {
+        let g = (v / SPACING).clamp(0.0, (GRID - 1) as f32);
+        let i = (g.floor() as usize).min(GRID - 2);
+        (i, g - i as f32)
+    };
+    let ((ix, fx), (iz, fz)) = (g(p.x), g(p.y));
+    let h = |dx: usize, dz: usize| terrain.node_height(ix + dx, iz + dz);
+    let (a, b, c, d) = (h(0, 0), h(1, 0), h(0, 1), h(1, 1));
+    if fx + fz <= 1.0 {
+        // Triangle a, b, c.
+        a + (b - a) * fx + (c - a) * fz
+    } else {
+        // Triangle b, c, d.
+        d + (c - d) * (1.0 - fx) + (b - d) * (1.0 - fz)
+    }
+}
+
 /// River/lake surface for chunk `(cx, cz)`: LOD0 quads over every cell with at least one
 /// wet corner whose surface is above sea level (the sea itself is a separate plane).
 /// Vertex alpha encodes depth, so shallow edges fade out. `None` if the chunk has no
@@ -272,6 +295,48 @@ mod tests {
             }
         }
         Terrain::from_samples(meta, &h, &w).unwrap()
+    }
+
+    #[test]
+    fn mesh_height_matches_the_lod0_vertices_and_the_triangle_diagonal() {
+        use bevy_math::Vec2;
+        let t = synthetic(|x, z| (1000 + (x * 7 + z * 3) % 400) as u16, |_, _| 0);
+        let (cx, cz) = (3, 4);
+        let m = build_chunk_mesh(&t, cx, cz, 0);
+        let n = verts_per_side(0);
+        // At every node the height is exactly the mesh vertex.
+        for j in (0..n).step_by(3) {
+            for i in (0..n).step_by(3) {
+                let p = m.positions[j * n + i];
+                let w = Vec2::new(cx as f32 * CHUNK_SIZE + p[0], cz as f32 * CHUNK_SIZE + p[2]);
+                assert_eq!(terrain_mesh_height(&t, w), p[1]);
+            }
+        }
+        // Inside a cell: a plane per triangle, split on the b-c diagonal.
+        let (i, j) = (10, 20);
+        let at = |a: usize, b: usize| m.positions[(j + b) * n + i + a];
+        let org = Vec2::new(
+            cx as f32 * CHUNK_SIZE + at(0, 0)[0],
+            cz as f32 * CHUNK_SIZE + at(0, 0)[2],
+        );
+        let (ha, hb, hc, hd) = (at(0, 0)[1], at(1, 0)[1], at(0, 1)[1], at(1, 1)[1]);
+        for (fx, fz) in [(0.2, 0.3), (0.5, 0.5), (0.9, 0.05), (0.7, 0.6), (0.1, 0.95)] {
+            let got = terrain_mesh_height(&t, org + Vec2::new(fx, fz) * SPACING);
+            let want = if fx + fz <= 1.0 {
+                ha + (hb - ha) * fx + (hc - ha) * fz
+            } else {
+                hd + (hc - hd) * (1.0 - fx) + (hb - hd) * (1.0 - fz)
+            };
+            assert!((got - want).abs() < 1e-3, "({fx},{fz}) {got} vs {want}");
+        }
+        // The diagonal itself is shared by both triangles and linear between b and c.
+        let mid = terrain_mesh_height(&t, org + Vec2::new(0.5, 0.5) * SPACING);
+        assert!((mid - (hb + hc) * 0.5).abs() < 1e-3);
+        // Clamped outside the map.
+        assert_eq!(
+            terrain_mesh_height(&t, Vec2::new(-50.0, -50.0)),
+            t.node_height(0, 0)
+        );
     }
 
     #[test]

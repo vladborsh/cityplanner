@@ -9,13 +9,31 @@ use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
 
+/// Pipeline specialisation key of [`VertexColorMaterial`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VertexColorKey {
+    depth_bias: bool,
+}
+
+impl From<&VertexColorMaterial> for VertexColorKey {
+    fn from(m: &VertexColorMaterial) -> Self {
+        Self {
+            depth_bias: m.depth_bias,
+        }
+    }
+}
+
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+#[bind_group_data(VertexColorKey)]
 pub struct VertexColorMaterial {
     /// x = perceptual roughness, y = reflectance.
     #[uniform(0)]
     pub params: Vec4,
     /// Alpha-blend using the vertex alpha (water) instead of drawing opaque.
     pub blend: bool,
+    /// Pull the surface towards the camera in the depth test so a layer lying a few
+    /// centimetres above the terrain (overlays) is not cut by it.
+    pub depth_bias: bool,
 }
 
 impl VertexColorMaterial {
@@ -23,7 +41,12 @@ impl VertexColorMaterial {
         Self {
             params: Vec4::new(roughness, reflectance, 0.0, 0.0),
             blend: false,
+            depth_bias: false,
         }
+    }
+
+    pub fn with_depth_bias(self, depth_bias: bool) -> Self {
+        Self { depth_bias, ..self }
     }
 
     pub fn blended(roughness: f32, reflectance: f32) -> Self {
@@ -45,6 +68,22 @@ impl Material for VertexColorMaterial {
         } else {
             AlphaMode::Opaque
         }
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        if key.bind_group_data.depth_bias
+            && let Some(ds) = descriptor.depth_stencil.as_mut()
+        {
+            // Bevy's depth is reversed (1 = near): positive bias moves towards the camera.
+            ds.bias.constant = 8;
+            ds.bias.slope_scale = 2.0;
+        }
+        Ok(())
     }
 
     // One draw per chunk is the budget on WebGL2; skip the extra depth/normal prepass.

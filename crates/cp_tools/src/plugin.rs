@@ -21,7 +21,7 @@ use crate::road::{RoadTool, preview, sample_curve};
 use crate::utility::{
     LINK_PICK_RADIUS, UtilityTool, link_line, pick_link, plan_polylines, preview as utility_preview,
 };
-use crate::zone::{ZoneTool, zone_color};
+use crate::zone::ZoneTool;
 use cp_building::{BuildingCommand, BuildingId};
 use cp_utility::{UtilityCommand, UtilityLinkId, UtilityNet};
 use cp_zone::{ZoneCellRef, ZoneCommand};
@@ -128,11 +128,19 @@ pub struct ToolsPlugin;
 impl Plugin for ToolsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ToolState>()
+            .init_resource::<crate::zone_lines::ZoneLines>()
             .init_resource::<UiCapture>()
             .init_resource::<CommandOutbox>()
             .add_systems(
                 Update,
-                (tool_hotkeys, tool_hover, tool_click, draw_ghost).chain(),
+                (
+                    tool_hotkeys,
+                    tool_hover,
+                    tool_click,
+                    draw_ghost,
+                    crate::zone_lines::sync_zone_lines,
+                )
+                    .chain(),
             )
             .init_resource::<BandState>()
             .add_systems(Update, sync_bands.after(tool_hover));
@@ -440,11 +448,6 @@ fn tool_click(
 }
 
 fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Gizmos) {
-    if state.active == ActiveTool::Zone
-        && let Some(view) = view.as_deref()
-    {
-        draw_zone_grid(&state, view, &mut gizmos);
-    }
     if let Some(ghost) = &state.utility_ghost
         && state.active == ActiveTool::Utility
     {
@@ -493,37 +496,5 @@ fn draw_cells(view: &SimView, cells: &[ZoneCellRef], color: Color, gizmos: &mut 
         gizmos.linestrip([k[0], k[1], k[2], k[3], k[0]], color);
         gizmos.line(k[0], k[2], color);
         gizmos.line(k[1], k[3], color);
-    }
-}
-
-/// Cells drawn around the cursor in zoning mode, metres.
-const OVERLAY_RADIUS: f32 = 400.0;
-
-/// The zone grid in zoning mode: cells around the cursor outlined in their zone colour (grey
-/// for unpainted), painted ones also crossed; the cells the tool would paint are brightened
-/// with the tool's colour. Invalid cells (under roads, built on) are not drawn.
-fn draw_zone_grid(state: &ToolState, view: &SimView, gizmos: &mut Gizmos) {
-    let Some(centre) = state.hover else {
-        return;
-    };
-    let height = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.4;
-    let paint = zone_color(state.zone.paint_type());
-    for c in view.zones.cells_within(centre, OVERLAY_RADIUS) {
-        if !view.zones.is_valid(c) {
-            continue;
-        }
-        let Some(o) = view.zones.cell_footprint(c) else {
-            continue;
-        };
-        let zone = view.zones.zone_of(c).unwrap_or(cp_content::ZoneType::None);
-        let hot = state.zone_preview.contains(&c);
-        let rgb = if hot { paint } else { zone_color(zone) };
-        let color = Color::srgb(rgb[0], rgb[1], rgb[2]);
-        let k = o.corners().map(|q| Vec3::new(q.x, height(q), q.y));
-        gizmos.linestrip([k[0], k[1], k[2], k[3], k[0]], color);
-        if hot || zone != cp_content::ZoneType::None {
-            gizmos.line(k[0], k[2], color);
-            gizmos.line(k[1], k[3], color);
-        }
     }
 }

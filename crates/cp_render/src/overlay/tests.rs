@@ -6,7 +6,7 @@ use bevy_math::Vec3;
 use cp_content::{ContentDb, ZoneType};
 use cp_core::curve::CubicBezier3;
 use cp_net::{Elevation, NetGraph};
-use cp_sim::SimRunner;
+use cp_sim::{SimRunner, ZoneCellView};
 use cp_terrain::Terrain;
 use cp_zone::{ZoneCellRef, ZoneGrid};
 
@@ -120,9 +120,13 @@ fn zone_layer_covers_exactly_the_valid_cells() {
 
     let m = zone_mesh(&view.overlays.zones, t);
     assert_eq!(view.overlays.zones.cells.len(), total);
-    assert_eq!(m.positions.len(), grid.valid_cells() * 4);
-    assert_eq!(m.triangle_count(), grid.valid_cells() * 2);
+    // Every cell is drawn (invalid ones muted grey); flat ones as a single quad.
+    assert!(m.triangle_count() >= total * 2);
     assert!(faces_up(&m));
+    let invalid = total - grid.valid_cells();
+    let n_grey = m.colors.iter().filter(|c| **c == INVALID).count();
+    assert!(n_grey > 0, "{n_grey} grey vertices");
+    assert!(n_grey >= invalid * 4);
 
     // Painted cells get their zone colour, unpainted valid ones the faint tint.
     let painted = zone_color(ZoneType::ResLow).unwrap();
@@ -137,12 +141,57 @@ fn zone_layer_covers_exactly_the_valid_cells() {
     assert!(n_valid_painted > 0);
     assert_eq!(n_painted, n_valid_painted);
     assert!(m.colors.contains(&UNPAINTED));
-    // The layer lies on the ground.
-    assert!(
-        m.positions
-            .iter()
-            .all(|p| { (p[1] - t.height(bevy_math::Vec2::new(p[0], p[2])) - LIFT).abs() < 1e-3 })
-    );
+    // The layer lies on the rendered terrain.
+    assert!(m.positions.iter().all(|p| {
+        let h = terrain_mesh_height(t, bevy_math::Vec2::new(p[0], p[2]));
+        (p[1] - h - LIFT).abs() < 1e-3
+    }));
+}
+
+/// A steep, bumpy synthetic slope: every vertex of every cell lies at least 0.25 m above the
+/// rendered terrain, and the 2 m chord between vertices never dips under it by more than the lift.
+#[test]
+fn zone_cells_on_a_slope_stay_above_the_terrain_mesh() {
+    use cp_terrain::{GRID, MapMeta};
+    let meta = MapMeta {
+        name: "t".into(),
+        sea_level: 0.0,
+        start_tile: (2, 2),
+        external_connections: vec![],
+    };
+    let h: Vec<u16> = (0..GRID * GRID)
+        .map(|k| {
+            let (x, z) = (k % GRID, k / GRID);
+            (2000 + x * 40 + (x * 7 + z * 13) % 90) as u16
+        })
+        .collect();
+    let t = Terrain::from_samples(meta, &h, &vec![0; GRID * GRID]).unwrap();
+    // Cells straddling node lines and the cell diagonals, rotated against the 10 m grid.
+    let zones = ZoneOverlay {
+        cells: (0..40)
+            .map(|k| {
+                let o = bevy_math::Vec2::new(5003.0 + k as f32 * 7.3, 5004.0 + k as f32 * 3.1);
+                let (u, v) = (
+                    bevy_math::Vec2::new(0.8, 0.6) * 8.0,
+                    bevy_math::Vec2::new(-0.6, 0.8) * 8.0,
+                );
+                let c = [o, o + u, o + u + v, o + v];
+                ZoneCellView {
+                    corners: c.map(|p| [p.x, p.y]),
+                    zone: ZoneType::ResLow,
+                    valid: true,
+                }
+            })
+            .collect(),
+    };
+    let m = zone_mesh(&zones, &t);
+    assert!(!m.positions.is_empty());
+    // Bumpy ground needs the fine grid (flat cells stay a single quad, see the city test).
+    assert!(m.triangle_count() > zones.cells.len() * 2 * 4);
+    for p in &m.positions {
+        let h = terrain_mesh_height(&t, bevy_math::Vec2::new(p[0], p[2]));
+        assert!(p[1] >= h + 0.25, "{p:?} vs {h}");
+    }
 }
 
 #[test]

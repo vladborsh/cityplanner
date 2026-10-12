@@ -20,7 +20,7 @@ use cp_net::NetGraph;
 use cp_sim::{ScalarGrid, SimView, ZoneOverlay};
 use cp_terrain::{MAP_SIZE, Terrain};
 
-use crate::chunk::MeshData;
+use crate::chunk::{MeshData, terrain_mesh_height};
 use crate::material::VertexColorMaterial;
 
 mod utility;
@@ -178,16 +178,80 @@ fn flat(m: &mut MeshData, corners: [[f32; 3]; 4], c: [f32; 4]) {
     }
 }
 
-/// The zone layer: one quad per **valid** cell, coloured by its painted type (invalid cells
-/// are blocked by roads, other blocks or buildings and are not drawn).
+/// Colour of invalid zone cells (blocked by a road, another block or a building): muted grey.
+pub const INVALID: [f32; 4] = [0.5, 0.5, 0.5, 0.25];
+/// The zone layer is rebuilt at most this often while it is on screen.
+const ZONE_REBUILD_SECS: f32 = 0.25;
+/// Largest vertex spacing of a zone cell's tessellation, metres: a cell is 8 m wide, the
+/// terrain mesh turns every 10 m, so the drape has to be finer than the terrain.
+pub const ZONE_STEP: f32 = 2.0;
+
+/// A cell whose terrain deviates from its corners' bilinear surface by at most this (m) is
+/// drawn as one quad.
+const FLAT_TOLERANCE: f32 = 0.03;
+
+/// The zone layer: every cell is a grid of quads at most [`ZONE_STEP`] wide, each vertex
+/// [`LIFT`] above the *rendered* terrain ([`terrain_mesh_height`]), coloured by the painted
+/// type; invalid cells are drawn in muted grey ([`INVALID`]) so the edge of the grid is solid.
 pub fn zone_mesh(zones: &ZoneOverlay, terrain: &Terrain) -> MeshData {
+    use bevy::math::Vec2;
     let mut m = MeshData::default();
-    for cell in zones.cells.iter().filter(|c| c.valid) {
-        let color = zone_color(cell.zone).unwrap_or(UNPAINTED);
-        let corners = cell
-            .corners
-            .map(|[x, z]| [x, terrain.height(bevy::math::Vec2::new(x, z)) + LIFT, z]);
-        flat(&mut m, corners, color);
+    for cell in &zones.cells {
+        let color = if cell.valid {
+            zone_color(cell.zone).unwrap_or(UNPAINTED)
+        } else {
+            INVALID
+        };
+        let c = cell.corners.map(|[x, z]| Vec2::new(x, z));
+        let longest = (0..4)
+            .map(|i| c[i].distance(c[(i + 1) % 4]))
+            .fold(0.0f32, f32::max);
+        let at = |u: f32, v: f32| c[0].lerp(c[1], u).lerp(c[3].lerp(c[2], u), v);
+        // Where the rendered terrain is flat or planar across the cell one quad already lies on
+        // it, so only creased cells pay for the fine grid: compare the terrain with the bilinear
+        // of the corner heights on a 5x5 probe.
+        let corner_h = c.map(|p| terrain_mesh_height(terrain, p));
+        let probe_err = (0..25)
+            .map(|k| {
+                let (u, v) = ((k % 5) as f32 / 4.0, (k / 5) as f32 / 4.0);
+                let bil = (corner_h[0] * (1.0 - u) + corner_h[1] * u) * (1.0 - v)
+                    + (corner_h[3] * (1.0 - u) + corner_h[2] * u) * v;
+                (terrain_mesh_height(terrain, at(u, v)) - bil).abs()
+            })
+            .fold(0.0f32, f32::max);
+        let n = if probe_err <= FLAT_TOLERANCE {
+            1
+        } else {
+            ((longest / ZONE_STEP).ceil() as usize).max(1)
+        };
+        // Which way the corner order runs decides the winding that faces up.
+        let area: f32 = (0..4)
+            .map(|i| c[i].x * c[(i + 1) % 4].y - c[(i + 1) % 4].x * c[i].y)
+            .sum();
+        let base = m.positions.len() as u32;
+        for j in 0..=n {
+            let v = j as f32 / n as f32;
+            for i in 0..=n {
+                let u = i as f32 / n as f32;
+                let p = at(u, v);
+                push(
+                    &mut m,
+                    [p.x, terrain_mesh_height(terrain, p) + LIFT, p.y],
+                    color,
+                );
+            }
+        }
+        let at = |i: usize, j: usize| base + (j * (n + 1) + i) as u32;
+        for j in 0..n {
+            for i in 0..n {
+                let q = [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)];
+                if area > 0.0 {
+                    quad(&mut m, [q[3], q[2], q[1], q[0]]);
+                } else {
+                    quad(&mut m, q);
+                }
+            }
+        }
     }
     m
 }
@@ -308,6 +372,8 @@ struct LayerSource {
     /// Pointer of the `Arc` the mesh was last built from.
     key: usize,
     entity: Option<Entity>,
+    /// `Time<Real>` seconds of the last build (for throttled layers).
+    built_at: f32,
 }
 
 #[derive(Resource, Default)]
@@ -387,6 +453,8 @@ fn upsert(
 
 fn sync_overlay_meshes(
     view: Option<Res<SimView>>,
+    state: Res<OverlayState>,
+    time: Res<Time<Real>>,
     mut layers: ResMut<OverlayLayers>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -398,7 +466,9 @@ fn sync_overlay_meshes(
     };
     let material = layers
         .material
-        .get_or_insert_with(|| materials.add(VertexColorMaterial::blended(0.95, 0.02)))
+        .get_or_insert_with(|| {
+            materials.add(VertexColorMaterial::blended(0.95, 0.02).with_depth_bias(true))
+        })
         .clone();
     // A different terrain invalidates every draped layer.
     let tkey = ptr(terrain);
@@ -418,16 +488,27 @@ fn sync_overlay_meshes(
         &mut meshes,
         false,
     );
-    upsert(
-        &mut l.zones,
-        ptr(&o.zones),
-        Overlay::Zones,
-        || zone_mesh(&o.zones, terrain),
-        &material,
-        &mut commands,
-        &mut meshes,
-        terrain_changed,
-    );
+    // The zone snapshot changes whenever a building goes up, and the fine mesh is the costly
+    // one: build it only while it is shown, and at most every `ZONE_REBUILD_SECS` (a stale
+    // layer is replaced on the next frame that allows it; switching it on builds at once).
+    let now = time.elapsed_secs();
+    let zones_key = ptr(&o.zones);
+    let zones_due = l.zones.entity.is_none()
+        || terrain_changed
+        || (l.zones.key != zones_key && now - l.zones.built_at >= ZONE_REBUILD_SECS);
+    if state.active == Overlay::Zones && zones_due {
+        l.zones.built_at = now;
+        upsert(
+            &mut l.zones,
+            zones_key,
+            Overlay::Zones,
+            || zone_mesh(&o.zones, terrain),
+            &material,
+            &mut commands,
+            &mut meshes,
+            true,
+        );
+    }
     upsert(
         &mut l.land,
         opt_ptr(&o.land_value),

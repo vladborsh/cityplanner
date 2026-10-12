@@ -19,6 +19,7 @@ pub mod plugin;
 pub mod road;
 pub mod utility;
 pub mod zone;
+pub mod zone_lines;
 
 pub use building::{BuildingTool, PlacementGhost, pick_building};
 pub use bulldozer::pick_segment;

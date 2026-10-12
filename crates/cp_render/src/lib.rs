@@ -19,6 +19,7 @@ pub mod utility_render;
 pub use agent_render::{AgentRenderPlugin, AgentRenderStats, TickFraction};
 pub use building_render::{BuildingRenderPlugin, BuildingStats};
 pub use camera::{CameraSettings, RtsCamera, RtsCameraPlugin};
+pub use chunk::terrain_mesh_height;
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{Overlay, OverlayPlugin, OverlayState};
 pub use road_render::{RoadRenderPlugin, RoadStats};

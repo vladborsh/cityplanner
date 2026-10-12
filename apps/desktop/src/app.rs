@@ -2,7 +2,7 @@
 //! terrain rendering and the RTS camera from `cp_render`.
 //!
 //! `cargo run --release -p cp_desktop -- [--map flatlands|river_valley] [--cam overview|ground|valley]`
-//! `  [--hour 0..24] [--always-day] [--screenshot out.png] [--bench seconds] [--no-vsync]`
+//! `  [--hour 0..24] [--always-day] [--overlay zones] [--screenshot out.png] [--bench seconds] [--no-vsync]`
 //! `cargo run --release -p cp_desktop -- --map flatlands --headless 512` runs N ticks without a
 //! window and prints the numbers the F3 window shows (for comparing with `cp_bench`).
 
@@ -31,6 +31,8 @@ pub struct Options {
     pub scene: Option<String>,
     pub hidden: bool,
     pub always_day: bool,
+    /// `--overlay zones|traffic|...`: start with that map overlay on (for screenshots).
+    pub overlay: Option<cp_render::Overlay>,
 }
 
 impl Options {
@@ -50,6 +52,11 @@ impl Options {
             bench,
             headless: value("--headless").and_then(|v| v.parse().ok()),
             scene: value("--scene"),
+            overlay: value("--overlay").and_then(|n| {
+                cp_render::Overlay::ALL
+                    .into_iter()
+                    .find(|o| o.label().eq_ignore_ascii_case(&n))
+            }),
             always_day: args.iter().any(|a| a == "--always-day"),
             hidden: crate::capture::hidden_requested(args),
             vsync: !args.iter().any(|a| a == "--no-vsync") && bench.is_none(),
@@ -118,6 +125,9 @@ pub fn run(opts: Options) -> AppExit {
     if opts.hidden {
         // With no window the loop counts as unfocused and would idle at 60 Hz.
         app.insert_resource(bevy::winit::WinitSettings::continuous());
+    }
+    if let Some(active) = opts.overlay {
+        app.insert_resource(cp_render::OverlayState { active });
     }
     app.add_plugins((
         GamePlugin {
