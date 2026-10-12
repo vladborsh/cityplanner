@@ -200,6 +200,68 @@ fn zip_by_key<T: Copy>(
     }
 }
 
+/// Where the renderer draws a vehicle `alpha` of the way from its pose in the previous snapshot
+/// to `cur` (a jump of 60 m or more is a teleport and not interpolated). Picking uses it so
+/// the player clicks what is on screen.
+pub fn vehicle_position(prev: Option<&VehiclePose>, cur: &VehiclePose, alpha: f32) -> Vec3 {
+    match prev {
+        Some(p) if p.pos.distance_squared(cur.pos) < TELEPORT * TELEPORT => {
+            p.pos.lerp(cur.pos, alpha.clamp(0.0, 1.0))
+        }
+        _ => cur.pos,
+    }
+}
+
+/// [`vehicle_position`] for pedestrians (ground plane).
+pub fn pedestrian_position(
+    prev: Option<&PedestrianPose>,
+    cur: &PedestrianPose,
+    alpha: f32,
+) -> bevy_math::Vec2 {
+    match prev {
+        Some(p) if p.pos.distance_squared(cur.pos) < TELEPORT * TELEPORT => {
+            p.pos.lerp(cur.pos, alpha.clamp(0.0, 1.0))
+        }
+        _ => cur.pos,
+    }
+}
+
+/// Every vehicle `(key, drawn position)` of the snapshot pair at `alpha`.
+pub fn vehicle_positions(
+    prev: &[VehiclePose],
+    cur: &[VehiclePose],
+    alpha: f32,
+) -> Vec<(u64, Vec3)> {
+    let mut out = Vec::with_capacity(cur.len());
+    zip_by_key(
+        prev,
+        cur,
+        |v| v.key,
+        |c, p| {
+            out.push((c.key, vehicle_position(p, c, alpha)));
+        },
+    );
+    out
+}
+
+/// Every pedestrian `(key, drawn position)` of the snapshot pair at `alpha`.
+pub fn pedestrian_positions(
+    prev: &[PedestrianPose],
+    cur: &[PedestrianPose],
+    alpha: f32,
+) -> Vec<(u64, bevy_math::Vec2)> {
+    let mut out = Vec::with_capacity(cur.len());
+    zip_by_key(
+        prev,
+        cur,
+        |p| p.key,
+        |c, p| {
+            out.push((c.key, pedestrian_position(p, c, alpha)));
+        },
+    );
+    out
+}
+
 /// Fills `out.vehicles` with the interpolated, culled vehicles. Nothing is drawn when the
 /// camera is above [`VEHICLE_MAX_HEIGHT`].
 pub fn build_vehicles(

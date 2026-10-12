@@ -15,6 +15,7 @@ pub mod band;
 pub mod building;
 pub mod bulldozer;
 mod outbox;
+pub mod pick;
 pub mod plugin;
 pub mod road;
 pub mod utility;
@@ -24,6 +25,7 @@ pub mod zone_lines;
 pub use building::{BuildingTool, PlacementGhost, pick_building};
 pub use bulldozer::pick_segment;
 pub use outbox::CommandOutbox;
+pub use pick::{Inspected, Picked, pick};
 pub use plugin::{ActiveTool, Ghost, ToolState, ToolsPlugin, UiCapture, compute_utility_ghost};
 pub use road::{
     ELEVATION_STEP, MAX_ELEVATION_LEVEL, RoadMode, RoadTool, format_money, preview, preview_report,

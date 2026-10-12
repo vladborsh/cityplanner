@@ -25,3 +25,6 @@ cp_terrain.workspace = true
 
 [dev-dependencies]
 cp_save.workspace = true
+cp_citizen.workspace = true
+cp_economy.workspace = true
+cp_traffic.workspace = true

@@ -14,10 +14,12 @@ use cp_tools::{CommandOutbox, ToolState, UiCapture};
 pub mod budget;
 pub mod debug;
 pub mod files;
+pub mod info;
 pub mod panels;
 
 pub use debug::{DebugData, PhaseTimes, TickRate};
 pub use files::{FileMenu, FileRequest, SaveEntry, file_window};
+pub use info::{InfoRects, info_panel};
 pub use panels::{Category, UiState, bottom_bar, overlay_buttons, root_ui, top_bar};
 
 pub struct UiPlugin;
@@ -33,6 +35,8 @@ impl Plugin for UiPlugin {
             .init_resource::<ToolState>()
             .init_resource::<UiCapture>()
             .init_resource::<FileMenu>()
+            .init_resource::<cp_tools::Picked>()
+            .init_resource::<cp_tools::Inspected>()
             .add_systems(Update, (toggle_debug, measure_tick_rate))
             .add_systems(EguiPrimaryContextPass, draw_ui);
     }
@@ -67,6 +71,8 @@ fn draw_ui(
     mut tools: ResMut<ToolState>,
     mut capture: ResMut<UiCapture>,
     mut files: ResMut<FileMenu>,
+    inspected: Res<cp_tools::Inspected>,
+    mut picked: ResMut<cp_tools::Picked>,
 ) -> Result {
     let Some(view) = view else {
         return Ok(());
@@ -98,6 +104,7 @@ fn draw_ui(
         );
     }
     file_window(ctx, &mut files);
+    info_panel(ctx, &inspected, &mut picked);
     // Clicks over a panel or window belong to the UI, not to the tools.
     capture.pointer_over_ui = ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
     Ok(())

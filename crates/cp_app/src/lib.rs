@@ -96,7 +96,7 @@ impl Plugin for GamePlugin {
         .add_systems(PreUpdate, step_sim);
         if self.ui {
             app.add_plugins((UiPlugin, cp_tools::ToolsPlugin))
-                .add_systems(Update, file_requests);
+                .add_systems(Update, (file_requests, inspect_selection));
         }
         app.add_systems(Startup, move |mut commands: Commands| {
             let mut camera = commands.spawn((
@@ -332,6 +332,32 @@ pub fn handle_file_request(
                 }
                 Err(e) => format!("Load failed: {e}"),
             };
+        }
+    }
+}
+
+/// Asks the sim for the details of what is selected (every frame: a car moves, a building fills
+/// up). A selection that no longer exists (the car arrived, the building is gone) is dropped.
+fn inspect_selection(
+    sim: Option<Res<Sim>>,
+    mut picked: ResMut<cp_tools::Picked>,
+    mut inspected: ResMut<cp_tools::Inspected>,
+) {
+    let (Some(sim), Some(sel)) = (sim, picked.0) else {
+        if inspected.0.is_some() {
+            inspected.0 = None;
+        }
+        return;
+    };
+    match sim.0.inspect(sel) {
+        Some(info) => {
+            if inspected.0.as_ref() != Some(&info) {
+                inspected.0 = Some(info);
+            }
+        }
+        None => {
+            picked.0 = None;
+            inspected.0 = None;
         }
     }
 }

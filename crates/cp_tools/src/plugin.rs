@@ -133,6 +133,12 @@ impl Plugin for ToolsPlugin {
             .init_resource::<crate::zone_lines::ZoneLines>()
             .init_resource::<UiCapture>()
             .init_resource::<CommandOutbox>()
+            .init_resource::<crate::Picked>()
+            .init_resource::<crate::Inspected>()
+            .add_systems(
+                Update,
+                (tool_pick, draw_selection).chain().after(tool_hover),
+            )
             .add_systems(
                 Update,
                 (
@@ -519,5 +525,118 @@ fn draw_cells(view: &SimView, cells: &[ZoneCellRef], color: Color, gizmos: &mut 
         gizmos.linestrip([k[0], k[1], k[2], k[3], k[0]], color);
         gizmos.line(k[0], k[2], color);
         gizmos.line(k[1], k[3], color);
+    }
+}
+
+/// With no tool active, a click selects what is under the cursor ([`crate::pick`]), a click on
+/// nothing (or Esc) deselects. Choosing a tool deselects.
+#[allow(clippy::too_many_arguments)]
+fn tool_pick(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    capture: Res<UiCapture>,
+    state: Res<ToolState>,
+    view: Option<Res<SimView>>,
+    fraction: Option<Res<cp_render::TickFraction>>,
+    camera: Query<&GlobalTransform, With<RtsCamera>>,
+    mut picked: ResMut<crate::Picked>,
+) {
+    if state.active != ActiveTool::None {
+        if picked.0.is_some() {
+            picked.0 = None;
+        }
+        return;
+    }
+    if keys.just_pressed(KeyCode::Escape) && picked.0.is_some() {
+        picked.0 = None;
+    }
+    if !buttons.just_pressed(MouseButton::Left) || capture.pointer_over_ui {
+        return;
+    }
+    let (Some(view), Some(p), Ok(cam)) = (view, state.hover, camera.single()) else {
+        return;
+    };
+    let ground = view.terrain.as_deref().map_or(0.0, |t| t.height(p));
+    let height = cam.translation().y - ground;
+    let alpha = fraction.map_or(1.0, |f| f.0);
+    picked.0 = crate::pick(&view, alpha, p, height);
+}
+
+/// Outlines the selection: a building's lot, a citizen's home and workplace (or the pedestrian
+/// walking), a vehicle with the rest of its route, a segment along its length.
+fn draw_selection(
+    picked: Res<crate::Picked>,
+    inspected: Res<crate::Inspected>,
+    view: Option<Res<SimView>>,
+    fraction: Option<Res<cp_render::TickFraction>>,
+    mut gizmos: Gizmos,
+) {
+    use cp_render::agent::{pedestrian_positions, vehicle_positions};
+    use cp_sim::{Inspection, Selection};
+    let (Some(view), Some(sel), Some(info)) = (view.as_deref(), picked.0, inspected.0.as_ref())
+    else {
+        return;
+    };
+    let alpha = fraction.map_or(1.0, |f| f.0);
+    let ground = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p));
+    let cyan = Color::srgb(0.2, 0.85, 1.0);
+    let ring = |gizmos: &mut Gizmos, p: Vec2, r: f32| {
+        gizmos.circle(
+            Isometry3d::new(
+                Vec3::new(p.x, ground(p) + 1.0, p.y),
+                Quat::from_rotation_arc(Vec3::Z, Vec3::Y),
+            ),
+            r,
+            cyan,
+        );
+    };
+    let lot = |id: cp_building::BuildingId| -> Vec<ZoneCellRef> {
+        view.buildings
+            .get(id)
+            .map(|b| cp_building::held_cells(&view.zones, b))
+            .unwrap_or_default()
+    };
+    match info {
+        Inspection::Building(b) => draw_cells(view, &b.footprint, cyan, &mut gizmos),
+        Inspection::Citizen(c) => {
+            if let Some((h, _)) = &c.home {
+                draw_cells(view, &lot(*h), Color::srgb(0.3, 0.9, 0.4), &mut gizmos);
+            }
+            if let Some((w, _, _)) = &c.work {
+                draw_cells(view, &lot(*w), Color::srgb(1.0, 0.6, 0.1), &mut gizmos);
+            }
+            if let Selection::Pedestrian(key) = sel
+                && let Some((_, pos)) = pedestrian_positions(
+                    &view.agents.prev.pedestrians,
+                    &view.agents.cur.pedestrians,
+                    alpha,
+                )
+                .into_iter()
+                .find(|(k, _)| *k == key)
+            {
+                ring(&mut gizmos, pos, 2.0);
+            }
+        }
+        Inspection::Vehicle(v) => {
+            for lane in &v.route {
+                gizmos.linestrip(lane.iter().map(|p| *p + Vec3::Y * 0.9), cyan);
+            }
+            if let Some((_, pos)) =
+                vehicle_positions(&view.agents.prev.vehicles, &view.agents.cur.vehicles, alpha)
+                    .into_iter()
+                    .find(|(k, _)| *k == v.key)
+            {
+                ring(&mut gizmos, Vec2::new(pos.x, pos.z), 4.0);
+            }
+            if let Some(t) = &v.trip {
+                draw_cells(view, &lot(t.to), Color::srgb(1.0, 0.6, 0.1), &mut gizmos);
+            }
+        }
+        Inspection::Segment(s) => {
+            gizmos.linestrip(
+                s.line.iter().map(|p| *p + Vec3::Y * 0.9),
+                Color::srgb(1.0, 0.85, 0.2),
+            );
+        }
     }
 }

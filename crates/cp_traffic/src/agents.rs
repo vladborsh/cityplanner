@@ -242,6 +242,14 @@ impl Agents {
         Self::default()
     }
 
+    pub fn vehicle(&self, id: VehicleId) -> Option<&Vehicle> {
+        self.vehicles.get(id)
+    }
+
+    pub fn pedestrian(&self, id: PedestrianId) -> Option<&Pedestrian> {
+        self.pedestrians.get(id)
+    }
+
     pub fn pedestrians(&self) -> impl Iterator<Item = (PedestrianId, &Pedestrian)> {
         self.pedestrians.iter()
     }
