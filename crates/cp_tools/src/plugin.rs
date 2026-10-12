@@ -14,8 +14,9 @@ use cp_render::camera::math::ray_terrain_hit;
 use cp_sim::{SimCommand, SimView};
 
 use crate::CommandOutbox;
+use crate::band::{BandState, sync_bands};
 use crate::building::{BuildingTool, PlacementGhost, pick_building, preview as place_preview};
-use crate::bulldozer::{PICK_RADIUS, centre_line, pick_segment, remove_run_commands};
+use crate::bulldozer::{PICK_RADIUS, pick_segment, remove_run_commands};
 use crate::road::{RoadTool, preview, sample_curve};
 use crate::utility::{
     LINK_PICK_RADIUS, UtilityTool, link_line, pick_link, plan_polylines, preview as utility_preview,
@@ -57,6 +58,8 @@ pub struct Ghost {
     pub cost: Option<Cost>,
     /// One player-facing line per validation error.
     pub errors: Vec<String>,
+    /// Half the road width, metres: drawn as a band. `0.0` draws the polylines as lines.
+    pub half_width: f32,
 }
 
 #[derive(Resource, Default, Debug)]
@@ -130,7 +133,9 @@ impl Plugin for ToolsPlugin {
             .add_systems(
                 Update,
                 (tool_hotkeys, tool_hover, tool_click, draw_ghost).chain(),
-            );
+            )
+            .init_resource::<BandState>()
+            .add_systems(Update, sync_bands.after(tool_hover));
     }
 }
 
@@ -284,6 +289,10 @@ fn tool_hover(
 pub fn compute_ghost(view: &SimView, tool: &RoadTool, hover: Vec2) -> Option<Ghost> {
     let path = tool.path_with_hover(hover)?;
     let req = tool.request(path.clone())?;
+    let half_width = view
+        .content
+        .as_deref()
+        .map_or(0.0, |c| c.road(req.road).width * 0.5);
     Some(match preview(view, &req)? {
         Ok(plan) => Ghost {
             polylines: plan
@@ -294,12 +303,14 @@ pub fn compute_ghost(view: &SimView, tool: &RoadTool, hover: Vec2) -> Option<Gho
             valid: true,
             cost: Some(plan.cost),
             errors: Vec::new(),
+            half_width,
         },
         Err(errors) => Ghost {
             polylines: vec![raw_polyline(view, &path)],
             valid: false,
             cost: None,
             errors: errors.iter().map(RoadBuildError::to_string).collect(),
+            half_width,
         },
     })
 }
@@ -314,6 +325,7 @@ pub fn compute_utility_ghost(view: &SimView, tool: &UtilityTool, hover: Vec2) ->
             valid: true,
             cost: Some(plan.cost),
             errors: Vec::new(),
+            half_width: 0.0,
         },
         Err(problems) => Ghost {
             polylines: vec![
@@ -327,6 +339,7 @@ pub fn compute_utility_ghost(view: &SimView, tool: &UtilityTool, hover: Vec2) ->
             valid: false,
             cost: None,
             errors: problems.iter().map(ToString::to_string).collect(),
+            half_width: 0.0,
         },
     })
 }
@@ -451,18 +464,6 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
             Color::srgb(1.0, 0.6, 0.1),
         );
     }
-    if let Some(ghost) = &state.ghost
-        && state.active == ActiveTool::Road
-    {
-        let color = if ghost.valid {
-            Color::srgb(0.2, 0.9, 0.3)
-        } else {
-            Color::srgb(0.95, 0.2, 0.2)
-        };
-        for line in &ghost.polylines {
-            gizmos.linestrip(line.iter().map(|p| *p + Vec3::Y * 0.4), color);
-        }
-    }
     if let (Some(view), Some(g)) = (view.as_deref(), &state.place_ghost)
         && state.active == ActiveTool::Place
     {
@@ -478,15 +479,6 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
     {
         let cells: Vec<ZoneCellRef> = b.lot.cells().collect();
         draw_cells(view, &cells, Color::srgb(1.0, 0.6, 0.1), &mut gizmos);
-    }
-    if let Some(view) = view {
-        for seg in &state.highlight {
-            let line = centre_line(&view.net, *seg, 3.0);
-            gizmos.linestrip(
-                line.iter().map(|p| *p + Vec3::Y * 0.6),
-                Color::srgb(1.0, 0.6, 0.1),
-            );
-        }
     }
 }
 

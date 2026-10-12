@@ -972,5 +972,8 @@ impl RoadSet {
     }
 }
 
+pub mod band;
+pub use band::{BAND_LIFT, BAND_STEP, band_data, band_mesh, band_polyline, to_mesh};
+
 #[cfg(test)]
 mod tests;

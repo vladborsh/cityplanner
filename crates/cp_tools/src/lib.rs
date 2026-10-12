@@ -11,6 +11,7 @@
 //! * [`bulldozer`] — picks the segment under the cursor.
 //! * [`plugin`] — the Bevy glue: cursor ray → terrain point, hotkeys, clicks, ghost drawing.
 
+pub mod band;
 pub mod building;
 pub mod bulldozer;
 mod outbox;

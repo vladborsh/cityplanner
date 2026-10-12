@@ -609,6 +609,7 @@ mod tests {
             valid: true,
             cost: Some(Cost(123_456)),
             errors: vec![],
+            half_width: 0.0,
         });
         draw(&mut tools);
         tools.ghost = Some(Ghost {
@@ -616,6 +617,7 @@ mod tests {
             valid: false,
             cost: None,
             errors: vec!["too steep (20%, max 12%)".into()],
+            half_width: 6.0,
         });
         draw(&mut tools);
         tools.select(ActiveTool::Bulldozer);
@@ -699,6 +701,7 @@ mod tests {
             valid: false,
             cost: None,
             errors: vec!["outside the land you own".into()],
+            half_width: 0.0,
         });
         draw(&mut tools, &mut overlay, Category::Power);
         tools.select(ActiveTool::UtilityRemove);
