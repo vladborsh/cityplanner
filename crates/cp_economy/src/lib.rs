@@ -8,11 +8,15 @@
 
 pub mod command;
 pub mod demand;
+pub mod growth;
+pub mod land;
 pub mod state;
 pub mod week;
 
 pub use command::{EconomyCommand, EconomyError, apply};
 pub use demand::{DemandAcc, smooth, update_demand};
+pub use growth::{CITY_PERIOD, Decay, PROBLEM_MASK, level_for, update_city};
+pub use land::{CELL_M, LandGrids, LandInputs, SIDE};
 pub use state::{
     BUDGET_DEFAULT, BUDGET_MAX, BUDGET_MIN, BUDGETED, Budgets, EconomyState, TAX_DEFAULT, TAX_MAX,
     TAX_MIN, TAXED_ZONES, TaxRates, WeekReport,

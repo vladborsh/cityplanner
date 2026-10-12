@@ -31,6 +31,8 @@ fn city(content: &Arc<ContentDb>, seed: u64, kinds: &[ZoneType]) -> SimRunner {
     let def = content.road(road).clone();
     let mut sim = SimRunner::new(seed);
     *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
+    // These towns have no water or power lines: nothing here may be abandoned.
+    *sim.world_mut().resource_mut::<cp_economy::Decay>() = cp_economy::Decay::disabled();
     sim.set_content(Arc::clone(content));
     {
         let mut g = sim.world_mut().resource_mut::<NetGraph>();

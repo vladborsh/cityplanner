@@ -97,6 +97,7 @@ pub struct Building {
     pub rot: f32,
     pub access: AccessPoint,
     pub flags: BuildingFlags,
-    /// Progress towards the next level, 0..1 (used by the levelling task).
+    /// Progress of the level checks: towards `+1` (a level up) or `-1` (a level down), `0`
+    /// when the building is where its surroundings put it (`cp_economy::growth`).
     pub level_progress: f32,
 }

@@ -21,7 +21,7 @@ use cp_utility::UtilityGraph;
 
 use crate::checksum::{Fnv1a, SimChecksum};
 use crate::command::SimCommand;
-use crate::overlay::{OverlayData, zone_snapshot};
+use crate::overlay::{OverlayData, ScalarGrid, zone_snapshot};
 use crate::runner::SimRunner;
 
 /// How full one arena is.
@@ -180,11 +180,35 @@ impl SimRunner {
                 road_load.insert(id, agents.load.inst(id));
             }
         }
+        let (land_value, pollution) = self.land_overlays();
         OverlayData {
             zones: zone_snapshot(self.world().get_resource::<cp_zone::ZoneGrid>(), &mut cache),
             road_load: Arc::new(road_load),
-            ..OverlayData::default()
+            land_value,
+            pollution,
         }
+    }
+
+    /// Land value and pollution as `0..=1` heat-map grids, rebuilt only when the grids were.
+    fn land_overlays(&self) -> (Option<Arc<ScalarGrid>>, Option<Arc<ScalarGrid>>) {
+        let Some(g) = self.world().get_resource::<cp_economy::LandGrids>() else {
+            return (None, None);
+        };
+        let mut cache = self.land_cache.lock().expect("land cache");
+        if let Some((rev, v, p)) = cache.as_ref()
+            && *rev == g.revision()
+        {
+            return (Some(Arc::clone(v)), Some(Arc::clone(p)));
+        }
+        let norm = |vs: &[f32]| {
+            Arc::new(ScalarGrid::new(
+                cp_economy::SIDE,
+                vs.iter().map(|v| (v / 100.0).clamp(0.0, 1.0)).collect(),
+            ))
+        };
+        let (v, p) = (norm(&g.land_value), norm(&g.pollution));
+        *cache = Some((g.revision(), Arc::clone(&v), Arc::clone(&p)));
+        (Some(v), Some(p))
     }
 
     /// The zone snapshot for `SimView::zones`, cached while the grid's revision is unchanged.

@@ -9,7 +9,7 @@ use cp_citizen::{CitizenGrid, TripBook};
 use cp_citizen::{CitizenId, TripId};
 use cp_core::Arena;
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
-use cp_economy::{DemandAcc, EconomyState};
+use cp_economy::{Decay, DemandAcc, EconomyState, LandGrids};
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
@@ -308,12 +308,63 @@ pub struct SaveDataV14 {
     pub economy: EconomyState,
 }
 
+/// Version 15: the body as written by format 15 (demand; no land grids or decay timers).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV15 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+    pub trips: TripBook,
+    pub agents: Agents,
+    pub treasury: Treasury,
+    pub economy: EconomyState,
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+}
+
+/// v15 → v16: the land grids and the decay timers were added. An old city starts with empty
+/// grids (the first 256-tick pass computes the real ones before anything reads them) and no
+/// timers: buildings in trouble start their week then.
+pub fn migrate_v15_to_v16(v15: SaveDataV15) -> SaveData {
+    SaveData {
+        tick: v15.tick,
+        rng: v15.rng,
+        speed: v15.speed,
+        queue: v15.queue,
+        log: v15.log,
+        tiles: v15.tiles,
+        net: v15.net,
+        zones: v15.zones,
+        buildings: v15.buildings,
+        citizens: v15.citizens,
+        paths: v15.paths,
+        utilities: v15.utilities,
+        trips: v15.trips,
+        agents: v15.agents,
+        treasury: v15.treasury,
+        economy: v15.economy,
+        demand: v15.demand,
+        demand_acc: v15.demand_acc,
+        land: LandGrids::default(),
+        decay: Decay::default(),
+    }
+}
+
 /// v14 → v15: demand and its cycle sums were added. An old city starts from the demand of a
 /// new one (housing, shops and industry wanted, no offices) with empty sums, so spawning and
 /// move-in are not stalled; the smoothing pulls the values to the city's real ones within a
 /// few 64-tick cycles, and the cycle that was in progress is dropped.
-pub fn migrate_v14_to_v15(v14: SaveDataV14) -> SaveData {
-    SaveData {
+pub fn migrate_v14_to_v15(v14: SaveDataV14) -> SaveDataV15 {
+    SaveDataV15 {
         tick: v14.tick,
         rng: v14.rng,
         speed: v14.speed,
@@ -573,8 +624,8 @@ pub fn migrate_v3_to_v4(v3: SaveDataV3) -> SaveDataV4 {
 
 /// The last two chain steps, shared by every arm.
 fn up(v: SaveDataV10) -> SaveData {
-    migrate_v14_to_v15(migrate_v13_to_v14(migrate_v12_to_v13(migrate_v11_to_v12(
-        migrate_v10_to_v11(v),
+    migrate_v15_to_v16(migrate_v14_to_v15(migrate_v13_to_v14(migrate_v12_to_v13(
+        migrate_v11_to_v12(migrate_v10_to_v11(v)),
     ))))
 }
 
@@ -645,15 +696,18 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         8 => Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(dec(body)?)))),
         9 => Ok(up(migrate_v9_to_v10(dec(body)?))),
         10 => Ok(up(dec(body)?)),
-        11 => Ok(migrate_v14_to_v15(migrate_v13_to_v14(migrate_v12_to_v13(
-            migrate_v11_to_v12(dec(body)?),
+        11 => Ok(migrate_v15_to_v16(migrate_v14_to_v15(migrate_v13_to_v14(
+            migrate_v12_to_v13(migrate_v11_to_v12(dec(body)?)),
         )))),
-        12 => Ok(migrate_v14_to_v15(migrate_v13_to_v14(migrate_v12_to_v13(
+        12 => Ok(migrate_v15_to_v16(migrate_v14_to_v15(migrate_v13_to_v14(
+            migrate_v12_to_v13(dec(body)?),
+        )))),
+        13 => Ok(migrate_v15_to_v16(migrate_v14_to_v15(migrate_v13_to_v14(
             dec(body)?,
         )))),
-        13 => Ok(migrate_v14_to_v15(migrate_v13_to_v14(dec(body)?))),
-        14 => Ok(migrate_v14_to_v15(dec(body)?)),
-        15 => dec(body),
+        14 => Ok(migrate_v15_to_v16(migrate_v14_to_v15(dec(body)?))),
+        15 => Ok(migrate_v15_to_v16(dec(body)?)),
+        16 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -870,4 +924,16 @@ pub fn encode_v14(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v14).expect("serialization failed");
     crate::assemble(14, v14.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 15** file (demand, no land grids or decay timers). Legacy writer kept
+/// only to test the v15 fixture; real saves always use [`crate::save`].
+pub fn encode_v15(
+    v15: &SaveDataV15,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v15).expect("serialization failed");
+    crate::assemble(15, v15.tick.0, &body, content_hash, map_id, map_hash)
 }

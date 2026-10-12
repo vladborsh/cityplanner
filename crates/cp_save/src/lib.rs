@@ -48,7 +48,7 @@ use bevy_ecs::world::World;
 use cp_building::{BuildingGrid, Demand};
 use cp_citizen::{CitizenGrid, TripBook};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
-use cp_economy::{DemandAcc, EconomyState};
+use cp_economy::{Decay, DemandAcc, EconomyState, LandGrids};
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
 use cp_terrain::TileOwnership;
@@ -59,7 +59,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 15;
+pub const FORMAT_VERSION: u32 = 16;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -96,6 +96,10 @@ pub struct SaveData {
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
+    /// Pollution, noise and land value grids. Added in v16.
+    pub land: LandGrids,
+    /// Abandonment timers. Added in v16.
+    pub decay: Decay,
 }
 
 impl SaveData {
@@ -120,6 +124,8 @@ impl SaveData {
             economy: *world.resource::<EconomyState>(),
             demand: *world.resource::<Demand>(),
             demand_acc: *world.resource::<DemandAcc>(),
+            land: world.resource::<LandGrids>().clone(),
+            decay: world.resource::<Decay>().clone(),
         }
     }
 
@@ -153,6 +159,8 @@ impl SaveData {
         world.insert_resource(self.economy);
         world.insert_resource(self.demand);
         world.insert_resource(self.demand_acc);
+        world.insert_resource(self.land);
+        world.insert_resource(self.decay);
         // The pathfinder reads the segment load last published to it (saved with the agents).
         let published = cp_traffic::CongestionMap(self.agents.load.published.clone());
         world.insert_resource(self.agents);

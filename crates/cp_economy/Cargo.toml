@@ -15,8 +15,9 @@ cp_utility.workspace = true
 cp_core.workspace = true
 cp_content.workspace = true
 cp_net.workspace = true
+cp_traffic.workspace = true
+cp_terrain.workspace = true
+cp_zone.workspace = true
 bevy_ecs.workspace = true
-serde.workspace = true
-
-[dev-dependencies]
 bevy_math.workspace = true
+serde.workspace = true

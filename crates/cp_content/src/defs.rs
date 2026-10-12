@@ -78,6 +78,63 @@ pub struct Balance {
     pub demand_shop_jobs_per_citizen: f32,
     /// Industrial job slots one commercial job slot needs goods from.
     pub demand_industry_jobs_per_shop_job: f32,
+    /// Pollution an active industrial building makes per level, at its own cell (`0..=100`
+    /// scale), fading linearly to nothing at `pollution_radius_m` (§11).
+    pub pollution_per_level: f32,
+    pub pollution_radius_m: f32,
+    /// Noise of a road at full load, fading linearly to nothing at `noise_radius_m`.
+    pub noise_per_load: f32,
+    pub noise_radius_m: f32,
+    /// Land value (`0..=100`): a base, plus up to `land_access` for a road within reach, plus
+    /// `land_water` / `land_power` for a pipe / power line within `land_utility_reach_m`,
+    /// minus pollution and noise times their weights.
+    pub land_base: f32,
+    pub land_access: f32,
+    pub land_water: f32,
+    pub land_power: f32,
+    pub land_utility_reach_m: f32,
+    pub land_pollution_weight: f32,
+    pub land_noise_weight: f32,
+    /// Land value a residential building of level 1..=5 needs.
+    pub level_res_land: [f32; 5],
+    /// Land value a commercial building of level 1..=3 needs.
+    pub level_com_land: [f32; 3],
+    /// Average education of the workers an industrial / office building of level 1..=3 needs.
+    pub level_ind_edu: [f32; 3],
+    pub level_office_edu: [f32; 3],
+    /// Level checks (one per 256 ticks) in a row that move a building one level.
+    pub level_checks: u32,
+    /// Game days of an unbroken problem (no water, power, sewage, road or path) until a
+    /// building is abandoned, and until it is demolished (counted from the first problem).
+    pub abandon_days: f32,
+    pub demolish_days: f32,
+}
+
+impl Balance {
+    /// The land value, pollution, noise, level and decay knobs (T-042) that are plain floats,
+    /// in declaration order: for validation and the content hash.
+    pub fn land_knobs(&self) -> Vec<f32> {
+        let mut v = vec![
+            self.pollution_per_level,
+            self.pollution_radius_m,
+            self.noise_per_load,
+            self.noise_radius_m,
+            self.land_base,
+            self.land_access,
+            self.land_water,
+            self.land_power,
+            self.land_utility_reach_m,
+            self.land_pollution_weight,
+            self.land_noise_weight,
+            self.abandon_days,
+            self.demolish_days,
+        ];
+        v.extend(self.level_res_land);
+        v.extend(self.level_com_land);
+        v.extend(self.level_ind_edu);
+        v.extend(self.level_office_edu);
+        v
+    }
 }
 
 impl Default for Balance {
@@ -91,6 +148,24 @@ impl Default for Balance {
             demand_adults_per_home: 2.0,
             demand_shop_jobs_per_citizen: 0.2,
             demand_industry_jobs_per_shop_job: 0.5,
+            pollution_per_level: 40.0,
+            pollution_radius_m: 150.0,
+            noise_per_load: 60.0,
+            noise_radius_m: 96.0,
+            land_base: 20.0,
+            land_access: 30.0,
+            land_water: 10.0,
+            land_power: 10.0,
+            land_utility_reach_m: 64.0,
+            land_pollution_weight: 0.6,
+            land_noise_weight: 0.4,
+            level_res_land: [0.0, 30.0, 45.0, 55.0, 65.0],
+            level_com_land: [0.0, 40.0, 55.0],
+            level_ind_edu: [0.0, 0.7, 1.5],
+            level_office_edu: [0.0, 1.5, 2.3],
+            level_checks: 3,
+            abandon_days: 7.0,
+            demolish_days: 14.0,
         }
     }
 }

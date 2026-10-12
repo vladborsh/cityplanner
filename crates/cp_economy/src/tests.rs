@@ -600,3 +600,295 @@ mod demand {
         assert_eq!(d.get(ZoneType::None), 0.0);
     }
 }
+
+// --- land grids, levels, decay ---
+
+mod city {
+    use cp_building::{BuildingFlags, BuildingGrid, BuildingState};
+    use cp_citizen::CitizenGrid;
+    use cp_content::SimContent;
+    use cp_core::Tick;
+    use cp_core::time::TICKS_PER_DAY;
+    use cp_traffic::Agents;
+    use cp_zone::ZoneGrid;
+
+    use super::*;
+    use crate::growth::{CITY_PERIOD, Decay, level_for, update_city};
+    use crate::land::{LandGrids, LandInputs};
+
+    fn extra_content() -> Arc<ContentDb> {
+        Arc::new(
+            ContentDb::from_sources(vec![
+                ("r/street.ron".into(), ROAD.into()),
+                building("house", "ResLow", "households: 4, tax_base: 40.0,", "None"),
+                building(
+                    "factory",
+                    "Industrial",
+                    "jobs: (4, 0, 0, 0), tax_base: 30.0,",
+                    "None",
+                ),
+                utility("water_pipe", "Water", 0.02),
+                utility("power_line", "Power", 0.03),
+            ])
+            .unwrap_or_else(|e| panic!("{e}")),
+        )
+    }
+
+    fn at(
+        world: &mut World,
+        db: &ContentDb,
+        def: &str,
+        state: BuildingState,
+        x: f32,
+    ) -> BuildingId {
+        let id = super::add(world, db, def, state);
+        world
+            .resource_mut::<BuildingGrid>()
+            .get_mut(id)
+            .unwrap()
+            .pos = Vec2::new(x, 640.0);
+        id
+    }
+
+    fn world() -> (World, Schedule, Arc<ContentDb>) {
+        let db = extra_content();
+        let mut w = World::new();
+        w.insert_resource(Tick(0));
+        w.insert_resource(SimContent(Arc::clone(&db)));
+        w.init_resource::<NetGraph>();
+        w.init_resource::<BuildingGrid>();
+        w.init_resource::<CitizenGrid>();
+        w.init_resource::<UtilityGraph>();
+        w.init_resource::<Agents>();
+        w.init_resource::<ZoneGrid>();
+        w.init_resource::<LandGrids>();
+        w.init_resource::<Decay>();
+        let mut s = Schedule::default();
+        s.add_systems(update_city);
+        (w, s, db)
+    }
+
+    fn grids(w: &World, db: &ContentDb, load: &cp_traffic::SegmentLoad) -> LandGrids {
+        LandGrids::compute(&LandInputs {
+            content: db,
+            buildings: w.resource::<BuildingGrid>(),
+            net: w.resource::<NetGraph>(),
+            utilities: w.resource::<UtilityGraph>(),
+            load,
+        })
+    }
+
+    #[test]
+    fn an_empty_map_is_worth_its_base_value_everywhere() {
+        let (w, _, db) = world();
+        let g = grids(&w, &db, &cp_traffic::SegmentLoad::default());
+        assert_eq!(g, LandGrids::default());
+        assert_eq!(g.value_at(Vec2::new(10.0, 10.0)), 20.0);
+        assert_eq!(g.pollution_at(Vec2::new(5000.0, 5000.0)), 0.0);
+    }
+
+    #[test]
+    fn industry_pollutes_its_surroundings_and_that_costs_land_value() {
+        let (mut w, _, db) = world();
+        // A level-1 factory at x = 640 (cell 10): 40 at its own spot, fading to 0 at 150 m.
+        at(&mut w, &db, "factory", BuildingState::Active, 640.0);
+        // One still being built, and a house, pollute nothing.
+        at(
+            &mut w,
+            &db,
+            "factory",
+            BuildingState::UnderConstruction,
+            3200.0,
+        );
+        at(&mut w, &db, "house", BuildingState::Active, 1280.0);
+        let g = grids(&w, &db, &cp_traffic::SegmentLoad::default());
+        let near = Vec2::new(640.0, 640.0);
+        let cell_centre = Vec2::new(10.5 * 64.0, 10.5 * 64.0);
+        let d = cell_centre.distance(near);
+        assert!((g.pollution_at(near) - 40.0 * (1.0 - d / 150.0)).abs() < 1e-3);
+        // 64 m away: a third of the way... still polluted, less than at the source.
+        let one_over = g.pollution_at(Vec2::new(640.0 + 64.0, 640.0));
+        assert!(one_over > 0.0 && one_over < g.pollution_at(near));
+        assert_eq!(g.pollution_at(Vec2::new(640.0 + 256.0, 640.0)), 0.0);
+        assert_eq!(
+            g.pollution_at(Vec2::new(3200.0, 640.0)),
+            0.0,
+            "under construction"
+        );
+        // Pollution weighs 0.6 on the land value: base 20 - 0.6 * pollution.
+        let p = g.pollution_at(near);
+        assert!((g.value_at(near) - (20.0 - 0.6 * p).max(0.0)).abs() < 1e-3);
+        assert_eq!(g.value_at(Vec2::new(1280.0, 640.0)), 20.0);
+    }
+
+    #[test]
+    fn roads_add_access_and_load_makes_noise() {
+        let (mut w, _, db) = world();
+        let road = db.road_id("street").unwrap();
+        let def = db.road(road).clone();
+        // A street along z = 672 (the middle of row 10 and 11), x = 640..1280.
+        let seg = w
+            .resource_mut::<NetGraph>()
+            .add_segment(
+                &def,
+                road,
+                CubicBezier3::line(Vec3::new(640.0, 0.0, 672.0), Vec3::new(1280.0, 0.0, 672.0)),
+                Elevation::Ground,
+            )
+            .unwrap();
+        let quiet = grids(&w, &db, &cp_traffic::SegmentLoad::default());
+        let on = Vec2::new(960.0, 672.0);
+        // Within 32 m of the cell centre: the full +30.
+        assert!(quiet.value_at(on) > 20.0 + 29.0, "{}", quiet.value_at(on));
+        assert_eq!(quiet.noise_at(on), 0.0);
+        assert_eq!(
+            quiet.value_at(Vec2::new(960.0, 3000.0)),
+            20.0,
+            "far from any road"
+        );
+
+        let mut ema = vec![0.0; seg.index as usize + 1];
+        ema[seg.index as usize] = 1.0;
+        let load = cp_traffic::SegmentLoad {
+            ema,
+            ..Default::default()
+        };
+        let loud = grids(&w, &db, &load);
+        let n = loud.noise_at(on);
+        assert!(n > 40.0 && n <= 60.0, "{n}");
+        assert!(loud.value_at(on) < quiet.value_at(on));
+        assert_eq!(
+            loud.noise_at(Vec2::new(960.0, 672.0 + 200.0)),
+            0.0,
+            "beyond 96 m"
+        );
+    }
+
+    #[test]
+    fn pipes_and_lines_add_to_the_land_value() {
+        let (mut w, _, db) = world();
+        {
+            let mut u = w.resource_mut::<UtilityGraph>();
+            for (net, z) in [(UtilityNet::Pipe, 100.0), (UtilityNet::Power, 3000.0)] {
+                let a = u.add_node(net, Vec3::new(960.0, 0.0, z));
+                let b = u.add_node(net, Vec3::new(1000.0, 0.0, z));
+                u.add_link(
+                    a,
+                    b,
+                    CubicBezier3::line(Vec3::new(960.0, 0.0, z), Vec3::new(1000.0, 0.0, z)),
+                )
+                .unwrap();
+            }
+        }
+        let g = grids(&w, &db, &cp_traffic::SegmentLoad::default());
+        assert_eq!(g.value_at(Vec2::new(970.0, 100.0)), 30.0, "water +10");
+        assert_eq!(g.value_at(Vec2::new(970.0, 3000.0)), 30.0, "power +10");
+    }
+
+    #[test]
+    fn levels_follow_the_thresholds() {
+        let t = [0.0, 30.0, 45.0];
+        assert_eq!(level_for(&t, -5.0), 1);
+        assert_eq!(level_for(&t, 29.9), 1);
+        assert_eq!(level_for(&t, 30.0), 2);
+        assert_eq!(level_for(&t, 100.0), 3);
+        assert_eq!(level_for(&[], 5.0), 1);
+    }
+
+    fn run_pass(w: &mut World, s: &mut Schedule, tick: u64) {
+        w.insert_resource(Tick(tick));
+        s.run(w);
+    }
+
+    /// Timeline of a building with no water: first seen at pass P, abandoned 7 days later,
+    /// demolished 14 days after P.
+    #[test]
+    fn a_building_without_water_is_abandoned_after_seven_days_and_demolished_after_fourteen() {
+        for bit in [
+            BuildingFlags::NO_WATER,
+            BuildingFlags::NO_ROAD,
+            BuildingFlags::NO_PATH,
+        ] {
+            let (mut w, mut s, db) = world();
+            let healthy = at(&mut w, &db, "house", BuildingState::Active, 100.0);
+            let sick = at(&mut w, &db, "house", BuildingState::Active, 200.0);
+            w.resource_mut::<BuildingGrid>().set_flag(sick, bit, true);
+            let p = CITY_PERIOD;
+            run_pass(&mut w, &mut s, p);
+            assert_eq!(w.resource::<Decay>().since.get(&sick), Some(&Tick(p)));
+            assert!(!w.resource::<Decay>().since.contains_key(&healthy));
+            let state = |w: &World, id| w.resource::<BuildingGrid>().get(id).map(|b| b.state);
+
+            let week = 7 * TICKS_PER_DAY;
+            run_pass(&mut w, &mut s, p + week - CITY_PERIOD);
+            assert_eq!(state(&w, sick), Some(BuildingState::Active), "6.94 days");
+            run_pass(&mut w, &mut s, p + week);
+            assert_eq!(state(&w, sick), Some(BuildingState::Abandoned), "7 days");
+            run_pass(&mut w, &mut s, p + 2 * week - CITY_PERIOD);
+            assert_eq!(
+                state(&w, sick),
+                Some(BuildingState::Abandoned),
+                "13.94 days"
+            );
+            run_pass(&mut w, &mut s, p + 2 * week);
+            assert_eq!(state(&w, sick), None, "14 days: demolished");
+            assert_eq!(state(&w, healthy), Some(BuildingState::Active));
+            assert!(w.resource::<Decay>().since.is_empty());
+            // The id went to the removed list, which purges people and agents next tick.
+            assert_eq!(w.resource::<BuildingGrid>().removed(), [sick]);
+        }
+    }
+
+    #[test]
+    fn trouble_that_goes_away_resets_the_timer_and_revives_an_abandoned_building() {
+        let (mut w, mut s, db) = world();
+        let id = at(&mut w, &db, "house", BuildingState::Active, 100.0);
+        w.resource_mut::<BuildingGrid>()
+            .set_flag(id, BuildingFlags::NO_WATER, true);
+        let p = CITY_PERIOD;
+        run_pass(&mut w, &mut s, p);
+        // Fixed on day 6: the timer is gone ...
+        w.resource_mut::<BuildingGrid>()
+            .set_flag(id, BuildingFlags::NO_WATER, false);
+        run_pass(&mut w, &mut s, p + 6 * TICKS_PER_DAY);
+        assert!(w.resource::<Decay>().since.is_empty());
+        // ... and a new trouble starts a fresh week.
+        w.resource_mut::<BuildingGrid>()
+            .set_flag(id, BuildingFlags::NO_WATER, true);
+        let q = p + 7 * TICKS_PER_DAY;
+        run_pass(&mut w, &mut s, q);
+        run_pass(&mut w, &mut s, q + 6 * TICKS_PER_DAY);
+        let grid = w.resource::<BuildingGrid>();
+        assert_eq!(grid.get(id).unwrap().state, BuildingState::Active);
+        // Abandoned, then the water comes back on day 10: the building lives again.
+        run_pass(&mut w, &mut s, q + 7 * TICKS_PER_DAY);
+        assert_eq!(
+            w.resource::<BuildingGrid>().get(id).unwrap().state,
+            BuildingState::Abandoned
+        );
+        w.resource_mut::<BuildingGrid>()
+            .set_flag(id, BuildingFlags::NO_WATER, false);
+        run_pass(&mut w, &mut s, q + 10 * TICKS_PER_DAY);
+        assert_eq!(
+            w.resource::<BuildingGrid>().get(id).unwrap().state,
+            BuildingState::Active
+        );
+        assert!(w.resource::<Decay>().since.is_empty());
+    }
+
+    #[test]
+    fn nothing_decays_while_the_hook_is_off_or_between_passes() {
+        let (mut w, mut s, db) = world();
+        let id = at(&mut w, &db, "house", BuildingState::Active, 100.0);
+        w.resource_mut::<BuildingGrid>()
+            .set_flag(id, BuildingFlags::NO_WATER, true);
+        run_pass(&mut w, &mut s, CITY_PERIOD + 1);
+        assert!(w.resource::<Decay>().since.is_empty(), "not a pass tick");
+        *w.resource_mut::<Decay>() = Decay::disabled();
+        run_pass(&mut w, &mut s, 100 * TICKS_PER_DAY);
+        assert_eq!(
+            w.resource::<BuildingGrid>().get(id).unwrap().state,
+            BuildingState::Active
+        );
+    }
+}

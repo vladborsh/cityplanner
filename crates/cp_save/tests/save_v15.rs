@@ -74,7 +74,6 @@ fn v14_fixture_migrates_with_the_demand_of_a_new_city_and_round_trips() {
     // Re-saved at the current version it round-trips byte for byte.
     let v15 = save_with_map(&l.data, h.content_hash, &h.map_id, h.map_hash).unwrap();
     assert_eq!(read_header(&v15).unwrap().0.format_version, FORMAT_VERSION);
-    assert_eq!(FORMAT_VERSION, 15);
     let l2 = load(&v15, h.content_hash).unwrap();
     assert_eq!(l2.data, l.data);
     assert_eq!(

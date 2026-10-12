@@ -114,7 +114,7 @@ fn spawnable(db: &ContentDb, zone: ZoneType) -> Vec<BuildingDefId> {
 }
 
 /// World position, yaw and access point of a lot.
-pub(crate) fn place(
+pub fn place(
     grid: &ZoneGrid,
     net: &NetGraph,
     block_id: ZoneBlockId,

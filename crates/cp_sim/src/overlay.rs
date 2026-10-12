@@ -51,6 +51,9 @@ pub struct OverlayData {
     pub pollution: Option<Arc<ScalarGrid>>,
 }
 
+/// `(land grids revision, land value, pollution)` of the last snapshot.
+pub(crate) type LandCache = Option<(u64, Arc<ScalarGrid>, Arc<ScalarGrid>)>;
+
 /// `(zone grid revision, overlay)` of the last snapshot.
 pub(crate) type ZoneCache = Option<(u64, Arc<ZoneOverlay>)>;
 

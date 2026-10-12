@@ -2406,6 +2406,7 @@ dependencies = [
  "cp_building",
  "cp_content",
  "cp_core",
+ "cp_economy",
  "cp_net",
  "cp_prof",
  "cp_render",
@@ -2515,7 +2516,10 @@ dependencies = [
  "cp_content",
  "cp_core",
  "cp_net",
+ "cp_terrain",
+ "cp_traffic",
  "cp_utility",
+ "cp_zone",
  "serde",
 ]
 

@@ -3,6 +3,7 @@
 
 pub mod command;
 pub mod grid;
+pub mod level;
 pub mod model;
 pub mod spawn;
 
@@ -10,10 +11,11 @@ pub use command::{
     BuildingCommand, BuildingError, PlacementPlan, apply, oriented_lot, validate_placement,
 };
 pub use grid::{BuildingGrid, cells_under_lot, demolish_building, held_cells};
+pub use level::{rebuild, rebuild_candidate};
 pub use model::{
     AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Lot, build_ticks,
 };
-pub use spawn::{BLOCK_BUCKETS, DEMAND_PERIOD, Demand, SPAWN_STREAM, update_buildings};
+pub use spawn::{BLOCK_BUCKETS, DEMAND_PERIOD, Demand, SPAWN_STREAM, place, update_buildings};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_building";

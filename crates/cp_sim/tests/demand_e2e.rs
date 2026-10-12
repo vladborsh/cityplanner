@@ -25,6 +25,8 @@ fn lattice(lines: usize, kinds: &[ZoneType]) -> SimRunner {
     let mut sim = SimRunner::new(7);
     sim.set_content(Arc::clone(&content));
     sim.world_mut().insert_resource(TileOwnership::only((2, 2)));
+    // No water or power lines in these scenarios: growth, not decay, is under test.
+    *sim.world_mut().resource_mut::<cp_economy::Decay>() = cp_economy::Decay::disabled();
     {
         let mut g = sim.world_mut().resource_mut::<NetGraph>();
         let p = |x: f32, z: f32| Vec3::new(2000.0 + x, 0.0, 2000.0 + z);

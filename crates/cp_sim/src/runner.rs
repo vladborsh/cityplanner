@@ -56,6 +56,8 @@ pub struct SimRunner {
     pub(crate) utilities_cache: std::sync::Mutex<crate::view::UtilitiesCache>,
     /// `SimView::agents` cache, keyed by the tick.
     pub(crate) agents_cache: std::sync::Mutex<crate::view::AgentCache>,
+    /// `SimView::overlays` land value and pollution, keyed by the grids' revision.
+    pub(crate) land_cache: std::sync::Mutex<crate::overlay::LandCache>,
 }
 
 fn multiplier(speed: SimSpeed) -> u128 {
@@ -104,6 +106,8 @@ impl SimRunner {
         world.init_resource::<cp_core::Treasury>();
         world.init_resource::<cp_economy::EconomyState>();
         world.init_resource::<cp_economy::DemandAcc>();
+        world.init_resource::<cp_economy::LandGrids>();
+        world.init_resource::<cp_economy::Decay>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
@@ -183,6 +187,7 @@ impl SimRunner {
         schedule.add_systems(cp_utility::update_supply.in_set(SimPhase::Utilities));
         schedule.add_systems(cp_economy::settle_week.in_set(SimPhase::Economy));
         schedule.add_systems(cp_economy::update_demand.in_set(SimPhase::Economy));
+        schedule.add_systems(cp_economy::update_city.in_set(SimPhase::Economy));
         schedule.add_systems(cp_citizen::update_citizens.in_set(SimPhase::Citizens));
         // Path snapshot after the junction links it is built from; results are applied in
         // the Paths phase (system-design §2: requests from tick t land exactly at t + 8).
@@ -220,6 +225,7 @@ impl SimRunner {
             zone_grid_cache: Default::default(),
             utilities_cache: Default::default(),
             agents_cache: Default::default(),
+            land_cache: Default::default(),
         }
     }
 

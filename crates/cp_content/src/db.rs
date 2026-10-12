@@ -274,6 +274,22 @@ impl ContentDb {
                 }
             }
         }
+        if let Some((path, b)) = balances.first() {
+            if b.land_knobs().iter().any(|v| !v.is_finite() || *v < 0.0) {
+                errors.push(ContentError::new(
+                    path,
+                    Some("pollution_*, noise_*, land_*, level_*, abandon_days, demolish_days"),
+                    "must be finite and >= 0".to_string(),
+                ));
+            }
+            if b.level_checks == 0 {
+                errors.push(ContentError::new(
+                    path,
+                    Some("level_checks"),
+                    "must be >= 1".to_string(),
+                ));
+            }
+        }
         if !errors.is_empty() {
             return Err(ContentErrors(errors));
         }
@@ -300,6 +316,16 @@ impl ContentDb {
                 ]);
             for v in demand {
                 fnv1a(&mut hash, &v.to_bits().to_le_bytes());
+            }
+            // The T-042 knobs only count when they differ from the defaults, so content that
+            // does not touch them keeps the hash (and the saves) it had before they existed.
+            let defaults = Balance::default();
+            if b.land_knobs() != defaults.land_knobs() || b.level_checks != defaults.level_checks {
+                fnv1a(&mut hash, b"land");
+                for v in b.land_knobs() {
+                    fnv1a(&mut hash, &v.to_bits().to_le_bytes());
+                }
+                fnv1a(&mut hash, &b.level_checks.to_le_bytes());
             }
         }
         Ok(Self {
