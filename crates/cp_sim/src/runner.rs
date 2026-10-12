@@ -58,6 +58,8 @@ pub struct SimRunner {
     pub(crate) agents_cache: std::sync::Mutex<crate::view::AgentCache>,
     /// `SimView::overlays` land value and pollution, keyed by the grids' revision.
     pub(crate) land_cache: std::sync::Mutex<crate::overlay::LandCache>,
+    /// `SimView::city` cache, keyed by `CityStats::generation`.
+    pub(crate) city_cache: std::sync::Mutex<crate::view::CityCache>,
 }
 
 fn multiplier(speed: SimSpeed) -> u128 {
@@ -209,6 +211,13 @@ impl SimRunner {
                 .in_set(SimPhase::Agents),
         );
         schedule.add_systems(cp_traffic::update_traffic_load.in_set(SimPhase::Stats));
+        // Derived summary for the UI: after the load statistics it reads, never read by the sim.
+        world.init_resource::<crate::stats::CityStats>();
+        schedule.add_systems(
+            crate::stats::update_city_stats
+                .in_set(SimPhase::Stats)
+                .after(cp_traffic::update_traffic_load),
+        );
         schedule.add_systems(
             cp_citizen::update_routine
                 .in_set(SimPhase::Citizens)
@@ -226,6 +235,7 @@ impl SimRunner {
             utilities_cache: Default::default(),
             agents_cache: Default::default(),
             land_cache: Default::default(),
+            city_cache: Default::default(),
         }
     }
 

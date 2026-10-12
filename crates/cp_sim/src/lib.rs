@@ -8,6 +8,7 @@ pub mod phase;
 pub mod plugin;
 pub mod runner;
 pub mod scenario;
+pub mod stats;
 pub mod view;
 
 pub use checksum::{Fnv1a, SimChecksum};
@@ -21,6 +22,7 @@ pub use overlay::{OverlayData, ScalarGrid, ZoneCellView, ZoneOverlay};
 pub use phase::SimPhase;
 pub use plugin::{SimBuilder, SimPlugin};
 pub use runner::{MAX_TICKS_PER_STEP, SimRunner, run_headless, run_headless_with};
+pub use stats::CityStats;
 pub use view::{AgentSnapshot, ArenaFill, ArenaGauges, SimStats, SimTerrain, SimView};
 
 /// Crate name, used by the skeleton smoke test.

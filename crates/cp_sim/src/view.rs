@@ -101,6 +101,9 @@ pub struct SimView {
     pub treasury: cp_core::Treasury,
     /// Tax rates, budget percentages and the last settled week, read-only (budget window).
     pub economy: cp_economy::EconomyState,
+    /// The city summary for the panels, recomputed every 64 ticks (§13.6). Shared: re-cloned
+    /// only when it was recomputed.
+    pub city: Arc<crate::stats::CityStats>,
 }
 
 /// Agent poses of two consecutive snapshots. `prev` is the frame of the previous published
@@ -115,6 +118,9 @@ pub struct AgentSnapshot {
 
 /// Last `SimView::agents`.
 pub(crate) type AgentCache = Option<Arc<AgentSnapshot>>;
+
+/// `(generation, snapshot)` of the last `SimView::city`.
+pub(crate) type CityCache = Option<(u64, Arc<crate::stats::CityStats>)>;
 
 /// `(zone revision, snapshot)` of the last `SimView::zones`.
 pub(crate) type ZoneCache = Option<(u64, Arc<cp_zone::ZoneGrid>)>;
@@ -337,8 +343,24 @@ impl SimRunner {
             treasury: *self.world().resource::<cp_core::Treasury>(),
             economy: *self.world().resource::<cp_economy::EconomyState>(),
             utilities: self.utilities_snapshot(),
+            city: self.city_snapshot(),
             junctions,
         }
+    }
+
+    fn city_snapshot(&self) -> Arc<crate::stats::CityStats> {
+        let Some(c) = self.world().get_resource::<crate::stats::CityStats>() else {
+            return Arc::default();
+        };
+        let mut cache = self.city_cache.lock().expect("city cache");
+        if let Some((g, snap)) = cache.as_ref()
+            && *g == c.generation
+        {
+            return Arc::clone(snap);
+        }
+        let snap = Arc::new(c.clone());
+        *cache = Some((c.generation, Arc::clone(&snap)));
+        snap
     }
 
     fn stats(&self) -> SimStats {
