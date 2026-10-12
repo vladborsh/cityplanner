@@ -555,3 +555,100 @@ fn multilane_lattices_have_a_path_between_every_pair_and_cars_arrive() {
         );
     }
 }
+
+/// Closest centre-to-centre distance (m) between two cars in *different* places that share a
+/// source lane: one on the lane and one in a connection leaving it, or both in different
+/// connections leaving it. Cars in one place are ordered by `s` (`check_invariants`); their
+/// centre distance on a tight curve is a chord, shorter than the arc. `None` if no pair exists.
+fn min_shared_lane_distance(rig: &Rig) -> Option<f32> {
+    let net = rig.sim.world.resource::<cp_net::NetGraph>();
+    let geo = rig.sim.world.resource::<cp_net::JunctionGeometry>();
+    let pos = |id: VehicleId| {
+        let v = rig.veh.get(id)?;
+        crate::pose::vehicle_pose(v, &rig.graph, net, geo).map(|(p, _)| p)
+    };
+    let mut best: Option<f32> = None;
+    for slot in 0..rig.st.lanes.len() as u32 {
+        // The lane itself, then each connection leaving it.
+        let mut places: Vec<&Vec<VehicleId>> = vec![&rig.st.lanes[slot as usize]];
+        places.extend(
+            rig.st
+                .conns
+                .iter()
+                .filter(|((f, _), _)| *f == slot)
+                .map(|(_, l)| l),
+        );
+        for (i, pa) in places.iter().enumerate() {
+            for pb in &places[i + 1..] {
+                for &a in pa.iter() {
+                    for &b in pb.iter() {
+                        if let (Some(p), Some(q)) = (pos(a), pos(b)) {
+                            let d = p.distance(q);
+                            best = Some(best.map_or(d, |m| m.min(d)));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    best
+}
+
+/// BUG-020: after a lane hop cars keep a car length between centres, also towards cars that
+/// have just left the target lane into a junction connection.
+#[test]
+fn cars_sharing_a_lane_or_its_connections_never_close_to_a_car_length() {
+    let mut worst = f32::MAX;
+    for seed in [5u64, 7] {
+        let (s, segs) = lattice_of(Some("medium_4l"), 5);
+        let mut rig = Rig::new(s);
+        let mut rng = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let mut next = |n: usize| {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            (rng >> 11) as usize % n
+        };
+        let mut trips = 0;
+        while trips < 300 {
+            let (a, b) = (segs[next(segs.len())], segs[next(segs.len())]);
+            if a == b {
+                continue;
+            }
+            let side = |k: usize| {
+                if k.is_multiple_of(2) {
+                    Side::Right
+                } else {
+                    Side::Left
+                }
+            };
+            let from = acc(a, 8.0 + next(70) as f32, side(next(2)));
+            let to = acc(b, 8.0 + next(70) as f32, side(next(2)));
+            if find_car_path(&rig.graph, &CongestionMap::default(), &from, &to).is_ok() {
+                rig.add(from, to);
+                trips += 1;
+            }
+        }
+        let mut closest = f32::MAX;
+        for t in 0..cp_core::time::TICKS_PER_DAY {
+            rig.tick(t, None, STUCK_TICKS);
+            rig.check_invariants();
+            if let Some(d) = min_shared_lane_distance(&rig) {
+                closest = closest.min(d);
+            }
+            if rig.veh.is_empty() {
+                break;
+            }
+        }
+        println!(
+            "seed {seed}: closest {closest:.2} m, arrived {} stuck {} invalid {}",
+            rig.arrived, rig.stuck, rig.invalid
+        );
+        assert_eq!(rig.stuck + rig.invalid, 0, "seed {seed}: cars were removed");
+        worst = worst.min(closest);
+    }
+    assert!(
+        worst > CAR_LENGTH,
+        "two cars sharing a lane came {worst:.2} m apart"
+    );
+}

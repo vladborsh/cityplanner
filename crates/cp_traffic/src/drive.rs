@@ -22,6 +22,11 @@
 //! neighbouring lanes of one segment is a lateral hop: before each substep a car whose next
 //! step is a hop moves to the target lane at the same `s` when that lane has room there
 //! (no car within a car length plus the standstill gap), else it keeps driving and retries.
+//! Cars that have just left the target lane into a junction connection are not in its list but
+//! still cover its stop line, so they count as well ([`hop_blockers`], BUG-020): a hopper at the
+//! stop line would otherwise enter another connection of the lane on top of them. A car whose
+//! next connection leaves a lane that a sibling connection's car has not yet cleared waits
+//! (`gate_open`). A hop held shut only by moving cars is not a suspicious wait.
 //!
 //! **Following** is a Krauss-style safe speed behind the leader: the next vehicle on the
 //! place, else the rear-most vehicle of the connection / next lane (when the junction gate
@@ -86,6 +91,38 @@ pub(crate) fn is_lane_change(g: &PathGraph, from: LaneId, to: LaneId) -> bool {
     }
 }
 
+/// Cars that keep a hop to lane `to` at position `s` shut: cars of that lane within a car length
+/// plus the gap, and cars that have just left it into a junction connection and still cover its
+/// stop line.
+fn hop_blockers<'a>(
+    g: &PathGraph,
+    veh: &'a Arena<Vehicle>,
+    st: &DriveState,
+    to: LaneId,
+    s: f32,
+) -> Vec<&'a Vehicle> {
+    let (Some(ts), Some(t)) = (
+        g.car_slot(to),
+        g.car_slot(to).and_then(|sl| g.car[sl as usize].as_ref()),
+    ) else {
+        return Vec::new();
+    };
+    let s = s.clamp(t.s_in, t.s_out);
+    let mut out: Vec<&Vehicle> = st.lanes[ts as usize]
+        .iter()
+        .filter_map(|&o| veh.get(o))
+        .filter(|o| (o.s - s).abs() < CAR_LENGTH + MIN_GAP)
+        .collect();
+    out.extend(
+        st.conns
+            .range((ts, 0)..=(ts, u32::MAX))
+            .flat_map(|(_, l)| l.iter())
+            .filter_map(|&o| veh.get(o))
+            .filter(|o| t.s_out + o.s - CAR_LENGTH < s + MIN_GAP),
+    );
+    out
+}
+
 /// Performs the lateral hops that have room, in lane-slot then queue order (deterministic).
 fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGraph) {
     for slot in 0..st.lanes.len() {
@@ -106,12 +143,7 @@ fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGrap
                 };
                 let t = g.car[ts as usize].as_ref().expect("lane");
                 let s = v.s.clamp(t.s_in, t.s_out);
-                let clear = st.lanes[ts as usize].iter().all(|&o| {
-                    vehicles
-                        .get(o)
-                        .is_none_or(|o| (o.s - s).abs() >= CAR_LENGTH + MIN_GAP)
-                });
-                if !clear {
+                if !hop_blockers(g, vehicles, st, to, s).is_empty() {
                     break;
                 }
                 st.lanes[fs as usize].retain(|w| *w != id);
@@ -327,6 +359,19 @@ fn gate_open(
                 }
             }
             Signal::Red => return false,
+        }
+    }
+    // A car that left this lane into another connection a moment ago is still on the same spot:
+    // wait until its rear has cleared the stop line by the standstill gap.
+    if let Some(from_slot) = g.car_slot(v.lane()) {
+        let sibling_in_the_way = st
+            .conns
+            .range((from_slot, 0)..=(from_slot, u32::MAX))
+            .filter(|((_, to), _)| *to != ex.to_slot)
+            .flat_map(|(_, l)| l.iter())
+            .any(|&o| veh.get(o).is_some_and(|o| o.s - CAR_LENGTH < MIN_GAP));
+        if sibling_in_the_way {
+            return false;
         }
     }
     for c in &ex.conflicts {
@@ -551,8 +596,12 @@ fn front_suspicious(
         return false;
     };
     let Some(ex) = find_exit(g, node.id, to) else {
-        // Held at the stop line by a lane change that finds no gap.
-        return is_lane_change(g, node.id, to);
+        // Held at the stop line by a lane change that finds no gap: only a gap kept shut by
+        // cars that stand is suspicious; cars that are moving will clear it.
+        return is_lane_change(g, node.id, to)
+            && hop_blockers(g, veh, st, to, node.s_out)
+                .into_iter()
+                .any(|o| o.speed < 0.1);
     };
     if gate_open(g, veh, st, signal, v, ex, node.s_out) {
         return false;

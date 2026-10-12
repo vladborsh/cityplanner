@@ -51,7 +51,7 @@ fn yaw_of(d: Vec3) -> f32 {
 }
 
 /// Pose `(centre, yaw)` of a vehicle, or `None` for one not yet on the road / off the network.
-fn vehicle_pose(
+pub(crate) fn vehicle_pose(
     v: &Vehicle,
     graph: &PathGraph,
     net: &NetGraph,
