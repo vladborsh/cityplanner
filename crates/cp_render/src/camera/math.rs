@@ -56,6 +56,12 @@ pub fn clamp_tilt(pitch: f32) -> f32 {
     pitch.clamp(MIN_TILT, MAX_TILT)
 }
 
+/// Pitch after holding the tilt keys for `dt` seconds: `dir` is +1 for R (towards top-down),
+/// -1 for F (towards the horizon), 0 for none; `speed` in rad/s. Clamped to the tilt limits.
+pub fn key_tilt(pitch: f32, dir: i32, speed: f32, dt: f32) -> f32 {
+    clamp_tilt(pitch + dir as f32 * speed * dt)
+}
+
 /// Highest terrain within ~60 m of `p` (sampled on two rings), so the camera does not
 /// clip into a hill beside it. 0 without a terrain.
 pub fn terrain_peak_near(terrain: Option<&Terrain>, p: Vec2) -> f32 {
@@ -190,6 +196,26 @@ mod tests {
             external_connections: vec![],
         };
         Terrain::from_samples(meta, &hs, &vec![0; GRID * GRID]).unwrap()
+    }
+
+    #[test]
+    fn r_raises_and_f_lowers_the_tilt_within_limits() {
+        let deg = std::f32::consts::PI / 180.0;
+        let start = 45.0 * deg;
+        // 1 s at 1 rad/s is 57.3 deg: R from 45 deg would reach 102 deg, so it stops at 89.
+        assert_eq!(key_tilt(start, 1, 1.0, 1.0), MAX_TILT);
+        // F mirrors it: 45 - 57.3 < 15.
+        assert_eq!(key_tilt(start, -1, 1.0, 1.0), MIN_TILT);
+        // Below the limits it is plain integration: 0.2 s of R = +11.46 deg.
+        assert!((key_tilt(start, 1, 1.0, 0.2) - (start + 0.2)).abs() < 1e-6);
+        assert!((key_tilt(start, -1, 1.0, 0.2) - (start - 0.2)).abs() < 1e-6);
+        // No key: unchanged. 1 s in 60 frames reaches the same clamp.
+        assert_eq!(key_tilt(start, 0, 1.0, 1.0), start);
+        let mut p = start;
+        for _ in 0..60 {
+            p = key_tilt(p, 1, 1.0, 1.0 / 60.0);
+        }
+        assert_eq!(p, MAX_TILT);
     }
 
     #[test]

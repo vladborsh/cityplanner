@@ -1,10 +1,16 @@
 //! RTS orbit camera. See `architecture/system-design.md` §13.2.
 //!
 //! Controls: pan with WASD, screen edge or middle-button drag; rotate with Q/E or
-//! right-button drag (horizontal = yaw, vertical = tilt); mouse wheel zooms towards the
+//! right-button drag (horizontal = yaw, vertical = tilt); R raises / F lowers the tilt
+//! angle (towards top-down / towards the horizon); mouse wheel zooms towards the
 //! point under the cursor. Input moves a *target* rig; the shown rig eases to it, and
 //! panning/rotation keep their momentum (inertia). All limits live in [`math`].
 //! Reads only [`SimView`] (terrain, owned tiles).
+//!
+//! Manual checklist (T-012, extended by T-073): WASD / edge / middle-drag pan; Q/E and
+//! right-drag rotate; wheel zooms to the cursor; right-drag up/down tilts; **hold R: the
+//! view tilts up towards top-down and stops at 89°; hold F: it tilts down and stops at
+//! 15°; release: it eases to rest**; limits hold at the map bounds and terrain.
 
 pub mod math;
 
@@ -27,6 +33,8 @@ pub struct CameraSettings {
     pub edge_margin: f32,
     /// Rotation speed of Q/E, rad/s.
     pub key_rotate_speed: f32,
+    /// Tilt speed of R (raise) / F (lower), rad/s.
+    pub key_tilt_speed: f32,
     /// Right-drag yaw/tilt, rad per pixel.
     pub drag_rotate_sens: f32,
     /// Middle-drag pan multiplier (1 = the ground follows the cursor).
@@ -48,6 +56,7 @@ impl Default for CameraSettings {
             edge_pan: true,
             edge_margin: 6.0,
             key_rotate_speed: 1.4,
+            key_tilt_speed: 1.0,
             drag_rotate_sens: 0.005,
             drag_pan_sens: 1.0,
             zoom_step: 0.85,
@@ -180,6 +189,8 @@ fn rts_camera(
         }
 
         // --- rotate / tilt ---
+        let tilt_dir = keys.pressed(KeyCode::KeyR) as i32 - keys.pressed(KeyCode::KeyF) as i32;
+        rts.target.pitch = math::key_tilt(rts.target.pitch, tilt_dir, settings.key_tilt_speed, dt);
         let key_dir = keys.pressed(KeyCode::KeyQ) as i32 - keys.pressed(KeyCode::KeyE) as i32;
         if buttons.pressed(MouseButton::Right) {
             let d = motion.delta;

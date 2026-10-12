@@ -33,7 +33,7 @@ pub enum ActiveTool {
     Bulldozer,
     /// Zoning: fill block, brushes, rectangle, eraser.
     Zone,
-    /// Placing a service building (type chosen in the Services tab, R rotates).
+    /// Placing a service building (type chosen in the Services tab, T rotates).
     Place,
     /// Drawing pipes or power lines (Water / Power tabs).
     Utility,
@@ -154,7 +154,7 @@ fn tool_hotkeys(
         state.utility_key = None;
         outbox.push(state.utility.command(path));
     }
-    if state.active == ActiveTool::Place && keys.just_pressed(KeyCode::KeyR) {
+    if state.active == ActiveTool::Place && keys.just_pressed(KeyCode::KeyT) {
         state.building.rotate();
     }
     if keys.just_pressed(KeyCode::Escape) {

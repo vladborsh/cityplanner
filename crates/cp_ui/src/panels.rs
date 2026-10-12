@@ -182,7 +182,7 @@ pub fn bottom_bar(
 }
 
 /// The Services tab: the placeable service buildings of the content, the bulldozer, and the
-/// placement ghost's verdict. R rotates the building.
+/// placement ghost's verdict. T rotates the building.
 pub fn services_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
     ui.horizontal(|ui| {
         if let Some(content) = view.and_then(|v| v.content.as_deref()) {
@@ -218,7 +218,7 @@ pub fn services_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut Too
                 );
             }
             None => {
-                ui.weak("Hover a spot beside a road. R rotates, Esc leaves the tool.");
+                ui.weak("Hover a spot beside a road. T rotates, Esc leaves the tool.");
             }
         }
     }

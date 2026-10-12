@@ -10,7 +10,7 @@ python3 -m http.server -d dist/web 8080                      # open http://local
 ```
 
 URL parameters: `?map=flatlands|river_valley`, `?hour=0..24`, `?cam=overview|ground|valley`.
-Controls (RTS camera): WASD / middle-drag pan, Q/E or right-drag rotate, wheel zoom.
+Controls (RTS camera): WASD / middle-drag pan, Q/E or right-drag rotate, R/F tilt up/down, wheel zoom (T rotates a building being placed).
 
 The egui UI works in the browser thanks to the vendored `bevy_egui` patch
 (`vendor/bevy_egui/PATCH.md`).
