@@ -26,10 +26,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_math::{Vec2, Vec3};
-use cp_building::{Building, BuildingGrid, BuildingId, BuildingState};
+use cp_building::{Building, BuildingGrid, BuildingId, BuildingState, build_ticks};
 use cp_content::{BuildingDef, ContentDb, RoofKind, ZoneType};
 use cp_core::Tick;
-use cp_core::time::TICKS_PER_DAY;
 use cp_net::NetGraph;
 use cp_terrain::Terrain;
 use cp_zone::CELL_SIZE;
@@ -222,9 +221,10 @@ fn hash2(seed: u32, a: u32, b: u32) -> u32 {
     h
 }
 
-/// Construction stage `0..STAGES` of an `UnderConstruction` building at `tick`.
-pub fn construction_stage(b: &Building, tick: Tick) -> u8 {
-    let left = b.ready_at.0.saturating_sub(tick.0) as f32 / TICKS_PER_DAY as f32;
+/// Construction stage `0..STAGES` of an `UnderConstruction` building at `tick`;
+/// `total` is its whole construction time in ticks (`cp_building::build_ticks`).
+pub fn construction_stage(b: &Building, total: u64, tick: Tick) -> u8 {
+    let left = b.ready_at.0.saturating_sub(tick.0) as f32 / total.max(1) as f32;
     let progress = (1.0 - left).clamp(0.0, 0.999);
     (progress * f32::from(STAGES)) as u8
 }
@@ -762,7 +762,7 @@ pub fn build_building(
             );
         }
         if b.state == BuildingState::UnderConstruction {
-            let stage = construction_stage(b, tick);
+            let stage = construction_stage(b, build_ticks(def), tick);
             let core_h = height * f32::from(stage + 1) / f32::from(STAGES);
             let slab = [0.55, 0.55, 0.53, 1.0];
             solid_box(m, &cx, base, base + core_h, [0.62, 0.62, 0.60, 1.0], slab);
@@ -820,7 +820,7 @@ fn mix(h: &mut u64, v: u32) {
 }
 
 /// Hash of everything a building's mesh depends on (except static terrain).
-pub fn building_stamp(b: &Building, tick: Tick) -> u64 {
+pub fn building_stamp(b: &Building, total: u64, tick: Tick) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     mix(&mut h, b.def.index() as u32);
     mix(&mut h, u32::from(b.level));
@@ -831,7 +831,7 @@ pub fn building_stamp(b: &Building, tick: Tick) -> u64 {
     mix(&mut h, u32::from(b.lot.w) | u32::from(b.lot.d) << 8);
     mix(&mut h, b.access.t.to_bits());
     if b.state == BuildingState::UnderConstruction {
-        mix(&mut h, u32::from(construction_stage(b, tick)));
+        mix(&mut h, u32::from(construction_stage(b, total, tick)));
     }
     h
 }
@@ -905,11 +905,11 @@ impl BuildingSet {
             up.removed += 1;
         }
         for (id, b) in grid.iter() {
-            let stamp = building_stamp(b, tick);
-            if self.pieces.get(&id).is_some_and(|e| e.stamp == stamp) {
+            if b.def.index() >= db.buildings().count() {
                 continue;
             }
-            if b.def.index() >= db.buildings().count() {
+            let stamp = building_stamp(b, build_ticks(db.building(b.def)), tick);
+            if self.pieces.get(&id).is_some_and(|e| e.stamp == stamp) {
                 continue;
             }
             let piece = build_building(id, b, db.building(b.def), net, terrain, tick);

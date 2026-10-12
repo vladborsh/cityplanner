@@ -154,32 +154,27 @@ fn winding_matches_normals_for_every_state() {
 fn construction_grows_through_four_stages() {
     let e = env();
     let (def_id, def) = e.db.buildings().find(|(_, d)| d.style.floors >= 4).unwrap();
-    let ready = TICKS_PER_DAY;
+    let ready = build_ticks(def);
     let b = building(def_id, &e.db, BuildingState::UnderConstruction, ready);
     let stages: Vec<u8> = [
         0,
-        TICKS_PER_DAY / 4 + 1,
-        TICKS_PER_DAY / 2 + 1,
-        TICKS_PER_DAY * 3 / 4 + 1,
-        TICKS_PER_DAY - 1,
+        ready / 4 + 1,
+        ready / 2 + 1,
+        ready * 3 / 4 + 1,
+        ready - 1,
     ]
     .iter()
-    .map(|&t| construction_stage(&b, Tick(t)))
+    .map(|&t| construction_stage(&b, ready, Tick(t)))
     .collect();
     assert_eq!(stages, [0, 1, 2, 3, 3]);
     let height = |tick: u64| {
         let p = build_building(id(1), &b, def, &e.net, &e.terrain, Tick(tick));
         extent(&p.far).1.y
     };
-    let hs: Vec<f32> = [
-        0,
-        TICKS_PER_DAY / 4 + 1,
-        TICKS_PER_DAY / 2 + 1,
-        TICKS_PER_DAY * 3 / 4 + 1,
-    ]
-    .iter()
-    .map(|&t| height(t))
-    .collect();
+    let hs: Vec<f32> = [0, ready / 4 + 1, ready / 2 + 1, ready * 3 / 4 + 1]
+        .iter()
+        .map(|&t| height(t))
+        .collect();
     assert!(hs.windows(2).all(|w| w[1] > w[0] + 0.5), "{hs:?}");
     // Near shows scaffolding (many more triangles than the plain core).
     let p = build_building(id(1), &b, def, &e.net, &e.terrain, Tick(0));
@@ -322,7 +317,7 @@ fn construction_stage_changes_trigger_a_rebuild_only_at_stage_boundaries() {
         def,
         &e.db,
         BuildingState::UnderConstruction,
-        TICKS_PER_DAY,
+        build_ticks(e.db.building(def)),
     ));
     let mut set = BuildingSet::default();
     assert_eq!(
@@ -344,9 +339,32 @@ fn construction_stage_changes_trigger_a_rebuild_only_at_stage_boundaries() {
             &e.net,
             &e.db,
             &e.terrain,
-            Tick(TICKS_PER_DAY / 4 + 1)
+            Tick(build_ticks(e.db.building(def)) / 4 + 1)
         )
         .rebuilt,
         1
     );
+}
+
+#[test]
+fn construction_stage_spans_the_buildings_own_duration() {
+    let e = env();
+    let (def_id, _) = e.db.buildings().next().unwrap();
+    // A 2 h and a 6 h building: stage 0 right after spawn, the last stage just before ready_at.
+    for hours in [2.0f32, 6.0] {
+        let total = (hours * cp_core::time::TICKS_PER_HOUR).round() as u64;
+        let spawn = 1000;
+        let b = building(
+            def_id,
+            &e.db,
+            BuildingState::UnderConstruction,
+            spawn + total,
+        );
+        assert_eq!(construction_stage(&b, total, Tick(spawn)), 0);
+        assert_eq!(construction_stage(&b, total, Tick(spawn + 1)), 0);
+        assert_eq!(
+            construction_stage(&b, total, Tick(spawn + total - 1)),
+            STAGES - 1
+        );
+    }
 }
