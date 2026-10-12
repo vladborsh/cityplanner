@@ -1,10 +1,17 @@
 //! T-046: the two M1 fixtures (`gen_m1_fixtures`): a city of about 1900 residents built by
 //! `grid_city`, and the same kind of city in a jam, with 700 cars and 150 pedestrians on the
 //! road and a building demolished on pause right before the save (`BuildingGrid.removed` not
-//! empty). Both load without warnings, save back to the very same bytes, and load + 4096
+//! empty). Both load without warnings, migrate to the current format and save back to the same
+//! bytes, and load + 4096
 //! ticks gives the recorded checksum. They were made with BUG-022 in (routine trips are routed
 //! by the traffic domain); the jam's 850 trips are sent by `scenario::send_citizens` so the
 //! jam does not depend on the time of day.
+//!
+//! **T-066 (save v17).** The pinned checksums were re-recorded when the agents gained the
+//! re-route fields: the checksum hashes the serialized agents, so every value moves with the
+//! encoding. The behaviour did not change: hashed with the agents in the v16 layout, the
+//! old values (`0x169a_6df5_9eee_92be` / `0xa0fd_aeed_3448_248a` for m1-small,
+//! `0xedcc_aa46_d0b4_49a5` / `0x2513_97bf_beca_a44a` for m1-traffic) reproduce exactly.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -43,7 +50,8 @@ fn loaded(bytes: &[u8]) -> SimRunner {
     sim
 }
 
-/// Format, map identity and a byte-for-byte round trip.
+/// Format, map identity, and a round trip: the v16 file migrates to the current format (v17,
+/// T-066), which saves and reloads to the very same bytes.
 fn check_file(name: &str) {
     let bytes = fixture(name);
     let (h, _) = read_header(&bytes).unwrap();
@@ -55,7 +63,17 @@ fn check_file(name: &str) {
     assert!(l.warnings.is_empty(), "{:?}", l.warnings);
     let again = save_with_map(&l.data, h.content_hash, &h.map_id, h.map_hash).unwrap();
     assert_eq!(
-        again, bytes,
+        read_header(&again).unwrap().0.format_version,
+        FORMAT_VERSION
+    );
+    let l2 = load_with_map(&again, content.content_hash(), h.map_hash).unwrap();
+    assert_eq!(
+        l2.data, l.data,
+        "{name}: migrate -> save -> load is lossless"
+    );
+    assert_eq!(
+        save_with_map(&l2.data, h.content_hash, &h.map_id, h.map_hash).unwrap(),
+        again,
         "{name}: save -> load -> save is byte for byte"
     );
 }
@@ -73,10 +91,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0x169a_6df5_9eee_92be, "state at load");
+    assert_eq!(sim.checksum(), 0xc6b6_08b5_17a9_0b18, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0xa0fd_aeed_3448_248a,
+        0xbeaf_506b_046f_7500,
         "load + 4096 ticks"
     );
 }
@@ -102,7 +120,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0xedcc_aa46_d0b4_49a5, "state at load");
+    assert_eq!(sim.checksum(), 0xcc97_0e58_dc2d_41f6, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -110,7 +128,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x2513_97bf_beca_a44a, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0xd4b3_8fc4_ab58_e11c, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,
