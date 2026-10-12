@@ -11,6 +11,7 @@ use cp_render::{LightingSettings, OverlayState};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, ToolState, UiCapture};
 
+pub mod budget;
 pub mod debug;
 pub mod files;
 pub mod panels;
@@ -72,8 +73,19 @@ fn draw_ui(
     };
     let ctx = contexts.ctx_mut()?;
     let mut root = root_ui(ctx);
-    top_bar(&mut root, &view, &mut outbox, &mut overlay, &mut lighting);
+    top_bar(
+        &mut root,
+        &view,
+        &mut outbox,
+        &mut overlay,
+        &mut lighting,
+        &mut state.budget_open,
+    );
     bottom_bar(&mut root, &mut state, Some(&view), &mut tools, &mut overlay);
+    {
+        let st = &mut *state;
+        budget::budget_window(ctx, &mut st.budget_open, &view, &mut st.budget, &mut outbox);
+    }
     if state.debug_open {
         debug::debug_window(
             ctx,

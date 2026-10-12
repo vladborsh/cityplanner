@@ -2660,11 +2660,15 @@ version = "0.0.0"
 dependencies = [
  "bevy",
  "bevy_egui",
+ "cp_building",
+ "cp_citizen",
  "cp_content",
  "cp_core",
+ "cp_economy",
  "cp_net",
  "cp_render",
  "cp_sim",
+ "cp_terrain",
  "cp_tools",
  "cp_utility",
 ]

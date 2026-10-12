@@ -97,6 +97,10 @@ pub struct SimView {
     pub agents: Arc<AgentSnapshot>,
     /// Smoothed demand (R, C, I, O) for the demand bars (§11), read-only.
     pub demand: cp_building::Demand,
+    /// The city's money (cents), read-only, for the top bar and the budget window.
+    pub treasury: cp_core::Treasury,
+    /// Tax rates, budget percentages and the last settled week, read-only (budget window).
+    pub economy: cp_economy::EconomyState,
 }
 
 /// Agent poses of two consecutive snapshots. `prev` is the frame of the previous published
@@ -330,6 +334,8 @@ impl SimRunner {
             overlays: self.overlay_data(),
             agents: self.agent_snapshot(tick),
             demand: *self.world().resource::<cp_building::Demand>(),
+            treasury: *self.world().resource::<cp_core::Treasury>(),
+            economy: *self.world().resource::<cp_economy::EconomyState>(),
             utilities: self.utilities_snapshot(),
             junctions,
         }

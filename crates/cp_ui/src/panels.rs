@@ -55,6 +55,10 @@ impl Category {
 pub struct UiState {
     pub category: Option<Category>,
     pub debug_open: bool,
+    /// The budget window is shown (button in the top bar).
+    pub budget_open: bool,
+    /// Slider drafts of the budget window.
+    pub budget: crate::budget::BudgetDraft,
 }
 
 pub const SPEEDS: [(SimSpeed, &str); 4] = [
@@ -105,7 +109,7 @@ pub fn overlay_buttons(ui: &mut egui::Ui, state: &mut OverlayState) -> Vec<(Over
     rects
 }
 
-/// Top bar: money and population (stubs), date/time, speed buttons, overlay switcher, the always-day lighting toggle.
+/// Top bar: money (with the debt warning colour) and the Budget button, demand bars, population (stub), date/time, speed buttons, overlay switcher, the always-day lighting toggle.
 /// Returns the on-screen rectangle of each speed button (tests use it to click them). A
 /// click pushes `SetSpeed` into `outbox`.
 pub fn top_bar(
@@ -114,11 +118,17 @@ pub fn top_bar(
     outbox: &mut CommandOutbox,
     overlay: &mut OverlayState,
     lighting: &mut LightingSettings,
+    budget_open: &mut bool,
 ) -> Vec<(SimSpeed, egui::Rect)> {
     let mut rects = Vec::new();
     egui::Panel::top("top_bar").show(root, |ui| {
         ui.horizontal(|ui| {
-            ui.label("💰 $0"); // stub until the economy lands
+            crate::budget::money_label(ui, view);
+            if ui.selectable_label(*budget_open, "Budget").clicked() {
+                *budget_open = !*budget_open;
+            }
+            ui.separator();
+            crate::budget::demand_bars(ui, &view.demand);
             ui.separator();
             ui.label("👥 —"); // stub until citizens land
             ui.separator();
@@ -480,6 +490,7 @@ mod tests {
                 &mut CommandOutbox::default(),
                 &mut OverlayState::default(),
                 &mut LightingSettings::default(),
+                &mut false,
             );
         });
         let pos = rects.iter().find(|(s, _)| *s == speed).unwrap().1.center();
@@ -500,6 +511,7 @@ mod tests {
                     outbox,
                     &mut OverlayState::default(),
                     &mut LightingSettings::default(),
+                    &mut false,
                 );
             });
         }
