@@ -7,6 +7,7 @@ pub mod control;
 pub mod graph;
 pub mod junction;
 pub mod model;
+pub mod run;
 
 pub use build::{
     AppliedSnap, DemolishRef, ElevationMode, NodeRef, PIER_SPACING, PlannedSegment, PlannedSplit,
@@ -19,6 +20,7 @@ pub use control::{ControlPlan, LightPlan, Phase, Priority, Signal};
 pub use graph::{MIN_SEGMENT_LENGTH, NODE_REUSE_EPS, NetGraph, NetOpError, SplitResult};
 pub use junction::{Arm, Junction, JunctionGeometry, compute_junction, update_junctions};
 pub use model::*;
+pub use run::road_run;
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_net";

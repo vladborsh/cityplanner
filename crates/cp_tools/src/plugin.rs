@@ -8,14 +8,14 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use cp_core::Cost;
-use cp_net::{NetCommand, RoadBuildError, RoadPath, SegmentId};
+use cp_net::{NetCommand, RoadBuildError, RoadPath, SegmentId, road_run};
 use cp_render::RtsCamera;
 use cp_render::camera::math::ray_terrain_hit;
 use cp_sim::{SimCommand, SimView};
 
 use crate::CommandOutbox;
 use crate::building::{BuildingTool, PlacementGhost, pick_building, preview as place_preview};
-use crate::bulldozer::{PICK_RADIUS, centre_line, pick_segment};
+use crate::bulldozer::{PICK_RADIUS, centre_line, pick_segment, remove_run_commands};
 use crate::road::{RoadTool, preview, sample_curve};
 use crate::utility::{
     LINK_PICK_RADIUS, UtilityTool, link_line, pick_link, plan_polylines, preview as utility_preview,
@@ -66,8 +66,8 @@ pub struct ToolState {
     pub ghost: Option<Ghost>,
     /// Terrain point under the cursor (XZ).
     pub hover: Option<Vec2>,
-    /// Segment the bulldozer would remove.
-    pub highlight: Option<SegmentId>,
+    /// Segments the bulldozer would remove: the whole road run under the cursor (T-070).
+    pub highlight: Vec<SegmentId>,
     pub zone: ZoneTool,
     pub building: BuildingTool,
     pub utility: UtilityTool,
@@ -107,7 +107,7 @@ impl ToolState {
         self.active = tool;
         self.road.cancel();
         self.ghost = None;
-        self.highlight = None;
+        self.highlight.clear();
         self.ghost_key = None;
         self.zone.cancel();
         self.zone_preview.clear();
@@ -222,9 +222,11 @@ fn tool_hover(
         (ActiveTool::Bulldozer, Some(p)) => {
             state.building_highlight = pick_building(&view, p);
             state.highlight = if state.building_highlight.is_some() {
-                None
+                Vec::new()
             } else {
                 pick_segment(&view.net, p, PICK_RADIUS)
+                    .map(|seg| road_run(&view.net, seg))
+                    .unwrap_or_default()
             };
         }
         (ActiveTool::Place, Some(p)) => {
@@ -261,7 +263,7 @@ fn tool_hover(
             }
         }
         _ => {
-            state.highlight = None;
+            state.highlight.clear();
             state.building_highlight = None;
             state.place_ghost = None;
             state.zone_preview.clear();
@@ -391,9 +393,11 @@ fn tool_click(
             if let Some(building) = state.building_highlight {
                 outbox.push(SimCommand::Building(BuildingCommand::Demolish { building }));
                 state.building_highlight = None;
-            } else if let Some(seg) = state.highlight {
-                outbox.push(SimCommand::Net(NetCommand::RemoveSegment { seg }));
-                state.highlight = None;
+            } else if !state.highlight.is_empty() {
+                for command in remove_run_commands(&state.highlight) {
+                    outbox.push(command);
+                }
+                state.highlight.clear();
             }
         }
         ActiveTool::Place => {
@@ -475,12 +479,14 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
         let cells: Vec<ZoneCellRef> = b.lot.cells().collect();
         draw_cells(view, &cells, Color::srgb(1.0, 0.6, 0.1), &mut gizmos);
     }
-    if let (Some(seg), Some(view)) = (state.highlight, view) {
-        let line = centre_line(&view.net, seg, 3.0);
-        gizmos.linestrip(
-            line.iter().map(|p| *p + Vec3::Y * 0.6),
-            Color::srgb(1.0, 0.6, 0.1),
-        );
+    if let Some(view) = view {
+        for seg in &state.highlight {
+            let line = centre_line(&view.net, *seg, 3.0);
+            gizmos.linestrip(
+                line.iter().map(|p| *p + Vec3::Y * 0.6),
+                Color::srgb(1.0, 0.6, 0.1),
+            );
+        }
     }
 }
 

@@ -1,7 +1,8 @@
 //! The segment bulldozer: finds the segment under the cursor.
 
 use bevy_math::Vec2;
-use cp_net::{NetGraph, SegmentId};
+use cp_net::{NetCommand, NetGraph, SegmentId};
+use cp_sim::SimCommand;
 
 /// Pick radius around the cursor, metres.
 pub const PICK_RADIUS: f32 = 8.0;
@@ -25,6 +26,14 @@ pub fn pick_segment(net: &NetGraph, p: Vec2, radius: f32) -> Option<SegmentId> {
         }
     }
     best.map(|(_, id)| id)
+}
+
+/// One `RemoveSegment` per segment of a road run, in run order. The tool pushes them all in
+/// one frame, so the whole run goes in a single tick (no new command, no save change).
+pub fn remove_run_commands(run: &[SegmentId]) -> Vec<SimCommand> {
+    run.iter()
+        .map(|&seg| SimCommand::Net(NetCommand::RemoveSegment { seg }))
+        .collect()
 }
 
 /// The segment's centre line as XZ points (for highlighting).
@@ -109,5 +118,60 @@ mod tests {
         assert!(
             (line[0].x - 1000.0).abs() < 1e-3 && (line.last().unwrap().x - 1100.0).abs() < 1e-3
         );
+    }
+
+    #[test]
+    fn a_click_on_the_middle_of_a_long_street_removes_it_up_to_the_crossings() {
+        use crate::CommandOutbox;
+        use cp_net::road_run;
+        use cp_sim::SimRunner;
+
+        let db = ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content"))
+            .unwrap();
+        let road = db.road_id("basic_2l").unwrap();
+        let def = db.road(road).clone();
+        let mut sim = SimRunner::new(1);
+        sim.set_content(std::sync::Arc::new(db));
+        let line = |a: (f32, f32), b: (f32, f32)| {
+            CubicBezier3::line(Vec3::new(a.0, 0.0, a.1), Vec3::new(b.0, 0.0, b.1))
+        };
+        {
+            let mut net = sim.world_mut().resource_mut::<NetGraph>();
+            for i in 0..4 {
+                let x = 1000.0 + 75.0 * i as f32;
+                net.add_segment(
+                    &def,
+                    road,
+                    line((x, 1000.0), (x + 75.0, 1000.0)),
+                    Elevation::Ground,
+                )
+                .unwrap();
+            }
+            // Crossing arms at both ends.
+            for (a, b) in [
+                ((920.0, 1000.0), (1000.0, 1000.0)),
+                ((1300.0, 1000.0), (1380.0, 1000.0)),
+                ((1000.0, 920.0), (1000.0, 1000.0)),
+                ((1300.0, 1000.0), (1300.0, 1080.0)),
+            ] {
+                net.add_segment(&def, road, line(a, b), Elevation::Ground)
+                    .unwrap();
+            }
+        }
+        sim.tick_once();
+        let view = sim.view();
+        let seg = pick_segment(&view.net, Vec2::new(1150.0, 1002.0), PICK_RADIUS).unwrap();
+        let run = road_run(&view.net, seg);
+        assert_eq!(run.len(), 4);
+
+        let mut outbox = CommandOutbox::default();
+        for c in remove_run_commands(&run) {
+            outbox.push(c);
+        }
+        outbox.flush_into(&mut sim);
+        sim.tick_once();
+        let after = sim.view();
+        assert_eq!(after.net.segment_count(), 4, "only the four arms are left");
+        assert!(run.iter().all(|s| after.net.segment(*s).is_none()));
     }
 }
