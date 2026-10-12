@@ -359,16 +359,19 @@ fn print_table(r: &Report) {
             println!("warning: {w}");
         }
     }
-    println!("{:<10} {:>12} {:>12}", "phase", "median ms", "p95 ms");
+    println!(
+        "{:<10} {:>12} {:>12} {:>12} {:>12}",
+        "phase", "median ms", "p95 ms", "mean ms", "max ms"
+    );
     for p in &r.phases {
         println!(
-            "{:<10} {:>12.5} {:>12.5}",
-            p.name, p.stat.median_ms, p.stat.p95_ms
+            "{:<10} {:>12.5} {:>12.5} {:>12.5} {:>12.5}",
+            p.name, p.stat.median_ms, p.stat.p95_ms, p.stat.mean_ms, p.stat.max_ms
         );
     }
     println!(
-        "{:<10} {:>12.5} {:>12.5}",
-        "total", r.total.median_ms, r.total.p95_ms
+        "{:<10} {:>12.5} {:>12.5} {:>12.5} {:>12.5}",
+        "total", r.total.median_ms, r.total.p95_ms, r.total.mean_ms, r.total.max_ms
     );
 }
 

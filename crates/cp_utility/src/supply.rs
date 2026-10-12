@@ -65,6 +65,10 @@ fn bucket(p: Vec2, size: f32) -> (i32, i32) {
 pub(crate) struct Attach {
     buckets: BTreeMap<(i32, i32), Vec<UtilityLinkId>>,
     comp_of_link: BTreeMap<UtilityLinkId, u32>,
+    /// XZ bounding box of each link's control points: a Bézier curve lies inside it, so a
+    /// position farther than [`LINE_REACH_M`] from the box cannot be within reach of the curve
+    /// and the (expensive) exact nearest-point search is skipped for that link.
+    bbox: BTreeMap<UtilityLinkId, (Vec2, Vec2)>,
 }
 
 impl Attach {
@@ -73,8 +77,17 @@ impl Attach {
         let label: BTreeMap<_, _> = comps.labels.iter().copied().collect();
         let mut buckets: BTreeMap<(i32, i32), Vec<UtilityLinkId>> = BTreeMap::new();
         let mut comp_of_link = BTreeMap::new();
+        let mut bbox = BTreeMap::new();
         for (id, l) in graph.links().filter(|(_, l)| l.net == net) {
             comp_of_link.insert(id, label[&l.a]);
+            let c = [l.curve.p0, l.curve.p1, l.curve.p2, l.curve.p3].map(to_xz);
+            bbox.insert(
+                id,
+                (
+                    c.iter().fold(Vec2::splat(f32::MAX), |a, p| a.min(*p)),
+                    c.iter().fold(Vec2::splat(f32::MIN), |a, p| a.max(*p)),
+                ),
+            );
             let n = (l.length / LINK_SAMPLE_M).ceil().max(1.0) as usize;
             let mut seen = BTreeSet::new();
             for i in 0..=n {
@@ -87,6 +100,7 @@ impl Attach {
         Self {
             buckets,
             comp_of_link,
+            bbox,
         }
     }
 
@@ -103,6 +117,11 @@ impl Attach {
         }
         let mut best: Option<(f32, UtilityLinkId)> = None;
         for id in cand {
+            let (lo, hi) = self.bbox[&id];
+            let off = (lo - p).max(p - hi).max(Vec2::ZERO);
+            if off.length() > LINE_REACH_M {
+                continue;
+            }
             let (_, d) = graph.link(id)?.curve.nearest_xz(p);
             if d <= LINE_REACH_M && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, id));
@@ -120,12 +139,58 @@ fn kind_index(k: UtilityKind) -> usize {
     }
 }
 
+/// Which pipe and power-line component each building is attached to, remembered between
+/// recomputes: positions and links rarely change, and the nearest-link search is the expensive
+/// part of [`compute_supply`]. An entry is valid for the graph it was computed for (a
+/// fingerprint of every link) and for the position it was computed at.
+#[derive(Default)]
+pub struct AttachCache {
+    graph: u64,
+    by_building: BTreeMap<BuildingId, (Vec2, Option<u32>, Option<u32>)>,
+}
+
+/// FNV-1a over every link: network, endpoints and curve.
+fn graph_fingerprint(graph: &UtilityGraph) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    let mut mix = |v: u32| {
+        for b in v.to_le_bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    for (id, l) in graph.links() {
+        mix(id.index);
+        mix(id.generation);
+        mix(l.net as u32);
+        for n in [l.a, l.b] {
+            mix(n.index);
+            mix(n.generation);
+        }
+        for p in [l.curve.p0, l.curve.p1, l.curve.p2, l.curve.p3] {
+            mix(p.x.to_bits());
+            mix(p.y.to_bits());
+            mix(p.z.to_bits());
+        }
+    }
+    h
+}
+
 /// Buildings `(id -> missing-supply bits)` for every `Active` building that lacks something;
 /// buildings that have everything are absent.
 pub fn compute_supply(
     db: &ContentDb,
     buildings: &BuildingGrid,
     graph: &UtilityGraph,
+) -> BTreeMap<BuildingId, u8> {
+    compute_supply_cached(db, buildings, graph, &mut AttachCache::default())
+}
+
+/// [`compute_supply`] reusing (and refreshing) `cache`; the result is the same as without it.
+pub fn compute_supply_cached(
+    db: &ContentDb,
+    buildings: &BuildingGrid,
+    graph: &UtilityGraph,
+    cache: &mut AttachCache,
 ) -> BTreeMap<BuildingId, u8> {
     let sites: Vec<Site> = buildings
         .iter()
@@ -155,9 +220,41 @@ pub fn compute_supply(
         *missing.entry(id).or_default() |= bit;
     };
 
+    // The component of each building in the pipe and in the power network.
+    let fingerprint = graph_fingerprint(graph);
+    if cache.graph != fingerprint {
+        cache.graph = fingerprint;
+        cache.by_building.clear();
+    }
+    let mut attach: Option<(Attach, Attach)> = None;
+    let mut comps: Vec<(Option<u32>, Option<u32>)> = Vec::with_capacity(sites.len());
+    for s in &sites {
+        let hit = cache
+            .by_building
+            .get(&s.id)
+            .filter(|(pos, _, _)| *pos == s.pos)
+            .map(|&(_, pipe, line)| (pipe, line));
+        let pair = hit.unwrap_or_else(|| {
+            let (pipes, lines) = attach.get_or_insert_with(|| {
+                (
+                    Attach::build(graph, UtilityNet::Pipe),
+                    Attach::build(graph, UtilityNet::Power),
+                )
+            });
+            let pair = (pipes.comp_at(graph, s.pos), lines.comp_at(graph, s.pos));
+            cache.by_building.insert(s.id, (s.pos, pair.0, pair.1));
+            pair
+        });
+        comps.push(pair);
+    }
+    // Forget buildings that are gone (ids of the arena slots still in use are kept).
+    if cache.by_building.len() > sites.len() * 2 {
+        let live: BTreeSet<BuildingId> = sites.iter().map(|s| s.id).collect();
+        cache.by_building.retain(|id, _| live.contains(id));
+    }
+
     // --- pipes: water, then sewage ---
-    let pipes = Attach::build(graph, UtilityNet::Pipe);
-    let comp: Vec<Option<u32>> = sites.iter().map(|s| pipes.comp_at(graph, s.pos)).collect();
+    let comp: Vec<Option<u32>> = comps.iter().map(|c| c.0).collect();
     let mut water_cap: BTreeMap<u32, f32> = BTreeMap::new();
     for (s, c) in sites.iter().zip(&comp) {
         if let (Some((ServiceKind::Water, cap)), Some(c)) = (s.source, c) {
@@ -199,8 +296,7 @@ pub fn compute_supply(
     }
 
     // --- power ---
-    let lines = Attach::build(graph, UtilityNet::Power);
-    let attached: Vec<Option<u32>> = sites.iter().map(|s| lines.comp_at(graph, s.pos)).collect();
+    let attached: Vec<Option<u32>> = comps.iter().map(|c| c.1).collect();
     let mut hop: BTreeMap<(i32, i32), Vec<usize>> = BTreeMap::new();
     for (i, s) in sites.iter().enumerate() {
         hop.entry(bucket(s.pos, POWER_HOP_M)).or_default().push(i);
@@ -257,7 +353,8 @@ pub fn compute_supply(
                     exhausted = true;
                 }
             }
-            next.retain(|j| !layer.contains(j) && !visited[*j]);
+            // Every member of `layer` is visited by now, so this also drops those.
+            next.retain(|j| !visited[*j]);
             layer = next.into_iter().collect();
         }
     }
@@ -276,12 +373,13 @@ pub fn update_supply(
     content: Option<Res<SimContent>>,
     graph: Res<UtilityGraph>,
     mut buildings: ResMut<BuildingGrid>,
+    mut cache: Local<AttachCache>,
 ) {
     if !tick.0.is_multiple_of(SUPPLY_PERIOD) {
         return;
     }
     let Some(content) = content else { return };
-    let missing = compute_supply(&content.0, &buildings, &graph);
+    let missing = compute_supply_cached(&content.0, &buildings, &graph, &mut cache);
     let changes: Vec<(BuildingId, u8)> = buildings
         .iter()
         .filter(|(_, b)| b.state == BuildingState::Active)

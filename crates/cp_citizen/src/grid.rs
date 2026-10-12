@@ -1,7 +1,5 @@
 //! The citizen and household arenas, plus derived occupancy tables.
 
-use std::collections::BTreeMap;
-
 use bevy_ecs::resource::Resource;
 use cp_building::BuildingId;
 use cp_core::{Arena, Tick};
@@ -9,40 +7,84 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{Citizen, CitizenId, HOUSEHOLD_MAX, Household, HouseholdId, Location};
 
-/// Per-building counts derived from the arenas, keyed by the full `BuildingId` (index
-/// **and generation**), so a building that reuses a removed building's slot starts empty.
+/// A table keyed by `BuildingId` stored densely by arena index; an entry carries the generation
+/// of the building it belongs to, so a building that reuses a removed building's slot starts
+/// empty (the key is the full id: index **and generation**).
+#[derive(Clone, Debug, Default)]
+struct PerBuilding<T> {
+    slots: Vec<Option<(u32, T)>>,
+}
+
+impl<T: Copy + Default + PartialEq> PerBuilding<T> {
+    fn get(&self, id: BuildingId) -> Option<&T> {
+        match self.slots.get(id.index as usize) {
+            Some(Some((g, v))) if *g == id.generation => Some(v),
+            _ => None,
+        }
+    }
+
+    fn get_mut(&mut self, id: BuildingId) -> Option<&mut T> {
+        match self.slots.get_mut(id.index as usize) {
+            Some(Some((g, v))) if *g == id.generation => Some(v),
+            _ => None,
+        }
+    }
+
+    /// The entry of `id`, created (default) if absent or left over from an older generation.
+    fn entry(&mut self, id: BuildingId) -> &mut T {
+        let i = id.index as usize;
+        if self.slots.len() <= i {
+            self.slots.resize(i + 1, None);
+        }
+        let slot = &mut self.slots[i];
+        if !matches!(slot, Some((g, _)) if *g == id.generation) {
+            *slot = Some((id.generation, T::default()));
+        }
+        &mut slot.as_mut().expect("just set").1
+    }
+
+    fn remove(&mut self, id: BuildingId) {
+        if let Some(Some((g, _))) = self.slots.get(id.index as usize)
+            && *g == id.generation
+        {
+            self.slots[id.index as usize] = None;
+        }
+    }
+}
+
+/// Per-building counts derived from the arenas (see [`PerBuilding`]).
 #[derive(Clone, Debug, Default)]
 struct Derived {
     ready: bool,
     /// Households living in the building.
-    homes: BTreeMap<BuildingId, u16>,
+    homes: PerBuilding<u16>,
     /// Filled job slots per education level.
-    jobs: BTreeMap<BuildingId, [u16; 4]>,
+    jobs: PerBuilding<[u16; 4]>,
 }
 
 impl Derived {
     fn add_home(&mut self, b: BuildingId) {
-        *self.homes.entry(b).or_default() += 1;
+        *self.homes.entry(b) += 1;
     }
 
     fn remove_home(&mut self, b: BuildingId) {
-        if let Some(n) = self.homes.get_mut(&b) {
+        if let Some(n) = self.homes.get_mut(b) {
             *n = n.saturating_sub(1);
             if *n == 0 {
-                self.homes.remove(&b);
+                self.homes.remove(b);
             }
         }
     }
 
     fn add_job(&mut self, b: BuildingId, level: usize) {
-        self.jobs.entry(b).or_default()[level] += 1;
+        self.jobs.entry(b)[level] += 1;
     }
 
     fn remove_job(&mut self, b: BuildingId, level: usize) {
-        if let Some(j) = self.jobs.get_mut(&b) {
+        if let Some(j) = self.jobs.get_mut(b) {
             j[level] = j[level].saturating_sub(1);
             if *j == [0; 4] {
-                self.jobs.remove(&b);
+                self.jobs.remove(b);
             }
         }
     }
@@ -147,12 +189,12 @@ impl CitizenGrid {
 
     /// Households living in `building` (needs [`Self::ensure_derived`]).
     pub fn households_in(&self, building: BuildingId) -> u16 {
-        self.derived.homes.get(&building).copied().unwrap_or(0)
+        self.derived.homes.get(building).copied().unwrap_or(0)
     }
 
     /// Filled job slots of `level` in `building`.
     pub fn jobs_filled(&self, building: BuildingId, level: usize) -> u16 {
-        self.derived.jobs.get(&building).map_or(0, |j| j[level])
+        self.derived.jobs.get(building).map_or(0, |j| j[level])
     }
 
     /// Creates a household and its members. `members` are `(age_days, education, has_car)`

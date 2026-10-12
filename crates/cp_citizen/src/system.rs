@@ -78,6 +78,141 @@ struct JobSite {
     slots: [u16; 4],
 }
 
+/// Side of a job-index cell, metres.
+const JOB_CELL: f32 = 128.0;
+/// Cells per side of the job index (the map is 10.24 km).
+const JOB_CELLS: usize = (cp_terrain::MAP_SIZE / JOB_CELL) as usize + 1;
+
+fn job_cell(p: Vec2) -> (usize, usize) {
+    let c = |v: f32| ((v / JOB_CELL).max(0.0) as usize).min(JOB_CELLS - 1);
+    (c(p.x), c(p.y))
+}
+
+/// The job search: the buildings offering jobs, binned in a grid with the number of free
+/// slots per cell and level, so "nearest site with a free slot" looks at a few cells instead
+/// of every workplace for every seeker. Built once per tick when someone looks for work and
+/// kept exact while that tick assigns jobs ([`JobIndex::taken`]); the free counts are read from
+/// the live occupancy at build time. Results equal a scan of all sites in id order: the
+/// nearest free site by straight-line distance, ties to the lower building id.
+struct JobIndex {
+    sites: Vec<JobSite>,
+    /// CSR layout: the sites of cell `c` are `items[start[c]..start[c + 1]]` (ascending index).
+    start: Vec<u32>,
+    items: Vec<u32>,
+    free_cell: Vec<[u32; 4]>,
+    free_total: [u32; 4],
+}
+
+impl JobIndex {
+    fn build(buildings: &BuildingGrid, db: &ContentDb, grid: &CitizenGrid) -> Self {
+        Self::from_sites(job_sites(buildings, db), &|id, l| grid.jobs_filled(id, l))
+    }
+
+    fn from_sites(sites: Vec<JobSite>, filled: &dyn Fn(BuildingId, usize) -> u16) -> Self {
+        let cell_of = |s: &JobSite| {
+            let (x, z) = job_cell(s.pos);
+            z * JOB_CELLS + x
+        };
+        let mut start = vec![0u32; JOB_CELLS * JOB_CELLS + 1];
+        for s in &sites {
+            start[cell_of(s) + 1] += 1;
+        }
+        for c in 0..JOB_CELLS * JOB_CELLS {
+            start[c + 1] += start[c];
+        }
+        let mut fill = start.clone();
+        let mut items = vec![0u32; sites.len()];
+        let mut free_cell = vec![[0u32; 4]; JOB_CELLS * JOB_CELLS];
+        let mut free_total = [0u32; 4];
+        for (i, s) in sites.iter().enumerate() {
+            let c = cell_of(s);
+            items[fill[c] as usize] = i as u32;
+            fill[c] += 1;
+            for l in 0..4 {
+                let free = u32::from(s.slots[l].saturating_sub(filled(s.id, l)));
+                free_cell[c][l] += free;
+                free_total[l] += free;
+            }
+        }
+        Self {
+            sites,
+            start,
+            items,
+            free_cell,
+            free_total,
+        }
+    }
+
+    /// A job at site `i`, `level`, was given away.
+    fn taken(&mut self, i: usize, level: u8) {
+        let (x, z) = job_cell(self.sites[i].pos);
+        self.free_cell[z * JOB_CELLS + x][usize::from(level)] -= 1;
+        self.free_total[usize::from(level)] -= 1;
+    }
+
+    /// Best free slot for a citizen of `education` living at `home`: `(site index, level)` —
+    /// the highest level up to `education` that has a free slot anywhere, and there the nearest
+    /// site (ties: lower index).
+    fn find(
+        &self,
+        filled: &dyn Fn(BuildingId, usize) -> u16,
+        home: Vec2,
+        education: u8,
+    ) -> Option<(usize, u8)> {
+        for level in (0..=education).rev() {
+            let l = usize::from(level);
+            if self.free_total[l] == 0 {
+                continue;
+            }
+            let (hx, hz) = job_cell(home);
+            let mut best: Option<(f32, usize)> = None;
+            for r in 0..JOB_CELLS {
+                // Ring `r`: the cells at Chebyshev distance `r` from the home cell.
+                let (x0, x1) = (hx as isize - r as isize, hx as isize + r as isize);
+                let (z0, z1) = (hz as isize - r as isize, hz as isize + r as isize);
+                for cz in z0.max(0)..=z1.min(JOB_CELLS as isize - 1) {
+                    let edge_row = cz == z0 || cz == z1;
+                    let step = if edge_row { 1 } else { (x1 - x0).max(1) };
+                    let mut cx = x0;
+                    while cx <= x1 {
+                        if cx >= 0 && cx < JOB_CELLS as isize {
+                            let c = cz as usize * JOB_CELLS + cx as usize;
+                            if self.free_cell[c][l] > 0 {
+                                for &i in
+                                    &self.items[self.start[c] as usize..self.start[c + 1] as usize]
+                                {
+                                    let s = &self.sites[i as usize];
+                                    if s.slots[l] > filled(s.id, l) {
+                                        let d = s.pos.distance_squared(home);
+                                        let better = best.is_none_or(|(bd, bi)| {
+                                            d < bd || (d == bd && (i as usize) < bi)
+                                        });
+                                        if better {
+                                            best = Some((d, i as usize));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        cx += step;
+                    }
+                }
+                // Everything not yet looked at is at least `r` cells away.
+                if let Some((bd, _)) = best {
+                    let reach = r as f32 * JOB_CELL;
+                    if bd < reach * reach {
+                        break;
+                    }
+                }
+            }
+            if let Some((_, i)) = best {
+                return Some((i, level));
+            }
+        }
+        None
+    }
+}
+
 fn job_sites(buildings: &BuildingGrid, db: &ContentDb) -> Vec<JobSite> {
     buildings
         .iter()
@@ -91,31 +226,6 @@ fn job_sites(buildings: &BuildingGrid, db: &ContentDb) -> Vec<JobSite> {
             })
         })
         .collect()
-}
-
-/// Best free slot for a citizen of `education` living at `home`: `(site index, level)`.
-fn find_job(
-    sites: &[JobSite],
-    grid: &CitizenGrid,
-    home: Vec2,
-    education: u8,
-) -> Option<(usize, u8)> {
-    for level in (0..=education).rev() {
-        let l = usize::from(level);
-        let mut best: Option<(f32, usize)> = None;
-        for (i, s) in sites.iter().enumerate() {
-            if s.slots[l] > grid.jobs_filled(s.id, l) {
-                let d = s.pos.distance_squared(home);
-                if best.is_none_or(|(bd, _)| d < bd) {
-                    best = Some((d, i));
-                }
-            }
-        }
-        if let Some((_, i)) = best {
-            return Some((i, level));
-        }
-    }
-    None
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -197,7 +307,7 @@ pub fn update_citizens(
         .citizens_bucket(CITIZEN_BUCKETS, bucket)
         .map(|(id, _)| id)
         .collect();
-    let mut sites: Option<Vec<JobSite>> = None;
+    let mut sites: Option<JobIndex> = None;
     for cid in citizens {
         let Some(c) = grid.citizen(cid).cloned() else {
             continue;
@@ -216,10 +326,13 @@ pub fn update_citizens(
         let Some(home) = c.home.and_then(|h| buildings.get(h)) else {
             continue;
         };
-        let sites = sites.get_or_insert_with(|| job_sites(&buildings, db));
-        if let Some((i, level)) = find_job(sites, &grid, home.pos, c.education) {
-            let site = sites[i].id;
+        let index = sites.get_or_insert_with(|| JobIndex::build(&buildings, db, &grid));
+        if let Some((i, level)) =
+            index.find(&|id, l| grid.jobs_filled(id, l), home.pos, c.education)
+        {
+            let site = index.sites[i].id;
             grid.set_job(cid, site, level);
+            index.taken(i, level);
         }
     }
 
@@ -265,5 +378,92 @@ pub fn update_citizens(
         let wealth = 50_000 + i64::from(rng.below(50_000));
         let arrive = Tick(now + arrival_delay(terrain.as_deref(), pos));
         grid.add_household(id, wealth, arrive, &members);
+    }
+}
+
+#[cfg(test)]
+mod job_index_tests {
+    use super::*;
+
+    /// The scan the index replaces: nearest free site of the highest level, ties to the lower
+    /// index.
+    fn brute(
+        sites: &[JobSite],
+        filled: &dyn Fn(BuildingId, usize) -> u16,
+        home: Vec2,
+        education: u8,
+    ) -> Option<(usize, u8)> {
+        for level in (0..=education).rev() {
+            let l = usize::from(level);
+            let mut best: Option<(f32, usize)> = None;
+            for (i, s) in sites.iter().enumerate() {
+                if s.slots[l] > filled(s.id, l) {
+                    let d = s.pos.distance_squared(home);
+                    if best.is_none_or(|(bd, _)| d < bd) {
+                        best = Some((d, i));
+                    }
+                }
+            }
+            if let Some((_, i)) = best {
+                return Some((i, level));
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn the_index_finds_what_a_full_scan_finds_while_slots_fill_up() {
+        let mut rng = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move |n: u64| {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng % n
+        };
+        // Sites on a coarse lattice (many exact distance ties) and at random, a few slots each.
+        let mut sites = Vec::new();
+        for i in 0..600u32 {
+            let pos = if i % 2 == 0 {
+                Vec2::new(next(40) as f32 * 64.0, next(40) as f32 * 64.0)
+            } else {
+                Vec2::new(next(10_200) as f32, next(10_200) as f32)
+            };
+            sites.push(JobSite {
+                id: BuildingId::new(i, 0),
+                pos,
+                slots: [
+                    next(3) as u16,
+                    next(3) as u16,
+                    next(2) as u16,
+                    (next(4) == 0) as u16,
+                ],
+            });
+        }
+        let filled = std::cell::RefCell::new(vec![[0u16; 4]; sites.len()]);
+        let get = |id: BuildingId, l: usize| filled.borrow()[id.index as usize][l];
+        let mut index = JobIndex::from_sites(
+            sites
+                .iter()
+                .map(|s| JobSite {
+                    id: s.id,
+                    pos: s.pos,
+                    slots: s.slots,
+                })
+                .collect(),
+            &get,
+        );
+        let mut assigned = 0;
+        for _ in 0..4000 {
+            let home = Vec2::new(next(10_240) as f32, next(10_240) as f32);
+            let edu = next(4) as u8;
+            let want = brute(&sites, &get, home, edu);
+            assert_eq!(index.find(&get, home, edu), want, "home {home:?} edu {edu}");
+            if let Some((i, level)) = want {
+                filled.borrow_mut()[i][usize::from(level)] += 1;
+                index.taken(i, level);
+                assigned += 1;
+            }
+        }
+        assert!(assigned > 500, "{assigned} jobs given");
     }
 }

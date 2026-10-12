@@ -8,6 +8,13 @@ pub const SCHEMA: u32 = 1;
 pub struct Stat {
     pub median_ms: f64,
     pub p95_ms: f64,
+    /// Mean over the sampled ticks: what a frame budget really sees, spikes included (a phase
+    /// that runs every 64th tick costs nothing at the median). Absent in older results.
+    #[serde(default)]
+    pub mean_ms: f64,
+    /// Slowest sampled tick. Absent in older results.
+    #[serde(default)]
+    pub max_ms: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -81,6 +88,8 @@ pub fn stat_of(samples_ms: &[f64]) -> Stat {
     Stat {
         median_ms: median(samples_ms),
         p95_ms: percentile(samples_ms, 0.95),
+        mean_ms: samples_ms.iter().sum::<f64>() / samples_ms.len() as f64,
+        max_ms: samples_ms.iter().copied().fold(0.0, f64::max),
     }
 }
 
@@ -105,6 +114,8 @@ pub fn aggregate(runs: &[Report]) -> Result<Report, String> {
     let merge = |pick: &dyn Fn(&Report) -> &Stat| Stat {
         median_ms: median(&runs.iter().map(|r| pick(r).median_ms).collect::<Vec<_>>()),
         p95_ms: median(&runs.iter().map(|r| pick(r).p95_ms).collect::<Vec<_>>()),
+        mean_ms: median(&runs.iter().map(|r| pick(r).mean_ms).collect::<Vec<_>>()),
+        max_ms: median(&runs.iter().map(|r| pick(r).max_ms).collect::<Vec<_>>()),
     };
     let phases = (0..first.phases.len())
         .map(|i| NamedStat {
@@ -176,6 +187,8 @@ mod tests {
         let s = |m| Stat {
             median_ms: m,
             p95_ms: m * 2.0,
+            mean_ms: m,
+            max_ms: m * 3.0,
         };
         Report {
             schema: SCHEMA,
