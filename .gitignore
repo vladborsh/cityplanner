@@ -2,3 +2,4 @@ target/
 .data/
 node_modules/
 dist/
+fixtures/saves/bench-100k.sav

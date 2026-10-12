@@ -1,8 +1,10 @@
 //! `cp_bench`: headless benchmark harness (`architecture/system-design.md` §14).
 //!
 //! ```text
-//! cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty] [--content DIR] [--ticks N] [--warmup N]
-//!          [--seed S] [--out FILE.json] [--inject-sleep Phase=MS]
+//! cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty|grid_city] [--pop N] [--content DIR]
+//!          [--ticks N] [--warmup N] [--seed S] [--out FILE.json] [--inject-sleep Phase=MS]
+//! cp_bench fixture --pop N [--seed S] [--map DIR|NAME] [--content DIR] --out FILE.sav
+//!                                                        (writes a grid_city save)
 //! cp_bench aggregate OUT.json RUN.json...        median over runs
 //! cp_bench paths [--grid N] [--requests N] [--threads 1,8] [--seed S]   (pathfinding throughput)
 //! cp_bench compare BASELINE.json CURRENT.json [--threshold 0.2] [--floor-ms 0.05]
@@ -27,6 +29,8 @@ struct Opts {
     map: Option<String>,
     save: Option<String>,
     scenario: Option<String>,
+    /// Target population of `--scenario grid_city`.
+    pop: usize,
     content: PathBuf,
     ticks: u64,
     warmup: u64,
@@ -36,8 +40,9 @@ struct Opts {
 }
 
 fn usage() -> &'static str {
-    "usage: cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty] [--content DIR] [--ticks N] [--warmup N] \
-     [--seed S] [--out FILE.json] [--inject-sleep Phase=MS]\n       \
+    "usage: cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty|grid_city] [--pop N] [--content DIR] \
+     [--ticks N] [--warmup N] [--seed S] [--out FILE.json] [--inject-sleep Phase=MS]\n       \
+     cp_bench fixture --pop N [--seed S] [--map DIR|NAME] [--content DIR] --out FILE.sav\n       \
      cp_bench aggregate OUT.json RUN.json...\n       \
      cp_bench compare BASELINE.json CURRENT.json [--threshold 0.2] [--floor-ms 0.05]"
 }
@@ -69,6 +74,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         map: None,
         save: None,
         scenario: None,
+        pop: 10_000,
         content: PathBuf::from("assets/content"),
         ticks: 2000,
         warmup: 100,
@@ -84,6 +90,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--map" => o.map = Some(val()?),
             "--save" => o.save = Some(val()?),
             "--scenario" => o.scenario = Some(val()?),
+            "--pop" => o.pop = num(val()?)? as usize,
             "--content" => o.content = val()?.into(),
             "--ticks" => o.ticks = num(val()?)?,
             "--warmup" => o.warmup = num(val()?)?,
@@ -129,8 +136,11 @@ fn run(o: &Opts) -> Result<Report, String> {
     let scenario = match (&o.save, o.scenario.as_deref()) {
         (Some(_), _) => "save",
         (None, None | Some("empty")) => "empty",
+        (None, Some("grid_city")) => "grid_city",
         (None, Some(other)) => {
-            return Err(format!("unknown scenario '{other}' (available: empty)"));
+            return Err(format!(
+                "unknown scenario '{other}' (available: empty, grid_city)"
+            ));
         }
     };
     // The map is attached to the sim exactly like `cp_app::build_sim` does (`set_terrain` opens
@@ -154,16 +164,27 @@ fn run(o: &Opts) -> Result<Report, String> {
         })
         .transpose()?;
 
-    let mut sim = SimRunner::new(o.seed);
-    if let Some(terrain) = terrain {
-        sim.set_terrain(terrain);
-    }
+    let mut sim = if scenario == "grid_city" {
+        // The scenario runs untimed; the timed ticks start from the finished city.
+        let terrain = terrain.ok_or("--scenario grid_city needs --map")?;
+        build_grid_city(o, terrain)?.0
+    } else {
+        let mut sim = SimRunner::new(o.seed);
+        if let Some(terrain) = terrain {
+            sim.set_terrain(terrain);
+        }
+        sim
+    };
     sim.add_plugin(&PhaseTiming {
         sleep: o
             .inject_sleep
             .map(|(phase, duration)| InjectedSleep { phase, duration }),
         history: History::Unbounded,
     });
+    if o.save.is_some() {
+        // Without the content the building, citizen and agent systems have nothing to run on.
+        sim.set_content(load_content(&o.content)?);
+    }
     let save = o
         .save
         .as_deref()
@@ -207,6 +228,83 @@ fn run(o: &Opts) -> Result<Report, String> {
         phases,
         total: stat_of(&total_ms),
     })
+}
+
+fn load_content(dir: &Path) -> Result<std::sync::Arc<cp_content::ContentDb>, String> {
+    cp_content::ContentDb::load_dir(dir)
+        .map(std::sync::Arc::new)
+        .map_err(|e| {
+            e.0.iter()
+                .map(|err| format!("--content {}: {err}", dir.display()))
+                .collect::<Vec<_>>()
+                .join("\nerror: ")
+        })
+}
+
+/// Runs `cp_sim::scenario::grid_city` for `o.pop` and `o.seed`.
+fn build_grid_city(
+    o: &Opts,
+    terrain: std::sync::Arc<cp_terrain::Terrain>,
+) -> Result<(SimRunner, cp_sim::scenario::GridCityReport), String> {
+    let content = load_content(&o.content)?;
+    let (sim, report) = cp_sim::scenario::grid_city(
+        o.pop,
+        o.seed,
+        terrain,
+        content,
+        &cp_sim::scenario::GridCityConfig::default(),
+    );
+    if !report.reached || !report.rejected.is_empty() {
+        return Err(format!("grid_city: {report:?}"));
+    }
+    Ok((sim, report))
+}
+
+/// `cp_bench fixture`: builds the grid city and writes it as a save.
+fn make_fixture(args: &[String]) -> Result<(), String> {
+    let mut o = parse_opts(&["--ticks".into(), "1".into()])?;
+    let mut out: Option<PathBuf> = None;
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        let mut val = || it.next().cloned().ok_or(format!("{flag} needs a value"));
+        match flag.as_str() {
+            "--pop" => o.pop = val()?.parse().map_err(|e| format!("--pop: {e}"))?,
+            "--seed" => o.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
+            "--map" => o.map = Some(val()?),
+            "--content" => o.content = val()?.into(),
+            "--out" => out = Some(val()?.into()),
+            other => return Err(format!("unknown argument '{other}'")),
+        }
+    }
+    let out = out.ok_or("fixture needs --out FILE.sav")?;
+    let map = o.map.clone().unwrap_or_else(|| "flatlands".into());
+    let dir = map_dir(&map);
+    let terrain = std::sync::Arc::new(
+        cp_terrain::Terrain::load(&dir).map_err(|e| format!("--map {}: {e}", dir.display()))?,
+    );
+    let (mut sim, report) = build_grid_city(&o, terrain)?;
+    let content = load_content(&o.content)?;
+    let map_id = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("map")
+        .to_string();
+    let bytes = cp_save::save_runner(&sim, content.content_hash(), &map_id)
+        .map_err(|e| format!("save: {e}"))?;
+    std::fs::write(&out, &bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+    println!(
+        "{}: {} bytes; grid_city pop {} (target {}), {} buildings, tick {}, {} streets, seed {}, checksum {:016x}",
+        out.display(),
+        bytes.len(),
+        report.population,
+        report.target_pop,
+        report.buildings,
+        report.ticks,
+        report.streets,
+        o.seed,
+        sim.checksum()
+    );
+    Ok(())
 }
 
 /// Loads `path` into `sim` through `cp_save`'s public API. The current content hash comes
@@ -277,6 +375,7 @@ fn print_table(r: &Report) {
 fn real_main(args: Vec<String>) -> Result<ExitCode, String> {
     match args.first().map(String::as_str) {
         Some("paths") => paths::run(&args[1..]),
+        Some("fixture") => make_fixture(&args[1..]).map(|()| ExitCode::SUCCESS),
         Some("aggregate") => {
             let [_, out, runs @ ..] = args.as_slice() else {
                 return Err(usage().into());
@@ -395,6 +494,48 @@ mod tests {
             .to_str()
             .unwrap()
             .to_string()
+    }
+
+    /// The checksum of `fixtures/saves/bench-10k.sav` as loaded, recorded in
+    /// `bench/baseline.json` ("fixtures") when the fixture was made.
+    #[test]
+    fn the_committed_10k_fixture_loads_to_the_recorded_state() {
+        let content = load_content(Path::new(&repo("assets/content"))).unwrap();
+        let terrain = std::sync::Arc::new(
+            cp_terrain::Terrain::load(Path::new(&repo("assets/maps/flatlands"))).unwrap(),
+        );
+        let mut sim = SimRunner::new(1);
+        sim.set_terrain(terrain);
+        sim.set_content(std::sync::Arc::clone(&content));
+        let bytes = std::fs::read(repo("fixtures/saves/bench-10k.sav")).unwrap();
+        let (_, warnings) =
+            cp_save::load_into_runner(&mut sim, &bytes, content.content_hash()).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let baseline: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(repo("bench/baseline.json")).unwrap())
+                .unwrap();
+        let recorded = baseline["fixtures"]["bench-10k"]["checksum"]
+            .as_str()
+            .unwrap();
+        assert_eq!(format!("{:016x}", sim.checksum()), recorded);
+    }
+
+    /// Rebuilds the 10k city from its seed and compares it byte for byte with the committed
+    /// fixture. Slow in debug.
+    #[test]
+    #[ignore = "grid_city 10k: run in release (cargo test -p cp_bench --release grid_city_10k -- --ignored)"]
+    fn grid_city_10k_rebuilds_the_committed_fixture_byte_for_byte() {
+        let terrain = std::sync::Arc::new(
+            cp_terrain::Terrain::load(Path::new(&repo("assets/maps/flatlands"))).unwrap(),
+        );
+        let mut o = opts(&[]);
+        o.content = repo("assets/content").into();
+        o.pop = 10_000;
+        o.seed = 1;
+        let (sim, _) = build_grid_city(&o, terrain).unwrap();
+        let content = load_content(&o.content).unwrap();
+        let bytes = cp_save::save_runner(&sim, content.content_hash(), "flatlands").unwrap();
+        assert!(bytes == std::fs::read(repo("fixtures/saves/bench-10k.sav")).unwrap());
     }
 
     #[test]

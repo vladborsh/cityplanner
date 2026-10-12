@@ -50,3 +50,40 @@ The baseline must come from the CI runner, not a laptop. Run the `bench` job (an
 download its `bench-result` artifact, commit `result.json` as `bench/baseline.json`.
 Do this deliberately when the sim legitimately gets slower or a new scenario is added;
 `compare` errors if the baseline's scenario/seed/ticks differ from the current run.
+
+## City benches: `grid_city` 10k and 100k (T-047)
+
+`cp_sim::scenario::grid_city(target_pop, seed, terrain, content, &GridCityConfig)` builds a
+street lattice (every fifth street a 4-lane avenue), power lines and water/sewage pipes along
+every street, wind turbines at the edge, paints every block (dense and tall in the middle,
+low and industrial outside) and runs the sim, with demand held high, until `target_pop` citizens
+live there; then the clock runs on to 07:00 so a bench starts in the morning rush. Everything
+goes through commands; the starting balance is the scenario's documented `funds` setting.
+Same `(target_pop, seed, map, content)` gives the same city (checksum and save bytes).
+It needs a map without water in the way: use `flatlands` (the pump and outflow are only placed
+where the owned tiles have water).
+
+```
+cp_bench fixture --pop 10000  --seed 1 --map flatlands --out fixtures/saves/bench-10k.sav
+cp_bench --scenario grid_city --pop 10000 --map flatlands --ticks 600      # build + time in one go
+scripts/bench.sh 10k            # 5 runs on the fixture, aggregate, compare with bench/baseline-10k.json
+scripts/bench.sh 100k           # the nightly one; RUNS=3 scripts/bench.sh 100k for a quicker look
+scripts/bench.sh 10k --update-baseline   # record a new baseline (deliberately, on a quiet machine)
+```
+
+* `fixtures/saves/bench-10k.sav` (0.99 MB) is committed, written at the current save version:
+  whoever bumps the save must keep it loading through the migration chain.
+* `fixtures/saves/bench-100k.sav` (9.4 MB) is **gitignored**: `scripts/bench.sh 100k` builds it
+  on demand (about 80 s in release) and refuses it unless its state checksum equals the one in
+  `bench/baseline.json` under `"fixtures"` (as the 10k fixture's checksum is checked by a
+  `cp_bench` test).
+* GitHub CI is unavailable, so "10k on every PR, 100k nightly" is this script run by hand (or by
+  a local cron): it writes `<target dir>/bench/bench-<size>.json` (ms per phase, median and p95)
+  and exits 1 on a regression over 20 %.
+* `bench/baseline-10k.json` and `bench/baseline-100k.json` hold the measured numbers (release,
+  Apple M4 Pro, **shared machine at load average ~8**: noisy; re-baseline on a quiet one). The
+  empty-scenario gate keeps using `bench/baseline.json`.
+* A bench run attaches the content to a loaded save (without it the citizen, building and agent
+  systems do nothing); `--save` runs of the old fixtures change accordingly.
+* Today the commuters of the routine are abstract trips, so the `Agents` phase of these cities is
+  nearly empty (no cars or pedestrians on the road).

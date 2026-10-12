@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "scenario": "save",
+  "seed": 1,
+  "ticks": 600,
+  "warmup_ticks": 100,
+  "runs": 5,
+  "git_sha": "87dabb1",
+  "map": {
+    "path": "assets/maps/flatlands",
+    "load_ms": 8.932875
+  },
+  "save": {
+    "path": "fixtures/saves/bench-10k.sav",
+    "format_version": 15,
+    "tick": 5290,
+    "map_id": "flatlands",
+    "load_ms": 34.918583000000005,
+    "warnings": []
+  },
+  "checksum": "3dae29270e688b1e",
+  "arenas": [],
+  "phases": [
+    {
+      "name": "Commands",
+      "median_ms": 0.000083,
+      "p95_ms": 0.000167
+    },
+    {
+      "name": "Network",
+      "median_ms": 0.000125,
+      "p95_ms": 0.000291
+    },
+    {
+      "name": "Agents",
+      "median_ms": 0.01025,
+      "p95_ms": 0.012125
+    },
+    {
+      "name": "Paths",
+      "median_ms": 0.000125,
+      "p95_ms": 0.00025
+    },
+    {
+      "name": "Citizens",
+      "median_ms": 0.162021,
+      "p95_ms": 0.276709
+    },
+    {
+      "name": "Buildings",
+      "median_ms": 0.003458,
+      "p95_ms": 0.004542
+    },
+    {
+      "name": "Utilities",
+      "median_ms": 0.000083,
+      "p95_ms": 0.000167
+    },
+    {
+      "name": "Economy",
+      "median_ms": 0.008083,
+      "p95_ms": 0.01
+    },
+    {
+      "name": "Services",
+      "median_ms": 0.000041,
+      "p95_ms": 0.000042
+    },
+    {
+      "name": "Stats",
+      "median_ms": 0.003917,
+      "p95_ms": 0.004792
+    }
+  ],
+  "total": {
+    "median_ms": 0.18975,
+    "p95_ms": 0.334125
+  }
+}

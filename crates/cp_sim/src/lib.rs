@@ -6,6 +6,7 @@ pub mod overlay;
 pub mod phase;
 pub mod plugin;
 pub mod runner;
+pub mod scenario;
 pub mod view;
 
 pub use checksum::{Fnv1a, SimChecksum};
