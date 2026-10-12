@@ -367,9 +367,9 @@ fn decide(
                     to,
                     purpose,
                     mode,
-                    state: TripState::InTransit {
-                        arrive_at: Tick(now + travel_ticks(d, mode)),
-                    },
+                    // `cp_traffic` routes it and takes an agent from the pool; only a full
+                    // pool or a missing agent makes it run abstractly (§9.4).
+                    state: TripState::Planned,
                 })
                 .is_some();
             if ok {

@@ -5,75 +5,75 @@
   "ticks": 600,
   "warmup_ticks": 100,
   "runs": 5,
-  "git_sha": "87dabb1",
+  "git_sha": "22460bf",
   "map": {
     "path": "assets/maps/flatlands",
-    "load_ms": 8.932875
+    "load_ms": 5.4094169999999995
   },
   "save": {
     "path": "fixtures/saves/bench-10k.sav",
     "format_version": 15,
     "tick": 5290,
     "map_id": "flatlands",
-    "load_ms": 34.918583000000005,
+    "load_ms": 26.212292,
     "warnings": []
   },
-  "checksum": "3dae29270e688b1e",
+  "checksum": "94122ee46c352b01",
   "arenas": [],
   "phases": [
     {
       "name": "Commands",
-      "median_ms": 0.000083,
-      "p95_ms": 0.000167
+      "median_ms": 0.000084,
+      "p95_ms": 0.000375
     },
     {
       "name": "Network",
       "median_ms": 0.000125,
-      "p95_ms": 0.000291
+      "p95_ms": 0.000458
     },
     {
       "name": "Agents",
-      "median_ms": 0.01025,
-      "p95_ms": 0.012125
+      "median_ms": 0.0942915,
+      "p95_ms": 0.167708
     },
     {
       "name": "Paths",
-      "median_ms": 0.000125,
-      "p95_ms": 0.00025
+      "median_ms": 0.004417,
+      "p95_ms": 0.0135
     },
     {
       "name": "Citizens",
-      "median_ms": 0.162021,
-      "p95_ms": 0.276709
+      "median_ms": 0.1828955,
+      "p95_ms": 0.297584
     },
     {
       "name": "Buildings",
-      "median_ms": 0.003458,
-      "p95_ms": 0.004542
+      "median_ms": 0.0075,
+      "p95_ms": 0.01125
     },
     {
       "name": "Utilities",
-      "median_ms": 0.000083,
-      "p95_ms": 0.000167
+      "median_ms": 0.000125,
+      "p95_ms": 0.000291
     },
     {
       "name": "Economy",
-      "median_ms": 0.008083,
-      "p95_ms": 0.01
+      "median_ms": 0.008916,
+      "p95_ms": 0.010792
     },
     {
       "name": "Services",
-      "median_ms": 0.000041,
-      "p95_ms": 0.000042
+      "median_ms": 0.000042,
+      "p95_ms": 0.000084
     },
     {
       "name": "Stats",
-      "median_ms": 0.003917,
-      "p95_ms": 0.004792
+      "median_ms": 0.00475,
+      "p95_ms": 0.01
     }
   ],
   "total": {
-    "median_ms": 0.18975,
-    "p95_ms": 0.334125
+    "median_ms": 0.3160205,
+    "p95_ms": 0.49633399999999994
   }
 }

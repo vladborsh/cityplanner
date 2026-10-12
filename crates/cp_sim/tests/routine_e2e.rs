@@ -25,11 +25,44 @@ fn content() -> Arc<ContentDb> {
     )
 }
 
+/// The game content with `walk_limit_m` of the balance replaced.
+fn content_walking_below(walk_limit_m: f32) -> Arc<ContentDb> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<(String, String)>, limit: f32) {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap())
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let path = e.path();
+            if path.is_dir() {
+                walk(&path, out, limit);
+            } else if path.extension().is_some_and(|x| x == "ron") {
+                let mut text = std::fs::read_to_string(&path).unwrap();
+                if path.file_name().is_some_and(|n| n == "balance.ron") {
+                    text = format!("Balance((walk_limit_m: {limit}))");
+                }
+                out.push((path.display().to_string(), text));
+            }
+        }
+    }
+    let mut sources = Vec::new();
+    walk(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"),
+        &mut sources,
+        walk_limit_m,
+    );
+    Arc::new(ContentDb::from_sources(sources).unwrap())
+}
+
 /// An `n`x`n`-line lattice of 90 m streets; blocks are zoned in a repeating pattern.
 fn town(content: &Arc<ContentDb>, seed: u64, lines: usize) -> SimRunner {
+    town_with(content, SimRunner::new(seed), lines)
+}
+
+fn town_with(content: &Arc<ContentDb>, mut sim: SimRunner, lines: usize) -> SimRunner {
     let road = content.road_id("basic_2l").unwrap();
     let def = content.road(road).clone();
-    let mut sim = SimRunner::new(seed);
     sim.set_content(Arc::clone(content));
     {
         let mut g = sim.world_mut().resource_mut::<NetGraph>();
@@ -73,7 +106,10 @@ fn town(content: &Arc<ContentDb>, seed: u64, lines: usize) -> SimRunner {
 /// Runs until the town has `n` citizens and everyone had time to find work, then to the
 /// start of a game day.
 fn grown(content: &Arc<ContentDb>, seed: u64, lines: usize, n: usize) -> SimRunner {
-    let mut sim = town(content, seed, lines);
+    grown_from(town(content, seed, lines), n)
+}
+
+fn grown_from(mut sim: SimRunner, n: usize) -> SimRunner {
     while sim.world().resource::<CitizenGrid>().citizen_count() < n {
         sim.tick_once();
         assert!(
@@ -225,7 +261,12 @@ fn trips_to_a_building_that_disappears_are_cancelled_cleanly() {
         sim.tick_once();
         let book = sim.world().resource::<TripBook>();
         victim = book.iter().find_map(|(_, t)| {
-            matches!(t.state, TripState::InTransit { .. }).then_some((t.citizen, t.to, t.from))
+            // On its way, as a timer or as an agent.
+            matches!(
+                t.state,
+                TripState::InTransit { .. } | TripState::AwaitingPath { .. } | TripState::Agent
+            )
+            .then_some((t.citizen, t.to, t.from))
         });
         if victim.is_some() {
             break;
@@ -238,7 +279,7 @@ fn trips_to_a_building_that_disappears_are_cancelled_cleanly() {
             let mut z = w.resource_mut::<ZoneGrid>();
             assert!(demolish_building(&mut b, &mut z, to));
         });
-    // Past the longest abstract trip: the trip has resolved one way or another.
+    // Long enough for the trip to have resolved one way or another.
     for _ in 0..(TICKS_PER_DAY / 2) {
         sim.tick_once();
     }
@@ -381,4 +422,86 @@ fn demolishing_an_occupied_home_and_workplace_leaves_nothing_dangling() {
     let mut b = demolish_occupied_buildings(&content, 5);
     assert_eq!(a.checksum(), b.checksum(), "same command log, same state");
     assert!(a.world().resource::<TripBook>().cancelled > 0);
+}
+
+/// Cars and pedestrians on the road right now.
+fn on_the_road(sim: &SimRunner) -> (usize, usize) {
+    let a = sim.world().resource::<cp_traffic::Agents>();
+    (a.vehicle_count(), a.pedestrian_count())
+}
+
+/// BUG-022: commuters are cars and pedestrians, not abstract timers. The road is empty at
+/// night, fills in the morning peak, and nothing runs abstractly while the pools have room.
+#[test]
+fn commuters_drive_and_walk_in_the_morning_peak() {
+    // Trips under the walking limit (1 km) are walked; a small town needs a short limit to
+    // have cars too.
+    let content = content_walking_below(150.0);
+    let mut sim = grown(&content, 5, 7, 1000);
+    let abstract_before = sim
+        .world()
+        .resource::<cp_traffic::Agents>()
+        .stats
+        .abstract_trips;
+    let (mut night_max, mut peak_cars, mut peak_peds) = (0, 0, 0);
+    let mut growing = false;
+    for t in 0..TICKS_PER_DAY {
+        sim.tick_once();
+        let (cars, peds) = on_the_road(&sim);
+        let hour = hour_of_day(sim.tick().0);
+        if hour < 3.0 {
+            night_max = night_max.max(cars + peds);
+        }
+        if (5.0..10.0).contains(&hour) {
+            peak_cars = peak_cars.max(cars);
+            peak_peds = peak_peds.max(peds);
+            // More trips depart than finish early in the peak, so the count grows.
+            growing |= cars + peds > night_max + 5;
+        }
+        let _ = t;
+    }
+    eprintln!("peak: {peak_cars} cars, {peak_peds} pedestrians; night max {night_max}");
+    assert!(peak_cars > 0, "no car on the road in the morning peak");
+    assert!(peak_cars + peak_peds > 10, "{peak_cars} + {peak_peds}");
+    assert!(growing, "the road never filled up");
+    let a = sim.world().resource::<cp_traffic::Agents>();
+    assert_eq!(
+        a.stats.abstract_trips, abstract_before,
+        "trips ran abstractly with free pools"
+    );
+    assert!(a.stats.driven > 0);
+}
+
+/// BUG-022: with ten agent slots the overflow runs abstractly and every trip still finishes.
+#[test]
+fn a_full_pool_sends_the_overflow_abstract_and_every_trip_finishes() {
+    let content = content();
+    let mut limits = cp_core::SimLimits::desktop();
+    limits.vehicles = 10;
+    limits.pedestrians = 10;
+    let sim = town_with(&content, SimRunner::with_limits(5, limits), 7);
+    let mut sim = grown_from(sim, 1000);
+    let mut first_seen: BTreeMap<cp_citizen::TripId, u64> = BTreeMap::new();
+    let (mut max_cars, mut max_peds) = (0, 0);
+    for _ in 0..(2 * TICKS_PER_DAY) {
+        sim.tick_once();
+        let now = sim.tick().0;
+        let (cars, peds) = on_the_road(&sim);
+        (max_cars, max_peds) = (max_cars.max(cars), max_peds.max(peds));
+        let book = sim.world().resource::<TripBook>();
+        for (tid, _) in book.iter() {
+            let first = *first_seen.entry(tid).or_insert(now);
+            assert!(now - first < TICKS_PER_DAY, "trip {tid:?} is stuck");
+        }
+        first_seen.retain(|id, _| book.get(*id).is_some());
+    }
+    assert!(
+        max_cars <= 10 && max_peds <= 10,
+        "{max_cars} cars, {max_peds} peds"
+    );
+    assert!(max_cars + max_peds > 0, "the pool was never used");
+    let a = sim.world().resource::<cp_traffic::Agents>();
+    assert!(a.stats.abstract_trips > 0, "no overflow with ten slots");
+    let book = sim.world().resource::<TripBook>();
+    assert!(book.completed > 300, "{} trips completed", book.completed);
 }
