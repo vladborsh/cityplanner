@@ -16,7 +16,7 @@ use crate::chunk::{
     build_water_mesh, grid_triangles, select_lod,
 };
 use crate::material::{VertexColorMaterial, VertexColorMaterialPlugin};
-use crate::sun::sun_state;
+use crate::sun::{LightingSettings, lit_state};
 
 /// Adds terrain, sea, rivers, sun and sky. Requires `SimView` to be published as a resource
 /// (it may appear later; chunks are spawned when the first terrain shows up).
@@ -27,6 +27,7 @@ impl Plugin for TerrainRenderPlugin {
         app.add_plugins(VertexColorMaterialPlugin)
             .init_resource::<TerrainStats>()
             .init_resource::<LoadedTerrain>()
+            .init_resource::<LightingSettings>()
             .add_systems(Startup, spawn_sun)
             .add_systems(Update, (sync_terrain, update_lods, apply_sun).chain())
             .add_systems(Last, collect_stats);
@@ -295,12 +296,13 @@ fn spawn_sun(mut commands: Commands) {
 
 fn apply_sun(
     view: Option<Res<SimView>>,
+    lighting: Res<LightingSettings>,
     mut sun: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut clear: ResMut<ClearColor>,
 ) {
     let Some(view) = view else { return };
-    let s = sun_state(view.game_time);
+    let s = lit_state(view.game_time, *lighting);
     let rgb = |c: [f32; 3]| Color::linear_rgb(c[0], c[1], c[2]);
     for (mut tf, mut light) in &mut sun {
         let dir = Vec3::from(s.light_dir);

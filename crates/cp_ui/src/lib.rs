@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use cp_core::SimSpeed;
-use cp_render::OverlayState;
+use cp_render::{LightingSettings, OverlayState};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, ToolState, UiCapture};
 
@@ -24,6 +24,7 @@ impl Plugin for UiPlugin {
         app.add_plugins(EguiPlugin::default())
             .init_resource::<UiState>()
             .init_resource::<OverlayState>()
+            .init_resource::<LightingSettings>()
             .init_resource::<TickRate>()
             .init_resource::<CommandOutbox>()
             .init_resource::<ToolState>()
@@ -56,6 +57,7 @@ fn draw_ui(
     mut state: ResMut<UiState>,
     mut outbox: ResMut<CommandOutbox>,
     mut overlay: ResMut<OverlayState>,
+    mut lighting: ResMut<LightingSettings>,
     rate: Res<TickRate>,
     extra: Option<Res<debug::PhaseTimes>>,
     mut tools: ResMut<ToolState>,
@@ -66,7 +68,7 @@ fn draw_ui(
     };
     let ctx = contexts.ctx_mut()?;
     let mut root = root_ui(ctx);
-    top_bar(&mut root, &view, &mut outbox, &mut overlay);
+    top_bar(&mut root, &view, &mut outbox, &mut overlay, &mut lighting);
     bottom_bar(&mut root, &mut state, Some(&view), &mut tools, &mut overlay);
     if state.debug_open {
         debug::debug_window(

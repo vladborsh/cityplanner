@@ -22,6 +22,7 @@ pub use camera::{CameraSettings, RtsCamera, RtsCameraPlugin};
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{Overlay, OverlayPlugin, OverlayState};
 pub use road_render::{RoadRenderPlugin, RoadStats};
+pub use sun::LightingSettings;
 pub use terrain::{Sun, TerrainChunk, TerrainRenderPlugin, TerrainStats};
 pub use utility_render::UtilityRenderPlugin;
 

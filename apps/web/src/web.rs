@@ -41,6 +41,7 @@ pub fn run() {
                 // std::time::Instant is unavailable in the browser.
                 phase_timing: false,
                 ui: true,
+                always_day: false,
                 scene,
                 target: None,
             },

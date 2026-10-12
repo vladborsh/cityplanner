@@ -49,6 +49,8 @@ pub struct GamePlugin {
     pub phase_timing: bool,
     /// Add the egui UI (`cp_ui`). The browser build cannot yet: see `apps/web/README.md`.
     pub ui: bool,
+    /// Light the world as at noon at any hour (`--always-day`); toggled at runtime in the UI.
+    pub always_day: bool,
     /// Optional test scene, e.g. `grid:10` (see [`scene`]).
     pub scene: Option<String>,
     /// Render into this image instead of a window (`--hidden`: no window exists).
@@ -74,6 +76,9 @@ impl Plugin for GamePlugin {
             hour: self.hour,
             phase_timing: self.phase_timing,
             scene: self.scene.clone(),
+        })
+        .insert_resource(cp_render::LightingSettings {
+            always_day: self.always_day,
         })
         .init_resource::<PhaseTimes>()
         .init_resource::<CommandOutbox>()

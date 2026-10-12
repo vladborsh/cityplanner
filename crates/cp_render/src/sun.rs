@@ -1,6 +1,28 @@
-//! Day/night lighting as a pure function of [`GameTime`] (no Bevy types).
+//! Day/night lighting as a pure function of [`GameTime`] and [`LightingSettings`].
 
+use bevy::prelude::Resource;
 use cp_core::GameTime;
+
+/// Client-side lighting options (render only: the sim clock, citizens' routines and the UI
+/// clock never see them).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LightingSettings {
+    /// Light the world as at noon whatever the game time is (no night).
+    pub always_day: bool,
+}
+
+/// Midday, `GameTime::day_fraction() == 0.5`.
+fn noon() -> GameTime {
+    GameTime {
+        day: 0,
+        tick_of_day: (cp_core::time::TICKS_PER_DAY / 2) as u32,
+    }
+}
+
+/// [`sun_state`] of `time`, or of noon when `settings.always_day` is on.
+pub fn lit_state(time: GameTime, settings: LightingSettings) -> SunState {
+    sun_state(if settings.always_day { noon() } else { time })
+}
 
 /// Lighting for one instant. Colours are linear RGB.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -85,6 +107,23 @@ mod tests {
 
     fn at(hour: f32) -> SunState {
         sun_state(Tick((hour / 24.0 * TICKS_PER_DAY as f32) as u64).game_time())
+    }
+
+    #[test]
+    fn always_day_is_noon_at_any_time() {
+        let on = LightingSettings { always_day: true };
+        let off = LightingSettings::default();
+        let noon = at(12.0);
+        for h in [0.0, 2.0, 5.5, 12.0, 18.5, 23.9] {
+            let t = Tick((h / 24.0 * TICKS_PER_DAY as f32) as u64 + 3 * TICKS_PER_DAY).game_time();
+            assert_eq!(lit_state(t, on), noon, "{h} h");
+            assert_eq!(lit_state(t, off), sun_state(t), "{h} h, flag off");
+        }
+        assert_ne!(lit_state(at_time(2.0), off), noon);
+    }
+
+    fn at_time(hour: f32) -> GameTime {
+        Tick((hour / 24.0 * TICKS_PER_DAY as f32) as u64).game_time()
     }
 
     #[test]

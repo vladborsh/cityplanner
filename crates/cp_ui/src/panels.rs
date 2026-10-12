@@ -5,7 +5,7 @@ use bevy_egui::egui;
 use cp_content::UtilityKind;
 use cp_core::SimSpeed;
 use cp_net::ElevationMode;
-use cp_render::{Overlay, OverlayState};
+use cp_render::{LightingSettings, Overlay, OverlayState};
 use cp_sim::SimView;
 use cp_tools::{
     ActiveTool, CommandOutbox, PALETTE, RoadMode, ToolState, UtilityMode, ZoneToolKind,
@@ -105,7 +105,7 @@ pub fn overlay_buttons(ui: &mut egui::Ui, state: &mut OverlayState) -> Vec<(Over
     rects
 }
 
-/// Top bar: money and population (stubs), date/time, speed buttons, overlay switcher.
+/// Top bar: money and population (stubs), date/time, speed buttons, overlay switcher, the always-day lighting toggle.
 /// Returns the on-screen rectangle of each speed button (tests use it to click them). A
 /// click pushes `SetSpeed` into `outbox`.
 pub fn top_bar(
@@ -113,6 +113,7 @@ pub fn top_bar(
     view: &SimView,
     outbox: &mut CommandOutbox,
     overlay: &mut OverlayState,
+    lighting: &mut LightingSettings,
 ) -> Vec<(SimSpeed, egui::Rect)> {
     let mut rects = Vec::new();
     egui::Panel::top("top_bar").show(root, |ui| {
@@ -132,6 +133,9 @@ pub fn top_bar(
             }
             ui.separator();
             overlay_buttons(ui, overlay);
+            ui.separator();
+            // Render only: the game clock and everyone's routine keep running at night.
+            ui.checkbox(&mut lighting.always_day, "Всегда день");
         });
     });
     rects
@@ -471,6 +475,7 @@ mod tests {
                 view,
                 &mut CommandOutbox::default(),
                 &mut OverlayState::default(),
+                &mut LightingSettings::default(),
             );
         });
         let pos = rects.iter().find(|(s, _)| *s == speed).unwrap().1.center();
@@ -485,7 +490,13 @@ mod tests {
             (0.2, vec![button(false)]),
         ] {
             crate::testutil::frame(&ctx, input(t, events), |ui| {
-                top_bar(ui, view, outbox, &mut OverlayState::default());
+                top_bar(
+                    ui,
+                    view,
+                    outbox,
+                    &mut OverlayState::default(),
+                    &mut LightingSettings::default(),
+                );
             });
         }
     }
