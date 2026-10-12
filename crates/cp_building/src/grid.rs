@@ -204,6 +204,44 @@ impl BuildingGrid {
     }
 }
 
+/// The cells of the live zone blocks under the lot rectangle of `b` (`pos`, `rot`, `w` × `d`
+/// cells), matched by cell centre. For a building whose `lot.block` is gone (its road was
+/// removed and maybe rebuilt) these are the cells it covers now.
+pub fn cells_under_lot(zones: &cp_zone::ZoneGrid, b: &Building) -> Vec<ZoneCellRef> {
+    use bevy_math::Vec2;
+    use cp_zone::CELL_SIZE;
+    let (w, d) = (f32::from(b.lot.w), f32::from(b.lot.d));
+    let (u, v) = (
+        Vec2::new(b.rot.cos(), b.rot.sin()),
+        Vec2::new(-b.rot.sin(), b.rot.cos()),
+    );
+    let reach = (w.hypot(d) * CELL_SIZE) * 0.5 + CELL_SIZE;
+    zones
+        .cells_within(b.pos, reach)
+        .into_iter()
+        .filter(|c| {
+            zones.cell_footprint(*c).is_some_and(|o| {
+                let off = o.c - b.pos;
+                off.dot(u).abs() <= w * CELL_SIZE * 0.5 - 0.5
+                    && off.dot(v).abs() <= d * CELL_SIZE * 0.5 - 0.5
+            })
+        })
+        .collect()
+}
+
+/// The cells `b` holds: its lot cells, or, when its block is gone, the cells under its lot
+/// rectangle in the blocks that replaced it.
+pub fn held_cells(zones: &cp_zone::ZoneGrid, b: &Building) -> Vec<ZoneCellRef> {
+    if zones.block(b.lot.block).is_some() {
+        b.lot.cells().collect()
+    } else {
+        cells_under_lot(zones, b)
+            .into_iter()
+            .filter(|c| zones.is_occupied(*c))
+            .collect()
+    }
+}
+
 /// Removes a building and frees its lot cells in the zone grid. The future `Demolish`
 /// command uses this; citizens living or working there leave on their next update.
 pub fn demolish_building(
@@ -213,7 +251,7 @@ pub fn demolish_building(
 ) -> bool {
     match buildings.remove(id) {
         Some(b) => {
-            let cells: Vec<ZoneCellRef> = b.lot.cells().collect();
+            let cells = held_cells(zones, &b);
             zones.release(&cells);
             true
         }

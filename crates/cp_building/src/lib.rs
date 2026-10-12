@@ -9,7 +9,7 @@ pub mod spawn;
 pub use command::{
     BuildingCommand, BuildingError, PlacementPlan, apply, oriented_lot, validate_placement,
 };
-pub use grid::{BuildingGrid, demolish_building};
+pub use grid::{BuildingGrid, cells_under_lot, demolish_building, held_cells};
 pub use model::{
     AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Lot, build_ticks,
 };

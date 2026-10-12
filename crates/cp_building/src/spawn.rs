@@ -19,7 +19,7 @@ use cp_net::NetGraph;
 use cp_zone::{BLOCK_DEPTH, CELL_SIZE, ZoneBlock, ZoneBlockId, ZoneCellRef, ZoneGrid};
 use serde::{Deserialize, Serialize};
 
-use crate::grid::BuildingGrid;
+use crate::grid::{BuildingGrid, cells_under_lot};
 use crate::model::build_ticks;
 use crate::model::{AccessPoint, Building, BuildingFlags, BuildingState, Lot};
 
@@ -188,10 +188,10 @@ fn revalidate_access(net: &NetGraph, buildings: &mut BuildingGrid, tick: u64) {
 }
 
 /// Buildings that outlived their zone block (the road was removed; §8 v1.1) take their ground
-/// back when a road is rebuilt along it: the cells of the new blocks under the lot are occupied,
-/// and when they form the lot's rectangle in one block the lot is re-bound to it (so the cells
-/// are released with the building). Without this the spawner would build on top of survivors
-/// (BUG-019). Cells are matched by centre against the lot's rectangle (`pos`, `rot`, size).
+/// back when a road is rebuilt along it: the cells of the new blocks under the lot are occupied
+/// (only the ones not yet occupied, so a settled survivor leaves the zone revision alone), and
+/// when they form the lot's rectangle in one block the lot is re-bound to it. Without this the
+/// spawner would build on top of survivors (BUG-019).
 fn rebind_lots(zones: &mut ZoneGrid, buildings: &mut BuildingGrid) {
     let stale: Vec<(crate::BuildingId, Building)> = buildings
         .iter()
@@ -199,30 +199,24 @@ fn rebind_lots(zones: &mut ZoneGrid, buildings: &mut BuildingGrid) {
         .map(|(id, b)| (id, b.clone()))
         .collect();
     for (id, b) in stale {
-        let (w, d) = (f32::from(b.lot.w), f32::from(b.lot.d));
-        let (u, v) = (
-            Vec2::new(b.rot.cos(), b.rot.sin()),
-            Vec2::new(-b.rot.sin(), b.rot.cos()),
-        );
-        let reach = (w.hypot(d) * CELL_SIZE) * 0.5 + CELL_SIZE;
-        let cells: Vec<ZoneCellRef> = zones
-            .cells_within(b.pos, reach)
-            .into_iter()
-            .filter(|c| {
-                zones.cell_footprint(*c).is_some_and(|o| {
-                    let off = o.c - b.pos;
-                    off.dot(u).abs() <= w * CELL_SIZE * 0.5 - 0.5
-                        && off.dot(v).abs() <= d * CELL_SIZE * 0.5 - 0.5
-                })
-            })
-            .collect();
+        let cells = cells_under_lot(zones, &b);
         let Some(first) = cells.first().copied() else {
             continue;
         };
-        zones.occupy(&cells);
+        let fresh: Vec<ZoneCellRef> = cells
+            .iter()
+            .copied()
+            .filter(|c| !zones.is_occupied(*c))
+            .collect();
+        if !fresh.is_empty() {
+            zones.occupy(&fresh);
+        }
         // A whole rectangle in one block, rows starting at the road edge: re-bind.
-        let cols = cells.iter().map(|c| c.cell / BLOCK_DEPTH);
-        let col = cols.clone().min().unwrap_or(0);
+        let col = cells
+            .iter()
+            .map(|c| c.cell / BLOCK_DEPTH)
+            .min()
+            .unwrap_or(0);
         let one_block = cells.iter().all(|c| c.block == first.block);
         let rows_ok = cells
             .iter()

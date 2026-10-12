@@ -70,8 +70,8 @@ fn cells_of(sim: &SimRunner) -> Vec<(BuildingId, ZoneCellRef)> {
         .collect()
 }
 
-#[test]
-fn survivors_keep_their_cells_in_the_blocks_of_a_rebuilt_road() {
+/// A road with survivors, removed and rebuilt along the same line (new blocks, zoned).
+fn rebuilt() -> (SimRunner, Vec<BuildingId>) {
     let content = content();
     let mut sim = SimRunner::new(7);
     sim.set_content(Arc::clone(&content));
@@ -98,6 +98,12 @@ fn survivors_keep_their_cells_in_the_blocks_of_a_rebuilt_road() {
     sim.tick_once();
     zone(&mut sim, again);
 
+    (sim, survivors)
+}
+
+#[test]
+fn survivors_keep_their_cells_in_the_blocks_of_a_rebuilt_road() {
+    let (mut sim, survivors) = rebuilt();
     // Long enough for many spawn attempts on the new blocks.
     for _ in 0..(3 * TICKS_PER_DAY) {
         sim.tick_once();
@@ -135,4 +141,69 @@ fn survivors_keep_their_cells_in_the_blocks_of_a_rebuilt_road() {
             );
         }
     }
+}
+
+#[test]
+fn the_zone_revision_is_stable_once_the_survivors_are_settled() {
+    let (mut sim, _) = rebuilt();
+    // Stop spawning so only the rebind logic could still touch the grid.
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(0.0);
+    // A survivor whose cells never form its lot rectangle stays unbound for good: it must
+    // not touch the zone grid every tick.
+    {
+        let (id, _) = sim
+            .world()
+            .resource::<BuildingGrid>()
+            .iter()
+            .next()
+            .unwrap();
+        let mut grid = sim.world_mut().resource_mut::<BuildingGrid>();
+        let lot = &mut grid.get_mut(id).unwrap().lot;
+        lot.block = cp_core::Id::new(9999, 0);
+        lot.w += 1;
+    }
+    for _ in 0..40 {
+        sim.tick_once();
+    }
+    let rev = sim.world().resource::<ZoneGrid>().revision();
+    for _ in 0..200 {
+        sim.tick_once();
+    }
+    assert_eq!(sim.world().resource::<ZoneGrid>().revision(), rev);
+}
+
+#[test]
+fn demolishing_an_unbound_survivor_releases_the_cells_it_holds() {
+    use cp_building::BuildingCommand;
+    use cp_core::Id;
+    let (mut sim, survivors) = rebuilt();
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(0.0);
+    for _ in 0..40 {
+        sim.tick_once();
+    }
+    let id = survivors[0];
+    let held: Vec<ZoneCellRef> = {
+        let b = sim.world().resource::<BuildingGrid>().get(id).unwrap();
+        b.lot.cells().collect()
+    };
+    assert!(
+        held.iter()
+            .all(|c| sim.world().resource::<ZoneGrid>().is_occupied(*c))
+    );
+    // Make the lot unbound, as if the rebuilt cells had not formed its rectangle.
+    sim.world_mut()
+        .resource_mut::<BuildingGrid>()
+        .get_mut(id)
+        .unwrap()
+        .lot
+        .block = Id::new(9999, 0);
+    let command = cp_sim::SimCommand::Building(BuildingCommand::Demolish { building: id });
+    sim.push_command(command, sim.tick());
+    sim.apply_due_commands();
+    assert!(sim.world().resource::<BuildingGrid>().get(id).is_none());
+    let zones = sim.world().resource::<ZoneGrid>();
+    assert!(
+        held.iter().all(|c| !zones.is_occupied(*c)),
+        "the cells under the unbound lot are free again"
+    );
 }

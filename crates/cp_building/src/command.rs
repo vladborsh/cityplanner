@@ -293,8 +293,9 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
             let Some(b) = buildings.remove(*building) else {
                 return Err(BuildingError::UnknownBuilding);
             };
-            let cells: Vec<ZoneCellRef> = b.lot.cells().collect();
-            world.resource_mut::<ZoneGrid>().release(&cells);
+            let mut zones = world.resource_mut::<ZoneGrid>();
+            let cells = crate::grid::held_cells(&zones, &b);
+            zones.release(&cells);
             Ok(Cost::ZERO)
         }
     }
