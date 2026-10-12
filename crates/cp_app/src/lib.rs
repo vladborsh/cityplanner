@@ -162,6 +162,10 @@ pub fn build_sim(
     let mut sim = SimRunner::with_limits(1, limits);
     sim.set_terrain(Arc::new(terrain));
     sim.set_content(scene::road_content());
+    // The periodic desync checksum is for tests and replays; the game does not pay for it.
+    sim.world_mut()
+        .resource_mut::<cp_sim::SimChecksum>()
+        .skip_periodic = true;
     sim.world_mut()
         .insert_resource(Tick((hour / 24.0 * TICKS_PER_DAY as f32) as u64));
     if phase_timing {
@@ -184,6 +188,22 @@ pub fn build_sim(
     } else if let Some(n) = scene.and_then(scene::parse_city) {
         let built = scene::build_city(&mut sim, n, 5200, 6000);
         info!("scene city:{n}: {built} buildings");
+    } else if let Some(path) = scene.and_then(|s| s.strip_prefix("save:")) {
+        // A saved city (the bench fixtures), to look at and to time the client on.
+        let content = scene::embedded_content();
+        match std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                cp_save::load_into_runner(&mut sim, &bytes, content.content_hash())
+                    .map_err(|e| e.to_string())
+            }) {
+            Ok((header, warnings)) => info!(
+                "scene save:{path}: tick {}, {} warnings",
+                header.tick,
+                warnings.len()
+            ),
+            Err(e) => warn!("scene save:{path}: {e}"),
+        }
     } else if let Some(n) = scene.and_then(scene::parse_grid) {
         for reason in scene::build_grid(&mut sim, n) {
             warn!("scene command rejected: {reason}");

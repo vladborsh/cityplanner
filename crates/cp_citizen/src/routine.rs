@@ -139,19 +139,32 @@ fn is_active(b: &BuildingGrid, id: BuildingId) -> bool {
     b.get(id).is_some_and(|b| b.state == BuildingState::Active)
 }
 
+/// The active shops, in building order: `(id, position)`. Built once per tick when a citizen
+/// wants one (scanning every building for every shopper was the cost).
+type Shops = Option<Vec<(BuildingId, Vec2)>>;
+
 /// Nearest active shop to `from`, ties to the lower id.
-fn nearest_shop(b: &BuildingGrid, db: &ContentDb, from: Vec2) -> Option<BuildingId> {
+fn nearest_shop(
+    b: &BuildingGrid,
+    db: &ContentDb,
+    shops: &mut Shops,
+    from: Vec2,
+) -> Option<BuildingId> {
+    let shops = shops.get_or_insert_with(|| {
+        b.iter()
+            .filter(|(_, bd)| {
+                bd.state == BuildingState::Active
+                    && matches!(
+                        db.building(bd.def).zone,
+                        ZoneType::ComLow | ZoneType::ComHigh
+                    )
+            })
+            .map(|(id, bd)| (id, bd.pos))
+            .collect()
+    });
     let mut best: Option<(f32, BuildingId)> = None;
-    for (id, bd) in b.iter() {
-        if bd.state != BuildingState::Active
-            || !matches!(
-                db.building(bd.def).zone,
-                ZoneType::ComLow | ZoneType::ComHigh
-            )
-        {
-            continue;
-        }
-        let d = bd.pos.distance_squared(from);
+    for &(id, pos) in shops.iter() {
+        let d = pos.distance_squared(from);
         if best.is_none_or(|(bd, _)| d < bd) {
             best = Some((d, id));
         }
@@ -300,9 +313,10 @@ pub fn update_routine(
             .map(|(id, _)| id)
             .collect();
         let mut r = rng.fork(ROUTINE_STREAM, *tick);
+        let mut shops: Shops = None;
         for cid in citizens {
             decide(
-                cid, now, day, hour, &buildings, db, &mut grid, &mut book, &mut r,
+                cid, now, day, hour, &buildings, db, &mut grid, &mut book, &mut r, &mut shops,
             );
         }
     }
@@ -325,6 +339,7 @@ fn decide(
     grid: &mut CitizenGrid,
     book: &mut TripBook,
     rng: &mut SimRng,
+    shops: &mut Shops,
 ) {
     let Some(c) = grid.citizen(cid).cloned() else {
         return;
@@ -387,7 +402,7 @@ fn decide(
                 let need = (NEED_PCT_PER_DAY * book.days_since_shop(c.household, day)).min(100);
                 if rng.below(100) < need
                     && let Some(shop) =
-                        pos_of(buildings, home).and_then(|p| nearest_shop(buildings, db, p))
+                        pos_of(buildings, home).and_then(|p| nearest_shop(buildings, db, shops, p))
                     && go(TripPurpose::Shop, home, shop, grid, book)
                 {
                     book.note_shopped(c.household, day);

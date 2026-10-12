@@ -93,3 +93,90 @@ every step, i.e. bit-identical)
 scripts/bench.sh 100k     # builds fixtures/saves/bench-100k.sav on demand
 ```
 `bench/baseline-100k.json` and `bench/baseline-10k.json` hold the new numbers.
+
+
+---
+
+# Round 2 (T-076)
+
+Same scenario and caveats as above (shared, loaded M4 Pro, load average 10-12 during the final
+runs; not target hardware; balance-analyst confirmation still open). 100k checksum after 250
+ticks is `b8938f66733aadef` after **every** step of this round too (bit-identical); none of
+the steps below changes behaviour.
+
+## Before / after per phase (ms per tick, median of 3 runs each)
+
+"Before" = master `ca1a5a0` (end of T-048) re-measured at the start of this round, on a busier
+moment than the final run (Agents 2.6 vs 1.8 is machine noise: that code is unchanged).
+
+| phase | before median | before p95 | before mean | before max | after median | after p95 | after mean | after max |
+|---|---|---|---|---|---|---|---|---|
+| Commands | 0.001 | 0.002 | 0.001 | 0.00 | 0.001 | 0.001 | 0.001 | 0.00 |
+| Network | 0.001 | 0.003 | 0.001 | 0.02 | 0.001 | 0.001 | 0.001 | 0.00 |
+| Agents | 2.612 | 8.322 | 3.639 | 51.83 | 1.837 | 3.035 | 1.784 | 4.66 |
+| Paths | 0.037 | 0.280 | 0.098 | 1.56 | 0.032 | 0.119 | 0.063 | 1.25 |
+| Citizens | 0.280 | 1.244 | 0.493 | 6.70 | 0.263 | 0.809 | 0.359 | 1.61 |
+| Buildings | 0.249 | 1.017 | 0.404 | 4.36 | 0.228 | 0.604 | 0.278 | 1.18 |
+| Utilities | 0.001 | 0.002 | 0.355 | 24.42 | 0.000 | 0.001 | 0.056 | 3.75 |
+| Economy | 0.036 | 0.089 | 0.102 | 9.60 | 0.031 | 0.036 | 0.062 | 6.10 |
+| Services | 0.000 | 0.000 | 0.000 | 0.00 | 0.000 | 0.000 | 0.000 | 0.00 |
+| Stats | 0.176 | 0.599 | 0.247 | 2.76 | 0.147 | 0.215 | 0.154 | 0.52 |
+| **total** | 3.773 | 11.947 | 5.560 | 54.63 | 2.660 | 4.258 | 2.761 | 12.16 |
+
+Quieter single runs of the final code: total mean 2.37 ms, **max tick 11.1 ms**, Agents mean
+1.55 ms, Utilities max 3.8 ms, Economy max 6.1 ms. The slowest tick is now under the 16 ms
+target (before: 54 ms, mostly the `update_supply` and checksum ticks landing together every 256th tick).
+
+## Budget (§14, per frame at ×3)
+
+| item | budget | after (3 × mean tick) | |
+|---|---|---|---|
+| sim total | ≤ 8 ms | 7.1 ms (quiet) - 8.3 ms (loaded) | at the limit |
+| agents | ≤ 3 ms | 4.7-5.4 ms (1.55-1.8 ms/tick) | **over**: pedestrian and vehicle stepping |
+| citizens + buildings + economy + utilities | ≤ 1.5 ms | 2.3 ms (0.36 + 0.28 + 0.06 + 0.06 per tick) | **over**: Citizens and Buildings |
+| render frame (100k overview, `--hidden --bench`) | ≤ 16.6 ms | avg 7.65 ms (131 fps), p50 2.9, p95 16.8 | within; but p99 107 ms / max 261 ms |
+
+Render frame, first measurement: `cp_desktop --map flatlands --scene save:fixtures/saves/bench-100k.sav
+--cam overview --hidden --bench 10` (new `save:` scene: loads a save into the client; 37k buildings,
+4.4k cars and 3.3k pedestrians in the sim). The avg/p50/p95 are within 16.6 ms; the slow tail is the
+mesh rebuild at start (`roads last_update_ms=83`, `buildings last_update_ms=7.5`) and sim ticks that
+share a frame, not steady state. Agents were not drawn at that camera distance (`vehicles_drawn=0`).
+The machine runs with other loads and the GPU is an M4 Pro: on a GTX 1660 / M1 the GPU part is unknown.
+
+## What was done
+
+1. **`update_supply` hitch 25 ms -> 3.8 ms every 64 ticks** (bit-identical): per-def needs/source
+   computed once (was per building: BTreeMap iteration and a service-name lookup), the attach
+   cache and the missing-supply bits are dense `Vec`s by arena index, the cache keeps the
+   `Attach` lookups between runs, and the power BFS neighbour lookup is a dense CSR grid
+   (`HopGrid`) instead of a `BTreeMap` of 9 lookups per building (6 ms -> <1 ms).
+   (The first run after a load still pays the one-off ~265 ms attach build; it happens once.)
+2. **Economy 9.6 -> 6.1 ms every 256 ticks** (bit-identical): `worker_education` was a
+   `BTreeMap` built over 106k citizens; now dense by building index.
+3. **Periodic checksum off in the client and the bench** (`SimChecksum::skip_periodic`,
+   `cp_bench --periodic-checksum` to turn it back on): the checksum serialises and FNV-hashes
+   the whole state (~30 ms at 100k, every 256th tick: the 37 ms max tick of T-048). It does not
+   touch the sim state; `SimRunner::checksum()` and the on-demand value are unchanged, tests
+   and replays keep the periodic one (default on). FNV-1a is byte-serial, so a faster
+   identical hash is not possible; a parallel per-part hash would change every checksum.
+4. **Shop search** (`nearest_shop`): the active shops are listed once per tick (was a scan of
+   every building for each shopper); same pick (nearest, ties to the lower id).
+5. **Measurement**: `cp_desktop --scene save:FILE` loads a save into the client (new
+   `cp_save` dependency of `cp_app`; pure-Rust zstd, no browser issue), used for the render frame.
+
+## Remaining, ranked
+
+1. **Agents 1.55-1.8 ms/tick** (budget share 1 ms): pedestrians re-resolve their current leg
+   (`Ctx::leg`: lane lookups, a search over the junction's links for crossings) every tick, and
+   `position()` evaluates the lane/curve each tick; caching the resolved leg per pedestrian
+   (it only changes on leg change or network change) would cut most of it. Not done: it touches
+   the `Pedestrian` struct (serialized) - needs a save-format decision (dev-1 / T-046).
+2. **Citizens 0.36 ms + Buildings 0.28 ms per tick** (budget share 0.5 + 0.5): per-citizen
+   `decide` for 1/256 of 106k citizens each tick (400 decisions) and the 1/64 building bucket;
+   both are linear in the bucket and now mostly allocation and arena-walk bound.
+3. **Economy 6 ms every 256th tick** (`LandGrids::compute` over all links/segments/buildings;
+   could be spread over the 256 ticks only with a behaviour change: the grids are saved and
+   checksummed).
+4. **Periodic checksum 30 ms** when it is on (tests/replays); a parallel per-part hash would
+   fix it at the price of changing every checksum.
+5. Render tail (p99 107 ms): road/building mesh rebuild at load.

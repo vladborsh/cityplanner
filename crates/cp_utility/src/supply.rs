@@ -131,6 +131,72 @@ impl Attach {
     }
 }
 
+/// The sites binned by [`POWER_HOP_M`] cells in a dense grid over their bounding box (cell
+/// contents in ascending site index): the neighbour lookup of the power BFS is an array index.
+struct HopGrid {
+    x0: i32,
+    z0: i32,
+    w: usize,
+    h: usize,
+    start: Vec<u32>,
+    items: Vec<usize>,
+}
+
+impl HopGrid {
+    fn build(sites: &[Site]) -> Self {
+        let cells: Vec<(i32, i32)> = sites.iter().map(|s| bucket(s.pos, POWER_HOP_M)).collect();
+        let (x0, x1) = cells
+            .iter()
+            .fold((i32::MAX, i32::MIN), |a, c| (a.0.min(c.0), a.1.max(c.0)));
+        let (z0, z1) = cells
+            .iter()
+            .fold((i32::MAX, i32::MIN), |a, c| (a.0.min(c.1), a.1.max(c.1)));
+        if cells.is_empty() {
+            return Self {
+                x0: 0,
+                z0: 0,
+                w: 0,
+                h: 0,
+                start: vec![0],
+                items: Vec::new(),
+            };
+        }
+        let (w, h) = ((x1 - x0 + 1) as usize, (z1 - z0 + 1) as usize);
+        let at = |c: (i32, i32)| (c.1 - z0) as usize * w + (c.0 - x0) as usize;
+        let mut start = vec![0u32; w * h + 1];
+        for &c in &cells {
+            start[at(c) + 1] += 1;
+        }
+        for i in 0..w * h {
+            start[i + 1] += start[i];
+        }
+        let mut fill = start.clone();
+        let mut items = vec![0usize; cells.len()];
+        for (i, &c) in cells.iter().enumerate() {
+            let a = at(c);
+            items[fill[a] as usize] = i;
+            fill[a] += 1;
+        }
+        Self {
+            x0,
+            z0,
+            w,
+            h,
+            start,
+            items,
+        }
+    }
+
+    fn get(&self, bx: i32, bz: i32) -> &[usize] {
+        let (x, z) = (bx - self.x0, bz - self.z0);
+        if x < 0 || z < 0 || x as usize >= self.w || z as usize >= self.h {
+            return &[];
+        }
+        let c = z as usize * self.w + x as usize;
+        &self.items[self.start[c] as usize..self.start[c + 1] as usize]
+    }
+}
+
 fn kind_index(k: UtilityKind) -> usize {
     match k {
         UtilityKind::Water => 0,
@@ -143,11 +209,20 @@ fn kind_index(k: UtilityKind) -> usize {
 /// recomputes: positions and links rarely change, and the nearest-link search is the expensive
 /// part of [`compute_supply`]. An entry is valid for the graph it was computed for (a
 /// fingerprint of every link) and for the position it was computed at.
+/// `(generation, position, pipe component, line component)` of one building.
+type CachedAttach = (u32, Vec2, Option<u32>, Option<u32>);
+
 #[derive(Default)]
 pub struct AttachCache {
     graph: u64,
-    by_building: BTreeMap<BuildingId, (Vec2, Option<u32>, Option<u32>)>,
+    /// The link lookups of that graph, built when the first building needs one.
+    attach: Option<(Attach, Attach)>,
+    /// By arena index of the building: `(generation, position, pipe component, line component)`.
+    by_building: Vec<Option<CachedAttach>>,
 }
+
+/// Consumption per utility and the source `(kind, capacity)` of one building def.
+type DefSupply = ([f32; 3], Option<(ServiceKind, f32)>);
 
 /// FNV-1a over every link: network, endpoints and curve.
 fn graph_fingerprint(graph: &UtilityGraph) -> u64 {
@@ -182,21 +257,28 @@ pub fn compute_supply(
     buildings: &BuildingGrid,
     graph: &UtilityGraph,
 ) -> BTreeMap<BuildingId, u8> {
-    compute_supply_cached(db, buildings, graph, &mut AttachCache::default())
+    let missing = compute_supply_cached(db, buildings, graph, &mut AttachCache::default());
+    buildings
+        .iter()
+        .filter_map(|(id, _)| {
+            let bits = missing.get(id.index as usize).copied().unwrap_or(0);
+            (bits != 0).then_some((id, bits))
+        })
+        .collect()
 }
 
-/// [`compute_supply`] reusing (and refreshing) `cache`; the result is the same as without it.
+/// [`compute_supply`] reusing (and refreshing) `cache`; the result is the same as without it,
+/// but dense: the missing-supply bits by arena index of the building (`0` = has everything).
 pub fn compute_supply_cached(
     db: &ContentDb,
     buildings: &BuildingGrid,
     graph: &UtilityGraph,
     cache: &mut AttachCache,
-) -> BTreeMap<BuildingId, u8> {
-    let sites: Vec<Site> = buildings
-        .iter()
-        .filter(|(_, b)| b.state == BuildingState::Active)
-        .map(|(id, b)| {
-            let def = db.building(b.def);
+) -> Vec<u8> {
+    // Needs and source of each building def, once.
+    let defs: Vec<DefSupply> = db
+        .buildings()
+        .map(|(_, def)| {
             let mut needs = [0.0; 3];
             for (k, v) in &def.consumption {
                 needs[kind_index(*k)] = *v;
@@ -207,6 +289,14 @@ pub fn compute_supply_cached(
                 .and_then(|s| db.service_id(s))
                 .map(|s| db.service(s))
                 .map(|s| (s.kind, s.capacity as f32));
+            (needs, source)
+        })
+        .collect();
+    let sites: Vec<Site> = buildings
+        .iter()
+        .filter(|(_, b)| b.state == BuildingState::Active)
+        .map(|(id, b)| {
+            let (needs, source) = defs[b.def.index()];
             Site {
                 id,
                 pos: b.pos,
@@ -215,42 +305,49 @@ pub fn compute_supply_cached(
             }
         })
         .collect();
-    let mut missing: BTreeMap<BuildingId, u8> = BTreeMap::new();
+    let mut missing: Vec<u8> = vec![
+        0;
+        sites
+            .iter()
+            .map(|s| s.id.index as usize + 1)
+            .max()
+            .unwrap_or(0)
+    ];
     let mut flag = |id: BuildingId, bit: u8| {
-        *missing.entry(id).or_default() |= bit;
+        missing[id.index as usize] |= bit;
     };
 
     // The component of each building in the pipe and in the power network.
     let fingerprint = graph_fingerprint(graph);
     if cache.graph != fingerprint {
         cache.graph = fingerprint;
+        cache.attach = None;
         cache.by_building.clear();
     }
-    let mut attach: Option<(Attach, Attach)> = None;
     let mut comps: Vec<(Option<u32>, Option<u32>)> = Vec::with_capacity(sites.len());
     for s in &sites {
-        let hit = cache
-            .by_building
-            .get(&s.id)
-            .filter(|(pos, _, _)| *pos == s.pos)
-            .map(|&(_, pipe, line)| (pipe, line));
+        let i = s.id.index as usize;
+        let hit = match cache.by_building.get(i) {
+            Some(Some((g, pos, pipe, line))) if *g == s.id.generation && *pos == s.pos => {
+                Some((*pipe, *line))
+            }
+            _ => None,
+        };
         let pair = hit.unwrap_or_else(|| {
-            let (pipes, lines) = attach.get_or_insert_with(|| {
+            let (pipes, lines) = cache.attach.get_or_insert_with(|| {
                 (
                     Attach::build(graph, UtilityNet::Pipe),
                     Attach::build(graph, UtilityNet::Power),
                 )
             });
             let pair = (pipes.comp_at(graph, s.pos), lines.comp_at(graph, s.pos));
-            cache.by_building.insert(s.id, (s.pos, pair.0, pair.1));
+            if cache.by_building.len() <= i {
+                cache.by_building.resize(i + 1, None);
+            }
+            cache.by_building[i] = Some((s.id.generation, s.pos, pair.0, pair.1));
             pair
         });
         comps.push(pair);
-    }
-    // Forget buildings that are gone (ids of the arena slots still in use are kept).
-    if cache.by_building.len() > sites.len() * 2 {
-        let live: BTreeSet<BuildingId> = sites.iter().map(|s| s.id).collect();
-        cache.by_building.retain(|id, _| live.contains(id));
     }
 
     // --- pipes: water, then sewage ---
@@ -297,10 +394,7 @@ pub fn compute_supply_cached(
 
     // --- power ---
     let attached: Vec<Option<u32>> = comps.iter().map(|c| c.1).collect();
-    let mut hop: BTreeMap<(i32, i32), Vec<usize>> = BTreeMap::new();
-    for (i, s) in sites.iter().enumerate() {
-        hop.entry(bucket(s.pos, POWER_HOP_M)).or_default().push(i);
-    }
+    let hop = HopGrid::build(&sites);
     // Pools: line components (ascending) first, then unattached plants by id.
     enum Pool {
         Comp(u32),
@@ -341,7 +435,7 @@ pub fn compute_supply_cached(
                     let (bx, bz) = bucket(sites[i].pos, POWER_HOP_M);
                     for dx in -1..=1 {
                         for dz in -1..=1 {
-                            for &j in hop.get(&(bx + dx, bz + dz)).into_iter().flatten() {
+                            for &j in hop.get(bx + dx, bz + dz) {
                                 if !visited[j] && sites[j].pos.distance(sites[i].pos) <= POWER_HOP_M
                                 {
                                     next.insert(j);
@@ -384,7 +478,7 @@ pub fn update_supply(
         .iter()
         .filter(|(_, b)| b.state == BuildingState::Active)
         .filter_map(|(id, b)| {
-            let want = missing.get(&id).copied().unwrap_or(0);
+            let want = missing.get(id.index as usize).copied().unwrap_or(0);
             ((b.flags.0 & BuildingFlags::UTILITY_MASK) != want).then_some((id, want))
         })
         .collect();

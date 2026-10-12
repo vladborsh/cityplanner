@@ -129,6 +129,11 @@ pub(crate) fn net_part(world: &World, h: &mut Fnv1a) {
 /// Checksum registry and the latest periodic value.
 #[derive(Resource, Default)]
 pub struct SimChecksum {
+    /// Do not compute the periodic checksum (it serialises and hashes the whole state, ~30 ms at
+    /// 100k citizens, a visible hitch every 256 ticks). The game and the bench switch it off;
+    /// [`SimChecksum::compute`] and `SimRunner::checksum` still give the value on demand, and
+    /// tests and replays leave it on (default).
+    pub skip_periodic: bool,
     parts: Vec<(&'static str, ChecksumFn)>,
     /// Command-log entries already folded into `log_hash`.
     log_hashed: usize,
@@ -187,7 +192,9 @@ impl SimChecksum {
 /// `Stats`-phase system: records a checksum each time a 256-tick period completes.
 pub(crate) fn update_checksum(world: &mut World) {
     let tick = *world.resource::<Tick>();
-    if !(tick.0 + 1).is_multiple_of(CHECKSUM_PERIOD) {
+    if !(tick.0 + 1).is_multiple_of(CHECKSUM_PERIOD)
+        || world.resource::<SimChecksum>().skip_periodic
+    {
         return;
     }
     world.resource_scope(

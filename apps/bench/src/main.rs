@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty|grid_city] [--pop N] [--content DIR]
-//!          [--ticks N] [--warmup N] [--seed S] [--out FILE.json] [--inject-sleep Phase=MS]
+//!          [--ticks N] [--warmup N] [--seed S] [--out FILE.json] [--inject-sleep Phase=MS] [--periodic-checksum]
 //! cp_bench fixture --pop N [--seed S] [--map DIR|NAME] [--content DIR] --out FILE.sav
 //!                                                        (writes a grid_city save)
 //! cp_bench aggregate OUT.json RUN.json...        median over runs
@@ -37,11 +37,14 @@ struct Opts {
     seed: u64,
     out: Option<PathBuf>,
     inject_sleep: Option<(SimPhase, Duration)>,
+    /// Keep the periodic checksum (a ~30 ms hitch every 256 ticks at 100k): off by default, as
+    /// in the game.
+    periodic_checksum: bool,
 }
 
 fn usage() -> &'static str {
     "usage: cp_bench [--map DIR|NAME] [--save FILE] [--scenario empty|grid_city] [--pop N] [--content DIR] \
-     [--ticks N] [--warmup N] [--seed S] [--out FILE.json] [--inject-sleep Phase=MS]\n       \
+     [--ticks N] [--warmup N] [--seed S] [--out FILE.json] [--inject-sleep Phase=MS] [--periodic-checksum]\n       \
      cp_bench fixture --pop N [--seed S] [--map DIR|NAME] [--content DIR] --out FILE.sav\n       \
      cp_bench aggregate OUT.json RUN.json...\n       \
      cp_bench compare BASELINE.json CURRENT.json [--threshold 0.2] [--floor-ms 0.05]"
@@ -81,6 +84,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         seed: 1,
         out: None,
         inject_sleep: None,
+        periodic_checksum: false,
     };
     let mut it = args.iter();
     while let Some(flag) = it.next() {
@@ -91,6 +95,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--save" => o.save = Some(val()?),
             "--scenario" => o.scenario = Some(val()?),
             "--pop" => o.pop = num(val()?)? as usize,
+            "--periodic-checksum" => o.periodic_checksum = true,
             "--content" => o.content = val()?.into(),
             "--ticks" => o.ticks = num(val()?)?,
             "--warmup" => o.warmup = num(val()?)?,
@@ -175,6 +180,9 @@ fn run(o: &Opts) -> Result<Report, String> {
         }
         sim
     };
+    sim.world_mut()
+        .resource_mut::<cp_sim::SimChecksum>()
+        .skip_periodic = !o.periodic_checksum;
     sim.add_plugin(&PhaseTiming {
         sleep: o
             .inject_sleep

@@ -87,3 +87,7 @@ scripts/bench.sh 10k --update-baseline   # record a new baseline (deliberately, 
   systems do nothing); `--save` runs of the old fixtures change accordingly.
 * Today the commuters of the routine are abstract trips, so the `Agents` phase of these cities is
   nearly empty (no cars or pedestrians on the road).
+* The periodic 256-tick state checksum (a ~30 ms hitch at 100k) is off in bench runs, as in the
+  game; `--periodic-checksum` turns it back on. The result's `checksum` is computed on demand
+  at the end and is not affected. Results now carry `mean_ms` and `max_ms` per phase next to the
+  median and p95: the mean and the slowest tick are what a frame budget sees.

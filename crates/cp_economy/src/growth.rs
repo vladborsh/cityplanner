@@ -109,17 +109,36 @@ fn wanted_level(
     }
 }
 
-/// `(education sum, workers)` per workplace.
-fn worker_education(citizens: &CitizenGrid) -> BTreeMap<BuildingId, (u32, u32)> {
-    let mut m: BTreeMap<BuildingId, (u32, u32)> = BTreeMap::new();
-    for (_, c) in citizens.citizens() {
-        if let Some(w) = c.work {
-            let e = m.entry(w).or_default();
-            e.0 += u32::from(c.education);
-            e.1 += 1;
+/// `(education sum, workers)` per workplace, dense by arena index with the generation of the
+/// workplace (a stale slot reads as nobody works there).
+struct Workers(Vec<Option<(u32, u32, u32)>>);
+
+impl Workers {
+    fn get(&self, id: BuildingId) -> Option<(u32, u32)> {
+        match self.0.get(id.index as usize) {
+            Some(Some((g, e, n))) if *g == id.generation => Some((*e, *n)),
+            _ => None,
         }
     }
-    m
+}
+
+fn worker_education(citizens: &CitizenGrid) -> Workers {
+    let mut m: Vec<Option<(u32, u32, u32)>> = Vec::new();
+    for (_, c) in citizens.citizens() {
+        if let Some(w) = c.work {
+            let i = w.index as usize;
+            if m.len() <= i {
+                m.resize(i + 1, None);
+            }
+            let e = match &mut m[i] {
+                Some(e) if e.0 == w.generation => e,
+                slot => slot.insert((w.generation, 0, 0)),
+            };
+            e.1 += u32::from(c.education);
+            e.2 += 1;
+        }
+    }
+    Workers(m)
 }
 
 /// Moves `level_progress` of building `id` and rebuilds it when it reaches a whole step.
@@ -252,12 +271,7 @@ pub fn update_city(
             continue;
         }
         let utility_trouble = flags.0 & BuildingFlags::UTILITY_MASK != 0;
-        if let Some(wanted) = wanted_level(
-            bal,
-            def.zone,
-            grids.value_at(pos),
-            workers.get(&id).copied(),
-        ) {
+        if let Some(wanted) = wanted_level(bal, def.zone, grids.value_at(pos), workers.get(id)) {
             let may_rise = !utility_trouble;
             step_level(db, &mut buildings, &mut zones, &net, id, wanted, may_rise);
         }
