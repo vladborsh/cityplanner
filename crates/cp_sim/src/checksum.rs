@@ -108,6 +108,8 @@ pub(crate) fn agent_part(world: &World, h: &mut Fnv1a) {
 pub(crate) fn economy_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_core::Treasury>());
     h.write_serialized(world.resource::<cp_economy::EconomyState>());
+    h.write_serialized(world.resource::<cp_building::Demand>());
+    h.write_serialized(world.resource::<cp_economy::DemandAcc>());
 }
 
 /// Checksum part of trips (`cp_citizen::TripBook`).

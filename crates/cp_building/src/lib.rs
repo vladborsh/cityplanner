@@ -13,7 +13,7 @@ pub use grid::{BuildingGrid, demolish_building};
 pub use model::{
     AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Lot, build_ticks,
 };
-pub use spawn::{BLOCK_BUCKETS, DemandStub, SPAWN_STREAM, update_buildings};
+pub use spawn::{BLOCK_BUCKETS, DEMAND_PERIOD, Demand, SPAWN_STREAM, update_buildings};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_building";

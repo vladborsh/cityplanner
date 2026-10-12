@@ -91,7 +91,7 @@ impl SimRunner {
         world.init_resource::<JunctionGeometry>();
         world.init_resource::<cp_zone::ZoneGrid>();
         world.init_resource::<cp_building::BuildingGrid>();
-        world.init_resource::<cp_building::DemandStub>();
+        world.init_resource::<cp_building::Demand>();
         world.init_resource::<cp_utility::UtilityGraph>();
         world.init_resource::<cp_citizen::CitizenGrid>();
         world.init_resource::<cp_traffic::PathNetwork>();
@@ -103,6 +103,7 @@ impl SimRunner {
         world.init_resource::<cp_traffic::AgentSettings>();
         world.init_resource::<cp_core::Treasury>();
         world.init_resource::<cp_economy::EconomyState>();
+        world.init_resource::<cp_economy::DemandAcc>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
@@ -181,6 +182,7 @@ impl SimRunner {
         );
         schedule.add_systems(cp_utility::update_supply.in_set(SimPhase::Utilities));
         schedule.add_systems(cp_economy::settle_week.in_set(SimPhase::Economy));
+        schedule.add_systems(cp_economy::update_demand.in_set(SimPhase::Economy));
         schedule.add_systems(cp_citizen::update_citizens.in_set(SimPhase::Citizens));
         // Path snapshot after the junction links it is built from; results are applied in
         // the Paths phase (system-design §2: requests from tick t land exactly at t + 8).

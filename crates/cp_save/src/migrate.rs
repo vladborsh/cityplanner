@@ -4,12 +4,12 @@
 //! never change (its postcard encoding is what old files contain; `SimCommand` and the
 //! domain enums are append-only for the same reason).
 
-use cp_building::{Building, BuildingGrid};
+use cp_building::{Building, BuildingGrid, Demand};
 use cp_citizen::{CitizenGrid, TripBook};
 use cp_citizen::{CitizenId, TripId};
 use cp_core::Arena;
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
-use cp_economy::EconomyState;
+use cp_economy::{DemandAcc, EconomyState};
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
@@ -287,10 +287,58 @@ pub struct SaveDataV13 {
     pub agents: Agents,
 }
 
+/// Version 14: the body as written by format 14 (treasury and economy settings; no demand).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV14 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+    pub trips: TripBook,
+    pub agents: Agents,
+    pub treasury: Treasury,
+    pub economy: EconomyState,
+}
+
+/// v14 → v15: demand and its cycle sums were added. An old city starts from the demand of a
+/// new one (housing, shops and industry wanted, no offices) with empty sums, so spawning and
+/// move-in are not stalled; the smoothing pulls the values to the city's real ones within a
+/// few 64-tick cycles, and the cycle that was in progress is dropped.
+pub fn migrate_v14_to_v15(v14: SaveDataV14) -> SaveData {
+    SaveData {
+        tick: v14.tick,
+        rng: v14.rng,
+        speed: v14.speed,
+        queue: v14.queue,
+        log: v14.log,
+        tiles: v14.tiles,
+        net: v14.net,
+        zones: v14.zones,
+        buildings: v14.buildings,
+        citizens: v14.citizens,
+        paths: v14.paths,
+        utilities: v14.utilities,
+        trips: v14.trips,
+        agents: v14.agents,
+        treasury: v14.treasury,
+        economy: v14.economy,
+        demand: Demand::default(),
+        demand_acc: DemandAcc::default(),
+    }
+}
+
 /// v13 → v14: the treasury and the economy settings were added. An old city starts with the
 /// default treasury (70 000.00), 9% taxes, 100% budgets and no weekly report.
-pub fn migrate_v13_to_v14(v13: SaveDataV13) -> SaveData {
-    SaveData {
+pub fn migrate_v13_to_v14(v13: SaveDataV13) -> SaveDataV14 {
+    SaveDataV14 {
         tick: v13.tick,
         rng: v13.rng,
         speed: v13.speed,
@@ -525,8 +573,8 @@ pub fn migrate_v3_to_v4(v3: SaveDataV3) -> SaveDataV4 {
 
 /// The last two chain steps, shared by every arm.
 fn up(v: SaveDataV10) -> SaveData {
-    migrate_v13_to_v14(migrate_v12_to_v13(migrate_v11_to_v12(migrate_v10_to_v11(
-        v,
+    migrate_v14_to_v15(migrate_v13_to_v14(migrate_v12_to_v13(migrate_v11_to_v12(
+        migrate_v10_to_v11(v),
     ))))
 }
 
@@ -597,12 +645,15 @@ pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         8 => Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(dec(body)?)))),
         9 => Ok(up(migrate_v9_to_v10(dec(body)?))),
         10 => Ok(up(dec(body)?)),
-        11 => Ok(migrate_v13_to_v14(migrate_v12_to_v13(migrate_v11_to_v12(
+        11 => Ok(migrate_v14_to_v15(migrate_v13_to_v14(migrate_v12_to_v13(
+            migrate_v11_to_v12(dec(body)?),
+        )))),
+        12 => Ok(migrate_v14_to_v15(migrate_v13_to_v14(migrate_v12_to_v13(
             dec(body)?,
         )))),
-        12 => Ok(migrate_v13_to_v14(migrate_v12_to_v13(dec(body)?))),
-        13 => Ok(migrate_v13_to_v14(dec(body)?)),
-        14 => dec(body),
+        13 => Ok(migrate_v14_to_v15(migrate_v13_to_v14(dec(body)?))),
+        14 => Ok(migrate_v14_to_v15(dec(body)?)),
+        15 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -807,4 +858,16 @@ pub fn encode_v13(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v13).expect("serialization failed");
     crate::assemble(13, v13.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 14** file (treasury and economy settings, no demand). Legacy writer kept
+/// only to test the v14 fixture; real saves always use [`crate::save`].
+pub fn encode_v14(
+    v14: &SaveDataV14,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v14).expect("serialization failed");
+    crate::assemble(14, v14.tick.0, &body, content_hash, map_id, map_hash)
 }

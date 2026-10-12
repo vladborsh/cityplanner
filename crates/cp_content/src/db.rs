@@ -235,6 +235,45 @@ impl ContentDb {
                 "must be >= 1".to_string(),
             ));
         }
+        if let Some((path, b)) = balances.first() {
+            let finite = |vs: &[f32]| vs.iter().all(|v| v.is_finite());
+            if !(b.demand_ema.is_finite() && (0.0..=1.0).contains(&b.demand_ema)) {
+                errors.push(ContentError::new(
+                    path,
+                    Some("demand_ema"),
+                    "must be in 0..=1".to_string(),
+                ));
+            }
+            let knobs = [
+                ("demand_base", &b.demand_base[..], false),
+                ("demand_job_weight", &b.demand_job_weight[..], true),
+                (
+                    "demand_adults_per_home",
+                    &[b.demand_adults_per_home][..],
+                    true,
+                ),
+                (
+                    "demand_shop_jobs_per_citizen",
+                    &[b.demand_shop_jobs_per_citizen][..],
+                    true,
+                ),
+                (
+                    "demand_industry_jobs_per_shop_job",
+                    &[b.demand_industry_jobs_per_shop_job][..],
+                    true,
+                ),
+            ];
+            for (name, values, non_negative) in knobs {
+                if !finite(values) || (non_negative && values.iter().any(|&v| v < 0.0)) {
+                    let what = if non_negative {
+                        "must be finite and >= 0"
+                    } else {
+                        "must be finite"
+                    };
+                    errors.push(ContentError::new(path, Some(name), what.to_string()));
+                }
+            }
+        }
         if !errors.is_empty() {
             return Err(ContentErrors(errors));
         }
@@ -251,6 +290,17 @@ impl ContentDb {
             fnv1a(&mut hash, b"balance");
             fnv1a(&mut hash, &b.walk_limit_m.to_bits().to_le_bytes());
             fnv1a(&mut hash, &b.spawn_one_in.to_le_bytes());
+            let demand = [b.demand_ema, b.demand_adults_per_home]
+                .into_iter()
+                .chain(b.demand_base)
+                .chain(b.demand_job_weight)
+                .chain([
+                    b.demand_shop_jobs_per_citizen,
+                    b.demand_industry_jobs_per_shop_job,
+                ]);
+            for v in demand {
+                fnv1a(&mut hash, &v.to_bits().to_le_bytes());
+            }
         }
         Ok(Self {
             roads: roads.strip(),

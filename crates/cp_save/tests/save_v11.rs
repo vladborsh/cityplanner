@@ -92,6 +92,7 @@ fn town() -> SimRunner {
     let road = db.road_id("basic_2l").unwrap();
     let def = db.road(road).clone();
     let mut sim = runner(3);
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
     {
         let mut g = sim.world_mut().resource_mut::<NetGraph>();
         for (a, b) in [

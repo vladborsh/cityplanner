@@ -17,6 +17,7 @@ use cp_content::{BuildingDefId, ContentDb, SimContent, ZoneType};
 use cp_core::{SimLimits, SimRng, Tick};
 use cp_net::NetGraph;
 use cp_zone::{BLOCK_DEPTH, CELL_SIZE, ZoneBlock, ZoneBlockId, ZoneCellRef, ZoneGrid};
+use serde::{Deserialize, Serialize};
 
 use crate::grid::BuildingGrid;
 use crate::model::build_ticks;
@@ -27,41 +28,65 @@ pub const BLOCK_BUCKETS: u64 = 32;
 /// ChaCha stream of the spawn RNG.
 pub const SPAWN_STREAM: u64 = 0xB01D;
 
-/// TEMPORARY demand per zone type until the demand task lands: a value `> 0` allows
-/// spawning. Default: everything allowed. Not saved and not checksummed.
-#[derive(Resource, Clone, Debug, PartialEq)]
-pub struct DemandStub {
-    pub res_low: f32,
-    pub res_high: f32,
-    pub com_low: f32,
-    pub com_high: f32,
-    pub industrial: f32,
-    pub office: f32,
+/// Smoothed demand per zone family, the economy's output and the gate of spawning and move-in
+/// (`architecture/system-design.md` §11): a value `> 0` allows it. `cp_economy` recomputes it
+/// every [`DEMAND_PERIOD`] ticks; it is serialized sim state.
+///
+/// The default is the state of a new city (the `Balance` defaults of `demand_base`): housing,
+/// shops and industry are wanted, offices are not until there are educated jobless.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Demand {
+    /// Residential (`ResLow`, `ResHigh`): wanted new homes. Vacant homes count against it.
+    pub r: f32,
+    /// Commercial (`ComLow`, `ComHigh`).
+    pub c: f32,
+    /// Industrial.
+    pub i: f32,
+    /// Office.
+    pub o: f32,
+    /// Households move into the homes that exist while this is `> 0`: like `r` without the
+    /// vacant-homes term (vacant homes are what moving in fills; counting them would stall it).
+    pub move_in: f32,
+    /// Scenario/test hook: while set, the economy leaves the values alone.
+    pub frozen: bool,
 }
 
-impl Default for DemandStub {
+/// Ticks between two recomputations of [`Demand`] (the 64 buckets of §11, one per tick).
+pub const DEMAND_PERIOD: u64 = 64;
+
+impl Default for Demand {
     fn default() -> Self {
         Self {
-            res_low: 1.0,
-            res_high: 1.0,
-            com_low: 1.0,
-            com_high: 1.0,
-            industrial: 1.0,
-            office: 1.0,
+            r: 10.0,
+            c: 5.0,
+            i: 5.0,
+            o: 0.0,
+            move_in: 10.0,
+            frozen: false,
         }
     }
 }
 
-impl DemandStub {
+impl Demand {
+    /// The same value for every family, frozen: for scenarios and tests.
+    pub fn fixed(v: f32) -> Self {
+        Self {
+            r: v,
+            c: v,
+            i: v,
+            o: v,
+            move_in: v,
+            frozen: true,
+        }
+    }
+
     pub fn get(&self, zone: ZoneType) -> f32 {
         match zone {
             ZoneType::None => 0.0,
-            ZoneType::ResLow => self.res_low,
-            ZoneType::ResHigh => self.res_high,
-            ZoneType::ComLow => self.com_low,
-            ZoneType::ComHigh => self.com_high,
-            ZoneType::Industrial => self.industrial,
-            ZoneType::Office => self.office,
+            ZoneType::ResLow | ZoneType::ResHigh => self.r,
+            ZoneType::ComLow | ZoneType::ComHigh => self.c,
+            ZoneType::Industrial => self.i,
+            ZoneType::Office => self.o,
         }
     }
 }
@@ -173,7 +198,7 @@ pub fn update_buildings(
     net: Res<NetGraph>,
     rng: Res<SimRng>,
     limits: Res<SimLimits>,
-    demand: Res<DemandStub>,
+    demand: Res<Demand>,
     mut zones: ResMut<ZoneGrid>,
     mut buildings: ResMut<BuildingGrid>,
 ) {

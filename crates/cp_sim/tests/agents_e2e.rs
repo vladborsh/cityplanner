@@ -38,6 +38,7 @@ fn town(
     let road = content.road_id(road).unwrap();
     let def = content.road(road).clone();
     let mut sim = SimRunner::new(seed);
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
     sim.set_content(Arc::clone(content));
     {
         let mut g = sim.world_mut().resource_mut::<NetGraph>();

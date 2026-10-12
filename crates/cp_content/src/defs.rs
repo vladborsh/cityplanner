@@ -55,27 +55,42 @@ pub enum ContentFile {
     Balance(Balance),
 }
 
-/// Global balance knobs the Balance Analyst may tune (`assets/content/balance.ron`).
+/// Global balance knobs the Balance Analyst may tune (`assets/content/balance.ron`). Every
+/// field is optional in the file; a missing one keeps its default.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct Balance {
     /// Trips with a straight line shorter than this (metres) are walked (§9.2). On the
     /// movement clock (§2) 1 km on foot is about 2 game hours.
     pub walk_limit_m: f32,
     /// A spawn attempt on a zone block proceeds with probability `1 / spawn_one_in` (§8).
-    #[serde(default = "default_spawn_one_in")]
     pub spawn_one_in: u32,
-}
-
-fn default_spawn_one_in() -> u32 {
-    4
+    /// Share of the gap a demand value closes per recomputation (every 64 ticks), `0..=1` (§11).
+    pub demand_ema: f32,
+    /// Constant added to the raw demand of residential, commercial, industrial and office
+    /// (R, C, I, O): what a city with nothing in it wants.
+    pub demand_base: [f32; 4],
+    /// Weight of a free job slot of education level 0..=3 in residential demand.
+    pub demand_job_weight: [f32; 4],
+    /// Adults a vacant home is expected to bring: it counts against residential demand.
+    pub demand_adults_per_home: f32,
+    /// Commercial job slots one resident supports.
+    pub demand_shop_jobs_per_citizen: f32,
+    /// Industrial job slots one commercial job slot needs goods from.
+    pub demand_industry_jobs_per_shop_job: f32,
 }
 
 impl Default for Balance {
     fn default() -> Self {
         Self {
             walk_limit_m: 1000.0,
-            spawn_one_in: default_spawn_one_in(),
+            spawn_one_in: 4,
+            demand_ema: 0.25,
+            demand_base: [10.0, 5.0, 5.0, 0.0],
+            demand_job_weight: [1.0, 1.0, 1.5, 2.0],
+            demand_adults_per_home: 2.0,
+            demand_shop_jobs_per_citizen: 0.2,
+            demand_industry_jobs_per_shop_job: 0.5,
         }
     }
 }

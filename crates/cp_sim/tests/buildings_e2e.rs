@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use bevy_math::Vec3;
-use cp_building::{BuildingGrid, BuildingState, DemandStub, build_ticks};
+use cp_building::{BuildingGrid, BuildingState, Demand, build_ticks};
 use cp_content::{ContentDb, ZoneType};
 use cp_core::curve::CubicBezier3;
 use cp_core::time::TICKS_PER_DAY;
@@ -205,14 +205,7 @@ fn construction_takes_exactly_build_hours() {
 fn no_demand_means_no_buildings() {
     let content = content();
     let mut sim = city(&content, 5);
-    *sim.world_mut().resource_mut::<DemandStub>() = DemandStub {
-        res_low: 0.0,
-        res_high: 0.0,
-        com_low: 0.0,
-        com_high: 0.0,
-        industrial: 0.0,
-        office: 0.0,
-    };
+    *sim.world_mut().resource_mut::<Demand>() = Demand::fixed(0.0);
     run_days(&mut sim, 1);
     assert!(sim.world().resource::<BuildingGrid>().is_empty());
 }

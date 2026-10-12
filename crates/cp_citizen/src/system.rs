@@ -14,8 +14,8 @@
 //!   distance** between the home and the workplace (pathfinding does not exist yet; the
 //!   traffic task can switch this to path cost). Ties go to the lower building id.
 //! * **Move-in** (buildings, 1/64 per tick): an `Active` residential building with a free
-//!   apartment (`BuildingDef.households` per building) and residential demand > 0
-//!   (`DemandStub`, temporary) receives a household with probability `1/MOVE_IN_ONE_IN`
+//!   apartment (`BuildingDef.households` per building) and residential move-in demand > 0
+//!   (`Demand::move_in`) receives a household with probability `1/MOVE_IN_ONE_IN`
 //!   per visit. The household is created at once but its members stay `Moving` for
 //!   [`FALLBACK_DELAY`] ticks, or — with a map — [`BASE_DELAY`] plus the time to drive from
 //!   the nearest external connection at [`ARRIVAL_SPEED_MPS`] (15 m/s, on the movement clock of §2: `ceil(d / 15 / MOVE_SECONDS_PER_TICK)` ticks). Size 1–5; the first
@@ -24,7 +24,7 @@
 
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
-use cp_building::{BuildingGrid, BuildingId, BuildingState, DemandStub};
+use cp_building::{BuildingGrid, BuildingId, BuildingState, Demand};
 use cp_content::{ContentDb, SimContent, ZoneType};
 use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_DAY};
 use cp_core::{SimLimits, SimRng, Tick};
@@ -123,7 +123,7 @@ pub fn update_citizens(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
     buildings: Res<BuildingGrid>,
-    demand: Res<DemandStub>,
+    demand: Res<Demand>,
     terrain: Option<Res<SimTerrain>>,
     rng: Res<SimRng>,
     limits: Res<SimLimits>,
@@ -226,23 +226,18 @@ pub fn update_citizens(
     // --- move-in ---
     let mut rng = rng.fork(MOVE_IN_STREAM, *tick);
     let bucket = (now % u64::from(BUILDING_BUCKETS)) as u32;
-    let visits: Vec<(BuildingId, ZoneType, u16, Vec2)> = buildings
+    let visits: Vec<(BuildingId, u16, Vec2)> = buildings
         .iter_bucket(BUILDING_BUCKETS, bucket)
         .filter(|(_, b)| b.state == BuildingState::Active)
         .filter_map(|(id, b)| {
             let def = db.building(b.def);
-            (is_residential(def.zone) && def.households > 0).then_some((
-                id,
-                def.zone,
-                def.households,
-                b.pos,
-            ))
+            (is_residential(def.zone) && def.households > 0).then_some((id, def.households, b.pos))
         })
         .collect();
-    for (id, zone, apartments, pos) in visits {
+    for (id, apartments, pos) in visits {
         let gate = rng.below(MOVE_IN_ONE_IN);
         if gate != 0
-            || demand.get(zone) <= 0.0
+            || demand.move_in <= 0.0
             || grid.households_in(id) >= apartments
             || grid.household_count() >= limits.households as usize
             || grid.citizen_count() + HOUSEHOLD_MAX > limits.citizens as usize

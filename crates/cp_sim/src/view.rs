@@ -95,6 +95,8 @@ pub struct SimView {
     /// Poses of vehicles and pedestrians after this tick and after the previously published
     /// one, for the client to interpolate between. Shared; rebuilt only when the tick advanced.
     pub agents: Arc<AgentSnapshot>,
+    /// Smoothed demand (R, C, I, O) for the demand bars (§11), read-only.
+    pub demand: cp_building::Demand,
 }
 
 /// Agent poses of two consecutive snapshots. `prev` is the frame of the previous published
@@ -303,6 +305,7 @@ impl SimRunner {
                 .map(|c| Arc::clone(&c.0)),
             overlays: self.overlay_data(),
             agents: self.agent_snapshot(tick),
+            demand: *self.world().resource::<cp_building::Demand>(),
             utilities: self.utilities_snapshot(),
             junctions,
         }

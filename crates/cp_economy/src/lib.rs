@@ -7,10 +7,12 @@
 //! and [`settle_week`].
 
 pub mod command;
+pub mod demand;
 pub mod state;
 pub mod week;
 
 pub use command::{EconomyCommand, EconomyError, apply};
+pub use demand::{DemandAcc, smooth, update_demand};
 pub use state::{
     BUDGET_DEFAULT, BUDGET_MAX, BUDGET_MIN, BUDGETED, Budgets, EconomyState, TAX_DEFAULT, TAX_MAX,
     TAX_MIN, TAXED_ZONES, TaxRates, WeekReport,

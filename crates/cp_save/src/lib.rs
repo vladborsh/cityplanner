@@ -45,10 +45,10 @@ pub mod migrate;
 use std::io::Read;
 
 use bevy_ecs::world::World;
-use cp_building::BuildingGrid;
+use cp_building::{BuildingGrid, Demand};
 use cp_citizen::{CitizenGrid, TripBook};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
-use cp_economy::EconomyState;
+use cp_economy::{DemandAcc, EconomyState};
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
 use cp_terrain::TileOwnership;
@@ -59,7 +59,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 14;
+pub const FORMAT_VERSION: u32 = 15;
 
 /// Everything the sim needs to resume, at [`FORMAT_VERSION`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -93,6 +93,9 @@ pub struct SaveData {
     pub treasury: Treasury,
     /// Tax rates, budgets and the last weekly report. Added in v14.
     pub economy: EconomyState,
+    /// Smoothed demand and the sums of the cycle in progress. Added in v15.
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
 }
 
 impl SaveData {
@@ -115,6 +118,8 @@ impl SaveData {
             agents: world.resource::<cp_traffic::Agents>().clone(),
             treasury: *world.resource::<Treasury>(),
             economy: *world.resource::<EconomyState>(),
+            demand: *world.resource::<Demand>(),
+            demand_acc: *world.resource::<DemandAcc>(),
         }
     }
 
@@ -146,6 +151,8 @@ impl SaveData {
         world.insert_resource(self.trips);
         world.insert_resource(self.treasury);
         world.insert_resource(self.economy);
+        world.insert_resource(self.demand);
+        world.insert_resource(self.demand_acc);
         // The pathfinder reads the segment load last published to it (saved with the agents).
         let published = cp_traffic::CongestionMap(self.agents.load.published.clone());
         world.insert_resource(self.agents);

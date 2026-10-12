@@ -30,6 +30,7 @@ fn city(content: &Arc<ContentDb>, seed: u64, kinds: &[ZoneType]) -> SimRunner {
     let road = content.road_id("basic_2l").unwrap();
     let def = content.road(road).clone();
     let mut sim = SimRunner::new(seed);
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
     sim.set_content(Arc::clone(content));
     {
         let mut g = sim.world_mut().resource_mut::<NetGraph>();
@@ -278,12 +279,7 @@ fn long_unemployment_makes_a_household_leave() {
     let first = sim.world().resource::<CitizenGrid>().household_count();
     assert!(first > 0);
     // No new arrivals; everyone is jobless and leaves after the grace period.
-    sim.world_mut()
-        .resource_mut::<cp_building::DemandStub>()
-        .res_high = 0.0;
-    sim.world_mut()
-        .resource_mut::<cp_building::DemandStub>()
-        .res_low = 0.0;
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(0.0);
     run_days(&mut sim, JOBLESS_LEAVE_DAYS as f64 - 6.0);
     assert!(
         sim.world().resource::<CitizenGrid>().household_count() > 0,

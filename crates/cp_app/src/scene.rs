@@ -250,6 +250,9 @@ fn zone_for(block_index: u32, dist: f32) -> cp_content::ZoneType {
 pub fn build_city(sim: &mut SimRunner, n: usize, target: usize, max_ticks: u64) -> usize {
     use cp_building::{BuildingGrid, BuildingState};
     use cp_zone::{ZoneCellRef, ZoneGrid};
+    // A scripted scene is not waited for: every zone is wanted while it grows.
+    let demand = *sim.world().resource::<cp_building::Demand>();
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
     let _ = build_grid_with(sim, n, 5);
     // Zone blocks exist after a few quiet ticks.
     for _ in 0..4 {
@@ -280,6 +283,7 @@ pub fn build_city(sim: &mut SimRunner, n: usize, target: usize, max_ticks: u64) 
             break;
         }
     }
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = demand;
     dress_city(sim);
     let _ = BuildingState::Active;
     sim.world().resource::<BuildingGrid>().len()

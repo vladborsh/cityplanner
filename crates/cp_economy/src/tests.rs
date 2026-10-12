@@ -347,3 +347,256 @@ fn defaults_are_nine_percent_taxes_and_full_budgets() {
     }
     assert_eq!(s.last_week, WeekReport::default());
 }
+
+// --- demand ---
+
+mod demand {
+    use bevy_ecs::schedule::Schedule;
+    use bevy_ecs::world::World;
+    use cp_building::{BuildingGrid, BuildingState, DEMAND_PERIOD, Demand};
+    use cp_citizen::CitizenGrid;
+    use cp_content::{Balance, SimContent};
+    use cp_core::Tick;
+
+    use super::*;
+    use crate::demand::{DemandAcc, smooth, update_demand};
+
+    fn raw(acc: DemandAcc) -> [f32; 5] {
+        acc.raw(&Balance::default())
+    }
+
+    /// Zero-based sums of a city with nothing in it: only the base values are wanted.
+    #[test]
+    fn an_empty_city_wants_its_base_values() {
+        assert_eq!(raw(DemandAcc::default()), [10.0, 5.0, 5.0, 0.0, 10.0]);
+    }
+
+    #[test]
+    fn surplus_jobs_raise_r_and_surplus_housing_lowers_it() {
+        let base = raw(DemandAcc::default())[0];
+        let jobs = raw(DemandAcc {
+            free_jobs_weighted: 40.0,
+            ..DemandAcc::default()
+        });
+        assert_eq!(jobs[0], base + 40.0);
+        assert_eq!(jobs[4], base + 40.0, "move-in follows the jobs too");
+        // People without work lower it ...
+        let jobless = raw(DemandAcc {
+            unemployed: 30,
+            ..DemandAcc::default()
+        });
+        assert_eq!(jobless[0], base - 30.0);
+        // ... and so do vacant homes (2 adults each), which do not hold back moving in.
+        let vacant = raw(DemandAcc {
+            vacant_homes: 10,
+            ..DemandAcc::default()
+        });
+        assert_eq!(vacant[0], base - 20.0);
+        assert_eq!(vacant[4], base);
+    }
+
+    #[test]
+    fn a_shortage_of_goods_raises_c_and_i() {
+        let base = raw(DemandAcc::default());
+        // 100 residents support 20 shop jobs; there are none.
+        let no_shops = raw(DemandAcc {
+            citizens: 100,
+            ..DemandAcc::default()
+        });
+        assert_eq!(no_shops[1], base[1] + 20.0);
+        // With 15 of them the want is only the remaining 5.
+        let some_shops = raw(DemandAcc {
+            citizens: 100,
+            commercial_jobs: 15,
+            ..DemandAcc::default()
+        });
+        assert_eq!(some_shops[1], base[1] + 5.0);
+        // Shops need goods: 100 shop jobs want 50 industrial jobs.
+        let no_industry = raw(DemandAcc {
+            commercial_jobs: 100,
+            ..DemandAcc::default()
+        });
+        assert_eq!(no_industry[2], base[2] + 50.0);
+        // Enough industry for them: back to the base.
+        let supplied = raw(DemandAcc {
+            commercial_jobs: 100,
+            industrial_jobs: 50,
+            ..DemandAcc::default()
+        });
+        assert_eq!(supplied[2], base[2]);
+        // Jobless manual workers want industry; educated ones want offices.
+        let workers = raw(DemandAcc {
+            unemployed_manual: 7,
+            unemployed_educated: 9,
+            ..DemandAcc::default()
+        });
+        assert_eq!(workers[2], base[2] + 7.0);
+        assert_eq!(workers[3], base[3] + 9.0);
+        // A vacant office slot absorbs them.
+        let offices = raw(DemandAcc {
+            unemployed_educated: 9,
+            free_office_jobs: 12,
+            ..DemandAcc::default()
+        });
+        assert_eq!(offices[3], base[3] - 3.0);
+    }
+
+    #[test]
+    fn raw_values_are_clamped() {
+        let r = raw(DemandAcc {
+            free_jobs_weighted: 1.0e6,
+            unemployed: 0,
+            citizens: 1_000_000,
+            ..DemandAcc::default()
+        });
+        assert_eq!((r[0], r[1]), (100.0, 100.0));
+        let r = raw(DemandAcc {
+            vacant_homes: 1_000_000,
+            ..DemandAcc::default()
+        });
+        assert_eq!(r[0], -100.0);
+    }
+
+    #[test]
+    fn smoothing_closes_a_share_of_the_gap() {
+        assert_eq!(smooth(0.0, 8.0, 0.25), 2.0);
+        assert_eq!(smooth(10.0, -10.0, 0.5), 0.0);
+        assert_eq!(smooth(3.0, 9.0, 0.0), 3.0);
+        assert_eq!(smooth(3.0, 9.0, 1.0), 9.0);
+        assert_eq!(smooth(3.0, 9.0, 7.0), 9.0, "the share is capped at 1");
+    }
+
+    fn world() -> (World, Schedule) {
+        let mut w = World::new();
+        w.insert_resource(Tick(0));
+        w.insert_resource(SimContent(content()));
+        w.init_resource::<BuildingGrid>();
+        w.init_resource::<CitizenGrid>();
+        w.init_resource::<Demand>();
+        w.init_resource::<DemandAcc>();
+        let mut s = Schedule::default();
+        s.add_systems(update_demand);
+        (w, s)
+    }
+
+    fn run_ticks(w: &mut World, s: &mut Schedule, from: u64, to: u64) {
+        for t in from..to {
+            w.insert_resource(Tick(t));
+            s.run(w);
+        }
+    }
+
+    /// A shop (4 job slots, none filled, standing) in an empty city: R and move-in get the
+    /// 4 free slots, C is the base minus the 4 shop jobs.
+    #[test]
+    fn the_cycle_publishes_after_the_64th_bucket_and_not_before() {
+        let (mut w, mut s) = world();
+        let db = content();
+        super::add(&mut w, &db, "shop", BuildingState::Active);
+        run_ticks(&mut w, &mut s, 0, DEMAND_PERIOD - 1);
+        assert_eq!(*w.resource::<Demand>(), Demand::default(), "mid-cycle");
+        run_ticks(&mut w, &mut s, DEMAND_PERIOD - 1, DEMAND_PERIOD);
+        let d = *w.resource::<Demand>();
+        let acc = *w.resource::<DemandAcc>();
+        assert_eq!((acc.seen, acc.commercial_jobs), (64, 4));
+        assert_eq!(acc.free_jobs_weighted, 4.0);
+        // EMA at 0.25 from the defaults (R 10, C 5) to the raw values (14, 1).
+        assert_eq!(d.r, smooth(10.0, 14.0, 0.25));
+        assert_eq!(d.c, smooth(5.0, 1.0, 0.25));
+        assert_eq!(d.move_in, smooth(10.0, 14.0, 0.25));
+    }
+
+    #[test]
+    fn a_cycle_not_scanned_from_its_start_is_dropped() {
+        let (mut w, mut s) = world();
+        let db = content();
+        super::add(&mut w, &db, "shop", BuildingState::Active);
+        // Joined at bucket 20 (e.g. a save from before demand existed): the first cycle's
+        // sums are partial, so nothing is published at its end ...
+        run_ticks(&mut w, &mut s, 20, DEMAND_PERIOD);
+        assert_eq!(*w.resource::<Demand>(), Demand::default());
+        // ... and the next full cycle is.
+        run_ticks(&mut w, &mut s, DEMAND_PERIOD, 2 * DEMAND_PERIOD);
+        assert_ne!(*w.resource::<Demand>(), Demand::default());
+    }
+
+    #[test]
+    fn a_frozen_demand_is_left_alone() {
+        let (mut w, mut s) = world();
+        *w.resource_mut::<Demand>() = Demand::fixed(3.0);
+        let db = content();
+        super::add(&mut w, &db, "shop", BuildingState::Active);
+        run_ticks(&mut w, &mut s, 0, 3 * DEMAND_PERIOD);
+        assert_eq!(*w.resource::<Demand>(), Demand::fixed(3.0));
+    }
+
+    #[test]
+    fn buildings_under_construction_count_as_standing() {
+        let (mut w, mut s) = world();
+        let db = content();
+        super::add(&mut w, &db, "house", BuildingState::UnderConstruction);
+        run_ticks(&mut w, &mut s, 0, DEMAND_PERIOD);
+        // 4 vacant flats: 8 adults against R, but not against moving in.
+        let acc = *w.resource::<DemandAcc>();
+        assert_eq!(acc.vacant_homes, 4);
+        let r = acc.raw(db.balance());
+        assert_eq!((r[0], r[4]), (2.0, 10.0));
+    }
+
+    /// Cycles of the system on a world; returns the demand after `cycles` full cycles.
+    fn after(w: &mut World, s: &mut Schedule, cycles: u64) -> Demand {
+        run_ticks(w, s, 0, cycles * DEMAND_PERIOD);
+        *w.resource::<Demand>()
+    }
+
+    #[test]
+    fn a_city_with_free_jobs_wants_more_homes_and_one_full_of_jobless_does_not() {
+        let db = content();
+        // Ten shops, nobody lives there: 40 free jobs.
+        let (mut jobs, mut s) = world();
+        for _ in 0..10 {
+            super::add(&mut jobs, &db, "shop", BuildingState::Active);
+        }
+        let d = after(&mut jobs, &mut s, 40);
+        assert!(d.r > 40.0 && d.move_in > 40.0, "{d:?}");
+
+        // Five full houses and no work: 20 households of jobless adults.
+        let (mut homes, mut s) = world();
+        let houses: Vec<_> = (0..5)
+            .map(|_| super::add(&mut homes, &db, "house", BuildingState::Active))
+            .collect();
+        {
+            let mut c = homes.resource_mut::<CitizenGrid>();
+            c.ensure_derived();
+            for h in houses {
+                for _ in 0..4 {
+                    c.add_household(h, 0, Tick(0), &[(30 * 365, 0, false)]);
+                }
+            }
+        }
+        let d = after(&mut homes, &mut s, 40);
+        assert!(d.r < 0.0 && d.move_in < 0.0, "{d:?}");
+        // Shops for 20 residents: 4 shop jobs wanted, none there.
+        assert!(d.c > 5.0, "{d:?}");
+        // The jobless are manual workers: industry is wanted.
+        assert!(d.i > 5.0, "{d:?}");
+    }
+
+    #[test]
+    fn spawn_gates_follow_the_zone_family() {
+        let d = Demand {
+            r: 1.0,
+            c: 2.0,
+            i: 3.0,
+            o: 4.0,
+            ..Demand::default()
+        };
+        assert_eq!(d.get(ZoneType::ResLow), 1.0);
+        assert_eq!(d.get(ZoneType::ResHigh), 1.0);
+        assert_eq!(d.get(ZoneType::ComLow), 2.0);
+        assert_eq!(d.get(ZoneType::ComHigh), 2.0);
+        assert_eq!(d.get(ZoneType::Industrial), 3.0);
+        assert_eq!(d.get(ZoneType::Office), 4.0);
+        assert_eq!(d.get(ZoneType::None), 0.0);
+    }
+}
