@@ -10,7 +10,9 @@
 //!   creation; arena slots are reused, but ids order by `(index, generation)` — see
 //!   [`ZoneBlockId`]), or
 //! * on a curve, overlaps the previous column of its own block (the later column loses),
-//! * is covered by a building (see [`ZoneGrid::occupy`]).
+//! * is covered by a building (see [`ZoneGrid::occupy`]), or
+//! * stands on water (the terrain says so at the cell centre) or on ground steeper than
+//!   [`MAX_CELL_SLOPE`] there (T-062; needs [`ZoneGrid::set_terrain`]).
 //!
 //! Overlap means interpenetration deeper than [`PENETRATION_EPS`]; touching and grazing
 //! cells are fine. Squares on the inside of a curve crowd together (neighbouring columns
@@ -18,6 +20,7 @@
 //! invalid: that is where the road geometry leaves no room for them.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use bevy_ecs::resource::Resource;
 use bevy_math::Vec2;
@@ -25,10 +28,13 @@ use cp_content::{RoadDefId, ZoneType};
 use cp_core::curve::{ArcTable, CubicBezier3, to_xz};
 use cp_core::{Arena, Id};
 use cp_net::{Elevation, NetGraph, Segment, SegmentId};
+use cp_terrain::Terrain;
 use serde::{Deserialize, Serialize};
 
 use crate::geom::Obb;
 
+/// Steepest ground a cell may stand on: rise over run at the cell centre (25 %).
+pub const MAX_CELL_SLOPE: f32 = 0.25;
 /// Cell edge length, metres.
 pub const CELL_SIZE: f32 = 8.0;
 /// Rows of cells away from the road.
@@ -245,6 +251,13 @@ pub struct ZoneGrid {
     /// already account for it.
     #[serde(skip)]
     occupied: BTreeSet<ZoneCellRef>,
+    /// The map, for the water and slope rule. Derived input, not saved; set with
+    /// [`ZoneGrid::set_terrain`].
+    #[serde(skip)]
+    terrain: Option<Arc<Terrain>>,
+    /// The terrain changed since the last [`ZoneGrid::sync`]: every block is revalidated.
+    #[serde(skip)]
+    terrain_dirty: bool,
     /// Bumped on every change (paint, rebuild, validity, occupancy) so snapshots can be
     /// cached. Not saved, not part of equality.
     #[serde(skip, default = "next_revision")]
@@ -262,6 +275,42 @@ impl PartialEq for ZoneGrid {
 impl ZoneGrid {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Gives the grid the map for the water and slope rule. A different map (compared by
+    /// identity) makes the next [`ZoneGrid::sync`] revalidate every block; the same one is a
+    /// no-op.
+    pub fn set_terrain(&mut self, terrain: Arc<Terrain>) {
+        if !self.has_terrain(&terrain) {
+            self.terrain = Some(terrain);
+            self.terrain_dirty = true;
+        }
+    }
+
+    /// Whether `terrain` is the map the grid already uses.
+    pub fn has_terrain(&self, terrain: &Arc<Terrain>) -> bool {
+        self.terrain
+            .as_ref()
+            .is_some_and(|t| Arc::ptr_eq(t, terrain))
+    }
+
+    /// The terrain changed and the next `sync` has to revalidate (so callers do not skip it).
+    pub fn terrain_dirty(&self) -> bool {
+        self.terrain_dirty
+    }
+
+    /// Whether the ground at cell centre `p` allows a cell: dry and not steeper than
+    /// [`MAX_CELL_SLOPE`]. Everything is allowed without a map.
+    fn ground_ok(&self, p: Vec2) -> bool {
+        let Some(t) = &self.terrain else {
+            return true;
+        };
+        if t.is_water(p) {
+            return false;
+        }
+        let ny = t.normal(p).y;
+        // slope = tan(angle from horizontal) = sqrt(1 - ny^2) / ny
+        (1.0 - ny * ny).max(0.0).sqrt() <= MAX_CELL_SLOPE * ny
     }
 
     pub fn block(&self, id: ZoneBlockId) -> Option<&ZoneBlock> {
@@ -391,6 +440,9 @@ impl ZoneGrid {
 
         // Everything near a change is re-examined, oldest first.
         let mut work: BTreeSet<ZoneBlockId> = created.clone();
+        if std::mem::take(&mut self.terrain_dirty) {
+            work.extend(self.blocks.iter().map(|(id, _)| id));
+        }
         for region in &dirty {
             let region = inflate(*region, REACH);
             for key in bucket_range(region, BLOCK_BUCKET) {
@@ -789,6 +841,12 @@ impl ZoneGrid {
         let mut valid = vec![true; obbs.len()];
         for (i, o) in obbs.iter().enumerate() {
             let reach = inflate(o.aabb(), REACH);
+
+            // Water and steep ground.
+            if !self.ground_ok(o.c) {
+                valid[i] = false;
+                continue;
+            }
 
             // Roads.
             'road: for key in bucket_range(reach, ROAD_BUCKET) {

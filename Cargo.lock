@@ -2707,6 +2707,7 @@ dependencies = [
  "cp_content",
  "cp_core",
  "cp_net",
+ "cp_terrain",
  "postcard",
  "serde",
 ]

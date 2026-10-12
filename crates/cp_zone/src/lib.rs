@@ -6,8 +6,8 @@ pub mod grid;
 
 pub use command::{ZoneCommand, ZoneError, apply, paint};
 pub use grid::{
-    BLOCK_DEPTH, CELL_SIZE, PENETRATION_EPS, RoadZoning, Side, ZoneBlock, ZoneBlockId, ZoneCellRef,
-    ZoneGrid,
+    BLOCK_DEPTH, CELL_SIZE, MAX_CELL_SLOPE, PENETRATION_EPS, RoadZoning, Side, ZoneBlock,
+    ZoneBlockId, ZoneCellRef, ZoneGrid,
 };
 
 use bevy_ecs::change_detection::DetectChanges;
@@ -25,12 +25,18 @@ pub fn update_zones(
     net: Res<NetGraph>,
     content: Option<Res<SimContent>>,
     junctions: Res<JunctionGeometry>,
+    terrain: Option<Res<cp_terrain::SimTerrain>>,
     mut grid: ResMut<ZoneGrid>,
 ) {
     let Some(content) = content else {
         return;
     };
-    if !net.is_changed() && grid.index_ready() {
+    if let Some(t) = &terrain
+        && !grid.has_terrain(&t.0)
+    {
+        grid.set_terrain(std::sync::Arc::clone(&t.0));
+    }
+    if !net.is_changed() && grid.index_ready() && !grid.terrain_dirty() {
         return;
     }
     let db = &content.0;

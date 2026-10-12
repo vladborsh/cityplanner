@@ -704,3 +704,144 @@ fn an_upgrade_or_downgrade_keeps_the_painting_of_the_cells_that_stay_valid() {
         );
     }
 }
+
+// ---------- terrain: water and slope (T-062) ----------
+
+mod ground {
+    use std::sync::Arc;
+
+    use bevy_math::Vec2;
+    use cp_terrain::{GRID, MAX_HEIGHT, MapMeta, SPACING, Terrain};
+
+    use super::*;
+
+    fn enc(m: f32) -> u16 {
+        (m / MAX_HEIGHT * 65535.0).round() as u16
+    }
+
+    /// Terrain with ground height `f(x, z)` and the given sea level.
+    fn terrain(sea: f32, f: impl Fn(f32, f32) -> f32) -> Arc<Terrain> {
+        let mut hs = vec![0u16; GRID * GRID];
+        for iz in 0..GRID {
+            for ix in 0..GRID {
+                hs[iz * GRID + ix] = enc(f(ix as f32 * SPACING, iz as f32 * SPACING));
+            }
+        }
+        let meta = MapMeta {
+            name: "t".into(),
+            sea_level: sea,
+            start_tile: (2, 2),
+            external_connections: vec![],
+        };
+        Arc::new(Terrain::from_samples(meta, &hs, &vec![0; GRID * GRID]).unwrap())
+    }
+
+    fn flat() -> Arc<Terrain> {
+        terrain(0.0, |_, _| 100.0)
+    }
+
+    /// A 200 m road along +X at z = 5000, synced against `t` (or no terrain).
+    fn world(t: Option<&Arc<Terrain>>) -> World {
+        let mut w = World::new();
+        w.line("basic_2l", (5000.0, 5000.0), (5200.0, 5000.0));
+        if let Some(t) = t {
+            w.grid.set_terrain(Arc::clone(t));
+        }
+        w.sync();
+        w
+    }
+
+    fn cells(w: &World) -> Vec<(ZoneCellRef, Vec2, bool)> {
+        w.grid
+            .blocks()
+            .flat_map(|(id, b)| {
+                (0..b.cell_count()).map(move |i| ZoneCellRef {
+                    block: id,
+                    cell: i as u16,
+                })
+            })
+            .map(|c| (c, w.grid.cell_footprint(c).unwrap().c, w.grid.is_valid(c)))
+            .collect()
+    }
+
+    #[test]
+    fn a_flat_dry_map_changes_nothing() {
+        let none = world(None);
+        let flat = world(Some(&flat()));
+        assert!(none.grid.valid_cells() > 0);
+        assert_eq!(none.grid.valid_cells(), flat.grid.valid_cells());
+    }
+
+    #[test]
+    fn cells_over_water_are_invalid_and_the_rest_valid() {
+        // A gentle shore (20 %): water below z = 5030, dry ground rising above it.
+        let t = terrain(100.0, |_, z| 100.0 + 0.2 * (z - 5030.0));
+        let w = world(Some(&t));
+        let plain = world(None);
+        let all = cells(&w);
+        let wet = all.iter().filter(|(_, c, _)| t.is_water(*c)).count();
+        assert!(wet > 0, "the fixture has cells over water");
+        assert!(wet < all.len(), "and cells that are not");
+        for (c, p, valid) in &all {
+            if t.is_water(*p) {
+                assert!(!valid, "{c:?} at {p} is over water");
+            }
+        }
+        // Dry cells are exactly as valid as without a map.
+        for ((c, p, valid), (_, _, plain_valid)) in all.iter().zip(cells(&plain)) {
+            if !t.is_water(*p) {
+                assert_eq!(*valid, plain_valid, "{c:?} at {p}");
+            }
+        }
+    }
+
+    #[test]
+    fn rows_on_a_slope_over_25_percent_are_invalid() {
+        // Ground rises 40 % north of z = 5010; the south side stays level.
+        let steep = terrain(0.0, |_, z| 100.0 + 0.4 * (z - 5010.0).max(0.0));
+        let w = world(Some(&steep));
+        let all = cells(&w);
+        let north: Vec<_> = all.iter().filter(|(_, p, _)| p.y > 5030.0).collect();
+        assert!(
+            !north.is_empty() && north.iter().all(|(_, _, v)| !v),
+            "steep rows"
+        );
+        let level: Vec<_> = all.iter().filter(|(_, p, _)| p.y < 5000.0).collect();
+        assert!(level.iter().any(|(_, _, v)| *v), "level side stays valid");
+        // 20 % is fine.
+        let gentle = terrain(0.0, |_, z| 100.0 + 0.2 * (z - 5010.0).max(0.0));
+        let g = world(Some(&gentle));
+        assert_eq!(g.grid.valid_cells(), world(None).grid.valid_cells());
+    }
+
+    #[test]
+    fn a_terrain_given_after_the_blocks_exist_revalidates_them() {
+        let mut w = world(None);
+        let before = w.grid.valid_cells();
+        let lake = terrain(100.0, |_, z| 100.0 + 0.2 * (z - 5030.0));
+        w.grid.set_terrain(Arc::clone(&lake));
+        assert!(w.grid.terrain_dirty());
+        w.sync();
+        assert!(!w.grid.terrain_dirty());
+        assert!(w.grid.valid_cells() < before);
+        // The same map again: nothing to do, the revision stays.
+        let rev = w.grid.revision();
+        w.grid.set_terrain(lake);
+        assert!(!w.grid.terrain_dirty());
+        w.sync();
+        assert_eq!(w.grid.revision(), rev);
+    }
+
+    #[test]
+    fn releasing_a_building_does_not_free_a_cell_over_water() {
+        let t = terrain(100.0, |_, z| 100.0 + 0.2 * (z - 5030.0));
+        let mut w = world(Some(&t));
+        let (wet, _, _) = *cells(&w)
+            .iter()
+            .find(|(_, p, _)| t.is_water(*p))
+            .expect("a wet cell");
+        w.grid.occupy(&[wet]);
+        w.grid.release(&[wet]);
+        assert!(!w.grid.is_valid(wet));
+    }
+}
