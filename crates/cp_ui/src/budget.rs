@@ -125,11 +125,43 @@ pub struct Draft {
     pub sent: bool,
 }
 
-/// Slider drafts of the budget window.
+/// The tabs of the economy window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BudgetTab {
+    #[default]
+    Overview,
+    Taxes,
+    Budgets,
+}
+
+impl BudgetTab {
+    pub const ALL: [BudgetTab; 3] = [BudgetTab::Overview, BudgetTab::Taxes, BudgetTab::Budgets];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BudgetTab::Overview => "Overview",
+            BudgetTab::Taxes => "Taxes",
+            BudgetTab::Budgets => "Service budgets",
+        }
+    }
+}
+
+/// State of the economy window: the open tab and the slider drafts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BudgetDraft {
+    pub tab: BudgetTab,
     taxes: [Option<Draft>; 6],
     budgets: [Option<Draft>; 4],
+}
+
+impl BudgetDraft {
+    /// A fresh state with `tab` open.
+    pub fn on(tab: BudgetTab) -> Self {
+        BudgetDraft {
+            tab,
+            ..Default::default()
+        }
+    }
 }
 
 /// One slider. Returns the value to send when the edit is finished (pointer released, or a
@@ -165,8 +197,8 @@ fn pct_slider(
     }
 }
 
-/// The budget window: last week's income and upkeep, the tax slider of every zone type and
-/// the budget slider of every service. Slider releases push commands into `outbox`.
+/// The economy window: the balance, then the tabs Overview (history and breakdown), Taxes
+/// and Service budgets. Slider releases push commands into `outbox`.
 pub fn budget_window(
     ctx: &egui::Context,
     open: &mut bool,
@@ -174,19 +206,142 @@ pub fn budget_window(
     draft: &mut BudgetDraft,
     outbox: &mut CommandOutbox,
 ) {
-    crate::frame::window("budget", crate::icons::Icon::Budget, "Budget", open).show(ctx, |ui| {
+    crate::frame::window(
+        "budget",
+        crate::icons::Icon::Budget,
+        "Economy & budget",
+        open,
+    )
+    .show(ctx, |ui| {
         budget_contents(ui, view, draft, outbox);
     });
 }
 
-/// The inside of the budget window (separate so tests can draw it into a plain `Ui`).
+/// One road class in the overview's expenses.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoadRow {
+    pub name: String,
+    pub segments: u32,
+    pub meters: f32,
+    pub upkeep_week: Cost,
+}
+
+/// The numbers of the Overview tab, read from the view.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Overview {
+    /// Tax income of last week per zone type, in [`TAXED_ZONES`] order.
+    pub income_by_zone: Vec<(ZoneType, Cost)>,
+    pub income: Cost,
+    pub upkeep: Cost,
+    pub net: Cost,
+    /// The roads by class (`CityStats::roads`), weekly upkeep at today's budget.
+    pub roads: Vec<RoadRow>,
+    /// Sum of [`Overview::roads`].
+    pub roads_sum: Cost,
+    /// Last week's settled road upkeep (`WeekReport::road_upkeep`).
+    pub road_upkeep: Cost,
+    pub building_upkeep: Cost,
+    pub utility_upkeep: Cost,
+    /// Balance of every hourly history sample (7 game days at most), oldest first.
+    pub balance_history: Vec<f32>,
+}
+
+pub fn overview(view: &SimView) -> Overview {
+    let week = &view.economy.last_week;
+    let roads: Vec<RoadRow> = view
+        .city
+        .roads
+        .iter()
+        .map(|g| RoadRow {
+            name: view.content.as_ref().map_or_else(
+                || format!("road {}", g.road.index()),
+                |c| c.road(g.road).name.clone(),
+            ),
+            segments: g.segments,
+            meters: g.meters,
+            upkeep_week: g.upkeep_week,
+        })
+        .collect();
+    Overview {
+        income_by_zone: TAXED_ZONES
+            .iter()
+            .enumerate()
+            .map(|(i, z)| (*z, week.income_by_zone[i]))
+            .collect(),
+        income: week.income(),
+        upkeep: week.upkeep(),
+        net: week.balance(),
+        roads_sum: roads.iter().map(|r| r.upkeep_week).sum(),
+        roads,
+        road_upkeep: week.road_upkeep,
+        building_upkeep: week.building_upkeep,
+        utility_upkeep: week.utility_upkeep,
+        balance_history: view
+            .city
+            .history
+            .iter()
+            .map(|h| h.balance.0 as f32)
+            .collect(),
+    }
+}
+
+/// The Overview tab: last week, the balance history, income by zone and the expenses.
+pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
+    let o = overview(view);
+    ui.strong("Last week");
+    egui::Grid::new("overview_week").show(ui, |ui| {
+        for (name, cost) in [("Income", o.income), ("Expenses", o.upkeep), ("Net", o.net)] {
+            ui.label(name);
+            ui.label(format_money(cost));
+            ui.end_row();
+        }
+    });
+    ui.weak("Balance, 7 days");
+    crate::metrics::sparkline(ui, &o.balance_history, egui::vec2(260.0, 36.0));
+    ui.separator();
+    ui.strong("Income by zone");
+    egui::Grid::new("overview_income").show(ui, |ui| {
+        for (zone, cost) in &o.income_by_zone {
+            ui.label(zone_name(*zone));
+            ui.label(format_money(*cost));
+            ui.end_row();
+        }
+    });
+    ui.separator();
+    ui.strong("Expenses");
+    egui::Grid::new("overview_expenses").show(ui, |ui| {
+        for r in &o.roads {
+            ui.label(format!(
+                "Roads: {} ({} seg, {:.0} m)",
+                r.name, r.segments, r.meters
+            ));
+            ui.label(format_money(r.upkeep_week));
+            ui.end_row();
+        }
+        ui.label("Roads, all classes");
+        ui.label(format_money(o.roads_sum));
+        ui.end_row();
+        ui.label("Roads, settled last week");
+        ui.label(format_money(o.road_upkeep));
+        ui.end_row();
+        ui.label("Service buildings");
+        ui.label(format_money(o.building_upkeep));
+        ui.end_row();
+        ui.label("Pipes and power lines");
+        ui.label(format_money(o.utility_upkeep));
+        ui.end_row();
+    });
+}
+
+/// The inside of the economy window (separate so tests can draw it into a plain `Ui`): the
+/// balance header, the tab row and the open tab.
 pub fn budget_contents(
     ui: &mut egui::Ui,
     view: &SimView,
     draft: &mut BudgetDraft,
     outbox: &mut CommandOutbox,
 ) {
-    let (state, week) = (&view.economy, &view.economy.last_week);
+    let week = &view.economy.last_week;
     let balance = view.treasury.balance;
     ui.horizontal(|ui| {
         money_label(ui, view);
@@ -199,7 +354,29 @@ pub fn budget_contents(
     if let Some(w) = debt_warning(balance) {
         ui.colored_label(debt_colour(debt_level(balance)), format!("⚠ {w}"));
     }
+    ui.horizontal(|ui| {
+        for tab in BudgetTab::ALL {
+            if ui.selectable_label(draft.tab == tab, tab.label()).clicked() {
+                draft.tab = tab;
+            }
+        }
+    });
     ui.separator();
+    match draft.tab {
+        BudgetTab::Overview => overview_tab(ui, view),
+        BudgetTab::Taxes => taxes_tab(ui, view, draft, outbox),
+        BudgetTab::Budgets => budgets_tab(ui, view, draft, outbox),
+    }
+}
+
+/// The Taxes tab: the tax slider of every zone type with last week's income (T-045).
+fn taxes_tab(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    draft: &mut BudgetDraft,
+    outbox: &mut CommandOutbox,
+) {
+    let (state, week) = (&view.economy, &view.economy.last_week);
     ui.strong("Taxes (income last week)");
     egui::Grid::new("budget_taxes").show(ui, |ui| {
         for (i, zone) in TAXED_ZONES.into_iter().enumerate() {
@@ -212,20 +389,16 @@ pub fn budget_contents(
             ui.end_row();
         }
     });
-    ui.separator();
-    ui.strong("Upkeep last week");
-    egui::Grid::new("budget_upkeep").show(ui, |ui| {
-        for (name, cost) in [
-            ("Roads", week.road_upkeep),
-            ("Service buildings", week.building_upkeep),
-            ("Pipes and power lines", week.utility_upkeep),
-        ] {
-            ui.label(name);
-            ui.label(format_money(cost));
-            ui.end_row();
-        }
-    });
-    ui.separator();
+}
+
+/// The Service budgets tab: one slider per budgeted service (T-045).
+fn budgets_tab(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    draft: &mut BudgetDraft,
+    outbox: &mut CommandOutbox,
+) {
+    let state = &view.economy;
     ui.strong("Service budgets");
     for (i, kind) in BUDGETED.into_iter().enumerate() {
         let current = state.budgets.get(kind);
@@ -245,13 +418,6 @@ pub fn budget_contents(
             outbox.push(budget_command(kind, pct));
         }
     }
-    ui.separator();
-    ui.label(format!(
-        "Last week: income {}, upkeep {}, balance {}",
-        format_money(week.income()),
-        format_money(week.upkeep()),
-        format_money(week.balance())
-    ));
 }
 
 #[cfg(test)]
@@ -340,7 +506,7 @@ mod tests {
     #[test]
     fn the_window_draws_with_and_without_debt_and_sends_nothing_by_itself() {
         let mut sim = SimRunner::new(1);
-        let mut draft = BudgetDraft::default();
+        let mut draft = BudgetDraft::on(BudgetTab::Taxes);
         assert!(frames(&sim.view(), &mut draft, vec![(0.0, vec![]), (0.1, vec![])]).is_empty());
         sim.world_mut().resource_mut::<cp_core::Treasury>().balance = Cost(-1_900_000);
         assert!(frames(&sim.view(), &mut draft, vec![(0.0, vec![])]).is_empty());
@@ -352,7 +518,7 @@ mod tests {
         let sim = SimRunner::new(1);
         let view = sim.view();
         let ctx = egui::Context::default();
-        let mut draft = BudgetDraft::default();
+        let mut draft = BudgetDraft::on(BudgetTab::Taxes);
         let mut outbox = CommandOutbox::default();
         let draw = |t: f64,
                     events: Vec<egui::Event>,
@@ -371,7 +537,7 @@ mod tests {
             for x in (200..520).step_by(10) {
                 let pos = egui::pos2(x as f32, y);
                 let ctx2 = egui::Context::default();
-                let mut d = BudgetDraft::default();
+                let mut d = BudgetDraft::on(BudgetTab::Taxes);
                 let mut o = CommandOutbox::default();
                 let ev = |pressed| egui::Event::PointerButton {
                     pos,
@@ -513,7 +679,152 @@ mod tests {
         assert!(at_9.0 > 0, "the house pays tax at the default 9%");
         assert_eq!(at_18.0, at_9.0 * 2, "18% pays twice what 9% did");
         // The window shows it.
-        let mut draft = BudgetDraft::default();
+        let mut draft = BudgetDraft::on(BudgetTab::Taxes);
         assert!(frames(&sim.view(), &mut draft, vec![(0.0, vec![])]).is_empty());
+    }
+
+    /// Draws the whole window on a tall screen for `ticks` frames and returns the painted texts.
+    fn painted(view: &SimView, draft: &mut BudgetDraft) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let mut outbox = CommandOutbox::default();
+        let mut all = Vec::new();
+        for t in [0.0, 0.1] {
+            let mut tall = input(t, vec![]);
+            tall.screen_rect = Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1280.0, 4000.0),
+            ));
+            all = crate::testutil::frame_texts(&ctx, tall, |ui| {
+                budget_contents(ui, view, draft, &mut outbox)
+            })
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        }
+        all
+    }
+
+    #[test]
+    fn the_overview_draws_on_an_empty_city() {
+        let sim = SimRunner::new(1);
+        let view = sim.view();
+        let text = painted(&view, &mut BudgetDraft::default());
+        for want in [
+            "Last week",
+            "Income by zone",
+            "Expenses",
+            "Roads, all classes",
+        ] {
+            assert!(text.iter().any(|t| t == want), "{want}: {text:?}");
+        }
+        let o = overview(&view);
+        assert_eq!(o.roads_sum, Cost(0));
+        assert!(o.balance_history.is_empty());
+        assert_eq!(o.income, Cost(0));
+    }
+
+    /// A built-up city after more than a week: the road classes of the overview add up to the
+    /// week's settled road upkeep, and every number of the tab is painted.
+    #[test]
+    fn the_road_classes_add_up_to_the_weeks_road_upkeep() {
+        use cp_content::ContentDb;
+        use cp_sim::scenario::{GridCityConfig, grid_city};
+        use cp_terrain::Terrain;
+        use std::sync::Arc;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let terrain = Arc::new(Terrain::load(&root.join("assets/maps/flatlands")).unwrap());
+        let content = Arc::new(ContentDb::load_dir(root.join("assets/content")).unwrap());
+        let (mut sim, report) = grid_city(400, 3, terrain, content, &GridCityConfig::default());
+        assert!(report.reached, "{report:?}");
+        // Past the next weekly settlement and the stats publish after it.
+        let start = sim.tick().0;
+        let week_end = (start / TICKS_PER_WEEK + 1) * TICKS_PER_WEEK;
+        while sim.tick().0 < week_end + 200 {
+            sim.tick_once();
+        }
+        let view = sim.view();
+        assert!(view.economy.last_week.week >= 1);
+        let o = overview(&view);
+        assert!(o.roads.len() >= 2, "avenues and streets: {:?}", o.roads);
+        assert!(o.road_upkeep.0 > 0);
+        assert_eq!(o.roads_sum, o.road_upkeep, "{:?}", o.roads);
+        assert_eq!(
+            o.roads.iter().map(|r| r.segments).sum::<u32>() as usize,
+            sim.world()
+                .resource::<cp_net::NetGraph>()
+                .segments()
+                .count()
+        );
+        assert!(!o.balance_history.is_empty());
+
+        let text = painted(&view, &mut BudgetDraft::default());
+        // `cargo test -p cp_ui road_classes -- --nocapture` prints what the Overview paints.
+        println!("{}", text.join(" | "));
+        let week = &view.economy.last_week;
+        let mut values = vec![
+            format_money(o.roads_sum),
+            format_money(o.road_upkeep),
+            format_money(week.building_upkeep),
+            format_money(week.utility_upkeep),
+            format_money(week.income()),
+            format_money(week.upkeep()),
+        ];
+        values.extend(o.income_by_zone.iter().map(|(_, c)| format_money(*c)));
+        values.extend(o.roads.iter().map(|r| format_money(r.upkeep_week)));
+        for v in values {
+            assert!(text.contains(&v), "{v} not painted: {text:?}");
+        }
+    }
+
+    #[test]
+    fn clicking_the_tabs_switches_them() {
+        let sim = SimRunner::new(1);
+        let view = sim.view();
+        let ctx = egui::Context::default();
+        let mut draft = BudgetDraft::default();
+        let mut outbox = CommandOutbox::default();
+        let mut at = Vec::new();
+        let mut t = 0.0;
+        let mut draw = |draft: &mut BudgetDraft, events: Vec<egui::Event>| {
+            t += 0.1;
+            crate::testutil::frame_texts(&ctx, input(t, events), |ui| {
+                budget_contents(ui, &view, draft, &mut outbox)
+            })
+        };
+        draw(&mut draft, vec![]);
+        for tab in [BudgetTab::Taxes, BudgetTab::Budgets, BudgetTab::Overview] {
+            let texts = draw(&mut draft, vec![]);
+            let (_, pos) = texts
+                .iter()
+                .find(|(s, _)| s == tab.label())
+                .unwrap_or_else(|| panic!("{tab:?} in {texts:?}"));
+            at.push(*pos);
+            let [down, up] = crate::testutil::click(*pos + egui::vec2(3.0, 3.0));
+            draw(&mut draft, down);
+            draw(&mut draft, up);
+            assert_eq!(draft.tab, tab);
+        }
+        // Each tab shows its own content.
+        let text = |tab| painted(&view, &mut BudgetDraft::on(tab));
+        assert!(
+            text(BudgetTab::Overview)
+                .iter()
+                .any(|t| t == "Income by zone")
+        );
+        assert!(
+            text(BudgetTab::Taxes)
+                .iter()
+                .any(|t| t.starts_with("Taxes"))
+        );
+        assert!(
+            text(BudgetTab::Budgets)
+                .iter()
+                .any(|t| t == "Service budgets")
+        );
+        assert!(
+            !text(BudgetTab::Budgets)
+                .iter()
+                .any(|t| t == "Income by zone")
+        );
     }
 }
