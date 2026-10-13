@@ -75,3 +75,9 @@ metres, pivot at ground centre, +Y up, +Z front). Source packs are not committed
 | `assets/models/props/stump_round.glb` | `stump_round.glb` | 56 → 56 |
 | `assets/models/props/sign.glb` | `sign.glb` | 44 → 44 |
 
+## UI icons — self-made, CC0
+
+The icons of the UI (`assets/ui/icons/*.png`, 64×64) were drawn for this project as SVG
+(`assets/ui/icons/src/*.svg`) and are rendered by `tools/assets/icons.mjs`
+(`@resvg/resvg-js`). They are dedicated to the public domain under CC0 1.0 Universal
+(https://creativecommons.org/publicdomain/zero/1.0/). No third-party icon pack is used.

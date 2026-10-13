@@ -22,6 +22,8 @@ cp_core.workspace = true
 cp_render.workspace = true
 bevy.workspace = true
 bevy_egui.workspace = true
+egui_extras.workspace = true
+image.workspace = true
 
 [dev-dependencies]
 cp_citizen.workspace = true

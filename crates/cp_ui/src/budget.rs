@@ -174,7 +174,7 @@ pub fn budget_window(
     draft: &mut BudgetDraft,
     outbox: &mut CommandOutbox,
 ) {
-    egui::Window::new("Budget").open(open).show(ctx, |ui| {
+    crate::frame::window("budget", crate::icons::Icon::Budget, "Budget", open).show(ctx, |ui| {
         budget_contents(ui, view, draft, outbox);
     });
 }

@@ -1,4 +1,5 @@
-//! Top bar, bottom category bar.
+//! Top bar and the content of the tool panels (the palette that opens them is in
+//! [`crate::palette`]).
 
 use bevy::prelude::Resource;
 use bevy_egui::egui;
@@ -13,52 +14,62 @@ use cp_tools::{
 };
 use cp_utility::UtilityNet;
 
+use crate::files::{FileMenu, toggle_saves};
+use crate::icons::{self, Icon};
+use crate::palette::Category;
 use crate::set_speed;
-
-/// Build-menu categories along the bottom. Tabs are empty until their tools land.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Category {
-    Roads,
-    Zones,
-    Water,
-    Power,
-    Services,
-    Transit,
-    Districts,
-}
-
-impl Category {
-    pub const ALL: [Category; 7] = [
-        Category::Roads,
-        Category::Zones,
-        Category::Water,
-        Category::Power,
-        Category::Services,
-        Category::Transit,
-        Category::Districts,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Category::Roads => "Roads",
-            Category::Zones => "Zones",
-            Category::Water => "Water",
-            Category::Power => "Power",
-            Category::Services => "Services",
-            Category::Transit => "Transit (M3)",
-            Category::Districts => "Districts (M4)",
-        }
-    }
-}
 
 #[derive(Resource, Debug, Default)]
 pub struct UiState {
+    /// The category whose tool panel is open.
     pub category: Option<Category>,
     pub debug_open: bool,
     /// The budget window is shown (button in the top bar).
     pub budget_open: bool,
+    pub demand_open: bool,
+    pub metrics_open: bool,
     /// Slider drafts of the budget window.
     pub budget: crate::budget::BudgetDraft,
+}
+
+/// The windows the top bar switches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiWindow {
+    Budget,
+    Demand,
+    Metrics,
+    Saves,
+    Debug,
+}
+
+impl UiWindow {
+    pub const ALL: [UiWindow; 5] = [
+        UiWindow::Budget,
+        UiWindow::Demand,
+        UiWindow::Metrics,
+        UiWindow::Saves,
+        UiWindow::Debug,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            UiWindow::Budget => "Budget",
+            UiWindow::Demand => "Demand",
+            UiWindow::Metrics => "Metrics",
+            UiWindow::Saves => "Save / Load",
+            UiWindow::Debug => "Debug (F3)",
+        }
+    }
+
+    pub fn icon(self) -> Icon {
+        match self {
+            UiWindow::Budget => Icon::Budget,
+            UiWindow::Demand => Icon::Demand,
+            UiWindow::Metrics => Icon::Metrics,
+            UiWindow::Saves => Icon::Saves,
+            UiWindow::Debug => Icon::Debug,
+        }
+    }
 }
 
 pub const SPEEDS: [(SimSpeed, &str); 4] = [
@@ -109,23 +120,50 @@ pub fn overlay_buttons(ui: &mut egui::Ui, state: &mut OverlayState) -> Vec<(Over
     rects
 }
 
-/// Top bar: money (with the debt warning colour) and the Budget button, demand bars, population (stub), date/time, speed buttons, overlay switcher, the always-day lighting toggle.
-/// Returns the on-screen rectangle of each speed button (tests use it to click them). A
-/// click pushes `SetSpeed` into `outbox`.
+/// Where the clickable parts of the top bar were drawn (tests click them).
+#[derive(Clone, Debug, Default)]
+pub struct TopRects {
+    pub speeds: Vec<(SimSpeed, egui::Rect)>,
+    pub windows: Vec<(UiWindow, egui::Rect)>,
+}
+
+/// Top bar: the window switches (budget, demand, metrics, saves, debug) with the money next to
+/// the budget, demand bars, population (stub), date/time, speed buttons, overlay switcher and
+/// the always-day lighting toggle. A speed click pushes `SetSpeed` into `outbox`.
 pub fn top_bar(
     root: &mut egui::Ui,
     view: &SimView,
     outbox: &mut CommandOutbox,
     overlay: &mut OverlayState,
     lighting: &mut LightingSettings,
-    budget_open: &mut bool,
-) -> Vec<(SimSpeed, egui::Rect)> {
-    let mut rects = Vec::new();
+    state: &mut UiState,
+    files: &mut FileMenu,
+) -> TopRects {
+    let mut rects = TopRects::default();
     egui::Panel::top("top_bar").show(root, |ui| {
         ui.horizontal(|ui| {
             crate::budget::money_label(ui, view);
-            if ui.selectable_label(*budget_open, "Budget").clicked() {
-                *budget_open = !*budget_open;
+            for w in UiWindow::ALL {
+                let on = match w {
+                    UiWindow::Budget => state.budget_open,
+                    UiWindow::Demand => state.demand_open,
+                    UiWindow::Metrics => state.metrics_open,
+                    UiWindow::Saves => files.open,
+                    UiWindow::Debug => state.debug_open,
+                };
+                let r = ui
+                    .add(egui::Button::image(w.icon().sized(20.0)).selected(on))
+                    .on_hover_text(w.label());
+                rects.windows.push((w, r.rect));
+                if r.clicked() {
+                    match w {
+                        UiWindow::Budget => state.budget_open = !on,
+                        UiWindow::Demand => state.demand_open = !on,
+                        UiWindow::Metrics => state.metrics_open = !on,
+                        UiWindow::Saves => toggle_saves(files),
+                        UiWindow::Debug => state.debug_open = !on,
+                    }
+                }
             }
             ui.separator();
             crate::budget::demand_bars(ui, &view.demand);
@@ -136,7 +174,7 @@ pub fn top_bar(
             ui.separator();
             for (speed, label) in SPEEDS {
                 let r = ui.selectable_label(view.speed == speed, label);
-                rects.push((speed, r.rect));
+                rects.speeds.push((speed, r.rect));
                 if r.clicked() && view.speed != speed {
                     outbox.push(set_speed(speed));
                 }
@@ -151,95 +189,127 @@ pub fn top_bar(
     rects
 }
 
-/// Bottom category bar. Clicking a tab selects it (click again to close). The Roads tab holds
-/// the road tool and the bulldozer ([`roads_panel`]); the others are empty for now.
-pub fn bottom_bar(
-    root: &mut egui::Ui,
-    state: &mut UiState,
-    view: Option<&SimView>,
-    tools: &mut ToolState,
-    overlay: &mut OverlayState,
-) {
-    egui::Panel::bottom("categories").show(root, |ui| {
-        ui.horizontal(|ui| {
-            for c in Category::ALL {
-                let selected = state.category == Some(c);
-                if ui.selectable_label(selected, c.label()).clicked() {
-                    state.category = if selected { None } else { Some(c) };
-                }
-            }
-        });
-        match state.category {
-            Some(Category::Roads) => {
-                ui.separator();
-                roads_panel(ui, view, tools);
-            }
-            Some(Category::Zones) => {
-                ui.separator();
-                zones_panel(ui, tools);
-            }
-            Some(Category::Services) => {
-                ui.separator();
-                services_panel(ui, view, tools);
-            }
-            Some(c @ (Category::Water | Category::Power)) => {
-                ui.separator();
-                utility_panel(ui, tools, overlay, c);
-            }
-            Some(c) => {
-                ui.separator();
-                ui.weak(format!("{} — nothing to build here yet", c.label()));
-            }
-            None => {}
-        }
-    });
+/// An icon + label button of a tool panel.
+pub fn tool_button(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -> egui::Response {
+    ui.add(egui::Button::image_and_text(icon.sized(22.0), label).selected(selected))
 }
 
-/// The Services tab: the placeable service buildings of the content, the bulldozer, and the
-/// placement ghost's verdict. T rotates the building.
-pub fn services_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
-    ui.horizontal(|ui| {
-        if let Some(content) = view.and_then(|v| v.content.as_deref()) {
-            for (id, def) in content.buildings().filter(|(_, d)| d.service.is_some()) {
-                let selected = tools.active == ActiveTool::Place && tools.building.def == Some(id);
-                if ui.selectable_label(selected, &def.name).clicked() {
-                    if tools.active != ActiveTool::Place {
-                        tools.select(ActiveTool::Place);
-                    }
-                    tools.building.def = Some(id);
-                }
-            }
+/// A titled section of a tool panel.
+fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.add_space(4.0);
+    ui.weak(title);
+    add(ui);
+}
+
+/// The pinned "cost · verdict" block: a ghost that can be built or placed shows its cost, one
+/// that cannot shows why; with no ghost, a hint for the open category.
+pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
+    let ok = |ui: &mut egui::Ui, text: &str, cost: Option<cp_core::Cost>, extra: String| {
+        let cost = cost.map_or(String::new(), |c| format!("{} · ", format_money(c)));
+        ui.colored_label(egui::Color32::LIGHT_GREEN, format!("{cost}✔ {text}{extra}"));
+    };
+    let bad = |ui: &mut egui::Ui, errors: &[String], fallback: &str| {
+        if errors.is_empty() {
+            ui.colored_label(egui::Color32::LIGHT_RED, format!("✖ {fallback}"));
         }
-        let bulldozing = tools.active == ActiveTool::Bulldozer;
-        if ui.selectable_label(bulldozing, "🚜 Bulldozer").clicked() {
-            tools.select(if bulldozing {
-                ActiveTool::None
-            } else {
-                ActiveTool::Bulldozer
-            });
+        for e in errors {
+            ui.colored_label(egui::Color32::LIGHT_RED, format!("✖ {e}"));
         }
-    });
-    if tools.active == ActiveTool::Place {
-        match &tools.place_ghost {
+    };
+    match (category, tools.active) {
+        (Category::Roads, ActiveTool::Road) => match &tools.ghost {
             Some(g) if g.valid => {
-                let cost = g.cost.map_or(String::new(), format_money);
-                ui.colored_label(egui::Color32::LIGHT_GREEN, format!("✔ can place — {cost}"));
+                let snap = snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));
+                ok(ui, "can build", g.cost, snap);
             }
-            Some(g) => {
-                ui.colored_label(
-                    egui::Color32::LIGHT_RED,
-                    format!("✖ {}", g.error.as_deref().unwrap_or("cannot place here")),
-                );
+            Some(g) => bad(ui, &g.errors, "cannot build here"),
+            None => {
+                ui.weak("Click to start a road. Esc cancels.");
             }
+        },
+        (Category::Buildings, ActiveTool::Place) => match &tools.place_ghost {
+            Some(g) if g.valid => ok(ui, "can place", g.cost, String::new()),
+            Some(g) => bad(
+                ui,
+                &g.error.iter().cloned().collect::<Vec<_>>(),
+                "cannot place here",
+            ),
             None => {
                 ui.weak("Hover a spot beside a road. T rotates, Esc leaves the tool.");
             }
+        },
+        (Category::Water | Category::Power, ActiveTool::Utility) => match &tools.utility_ghost {
+            Some(g) if g.valid => ok(ui, "can build", g.cost, String::new()),
+            Some(g) => bad(ui, &g.errors, "cannot build here"),
+            None => {
+                ui.weak("Click to start. Buildings within 40 m of the network are connected. Esc cancels.");
+            }
+        },
+        (Category::Water | Category::Power, ActiveTool::UtilityRemove) => {
+            ui.weak("Hover a piece and click to remove it. Esc leaves the tool.");
+        }
+        (Category::Zones, ActiveTool::Zone) => {
+            let n = tools.zone_preview.len();
+            let what = match tools.zone.kind {
+                ZoneToolKind::Rectangle if tools.zone.corner.is_some() => {
+                    "click the opposite corner".to_string()
+                }
+                ZoneToolKind::Rectangle => "click the first corner".to_string(),
+                ZoneToolKind::FillBlock => "click a block to fill it".to_string(),
+                _ => "hold and drag to paint".to_string(),
+            };
+            ui.weak(format!("{what} — {n} cells under the cursor. Esc cancels."));
+        }
+        (Category::Zones, _) => {
+            ui.weak("Pick a zoning tool or a zone type to show the zone grid.");
+        }
+        (Category::Bulldozer, ActiveTool::Bulldozer) => {
+            ui.weak("Hover a building or road segment, click to remove it. Esc leaves the tool.");
+        }
+        (Category::Water | Category::Power, _) => {
+            ui.weak("Pick a tool; the overlay shows the network and which buildings lack supply.");
+        }
+        _ => {
+            ui.weak("Pick a tool.");
         }
     }
 }
 
-/// The Water and Power tabs (`tab` picks which): the pipe or power-line tools, the remove tool
-/// and the ghost's verdict. Picking a tool also switches the map overlay to that network (pipes
+/// The Buildings category: the placeable service buildings of the content. T rotates the
+/// building.
+pub fn services_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
+    section(ui, "Service buildings", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            if let Some(content) = view.and_then(|v| v.content.as_deref()) {
+                for (id, def) in content.buildings().filter(|(_, d)| d.service.is_some()) {
+                    let selected =
+                        tools.active == ActiveTool::Place && tools.building.def == Some(id);
+                    if tool_button(ui, Icon::Building, &def.name, selected).clicked() {
+                        if tools.active != ActiveTool::Place {
+                            tools.select(ActiveTool::Place);
+                        }
+                        tools.building.def = Some(id);
+                    }
+                }
+            }
+        });
+    });
+}
+
+/// The Bulldozer category: the one tool.
+pub fn bulldozer_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
+    let on = tools.active == ActiveTool::Bulldozer;
+    if tool_button(ui, Icon::Bulldozer, "Bulldozer", on).clicked() {
+        tools.select(if on {
+            ActiveTool::None
+        } else {
+            ActiveTool::Bulldozer
+        });
+    }
+}
+
+/// The Water and Power categories (`tab` picks which): the pipe or power-line tools, the remove
+/// tool and the modes. Picking a tool also switches the map overlay to that network (pipes
 /// are underground and only the Water overlay shows them).
 pub fn utility_panel(
     ui: &mut egui::Ui,
@@ -247,219 +317,177 @@ pub fn utility_panel(
     overlay: &mut OverlayState,
     tab: Category,
 ) {
-    let (kinds, net, shown): (&[(UtilityKind, &str)], _, _) = if tab == Category::Power {
+    let (kinds, net, shown): (&[(UtilityKind, Icon, &str)], _, _) = if tab == Category::Power {
         (
-            &[(UtilityKind::Power, "⚡ Power line")],
+            &[(UtilityKind::Power, Icon::PowerLine, "Power line")],
             UtilityNet::Power,
             Overlay::Power,
         )
     } else {
         (
             &[
-                (UtilityKind::Water, "💧 Water pipe"),
-                (UtilityKind::Sewage, "🚰 Sewage pipe"),
+                (UtilityKind::Water, Icon::PipeWater, "Water pipe"),
+                (UtilityKind::Sewage, Icon::PipeSewage, "Sewage pipe"),
             ],
             UtilityNet::Pipe,
             Overlay::Water,
         )
     };
-    ui.horizontal(|ui| {
-        for &(kind, label) in kinds {
-            let selected = tools.active == ActiveTool::Utility && tools.utility.kind == kind;
-            if ui.selectable_label(selected, label).clicked() {
-                if selected {
+    section(ui, "Tools", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for &(kind, icon, label) in kinds {
+                let selected = tools.active == ActiveTool::Utility && tools.utility.kind == kind;
+                if tool_button(ui, icon, label, selected).clicked() {
+                    if selected {
+                        tools.select(ActiveTool::None);
+                    } else {
+                        tools.select(ActiveTool::Utility);
+                        tools.utility.set_kind(kind);
+                        overlay.active = shown;
+                    }
+                }
+            }
+            let removing =
+                tools.active == ActiveTool::UtilityRemove && tools.remove_net == Some(net);
+            if tool_button(ui, Icon::Remove, "Remove", removing).clicked() {
+                if removing {
                     tools.select(ActiveTool::None);
                 } else {
-                    tools.select(ActiveTool::Utility);
-                    tools.utility.set_kind(kind);
+                    tools.select(ActiveTool::UtilityRemove);
+                    tools.remove_net = Some(net);
                     overlay.active = shown;
                 }
             }
-        }
-        let removing = tools.active == ActiveTool::UtilityRemove && tools.remove_net == Some(net);
-        if ui.selectable_label(removing, "🚜 Remove").clicked() {
-            if removing {
-                tools.select(ActiveTool::None);
-            } else {
-                tools.select(ActiveTool::UtilityRemove);
-                tools.remove_net = Some(net);
-                overlay.active = shown;
-            }
-        }
-        if tools.active == ActiveTool::Utility {
-            ui.separator();
-            for (mode, label) in [
-                (UtilityMode::Straight, "Straight (2 clicks)"),
-                (UtilityMode::Polyline, "Polyline (Enter ends)"),
-            ] {
-                if ui
-                    .selectable_label(tools.utility.mode == mode, label)
-                    .clicked()
-                {
-                    tools.utility.set_mode(mode);
-                }
-            }
-        }
+        });
     });
-    match tools.active {
-        ActiveTool::Utility => match &tools.utility_ghost {
-            Some(g) if g.valid => {
-                let cost = g.cost.map_or(String::new(), format_money);
-                ui.colored_label(egui::Color32::LIGHT_GREEN, format!("✔ can build — {cost}"));
-            }
-            Some(g) => {
-                for e in &g.errors {
-                    ui.colored_label(egui::Color32::LIGHT_RED, format!("✖ {e}"));
+    if tools.active == ActiveTool::Utility {
+        section(ui, "Mode", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for (mode, label) in [
+                    (UtilityMode::Straight, "Straight (2 clicks)"),
+                    (UtilityMode::Polyline, "Polyline (Enter ends)"),
+                ] {
+                    if ui
+                        .selectable_label(tools.utility.mode == mode, label)
+                        .clicked()
+                    {
+                        tools.utility.set_mode(mode);
+                    }
                 }
-            }
-            None => {
-                ui.weak("Click to start. Buildings within 40 m of the network are connected. Esc cancels.");
-            }
-        },
-        ActiveTool::UtilityRemove => {
-            ui.weak("Hover a piece and click to remove it. Esc leaves the tool.");
-        }
-        _ => {
-            ui.weak("Pick a tool; the overlay shows the network and which buildings lack supply.");
-        }
+            });
+        });
     }
 }
 
-/// The Zones tab: tool kinds and the zone palette. Picking either activates the zoning tool
-/// (which shows the zone grid); "Off" leaves it.
+fn zone_kind_icon(kind: ZoneToolKind) -> Icon {
+    match kind {
+        ZoneToolKind::FillBlock => Icon::ZoneFill,
+        ZoneToolKind::BrushSmall => Icon::ZoneBrushSmall,
+        ZoneToolKind::BrushLarge => Icon::ZoneBrushLarge,
+        ZoneToolKind::Rectangle => Icon::ZoneRect,
+        ZoneToolKind::Eraser => Icon::ZoneEraser,
+    }
+}
+
+/// The Zones category: tool kinds and the zone palette. Picking either activates the zoning
+/// tool (which shows the zone grid); "Off" leaves it.
 pub fn zones_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
-    ui.horizontal(|ui| {
-        for kind in ZoneToolKind::ALL {
-            let selected = tools.active == ActiveTool::Zone && tools.zone.kind == kind;
-            if ui.selectable_label(selected, kind.label()).clicked() {
-                if tools.active != ActiveTool::Zone {
-                    tools.select(ActiveTool::Zone);
-                }
-                tools.zone.set_kind(kind);
-            }
-        }
-        if ui
-            .add_enabled(tools.active == ActiveTool::Zone, egui::Button::new("✖ Off"))
-            .clicked()
-        {
-            tools.select(ActiveTool::None);
-        }
-    });
-    ui.horizontal(|ui| {
-        for zone in PALETTE {
-            let [r, g, b] = zone_color(zone);
-            let color =
-                egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
-            let selected = tools.zone.zone == zone;
-            let text = egui::RichText::new(zone_name(zone)).color(color).strong();
-            if ui.selectable_label(selected, text).clicked() {
-                tools.zone.zone = zone;
-                if tools.active != ActiveTool::Zone {
-                    tools.select(ActiveTool::Zone);
+    section(ui, "Tool", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for kind in ZoneToolKind::ALL {
+                let selected = tools.active == ActiveTool::Zone && tools.zone.kind == kind;
+                if tool_button(ui, zone_kind_icon(kind), kind.label(), selected).clicked() {
+                    if tools.active != ActiveTool::Zone {
+                        tools.select(ActiveTool::Zone);
+                    }
+                    tools.zone.set_kind(kind);
                 }
             }
-        }
-    });
-    if tools.active == ActiveTool::Zone {
-        let n = tools.zone_preview.len();
-        let what = match tools.zone.kind {
-            ZoneToolKind::Rectangle if tools.zone.corner.is_some() => {
-                "click the opposite corner".to_string()
+            if ui
+                .add_enabled(tools.active == ActiveTool::Zone, egui::Button::new("✖ Off"))
+                .clicked()
+            {
+                tools.select(ActiveTool::None);
             }
-            ZoneToolKind::Rectangle => "click the first corner".to_string(),
-            ZoneToolKind::FillBlock => "click a block to fill it".to_string(),
-            _ => "hold and drag to paint".to_string(),
-        };
-        ui.weak(format!("{what} — {n} cells under the cursor. Esc cancels."));
-    } else {
-        ui.weak("Pick a zoning tool or a zone type to show the zone grid.");
-    }
+        });
+    });
+    section(ui, "Zone", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for zone in PALETTE {
+                let [r, g, b] = zone_color(zone);
+                let color = egui::Color32::from_rgb(
+                    (r * 255.0) as u8,
+                    (g * 255.0) as u8,
+                    (b * 255.0) as u8,
+                );
+                let selected = tools.zone.zone == zone;
+                let text = egui::RichText::new(zone_name(zone)).color(color).strong();
+                if ui.selectable_label(selected, text).clicked() {
+                    tools.zone.zone = zone;
+                    if tools.active != ActiveTool::Zone {
+                        tools.select(ActiveTool::Zone);
+                    }
+                }
+            }
+        });
+    });
 }
 
-/// The Roads tab: tool buttons, road mode, road type, elevation and the ghost's verdict.
+/// The Roads category: the road tool, road mode, road type (with its profile) and elevation.
 pub fn roads_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
-    ui.horizontal(|ui| {
-        for (tool, label) in [
-            (ActiveTool::Road, "🛣 Road"),
-            (ActiveTool::Bulldozer, "🚜 Bulldozer"),
-        ] {
-            if ui.selectable_label(tools.active == tool, label).clicked() {
-                let next = if tools.active == tool {
-                    ActiveTool::None
-                } else {
-                    tool
-                };
-                tools.select(next);
-            }
-        }
-        if tools.active == ActiveTool::Road {
-            ui.separator();
-            for (mode, label) in [
-                (RoadMode::Straight, "Straight"),
-                (RoadMode::Curve, "Curve (3 clicks)"),
-                (RoadMode::Free, "Free (Enter ends)"),
-            ] {
-                if ui
-                    .selectable_label(tools.road.mode == mode, label)
-                    .clicked()
-                {
-                    tools.road.set_mode(mode);
-                }
-            }
-            ui.separator();
-            if let Some(content) = view.and_then(|v| v.content.as_ref()) {
-                if tools.road.road.is_none() {
-                    tools.road.road = content.roads().next().map(|(id, _)| id);
-                }
-                let current = tools
-                    .road
-                    .road
-                    .map_or("—".to_string(), |id| content.road(id).name.clone());
-                egui::ComboBox::from_id_salt("road_type")
-                    .selected_text(current)
-                    .show_ui(ui, |ui| {
-                        for (id, def) in content.roads() {
-                            ui.selectable_value(&mut tools.road.road, Some(id), &def.name);
-                        }
-                    });
-            }
-            ui.separator();
-            ui.label(match tools.road.elevation() {
-                ElevationMode::Ground => "Ground (PgUp raises)".to_string(),
-                ElevationMode::Elevated(h) => format!("Raised {h:.0} m (PgUp / PgDn)"),
+    section(ui, "Tool", |ui| {
+        let on = tools.active == ActiveTool::Road;
+        if tool_button(ui, Icon::Road, "Road", on).clicked() {
+            tools.select(if on {
+                ActiveTool::None
+            } else {
+                ActiveTool::Road
             });
         }
     });
-    match tools.active {
-        ActiveTool::Road => match &tools.ghost {
-            Some(g) if g.valid => {
-                let cost = g.cost.map_or(String::new(), format_money);
-                let snap = snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));
-                ui.colored_label(
-                    egui::Color32::LIGHT_GREEN,
-                    format!("✔ can build — {cost}{snap}"),
-                );
-            }
-            Some(g) => {
-                for e in &g.errors {
-                    ui.colored_label(egui::Color32::LIGHT_RED, format!("✖ {e}"));
+    if tools.active != ActiveTool::Road {
+        return;
+    }
+    section(ui, "Mode", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for (mode, icon, label) in [
+                (RoadMode::Straight, Icon::Road, "Straight"),
+                (RoadMode::Curve, Icon::Curve, "Curve (3 clicks)"),
+                (RoadMode::Free, Icon::FreeRoad, "Free (Enter ends)"),
+            ] {
+                if tool_button(ui, icon, label, tools.road.mode == mode).clicked() {
+                    tools.road.set_mode(mode);
                 }
             }
-            None => {
-                ui.weak("Click to start a road. Esc cancels.");
+        });
+    });
+    if let Some(content) = view.and_then(|v| v.content.as_ref()) {
+        if tools.road.road.is_none() {
+            tools.road.road = content.roads().next().map(|(id, _)| id);
+        }
+        section(ui, "Road type", |ui| {
+            let current = tools
+                .road
+                .road
+                .map_or("—".to_string(), |id| content.road(id).name.clone());
+            egui::ComboBox::from_id_salt("road_type")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (id, def) in content.roads() {
+                        ui.selectable_value(&mut tools.road.road, Some(id), &def.name);
+                    }
+                });
+            if let Some(id) = tools.road.road {
+                icons::road_profile(ui, content.road(id), egui::vec2(180.0, 28.0));
             }
-        },
-        ActiveTool::Bulldozer => {
-            ui.weak("Hover a building or road segment, click to remove it. Esc leaves the tool.");
-        }
-        ActiveTool::None
-        | ActiveTool::Zone
-        | ActiveTool::Place
-        | ActiveTool::Utility
-        | ActiveTool::UtilityRemove => {
-            ui.weak("Pick a tool.");
-        }
+        });
     }
+    section(ui, "Elevation", |ui| {
+        ui.label(match tools.road.elevation() {
+            ElevationMode::Ground => "Ground (PgUp raises)".to_string(),
+            ElevationMode::Elevated(h) => format!("Raised {h:.0} m (PgUp / PgDn)"),
+        });
+    });
 }
 
 #[cfg(test)]
@@ -482,7 +510,7 @@ mod tests {
     /// Runs three frames: layout, press, release on `speed`'s button.
     fn click_speed(view: &SimView, speed: SimSpeed, outbox: &mut CommandOutbox) {
         let ctx = egui::Context::default();
-        let mut rects = Vec::new();
+        let mut rects = TopRects::default();
         crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
             rects = top_bar(
                 ui,
@@ -490,10 +518,17 @@ mod tests {
                 &mut CommandOutbox::default(),
                 &mut OverlayState::default(),
                 &mut LightingSettings::default(),
-                &mut false,
+                &mut UiState::default(),
+                &mut FileMenu::default(),
             );
         });
-        let pos = rects.iter().find(|(s, _)| *s == speed).unwrap().1.center();
+        let pos = rects
+            .speeds
+            .iter()
+            .find(|(s, _)| *s == speed)
+            .unwrap()
+            .1
+            .center();
         let button = |pressed| egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,
@@ -511,7 +546,8 @@ mod tests {
                     outbox,
                     &mut OverlayState::default(),
                     &mut LightingSettings::default(),
-                    &mut false,
+                    &mut UiState::default(),
+                    &mut FileMenu::default(),
                 );
             });
         }
@@ -573,22 +609,6 @@ mod tests {
             cp_core::time::TICKS_PER_DAY * 8 + cp_core::time::TICKS_PER_DAY / 2,
         ));
         assert_eq!(format_time(&sim.view()), "Tue 12:00  ·  day 9");
-    }
-
-    #[test]
-    fn bottom_bar_draws_with_no_category_selected() {
-        let ctx = egui::Context::default();
-        let mut state = UiState::default();
-        crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
-            bottom_bar(
-                ui,
-                &mut state,
-                None,
-                &mut ToolState::default(),
-                &mut OverlayState::default(),
-            )
-        });
-        assert_eq!(state.category, None);
     }
 
     #[test]
@@ -730,6 +750,53 @@ mod tests {
         assert!(
             tools.utility_ghost.is_none(),
             "leaving the tool clears the ghost"
+        );
+    }
+
+    #[test]
+    fn the_top_bar_icons_switch_their_windows() {
+        let ctx = egui::Context::default();
+        let sim = SimRunner::new(1);
+        let view = sim.view();
+        let mut state = UiState::default();
+        let mut files = FileMenu::default();
+        let mut outbox = CommandOutbox::default();
+        let mut t = 0.0;
+        let mut draw = |events: Vec<egui::Event>, state: &mut UiState, files: &mut FileMenu| {
+            t += 0.1;
+            let mut rects = TopRects::default();
+            crate::testutil::frame(&ctx, input(t, events), |ui| {
+                rects = top_bar(
+                    ui,
+                    &view,
+                    &mut outbox,
+                    &mut OverlayState::default(),
+                    &mut LightingSettings::default(),
+                    state,
+                    files,
+                );
+            });
+            rects
+        };
+        draw(vec![], &mut state, &mut files);
+        let rects = draw(vec![], &mut state, &mut files);
+        assert_eq!(rects.windows.len(), UiWindow::ALL.len());
+        for (w, rect) in rects.windows {
+            let [down, up] = crate::testutil::click(rect.center());
+            draw(down, &mut state, &mut files);
+            draw(up, &mut state, &mut files);
+            let on = match w {
+                UiWindow::Budget => state.budget_open,
+                UiWindow::Demand => state.demand_open,
+                UiWindow::Metrics => state.metrics_open,
+                UiWindow::Saves => files.open,
+                UiWindow::Debug => state.debug_open,
+            };
+            assert!(on, "{w:?} opens on a click");
+        }
+        assert_eq!(
+            files.request.take(),
+            Some(crate::files::FileRequest::Refresh)
         );
     }
 }

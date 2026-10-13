@@ -14,13 +14,19 @@ use cp_tools::{CommandOutbox, ToolState, UiCapture};
 pub mod budget;
 pub mod debug;
 pub mod files;
+pub mod frame;
+pub mod icons;
 pub mod info;
+pub mod palette;
 pub mod panels;
+pub mod windows;
 
 pub use debug::{DebugData, PhaseTimes, TickRate};
 pub use files::{FileMenu, FileRequest, SaveEntry, file_window};
+pub use icons::Icon;
 pub use info::{InfoRects, info_panel};
-pub use panels::{Category, UiState, bottom_bar, overlay_buttons, root_ui, top_bar};
+pub use palette::{Category, palette, tool_panel};
+pub use panels::{TopRects, UiState, UiWindow, overlay_buttons, root_ui, top_bar};
 
 pub struct UiPlugin;
 
@@ -73,11 +79,20 @@ fn draw_ui(
     mut files: ResMut<FileMenu>,
     inspected: Res<cp_tools::Inspected>,
     mut picked: ResMut<cp_tools::Picked>,
+    mut loaders_installed: Local<bool>,
 ) -> Result {
     let Some(view) = view else {
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;
+    if !*loaders_installed {
+        egui_extras::install_image_loaders(ctx);
+        *loaders_installed = true;
+    }
+    let available = Category::available(view.content.as_deref());
+    if let Some(c) = palette::hotkey(ctx, &available) {
+        palette::toggle(&mut state, c);
+    }
     let mut root = root_ui(ctx);
     top_bar(
         &mut root,
@@ -85,12 +100,16 @@ fn draw_ui(
         &mut outbox,
         &mut overlay,
         &mut lighting,
-        &mut state.budget_open,
+        &mut state,
+        &mut files,
     );
-    bottom_bar(&mut root, &mut state, Some(&view), &mut tools, &mut overlay);
+    palette(&mut root, &mut state, view.content.as_deref());
+    tool_panel(&mut root, &state, Some(&view), &mut tools, &mut overlay);
     {
         let st = &mut *state;
         budget::budget_window(ctx, &mut st.budget_open, &view, &mut st.budget, &mut outbox);
+        windows::demand_window(ctx, &mut st.demand_open, &view);
+        windows::metrics_window(ctx, &mut st.metrics_open, &view);
     }
     if state.debug_open {
         debug::debug_window(
@@ -123,5 +142,65 @@ pub(crate) mod testutil {
     pub fn frame(ctx: &egui::Context, input: egui::RawInput, f: impl FnMut(&mut egui::Ui)) {
         let mut out = ctx.run_ui(input, f);
         out.textures_delta.clear();
+    }
+
+    /// A 1280×720 screen at time `t` with `events`.
+    pub fn input(t: f64, events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1280.0, 720.0),
+            )),
+            time: Some(t),
+            events,
+            ..Default::default()
+        }
+    }
+
+    /// Like [`frame`], returning all text the frame painted with the position it starts at.
+    pub fn frame_texts(
+        ctx: &egui::Context,
+        input: egui::RawInput,
+        f: impl FnMut(&mut egui::Ui),
+    ) -> Vec<(String, egui::Pos2)> {
+        fn collect(shape: &egui::epaint::Shape, out: &mut Vec<(String, egui::Pos2)>) {
+            match shape {
+                egui::epaint::Shape::Text(t) => out.push((t.galley.text().to_string(), t.pos)),
+                egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| collect(s, out)),
+                _ => {}
+            }
+        }
+        let mut full = ctx.run_ui(input, f);
+        full.textures_delta.clear();
+        let mut texts = Vec::new();
+        for clipped in &full.shapes {
+            collect(&clipped.shape, &mut texts);
+        }
+        texts
+    }
+
+    /// Press and release events of the primary button at `pos` (move + press, then release).
+    pub fn click(pos: egui::Pos2) -> [Vec<egui::Event>; 2] {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        [
+            vec![egui::Event::PointerMoved(pos), button(true)],
+            vec![button(false)],
+        ]
+    }
+
+    /// A press and release of `key`.
+    pub fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
     }
 }

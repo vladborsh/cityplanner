@@ -6,6 +6,8 @@ use bevy_egui::egui;
 use cp_sim::{Inspection, Selection};
 use cp_tools::{Inspected, Picked};
 
+use crate::icons::Icon;
+
 /// Where the buttons of the last frame were (tests click them).
 #[derive(Clone, Debug, Default)]
 pub struct InfoRects {
@@ -21,11 +23,9 @@ pub fn info_panel(ctx: &egui::Context, inspected: &Inspected, picked: &mut Picke
         return rects;
     };
     let mut open = true;
-    egui::Window::new(info.title())
-        .id("info_panel".into())
-        .open(&mut open)
-        .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 40.0))
-        .resizable(false)
+    let title = info.title();
+    crate::frame::window("info_panel", Icon::Info, &title, &mut open)
+        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -8.0))
         .show(ctx, |ui| {
             egui::Grid::new("info_rows").num_columns(2).show(ui, |ui| {
                 for (label, value) in info.rows() {

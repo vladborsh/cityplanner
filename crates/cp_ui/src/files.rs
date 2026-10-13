@@ -5,6 +5,8 @@
 use bevy::prelude::*;
 use bevy_egui::egui;
 
+use crate::icons::Icon;
+
 /// One save file as the list shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SaveEntry {
@@ -39,34 +41,25 @@ pub struct FileMenu {
 /// Where the widgets of the last frame were (tests click them).
 #[derive(Clone, Debug, Default)]
 pub struct FileRects {
-    pub toggle: Option<egui::Rect>,
     pub save: Option<egui::Rect>,
     pub loads: Vec<(String, egui::Rect)>,
 }
 
-/// The "Save / Load" button at the top right and, when open, the window under it.
+/// What the top bar's saves icon does: opens or closes the window and, on opening, asks for
+/// a fresh list.
+pub fn toggle_saves(menu: &mut FileMenu) {
+    menu.open = !menu.open;
+    if menu.open {
+        menu.request = Some(FileRequest::Refresh);
+    }
+}
+
+/// The save / load window (opened by the saves icon in the top bar).
 pub fn file_window(ctx: &egui::Context, menu: &mut FileMenu) -> FileRects {
     let mut rects = FileRects::default();
-    egui::Area::new("file_menu_button".into())
+    let mut open = menu.open;
+    crate::frame::window("file_menu", Icon::Saves, "Save / Load", &mut open)
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 40.0))
-        .show(ctx, |ui| {
-            let r = ui.button("Save / Load");
-            rects.toggle = Some(r.rect);
-            if r.clicked() {
-                menu.open = !menu.open;
-                if menu.open {
-                    menu.request = Some(FileRequest::Refresh);
-                }
-            }
-        });
-    if !menu.open {
-        return rects;
-    }
-    let mut open = true;
-    egui::Window::new("Save / Load")
-        .open(&mut open)
-        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 72.0))
-        .resizable(false)
         .show(ctx, |ui| {
             ui.weak(&menu.dir);
             ui.horizontal(|ui| {
@@ -158,14 +151,18 @@ mod tests {
     }
 
     #[test]
-    fn the_button_opens_the_window_and_asks_for_the_list() {
+    fn toggling_opens_the_window_and_asks_for_the_list() {
         let ctx = egui::Context::default();
         let mut menu = FileMenu::default();
         let r = layout(&ctx, &mut menu, 0.0);
         assert!(!menu.open && r.save.is_none());
-        click(&ctx, &mut menu, r.toggle.unwrap().center(), 1.0);
+        toggle_saves(&mut menu);
         assert!(menu.open);
         assert_eq!(menu.request.take(), Some(FileRequest::Refresh));
+        assert!(layout(&ctx, &mut menu, 1.0).save.is_some());
+        toggle_saves(&mut menu);
+        assert!(!menu.open);
+        assert_eq!(menu.request, None);
     }
 
     #[test]

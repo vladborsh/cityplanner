@@ -46,7 +46,7 @@ pub struct DebugData<'a> {
 }
 
 pub fn debug_window(ctx: &egui::Context, d: &DebugData, open: &mut bool) {
-    egui::Window::new("Debug (F3)").open(open).show(ctx, |ui| {
+    crate::frame::window("debug", crate::icons::Icon::Debug, "Debug (F3)", open).show(ctx, |ui| {
         ui.label(format!(
             "tick {}   {:.1} ticks/s",
             d.view.tick.0, d.ticks_per_sec
