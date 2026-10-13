@@ -206,3 +206,35 @@ was left, and is gone: `apply` decides everything before the first change
 order, error for error), and keeps a copy of the graph only under `debug_assertions` to restore and
 fail loudly if a checked plan ever fails to apply. The remaining ~0.3 ms is the O(nodes) `find_node`
 scans and `intersect_xz` against all segments; a spatial index would get it below 0.1 ms.
+
+---
+
+# T-093: Agents on the 100k city
+
+The premise of T-093 (pedestrians re-resolve their route leg every tick, `Ctx::leg`) did **not**
+hold: switching the pedestrian step off entirely left the Agents phase unchanged (1.62 ms with and
+without pedestrians), switching the vehicle block off took it to 0.25 ms. At the 07:00 bench
+moment the road holds ~4.4k cars and ~3.3k pedestrians; the cost is `drive_tick`.
+
+What was done (the 100k checksum after 400 ticks is `8ac0a53bbe36260a` before and after: bit-identical,
+nothing serialized changed, so no save bump):
+
+1. **Pedestrian leg cache** (`Pedestrian.cache`, `#[serde(skip)]`, not compared): the resolved current
+   leg is kept per pedestrian for one generation of the path graph and refilled after a load or a
+   network change. Correct and free, but worth < 0.1 ms at 3k pedestrians; kept because the §14
+   scene has 20k of them.
+2. **Busy-lane bitset in `DriveState`** (`occ`): every substep walked all ~60k lane slots three
+   times (`lane_changes`, the place list, the stuck flags) and `update_traffic_load` once per tick.
+   They now visit the busy lanes only, in the same ascending order (the lane-change pass reads the
+   live bitset, so a hop into a later lane is visited as before). Stats 0.13 -> 0.03 ms median,
+   Agents ~1.55 -> ~1.2-1.3 ms.
+
+100k, `scripts/bench.sh 100k` (3 runs, shared machine, load ~9): Agents median 1.19 ms (p95 2.08,
+max 2.49), total median 1.86 ms / mean 1.90 / max 11.2 ms. The `RUNS=3` baseline of T-076 had Agents
+1.84 at load ~11, so part of the gain is noise: on the same moment the old code measured 1.5-1.6.
+
+**Target missed (≤ 1.0 ms median).** Remaining cause: the CPU cost of stepping ~4.4k cars is ~2 ms per
+tick on one thread (sequential run 2.0 ms; the pool brings it to ~1.3 here), i.e. ~110 ns per car and
+substep: per-car leader/gate checks, the `Upd` vector and its sequential apply. The next steps
+would be: avoid cloning the lane list in `lane_changes`, skip `gate_open` for cars far from the stop
+line, and apply updates per chunk instead of one sequential pass. `bench/baseline-100k.json` re-recorded.

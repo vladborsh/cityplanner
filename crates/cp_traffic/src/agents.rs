@@ -81,6 +81,21 @@ pub struct Pedestrian {
     pub waited: u32,
     /// World position (XZ), kept for rendering.
     pub pos: Vec2,
+    /// The resolved current leg, so it is not looked up again every tick. Derived, not saved
+    /// and not compared: it refills on the first tick after a load.
+    #[serde(skip)]
+    pub(crate) cache: LegCache,
+}
+
+/// A leg of a pedestrian's route resolved against the network of one path-graph generation.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LegCache(Option<(u64, u32, Leg)>);
+
+impl PartialEq for LegCache {
+    /// A cache never makes two pedestrians different.
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -624,6 +639,7 @@ pub fn receive_paths(
                         started: false,
                         waited: 0,
                         pos: Vec2::ZERO,
+                        cache: LegCache::default(),
                     });
                     book.set_state(tid, TripState::Agent);
                 } else {
@@ -670,7 +686,8 @@ pub fn receive_paths(
 }
 
 /// What a leg of a route is.
-enum Leg {
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Leg {
     Walk {
         lane: LaneId,
         from_s: f32,
@@ -689,6 +706,8 @@ struct Ctx<'a> {
     graph: &'a PathGraph,
     geo: &'a JunctionGeometry,
     tick: u64,
+    /// Generation of the path graph: a cached leg is valid for one generation.
+    generation: u64,
 }
 
 impl Ctx<'_> {
@@ -808,8 +827,15 @@ enum Step {
 fn step_pedestrian(p: &mut Pedestrian, ctx: &Ctx) -> Step {
     let mut budget = PED_STEP;
     loop {
-        let Some(leg) = ctx.leg(&p.route, p.leg as usize) else {
-            return Step::Invalid;
+        let leg = match p.cache.0 {
+            Some((g, i, leg)) if g == ctx.generation && i == p.leg => leg,
+            _ => {
+                let Some(leg) = ctx.leg(&p.route, p.leg as usize) else {
+                    return Step::Invalid;
+                };
+                p.cache.0 = Some((ctx.generation, p.leg, leg));
+                leg
+            }
         };
         if !p.started {
             // Entering a leg: measure it; a crossing may only be entered on a walk signal.
@@ -860,6 +886,7 @@ pub fn crossing_of(
         graph,
         geo,
         tick: 0,
+        generation: 0,
     };
     match ctx.leg(&p.route, p.leg as usize)? {
         Leg::Cross { node, link, .. } => Some((node, link)),
@@ -892,6 +919,7 @@ pub fn move_agents(
         geo: &geo,
         // Plan time on the movement clock (§2, three clocks).
         tick: signal_tick(now, 0),
+        generation: pnet.generation(),
     };
     let (parallel, stuck_ticks) =
         settings.map_or((true, STUCK_TICKS), |s| (s.parallel, s.stuck_ticks));
@@ -1028,7 +1056,8 @@ pub fn update_traffic_load(
     load.inst.clear();
     load.inst.resize(n, 0.0);
     load.ema.resize(n, 0.0);
-    for (slot, l) in drive.lanes.iter().enumerate() {
+    for slot in drive.occ.iter() {
+        let l = &drive.lanes[slot];
         if let (false, Some(node)) = (l.is_empty(), graph.car.get(slot).and_then(Option::as_ref)) {
             // Road length the queue covers: the sum of the cars' lengths.
             let covered: f32 = l

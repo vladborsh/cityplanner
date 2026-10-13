@@ -229,7 +229,12 @@ where
 
 /// Performs the lateral hops that have room, in lane-slot then queue order (deterministic).
 fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGraph) {
-    for slot in 0..st.lanes.len() {
+    // Busy lanes in ascending slot order, looking at the live occupancy: a hop can make a later
+    // lane busy, and it is then visited like any other.
+    let mut next = st.occ.next_from(0);
+    while let Some(slot) = next {
+        next = st.occ.next_from(slot + 1);
+        // (A lane visited later may have been emptied by a hop in the meantime.)
         if st.lanes[slot].is_empty() {
             continue;
         }
@@ -250,10 +255,10 @@ fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGrap
                 if !hop_blockers(g, vehicles, st, v, to, s).is_empty() {
                     break;
                 }
-                st.lanes[fs as usize].retain(|w| *w != id);
+                st.lane_remove(fs, id);
                 let at = st.lanes[ts as usize]
                     .partition_point(|&o| vehicles.get(o).is_some_and(|o| o.s > s));
-                st.lanes[ts as usize].insert(at, id);
+                st.lane_insert(ts, at, id);
                 let v = vehicles.get_mut(id).expect("vehicle");
                 v.s = s;
                 v.hop += 1;
@@ -262,9 +267,62 @@ fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGrap
     }
 }
 
+/// Which lane slots hold a car, as a bitset: the passes of a substep visit the few hundred busy
+/// lanes of a 60k-lane network, not every lane.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct OccBits(Vec<u64>);
+
+impl OccBits {
+    fn with_len(n: usize) -> Self {
+        Self(vec![0; n.div_ceil(64)])
+    }
+
+    fn set(&mut self, i: usize, on: bool) {
+        let (w, b) = (i / 64, i % 64);
+        if w < self.0.len() {
+            if on {
+                self.0[w] |= 1 << b;
+            } else {
+                self.0[w] &= !(1 << b);
+            }
+        }
+    }
+
+    /// The first set slot `>= from`.
+    fn next_from(&self, from: usize) -> Option<usize> {
+        let mut w = from / 64;
+        if w >= self.0.len() {
+            return None;
+        }
+        let mut bits = self.0[w] & (!0u64 << (from % 64));
+        loop {
+            if bits != 0 {
+                return Some(w * 64 + bits.trailing_zeros() as usize);
+            }
+            w += 1;
+            if w >= self.0.len() {
+                return None;
+            }
+            bits = self.0[w];
+        }
+    }
+
+    /// Set slots in ascending order.
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        let mut next = self.next_from(0);
+        std::iter::from_fn(move || {
+            let cur = next?;
+            next = self.next_from(cur + 1);
+            Some(cur)
+        })
+    }
+}
+
 /// Derived occupancy of lanes and connections.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DriveState {
+    /// Lane slots with at least one car (kept in step with `lanes` by the `lane_*` methods).
+    pub occ: OccBits,
     /// Vehicles per lane slot, front-most first.
     pub lanes: Vec<Vec<VehicleId>>,
     /// Vehicles per connection `(from slot, to slot)`, front-most first.
@@ -329,6 +387,24 @@ pub(crate) fn find_exit(g: &PathGraph, from: LaneId, to: LaneId) -> Option<&Exit
 }
 
 impl DriveState {
+    fn lane_push(&mut self, slot: u32, id: VehicleId) {
+        self.lanes[slot as usize].push(id);
+        self.occ.set(slot as usize, true);
+    }
+
+    fn lane_insert(&mut self, slot: u32, at: usize, id: VehicleId) {
+        self.lanes[slot as usize].insert(at, id);
+        self.occ.set(slot as usize, true);
+    }
+
+    fn lane_remove(&mut self, slot: u32, id: VehicleId) {
+        let l = &mut self.lanes[slot as usize];
+        l.retain(|w| *w != id);
+        if l.is_empty() {
+            self.occ.set(slot as usize, false);
+        }
+    }
+
     /// Rebuilds the occupancy from the vehicles; returns those whose place no longer exists.
     pub fn rebuild(
         &mut self,
@@ -338,6 +414,7 @@ impl DriveState {
     ) -> Vec<VehicleId> {
         let n = g.car.len();
         self.lanes = vec![Vec::new(); n];
+        self.occ = OccBits::with_len(n);
         self.conns.clear();
         self.entering = vec![0; n];
         self.waiting.clear();
@@ -362,7 +439,7 @@ impl DriveState {
                 }
             } else {
                 match g.car_slot(v.lane()) {
-                    Some(slot) => self.lanes[slot as usize].push(id),
+                    Some(slot) => self.lane_push(slot, id),
                     None => invalid.push(id),
                 }
             }
@@ -400,8 +477,8 @@ impl DriveState {
                     }
                 }
             }
-        } else if let Some(l) = self.lanes.get_mut(v.lane().index as usize) {
-            l.retain(|w| *w != id);
+        } else if (v.lane().index as usize) < self.lanes.len() {
+            self.lane_remove(v.lane().index, id);
         }
     }
 }
@@ -741,7 +818,7 @@ pub(crate) fn spawn_waiting(
             .next()
             .is_none();
         if ahead_ok && behind_ok && clear_of_junction {
-            st.lanes[slot as usize].insert(at, id);
+            st.lane_insert(slot, at, id);
             let v = vehicles.get_mut(id).expect("vehicle");
             v.spawned = true;
             v.s = s;
@@ -857,7 +934,8 @@ fn suspicious_flags(
             lead = standing.then_some(sus);
         }
     };
-    for (slot, list) in st.lanes.iter().enumerate() {
+    for slot in st.occ.iter() {
+        let list = &st.lanes[slot];
         let Some(&first) = list.first() else { continue };
         let front = match (veh.get(first), g.car[slot].as_ref()) {
             (Some(v), Some(node)) if v.speed < 0.1 => {
@@ -933,10 +1011,8 @@ pub(crate) fn substep(
 ) {
     lane_changes(vehicles, st, g);
     let mut places: Vec<Place> = Vec::new();
-    for (slot, l) in st.lanes.iter().enumerate() {
-        if !l.is_empty() {
-            places.push(Place::Lane(slot as u32));
-        }
+    for slot in st.occ.iter() {
+        places.push(Place::Lane(slot as u32));
     }
     for (&(a, b), l) in &st.conns {
         if !l.is_empty() {
@@ -1026,7 +1102,7 @@ fn apply(
                 v.s = over;
                 v.speed = u.v;
                 v.in_conn = true;
-                st.lanes[fs as usize].retain(|w| *w != u.id);
+                st.lane_remove(fs, u.id);
                 st.conns.entry((fs, ex.to_slot)).or_default().push(u.id);
                 st.entering[ex.to_slot as usize] += 1;
             }
@@ -1062,7 +1138,7 @@ fn apply(
                 }
                 st.entering[ex.to_slot as usize] =
                     st.entering[ex.to_slot as usize].saturating_sub(1);
-                st.lanes[ex.to_slot as usize].push(u.id);
+                st.lane_push(ex.to_slot, u.id);
             }
         }
     }

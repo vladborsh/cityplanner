@@ -65,6 +65,13 @@ fn a_run_with_injected_traffic_resumes_from_a_save() {
     for _ in 0..60 {
         a.tick_once();
     }
+    // Pedestrians and cars are on their way (a pedestrian's resolved leg is a cache that is
+    // not saved and refills after the load).
+    let (cars, peds) = a.agent_counts();
+    assert!(
+        cars > 0 && peds > 0,
+        "{cars} cars {peds} pedestrians at the save"
+    );
     let bytes = save_runner(&a, content.content_hash(), "flatlands").unwrap();
     let mut b = SimRunner::new(1);
     b.set_terrain(terrain);
