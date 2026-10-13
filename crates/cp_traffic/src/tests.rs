@@ -523,3 +523,25 @@ fn grid_routes_are_optimal_manhattan_distances() {
         );
     }
 }
+
+#[test]
+fn the_route_between_two_points_takes_the_100_kmh_highway_over_the_40_kmh_street() {
+    // Two equal-length branches between the same two stems: a one-way highway and a street.
+    let mut s = sim();
+    let stem_in = s.seg((900.0, 1000.0), (1000.0, 1000.0));
+    let stem_out = s.seg((1200.0, 1000.0), (1300.0, 1000.0));
+    let h1 = s.seg_with("highway_1w_2l", (1000.0, 1000.0), (1100.0, 900.0));
+    let h2 = s.seg_with("highway_1w_2l", (1100.0, 900.0), (1200.0, 1000.0));
+    let s1 = s.seg((1000.0, 1000.0), (1100.0, 1100.0));
+    let s2 = s.seg((1100.0, 1100.0), (1200.0, 1000.0));
+    let req = car(
+        acc(stem_in, 10.0, Side::Right),
+        acc(stem_out, 90.0, Side::Right),
+    );
+    let path = car_path(s.solve(req)).unwrap();
+    let segs = via(&s, &path);
+    assert!(
+        segs.contains(&h1) && segs.contains(&h2) && !segs.contains(&s1) && !segs.contains(&s2),
+        "{segs:?}"
+    );
+}

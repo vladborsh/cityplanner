@@ -328,6 +328,27 @@ impl ContentDb {
         let vehicles = table(vehicles, |d| &d.id, validate::vehicle, &mut errors);
         let utilities = table(utilities, |d| &d.id, validate::utility, &mut errors);
 
+        // A Highway outranks every other class at a junction.
+        let top_other = roads
+            .defs
+            .iter()
+            .filter(|d| d.class != RoadClass::Highway)
+            .map(|d| d.rank)
+            .max();
+        if let Some(top) = top_other {
+            for (i, d) in roads.defs.iter().enumerate() {
+                if d.class == RoadClass::Highway && d.rank <= top {
+                    errors.push(ContentError::new(
+                        &roads.files[i],
+                        Some("rank"),
+                        format!(
+                            "a Highway's rank must be above {top}, the highest of the other classes"
+                        ),
+                    ));
+                }
+            }
+        }
+
         // Cross references.
         for (i, b) in buildings.defs.iter().enumerate() {
             if let Some(s) = &b.service
@@ -626,7 +647,9 @@ mod tests {
     }
     use crate::kinds::{UtilityKind, ZoneType};
 
-    const PINNED_SINGLE_ROAD_HASH: u64 = 4353786976156915245;
+    /// Re-pinned for T-078: `RoadDef.class` is part of the hashed encoding (it was
+    /// 4353786976156915245 before).
+    const PINNED_SINGLE_ROAD_HASH: u64 = 3543843456772795126;
 
     const ROAD: &str = r#"Road((id: "r", name: "R", width: 10.0,
         lanes: [(kind: Car, dir: Forward, width: 3.0, offset: 0.0)],
@@ -653,12 +676,20 @@ mod tests {
     #[test]
     fn loads_shipped_content() {
         let db = real();
-        assert_eq!(db.roads().count(), 4);
+        assert_eq!(db.roads().count(), 7);
         // Dense ids follow sorted string ids.
         let names: Vec<_> = db.roads().map(|(_, d)| d.id.as_str()).collect();
         assert_eq!(
             names,
-            ["basic_2l", "highway_1w_3l", "large_6l", "medium_4l"]
+            [
+                "basic_2l",
+                "highway_1w_1l",
+                "highway_1w_2l",
+                "highway_1w_3l",
+                "highway_1w_4l",
+                "large_6l",
+                "medium_4l"
+            ]
         );
         let hw = db.road(db.road_id("highway_1w_3l").unwrap());
         assert!(!hw.allows_zoning && hw.elevated.is_some() && hw.bridge.is_some());

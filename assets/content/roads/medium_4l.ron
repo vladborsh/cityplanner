@@ -1,6 +1,7 @@
 Road((
     id: "medium_4l",
-    name: "Medium street",
+    name: "Collector (4 lanes)",
+    class: Collector,
     width: 19.0,
     lanes: [
         (kind: Pedestrian, dir: Forward, width: 2.5, offset: 8.25),

@@ -1,7 +1,12 @@
 //! Per-definition range checks. Each returns `(field, message)` pairs.
 
-use crate::defs::{BuildingDef, RoadDef, RoadVariant, ServiceDef, UtilityDef, VehicleDef};
+use crate::defs::{
+    BuildingDef, LaneKind, RoadClass, RoadDef, RoadVariant, ServiceDef, UtilityDef, VehicleDef,
+};
 use crate::kinds::ZoneType;
+
+/// Steepest grade a Highway may declare.
+pub const HIGHWAY_MAX_SLOPE: f32 = 0.06;
 
 pub type Problems = Vec<(String, String)>;
 
@@ -57,6 +62,26 @@ pub fn road(d: &RoadDef) -> Problems {
                 format!("lanes[{i}].offset"),
                 "lane lies outside the road width",
             );
+        }
+    }
+    if d.class == RoadClass::Highway {
+        if !d.is_one_way() {
+            c.bad(
+                "lanes",
+                "a Highway has car lanes and all of them are Forward",
+            );
+        }
+        if let Some(i) = d.lanes.iter().position(|l| l.kind == LaneKind::Pedestrian) {
+            c.bad(
+                format!("lanes[{i}].kind"),
+                "a Highway has no Pedestrian lane",
+            );
+        }
+        if d.allows_zoning {
+            c.bad("allows_zoning", "a Highway does not allow zoning");
+        }
+        if d.max_slope > HIGHWAY_MAX_SLOPE {
+            c.bad("max_slope", "a Highway's max_slope must be <= 0.06");
         }
     }
     variant(&mut c, "elevated", &d.elevated);

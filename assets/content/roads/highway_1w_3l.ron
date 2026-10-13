@@ -1,6 +1,7 @@
 Road((
     id: "highway_1w_3l",
-    name: "One-way highway",
+    name: "Highway, 3 lanes (one-way)",
+    class: Highway,
     width: 11.25,
     lanes: [
         (kind: Car, dir: Forward, width: 3.75, offset: 3.75),

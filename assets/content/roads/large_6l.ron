@@ -1,6 +1,7 @@
 Road((
     id: "large_6l",
-    name: "Large avenue",
+    name: "Arterial (6 lanes)",
+    class: Arterial,
     width: 28.0,
     lanes: [
         (kind: Pedestrian, dir: Forward, width: 2.5, offset: 12.75),

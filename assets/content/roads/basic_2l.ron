@@ -1,6 +1,7 @@
 Road((
     id: "basic_2l",
-    name: "Basic street",
+    name: "Local street",
+    class: Local,
     width: 12.0,
     lanes: [
         (kind: Pedestrian, dir: Forward, width: 2.5, offset: 4.75),

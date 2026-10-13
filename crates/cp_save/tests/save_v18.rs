@@ -187,7 +187,25 @@ fn every_fixture_keeps_its_road_and_building_types_when_new_types_sort_first() {
                 "{name}: {w:?}"
             );
         }
+        // Against the names the file itself implies: the raw index through the frozen table of
+        // its time, with the real highway defs now in the shipped content.
+        let raw = load(&bytes, base.content_hash()).unwrap().data;
+        let want_roads: Vec<String> = raw
+            .net
+            .segments()
+            .map(|(_, s)| raw.def_names.roads[s.road.0 as usize].clone())
+            .collect();
+        let want_buildings: Vec<String> = raw
+            .buildings
+            .iter()
+            .map(|(_, b)| raw.def_names.buildings[b.def.index()].clone())
+            .collect();
         let (roads_a, buildings_a) = types(&a);
+        assert_eq!(roads_a, want_roads, "{name}: road names of the file");
+        assert_eq!(
+            buildings_a, want_buildings,
+            "{name}: building names of the file"
+        );
         let (roads_b, buildings_b) = types(&b);
         assert_eq!(roads_a, roads_b, "{name}: road types");
         assert_eq!(buildings_a, buildings_b, "{name}: building types");

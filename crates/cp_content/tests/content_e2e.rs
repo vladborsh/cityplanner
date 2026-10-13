@@ -1,7 +1,7 @@
 //! Acceptance tests for `m0-data` content loading, driven from the committed
 //! `assets/content` files through the public API only.
 
-use cp_content::{ContentDb, ZoneType};
+use cp_content::{ContentDb, LaneKind, RoadClass, ZoneType};
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
@@ -54,16 +54,86 @@ fn mutate(file: &str, from: &str, to: &str) -> Vec<(String, String)> {
 }
 
 #[test]
-fn committed_content_loads_with_four_m1_roads() {
+fn committed_content_loads_with_seven_road_types_in_four_classes() {
     let db = ContentDb::load_dir(root()).unwrap();
-    assert_eq!(db.roads().count(), 4);
-    for id in ["basic_2l", "medium_4l", "large_6l", "highway_1w_3l"] {
+    assert_eq!(db.roads().count(), 7);
+    let want = [
+        ("basic_2l", RoadClass::Local, "Local street", false),
+        (
+            "medium_4l",
+            RoadClass::Collector,
+            "Collector (4 lanes)",
+            false,
+        ),
+        ("large_6l", RoadClass::Arterial, "Arterial (6 lanes)", false),
+        (
+            "highway_1w_1l",
+            RoadClass::Highway,
+            "Highway, 1 lane (one-way)",
+            true,
+        ),
+        (
+            "highway_1w_2l",
+            RoadClass::Highway,
+            "Highway, 2 lanes (one-way)",
+            true,
+        ),
+        (
+            "highway_1w_3l",
+            RoadClass::Highway,
+            "Highway, 3 lanes (one-way)",
+            true,
+        ),
+        (
+            "highway_1w_4l",
+            RoadClass::Highway,
+            "Highway, 4 lanes (one-way)",
+            true,
+        ),
+    ];
+    for (id, class, name, highway) in want {
         let r = db.road(db.road_id(id).unwrap_or_else(|| panic!("road {id}")));
         assert!(
             r.elevated.is_some() && r.bridge.is_some(),
             "{id} needs elevated + bridge"
         );
+        assert_eq!((r.class, r.name.as_str()), (class, name), "{id}");
+        assert_eq!(r.is_one_way(), highway, "{id}");
+        if highway {
+            assert!(
+                r.lanes.iter().all(|l| l.kind == LaneKind::Car),
+                "{id}: no sidewalks"
+            );
+            assert!(
+                !r.allows_zoning && r.max_slope <= 0.06 && r.rank == 4,
+                "{id}"
+            );
+            assert_eq!(
+                (r.speed_kmh, r.width),
+                (100.0, 3.75 * r.lanes.len() as f32),
+                "{id}"
+            );
+        }
     }
+    // Cost and upkeep are proportional to the lanes (placeholder: 40/3 per lane-metre).
+    let cost = |id: &str| db.road(db.road_id(id).unwrap()).cost_per_m;
+    assert!((cost("highway_1w_2l") - 2.0 * cost("highway_1w_1l")).abs() < 1e-3);
+    assert!((cost("highway_1w_3l") - 3.0 * cost("highway_1w_1l")).abs() < 1e-3);
+    assert!((cost("highway_1w_4l") - 4.0 * cost("highway_1w_1l")).abs() < 1e-3);
+    // The existing ids keep their names; the new ones sort between them.
+    let ids: Vec<&str> = db.roads().map(|(_, r)| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "basic_2l",
+            "highway_1w_1l",
+            "highway_1w_2l",
+            "highway_1w_3l",
+            "highway_1w_4l",
+            "large_6l",
+            "medium_4l"
+        ]
+    );
     let house = db.building(db.building_id("house_low_1").unwrap());
     assert_eq!(house.zone, ZoneType::ResLow);
 }
@@ -131,6 +201,50 @@ fn content_hash_changes_with_any_value() {
             .content_hash();
         assert_ne!(base, h, "{file}: {from} -> {to}");
     }
+}
+
+/// One Highway rule broken at a time: the error names the file and the field.
+#[test]
+fn highway_rules_are_enforced_with_file_and_field() {
+    let hw = "highway_1w_2l";
+    let cases = [
+        (
+            "a backward car lane",
+            "dir: Forward, width: 3.75, offset: -1.875",
+            "dir: Backward, width: 3.75, offset: -1.875",
+            "lanes",
+        ),
+        (
+            "a sidewalk",
+            "kind: Car, dir: Forward, width: 3.75, offset: -1.875",
+            "kind: Pedestrian, dir: Forward, width: 3.75, offset: -1.875",
+            "lanes[1].kind",
+        ),
+        (
+            "zoning",
+            "allows_zoning: false",
+            "allows_zoning: true",
+            "allows_zoning",
+        ),
+        (
+            "a steep grade",
+            "max_slope: 0.06",
+            "max_slope: 0.07",
+            "max_slope",
+        ),
+        ("a low rank", "rank: 4", "rank: 3", "rank"),
+    ];
+    for (what, from, to, field) in cases {
+        let e = errs(mutate(hw, from, to));
+        assert!(e.contains(hw) && e.contains(field), "{what}: {e}");
+    }
+    // A Highway with no car lane at all is not one-way either.
+    let e = errs(mutate(
+        hw,
+        "kind: Car, dir: Forward, width: 3.75, offset: 1.875",
+        "kind: Pedestrian, dir: Forward, width: 3.75, offset: 1.875",
+    ));
+    assert!(e.contains("lanes[0].kind"), "{e}");
 }
 
 #[test]

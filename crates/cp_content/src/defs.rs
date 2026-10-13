@@ -207,11 +207,26 @@ pub struct RoadVariant {
     pub mesh: String,
 }
 
+/// The role of a road type in the network (§6.2): how the player and the UI group it.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+pub enum RoadClass {
+    #[default]
+    Local,
+    Collector,
+    Arterial,
+    Highway,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoadDef {
     pub id: String,
     pub name: String,
+    /// Role of the road type; `Local` when absent from the RON.
+    #[serde(default)]
+    pub class: RoadClass,
     /// Total profile width, metres.
     pub width: f32,
     pub lanes: Vec<LaneDef>,
@@ -232,6 +247,19 @@ pub struct RoadDef {
     pub bridge: Option<RoadVariant>,
     pub mesh: String,
     pub material: String,
+}
+
+impl RoadDef {
+    /// Every car lane is `Forward`: traffic runs one way, along the segment. A road without
+    /// car lanes is not one-way.
+    pub fn is_one_way(&self) -> bool {
+        let mut cars = self
+            .lanes
+            .iter()
+            .filter(|l| l.kind == LaneKind::Car)
+            .peekable();
+        cars.peek().is_some() && cars.all(|l| l.dir == LaneDir::Forward)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

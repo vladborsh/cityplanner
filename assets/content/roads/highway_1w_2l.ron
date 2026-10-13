@@ -1,0 +1,21 @@
+Road((
+    id: "highway_1w_2l",
+    name: "Highway, 2 lanes (one-way)",
+    class: Highway,
+    width: 7.5,
+    lanes: [
+        (kind: Car, dir: Forward, width: 3.75, offset: 1.875),
+        (kind: Car, dir: Forward, width: 3.75, offset: -1.875),
+    ],
+    median_width: 0.0,
+    speed_kmh: 100,
+    max_slope: 0.06,
+    cost_per_m: 26.666667,
+    upkeep_per_m_week: 0.26666667,
+    allows_zoning: false,
+    rank: 4,
+    elevated: Some((cost_per_m: 80.0, upkeep_per_m_week: 0.53333333, mesh: "road/highway_1w_2l_elevated")),
+    bridge: Some((cost_per_m: 160.0, upkeep_per_m_week: 0.8, mesh: "road/highway_1w_2l_bridge")),
+    mesh: "road/highway_1w_2l",
+    material: "road/asphalt",
+))
