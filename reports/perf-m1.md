@@ -238,3 +238,43 @@ tick on one thread (sequential run 2.0 ms; the pool brings it to ~1.3 here), i.e
 substep: per-car leader/gate checks, the `Upd` vector and its sequential apply. The next steps
 would be: avoid cloning the lane list in `lane_changes`, skip `gate_open` for cars far from the stop
 line, and apply updates per chunk instead of one sequential pass. `bench/baseline-100k.json` re-recorded.
+
+---
+
+# T-094: drive_tick on the 100k city
+
+Same scene and caveats as above (shared M4 Pro, load average 9-12). The 100k checksum after
+400 ticks is `8ac0a53bbe36260a` before and after (bit-identical); 1 vs 8 threads vs sequential is
+covered by `one_and_eight_threads_and_sequential_runs_are_identical`. Nothing serialized changed.
+
+Where the Agents time went (temporary timers, per tick, four substeps summed, µs):
+
+| part | before | after |
+|---|---|---|
+| `lane_changes` | 210-420 | 8-83 |
+| place list | 28-42 | same |
+| step (parallel, wall) | 390-590 | same (pool wake-up and the per-place work) |
+| `apply` (sequential) | 110-200 | ~100-130 (plain moves take one arena lookup) |
+| spawn + hop refresh | 4 | 36-94 (the per-tick scan below) |
+| stuck flags + timers | 56-146 | same |
+
+* **`lane_changes`** visited every busy lane (600) and dereferenced every car's path (a cache miss
+  per car, four times a tick) to find out that nobody wants to hop. It now keeps `hop_lanes`, the
+  lanes that may hold a car with a hop pending: refreshed from the cars once per tick (in
+  `spawn_waiting`, so routes replaced between ticks and new cars are seen), marked when a car enters
+  a lane with a hop pending during a tick, dropped when a visited lane has none left. A lane
+  without a pending hop has nothing to do, so the result is the same (checksum).
+* **`apply`**: a plain move (`Ev::Stay`, nearly all updates) is applied with one lookup.
+* The "skip `gate_open` far from the stop line" idea does not apply: lanes are at most ~100 m, a car
+  is never far enough for the gate to change its safe speed.
+
+Result, `scripts/bench.sh 100k` (5 runs, load ~12): Agents median 1.18 ms (p95 2.36, max 3.8); on
+the same machine moments the code before this task measured 1.4-1.8, quiet single runs of the new
+code 0.99-1.13 (median). So the ≤ 1.0 ms target is met on a quiet machine and missed (~1.2) under
+load; baselines were not re-recorded (the run was too noisy: Buildings read 0.21 against 0.16).
+
+Remaining, ranked: (1) the parallel step is 0.3-0.7 ms of wall time for ~9 chunks of work, mostly
+thread wake-up and join four times a tick: one scope per tick with a barrier between substeps, or
+running small ticks sequentially (sequential cost is ~1.5 ms, so only worth it below ~1k cars);
+(2) `suspicious_flags` allocates a vector over all cars every tick; (3) the sequential `apply` for
+crossings and arrivals.

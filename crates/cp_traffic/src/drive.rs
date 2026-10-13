@@ -227,15 +227,41 @@ where
         .filter(move |o| s_out + o.s - st.specs.of(o).length < s + gap)
 }
 
+/// Is the next step of `v` a lateral hop to a neighbouring lane?
+fn pending_hop(g: &PathGraph, v: &Vehicle) -> bool {
+    v.path
+        .steps
+        .get(usize::from(v.hop))
+        .is_some_and(|&(from, to)| is_lane_change(g, from, to))
+}
+
+impl DriveState {
+    /// Recomputes [`DriveState::hop_lanes`] from the cars on the lanes.
+    fn refresh_hop_lanes(&mut self, vehicles: &Arena<Vehicle>, g: &PathGraph) {
+        self.hop_lanes = OccBits::with_len(self.lanes.len());
+        let slots: Vec<usize> = self.occ.iter().collect();
+        for slot in slots {
+            if self.lanes[slot]
+                .iter()
+                .any(|&id| vehicles.get(id).is_some_and(|v| pending_hop(g, v)))
+            {
+                self.hop_lanes.set(slot, true);
+            }
+        }
+    }
+}
+
 /// Performs the lateral hops that have room, in lane-slot then queue order (deterministic).
 fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGraph) {
-    // Busy lanes in ascending slot order, looking at the live occupancy: a hop can make a later
-    // lane busy, and it is then visited like any other.
-    let mut next = st.occ.next_from(0);
+    // Lanes with a hop pending in ascending slot order, looking at the live marks: a hop can
+    // make a later lane one of them, and it is then visited like any other. (A lane without a
+    // pending hop has nothing to do, so skipping it changes nothing.)
+    let mut next = st.hop_lanes.next_from(0);
     while let Some(slot) = next {
-        next = st.occ.next_from(slot + 1);
+        next = st.hop_lanes.next_from(slot + 1);
         // (A lane visited later may have been emptied by a hop in the meantime.)
         if st.lanes[slot].is_empty() {
+            st.hop_lanes.set(slot, false);
             continue;
         }
         let ids = st.lanes[slot].clone();
@@ -262,8 +288,16 @@ fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGrap
                 let v = vehicles.get_mut(id).expect("vehicle");
                 v.s = s;
                 v.hop += 1;
+                if pending_hop(g, v) {
+                    st.hop_lanes.set(ts as usize, true);
+                }
             }
         }
+        // Still a car waiting for room to hop? Then the lane stays on the list.
+        let pending = st.lanes[slot]
+            .iter()
+            .any(|&id| vehicles.get(id).is_some_and(|v| pending_hop(g, v)));
+        st.hop_lanes.set(slot, pending);
     }
 }
 
@@ -323,6 +357,11 @@ impl OccBits {
 pub(crate) struct DriveState {
     /// Lane slots with at least one car (kept in step with `lanes` by the `lane_*` methods).
     pub occ: OccBits,
+    /// Lane slots that may hold a car whose next step is a lateral hop: the only lanes
+    /// [`lane_changes`] has to look at. Refreshed from the cars at the start of every tick
+    /// (routes can be replaced between ticks) and marked when a car enters a lane with a hop
+    /// pending during one; a lane whose cars have no hop left is dropped when visited.
+    pub hop_lanes: OccBits,
     /// Vehicles per lane slot, front-most first.
     pub lanes: Vec<Vec<VehicleId>>,
     /// Vehicles per connection `(from slot, to slot)`, front-most first.
@@ -415,6 +454,7 @@ impl DriveState {
         let n = g.car.len();
         self.lanes = vec![Vec::new(); n];
         self.occ = OccBits::with_len(n);
+        self.hop_lanes = OccBits::with_len(n);
         self.conns.clear();
         self.entering = vec![0; n];
         self.waiting.clear();
@@ -828,6 +868,8 @@ pub(crate) fn spawn_waiting(
             st.waiting.push(id);
         }
     }
+    // Routes can change between ticks and cars appear: look at all lanes once per tick.
+    st.refresh_hop_lanes(vehicles, g);
 }
 
 /// Is the front car `v` of its lane held by something that should not last: no room beyond the
@@ -1061,6 +1103,14 @@ fn apply(
     finished: &mut Finished,
 ) {
     for u in updates {
+        // Most updates are plain moves: one lookup.
+        if u.ev == Ev::Stay {
+            if let Some(v) = vehicles.get_mut(u.id) {
+                v.s = u.s;
+                v.speed = u.v;
+            }
+            continue;
+        }
         let Some(v) = vehicles.get(u.id) else {
             continue;
         };
@@ -1129,6 +1179,9 @@ fn apply(
                 v.speed = u.v;
                 v.in_conn = false;
                 v.hop += 1;
+                if pending_hop(g, v) {
+                    st.hop_lanes.set(ex.to_slot as usize, true);
+                }
                 let key = (fs, ex.to_slot);
                 if let Some(l) = st.conns.get_mut(&key) {
                     l.retain(|w| *w != u.id);
