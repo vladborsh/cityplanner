@@ -19,7 +19,6 @@ cp_economy.workspace = true
 cp_save.workspace = true
 cp_zone.workspace = true
 cp_content.workspace = true
-cp_traffic.workspace = true
 bevy_math.workspace = true
 bevy_ecs.workspace = true
 cp_render.workspace = true

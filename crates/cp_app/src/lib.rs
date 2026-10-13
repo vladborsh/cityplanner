@@ -175,11 +175,8 @@ pub fn build_sim(
         for reason in scene::build_grid(&mut sim, n) {
             warn!("scene command rejected: {reason}");
         }
-        sim.world_mut().insert_resource(scene::DemoTraffic {
-            cars,
-            peds,
-            batch: 0,
-        });
+        sim.world_mut()
+            .insert_resource(scene::DemoTraffic { cars, peds });
         scene::top_up_traffic(&mut sim);
         info!("scene traffic:{n}: up to {cars} cars, {peds} pedestrians");
     } else if scene == Some(scene::SHOWCASE) {

@@ -27,6 +27,7 @@ use cp_net::{JunctionGeometry, NetGraph};
 use cp_terrain::TileOwnership;
 
 use crate::checksum::{SimChecksum, update_checksum};
+use crate::command::DebugCommand;
 use crate::command::{SimCommand, dispatch_commands, init_command_resources};
 use crate::phase::SimPhase;
 use crate::plugin::{SimBuilder, SimPlugin};
@@ -284,6 +285,24 @@ impl SimRunner {
     /// the same state. Outcomes are readable like any others.
     pub fn apply_due_commands(&mut self) {
         dispatch_commands(&mut self.world);
+    }
+
+    /// Cars and pedestrians on the road right now.
+    pub fn agent_counts(&self) -> (usize, usize) {
+        let a = self.world.resource::<cp_traffic::Agents>();
+        (a.vehicle_count(), a.pedestrian_count())
+    }
+
+    /// Tops the synthetic traffic up to `cars` and `peds` (see
+    /// [`DebugCommand::TopUpTraffic`]) with a logged command applied right now (a command
+    /// that adds nothing is rejected and not logged).
+    pub fn top_up_traffic(&mut self, cars: u32, peds: u32) {
+        let now = self.tick();
+        self.push_command(
+            SimCommand::Debug(DebugCommand::TopUpTraffic { cars, peds }),
+            now,
+        );
+        self.apply_due_commands();
     }
 
     /// Runs exactly one tick, ignoring speed and the accumulator.

@@ -15,13 +15,28 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SimCommand {
-    SetSpeed { speed: SimSpeed },
+    SetSpeed {
+        speed: SimSpeed,
+    },
     Net(NetCommand),
     Zone(ZoneCommand),
     Building(BuildingCommand),
     Utility(UtilityCommand),
     Economy(EconomyCommand),
+    /// Debug and demo commands: logged and replayed like any other, never sent by the game UI.
+    Debug(DebugCommand),
     // M2: Terrain(TerrainCommand). M3+: Transit, District, ...
+}
+
+/// Commands for demos, benchmarks and tests (see [`SimCommand::Debug`]). Variants are only
+/// appended.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum DebugCommand {
+    /// Adds randomly routed cars and pedestrians (synthetic traffic, not tied to any citizen
+    /// or trip) until the pools hold `cars` and `peds`, at most 600 of each kind per command
+    /// (`cp_traffic::demo`). The randomness is the sub-stream of the sim RNG named by the
+    /// tick the command runs at, so a replay of the log adds the same agents.
+    TopUpTraffic { cars: u32, peds: u32 },
 }
 
 fn rejected(domain: &'static str, e: impl std::fmt::Display) -> CommandError {
@@ -57,6 +72,39 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
         SimCommand::Utility(c) => cp_utility::apply(world, c)
             .map_err(|e| rejected_or_funds("utility", &e, e.insufficient_funds())),
         SimCommand::Economy(c) => cp_economy::apply(world, c).map_err(|e| rejected("economy", e)),
+        SimCommand::Debug(c) => apply_debug(world, c),
+    }
+}
+
+fn apply_debug(world: &mut World, cmd: &DebugCommand) -> Result<Cost, CommandError> {
+    match cmd {
+        DebugCommand::TopUpTraffic { cars, peds } => {
+            let tick = world.get_resource::<Tick>().copied().unwrap_or_default();
+            world.resource_scope(
+                |world, mut agents: bevy_ecs::prelude::Mut<cp_traffic::Agents>| {
+                    let (Some(pnet), Some(net), Some(rng)) = (
+                        world.get_resource::<cp_traffic::PathNetwork>(),
+                        world.get_resource::<cp_net::NetGraph>(),
+                        world.get_resource::<cp_core::SimRng>(),
+                    ) else {
+                        return Err(rejected("debug", "no network to route on"));
+                    };
+                    let added = cp_traffic::demo::top_up(
+                        &mut agents,
+                        pnet.graph(),
+                        net,
+                        *cars as usize,
+                        *peds as usize,
+                        rng,
+                        tick.0,
+                    );
+                    if added == 0 {
+                        return Err(rejected("debug", "nothing added"));
+                    }
+                    Ok(Cost::ZERO)
+                },
+            )
+        }
     }
 }
 

@@ -65,46 +65,24 @@ pub fn parse_traffic(spec: &str) -> Option<(usize, usize, usize)> {
     Some((n, cars, peds))
 }
 
-/// Synthetic traffic kept topped up by the app (`traffic:` scene), see
-/// `cp_traffic::demo`.
+/// Synthetic traffic kept topped up by the app (`traffic:` scene): the app sends
+/// `DebugCommand::TopUpTraffic` through the sim's own command queue whenever the pools run below
+/// these numbers.
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct DemoTraffic {
     pub cars: usize,
     pub peds: usize,
-    /// Number of top-up calls so far (selects the sub-stream of the sim RNG).
-    pub batch: u64,
 }
 
 /// Adds the missing demo agents. Cheap when the pools are full.
 pub fn top_up_traffic(sim: &mut SimRunner) {
-    let Some(mut demo) = sim.world().get_resource::<DemoTraffic>().copied() else {
+    let Some(demo) = sim.world().get_resource::<DemoTraffic>().copied() else {
         return;
     };
-    sim.world_mut().resource_scope(
-        |world, mut agents: bevy_ecs::prelude::Mut<cp_traffic::Agents>| {
-            if agents.vehicle_count() >= demo.cars && agents.pedestrian_count() >= demo.peds {
-                return;
-            }
-            let (Some(pnet), Some(net), Some(rng)) = (
-                world.get_resource::<cp_traffic::PathNetwork>(),
-                world.get_resource::<cp_net::NetGraph>(),
-                world.get_resource::<cp_core::SimRng>(),
-            ) else {
-                return;
-            };
-            cp_traffic::demo::top_up(
-                &mut agents,
-                pnet.graph(),
-                net,
-                demo.cars,
-                demo.peds,
-                rng,
-                demo.batch,
-            );
-            demo.batch += 1;
-        },
-    );
-    sim.world_mut().insert_resource(demo);
+    let (cars, peds) = sim.agent_counts();
+    if cars < demo.cars || peds < demo.peds {
+        sim.top_up_traffic(demo.cars as u32, demo.peds as u32);
+    }
 }
 
 /// Builds an `n`×`n` lattice (n streets each way, n² crossings) centred on the map, and

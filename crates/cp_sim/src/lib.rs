@@ -12,7 +12,7 @@ pub mod stats;
 pub mod view;
 
 pub use checksum::{Fnv1a, SimChecksum};
-pub use command::{SimCommand, dispatch_commands, init_command_resources};
+pub use command::{DebugCommand, SimCommand, dispatch_commands, init_command_resources};
 pub use cp_traffic::{AgentFrame, PedestrianPose, VehiclePose};
 pub use inspect::{
     BuildingInfo, CitizenInfo, Inspection, SegmentInfo, Selection, TripInfo, Trouble, VehicleInfo,
