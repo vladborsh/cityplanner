@@ -17,6 +17,7 @@ pub mod files;
 pub mod frame;
 pub mod icons;
 pub mod info;
+pub mod metrics;
 pub mod palette;
 pub mod panels;
 pub mod windows;
@@ -109,7 +110,7 @@ fn draw_ui(
         let st = &mut *state;
         budget::budget_window(ctx, &mut st.budget_open, &view, &mut st.budget, &mut outbox);
         windows::demand_window(ctx, &mut st.demand_open, &view);
-        windows::metrics_window(ctx, &mut st.metrics_open, &view);
+        metrics::metrics_window(ctx, &mut st.metrics_open, &view);
     }
     if state.debug_open {
         debug::debug_window(

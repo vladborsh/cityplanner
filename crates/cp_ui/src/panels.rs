@@ -168,7 +168,8 @@ pub fn top_bar(
             ui.separator();
             crate::budget::demand_bars(ui, &view.demand);
             ui.separator();
-            ui.label("👥 —"); // stub until citizens land
+            ui.label(format!("👥 {}", view.city.population))
+                .on_hover_text("Residents");
             ui.separator();
             ui.label(format_time(view));
             ui.separator();
@@ -794,9 +795,44 @@ mod tests {
             };
             assert!(on, "{w:?} opens on a click");
         }
+        // A second click on each closes it again.
+        let rects = draw(vec![], &mut state, &mut files);
+        for (w, rect) in rects.windows {
+            let [down, up] = crate::testutil::click(rect.center());
+            draw(down, &mut state, &mut files);
+            draw(up, &mut state, &mut files);
+            let on = match w {
+                UiWindow::Budget => state.budget_open,
+                UiWindow::Demand => state.demand_open,
+                UiWindow::Metrics => state.metrics_open,
+                UiWindow::Saves => files.open,
+                UiWindow::Debug => state.debug_open,
+            };
+            assert!(!on, "{w:?} closes on a second click");
+        }
         assert_eq!(
             files.request.take(),
             Some(crate::files::FileRequest::Refresh)
         );
+    }
+
+    #[test]
+    fn the_top_bar_shows_the_population_from_the_city_stats() {
+        let ctx = egui::Context::default();
+        let sim = SimRunner::new(1);
+        let mut view = sim.view();
+        std::sync::Arc::make_mut(&mut view.city).population = 12_345;
+        let texts = crate::testutil::frame_texts(&ctx, input(0.0, vec![]), |ui| {
+            top_bar(
+                ui,
+                &view,
+                &mut CommandOutbox::default(),
+                &mut OverlayState::default(),
+                &mut LightingSettings::default(),
+                &mut UiState::default(),
+                &mut FileMenu::default(),
+            );
+        });
+        assert!(texts.iter().any(|(t, _)| t == "👥 12345"), "{texts:?}");
     }
 }
