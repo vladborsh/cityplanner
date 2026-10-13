@@ -197,7 +197,9 @@ pub fn tool_panel(
             egui::ScrollArea::vertical().show(ui, |ui| match category {
                 Category::Roads => roads_panel(ui, view, tools),
                 Category::Zones => zones_panel(ui, tools),
-                Category::Water | Category::Power => utility_panel(ui, tools, overlay, category),
+                Category::Water | Category::Power => {
+                    utility_panel(ui, view, tools, overlay, category)
+                }
                 Category::Buildings => services_panel(ui, view, tools),
                 Category::Bulldozer => bulldozer_panel(ui, tools),
                 Category::Transit | Category::Districts => {

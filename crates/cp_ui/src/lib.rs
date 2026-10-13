@@ -18,6 +18,7 @@ pub mod frame;
 pub mod icons;
 pub mod info;
 pub mod metrics;
+pub mod net_summary;
 pub mod palette;
 pub mod panels;
 pub mod windows;

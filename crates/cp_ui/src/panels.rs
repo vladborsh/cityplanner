@@ -314,10 +314,16 @@ pub fn bulldozer_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
 /// are underground and only the Water overlay shows them).
 pub fn utility_panel(
     ui: &mut egui::Ui,
+    view: Option<&SimView>,
     tools: &mut ToolState,
     overlay: &mut OverlayState,
     tab: Category,
 ) {
+    if let Some(view) = view {
+        section(ui, "Network", |ui| {
+            crate::net_summary::network_summary(ui, view, tab);
+        });
+    }
     let (kinds, net, shown): (&[(UtilityKind, Icon, &str)], _, _) = if tab == Category::Power {
         (
             &[(UtilityKind::Power, Icon::PowerLine, "Power line")],
@@ -721,9 +727,10 @@ mod tests {
         let ctx = egui::Context::default();
         let mut tools = ToolState::default();
         let mut overlay = OverlayState::default();
+        let view = SimRunner::new(1).view();
         let draw = |tools: &mut ToolState, overlay: &mut OverlayState, tab| {
             crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
-                utility_panel(ui, tools, overlay, tab);
+                utility_panel(ui, Some(&view), tools, overlay, tab);
             });
         };
         draw(&mut tools, &mut overlay, Category::Water);
