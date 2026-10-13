@@ -59,6 +59,9 @@ lockstep multiplayer), so `f32` math is fine. Within that scope:
   its own `Cargo.toml`.
 - **No wall clock in sim code.** No `Instant`, `SystemTime` or Bevy's `Time<Real>`/`Time<Virtual>`.
   Sim time is the tick counter from `cp_core`.
+  This holds for `tests/`, `examples/` and `benches/` of the sim crates too: the clippy lints
+  `disallowed_types`/`disallowed_methods` (`clippy.toml`) deny `std::time::Instant`/`SystemTime`
+  there. Time things with `cp_prof` (`PhaseTiming`) or in `apps/bench`.
 - **RNG only from the sim RNG resource** in `cp_core`. Never `rand::thread_rng()` and never
   an RNG seeded from time. Derive sub-streams from the sim RNG; don't share one stream
   across parallel systems.

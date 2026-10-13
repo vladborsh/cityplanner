@@ -138,9 +138,7 @@ fn budget_scene_snapshot_holds_every_agent() {
     for _ in 0..3 {
         sim.tick_once();
     }
-    let start = std::time::Instant::now();
     let snap = sim.view().agents;
-    println!("pose snapshot: {:?}", start.elapsed());
     assert!(snap.cur.pedestrians.len() > 19_000);
     assert!(!snap.cur.vehicles.is_empty());
 }

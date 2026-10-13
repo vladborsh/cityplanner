@@ -8,6 +8,7 @@ publish = false
 [lints.clippy]
 # Client crate, not a sim crate: hash containers are fine here (see the workspace lint).
 disallowed_types = "allow"
+disallowed_methods = "allow"
 
 [dependencies]
 cp_core.workspace = true

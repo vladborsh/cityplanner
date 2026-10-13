@@ -14,6 +14,8 @@ license = "MIT OR Apache-2.0"
 # (cp_render, cp_tools, cp_ui, cp_prof, apps/*, tools/*) opt out in their own [lints.clippy].
 # A new crate is a sim crate by default; see clippy.toml.
 disallowed_types = "deny"
+# Same opt-out for the clock methods (`Instant::now`, `SystemTime::now`), see clippy.toml.
+disallowed_methods = "deny"
 
 # Temporary: bevy_egui 0.43.0-rc.1 with a WebGL2 shader fix, see vendor/bevy_egui/PATCH.md.
 [patch.crates-io]

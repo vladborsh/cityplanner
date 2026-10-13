@@ -1,8 +1,9 @@
-//! Perf note for T-031: ms per tick with ~10k citizens (release).
-//! `cargo run --release -p cp_sim --example citizen_perf`
+//! Growth workload of T-031: a 14x14 street lattice grown to ~10k citizens, then 2000 more
+//! ticks; prints what the city looks like. No clock here (sim crates have none, even in
+//! examples): time it from outside, e.g. `time cargo run --release -p cp_sim --example
+//! citizen_perf`, or use `cp_bench` (`--scenario grid_city`, `scripts/bench.sh`) for ms per phase.
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use bevy_math::Vec3;
 use cp_building::BuildingGrid;
@@ -55,13 +56,11 @@ fn main() {
             }
         }
     }
-    let t0 = Instant::now();
     let mut ticks = 0u64;
     while sim.world().resource::<CitizenGrid>().citizen_count() < 10_000 && ticks < 200_000 {
         sim.tick_once();
         ticks += 1;
     }
-    let grow = t0.elapsed();
     let (c, h, b) = {
         let w = sim.world();
         (
@@ -70,20 +69,13 @@ fn main() {
             w.resource::<BuildingGrid>().len(),
         )
     };
-    println!(
-        "growth: {ticks} ticks in {:.2}s ({:.3} ms/tick avg) -> {c} citizens, {h} households, {b} buildings",
-        grow.as_secs_f64(),
-        grow.as_secs_f64() * 1000.0 / ticks as f64
-    );
-    let t1 = Instant::now();
+    println!("growth: {ticks} ticks -> {c} citizens, {h} households, {b} buildings");
     for _ in 0..2000 {
         sim.tick_once();
     }
-    let steady = t1.elapsed();
     let w = sim.world();
     println!(
-        "steady: 2000 ticks, {:.3} ms/tick with {} citizens ({} adults, {} unemployed)",
-        steady.as_secs_f64() * 1000.0 / 2000.0,
+        "steady: 2000 more ticks, {} citizens ({} adults, {} unemployed)",
         w.resource::<CitizenGrid>().citizen_count(),
         w.resource::<CitizenGrid>().adults(),
         w.resource::<CitizenGrid>().unemployed(),

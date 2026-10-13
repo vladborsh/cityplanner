@@ -8,6 +8,7 @@ publish = false
 [lints.clippy]
 # Not a sim crate: wall-clock timing lives here (see the workspace lint in the root Cargo.toml).
 disallowed_types = "allow"
+disallowed_methods = "allow"
 
 [dependencies]
 cp_sim.workspace = true

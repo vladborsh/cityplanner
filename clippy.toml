@@ -12,4 +12,17 @@ disallowed-types = [
     { path = "bevy_ecs::entity::EntityHashSet", reason = "non-deterministic iteration; use BTreeSet or sorted Vec" },
     { path = "bevy_ecs::entity::EntityEquivalentHashMap", reason = "non-deterministic iteration; use BTreeMap or IndexMap" },
     { path = "bevy_ecs::entity::EntityEquivalentHashSet", reason = "non-deterministic iteration; use BTreeSet or sorted Vec" },
+    # Wall clock: sim time is the tick counter, in src, tests, examples and benches alike. Time
+    # things with cp_prof (PhaseTiming) or in apps/bench.
+    { path = "std::time::Instant", reason = "no wall clock in sim crates (not even in tests); use cp_prof or apps/bench" },
+    { path = "std::time::SystemTime", reason = "no wall clock in sim crates; sim time is the tick counter" },
+    { path = "bevy_platform::time::Instant", reason = "no wall clock in sim crates (not even in tests); use cp_prof or apps/bench" },
+    { path = "web_time::Instant", reason = "no wall clock in sim crates (not even in tests); use cp_prof or apps/bench" },
+]
+
+# Wall clock calls (the types above are banned too; this catches `Instant::now()` spelled any way).
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "no wall clock in sim crates; use cp_prof or apps/bench" },
+    { path = "std::time::SystemTime::now", reason = "no wall clock in sim crates; sim time is the tick counter" },
+    { path = "bevy_platform::time::Instant::now", reason = "no wall clock in sim crates; use cp_prof or apps/bench" },
 ]
