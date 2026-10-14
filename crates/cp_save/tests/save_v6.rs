@@ -68,7 +68,10 @@ fn v5_fixture_migrates_to_no_buildings_and_keeps_its_zones() {
 
     // Loaded into a runner it keeps going; zone it and buildings appear.
     let mut sim = runner(1);
-    l.data.restore(sim.world_mut());
+    // Ids are re-assigned by name against this content, as load_into_runner does.
+    let mut data = l.data;
+    data.remap_defs(&content());
+    data.restore(sim.world_mut());
     {
         let mut grid = sim.world_mut().resource_mut::<ZoneGrid>();
         let ids: Vec<_> = grid.blocks().map(|(i, b)| (i, b.cell_count())).collect();

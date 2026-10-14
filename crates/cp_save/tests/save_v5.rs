@@ -61,7 +61,10 @@ fn v4_fixture_migrates_to_empty_zones_and_the_network_phase_builds_them() {
 
     // Restored into a runner, the first tick derives blocks for both segments.
     let mut sim = runner(1);
-    l.data.clone().restore(sim.world_mut());
+    // Ids are re-assigned by name against this content, as load_into_runner does.
+    let mut data = l.data.clone();
+    data.remap_defs(&content());
+    data.restore(sim.world_mut());
     assert_eq!(sim.world().resource::<ZoneGrid>().block_count(), 0);
     sim.tick_once();
     let grid = sim.world().resource::<ZoneGrid>();

@@ -12,6 +12,11 @@
 //! encoding. The behaviour did not change: hashed with the agents in the v16 layout, the
 //! old values (`0x169a_6df5_9eee_92be` / `0xa0fd_aeed_3448_248a` for m1-small,
 //! `0xedcc_aa46_d0b4_49a5` / `0x2513_97bf_beca_a44a` for m1-traffic) reproduce exactly.
+//!
+//! **T-078.** Re-recorded again: `highway_1w_1l/2l/4l` sort between the old road types, so the
+//! dense road ids of `highway_1w_3l`, `large_6l` and `medium_4l` moved and the checksum hashes
+//! them. The behaviour did not change: loaded against the content without the three new
+//! highways, m1-small gives the previous `0xc6b6_08b5_17a9_0b18` at load.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -38,6 +43,11 @@ fn env() -> (Arc<Terrain>, Arc<ContentDb>) {
     )
 }
 
+fn only_hash_mismatch(w: &[cp_save::LoadWarning]) -> bool {
+    w.iter()
+        .all(|w| matches!(w, cp_save::LoadWarning::ContentHashMismatch { .. }))
+}
+
 /// A runner with the map and content, the file loaded into it.
 fn loaded(bytes: &[u8]) -> SimRunner {
     let (terrain, content) = env();
@@ -46,7 +56,8 @@ fn loaded(bytes: &[u8]) -> SimRunner {
     sim.set_terrain(terrain);
     sim.set_content(content);
     let (_, warnings) = load_into_runner(&mut sim, bytes, hash).unwrap();
-    assert!(warnings.is_empty(), "{warnings:?}");
+    // New content changes the content hash; any other warning is a problem.
+    assert!(only_hash_mismatch(&warnings), "{warnings:?}");
     sim
 }
 
@@ -60,7 +71,7 @@ fn check_file(name: &str) {
     let (terrain, content) = env();
     assert_eq!(h.map_hash, Some(terrain.map_hash()));
     let l = load_with_map(&bytes, content.content_hash(), h.map_hash).unwrap();
-    assert!(l.warnings.is_empty(), "{:?}", l.warnings);
+    assert!(only_hash_mismatch(&l.warnings), "{:?}", l.warnings);
     let again = save_with_map(&l.data, h.content_hash, &h.map_id, h.map_hash).unwrap();
     assert_eq!(
         read_header(&again).unwrap().0.format_version,
@@ -91,10 +102,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0xc6b6_08b5_17a9_0b18, "state at load");
+    assert_eq!(sim.checksum(), 0x4f64_5b59_acee_f99b, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0xbeaf_506b_046f_7500,
+        0x813c_fab1_6843_6f9d,
         "load + 4096 ticks"
     );
 }
@@ -120,7 +131,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0xcc97_0e58_dc2d_41f6, "state at load");
+    assert_eq!(sim.checksum(), 0xfb06_6b7b_c6f8_76d4, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -128,7 +139,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0xd4b3_8fc4_ab58_e11c, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x03de_2c5b_9eb5_f426, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,
