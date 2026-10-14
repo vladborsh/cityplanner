@@ -10,7 +10,7 @@
 //! the first recompute of each game hour (`tick * 24 / TICKS_PER_DAY` changes; an hour is 170
 //! ticks, so every hour has one), giving exactly 24 samples per game day.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use bevy_ecs::prelude::*;
 use cp_building::{BuildingFlags, BuildingGrid, BuildingState, Demand};
@@ -294,7 +294,8 @@ fn stage_citizens_traffic_land(
     s.traffic.abstract_trips = agents.stats.abstract_trips;
     let (mut load_sum, mut segs) = (0.0f32, 0u32);
     let roads_budget = economy.budgets.get(ServiceKind::Roads);
-    let mut groups: Vec<Option<RoadGroup>> = Vec::new();
+    // By road id, ascending; keyed (not a dense Vec) because the placeholder id is u32::MAX.
+    let mut groups: BTreeMap<u32, RoadGroup> = BTreeMap::new();
     for (id, seg) in net.segments() {
         let load = agents
             .load
@@ -306,11 +307,7 @@ fn stage_citizens_traffic_land(
         segs += 1;
         s.traffic.max_load = s.traffic.max_load.max(load);
         s.traffic.overloaded += u32::from(load > OVERLOAD);
-        let i = seg.road.index();
-        if groups.len() <= i {
-            groups.resize(i + 1, None);
-        }
-        let g = groups[i].get_or_insert(RoadGroup {
+        let g = groups.entry(seg.road.0).or_insert(RoadGroup {
             road: seg.road,
             segments: 0,
             meters: 0.0,
@@ -325,7 +322,7 @@ fn stage_citizens_traffic_land(
     } else {
         0.0
     };
-    s.roads = groups.into_iter().flatten().collect();
+    s.roads = groups.into_values().collect();
 
     let n = land.land_value.len().max(1) as f32;
     s.land = LandStats {
