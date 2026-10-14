@@ -172,7 +172,7 @@ pub fn hotkey(ctx: &egui::Context, available: &[Category]) -> Option<Category> {
 /// The tool panel of the open category (nothing when none is open). Returns its rectangle.
 pub fn tool_panel(
     root: &mut egui::Ui,
-    state: &UiState,
+    state: &mut UiState,
     view: Option<&SimView>,
     tools: &mut ToolState,
     overlay: &mut OverlayState,
@@ -196,7 +196,7 @@ pub fn tool_panel(
                 });
             egui::ScrollArea::vertical().show(ui, |ui| match category {
                 Category::Roads => roads_panel(ui, view, tools),
-                Category::Zones => zones_panel(ui, tools),
+                Category::Zones => zones_panel(ui, view, tools, state),
                 Category::Water | Category::Power => {
                     utility_panel(ui, view, tools, overlay, category)
                 }
@@ -324,6 +324,64 @@ mod tests {
         rig.click_category(Category::Zones);
         assert_eq!(rig.state.category, None);
         assert!(rig.panel.is_none());
+    }
+
+    #[test]
+    fn zone_tools_and_cards_set_the_tool_kind_and_zone_and_esc_keeps_the_panel() {
+        use cp_content::ZoneType;
+        use cp_tools::ZoneToolKind;
+        let mut rig = Rig::new();
+        rig.click_category(Category::Zones);
+        for (label, kind) in [
+            ("Rectangle", ZoneToolKind::Rectangle),
+            ("Eraser", ZoneToolKind::Eraser),
+        ] {
+            rig.click_label(label);
+            assert_eq!(rig.tools.active, ActiveTool::Zone);
+            assert_eq!(rig.tools.zone.kind, kind);
+        }
+        rig.click_label("Office");
+        assert_eq!(rig.tools.zone.zone, ZoneType::Office);
+        rig.click_label("Industrial");
+        assert_eq!(rig.tools.zone.zone, ZoneType::Industrial);
+        // Esc leaves the tool (cp_tools); the panel stays open.
+        rig.tools.select(ActiveTool::None);
+        rig.frame(vec![]);
+        assert_eq!(rig.state.category, Some(Category::Zones));
+        assert!(rig.panel.is_some());
+        // A card alone also activates the tool.
+        rig.click_label("Residential (high)");
+        assert_eq!(rig.tools.active, ActiveTool::Zone);
+        assert_eq!(rig.tools.zone.zone, ZoneType::ResHigh);
+    }
+
+    #[test]
+    fn zone_cards_show_their_group_demand_and_the_demand_button_opens_the_window() {
+        use cp_content::ZoneType as Z;
+        let d = cp_building::Demand {
+            r: 40.0,
+            c: -20.0,
+            i: 10.0,
+            o: -90.0,
+            ..Default::default()
+        };
+        for (zone, want) in [
+            (Z::ResLow, ("R", 40.0)),
+            (Z::ResHigh, ("R", 40.0)),
+            (Z::ComLow, ("C", -20.0)),
+            (Z::ComHigh, ("C", -20.0)),
+            (Z::Industrial, ("I", 10.0)),
+            (Z::Office, ("O", -90.0)),
+        ] {
+            assert_eq!(crate::panels::zone_group_demand(zone, &d), want);
+        }
+        let mut rig = Rig::new();
+        rig.click_category(Category::Zones);
+        let text = rig.frame(vec![]);
+        assert!(text.contains("Спрос по зонам"), "{text}");
+        assert!(!rig.state.demand_open);
+        rig.click_label("Спрос по зонам ▸");
+        assert!(rig.state.demand_open);
     }
 
     #[test]

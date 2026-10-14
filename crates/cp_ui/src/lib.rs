@@ -106,7 +106,7 @@ fn draw_ui(
         &mut files,
     );
     palette(&mut root, &mut state, view.content.as_deref());
-    tool_panel(&mut root, &state, Some(&view), &mut tools, &mut overlay);
+    tool_panel(&mut root, &mut state, Some(&view), &mut tools, &mut overlay);
     {
         let st = &mut *state;
         budget::budget_window(ctx, &mut st.budget_open, &view, &mut st.budget, &mut outbox);

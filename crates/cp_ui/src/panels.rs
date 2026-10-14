@@ -3,6 +3,7 @@
 
 use bevy::prelude::Resource;
 use bevy_egui::egui;
+use cp_building::Demand;
 use cp_content::UtilityKind;
 use cp_core::SimSpeed;
 use cp_net::ElevationMode;
@@ -398,7 +399,12 @@ fn zone_kind_icon(kind: ZoneToolKind) -> Icon {
 
 /// The Zones category: tool kinds and the zone palette. Picking either activates the zoning
 /// tool (which shows the zone grid); "Off" leaves it.
-pub fn zones_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
+pub fn zones_panel(
+    ui: &mut egui::Ui,
+    view: Option<&SimView>,
+    tools: &mut ToolState,
+    state: &mut UiState,
+) {
     section(ui, "Tool", |ui| {
         ui.horizontal_wrapped(|ui| {
             for kind in ZoneToolKind::ALL {
@@ -419,25 +425,81 @@ pub fn zones_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
         });
     });
     section(ui, "Zone", |ui| {
-        ui.horizontal_wrapped(|ui| {
-            for zone in PALETTE {
-                let [r, g, b] = zone_color(zone);
-                let color = egui::Color32::from_rgb(
-                    (r * 255.0) as u8,
-                    (g * 255.0) as u8,
-                    (b * 255.0) as u8,
-                );
-                let selected = tools.zone.zone == zone;
-                let text = egui::RichText::new(zone_name(zone)).color(color).strong();
-                if ui.selectable_label(selected, text).clicked() {
-                    tools.zone.zone = zone;
-                    if tools.active != ActiveTool::Zone {
-                        tools.select(ActiveTool::Zone);
-                    }
+        for zone in PALETTE {
+            if zone_card(ui, zone, view, tools.zone.zone == zone).clicked() {
+                tools.zone.zone = zone;
+                if tools.active != ActiveTool::Zone {
+                    tools.select(ActiveTool::Zone);
                 }
             }
-        });
+        }
     });
+    if ui.button("Спрос по зонам ▸").clicked() {
+        state.demand_open = true;
+    }
+}
+
+/// The demand group a zone type belongs to: the letter and its value (R for `ResLow`/`ResHigh`,
+/// C for `Com*`, I, O). Demand is per group in M1.
+pub fn zone_group_demand(zone: cp_content::ZoneType, d: &Demand) -> (&'static str, f32) {
+    use cp_content::ZoneType as Z;
+    match zone {
+        Z::ResLow | Z::ResHigh => ("R", d.r),
+        Z::ComLow | Z::ComHigh => ("C", d.c),
+        Z::Industrial => ("I", d.i),
+        Z::Office | Z::None => ("O", d.o),
+    }
+}
+
+/// A zone card: the colour square with the group letter, the name and the group's demand bar.
+fn zone_card(
+    ui: &mut egui::Ui,
+    zone: cp_content::ZoneType,
+    view: Option<&SimView>,
+    selected: bool,
+) -> egui::Response {
+    let [r, g, b] = zone_color(zone);
+    let color = egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
+    let inner = egui::Frame::group(ui.style())
+        .fill(if selected {
+            ui.visuals().selection.bg_fill
+        } else {
+            ui.visuals().faint_bg_color
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let letter = zone_group_demand(zone, &Demand::default()).0;
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, 4.0, color);
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    letter,
+                    egui::FontId::proportional(15.0),
+                    egui::Color32::BLACK,
+                );
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(zone_name(zone)).strong());
+                    if let Some(view) = view {
+                        let (letter, v) = zone_group_demand(zone, &view.demand);
+                        ui.add(
+                            egui::ProgressBar::new(crate::budget::demand_fraction(v))
+                                .desired_width(120.0)
+                                .desired_height(8.0)
+                                .fill(color),
+                        )
+                        .on_hover_text(format!("{letter} demand {v:+.0}"));
+                    }
+                });
+            });
+        });
+    ui.interact(
+        inner.response.rect,
+        inner.response.id.with("card"),
+        egui::Sense::click(),
+    )
 }
 
 /// The Roads category: the road tool, road mode, road type (with its profile) and elevation.
@@ -704,8 +766,11 @@ mod tests {
     fn zones_panel_activates_the_zoning_tool_and_shows_the_state() {
         let ctx = egui::Context::default();
         let mut tools = ToolState::default();
-        let draw = |tools: &mut ToolState| {
-            crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| zones_panel(ui, tools));
+        let mut state = UiState::default();
+        let mut draw = |tools: &mut ToolState| {
+            crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
+                zones_panel(ui, None, tools, &mut state);
+            });
         };
         draw(&mut tools);
         assert_eq!(tools.active, ActiveTool::None);
