@@ -378,9 +378,9 @@ mod tests {
         let mut rig = Rig::new();
         rig.click_category(Category::Zones);
         let text = rig.frame(vec![]);
-        assert!(text.contains("Спрос по зонам"), "{text}");
+        assert!(text.contains("Demand by zone"), "{text}");
         assert!(!rig.state.demand_open);
-        rig.click_label("Спрос по зонам ▸");
+        rig.click_label("Demand by zone ▸");
         assert!(rig.state.demand_open);
     }
 

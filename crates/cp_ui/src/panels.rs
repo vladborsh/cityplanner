@@ -434,7 +434,7 @@ pub fn zones_panel(
             }
         }
     });
-    if ui.button("Спрос по зонам ▸").clicked() {
+    if ui.button("Demand by zone ▸").clicked() {
         state.demand_open = true;
     }
 }
