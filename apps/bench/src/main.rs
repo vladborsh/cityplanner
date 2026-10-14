@@ -608,7 +608,12 @@ mod tests {
         let bytes = std::fs::read(repo("fixtures/saves/bench-10k.sav")).unwrap();
         let (_, warnings) =
             cp_save::load_into_runner(&mut sim, &bytes, content.content_hash()).unwrap();
-        assert!(warnings.is_empty(), "{warnings:?}");
+        // New content (T-078's roads) changes the content hash; that is the only warning allowed.
+        let others: Vec<_> = warnings
+            .iter()
+            .filter(|w| !matches!(w, cp_save::LoadWarning::ContentHashMismatch { .. }))
+            .collect();
+        assert!(others.is_empty(), "{others:?}");
         let baseline: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(repo("bench/baseline.json")).unwrap())
                 .unwrap();
