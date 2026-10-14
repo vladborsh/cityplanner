@@ -12,6 +12,7 @@ use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, ToolState, UiCapture};
 
 pub mod budget;
+pub mod buildings;
 pub mod debug;
 pub mod files;
 pub mod frame;

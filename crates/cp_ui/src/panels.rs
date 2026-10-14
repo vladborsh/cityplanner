@@ -230,12 +230,18 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
             }
         },
         (Category::Buildings, ActiveTool::Place) => match &tools.place_ghost {
-            Some(g) if g.valid => ok(ui, "can place", g.cost, String::new()),
-            Some(g) => bad(
-                ui,
-                &g.error.iter().cloned().collect::<Vec<_>>(),
-                "cannot place here",
-            ),
+            Some(g) => {
+                if g.valid {
+                    ok(ui, "can place", g.cost, String::new());
+                } else {
+                    bad(
+                        ui,
+                        &g.error.iter().cloned().collect::<Vec<_>>(),
+                        "cannot place here",
+                    );
+                }
+                ui.weak("T rotates, Esc leaves the tool.");
+            }
             None => {
                 ui.weak("Hover a spot beside a road. T rotates, Esc leaves the tool.");
             }
@@ -277,25 +283,10 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
     }
 }
 
-/// The Buildings category: the placeable service buildings of the content. T rotates the
-/// building.
+/// The Buildings category: the service buildings of the content as cards, grouped by service
+/// kind (see [`crate::buildings`]). T rotates the building.
 pub fn services_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
-    section(ui, "Service buildings", |ui| {
-        ui.horizontal_wrapped(|ui| {
-            if let Some(content) = view.and_then(|v| v.content.as_deref()) {
-                for (id, def) in content.buildings().filter(|(_, d)| d.service.is_some()) {
-                    let selected =
-                        tools.active == ActiveTool::Place && tools.building.def == Some(id);
-                    if tool_button(ui, Icon::Building, &def.name, selected).clicked() {
-                        if tools.active != ActiveTool::Place {
-                            tools.select(ActiveTool::Place);
-                        }
-                        tools.building.def = Some(id);
-                    }
-                }
-            }
-        });
-    });
+    crate::buildings::buildings_panel(ui, view, tools);
 }
 
 /// The Bulldozer category: the one tool.
