@@ -1,7 +1,7 @@
 //! The road tool: modes, click state machine, preview.
 
 use bevy_math::{Vec2, Vec3};
-use cp_content::RoadDefId;
+use cp_content::{LaneDir, LaneKind, RoadDef, RoadDefId};
 use cp_core::Cost;
 use cp_core::curve::CubicBezier3;
 use cp_net::{
@@ -173,6 +173,47 @@ pub fn preview_report(
         content,
         req,
     ))
+}
+
+/// Distance between direction chevrons along a one-way ghost, metres.
+pub const CHEVRON_SPACING: f32 = 16.0;
+/// Lift of the chevrons over the curve, metres (above the 0.3 m ghost band).
+const CHEVRON_LIFT: f32 = 0.7;
+
+/// Do all the car lanes of `def` run `Forward` (and are there any)?
+pub fn road_is_one_way(def: &RoadDef) -> bool {
+    let mut cars = def
+        .lanes
+        .iter()
+        .filter(|l| l.kind == LaneKind::Car)
+        .peekable();
+    cars.peek().is_some() && cars.all(|l| l.dir == LaneDir::Forward)
+}
+
+/// The direction chevrons of a one-way piece: one every [`CHEVRON_SPACING`] metres, so
+/// `floor(length / 16)` of them, centred in their 16 m cell. Each chevron is three gizmo
+/// segments: the two arms of the arrowhead and a short stem behind its tip, pointing along
+/// the curve from `start` to `end`.
+pub fn chevron_lines(curve: &CubicBezier3, length: f32) -> Vec<[Vec3; 2]> {
+    let n = (length / CHEVRON_SPACING).floor().max(0.0) as usize;
+    let table = curve.arc_table();
+    let lift = Vec3::Y * CHEVRON_LIFT;
+    let mut out = Vec::with_capacity(n * 3);
+    for i in 0..n {
+        let s = ((i as f32 + 0.5) * CHEVRON_SPACING).min(table.length());
+        let t = table.s_to_t(s);
+        let p = curve.point(t) + lift;
+        let flat = Vec3::new(curve.tangent(t).x, 0.0, curve.tangent(t).z);
+        let Some(dir) = flat.try_normalize() else {
+            continue;
+        };
+        let side = Vec3::new(-dir.z, 0.0, dir.x);
+        let tip = p + dir * 1.5;
+        out.push([p - dir * 1.0 + side * 1.5, tip]);
+        out.push([p - dir * 1.0 - side * 1.5, tip]);
+        out.push([p - dir * 1.8, tip]);
+    }
+    out
 }
 
 /// The tool's label for a snap: `90°`, `45°`, `∥` or `⊥`; steps and plain snaps show none.

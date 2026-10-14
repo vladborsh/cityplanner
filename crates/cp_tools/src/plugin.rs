@@ -8,7 +8,9 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use cp_core::Cost;
-use cp_net::{NetCommand, RoadBuildError, RoadPath, SegmentId, SnapReport, road_run};
+use cp_net::{
+    NetCommand, RoadBuildError, RoadPath, SegmentId, SnapReport, one_way_report, road_run,
+};
 use cp_render::RtsCamera;
 use cp_render::camera::math::ray_terrain_hit;
 use cp_sim::{SimCommand, SimView};
@@ -17,7 +19,7 @@ use crate::CommandOutbox;
 use crate::band::{BandState, sync_bands};
 use crate::building::{BuildingTool, PlacementGhost, pick_building, preview as place_preview};
 use crate::bulldozer::{PICK_RADIUS, pick_segment, remove_run_commands};
-use crate::road::{RoadTool, preview_report, sample_curve};
+use crate::road::{RoadTool, chevron_lines, preview_report, road_is_one_way, sample_curve};
 use crate::utility::{
     LINK_PICK_RADIUS, UtilityTool, link_line, pick_link, plan_polylines, preview as utility_preview,
 };
@@ -62,6 +64,10 @@ pub struct Ghost {
     pub half_width: f32,
     /// What snapped the cursor point, with its guide line (road ghost only).
     pub snap: SnapReport,
+    /// One player-facing line per one-way warning (§6.6); shown in yellow, never blocks.
+    pub warnings: Vec<String>,
+    /// Direction chevrons of a one-way road, three segments each (road ghost only).
+    pub chevrons: Vec<[Vec3; 2]>,
 }
 
 #[derive(Resource, Default, Debug)]
@@ -311,18 +317,34 @@ pub fn compute_ghost(view: &SimView, tool: &RoadTool, hover: Vec2) -> Option<Gho
         .map_or(0.0, |c| c.road(req.road).width * 0.5);
     let (result, report) = preview_report(view, &req)?;
     Some(match result {
-        Ok(plan) => Ghost {
-            polylines: plan
-                .segments
-                .iter()
-                .map(|s| sample_curve(&s.curve, 3.0))
-                .collect(),
-            valid: true,
-            cost: Some(plan.cost),
-            errors: Vec::new(),
-            half_width,
-            snap: report,
-        },
+        Ok(plan) => {
+            let content = view.content.as_deref()?;
+            let one_way = road_is_one_way(content.road(plan.road));
+            Ghost {
+                polylines: plan
+                    .segments
+                    .iter()
+                    .map(|s| sample_curve(&s.curve, 3.0))
+                    .collect(),
+                valid: true,
+                cost: Some(plan.cost),
+                errors: Vec::new(),
+                half_width,
+                snap: report,
+                warnings: one_way_report(&view.net, content, &plan)
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                chevrons: if one_way {
+                    plan.segments
+                        .iter()
+                        .flat_map(|s| chevron_lines(&s.curve, s.length))
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+            }
+        }
         Err(errors) => Ghost {
             polylines: vec![raw_polyline(view, &path)],
             valid: false,
@@ -330,6 +352,8 @@ pub fn compute_ghost(view: &SimView, tool: &RoadTool, hover: Vec2) -> Option<Gho
             errors: errors.iter().map(RoadBuildError::to_string).collect(),
             half_width,
             snap: report,
+            warnings: Vec::new(),
+            chevrons: Vec::new(),
         },
     })
 }
@@ -346,6 +370,8 @@ pub fn compute_utility_ghost(view: &SimView, tool: &UtilityTool, hover: Vec2) ->
             errors: Vec::new(),
             half_width: 0.0,
             snap: SnapReport::default(),
+            warnings: Vec::new(),
+            chevrons: Vec::new(),
         },
         Err(problems) => Ghost {
             polylines: vec![
@@ -361,6 +387,8 @@ pub fn compute_utility_ghost(view: &SimView, tool: &UtilityTool, hover: Vec2) ->
             errors: problems.iter().map(ToString::to_string).collect(),
             half_width: 0.0,
             snap: SnapReport::default(),
+            warnings: Vec::new(),
+            chevrons: Vec::new(),
         },
     })
 }
@@ -479,6 +507,18 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
             line.iter().map(|p| *p + Vec3::Y * 0.8),
             Color::srgb(1.0, 0.6, 0.1),
         );
+    }
+    if let Some(ghost) = &state.ghost
+        && state.active == ActiveTool::Road
+    {
+        let color = if ghost.valid {
+            Color::srgb(0.9, 1.0, 0.9)
+        } else {
+            Color::srgb(0.95, 0.2, 0.2)
+        };
+        for [a, b] in &ghost.chevrons {
+            gizmos.line(*a, *b, color);
+        }
     }
     if let Some(ghost) = &state.ghost
         && state.active == ActiveTool::Road

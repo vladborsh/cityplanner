@@ -223,6 +223,10 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
             Some(g) if g.valid => {
                 let snap = snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));
                 ok(ui, "can build", g.cost, snap);
+                // One-way direction warnings (§6.6): yellow, they never block the build.
+                for w in &g.warnings {
+                    ui.colored_label(egui::Color32::YELLOW, format!("⚠ {w}"));
+                }
             }
             Some(g) => bad(ui, &g.errors, "cannot build here"),
             None => {
@@ -707,6 +711,8 @@ mod tests {
             errors: vec![],
             half_width: 0.0,
             snap: Default::default(),
+            warnings: Vec::new(),
+            chevrons: Vec::new(),
         });
         draw(&mut tools);
         tools.ghost = Some(Ghost {
@@ -716,6 +722,8 @@ mod tests {
             errors: vec!["too steep (20%, max 12%)".into()],
             half_width: 6.0,
             snap: Default::default(),
+            warnings: Vec::new(),
+            chevrons: Vec::new(),
         });
         draw(&mut tools);
         tools.select(ActiveTool::Bulldozer);
@@ -805,6 +813,8 @@ mod tests {
             errors: vec!["outside the land you own".into()],
             half_width: 0.0,
             snap: Default::default(),
+            warnings: Vec::new(),
+            chevrons: Vec::new(),
         });
         draw(&mut tools, &mut overlay, Category::Power);
         tools.select(ActiveTool::UtilityRemove);

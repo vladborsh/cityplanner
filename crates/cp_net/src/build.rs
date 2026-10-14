@@ -29,14 +29,14 @@
 //! independent of anything but the inputs.
 
 use bevy_math::{Vec2, Vec3};
-use cp_content::{ContentDb, RoadDefId};
+use cp_content::{ContentDb, LaneDir, LaneKind, RoadDefId};
 use cp_core::Cost;
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_terrain::{Terrain, TileOwnership};
 use serde::{Deserialize, Serialize};
 
 use crate::graph::NetGraph;
-use crate::model::{Elevation, MAX_SEGMENTS_PER_NODE, NodeId, Segment, SegmentId};
+use crate::model::{Elevation, MAX_SEGMENTS_PER_NODE, NodeId, NodeKind, Segment, SegmentId};
 
 /// Longest allowed segment, metres. Longer legs are cut into equal pieces.
 pub const MAX_SEGMENT_LENGTH: f32 = 96.0;
@@ -1021,6 +1021,156 @@ fn validate_inner(
         demolish: Vec::new(),
         cost,
     })
+}
+
+/// A warning about the direction of a one-way plan (§6.6). Warnings never block the command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OneWayWarning {
+    /// A one-way piece ends at this node, which has other roads but no car lane leaving it.
+    /// (A node with no other road is an unfinished end, not a dead end.)
+    DeadEnd { at: NodeRef },
+    /// A node of degree two where both roads are one-way and both lead into it.
+    HeadOn { at: NodeRef },
+}
+
+impl std::fmt::Display for OneWayWarning {
+    /// Short player-facing text (shown next to the ghost).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DeadEnd { .. } => write!(f, "one-way road ends where its traffic cannot leave"),
+            Self::HeadOn { .. } => write!(f, "two one-way roads meet head-on"),
+        }
+    }
+}
+
+/// What a road end at a node carries, as seen from the node.
+#[derive(Clone, Copy, Debug, Default)]
+struct ArmDirs {
+    /// Has a car lane that arrives at the node.
+    inbound: bool,
+    /// Has a car lane that leaves the node.
+    outbound: bool,
+}
+
+impl ArmDirs {
+    /// The end of a road with these car lanes (`fwd` / `bwd` = has a Forward / Backward car
+    /// lane) at the segment's `end` (`at_end`) or `start` node.
+    fn of(fwd: bool, bwd: bool, at_end: bool) -> Self {
+        if at_end {
+            Self {
+                inbound: fwd,
+                outbound: bwd,
+            }
+        } else {
+            Self {
+                inbound: bwd,
+                outbound: fwd,
+            }
+        }
+    }
+    fn one_way_in(self) -> bool {
+        self.inbound && !self.outbound
+    }
+}
+
+/// The car-lane directions of an existing segment: `(has Forward, has Backward)`.
+fn segment_car_dirs(graph: &NetGraph, seg: &Segment) -> (bool, bool) {
+    let (mut fwd, mut bwd) = (false, false);
+    for lane in seg.lanes.iter().filter_map(|&l| graph.lane(l)) {
+        if lane.kind == LaneKind::Car {
+            match lane.dir {
+                LaneDir::Forward => fwd = true,
+                LaneDir::Backward => bwd = true,
+            }
+        }
+    }
+    (fwd, bwd)
+}
+
+/// Direction warnings for `plan` (§6.6): pure, reads the graph the plan was made against.
+///
+/// `content` gives the car lanes of the plan's road (the plan only holds its id).
+/// A node that is a `HeadOn` is not also reported as a `DeadEnd`. Nodes are visited in plan
+/// order, so the result is deterministic.
+pub fn one_way_report(
+    graph: &NetGraph,
+    content: &ContentDb,
+    plan: &RoadBuildPlan,
+) -> Vec<OneWayWarning> {
+    let def = content.road(plan.road);
+    let (fwd, bwd) =
+        def.lanes
+            .iter()
+            .filter(|l| l.kind == LaneKind::Car)
+            .fold((false, false), |(f, b), l| match l.dir {
+                LaneDir::Forward => (true, b),
+                LaneDir::Backward => (f, true),
+            });
+    let plan_one_way = fwd && !bwd;
+
+    // The distinct nodes the plan touches, in plan order.
+    let mut touched: Vec<NodeRef> = Vec::new();
+    for s in &plan.segments {
+        for r in [s.start, s.end] {
+            if !touched.contains(&r) {
+                touched.push(r);
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for at in touched {
+        let mut arms: Vec<ArmDirs> = Vec::new();
+        let mut leaves_map = false;
+        // Roads that already exist at the node.
+        match at {
+            NodeRef::Existing(n) => {
+                if let Some(node) = graph.node(n) {
+                    leaves_map = node.kind == NodeKind::Outside;
+                    for seg in node.segments.iter().filter_map(|&id| graph.segment(id)) {
+                        let (f, b) = segment_car_dirs(graph, seg);
+                        if seg.end == n {
+                            arms.push(ArmDirs::of(f, b, true));
+                        }
+                        if seg.start == n {
+                            arms.push(ArmDirs::of(f, b, false));
+                        }
+                    }
+                }
+            }
+            NodeRef::Split(i) => {
+                // The two halves of the split segment: one ends at the node, one starts there.
+                if let Some(seg) = plan.splits.get(i).and_then(|sp| graph.segment(sp.segment)) {
+                    let (f, b) = segment_car_dirs(graph, seg);
+                    arms.push(ArmDirs::of(f, b, true));
+                    arms.push(ArmDirs::of(f, b, false));
+                }
+            }
+            NodeRef::New(_) => {}
+        }
+        // The plan's own pieces.
+        let mut plan_arm_in = false;
+        for s in &plan.segments {
+            if s.end == at {
+                let a = ArmDirs::of(fwd, bwd, true);
+                plan_arm_in |= plan_one_way && a.one_way_in();
+                arms.push(a);
+            }
+            if s.start == at {
+                arms.push(ArmDirs::of(fwd, bwd, false));
+            }
+        }
+        if leaves_map {
+            continue;
+        }
+        let head_on = arms.len() == 2 && arms.iter().all(|a| a.one_way_in());
+        if head_on {
+            out.push(OneWayWarning::HeadOn { at });
+        } else if plan_arm_in && arms.len() >= 2 && !arms.iter().any(|a| a.outbound) {
+            out.push(OneWayWarning::DeadEnd { at });
+        }
+    }
+    out
 }
 
 #[cfg(test)]

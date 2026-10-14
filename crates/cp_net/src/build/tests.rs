@@ -889,3 +889,120 @@ fn the_report_is_available_for_an_invalid_path_and_matches_the_plan() {
     assert_eq!(res.unwrap().report, report);
     assert_eq!(plan.report, report);
 }
+
+// ---------- one-way warnings (§6.6) ----------
+
+impl W {
+    /// Existing flat straight segment of the named road type.
+    fn add_road(&mut self, name: &str, a: Vec2, b: Vec2) -> SegmentId {
+        let id = self.road(name);
+        let def = self.db.road(id).clone();
+        let v = |p: Vec2| Vec3::new(p.x, 100.0, p.y);
+        self.graph
+            .add_segment(&def, id, CubicBezier3::line(v(a), v(b)), Elevation::Ground)
+            .unwrap()
+    }
+
+    fn straight_of(&self, name: &str, from: Vec2, to: Vec2) -> RoadPathRequest {
+        RoadPathRequest {
+            road: self.road(name),
+            ..self.straight(from, to)
+        }
+    }
+
+    fn warnings(&self, req: &RoadPathRequest) -> Vec<OneWayWarning> {
+        let plan = self.run(req).unwrap_or_else(|e| panic!("{e:?}"));
+        one_way_report(&self.graph, &self.db, &plan)
+    }
+}
+
+#[test]
+fn a_highway_entering_a_street_node_has_no_warning() {
+    let mut w = W::new();
+    // A street through the origin; the highway ends on its end node.
+    w.add_road("basic_2l", at(0.0, 0.0), at(60.0, 0.0));
+    w.add_road("basic_2l", at(60.0, 0.0), at(60.0, 60.0));
+    let req = w.straight_of("highway_1w_3l", at(-60.0, 0.0), at(0.0, 0.0));
+    assert_eq!(w.warnings(&req), vec![]);
+}
+
+#[test]
+fn a_highway_ending_in_a_street_by_splitting_it_has_no_warning() {
+    let mut w = W::new();
+    w.add_road("basic_2l", at(-60.0, 0.0), at(60.0, 0.0));
+    let req = w.straight_of("highway_1w_3l", at(0.0, -80.0), at(0.0, 0.0));
+    let plan = w.run(&req).unwrap();
+    assert_eq!(
+        plan.splits.len(),
+        1,
+        "the street is split under the highway"
+    );
+    assert_eq!(one_way_report(&w.graph, &w.db, &plan), vec![]);
+}
+
+#[test]
+fn a_highway_alone_has_no_warning_its_free_end_is_just_unfinished() {
+    let w = W::new();
+    let req = w.straight_of("highway_1w_3l", at(0.0, 0.0), at(80.0, 0.0));
+    assert_eq!(w.warnings(&req), vec![]);
+}
+
+#[test]
+fn a_highway_ending_where_every_other_arm_is_inbound_is_a_dead_end() {
+    let mut w = W::new();
+    // Two one-way highways run into the node at the origin ...
+    w.add_road("highway_1w_3l", at(-70.0, -20.0), at(0.0, 0.0));
+    w.add_road("highway_1w_3l", at(-70.0, 60.0), at(0.0, 0.0));
+    // ... and a third one is drawn into it as well: nothing leaves.
+    let req = w.straight_of("highway_1w_3l", at(60.0, 0.0), at(0.0, 0.0));
+    let plan = w.run(&req).unwrap();
+    let node = plan.segments[0].end;
+    assert_eq!(
+        one_way_report(&w.graph, &w.db, &plan),
+        vec![OneWayWarning::DeadEnd { at: node }]
+    );
+}
+
+#[test]
+fn a_highway_continuing_out_of_the_node_is_not_a_dead_end() {
+    let mut w = W::new();
+    w.add_road("highway_1w_3l", at(-70.0, 0.0), at(0.0, 0.0));
+    // The existing highway arrives, the new one leaves in the same direction.
+    let req = w.straight_of("highway_1w_3l", at(0.0, 0.0), at(70.0, 0.0));
+    assert_eq!(w.warnings(&req), vec![]);
+}
+
+#[test]
+fn two_one_way_roads_head_on_in_a_degree_two_node_warn_head_on_only() {
+    let mut w = W::new();
+    w.add_road("highway_1w_3l", at(-70.0, 0.0), at(0.0, 0.0));
+    let req = w.straight_of("highway_1w_3l", at(70.0, 0.0), at(0.0, 0.0));
+    let plan = w.run(&req).unwrap();
+    let node = plan.segments[0].end;
+    assert_eq!(
+        one_way_report(&w.graph, &w.db, &plan),
+        vec![OneWayWarning::HeadOn { at: node }],
+        "HeadOn, and not also DeadEnd"
+    );
+}
+
+#[test]
+fn a_two_way_road_never_warns() {
+    let mut w = W::new();
+    w.add_road("highway_1w_3l", at(-70.0, -20.0), at(0.0, 0.0));
+    w.add_road("highway_1w_3l", at(-70.0, 60.0), at(0.0, 0.0));
+    let req = w.straight_of("basic_2l", at(60.0, 0.0), at(0.0, 0.0));
+    assert_eq!(w.warnings(&req), vec![]);
+    let req = w.straight_of("medium_4l", at(60.0, 0.0), at(0.0, 0.0));
+    assert_eq!(w.warnings(&req), vec![]);
+}
+
+#[test]
+fn warnings_do_not_block_the_command() {
+    // The same plan that warns is a valid plan: the report is separate from validation.
+    let mut w = W::new();
+    w.add_road("highway_1w_3l", at(-70.0, 0.0), at(0.0, 0.0));
+    let req = w.straight_of("highway_1w_3l", at(70.0, 0.0), at(0.0, 0.0));
+    assert!(w.run(&req).is_ok());
+    assert!(!w.warnings(&req).is_empty());
+}
