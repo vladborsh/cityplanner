@@ -60,6 +60,8 @@ pub struct SimRunner {
     /// `SimView::overlays` land value and pollution, keyed by the grids' revision.
     pub(crate) land_cache: std::sync::Mutex<crate::overlay::LandCache>,
     /// `SimView::city` cache, keyed by `CityStats::generation`.
+    /// `SimView::service` cache, keyed by `ServiceCoverage::generation`.
+    pub(crate) service_cache: std::sync::Mutex<crate::view::ServiceCache>,
     pub(crate) city_cache: std::sync::Mutex<crate::view::CityCache>,
 }
 
@@ -110,6 +112,7 @@ impl SimRunner {
         world.init_resource::<cp_core::Treasury>();
         world.init_resource::<cp_district::DistrictMap>();
         world.init_resource::<cp_district::Districts>();
+        cp_service::ServicePlugin::init(&mut world);
         world.init_resource::<cp_economy::EconomyState>();
         world.init_resource::<cp_economy::DistrictIncome>();
         world.init_resource::<cp_economy::DemandAcc>();
@@ -200,6 +203,7 @@ impl SimRunner {
                 .before(cp_citizen::update_citizens),
         );
         schedule.add_systems(cp_utility::update_supply.in_set(SimPhase::Utilities));
+        schedule.add_systems(cp_service::update_coverage.in_set(SimPhase::Services));
         schedule.add_systems(cp_economy::settle_week.in_set(SimPhase::Economy));
         schedule.add_systems(cp_economy::update_demand.in_set(SimPhase::Economy));
         schedule.add_systems(cp_economy::update_city.in_set(SimPhase::Economy));
@@ -248,6 +252,7 @@ impl SimRunner {
             utilities_cache: Default::default(),
             agents_cache: Default::default(),
             land_cache: Default::default(),
+            service_cache: Default::default(),
             city_cache: Default::default(),
         }
     }

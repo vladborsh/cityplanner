@@ -2591,6 +2591,7 @@ dependencies = [
  "cp_district",
  "cp_economy",
  "cp_net",
+ "cp_service",
  "cp_sim",
  "cp_terrain",
  "cp_traffic",
@@ -2599,6 +2600,18 @@ dependencies = [
  "postcard",
  "ruzstd 0.9.0",
  "serde",
+]
+
+[[package]]
+name = "cp_service"
+version = "0.0.0"
+dependencies = [
+ "bevy_ecs",
+ "bevy_math",
+ "cp_building",
+ "cp_content",
+ "cp_core",
+ "cp_net",
 ]
 
 [[package]]
@@ -2615,6 +2628,7 @@ dependencies = [
  "cp_district",
  "cp_economy",
  "cp_net",
+ "cp_service",
  "cp_terrain",
  "cp_traffic",
  "cp_utility",

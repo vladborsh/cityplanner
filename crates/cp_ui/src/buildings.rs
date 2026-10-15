@@ -79,6 +79,13 @@ fn kind_icon(kind: ServiceKind) -> Icon {
         ServiceKind::Power => Icon::Power,
         ServiceKind::Sewage => Icon::Pipe,
         ServiceKind::Roads => Icon::Roads,
+        // The M2 services get their own icons with their UI rows.
+        ServiceKind::Garbage
+        | ServiceKind::Health
+        | ServiceKind::Deathcare
+        | ServiceKind::Fire
+        | ServiceKind::Police
+        | ServiceKind::Education => Icon::Roads,
     }
 }
 

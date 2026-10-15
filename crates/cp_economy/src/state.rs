@@ -80,12 +80,20 @@ impl Default for Budgets {
 }
 
 impl Budgets {
+    /// The percentage of `kind`; kinds without a budget line (the M2 services before their
+    /// budget rows) run at the default.
     pub fn get(&self, kind: ServiceKind) -> u8 {
-        self.pct[kind as usize]
+        self.pct
+            .get(kind as usize)
+            .copied()
+            .unwrap_or(BUDGET_DEFAULT)
     }
 
+    /// Sets the percentage of `kind`; a kind without a budget line ignores it.
     pub fn set(&mut self, kind: ServiceKind, pct: u8) {
-        self.pct[kind as usize] = pct;
+        if let Some(p) = self.pct.get_mut(kind as usize) {
+            *p = pct;
+        }
     }
 }
 

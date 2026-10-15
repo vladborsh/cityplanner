@@ -101,6 +101,9 @@ pub struct SimView {
     pub treasury: cp_core::Treasury,
     /// Tax rates, budget percentages and the last settled week, read-only (budget window).
     pub economy: cp_economy::EconomyState,
+    /// Service coverage of the roads by kind, for the overlays (T-134). Shared: re-cloned
+    /// only when it was recomputed.
+    pub service: Arc<cp_service::ServiceCoverage>,
     /// The city summary for the panels, recomputed every 64 ticks (§13.6). Shared: re-cloned
     /// only when it was recomputed.
     pub city: Arc<crate::stats::CityStats>,
@@ -156,6 +159,9 @@ pub struct AgentSnapshot {
 pub(crate) type AgentCache = Option<Arc<AgentSnapshot>>;
 
 /// `(generation, snapshot)` of the last `SimView::city`.
+/// `(generation, snapshot)` of the last `SimView::service`.
+pub(crate) type ServiceCache = Option<(u64, Arc<cp_service::ServiceCoverage>)>;
+
 pub(crate) type CityCache = Option<(u64, Arc<crate::stats::CityStats>)>;
 
 /// `(zone revision, snapshot)` of the last `SimView::zones`.
@@ -255,6 +261,21 @@ impl SimRunner {
         let (v, p) = (norm(&g.land_value), norm(&g.pollution));
         *cache = Some((g.revision(), Arc::clone(&v), Arc::clone(&p)));
         (Some(v), Some(p))
+    }
+
+    /// The coverage snapshot for `SimView::service`, cached while its generation is unchanged.
+    fn service_snapshot(&self) -> Arc<cp_service::ServiceCoverage> {
+        let cov = self.world().get_resource::<cp_service::ServiceCoverage>();
+        let generation = cov.map_or(0, |c| c.generation);
+        let mut cache = self.service_cache.lock().expect("service cache");
+        if let Some((g, snap)) = cache.as_ref()
+            && *g == generation
+        {
+            return Arc::clone(snap);
+        }
+        let snap = Arc::new(cov.cloned().unwrap_or_default());
+        *cache = Some((generation, Arc::clone(&snap)));
+        snap
     }
 
     /// The zone snapshot for `SimView::zones`, cached while the grid's revision is unchanged.
@@ -379,6 +400,7 @@ impl SimRunner {
             treasury: *self.world().resource::<cp_core::Treasury>(),
             economy: self.world().resource::<cp_economy::EconomyState>().clone(),
             utilities: self.utilities_snapshot(),
+            service: self.service_snapshot(),
             city: self.city_snapshot(),
             junctions,
         }

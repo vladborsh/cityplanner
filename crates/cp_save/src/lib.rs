@@ -315,6 +315,8 @@ impl SaveData {
         world
             .resource_mut::<cp_traffic::PathNetwork>()
             .set_congestion(published);
+        // Derived from the net and the buildings, not saved.
+        cp_service::rebuild_coverage(world);
     }
 }
 

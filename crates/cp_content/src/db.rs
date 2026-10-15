@@ -462,6 +462,18 @@ impl ContentDb {
             }
         }
         for (i, s) in services.defs.iter().enumerate() {
+            let tier_ok = if s.kind == crate::kinds::ServiceKind::Education {
+                (1..=3).contains(&s.tier)
+            } else {
+                s.tier == 0
+            };
+            if !tier_ok {
+                errors.push(ContentError::new(
+                    &services.files[i],
+                    Some("tier"),
+                    "tier 1..=3 is for Education services only (and required there)".to_string(),
+                ));
+            }
             for (k, v) in s.vehicles.iter().enumerate() {
                 if vehicles.get_id(v).is_none() {
                     errors.push(ContentError::new(

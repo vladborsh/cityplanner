@@ -1,0 +1,19 @@
+[package]
+name = "cp_service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+cp_building.workspace = true
+cp_content.workspace = true
+cp_core.workspace = true
+cp_net.workspace = true
+bevy_ecs.workspace = true
+
+[dev-dependencies]
+bevy_math.workspace = true

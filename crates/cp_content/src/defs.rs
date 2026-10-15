@@ -472,7 +472,7 @@ fn road_access_default() -> bool {
     true
 }
 
-/// M1 stub; fields grow in M2 (`cp_service`).
+/// A service building's definition; M2 fields live in `cp_service`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceDef {
@@ -493,6 +493,12 @@ pub struct ServiceDef {
     /// Vehicle ids (`VehicleDef`) the service dispatches.
     #[serde(default)]
     pub vehicles: Vec<String>,
+    /// What the building can hold (garbage, bodies); 0 = not a store (T-134). // tune later
+    #[serde(default)]
+    pub storage: u32,
+    /// Education tier 1..=3 (elementary, high school, university); 0 for every other kind.
+    #[serde(default)]
+    pub tier: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

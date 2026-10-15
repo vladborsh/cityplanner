@@ -154,7 +154,7 @@ fn network_of(kind: ServiceKind) -> Option<UtilityNet> {
     match kind {
         ServiceKind::Water | ServiceKind::Sewage => Some(UtilityNet::Pipe),
         ServiceKind::Power => Some(UtilityNet::Power),
-        ServiceKind::Roads => None,
+        _ => None,
     }
 }
 

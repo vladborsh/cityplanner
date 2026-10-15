@@ -27,7 +27,7 @@ pub enum UtilityKind {
     Power = 2,
 }
 
-/// Budgeted service. M1 stub: extended in M2.
+/// Service kind: the budgeted utilities and roads of M1, the city services of M2.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum ServiceKind {
@@ -36,6 +36,13 @@ pub enum ServiceKind {
     Roads = 2,
     /// Appended in T-038: sewage outflow.
     Sewage = 3,
+    /// Appended in T-134 (M2 city services).
+    Garbage = 4,
+    Health = 5,
+    Deathcare = 6,
+    Fire = 7,
+    Police = 8,
+    Education = 9,
 }
 
 /// Where a service building may stand (checked by `cp_building::validate_placement`).

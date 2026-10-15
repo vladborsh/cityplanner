@@ -400,6 +400,7 @@ fn budgets_tab(
             ServiceKind::Power => "Power",
             ServiceKind::Roads => "Roads",
             ServiceKind::Sewage => "Sewage",
+            _ => continue,
         };
         if let Some(pct) = pct_slider(
             ui,
