@@ -145,6 +145,43 @@ pub fn plan_polylines(graph: &UtilityGraph, plan: &LinkPlan) -> Vec<Vec<Vec3>> {
         .collect()
 }
 
+/// Whether the pipe network is drawn (T-103): while a water tool is active (the pipe tool,
+/// removing pipes, placing a pump or an outflow) or the water overlay is on.
+pub fn pipes_visible(
+    state: &crate::ToolState,
+    overlay: cp_render::Overlay,
+    content: Option<&cp_content::ContentDb>,
+) -> bool {
+    use crate::ActiveTool;
+    if overlay == cp_render::Overlay::Water {
+        return true;
+    }
+    match state.active {
+        ActiveTool::Utility => state.utility.kind == UtilityKind::Water,
+        ActiveTool::UtilityRemove => state.remove_net == Some(UtilityNet::Pipe),
+        ActiveTool::Place => content.is_some_and(|db| {
+            state
+                .building
+                .def
+                .and_then(|def| db.building(def).service.as_deref())
+                .and_then(|name| db.service_id(name))
+                .is_some_and(|svc| {
+                    matches!(
+                        db.service(svc).kind,
+                        cp_content::ServiceKind::Water | cp_content::ServiceKind::Sewage
+                    )
+                })
+        }),
+        _ => false,
+    }
+}
+
+/// Whether the utility ghost of `kind` is drawn as gizmo lines: only the power lines are; a
+/// pipe is a 3D mesh (T-103, `cp_render::PipeLayers`).
+pub fn ghost_is_gizmo(kind: UtilityKind) -> bool {
+    kind == UtilityKind::Power
+}
+
 /// The link of `net` nearest to `p` within `radius` (the remove tool's target).
 pub fn pick_link(
     graph: &UtilityGraph,
@@ -323,5 +360,60 @@ mod tests {
         let after = sim.view();
         assert_eq!(after.utilities.link_count(), 1);
         assert!(after.utilities.link(link).is_none());
+    }
+
+    #[test]
+    fn pipes_are_visible_with_water_tools_and_the_water_overlay_only() {
+        use crate::{ActiveTool, ToolState};
+        use cp_render::Overlay;
+        let db = ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap();
+        let mut st = ToolState::default();
+        let vis = |st: &ToolState, o| pipes_visible(st, o, Some(&db));
+        // No tool, no overlay: hidden. The water overlay alone shows them.
+        assert!(!vis(&st, Overlay::Off));
+        assert!(vis(&st, Overlay::Water));
+        assert!(!vis(&st, Overlay::Traffic) && !vis(&st, Overlay::Power));
+        // The pipe tool, not the power-line tool.
+        st.active = ActiveTool::Utility;
+        st.utility.set_kind(UtilityKind::Water);
+        assert!(vis(&st, Overlay::Off));
+        st.utility.set_kind(UtilityKind::Power);
+        assert!(!vis(&st, Overlay::Off));
+        // Removing pipes, not lines.
+        st.active = ActiveTool::UtilityRemove;
+        st.remove_net = Some(UtilityNet::Pipe);
+        assert!(vis(&st, Overlay::Off));
+        st.remove_net = Some(UtilityNet::Power);
+        assert!(!vis(&st, Overlay::Off));
+        // Placing a pump or an outflow, not a power plant.
+        st.active = ActiveTool::Place;
+        for (name, want) in [
+            ("water_pump_station", true),
+            ("sewage_outflow_station", true),
+            ("coal_power_plant", false),
+            ("wind_turbine", false),
+        ] {
+            st.building.def = db.building_id(name);
+            assert!(st.building.def.is_some(), "{name}");
+            assert_eq!(vis(&st, Overlay::Off), want, "{name}");
+        }
+        // Roads and the rest.
+        for tool in [
+            ActiveTool::None,
+            ActiveTool::Road,
+            ActiveTool::Bulldozer,
+            ActiveTool::Zone,
+        ] {
+            st.active = tool;
+            assert!(!vis(&st, Overlay::Off), "{tool:?}");
+        }
+    }
+
+    /// The pipe ghost is a 3D mesh, not gizmo lines; only power lines keep their line ghost.
+    #[test]
+    fn only_power_ghosts_are_gizmo_lines() {
+        assert!(!ghost_is_gizmo(UtilityKind::Water));
+        assert!(!ghost_is_gizmo(UtilityKind::Sewage));
+        assert!(ghost_is_gizmo(UtilityKind::Power));
     }
 }

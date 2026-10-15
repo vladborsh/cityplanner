@@ -26,6 +26,7 @@ use crate::utility::{
 };
 use crate::zone::ZoneTool;
 use cp_building::{BuildingCommand, BuildingId};
+use cp_content::UtilityKind;
 use cp_utility::{UtilityCommand, UtilityLinkId, UtilityNet};
 use cp_zone::{ZoneCellRef, ZoneCommand};
 
@@ -139,6 +140,46 @@ fn sync_zoning_mode(state: Res<ToolState>, mut mode: ResMut<cp_render::ZoningMod
     }
 }
 
+/// Tells the renderer which pipe layers to draw (T-103): the network while a water tool or the
+/// water overlay is active, the pipe ghost, and the piece the remove tool would delete.
+fn sync_pipe_layers(
+    state: Res<ToolState>,
+    overlay: Res<cp_render::OverlayState>,
+    view: Option<Res<SimView>>,
+    mut layers: ResMut<cp_render::PipeLayers>,
+) {
+    let content = view.as_deref().and_then(|v| v.content.as_deref());
+    let visible = crate::utility::pipes_visible(&state, overlay.active, content);
+    let ghost = state
+        .utility_ghost
+        .as_ref()
+        .filter(|_| state.active == ActiveTool::Utility && state.utility.kind == UtilityKind::Water)
+        .map(|g| cp_render::PipeGhost {
+            curves: g
+                .polylines
+                .iter()
+                .flat_map(|l| l.windows(2))
+                .map(|w| cp_core::curve::CubicBezier3::line(w[0], w[1]))
+                .collect(),
+            valid: g.valid,
+        });
+    let highlight = view
+        .as_deref()
+        .zip(state.link_highlight)
+        .filter(|_| state.active == ActiveTool::UtilityRemove)
+        .and_then(|(v, id)| v.utilities.link(id))
+        .filter(|l| l.net == UtilityNet::Pipe)
+        .map(|l| l.curve);
+    let want = cp_render::PipeLayers {
+        visible,
+        ghost,
+        highlight,
+    };
+    if *layers != want {
+        *layers = want;
+    }
+}
+
 pub struct ToolsPlugin;
 
 impl Plugin for ToolsPlugin {
@@ -147,6 +188,8 @@ impl Plugin for ToolsPlugin {
             .init_resource::<crate::zone_lines::ZoneLines>()
             .init_resource::<cp_render::ZoningMode>()
             .add_systems(Update, sync_zoning_mode)
+            .init_resource::<cp_render::PipeLayers>()
+            .add_systems(Update, sync_pipe_layers.after(tool_hover))
             .init_resource::<UiCapture>()
             .init_resource::<CommandOutbox>()
             .init_resource::<crate::Picked>()
@@ -528,6 +571,7 @@ pub fn tool_click(
 fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Gizmos) {
     if let Some(ghost) = &state.utility_ghost
         && state.active == ActiveTool::Utility
+        && crate::utility::ghost_is_gizmo(state.utility.kind)
     {
         let color = if ghost.valid {
             Color::srgb(0.2, 0.9, 0.3)
@@ -538,7 +582,12 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
             gizmos.linestrip(line.iter().map(|p| *p + Vec3::Y * 0.6), color);
         }
     }
-    if let (Some(view), Some(link)) = (view.as_deref(), state.link_highlight) {
+    if let (Some(view), Some(link)) = (view.as_deref(), state.link_highlight)
+        && view
+            .utilities
+            .link(link)
+            .is_some_and(|l| l.net != UtilityNet::Pipe)
+    {
         let line = link_line(&view.utilities, link);
         gizmos.linestrip(
             line.iter().map(|p| *p + Vec3::Y * 0.8),

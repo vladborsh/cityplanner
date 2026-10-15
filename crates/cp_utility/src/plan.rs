@@ -31,8 +31,10 @@ use crate::graph::{UtilityGraph, UtilityLinkId, UtilityNet, UtilityNodeId};
 pub const NODE_SNAP_RADIUS: f32 = 6.0;
 pub const LINK_SNAP_RADIUS: f32 = 3.0;
 pub const SAMPLE_STEP: f32 = 8.0;
-/// Buildings farther than this from a leg's bounding circle are skipped quickly.
-const BUILDING_REACH: f32 = 40.0;
+/// How far a pipe reaches buildings, metres (the coverage band's half width; equal to
+/// [`crate::LINE_REACH_M`], the supply rule). Also: buildings farther than this from a leg's
+/// bounding circle are skipped quickly.
+pub const BUILDING_REACH: f32 = 40.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PathProblem {

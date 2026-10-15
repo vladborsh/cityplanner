@@ -27,7 +27,7 @@ pub use road_render::{RoadRenderPlugin, RoadStats};
 pub use sun::LightingSettings;
 pub use terrain::{Sun, TerrainChunk, TerrainRenderPlugin, TerrainStats};
 pub use ui_capture::UiCapture;
-pub use utility_render::UtilityRenderPlugin;
+pub use utility_render::{PipeGhost, PipeLayers, UtilityRenderPlugin};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_render";

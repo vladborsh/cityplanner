@@ -206,3 +206,23 @@ fn the_system_writes_flags_every_64_ticks_only() {
     assert!(f.has(BuildingFlags::NO_WATER) && f.has(BuildingFlags::NO_POWER));
     assert!(f.has(BuildingFlags::NO_SEWAGE));
 }
+
+/// The coverage band the player sees is `BUILDING_REACH` wide: that is the supply rule.
+#[test]
+fn the_coverage_band_half_width_is_the_supply_reach() {
+    assert_eq!(plan::BUILDING_REACH, LINE_REACH_M);
+    let db = db();
+    let mut b = BuildingGrid::new();
+    let mut g = UtilityGraph::new();
+    line(&mut g, UtilityNet::Pipe, 0.0, 100.0);
+    add(&mut b, &db, "pump", 0.0, 10.0);
+    let inside = add(&mut b, &db, "house", 50.0, plan::BUILDING_REACH - 1.0);
+    let outside = add(&mut b, &db, "house", 50.0, plan::BUILDING_REACH + 1.0);
+    let m = compute_supply(&db, &b, &g);
+    assert_eq!(
+        bits(&m, inside) & BuildingFlags::NO_WATER,
+        0,
+        "39 m: connected"
+    );
+    assert_ne!(bits(&m, outside) & BuildingFlags::NO_WATER, 0, "41 m: not");
+}

@@ -15,8 +15,8 @@ pub use graph::{
     UtilityNodeId,
 };
 pub use plan::{
-    LinkPlan, PathProblem, PlanInputs, PlanNode, PlannedLink, PlannedSplit, apply_plan,
-    plan_link_path,
+    BUILDING_REACH, LinkPlan, PathProblem, PlanInputs, PlanNode, PlannedLink, PlannedSplit,
+    apply_plan, plan_link_path,
 };
 pub use supply::{
     AttachCache, Coverage, LINE_REACH_M, POWER_HOP_M, SUPPLY_PERIOD, compute_supply,
