@@ -268,7 +268,7 @@ fn upkeep_may_push_the_treasury_below_the_debt_floor() {
 #[test]
 fn commands_validate_their_ranges_and_change_nothing_on_error() {
     let (mut world, _) = city();
-    let before = *world.resource::<EconomyState>();
+    let before = world.resource::<EconomyState>().clone();
     for (cmd, err) in [
         (
             EconomyCommand::SetTaxRate {
@@ -894,4 +894,94 @@ mod city {
             BuildingState::Active
         );
     }
+}
+
+/// Loans (T-129). The city's own weekly balance is constant (`-377.25`), so the loan shows as
+/// the difference to it.
+const WEEKLY: i64 = -37_725;
+
+#[test]
+fn a_loan_pays_out_and_is_repaid_to_the_cent_over_its_term() {
+    let (mut world, mut schedule) = city();
+    let start = balance(&world);
+    apply(&mut world, &EconomyCommand::TakeLoan { offer: 0 }).unwrap();
+    assert_eq!(balance(&world), start + Cost(2_500_000));
+    let mut paid = Cost::ZERO;
+    for week in 1..=26 {
+        run_at(&mut world, &mut schedule, week * TICKS_PER_WEEK);
+        paid += world.resource::<EconomyState>().last_week.loan_payments;
+    }
+    // 25 000 + 3 % simple interest = 25 750.00, weekly shares rounded down, last week the rest.
+    assert_eq!(paid, Cost(2_575_000));
+    assert!(world.resource::<EconomyState>().loans.is_empty());
+    assert_eq!(
+        balance(&world),
+        start + Cost(2_500_000 - 2_575_000 + 26 * WEEKLY)
+    );
+    // Nothing more is taken once it is gone.
+    run_at(&mut world, &mut schedule, 27 * TICKS_PER_WEEK);
+    assert_eq!(
+        world.resource::<EconomyState>().last_week.loan_payments,
+        Cost::ZERO
+    );
+}
+
+#[test]
+fn paying_off_early_costs_the_principal_left_and_stops_the_payments() {
+    let (mut world, mut schedule) = city();
+    apply(&mut world, &EconomyCommand::TakeLoan { offer: 0 }).unwrap();
+    for week in 1..=10 {
+        run_at(&mut world, &mut schedule, week * TICKS_PER_WEEK);
+    }
+    let loan = *world.resource::<EconomyState>().loan(0).unwrap();
+    assert_eq!(loan.weeks_left, 16);
+    let before = balance(&world);
+    let charged = apply(&mut world, &EconomyCommand::RepayLoan { offer: 0 }).unwrap();
+    assert_eq!(charged, loan.principal_left);
+    assert_eq!(balance(&world), before - loan.principal_left);
+    assert!(world.resource::<EconomyState>().loans.is_empty());
+    run_at(&mut world, &mut schedule, 11 * TICKS_PER_WEEK);
+    assert_eq!(
+        world.resource::<EconomyState>().last_week.loan_payments,
+        Cost::ZERO
+    );
+    // Nothing to pay off any more, and too little money is refused without a change.
+    assert_eq!(
+        apply(&mut world, &EconomyCommand::RepayLoan { offer: 0 }),
+        Err(EconomyError::NoSuchLoan(0))
+    );
+    apply(&mut world, &EconomyCommand::TakeLoan { offer: 0 }).unwrap();
+    world.resource_mut::<Treasury>().balance = Cost(100);
+    assert!(matches!(
+        apply(&mut world, &EconomyCommand::RepayLoan { offer: 0 }),
+        Err(EconomyError::NoMoney { .. })
+    ));
+    assert!(world.resource::<EconomyState>().loan(0).is_some());
+}
+
+#[test]
+fn a_loan_needs_the_population_and_a_free_slot() {
+    let (mut world, _) = city();
+    // The test city has 4 residents: only the offer without a threshold is open.
+    assert_eq!(
+        apply(&mut world, &EconomyCommand::TakeLoan { offer: 1 }),
+        Err(EconomyError::TooSmall {
+            needed: 1000,
+            have: 4
+        })
+    );
+    assert_eq!(
+        apply(&mut world, &EconomyCommand::TakeLoan { offer: 9 }),
+        Err(EconomyError::UnknownOffer(9))
+    );
+    apply(&mut world, &EconomyCommand::TakeLoan { offer: 0 }).unwrap();
+    let after = (balance(&world), world.resource::<EconomyState>().clone());
+    assert_eq!(
+        apply(&mut world, &EconomyCommand::TakeLoan { offer: 0 }),
+        Err(EconomyError::AlreadyTaken(0))
+    );
+    assert_eq!(
+        after,
+        (balance(&world), world.resource::<EconomyState>().clone())
+    );
 }

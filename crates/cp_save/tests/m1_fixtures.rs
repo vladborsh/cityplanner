@@ -18,6 +18,10 @@
 //! them. The behaviour did not change: loaded against the content without the three new
 //! highways, m1-small gives the previous `0xc6b6_08b5_17a9_0b18` at load.
 
+//! **T-129 (save v20).** Re-recorded again: the checksum hashes the serialized economy state,
+//! which gained the loans and the report's loan payments (two more bytes with no loans); the
+//! behaviour did not change.
+//!
 //! **T-106 (save v19).** Re-recorded again: the checksum hashes the serialized buildings, and a
 //! building now carries `footprint: Footprint::Lot(..)` and `access: Some(..)` (one more byte
 //! each). The behaviour did not change: `save_v19.rs` loads these two files and `v18-basic` and
@@ -120,10 +124,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0xffd3dbf19b051083, "state at load");
+    assert_eq!(sim.checksum(), 0x1519196dc1b8de05, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0xda29a542894c3f1b,
+        0x4e8919b27ee8c051,
         "load + 4096 ticks"
     );
 }
@@ -149,7 +153,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0xd267e0b3e8b7c5f, "state at load");
+    assert_eq!(sim.checksum(), 0xa71b2dcebc04d489, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -157,7 +161,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0xa108a09e7365381d, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x52f36a9b04a535b7, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

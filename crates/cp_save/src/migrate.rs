@@ -10,9 +10,9 @@ use cp_building::{
 };
 use cp_citizen::{CitizenGrid, TripBook};
 use cp_citizen::{CitizenId, TripId};
-use cp_core::Arena;
+use cp_core::{Arena, Cost};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
-use cp_economy::{Decay, DemandAcc, EconomyState, LandGrids};
+use cp_economy::{Budgets, Decay, DemandAcc, EconomyState, LandGrids, TaxRates, WeekReport};
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
@@ -451,7 +451,7 @@ pub struct SaveDataV14 {
     pub trips: TripBook,
     pub agents: AgentsV16,
     pub treasury: Treasury,
-    pub economy: EconomyState,
+    pub economy: EconomyStateV19,
 }
 
 /// Version 15: the body as written by format 15 (demand; no land grids or decay timers).
@@ -472,7 +472,7 @@ pub struct SaveDataV15 {
     pub trips: TripBook,
     pub agents: AgentsV16,
     pub treasury: Treasury,
-    pub economy: EconomyState,
+    pub economy: EconomyStateV19,
     pub demand: Demand,
     pub demand_acc: DemandAcc,
 }
@@ -496,7 +496,7 @@ pub struct SaveDataV16 {
     pub trips: TripBook,
     pub agents: AgentsV16,
     pub treasury: Treasury,
-    pub economy: EconomyState,
+    pub economy: EconomyStateV19,
     pub demand: Demand,
     pub demand_acc: DemandAcc,
     pub land: LandGrids,
@@ -521,7 +521,7 @@ pub struct SaveDataV17 {
     pub trips: TripBook,
     pub agents: Agents,
     pub treasury: Treasury,
-    pub economy: EconomyState,
+    pub economy: EconomyStateV19,
     pub demand: Demand,
     pub demand_acc: DemandAcc,
     pub land: LandGrids,
@@ -547,7 +547,7 @@ pub struct SaveDataV18 {
     pub trips: TripBook,
     pub agents: Agents,
     pub treasury: Treasury,
-    pub economy: EconomyState,
+    pub economy: EconomyStateV19,
     pub demand: Demand,
     pub demand_acc: DemandAcc,
     pub land: LandGrids,
@@ -555,11 +555,114 @@ pub struct SaveDataV18 {
     pub def_names: crate::DefNames,
 }
 
+/// The last weekly report as formats 14 to 19 wrote it (before `loan_payments`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WeekReportV19 {
+    pub week: u64,
+    pub income_by_zone: [Cost; 6],
+    pub road_upkeep: Cost,
+    pub building_upkeep: Cost,
+    pub utility_upkeep: Cost,
+}
+
+/// The economy state as formats 14 to 19 wrote it (before the loans).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EconomyStateV19 {
+    pub taxes: TaxRates,
+    pub budgets: Budgets,
+    pub last_week: WeekReportV19,
+}
+
+impl From<&EconomyState> for EconomyStateV19 {
+    /// Drops the loans: for the legacy writers and the tests only.
+    fn from(e: &EconomyState) -> Self {
+        let w = &e.last_week;
+        Self {
+            taxes: e.taxes,
+            budgets: e.budgets,
+            last_week: WeekReportV19 {
+                week: w.week,
+                income_by_zone: w.income_by_zone,
+                road_upkeep: w.road_upkeep,
+                building_upkeep: w.building_upkeep,
+                utility_upkeep: w.utility_upkeep,
+            },
+        }
+    }
+}
+
+/// Version 19: the body as written by format 19 (buildings on a `Footprint`; no loans).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV19 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+    pub trips: TripBook,
+    pub agents: Agents,
+    pub treasury: Treasury,
+    pub economy: EconomyStateV19,
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    pub land: LandGrids,
+    pub decay: Decay,
+    pub def_names: crate::DefNames,
+}
+
+/// v19 → v20 (T-129): the economy state got the loans and the report its loan payments; an
+/// old city has none of either.
+pub fn migrate_v19_to_v20(v19: SaveDataV19) -> SaveData {
+    let w = v19.economy.last_week;
+    SaveData {
+        tick: v19.tick,
+        rng: v19.rng,
+        speed: v19.speed,
+        queue: v19.queue,
+        log: v19.log,
+        tiles: v19.tiles,
+        net: v19.net,
+        zones: v19.zones,
+        buildings: v19.buildings,
+        citizens: v19.citizens,
+        paths: v19.paths,
+        utilities: v19.utilities,
+        trips: v19.trips,
+        agents: v19.agents,
+        treasury: v19.treasury,
+        economy: EconomyState {
+            taxes: v19.economy.taxes,
+            budgets: v19.economy.budgets,
+            last_week: WeekReport {
+                week: w.week,
+                income_by_zone: w.income_by_zone,
+                road_upkeep: w.road_upkeep,
+                building_upkeep: w.building_upkeep,
+                utility_upkeep: w.utility_upkeep,
+                loan_payments: Cost::ZERO,
+            },
+            loans: Vec::new(),
+        },
+        demand: v19.demand,
+        demand_acc: v19.demand_acc,
+        land: v19.land,
+        decay: v19.decay,
+        def_names: v19.def_names,
+    }
+}
+
 /// v18 → v19 (T-106): a building's `lot` became `footprint: Footprint::Lot(lot)` and its
 /// access point an `Option` (always `Some` in an old save). Ids, generations and the removed
 /// list are kept.
-pub fn migrate_v18_to_v19(v18: SaveDataV18) -> SaveData {
-    SaveData {
+pub fn migrate_v18_to_v19(v18: SaveDataV18) -> SaveDataV19 {
+    SaveDataV19 {
         tick: v18.tick,
         rng: v18.rng,
         speed: v18.speed,
@@ -747,7 +850,7 @@ pub fn migrate_v13_to_v14(v13: SaveDataV13) -> SaveDataV14 {
         trips: v13.trips,
         agents: v13.agents,
         treasury: Treasury::default(),
-        economy: EconomyState::default(),
+        economy: EconomyStateV19::default(),
     }
 }
 
@@ -996,7 +1099,7 @@ fn from_v16(v: SaveDataV16) -> SaveData {
 }
 
 fn from_v17(v: SaveDataV17) -> SaveData {
-    migrate_v18_to_v19(migrate_v17_to_v18(v))
+    migrate_v19_to_v20(migrate_v18_to_v19(migrate_v17_to_v18(v)))
 }
 
 /// Decodes a body written at `version` and runs the migration chain up to
@@ -1081,8 +1184,9 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         15 => Ok(from_v15(dec(body)?)),
         16 => Ok(from_v16(dec(body)?)),
         17 => Ok(from_v17(dec(body)?)),
-        18 => Ok(migrate_v18_to_v19(dec(body)?)),
-        19 => dec(body),
+        18 => Ok(migrate_v19_to_v20(migrate_v18_to_v19(dec(body)?))),
+        19 => Ok(migrate_v19_to_v20(dec(body)?)),
+        20 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

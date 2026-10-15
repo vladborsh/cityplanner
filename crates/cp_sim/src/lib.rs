@@ -24,7 +24,9 @@ pub use phase::SimPhase;
 pub use plugin::{SimBuilder, SimPlugin};
 pub use runner::{MAX_TICKS_PER_STEP, SimRunner, run_headless, run_headless_with};
 pub use stats::CityStats;
-pub use view::{AgentSnapshot, ArenaFill, ArenaGauges, SimStats, SimTerrain, SimView};
+pub use view::{
+    AgentSnapshot, ArenaFill, ArenaGauges, LoanOfferView, SimStats, SimTerrain, SimView,
+};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_sim";

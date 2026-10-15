@@ -108,7 +108,7 @@ fn the_v18_fixture_migrates_every_building_onto_its_lot_with_its_access_point() 
             trips: l.data.trips.clone(),
             agents: l.data.agents.clone(),
             treasury: l.data.treasury,
-            economy: l.data.economy,
+            economy: (&l.data.economy).into(),
             demand: l.data.demand,
             demand_acc: l.data.demand_acc,
             land: l.data.land,
@@ -155,7 +155,7 @@ fn the_fixtures_round_trip_byte_for_byte_on_the_new_version() {
             read_header(&again).unwrap().0.format_version,
             FORMAT_VERSION
         );
-        assert_eq!(FORMAT_VERSION, 19);
+        assert_eq!(FORMAT_VERSION, 20);
         let l2 = load_with_map(&again, content.content_hash(), h.map_hash).unwrap();
         let third = save_with_map(&l2.data, h.content_hash, &h.map_id, h.map_hash).unwrap();
         assert_eq!(again, third, "{name}: save(load(save(x))) == save(x)");

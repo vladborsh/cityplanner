@@ -62,7 +62,7 @@ fn v16_fixture_migrates_with_no_reroutes_and_round_trips() {
         trips: l.data.trips.clone(),
         agents: AgentsV16::from(&l.data.agents),
         treasury: l.data.treasury,
-        economy: l.data.economy,
+        economy: (&l.data.economy).into(),
         demand: l.data.demand,
         demand_acc: l.data.demand_acc,
         land: l.data.land.clone(),

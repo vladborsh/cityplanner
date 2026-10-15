@@ -77,7 +77,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 19;
+pub const FORMAT_VERSION: u32 = 20;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -187,7 +187,7 @@ pub struct SaveData {
     pub agents: cp_traffic::Agents,
     /// The city's money. Added in v14.
     pub treasury: Treasury,
-    /// Tax rates, budgets and the last weekly report. Added in v14.
+    /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
     pub economy: EconomyState,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
@@ -250,7 +250,7 @@ impl SaveData {
             trips: world.resource::<TripBook>().clone(),
             agents: world.resource::<cp_traffic::Agents>().clone(),
             treasury: *world.resource::<Treasury>(),
-            economy: *world.resource::<EconomyState>(),
+            economy: world.resource::<EconomyState>().clone(),
             demand: *world.resource::<Demand>(),
             demand_acc: *world.resource::<DemandAcc>(),
             land: world.resource::<LandGrids>().clone(),

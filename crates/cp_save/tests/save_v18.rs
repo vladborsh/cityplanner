@@ -128,7 +128,7 @@ fn v17_fixture_migrates_without_names_and_round_trips() {
         trips: l.data.trips.clone(),
         agents: l.data.agents.clone(),
         treasury: l.data.treasury,
-        economy: l.data.economy,
+        economy: (&l.data.economy).into(),
         demand: l.data.demand,
         demand_acc: l.data.demand_acc,
         land: l.data.land.clone(),

@@ -66,7 +66,7 @@ fn v14_fixture_migrates_with_the_demand_of_a_new_city_and_round_trips() {
         trips: l.data.trips.clone(),
         agents: AgentsV16::from(&l.data.agents),
         treasury: l.data.treasury,
-        economy: l.data.economy,
+        economy: (&l.data.economy).into(),
     };
     let again = encode_v14(&v14, h.content_hash, &h.map_id, h.map_hash).unwrap();
     assert_eq!(again, bytes, "frozen v14 writer matches the fixture");

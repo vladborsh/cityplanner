@@ -64,7 +64,7 @@ fn v15_fixture_migrates_with_empty_grids_and_no_timers_and_round_trips() {
         trips: l.data.trips.clone(),
         agents: AgentsV16::from(&l.data.agents),
         treasury: l.data.treasury,
-        economy: l.data.economy,
+        economy: (&l.data.economy).into(),
         demand: l.data.demand,
         demand_acc: l.data.demand_acc,
     };

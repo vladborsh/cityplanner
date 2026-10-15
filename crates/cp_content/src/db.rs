@@ -544,6 +544,22 @@ impl ContentDb {
                     "must be finite and >= 0".to_string(),
                 ));
             }
+            if b.loan_offers.len() > 255
+                || b.loan_offers.iter().any(|o| {
+                    !o.amount.is_finite()
+                        || o.amount <= 0.0
+                        || !o.interest_pct.is_finite()
+                        || o.interest_pct < 0.0
+                        || o.weeks == 0
+                })
+            {
+                errors.push(ContentError::new(
+                    path,
+                    Some("loan_offers"),
+                    "at most 255 offers, each with amount > 0, interest_pct >= 0, weeks >= 1"
+                        .to_string(),
+                ));
+            }
             if b.level_checks == 0 {
                 errors.push(ContentError::new(
                     path,
@@ -589,6 +605,15 @@ impl ContentDb {
                     fnv1a(&mut hash, &v.to_bits().to_le_bytes());
                 }
                 fnv1a(&mut hash, &b.level_checks.to_le_bytes());
+            }
+            if b.loan_offers != defaults.loan_offers {
+                fnv1a(&mut hash, b"loans");
+                for o in &b.loan_offers {
+                    fnv1a(&mut hash, &o.amount.to_bits().to_le_bytes());
+                    fnv1a(&mut hash, &o.interest_pct.to_bits().to_le_bytes());
+                    fnv1a(&mut hash, &o.weeks.to_le_bytes());
+                    fnv1a(&mut hash, &o.min_population.to_le_bytes());
+                }
             }
         }
         Ok(Self {

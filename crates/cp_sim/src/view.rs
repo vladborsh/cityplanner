@@ -106,6 +106,42 @@ pub struct SimView {
     pub city: Arc<crate::stats::CityStats>,
 }
 
+/// A bank offer for the Loans tab: the content row, whether the city may take it now, and the
+/// active loan on it, if any (T-129).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LoanOfferView {
+    /// The offer's index, what `TakeLoan`/`RepayLoan` name.
+    pub index: u8,
+    pub offer: cp_content::LoanOffer,
+    /// The population threshold is met (as of the last city summary) and the slot is free.
+    pub available: bool,
+    pub active: Option<cp_economy::Loan>,
+}
+
+impl SimView {
+    /// The bank's offers with their state. Empty for a sim without content.
+    pub fn loan_offers(&self) -> Vec<LoanOfferView> {
+        let Some(db) = &self.content else {
+            return Vec::new();
+        };
+        db.balance()
+            .loan_offers
+            .iter()
+            .enumerate()
+            .take(255)
+            .map(|(i, offer)| {
+                let active = self.economy.loan(i as u8).copied();
+                LoanOfferView {
+                    index: i as u8,
+                    available: active.is_none() && self.city.population >= offer.min_population,
+                    active,
+                    offer: offer.clone(),
+                }
+            })
+            .collect()
+    }
+}
+
 /// Agent poses of two consecutive snapshots. `prev` is the frame of the previous published
 /// view (equal to `cur` the first time), so a client draws `lerp(prev, cur, fraction)` where
 /// `fraction` is how far real time is into the tick that follows the snapshot.
@@ -341,7 +377,7 @@ impl SimRunner {
             agents: self.agent_snapshot(tick),
             demand: *self.world().resource::<cp_building::Demand>(),
             treasury: *self.world().resource::<cp_core::Treasury>(),
-            economy: *self.world().resource::<cp_economy::EconomyState>(),
+            economy: self.world().resource::<cp_economy::EconomyState>().clone(),
             utilities: self.utilities_snapshot(),
             city: self.city_snapshot(),
             junctions,

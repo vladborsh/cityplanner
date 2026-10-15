@@ -143,7 +143,7 @@ fn money_and_settings_survive_a_save_on_pause_and_resume_like_the_continuous_run
         b.world().resource::<Treasury>(),
         a.world().resource::<Treasury>()
     );
-    let eb = *b.world().resource::<EconomyState>();
+    let eb = b.world().resource::<EconomyState>().clone();
     assert_eq!(eb, *a.world().resource::<EconomyState>());
     assert_eq!(eb.taxes.get(ZoneType::Office), Some(3));
     assert_eq!(eb.taxes.get(ZoneType::ComHigh), Some(17));

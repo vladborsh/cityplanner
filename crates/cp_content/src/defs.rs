@@ -121,6 +121,24 @@ pub struct Balance {
     pub tax_job: [f32; 4],
     /// Multiplier of `tax_job` by building level 1..=3 (commercial, industrial, office).
     pub level_mul: [f32; 3],
+    /// Loans the bank offers, by index (the index is what a save and a command name); at most
+    /// 255, one active loan per offer (§16 M2).
+    pub loan_offers: Vec<LoanOffer>,
+}
+
+/// One loan the bank offers (`balance.ron` `loan_offers`). Interest is simple, for the whole
+/// term: `amount × interest_pct / 100`, rounded once.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoanOffer {
+    /// Money paid out, in currency units.
+    pub amount: f32,
+    /// Interest for the whole term, percent of `amount`.
+    pub interest_pct: f32,
+    /// Term in weeks, paid in equal weekly parts.
+    pub weeks: u16,
+    /// Residents the city needs for the bank to offer it.
+    pub min_population: u32,
 }
 
 impl Balance {
@@ -185,8 +203,26 @@ impl Default for Balance {
             tax_household: [110.0, 140.0, 175.0, 215.0, 260.0],
             tax_job: [30.0, 45.0, 65.0, 90.0],
             level_mul: [1.0, 1.2, 1.45],
+            loan_offers: default_loan_offers(),
         }
     }
+}
+
+/// The offers of a content set without a `loan_offers` entry. // tune later
+pub fn default_loan_offers() -> Vec<LoanOffer> {
+    [
+        (25_000.0, 3.0, 26, 0),
+        (60_000.0, 4.0, 52, 1000),
+        (150_000.0, 5.0, 104, 5000),
+    ]
+    .into_iter()
+    .map(|(amount, interest_pct, weeks, min_population)| LoanOffer {
+        amount,
+        interest_pct,
+        weeks,
+        min_population,
+    })
+    .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

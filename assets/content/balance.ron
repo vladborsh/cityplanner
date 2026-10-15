@@ -57,4 +57,13 @@ Balance((
     tax_job: (30.0, 45.0, 65.0, 90.0),
     // Multiplier of tax_job by building level 1..3. // tune later
     level_mul: (1.0, 1.2, 1.45),
+
+    // --- Loans (system-design §16 M2) ---
+    // The bank's offers; simple interest for the whole term, equal weekly payments, one active
+    // loan per offer, paying off early costs only the principal left. // tune later
+    loan_offers: [
+        (amount: 25000.0, interest_pct: 3.0, weeks: 26, min_population: 0),
+        (amount: 60000.0, interest_pct: 4.0, weeks: 52, min_population: 1000),
+        (amount: 150000.0, interest_pct: 5.0, weeks: 104, min_population: 5000),
+    ],
 ))

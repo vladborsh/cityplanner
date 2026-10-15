@@ -14,6 +14,8 @@
 //!   that of the elevated or bridge variant for such segments.
 //! * **Service buildings**, per `Active` building with a service: `upkeep_week × budget(kind)
 //!   / 100`, the kind being its service's.
+//! * **Loans** (T-129), per active loan: an equal share of the principal and interest left,
+//!   in whole cents; the last week takes the remainder. Paid even into debt.
 //! * **Utility links**, per link: `length × upkeep_per_m_week × budget / 100`; a pipe uses the
 //!   water definition and budget, a power line the power ones.
 
@@ -26,7 +28,7 @@ use cp_core::{Cost, Tick, Treasury};
 use cp_net::{Elevation, NetGraph, Segment};
 use cp_utility::{UtilityGraph, UtilityNet};
 
-use crate::state::{EconomyState, WeekReport};
+use crate::state::{EconomyState, Loan, WeekReport};
 
 fn percent(pct: u8) -> f64 {
     f64::from(pct) / 100.0
@@ -115,6 +117,7 @@ pub fn week_report(i: &WeekInputs, week: u64) -> WeekReport {
             );
         }
     }
+    r.loan_payments = st.loans.iter().map(Loan::weekly).sum();
     r
 }
 
@@ -149,5 +152,9 @@ pub fn settle_week(
         tick.0 / TICKS_PER_WEEK,
     );
     treasury.balance += report.balance();
+    for loan in &mut state.loans {
+        loan.pay_week();
+    }
+    state.loans.retain(|l| l.weeks_left > 0);
     state.last_week = report;
 }

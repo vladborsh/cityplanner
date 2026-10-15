@@ -2,8 +2,9 @@
 //! economy besides the [`Treasury`](cp_core::Treasury) (`architecture/system-design.md` §11).
 
 use bevy_ecs::resource::Resource;
+use cp_content::LoanOffer;
 use cp_content::{ServiceKind, ZoneType};
-use cp_core::Cost;
+use cp_core::{Cost, Tick};
 use serde::{Deserialize, Serialize};
 
 /// Tax rate limits and default, percent.
@@ -98,6 +99,9 @@ pub struct WeekReport {
     pub road_upkeep: Cost,
     pub building_upkeep: Cost,
     pub utility_upkeep: Cost,
+    /// Weekly loan payments, principal and interest (T-129).
+    #[serde(default)]
+    pub loan_payments: Cost,
 }
 
 impl WeekReport {
@@ -109,16 +113,79 @@ impl WeekReport {
         self.road_upkeep + self.building_upkeep + self.utility_upkeep
     }
 
-    /// Income minus upkeep: the change of the treasury that week.
+    /// Income minus upkeep and loan payments: the change of the treasury that week.
     pub fn balance(&self) -> Cost {
-        self.income() - self.upkeep()
+        self.income() - self.upkeep() - self.loan_payments
     }
 }
 
-/// The economy's settings and last report. Serialized sim state.
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// An active loan, one per offer at most. Serialized sim state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Loan {
+    /// Index into `Balance::loan_offers`.
+    pub offer: u8,
+    pub principal_left: Cost,
+    /// Interest still to be paid over the remaining weeks (simple, fixed at the start).
+    pub interest_left: Cost,
+    pub weeks_left: u16,
+    pub taken_at: Tick,
+}
+
+impl Loan {
+    /// A loan just taken from `o`: the interest for the whole term is
+    /// `amount × interest_pct / 100`, rounded once.
+    pub fn new(offer: u8, o: &LoanOffer, taken_at: Tick) -> Self {
+        Self {
+            offer,
+            principal_left: Cost::from_units(o.amount),
+            interest_left: Cost::scaled(o.amount, f64::from(o.interest_pct) / 100.0),
+            weeks_left: o.weeks,
+            taken_at,
+        }
+    }
+
+    /// This week's `(principal, interest)` in whole cents: an equal share of what is left; the
+    /// last week takes the remainder.
+    pub fn payment(&self) -> (Cost, Cost) {
+        let w = i64::from(self.weeks_left.max(1));
+        if w == 1 {
+            (self.principal_left, self.interest_left)
+        } else {
+            (
+                Cost(self.principal_left.0 / w),
+                Cost(self.interest_left.0 / w),
+            )
+        }
+    }
+
+    /// This week's total payment.
+    pub fn weekly(&self) -> Cost {
+        let (p, i) = self.payment();
+        p + i
+    }
+
+    /// Books one weekly payment; true when that was the last.
+    pub fn pay_week(&mut self) -> bool {
+        let (p, i) = self.payment();
+        self.principal_left = self.principal_left - p;
+        self.interest_left = self.interest_left - i;
+        self.weeks_left = self.weeks_left.saturating_sub(1);
+        self.weeks_left == 0
+    }
+}
+
+/// The economy's settings, loans and last report. Serialized sim state.
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EconomyState {
     pub taxes: TaxRates,
     pub budgets: Budgets,
     pub last_week: WeekReport,
+    /// Active loans, ordered by offer index (T-129).
+    pub loans: Vec<Loan>,
+}
+
+impl EconomyState {
+    pub fn loan(&self, offer: u8) -> Option<&Loan> {
+        self.loans.iter().find(|l| l.offer == offer)
+    }
 }
