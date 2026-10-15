@@ -22,6 +22,7 @@ pub mod metrics;
 pub mod net_summary;
 pub mod palette;
 pub mod panels;
+pub mod roads;
 pub mod windows;
 
 pub use debug::{DebugData, PhaseTimes, TickRate};

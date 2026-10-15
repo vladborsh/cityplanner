@@ -6,17 +6,16 @@ use bevy_egui::egui;
 use cp_building::Demand;
 use cp_content::UtilityKind;
 use cp_core::SimSpeed;
-use cp_net::ElevationMode;
 use cp_render::{LightingSettings, Overlay, OverlayState};
 use cp_sim::SimView;
 use cp_tools::{
-    ActiveTool, CommandOutbox, PALETTE, RoadMode, ToolState, UtilityMode, ZoneToolKind,
-    format_money, snap_label, zone_color, zone_name,
+    ActiveTool, CommandOutbox, PALETTE, ToolState, UtilityMode, ZoneToolKind, format_money,
+    snap_label, zone_color, zone_name,
 };
 use cp_utility::UtilityNet;
 
 use crate::files::{FileMenu, toggle_saves};
-use crate::icons::{self, Icon};
+use crate::icons::Icon;
 use crate::palette::Category;
 use crate::set_speed;
 
@@ -203,6 +202,14 @@ fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
     add(ui);
 }
 
+/// Length of the planned road, metres.
+pub fn plan_length(g: &cp_tools::Ghost) -> f32 {
+    g.polylines
+        .iter()
+        .flat_map(|p| p.windows(2))
+        .fold(0.0, |acc, w| acc + w[0].distance(w[1]))
+}
+
 /// The pinned "cost · verdict" block: a ghost that can be built or placed shows its cost, one
 /// that cannot shows why; with no ghost, a hint for the open category.
 pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
@@ -222,7 +229,12 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
         (Category::Roads, ActiveTool::Road) => match &tools.ghost {
             Some(g) if g.valid => {
                 let snap = snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));
-                ok(ui, "can build", g.cost, snap);
+                ok(
+                    ui,
+                    "can build",
+                    g.cost,
+                    format!(" · {:.0} m{snap}", plan_length(g)),
+                );
                 // One-way direction warnings (§6.6): yellow, they never block the build.
                 for w in &g.warnings {
                     ui.colored_label(egui::Color32::YELLOW, format!("⚠ {w}"));
@@ -497,61 +509,10 @@ fn zone_card(
     )
 }
 
-/// The Roads category: the road tool, road mode, road type (with its profile) and elevation.
+/// The Roads category: tools, mode, elevation and the road types as cards (see [`crate::roads`]).
 pub fn roads_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
-    section(ui, "Tool", |ui| {
-        let on = tools.active == ActiveTool::Road;
-        if tool_button(ui, Icon::Road, "Road", on).clicked() {
-            tools.select(if on {
-                ActiveTool::None
-            } else {
-                ActiveTool::Road
-            });
-        }
-    });
-    if tools.active != ActiveTool::Road {
-        return;
-    }
-    section(ui, "Mode", |ui| {
-        ui.horizontal_wrapped(|ui| {
-            for (mode, icon, label) in [
-                (RoadMode::Straight, Icon::Road, "Straight"),
-                (RoadMode::Curve, Icon::Curve, "Curve (3 clicks)"),
-                (RoadMode::Free, Icon::FreeRoad, "Free (Enter ends)"),
-            ] {
-                if tool_button(ui, icon, label, tools.road.mode == mode).clicked() {
-                    tools.road.set_mode(mode);
-                }
-            }
-        });
-    });
-    if let Some(content) = view.and_then(|v| v.content.as_ref()) {
-        if tools.road.road.is_none() {
-            tools.road.road = content.roads().next().map(|(id, _)| id);
-        }
-        section(ui, "Road type", |ui| {
-            let current = tools
-                .road
-                .road
-                .map_or("—".to_string(), |id| content.road(id).name.clone());
-            egui::ComboBox::from_id_salt("road_type")
-                .selected_text(current)
-                .show_ui(ui, |ui| {
-                    for (id, def) in content.roads() {
-                        ui.selectable_value(&mut tools.road.road, Some(id), &def.name);
-                    }
-                });
-            if let Some(id) = tools.road.road {
-                icons::road_profile(ui, content.road(id), egui::vec2(180.0, 28.0));
-            }
-        });
-    }
-    section(ui, "Elevation", |ui| {
-        ui.label(match tools.road.elevation() {
-            ElevationMode::Ground => "Ground (PgUp raises)".to_string(),
-            ElevationMode::Elevated(h) => format!("Raised {h:.0} m (PgUp / PgDn)"),
-        });
-    });
+    let content = view.and_then(|v| v.content.as_deref());
+    crate::roads::roads_panel(ui, content, tools);
 }
 
 #[cfg(test)]

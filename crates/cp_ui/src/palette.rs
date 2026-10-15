@@ -385,6 +385,81 @@ mod tests {
     }
 
     #[test]
+    fn road_cards_match_the_content_in_class_and_lane_order_and_a_click_selects() {
+        let db = content();
+        let cards = crate::roads::cards(&db);
+        assert_eq!(cards.len(), db.roads().count());
+        assert!(
+            cards
+                .windows(2)
+                .all(|w| (w[0].class, w[0].lanes) <= (w[1].class, w[1].lanes)),
+            "{cards:?}"
+        );
+        let mut rig = Rig::new();
+        rig.click_category(Category::Roads);
+        rig.click_label("Build");
+        assert_eq!(rig.tools.active, ActiveTool::Road);
+        // The panel scrolls, so only the first cards are painted; click the first two.
+        for c in &cards[..2] {
+            rig.click_label(&c.name);
+            assert_eq!(rig.tools.road.road, Some(c.id));
+        }
+        assert!(rig.frame(vec![]).contains("no zoning") == cards.iter().any(|c| !c.allows_zoning),);
+    }
+
+    #[test]
+    fn elevation_buttons_stay_within_the_levels() {
+        let mut rig = Rig::new();
+        rig.click_category(Category::Roads);
+        rig.click_label("Build");
+        rig.click_label("−");
+        assert_eq!(rig.tools.road.level, 0);
+        for _ in 0..cp_tools::MAX_ELEVATION_LEVEL + 2 {
+            rig.click_label("+");
+        }
+        assert_eq!(rig.tools.road.level, cp_tools::MAX_ELEVATION_LEVEL);
+        rig.click_label("−");
+        assert_eq!(rig.tools.road.level, cp_tools::MAX_ELEVATION_LEVEL - 1);
+    }
+
+    #[test]
+    fn the_road_verdict_shows_length_cost_and_errors() {
+        let mut rig = Rig::new();
+        rig.click_category(Category::Roads);
+        rig.click_label("Build");
+        rig.tools.ghost = Some(Ghost {
+            polylines: vec![vec![
+                bevy::math::Vec3::ZERO,
+                bevy::math::Vec3::new(30.0, 0.0, 40.0),
+            ]],
+            valid: true,
+            cost: Some(Cost(5_000)),
+            errors: vec![],
+            half_width: 3.0,
+            snap: Default::default(),
+            chevrons: Vec::new(),
+            warnings: vec!["one-way: arms face the same way".into()],
+        });
+        rig.frame(vec![]);
+        let text = rig.frame(vec![]);
+        assert!(text.contains("one-way: arms"), "{text}");
+        assert!(text.contains("50 m"), "{text}");
+        assert!(text.contains("can build"), "{text}");
+        rig.tools.ghost = Some(Ghost {
+            polylines: vec![],
+            valid: false,
+            cost: None,
+            errors: vec!["crosses water".into()],
+            half_width: 3.0,
+            snap: Default::default(),
+            chevrons: Vec::new(),
+            warnings: vec![],
+        });
+        let text = rig.frame(vec![]);
+        assert!(text.contains("crosses water"), "{text}");
+    }
+
+    #[test]
     fn the_palette_is_56_wide_and_the_tool_panel_300() {
         let mut rig = Rig::new();
         let pal = rig.palette[0].1;
@@ -432,7 +507,7 @@ mod tests {
     fn clicking_a_tool_activates_it_and_the_verdict_shows_for_valid_and_invalid_ghosts() {
         let mut rig = Rig::new();
         rig.click_category(Category::Roads);
-        rig.click_label("Road");
+        rig.click_label("Build");
         assert_eq!(rig.tools.active, ActiveTool::Road);
 
         rig.tools.ghost = Some(Ghost {
@@ -473,7 +548,7 @@ mod tests {
     fn the_roads_panel_paints_its_sections() {
         let mut rig = Rig::new();
         rig.click_category(Category::Roads);
-        rig.click_label("Road");
+        rig.click_label("Build");
         rig.tools.ghost = Some(Ghost {
             polylines: vec![],
             valid: true,
@@ -491,14 +566,14 @@ mod tests {
         let all: Vec<&str> = texts.iter().map(|(t, _)| t.as_str()).collect();
         for want in [
             "Roads",
-            "Tool",
-            "Road",
+            "Tools",
+            "Build",
             "Mode",
             "Straight",
             "Curve (3 clicks)",
             "Free (Enter ends)",
             "Road type",
-            "Elevation",
+            "Elevation (PgUp / PgDn)",
         ] {
             assert!(all.contains(&want), "{want:?} missing from {all:?}");
         }
