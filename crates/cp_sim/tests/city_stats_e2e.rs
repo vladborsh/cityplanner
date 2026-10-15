@@ -65,12 +65,8 @@ fn counters_match_a_direct_count_over_the_arenas() {
         s.buildings.abandoned,
         count(&|x| x.state == BuildingState::Abandoned)
     );
-    // flatlands has no water for a pump: every building that needs water lacks it.
+    // (BUG-031: the scenario's water towers supply the town; the counter is a count either way.)
     let no_water = count(&|x| x.flags.has(BuildingFlags::NO_WATER));
-    assert!(
-        no_water > 0,
-        "the city has no pump, so somebody lacks water"
-    );
     assert_eq!(s.buildings.no_water, no_water);
     assert_eq!(
         s.buildings.no_power,

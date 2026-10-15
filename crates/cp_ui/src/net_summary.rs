@@ -164,8 +164,8 @@ mod tests {
         );
     }
 
-    /// A real city on flatlands (no water for a pump, wind turbines for power): the rows are
-    /// exactly `CityStats.utilities`.
+    /// A real city on flatlands (water towers and wind turbines): the rows are exactly
+    /// `CityStats.utilities`.
     #[test]
     fn the_summary_of_a_real_city_is_city_stats() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -182,8 +182,8 @@ mod tests {
         assert!(stats.generation > 0);
         let water = &rows(stats, NetTab::Water);
         assert_eq!(water[0].unsupplied, stats.utilities[0].unsupplied);
-        assert_eq!(water[0].sources, 0, "no pump on flatlands");
-        assert!(water[0].unsupplied > 0, "so the buildings are dry");
+        assert!(water[0].sources > 0, "the scenario places water towers");
+        assert_eq!(water[0].unsupplied, 0, "and the buildings are supplied");
         let power = &rows(stats, NetTab::Power);
         assert!(power[0].sources > 0 && power[0].capacity > 0.0);
         assert_eq!(power[0].consumption, stats.utilities[2].consumption);

@@ -120,13 +120,23 @@ impl Script<'_> {
     }
 }
 
+/// The lattice fills up whatever the target (the loop only checks every 64 ticks): measured
+/// 102 residents per crossing at 5 streets (2544) and 81 at 16 (20811). The sources are sized
+/// for this many per crossing, a little above the first.
+const RESIDENTS_PER_CROSSING: f32 = 105.0;
+/// Consumption per resident of the grown town, measured at the same two sizes: water and
+/// sewage 0.64–0.70, power 1.10–1.21 (BUG-031); the upper values.
+const WATER_PER_RESIDENT: f32 = 0.7;
+const SEWAGE_PER_RESIDENT: f32 = 0.7;
+const POWER_PER_RESIDENT: f32 = 1.22;
+
 /// `Place` commands for the wind turbines on lots of the outermost blocks, and, where the
 /// owned tiles have water, a pump on it and an outflow on the shore with a pipe from each
 /// to the lattice. Every placement is validated first, so nothing here is rejected.
 fn service_sites(
     sim: &SimRunner,
     content: &ContentDb,
-    target_pop: usize,
+    streets: usize,
     runs: &[(Vec2, Vec2)],
 ) -> Vec<SimCommand> {
     let world = sim.world();
@@ -160,79 +170,122 @@ fn service_sites(
         .collect();
     // Farthest first; the index breaks ties deterministically.
     blocks.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-    if let Some(turbine) = content.building_id("wind_turbine") {
-        let count = (target_pop / 1500 + 1).clamp(1, 40);
-        // Every `step`-th outer block, so the turbines are spread along the edge.
-        let step = (blocks.len() / (count * 4)).max(1);
-        out.extend(
-            blocks
-                .iter()
-                .step_by(step)
-                .filter_map(|&(_, _, id, cols)| {
-                    zones
-                        .cell_footprint(ZoneCellRef {
-                            block: id,
-                            cell: (cols / 2) * BLOCK_DEPTH + 1,
-                        })
-                        .map(|o| o.c)
-                })
-                .filter(|&pos| valid(turbine, pos))
-                .take(count)
-                .map(|pos| place(turbine, pos)),
-        );
-    }
+    // Capacity (in consumption units) the pump and the outflow add, if they are placed.
+    let (mut water_cap, mut sewage_cap) = (0.0f32, 0.0f32);
+    // Where the pump and outflow stand, so the sources below keep clear of them.
+    let mut taken: Vec<Vec2> = Vec::new();
+    let capacity_of = |def| {
+        content
+            .building(def)
+            .service
+            .as_deref()
+            .and_then(|s| content.service_id(s))
+            .map_or(0, |s| content.service(s).capacity) as f32
+    };
 
-    // Water: the wet sample nearest to the lattice that takes a pump, then a shore spot
-    // nearby for the outflow.
-    let (Some(terrain), Some(pump), Some(outflow)) = (
-        terrain,
-        content.building_id("water_pump_station"),
-        content.building_id("sewage_outflow_station"),
-    ) else {
-        return out;
-    };
-    let nearest_street = |p: Vec2| {
-        runs.iter()
-            .flat_map(|&(a, b)| [a, b])
-            .min_by(|a, b| a.distance(p).total_cmp(&b.distance(p)))
-    };
-    let mut wet: Vec<(f32, Vec2)> = Vec::new();
-    let mut z = 0.0;
-    while z < MAP_SIZE {
-        let mut x = 0.0;
-        while x < MAP_SIZE {
-            let p = Vec2::new(x, z);
-            if terrain.water_depth(p) >= 2.0 {
-                wet.push((p.distance(centre), p));
+    'water: {
+        // Water: the wet sample nearest to the lattice that takes a pump, then a shore spot
+        // nearby for the outflow.
+        let (Some(terrain), Some(pump), Some(outflow)) = (
+            terrain,
+            content.building_id("water_pump_station"),
+            content.building_id("sewage_outflow_station"),
+        ) else {
+            break 'water;
+        };
+        let nearest_street = |p: Vec2| {
+            runs.iter()
+                .flat_map(|&(a, b)| [a, b])
+                .min_by(|a, b| a.distance(p).total_cmp(&b.distance(p)))
+        };
+        let mut wet: Vec<(f32, Vec2)> = Vec::new();
+        let mut z = 0.0;
+        while z < MAP_SIZE {
+            let mut x = 0.0;
+            while x < MAP_SIZE {
+                let p = Vec2::new(x, z);
+                if terrain.water_depth(p) >= 2.0 {
+                    wet.push((p.distance(centre), p));
+                }
+                x += 20.0;
             }
-            x += 20.0;
+            z += 20.0;
         }
-        z += 20.0;
-    }
-    wet.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.x.total_cmp(&b.1.x)));
-    let Some(pump_at) = wet.iter().map(|w| w.1).find(|&p| valid(pump, p)) else {
-        return out;
-    };
-    let shore = (0..64).find_map(|k| {
-        let ring = 40.0 + (k / 8) as f32 * 20.0;
-        let a = (k % 8) as f32 * std::f32::consts::FRAC_PI_4;
-        let p = pump_at + Vec2::new(a.cos(), a.sin()) * ring;
-        valid(outflow, p).then_some(p)
-    });
-    out.push(place(pump, pump_at));
-    if let Some(street) = nearest_street(pump_at) {
-        out.push(SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
-            kind: UtilityKind::Water,
-            path: vec![pump_at, street],
-        }));
-    }
-    if let Some(shore) = shore {
-        out.push(place(outflow, shore));
-        if let Some(street) = nearest_street(shore) {
+        wet.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.x.total_cmp(&b.1.x)));
+        let Some(pump_at) = wet.iter().map(|w| w.1).find(|&p| valid(pump, p)) else {
+            break 'water;
+        };
+        let shore = (0..64).find_map(|k| {
+            let ring = 40.0 + (k / 8) as f32 * 20.0;
+            let a = (k % 8) as f32 * std::f32::consts::FRAC_PI_4;
+            let p = pump_at + Vec2::new(a.cos(), a.sin()) * ring;
+            valid(outflow, p).then_some(p)
+        });
+        out.push(place(pump, pump_at));
+        water_cap += capacity_of(pump);
+        taken.push(pump_at);
+        if let Some(street) = nearest_street(pump_at) {
             out.push(SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
                 kind: UtilityKind::Water,
-                path: vec![shore, street],
+                path: vec![pump_at, street],
             }));
+        }
+        if let Some(shore) = shore {
+            out.push(place(outflow, shore));
+            sewage_cap += capacity_of(outflow);
+            taken.push(shore);
+            if let Some(street) = nearest_street(shore) {
+                out.push(SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
+                    kind: UtilityKind::Water,
+                    path: vec![shore, street],
+                }));
+            }
+        }
+    }
+
+    let residents = (streets * streets) as f32 * RESIDENTS_PER_CROSSING;
+    // Sources sized for the town the lattice holds, on free land beside the lattice (the
+    // blocks farthest from the centre first, one source per block, none within 30 m of
+    // another): sewage treatment plants, water towers and wind turbines. Without them the
+    // buildings lack supply and are abandoned after 7 game days (BUG-031; flatlands has no
+    // water for a pump).
+    let sources = [
+        (
+            "sewage_treatment_plant",
+            residents * SEWAGE_PER_RESIDENT,
+            sewage_cap,
+        ),
+        ("water_tower", residents * WATER_PER_RESIDENT, water_cap),
+        ("wind_turbine", residents * POWER_PER_RESIDENT, 0.0),
+    ];
+    let mut sites = blocks.iter().filter_map(|&(_, _, id, cols)| {
+        zones
+            .cell_footprint(ZoneCellRef {
+                block: id,
+                cell: (cols / 2) * BLOCK_DEPTH + 1,
+            })
+            .map(|o| o.c)
+    });
+    for (name, need, have) in sources {
+        let Some(def) = content.building_id(name) else {
+            continue;
+        };
+        let capacity = capacity_of(def);
+        if capacity <= 0.0 {
+            continue;
+        }
+        let count = ((need - have).max(0.0) / capacity).ceil() as usize;
+        let mut placed = 0;
+        while placed < count {
+            let Some(pos) = sites.next() else {
+                break;
+            };
+            if taken.iter().any(|t| t.distance(pos) < 30.0) || !valid(def, pos) {
+                continue;
+            }
+            taken.push(pos);
+            out.push(place(def, pos));
+            placed += 1;
         }
     }
     out
@@ -297,16 +350,24 @@ pub fn grid_city(
     // turbines on lots at the edge of the lattice (they stay unpainted), and, where the map
     // has water in the owned tiles, a pump on it and an outflow on the shore.
     let mut utilities = Vec::new();
+    // One link per block side: every crossing is then a node both streets share. A link
+    // along a whole run would cross the perpendicular ones without joining them, leaving the
+    // inner streets as networks of their own with no source (BUG-031).
     for kind in [UtilityKind::Power, UtilityKind::Water] {
         for &(from, to) in &runs {
-            utilities.push(SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
-                kind,
-                path: vec![from, to],
-            }));
+            let pieces = ((from.distance(to) / STREET_SPACING).round() as usize).max(1);
+            for k in 0..pieces {
+                let a = from.lerp(to, k as f32 / pieces as f32);
+                let b = from.lerp(to, (k + 1) as f32 / pieces as f32);
+                utilities.push(SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
+                    kind,
+                    path: vec![a, b],
+                }));
+            }
         }
     }
     script.run(utilities);
-    let sites = service_sites(script.sim, &content, target_pop, &runs);
+    let sites = service_sites(script.sim, &content, n, &runs);
     script.run(sites);
 
     // Zones: one `PaintZones` command per block.
