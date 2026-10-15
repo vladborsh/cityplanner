@@ -39,6 +39,8 @@ fn db() -> ContentDb {
         building_src("pump", Some("pump"), "{}"),
         building_src("outflow", Some("outflow"), "{}"),
         building_src("plant", Some("plant"), "{}"),
+        building_src("tower", Some("tower"), "{Power: 10.0}"),
+        service_src("tower", "Water", 300),
         service_src("pump", "Water", 25),
         service_src("outflow", "Sewage", 100),
         service_src("plant", "Power", 25),
@@ -225,4 +227,50 @@ fn the_coverage_band_half_width_is_the_supply_reach() {
         "39 m: connected"
     );
     assert_ne!(bits(&m, outside) & BuildingFlags::NO_WATER, 0, "41 m: not");
+}
+
+/// T-109: a water tower (a free-standing water source of 300 that itself needs 10 power) with
+/// a pipe within 40 m supplies the houses in the pipe's component up to its capacity, works
+/// without electricity, and makes the component's outflow work like a pump does.
+#[test]
+fn a_water_tower_supplies_its_pipe_component_without_power() {
+    let db = db();
+    let mut b = BuildingGrid::new();
+    let mut g = UtilityGraph::new();
+    line(&mut g, UtilityNet::Pipe, 0.0, 200.0);
+    // 35 m from the pipe, standing free (no lot, no road).
+    let tower = add(&mut b, &db, "tower", 100.0, 35.0);
+    {
+        let t = b.get_mut(tower).unwrap();
+        t.footprint = cp_building::Footprint::Free { w: 2, d: 2 };
+        t.access = None;
+    }
+    let houses: Vec<_> = (0..31)
+        .map(|i| add(&mut b, &db, "house", 5.0 * i as f32, 10.0))
+        .collect();
+    let m = compute_supply(&db, &b, &g);
+    for (i, h) in houses.iter().enumerate() {
+        let dry = bits(&m, *h) & BuildingFlags::NO_WATER != 0;
+        assert_eq!(dry, i >= 30, "house {i}: 300 water, 10 each");
+    }
+    assert_ne!(
+        bits(&m, tower) & BuildingFlags::NO_POWER,
+        0,
+        "no plant: the tower has no power and still pumps"
+    );
+    assert_eq!(bits(&m, tower) & BuildingFlags::NO_WATER, 0);
+
+    // Out of reach of the pipe (45 m): it gives nothing.
+    let mut b2 = BuildingGrid::new();
+    let far = add(&mut b2, &db, "tower", 100.0, 45.0);
+    let h = add(&mut b2, &db, "house", 100.0, 10.0);
+    let m2 = compute_supply(&db, &b2, &g);
+    assert_ne!(bits(&m2, h) & BuildingFlags::NO_WATER, 0);
+    let _ = far;
+
+    // An outflow in the component works because the tower is a working water source.
+    let outflow = add(&mut b, &db, "outflow", 150.0, 10.0);
+    let m3 = compute_supply(&db, &b, &g);
+    assert_eq!(bits(&m3, houses[0]) & BuildingFlags::NO_SEWAGE, 0);
+    let _ = outflow;
 }

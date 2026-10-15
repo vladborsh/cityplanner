@@ -1,0 +1,10 @@
+Service((
+    id: "water_tower",
+    name: "Water tower",
+    kind: Water,
+    radius_m: 800.0,
+    capacity: 300,
+    site: Land,
+    road_access: false,
+    vehicles: [],
+))

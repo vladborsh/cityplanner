@@ -4,5 +4,6 @@ Service((
     kind: Power,
     radius_m: 800.0,
     capacity: 300,
+    road_access: false,
     vehicles: [],
 ))

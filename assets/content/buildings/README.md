@@ -12,11 +12,15 @@ Every zone type has levels and **two variants per level** (`<name>_<level>` and
 | `ind_N` | Industrial | 1–3 |
 | `office_N` | Office | 1–3 |
 
-Service buildings (`water_pump_station` on water, `sewage_outflow_station` at the shore,
+Service buildings (`water_pump_station` on water, `water_tower` free-standing on land, `sewage_outflow_station` at the shore,
 `coal_power_plant`, `wind_turbine`; `ServiceDef.capacity` is their supply per game day, `site` where
 they may stand) carry `service: Some(..)`, a `cost` (what the player pays to place one) and an
 `upkeep_week` (per game week at a 100% budget; both in currency units) and are never spawned by
 the zone system.
+
+Free-standing types (`wind_turbine`, `water_tower`: `road_access: false` in their service, §8.1)
+need no road and no zone cells; their `jobs` are zero. The tower's numbers (capacity 300 against the
+pump's 1000, cost 5000, upkeep 150, Power 10) are proposals for the balance analyst.
 
 **All numbers below the lot size are PLACEHOLDERS for balance tuning** (T-028):
 households / jobs per education level, consumption (water, sewage, power per game day),

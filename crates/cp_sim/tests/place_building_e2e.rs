@@ -58,8 +58,9 @@ fn run(sim: &mut SimRunner, cmd: BuildingCommand) -> Result<(), String> {
     }
 }
 
+/// A service building that stands on a road: the coal plant (3×3; the turbine is free-standing now).
 fn pump(c: &ContentDb) -> BuildingDefId {
-    c.building_id("wind_turbine").unwrap()
+    c.building_id("coal_power_plant").unwrap()
 }
 
 /// Centre of a valid cell in row 1 of the first block, column `col`.
@@ -99,7 +100,7 @@ fn place_then_demolish_round_trip() {
         assert_eq!(b.state, BuildingState::UnderConstruction);
         (id, b.lot().expect("a lot").cells().collect::<Vec<_>>())
     };
-    assert_eq!(cells.len(), 4);
+    assert_eq!(cells.len(), 9);
     {
         let z = sim.world().resource::<ZoneGrid>();
         assert_ne!(z.revision(), zrev);
@@ -120,7 +121,7 @@ fn place_then_demolish_round_trip() {
     assert_eq!(sim.world().resource::<BuildingGrid>().len(), 1);
 
     // Finishes construction after its `build_hours`.
-    let build = build_ticks(c.building(c.building_id("wind_turbine").unwrap()));
+    let build = build_ticks(c.building(c.building_id("coal_power_plant").unwrap()));
     for _ in 0..=build {
         sim.tick_once();
     }
@@ -256,7 +257,7 @@ fn a_pump_needs_water_and_other_buildings_cannot_stand_in_it() {
     let (dry, wet) = (spot(&sim, 3), spot(&sim, 13));
     assert!(cols > 20);
     let pump = c.building_id("water_pump_station").unwrap();
-    let turbine = c.building_id("wind_turbine").unwrap();
+    let turbine = c.building_id("coal_power_plant").unwrap();
     let place = |pos, def| BuildingCommand::Place { def, pos, rot: 0.0 };
     let e = run(&mut sim, place(dry, pump)).unwrap_err();
     assert!(e.contains("on or beside water"), "{e}");
@@ -271,7 +272,7 @@ fn non_finite_positions_and_rotations_are_rejected() {
     let c = content();
     let mut sim = world(&c);
     let at = spot(&sim, 5);
-    let def = c.building_id("wind_turbine").unwrap();
+    let def = c.building_id("coal_power_plant").unwrap();
     for (pos, rot) in [
         (at, f32::NAN),
         (at, f32::INFINITY),

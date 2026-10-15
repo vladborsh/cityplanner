@@ -134,7 +134,7 @@ fn the_pump_goes_on_the_water_the_outflow_on_the_bank_and_a_land_building_not_on
     // lot is dry; with a lot cell over the water it is refused.
     let mut refused_over_water = 0;
     for &c in &cells {
-        match try_def("wind_turbine", c) {
+        match try_def("coal_power_plant", c) {
             Ok(plan) => {
                 for cell in plan.cells() {
                     let f = zones.cell_footprint(cell).unwrap();

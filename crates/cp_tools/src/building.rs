@@ -349,7 +349,7 @@ mod tests {
     fn ghost_is_valid_beside_the_road_and_red_elsewhere() {
         let (mut sim, c) = sim();
         let tool = BuildingTool {
-            def: c.building_id("wind_turbine"),
+            def: c.building_id("coal_power_plant"),
             quarters: 0,
             free_rot: 0.0,
         };
@@ -357,7 +357,7 @@ mod tests {
         let near = Vec2::new(3100.0, 3012.0);
         let g = preview(&view, &tool, near).unwrap();
         assert!(
-            g.valid && g.cells.len() == 4 && g.cost == Some(Cost::from_units(6000.0)),
+            g.valid && g.cells.len() == 9 && g.cost == Some(Cost::from_units(30000.0)),
             "{g:?}"
         );
         let far = preview(&view, &tool, Vec2::new(3100.0, 3300.0)).unwrap();
@@ -371,7 +371,7 @@ mod tests {
     fn rotation_cycles_and_picking_finds_the_building() {
         let (mut sim, c) = sim();
         let mut tool = BuildingTool {
-            def: c.building_id("wind_turbine"),
+            def: c.building_id("coal_power_plant"),
             quarters: 0,
             free_rot: 0.0,
         };
@@ -541,7 +541,7 @@ mod tests {
         }
         assert!(t.free_rot < 1e-4 || (t.free_rot - std::f32::consts::TAU).abs() < 1e-4);
         // A road type still turns by quarters.
-        let mut w = tool(&c, "wind_turbine");
+        let mut w = tool(&c, "coal_power_plant");
         w.turn(Some(&view), None, false);
         assert_eq!((w.quarters, w.free_rot), (1, 0.0));
         let _ = &mut sim;
@@ -656,7 +656,12 @@ mod tests {
         assert!(!h.connects && h.net == UtilityNet::Power && h.text.contains("power line"));
         // A road type has no hint of its own.
         assert!(
-            connection_hint(&view, c.building_id("wind_turbine").unwrap(), Vec2::ZERO).is_some()
+            connection_hint(
+                &view,
+                c.building_id("coal_power_plant").unwrap(),
+                Vec2::ZERO
+            )
+            .is_some()
         );
     }
 }

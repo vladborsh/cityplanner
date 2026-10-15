@@ -134,8 +134,17 @@ fn service_sites(
     let net = world.resource::<cp_net::NetGraph>();
     let terrain = world.get_resource::<crate::SimTerrain>().map(|t| &*t.0);
     let tiles = world.get_resource::<cp_terrain::TileOwnership>();
+    let buildings = world.resource::<cp_building::BuildingGrid>();
     let valid = |def, pos| {
-        cp_building::validate_placement(content, zones, net, terrain, tiles, def, pos, 0.0).is_ok()
+        if cp_building::is_free_standing(content, def) {
+            cp_building::validate_free_placement(
+                content, zones, net, buildings, terrain, tiles, def, pos, 0.0,
+            )
+            .is_ok()
+        } else {
+            cp_building::validate_placement(content, zones, net, terrain, tiles, def, pos, 0.0)
+                .is_ok()
+        }
     };
     let place = |def, pos| SimCommand::Building(BuildingCommand::Place { def, pos, rot: 0.0 });
     let mut out = Vec::new();

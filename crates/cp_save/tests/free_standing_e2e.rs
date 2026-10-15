@@ -1,6 +1,5 @@
-//! T-107 acceptance: a free-standing building (a temporary `road_access: false` def, the real
-//! types become free in T-109) is placed in a field far from any road, gets power from a line
-//! 40 m away, makes the zone cells under it invalid, frees them again when demolished, and
+//! T-107 acceptance (with the real `water_tower`, free-standing since T-109): a free-standing
+//! building is placed in a field far from any road, gets power from a line 40 m away, makes the zone cells under it invalid, frees them again when demolished, and
 //! survives save → load with the same invalid cells and the same checksum.
 
 use std::path::Path;
@@ -22,40 +21,8 @@ use cp_zone::{ZoneCellRef, ZoneGrid};
 
 const ROOT: &str = env!("CARGO_MANIFEST_DIR");
 
-/// The real content plus a free-standing `test_tower` (2×2, needs 5 power).
 fn content() -> Arc<ContentDb> {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("t107-content");
-    let _ = std::fs::remove_dir_all(&dir);
-    copy(&Path::new(ROOT).join("../../assets/content"), &dir);
-    std::fs::write(
-        dir.join("buildings/test_tower.ron"),
-        r#"Building((id: "test_tower", name: "Test tower", zone: Industrial, level: 1,
-        lot: (2, 2), jobs: (0, 0, 0, 0), consumption: {Power: 5.0}, tax_base: 0.0,
-        cost: 5000.0, upkeep_week: 1.0,
-        style: (floors: 1, roof: Flat, palette: "utility_grey"),
-        service: Some("test_tower"), icon: "wind_turbine"))"#,
-    )
-    .unwrap();
-    std::fs::write(
-        dir.join("services/test_tower.ron"),
-        r#"Service((id: "test_tower", name: "Test tower", kind: Water, radius_m: 100.0,
-        capacity: 10, road_access: false, vehicles: []))"#,
-    )
-    .unwrap();
-    Arc::new(ContentDb::load_dir(&dir).unwrap())
-}
-
-fn copy(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for e in std::fs::read_dir(from).unwrap() {
-        let e = e.unwrap();
-        let target = to.join(e.file_name());
-        if e.file_type().unwrap().is_dir() {
-            copy(&e.path(), &target);
-        } else {
-            std::fs::copy(e.path(), target).unwrap();
-        }
-    }
+    Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap())
 }
 
 fn runner(content: &Arc<ContentDb>) -> SimRunner {
@@ -111,8 +78,8 @@ fn tower_ids(sim: &SimRunner, def: BuildingDefId) -> Vec<BuildingId> {
 #[test]
 fn a_free_standing_building_is_placed_powered_blocks_cells_and_survives_save_and_load() {
     let c = content();
-    let tower = c.building_id("test_tower").unwrap();
-    let turbine = c.building_id("wind_turbine").unwrap();
+    let tower = c.building_id("water_tower").unwrap();
+    let turbine = c.building_id("coal_power_plant").unwrap();
     let mut sim = runner(&c);
     sim.world_mut().insert_resource(TileOwnership::only((2, 2)));
     let road = c.road_id("basic_2l").unwrap();
@@ -131,7 +98,7 @@ fn a_free_standing_building_is_placed_powered_blocks_cells_and_survives_save_and
     sim.tick_once();
     let baseline = invalid_cells(&sim);
 
-    // A wind turbine on the road gives the power line something to carry.
+    // A coal plant on the road gives the power line something to carry.
     let spot = {
         let z = sim.world().resource::<ZoneGrid>();
         let (id, _) = z.blocks().next().unwrap();
