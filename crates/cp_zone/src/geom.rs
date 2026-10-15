@@ -88,6 +88,121 @@ pub fn point_segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     p.distance(a + ab * t)
 }
 
+/// A convex quadrilateral, counter-clockwise (a free-standing building's rectangle).
+pub type Quad = [Vec2; 4];
+
+/// Axis-aligned bounds `(min, max)` of a quad.
+pub fn quad_aabb(q: &Quad) -> (Vec2, Vec2) {
+    let lo = q[0].min(q[1]).min(q[2]).min(q[3]);
+    let hi = q[0].max(q[1]).max(q[2]).max(q[3]);
+    (lo, hi)
+}
+
+/// Whether the interiors of two convex quads overlap (SAT; merely touching is not overlap).
+pub fn quads_overlap(a: &Quad, b: &Quad) -> bool {
+    for q in [a, b] {
+        for i in 0..4 {
+            let edge = q[(i + 1) % 4] - q[i];
+            let axis = Vec2::new(-edge.y, edge.x);
+            let proj = |poly: &Quad| {
+                poly.iter()
+                    .map(|p| p.dot(axis))
+                    .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| {
+                        (lo.min(v), hi.max(v))
+                    })
+            };
+            let (a0, a1) = proj(a);
+            let (b0, b1) = proj(b);
+            if a1.min(b1) - a0.max(b0) <= 1e-4 * axis.length() {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Whether `p` is inside (or on the edge of) the convex counter-clockwise quad.
+pub fn quad_contains(q: &Quad, p: Vec2) -> bool {
+    (0..4).all(|i| (q[(i + 1) % 4] - q[i]).perp_dot(p - q[i]) >= 0.0)
+}
+
+/// Area of the intersection of two convex counter-clockwise quads (Sutherland–Hodgman).
+pub fn quad_intersection_area(subject: &Quad, clip: &Quad) -> f32 {
+    let (subject, clip) = (&ccw(subject), &ccw(clip));
+    let mut poly: Vec<Vec2> = subject.to_vec();
+    for i in 0..4 {
+        let (a, b) = (clip[i], clip[(i + 1) % 4]);
+        let inside = |p: Vec2| (b - a).perp_dot(p - a) >= 0.0;
+        let input = std::mem::take(&mut poly);
+        for j in 0..input.len() {
+            let (p, q) = (input[j], input[(j + 1) % input.len()]);
+            match (inside(p), inside(q)) {
+                (true, true) => poly.push(q),
+                (true, false) => poly.push(cross_at(p, q, a, b)),
+                (false, true) => {
+                    poly.push(cross_at(p, q, a, b));
+                    poly.push(q);
+                }
+                (false, false) => {}
+            }
+        }
+        if poly.is_empty() {
+            return 0.0;
+        }
+    }
+    (0..poly.len())
+        .map(|i| poly[i].perp_dot(poly[(i + 1) % poly.len()]))
+        .sum::<f32>()
+        .abs()
+        * 0.5
+}
+
+/// The quad with counter-clockwise winding (a mirrored cell comes out clockwise).
+pub fn ccw(q: &Quad) -> Quad {
+    let area: f32 = (0..4).map(|i| q[i].perp_dot(q[(i + 1) % 4])).sum();
+    if area >= 0.0 {
+        *q
+    } else {
+        [q[3], q[2], q[1], q[0]]
+    }
+}
+
+/// Where the line `p`–`q` crosses the line `a`–`b`.
+fn cross_at(p: Vec2, q: Vec2, a: Vec2, b: Vec2) -> Vec2 {
+    let (d, e) = (q - p, b - a);
+    let denom = d.perp_dot(e);
+    if denom.abs() < 1e-12 {
+        return p;
+    }
+    p + d * ((a - p).perp_dot(e) / denom)
+}
+
+/// Distance from the segment `a`–`b` to the convex quad (0 when they touch or cross).
+pub fn quad_segment_distance(q: &Quad, a: Vec2, b: Vec2) -> f32 {
+    if quad_contains(q, a) || quad_contains(q, b) {
+        return 0.0;
+    }
+    for i in 0..4 {
+        let (c, d) = (q[i], q[(i + 1) % 4]);
+        let (r, s) = (b - a, d - c);
+        let denom = r.perp_dot(s);
+        if denom.abs() > 1e-12 {
+            let t = (c - a).perp_dot(s) / denom;
+            let u = (c - a).perp_dot(r) / denom;
+            if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+                return 0.0;
+            }
+        }
+    }
+    let mut best = f32::INFINITY;
+    for i in 0..4 {
+        best = best.min(point_segment_distance(q[i], a, b));
+        best = best.min(point_segment_distance(a, q[i], q[(i + 1) % 4]));
+        best = best.min(point_segment_distance(b, q[i], q[(i + 1) % 4]));
+    }
+    best
+}
+
 /// Does the segment `a`–`b` intersect the axis-aligned square `[-h, h]²`?
 fn segment_hits_square(a: Vec2, b: Vec2, h: f32) -> bool {
     let d = b - a;

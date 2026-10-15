@@ -2,6 +2,7 @@
 //! `architecture/system-design.md` §8.
 
 pub mod command;
+pub mod free;
 pub mod grid;
 pub mod level;
 pub mod model;
@@ -10,11 +11,12 @@ pub mod spawn;
 pub use command::{
     BuildingCommand, BuildingError, PlacementPlan, apply, oriented_lot, validate_placement,
 };
+pub use free::{ROAD_CLEARANCE_M, is_free_standing, sync_blockers, validate_free_placement};
 pub use grid::{BuildingGrid, cells_under_lot, demolish_building, held_cells};
 pub use level::{rebuild, rebuild_candidate};
 pub use model::{
     AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, FOOTPRINT_CELL_M, Footprint,
-    Lot, build_ticks,
+    Lot, build_ticks, footprint_quad,
 };
 pub use spawn::{BLOCK_BUCKETS, DEMAND_PERIOD, Demand, SPAWN_STREAM, place, update_buildings};
 
@@ -70,54 +72,7 @@ mod tests {
             assert!(sizes.len() >= 2, "{zone:?} level 1 lots {sizes:?}");
         }
     }
-
-    /// T-106: a free-standing type (`road_access: false`) is refused by `Place` with a plain
-    /// error until T-107 gives it a placement rule; a type that needs a road is not.
-    #[test]
-    fn placing_a_free_standing_type_is_refused_with_a_clear_error() {
-        use crate::{BuildingError, validate_placement};
-        use bevy_math::Vec2;
-        let tower = |road_access: &str| {
-            ContentDb::from_sources(vec![
-                (
-                    "content/buildings/tower.ron".to_string(),
-                    r#"Building((id: "tower", name: "Tower", zone: Industrial, level: 1,
-                    lot: (1, 1), jobs: (0, 0, 0, 0), consumption: {}, tax_base: 0.0,
-                    cost: 1.0, upkeep_week: 1.0,
-                    style: (floors: 1, roof: Flat, palette: "utility_grey"),
-                    service: Some("tower_service")))"#
-                        .to_string(),
-                ),
-                (
-                    "content/services/tower.ron".to_string(),
-                    format!(
-                        r#"Service((id: "tower_service", name: "Tower", kind: Water,
-                        radius_m: 100.0, capacity: 10, {road_access} vehicles: []))"#
-                    ),
-                ),
-            ])
-            .unwrap()
-        };
-        let place = |db: &ContentDb| {
-            validate_placement(
-                db,
-                &cp_zone::ZoneGrid::default(),
-                &cp_net::NetGraph::default(),
-                None,
-                None,
-                db.building_id("tower").unwrap(),
-                Vec2::new(100.0, 100.0),
-                0.0,
-            )
-        };
-        let free = place(&tower("road_access: false,"));
-        assert_eq!(free, Err(BuildingError::FreePlacementUnsupported));
-        assert!(
-            BuildingError::FreePlacementUnsupported
-                .to_string()
-                .contains("free-standing")
-        );
-        // A type that needs a road gets as far as looking for one.
-        assert_eq!(place(&tower("")), Err(BuildingError::NoRoad));
-    }
 }
+
+#[cfg(test)]
+mod free_tests;

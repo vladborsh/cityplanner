@@ -846,3 +846,95 @@ mod ground {
         assert!(!w.grid.is_valid(wet));
     }
 }
+
+// ---------- free-standing blockers (T-107) ----------
+
+mod blockers {
+    use bevy_math::Vec2;
+
+    use super::*;
+
+    fn world() -> World {
+        let mut w = World::new();
+        w.line("basic_2l", (5000.0, 5000.0), (5200.0, 5000.0));
+        w.sync();
+        w
+    }
+
+    /// A rectangle in the cell's own frame: along `u` the whole cell, along `v` from the
+    /// cell's near edge to `frac` of its depth.
+    fn rect(grid: &ZoneGrid, cell: ZoneCellRef, frac: f32) -> [Vec2; 4] {
+        let o = grid.cell_footprint(cell).unwrap();
+        let h = o.half;
+        let (a, b) = (-h - 2.0, -h + 2.0 * h * frac);
+        [
+            o.c + o.u * (-h - 2.0) + o.v * a,
+            o.c + o.u * (h + 2.0) + o.v * a,
+            o.c + o.u * (h + 2.0) + o.v * b,
+            o.c + o.u * (-h - 2.0) + o.v * b,
+        ]
+    }
+
+    fn some_cell(w: &World) -> ZoneCellRef {
+        let (block, _) = w.grid.blocks().next().unwrap();
+        ZoneCellRef {
+            block,
+            cell: 5 * 4 + 2,
+        }
+    }
+
+    #[test]
+    fn a_rectangle_covering_half_a_cell_or_its_centre_makes_it_invalid_and_releasing_restores_it() {
+        let mut w = world();
+        let cell = some_cell(&w);
+        assert!(w.grid.is_valid(cell));
+        let rev = w.grid.revision();
+
+        // 40 % of the area, centre outside: still valid.
+        w.grid
+            .set_blockers(vec![crate::geom::ccw(&rect(&w.grid, cell, 0.4))]);
+        assert!(w.grid.is_valid(cell));
+        // 60 %: invalid.
+        w.grid.set_blockers(vec![rect(&w.grid, cell, 0.6)]);
+        assert!(!w.grid.is_valid(cell));
+        assert_ne!(w.grid.revision(), rev);
+        // The neighbour along the road is untouched.
+        let next = ZoneCellRef {
+            cell: cell.cell + 4,
+            ..cell
+        };
+        assert!(w.grid.is_valid(next));
+        // Gone: valid again.
+        w.grid.set_blockers(Vec::new());
+        assert!(w.grid.is_valid(cell));
+
+        // A thin strip through the centre (12 % of the area) counts: the centre is inside.
+        let o = w.grid.cell_footprint(cell).unwrap();
+        let strip = [
+            o.c - o.u * 0.5 - o.v * 6.0,
+            o.c + o.u * 0.5 - o.v * 6.0,
+            o.c + o.u * 0.5 + o.v * 6.0,
+            o.c - o.u * 0.5 + o.v * 6.0,
+        ];
+        w.grid.set_blockers(vec![strip]);
+        assert!(!w.grid.is_valid(cell));
+        assert_eq!(w.grid.blockers().len(), 1);
+    }
+
+    #[test]
+    fn blockers_hold_for_cells_made_after_them_and_do_not_change_equality() {
+        let mut w = world();
+        let before = w.grid.clone();
+        let cell = some_cell(&w);
+        let q = rect(&w.grid, cell, 1.0);
+        w.grid.set_blockers(vec![q]);
+        assert!(!w.grid.is_valid(cell));
+        // A road laid later over the same ground: its blocks see the obstacle.
+        w.line("basic_2l", (5300.0, 5000.0), (5400.0, 5000.0));
+        w.sync();
+        assert!(!w.grid.is_valid(cell));
+        // The list is derived state: it is not part of equality or of the save.
+        assert_eq!(w.grid.blockers().len(), 1);
+        assert_ne!(before.valid_cells(), w.grid.valid_cells());
+    }
+}

@@ -24,9 +24,10 @@ use cp_terrain::{SimTerrain, Terrain, TileOwnership};
 use cp_zone::{BLOCK_DEPTH, ZoneCellRef, ZoneGrid};
 use serde::{Deserialize, Serialize};
 
+use crate::free::{is_free_standing, validate_free_placement};
 use crate::grid::BuildingGrid;
 use crate::model::{
-    AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Lot, build_ticks,
+    AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Footprint, Lot, build_ticks,
 };
 use crate::spawn::place;
 
@@ -71,9 +72,10 @@ pub enum BuildingError {
     NeedsWater,
     LimitReached,
     UnknownBuilding,
-    /// A free-standing type (`ServiceDef.road_access: false`, §8.1) is placed by a rule that
-    /// does not exist yet (T-107): the command is refused rather than put on a road.
-    FreePlacementUnsupported,
+    /// The rectangle of a free-standing building is closer than 1 m to a road (§8.1).
+    Road,
+    /// The ground under a free-standing building is steeper than `MAX_CELL_SLOPE`.
+    TooSteep,
 }
 
 impl BuildingError {
@@ -109,7 +111,8 @@ impl fmt::Display for BuildingError {
             Self::NeedsWater => "must be built on or beside water",
             Self::LimitReached => "building limit reached",
             Self::UnknownBuilding => "no such building",
-            Self::FreePlacementUnsupported => "free-standing buildings cannot be placed yet",
+            Self::Road => "too close to a road",
+            Self::TooSteep => "ground too steep",
         })
     }
 }
@@ -119,17 +122,23 @@ impl std::error::Error for BuildingError {}
 /// A validated placement.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacementPlan {
-    pub lot: Lot,
-    /// Lot centre and road-direction yaw, as spawned buildings have them.
+    pub footprint: Footprint,
+    /// Lot centre and road-direction yaw, as spawned buildings have them; the rectangle's
+    /// centre and own yaw for a free-standing one.
     pub pos: Vec2,
     pub rot: f32,
-    pub access: AccessPoint,
+    /// `None` for a free-standing building.
+    pub access: Option<AccessPoint>,
     pub cost: Cost,
 }
 
 impl PlacementPlan {
+    /// The zone cells the building covers (none when it stands free).
     pub fn cells(&self) -> Vec<ZoneCellRef> {
-        self.lot.cells().collect()
+        match &self.footprint {
+            Footprint::Lot(lot) => lot.cells().collect(),
+            Footprint::Free { .. } => Vec::new(),
+        }
     }
 }
 
@@ -171,7 +180,8 @@ pub fn validate_placement(
         .service_id(service)
         .is_some_and(|s| !db.service(s).road_access)
     {
-        return Err(BuildingError::FreePlacementUnsupported);
+        // Free-standing types are placed by `validate_free_placement`.
+        return Err(BuildingError::NotPlaceable);
     }
     let (w, d) = oriented_lot(def, rot);
     let under = zones.cell_at(pos).ok_or(BuildingError::NoRoad)?;
@@ -243,10 +253,10 @@ pub fn validate_placement(
     }
     let (pos, rot, access) = place(zones, net, under.block, &lot).ok_or(BuildingError::NoRoad)?;
     Ok(PlacementPlan {
-        lot,
+        footprint: Footprint::Lot(lot),
         pos,
         rot,
-        access,
+        access: Some(access),
         cost: Cost::from_units(def.cost),
     })
 }
@@ -267,16 +277,18 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
                 ) else {
                     return Err(BuildingError::Missing);
                 };
-                let plan = validate_placement(
-                    &content.0,
-                    zones,
-                    net,
-                    world.get_resource::<SimTerrain>().map(|t| &*t.0),
-                    world.get_resource::<TileOwnership>(),
-                    *def,
-                    *pos,
-                    *rot,
-                )?;
+                let terrain = world.get_resource::<SimTerrain>().map(|t| &*t.0);
+                let tiles = world.get_resource::<TileOwnership>();
+                let plan = if is_free_standing(&content.0, *def) {
+                    let buildings = world
+                        .get_resource::<BuildingGrid>()
+                        .ok_or(BuildingError::Missing)?;
+                    validate_free_placement(
+                        &content.0, zones, net, buildings, terrain, tiles, *def, *pos, *rot,
+                    )?
+                } else {
+                    validate_placement(&content.0, zones, net, terrain, tiles, *def, *pos, *rot)?
+                };
                 (
                     plan,
                     content.0.building(*def).level,
@@ -292,13 +304,13 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
             }
             buildings.insert(Building {
                 def: *def,
-                footprint: crate::model::Footprint::Lot(plan.lot),
+                footprint: plan.footprint,
                 level,
                 state: BuildingState::UnderConstruction,
                 ready_at: Tick(tick.0 + build),
                 pos: plan.pos,
                 rot: plan.rot,
-                access: Some(plan.access),
+                access: plan.access,
                 flags: BuildingFlags::default(),
                 level_progress: 0.0,
             });

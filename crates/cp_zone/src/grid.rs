@@ -31,7 +31,7 @@ use cp_net::{Elevation, NetGraph, Segment, SegmentId};
 use cp_terrain::Terrain;
 use serde::{Deserialize, Serialize};
 
-use crate::geom::Obb;
+use crate::geom::{Obb, Quad, quad_aabb, quad_contains, quad_intersection_area};
 
 /// Steepest ground a cell may stand on: rise over run at the cell centre (25 %).
 pub const MAX_CELL_SLOPE: f32 = 0.25;
@@ -251,6 +251,11 @@ pub struct ZoneGrid {
     /// already account for it.
     #[serde(skip)]
     occupied: BTreeSet<ZoneCellRef>,
+    /// Rectangles of free-standing buildings (§8.1): cells under them are invalid. Derived
+    /// from the buildings, set with [`ZoneGrid::set_blockers`]; not saved (the saved `valid`
+    /// masks already account for them).
+    #[serde(skip)]
+    blockers: Vec<Quad>,
     /// The map, for the water and slope rule. Derived input, not saved; set with
     /// [`ZoneGrid::set_terrain`].
     #[serde(skip)]
@@ -693,6 +698,53 @@ impl ZoneGrid {
         self.revision = next_revision();
     }
 
+    /// Replaces the free-standing rectangles that make cells invalid (§8.1): a cell is
+    /// invalid when its centre is inside a rectangle or a rectangle covers at least half of
+    /// its area. Derived state: the caller rebuilds it from the buildings after changes and
+    /// after a load. Cells near an old or a new rectangle are revalidated; nothing happens
+    /// when the list is unchanged.
+    pub fn set_blockers(&mut self, blockers: Vec<Quad>) {
+        if self.blockers == blockers {
+            return;
+        }
+        let old = std::mem::replace(&mut self.blockers, blockers);
+        self.revision = next_revision();
+        if !self.index.built {
+            return;
+        }
+        let mut work: BTreeSet<ZoneBlockId> = BTreeSet::new();
+        for q in old.iter().chain(self.blockers.iter()) {
+            let region = inflate(quad_aabb(q), REACH);
+            for key in bucket_range(region, BLOCK_BUCKET) {
+                if let Some(set) = self.index.block_buckets.get(&key) {
+                    work.extend(set.iter().copied());
+                }
+            }
+        }
+        self.revalidate(work, &BTreeSet::new());
+    }
+
+    /// The free-standing rectangles currently blocking cells.
+    pub fn blockers(&self) -> &[Quad] {
+        &self.blockers
+    }
+
+    fn blocked_by_rect(&self, o: &Obb) -> bool {
+        if self.blockers.is_empty() {
+            return false;
+        }
+        let (lo, hi) = o.aabb();
+        let cell = o.corners();
+        self.blockers.iter().any(|q| {
+            let (qlo, qhi) = quad_aabb(q);
+            if qhi.x < lo.x || qlo.x > hi.x || qhi.y < lo.y || qlo.y > hi.y {
+                return false;
+            }
+            quad_contains(&crate::geom::ccw(q), o.c)
+                || quad_intersection_area(&cell, q) >= 0.5 * (2.0 * o.half) * (2.0 * o.half)
+        })
+    }
+
     fn revalidate_cells(&mut self, cells: &[ZoneCellRef]) {
         if !self.index.built {
             return;
@@ -874,6 +926,12 @@ impl ZoneGrid {
                 block: id,
                 cell: i as u16,
             }) {
+                valid[i] = false;
+                continue;
+            }
+
+            // A free-standing building stands here (§8.1).
+            if self.blocked_by_rect(o) {
                 valid[i] = false;
                 continue;
             }

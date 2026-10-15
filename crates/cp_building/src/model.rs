@@ -115,19 +115,24 @@ impl Building {
     /// same rectangle, centred on `pos` and turned by the road direction.
     pub fn footprint_polygon(&self) -> [Vec2; 4] {
         let (w, d) = self.size();
-        let (hw, hd) = (
-            f32::from(w) * FOOTPRINT_CELL_M * 0.5,
-            f32::from(d) * FOOTPRINT_CELL_M * 0.5,
-        );
-        let (s, c) = self.rot.sin_cos();
-        let (ax, ay) = (Vec2::new(c, s), Vec2::new(-s, c));
-        [
-            self.pos - ax * hw - ay * hd,
-            self.pos + ax * hw - ay * hd,
-            self.pos + ax * hw + ay * hd,
-            self.pos - ax * hw + ay * hd,
-        ]
+        footprint_quad(self.pos, self.rot, w, d)
     }
+}
+
+/// The rectangle of `w` × `d` cells centred on `pos` and turned by `rot`, counter-clockwise.
+pub fn footprint_quad(pos: Vec2, rot: f32, w: u8, d: u8) -> [Vec2; 4] {
+    let (hw, hd) = (
+        f32::from(w) * FOOTPRINT_CELL_M * 0.5,
+        f32::from(d) * FOOTPRINT_CELL_M * 0.5,
+    );
+    let (s, c) = rot.sin_cos();
+    let (ax, ay) = (Vec2::new(c, s), Vec2::new(-s, c));
+    [
+        pos - ax * hw - ay * hd,
+        pos + ax * hw - ay * hd,
+        pos + ax * hw + ay * hd,
+        pos - ax * hw + ay * hd,
+    ]
 }
 
 /// Where the building meets the road network: a point on a segment, for pathfinding.

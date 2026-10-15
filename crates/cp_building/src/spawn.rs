@@ -256,8 +256,13 @@ pub fn update_buildings(
     demand: Res<Demand>,
     mut zones: ResMut<ZoneGrid>,
     mut buildings: ResMut<BuildingGrid>,
+    mut synced: Local<u64>,
 ) {
     buildings.finish_construction(tick.0);
+    if *synced != buildings.revision() {
+        *synced = buildings.revision();
+        crate::free::sync_blockers(&mut zones, &buildings);
+    }
     revalidate_access(&net, &mut buildings, tick.0);
     let Some(content) = content else { return };
     if !zones.index_ready() {
