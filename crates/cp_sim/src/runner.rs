@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use bevy_ecs::message::Messages;
 use bevy_ecs::schedule::{IntoScheduleConfigs, Schedule, SystemSet};
-use bevy_ecs::world::World;
+use bevy_ecs::world::{Mut, World};
 use bevy_tasks::{ComputeTaskPool, TaskPool};
 use cp_core::time::TICK_MILLIS;
 use cp_core::{CommandId, CommandOutcome, CommandQueue, SimLimits, SimRng, SimSpeed, Tick};
@@ -285,6 +285,13 @@ impl SimRunner {
     /// the same state. Outcomes are readable like any others.
     pub fn apply_due_commands(&mut self) {
         dispatch_commands(&mut self.world);
+        // No tick follows while paused, so the `Network` phase does not run: refresh the
+        // geometry clients draw (derived, never saved or hashed; the dirty set stays for the
+        // next tick) so a road built while paused is trimmed and has its junction (BUG-023).
+        self.world
+            .resource_scope(|world, mut geo: Mut<JunctionGeometry>| {
+                cp_net::refresh_geometry(world.resource::<NetGraph>(), &mut geo);
+            });
     }
 
     /// Cars and pedestrians on the road right now.
@@ -396,6 +403,7 @@ mod tests {
     use super::*;
     use bevy_ecs::message::MessageCursor;
     use cp_core::CommandLog;
+    use std::sync::Arc;
 
     const FRAME: Duration = Duration::from_millis(50);
 
@@ -403,6 +411,89 @@ mod tests {
         let mut sim = SimRunner::new(1);
         sim.world_mut().insert_resource(speed);
         (0..frames).map(|_| u64::from(sim.step(dt))).sum()
+    }
+
+    /// A sim with a road content set and terrain, and a T of two `basic_2l` roads queued for
+    /// the current tick (the second ends on the middle of the first).
+    fn sim_with_t() -> SimRunner {
+        use bevy_math::Vec2;
+        use cp_net::{ElevationMode, NetCommand, RoadPath};
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
+        let db = Arc::new(cp_content::ContentDb::load_dir(format!("{dir}/content")).unwrap());
+        let terrain = Arc::new(
+            cp_terrain::Terrain::load(&std::path::Path::new(dir).join("maps/flatlands")).unwrap(),
+        );
+        let mut sim = SimRunner::new(1);
+        sim.set_terrain(terrain);
+        sim.set_content(Arc::clone(&db));
+        let road = db.road_id("basic_2l").unwrap();
+        let at = sim.tick();
+        for (from, to) in [
+            (Vec2::new(4600.0, 4700.0), Vec2::new(4800.0, 4700.0)),
+            (Vec2::new(4700.0, 4600.0), Vec2::new(4700.0, 4700.0)),
+        ] {
+            sim.push_command(
+                SimCommand::Net(NetCommand::BuildRoad {
+                    road,
+                    path: RoadPath::Straight { from, to },
+                    elevation: ElevationMode::Ground,
+                }),
+                at,
+            );
+        }
+        sim
+    }
+
+    /// BUG-023/024: a road built while paused (commands applied, no tick) is trimmed and has
+    /// its junction polygon in the view straight away, and the next tick changes neither the
+    /// geometry nor the state.
+    #[test]
+    fn paused_build_road_gives_trimmed_segments_and_a_junction_polygon() {
+        let mut paused = sim_with_t();
+        paused.apply_due_commands();
+        let v = paused.view();
+        assert!(v.net.segment_count() >= 4);
+        assert_eq!(v.junctions.len(), v.net.node_count());
+        let t = v
+            .junctions
+            .iter()
+            .map(|(_, j)| j)
+            .find(|j| j.arms.len() == 3)
+            .expect("the T node");
+        assert!(t.polygon.len() >= 4);
+        for a in &t.arms {
+            let curve = v.junctions.trimmed_curve(&v.net, a.segment).unwrap();
+            let seg = v.net.segment(a.segment).unwrap();
+            assert!(curve.p3.distance(seg.curve.p3) > 1.0 || curve.p0.distance(seg.curve.p0) > 1.0);
+        }
+        let before: Vec<_> = v
+            .junctions
+            .iter()
+            .map(|(n, j)| (*n, j.polygon.clone()))
+            .collect();
+
+        // The same commands with no refresh (applied inside the tick) end in the same state
+        // and the same geometry: the refresh touched nothing the sim hashes.
+        let mut quiet = sim_with_t();
+        for _ in 0..3 {
+            paused.tick_once();
+            quiet.tick_once();
+        }
+        assert_eq!(paused.checksum(), quiet.checksum());
+        let after: Vec<_> = paused
+            .view()
+            .junctions
+            .iter()
+            .map(|(n, j)| (*n, j.polygon.clone()))
+            .collect();
+        assert_eq!(before, after);
+        let q: Vec<_> = quiet
+            .view()
+            .junctions
+            .iter()
+            .map(|(n, j)| (*n, j.polygon.clone()))
+            .collect();
+        assert_eq!(after, q);
     }
 
     #[test]

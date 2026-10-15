@@ -19,7 +19,9 @@ pub use command::{NetCommand, NetError, apply};
 pub use connections::{LaneConnection, Links, PedLink, PedLinkKind, Turn};
 pub use control::{ControlPlan, LightPlan, Phase, Priority, Signal};
 pub use graph::{MIN_SEGMENT_LENGTH, NODE_REUSE_EPS, NetGraph, NetOpError, SplitResult};
-pub use junction::{Arm, Junction, JunctionGeometry, compute_junction, update_junctions};
+pub use junction::{
+    Arm, Junction, JunctionGeometry, compute_junction, refresh_geometry, update_junctions,
+};
 pub use model::*;
 pub use run::road_run;
 

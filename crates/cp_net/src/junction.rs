@@ -323,6 +323,45 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
     })
 }
 
+/// Brings the geometry of every dirty or missing node up to date **without** a tick, for the
+/// renderer: while the game is paused commands still change the graph but the `Network` phase
+/// ([`update_junctions`]) does not run, so new roads would be drawn untrimmed and without a
+/// junction polygon (BUG-023/024).
+///
+/// Pure with respect to the sim state: it reads the graph and writes only `geo` (never saved,
+/// never hashed). The graph's dirty set is left intact, no light is installed and no control
+/// plan is made (a recomputed junction keeps its previous plan), so the next real tick
+/// recomputes the same nodes exactly as if this had never run. Returns whether `geo` changed.
+pub fn refresh_geometry(graph: &NetGraph, geo: &mut JunctionGeometry) -> bool {
+    let stale: Vec<NodeId> = graph
+        .nodes()
+        .map(|(id, _)| id)
+        .filter(|&id| graph.is_dirty(id) || !geo.junctions.contains_key(&id))
+        .collect();
+    let gone = geo.junctions.keys().any(|&id| graph.node(id).is_none());
+    if stale.is_empty() && !gone {
+        return false;
+    }
+    let version = geo.version + 1;
+    let map = Arc::make_mut(&mut geo.junctions);
+    for id in stale {
+        match compute_junction(graph, id, version) {
+            Some(mut j) => {
+                if let Some(old) = map.get(&id) {
+                    j.control = old.control.clone();
+                }
+                map.insert(id, j);
+            }
+            None => {
+                map.remove(&id);
+            }
+        }
+    }
+    map.retain(|id, _| graph.node(*id).is_some());
+    geo.version = version;
+    true
+}
+
 /// The `Network`-phase system: recomputes dirty nodes (draining the graph's dirty set),
 /// nodes that have no geometry yet (after a load), and drops junctions of removed nodes.
 /// Does nothing — and bumps no version — when everything is up to date.

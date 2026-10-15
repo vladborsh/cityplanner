@@ -512,3 +512,20 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn refresh_geometry_fills_dirty_nodes_and_leaves_the_dirty_set_alone() {
+    let db = content();
+    let (g, node, _) = star(&db, &[(0.0, 80.0, "basic_2l"), (90.0, 80.0, "basic_2l")]);
+    let dirty: Vec<NodeId> = g.dirty_nodes().collect();
+    assert!(!dirty.is_empty());
+    let mut geo = JunctionGeometry::default();
+    assert!(refresh_geometry(&g, &mut geo));
+    assert_eq!(geo.len(), g.node_count());
+    assert_eq!(
+        geo.get(node).unwrap().polygon,
+        compute_junction(&g, node, 1).unwrap().polygon
+    );
+    // The sim's own state is untouched: the same nodes are still dirty for the next tick.
+    assert_eq!(g.dirty_nodes().collect::<Vec<_>>(), dirty);
+}
