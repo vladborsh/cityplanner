@@ -823,6 +823,11 @@ pub fn build_junction_piece(
     for [a, b, c] in triangulate(&j.polygon) {
         tri(&mut m, verts[a], verts[b], verts[c], Vec3::Y);
     }
+    // The pavement around the outside of the junction joins the arms' sidewalks.
+    let walks = corner::walks(graph, j);
+    let mut kerb = MeshData::default();
+    corner::build(j, &walks, &ys, &mut m, &mut kerb);
+    corner::build_patches(&corner::patches(graph, j), &ys, &mut m, &mut kerb);
 
     // Edges between corners of *different* arms are the outside of the junction: skirt them.
     let k = j.polygon.len();
@@ -839,14 +844,26 @@ pub fn build_junction_piece(
             continue; // the end line of an arm: the segment's ring is attached here
         }
         let (ya, yb) = (ys[i], ys[(i + 1) % k]);
-        let (a, b) = (Vec3::new(pa.x, ya, pa.y), Vec3::new(pb.x, yb, pb.y));
+        // Under a sidewalk the wall starts at its top.
+        let lift = if walks.iter().any(|w| w.from == i) {
+            CURB
+        } else {
+            0.0
+        };
+        let (a, b) = (
+            Vec3::new(pa.x, ya + lift, pa.y),
+            Vec3::new(pb.x, yb + lift, pb.y),
+        );
         let out = (pb - pa).perp().try_normalize().unwrap_or(Vec2::Y);
         // Polygon is counter-clockwise in (x, z): the right-hand perpendicular points out.
         let outward = Vec3::new(-out.x, 0.0, -out.y);
         let (da, db) = if raised {
-            (DECK, DECK)
+            (DECK + lift, DECK + lift)
         } else {
-            (skirt_depth(terrain, pa, ya), skirt_depth(terrain, pb, yb))
+            (
+                skirt_depth(terrain, pa, ya) + lift,
+                skirt_depth(terrain, pb, yb) + lift,
+            )
         };
         let v = [a, b, b - Vec3::Y * db, a - Vec3::Y * da].map(|p| {
             push_vertex(
@@ -876,6 +893,7 @@ pub fn build_junction_piece(
         }
     }
     let far = m.clone();
+    append(&mut m, &kerb);
     Some(finish(m, far))
 }
 
@@ -1107,6 +1125,7 @@ impl RoadSet {
 }
 
 pub mod band;
+mod corner;
 mod ground;
 pub use band::{BAND_LIFT, BAND_STEP, band_data, band_mesh, band_polyline, to_mesh};
 pub use ground::{CLEARANCE, lod_height, max_mesh_height};
