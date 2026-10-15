@@ -1,5 +1,8 @@
 # apps/desktop
 
+Для игрока (сборка, запуск, управление, первые шаги): [`docs/PLAYING.md`](../../docs/PLAYING.md).
+Ниже флаги для агентов и скриптов.
+
 ```sh
 cargo run --release -p cp_desktop -- [--map flatlands|river_valley] [--cam overview|ground|street|valley]
   [--hour 0..24] [--scene grid:N] [--screenshot out.png] [--bench seconds] [--no-vsync] [--hidden]
