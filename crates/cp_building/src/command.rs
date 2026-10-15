@@ -177,24 +177,34 @@ pub fn validate_placement(
         w,
         d,
     };
-    let mut centres = Vec::new();
-    for cell in lot.cells() {
-        if zones.is_occupied(cell) || !zones.is_valid(cell) {
-            return Err(BuildingError::Blocked);
-        }
-        centres.push(zones.cell_footprint(cell).ok_or(BuildingError::Blocked)?.c);
-    }
-    if let Some(tiles) = tiles
-        && !centres.iter().all(|&c| tiles.contains_point(c))
-    {
-        return Err(BuildingError::NotOwned);
-    }
     let site = def
         .service
         .as_deref()
         .and_then(|s| db.service_id(s))
         .map_or(ServiceSite::Land, |s| db.service(s).site);
     let wet = |c: Vec2| terrain.is_some_and(|t| t.is_water(c));
+    let mut centres = Vec::new();
+    for cell in lot.cells() {
+        let centre = zones.cell_footprint(cell).ok_or(BuildingError::Blocked)?.c;
+        if zones.is_occupied(cell) {
+            return Err(BuildingError::Blocked);
+        }
+        // Cells over water are invalid for zoning (T-062). A building that stands on the
+        // water (a pump) may cover them; anything else is told it is water, not "blocked".
+        if !zones.is_valid(cell) {
+            match (wet(centre), site) {
+                (true, ServiceSite::OnWater) => {}
+                (true, _) => return Err(BuildingError::Water),
+                (false, _) => return Err(BuildingError::Blocked),
+            }
+        }
+        centres.push(centre);
+    }
+    if let Some(tiles) = tiles
+        && !centres.iter().all(|&c| tiles.contains_point(c))
+    {
+        return Err(BuildingError::NotOwned);
+    }
     match site {
         ServiceSite::Land => {
             if centres.iter().any(|&c| wet(c)) {
