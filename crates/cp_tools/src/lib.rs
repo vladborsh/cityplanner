@@ -24,10 +24,12 @@ pub mod zone_lines;
 
 pub use building::{BuildingTool, PlacementGhost, pick_building};
 pub use bulldozer::pick_segment;
+pub use cp_render::UiCapture;
 pub use outbox::CommandOutbox;
 pub use pick::{Inspected, Picked, pick};
 pub use plugin::{
-    ActiveTool, Ghost, ToolState, ToolsPlugin, UiCapture, compute_ghost, compute_utility_ghost,
+    ActiveTool, Ghost, ToolState, ToolsPlugin, compute_ghost, compute_utility_ghost, tool_click,
+    tool_hotkeys,
 };
 pub use road::{
     CHEVRON_SPACING, ELEVATION_STEP, MAX_ELEVATION_LEVEL, RoadMode, RoadTool, chevron_lines,

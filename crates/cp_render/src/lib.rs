@@ -14,6 +14,7 @@ pub mod road;
 pub mod road_render;
 pub mod sun;
 pub mod terrain;
+pub mod ui_capture;
 pub mod utility_render;
 
 pub use agent_render::{AgentRenderPlugin, AgentRenderStats, TickFraction};
@@ -25,6 +26,7 @@ pub use overlay::{Overlay, OverlayPlugin, OverlayState};
 pub use road_render::{RoadRenderPlugin, RoadStats};
 pub use sun::LightingSettings;
 pub use terrain::{Sun, TerrainChunk, TerrainRenderPlugin, TerrainStats};
+pub use ui_capture::UiCapture;
 pub use utility_render::UtilityRenderPlugin;
 
 /// Crate name, used by the skeleton smoke test.

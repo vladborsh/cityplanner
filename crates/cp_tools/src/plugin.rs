@@ -11,8 +11,8 @@ use cp_core::Cost;
 use cp_net::{
     NetCommand, RoadBuildError, RoadPath, SegmentId, SnapReport, one_way_report, road_run,
 };
-use cp_render::RtsCamera;
 use cp_render::camera::math::ray_terrain_hit;
+use cp_render::{RtsCamera, UiCapture};
 use cp_sim::{SimCommand, SimView};
 
 use crate::CommandOutbox;
@@ -42,12 +42,6 @@ pub enum ActiveTool {
     Utility,
     /// Removing the pipe or power-line piece under the cursor.
     UtilityRemove,
-}
-
-/// Set by the UI each frame: the pointer is over a panel/window, so clicks are not the tool's.
-#[derive(Resource, Default, Debug)]
-pub struct UiCapture {
-    pub pointer_over_ui: bool,
 }
 
 /// The road ghost: what the cursor would build.
@@ -161,11 +155,18 @@ impl Plugin for ToolsPlugin {
     }
 }
 
-fn tool_hotkeys(
+/// Exported for the headless input tests (`tests/click_through.rs`).
+#[doc(hidden)]
+pub fn tool_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
+    capture: Res<UiCapture>,
     mut state: ResMut<ToolState>,
     mut outbox: ResMut<CommandOutbox>,
 ) {
+    // A text field has the keyboard (the save name): its keys are not hotkeys.
+    if capture.keyboard_captured {
+        return;
+    }
     if state.active == ActiveTool::Road {
         if keys.just_pressed(KeyCode::PageUp) {
             state.road.raise();
@@ -412,7 +413,9 @@ fn raw_polyline(view: &SimView, path: &RoadPath) -> Vec<Vec3> {
     }
 }
 
-fn tool_click(
+/// Exported for the headless input tests (`tests/click_through.rs`).
+#[doc(hidden)]
+pub fn tool_click(
     buttons: Res<ButtonInput<MouseButton>>,
     capture: Res<UiCapture>,
     view: Option<Res<SimView>>,
@@ -423,7 +426,7 @@ fn tool_click(
         state.zone.end_stroke();
     }
     if state.active == ActiveTool::Zone
-        && !capture.pointer_over_ui
+        && !capture.pointer_blocked()
         && let (Some(view), Some(p)) = (view.as_deref(), state.hover)
     {
         let painted = if buttons.just_pressed(MouseButton::Left) {
@@ -438,7 +441,7 @@ fn tool_click(
         }
         return;
     }
-    if !buttons.just_pressed(MouseButton::Left) || capture.pointer_over_ui {
+    if !buttons.just_pressed(MouseButton::Left) || capture.pointer_blocked() {
         return;
     }
     let Some(p) = state.hover else {
@@ -590,7 +593,7 @@ fn tool_pick(
     if keys.just_pressed(KeyCode::Escape) && picked.0.is_some() {
         picked.0 = None;
     }
-    if !buttons.just_pressed(MouseButton::Left) || capture.pointer_over_ui {
+    if !buttons.just_pressed(MouseButton::Left) || capture.pointer_blocked() {
         return;
     }
     let (Some(view), Some(p), Ok(cam)) = (view, state.hover, camera.single()) else {

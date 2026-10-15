@@ -5,7 +5,7 @@
 //! functions take an `egui::Context` so they run (and are tested) without a window.
 
 use bevy::prelude::*;
-use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
+use bevy_egui::{EguiContexts, EguiPlugin, EguiPreUpdateSet, EguiPrimaryContextPass, egui};
 use cp_core::SimSpeed;
 use cp_render::{LightingSettings, OverlayState};
 use cp_sim::{SimCommand, SimView};
@@ -47,6 +47,12 @@ impl Plugin for UiPlugin {
             .init_resource::<FileMenu>()
             .init_resource::<cp_tools::Picked>()
             .init_resource::<cp_tools::Inspected>()
+            // After egui has taken this frame's pointer position, before any `Update` system:
+            // a click on a panel is already "over the UI" when the tools see it.
+            .add_systems(
+                PreUpdate,
+                update_ui_capture.after(EguiPreUpdateSet::BeginPass),
+            )
             .add_systems(Update, (toggle_debug, measure_tick_rate))
             .add_systems(EguiPrimaryContextPass, draw_ui);
     }
@@ -79,7 +85,6 @@ fn draw_ui(
     rate: Res<TickRate>,
     extra: Option<Res<debug::PhaseTimes>>,
     mut tools: ResMut<ToolState>,
-    mut capture: ResMut<UiCapture>,
     mut files: ResMut<FileMenu>,
     inspected: Res<cp_tools::Inspected>,
     mut picked: ResMut<cp_tools::Picked>,
@@ -128,9 +133,27 @@ fn draw_ui(
     }
     file_window(ctx, &mut files);
     info_panel(ctx, &inspected, &mut picked);
-    // Clicks over a panel or window belong to the UI, not to the tools.
-    capture.pointer_over_ui = ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
     Ok(())
+}
+
+/// What egui owns, given the pointer position of the frame that just began and the layout of
+/// the last drawn one: `(pointer, keyboard)`.
+pub fn egui_owns_input(ctx: &egui::Context) -> (bool, bool) {
+    (
+        ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input(),
+        ctx.egui_wants_keyboard_input(),
+    )
+}
+
+/// Writes [`UiCapture`] for the camera and the tools. Runs in `PreUpdate`, right after
+/// egui began its pass with this frame's input; the flag used to be written at the end of
+/// the previous frame's pass, so a click that moved the pointer onto a button the same
+/// frame was still "over the map".
+fn update_ui_capture(mut contexts: EguiContexts, mut capture: ResMut<UiCapture>) {
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
+    (capture.pointer_over_ui, capture.keyboard_captured) = egui_owns_input(ctx);
 }
 
 /// What a speed button sends.
@@ -206,5 +229,58 @@ pub(crate) mod testutil {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         }
+    }
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+    use crate::testutil::{frame, input};
+
+    fn panel(ui: &mut egui::Ui) {
+        egui::Window::new("p")
+            .fixed_pos(egui::pos2(100.0, 100.0))
+            .fixed_size(egui::vec2(200.0, 200.0))
+            .show(ui.ctx(), |ui| {
+                ui.label("panel");
+            });
+    }
+
+    /// The flag is read at the start of the frame the click arrives in, when the pointer has
+    /// just jumped onto the panel: the layout is the previous frame's, the position is new.
+    #[test]
+    fn a_pointer_that_jumps_onto_a_panel_is_over_the_ui_in_the_same_frame() {
+        let ctx = egui::Context::default();
+        frame(&ctx, input(0.0, vec![]), panel);
+        frame(&ctx, input(0.05, vec![]), panel);
+        assert_eq!(egui_owns_input(&ctx), (false, false));
+        // Checked first thing in the pass, before the panel is drawn again.
+        let at = |t: f64, pos: egui::Pos2| {
+            let mut owned = (false, false);
+            let events = vec![egui::Event::PointerMoved(pos)];
+            frame(&ctx, input(t, events), |ui| {
+                owned = egui_owns_input(ui.ctx());
+                panel(ui);
+            });
+            owned
+        };
+        assert!(
+            at(0.1, egui::pos2(150.0, 150.0)).0,
+            "over the panel at the frame start"
+        );
+        assert!(!at(0.2, egui::pos2(900.0, 500.0)).0, "back over the map");
+    }
+
+    #[test]
+    fn a_focused_text_field_owns_the_keyboard() {
+        let ctx = egui::Context::default();
+        let mut text = String::new();
+        let mut field = |ui: &mut egui::Ui| {
+            let r = ui.text_edit_singleline(&mut text);
+            r.request_focus();
+        };
+        frame(&ctx, input(0.0, vec![]), &mut field);
+        frame(&ctx, input(0.1, vec![]), &mut field);
+        assert!(egui_owns_input(&ctx).1);
     }
 }

@@ -19,6 +19,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use cp_sim::SimView;
 
+use crate::ui_capture::{UiCapture, track_window_focus};
+
 pub use math::Rig;
 use math::{owned_bounds, ray_terrain_hit, zoom_to_cursor};
 
@@ -99,6 +101,8 @@ pub struct RtsCameraPlugin;
 impl Plugin for RtsCameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraSettings>()
+            .init_resource::<UiCapture>()
+            .add_systems(PreUpdate, track_window_focus)
             .add_systems(Update, rts_camera);
     }
 }
@@ -124,6 +128,8 @@ fn rts_camera(
     buttons: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
+    capture: Res<UiCapture>,
+    mut drag_from_map: Local<(bool, bool)>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut cams: Query<(&Camera, &GlobalTransform, &mut Transform, &mut RtsCamera)>,
 ) {
@@ -133,6 +139,25 @@ fn rts_camera(
     let window = window.single().ok();
     let cursor = window.and_then(|w| w.cursor_position());
     let win_size = window.map_or(Vec2::new(1600.0, 900.0), |w| w.size());
+    // The UI owns the pointer and the keyboard when it says so. A drag belongs to the map
+    // only if it started there (sweeping over a panel mid-drag must not stall it).
+    let over_ui = capture.pointer_over_ui;
+    let typing = capture.keyboard_captured;
+    let (drag_mid, drag_right) = &mut *drag_from_map;
+    for (button, from_map) in [
+        (MouseButton::Middle, &mut *drag_mid),
+        (MouseButton::Right, &mut *drag_right),
+    ] {
+        if buttons.just_pressed(button) {
+            *from_map = !over_ui;
+        } else if !buttons.pressed(button) {
+            *from_map = false;
+        }
+    }
+    let (middle_drag, right_drag) = (
+        *drag_mid && buttons.pressed(MouseButton::Middle),
+        *drag_right && buttons.pressed(MouseButton::Right),
+    );
 
     for (camera, global, mut tf, mut rts) in &mut cams {
         let rts = &mut *rts;
@@ -146,11 +171,12 @@ fn rts_camera(
             (KeyCode::KeyD, right),
             (KeyCode::KeyA, -right),
         ] {
-            if keys.pressed(key) {
+            if !typing && keys.pressed(key) {
                 dir += v;
             }
         }
         if settings.edge_pan
+            && !over_ui
             && let Some(c) = cursor
             && window.is_some_and(|w| w.focused)
         {
@@ -166,7 +192,7 @@ fn rts_camera(
                 dir -= forward;
             }
         }
-        let panning_by_drag = buttons.pressed(MouseButton::Middle);
+        let panning_by_drag = middle_drag;
         if panning_by_drag {
             // The ground follows the cursor; vertical pixels are foreshortened by tilt.
             let fov_y = camera_fov(camera).unwrap_or(std::f32::consts::FRAC_PI_4);
@@ -189,10 +215,11 @@ fn rts_camera(
         }
 
         // --- rotate / tilt ---
-        let tilt_dir = keys.pressed(KeyCode::KeyR) as i32 - keys.pressed(KeyCode::KeyF) as i32;
+        let key = |k: KeyCode| !typing && keys.pressed(k);
+        let tilt_dir = key(KeyCode::KeyR) as i32 - key(KeyCode::KeyF) as i32;
         rts.target.pitch = math::key_tilt(rts.target.pitch, tilt_dir, settings.key_tilt_speed, dt);
-        let key_dir = keys.pressed(KeyCode::KeyQ) as i32 - keys.pressed(KeyCode::KeyE) as i32;
-        if buttons.pressed(MouseButton::Right) {
+        let key_dir = key(KeyCode::KeyQ) as i32 - key(KeyCode::KeyE) as i32;
+        if right_drag {
             let d = motion.delta;
             rts.target.yaw -= d.x * settings.drag_rotate_sens;
             rts.target.pitch -= d.y * settings.drag_rotate_sens;
@@ -208,6 +235,7 @@ fn rts_camera(
 
         // --- zoom to cursor ---
         let notches = match scroll.unit {
+            _ if over_ui => 0.0,
             MouseScrollUnit::Line => scroll.delta.y,
             MouseScrollUnit::Pixel => scroll.delta.y / 40.0,
         };
@@ -243,4 +271,110 @@ fn camera_fov(camera: &Camera) -> Option<f32> {
     let m = camera.clip_from_view();
     let f = m.y_axis.y;
     (f.is_finite() && f > 0.0).then(|| 2.0 * (1.0 / f).atan())
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::input::ButtonState;
+    use bevy::input::InputPlugin;
+    use bevy::input::mouse::{MouseButtonInput, MouseWheel};
+
+    use super::*;
+
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, InputPlugin, RtsCameraPlugin))
+            .add_message::<bevy::window::WindowFocused>()
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(50),
+            ));
+        let rig = Rig::from_pose(Vec3::new(500.0, 300.0, 500.0), Vec3::new(500.0, 0.0, 400.0));
+        app.world_mut().spawn((
+            Camera::default(),
+            Transform::default(),
+            GlobalTransform::default(),
+            RtsCamera::new(rig),
+        ));
+        app.update();
+        app
+    }
+
+    fn target(app: &mut App) -> Rig {
+        app.world_mut()
+            .query::<&RtsCamera>()
+            .single(app.world())
+            .unwrap()
+            .target
+    }
+
+    fn wheel(app: &mut App) {
+        app.world_mut().write_message(MouseWheel {
+            unit: MouseScrollUnit::Line,
+            x: 0.0,
+            y: 3.0,
+            phase: bevy::input::touch::TouchPhase::Moved,
+            window: Entity::PLACEHOLDER,
+        });
+        app.update();
+    }
+
+    #[test]
+    fn the_wheel_zooms_only_when_the_pointer_is_not_over_the_ui() {
+        let mut app = app();
+        let before = target(&mut app);
+        app.world_mut().resource_mut::<UiCapture>().pointer_over_ui = true;
+        wheel(&mut app);
+        let over_ui = target(&mut app);
+        assert_eq!(over_ui.distance, before.distance, "zoomed over a panel");
+        assert_eq!(over_ui.focus, before.focus);
+
+        app.world_mut().resource_mut::<UiCapture>().pointer_over_ui = false;
+        wheel(&mut app);
+        assert!(
+            target(&mut app).distance < before.distance,
+            "no zoom on the map"
+        );
+    }
+
+    #[test]
+    fn a_text_field_stops_the_camera_keys() {
+        let mut app = app();
+        let before = target(&mut app);
+        app.world_mut()
+            .resource_mut::<UiCapture>()
+            .keyboard_captured = true;
+        app.world_mut()
+            .write_message(bevy::input::keyboard::KeyboardInput {
+                key_code: KeyCode::KeyQ,
+                logical_key: bevy::input::keyboard::Key::Character("q".into()),
+                state: ButtonState::Pressed,
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(target(&mut app).yaw, before.yaw, "rotated while typing");
+    }
+
+    #[test]
+    fn a_drag_that_starts_over_the_ui_does_not_pan() {
+        let mut app = app();
+        let before = target(&mut app);
+        app.world_mut().resource_mut::<UiCapture>().pointer_over_ui = true;
+        app.world_mut().write_message(MouseButtonInput {
+            button: MouseButton::Middle,
+            state: ButtonState::Pressed,
+            window: Entity::PLACEHOLDER,
+        });
+        app.update();
+        app.world_mut().resource_mut::<UiCapture>().pointer_over_ui = false;
+        app.world_mut()
+            .write_message(bevy::input::mouse::MouseMotion {
+                delta: Vec2::new(80.0, 0.0),
+            });
+        app.update();
+        assert_eq!(target(&mut app).focus, before.focus);
+    }
 }
