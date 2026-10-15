@@ -340,3 +340,22 @@ fn a_sewage_utility_is_rejected_and_the_committed_content_has_one_pipe() {
         ]
     );
 }
+
+/// T-111: every shipped building names at least one style, every name is a shipped style, and
+/// an unknown name is a load error naming the file and field.
+#[test]
+fn every_building_references_existing_styles_and_a_dangling_one_is_rejected() {
+    let db = ContentDb::load_dir(root()).unwrap();
+    assert!(db.styles().count() >= 1);
+    for (_, d) in db.buildings() {
+        assert!(!d.styles.is_empty(), "{}", d.id);
+        for s in &d.styles {
+            assert!(db.style_id(s).is_some(), "{}: style {s}", d.id);
+        }
+    }
+    let e = errs(mutate("house_low_1.ron", "legacy_", "ghost_"));
+    assert!(
+        e.contains("house_low_1.ron: styles[0]: unknown style `ghost_"),
+        "{e}"
+    );
+}

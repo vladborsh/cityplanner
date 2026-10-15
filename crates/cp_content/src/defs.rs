@@ -38,6 +38,10 @@ def_id!(
     VehicleDefId
 );
 def_id!(
+    /// Dense index of a building style, assigned in sorted-string-id order.
+    StyleDefId
+);
+def_id!(
     /// Dense index of a utility (pipe / power line) type, assigned in sorted-string-id order.
     UtilityDefId
 );
@@ -51,6 +55,8 @@ pub enum ContentFile {
     Vehicle(VehicleDef),
     /// Appended in T-037.
     Utility(UtilityDef),
+    /// Appended in T-111.
+    Style(StyleDef),
     /// Global balance knobs (`balance.ron`); at most one file.
     Balance(Balance),
 }
@@ -268,15 +274,84 @@ pub enum RoofKind {
     Flat = 0,
     Gabled = 1,
     Hipped = 2,
+    Shed = 3,
+    Mansard = 4,
 }
 
-/// Procedural look of a building.
+/// Shape of the volume of a building inside its lot (`system-design.md` §8.2). Variants are
+/// only ever appended. The renderer draws the ones it does not know yet as `Box`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum Massing {
+    Box = 0,
+    LShape = 1,
+    Stepped = 2,
+    TowerOnPodium = 3,
+    TwinBlocks = 4,
+    Sawtooth = 5,
+    PumpHouse = 6,
+    Outflow = 7,
+    CoalPlant = 8,
+    WindTurbine = 9,
+    WaterTower = 10,
+    TreatmentPlant = 11,
+}
+
+/// Facade pattern family of a style.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum Facade {
+    Punched = 0,
+    Ribbon = 1,
+    Curtain = 2,
+    Shopfront = 3,
+    Industrial = 4,
+}
+
+/// Extra parts a style may carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum Detail {
+    Chimney = 0,
+    Balconies = 1,
+    Awning = 2,
+    RooftopUnits = 3,
+    Sign = 4,
+    LoadingDock = 5,
+    Tanks = 6,
+    Fence = 7,
+}
+
+/// Linear RGB colour, `0..=1` per channel.
+pub type Rgb = [f32; 3];
+
+/// Colours of a style. `walls` and `roof` and `trim` are alternatives picked per building.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct BuildingStyle {
-    pub floors: u8,
+pub struct StylePalette {
+    pub walls: Vec<Rgb>,
+    pub roof: Vec<Rgb>,
+    pub trim: Vec<Rgb>,
+    pub glass: Rgb,
+}
+
+/// Look of a building type (`assets/content/styles/*.ron`, `system-design.md` §8.2). A
+/// `BuildingDef` lists the styles it may use; which one a building gets is a hash of its
+/// `BuildingId` (not sim state).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StyleDef {
+    pub id: String,
+    pub massing: Massing,
     pub roof: RoofKind,
-    pub palette: String,
+    /// Floors, inclusive range.
+    pub floors: (u8, u8),
+    /// Share of the lot area the volume covers, inclusive range within `0..=1`.
+    pub footprint_fill: (f32, f32),
+    pub palette: StylePalette,
+    pub facade: Facade,
+    #[serde(default)]
+    pub details: Vec<Detail>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -304,7 +379,9 @@ pub struct BuildingDef {
     /// Weekly upkeep of a service building at a 100% budget, currency units.
     #[serde(default)]
     pub upkeep_week: f32,
-    pub style: BuildingStyle,
+    /// Styles (ids of `StyleDef`) the look of a building of this type is chosen from; at
+    /// least one.
+    pub styles: Vec<String>,
     /// Service this building provides (id of a `ServiceDef`), for service buildings.
     #[serde(default)]
     pub service: Option<String>,

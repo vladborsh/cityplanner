@@ -32,7 +32,7 @@ fn building(id: &str, zone: &str, extra: &str, service: &str) -> (String, String
         format!("b/{id}.ron"),
         format!(
             r#"Building((id: "{id}", name: "{id}", zone: {zone}, level: 1, lot: (1, 1), {extra}
-            style: (floors: 1, roof: Flat, palette: "p"), service: {service}))"#
+            styles: ["p"], service: {service}))"#
         ),
     )
 }
@@ -51,6 +51,7 @@ fn content() -> Arc<ContentDb> {
     Arc::new(
         ContentDb::from_sources(vec![
             ("r/street.ron".into(), ROAD.into()),
+            ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
             building("house", "ResLow", "households: 4, tax_base: 40.0,", "None"),
             building(
                 "shop",
@@ -620,6 +621,7 @@ mod city {
         Arc::new(
             ContentDb::from_sources(vec![
                 ("r/street.ron".into(), ROAD.into()),
+                ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
                 building("house", "ResLow", "households: 4, tax_base: 40.0,", "None"),
                 building(
                     "factory",

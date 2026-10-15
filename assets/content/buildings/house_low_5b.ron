@@ -8,5 +8,5 @@ Building((
     households: 6,
     consumption: {Water: 6.2, Sewage: 6.2, Power: 12.8},
     tax_base: 60.0,
-    style: (floors: 3, roof: Hipped, palette: "suburb_warm"),
+    styles: ["legacy_suburb_warm_hipped_3"],
 ))

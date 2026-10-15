@@ -1,7 +1,8 @@
 //! Pure building mesh generation (no Bevy types). See `architecture/system-design.md` §13.3.
 //!
 //! A building is a box on its lot (`Building::lot` × 8 m cells, inset by a front setback
-//! and side margins) with `style.floors` floors, a roof (`Flat`, `Gabled`, `Hipped`) and a
+//! and side margins) with floors and a roof (`Flat`, `Gabled`, `Hipped`; the other roofs and
+//! massings draw as a flat box until T-112) chosen by [`variant`] from the def's `StyleDef`s, and a
 //! facade. **Windows are geometry, not a texture atlas:** every wall is *tiled* exactly with
 //! wall-coloured and glass-coloured quads (no overlapping surfaces, so no z-fighting), the
 //! pattern (bay width, window size, ribbon glazing, door) chosen by zone family and level.
@@ -27,7 +28,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_math::{Vec2, Vec3};
 use cp_building::{Building, BuildingGrid, BuildingId, BuildingState, build_ticks};
-use cp_content::{BuildingDef, ContentDb, RoofKind, ZoneType};
+use cp_content::{
+    BuildingDef, ContentDb, PLACEHOLDER_INDEX, Rgb, RoofKind, StyleDef, StyleDefId, ZoneType,
+};
 use cp_core::Tick;
 use cp_net::NetGraph;
 use cp_terrain::Terrain;
@@ -50,76 +53,72 @@ const FRONT_SETBACK: f32 = 2.0;
 const BACK_MARGIN: f32 = 1.0;
 const PLINTH: f32 = 0.4;
 
-type Rgb = [f32; 3];
-
 fn rgba(c: Rgb, shade: f32) -> [f32; 4] {
     [c[0] * shade, c[1] * shade, c[2] * shade, 1.0]
 }
 
-/// Colours of a style. `walls` are alternatives picked by the seed.
-struct Palette {
-    walls: &'static [Rgb],
-    roof: Rgb,
-    trim: Rgb,
-    glass: Rgb,
+/// What the hash of a building picks inside its [`StyleDef`] (`system-design.md` §8.2).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VariantParams {
+    /// Floors, within the style's range.
+    pub floors: u8,
+    /// Share of the lot area the volume covers, within the style's range.
+    pub fill: f32,
+    pub wall: Rgb,
+    pub roof: Rgb,
+    pub trim: Rgb,
 }
 
-fn palette(name: &str) -> Palette {
-    match name {
-        "suburb_warm" => Palette {
-            walls: &[
-                [0.78, 0.66, 0.50],
-                [0.82, 0.74, 0.62],
-                [0.70, 0.52, 0.42],
-                [0.86, 0.80, 0.70],
-            ],
-            roof: [0.50, 0.22, 0.17],
-            trim: [0.90, 0.88, 0.82],
-            glass: [0.18, 0.24, 0.30],
-        },
-        "shopfront" => Palette {
-            walls: &[[0.72, 0.60, 0.46], [0.60, 0.40, 0.34], [0.78, 0.74, 0.62]],
-            roof: [0.36, 0.34, 0.33],
-            trim: [0.30, 0.22, 0.18],
-            glass: [0.20, 0.28, 0.34],
-        },
-        "city_concrete" => Palette {
-            walls: &[[0.60, 0.60, 0.58], [0.66, 0.65, 0.60], [0.54, 0.55, 0.57]],
-            roof: [0.32, 0.32, 0.33],
-            trim: [0.45, 0.45, 0.45],
-            glass: [0.16, 0.22, 0.28],
-        },
-        "office_grey" => Palette {
-            walls: &[[0.50, 0.53, 0.57], [0.58, 0.60, 0.62], [0.44, 0.47, 0.52]],
-            roof: [0.30, 0.31, 0.33],
-            trim: [0.36, 0.38, 0.41],
-            glass: [0.14, 0.22, 0.30],
-        },
-        "glass_blue" => Palette {
-            walls: &[[0.30, 0.42, 0.55], [0.26, 0.38, 0.52], [0.34, 0.46, 0.58]],
-            roof: [0.28, 0.30, 0.33],
-            trim: [0.22, 0.28, 0.35],
-            glass: [0.12, 0.28, 0.42],
-        },
-        "industry_rust" => Palette {
-            walls: &[[0.55, 0.36, 0.28], [0.62, 0.45, 0.32], [0.46, 0.34, 0.30]],
-            roof: [0.40, 0.40, 0.38],
-            trim: [0.30, 0.26, 0.24],
-            glass: [0.20, 0.22, 0.24],
-        },
-        "utility_grey" => Palette {
-            walls: &[[0.55, 0.57, 0.58]],
-            roof: [0.38, 0.40, 0.42],
-            trim: [0.40, 0.42, 0.44],
-            glass: [0.20, 0.24, 0.28],
-        },
-        _ => Palette {
-            walls: &[[0.6, 0.6, 0.6]],
-            roof: [0.35, 0.35, 0.35],
-            trim: [0.4, 0.4, 0.4],
-            glass: [0.2, 0.25, 0.3],
-        },
-    }
+/// FNV-1a 64 over the building's index, generation and def id, then a finaliser so every
+/// bit depends on every input (the modulo below reads the low bits).
+fn variant_hash(id: BuildingId, def: &BuildingDef) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    let mut eat = |bytes: &[u8]| {
+        for b in bytes {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    eat(&id.index.to_le_bytes());
+    eat(&id.generation.to_le_bytes());
+    eat(def.id.as_bytes());
+    h ^= h >> 32;
+    h = h.wrapping_mul(0xd6e8_feb8_6659_fd93);
+    h ^= h >> 32;
+    h
+}
+
+/// The look of a building: one of the def's styles and the floors, lot fill and colours
+/// inside it, all from a hash of `(id.index, id.generation, def.id)`. A function of sim
+/// state, not RNG: the same building looks the same after a load and on another client, and
+/// nothing is written to the sim. A style the content does not have draws as the grey
+/// placeholder.
+pub fn variant<'a>(
+    db: &'a ContentDb,
+    id: BuildingId,
+    def: &BuildingDef,
+) -> (&'a StyleDef, VariantParams) {
+    let h = variant_hash(id, def);
+    // Independent draws: each takes its own 16 bits of two mixed words.
+    let h2 = (h ^ (h >> 29)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    let draw = |k: u32| (((if k < 4 { h } else { h2 }) >> ((k % 4) * 16)) & 0xffff) as usize;
+    let style = def
+        .styles
+        .get(draw(0) % def.styles.len().max(1))
+        .and_then(|name| db.style_id(name))
+        .map_or_else(|| db.style(StyleDefId(PLACEHOLDER_INDEX)), |s| db.style(s));
+    let (f0, f1) = style.floors;
+    let (g0, g1) = style.footprint_fill;
+    let pal = &style.palette;
+    let pick = |list: &[Rgb], k: u32| list[draw(k) % list.len()];
+    let params = VariantParams {
+        floors: f0 + (draw(1) % (usize::from(f1.saturating_sub(f0)) + 1)) as u8,
+        fill: g0 + (g1 - g0) * (draw(2) as f32 / 65535.0),
+        wall: pick(&pal.walls, 3),
+        roof: pick(&pal.roof, 4),
+        trim: pick(&pal.trim, 5),
+    };
+    (style, params)
 }
 
 /// Window pattern of a zone family and level (the "atlas", as parameters).
@@ -433,7 +432,8 @@ fn roof(m: &mut MeshData, cx: &Ctx, kind: RoofKind, y: f32, lod: Lod) {
     let burned = cx.state == BuildingState::Burned;
     let rc = cx.roof;
     match kind {
-        RoofKind::Flat => {
+        // Shed and Mansard are drawn flat until T-112.
+        RoofKind::Flat | RoofKind::Shed | RoofKind::Mansard => {
             quad_up(
                 m,
                 [
@@ -666,6 +666,7 @@ pub fn build_building(
     def: &BuildingDef,
     net: &NetGraph,
     terrain: &Terrain,
+    db: &ContentDb,
     tick: Tick,
 ) -> BuildingPiece {
     let f = lot_frame(b, net);
@@ -673,8 +674,11 @@ pub fn build_building(
         f32::from(b.size().0) * CELL_SIZE,
         f32::from(b.size().1) * CELL_SIZE,
     );
-    let hu = (w * 0.5 - SIDE_MARGIN).max(1.0);
-    let hv = ((d - FRONT_SETBACK - BACK_MARGIN) * 0.5).max(1.0);
+    let (style_def, vp) = variant(db, id, def);
+    // The volume covers `fill` of the lot area: both half-extents shrink by its square root.
+    let shrink = vp.fill.clamp(0.0, 1.0).sqrt();
+    let hu = ((w * 0.5 - SIDE_MARGIN) * shrink).max(1.0);
+    let hv = (((d - FRONT_SETBACK - BACK_MARGIN) * 0.5) * shrink).max(1.0);
     let cv = (FRONT_SETBACK - BACK_MARGIN) * 0.5;
 
     // Ground: the highest corner of the box, with a foundation down to the lowest.
@@ -688,15 +692,13 @@ pub fn build_building(
     }
     let base = hi + PLINTH;
 
-    let pal = palette(&def.style.palette);
     let sd = seed(id, b);
     let style = facade_style(def.zone, def.level);
-    let wall_c = pal.walls[sd as usize % pal.walls.len()];
     let tone = 0.92 + (sd >> 8) as f32 % 9.0 * 0.02;
-    let mut wallc = rgba(wall_c, tone);
-    let mut roofc = rgba(pal.roof, 0.9 + (sd >> 16) as f32 % 5.0 * 0.04);
-    let mut trimc = rgba(pal.trim, 1.0);
-    let mut glassc = rgba(pal.glass, 1.0);
+    let mut wallc = rgba(vp.wall, tone);
+    let mut roofc = rgba(vp.roof, 0.9 + (sd >> 16) as f32 % 5.0 * 0.04);
+    let mut trimc = rgba(vp.trim, 1.0);
+    let mut glassc = rgba(style_def.palette.glass, 1.0);
     match b.state {
         BuildingState::Abandoned => {
             wallc = dull(wallc, 0.62);
@@ -727,7 +729,7 @@ pub fn build_building(
         state: b.state,
     };
 
-    let floors = u32::from(def.style.floors.max(1));
+    let floors = u32::from(vp.floors.max(1));
     let full_h = floors as f32 * style.floor_h;
     let (floors_shown, height) = match b.state {
         BuildingState::Burned => {
@@ -798,7 +800,7 @@ pub fn build_building(
                 cx.roof,
             );
         } else {
-            roof(m, &cx, def.style.roof, top, lod);
+            roof(m, &cx, style_def.roof, top, lod);
         }
     }
     let [near, mid, far] = pieces;
@@ -915,7 +917,7 @@ impl BuildingSet {
             if self.pieces.get(&id).is_some_and(|e| e.stamp == stamp) {
                 continue;
             }
-            let piece = build_building(id, b, db.building(b.def), net, terrain, tick);
+            let piece = build_building(id, b, db.building(b.def), net, terrain, db, tick);
             self.remove(id, &mut up);
             let chunk = chunk_of(piece.center());
             self.by_chunk.entry(chunk).or_default().insert(id);

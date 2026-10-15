@@ -7,7 +7,9 @@ pub mod error;
 pub mod kinds;
 mod validate;
 
-pub use db::{ContentDb, DEFAULT_CONTENT_ROOT, DefKind, PLACEHOLDER_INDEX, SimContent};
+pub use db::{
+    ContentDb, DEFAULT_CONTENT_ROOT, DefKind, PLACEHOLDER_INDEX, SimContent, TEST_STYLE_RON,
+};
 pub use defs::*;
 pub use error::{ContentError, ContentErrors};
 pub use kinds::{ServiceKind, ServiceSite, UtilityKind, ZoneType};

@@ -9,7 +9,7 @@ Building((
     tax_base: 0.0,
     cost: 25000.0,
     upkeep_week: 600.0,
-    style: (floors: 1, roof: Flat, palette: "utility_grey"),
+    styles: ["legacy_utility_grey_flat_1"],
     service: Some("sewage_treatment_plant"),
     icon: "sewage_treatment_plant",
 ))

@@ -11,6 +11,14 @@ use crate::validate;
 /// Default content root, relative to the working directory.
 pub const DEFAULT_CONTENT_ROOT: &str = "assets/content";
 
+/// A minimal style with id `p`, for tests that build a content set from inline defs. Not
+/// part of the shipped content.
+#[doc(hidden)]
+pub const TEST_STYLE_RON: &str = r#"Style((id: "p", massing: Box, roof: Flat, floors: (1, 1),
+    footprint_fill: (1.0, 1.0), facade: Punched,
+    palette: (walls: [(0.5, 0.5, 0.5)], roof: [(0.3, 0.3, 0.3)], trim: [(0.4, 0.4, 0.4)],
+        glass: (0.2, 0.2, 0.3))))"#;
+
 /// FNV-1a 64-bit: fixed algorithm, stable across runs, platforms and Rust releases.
 fn fnv1a(hash: &mut u64, bytes: &[u8]) {
     for b in bytes {
@@ -91,6 +99,7 @@ struct Placeholders {
     service: ServiceDef,
     vehicle: VehicleDef,
     utility: UtilityDef,
+    style: StyleDef,
 }
 
 impl Placeholders {
@@ -115,7 +124,7 @@ impl Placeholders {
         let ContentFile::Building(building) = parse(
             r#"Building((id: "placeholder_building", name: "Missing building", zone: None,
                 level: 1, lot: (1, 1), consumption: {}, tax_base: 0.0,
-                style: (floors: 1, roof: Flat, palette: "placeholder"), service: None))"#,
+                styles: ["placeholder_style"], service: None))"#,
         ) else {
             unreachable!()
         };
@@ -139,12 +148,21 @@ impl Placeholders {
         ) else {
             unreachable!()
         };
+        let ContentFile::Style(style) = parse(
+            r#"Style((id: "placeholder_style", massing: Box, roof: Flat, floors: (1, 1),
+                footprint_fill: (1.0, 1.0), facade: Punched,
+                palette: (walls: [(0.6, 0.6, 0.6)], roof: [(0.35, 0.35, 0.35)],
+                    trim: [(0.4, 0.4, 0.4)], glass: (0.2, 0.25, 0.3))))"#,
+        ) else {
+            unreachable!()
+        };
         Self {
             road,
             building,
             service,
             vehicle,
             utility,
+            style,
         }
     }
 }
@@ -157,6 +175,7 @@ pub struct ContentDb {
     services: Table<ServiceDef>,
     vehicles: Table<VehicleDef>,
     utilities: Table<UtilityDef>,
+    styles: Table<StyleDef>,
     placeholders: Placeholders,
     balance: Balance,
     content_hash: u64,
@@ -223,6 +242,25 @@ impl ContentDb {
         utility_id,
         utilities
     );
+
+    /// The style, or the built-in grey one for [`PLACEHOLDER_INDEX`].
+    pub fn style(&self, id: StyleDefId) -> &StyleDef {
+        self.styles
+            .defs
+            .get(id.index())
+            .unwrap_or(&self.placeholders.style)
+    }
+    pub fn style_id(&self, name: &str) -> Option<StyleDefId> {
+        self.styles.get_id(name).map(StyleDefId)
+    }
+    /// All styles in id order.
+    pub fn styles(&self) -> impl Iterator<Item = (StyleDefId, &StyleDef)> {
+        self.styles
+            .defs
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (StyleDefId(i as u32), d))
+    }
 
     /// The `*DefId` index of the built-in placeholder of `kind` ([`PLACEHOLDER_INDEX`]): what a
     /// save's unknown definition name becomes on load.
@@ -315,6 +353,7 @@ impl ContentDb {
         let mut services: Vec<(String, ServiceDef)> = Vec::new();
         let mut vehicles: Vec<(String, VehicleDef)> = Vec::new();
         let mut utilities: Vec<(String, UtilityDef)> = Vec::new();
+        let mut styles: Vec<(String, StyleDef)> = Vec::new();
         let mut balances: Vec<(String, Balance)> = Vec::new();
         for (path, text) in sources {
             match ron::from_str::<ContentFile>(&text) {
@@ -323,6 +362,7 @@ impl ContentDb {
                 Ok(ContentFile::Service(d)) => services.push((path, d)),
                 Ok(ContentFile::Vehicle(d)) => vehicles.push((path, d)),
                 Ok(ContentFile::Utility(d)) => utilities.push((path, d)),
+                Ok(ContentFile::Style(d)) => styles.push((path, d)),
                 Ok(ContentFile::Balance(d)) => balances.push((path, d)),
                 Err(e) => errors.push(ContentError::new(&path, None, format!("parse error: {e}"))),
             }
@@ -332,6 +372,7 @@ impl ContentDb {
         let services = table(services, |d| &d.id, validate::service, &mut errors);
         let vehicles = table(vehicles, |d| &d.id, validate::vehicle, &mut errors);
         let utilities = table(utilities, |d| &d.id, validate::utility, &mut errors);
+        let styles = table(styles, |d| &d.id, validate::style, &mut errors);
         let (mut buildings, mut utilities) = (buildings, utilities);
         // The icon of a def is data; a def without one uses the icon named like itself.
         for d in &mut buildings.defs {
@@ -376,6 +417,17 @@ impl ContentDb {
                     Some("service"),
                     format!("unknown service `{s}`"),
                 ));
+            }
+        }
+        for (i, b) in buildings.defs.iter().enumerate() {
+            for (k, name) in b.styles.iter().enumerate() {
+                if styles.get_id(name).is_none() {
+                    errors.push(ContentError::new(
+                        &buildings.files[i],
+                        Some(&format!("styles[{k}]")),
+                        format!("unknown style `{name}`"),
+                    ));
+                }
             }
         }
         // A free-standing building (`road_access: false`, §8.1) has nobody who could reach it.
@@ -510,6 +562,7 @@ impl ContentDb {
         hash_table(&mut hash, "service", &services.defs, |d| &d.id);
         hash_table(&mut hash, "vehicle", &vehicles.defs, |d| &d.id);
         hash_table(&mut hash, "utility", &utilities.defs, |d| &d.id);
+        hash_table(&mut hash, "style", &styles.defs, |d| &d.id);
         // Absent file = defaults = no contribution, so content sets without one keep their hash.
         let balance = balances.into_iter().next().map(|(_, b)| b);
         if let Some(b) = &balance {
@@ -544,6 +597,7 @@ impl ContentDb {
             services: services.strip(),
             vehicles: vehicles.strip(),
             utilities: utilities.strip(),
+            styles: styles.strip(),
             placeholders: Placeholders::builtin(),
             balance: balance.unwrap_or_default(),
             content_hash: hash,
@@ -831,9 +885,65 @@ mod tests {
     #[test]
     fn broken_reference_is_reported() {
         let b = r#"Building((id: "b", name: "B", zone: ComLow, level: 1, lot: (1, 1),
-            tax_base: 1.0, style: (floors: 1, roof: Flat, palette: "p"), service: Some("nope")))"#;
-        let e = errors(&[("c/b.ron", b)]);
+            tax_base: 1.0, styles: ["p"], service: Some("nope")))"#;
+        let e = errors(&[("c/b.ron", b), ("c/p.ron", TEST_STYLE_RON)]);
         assert_eq!(e, ["c/b.ron: service: unknown service `nope`"]);
+    }
+
+    /// T-111: a building's style references are checked on load, and it needs at least one.
+    #[test]
+    fn unknown_or_missing_styles_are_load_errors() {
+        let b = |styles: &str| {
+            format!(
+                r#"Building((id: "b", name: "B", zone: ComLow, level: 1, lot: (1, 1),
+                tax_base: 1.0, styles: {styles}, service: None))"#
+            )
+        };
+        let e = errors(&[
+            ("c/b.ron", &b(r#"["p", "ghost"]"#)),
+            ("c/p.ron", TEST_STYLE_RON),
+        ]);
+        assert_eq!(e, ["c/b.ron: styles[1]: unknown style `ghost`"]);
+        let e = errors(&[("c/b.ron", &b("[]")), ("c/p.ron", TEST_STYLE_RON)]);
+        assert_eq!(e, ["c/b.ron: styles: needs at least one style"]);
+        let ok = ContentDb::from_sources(src(&[
+            ("c/b.ron", &b(r#"["p"]"#)),
+            ("c/p.ron", TEST_STYLE_RON),
+        ]))
+        .unwrap();
+        assert_eq!(ok.styles().count(), 1);
+        assert_eq!(ok.style(ok.style_id("p").unwrap()).id, "p");
+        // An unknown id answers with the built-in grey style.
+        assert_eq!(
+            ok.style(StyleDefId(PLACEHOLDER_INDEX)).id,
+            "placeholder_style"
+        );
+    }
+
+    #[test]
+    fn style_ranges_are_validated() {
+        for (from, to, field) in [
+            ("floors: (1, 1)", "floors: (3, 2)", "floors"),
+            ("floors: (1, 1)", "floors: (0, 2)", "floors"),
+            (
+                "footprint_fill: (1.0, 1.0)",
+                "footprint_fill: (0.5, 1.2)",
+                "footprint_fill",
+            ),
+            ("walls: [(0.5, 0.5, 0.5)]", "walls: []", "palette.walls"),
+            (
+                "glass: (0.2, 0.2, 0.3)",
+                "glass: (2.0, 0.2, 0.3)",
+                "palette.glass",
+            ),
+        ] {
+            let bad = TEST_STYLE_RON.replace(from, to);
+            let e = errors(&[("s.ron", &bad)]);
+            assert!(
+                e.iter().any(|m| m.starts_with(&format!("s.ron: {field}:"))),
+                "{e:?}"
+            );
+        }
     }
 
     #[test]
@@ -920,7 +1030,7 @@ mod tests {
                     r#"Building((id: "tower", name: "Tower", zone: Industrial, level: 1,
                     lot: (1, 1), jobs: {jobs}, households: {households}, consumption: {{}},
                     tax_base: 0.0, cost: 1.0, upkeep_week: 1.0,
-                    style: (floors: 1, roof: Flat, palette: "utility_grey"),
+                    styles: ["p"],
                     service: Some("tower_service")))"#
                 ),
             )
@@ -934,7 +1044,13 @@ mod tests {
                 ),
             )
         };
-        let load = |b, s| ContentDb::from_sources(vec![b, s]);
+        let load = |b, s| {
+            ContentDb::from_sources(vec![
+                b,
+                s,
+                ("content/styles/p.ron".into(), TEST_STYLE_RON.into()),
+            ])
+        };
         // Free-standing, on land, nobody works or lives there: fine.
         assert!(
             load(

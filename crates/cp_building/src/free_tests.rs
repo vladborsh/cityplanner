@@ -30,12 +30,13 @@ fn db() -> ContentDb {
     ContentDb::from_sources(vec![
         src("balance", "balance.ron"),
         src("road", "roads/basic_2l.ron"),
+        src("style", "styles/legacy_utility_grey_flat_1.ron"),
         (
             "content/buildings/tower.ron".to_string(),
             r#"Building((id: "tower", name: "Tower", zone: Industrial, level: 1,
             lot: (2, 2), jobs: (0, 0, 0, 0), consumption: {}, tax_base: 0.0,
             cost: 5000.0, upkeep_week: 1.0,
-            style: (floors: 1, roof: Flat, palette: "utility_grey"),
+            styles: ["legacy_utility_grey_flat_1"],
             service: Some("tower_service")))"#
                 .to_string(),
         ),

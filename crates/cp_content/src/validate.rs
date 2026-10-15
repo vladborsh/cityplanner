@@ -1,7 +1,8 @@
 //! Per-definition range checks. Each returns `(field, message)` pairs.
 
 use crate::defs::{
-    BuildingDef, LaneKind, RoadClass, RoadDef, RoadVariant, ServiceDef, UtilityDef, VehicleDef,
+    BuildingDef, LaneKind, RoadClass, RoadDef, RoadVariant, ServiceDef, StyleDef, UtilityDef,
+    VehicleDef,
 };
 use crate::kinds::ZoneType;
 
@@ -113,10 +114,45 @@ pub fn building(d: &BuildingDef) -> Problems {
     c.non_negative("cost", d.cost);
     c.non_negative("upkeep_week", d.upkeep_week);
     c.non_negative("build_hours", d.build_hours);
-    if !(1..=60).contains(&d.style.floors) {
-        c.bad("style.floors", "must be in 1..=60");
+    if d.styles.is_empty() {
+        c.bad("styles", "needs at least one style");
     }
-    c.not_empty("style.palette", &d.style.palette);
+    for (k, s) in d.styles.iter().enumerate() {
+        c.not_empty(&format!("styles[{k}]"), s);
+    }
+    c.0
+}
+
+pub fn style(d: &StyleDef) -> Problems {
+    let mut c = Check(Vec::new());
+    c.not_empty("id", &d.id);
+    let (lo, hi) = d.floors;
+    if lo < 1 || hi > 60 || lo > hi {
+        c.bad("floors", "must be (min, max) with 1 <= min <= max <= 60");
+    }
+    let (lo, hi) = d.footprint_fill;
+    if !(lo.is_finite() && hi.is_finite() && lo > 0.0 && lo <= hi && hi <= 1.0) {
+        c.bad(
+            "footprint_fill",
+            "must be (min, max) with 0 < min <= max <= 1",
+        );
+    }
+    let p = &d.palette;
+    for (name, list) in [
+        ("palette.walls", &p.walls),
+        ("palette.roof", &p.roof),
+        ("palette.trim", &p.trim),
+    ] {
+        if list.is_empty() {
+            c.bad(name, "needs at least one colour");
+        }
+        if list.iter().flatten().any(|v| !(0.0..=1.0).contains(v)) {
+            c.bad(name, "channels must be in 0..=1");
+        }
+    }
+    if p.glass.iter().any(|v| !(0.0..=1.0).contains(v)) {
+        c.bad("palette.glass", "channels must be in 0..=1");
+    }
     c.0
 }
 

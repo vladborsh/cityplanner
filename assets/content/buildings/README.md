@@ -26,3 +26,12 @@ pump's 1000, cost 5000, upkeep 150, Power 10) are proposals for the balance anal
 households / jobs per education level, consumption (water, sewage, power per game day),
 `tax_base`, floors and roofs. They only need to be plausible and monotone in the level.
 `house_low_1` is the original M1 sample and is kept as is.
+
+## Looks (T-111)
+
+A building's look is not in its def: `styles: ["..."]` lists ids of `StyleDef`s in
+`assets/content/styles/*.ron` (massing, roof, floors and lot-fill ranges, palette, facade,
+details; `system-design.md` §8.2). Which one a building gets, and its floors, fill and colours
+inside the style, is a hash of its `BuildingId` in `cp_render::building::variant`, not sim state.
+Today every def lists one `legacy_<palette>_<roof>_<floors>` style that reproduces its old look;
+T-113 adds the varied styles. A dangling style id is a load error.

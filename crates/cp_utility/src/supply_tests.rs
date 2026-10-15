@@ -19,7 +19,7 @@ fn building_src(id: &str, svc: Option<&str>, cons: &str) -> (String, String) {
         format!(
             r#"Building((id: "{id}", name: "{id}", zone: ResLow, level: 1, lot: (1, 1),
             consumption: {cons}, tax_base: 0.0,
-            style: (floors: 1, roof: Flat, palette: "p"), service: {service}))"#
+            styles: ["p"], service: {service}))"#
         ),
     )
 }
@@ -35,6 +35,7 @@ fn service_src(id: &str, kind: &str, cap: u32) -> (String, String) {
 
 fn db() -> ContentDb {
     ContentDb::from_sources(vec![
+        ("style/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
         building_src("house", None, "{Water: 10.0, Sewage: 10.0, Power: 10.0}"),
         building_src("pump", Some("pump"), "{}"),
         building_src("outflow", Some("outflow"), "{}"),

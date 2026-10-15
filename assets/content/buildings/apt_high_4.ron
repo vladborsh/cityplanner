@@ -8,5 +8,5 @@ Building((
     households: 36,
     consumption: {Water: 21.2, Sewage: 21.2, Power: 36.8},
     tax_base: 216.0,
-    style: (floors: 16, roof: Flat, palette: "city_concrete"),
+    styles: ["legacy_city_concrete_flat_16"],
 ))

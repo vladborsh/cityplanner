@@ -1,0 +1,16 @@
+// Reproduces the look the building defs had before styles existed (T-111). T-113 adds the
+// varied styles per zone type.
+Style((
+    id: "legacy_office_grey_flat_5",
+    massing: Box,
+    roof: Flat,
+    floors: (5, 5),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.50, 0.53, 0.57), (0.58, 0.60, 0.62), (0.44, 0.47, 0.52)],
+        roof: [(0.30, 0.31, 0.33)],
+        trim: [(0.36, 0.38, 0.41)],
+        glass: (0.14, 0.22, 0.30),
+    ),
+    facade: Ribbon,
+))

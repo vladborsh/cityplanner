@@ -41,7 +41,7 @@ fn building(id: &str, zone: &str, level: u8, lot: (u8, u8), extra: &str) -> (Str
         format!("b/{id}.ron"),
         format!(
             r#"Building((id: "{id}", name: "{id}", zone: {zone}, level: {level}, lot: {lot:?}, {extra}
-            tax_base: 1.0, style: (floors: 1, roof: Flat, palette: "p")))"#
+            tax_base: 1.0, styles: ["p"]))"#
         ),
     )
 }
@@ -52,6 +52,7 @@ fn plain_content() -> Arc<ContentDb> {
     Arc::new(
         ContentDb::from_sources(vec![
             ("r/street.ron".into(), ROAD.into()),
+            ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
             building("house_1", "ResLow", 1, (2, 2), "households: 4,"),
             building("house_2", "ResLow", 2, (2, 2), "households: 6,"),
             building("house_3", "ResLow", 3, (3, 2), "households: 8,"),

@@ -8,5 +8,5 @@ Building((
     jobs: (4, 9, 3, 0),
     consumption: {Water: 9.8, Sewage: 9.8, Power: 17.3},
     tax_base: 96.0,
-    style: (floors: 2, roof: Flat, palette: "shopfront"),
+    styles: ["legacy_shopfront_flat_2"],
 ))
