@@ -466,6 +466,9 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
         (Category::Zones, _) => {
             ui.weak("Pick a zoning tool or a zone type to show the zone grid.");
         }
+        (Category::Bulldozer, ActiveTool::Bulldozer) if tools.highlight_outside => {
+            bad(ui, &["outside your land".to_string()], "cannot remove");
+        }
         (Category::Bulldozer, ActiveTool::Bulldozer) => {
             ui.weak("Hover a building or road segment, click to remove it. Esc leaves the tool.");
         }

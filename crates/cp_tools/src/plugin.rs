@@ -18,7 +18,7 @@ use cp_sim::{SimCommand, SimView};
 use crate::CommandOutbox;
 use crate::band::{BandState, sync_bands};
 use crate::building::{BuildingTool, PlacementGhost, pick_building, preview as place_preview};
-use crate::bulldozer::{PICK_RADIUS, pick_segment, remove_run_commands};
+use crate::bulldozer::{PICK_RADIUS, pick_segment, remove_run_commands, run_outside_owned};
 use crate::road::{RoadTool, chevron_lines, preview_report, road_is_one_way, sample_curve};
 use crate::upgrade::{upgrade_commands, upgrade_preview};
 use crate::utility::{
@@ -77,6 +77,8 @@ pub struct ToolState {
     pub hover: Option<Vec2>,
     /// Segments the bulldozer would remove: the whole road run under the cursor (T-070).
     pub highlight: Vec<SegmentId>,
+    /// The highlighted run leaves the bought tiles: drawn red, no command on click (§5.1).
+    pub highlight_outside: bool,
     /// What the upgrade tool would do to the run under the cursor (T-081).
     pub upgrade_preview: Option<crate::upgrade::UpgradePreview>,
     pub zone: ZoneTool,
@@ -119,6 +121,7 @@ impl ToolState {
         self.road.cancel();
         self.ghost = None;
         self.highlight.clear();
+        self.highlight_outside = false;
         self.upgrade_preview = None;
         self.ghost_key = None;
         self.zone.cancel();
@@ -315,14 +318,21 @@ fn tool_hover(
                     .map(|seg| road_run(&view.net, seg))
                     .unwrap_or_default()
             };
+            state.highlight_outside = run_outside_owned(&view.net, &view.tiles, &state.highlight);
         }
         (ActiveTool::Upgrade, Some(p)) => {
             let preview = match (state.road.road, view.content.as_deref()) {
-                (Some(target), Some(content)) => pick_segment(&view.net, p, PICK_RADIUS)
-                    .map(|seg| upgrade_preview(&view.net, &view.zones, content, seg, target)),
+                (Some(target), Some(content)) => {
+                    pick_segment(&view.net, p, PICK_RADIUS).map(|seg| {
+                        upgrade_preview(&view.net, &view.tiles, &view.zones, content, seg, target)
+                    })
+                }
                 _ => None,
             };
             state.highlight = preview.as_ref().map(|u| u.run.clone()).unwrap_or_default();
+            state.highlight_outside = preview
+                .as_ref()
+                .is_some_and(|u| u.errors.iter().any(|e| e == crate::upgrade::OUTSIDE_LAND));
             state.upgrade_preview = preview;
         }
         (ActiveTool::Place, Some(p)) => {
@@ -360,6 +370,7 @@ fn tool_hover(
         }
         _ => {
             state.highlight.clear();
+            state.highlight_outside = false;
             state.upgrade_preview = None;
             state.building_highlight = None;
             state.place_ghost = None;
@@ -527,7 +538,7 @@ pub fn tool_click(
             if let Some(building) = state.building_highlight {
                 outbox.push(SimCommand::Building(BuildingCommand::Demolish { building }));
                 state.building_highlight = None;
-            } else if !state.highlight.is_empty() {
+            } else if !state.highlight.is_empty() && !state.highlight_outside {
                 for command in remove_run_commands(&state.highlight) {
                     outbox.push(command);
                 }

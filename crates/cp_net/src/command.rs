@@ -16,7 +16,9 @@
 use std::fmt;
 
 use bevy_ecs::world::World;
+use bevy_math::{Vec2, Vec3};
 use cp_content::{RoadDefId, SimContent};
+use cp_core::curve::CubicBezier3;
 use cp_core::treasury::{charge_funds, check_funds};
 use cp_core::{Cost, InsufficientFunds};
 use cp_terrain::{SimTerrain, TileOwnership};
@@ -65,6 +67,12 @@ pub enum NetError {
     Op(NetOpError),
     /// The treasury cannot pay for the change.
     Funds(InsufficientFunds),
+    /// `RemoveSegment` / `UpgradeSegment` on a segment whose curve leaves the bought tiles
+    /// (design §5.1); `pos` is the first sampled point outside.
+    NotOwned {
+        seg: SegmentId,
+        pos: Vec3,
+    },
 }
 
 impl NetError {
@@ -96,6 +104,7 @@ impl fmt::Display for NetError {
             Self::SameRoad => write!(f, "segment already has this road type"),
             Self::NoElevatedVariant(r) => write!(f, "road type {r:?} has no elevated variant"),
             Self::Op(e) => write!(f, "{e}"),
+            Self::NotOwned { seg, .. } => write!(f, "segment {seg:?} is outside your land"),
             Self::Funds(e) => write!(
                 f,
                 "insufficient funds: need {}, can spend {}",
@@ -110,6 +119,35 @@ impl std::error::Error for NetError {}
 impl From<NetOpError> for NetError {
     fn from(e: NetOpError) -> Self {
         Self::Op(e)
+    }
+}
+
+/// Sample spacing of the ownership check along a segment's curve, metres.
+const OWNERSHIP_STEP: f32 = 8.0;
+
+/// The first point of `curve` (samples every [`OWNERSHIP_STEP`] metres, both ends included)
+/// that lies on a tile that is not bought, if any. Used by `RemoveSegment` /
+/// `UpgradeSegment` and by the tools' previews, so both agree.
+pub fn curve_outside_owned(tiles: &TileOwnership, curve: &CubicBezier3) -> Option<Vec3> {
+    let steps = ((curve.arc_table().length() / OWNERSHIP_STEP).ceil() as usize).max(1);
+    (0..=steps).find_map(|k| {
+        let p = curve.point(k as f32 / steps as f32);
+        (!tiles.contains_point(Vec2::new(p.x, p.z))).then_some(p)
+    })
+}
+
+/// Rejects a segment that leaves the bought tiles.
+fn check_owned(world: &World, seg: SegmentId) -> Result<(), NetError> {
+    let tiles = world
+        .get_resource::<TileOwnership>()
+        .ok_or(NetError::Missing("tile ownership"))?;
+    let s = world
+        .resource::<NetGraph>()
+        .segment(seg)
+        .ok_or(NetError::UnknownSegment(seg))?;
+    match curve_outside_owned(tiles, &s.curve) {
+        Some(pos) => Err(NetError::NotOwned { seg, pos }),
+        None => Ok(()),
     }
 }
 
@@ -177,6 +215,7 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
                 return Err(NetError::UnknownRoad(*road));
             }
             let def = content.road(*road);
+            check_owned(world, *seg)?;
             let graph = world.resource::<NetGraph>();
             let s = graph.segment(*seg).ok_or(NetError::UnknownSegment(*seg))?;
             if s.road == *road {
@@ -198,10 +237,8 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
             Ok(cost)
         }
         NetCommand::RemoveSegment { seg } => {
+            check_owned(world, *seg)?;
             let mut graph = world.resource_mut::<NetGraph>();
-            if graph.segment(*seg).is_none() {
-                return Err(NetError::UnknownSegment(*seg));
-            }
             graph.remove_segment(*seg)?;
             Ok(Cost::ZERO)
         }
@@ -297,4 +334,67 @@ fn apply_plan(
         graph.add_segment(def, plan.road, s.curve, s.elevation)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cp_content::ContentDb;
+    use cp_core::treasury::Treasury;
+
+    fn world(open: &[(usize, usize)]) -> (World, RoadDefId) {
+        let db = ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content"))
+            .unwrap();
+        let road = db.road_id("basic_2l").unwrap();
+        let mut w = World::new();
+        w.insert_resource(SimContent(std::sync::Arc::new(db)));
+        w.insert_resource(NetGraph::new());
+        let mut tiles = TileOwnership::none();
+        for &(tx, tz) in open {
+            tiles.set(tx, tz, true);
+        }
+        w.insert_resource(tiles);
+        w.insert_resource(Treasury::default());
+        (w, road)
+    }
+
+    fn add(w: &mut World, road: RoadDefId, x0: f32, x1: f32) -> SegmentId {
+        let def = w.resource::<SimContent>().0.road(road).clone();
+        w.resource_mut::<NetGraph>()
+            .add_segment(
+                &def,
+                road,
+                CubicBezier3::line(Vec3::new(x0, 0.0, 1000.0), Vec3::new(x1, 0.0, 1000.0)),
+                Elevation::Ground,
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn removing_or_upgrading_outside_the_bought_tiles_is_not_owned() {
+        let t = cp_terrain::TILE_SIZE;
+        let (tx, tz) = cp_terrain::Terrain::tile_of(Vec2::new(100.0, 1000.0));
+        let (mut w, road) = world(&[(tx, tz)]);
+        let other = w.resource::<SimContent>().0.road_id("medium_4l").unwrap();
+        let half = add(&mut w, road, t - 50.0, t + 50.0);
+        let inside = add(&mut w, road, 100.0, 200.0);
+
+        let up = NetCommand::UpgradeSegment {
+            seg: half,
+            road: other,
+        };
+        assert!(matches!(
+            apply(&mut w, &up),
+            Err(NetError::NotOwned { seg, .. }) if seg == half
+        ));
+        assert!(matches!(
+            apply(&mut w, &NetCommand::RemoveSegment { seg: half }),
+            Err(NetError::NotOwned { .. })
+        ));
+        assert!(w.resource::<NetGraph>().segment(half).is_some());
+        assert_eq!(w.resource::<NetGraph>().segment(half).unwrap().road, road);
+
+        apply(&mut w, &NetCommand::RemoveSegment { seg: inside }).unwrap();
+        assert!(w.resource::<NetGraph>().segment(inside).is_none());
+    }
 }

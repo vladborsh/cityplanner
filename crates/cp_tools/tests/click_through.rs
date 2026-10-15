@@ -174,6 +174,18 @@ fn the_bulldozer_ignores_ui_and_activation_clicks_but_not_map_clicks() {
     arm(&mut app);
     click(&mut app);
     assert!(commands(&app) > 0, "a map click removes the road");
+
+    // The same click on a run outside the bought tiles sends nothing (T-116).
+    *app.world_mut().resource_mut::<CommandOutbox>() = CommandOutbox::default();
+    app.world_mut()
+        .resource_mut::<ToolState>()
+        .highlight_outside = true;
+    arm(&mut app);
+    app.world_mut()
+        .resource_mut::<ToolState>()
+        .highlight_outside = true;
+    click(&mut app);
+    assert_eq!(commands(&app), 0, "outside your land");
 }
 
 #[test]

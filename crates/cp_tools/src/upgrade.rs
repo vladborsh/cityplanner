@@ -5,9 +5,15 @@
 
 use cp_content::{ContentDb, RoadDefId};
 use cp_core::Cost;
-use cp_net::{Elevation, NetCommand, NetGraph, SegmentId, road_run, segment_cost};
+use cp_net::{
+    Elevation, NetCommand, NetGraph, SegmentId, curve_outside_owned, road_run, segment_cost,
+};
 use cp_sim::SimCommand;
+use cp_terrain::TileOwnership;
 use cp_zone::{ZoneCellRef, ZoneGrid};
+
+/// Why a run that leaves the bought tiles cannot be changed (§5.1).
+pub const OUTSIDE_LAND: &str = "outside your land";
 
 /// What an upgrade of one road run would do.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -44,6 +50,7 @@ impl UpgradePreview {
 /// The preview of upgrading the run through `seg` to `target`.
 pub fn upgrade_preview(
     net: &NetGraph,
+    tiles: &TileOwnership,
     zones: &ZoneGrid,
     content: &ContentDb,
     seg: SegmentId,
@@ -59,6 +66,13 @@ pub fn upgrade_preview(
         return out;
     }
     let def = content.road(target);
+    if run.iter().any(|&id| {
+        net.segment(id)
+            .is_some_and(|s| curve_outside_owned(tiles, &s.curve).is_some())
+    }) {
+        out.errors.push(OUTSIDE_LAND.to_string());
+        return out;
+    }
     for id in run {
         let Some(s) = net.segment(id) else { continue };
         if s.road == target {

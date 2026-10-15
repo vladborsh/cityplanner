@@ -1,8 +1,9 @@
 //! The segment bulldozer: finds the segment under the cursor.
 
 use bevy_math::Vec2;
-use cp_net::{NetCommand, NetGraph, SegmentId};
+use cp_net::{NetCommand, NetGraph, SegmentId, curve_outside_owned};
 use cp_sim::SimCommand;
+use cp_terrain::TileOwnership;
 
 /// Pick radius around the cursor, metres.
 pub const PICK_RADIUS: f32 = 8.0;
@@ -36,6 +37,15 @@ pub fn remove_run_commands(run: &[SegmentId]) -> Vec<SimCommand> {
         .collect()
 }
 
+/// Whether any segment of the run leaves the bought tiles: the bulldozer ghost is then
+/// invalid ("outside your land") and no command is sent (`RemoveSegment` would be `NotOwned`).
+pub fn run_outside_owned(net: &NetGraph, tiles: &TileOwnership, run: &[SegmentId]) -> bool {
+    run.iter().any(|&id| {
+        net.segment(id)
+            .is_some_and(|s| curve_outside_owned(tiles, &s.curve).is_some())
+    })
+}
+
 /// The segment's centre line as XZ points (for highlighting).
 pub fn centre_line(net: &NetGraph, id: SegmentId, step: f32) -> Vec<bevy_math::Vec3> {
     net.segment(id)
@@ -50,6 +60,16 @@ mod tests {
     use cp_content::ContentDb;
     use cp_core::curve::CubicBezier3;
     use cp_net::Elevation;
+
+    fn all_owned() -> TileOwnership {
+        let mut tiles = TileOwnership::none();
+        for tz in 0..cp_terrain::TILES_PER_SIDE {
+            for tx in 0..cp_terrain::TILES_PER_SIDE {
+                tiles.set(tx, tz, true);
+            }
+        }
+        tiles
+    }
 
     fn net_with_two_roads() -> (NetGraph, SegmentId, SegmentId) {
         let db = ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content"))
@@ -132,6 +152,7 @@ mod tests {
         let def = db.road(road).clone();
         let mut sim = SimRunner::new(1);
         sim.set_content(std::sync::Arc::new(db));
+        sim.world_mut().insert_resource(all_owned());
         let line = |a: (f32, f32), b: (f32, f32)| {
             CubicBezier3::line(Vec3::new(a.0, 0.0, a.1), Vec3::new(b.0, 0.0, b.1))
         };
@@ -173,5 +194,32 @@ mod tests {
         let after = sim.view();
         assert_eq!(after.net.segment_count(), 4, "only the four arms are left");
         assert!(run.iter().all(|s| after.net.segment(*s).is_none()));
+    }
+
+    #[test]
+    fn a_bulldozer_run_half_on_an_unbought_tile_is_invalid() {
+        let db = ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content"))
+            .unwrap();
+        let road = db.road_id("basic_2l").unwrap();
+        let t = cp_terrain::TILE_SIZE;
+        let mut net = NetGraph::new();
+        let seg = |net: &mut NetGraph, x0: f32, x1: f32| {
+            net.add_segment(
+                db.road(road),
+                road,
+                CubicBezier3::line(Vec3::new(x0, 0.0, 1000.0), Vec3::new(x1, 0.0, 1000.0)),
+                Elevation::Ground,
+            )
+            .unwrap()
+        };
+        let straddling = seg(&mut net, t - 50.0, t + 50.0);
+        let inside = seg(&mut net, 100.0, 200.0);
+        // Only the tile column of x = 0 is bought.
+        let mut tiles = TileOwnership::none();
+        let (tx, tz) = cp_terrain::Terrain::tile_of(Vec2::new(100.0, 1000.0));
+        tiles.set(tx, tz, true);
+        assert!(run_outside_owned(&net, &tiles, &[straddling]));
+        assert!(run_outside_owned(&net, &tiles, &[inside, straddling]));
+        assert!(!run_outside_owned(&net, &tiles, &[inside]));
     }
 }

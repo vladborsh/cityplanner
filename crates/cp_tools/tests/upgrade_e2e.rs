@@ -99,7 +99,7 @@ fn painted(sim: &SimRunner) -> usize {
 
 fn preview_for(w: &World, arm: SegmentId, target: RoadDefId) -> cp_tools::UpgradePreview {
     let view = w.sim.view();
-    upgrade_preview(&view.net, &view.zones, &w.db, arm, target)
+    upgrade_preview(&view.net, &view.tiles, &view.zones, &w.db, arm, target)
 }
 
 #[test]
@@ -191,4 +191,16 @@ fn a_segment_of_the_target_type_sends_nothing() {
     let p = preview_for(&w, arm, basic);
     assert!(p.is_noop() && p.cost == Cost::ZERO);
     assert!(upgrade_commands(&p, basic).is_empty());
+}
+
+#[test]
+fn a_run_outside_the_bought_tiles_cannot_be_upgraded() {
+    let mut w = setup();
+    let arm = cross(&mut w);
+    let medium = w.db.road_id("medium_4l").unwrap();
+    let view = w.sim.view();
+    let none = cp_terrain::TileOwnership::none();
+    let p = upgrade_preview(&view.net, &none, &view.zones, &w.db, arm, medium);
+    assert_eq!(p.errors, vec![cp_tools::upgrade::OUTSIDE_LAND.to_string()]);
+    assert!(upgrade_commands(&p, medium).is_empty());
 }

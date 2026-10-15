@@ -25,7 +25,12 @@ pub const GHOST_BAD: [f32; 4] = [0.95, 0.2, 0.2, 0.5];
 pub const HIGHLIGHT: [f32; 4] = [1.0, 0.6, 0.1, 0.55];
 
 /// The band geometry of the road ghost (when it has a width) and of the highlighted run.
-pub fn band_geometry(view: &SimView, ghost: Option<&Ghost>, run: &[SegmentId]) -> MeshData {
+pub fn band_geometry(
+    view: &SimView,
+    ghost: Option<&Ghost>,
+    run: &[SegmentId],
+    run_outside: bool,
+) -> MeshData {
     let terrain = view.terrain.as_deref();
     let mut out = MeshData::default();
     let mut add = |m: MeshData| {
@@ -58,7 +63,7 @@ pub fn band_geometry(view: &SimView, ghost: Option<&Ghost>, run: &[SegmentId]) -
             half,
             terrain,
             BAND_LIFT + 0.05,
-            HIGHLIGHT,
+            if run_outside { GHOST_BAD } else { HIGHLIGHT },
         ));
     }
     out
@@ -75,6 +80,7 @@ pub struct BandState {
 struct BandKey {
     ghost: Option<Ghost>,
     run: Vec<SegmentId>,
+    run_outside: bool,
     net_ptr: usize,
 }
 
@@ -100,12 +106,13 @@ pub fn sync_bands(
     let key = BandKey {
         ghost,
         run,
+        run_outside: state.highlight_outside,
         net_ptr: Arc::as_ptr(&view.net) as usize,
     };
     if bands.key.as_ref() == Some(&key) {
         return;
     }
-    let data = band_geometry(&view, key.ghost.as_ref(), &key.run);
+    let data = band_geometry(&view, key.ghost.as_ref(), &key.run, key.run_outside);
     bands.key = Some(key);
     if let Some(e) = bands.entity.take() {
         commands.entity(e).despawn();
@@ -175,7 +182,7 @@ mod tests {
     #[test]
     fn the_highlight_band_is_as_wide_as_the_road_and_orange() {
         let (sim, seg, width) = sim();
-        let m = band_geometry(&sim.view(), None, &[seg]);
+        let m = band_geometry(&sim.view(), None, &[seg], false);
         assert!(!m.indices.is_empty());
         assert!((x_extent(&m) - width * 0.5).abs() < 1e-3);
         assert!(m.colors.iter().all(|c| *c == HIGHLIGHT));
@@ -196,15 +203,15 @@ mod tests {
             chevrons: Vec::new(),
         };
         let view = sim.view();
-        let ok = band_geometry(&view, Some(&ghost(true, 6.0)), &[]);
+        let ok = band_geometry(&view, Some(&ghost(true, 6.0)), &[], false);
         assert!((x_extent(&ok) - 6.0).abs() < 1e-3);
         assert!(ok.colors.iter().all(|c| *c == GHOST_OK));
-        let bad = band_geometry(&view, Some(&ghost(false, 14.0)), &[]);
+        let bad = band_geometry(&view, Some(&ghost(false, 14.0)), &[], false);
         assert!((x_extent(&bad) - 14.0).abs() < 1e-3);
         assert!(bad.colors.iter().all(|c| *c == GHOST_BAD));
         // A line-only ghost (no width) and no run draw nothing.
         assert!(
-            band_geometry(&view, Some(&ghost(true, 0.0)), &[])
+            band_geometry(&view, Some(&ghost(true, 0.0)), &[], false)
                 .indices
                 .is_empty()
         );

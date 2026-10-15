@@ -15,7 +15,7 @@ pub use build::{
     SnapReport, SnapReportKind, one_way_report, pier_positions, segment_cost, validate_road_path,
     validate_road_path_report,
 };
-pub use command::{NetCommand, NetError, apply, build_unowned};
+pub use command::{NetCommand, NetError, apply, build_unowned, curve_outside_owned};
 pub use connections::{LaneConnection, Links, PedLink, PedLinkKind, Turn};
 pub use control::{ControlPlan, LightPlan, Phase, Priority, Signal};
 pub use graph::{MIN_SEGMENT_LENGTH, NODE_REUSE_EPS, NetGraph, NetOpError, SplitResult};
