@@ -278,3 +278,22 @@ thread wake-up and join four times a tick: one scope per tick with a barrier bet
 running small ticks sequentially (sequential cost is ~1.5 ms, so only worth it below ~1k cars);
 (2) `suspicious_flags` allocates a vector over all cars every tick; (3) the sequential `apply` for
 crossings and arrivals.
+
+## Building shapes (T-112)
+
+`cp_render::building` now builds the `StyleDef` massings (LShape, Stepped, TowerOnPodium,
+TwinBlocks, Sawtooth), the Shed and Mansard roofs and the eight details. Every shipped def still
+uses a one-box `legacy_*` style (T-111), and a Box style takes the same code path as before, so the
+meshes of the shipped content are unchanged: test `meshes_keep_their_vertex_counts_after_the_style_move`
+pins near/mid/far vertices of all 50 defs to the pre-T-111 counts, i.e. **1.00× on bench-100k for
+near, mid and far**, inside the 1.5× / 1.2× budget, and the frame cost of buildings is unchanged by
+construction. No bench-100k frame was measured in this task (no headless frame harness in the
+sandbox; the content that would change it arrives with T-113).
+
+Worst single building per massing, with every detail on and a 14-floor, 4×4 lot (vertices, near /
+mid / far; the test `every_shape_and_roof_builds_a_sound_mesh_inside_its_lot` limits them):
+Box 5672 / 708 / 52, LShape 6538 / 1244 / 96, Stepped 4692 / 716 / 92, TowerOnPodium 3740 / 712 / 72,
+TwinBlocks 7290 / 1272 / 104, Sawtooth 5728 / 758 / 102. For T-113: the budget is on the *average*
+over the city, so details (balconies are capped at 16, fences are one board per cell, tanks 41
+vertices each) should stay on a minority of styles; `mid`/`far` carry no details. T-113 must
+re-measure vertices and the frame on bench-100k with the final styles.

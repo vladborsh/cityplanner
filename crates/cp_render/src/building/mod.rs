@@ -24,6 +24,8 @@
 //! direction from the road point to the lot centre. Without a usable access point the lot's
 //! +v side is assumed to point away from the road.
 
+mod shapes;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_math::{Vec2, Vec3};
@@ -295,8 +297,11 @@ fn mul(c: [f32; 4], k: f32) -> [f32; 4] {
     [c[0] * k, c[1] * k, c[2] * k, c[3]]
 }
 
+#[derive(Clone, Copy)]
 struct Ctx {
     f: Frame,
+    /// Centre offset of the box along u.
+    cu: f32,
     /// Half extents of the box along u and v, and the box centre offset along v.
     hu: f32,
     hv: f32,
@@ -314,7 +319,7 @@ struct Ctx {
 
 impl Ctx {
     fn corner(&self, su: f32, sv: f32, y: f32) -> Vec3 {
-        self.f.at(su * self.hu, self.cv + sv * self.hv, y)
+        self.f.at(self.cu + su * self.hu, self.cv + sv * self.hv, y)
     }
 }
 
@@ -427,13 +432,14 @@ fn quad_up(m: &mut MeshData, p: [Vec3; 4], c: [f32; 4]) {
 }
 
 /// Roof on top of the box at height `y`.
-fn roof(m: &mut MeshData, cx: &Ctx, kind: RoofKind, y: f32, lod: Lod) {
+fn roof(m: &mut MeshData, cx: &Ctx, kind: RoofKind, y: f32, lod: Lod, plain: bool) {
     let c = |su: f32, sv: f32, yy: f32| cx.corner(su, sv, yy);
     let burned = cx.state == BuildingState::Burned;
     let rc = cx.roof;
     match kind {
-        // Shed and Mansard are drawn flat until T-112.
-        RoofKind::Flat | RoofKind::Shed | RoofKind::Mansard => {
+        RoofKind::Shed => shapes::shed(m, cx, y),
+        RoofKind::Mansard => shapes::mansard(m, cx, y),
+        RoofKind::Flat => {
             quad_up(
                 m,
                 [
@@ -444,7 +450,7 @@ fn roof(m: &mut MeshData, cx: &Ctx, kind: RoofKind, y: f32, lod: Lod) {
                 ],
                 rc,
             );
-            if lod == Lod::Near && !burned {
+            if lod == Lod::Near && !burned && !plain {
                 // Parapet rim (outer faces are the walls; add the inner faces and cap) and a
                 // roof box.
                 let h = 0.5;
@@ -469,7 +475,11 @@ fn roof(m: &mut MeshData, cx: &Ctx, kind: RoofKind, y: f32, lod: Lod) {
                 let (bu, bv) = (cx.hu * 0.25, cx.hv * 0.25);
                 let top = y + 1.6;
                 let p = |su: f32, sv: f32, yy: f32| {
-                    cx.f.at(su * bu - cx.hu * 0.3, cx.cv + sv * bv - cx.hv * 0.2, yy)
+                    cx.f.at(
+                        cx.cu + su * bu - cx.hu * 0.3,
+                        cx.cv + sv * bv - cx.hv * 0.2,
+                        yy,
+                    )
                 };
                 let corners = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
                 quad_up(
@@ -566,7 +576,7 @@ fn scaffold(m: &mut MeshData, cx: &Ctx, top: f32) {
     let out = 0.8;
     let (hu, hv) = (cx.hu + out, cx.hv + out);
     let corners = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
-    let cp = |su: f32, sv: f32, y: f32| cx.f.at(su * hu, cx.cv + sv * hv, y);
+    let cp = |su: f32, sv: f32, y: f32| cx.f.at(cx.cu + su * hu, cx.cv + sv * hv, y);
     let post = |m: &mut MeshData, p: Vec3, h: f32| {
         let s = 0.09;
         for (dx, dz, n) in [
@@ -681,19 +691,24 @@ pub fn build_building(
     let hv = (((d - FRONT_SETBACK - BACK_MARGIN) * 0.5) * shrink).max(1.0);
     let cv = (FRONT_SETBACK - BACK_MARGIN) * 0.5;
 
-    // Ground: the highest corner of the box, with a foundation down to the lowest.
+    let sd = seed(id, b);
+    let style = facade_style(def.zone, def.level);
+    let floors = u32::from(vp.floors.max(1));
+    let plan = shapes::plan(style_def.massing, floors, hu, hv, cv);
+
+    // Ground: the highest corner of any box, with a foundation down to the lowest.
     let mut lo = f32::MAX;
     let mut hi = f32::MIN;
-    for (su, sv) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-        let p = f.c + f.u * (su * hu) + f.v * (cv + sv * hv);
-        let y = terrain.height(p);
-        lo = lo.min(y);
-        hi = hi.max(y);
+    for v in &plan.vols {
+        for (su, sv) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            let p = f.c + f.u * (v.cu + su * v.hu) + f.v * (v.cv + sv * v.hv);
+            let y = terrain.height(p);
+            lo = lo.min(y);
+            hi = hi.max(y);
+        }
     }
     let base = hi + PLINTH;
 
-    let sd = seed(id, b);
-    let style = facade_style(def.zone, def.level);
     let tone = 0.92 + (sd >> 8) as f32 % 9.0 * 0.02;
     let mut wallc = rgba(vp.wall, tone);
     let mut roofc = rgba(vp.roof, 0.9 + (sd >> 16) as f32 % 5.0 * 0.04);
@@ -716,6 +731,7 @@ pub fn build_building(
     }
     let cx = Ctx {
         f,
+        cu: 0.0,
         hu,
         hv,
         cv,
@@ -729,15 +745,34 @@ pub fn build_building(
         state: b.state,
     };
 
-    let floors = u32::from(vp.floors.max(1));
-    let full_h = floors as f32 * style.floor_h;
-    let (floors_shown, height) = match b.state {
-        BuildingState::Burned => {
-            let n = ((floors as f32 * 0.6).ceil() as u32).max(1);
-            (n, n as f32 * style.floor_h)
-        }
-        _ => (floors, full_h),
+    // Floors drawn per box: all of them, or 60% of the whole stack once burned.
+    let burned = b.state == BuildingState::Burned;
+    let shown_total = if burned {
+        ((floors as f32 * 0.6).ceil() as u32).max(1)
+    } else {
+        floors
     };
+    let fh = style.floor_h;
+    let full_h = floors as f32 * fh;
+    let boxes: Vec<(usize, Ctx, u32)> = plan
+        .vols
+        .iter()
+        .enumerate()
+        .filter_map(|(i, v)| {
+            let shown = shown_total.saturating_sub(v.below).min(v.floors);
+            (shown > 0).then_some((
+                i,
+                Ctx {
+                    cu: v.cu,
+                    cv: v.cv,
+                    hu: v.hu,
+                    hv: v.hv,
+                    ..cx
+                },
+                shown,
+            ))
+        })
+        .collect();
 
     let mut pieces = [
         MeshData::default(),
@@ -745,62 +780,134 @@ pub fn build_building(
         MeshData::default(),
     ];
     for (m, lod) in pieces.iter_mut().zip([Lod::Near, Lod::Mid, Lod::Far]) {
-        // Foundation: from the lowest terrain point up to the plinth.
+        // Foundation of every box that stands on the ground.
         let fnd = [0.30, 0.30, 0.30, 1.0];
         let ring = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
-        for k in 0..4 {
-            let (a, bb) = (ring[k], ring[(k + 1) % 4]);
-            let n = f
-                .dir((a.0 + bb.0) * 0.5 * hu, (a.1 + bb.1) * 0.5 * hv)
-                .normalize_or_zero();
-            let c = |su: f32, sv: f32, y: f32| cx.corner(su, sv, y);
-            flat_quad(
-                m,
-                [
-                    c(a.0, a.1, lo - 0.3),
-                    c(bb.0, bb.1, lo - 0.3),
-                    c(bb.0, bb.1, base),
-                    c(a.0, a.1, base),
-                ],
-                n,
-                fnd,
-            );
+        for (i, vcx, _) in &boxes {
+            let v = &plan.vols[*i];
+            if v.below > 0 {
+                continue;
+            }
+            for k in 0..4 {
+                let Some((t0, t1)) = v.vis[k] else { continue };
+                let (a, bb) = (ring[k], ring[(k + 1) % 4]);
+                let n = f
+                    .dir((a.0 + bb.0) * 0.5 * vcx.hu, (a.1 + bb.1) * 0.5 * vcx.hv)
+                    .normalize_or_zero();
+                let c = |su: f32, sv: f32, y: f32| vcx.corner(su, sv, y);
+                let (pa, pb) = (
+                    c(a.0, a.1, lo - 0.3).lerp(c(bb.0, bb.1, lo - 0.3), t0),
+                    c(a.0, a.1, lo - 0.3).lerp(c(bb.0, bb.1, lo - 0.3), t1),
+                );
+                flat_quad(
+                    m,
+                    [
+                        pa,
+                        pb,
+                        Vec3::new(pb.x, base, pb.z),
+                        Vec3::new(pa.x, base, pa.z),
+                    ],
+                    n,
+                    fnd,
+                );
+            }
         }
         if b.state == BuildingState::UnderConstruction {
             let stage = construction_stage(b, build_ticks(def), tick);
-            let core_h = height * f32::from(stage + 1) / f32::from(STAGES);
+            let frac = f32::from(stage + 1) / f32::from(STAGES);
             let slab = [0.55, 0.55, 0.53, 1.0];
-            solid_box(m, &cx, base, base + core_h, [0.62, 0.62, 0.60, 1.0], slab);
+            for (i, vcx, _) in &boxes {
+                let v = &plan.vols[*i];
+                let y0 = base + frac * v.below as f32 * fh;
+                let y1 = base + frac * (v.below + v.floors) as f32 * fh;
+                solid_box(m, vcx, y0, y1, [0.62, 0.62, 0.60, 1.0], slab);
+            }
             if lod == Lod::Near {
-                scaffold(m, &cx, base + core_h + style.floor_h.min(3.0));
+                scaffold(m, &cx, base + full_h * frac + fh.min(3.0));
             }
             continue;
         }
         // Walls. Corners counter-clockwise from above: (-u,-v) -> (+u,-v) -> (+u,+v) -> (-u,+v).
-        let c = |su: f32, sv: f32| cx.corner(su, sv, base);
-        let faces = [
-            (c(-1.0, -1.0), c(1.0, -1.0), f.dir(0.0, -1.0), true, 0u32),
-            (c(1.0, -1.0), c(1.0, 1.0), f.dir(1.0, 0.0), false, 1),
-            (c(1.0, 1.0), c(-1.0, 1.0), f.dir(0.0, 1.0), false, 2),
-            (c(-1.0, 1.0), c(-1.0, -1.0), f.dir(-1.0, 0.0), false, 3),
-        ];
-        for (a, bb, n, front, wid) in faces {
-            wall(m, &cx, a, bb, n, height, floors_shown, lod, front, wid);
+        for (i, vcx, shown) in &boxes {
+            let v = &plan.vols[*i];
+            let y0 = base + v.below as f32 * fh;
+            let h = *shown as f32 * fh;
+            let c = |su: f32, sv: f32| vcx.corner(su, sv, y0);
+            let faces = [
+                (
+                    c(-1.0, -1.0),
+                    c(1.0, -1.0),
+                    vcx.f.dir(0.0, -1.0),
+                    v.front,
+                    0u32,
+                ),
+                (c(1.0, -1.0), c(1.0, 1.0), vcx.f.dir(1.0, 0.0), false, 1),
+                (c(1.0, 1.0), c(-1.0, 1.0), vcx.f.dir(0.0, 1.0), false, 2),
+                (c(-1.0, 1.0), c(-1.0, -1.0), vcx.f.dir(-1.0, 0.0), false, 3),
+            ];
+            for (k, (a, bb, n, front, wid)) in faces.into_iter().enumerate() {
+                let Some((t0, t1)) = v.vis[k] else { continue };
+                // Separate boxes get separate wall ids so their windows differ.
+                let (pa, pb) = (a.lerp(bb, t0), a.lerp(bb, t1));
+                wall(
+                    m,
+                    vcx,
+                    pa,
+                    pb,
+                    n,
+                    h,
+                    *shown,
+                    lod,
+                    front,
+                    wid + 4 * *i as u32,
+                );
+            }
+            let top = y0 + h;
+            if burned {
+                quad_up(
+                    m,
+                    [
+                        vcx.corner(-1.0, -1.0, top),
+                        vcx.corner(1.0, -1.0, top),
+                        vcx.corner(1.0, 1.0, top),
+                        vcx.corner(-1.0, 1.0, top),
+                    ],
+                    vcx.roof,
+                );
+            } else {
+                match v.roof {
+                    shapes::RoofMode::Style => {
+                        roof(m, vcx, style_def.roof, top, lod, false);
+                    }
+                    shapes::RoofMode::Plain => roof(m, vcx, RoofKind::Flat, top, lod, true),
+                    shapes::RoofMode::Saw => shapes::sawtooth(m, vcx, top),
+                }
+            }
         }
-        let top = base + height;
-        if b.state == BuildingState::Burned {
-            quad_up(
-                m,
-                [
-                    cx.corner(-1.0, -1.0, top),
-                    cx.corner(1.0, -1.0, top),
-                    cx.corner(1.0, 1.0, top),
-                    cx.corner(-1.0, 1.0, top),
-                ],
-                cx.roof,
-            );
-        } else {
-            roof(m, &cx, style_def.roof, top, lod);
+        if lod == Lod::Near
+            && !matches!(b.state, BuildingState::Burned)
+            && !style_def.details.is_empty()
+        {
+            let dc = shapes::DetailCx {
+                f: &f,
+                terrain,
+                vols: &plan.vols,
+                plan_top: plan.top,
+                plan_front: plan.front,
+                base,
+                floor_h: fh,
+                bay: style.bay,
+                lot: (w, d),
+                roof_kind: if plan.vols[plan.top].roof == shapes::RoofMode::Style {
+                    style_def.roof
+                } else {
+                    RoofKind::Hipped
+                },
+                wall: wallc,
+                trim: trimc,
+                seed: sd,
+            };
+            shapes::details(m, &dc, &style_def.details);
         }
     }
     let [near, mid, far] = pieces;

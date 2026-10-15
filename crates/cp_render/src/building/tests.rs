@@ -458,3 +458,155 @@ fn variant_is_deterministic_and_spread_over_the_styles() {
         assert_eq!(variant(&db, id(i), def).1, variant(&db2, id(i), def2).1);
     }
 }
+
+const MASSINGS: [&str; 6] = [
+    "Box",
+    "LShape",
+    "Stepped",
+    "TowerOnPodium",
+    "TwinBlocks",
+    "Sawtooth",
+];
+const ROOFS: [&str; 5] = ["Flat", "Gabled", "Hipped", "Shed", "Mansard"];
+const LOTS: [(u8, u8); 3] = [(1, 1), (2, 3), (4, 4)];
+
+/// Every massing × roof style (with all details) on three lot sizes.
+fn shapes_db() -> ContentDb {
+    let mut src = Vec::new();
+    for m in MASSINGS {
+        for r in ROOFS {
+            src.push((
+                format!("s/{m}_{r}.ron"),
+                format!(
+                    r#"Style((id: "{m}_{r}", massing: {m}, roof: {r}, floors: (1, 14),
+                    footprint_fill: (0.6, 1.0), facade: Punched,
+                    details: [Chimney, Balconies, Awning, RooftopUnits, Sign, LoadingDock, Tanks, Fence],
+                    palette: (walls: [(0.6, 0.6, 0.6)], roof: [(0.3, 0.3, 0.3)], trim: [(0.4, 0.4, 0.4)],
+                        glass: (0.2, 0.2, 0.3))))"#
+                ),
+            ));
+            for (w, d) in LOTS {
+                src.push((
+                    format!("b/{m}_{r}_{w}x{d}.ron"),
+                    format!(
+                        r#"Building((id: "{m}_{r}_{w}x{d}", name: "x", zone: ComLow, level: 1,
+                        lot: ({w}, {d}), tax_base: 1.0, styles: ["{m}_{r}"]))"#
+                    ),
+                ));
+            }
+        }
+    }
+    ContentDb::from_sources(src).unwrap()
+}
+
+/// Most vertices a building of this massing may have per detail level (near, mid, far).
+fn vertex_limit(massing: &str) -> [usize; 3] {
+    match massing {
+        "Box" => [6500, 900, 160],
+        "LShape" | "TwinBlocks" => [8000, 1800, 300],
+        "Stepped" | "TowerOnPodium" => [8000, 1800, 300],
+        _ => [6000, 1100, 260],
+    }
+}
+
+/// T-112: every shape × roof is a sound mesh in every state and detail level.
+#[test]
+fn every_shape_and_roof_builds_a_sound_mesh_inside_its_lot() {
+    let e = env();
+    let db = shapes_db();
+    let mut worst = BTreeMap::<&str, [usize; 3]>::new();
+    for (def_id, def) in db.buildings() {
+        let massing = MASSINGS.iter().find(|m| def.id.starts_with(*m)).unwrap();
+        for i in 0..24u32 {
+            for (state, ready) in [
+                (BuildingState::Active, 0),
+                (BuildingState::Abandoned, 0),
+                (BuildingState::Burned, 0),
+                (BuildingState::UnderConstruction, 1000),
+            ] {
+                let b = building(def_id, &db, state, ready);
+                let p = build_building(id(i), &b, def, &e.net, &e.terrain, &db, Tick(300));
+                let what = format!("{} #{i} {state:?}", def.id);
+                let (hw, hd) = (f32::from(def.lot.0) * 4.0, f32::from(def.lot.1) * 4.0);
+                // The foundation reaches 0.3 m below the lowest box corner, so nothing may sit
+                // lower than the lowest ground under the lot.
+                let lot_floor = (0..81)
+                    .map(|k| {
+                        let (i, j) = ((k / 9) as f32 / 4.0 - 1.0, (k % 9) as f32 / 4.0 - 1.0);
+                        e.terrain
+                            .height(Vec2::new(b.pos.x + i * hw, b.pos.y + j * hd))
+                    })
+                    .fold(f32::MAX, f32::min);
+                for (lod, m) in [&p.near, &p.mid, &p.far].into_iter().enumerate() {
+                    assert!(!m.positions.is_empty(), "{what}");
+                    assert_eq!(m.positions.len(), m.normals.len());
+                    assert_eq!(m.positions.len(), m.colors.len());
+                    assert!(m.indices.len().is_multiple_of(3));
+                    assert!(m.indices.iter().all(|&k| (k as usize) < m.positions.len()));
+                    for (pos, n) in m.positions.iter().zip(&m.normals) {
+                        assert!(pos.iter().chain(n).all(|v| v.is_finite()), "{what} NaN");
+                        let len = Vec3::from_array(*n).length();
+                        assert!((len - 1.0).abs() < 1e-3, "{what}: normal length {len}");
+                        // Inside the lot (x/z), and not below the ground by more than the
+                        // foundation's 0.3 m.
+                        assert!((pos[0] - b.pos.x).abs() <= hw + 1e-3, "{what}: x {pos:?}");
+                        assert!((pos[2] - b.pos.y).abs() <= hd + 1e-3, "{what}: z {pos:?}");
+                        assert!(pos[1] >= lot_floor - 0.31, "{what}: below ground {pos:?}");
+                    }
+                    for t in m.indices.chunks(3) {
+                        let q = |k: u32| Vec3::from_array(m.positions[k as usize]);
+                        let area = (q(t[1]) - q(t[0])).cross(q(t[2]) - q(t[0])).length() * 0.5;
+                        assert!(area > 1e-6, "{what}: degenerate triangle ({area})");
+                    }
+                    let w = worst.entry(massing).or_default();
+                    w[lod] = w[lod].max(m.positions.len());
+                }
+                if state != BuildingState::UnderConstruction {
+                    let n = [
+                        p.near.positions.len(),
+                        p.mid.positions.len(),
+                        p.far.positions.len(),
+                    ];
+                    assert!(n[2] <= n[1] && n[1] <= n[0], "{what}: LOD vertices {n:?}");
+                }
+            }
+        }
+    }
+    for (massing, w) in &worst {
+        let lim = vertex_limit(massing);
+        eprintln!("{massing}: worst near/mid/far {w:?} (limit {lim:?})");
+        for k in 0..3 {
+            assert!(
+                w[k] <= lim[k],
+                "{massing}: LOD {k} has {} vertices, limit {}",
+                w[k],
+                lim[k]
+            );
+        }
+    }
+}
+
+/// T-112: the shapes really differ: each massing and roof adds geometry to the plain box.
+#[test]
+fn massings_have_their_silhouettes() {
+    let e = env();
+    let db = shapes_db();
+    let size = |name: &str| {
+        let (def_id, def) = db.buildings().find(|(_, d)| d.id == name).unwrap();
+        let mut total = 0usize;
+        for i in 0..40 {
+            let b = building(def_id, &db, BuildingState::Active, 0);
+            let p = build_building(id(i), &b, def, &e.net, &e.terrain, &db, Tick(0));
+            total += p.far.positions.len();
+        }
+        total
+    };
+    let boxy = size("Box_Flat_4x4");
+    assert!(size("LShape_Flat_4x4") > boxy);
+    assert!(size("TwinBlocks_Flat_4x4") > boxy);
+    assert!(size("Stepped_Flat_4x4") > boxy);
+    assert!(size("TowerOnPodium_Flat_4x4") > boxy);
+    assert!(size("Sawtooth_Flat_4x4") > boxy);
+    assert!(size("Box_Mansard_4x4") > boxy);
+    assert!(size("Box_Shed_4x4") > boxy);
+}
