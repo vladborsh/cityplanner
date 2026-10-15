@@ -1,7 +1,7 @@
 //! The road tool: modes, click state machine, preview.
 
 use bevy_math::{Vec2, Vec3};
-use cp_content::{LaneDir, LaneKind, RoadDef, RoadDefId};
+use cp_content::{RoadDef, RoadDefId};
 use cp_core::Cost;
 use cp_core::curve::CubicBezier3;
 use cp_net::{
