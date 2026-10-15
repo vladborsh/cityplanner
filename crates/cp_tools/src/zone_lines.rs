@@ -22,7 +22,7 @@ use crate::plugin::{ActiveTool, ToolState};
 use crate::zone::zone_color;
 
 /// Longest ribbon piece, metres.
-pub const LINE_STEP: f32 = 4.0;
+pub const LINE_STEP: f32 = cp_render::LINE_STEP;
 /// Lines farther than this from the camera are not built.
 pub const DRAW_DISTANCE: f32 = 1500.0;
 /// Cells outlined around the cursor's bucket centre, metres (covers 400 m around the cursor).
@@ -32,32 +32,7 @@ const LIFT: f32 = 0.5;
 
 /// Appends a ribbon of width `w` along the straight XZ segment `a → b`, draped on the terrain.
 pub fn ribbon(m: &mut MeshData, terrain: &Terrain, a: Vec2, b: Vec2, w: f32, color: [f32; 4]) {
-    let len = a.distance(b);
-    if len < 1e-3 {
-        return;
-    }
-    let n = ((len / LINE_STEP).ceil() as usize).max(1);
-    let d = (b - a) / len;
-    let side = Vec2::new(d.y, -d.x) * (w * 0.5);
-    let mut prev: Option<[u32; 2]> = None;
-    for i in 0..=n {
-        let p = a.lerp(b, i as f32 / n as f32);
-        let mut vert = |q: Vec2| {
-            let id = m.positions.len() as u32;
-            m.positions
-                .push([q.x, terrain_mesh_height(terrain, q) + LIFT, q.y]);
-            m.normals.push([0.0, 1.0, 0.0]);
-            m.colors.push(color);
-            id
-        };
-        let cur = [vert(p + side), vert(p - side)];
-        if let Some([pl, pr]) = prev {
-            // l = p + side runs to the right of d (XZ with z down), so this faces up.
-            m.indices
-                .extend_from_slice(&[pl, pr, cur[1], pl, cur[1], cur[0]]);
-        }
-        prev = Some(cur);
-    }
+    cp_render::ribbon_at(m, terrain, a, b, w, color, LIFT);
 }
 
 /// The outline of one cell (its four edges), plus both diagonals when `crossed`.

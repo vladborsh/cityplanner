@@ -22,7 +22,7 @@ pub use building_render::{BuildingRenderPlugin, BuildingStats};
 pub use camera::{CameraSettings, RtsCamera, RtsCameraPlugin};
 pub use chunk::terrain_mesh_height;
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
-pub use overlay::{Overlay, OverlayPlugin, OverlayState};
+pub use overlay::{LINE_STEP, Overlay, OverlayPlugin, OverlayState, ZoningMode, ribbon_at};
 pub use road_render::{RoadRenderPlugin, RoadStats};
 pub use sun::LightingSettings;
 pub use terrain::{Sun, TerrainChunk, TerrainRenderPlugin, TerrainStats};

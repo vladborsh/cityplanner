@@ -20,7 +20,7 @@ use cp_net::NetGraph;
 use cp_sim::{ScalarGrid, SimView, ZoneOverlay};
 use cp_terrain::{MAP_SIZE, Terrain};
 
-use crate::chunk::{MeshData, terrain_mesh_height};
+use crate::chunk::{MeshData, select_lod, terrain_mesh_height};
 use crate::material::VertexColorMaterial;
 
 mod utility;
@@ -73,6 +73,11 @@ impl Overlay {
 pub struct OverlayState {
     pub active: Overlay,
 }
+
+/// Whether the zone tool is active (written by `cp_tools`). The zone grid is always drawn; in
+/// zoning mode it also shows the unpainted and the invalid (grey) cells.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ZoningMode(pub bool);
 
 /// Height of the overlay layers above the surface they cover, metres.
 const LIFT: f32 = 0.3;
@@ -194,9 +199,35 @@ const FLAT_TOLERANCE: f32 = 0.03;
 /// [`LIFT`] above the *rendered* terrain ([`terrain_mesh_height`]), coloured by the painted
 /// type; invalid cells are drawn in muted grey ([`INVALID`]) so the edge of the grid is solid.
 pub fn zone_mesh(zones: &ZoneOverlay, terrain: &Terrain) -> MeshData {
+    zone_mesh_with(zones, terrain, true, None)
+}
+
+/// Terrain height the zone layers drape on: the LOD0 mesh, and, for cells that the camera at
+/// `cam` sees on a coarser terrain LOD, the highest of the LODs on show there (a coarse
+/// triangle can pass above the fine mesh, which would bury the layer).
+fn drape_height(terrain: &Terrain, cam: Option<Vec3>, p: bevy::math::Vec2) -> f32 {
+    let h = terrain_mesh_height(terrain, p);
+    let Some(cam) = cam else { return h };
+    let d = cam.distance(Vec3::new(p.x, h, p.y));
+    let coarsest = select_lod(d, None);
+    (1..=coarsest).fold(h, |h, l| h.max(crate::road::lod_height(terrain, l, p)))
+}
+
+/// [`zone_mesh`] with a style. `zoning` off draws only the painted valid cells (the grid that is
+/// always shown); on, it also draws unpainted valid cells and the invalid ones in grey.
+/// `cam` selects the terrain LODs to clear (see [`drape_height`]).
+pub fn zone_mesh_with(
+    zones: &ZoneOverlay,
+    terrain: &Terrain,
+    zoning: bool,
+    cam: Option<Vec3>,
+) -> MeshData {
     use bevy::math::Vec2;
     let mut m = MeshData::default();
     for cell in &zones.cells {
+        if !zoning && (!cell.valid || cell.zone == ZoneType::None) {
+            continue;
+        }
         let color = if cell.valid {
             zone_color(cell.zone).unwrap_or(UNPAINTED)
         } else {
@@ -210,13 +241,13 @@ pub fn zone_mesh(zones: &ZoneOverlay, terrain: &Terrain) -> MeshData {
         // Where the rendered terrain is flat or planar across the cell one quad already lies on
         // it, so only creased cells pay for the fine grid: compare the terrain with the bilinear
         // of the corner heights on a 5x5 probe.
-        let corner_h = c.map(|p| terrain_mesh_height(terrain, p));
+        let corner_h = c.map(|p| drape_height(terrain, cam, p));
         let probe_err = (0..25)
             .map(|k| {
                 let (u, v) = ((k % 5) as f32 / 4.0, (k / 5) as f32 / 4.0);
                 let bil = (corner_h[0] * (1.0 - u) + corner_h[1] * u) * (1.0 - v)
                     + (corner_h[3] * (1.0 - u) + corner_h[2] * u) * v;
-                (terrain_mesh_height(terrain, at(u, v)) - bil).abs()
+                (drape_height(terrain, cam, at(u, v)) - bil).abs()
             })
             .fold(0.0f32, f32::max);
         let n = if probe_err <= FLAT_TOLERANCE {
@@ -236,7 +267,7 @@ pub fn zone_mesh(zones: &ZoneOverlay, terrain: &Terrain) -> MeshData {
                 let p = at(u, v);
                 push(
                     &mut m,
-                    [p.x, terrain_mesh_height(terrain, p) + LIFT, p.y],
+                    [p.x, drape_height(terrain, cam, p) + LIFT, p.y],
                     color,
                 );
             }
@@ -251,6 +282,102 @@ pub fn zone_mesh(zones: &ZoneOverlay, terrain: &Terrain) -> MeshData {
                     quad(&mut m, q);
                 }
             }
+        }
+    }
+    m
+}
+
+/// Longest ribbon piece on uneven ground, metres.
+pub const LINE_STEP: f32 = 4.0;
+/// Zone outlines are not built farther than this from the camera (terrain LOD1 and beyond).
+pub const OUTLINE_DISTANCE: f32 = 1500.0;
+/// Height of the zone outlines above the rendered terrain, metres.
+const OUTLINE_LIFT: f32 = 0.4;
+/// A ribbon whose terrain stays within this (m) of the straight line is one piece.
+const RIBBON_FLAT: f32 = 0.05;
+
+/// Appends a ribbon of width `w` along the XZ segment `a → b`, draped `lift` above the rendered
+/// terrain: one piece where the terrain is straight under it, else cut every [`LINE_STEP`].
+pub fn ribbon_at(
+    m: &mut MeshData,
+    terrain: &Terrain,
+    a: bevy::math::Vec2,
+    b: bevy::math::Vec2,
+    w: f32,
+    color: [f32; 4],
+    lift: f32,
+) {
+    let len = a.distance(b);
+    if len < 1e-3 {
+        return;
+    }
+    let (ha, hb) = (
+        terrain_mesh_height(terrain, a),
+        terrain_mesh_height(terrain, b),
+    );
+    let straight = [0.25f32, 0.5, 0.75].iter().all(|&t| {
+        (terrain_mesh_height(terrain, a.lerp(b, t)) - (ha + (hb - ha) * t)).abs() <= RIBBON_FLAT
+    });
+    let n = if straight {
+        1
+    } else {
+        ((len / LINE_STEP).ceil() as usize).max(1)
+    };
+    let d = (b - a) / len;
+    let side = bevy::math::Vec2::new(d.y, -d.x) * (w * 0.5);
+    let mut prev: Option<[u32; 2]> = None;
+    for i in 0..=n {
+        let p = a.lerp(b, i as f32 / n as f32);
+        let cur = [p + side, p - side]
+            .map(|q| push(m, [q.x, terrain_mesh_height(terrain, q) + lift, q.y], color));
+        if let Some([pl, pr]) = prev {
+            // l = p + side runs to the right of d (XZ with z down), so this faces up.
+            m.indices
+                .extend_from_slice(&[pl, pr, cur[1], pl, cur[1], cur[0]]);
+        }
+        prev = Some(cur);
+    }
+}
+
+/// Line width wanted at `dist` metres from the camera (≈ 1.5 px at 1080p), in half-octave
+/// steps so the layer rebuilds only when the step changes.
+pub fn outline_width_step(dist: f32) -> i32 {
+    ((dist * 0.003).clamp(0.25, 4.0).log2() * 2.0).round() as i32
+}
+
+/// Zone outlines: the four edges of every valid cell within [`OUTLINE_DISTANCE`] of `cam`,
+/// tinted by the painted zone (grey if unpainted), draped on the rendered terrain. `zoning`
+/// makes them stronger.
+pub fn zone_outline_mesh(
+    zones: &ZoneOverlay,
+    terrain: &Terrain,
+    cam: Vec3,
+    width_step: i32,
+    zoning: bool,
+) -> MeshData {
+    use bevy::math::Vec2;
+    let w = (width_step as f32 * 0.5).exp2();
+    let alpha = if zoning { 0.9 } else { 0.5 };
+    let mut m = MeshData::default();
+    for cell in zones.cells.iter().filter(|c| c.valid) {
+        let k = cell.corners.map(|[x, z]| Vec2::new(x, z));
+        let mid = (k[0] + k[2]) * 0.5;
+        let y = terrain_mesh_height(terrain, mid);
+        if cam.distance(Vec3::new(mid.x, y, mid.y)) > OUTLINE_DISTANCE {
+            continue;
+        }
+        let rgb = zone_color(cell.zone).map_or([0.9, 0.9, 0.9], |c| [c[0], c[1], c[2]]);
+        let color = [rgb[0], rgb[1], rgb[2], alpha];
+        for i in 0..4 {
+            ribbon_at(
+                &mut m,
+                terrain,
+                k[i],
+                k[(i + 1) % 4],
+                w,
+                color,
+                OUTLINE_LIFT,
+            );
         }
     }
     m
@@ -355,12 +482,26 @@ pub struct OverlayPlugin;
 impl Plugin for OverlayPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<OverlayState>()
+            .init_resource::<ZoningMode>()
             .init_resource::<OverlayLayers>()
             .add_systems(
                 Update,
                 (sync_overlay_meshes, apply_overlay_visibility).chain(),
             );
     }
+}
+
+/// Marks the zone outline entity (shown with every overlay).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZoneOutlines;
+
+/// Whether the zone fill layer is shown with `active`: with every overlay except the ones that
+/// recolour the ground itself (their cells are outlines only).
+pub fn zone_fill_visible(active: Overlay) -> bool {
+    !matches!(
+        active,
+        Overlay::LandValue | Overlay::Pollution | Overlay::Water | Overlay::Power
+    )
 }
 
 /// Marks a layer entity.
@@ -380,6 +521,9 @@ struct LayerSource {
 struct OverlayLayers {
     traffic: LayerSource,
     zones: LayerSource,
+    outlines: LayerSource,
+    /// Style the zone layers were built with: zoning mode, camera cell, line width step.
+    zone_style: Option<(bool, (i32, i32, i32), i32)>,
     land: LayerSource,
     pollution: LayerSource,
     water: LayerSource,
@@ -418,6 +562,7 @@ fn upsert(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     force: bool,
+    outlines: bool,
 ) {
     if src.entity.is_some() && src.key == key && !force {
         return;
@@ -435,25 +580,27 @@ fn upsert(
         lo = lo.min(Vec3::from(*p));
         hi = hi.max(Vec3::from(*p));
     }
-    src.entity = Some(
-        commands
-            .spawn((
-                Mesh3d(meshes.add(to_bevy_mesh(data))),
-                MeshMaterial3d(material.clone()),
-                Transform::default(),
-                Aabb::from_min_max(lo, hi),
-                NotShadowCaster,
-                Visibility::Hidden,
-                OverlayLayer(which),
-                Name::new(format!("overlay {}", which.label())),
-            ))
-            .id(),
-    );
+    let mut e = commands.spawn((
+        Mesh3d(meshes.add(to_bevy_mesh(data))),
+        MeshMaterial3d(material.clone()),
+        Transform::default(),
+        Aabb::from_min_max(lo, hi),
+        NotShadowCaster,
+        Visibility::Hidden,
+        OverlayLayer(which),
+        Name::new(format!("overlay {}", which.label())),
+    ));
+    if outlines {
+        e.insert(ZoneOutlines);
+    }
+    src.entity = Some(e.id());
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_overlay_meshes(
     view: Option<Res<SimView>>,
-    state: Res<OverlayState>,
+    zoning: Res<ZoningMode>,
+    camera: Query<&Transform, With<Camera3d>>,
     time: Res<Time<Real>>,
     mut layers: ResMut<OverlayLayers>,
     mut commands: Commands,
@@ -487,27 +634,56 @@ fn sync_overlay_meshes(
         &mut commands,
         &mut meshes,
         false,
+        false,
     );
-    // The zone snapshot changes whenever a building goes up, and the fine mesh is the costly
-    // one: build it only while it is shown, and at most every `ZONE_REBUILD_SECS` (a stale
-    // layer is replaced on the next frame that allows it; switching it on builds at once).
+    // The zone grid is always on. It is the costly mesh, so it rebuilds at most every
+    // `ZONE_REBUILD_SECS` (a stale layer is replaced on the next frame that allows it); a
+    // changed style (zoning mode, camera cell, line width) or terrain rebuilds at once.
     let now = time.elapsed_secs();
     let zones_key = ptr(&o.zones);
-    let zones_due = l.zones.entity.is_none()
-        || terrain_changed
+    let cam_pos = camera.single().ok().map(|t| t.translation);
+    let style = (
+        zoning.0,
+        cam_pos.map_or((0, 0, 0), |c| {
+            (
+                (c.x / 250.0).floor() as i32,
+                (c.y / 250.0).floor() as i32,
+                (c.z / 250.0).floor() as i32,
+            )
+        }),
+        cam_pos.map_or(0, |c| outline_width_step(c.y)),
+    );
+    let style_changed = l.zone_style != Some(style);
+    let zones_due = terrain_changed
+        || style_changed
         || (l.zones.key != zones_key && now - l.zones.built_at >= ZONE_REBUILD_SECS);
-    if state.active == Overlay::Zones && zones_due {
+    if zones_due {
         l.zones.built_at = now;
+        l.zone_style = Some(style);
         upsert(
             &mut l.zones,
             zones_key,
             Overlay::Zones,
-            || zone_mesh(&o.zones, terrain),
+            || zone_mesh_with(&o.zones, terrain, zoning.0, cam_pos),
             &material,
             &mut commands,
             &mut meshes,
             true,
+            false,
         );
+        if let Some(cam) = cam_pos {
+            upsert(
+                &mut l.outlines,
+                zones_key,
+                Overlay::Zones,
+                || zone_outline_mesh(&o.zones, terrain, cam, style.2, zoning.0),
+                &material,
+                &mut commands,
+                &mut meshes,
+                true,
+                true,
+            );
+        }
     }
     upsert(
         &mut l.land,
@@ -518,6 +694,7 @@ fn sync_overlay_meshes(
         &mut commands,
         &mut meshes,
         terrain_changed,
+        false,
     );
     upsert(
         &mut l.pollution,
@@ -528,6 +705,7 @@ fn sync_overlay_meshes(
         &mut commands,
         &mut meshes,
         terrain_changed,
+        false,
     );
     if let Some(db) = view.content.as_deref() {
         // The utility layers depend on the network, the buildings (flags) and the zone grid
@@ -557,19 +735,27 @@ fn sync_overlay_meshes(
                 &mut commands,
                 &mut meshes,
                 terrain_changed,
+                false,
             );
         }
     }
 }
 
-/// Shows exactly the active layer. Runs every frame after the sync (cheap: a handful of
+/// Shows the active layer, and the zone grid (see [`zone_fill_visible`]). Runs every frame after the sync (cheap: a handful of
 /// entities), so a switch and a rebuild in the same frame never show a stale layer.
 fn apply_overlay_visibility(
     state: Res<OverlayState>,
-    mut layers: Query<(&OverlayLayer, &mut Visibility)>,
+    mut layers: Query<(&OverlayLayer, Option<&ZoneOutlines>, &mut Visibility)>,
 ) {
-    for (layer, mut vis) in &mut layers {
-        let want = if layer.0 == state.active {
+    for (layer, outlines, mut vis) in &mut layers {
+        let on = if outlines.is_some() {
+            true
+        } else if layer.0 == Overlay::Zones {
+            zone_fill_visible(state.active)
+        } else {
+            layer.0 == state.active
+        };
+        let want = if on {
             Visibility::Visible
         } else {
             Visibility::Hidden

@@ -125,12 +125,22 @@ impl ToolState {
     }
 }
 
+/// Tells the renderer whether the zone tool is active (the zone grid shows more then).
+fn sync_zoning_mode(state: Res<ToolState>, mut mode: ResMut<cp_render::ZoningMode>) {
+    let zoning = state.active == ActiveTool::Zone;
+    if mode.0 != zoning {
+        mode.0 = zoning;
+    }
+}
+
 pub struct ToolsPlugin;
 
 impl Plugin for ToolsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ToolState>()
             .init_resource::<crate::zone_lines::ZoneLines>()
+            .init_resource::<cp_render::ZoningMode>()
+            .add_systems(Update, sync_zoning_mode)
             .init_resource::<UiCapture>()
             .init_resource::<CommandOutbox>()
             .init_resource::<crate::Picked>()

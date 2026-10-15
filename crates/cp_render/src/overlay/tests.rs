@@ -257,8 +257,8 @@ fn heat_layer_drapes_a_grid_and_a_missing_grid_draws_the_placeholder() {
     assert!(p.colors.iter().all(|c| *c == pollution_color(0.0)));
 }
 
-/// An app with the visibility system and one hidden entity per layer.
-fn layer_app() -> (App, Vec<(Overlay, Entity)>) {
+/// An app with the visibility system, one hidden entity per layer and the zone outlines.
+fn layer_app() -> (App, Vec<(Overlay, Entity)>, Entity) {
     let mut app = App::new();
     app.init_resource::<OverlayState>()
         .add_systems(Update, apply_overlay_visibility);
@@ -279,7 +279,15 @@ fn layer_app() -> (App, Vec<(Overlay, Entity)>) {
         )
     })
     .to_vec();
-    (app, layers)
+    let outlines = app
+        .world_mut()
+        .spawn((
+            OverlayLayer(Overlay::Zones),
+            ZoneOutlines,
+            Visibility::Hidden,
+        ))
+        .id();
+    (app, layers, outlines)
 }
 
 fn visible(app: &App, layers: &[(Overlay, Entity)]) -> Vec<Overlay> {
@@ -291,15 +299,36 @@ fn visible(app: &App, layers: &[(Overlay, Entity)]) -> Vec<Overlay> {
 }
 
 #[test]
-fn switching_overlays_flips_exactly_one_layer_within_one_update() {
-    let (mut app, layers) = layer_app();
-    app.update();
-    assert!(visible(&app, &layers).is_empty(), "off shows nothing");
+fn switching_overlays_shows_that_layer_and_the_zone_grid_stays_on() {
+    let (mut app, layers, outlines) = layer_app();
     for o in Overlay::ALL {
         app.world_mut().resource_mut::<OverlayState>().active = o;
         app.update(); // one frame
-        let want: Vec<_> = if o == Overlay::Off { vec![] } else { vec![o] };
-        assert_eq!(visible(&app, &layers), want, "{o:?}");
+        let mut want: Vec<_> = if o == Overlay::Off { vec![] } else { vec![o] };
+        // BUG-026: the zone fill is on with every overlay that does not recolour the ground.
+        if zone_fill_visible(o) && !want.contains(&Overlay::Zones) {
+            want.push(Overlay::Zones);
+        }
+        let mut got = visible(&app, &layers);
+        got.sort_by_key(|o| Overlay::ALL.iter().position(|a| a == o));
+        want.sort_by_key(|o| Overlay::ALL.iter().position(|a| a == o));
+        assert_eq!(got, want, "{o:?}");
+        assert_eq!(
+            *app.world().get::<Visibility>(outlines).unwrap(),
+            Visibility::Visible,
+            "outlines with {o:?}"
+        );
+    }
+    for (o, on) in [
+        (Overlay::Off, true),
+        (Overlay::Zones, true),
+        (Overlay::Traffic, true),
+        (Overlay::LandValue, false),
+        (Overlay::Pollution, false),
+        (Overlay::Water, false),
+        (Overlay::Power, false),
+    ] {
+        assert_eq!(zone_fill_visible(o), on, "{o:?}");
     }
 }
 
@@ -519,5 +548,164 @@ mod utility_overlays {
             &[(5000.0, 5100.0), (5050.0, 5100.0)],
         );
         assert!(!Arc::ptr_eq(&a.utilities, &sim.view().utilities));
+    }
+}
+
+/// BUG-026: a street built with the real command has zone cells, and the zone mesh is not
+/// empty and lies above the rendered terrain.
+#[test]
+fn a_built_street_has_a_zone_mesh_above_the_terrain() {
+    use cp_net::{ElevationMode, NetCommand, RoadPath};
+    use cp_sim::SimCommand;
+    let content =
+        Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
+    let t = terrain();
+    let mut sim = SimRunner::new(1);
+    sim.set_terrain(Arc::clone(&t));
+    sim.set_content(Arc::clone(&content));
+    let tick = sim.tick();
+    sim.push_command(
+        SimCommand::Net(NetCommand::BuildRoad {
+            road: content.road_id("basic_2l").unwrap(),
+            path: RoadPath::Straight {
+                from: bevy_math::Vec2::new(4600.0, 4700.0),
+                to: bevy_math::Vec2::new(4800.0, 4700.0),
+            },
+            elevation: ElevationMode::Ground,
+        }),
+        tick,
+    );
+    sim.tick_once();
+    sim.tick_once();
+    let view = sim.view();
+    let cells = view.overlays.zones.cells.len();
+    eprintln!(
+        "cells={cells} grid_cells={}",
+        view.zones
+            .cells_within(bevy_math::Vec2::new(4700.0, 4700.0), 500.0)
+            .len()
+    );
+    assert!(cells > 0, "no zone cells after BuildRoad");
+    let m = zone_mesh(&view.overlays.zones, &t);
+    assert!(!m.indices.is_empty());
+    for p in &m.positions {
+        let h = terrain_mesh_height(&t, bevy_math::Vec2::new(p[0], p[2]));
+        assert!(p[1] >= h + 0.25, "{p:?} vs {h}");
+    }
+}
+
+fn built_street() -> (SimRunner, Arc<Terrain>) {
+    use cp_net::{ElevationMode, NetCommand, RoadPath};
+    use cp_sim::SimCommand;
+    let content =
+        Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
+    let t = terrain();
+    let mut sim = SimRunner::new(1);
+    sim.set_terrain(Arc::clone(&t));
+    sim.set_content(Arc::clone(&content));
+    let tick = sim.tick();
+    sim.push_command(
+        SimCommand::Net(NetCommand::BuildRoad {
+            road: content.road_id("basic_2l").unwrap(),
+            path: RoadPath::Straight {
+                from: bevy_math::Vec2::new(4600.0, 4700.0),
+                to: bevy_math::Vec2::new(4800.0, 4700.0),
+            },
+            elevation: ElevationMode::Ground,
+        }),
+        tick,
+    );
+    sim.tick_once();
+    sim.tick_once();
+    (sim, t)
+}
+
+#[test]
+fn outside_zoning_mode_only_painted_valid_cells_are_filled_and_outlines_cover_valid_cells() {
+    let (_, t) = built_street();
+    let mut zones = built_street().0.view().overlays.zones.as_ref().clone();
+    zones.cells[0].zone = ZoneType::ResLow;
+    zones.cells[1].zone = ZoneType::ResLow;
+    zones.cells[1].valid = false;
+    let fill = zone_mesh_with(&zones, &t, false, None);
+    let n = fill.triangle_count();
+    assert!(n >= 2, "the painted valid cell is filled");
+    // Only cell 0 (1 quad on flat ground at least): unpainted and invalid cells are skipped.
+    assert!(n < zones.cells.len(), "{n}");
+    let full = zone_mesh_with(&zones, &t, true, None);
+    assert!(full.triangle_count() >= zones.cells.len() * 2);
+    assert!(
+        fill.colors
+            .iter()
+            .all(|c| *c == zone_color(ZoneType::ResLow).unwrap())
+    );
+
+    let cam = Vec3::new(4700.0, 200.0, 4750.0);
+    let o = zone_outline_mesh(&zones, &t, cam, 0, false);
+    assert!(!o.indices.is_empty());
+    assert!(faces_up(&o));
+    for p in &o.positions {
+        let h = terrain_mesh_height(&t, bevy_math::Vec2::new(p[0], p[2]));
+        assert!(p[1] >= h + OUTLINE_LIFT - 1e-3, "{p:?} vs {h}");
+    }
+    // A camera farther than the LOD0 range draws no outlines.
+    let far = zone_outline_mesh(
+        &zones,
+        &t,
+        Vec3::new(4700.0, 200.0, 4700.0 + 1600.0),
+        0,
+        false,
+    );
+    assert!(far.indices.is_empty());
+    // The invalid cell has none: one fewer cell outlined.
+    let mut all_valid = zones.clone();
+    all_valid.cells[1].valid = true;
+    assert!(zone_outline_mesh(&all_valid, &t, cam, 0, false).triangle_count() > o.triangle_count());
+}
+
+/// A coarse terrain LOD may pass above the fine mesh: seen from far away the fill clears it.
+#[test]
+fn the_zone_fill_clears_the_coarse_terrain_lods_seen_from_afar() {
+    use cp_terrain::{GRID, MapMeta};
+    let meta = MapMeta {
+        name: "t".into(),
+        sea_level: 0.0,
+        start_tile: (2, 2),
+        external_connections: vec![],
+    };
+    let h: Vec<u16> = (0..GRID * GRID)
+        .map(|k| {
+            let (x, z) = (k % GRID, k / GRID);
+            (2000 + ((x * 7 + z * 13) % 40) * 30) as u16
+        })
+        .collect();
+    let t = Terrain::from_samples(meta, &h, &vec![0; GRID * GRID]).unwrap();
+    let zones = ZoneOverlay {
+        cells: (0..30)
+            .map(|k| {
+                let o = bevy_math::Vec2::new(5003.0 + k as f32 * 9.7, 5004.0 + k as f32 * 3.1);
+                ZoneCellView {
+                    corners: [
+                        o,
+                        o + bevy_math::Vec2::X * 8.0,
+                        o + bevy_math::Vec2::splat(8.0),
+                        o + bevy_math::Vec2::Y * 8.0,
+                    ]
+                    .map(|p| [p.x, p.y]),
+                    zone: ZoneType::ResLow,
+                    valid: true,
+                }
+            })
+            .collect(),
+    };
+    let cam = Vec3::new(5100.0, 3000.0, 5100.0 + 4000.0);
+    let m = zone_mesh_with(&zones, &t, false, Some(cam));
+    assert!(!m.positions.is_empty());
+    for p in &m.positions {
+        let q = bevy_math::Vec2::new(p[0], p[2]);
+        for l in 0..crate::chunk::LOD_COUNT {
+            let h = crate::road::lod_height(&t, l, q);
+            assert!(p[1] >= h + 0.25, "{p:?} below LOD{l} {h}");
+        }
     }
 }
