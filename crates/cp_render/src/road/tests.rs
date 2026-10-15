@@ -497,3 +497,118 @@ fn incremental_update_matches_a_fresh_build() {
         assert_eq!(a.indices, b.indices, "chunk {c:?}");
     }
 }
+
+/// Triangles whose three vertices are all chevron-coloured.
+fn chevron_triangles(m: &MeshData) -> usize {
+    (0..m.triangle_count())
+        .filter(|&t| (0..3).all(|k| m.colors[m.indices[t * 3 + k] as usize] == CHEVRON))
+        .count()
+}
+
+fn segment_length(w: &World, v: &SimView, id: SegmentId) -> f32 {
+    let _ = w;
+    v.junctions
+        .trimmed_curve(&v.net, id)
+        .unwrap()
+        .arc_table()
+        .length()
+}
+
+#[test]
+fn a_one_way_segment_gets_floor_len_over_24_chevrons_and_a_two_way_one_none() {
+    let mut w = world();
+    w.line("highway_1w_2l", (X0, Z0), (X0 + 130.0, Z0));
+    w.line("highway_1w_1l", (X0, Z0 + 100.0), (X0 + 60.0, Z0 + 100.0));
+    w.line("basic_2l", (X0, Z0 + 200.0), (X0 + 130.0, Z0 + 200.0));
+    let v = w.view();
+    let (set, _) = w.set(&v);
+    let mut seen = 0;
+    for (id, seg) in v.net.segments() {
+        let piece = set.piece(PieceKey::Segment(id)).unwrap();
+        let name = &w.content.road(seg.road).id;
+        let n = chevron_triangles(&piece.near) / 4;
+        if name.starts_with("highway_1w") {
+            let expected = (segment_length(&w, &v, id) / CHEVRON_SPACING).floor() as usize;
+            assert_eq!(n, expected, "{name}");
+            // The far mesh has none, and is strictly cheaper than the near one.
+            assert_eq!(chevron_triangles(&piece.far), 0);
+            assert!(piece.far.triangle_count() < piece.near.triangle_count());
+            seen += 1;
+        } else {
+            assert_eq!(n, 0, "{name} is two-way");
+        }
+    }
+    // Long roads may be split into several segments; each is checked on its own length.
+    assert!(seen >= 2, "{seen} one-way segments");
+}
+
+#[test]
+fn chevrons_point_along_the_segment_replace_the_asphalt_and_face_up() {
+    let mut w = world();
+    w.line("highway_1w_2l", (X0, Z0), (X0 + 100.0, Z0));
+    let v = w.view();
+    let (set, _) = w.set(&v);
+    let (id, _) = v.net.segments().next().unwrap();
+    let m = &set.piece(PieceKey::Segment(id)).unwrap().near;
+    // The segment runs along +x: each chevron's furthest vertex (its tip) is on the axis z = Z0
+    // and ahead of the other vertices of its arms.
+    let chevron_verts: Vec<Vec3> = (0..m.triangle_count())
+        .filter(|&t| (0..3).all(|k| m.colors[m.indices[t * 3 + k] as usize] == CHEVRON))
+        .flat_map(|t| {
+            (0..3).map(move |k| Vec3::from_array(m.positions[m.indices[t * 3 + k] as usize]))
+        })
+        .collect();
+    let tip_x = chevron_verts.iter().map(|p| p.x).fold(f32::MIN, f32::max);
+    let tips: Vec<_> = chevron_verts
+        .iter()
+        .filter(|p| (p.x - tip_x).abs() < 1e-3)
+        .collect();
+    assert!(!tips.is_empty());
+    assert!(
+        tips.iter().all(|p| (p.z - Z0).abs() < 1e-3),
+        "tip on the axis"
+    );
+    // The arms trail behind the tip: the lowest-x vertices are off the axis.
+    let tail_x = chevron_verts.iter().map(|p| p.x).fold(f32::MAX, f32::min);
+    assert!(
+        chevron_verts
+            .iter()
+            .filter(|p| (p.x - tail_x).abs() < 1e-3)
+            .all(|p| (p.z - Z0).abs() > 0.5)
+    );
+    // Every up-facing triangle faces up (no flipped fan), and nothing is stacked on the
+    // surface: no two triangles of the road level cover the same point, checked via the
+    // total area of the carriageway band equalling its rectangle.
+    for t in 0..m.triangle_count() {
+        if (0..3).all(|k| m.normals[m.indices[t * 3 + k] as usize][1] > 0.99) {
+            assert!(tri_normal(m, t).y > 0.99, "triangle {t} faces down");
+        }
+    }
+}
+
+#[test]
+fn chevrons_do_not_change_the_carriageway_area() {
+    let mut w = world();
+    w.line("highway_1w_2l", (X0, Z0), (X0 + 100.0, Z0));
+    let v = w.view();
+    let (set, _) = w.set(&v);
+    let (id, _) = v.net.segments().next().unwrap();
+    let m = &set.piece(PieceKey::Segment(id)).unwrap().near;
+    let top = |c: [f32; 4]| -> f32 {
+        (0..m.triangle_count())
+            .filter(|&t| (0..3).all(|k| m.colors[m.indices[t * 3 + k] as usize] == c))
+            .map(|t| {
+                let p = |k: usize| Vec3::from_array(m.positions[m.indices[t * 3 + k] as usize]);
+                (p(1) - p(0)).cross(p(2) - p(0)).length() * 0.5
+            })
+            .sum()
+    };
+    let len = segment_length(&w, &v, id);
+    let area = top(ASPHALT) + top(CHEVRON) + top(WHITE);
+    // The two lanes (7.5 m) over the whole segment, divider line included.
+    assert!(
+        (area - 7.5 * len).abs() < 0.5,
+        "area {area} vs {}",
+        7.5 * len
+    );
+}

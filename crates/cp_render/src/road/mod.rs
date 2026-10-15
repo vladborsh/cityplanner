@@ -8,7 +8,10 @@
 //!   to the terrain; elevated and bridge segments get an underside, fascias and piers.
 //! * A **junction piece** is the junction polygon, triangulated. Its arm corners are *the
 //!   same points* the neighbouring segments use for their end rings, so there are no gaps.
-//! * Every piece has a `near` mesh (markings, kerbs) and a `far` mesh (no markings).
+//! * One-way segments (every car lane runs forward) get direction **chevrons** on the
+//!   carriageway axis every [`CHEVRON_SPACING`] metres, baked in as vertex-coloured
+//!   triangles that replace the asphalt under them (no overlay). Near mesh only.
+//! * Every piece has a `near` mesh (markings, kerbs, chevrons) and a `far` mesh (none).
 //! * [`RoadSet`] keeps the pieces and, given a new snapshot, rebuilds only pieces whose
 //!   inputs changed (segment fingerprint / junction revision).
 //!
@@ -18,7 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_math::{Vec2, Vec3};
-use cp_content::LaneKind;
+use cp_content::{LaneDir, LaneKind};
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_net::{
     Arm, Elevation, Junction, JunctionGeometry, NetGraph, NodeId, Segment, SegmentId,
@@ -43,6 +46,14 @@ pub const DASH_ON: f32 = 3.0;
 pub const DASH_PERIOD: f32 = 12.0;
 /// Chunk side used to batch pieces into meshes, metres.
 pub const ROAD_CHUNK: f32 = 256.0;
+/// Distance between direction chevrons on a one-way segment, metres.
+pub const CHEVRON_SPACING: f32 = 24.0;
+/// Length of a chevron along the road, metres.
+const CHEVRON_LEN: f32 = 3.2;
+/// Half width of a chevron, metres, at most (also capped at 70% of the carriageway half).
+const CHEVRON_HALF: f32 = 1.4;
+/// Thickness of a chevron arm along the road, as a fraction of [`CHEVRON_LEN`].
+const CHEVRON_ARM: f32 = 0.15;
 
 const ASPHALT: [f32; 4] = [0.11, 0.11, 0.12, 1.0];
 const SIDEWALK: [f32; 4] = [0.55, 0.55, 0.52, 1.0];
@@ -53,6 +64,8 @@ const TRAM: [f32; 4] = [0.20, 0.20, 0.21, 1.0];
 const MEDIAN: [f32; 4] = [0.30, 0.34, 0.26, 1.0];
 const WHITE: [f32; 4] = [0.80, 0.80, 0.78, 1.0];
 const YELLOW: [f32; 4] = [0.80, 0.62, 0.12, 1.0];
+/// Direction chevrons on one-way roads (paler than the lane lines).
+pub const CHEVRON: [f32; 4] = [0.62, 0.62, 0.60, 1.0];
 const CONCRETE: [f32; 4] = [0.48, 0.48, 0.47, 1.0];
 const EMBANKMENT: [f32; 4] = [0.28, 0.24, 0.17, 1.0];
 
@@ -342,8 +355,59 @@ fn is_straight(c: &CubicBezier3) -> bool {
         .all(|p| (*p - c.p0).cross(dir).length() < 0.01)
 }
 
-/// Arc-length positions of the rings: ends, curve steps, and dash boundaries.
-fn ring_positions(length: f32, straight: bool, dashes: bool) -> Vec<f32> {
+/// Every car lane of the segment runs forward, and there is one (`RoadDef::is_one_way`,
+/// read from the segment's lanes so the mesh needs no content).
+fn is_one_way(graph: &NetGraph, seg: &Segment) -> bool {
+    let mut cars = seg
+        .lanes
+        .iter()
+        .filter_map(|&l| graph.lane(l))
+        .filter(|l| l.kind == LaneKind::Car)
+        .peekable();
+    cars.peek().is_some() && cars.all(|l| l.dir == LaneDir::Forward)
+}
+
+/// The lateral extent `(lo, hi)` of the car lanes, when everything between is plain
+/// asphalt or a white lane line at road level (so chevrons can replace it).
+fn carriageway(graph: &NetGraph, seg: &Segment, bands: &[Band]) -> Option<(f32, f32)> {
+    let cars = || {
+        seg.lanes
+            .iter()
+            .filter_map(|&l| graph.lane(l))
+            .filter(|l| l.kind == LaneKind::Car)
+    };
+    let lo = cars()
+        .map(|l| l.offset - l.width * 0.5)
+        .fold(f32::MAX, f32::min);
+    let hi = cars()
+        .map(|l| l.offset + l.width * 0.5)
+        .fold(f32::MIN, f32::max);
+    let inside = bands.iter().filter(|b| in_range(b, lo, hi));
+    inside
+        .into_iter()
+        .all(|b| b.raise == 0.0 && (b.color == ASPHALT || b.color == WHITE))
+        .then_some((lo, hi))
+}
+
+fn in_range(b: &Band, lo: f32, hi: f32) -> bool {
+    b.lo >= lo - 1e-3 && b.hi <= hi + 1e-3
+}
+
+/// The arc-length intervals of the chevrons of a segment of `length` metres: one centred in
+/// each [`CHEVRON_SPACING`] cell, `floor(length / 24)` of them.
+pub fn chevron_rows(length: f32) -> Vec<(f32, f32)> {
+    let n = (length / CHEVRON_SPACING).floor().max(0.0) as usize;
+    (0..n)
+        .map(|i| {
+            let c = (i as f32 + 0.5) * CHEVRON_SPACING;
+            (c - CHEVRON_LEN * 0.5, c + CHEVRON_LEN * 0.5)
+        })
+        .collect()
+}
+
+/// Arc-length positions of the rings: ends, curve steps, dash boundaries, and the two
+/// boundaries of every chevron row (which displace other rings within it).
+fn ring_positions(length: f32, straight: bool, dashes: bool, chevrons: &[(f32, f32)]) -> Vec<f32> {
     let mut s = vec![0.0, length];
     if !straight {
         let n = (length / STEP).ceil().max(1.0) as usize;
@@ -364,6 +428,15 @@ fn ring_positions(length: f32, straight: bool, dashes: bool) -> Vec<f32> {
     // Keep the exact end value.
     if let Some(last) = s.last_mut() {
         *last = length;
+    }
+    if !chevrons.is_empty() {
+        s.retain(|&x| {
+            x <= 1e-4
+                || x >= length - 1e-4
+                || chevrons.iter().all(|&(a, b)| x < a - 0.25 || x > b + 0.25)
+        });
+        s.extend(chevrons.iter().flat_map(|&(a, b)| [a, b]));
+        s.sort_by(f32::total_cmp);
     }
     s
 }
@@ -406,18 +479,33 @@ fn extrude(
     };
     let bands = cross_section(graph, seg, markings);
     let has_dashes = bands.iter().any(|b| b.dashed);
-    let s_list = ring_positions(length, is_straight(&curve), has_dashes);
+    // Chevrons (near mesh, one-way roads): `(lo, hi)` is the carriageway they replace.
+    let chevron = (markings && is_one_way(graph, seg))
+        .then(|| carriageway(graph, seg, &bands))
+        .flatten();
+    let chevrons = chevron.map_or_else(Vec::new, |_| chevron_rows(length));
+    let s_list = ring_positions(length, is_straight(&curve), has_dashes, &chevrons);
     let rings: Vec<Ring> = s_list.iter().map(|&s| frame.ring(s)).collect();
+    // Ring pairs `k - 1, k` that hold a chevron.
+    let chevron_row = |k: usize| {
+        k > 0
+            && chevrons
+                .iter()
+                .any(|&(a, b)| (s_list[k - 1] - a).abs() < 1e-4 && (s_list[k] - b).abs() < 1e-4)
+    };
     let up = Vec3::Y;
     let mut m = MeshData::default();
 
     // Surface bands.
     for b in &bands {
         let mut prev: Option<(u32, u32)> = None;
+        // Under a chevron the carriageway is drawn by `chevron_quads` instead.
+        let replaced = chevron.is_some_and(|(lo, hi)| in_range(b, lo, hi));
         for (k, r) in rings.iter().enumerate() {
             let (lo, hi) = (r.at(b.lo, b.raise), r.at(b.hi, b.raise));
+            let skip = replaced && chevron_row(k);
             if b.dashed {
-                if k == 0 {
+                if k == 0 || skip {
                     continue;
                 }
                 let on = dash_on(s_list[k - 1], s_list[k]);
@@ -434,11 +522,18 @@ fn extrude(
                     push_vertex(&mut m, lo, up, b.color),
                     push_vertex(&mut m, hi, up, b.color),
                 );
-                if let Some(p) = prev {
+                if let Some(p) = prev
+                    && !skip
+                {
                     quad(&mut m, [p.0, p.1, v.1, v.0], up);
                 }
                 prev = Some(v);
             }
+        }
+    }
+    if let Some((lo, hi)) = chevron {
+        for k in (1..rings.len()).filter(|&k| chevron_row(k)) {
+            chevron_quads(&mut m, &rings[k - 1], &rings[k], lo, hi);
         }
     }
 
@@ -535,6 +630,43 @@ fn extrude(
         piers(&mut m, terrain, seg);
     }
     Some(m)
+}
+
+fn flat_tri(m: &mut MeshData, p: [Vec3; 3], c: [f32; 4]) {
+    let v = p.map(|p| push_vertex(m, p, Vec3::Y, c));
+    tri(m, v[0], v[1], v[2], Vec3::Y);
+}
+
+/// The carriageway `[lo, hi]` between rings `a` and `b`, as asphalt with one chevron (an
+/// arrowhead pointing along the road) cut out of it: the chevron is four triangles of
+/// [`CHEVRON`] colour, the rest of the rectangle is tiled around it, nothing overlaps.
+fn chevron_quads(m: &mut MeshData, a: &Ring, b: &Ring, lo: f32, hi: f32) {
+    let c = (lo + hi) * 0.5;
+    let w = CHEVRON_HALF.min((hi - lo) * 0.5 * 0.7);
+    let th = CHEVRON_ARM;
+    // A point at lateral `x`, `t` (0..1) of the way from ring `a` to ring `b`.
+    let at = |x: f32, t: f32| a.at(x, 0.0).lerp(b.at(x, 0.0), t);
+    let (q0, q1, q2, q3) = (at(lo, 0.0), at(hi, 0.0), at(hi, 1.0), at(lo, 1.0));
+    // Chevron outline: outer edge p0 - p1 - p2 (tip p1), inner edge p5 - p4 - p3.
+    let (p0, p1, p2) = (at(c - w, th), at(c, 1.0), at(c + w, th));
+    let (p3, p4, p5) = (at(c + w, 0.0), at(c, 1.0 - th), at(c - w, 0.0));
+    for t in [[p5, p0, p1], [p5, p1, p4], [p4, p1, p2], [p4, p2, p3]] {
+        flat_tri(m, t, CHEVRON);
+    }
+    for t in [
+        // Under the arrowhead.
+        [p5, p3, p4],
+        // Left of it (fan from the lower left corner).
+        [q0, p5, p0],
+        [q0, p0, p1],
+        [q0, p1, q3],
+        // Right of it.
+        [q1, q2, p1],
+        [q1, p1, p2],
+        [q1, p2, p3],
+    ] {
+        flat_tri(m, t, ASPHALT);
+    }
 }
 
 /// Square columns from the underside of the deck down to the terrain.
