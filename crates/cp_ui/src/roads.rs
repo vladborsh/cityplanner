@@ -119,6 +119,14 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
                 ActiveTool::Road
             });
         }
+        let on = tools.active == ActiveTool::Upgrade;
+        if crate::panels::tool_button(ui, Icon::Roads, "Upgrade", on).clicked() {
+            tools.select(if on {
+                ActiveTool::None
+            } else {
+                ActiveTool::Upgrade
+            });
+        }
         let on = tools.active == ActiveTool::Bulldozer;
         if crate::panels::tool_button(ui, Icon::Bulldozer, "Bulldozer", on).clicked() {
             tools.select(if on {
@@ -128,42 +136,45 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
             });
         }
     });
-    if tools.active != ActiveTool::Road {
+    let building = tools.active == ActiveTool::Road;
+    if !building && tools.active != ActiveTool::Upgrade {
         return;
     }
-    ui.add_space(4.0);
-    ui.weak("Mode");
-    ui.horizontal_wrapped(|ui| {
-        for (mode, icon, label) in [
-            (RoadMode::Straight, Icon::Road, "Straight"),
-            (RoadMode::Curve, Icon::Curve, "Curve (3 clicks)"),
-            (RoadMode::Free, Icon::FreeRoad, "Free (Enter ends)"),
-        ] {
-            if crate::panels::tool_button(ui, icon, label, tools.road.mode == mode).clicked() {
-                tools.road.set_mode(mode);
+    if building {
+        ui.add_space(4.0);
+        ui.weak("Mode");
+        ui.horizontal_wrapped(|ui| {
+            for (mode, icon, label) in [
+                (RoadMode::Straight, Icon::Road, "Straight"),
+                (RoadMode::Curve, Icon::Curve, "Curve (3 clicks)"),
+                (RoadMode::Free, Icon::FreeRoad, "Free (Enter ends)"),
+            ] {
+                if crate::panels::tool_button(ui, icon, label, tools.road.mode == mode).clicked() {
+                    tools.road.set_mode(mode);
+                }
             }
-        }
-    });
-    ui.add_space(4.0);
-    ui.weak("Elevation (PgUp / PgDn)");
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(tools.road.level > 0, egui::Button::new("−"))
-            .clicked()
-        {
-            tools.road.lower();
-        }
-        ui.label(elevation_text(tools.road.level));
-        if ui
-            .add_enabled(
-                tools.road.level < MAX_ELEVATION_LEVEL,
-                egui::Button::new("+"),
-            )
-            .clicked()
-        {
-            tools.road.raise();
-        }
-    });
+        });
+        ui.add_space(4.0);
+        ui.weak("Elevation (PgUp / PgDn)");
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(tools.road.level > 0, egui::Button::new("−"))
+                .clicked()
+            {
+                tools.road.lower();
+            }
+            ui.label(elevation_text(tools.road.level));
+            if ui
+                .add_enabled(
+                    tools.road.level < MAX_ELEVATION_LEVEL,
+                    egui::Button::new("+"),
+                )
+                .clicked()
+            {
+                tools.road.raise();
+            }
+        });
+    }
     let Some(content) = content else {
         return;
     };
@@ -172,7 +183,7 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
         tools.road.road = cards.first().map(|c| c.id);
     }
     ui.add_space(4.0);
-    ui.weak("Road type");
+    ui.weak(if building { "Road type" } else { "Upgrade to" });
     let mut last = None;
     for c in &cards {
         if last != Some(c.class) {

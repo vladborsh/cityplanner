@@ -18,6 +18,7 @@ mod outbox;
 pub mod pick;
 pub mod plugin;
 pub mod road;
+pub mod upgrade;
 pub mod utility;
 pub mod zone;
 pub mod zone_lines;
@@ -35,6 +36,7 @@ pub use road::{
     CHEVRON_SPACING, ELEVATION_STEP, MAX_ELEVATION_LEVEL, RoadMode, RoadTool, chevron_lines,
     format_money, preview, preview_report, road_is_one_way, snap_label,
 };
+pub use upgrade::{UpgradePreview, upgrade_commands, upgrade_preview};
 pub use utility::{LINK_PICK_RADIUS, UtilityMode, UtilityTool, pick_link};
 pub use zone::{PALETTE, ZoneTool, ZoneToolKind, zone_color, zone_name};
 

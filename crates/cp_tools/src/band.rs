@@ -92,7 +92,7 @@ pub fn sync_bands(
         .ghost
         .clone()
         .filter(|_| state.active == ActiveTool::Road);
-    let run = if state.active == ActiveTool::Bulldozer {
+    let run = if matches!(state.active, ActiveTool::Bulldozer | ActiveTool::Upgrade) {
         state.highlight.clone()
     } else {
         Vec::new()

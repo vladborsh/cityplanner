@@ -20,6 +20,7 @@ use crate::band::{BandState, sync_bands};
 use crate::building::{BuildingTool, PlacementGhost, pick_building, preview as place_preview};
 use crate::bulldozer::{PICK_RADIUS, pick_segment, remove_run_commands};
 use crate::road::{RoadTool, chevron_lines, preview_report, road_is_one_way, sample_curve};
+use crate::upgrade::{upgrade_commands, upgrade_preview};
 use crate::utility::{
     LINK_PICK_RADIUS, UtilityTool, link_line, pick_link, plan_polylines, preview as utility_preview,
 };
@@ -34,6 +35,8 @@ pub enum ActiveTool {
     None,
     Road,
     Bulldozer,
+    /// Changing the road type of the run under the cursor to the one chosen in the Roads panel.
+    Upgrade,
     /// Zoning: fill block, brushes, rectangle, eraser.
     Zone,
     /// Placing a service building (type chosen in the Services tab, T rotates).
@@ -73,6 +76,8 @@ pub struct ToolState {
     pub hover: Option<Vec2>,
     /// Segments the bulldozer would remove: the whole road run under the cursor (T-070).
     pub highlight: Vec<SegmentId>,
+    /// What the upgrade tool would do to the run under the cursor (T-081).
+    pub upgrade_preview: Option<crate::upgrade::UpgradePreview>,
     pub zone: ZoneTool,
     pub building: BuildingTool,
     pub utility: UtilityTool,
@@ -113,6 +118,7 @@ impl ToolState {
         self.road.cancel();
         self.ghost = None;
         self.highlight.clear();
+        self.upgrade_preview = None;
         self.ghost_key = None;
         self.zone.cancel();
         self.zone_preview.clear();
@@ -267,6 +273,15 @@ fn tool_hover(
                     .unwrap_or_default()
             };
         }
+        (ActiveTool::Upgrade, Some(p)) => {
+            let preview = match (state.road.road, view.content.as_deref()) {
+                (Some(target), Some(content)) => pick_segment(&view.net, p, PICK_RADIUS)
+                    .map(|seg| upgrade_preview(&view.net, &view.zones, content, seg, target)),
+                _ => None,
+            };
+            state.highlight = preview.as_ref().map(|u| u.run.clone()).unwrap_or_default();
+            state.upgrade_preview = preview;
+        }
         (ActiveTool::Place, Some(p)) => {
             state.place_ghost = place_preview(&view, &state.building, p);
         }
@@ -302,6 +317,7 @@ fn tool_hover(
         }
         _ => {
             state.highlight.clear();
+            state.upgrade_preview = None;
             state.building_highlight = None;
             state.place_ghost = None;
             state.zone_preview.clear();
@@ -470,6 +486,14 @@ pub fn tool_click(
                 state.building_highlight = None;
             } else if !state.highlight.is_empty() {
                 for command in remove_run_commands(&state.highlight) {
+                    outbox.push(command);
+                }
+                state.highlight.clear();
+            }
+        }
+        ActiveTool::Upgrade => {
+            if let (Some(preview), Some(target)) = (state.upgrade_preview.take(), state.road.road) {
+                for command in upgrade_commands(&preview, target) {
                     outbox.push(command);
                 }
                 state.highlight.clear();

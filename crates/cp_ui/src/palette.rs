@@ -408,6 +408,45 @@ mod tests {
     }
 
     #[test]
+    fn the_upgrade_button_selects_the_tool_and_its_verdict_shows_cost_warning_and_errors() {
+        use cp_tools::UpgradePreview;
+        let mut rig = Rig::new();
+        rig.click_category(Category::Roads);
+        rig.click_label("Upgrade");
+        assert_eq!(rig.tools.active, ActiveTool::Upgrade);
+        assert!(rig.frame(vec![]).contains("Upgrade to"));
+        rig.tools.upgrade_preview = Some(UpgradePreview {
+            run: vec![],
+            changes: vec![],
+            cost: Cost(32_100),
+            dropped_building_cells: 4,
+            errors: vec![],
+        });
+        // Nothing changes: the run is already of that type.
+        rig.frame(vec![]);
+        assert!(
+            rig.frame(vec![])
+                .contains("already has the chosen road type")
+        );
+        rig.tools.upgrade_preview.as_mut().unwrap().changes = vec![cp_net::SegmentId::new(1, 0)];
+        rig.frame(vec![]);
+        let text = rig.frame(vec![]);
+        assert!(text.contains("can upgrade"), "{text}");
+        assert!(
+            text.contains(&cp_tools::format_money(Cost(32_100))),
+            "{text}"
+        );
+        assert!(text.contains("NO_ROAD"), "{text}");
+        rig.tools.upgrade_preview.as_mut().unwrap().errors = vec!["no elevated variant".into()];
+        rig.frame(vec![]);
+        assert!(rig.frame(vec![]).contains("no elevated variant"));
+        // Build and Upgrade are exclusive; the cards stay for both.
+        rig.click_label("Build");
+        assert_eq!(rig.tools.active, ActiveTool::Road);
+        assert!(rig.tools.upgrade_preview.is_none());
+    }
+
+    #[test]
     fn elevation_buttons_stay_within_the_levels() {
         let mut rig = Rig::new();
         rig.click_category(Category::Roads);

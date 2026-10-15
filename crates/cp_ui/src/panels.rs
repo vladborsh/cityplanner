@@ -245,6 +245,27 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ui.weak("Click to start a road. Esc cancels.");
             }
         },
+        (Category::Roads, ActiveTool::Upgrade) => match &tools.upgrade_preview {
+            Some(u) if !u.errors.is_empty() => bad(ui, &u.errors, "cannot upgrade"),
+            Some(u) if u.is_noop() => {
+                ui.weak("This run already has the chosen road type.");
+            }
+            Some(u) => {
+                let n = u.changes.len();
+                ok(
+                    ui,
+                    "can upgrade",
+                    Some(u.cost),
+                    format!(" · {n} segment{}", if n == 1 { "" } else { "s" }),
+                );
+                if let Some(w) = u.warning() {
+                    ui.colored_label(egui::Color32::YELLOW, format!("⚠ {w}"));
+                }
+            }
+            None => {
+                ui.weak("Pick a road type, then click a road to change its whole run. Esc leaves the tool.");
+            }
+        },
         (Category::Buildings, ActiveTool::Place) => match &tools.place_ghost {
             Some(g) => {
                 if g.valid {
