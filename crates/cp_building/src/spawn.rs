@@ -158,16 +158,20 @@ pub fn place(
 fn revalidate_access(net: &NetGraph, buildings: &mut BuildingGrid, tick: u64) {
     let mut changes: Vec<(crate::BuildingId, Option<AccessPoint>)> = Vec::new();
     for (id, b) in buildings.iter_bucket(BLOCK_BUCKETS as u32, (tick % BLOCK_BUCKETS) as u32) {
-        let alive = net.segment(b.access.segment).is_some();
+        // A free-standing building has no road to lose (§8.1): never NO_ROAD.
+        let Some(current) = b.access() else {
+            continue;
+        };
+        let alive = net.segment(current.segment).is_some();
         if alive && !b.flags.has(BuildingFlags::NO_ROAD) {
             continue;
         }
         if alive {
-            changes.push((id, Some(b.access)));
+            changes.push((id, Some(current)));
             continue;
         }
         // Nearest road within reach of the lot's front; lowest segment id wins a tie.
-        let reach = f32::from(b.lot.d) * CELL_SIZE + ACCESS_SLACK;
+        let reach = f32::from(b.size().1) * CELL_SIZE + ACCESS_SLACK;
         let mut best: Option<(f32, AccessPoint)> = None;
         for (sid, seg) in net.segments() {
             let (t, d) = seg.curve.nearest_xz(b.pos);
@@ -179,9 +183,9 @@ fn revalidate_access(net: &NetGraph, buildings: &mut BuildingGrid, tick: u64) {
     }
     for (id, access) in changes {
         if let Some(a) = access
-            && buildings.get(id).is_some_and(|b| b.access != a)
+            && buildings.get(id).is_some_and(|b| b.access() != Some(a))
         {
-            buildings.get_mut(id).expect("building").access = a;
+            buildings.get_mut(id).expect("building").set_access(Some(a));
         }
         buildings.set_flag(id, BuildingFlags::NO_ROAD, access.is_none());
     }
@@ -195,10 +199,13 @@ fn revalidate_access(net: &NetGraph, buildings: &mut BuildingGrid, tick: u64) {
 fn rebind_lots(zones: &mut ZoneGrid, buildings: &mut BuildingGrid) {
     let stale: Vec<(crate::BuildingId, Building)> = buildings
         .iter()
-        .filter(|(_, b)| zones.block(b.lot.block).is_none())
+        .filter(|(_, b)| b.lot().is_some_and(|l| zones.block(l.block).is_none()))
         .map(|(id, b)| (id, b.clone()))
         .collect();
     for (id, b) in stale {
+        let Some(old_lot) = b.lot().copied() else {
+            continue;
+        };
         let cells = cells_under_lot(zones, &b);
         let Some(first) = cells.first().copied() else {
             continue;
@@ -220,16 +227,16 @@ fn rebind_lots(zones: &mut ZoneGrid, buildings: &mut BuildingGrid) {
         let one_block = cells.iter().all(|c| c.block == first.block);
         let rows_ok = cells
             .iter()
-            .all(|c| c.cell % BLOCK_DEPTH < u16::from(b.lot.d));
-        if cells.len() == usize::from(b.lot.w) * usize::from(b.lot.d) && one_block && rows_ok {
+            .all(|c| c.cell % BLOCK_DEPTH < u16::from(old_lot.d));
+        if cells.len() == usize::from(old_lot.w) * usize::from(old_lot.d) && one_block && rows_ok {
             let lot = Lot {
                 block: first.block,
                 col,
-                w: b.lot.w,
-                d: b.lot.d,
+                w: old_lot.w,
+                d: old_lot.d,
             };
             if let Some(bm) = buildings.get_mut(id) {
-                bm.lot = lot;
+                bm.set_lot(lot);
             }
         }
     }
@@ -313,16 +320,77 @@ pub fn update_buildings(
         let cells: Vec<ZoneCellRef> = lot.cells().collect();
         buildings.insert(Building {
             def: def_id,
-            lot,
+            footprint: crate::model::Footprint::Lot(lot),
             level: def.level,
             state: BuildingState::UnderConstruction,
             ready_at: Tick(tick.0 + build_ticks(def)),
             pos,
             rot,
-            access,
+            access: Some(access),
             flags: BuildingFlags::default(),
             level_progress: 0.0,
         });
         zones.occupy(&cells);
+    }
+}
+
+#[cfg(test)]
+mod free_standing_tests {
+    use super::*;
+    use crate::model::{FOOTPRINT_CELL_M, Footprint};
+    use bevy_math::Vec2;
+    use cp_core::{Id, Tick};
+
+    fn free(w: u8, d: u8, pos: Vec2, rot: f32) -> Building {
+        Building {
+            def: cp_content::BuildingDefId(0),
+            footprint: Footprint::Free { w, d },
+            level: 1,
+            state: BuildingState::Active,
+            ready_at: Tick(0),
+            pos,
+            rot,
+            access: None,
+            flags: BuildingFlags::default(),
+            level_progress: 0.0,
+        }
+    }
+
+    #[test]
+    fn the_helpers_of_a_free_standing_building() {
+        let b = free(2, 3, Vec2::new(100.0, 50.0), 0.0);
+        assert!(b.lot().is_none() && b.access().is_none());
+        assert_eq!(b.size(), (2, 3));
+        let q = b.footprint_polygon();
+        // 16 m by 24 m around the centre, counter-clockwise.
+        assert_eq!(q[0], Vec2::new(100.0 - 8.0, 50.0 - 12.0));
+        assert_eq!(q[2], Vec2::new(100.0 + 8.0, 50.0 + 12.0));
+        assert!((q[0].distance(q[1]) - 2.0 * FOOTPRINT_CELL_M).abs() < 1e-4);
+        assert!(b.footprint_contains(Vec2::new(105.0, 55.0)));
+        assert!(!b.footprint_contains(Vec2::new(120.0, 50.0)));
+        // Turned a quarter: the long side runs along x.
+        let t = free(2, 3, Vec2::ZERO, std::f32::consts::FRAC_PI_2);
+        assert!(
+            t.footprint_contains(Vec2::new(11.0, 0.0))
+                && !t.footprint_contains(Vec2::new(0.0, 11.0))
+        );
+    }
+
+    /// §8.1: a free-standing building never gets NO_ROAD and keeps no cells in the zone grid.
+    #[test]
+    fn a_free_standing_building_never_loses_its_road_and_holds_no_cells() {
+        let mut grid = BuildingGrid::default();
+        let id = grid.insert(free(2, 2, Vec2::new(10.0, 10.0), 0.0));
+        let net = NetGraph::default();
+        for tick in 0..BLOCK_BUCKETS * 2 {
+            revalidate_access(&net, &mut grid, tick);
+        }
+        let b = grid.get(id).unwrap();
+        assert!(!b.flags.has(BuildingFlags::NO_ROAD));
+        assert_eq!(b.access(), None);
+        assert_eq!(grid.occupied_cells().count(), 0);
+        let zones = ZoneGrid::default();
+        assert!(crate::grid::held_cells(&zones, b).is_empty());
+        let _ = Id::<Building>::new(0, 0);
     }
 }

@@ -66,7 +66,7 @@ fn cells_of(sim: &SimRunner) -> Vec<(BuildingId, ZoneCellRef)> {
     sim.world()
         .resource::<BuildingGrid>()
         .iter()
-        .flat_map(|(id, b)| b.lot.cells().map(move |c| (id, c)))
+        .flat_map(|(id, b)| b.lot().expect("a lot").cells().map(move |c| (id, c)))
         .collect()
 }
 
@@ -114,11 +114,14 @@ fn survivors_keep_their_cells_in_the_blocks_of_a_rebuilt_road() {
     for &id in &survivors {
         let b = grid.get(id).expect("the survivor is still there");
         assert!(
-            zones.block(b.lot.block).is_some(),
+            zones.block(b.lot().expect("a lot").block).is_some(),
             "re-bound to a live block"
         );
         assert!(
-            b.lot.cells().all(|c| zones.is_occupied(c)),
+            b.lot()
+                .expect("a lot")
+                .cells()
+                .all(|c| zones.is_occupied(c)),
             "its cells are taken in the new block"
         );
     }
@@ -158,7 +161,7 @@ fn the_zone_revision_is_stable_once_the_survivors_are_settled() {
             .next()
             .unwrap();
         let mut grid = sim.world_mut().resource_mut::<BuildingGrid>();
-        let lot = &mut grid.get_mut(id).unwrap().lot;
+        let lot = grid.get_mut(id).unwrap().lot_mut().expect("a lot");
         lot.block = cp_core::Id::new(9999, 0);
         lot.w += 1;
     }
@@ -184,7 +187,7 @@ fn demolishing_an_unbound_survivor_releases_the_cells_it_holds() {
     let id = survivors[0];
     let held: Vec<ZoneCellRef> = {
         let b = sim.world().resource::<BuildingGrid>().get(id).unwrap();
-        b.lot.cells().collect()
+        b.lot().expect("a lot").cells().collect()
     };
     assert!(
         held.iter()
@@ -195,7 +198,8 @@ fn demolishing_an_unbound_survivor_releases_the_cells_it_holds() {
         .resource_mut::<BuildingGrid>()
         .get_mut(id)
         .unwrap()
-        .lot
+        .lot_mut()
+        .expect("a lot")
         .block = Id::new(9999, 0);
     let command = cp_sim::SimCommand::Building(BuildingCommand::Demolish { building: id });
     sim.push_command(command, sim.tick());

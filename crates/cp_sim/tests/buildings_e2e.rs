@@ -107,7 +107,7 @@ fn zoned_blocks_fill_with_all_four_kinds_without_overlap() {
     // No two lots share a cell, and no two buildings' cell footprints interpenetrate.
     let mut cells: Vec<(ZoneCellRef, usize)> = Vec::new();
     for (n, (_, b)) in buildings.iter().enumerate() {
-        for c in b.lot.cells() {
+        for c in b.lot().expect("a lot").cells() {
             assert!(grid.is_occupied(c), "{c:?} is not marked occupied");
             assert!(!grid.is_valid(c));
             cells.push((c, n));
@@ -135,14 +135,20 @@ fn zoned_blocks_fill_with_all_four_kinds_without_overlap() {
     // access point on an existing segment close to the lot.
     for (_, b) in buildings.iter() {
         let def = content.building(b.def);
-        assert_eq!((b.lot.w, b.lot.d), def.lot);
-        let first = grid.block(b.lot.block).unwrap();
-        assert_eq!(first.zones[usize::from(b.lot.col * 4)], def.zone);
+        assert_eq!(
+            (b.lot().expect("a lot").w, b.lot().expect("a lot").d),
+            def.lot
+        );
+        let first = grid.block(b.lot().expect("a lot").block).unwrap();
+        assert_eq!(
+            first.zones[usize::from(b.lot().expect("a lot").col * 4)],
+            def.zone
+        );
         let seg = net
-            .segment(b.access.segment)
+            .segment(b.access().expect("an access point").segment)
             .expect("access segment exists");
-        assert!((0.0..=1.0).contains(&b.access.t));
-        let at = seg.curve.point(b.access.t);
+        assert!((0.0..=1.0).contains(&b.access().expect("an access point").t));
+        let at = seg.curve.point(b.access().expect("an access point").t);
         let d = bevy_math::Vec2::new(at.x - b.pos.x, at.z - b.pos.y).length();
         assert!(d < 45.0, "access point {d} m from the lot");
         assert_eq!(def.level, 1);

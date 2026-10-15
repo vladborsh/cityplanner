@@ -383,7 +383,7 @@ fn stage_buildings(
         s.buildings.no_road += u32::from(f.has(BuildingFlags::NO_ROAD));
 
         // Lot cells by the painted type under them.
-        for cell in b.lot.cells() {
+        for cell in b.lot().map(|l| l.cells()).into_iter().flatten() {
             if let Some(k) = painted_zone(zones, cell).and_then(zone_index) {
                 s.zones[k].occupied += 1;
             }

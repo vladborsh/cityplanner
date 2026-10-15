@@ -160,13 +160,13 @@ fn put(sim: &mut SimRunner, content: &ContentDb, def: &str, block: ZoneBlockId) 
         .resource_mut::<BuildingGrid>()
         .insert(Building {
             def: def_id,
-            lot,
+            footprint: cp_building::Footprint::Lot(lot),
             level: d.level,
             state: BuildingState::Active,
             ready_at: Tick(0),
             pos,
             rot,
-            access,
+            access: Some(access),
             flags: BuildingFlags::default(),
             level_progress: 0.0,
         });
@@ -214,7 +214,13 @@ fn industry_nearby_lowers_the_level_of_housing() {
     assert_eq!(level(&sim, a), 3, "the clean one keeps its level");
     assert_eq!(level(&sim, b), 2, "the one beside the factory drops");
     // A lower level is rebuilt inside the same lot.
-    let nb = sim.world().resource::<BuildingGrid>().get(b).unwrap().lot;
+    let nb = *sim
+        .world()
+        .resource::<BuildingGrid>()
+        .get(b)
+        .unwrap()
+        .lot()
+        .expect("a lot");
     assert_eq!((nb.block, nb.col), (near, 0));
 }
 
@@ -233,7 +239,13 @@ fn a_level_up_keeps_the_lot_and_the_people() {
         Tick(0),
         &[(30 * 365, 0, false), (3 * 365, 0, false)],
     );
-    let before = sim.world().resource::<BuildingGrid>().get(id).unwrap().lot;
+    let before = *sim
+        .world()
+        .resource::<BuildingGrid>()
+        .get(id)
+        .unwrap()
+        .lot()
+        .expect("a lot");
     assert_eq!(level(&sim, id), 1);
 
     run(&mut sim, 12 * 256);
@@ -247,15 +259,15 @@ fn a_level_up_keeps_the_lot_and_the_people() {
     assert_eq!(b.level, 3);
     assert_eq!(content.building(b.def).level, 3);
     assert_eq!(
-        (b.lot.block, b.lot.col),
+        (b.lot().expect("a lot").block, b.lot().expect("a lot").col),
         (before.block, before.col),
         "same anchor"
     );
-    assert!(b.lot.w >= before.w && b.lot.d >= before.d);
+    assert!(b.lot().expect("a lot").w >= before.w && b.lot().expect("a lot").d >= before.d);
     assert_eq!(b.state, BuildingState::Active);
     // Its cells, and only its cells, are occupied; the grown lot took free neighbours.
     let zones = sim.world().resource::<ZoneGrid>();
-    let cells: Vec<_> = b.lot.cells().collect();
+    let cells: Vec<_> = b.lot().expect("a lot").cells().collect();
     assert!(cells.iter().all(|c| zones.is_occupied(*c)));
     assert_eq!(
         zones
@@ -273,8 +285,8 @@ fn a_level_up_keeps_the_lot_and_the_people() {
     let (p, _, _) = place(
         zones,
         sim.world().resource::<NetGraph>(),
-        b.lot.block,
-        &b.lot,
+        b.lot().expect("a lot").block,
+        b.lot().expect("a lot"),
     )
     .unwrap();
     assert_eq!(pos, p);

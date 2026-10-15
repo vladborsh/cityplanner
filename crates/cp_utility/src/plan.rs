@@ -125,11 +125,24 @@ fn building_on_leg(w: &PlanInputs, a: Vec2, b: Vec2) -> Option<BuildingId> {
         if bld.pos.distance(mid) > reach {
             continue;
         }
-        let hit = bld.lot.cells().any(|cell| {
-            zones
-                .cell_footprint(cell)
-                .is_some_and(|o| o.distance_to_segment(a, b) <= 0.0)
-        });
+        let hit = match bld.lot() {
+            Some(lot) => lot.cells().any(|cell| {
+                zones
+                    .cell_footprint(cell)
+                    .is_some_and(|o| o.distance_to_segment(a, b) <= 0.0)
+            }),
+            // A free-standing building: the segment ends inside, or crosses an edge.
+            None => {
+                let q = bld.footprint_polygon();
+                let cross = |p: Vec2, r: Vec2, s: Vec2, t: Vec2| {
+                    let side = |x: Vec2, u: Vec2, v: Vec2| (v - u).perp_dot(x - u);
+                    side(p, s, t) * side(r, s, t) <= 0.0 && side(s, p, r) * side(t, p, r) <= 0.0
+                };
+                bld.footprint_contains(a)
+                    || bld.footprint_contains(b)
+                    || (0..4).any(|i| cross(a, b, q[i], q[(i + 1) % 4]))
+            }
+        };
         if hit {
             return Some(id);
         }

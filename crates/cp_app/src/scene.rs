@@ -379,12 +379,12 @@ pub fn build_showcase(sim: &mut SimRunner) -> usize {
         let d = db.building(def_id);
         let b = Building {
             def: def_id,
-            lot: Lot {
+            footprint: cp_building::Footprint::Lot(Lot {
                 block: cp_core::Id::new(0, 0),
                 col: 0,
                 w: d.lot.0,
                 d: d.lot.1,
-            },
+            }),
             level: d.level,
             state,
             ready_at: cp_core::Tick(ready),
@@ -393,7 +393,7 @@ pub fn build_showcase(sim: &mut SimRunner) -> usize {
                 c - 130.0 + row as f32 * spacing,
             ),
             rot: 0.0,
-            access: AccessPoint { segment, t: 0.5 },
+            access: Some(AccessPoint { segment, t: 0.5 }),
             flags: BuildingFlags::default(),
             level_progress: 0.0,
         };

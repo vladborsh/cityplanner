@@ -340,6 +340,10 @@ pub fn default_build_hours(lot: (u8, u8)) -> f32 {
     }
 }
 
+fn road_access_default() -> bool {
+    true
+}
+
 /// M1 stub; fields grow in M2 (`cp_service`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -354,6 +358,10 @@ pub struct ServiceDef {
     /// Where it may stand.
     #[serde(default)]
     pub site: ServiceSite,
+    /// The building needs a road (a lot in a zone block and an access point). `false` makes it
+    /// free-standing (§8.1): placed anywhere on land, no jobs or households.
+    #[serde(default = "road_access_default")]
+    pub road_access: bool,
     /// Vehicle ids (`VehicleDef`) the service dispatches.
     #[serde(default)]
     pub vehicles: Vec<String>,

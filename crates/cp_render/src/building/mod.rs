@@ -275,12 +275,15 @@ impl Frame {
 fn lot_frame(b: &Building, net: &NetGraph) -> Frame {
     let u = Vec2::new(b.rot.cos(), b.rot.sin());
     let v_default = Vec2::new(u.y, -u.x);
-    let from_road = net.segment(b.access.segment).and_then(|s| {
-        let p = s.curve.point(b.access.t);
-        let d = b.pos - Vec2::new(p.x, p.z);
-        // Sane distance from the road (lots are at most 4 cells deep).
-        (d.length() > 3.0 && d.length() < 60.0).then(|| d.normalize())
-    });
+    let from_road = b
+        .access()
+        .and_then(|a| net.segment(a.segment).map(|s| (s, a)))
+        .and_then(|(s, a)| {
+            let p = s.curve.point(a.t);
+            let d = b.pos - Vec2::new(p.x, p.z);
+            // Sane distance from the road (lots are at most 4 cells deep).
+            (d.length() > 3.0 && d.length() < 60.0).then(|| d.normalize())
+        });
     let v = match from_road {
         // Snap to the perpendicular of `u` on the side the road says.
         Some(d) if d.dot(v_default) < 0.0 => -v_default,
@@ -667,8 +670,8 @@ pub fn build_building(
 ) -> BuildingPiece {
     let f = lot_frame(b, net);
     let (w, d) = (
-        f32::from(b.lot.w) * CELL_SIZE,
-        f32::from(b.lot.d) * CELL_SIZE,
+        f32::from(b.size().0) * CELL_SIZE,
+        f32::from(b.size().1) * CELL_SIZE,
     );
     let hu = (w * 0.5 - SIDE_MARGIN).max(1.0);
     let hv = ((d - FRONT_SETBACK - BACK_MARGIN) * 0.5).max(1.0);
@@ -828,8 +831,8 @@ pub fn building_stamp(b: &Building, total: u64, tick: Tick) -> u64 {
     mix(&mut h, b.pos.x.to_bits());
     mix(&mut h, b.pos.y.to_bits());
     mix(&mut h, b.rot.to_bits());
-    mix(&mut h, u32::from(b.lot.w) | u32::from(b.lot.d) << 8);
-    mix(&mut h, b.access.t.to_bits());
+    mix(&mut h, u32::from(b.size().0) | u32::from(b.size().1) << 8);
+    mix(&mut h, b.access().map_or(0, |a| a.t.to_bits()));
     if b.state == BuildingState::UnderConstruction {
         mix(&mut h, u32::from(construction_stage(b, total, tick)));
     }

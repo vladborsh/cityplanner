@@ -570,21 +570,21 @@ mod tests {
         assert!(Arc::ptr_eq(&a, &b) && a.is_empty());
         let building = Building {
             def: cp_content::BuildingDefId(0),
-            lot: Lot {
+            footprint: cp_building::Footprint::Lot(Lot {
                 block: Id::new(0, 0),
                 col: 0,
                 w: 1,
                 d: 1,
-            },
+            }),
             level: 1,
             state: BuildingState::Active,
             ready_at: Tick(0),
             pos: bevy_math::Vec2::ZERO,
             rot: 0.0,
-            access: AccessPoint {
+            access: Some(AccessPoint {
                 segment: Id::new(0, 0),
                 t: 0.0,
-            },
+            }),
             flags: BuildingFlags::default(),
             level_progress: 0.0,
         };

@@ -112,7 +112,10 @@ fn buildings_keep_their_lots_and_get_no_road_until_a_road_runs_along_them_again(
         let bd = sim.world().resource::<BuildingGrid>().get(b).unwrap();
         assert!(flags(&sim, b).has(BuildingFlags::NO_ROAD));
         assert!(
-            bd.lot.cells().all(|c| zones.is_occupied(c)),
+            bd.lot()
+                .expect("a lot")
+                .cells()
+                .all(|c| zones.is_occupied(c)),
             "cells stay taken"
         );
     }
@@ -123,7 +126,7 @@ fn buildings_keep_their_lots_and_get_no_road_until_a_road_runs_along_them_again(
     for &b in &after {
         assert!(!flags(&sim, b).has(BuildingFlags::NO_ROAD), "flag cleared");
         let bd = sim.world().resource::<BuildingGrid>().get(b).unwrap();
-        assert_eq!(bd.access.segment, again);
+        assert_eq!(bd.access().expect("an access point").segment, again);
     }
 }
 
@@ -141,7 +144,14 @@ fn a_trip_into_an_isolated_network_flags_no_path_until_it_is_connected() {
         let g = sim.world().resource::<BuildingGrid>();
         active(sim)
             .into_iter()
-            .filter(|&id| g.get(id).unwrap().access.segment == seg)
+            .filter(|&id| {
+                g.get(id)
+                    .unwrap()
+                    .access()
+                    .expect("an access point")
+                    .segment
+                    == seg
+            })
             .collect()
     };
     loop {

@@ -378,6 +378,37 @@ impl ContentDb {
                 ));
             }
         }
+        // A free-standing building (`road_access: false`, §8.1) has nobody who could reach it.
+        for (i, b) in buildings.defs.iter().enumerate() {
+            let Some(s) = b.service.as_deref().and_then(|s| services.get_id(s)) else {
+                continue;
+            };
+            let service = &services.defs[s as usize];
+            if service.road_access {
+                continue;
+            }
+            if b.jobs.iter().any(|&j| j != 0) {
+                errors.push(ContentError::new(
+                    &buildings.files[i],
+                    Some("jobs"),
+                    "a free-standing building (road_access: false) has no jobs".to_string(),
+                ));
+            }
+            if b.households != 0 {
+                errors.push(ContentError::new(
+                    &buildings.files[i],
+                    Some("households"),
+                    "a free-standing building (road_access: false) has no households".to_string(),
+                ));
+            }
+            if service.site != crate::kinds::ServiceSite::Land {
+                errors.push(ContentError::new(
+                    &services.files[s as usize],
+                    Some("site"),
+                    "a free-standing service must have site: Land".to_string(),
+                ));
+            }
+        }
         for (i, s) in services.defs.iter().enumerate() {
             for (k, v) in s.vehicles.iter().enumerate() {
                 if vehicles.get_id(v).is_none() {
@@ -876,5 +907,64 @@ mod tests {
         assert_eq!(pump.icon, "water_pump_station");
         // One pipe (T-101): no sewage pipe any more.
         assert!(db.utilities().all(|(_, d)| d.id != "sewage_pipe"));
+    }
+
+    /// T-106 (§8.1): a free-standing service (`road_access: false`) has no jobs and no
+    /// households, stands on land, and its lot stays 1×1…4×4.
+    #[test]
+    fn a_free_standing_building_must_have_no_jobs_no_households_and_a_land_site() {
+        let building = |jobs: &str, households: u16| {
+            (
+                "content/buildings/tower.ron".to_string(),
+                format!(
+                    r#"Building((id: "tower", name: "Tower", zone: Industrial, level: 1,
+                    lot: (1, 1), jobs: {jobs}, households: {households}, consumption: {{}},
+                    tax_base: 0.0, cost: 1.0, upkeep_week: 1.0,
+                    style: (floors: 1, roof: Flat, palette: "utility_grey"),
+                    service: Some("tower_service")))"#
+                ),
+            )
+        };
+        let service = |site: &str, road_access: &str| {
+            (
+                "content/services/tower.ron".to_string(),
+                format!(
+                    r#"Service((id: "tower_service", name: "Tower", kind: Water, radius_m: 100.0,
+                    capacity: 10, site: {site}, {road_access} vehicles: []))"#
+                ),
+            )
+        };
+        let load = |b, s| ContentDb::from_sources(vec![b, s]);
+        // Free-standing, on land, nobody works or lives there: fine.
+        assert!(
+            load(
+                building("(0, 0, 0, 0)", 0),
+                service("Land", "road_access: false,")
+            )
+            .is_ok()
+        );
+        // With a job: an error on the building's `jobs`.
+        let err = load(
+            building("(0, 1, 0, 0)", 0),
+            service("Land", "road_access: false,"),
+        )
+        .expect_err("jobs are refused");
+        assert!(err.to_string().contains("jobs"), "{err}");
+        // With households.
+        let err = load(
+            building("(0, 0, 0, 0)", 2),
+            service("Land", "road_access: false,"),
+        )
+        .expect_err("households are refused");
+        assert!(err.to_string().contains("households"), "{err}");
+        // On water.
+        let err = load(
+            building("(0, 0, 0, 0)", 0),
+            service("OnWater", "road_access: false,"),
+        )
+        .expect_err("a water site is refused");
+        assert!(err.to_string().contains("site"), "{err}");
+        // The same jobs with the default (a road is needed): fine.
+        assert!(load(building("(0, 1, 0, 0)", 0), service("OnWater", "")).is_ok());
     }
 }

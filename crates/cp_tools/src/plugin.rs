@@ -635,7 +635,7 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
     if let (Some(view), Some(id)) = (view.as_deref(), state.building_highlight)
         && let Some(b) = view.buildings.get(id)
     {
-        let cells: Vec<ZoneCellRef> = b.lot.cells().collect();
+        let cells: Vec<ZoneCellRef> = b.lot().map(|l| l.cells().collect()).unwrap_or_default();
         draw_cells(view, &cells, Color::srgb(1.0, 0.6, 0.1), &mut gizmos);
     }
 }

@@ -29,7 +29,8 @@ pub fn rebuild_candidate(
     } else {
         b.level.checked_sub(1).filter(|l| *l >= 1)?
     };
-    let block = zones.block(b.lot.block)?;
+    let cur = *b.lot()?;
+    let block = zones.block(cur.block)?;
     let area = |w: u8, d: u8| u32::from(w) * u32::from(d);
     let mut best: Option<(u32, BuildingDefId, Lot)> = None;
     for (id, def) in db.buildings() {
@@ -37,20 +38,20 @@ pub fn rebuild_candidate(
             continue;
         }
         let (w, d) = def.lot;
-        let lot = Lot { w, d, ..b.lot };
+        let lot = Lot { w, d, ..cur };
         let fits = if up {
-            w >= b.lot.w
-                && d >= b.lot.d
+            w >= cur.w
+                && d >= cur.d
                 && lot.col + u16::from(w) <= block.cols
                 && u16::from(d) <= BLOCK_DEPTH
                 && lot
                     .cells()
-                    .filter(|c| !b.lot.cells().any(|o| o == *c))
+                    .filter(|c| !cur.cells().any(|o| o == *c))
                     .all(|c| {
                         zones.is_valid(c) && !zones.is_occupied(c) && zones.zone_of(c) == Some(zone)
                     })
         } else {
-            w <= b.lot.w && d <= b.lot.d
+            w <= cur.w && d <= cur.d
         };
         if !fits {
             continue;
@@ -81,7 +82,7 @@ pub fn rebuild(
     def: BuildingDefId,
     lot: Lot,
 ) -> bool {
-    let Some(old) = buildings.get(id).map(|b| b.lot) else {
+    let Some(old) = buildings.get(id).and_then(|b| b.lot().copied()) else {
         return false;
     };
     let old_cells: Vec<ZoneCellRef> = old.cells().collect();
@@ -106,12 +107,12 @@ pub fn rebuild(
     let b = buildings.get_mut(id).expect("checked above");
     b.def = def;
     b.level = db.building(def).level;
-    b.lot = lot;
+    b.set_lot(lot);
     b.level_progress = 0.0;
     if let Some((pos, rot, access)) = placed {
         b.pos = pos;
         b.rot = rot;
-        b.access = access;
+        b.set_access(Some(access));
     }
     true
 }

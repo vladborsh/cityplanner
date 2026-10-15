@@ -380,7 +380,7 @@ fn replace_in_place(sim: &mut SimRunner, old: cp_building::BuildingId) -> cp_bui
         .get(old)
         .unwrap()
         .clone();
-    let cells: Vec<ZoneCellRef> = copy.lot.cells().collect();
+    let cells: Vec<ZoneCellRef> = copy.lot().expect("a lot").cells().collect();
     sim.world_mut()
         .resource_scope(|w, mut b: Mut<BuildingGrid>| {
             let mut z = w.resource_mut::<ZoneGrid>();

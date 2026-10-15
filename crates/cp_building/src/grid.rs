@@ -184,7 +184,9 @@ impl BuildingGrid {
 
     /// Every cell covered by a building, in building order.
     pub fn occupied_cells(&self) -> impl Iterator<Item = ZoneCellRef> + '_ {
-        self.buildings.iter().flat_map(|(_, b)| b.lot.cells())
+        self.buildings
+            .iter()
+            .flat_map(|(_, b)| b.lot().map(|l| l.cells()).into_iter().flatten())
     }
 
     /// Moves buildings whose construction finished by `tick` to `Active`; returns them.
@@ -222,7 +224,7 @@ impl BuildingGrid {
 pub fn cells_under_lot(zones: &cp_zone::ZoneGrid, b: &Building) -> Vec<ZoneCellRef> {
     use bevy_math::Vec2;
     use cp_zone::CELL_SIZE;
-    let (w, d) = (f32::from(b.lot.w), f32::from(b.lot.d));
+    let (w, d) = (f32::from(b.size().0), f32::from(b.size().1));
     let (u, v) = (
         Vec2::new(b.rot.cos(), b.rot.sin()),
         Vec2::new(-b.rot.sin(), b.rot.cos()),
@@ -244,13 +246,14 @@ pub fn cells_under_lot(zones: &cp_zone::ZoneGrid, b: &Building) -> Vec<ZoneCellR
 /// The cells `b` holds: its lot cells, or, when its block is gone, the cells under its lot
 /// rectangle in the blocks that replaced it.
 pub fn held_cells(zones: &cp_zone::ZoneGrid, b: &Building) -> Vec<ZoneCellRef> {
-    if zones.block(b.lot.block).is_some() {
-        b.lot.cells().collect()
-    } else {
-        cells_under_lot(zones, b)
+    // A free-standing building holds no zone cells (§8.1).
+    match b.lot() {
+        None => Vec::new(),
+        Some(lot) if zones.block(lot.block).is_some() => lot.cells().collect(),
+        Some(_) => cells_under_lot(zones, b)
             .into_iter()
             .filter(|c| zones.is_occupied(*c))
-            .collect()
+            .collect(),
     }
 }
 
@@ -280,21 +283,21 @@ mod revision_tests {
     fn building() -> Building {
         Building {
             def: cp_content::BuildingDefId(0),
-            lot: Lot {
+            footprint: crate::model::Footprint::Lot(Lot {
                 block: Id::new(0, 0),
                 col: 0,
                 w: 1,
                 d: 1,
-            },
+            }),
             level: 1,
             state: BuildingState::Active,
             ready_at: Tick(0),
             pos: bevy_math::Vec2::ZERO,
             rot: 0.0,
-            access: AccessPoint {
+            access: Some(AccessPoint {
                 segment: Id::new(0, 0),
                 t: 0.0,
-            },
+            }),
             flags: BuildingFlags::default(),
             level_progress: 0.0,
         }

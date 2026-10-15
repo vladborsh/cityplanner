@@ -53,7 +53,7 @@ fn v13_fixture_migrates_with_the_default_economy_and_round_trips() {
         tiles: l.data.tiles,
         net: l.data.net.clone(),
         zones: l.data.zones.clone(),
-        buildings: l.data.buildings.clone(),
+        buildings: cp_save::migrate::BuildingGridV18::from(&l.data.buildings),
         citizens: l.data.citizens.clone(),
         paths: l.data.paths.clone(),
         utilities: l.data.utilities.clone(),

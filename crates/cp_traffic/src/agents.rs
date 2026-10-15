@@ -378,10 +378,11 @@ pub fn purge_removed_buildings(
 
 /// The access point of a building as the path service wants it.
 fn access_of(net: &NetGraph, b: &Building) -> Option<Access> {
-    let seg = net.segment(b.access.segment)?;
-    let s = seg.curve.arc_table().t_to_s(b.access.t);
-    let p = seg.curve.point(b.access.t);
-    let tg = seg.curve.tangent(b.access.t);
+    let access = b.access()?;
+    let seg = net.segment(access.segment)?;
+    let s = seg.curve.arc_table().t_to_s(access.t);
+    let p = seg.curve.point(access.t);
+    let tg = seg.curve.tangent(access.t);
     // Left of the travel direction in XZ is (t.z, -t.x), as in `cp_zone`.
     let left = Vec2::new(tg.z, -tg.x);
     let side = if (b.pos - to_xz(p)).dot(left) >= 0.0 {
@@ -390,7 +391,7 @@ fn access_of(net: &NetGraph, b: &Building) -> Option<Access> {
         Side::Right
     };
     Some(Access {
-        segment: b.access.segment,
+        segment: access.segment,
         s,
         side,
     })

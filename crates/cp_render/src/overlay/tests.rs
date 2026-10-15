@@ -350,16 +350,16 @@ mod utility_overlays {
             .resource_mut::<BuildingGrid>()
             .insert(Building {
                 def: db.building_id(def).unwrap(),
-                lot,
+                footprint: cp_building::Footprint::Lot(lot),
                 level: 1,
                 state: BuildingState::Active,
                 ready_at: Tick(0),
                 pos: bevy_math::Vec2::new(x, z),
                 rot: 0.0,
-                access: AccessPoint {
+                access: Some(AccessPoint {
                     segment: Id::new(0, 0),
                     t: 0.0,
-                },
+                }),
                 flags: BuildingFlags::default(),
                 level_progress: 0.0,
             });

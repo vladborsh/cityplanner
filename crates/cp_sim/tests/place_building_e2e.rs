@@ -97,7 +97,7 @@ fn place_then_demolish_round_trip() {
         assert_ne!(g.revision(), rev);
         let (id, b) = g.iter().next().unwrap();
         assert_eq!(b.state, BuildingState::UnderConstruction);
-        (id, b.lot.cells().collect::<Vec<_>>())
+        (id, b.lot().expect("a lot").cells().collect::<Vec<_>>())
     };
     assert_eq!(cells.len(), 4);
     {

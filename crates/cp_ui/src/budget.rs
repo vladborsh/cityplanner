@@ -609,21 +609,21 @@ mod tests {
                 .resource_mut::<BuildingGrid>()
                 .insert(Building {
                     def: db.building_id("house_low_1").unwrap(),
-                    lot: Lot {
+                    footprint: cp_building::Footprint::Lot(Lot {
                         block: Id::new(0, 0),
                         col: 0,
                         w: 1,
                         d: 1,
-                    },
+                    }),
                     level: 1,
                     state: BuildingState::Active,
                     ready_at: Tick(0),
                     pos: bevy::math::Vec2::new(5000.0, 5000.0),
                     rot: 0.0,
-                    access: AccessPoint {
+                    access: Some(AccessPoint {
                         segment: Id::new(0, 0),
                         t: 0.0,
-                    },
+                    }),
                     flags: BuildingFlags::default(),
                     level_progress: 0.0,
                 });

@@ -121,7 +121,7 @@ fn v17_fixture_migrates_without_names_and_round_trips() {
         tiles: l.data.tiles,
         net: l.data.net.clone(),
         zones: l.data.zones.clone(),
-        buildings: l.data.buildings.clone(),
+        buildings: cp_save::migrate::BuildingGridV18::from(&l.data.buildings),
         citizens: l.data.citizens.clone(),
         paths: l.data.paths.clone(),
         utilities: l.data.utilities.clone(),

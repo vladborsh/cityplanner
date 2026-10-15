@@ -80,21 +80,21 @@ fn content() -> Arc<ContentDb> {
 fn add(world: &mut World, db: &ContentDb, def: &str, state: BuildingState) -> BuildingId {
     world.resource_mut::<BuildingGrid>().insert(Building {
         def: db.building_id(def).unwrap(),
-        lot: Lot {
+        footprint: cp_building::Footprint::Lot(Lot {
             block: Id::new(0, 0),
             col: 0,
             w: 1,
             d: 1,
-        },
+        }),
         level: 1,
         state,
         ready_at: Tick(0),
         pos: Vec2::new(5000.0, 5000.0),
         rot: 0.0,
-        access: AccessPoint {
+        access: Some(AccessPoint {
             segment: Id::new(0, 0),
             t: 0.0,
-        },
+        }),
         flags: BuildingFlags::default(),
         level_progress: 0.0,
     })

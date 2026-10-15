@@ -207,7 +207,7 @@ impl SimRunner {
                     level: b.level,
                     level_progress: b.level_progress,
                     state: b.state,
-                    lot: (b.lot.w, b.lot.d),
+                    lot: b.size(),
                     problems: flag_names(b.flags),
                     households,
                     apartments: def.households,

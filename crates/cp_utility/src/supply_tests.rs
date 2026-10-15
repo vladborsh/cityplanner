@@ -49,21 +49,21 @@ fn db() -> ContentDb {
 fn add(grid: &mut BuildingGrid, db: &ContentDb, def: &str, x: f32, z: f32) -> BuildingId {
     grid.insert(Building {
         def: db.building_id(def).unwrap(),
-        lot: Lot {
+        footprint: cp_building::Footprint::Lot(Lot {
             block: Id::new(0, 0),
             col: 0,
             w: 1,
             d: 1,
-        },
+        }),
         level: 1,
         state: BuildingState::Active,
         ready_at: Tick(0),
         pos: Vec2::new(5000.0 + x, 5000.0 + z),
         rot: 0.0,
-        access: AccessPoint {
+        access: Some(AccessPoint {
             segment: Id::new(0, 0),
             t: 0.0,
-        },
+        }),
         flags: BuildingFlags::default(),
         level_progress: 0.0,
     })

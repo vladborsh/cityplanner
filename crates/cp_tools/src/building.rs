@@ -102,12 +102,13 @@ pub fn pick_building(view: &SimView, p: Vec2) -> Option<BuildingId> {
     view.buildings
         .iter()
         .filter(|(_, b)| b.pos.distance(p) <= PICK_REACH)
-        .find(|(_, b)| {
-            b.lot.cells().any(|c| {
+        .find(|(_, b)| match b.lot() {
+            Some(lot) => lot.cells().any(|c| {
                 view.zones
                     .cell_footprint(c)
                     .is_some_and(|o| o.distance_to_point(p) <= 1e-3)
-            })
+            }),
+            None => b.footprint_contains(p),
         })
         .map(|(id, _)| id)
 }

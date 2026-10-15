@@ -122,7 +122,7 @@ fn cells_over_the_river_are_invalid_and_no_building_stands_on_them() {
     let buildings = sim.world().resource::<BuildingGrid>();
     assert!(!buildings.is_empty(), "the dry bank got buildings");
     for (id, b) in buildings.iter() {
-        for c in b.lot.cells() {
+        for c in b.lot().expect("a lot").cells() {
             let p = zones.cell_footprint(c).expect("cell").c;
             assert!(!terrain.is_water(p), "{id:?} stands in the river at {p}");
             assert!(

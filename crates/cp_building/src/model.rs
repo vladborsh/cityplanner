@@ -47,6 +47,89 @@ impl Lot {
     }
 }
 
+/// What a building stands on (`architecture/system-design.md` §8.1). Enum variants are
+/// append-only (save format).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Footprint {
+    /// A lot in one zone block.
+    Lot(Lot),
+    /// A free-standing rectangle of `w` × `d` cells (8 m) centred on the building's `pos`,
+    /// turned by its `rot`. Not tied to a zone block or a road.
+    Free { w: u8, d: u8 },
+}
+
+/// Side of a zone cell, metres (the free-standing rectangle is counted in these too).
+pub const FOOTPRINT_CELL_M: f32 = 8.0;
+
+impl Building {
+    /// The lot, for a building on a lot (`None` when free-standing).
+    pub fn lot(&self) -> Option<&Lot> {
+        match &self.footprint {
+            Footprint::Lot(lot) => Some(lot),
+            Footprint::Free { .. } => None,
+        }
+    }
+
+    /// The lot, mutably (`None` when free-standing).
+    pub fn lot_mut(&mut self) -> Option<&mut Lot> {
+        match &mut self.footprint {
+            Footprint::Lot(lot) => Some(lot),
+            Footprint::Free { .. } => None,
+        }
+    }
+
+    /// The access point, `None` for a free-standing building.
+    pub fn access(&self) -> Option<AccessPoint> {
+        self.access
+    }
+
+    /// Puts the building on `lot`.
+    pub fn set_lot(&mut self, lot: Lot) {
+        self.footprint = Footprint::Lot(lot);
+    }
+
+    /// Moves the access point (`None` for a free-standing building).
+    pub fn set_access(&mut self, access: Option<AccessPoint>) {
+        self.access = access;
+    }
+
+    /// Size in cells: `(w, d)`.
+    pub fn size(&self) -> (u8, u8) {
+        match self.footprint {
+            Footprint::Lot(l) => (l.w, l.d),
+            Footprint::Free { w, d } => (w, d),
+        }
+    }
+
+    /// Whether `p` (world XZ) is inside the building's rectangle.
+    pub fn footprint_contains(&self, p: Vec2) -> bool {
+        let q = self.footprint_polygon();
+        (0..4).all(|i| {
+            let (a, b) = (q[i], q[(i + 1) % 4]);
+            (b - a).perp_dot(p - a) >= 0.0
+        })
+    }
+
+    /// The rectangle the building covers, in world XZ, counter-clockwise: `pos` is its centre
+    /// and `rot` turns the `w` side (along `x` at `rot = 0`) and the `d` side. Lots use the
+    /// same rectangle, centred on `pos` and turned by the road direction.
+    pub fn footprint_polygon(&self) -> [Vec2; 4] {
+        let (w, d) = self.size();
+        let (hw, hd) = (
+            f32::from(w) * FOOTPRINT_CELL_M * 0.5,
+            f32::from(d) * FOOTPRINT_CELL_M * 0.5,
+        );
+        let (s, c) = self.rot.sin_cos();
+        let (ax, ay) = (Vec2::new(c, s), Vec2::new(-s, c));
+        [
+            self.pos - ax * hw - ay * hd,
+            self.pos + ax * hw - ay * hd,
+            self.pos + ax * hw + ay * hd,
+            self.pos - ax * hw + ay * hd,
+        ]
+    }
+}
+
 /// Where the building meets the road network: a point on a segment, for pathfinding.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AccessPoint {
@@ -87,7 +170,10 @@ pub fn build_ticks(def: &BuildingDef) -> u64 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Building {
     pub def: BuildingDefId,
-    pub lot: Lot,
+    /// What the building stands on: a lot in a zone block, or (free-standing, §8.1) a
+    /// rectangle at `pos` / `rot`. Read it through [`Building::lot`] and
+    /// [`Building::footprint_polygon`].
+    pub footprint: Footprint,
     pub level: u8,
     pub state: BuildingState,
     /// Tick at which construction finishes (spawn tick + one game day).
@@ -95,7 +181,9 @@ pub struct Building {
     /// Lot centre (world XZ) and the yaw of the road direction in the XZ plane, radians.
     pub pos: Vec2,
     pub rot: f32,
-    pub access: AccessPoint,
+    /// Where the building meets the road network; `None` for a free-standing building.
+    /// Read it through [`Building::access`].
+    pub access: Option<AccessPoint>,
     pub flags: BuildingFlags,
     /// Progress of the level checks: towards `+1` (a level up) or `-1` (a level down), `0`
     /// when the building is where its surroundings put it (`cp_economy::growth`).

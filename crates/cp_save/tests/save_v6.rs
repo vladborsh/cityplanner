@@ -189,7 +189,7 @@ fn buildings_survive_save_load_with_occupancy_checksum_and_construction_schedule
     {
         let grid = b.world().resource::<ZoneGrid>();
         for (_, bd) in b.world().resource::<BuildingGrid>().iter() {
-            for c in bd.lot.cells() {
+            for c in bd.lot().expect("a lot").cells() {
                 assert!(grid.is_occupied(c) && !grid.is_valid(c));
             }
         }

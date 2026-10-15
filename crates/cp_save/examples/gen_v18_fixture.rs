@@ -100,7 +100,10 @@ fn main() {
         .iter()
         .filter(|(_, b)| db.building(b.def).service.is_some())
         .count();
-    assert!(n > services && services > 0, "{n} buildings, {services} service");
+    assert!(
+        n > services && services > 0,
+        "{n} buildings, {services} service"
+    );
     let bytes = save_with_map(
         &SaveData::capture(sim.world()),
         0xC18F_0000_0000_0012,
@@ -109,5 +112,8 @@ fn main() {
     )
     .unwrap();
     std::fs::write("fixtures/saves/v18-basic.sav", &bytes).unwrap();
-    println!("wrote {} bytes, {n} buildings, {services} service", bytes.len());
+    println!(
+        "wrote {} bytes, {n} buildings, {services} service",
+        bytes.len()
+    );
 }

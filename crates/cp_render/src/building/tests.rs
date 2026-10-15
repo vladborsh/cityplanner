@@ -31,21 +31,21 @@ fn building(def: BuildingDefId, db: &ContentDb, state: BuildingState, ready_at: 
     let d = db.building(def);
     Building {
         def,
-        lot: Lot {
+        footprint: cp_building::Footprint::Lot(Lot {
             block: Id::new(0, 0),
             col: 0,
             w: d.lot.0,
             d: d.lot.1,
-        },
+        }),
         level: d.level,
         state,
         ready_at: Tick(ready_at),
         pos: Vec2::new(5120.0, 5120.0),
         rot: 0.0,
-        access: AccessPoint {
+        access: Some(AccessPoint {
             segment: SegmentId::new(0, 0),
             t: 0.5,
-        },
+        }),
         flags: BuildingFlags::default(),
         level_progress: 0.0,
     }

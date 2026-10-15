@@ -4,7 +4,10 @@
 //! never change (its postcard encoding is what old files contain; `SimCommand` and the
 //! domain enums are append-only for the same reason).
 
-use cp_building::{Building, BuildingGrid, Demand};
+use cp_building::{
+    AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingId, BuildingState, Demand,
+    Footprint, Lot,
+};
 use cp_citizen::{CitizenGrid, TripBook};
 use cp_citizen::{CitizenId, TripId};
 use cp_core::Arena;
@@ -308,13 +311,85 @@ pub struct SaveDataV11 {
 /// The building arena as written by formats 1–12 (before the removed-ids list).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BuildingGridV12 {
-    pub buildings: Arena<Building>,
+    pub buildings: Arena<BuildingV18>,
 }
 
 impl From<&BuildingGrid> for BuildingGridV12 {
     fn from(g: &BuildingGrid) -> Self {
         Self {
-            buildings: g.arena().clone(),
+            buildings: g.arena().map(|b| BuildingV18::from(b)),
+        }
+    }
+}
+
+/// A building as formats 1–18 wrote it: always on a lot, always with an access point (T-106
+/// made both optional: `footprint` and `access`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BuildingV18 {
+    pub def: cp_content::BuildingDefId,
+    pub lot: Lot,
+    pub level: u8,
+    pub state: BuildingState,
+    pub ready_at: Tick,
+    pub pos: bevy_math::Vec2,
+    pub rot: f32,
+    pub access: AccessPoint,
+    pub flags: BuildingFlags,
+    pub level_progress: f32,
+}
+
+impl From<&Building> for BuildingV18 {
+    /// For the legacy writers and the tests: a free-standing building has no v18 form.
+    fn from(b: &Building) -> Self {
+        Self {
+            def: b.def,
+            lot: *b
+                .lot()
+                .expect("formats before 19 only know buildings on lots"),
+            level: b.level,
+            state: b.state,
+            ready_at: b.ready_at,
+            pos: b.pos,
+            rot: b.rot,
+            access: b
+                .access()
+                .expect("formats before 19 only know buildings with an access point"),
+            flags: b.flags,
+            level_progress: b.level_progress,
+        }
+    }
+}
+
+impl From<&BuildingV18> for Building {
+    /// v18 → v19: a lot stays a lot, the access point stays.
+    fn from(b: &BuildingV18) -> Self {
+        Self {
+            def: b.def,
+            footprint: Footprint::Lot(b.lot),
+            level: b.level,
+            state: b.state,
+            ready_at: b.ready_at,
+            pos: b.pos,
+            rot: b.rot,
+            access: Some(b.access),
+            flags: b.flags,
+            level_progress: b.level_progress,
+        }
+    }
+}
+
+/// The building grid as formats 13–18 wrote it: the arena and the removed-ids list.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BuildingGridV18 {
+    pub buildings: Arena<BuildingV18>,
+    pub removed: Vec<BuildingId>,
+}
+
+impl From<&BuildingGrid> for BuildingGridV18 {
+    fn from(g: &BuildingGrid) -> Self {
+        Self {
+            buildings: g.arena().map(|b| BuildingV18::from(b)),
+            removed: g.removed().to_vec(),
         }
     }
 }
@@ -350,7 +425,7 @@ pub struct SaveDataV13 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     pub zones: ZoneGrid,
-    pub buildings: BuildingGrid,
+    pub buildings: BuildingGridV18,
     pub citizens: CitizenGrid,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
@@ -369,7 +444,7 @@ pub struct SaveDataV14 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     pub zones: ZoneGrid,
-    pub buildings: BuildingGrid,
+    pub buildings: BuildingGridV18,
     pub citizens: CitizenGrid,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
@@ -390,7 +465,7 @@ pub struct SaveDataV15 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     pub zones: ZoneGrid,
-    pub buildings: BuildingGrid,
+    pub buildings: BuildingGridV18,
     pub citizens: CitizenGrid,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
@@ -414,7 +489,7 @@ pub struct SaveDataV16 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     pub zones: ZoneGrid,
-    pub buildings: BuildingGrid,
+    pub buildings: BuildingGridV18,
     pub citizens: CitizenGrid,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
@@ -439,7 +514,7 @@ pub struct SaveDataV17 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     pub zones: ZoneGrid,
-    pub buildings: BuildingGrid,
+    pub buildings: BuildingGridV18,
     pub citizens: CitizenGrid,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
@@ -453,11 +528,70 @@ pub struct SaveDataV17 {
     pub decay: Decay,
 }
 
+/// Version 18: the body as written by format 18 (definition names; buildings always on a lot
+/// with an access point).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV18 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGridV18,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+    pub trips: TripBook,
+    pub agents: Agents,
+    pub treasury: Treasury,
+    pub economy: EconomyState,
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    pub land: LandGrids,
+    pub decay: Decay,
+    pub def_names: crate::DefNames,
+}
+
+/// v18 → v19 (T-106): a building's `lot` became `footprint: Footprint::Lot(lot)` and its
+/// access point an `Option` (always `Some` in an old save). Ids, generations and the removed
+/// list are kept.
+pub fn migrate_v18_to_v19(v18: SaveDataV18) -> SaveData {
+    SaveData {
+        tick: v18.tick,
+        rng: v18.rng,
+        speed: v18.speed,
+        queue: v18.queue,
+        log: v18.log,
+        tiles: v18.tiles,
+        net: v18.net,
+        zones: v18.zones,
+        buildings: BuildingGrid::from_parts(
+            v18.buildings.buildings.map(|b| Building::from(b)),
+            v18.buildings.removed,
+        ),
+        citizens: v18.citizens,
+        paths: v18.paths,
+        utilities: v18.utilities,
+        trips: v18.trips,
+        agents: v18.agents,
+        treasury: v18.treasury,
+        economy: v18.economy,
+        demand: v18.demand,
+        demand_acc: v18.demand_acc,
+        land: v18.land,
+        decay: v18.decay,
+        def_names: v18.def_names,
+    }
+}
+
 /// v17 → v18: definition names were added. An old save has none, so they come from the frozen
 /// tables of the content that wrote it ([`crate::def_tables`]); this step assumes a v17 writer,
 /// `decode_and_migrate` replaces the names for files from before T-038 (v11 and older).
-pub fn migrate_v17_to_v18(v17: SaveDataV17) -> SaveData {
-    SaveData {
+pub fn migrate_v17_to_v18(v17: SaveDataV17) -> SaveDataV18 {
+    SaveDataV18 {
         tick: v17.tick,
         rng: v17.rng,
         speed: v17.speed,
@@ -629,7 +763,10 @@ pub fn migrate_v12_to_v13(v12: SaveDataV12) -> SaveDataV13 {
         tiles: v12.tiles,
         net: v12.net,
         zones: v12.zones,
-        buildings: BuildingGrid::from_parts(v12.buildings.buildings, Vec::new()),
+        buildings: BuildingGridV18 {
+            buildings: v12.buildings.buildings,
+            removed: Vec::new(),
+        },
         citizens: v12.citizens,
         paths: v12.paths,
         utilities: v12.utilities,
@@ -832,11 +969,34 @@ pub fn migrate_v3_to_v4(v3: SaveDataV3) -> SaveDataV4 {
 
 /// The last two chain steps, shared by every arm.
 fn up(v: SaveDataV10) -> SaveData {
-    migrate_v17_to_v18(migrate_v16_to_v17(migrate_v15_to_v16(migrate_v14_to_v15(
-        migrate_v13_to_v14(migrate_v12_to_v13(migrate_v11_to_v12(migrate_v10_to_v11(
-            v,
-        )))),
-    ))))
+    let v = migrate_v11_to_v12(migrate_v10_to_v11(v));
+    from_v12(v)
+}
+
+/// The rest of the chain from a decoded v12 body.
+fn from_v12(v: SaveDataV12) -> SaveData {
+    let v = migrate_v12_to_v13(v);
+    from_v13(v)
+}
+
+fn from_v13(v: SaveDataV13) -> SaveData {
+    from_v14(migrate_v13_to_v14(v))
+}
+
+fn from_v14(v: SaveDataV14) -> SaveData {
+    from_v15(migrate_v14_to_v15(v))
+}
+
+fn from_v15(v: SaveDataV15) -> SaveData {
+    from_v16(migrate_v15_to_v16(v))
+}
+
+fn from_v16(v: SaveDataV16) -> SaveData {
+    from_v17(migrate_v16_to_v17(v))
+}
+
+fn from_v17(v: SaveDataV17) -> SaveData {
+    migrate_v18_to_v19(migrate_v17_to_v18(v))
 }
 
 /// Decodes a body written at `version` and runs the migration chain up to
@@ -914,26 +1074,15 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         8 => Ok(up(migrate_v9_to_v10(migrate_v8_to_v9(dec(body)?)))),
         9 => Ok(up(migrate_v9_to_v10(dec(body)?))),
         10 => Ok(up(dec(body)?)),
-        11 => Ok(migrate_v17_to_v18(migrate_v16_to_v17(migrate_v15_to_v16(
-            migrate_v14_to_v15(migrate_v13_to_v14(migrate_v12_to_v13(migrate_v11_to_v12(
-                dec(body)?,
-            )))),
-        )))),
-        12 => Ok(migrate_v17_to_v18(migrate_v16_to_v17(migrate_v15_to_v16(
-            migrate_v14_to_v15(migrate_v13_to_v14(migrate_v12_to_v13(dec(body)?))),
-        )))),
-        13 => Ok(migrate_v17_to_v18(migrate_v16_to_v17(migrate_v15_to_v16(
-            migrate_v14_to_v15(migrate_v13_to_v14(dec(body)?)),
-        )))),
-        14 => Ok(migrate_v17_to_v18(migrate_v16_to_v17(migrate_v15_to_v16(
-            migrate_v14_to_v15(dec(body)?),
-        )))),
-        15 => Ok(migrate_v17_to_v18(migrate_v16_to_v17(migrate_v15_to_v16(
-            dec(body)?,
-        )))),
-        16 => Ok(migrate_v17_to_v18(migrate_v16_to_v17(dec(body)?))),
-        17 => Ok(migrate_v17_to_v18(dec(body)?)),
-        18 => dec(body),
+        11 => Ok(from_v12(migrate_v11_to_v12(dec(body)?))),
+        12 => Ok(from_v12(dec(body)?)),
+        13 => Ok(from_v13(dec(body)?)),
+        14 => Ok(from_v14(dec(body)?)),
+        15 => Ok(from_v15(dec(body)?)),
+        16 => Ok(from_v16(dec(body)?)),
+        17 => Ok(from_v17(dec(body)?)),
+        18 => Ok(migrate_v18_to_v19(dec(body)?)),
+        19 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
@@ -1186,4 +1335,16 @@ pub fn encode_v17(
 ) -> Result<Vec<u8>, SaveError> {
     let body = postcard::to_stdvec(v17).expect("serialization failed");
     crate::assemble(17, v17.tick.0, &body, content_hash, map_id, map_hash)
+}
+
+/// Writes a **version 18** file (definition names; buildings on lots with an access point).
+/// Legacy writer kept only to test the v18 fixture; real saves always use [`crate::save`].
+pub fn encode_v18(
+    v18: &SaveDataV18,
+    content_hash: u64,
+    map_id: &str,
+    map_hash: Option<u64>,
+) -> Result<Vec<u8>, SaveError> {
+    let body = postcard::to_stdvec(v18).expect("serialization failed");
+    crate::assemble(18, v18.tick.0, &body, content_hash, map_id, map_hash)
 }

@@ -71,6 +71,9 @@ pub enum BuildingError {
     NeedsWater,
     LimitReached,
     UnknownBuilding,
+    /// A free-standing type (`ServiceDef.road_access: false`, §8.1) is placed by a rule that
+    /// does not exist yet (T-107): the command is refused rather than put on a road.
+    FreePlacementUnsupported,
 }
 
 impl BuildingError {
@@ -106,6 +109,7 @@ impl fmt::Display for BuildingError {
             Self::NeedsWater => "must be built on or beside water",
             Self::LimitReached => "building limit reached",
             Self::UnknownBuilding => "no such building",
+            Self::FreePlacementUnsupported => "free-standing buildings cannot be placed yet",
         })
     }
 }
@@ -160,8 +164,14 @@ pub fn validate_placement(
         .find(|(id, _)| *id == def)
         .map(|(_, d)| d)
         .ok_or(BuildingError::UnknownDef)?;
-    if def.service.is_none() {
+    let Some(service) = def.service.as_deref() else {
         return Err(BuildingError::NotPlaceable);
+    };
+    if db
+        .service_id(service)
+        .is_some_and(|s| !db.service(s).road_access)
+    {
+        return Err(BuildingError::FreePlacementUnsupported);
     }
     let (w, d) = oriented_lot(def, rot);
     let under = zones.cell_at(pos).ok_or(BuildingError::NoRoad)?;
@@ -282,13 +292,13 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
             }
             buildings.insert(Building {
                 def: *def,
-                lot: plan.lot,
+                footprint: crate::model::Footprint::Lot(plan.lot),
                 level,
                 state: BuildingState::UnderConstruction,
                 ready_at: Tick(tick.0 + build),
                 pos: plan.pos,
                 rot: plan.rot,
-                access: plan.access,
+                access: Some(plan.access),
                 flags: BuildingFlags::default(),
                 level_progress: 0.0,
             });

@@ -18,6 +18,12 @@
 //! them. The behaviour did not change: loaded against the content without the three new
 //! highways, m1-small gives the previous `0xc6b6_08b5_17a9_0b18` at load.
 
+//! **T-106 (save v19).** Re-recorded again: the checksum hashes the serialized buildings, and a
+//! building now carries `footprint: Footprint::Lot(..)` and `access: Some(..)` (one more byte
+//! each). The behaviour did not change: `save_v19.rs` loads these two files and `v18-basic` and
+//! checks the building flags, the residents and the households after 256 ticks against the
+//! values recorded before the type change.
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -102,10 +108,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0x4f64_5b59_acee_f99b, "state at load");
+    assert_eq!(sim.checksum(), 0x4537_b9aa_b153_01c9, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x813c_fab1_6843_6f9d,
+        0xb986_c3dd_e1a0_014f,
         "load + 4096 ticks"
     );
 }
@@ -131,7 +137,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0xfb06_6b7b_c6f8_76d4, "state at load");
+    assert_eq!(sim.checksum(), 0x6347_63cc_700b_28e1, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -139,7 +145,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x03de_2c5b_9eb5_f426, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x81c1_e669_411b_63a1, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,
