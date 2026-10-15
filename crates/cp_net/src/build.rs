@@ -1098,15 +1098,7 @@ pub fn one_way_report(
     plan: &RoadBuildPlan,
 ) -> Vec<OneWayWarning> {
     let def = content.road(plan.road);
-    let (fwd, bwd) =
-        def.lanes
-            .iter()
-            .filter(|l| l.kind == LaneKind::Car)
-            .fold((false, false), |(f, b), l| match l.dir {
-                LaneDir::Forward => (true, b),
-                LaneDir::Backward => (f, true),
-            });
-    let plan_one_way = fwd && !bwd;
+    let plan_one_way = def.is_one_way();
 
     // The distinct nodes the plan touches, in plan order.
     let mut touched: Vec<NodeRef> = Vec::new();

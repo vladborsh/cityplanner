@@ -182,12 +182,7 @@ const CHEVRON_LIFT: f32 = 0.7;
 
 /// Do all the car lanes of `def` run `Forward` (and are there any)?
 pub fn road_is_one_way(def: &RoadDef) -> bool {
-    let mut cars = def
-        .lanes
-        .iter()
-        .filter(|l| l.kind == LaneKind::Car)
-        .peekable();
-    cars.peek().is_some() && cars.all(|l| l.dir == LaneDir::Forward)
+    def.is_one_way()
 }
 
 /// The direction chevrons of a one-way piece: one every [`CHEVRON_SPACING`] metres, so
