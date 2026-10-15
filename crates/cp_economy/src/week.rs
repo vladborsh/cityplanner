@@ -19,16 +19,19 @@
 //! * **Utility links**, per link: `length × upkeep_per_m_week × budget / 100`; a pipe uses the
 //!   water definition and budget, a power line the power ones.
 
+use std::collections::BTreeMap;
+
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingState};
 use cp_citizen::CitizenGrid;
 use cp_content::{ContentDb, RoadDef, ServiceKind, SimContent, UtilityKind};
 use cp_core::time::TICKS_PER_WEEK;
 use cp_core::{Cost, Tick, Treasury};
+use cp_district::{DistrictId, DistrictMap, Districts, district_at};
 use cp_net::{Elevation, NetGraph, Segment};
 use cp_utility::{UtilityGraph, UtilityNet};
 
-use crate::state::{EconomyState, Loan, WeekReport};
+use crate::state::{DistrictIncome, EconomyState, Loan, WeekReport};
 
 fn percent(pct: u8) -> f64 {
     f64::from(pct) / 100.0
@@ -54,10 +57,21 @@ pub struct WeekInputs<'a> {
     pub citizens: &'a CitizenGrid,
     pub utilities: &'a UtilityGraph,
     pub state: &'a EconomyState,
+    /// Where districts are and what tax rates they override (T-132).
+    pub district_map: &'a DistrictMap,
+    pub districts: &'a Districts,
 }
 
 /// What week `week` books. See the module docs for each line.
 pub fn week_report(i: &WeekInputs, week: u64) -> WeekReport {
+    week_detail(i, week).0
+}
+
+/// [`week_report`] and the tax income by district: `None` (buildings outside every district)
+/// first, then districts in id order; a row exists for each district that has a taxable
+/// building. The rows sum to the report's income.
+pub fn week_detail(i: &WeekInputs, week: u64) -> (WeekReport, Vec<(Option<DistrictId>, Cost)>) {
+    let mut by_district: BTreeMap<Option<DistrictId>, Cost> = BTreeMap::new();
     let mut r = WeekReport {
         week,
         ..WeekReport::default()
@@ -70,8 +84,12 @@ pub fn week_report(i: &WeekInputs, week: u64) -> WeekReport {
         }
         let def = i.content.building(b.def);
         if let Some(zone_slot) = (def.zone as usize).checked_sub(1)
-            && let Some(rate) = st.taxes.get(def.zone)
+            && let Some(city_rate) = st.taxes.get(def.zone)
         {
+            let district = district_at(i.district_map, b.pos);
+            let rate = district
+                .and_then(|d| i.districts.tax_override(d, def.zone))
+                .unwrap_or(city_rate);
             let bal = i.content.balance();
             let rate_f = f64::from(rate) / 100.0;
             let lvl = usize::from(def.level.max(1)) - 1;
@@ -93,6 +111,7 @@ pub fn week_report(i: &WeekInputs, week: u64) -> WeekReport {
                 tax += Cost::scaled(def.tax_base, rate_f * f64::from(filled) / f64::from(cap));
             }
             r.income_by_zone[zone_slot] += tax;
+            *by_district.entry(district).or_insert(Cost::ZERO) += tax;
         }
         if let Some(service) = def.service.as_deref().and_then(|s| i.content.service_id(s)) {
             let kind = i.content.service(service).kind;
@@ -118,7 +137,7 @@ pub fn week_report(i: &WeekInputs, week: u64) -> WeekReport {
         }
     }
     r.loan_payments = st.loans.iter().map(Loan::weekly).sum();
-    r
+    (r, by_district.into_iter().collect())
 }
 
 /// Economy phase: on every week boundary after tick 0, books [`week_report`] into the
@@ -134,13 +153,16 @@ pub fn settle_week(
     utilities: Res<UtilityGraph>,
     mut state: ResMut<EconomyState>,
     mut treasury: ResMut<Treasury>,
+    mut district_income: ResMut<DistrictIncome>,
+    district_map: Res<DistrictMap>,
+    districts: Res<Districts>,
 ) {
     if tick.0 == 0 || !tick.0.is_multiple_of(TICKS_PER_WEEK) {
         return;
     }
     let Some(content) = content else { return };
     citizens.ensure_derived();
-    let report = week_report(
+    let (report, rows) = week_detail(
         &WeekInputs {
             content: &content.0,
             net: &net,
@@ -148,9 +170,15 @@ pub fn settle_week(
             citizens: &citizens,
             utilities: &utilities,
             state: &state,
+            district_map: &district_map,
+            districts: &districts,
         },
         tick.0 / TICKS_PER_WEEK,
     );
+    *district_income = DistrictIncome {
+        week: tick.0 / TICKS_PER_WEEK,
+        rows,
+    };
     treasury.balance += report.balance();
     for loan in &mut state.loans {
         loan.pay_week();

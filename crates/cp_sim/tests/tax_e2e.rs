@@ -40,6 +40,8 @@ fn week(sim: &mut SimRunner, pct: u8) -> (Cost, Cost) {
             citizens: w.resource::<cp_citizen::CitizenGrid>(),
             utilities: w.resource::<cp_utility::UtilityGraph>(),
             state: w.resource::<EconomyState>(),
+            district_map: w.resource::<cp_district::DistrictMap>(),
+            districts: w.resource::<cp_district::Districts>(),
         },
         1,
     );
@@ -68,4 +70,47 @@ fn a_city_of_seven_hundred_breaks_even_at_nine_percent() {
     assert!(pop >= 700);
     let (income, upkeep) = week(&mut sim, 9);
     assert!(income >= upkeep, "income {income:?} upkeep {upkeep:?}");
+}
+
+#[test]
+fn a_painted_district_reports_its_residents_and_tax() {
+    use cp_district::{DistrictCommand, DistrictId};
+    let (mut sim, _) = city(700);
+    // Cover the whole lattice area with one district.
+    let cells: Vec<(u16, u16)> = (0..320u16)
+        .flat_map(|c| (0..320u16).map(move |r| (c, r)))
+        .filter(|&(c, r)| (80..240).contains(&c) && (80..240).contains(&r))
+        .collect();
+    sim.push_command(
+        cp_sim::SimCommand::District(DistrictCommand::Create { name: "All".into() }),
+        sim.tick(),
+    );
+    sim.tick_once();
+    for chunk in cells.chunks(4096) {
+        let cmd = DistrictCommand::Paint {
+            cells: chunk.to_vec(),
+            district: DistrictId(1),
+        };
+        sim.push_command(cp_sim::SimCommand::District(cmd), sim.tick());
+    }
+    // Past the first week boundary, at the publish tick of the next summary. (This scenario
+    // has no water or sewage, so its buildings are abandoned a few thousand ticks later.)
+    while sim.tick().0 < cp_core::time::TICKS_PER_WEEK + 6
+        || sim.tick().0 % cp_sim::stats::STATS_PERIOD != 5
+    {
+        sim.tick_once();
+    }
+    let v = sim.view();
+    let d = &v.city.districts;
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert!(
+        d[0].population >= 700 && d[0].buildings > 0,
+        "{d:?} city {} real {} tick {}",
+        v.city.population,
+        sim.world()
+            .resource::<cp_citizen::CitizenGrid>()
+            .citizen_count(),
+        sim.tick().0
+    );
+    assert_eq!(d[0].income_last_week, v.economy.last_week.income());
 }

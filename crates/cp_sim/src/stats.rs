@@ -45,6 +45,18 @@ pub fn zone_index(zone: ZoneType) -> Option<usize> {
     (zone as usize).checked_sub(1)
 }
 
+/// What one district holds, for the district panel.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DistrictStat {
+    pub id: cp_district::DistrictId,
+    /// Residents of the households whose home stands in the district.
+    pub population: u32,
+    /// Buildings (any state) standing in the district.
+    pub buildings: u32,
+    /// Tax income the district paid in the last settled week.
+    pub income_last_week: Cost,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ZoneStats {
     /// Painted cells.
@@ -154,6 +166,8 @@ pub struct CityStats {
     pub unemployed: u32,
     pub zones: [ZoneStats; 6],
     pub buildings: BuildingStats,
+    /// Per existing district, in id order (T-132).
+    pub districts: Vec<DistrictStat>,
     pub traffic: TrafficStats,
     /// Water, sewage, power.
     pub utilities: [NetStats; 3],
@@ -183,6 +197,14 @@ impl CityStats {
 /// pass is four ~0.4 ms slices instead of one ~1.5 ms hitch at 100k citizens.
 const STAGE_TICKS: [u64; 5] = [0, 1, 2, 3, 4];
 
+/// The district inputs of [`update_city_stats`] (one parameter, the system has many).
+#[derive(bevy_ecs::system::SystemParam)]
+pub struct DistrictParams<'w> {
+    map: Res<'w, cp_district::DistrictMap>,
+    districts: Res<'w, cp_district::Districts>,
+    income: Res<'w, cp_economy::DistrictIncome>,
+}
+
 /// `Stats`-phase system: recomputes [`CityStats`] every [`STATS_PERIOD`] ticks, in stages (see
 /// [`STAGE_TICKS`]); the published value changes at the last stage only.
 #[allow(clippy::too_many_arguments)]
@@ -200,6 +222,7 @@ pub fn update_city_stats(
     demand: Res<Demand>,
     treasury: Res<Treasury>,
     economy: Res<EconomyState>,
+    district: DistrictParams,
     mut stats: ResMut<CityStats>,
 ) {
     let phase = tick.0 % STATS_PERIOD;
@@ -224,7 +247,17 @@ pub fn update_city_stats(
         return; // joined mid-period (after a load): wait for the next one
     };
     match stage {
-        1 => stage_zone_cells(&mut next, &zones, &demands),
+        1 => {
+            stage_zone_cells(&mut next, &zones, &demands);
+            stage_districts(
+                &mut next,
+                &buildings,
+                &citizens,
+                &district.map,
+                &district.districts,
+                &district.income,
+            );
+        }
         2 | 3 => stage_buildings(
             &mut next,
             db,
@@ -342,6 +375,55 @@ fn stage_citizens_traffic_land(
 }
 
 /// Stage 1: painted and valid zone cells, the demand of each zone's group.
+/// Stage 1 (with the zone cells): residents and buildings per district.
+fn stage_districts(
+    s: &mut CityStats,
+    buildings: &BuildingGrid,
+    citizens: &CitizenGrid,
+    map: &cp_district::DistrictMap,
+    districts: &cp_district::Districts,
+    income: &cp_economy::DistrictIncome,
+) {
+    let mut rows: BTreeMap<u8, DistrictStat> = districts
+        .iter()
+        .map(|(id, _)| {
+            let paid = income
+                .rows
+                .iter()
+                .find(|(d, _)| *d == Some(id))
+                .map_or(Cost::ZERO, |(_, c)| *c);
+            (
+                id.0,
+                DistrictStat {
+                    id,
+                    population: 0,
+                    buildings: 0,
+                    income_last_week: paid,
+                },
+            )
+        })
+        .collect();
+    if rows.is_empty() {
+        return;
+    }
+    for (_, b) in buildings.iter() {
+        if let Some(d) = cp_district::district_at(map, b.pos)
+            && let Some(row) = rows.get_mut(&d.0)
+        {
+            row.buildings += 1;
+        }
+    }
+    for (_, h) in citizens.households() {
+        if let Some(b) = buildings.get(h.home)
+            && let Some(d) = cp_district::district_at(map, b.pos)
+            && let Some(row) = rows.get_mut(&d.0)
+        {
+            row.population += h.member_ids().count() as u32;
+        }
+    }
+    s.districts = rows.into_values().collect();
+}
+
 fn stage_zone_cells(s: &mut CityStats, zones: &ZoneGrid, demands: &[f32; 4]) {
     for (_, block) in zones.blocks() {
         for (i, &z) in block.zones.iter().enumerate() {

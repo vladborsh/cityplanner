@@ -18,10 +18,10 @@ pub use demand::{DemandAcc, smooth, update_demand};
 pub use growth::{CITY_PERIOD, Decay, PROBLEM_MASK, level_for, update_city};
 pub use land::{CELL_M, LandGrids, LandInputs, SIDE};
 pub use state::{
-    BUDGET_DEFAULT, BUDGET_MAX, BUDGET_MIN, BUDGETED, Budgets, EconomyState, Loan, TAX_DEFAULT,
-    TAX_MAX, TAX_MIN, TAXED_ZONES, TaxRates, WeekReport,
+    BUDGET_DEFAULT, BUDGET_MAX, BUDGET_MIN, BUDGETED, Budgets, DistrictIncome, EconomyState, Loan,
+    TAX_DEFAULT, TAX_MAX, TAX_MIN, TAXED_ZONES, TaxRates, WeekReport,
 };
-pub use week::{WeekInputs, segment_upkeep, settle_week, week_report};
+pub use week::{WeekInputs, segment_upkeep, settle_week, week_detail, week_report};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_economy";

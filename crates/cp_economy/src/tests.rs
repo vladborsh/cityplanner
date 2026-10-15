@@ -113,6 +113,9 @@ fn city() -> (World, Schedule) {
     world.init_resource::<BuildingGrid>();
     world.init_resource::<CitizenGrid>();
     world.init_resource::<UtilityGraph>();
+    world.init_resource::<cp_district::DistrictMap>();
+    world.init_resource::<cp_district::Districts>();
+    world.init_resource::<DistrictIncome>();
 
     // Two straight streets, 100 m and 60 m.
     let road = db.road_id("street").unwrap();
@@ -986,4 +989,66 @@ fn a_loan_needs_the_population_and_a_free_slot() {
         after,
         (balance(&world), world.resource::<EconomyState>().clone())
     );
+}
+
+/// T-132: a house in a district with its own residential rate pays that rate; removing the
+/// override returns the city rate; the district rows sum to the tax income.
+#[test]
+fn a_district_rate_replaces_the_city_rate_for_its_buildings() {
+    use cp_district::{DistrictCommand, DistrictId};
+    let (mut world, mut schedule) = city();
+    // The second house (1 household) moves into cell (12, 12) = x, z 384..416.
+    let h2 = world
+        .resource::<BuildingGrid>()
+        .iter()
+        .filter(|(_, b)| b.state == BuildingState::Active)
+        .map(|(id, _)| id)
+        .find(|&id| world.resource::<CitizenGrid>().households_in(id) == 1)
+        .unwrap();
+    world
+        .resource_mut::<BuildingGrid>()
+        .get_mut(h2)
+        .unwrap()
+        .pos = Vec2::new(400.0, 400.0);
+    let d = DistrictId(1);
+    for cmd in [
+        DistrictCommand::Create {
+            name: "Hill".into(),
+        },
+        DistrictCommand::Paint {
+            cells: vec![(12, 12)],
+            district: d,
+        },
+        DistrictCommand::SetTax {
+            district: d,
+            zone: ZoneType::ResLow,
+            pct: Some(20),
+        },
+    ] {
+        cp_district::apply(&mut world, &cmd).unwrap();
+    }
+    run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
+    let rows = world.resource::<DistrictIncome>().rows.clone();
+    // 110 per household: the hill pays 20 % of one, the rest 9 % of three plus the shop's
+    // two jobs (30 each).
+    assert_eq!(
+        rows,
+        vec![(None, Cost(2_970 + 540)), (Some(d), Cost(2_200))]
+    );
+    let r = world.resource::<EconomyState>().last_week;
+    assert_eq!(rows.iter().map(|(_, c)| *c).sum::<Cost>(), r.income());
+
+    // Back to the city rate (9 %): 9.90 for that house.
+    cp_district::apply(
+        &mut world,
+        &DistrictCommand::SetTax {
+            district: d,
+            zone: ZoneType::ResLow,
+            pct: None,
+        },
+    )
+    .unwrap();
+    run_at(&mut world, &mut schedule, 2 * TICKS_PER_WEEK);
+    let rows = world.resource::<DistrictIncome>().rows.clone();
+    assert_eq!(rows[1], (Some(d), Cost(990)));
 }

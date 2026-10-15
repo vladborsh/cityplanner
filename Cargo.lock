@@ -2528,6 +2528,7 @@ dependencies = [
  "cp_citizen",
  "cp_content",
  "cp_core",
+ "cp_district",
  "cp_net",
  "cp_terrain",
  "cp_traffic",

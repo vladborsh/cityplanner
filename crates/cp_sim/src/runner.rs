@@ -111,6 +111,7 @@ impl SimRunner {
         world.init_resource::<cp_district::DistrictMap>();
         world.init_resource::<cp_district::Districts>();
         world.init_resource::<cp_economy::EconomyState>();
+        world.init_resource::<cp_economy::DistrictIncome>();
         world.init_resource::<cp_economy::DemandAcc>();
         world.init_resource::<cp_economy::LandGrids>();
         world.init_resource::<cp_economy::Decay>();

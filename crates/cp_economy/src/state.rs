@@ -189,3 +189,15 @@ impl EconomyState {
         self.loans.iter().find(|l| l.offer == offer)
     }
 }
+
+/// Tax income of the last settled week by district (T-132): `None` is the buildings outside
+/// every district, then districts in id order. Derived from the same pass as
+/// [`WeekReport`], so the rows sum to [`WeekReport::income`]; not saved and not in the
+/// checksum (the save format is unchanged), so it is empty after a load until the next week
+/// boundary.
+#[derive(bevy_ecs::prelude::Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct DistrictIncome {
+    /// Number of the settled week, 0 = none yet.
+    pub week: u64,
+    pub rows: Vec<(Option<cp_district::DistrictId>, Cost)>,
+}
