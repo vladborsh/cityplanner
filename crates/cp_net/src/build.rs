@@ -68,6 +68,20 @@ pub const CONTROL_SPACING: f32 = 64.0;
 /// Crossings closer than this (metres) to an auto-cut point replace it.
 const CUT_MERGE: f32 = 0.5;
 
+/// Where an automatic cut splits a span of `span` metres (from its start, ascending): on the
+/// control points `64·k` (§6.7) for as long as more than [`MAX_SEGMENT_LENGTH`] is left, so
+/// the tail stays one piece of 32…96 m. A control point then lies on a cut node or at least
+/// 8 m from every one, and the bulldozer's stop is never snapped onto a piece's end.
+pub fn auto_cuts(span: f32) -> Vec<f32> {
+    let mut cuts = Vec::new();
+    let mut at = 0.0;
+    while span - at > MAX_SEGMENT_LENGTH {
+        at += CONTROL_SPACING;
+        cuts.push(at);
+    }
+    cuts
+}
+
 /// Height mode of a build request (the command-facing type of §4; segments store the
 /// data type [`Elevation`]).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -778,9 +792,9 @@ fn validate_inner(
         }
         // Fixed split points first: crossings with existing ground segments (each becomes a
         // node). Then every span between fixed points (leg ends included) is cut into equal
-        // pieces of at most MAX_SEGMENT_LENGTH, so an automatic cut can never land a few metres
-        // from a crossing; a span that really is shorter than MIN_SEGMENT_LENGTH_BUILD is
-        // reported by the per-piece check below.
+        // pieces of at most MAX_SEGMENT_LENGTH (see `auto_cuts`: on the control points of §6.7),
+        // so an automatic cut can never land a few metres from a crossing; a span that really
+        // is shorter than MIN_SEGMENT_LENGTH_BUILD is reported by the per-piece check below.
         let mut fixed: Vec<(f32, NodeRef)> = Vec::new();
         if !elevated {
             for (sid, seg) in graph.segments() {
@@ -807,10 +821,8 @@ fn validate_inner(
             .chain(std::iter::once((len, None, v1.node)));
         for (s_end, t_end, node) in ends {
             let span = s_end - span_start;
-            let pieces = (span / MAX_SEGMENT_LENGTH).ceil().max(1.0) as usize;
-            for k in 1..pieces {
-                let s = span_start + span * k as f32 / pieces as f32;
-                bounds.push((tab.s_to_t(s), None));
+            for cut in auto_cuts(span) {
+                bounds.push((tab.s_to_t(span_start + cut), None));
             }
             bounds.push((t_end.unwrap_or(1.0), Some(node)));
             span_start = s_end;

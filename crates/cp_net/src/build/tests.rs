@@ -593,20 +593,22 @@ fn snap_zone_grid_is_an_inert_option_until_t026() {
 // ---------- plan shape ----------
 
 #[test]
-fn long_legs_are_cut_into_equal_pieces() {
+fn long_legs_are_cut_on_the_control_points_with_a_tail_of_up_to_96_m() {
     let w = W::new();
     let mut r = w.straight(at(0.0, 0.0), at(250.0, 0.0));
     r.snap = no_snap();
     let plan = w.run(&r).unwrap();
-    assert_eq!(plan.segments.len(), 3);
-    assert_eq!(plan.new_nodes.len(), 4);
-    for s in &plan.segments {
+    // 64, 64, 64 and a 58 m tail (T-127: cuts on the control points of §6.7).
+    assert_eq!(plan.segments.len(), 4);
+    assert_eq!(plan.new_nodes.len(), 5);
+    for (k, s) in plan.segments.iter().enumerate() {
         assert!(
             (MIN_SEGMENT_LENGTH_BUILD..=MAX_SEGMENT_LENGTH).contains(&s.length),
             "{}",
             s.length
         );
-        assert!((s.length - 250.0 / 3.0).abs() < 0.1);
+        let want = if k < 3 { 64.0 } else { 58.0 };
+        assert!((s.length - want).abs() < 0.1, "{k}: {}", s.length);
     }
     // Chain connectivity.
     for pair in plan.segments.windows(2) {
@@ -666,7 +668,8 @@ fn ground_crossing_creates_a_node_elevated_does_not() {
     r.elevation = ElevationMode::Elevated(4.0);
     let plan = w.run(&r).unwrap();
     assert!(plan.splits.is_empty());
-    assert_eq!(plan.segments.len(), 4);
+    // 290 m: cuts at 64, 128, 192 and 256 (T-127).
+    assert_eq!(plan.segments.len(), 5);
     // Starts at ground level, reaches ground + 4 at the top.
     assert!((plan.segments[0].curve.p0.y - 100.0).abs() < 0.05);
     assert!(
@@ -1006,4 +1009,25 @@ fn warnings_do_not_block_the_command() {
     let req = w.straight_of("highway_1w_3l", at(70.0, 0.0), at(0.0, 0.0));
     assert!(w.run(&req).is_ok());
     assert!(!w.warnings(&req).is_empty());
+}
+
+#[test]
+fn auto_cuts_follow_the_control_points_and_leave_a_tail_of_32_to_96_m() {
+    assert!(auto_cuts(50.0).is_empty());
+    assert!(auto_cuts(96.0).is_empty());
+    assert_eq!(auto_cuts(97.0), vec![64.0]);
+    assert_eq!(auto_cuts(200.0), vec![64.0, 128.0]);
+    assert_eq!(auto_cuts(250.0), vec![64.0, 128.0, 192.0]);
+    for k in 1..=200 {
+        let span = k as f32 * 8.0;
+        let cuts = auto_cuts(span);
+        let tail = span - cuts.last().copied().unwrap_or(0.0);
+        assert!(tail <= MAX_SEGMENT_LENGTH, "{span}");
+        if !cuts.is_empty() {
+            assert!(tail > 32.0, "{span}: tail {tail}");
+        }
+        for (i, c) in cuts.iter().enumerate() {
+            assert_eq!(*c, 64.0 * (i + 1) as f32);
+        }
+    }
 }

@@ -60,7 +60,7 @@ fn line(a: (f32, f32), b: (f32, f32)) -> RoadPath {
     }
 }
 
-/// A 192 m street (two 96 m pieces) from x = 4600 with a cross street at its start.
+/// A 192 m street (three 64 m pieces, T-127) from x = 4600 with a cross street at its start.
 fn t_street() -> (SimRunner, RoadDefId) {
     let (mut sim, road) = setup();
     build(&mut sim, road, line((4600.0, 4600.0), (4792.0, 4600.0)));
@@ -140,15 +140,16 @@ fn a_corner_stops_the_bulldozer() {
 #[test]
 fn a_junction_in_the_middle_of_a_street_is_not_crossed() {
     let (mut sim, road) = setup();
-    build(&mut sim, road, line((4600.0, 4600.0), (4792.0, 4600.0)));
-    // A cross street on the node between the two pieces (x = 4696).
-    build(&mut sim, road, line((4696.0, 4540.0), (4696.0, 4600.0)));
+    // 224 m: pieces of 64, 64 and 96 m (cut on the control points, T-127).
+    build(&mut sim, road, line((4600.0, 4600.0), (4824.0, 4600.0)));
+    // A cross street on the node between the second and third pieces (x = 4728).
+    build(&mut sim, road, line((4728.0, 4540.0), (4728.0, 4600.0)));
     let lit = click(&mut sim, Vec2::new(4740.0, 4600.0), false);
     assert!((lit - 64.0).abs() < 0.01, "to the control point: {lit}");
     let g = sim.world().resource::<NetGraph>();
     let junction = g
         .nodes()
-        .find(|(_, n)| (n.pos.x - 4696.0).abs() < 0.6 && (n.pos.z - 4600.0).abs() < 0.6)
+        .find(|(_, n)| (n.pos.x - 4728.0).abs() < 0.6 && (n.pos.z - 4600.0).abs() < 0.6)
         .expect("the junction survives");
     assert_eq!(
         junction.1.segments.len(),
@@ -160,12 +161,12 @@ fn a_junction_in_the_middle_of_a_street_is_not_crossed() {
 #[test]
 fn shift_takes_the_whole_run_up_to_the_junctions() {
     let (mut sim, road) = setup();
-    build(&mut sim, road, line((4600.0, 4600.0), (4792.0, 4600.0)));
-    build(&mut sim, road, line((4696.0, 4540.0), (4696.0, 4600.0)));
+    build(&mut sim, road, line((4600.0, 4600.0), (4824.0, 4600.0)));
+    build(&mut sim, road, line((4728.0, 4540.0), (4728.0, 4600.0)));
     let lit = click(&mut sim, Vec2::new(4740.0, 4600.0), true);
     assert!((lit - 96.0).abs() < 0.01, "{lit}");
-    // The first piece and the cross street are left.
-    assert_eq!(sim.world().resource::<NetGraph>().segment_count(), 2);
+    // The first two pieces and the cross street are left.
+    assert_eq!(sim.world().resource::<NetGraph>().segment_count(), 3);
 }
 
 #[test]

@@ -367,7 +367,8 @@ mod tests {
     }
 
     #[test]
-    fn a_straight_200_m_road_has_control_points_at_64_128_192_and_none_is_a_node() {
+    fn a_straight_200_m_road_has_control_points_at_64_128_192_two_on_cut_nodes_and_one_8_m_from_any()
+     {
         let mut g = NetGraph::new();
         let segs = draw(
             &mut g,
@@ -376,7 +377,7 @@ mod tests {
                 to: at(200.0, 0.0),
             },
         );
-        assert_eq!(segs.len(), 3, "auto-cut into 3 pieces");
+        assert_eq!(segs.len(), 3, "auto-cut at 64 and 128 into 3 pieces");
         let st = stretch(&g, segs[1]).unwrap();
         assert_eq!(st.segments, segs);
         assert!((st.length - 200.0).abs() < 0.5);
@@ -388,11 +389,13 @@ mod tests {
         assert_eq!(along, vec![64.0, 128.0, 192.0]);
         for (p, x) in cps.iter().zip([64.0, 128.0, 192.0]) {
             assert!(near(xz(p.pos), at(x, 0.0)), "{:?}", p.pos);
-            assert!(
-                g.nodes().all(|(_, n)| xz(n.pos).distance(xz(p.pos)) > 1.0),
-                "not a node"
-            );
-            assert!(p.s > 0.0 && p.s < g.segment(p.seg).unwrap().length);
+            // T-127: 64 and 128 are cut nodes; 192 is 8 m from the end and from every node.
+            let nearest = g
+                .nodes()
+                .map(|(_, n)| xz(n.pos).distance(xz(p.pos)))
+                .fold(f32::MAX, f32::min);
+            assert!(nearest < 0.5 || nearest >= 8.0 - 0.1, "{x}: {nearest}");
+            assert_eq!(nearest < 0.5, x < 150.0, "{x}");
         }
         // Stops are the two ends and the control points; the cut nodes are not stops.
         let stops = stops(&g, &st);
@@ -487,8 +490,8 @@ mod tests {
         let along: Vec<f32> = control_points(&g, &b).iter().map(|p| p.along).collect();
         assert_eq!(
             along,
-            vec![64.0],
-            "counted from the junction; 128 is on the end"
+            vec![64.0, 128.0],
+            "counted from the junction; 64 is a cut node, 128 is 8 m from the end"
         );
     }
 
@@ -623,5 +626,69 @@ mod tests {
         );
         assert_eq!(stretch(&g, segs[2]).unwrap().segments, vec![segs[2]]);
         assert!(stretch(&g, SegmentId::new(99, 0)).is_none());
+    }
+
+    /// Arc length of each node of a street drawn from the anchor, in order.
+    fn node_alongs(g: &NetGraph, st: &Stretch) -> Vec<f32> {
+        let mut at = 0.0;
+        let mut out = vec![0.0];
+        for s in &st.segments {
+            at += g.segment(*s).unwrap().length;
+            out.push(at);
+        }
+        out
+    }
+
+    #[test]
+    fn no_control_point_is_left_within_8_m_of_a_cut_node_for_any_length_of_8k_m() {
+        for k in 1..=60 {
+            let len = 8.0 * k as f32;
+            let mut g = NetGraph::new();
+            let segs = draw(
+                &mut g,
+                RoadPath::Straight {
+                    from: at(0.0, 0.0),
+                    to: at(len, 0.0),
+                },
+            );
+            let st = stretch(&g, segs[0]).unwrap();
+            assert_eq!(st.segments, segs);
+            let nodes = node_alongs(&g, &st);
+            let mut m = 64.0;
+            while m < st.length - 1e-3 {
+                let d = nodes.iter().map(|n| (n - m).abs()).fold(f32::MAX, f32::min);
+                assert!(
+                    d < 0.01 || d >= 8.0,
+                    "{len} m: control point {m} is {d} m from a node (nodes {nodes:?})"
+                );
+                m += 64.0;
+            }
+        }
+    }
+
+    #[test]
+    fn a_street_of_3_times_66_7_m_is_one_stretch_and_the_bulldozer_stops_remove_exactly_64_m() {
+        let mut g = NetGraph::new();
+        let segs = draw(
+            &mut g,
+            RoadPath::Straight {
+                from: at(0.0, 0.0),
+                to: at(200.0, 0.0),
+            },
+        );
+        let st = stretch(&g, segs[0]).unwrap();
+        let stops: Vec<f32> = stops(&g, &st).iter().map(|p| p.along).collect();
+        assert_eq!(stops.len(), 5);
+        // The first stop is the cut node at 64 m: the span from the end to it is one whole
+        // segment of 64 m, so a click there removes 64 m, not a 66.7 m piece.
+        let pieces = span(&g, &st, 0.0, stops[1]);
+        assert_eq!(pieces.len(), 1);
+        let (seg, s0, s1) = pieces[0];
+        assert_eq!(seg, segs[0]);
+        assert!(s0 == 0.0 && (s1 - 64.0).abs() < 0.01, "{s0}..{s1}");
+        // The next stop is 64 m further, again exactly one segment.
+        let pieces = span(&g, &st, stops[1], stops[2]);
+        assert_eq!(pieces.len(), 1);
+        assert!((pieces[0].2 - pieces[0].1 - 64.0).abs() < 0.01);
     }
 }

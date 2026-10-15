@@ -84,11 +84,11 @@ fn chevron_count_sums_the_pieces_of_a_long_plan() {
     let (sim, db) = sim();
     let view = sim.view();
     let a = Vec2::new(4600.0, 4700.0);
-    // 150 m is cut into two equal pieces of 75 m: 2 * floor(75 / 16) = 8 chevrons.
+    // 150 m is cut at the control point 64 m into 64 m and 86 m: (4 + 5) chevrons per lane.
     let g = compute_ghost(&view, &tool(&db, "highway_1w_3l", a), a + Vec2::X * 150.0).unwrap();
     assert!(g.valid);
     assert_eq!(g.polylines.len(), 2);
-    assert_eq!(g.chevrons.len(), 8 * 3);
+    assert_eq!(g.chevrons.len(), 9 * 3);
 }
 
 #[test]

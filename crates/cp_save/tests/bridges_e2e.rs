@@ -89,8 +89,8 @@ fn bridged_valley(w: &World) -> (SimRunner, Vec2, Vec2) {
                     &mut s,
                     build(
                         basic,
-                        Vec2::new(x, z - 50.0),
-                        Vec2::new(x, z + 50.0),
+                        Vec2::new(x, z - 64.0),
+                        Vec2::new(x, z + 64.0),
                         ElevationMode::Ground,
                     ),
                 )
@@ -228,13 +228,13 @@ fn elevated_over_a_road_makes_no_node_and_ground_over_a_road_does() {
     let basic = w.content.road_id("basic_2l").unwrap();
     // A north-south ground road on dry land near the start tile, then roads across it.
     let (x, z0) = (5120.0f32, 5000.0f32);
-    assert!(!w.terrain.is_water(Vec2::new(x, z0 + 50.0)));
+    assert!(!w.terrain.is_water(Vec2::new(x, z0 + 64.0)));
     let out = run(
         &mut s,
         build(
             basic,
             Vec2::new(x, z0),
-            Vec2::new(x, z0 + 100.0),
+            Vec2::new(x, z0 + 128.0),
             ElevationMode::Ground,
         ),
     );
@@ -242,23 +242,23 @@ fn elevated_over_a_road_makes_no_node_and_ground_over_a_road_does() {
     let nodes = s.world().resource::<NetGraph>().node_count();
     let ground_segments = s.world().resource::<NetGraph>().segment_count();
 
-    // A 300 m deck (4 pieces, nodes 75 m apart: none above the road's middle node).
+    // A 300 m deck (5 pieces, cut at 64 m steps from x - 100: none above the road's middle node).
     let (a, b) = (
-        Vec2::new(x - 140.0, z0 + 50.0),
-        Vec2::new(x + 160.0, z0 + 50.0),
+        Vec2::new(x - 100.0, z0 + 64.0),
+        Vec2::new(x + 200.0, z0 + 64.0),
     );
     let out = run(&mut s, build(basic, a, b, ElevationMode::Elevated(4.0)));
     assert!(out.result.is_ok(), "{out:?}");
     let g = s.world().resource::<NetGraph>();
     assert_eq!(
         g.node_count(),
-        nodes + 5,
+        nodes + 6,
         "only the deck's own nodes were added"
     );
-    assert_eq!(g.segment_count(), ground_segments + 4);
+    assert_eq!(g.segment_count(), ground_segments + 5);
     let under: Vec<_> = g
         .nodes()
-        .filter(|(_, n)| Vec2::new(n.pos.x, n.pos.z).distance(Vec2::new(x, z0 + 50.0)) < 1.0)
+        .filter(|(_, n)| Vec2::new(n.pos.x, n.pos.z).distance(Vec2::new(x, z0 + 64.0)) < 1.0)
         .collect();
     assert!(
         under

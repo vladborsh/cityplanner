@@ -35,24 +35,25 @@ fn build(road: RoadDefId, from: Vec2, to: Vec2) -> SimCommand {
     })
 }
 
-/// 5 horizontal and 5 vertical streets, 100 m apart, crossing in a 5x5 lattice.
+/// 5 horizontal and 5 vertical streets, 128 m apart (two control points, so the lattice points
+/// are also automatic cut nodes, T-127), crossing in a 5x5 lattice.
 fn grid_commands(road: RoadDefId) -> Vec<SimCommand> {
     let (x0, z0) = (4600.0, 4600.0);
     let mut v = Vec::new();
     for i in 0..5 {
-        let o = i as f32 * 100.0;
+        let o = i as f32 * 128.0;
         v.push(build(
             road,
             Vec2::new(x0, z0 + o),
-            Vec2::new(x0 + 400.0, z0 + o),
+            Vec2::new(x0 + 512.0, z0 + o),
         ));
     }
     for i in 0..5 {
-        let o = i as f32 * 100.0;
+        let o = i as f32 * 128.0;
         v.push(build(
             road,
             Vec2::new(x0 + o, z0),
-            Vec2::new(x0 + o, z0 + 400.0),
+            Vec2::new(x0 + o, z0 + 512.0),
         ));
     }
     v
@@ -125,7 +126,7 @@ fn builds_a_5x5_grid_then_upgrades_and_removes() {
     let mut junctions = 0;
     for ix in 0..5 {
         for iz in 0..5 {
-            let p = Vec2::new(4600.0 + ix as f32 * 100.0, 4600.0 + iz as f32 * 100.0);
+            let p = Vec2::new(4600.0 + ix as f32 * 128.0, 4600.0 + iz as f32 * 128.0);
             let (_, n) = g
                 .nodes()
                 .find(|(_, n)| (Vec2::new(n.pos.x, n.pos.z) - p).length() < 0.5)
@@ -138,7 +139,7 @@ fn builds_a_5x5_grid_then_upgrades_and_removes() {
     }
     assert_eq!(junctions, 9);
     let (segs, nodes) = (g.segment_count(), g.node_count());
-    // Pieces are at most 96 m, so every 100 m block is cut at least once.
+    // Pieces are at most 96 m, so every 128 m block is cut at least once.
     assert!(segs >= 40, "{segs}");
     // The Network phase (T-019) consumed the dirty set: every node has junction geometry
     // and nothing is left dirty. The 9 interior junctions have 4 arms.
