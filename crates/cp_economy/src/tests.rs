@@ -896,9 +896,8 @@ mod city {
     }
 }
 
-/// Loans (T-129). The city's own weekly balance is constant (`-377.25`), so the loan shows as
-/// the difference to it.
-const WEEKLY: i64 = -37_725;
+/// Loans (T-129). The city's own weekly balance is read back from the reports, so the loan
+/// shows as the difference to it.
 
 #[test]
 fn a_loan_pays_out_and_is_repaid_to_the_cent_over_its_term() {
@@ -907,16 +906,19 @@ fn a_loan_pays_out_and_is_repaid_to_the_cent_over_its_term() {
     apply(&mut world, &EconomyCommand::TakeLoan { offer: 0 }).unwrap();
     assert_eq!(balance(&world), start + Cost(2_500_000));
     let mut paid = Cost::ZERO;
+    let mut city_only = Cost::ZERO;
     for week in 1..=26 {
         run_at(&mut world, &mut schedule, week * TICKS_PER_WEEK);
-        paid += world.resource::<EconomyState>().last_week.loan_payments;
+        let w = world.resource::<EconomyState>().last_week;
+        paid += w.loan_payments;
+        city_only += w.balance() + w.loan_payments;
     }
     // 25 000 + 3 % simple interest = 25 750.00, weekly shares rounded down, last week the rest.
     assert_eq!(paid, Cost(2_575_000));
     assert!(world.resource::<EconomyState>().loans.is_empty());
     assert_eq!(
         balance(&world),
-        start + Cost(2_500_000 - 2_575_000 + 26 * WEEKLY)
+        start + Cost(2_500_000 - 2_575_000) + city_only
     );
     // Nothing more is taken once it is gone.
     run_at(&mut world, &mut schedule, 27 * TICKS_PER_WEEK);
