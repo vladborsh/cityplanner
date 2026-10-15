@@ -591,6 +591,61 @@ impl From<&EconomyState> for EconomyStateV19 {
     }
 }
 
+/// Version 20: the body as written by format 20 (loans; no districts).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV20 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGrid,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+    pub trips: TripBook,
+    pub agents: Agents,
+    pub treasury: Treasury,
+    pub economy: EconomyState,
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    pub land: LandGrids,
+    pub decay: Decay,
+    pub def_names: crate::DefNames,
+}
+
+/// v20 → v21 (T-131): the district map and records were added; an old save has no districts.
+pub fn migrate_v20_to_v21(v20: SaveDataV20) -> SaveData {
+    SaveData {
+        tick: v20.tick,
+        rng: v20.rng,
+        speed: v20.speed,
+        queue: v20.queue,
+        log: v20.log,
+        tiles: v20.tiles,
+        net: v20.net,
+        zones: v20.zones,
+        buildings: v20.buildings,
+        citizens: v20.citizens,
+        paths: v20.paths,
+        utilities: v20.utilities,
+        trips: v20.trips,
+        agents: v20.agents,
+        treasury: v20.treasury,
+        economy: v20.economy,
+        demand: v20.demand,
+        demand_acc: v20.demand_acc,
+        land: v20.land,
+        decay: v20.decay,
+        def_names: v20.def_names,
+        district_map: Default::default(),
+        districts: Default::default(),
+    }
+}
+
 /// Version 19: the body as written by format 19 (buildings on a `Footprint`; no loans).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SaveDataV19 {
@@ -619,9 +674,9 @@ pub struct SaveDataV19 {
 
 /// v19 → v20 (T-129): the economy state got the loans and the report its loan payments; an
 /// old city has none of either.
-pub fn migrate_v19_to_v20(v19: SaveDataV19) -> SaveData {
+pub fn migrate_v19_to_v20(v19: SaveDataV19) -> SaveDataV20 {
     let w = v19.economy.last_week;
-    SaveData {
+    SaveDataV20 {
         tick: v19.tick,
         rng: v19.rng,
         speed: v19.speed,
@@ -1099,7 +1154,9 @@ fn from_v16(v: SaveDataV16) -> SaveData {
 }
 
 fn from_v17(v: SaveDataV17) -> SaveData {
-    migrate_v19_to_v20(migrate_v18_to_v19(migrate_v17_to_v18(v)))
+    migrate_v20_to_v21(migrate_v19_to_v20(migrate_v18_to_v19(migrate_v17_to_v18(
+        v,
+    ))))
 }
 
 /// Decodes a body written at `version` and runs the migration chain up to
@@ -1184,9 +1241,12 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         15 => Ok(from_v15(dec(body)?)),
         16 => Ok(from_v16(dec(body)?)),
         17 => Ok(from_v17(dec(body)?)),
-        18 => Ok(migrate_v19_to_v20(migrate_v18_to_v19(dec(body)?))),
-        19 => Ok(migrate_v19_to_v20(dec(body)?)),
-        20 => dec(body),
+        18 => Ok(migrate_v20_to_v21(migrate_v19_to_v20(migrate_v18_to_v19(
+            dec(body)?,
+        )))),
+        19 => Ok(migrate_v20_to_v21(migrate_v19_to_v20(dec(body)?))),
+        20 => Ok(migrate_v20_to_v21(dec(body)?)),
+        21 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

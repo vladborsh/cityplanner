@@ -7,6 +7,7 @@ use bevy_ecs::message::Messages;
 use bevy_ecs::world::World;
 use cp_building::BuildingCommand;
 use cp_core::{CommandError, CommandLog, CommandOutcome, CommandQueue, Cost, SimSpeed, Tick};
+use cp_district::DistrictCommand;
 use cp_economy::EconomyCommand;
 use cp_net::NetCommand;
 use cp_utility::UtilityCommand;
@@ -25,7 +26,8 @@ pub enum SimCommand {
     Economy(EconomyCommand),
     /// Debug and demo commands: logged and replayed like any other, never sent by the game UI.
     Debug(DebugCommand),
-    // M2: Terrain(TerrainCommand). M3+: Transit, District, ...
+    District(DistrictCommand),
+    // M2: Terrain(TerrainCommand). M3+: Transit, ...
 }
 
 /// Commands for demos, benchmarks and tests (see [`SimCommand::Debug`]). Variants are only
@@ -60,6 +62,7 @@ impl SimCommand {
             | SimCommand::Zone(_)
             | SimCommand::Utility(_)
             | SimCommand::Economy(_)
+            | SimCommand::District(_)
             | SimCommand::Debug(_) => {}
         }
     }
@@ -98,6 +101,9 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
         SimCommand::Utility(c) => cp_utility::apply(world, c)
             .map_err(|e| rejected_or_funds("utility", &e, e.insufficient_funds())),
         SimCommand::Economy(c) => cp_economy::apply(world, c).map_err(|e| rejected("economy", e)),
+        SimCommand::District(c) => {
+            cp_district::apply(world, c).map_err(|e| rejected("district", e))
+        }
         SimCommand::Debug(c) => apply_debug(world, c),
     }
 }

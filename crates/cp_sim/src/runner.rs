@@ -108,6 +108,8 @@ impl SimRunner {
         world.init_resource::<cp_traffic::Agents>();
         world.init_resource::<cp_traffic::AgentSettings>();
         world.init_resource::<cp_core::Treasury>();
+        world.init_resource::<cp_district::DistrictMap>();
+        world.init_resource::<cp_district::Districts>();
         world.init_resource::<cp_economy::EconomyState>();
         world.init_resource::<cp_economy::DemandAcc>();
         world.init_resource::<cp_economy::LandGrids>();
@@ -139,6 +141,9 @@ impl SimRunner {
         world
             .resource_mut::<SimChecksum>()
             .register("economy", crate::checksum::economy_part);
+        world
+            .resource_mut::<SimChecksum>()
+            .register("districts", crate::checksum::district_part);
         world.init_resource::<crate::view::ArenaGauges>();
         let building_cap = world.resource::<SimLimits>().buildings;
         let limits = *world.resource::<SimLimits>();

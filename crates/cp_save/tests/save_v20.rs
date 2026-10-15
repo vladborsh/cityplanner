@@ -37,7 +37,6 @@ fn the_v19_fixture_migrates_without_loans_and_round_trips() {
         read_header(&again).unwrap().0.format_version,
         FORMAT_VERSION
     );
-    assert_eq!(FORMAT_VERSION, 20);
     let l2 = load_with_map(&again, content.content_hash(), h.map_hash).unwrap();
     assert_eq!(l.data, l2.data);
 }

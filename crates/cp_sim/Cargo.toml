@@ -18,6 +18,7 @@ cp_building.workspace = true
 cp_citizen.workspace = true
 cp_traffic.workspace = true
 cp_utility.workspace = true
+cp_district.workspace = true
 cp_economy.workspace = true
 bevy_ecs.workspace = true
 bevy_math.workspace = true

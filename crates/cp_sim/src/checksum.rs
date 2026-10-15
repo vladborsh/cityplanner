@@ -114,6 +114,12 @@ pub(crate) fn economy_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_economy::Decay>());
 }
 
+/// Checksum part of the districts: the cell map and the district records.
+pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
+    h.write_serialized(world.resource::<cp_district::DistrictMap>());
+    h.write_serialized(world.resource::<cp_district::Districts>());
+}
+
 /// Checksum part of trips (`cp_citizen::TripBook`).
 pub(crate) fn trip_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_citizen::TripBook>());

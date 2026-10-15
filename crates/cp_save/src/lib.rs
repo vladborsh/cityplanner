@@ -42,7 +42,7 @@
 //! | `Tick`, `SimRng`, `SimSpeed`, `CommandQueue`, `CommandLog` | yes |
 //! | `TileOwnership`, `NetGraph`, `ZoneGrid` (occupancy is rebuilt from the buildings), `BuildingGrid` (incl. the removed ids), `UtilityGraph`, `CitizenGrid` (occupancy tables rebuilt), `TripBook`, `Agents` (pools, lane state, segment load; drive tables rebuilt) | yes |
 //! | `PathService` (requests in flight) | yes, as `SavedPaths` |
-//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay` | yes |
+//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `DistrictMap`, `Districts` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
 //! | `SimLimits`, `RoutineSettings`, `AgentSettings`, `SimContent`, `SimTerrain` | configuration of the runner, not of the game |
@@ -66,6 +66,7 @@ use cp_building::{BuildingGrid, Demand};
 use cp_citizen::{CitizenGrid, TripBook};
 use cp_content::{BuildingDefId, ContentDb, DefKind, RoadDefId};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
+use cp_district::{DistrictMap, Districts};
 use cp_economy::{Decay, DemandAcc, EconomyState, LandGrids};
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
@@ -77,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 20;
+pub const FORMAT_VERSION: u32 = 21;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -199,6 +200,9 @@ pub struct SaveData {
     /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
     /// [`DefNames`] and [`SaveData::remap_defs`].
     pub def_names: DefNames,
+    /// The district grid and the district records. Added in v21.
+    pub district_map: DistrictMap,
+    pub districts: Districts,
 }
 
 impl SaveData {
@@ -258,6 +262,8 @@ impl SaveData {
             def_names: world
                 .get_resource::<cp_content::SimContent>()
                 .map_or_else(DefNames::default, |c| DefNames::from_content(&c.0)),
+            district_map: world.resource::<DistrictMap>().clone(),
+            districts: world.resource::<Districts>().clone(),
         }
     }
 
@@ -293,6 +299,8 @@ impl SaveData {
         world.insert_resource(self.demand_acc);
         world.insert_resource(self.land);
         world.insert_resource(self.decay);
+        world.insert_resource(self.district_map);
+        world.insert_resource(self.districts);
         // The pathfinder reads the segment load last published to it (saved with the agents).
         let published = cp_traffic::CongestionMap(self.agents.load.published.clone());
         world.insert_resource(self.agents);

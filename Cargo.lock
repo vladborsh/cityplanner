@@ -2507,6 +2507,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cp_district"
+version = "0.0.0"
+dependencies = [
+ "bevy_ecs",
+ "bevy_math",
+ "cp_content",
+ "cp_core",
+ "cp_terrain",
+ "serde",
+]
+
+[[package]]
 name = "cp_economy"
 version = "0.0.0"
 dependencies = [
@@ -2575,6 +2587,7 @@ dependencies = [
  "cp_citizen",
  "cp_content",
  "cp_core",
+ "cp_district",
  "cp_economy",
  "cp_net",
  "cp_sim",
@@ -2598,6 +2611,7 @@ dependencies = [
  "cp_citizen",
  "cp_content",
  "cp_core",
+ "cp_district",
  "cp_economy",
  "cp_net",
  "cp_terrain",

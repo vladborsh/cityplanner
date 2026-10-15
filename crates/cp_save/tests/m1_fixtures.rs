@@ -40,6 +40,11 @@
 //! by one. Checked: with the plant's two files taken out of the content, all four values of the
 //! T-109 header above reproduce exactly (and the bench-10k baseline too).
 
+//! **T-131 (save v21).** Re-recorded again: the sim checksum has a new part, the district map
+//! and records (empty in these files), so every value moves. The behaviour did not change: the
+//! districts are empty and nothing reads them yet; `save_v21.rs` runs the v20 fixture on to the
+//! residents recorded on the v20 code.
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -124,10 +129,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0x1519196dc1b8de05, "state at load");
+    assert_eq!(sim.checksum(), 0xae273cb1a62dd0ab, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x4e8919b27ee8c051,
+        0x678978e98878c11f,
         "load + 4096 ticks"
     );
 }
@@ -153,7 +158,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0xa71b2dcebc04d489, "state at load");
+    assert_eq!(sim.checksum(), 0x4a7dad0b27bc3287, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -161,7 +166,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x52f36a9b04a535b7, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0xf2c10d3a7c974351, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,
