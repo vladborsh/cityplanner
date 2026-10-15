@@ -849,3 +849,153 @@ mod tile_border {
         );
     }
 }
+
+/// T-119: the zone grid is built per chunk.
+mod zone_chunks {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::overlay::zone_chunks::chunk_of;
+
+    const NO_LIMIT: Duration = Duration::from_secs(3600);
+
+    /// 8 m cells on a square lattice around the map centre, spanning 3 x 3 zone chunks; every
+    /// third one painted, every seventh invalid.
+    fn lattice() -> ZoneOverlay {
+        let mut cells = Vec::new();
+        for iz in 0..75 {
+            for ix in 0..75 {
+                let (x, z) = (4700.0 + ix as f32 * 8.0, 4700.0 + iz as f32 * 8.0);
+                cells.push(ZoneCellView {
+                    corners: [[x, z], [x + 8.0, z], [x + 8.0, z + 8.0], [x, z + 8.0]],
+                    zone: if (ix + iz) % 3 == 0 {
+                        ZoneType::ResLow
+                    } else {
+                        ZoneType::None
+                    },
+                    valid: (ix * 3 + iz) % 7 != 0,
+                });
+            }
+        }
+        ZoneOverlay { cells }
+    }
+
+    fn style(zoning: bool, x: f32, y: f32) -> ZoneStyle {
+        ZoneStyle {
+            zoning,
+            cam: Some(Vec3::new(x, y, 5000.0)),
+        }
+    }
+
+    /// Builds everything and returns the chunks' meshes concatenated: (fill, outline) triangles.
+    fn build(c: &mut ZoneChunks, t: &Terrain, s: ZoneStyle) -> (usize, usize, usize) {
+        let (mut fill, mut line, mut chunks) = (0, 0, 0);
+        for u in c.update(t, 1, s, NO_LIMIT) {
+            chunks += 1;
+            fill += u.fill.map_or(0, |m| m.triangle_count());
+            line += u.outline.map_or(0, |m| m.triangle_count());
+        }
+        (fill, line, chunks)
+    }
+
+    #[test]
+    fn the_chunks_together_draw_what_the_whole_grid_draws() {
+        let (t, zones) = (terrain(), lattice());
+        for (zoning, x, y) in [(false, 5000.0, 300.0), (true, 1000.0, 2000.0)] {
+            let s = style(zoning, x, y);
+            let mut c = ZoneChunks::default();
+            c.set_zones(&zones);
+            let (fill, line, chunks) = build(&mut c, &t, s);
+            let whole = zone_mesh_with(&zones, &t, zoning, s.cam);
+            let width = outline_width_step(y);
+            let outlines = zone_outline_mesh(&zones, &t, s.cam.unwrap(), width, zoning);
+            assert_eq!(fill, whole.triangle_count(), "{zoning}");
+            assert_eq!(line, outlines.triangle_count(), "{zoning}");
+            assert!(chunks >= 9, "{chunks}");
+        }
+    }
+
+    #[test]
+    fn a_settled_grid_rebuilds_nothing_and_one_cell_rebuilds_one_chunk() {
+        let (t, zones) = (terrain(), lattice());
+        let s = style(false, 5000.0, 300.0);
+        let mut c = ZoneChunks::default();
+        c.set_zones(&zones);
+        build(&mut c, &t, s);
+        assert_eq!(c.dirty(&t, 1, s), 0);
+        assert!(c.update(&t, 1, s, NO_LIMIT).is_empty());
+        c.set_zones(&zones);
+        assert_eq!(c.dirty(&t, 1, s), 0, "the same cells are not a change");
+
+        let mut changed = zones.clone();
+        changed.cells[2000].zone = ZoneType::Office;
+        c.set_zones(&changed);
+        let ups = c.update(&t, 1, s, NO_LIMIT);
+        assert_eq!(ups.len(), 1);
+        assert_eq!(ups[0].chunk, chunk_of(&changed.cells[2000]));
+        assert!(c.update(&t, 1, s, NO_LIMIT).is_empty());
+
+        // A cell that disappears empties its chunk's meshes.
+        let mut fewer = changed.clone();
+        fewer.cells.truncate(10);
+        c.set_zones(&fewer);
+        let ups = c.update(&t, 1, s, NO_LIMIT);
+        assert!(ups.len() >= 3, "{}", ups.len());
+        assert!(
+            ups.iter()
+                .filter(|u| u.chunk != chunk_of(&fewer.cells[0]))
+                .all(|u| u.fill.as_ref().is_some_and(|m| m.indices.is_empty()))
+        );
+    }
+
+    #[test]
+    fn a_camera_step_only_touches_chunks_on_a_band_edge() {
+        let (t, zones) = (terrain(), lattice());
+        let mut c = ZoneChunks::default();
+        c.set_zones(&zones);
+        // High above the lattice every chunk is in the same terrain LOD band and the outlines
+        // are out of range: a step of the camera changes nothing.
+        let far = style(false, 5000.0, 9000.0);
+        build(&mut c, &t, far);
+        let step = style(false, 5000.0 + 260.0, 9000.0);
+        assert_eq!(c.dirty(&t, 1, step), 0);
+        // Close to the ground the chunks near the 1,500 m outline edge follow the camera, the
+        // ones well inside do not.
+        let near = style(false, 5000.0, 300.0);
+        build(&mut c, &t, near);
+        let step = style(false, 5000.0 + 260.0, 300.0);
+        let d = c.dirty(&t, 1, step);
+        assert!(d < 9, "{d}");
+        // The zoning mode redraws all of them.
+        assert!(c.dirty(&t, 1, style(true, 5000.0, 300.0)) >= 9);
+    }
+
+    #[test]
+    fn a_frame_budget_spreads_the_work_nearest_chunk_first() {
+        let (t, zones) = (terrain(), lattice());
+        let s = style(false, 4750.0, 300.0);
+        let mut c = ZoneChunks::default();
+        c.set_zones(&zones);
+        let mut frames = 0;
+        let mut first = None;
+        let mut seen = std::collections::BTreeSet::new();
+        loop {
+            let ups = c.update(&t, 1, s, Duration::ZERO);
+            if ups.is_empty() {
+                break;
+            }
+            assert_eq!(ups.len(), 1, "an exhausted budget still builds one chunk");
+            first.get_or_insert(ups[0].chunk);
+            assert!(seen.insert(ups[0].chunk));
+            frames += 1;
+        }
+        assert!(frames >= 9, "{frames}");
+        // The camera stands over this chunk.
+        let under = ZoneCellView {
+            corners: [[4750.0, 5000.0]; 4],
+            ..zones.cells[0]
+        };
+        assert_eq!(first, Some(chunk_of(&under)));
+        assert_eq!(seen.len(), frames);
+    }
+}

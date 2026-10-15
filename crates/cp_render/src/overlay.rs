@@ -25,11 +25,13 @@ use crate::material::VertexColorMaterial;
 
 mod tiles;
 mod utility;
+mod zone_chunks;
 pub use tiles::{border_edges, border_mesh, shade_mesh};
 pub use utility::{
     BuildingStatus, UtilityLayer, building_status, coverage_counts, status_color,
     utility_overlay_mesh,
 };
+pub use zone_chunks::{BUILD_BUDGET, ChunkUpdate, ZoneChunks, ZoneStyle, chunk_of};
 
 /// Which overlay is shown.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -187,8 +189,6 @@ fn flat(m: &mut MeshData, corners: [[f32; 3]; 4], c: [f32; 4]) {
 
 /// Colour of invalid zone cells (blocked by a road, another block or a building): muted grey.
 pub const INVALID: [f32; 4] = [0.5, 0.5, 0.5, 0.25];
-/// The zone layer is rebuilt at most this often while it is on screen.
-const ZONE_REBUILD_SECS: f32 = 0.25;
 /// Largest vertex spacing of a zone cell's tessellation, metres: a cell is 8 m wide, the
 /// terrain mesh turns every 10 m, so the drape has to be finer than the terrain.
 pub const ZONE_STEP: f32 = 2.0;
@@ -540,17 +540,17 @@ struct LayerSource {
     /// Pointer of the `Arc` the mesh was last built from.
     key: usize,
     entity: Option<Entity>,
-    /// `Time<Real>` seconds of the last build (for throttled layers).
-    built_at: f32,
 }
 
 #[derive(Resource, Default)]
 struct OverlayLayers {
     traffic: LayerSource,
-    zones: LayerSource,
-    outlines: LayerSource,
-    /// Style the zone layers were built with: zoning mode, camera cell, line width step.
-    zone_style: Option<(bool, (i32, i32, i32), i32)>,
+    /// The zone grid, built per terrain chunk (see `zone_chunks`).
+    zone_chunks: ZoneChunks,
+    /// Pointer of the zone snapshot `zone_chunks` holds.
+    zones_key: usize,
+    /// Fill and outline entity of each chunk.
+    zone_entities: Vec<[Option<Entity>; 2]>,
     land: LayerSource,
     pollution: LayerSource,
     water: LayerSource,
@@ -598,9 +598,20 @@ fn upsert(
         commands.entity(e).despawn();
     }
     src.key = key;
-    let data = mesh();
+    src.entity = spawn_layer(commands, meshes, material, which, mesh(), outlines);
+}
+
+/// Spawns `data` as a hidden layer entity (none if it has no triangles).
+fn spawn_layer(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    material: &Handle<VertexColorMaterial>,
+    which: Overlay,
+    data: MeshData,
+    outlines: bool,
+) -> Option<Entity> {
     if data.indices.is_empty() {
-        return;
+        return None;
     }
     let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     for p in &data.positions {
@@ -620,7 +631,7 @@ fn upsert(
     if outlines {
         e.insert(ZoneOutlines);
     }
-    src.entity = Some(e.id());
+    Some(e.id())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -628,7 +639,6 @@ fn sync_overlay_meshes(
     view: Option<Res<SimView>>,
     zoning: Res<ZoningMode>,
     camera: Query<&Transform, With<Camera3d>>,
-    time: Res<Time<Real>>,
     mut layers: ResMut<OverlayLayers>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -663,52 +673,34 @@ fn sync_overlay_meshes(
         false,
         false,
     );
-    // The zone grid is always on. It is the costly mesh, so it rebuilds at most every
-    // `ZONE_REBUILD_SECS` (a stale layer is replaced on the next frame that allows it); a
-    // changed style (zoning mode, camera cell, line width) or terrain rebuilds at once.
-    let now = time.elapsed_secs();
+    // The zone grid is always on. It is built per terrain chunk: only the chunks whose cells,
+    // style or camera band changed are rebuilt, a few per frame (see `zone_chunks`).
     let zones_key = ptr(&o.zones);
-    let cam_pos = camera.single().ok().map(|t| t.translation);
-    let style = (
-        zoning.0,
-        cam_pos.map_or((0, 0, 0), |c| {
-            (
-                (c.x / 250.0).floor() as i32,
-                (c.y / 250.0).floor() as i32,
-                (c.z / 250.0).floor() as i32,
-            )
-        }),
-        cam_pos.map_or(0, |c| outline_width_step(c.y)),
-    );
-    let style_changed = l.zone_style != Some(style);
-    let zones_due = terrain_changed
-        || style_changed
-        || (l.zones.key != zones_key && now - l.zones.built_at >= ZONE_REBUILD_SECS);
-    if zones_due {
-        l.zones.built_at = now;
-        l.zone_style = Some(style);
-        upsert(
-            &mut l.zones,
-            zones_key,
-            Overlay::Zones,
-            || zone_mesh_with(&o.zones, terrain, zoning.0, cam_pos),
-            &material,
-            &mut commands,
-            &mut meshes,
-            true,
-            false,
-        );
-        if let Some(cam) = cam_pos {
-            upsert(
-                &mut l.outlines,
-                zones_key,
-                Overlay::Zones,
-                || zone_outline_mesh(&o.zones, terrain, cam, style.2, zoning.0),
-                &material,
+    if l.zones_key != zones_key {
+        l.zones_key = zones_key;
+        l.zone_chunks.set_zones(&o.zones);
+    }
+    let style = ZoneStyle {
+        zoning: zoning.0,
+        cam: camera.single().ok().map(|t| t.translation),
+    };
+    let updates = l.zone_chunks.update(terrain, tkey, style, BUILD_BUDGET);
+    if l.zone_entities.is_empty() {
+        l.zone_entities = vec![[None; 2]; zone_chunks::SIDE.pow(2)];
+    }
+    for u in updates {
+        for (slot, mesh, outlines) in [(0, u.fill, false), (1, u.outline, true)] {
+            let Some(mesh) = mesh else { continue };
+            if let Some(e) = l.zone_entities[u.chunk][slot].take() {
+                commands.entity(e).despawn();
+            }
+            l.zone_entities[u.chunk][slot] = spawn_layer(
                 &mut commands,
                 &mut meshes,
-                true,
-                true,
+                &material,
+                Overlay::Zones,
+                mesh,
+                outlines,
             );
         }
     }
