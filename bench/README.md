@@ -85,9 +85,9 @@ scripts/bench.sh 100k           # the nightly one; RUNS=3 scripts/bench.sh 100k 
 scripts/bench.sh 10k --update-baseline   # record a new baseline (deliberately, on a quiet machine)
 ```
 
-* `fixtures/saves/bench-10k.sav` (0.99 MB) is committed, written at the current save version:
+* `fixtures/saves/bench-10k.sav` (1.09 MB) is committed, written at the current save version:
   whoever bumps the save must keep it loading through the migration chain.
-* `fixtures/saves/bench-100k.sav` (9.4 MB) is **gitignored**: `scripts/bench.sh 100k` builds it
+* `fixtures/saves/bench-100k.sav` (11.2 MB) is **gitignored**: `scripts/bench.sh 100k` builds it
   on demand (about 80 s in release) and refuses it unless its state checksum equals the one in
   `bench/baseline.json` under `"fixtures"` (as the 10k fixture's checksum is checked by a
   `cp_bench` test).
@@ -95,7 +95,7 @@ scripts/bench.sh 10k --update-baseline   # record a new baseline (deliberately, 
   a local cron): it writes `<target dir>/bench/bench-<size>.json` (ms per phase, median and p95)
   and exits 1 on a regression over 20 %.
 * `bench/baseline-10k.json` and `bench/baseline-100k.json` hold the measured numbers (release,
-  Apple M4 Pro, **shared machine at load average ~8**: noisy; re-baseline on a quiet one). The
+  Apple M4 Pro, shared machine, load average ~9 with no gate or bench running; re-recorded in T-057 with the multi-threaded executor, 12 pool threads, after T-101..T-110 changed the grid_city fixtures; re-baseline on a quiet one). The
   empty-scenario gate keeps using `bench/baseline.json`.
 * A bench run attaches the content to a loaded save (without it the citizen, building and agent
   systems do nothing); `--save` runs of the old fixtures change accordingly.
