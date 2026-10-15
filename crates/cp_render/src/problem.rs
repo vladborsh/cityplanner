@@ -3,8 +3,10 @@
 //! problems the icons take turns, one per second, most important first. Everything here
 //! depends on render time only (seconds since start), never on the sim tick.
 //!
-//! [`collect`] picks the icon of every building within [`RANGE_M`] of the camera, and
-//! [`build_mesh`] turns the picks into one camera-facing mesh (one draw call). The icons are
+//! [`collect`] picks the icons: buildings nearer than [`NEAR_M`] get one each, farther ones are
+//! grouped into a fixed world grid whose cell grows with distance ([`CELL_M`]) and each cell
+//! gets one cluster icon with a count badge. [`build_mesh`] turns the picks into one
+//! camera-facing mesh (one draw call). The icons are
 //! self-made vertex-coloured shapes on a square plate, one silhouette per problem (the user's
 //! rule for icons: square, uniform, distinct).
 
@@ -13,8 +15,14 @@ use cp_building::{Building, BuildingFlags, BuildingId, BuildingState};
 
 use crate::chunk::MeshData;
 
-/// Icons are created only for buildings closer than this to the camera, metres.
-pub const RANGE_M: f32 = 1500.0;
+/// Buildings closer than this to the camera get an icon each, metres.
+pub const NEAR_M: f32 = 400.0;
+/// Distance bands: band `b` starts at `BAND_EDGES[b - 1]` (band 0 is nearer than `NEAR_M`).
+const BAND_EDGES: [f32; 4] = [NEAR_M, 800.0, 1600.0, 3200.0];
+/// Cluster cell side per band, metres; band 0 draws single icons.
+pub const CELL_M: [f32; 5] = [0.0, 64.0, 128.0, 256.0, 512.0];
+/// A band changes only once the distance is this far past its edge (fraction of the edge).
+const HYSTERESIS: f32 = 0.1;
 /// Seconds each icon of a building with several problems stays up.
 pub const CYCLE_S: f32 = 1.0;
 /// Bobbing: a sine of this many hertz and this amplitude in metres, phase from the building id.
@@ -135,6 +143,8 @@ pub struct IconInstance {
     pub problem: Problem,
     /// Centre of the icon, bob included.
     pub pos: Vec3,
+    /// Buildings with `problem` this icon stands for: 1 for a single icon, else the badge.
+    pub count: u32,
 }
 
 /// The marked buildings among `buildings`; `top` gives a building's roof (`None` skips it,
@@ -158,22 +168,100 @@ pub fn mark<'a>(
         .collect()
 }
 
-/// The icons to draw at render time `t` for a camera at `camera`: marked buildings closer
-/// than [`RANGE_M`] (horizontally-and-vertically, straight-line).
-pub fn collect(marked: &[Marked], camera: Vec3, t: f32) -> Vec<IconInstance> {
-    let r2 = RANGE_M * RANGE_M;
-    marked
-        .iter()
-        .filter(|m| m.top.distance_squared(camera) <= r2)
-        .filter_map(|m| {
-            let problem = m.problems.shown(t)?;
-            Some(IconInstance {
-                id: m.id,
-                problem,
-                pos: m.top + Vec3::Y * (LIFT_M + bob(m.id, t)),
-            })
-        })
-        .collect()
+/// Distance band of a building, with hysteresis around the edges relative to `prev`
+/// (`u8::MAX` for none yet).
+fn band(distance: f32, prev: u8) -> u8 {
+    let fresh = BAND_EDGES.iter().filter(|&&e| distance >= e).count() as u8;
+    if prev as usize >= CELL_M.len() || prev == fresh {
+        return fresh;
+    }
+    if fresh > prev && distance < BAND_EDGES[prev as usize] * (1.0 + HYSTERESIS) {
+        return prev;
+    }
+    if fresh < prev && distance > BAND_EDGES[prev as usize - 1] * (1.0 - HYSTERESIS) {
+        return prev;
+    }
+    fresh
+}
+
+/// Per-building distance bands, kept between frames for the hysteresis. Clear it when the
+/// marked list is rebuilt.
+#[derive(Debug, Default)]
+pub struct Lod {
+    bands: Vec<u8>,
+}
+
+impl Lod {
+    pub fn clear(&mut self) {
+        self.bands.clear();
+    }
+}
+
+#[derive(Default)]
+struct Cell {
+    buildings: u32,
+    counts: [u32; Problem::ALL.len()],
+    problems: u8,
+    sum: Vec3,
+    first: u32,
+    first_id: Option<BuildingId>,
+}
+
+/// The icons to draw at render time `t` for a camera at `camera`: one per marked building
+/// nearer than [`NEAR_M`]; beyond it one per non-empty cell of the world grid of its band
+/// ([`CELL_M`]), at the centroid of its buildings, showing the cell's problems in turn (most
+/// important first) with the number of buildings that have the one on show.
+pub fn collect(marked: &[Marked], lod: &mut Lod, camera: Vec3, t: f32) -> Vec<IconInstance> {
+    lod.bands.resize(marked.len(), u8::MAX);
+    let mut out = Vec::new();
+    let mut cells: std::collections::HashMap<(u8, i32, i32), Cell> = Default::default();
+    for (m, b) in marked.iter().zip(lod.bands.iter_mut()) {
+        *b = band(m.top.distance(camera), *b);
+        if *b == 0 {
+            if let Some(problem) = m.problems.shown(t) {
+                out.push(IconInstance {
+                    id: m.id,
+                    problem,
+                    pos: m.top + Vec3::Y * (LIFT_M + bob(m.id, t)),
+                    count: 1,
+                });
+            }
+            continue;
+        }
+        let size = CELL_M[*b as usize];
+        let key = (
+            *b,
+            (m.top.x / size).floor() as i32,
+            (m.top.z / size).floor() as i32,
+        );
+        let c = cells.entry(key).or_default();
+        c.buildings += 1;
+        c.problems |= m.problems.0;
+        for p in m.problems.iter() {
+            c.counts[p as usize] += 1;
+        }
+        c.sum += m.top;
+        if c.first_id.is_none_or(|f| m.id < f) {
+            c.first_id = Some(m.id);
+            c.first = m.id.index;
+        }
+    }
+    let mut keys: Vec<_> = cells.keys().copied().collect();
+    keys.sort_unstable();
+    for key in keys {
+        let c = &cells[&key];
+        let (Some(id), Some(problem)) = (c.first_id, Problems(c.problems).shown(t)) else {
+            continue;
+        };
+        let centre = c.sum / c.buildings as f32;
+        out.push(IconInstance {
+            id,
+            problem,
+            pos: centre + Vec3::Y * (LIFT_M + bob(id, t)),
+            count: c.counts[problem as usize],
+        });
+    }
+    out
 }
 
 /// Camera frame used to face the icons towards the viewer.
@@ -263,6 +351,88 @@ fn glyph(p: Problem) -> (&'static [Shape], [f32; 4]) {
     }
 }
 
+/// Seven-segment digits for the count badge: segments top, upper-left, upper-right, middle,
+/// lower-left, lower-right, bottom.
+const SEGMENTS: [u8; 10] = [
+    0b1110111, 0b0010010, 0b1011101, 0b1011011, 0b0111010, 0b1101011, 0b1101111, 0b1010010,
+    0b1111111, 0b1111011,
+];
+
+/// Rectangles `[x0, y0, x1, y1]` of digit `d` in a cell of width 1 and height 1 (y up).
+fn digit_rects(d: u32) -> Vec<[f32; 4]> {
+    const T: f32 = 0.2;
+    let all = [
+        [0.0, 1.0 - T, 1.0, 1.0],
+        [0.0, 0.5, T, 1.0],
+        [1.0 - T, 0.5, 1.0, 1.0],
+        [0.0, 0.5 - T / 2.0, 1.0, 0.5 + T / 2.0],
+        [0.0, 0.0, T, 0.5],
+        [1.0 - T, 0.0, 1.0, 0.5],
+        [0.0, 0.0, 1.0, T],
+    ];
+    let bits = SEGMENTS[d as usize % 10];
+    (0..7)
+        .filter(|i| bits & (1 << (6 - i)) != 0)
+        .map(|i| all[i])
+        .collect()
+}
+
+/// The badge shapes ("×" and the digits of `count`, white on a dark box hanging off the
+/// plate's lower right corner) as `(polygon, colour)` in the icon's unit square.
+fn badge(count: u32) -> Vec<(Vec<[f32; 2]>, [f32; 4])> {
+    let digits: Vec<u32> = count
+        .min(9999)
+        .to_string()
+        .bytes()
+        .map(|b| u32::from(b - b'0'))
+        .collect();
+    let n = digits.len() as f32;
+    let adv = (0.95 / (n + 1.0)).min(0.22);
+    let (h, pad) = (0.28, 0.04);
+    let width = (n + 1.0) * adv + 2.0 * pad;
+    let x0 = 0.5 - width;
+    let y0 = -0.5 - (h + 2.0 * pad) / 2.0;
+    let rect = |a: f32, b: f32, c: f32, d: f32| vec![[a, b], [c, b], [c, d], [a, d]];
+    let mut out = vec![(rect(x0, y0, 0.5, y0 + h + 2.0 * pad), BORDER)];
+    let (gx, gy) = (x0 + pad, y0 + pad);
+    // The multiplication sign: two thin diagonals.
+    let (cx, cy, r, w) = (gx + adv * 0.4, gy + h / 2.0, adv * 0.32, 0.018);
+    out.push((
+        vec![
+            [cx - r - w, cy - r],
+            [cx - r + w, cy - r - w],
+            [cx + r + w, cy + r],
+            [cx + r - w, cy + r + w],
+        ],
+        WHITE,
+    ));
+    out.push((
+        vec![
+            [cx + r - w, cy - r - w],
+            [cx + r + w, cy - r],
+            [cx - r + w, cy + r + w],
+            [cx - r - w, cy + r],
+        ],
+        WHITE,
+    ));
+    for (i, d) in digits.iter().enumerate() {
+        let ox = gx + adv * (i as f32 + 1.0);
+        for r in digit_rects(*d) {
+            let (dw, dh) = (adv * 0.75, h);
+            out.push((
+                rect(
+                    ox + r[0] * dw,
+                    gy + r[1] * dh,
+                    ox + r[2] * dw,
+                    gy + r[3] * dh,
+                ),
+                WHITE,
+            ));
+        }
+    }
+    out
+}
+
 /// One mesh with a camera-facing quad stack per icon: border, plate, glyph. Layers sit a
 /// hair apart towards the camera, so the depth test keeps them in order.
 pub fn build_mesh(icons: &[IconInstance], facing: &Facing) -> MeshData {
@@ -294,6 +464,11 @@ pub fn build_mesh(icons: &[IconInstance], facing: &Facing) -> MeshData {
         push(&mut m, &SQUARE, plate_color, 0.86);
         for (pts, color) in shapes {
             push(&mut m, pts, *color, 1.0);
+        }
+        if icon.count > 1 {
+            for (pts, color) in badge(icon.count) {
+                push(&mut m, &pts, color, 1.0);
+            }
         }
     }
     m

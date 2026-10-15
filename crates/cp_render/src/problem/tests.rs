@@ -5,6 +5,10 @@ use cp_core::{Id, Tick};
 
 use super::*;
 
+fn collect_now(marked: &[Marked], camera: Vec3, t: f32) -> Vec<IconInstance> {
+    collect(marked, &mut Lod::default(), camera, t)
+}
+
 fn id(i: u32) -> BuildingId {
     Id::new(i, 0)
 }
@@ -47,7 +51,7 @@ fn one_flag_gives_one_icon_of_its_kind_over_the_roof() {
     ];
     for (flag, want) in cases {
         let marked = marked_one(flag, BuildingState::Active);
-        let icons = collect(&marked, Vec3::new(100.0, 50.0, 100.0), 0.3);
+        let icons = collect_now(&marked, Vec3::new(100.0, 50.0, 100.0), 0.3);
         assert_eq!(icons.len(), 1, "flag {flag}");
         assert_eq!(icons[0].problem, want);
         assert!(icons[0].pos.y >= 12.0 + LIFT_M - BOB_AMPLITUDE_M - 1e-4);
@@ -59,7 +63,7 @@ fn one_flag_gives_one_icon_of_its_kind_over_the_roof() {
 #[test]
 fn abandoned_building_gets_its_own_icon_after_the_flags() {
     let marked = marked_one(0, BuildingState::Abandoned);
-    let icons = collect(&marked, Vec3::new(100.0, 50.0, 100.0), 0.0);
+    let icons = collect_now(&marked, Vec3::new(100.0, 50.0, 100.0), 0.0);
     assert_eq!(icons[0].problem, Problem::Abandoned);
     let marked = marked_one(BuildingFlags::NO_POWER, BuildingState::Abandoned);
     assert_eq!(marked[0].problems.len(), 2);
@@ -75,7 +79,7 @@ fn several_flags_take_turns_each_second_by_importance() {
         | BuildingFlags::NO_SEWAGE;
     let marked = marked_one(all, BuildingState::Active);
     let cam = Vec3::new(100.0, 50.0, 100.0);
-    let at = |t: f32| collect(&marked, cam, t)[0].problem;
+    let at = |t: f32| collect_now(&marked, cam, t)[0].problem;
     assert_eq!(at(0.0), Problem::NoRoad);
     assert_eq!(at(0.99), Problem::NoRoad);
     assert_eq!(at(1.0), Problem::NoPower);
@@ -112,13 +116,139 @@ fn bob_stays_within_the_amplitude_and_phases_differ() {
     assert!((bob(id(3), 0.2) - bob(id(3), 1.2)).abs() < 1e-4);
 }
 
+/// `n` buildings on a 20 m lattice (20 per row) with the given problems, origin at (1000, 1000).
+fn lattice(n: u32, problems: impl Fn(u32) -> Problems) -> Vec<Marked> {
+    (0..n)
+        .map(|i| Marked {
+            id: id(i),
+            problems: problems(i),
+            top: Vec3::new(
+                1000.0 + (i % 20) as f32 * 20.0,
+                10.0,
+                1000.0 + (i / 20) as f32 * 20.0,
+            ),
+        })
+        .collect()
+}
+
 #[test]
-fn beyond_the_range_no_icons_are_made() {
-    let marked = marked_one(BuildingFlags::NO_POWER, BuildingState::Active);
-    let near = Vec3::new(100.0 + RANGE_M - 20.0, 12.0, 100.0);
-    let far = Vec3::new(100.0 + RANGE_M + 20.0, 12.0, 100.0);
-    assert_eq!(collect(&marked, near, 0.0).len(), 1);
-    assert!(collect(&marked, far, 0.0).is_empty());
+fn near_every_building_has_its_own_icon_and_far_they_merge_into_a_few_clusters() {
+    let marked = lattice(200, |_| Problems(Problem::NoPower.bit()));
+    // 150 m from the lattice: all nearer than NEAR_M.
+    let near = collect_now(&marked, Vec3::new(1200.0, 150.0, 1100.0), 0.0);
+    assert_eq!(near.len(), 200);
+    assert!(near.iter().all(|i| i.count == 1));
+    // From 2.5 km away: a handful of clusters whose counts add up to all of them.
+    for cam in [
+        Vec3::new(1200.0, 500.0, 3600.0),
+        Vec3::new(-1300.0, 800.0, 1100.0),
+        Vec3::new(1200.0, 3500.0, 1100.0),
+    ] {
+        let far = collect_now(&marked, cam, 0.0);
+        assert!(far.len() <= 10, "{} clusters from {cam}", far.len());
+        assert_eq!(far.iter().map(|i| i.count).sum::<u32>(), 200);
+        assert!(far.iter().all(|i| i.problem == Problem::NoPower));
+    }
+    // Nothing is cut off with distance any more.
+    let very_far = collect_now(&marked, Vec3::new(1200.0, 9000.0, 1100.0), 0.0);
+    assert!(!very_far.is_empty() && very_far.len() <= 4);
+}
+
+#[test]
+fn the_most_important_problem_wins_a_mixed_cell_and_the_badge_counts_its_buildings() {
+    // 30 buildings in one cell far away: 20 without power, 7 without water, 3 without road.
+    let marked: Vec<Marked> = (0..30u32)
+        .map(|i| Marked {
+            id: id(i),
+            problems: Problems(match i {
+                0..=19 => Problem::NoPower.bit(),
+                20..=26 => Problem::NoWater.bit(),
+                _ => Problem::NoRoad.bit(),
+            }),
+            top: Vec3::new(5000.0 + i as f32, 8.0, 5000.0),
+        })
+        .collect();
+    let cam = Vec3::new(5000.0, 2000.0, 5000.0 - 1500.0);
+    let at = |t: f32| collect_now(&marked, cam, t);
+    assert_eq!(at(0.0).len(), 1);
+    assert_eq!((at(0.0)[0].problem, at(0.0)[0].count), (Problem::NoRoad, 3));
+    // Then the others, one per second, each with its own count.
+    assert_eq!(
+        (at(1.0)[0].problem, at(1.0)[0].count),
+        (Problem::NoPower, 20)
+    );
+    assert_eq!(
+        (at(2.0)[0].problem, at(2.0)[0].count),
+        (Problem::NoWater, 7)
+    );
+    assert_eq!(at(3.0)[0].problem, Problem::NoRoad);
+    // The cluster sits at the centroid of the cell's buildings.
+    let c = at(0.0)[0].pos;
+    assert!((c.x - 5014.5).abs() < 1e-3 && (c.z - 5000.0).abs() < 1e-3);
+    // One building with two problems counts in both.
+    let one = lattice(1, |_| {
+        Problems(Problem::NoPower.bit() | Problem::NoWater.bit())
+    });
+    let far = Vec3::new(1000.0, 2500.0, 1000.0);
+    assert_eq!(collect_now(&one, far, 0.0)[0].count, 1);
+}
+
+#[test]
+fn clusters_stay_put_while_the_camera_moves_a_little() {
+    let marked = lattice(200, |_| Problems(Problem::NoWater.bit()));
+    let keys = |cam: Vec3| {
+        let mut v: Vec<_> = collect_now(&marked, cam, 0.0)
+            .iter()
+            .map(|i| ((i.pos.x * 10.0) as i32, (i.pos.z * 10.0) as i32, i.count))
+            .collect();
+        v.sort();
+        v
+    };
+    let a = keys(Vec3::new(1200.0, 1500.0, 2900.0));
+    assert_eq!(a, keys(Vec3::new(1215.0, 1500.0, 2890.0)));
+    assert_eq!(a, keys(Vec3::new(1190.0, 1510.0, 2910.0)));
+}
+
+#[test]
+fn bands_change_with_hysteresis() {
+    assert_eq!(band(390.0, u8::MAX), 0);
+    assert_eq!(band(410.0, u8::MAX), 1);
+    // Just past the edge a building stays in its band, well past it changes.
+    assert_eq!(band(410.0, 0), 0);
+    assert_eq!(band(450.0, 0), 1);
+    assert_eq!(band(390.0, 1), 1);
+    assert_eq!(band(350.0, 1), 0);
+    // Jumping several bands at once is allowed.
+    assert_eq!(band(5000.0, 0), 4);
+}
+
+#[test]
+fn the_badge_draws_the_count_and_clusters_cost_more_triangles_than_singles() {
+    let facing = Facing {
+        position: Vec3::new(0.0, 100.0, 0.0),
+        right: Vec3::X,
+        up: Vec3::NEG_Z,
+    };
+    let at = |count| {
+        let i = IconInstance {
+            id: id(1),
+            problem: Problem::NoPower,
+            pos: Vec3::ZERO,
+            count,
+        };
+        build_mesh(&[i], &facing)
+    };
+    assert!(at(37).triangle_count() > at(1).triangle_count());
+    // More digits, more segments; a count of 8 lights every segment of its digit.
+    assert!(at(88).triangle_count() > at(8).triangle_count());
+    for d in 0..10 {
+        assert!(!digit_rects(d).is_empty());
+    }
+    assert_eq!(digit_rects(8).len(), 7);
+    assert_eq!(digit_rects(1).len(), 2);
+    for (pts, _) in badge(9999) {
+        assert!(pts.iter().all(|p| p[0] <= 0.5 + 1e-4 && p[0] >= -0.6));
+    }
 }
 
 #[test]
@@ -151,6 +281,7 @@ fn mesh_has_the_icons_facing_the_camera_and_valid_indices() {
             id: id(i as u32),
             problem: *p,
             pos: Vec3::new(i as f32 * 10.0, 10.0, 5.0),
+            count: 1 + i as u32 * 40,
         })
         .collect();
     let m = build_mesh(&icons, &facing);
@@ -170,61 +301,77 @@ fn mesh_has_the_icons_facing_the_camera_and_valid_indices() {
 
 #[test]
 fn ten_thousand_flagged_buildings_fit_the_render_prep_budget() {
-    let marked: Vec<Marked> = (0..10_000u32)
-        .map(|i| Marked {
-            id: id(i),
-            problems: Problems(0b0111),
-            top: Vec3::new((i % 100) as f32 * 12.0, 15.0, (i / 100) as f32 * 12.0),
-        })
-        .collect();
-    let facing = Facing {
-        position: Vec3::new(600.0, 300.0, 600.0),
-        right: Vec3::X,
-        up: Vec3::Z,
-    };
-    let mut best = f32::MAX;
-    let mut drawn = 0;
-    for frame in 0..5 {
-        let start = std::time::Instant::now();
-        let icons = collect(&marked, facing.position, frame as f32 * 0.016);
-        let mesh = build_mesh(&icons, &facing);
-        best = best.min(start.elapsed().as_secs_f32() * 1000.0);
-        drawn = icons.len();
-        assert!(mesh.triangle_count() > 0);
+    // (spacing m, camera): all of them near (10k single icons, the worst case for the mesh),
+    // and a 1.2 km city seen from its middle (singles and clusters mixed).
+    for (spacing, cam, all_single) in [
+        (3.0, Vec3::new(150.0, 100.0, 150.0), true),
+        (12.0, Vec3::new(600.0, 300.0, 600.0), false),
+    ] {
+        let marked: Vec<Marked> = (0..10_000u32)
+            .map(|i| Marked {
+                id: id(i),
+                problems: Problems(0b0111),
+                top: Vec3::new((i % 100) as f32 * spacing, 15.0, (i / 100) as f32 * spacing),
+            })
+            .collect();
+        let facing = Facing {
+            position: cam,
+            right: Vec3::X,
+            up: Vec3::Z,
+        };
+        let mut lod = Lod::default();
+        let mut best = f32::MAX;
+        let mut drawn = 0;
+        for frame in 0..5 {
+            let start = std::time::Instant::now();
+            let icons = collect(&marked, &mut lod, cam, frame as f32 * 0.016);
+            let mesh = build_mesh(&icons, &facing);
+            best = best.min(start.elapsed().as_secs_f32() * 1000.0);
+            drawn = icons.len();
+            assert!(mesh.triangle_count() > 0);
+        }
+        eprintln!("problem icons: spacing {spacing}: {drawn} icons, {best:.2} ms (collect + mesh)");
+        if all_single {
+            assert_eq!(drawn, 10_000);
+        } else {
+            assert!(drawn < 10_000);
+        }
+        // §14 gives render preparation 3 ms in all (this runs at the test profile's opt-level 1).
+        assert!(best < 3.0, "{best} ms");
     }
-    eprintln!("problem icons: {drawn} icons, {best:.2} ms per frame (collect + mesh)");
-    assert_eq!(drawn, 10_000);
-    // §14 gives render preparation 3 ms in all (this runs at the test profile's opt-level 1).
-    assert!(best < 3.0, "{best} ms");
 }
 
-/// Draws the four icons side by side from the real mesh (camera straight above, painter's
+/// Draws the four icons and four clusters side by side from the real mesh (camera straight above, painter's
 /// order = index order) and checks each shows its plate colour and a glyph. With
 /// `T125_RASTER=<path>` set it also writes the picture there (reports/t-125/icons.png).
 #[test]
-fn the_four_icons_rasterise_square_and_distinct() {
+fn the_icons_and_their_clusters_rasterise_square_and_distinct() {
     const CELL: usize = 128;
     let facing = Facing {
         position: Vec3::new(0.0, 100.0, 0.0),
         right: Vec3::X,
         up: Vec3::NEG_Z,
     };
+    // Four single icons, then the same four as clusters with a count badge.
     let n = Problem::ALL.len();
+    let counts = [1, 1, 1, 1, 37, 128, 1204, 9999];
+    let total = counts.len();
     let size = icon_size(100.0);
-    // The icon fills about 100 of the cell's 128 pixels.
-    let scale = 100.0 / size;
+    // The icon fills about 90 of the cell's 128 pixels.
+    let scale = 90.0 / size;
     let spacing = CELL as f32 / scale;
-    let icons: Vec<_> = Problem::ALL
+    let icons: Vec<_> = counts
         .iter()
         .enumerate()
-        .map(|(i, p)| IconInstance {
+        .map(|(i, &count)| IconInstance {
             id: id(i as u32),
-            problem: *p,
+            problem: Problem::ALL[i % n],
             pos: Vec3::new(i as f32 * spacing, 0.0, 0.0),
+            count,
         })
         .collect();
     let m = build_mesh(&icons, &facing);
-    let (w, h) = (CELL * n, CELL);
+    let (w, h) = (CELL * total, CELL);
     let mut img = vec![[236u8, 238, 240]; w * h];
     let px = |v: [f32; 3]| {
         (
@@ -280,7 +427,7 @@ fn the_four_icons_rasterise_square_and_distinct() {
     // Square: the dark border spans the same pixels in height and width for every icon.
     let icon_px = (size * scale) as usize;
     let mut sigs = std::collections::BTreeSet::new();
-    for i in 0..n {
+    for i in 0..total {
         let cell: Vec<_> = (0..h)
             .flat_map(|y| (0..CELL).map(move |x| (x, y)))
             .map(|(x, y)| img[y * w + i * CELL + x])
@@ -294,6 +441,11 @@ fn the_four_icons_rasterise_square_and_distinct() {
                 ys = (ys.0.min(y), ys.1.max(y));
             }
         }
+        if i >= n {
+            // A cluster's dark box hangs below the plate: only its distinctness is checked.
+            sigs.insert(cell);
+            continue;
+        }
         assert!(
             xs.1 - xs.0 + 1 >= icon_px - 2 && ys.1 - ys.0 + 1 >= icon_px - 2,
             "icon {i} is not a full square"
@@ -304,7 +456,7 @@ fn the_four_icons_rasterise_square_and_distinct() {
         );
         sigs.insert(cell);
     }
-    assert_eq!(sigs.len(), n, "icons must differ");
+    assert_eq!(sigs.len(), total, "icons must differ");
     if let Ok(path) = std::env::var("T125_RASTER") {
         let file = std::fs::File::create(path).unwrap();
         let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);

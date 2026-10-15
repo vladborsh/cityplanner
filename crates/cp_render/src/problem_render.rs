@@ -48,6 +48,7 @@ struct ProblemIcons {
     /// Pieces known when `marked` was built; roofs appear a frame after the grid changes.
     pieces: usize,
     marked: Vec<Marked>,
+    lod: problem::Lod,
     mesh: Option<Handle<Mesh>>,
     entity: Option<Entity>,
 }
@@ -85,6 +86,7 @@ fn refresh_marked(
             Vec3::new(c.x, p.max.y, c.z)
         })
     });
+    icons.lod.clear();
     icons.last = Some(Arc::clone(&view.buildings));
     icons.pieces = pieces;
     stats.marked = icons.marked.len();
@@ -109,7 +111,8 @@ fn draw_problem_icons(
         right: rotation * Vec3::X,
         up: rotation * Vec3::Y,
     };
-    let shown = problem::collect(&icons.marked, position, time.elapsed_secs());
+    let icons = &mut *icons;
+    let shown = problem::collect(&icons.marked, &mut icons.lod, position, time.elapsed_secs());
     let mesh = to_bevy_mesh(problem::build_mesh(&shown, &facing));
     match icons.mesh.clone() {
         Some(h) => {
