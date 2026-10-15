@@ -28,6 +28,7 @@ use cp_building::{BuildingGrid, BuildingId, BuildingState, Demand};
 use cp_content::{ContentDb, SimContent, ZoneType};
 use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_DAY};
 use cp_core::{SimLimits, SimRng, Tick};
+use cp_net::EntryReach;
 use cp_terrain::SimTerrain;
 
 use crate::grid::CitizenGrid;
@@ -55,7 +56,14 @@ fn is_residential(z: ZoneType) -> bool {
     matches!(z, ZoneType::ResLow | ZoneType::ResHigh)
 }
 
-fn arrival_delay(terrain: Option<&SimTerrain>, at: Vec2) -> u64 {
+fn arrival_delay(terrain: Option<&SimTerrain>, reach: Option<&EntryReach>, at: Vec2) -> u64 {
+    // With an entry highway the household drives in from its `Outside` node (§5.1).
+    if let Some(d) = reach
+        .filter(|r| r.is_active())
+        .and_then(|r| r.distance_to_outside(at))
+    {
+        return BASE_DELAY + (d / ARRIVAL_SPEED_MPS / MOVE_SECONDS_PER_TICK).ceil() as u64;
+    }
     let Some(t) = terrain else {
         return FALLBACK_DELAY;
     };
@@ -235,6 +243,7 @@ pub fn update_citizens(
     buildings: Res<BuildingGrid>,
     demand: Res<Demand>,
     terrain: Option<Res<SimTerrain>>,
+    reach: Option<Res<EntryReach>>,
     rng: Res<SimRng>,
     limits: Res<SimLimits>,
     trips: Option<Res<crate::trips::TripBook>>,
@@ -339,9 +348,17 @@ pub fn update_citizens(
     // --- move-in ---
     let mut rng = rng.fork(MOVE_IN_STREAM, *tick);
     let bucket = (now % u64::from(BUILDING_BUCKETS)) as u32;
+    let reach = reach.as_deref();
+    let entry_rule = reach.is_some_and(EntryReach::is_active);
     let visits: Vec<(BuildingId, u16, Vec2)> = buildings
         .iter_bucket(BUILDING_BUCKETS, bucket)
         .filter(|(_, b)| b.state == BuildingState::Active)
+        // §5.1: with an entry highway only houses connected to it receive households.
+        .filter(|(_, b)| {
+            !entry_rule
+                || b.access()
+                    .is_some_and(|a| reach.is_some_and(|r| r.reaches(a.segment)))
+        })
         .filter_map(|(id, b)| {
             let def = db.building(b.def);
             (is_residential(def.zone) && def.households > 0).then_some((id, def.households, b.pos))
@@ -376,7 +393,7 @@ pub fn update_citizens(
             members.push((age, edu, rng.below(100) < 70));
         }
         let wealth = 50_000 + i64::from(rng.below(50_000));
-        let arrive = Tick(now + arrival_delay(terrain.as_deref(), pos));
+        let arrive = Tick(now + arrival_delay(terrain.as_deref(), reach, pos));
         grid.add_household(id, wealth, arrive, &members);
     }
 }

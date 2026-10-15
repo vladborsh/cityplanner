@@ -56,9 +56,41 @@ impl Plugin for UiPlugin {
                 PreUpdate,
                 update_ui_capture.after(EguiPreUpdateSet::BeginPass),
             )
-            .add_systems(Update, (toggle_debug, measure_tick_rate))
+            .add_systems(
+                Update,
+                (
+                    toggle_debug,
+                    measure_tick_rate,
+                    apply_camera_goal,
+                    draw_stub_marker,
+                ),
+            )
             .add_systems(EguiPrimaryContextPass, draw_ui);
     }
+}
+
+/// The "show" button of the not-connected notice: moves the camera to the goal.
+fn apply_camera_goal(mut state: ResMut<UiState>, mut cameras: Query<&mut cp_render::RtsCamera>) {
+    let Some(goal) = state.camera_goal.take() else {
+        return;
+    };
+    for mut cam in &mut cameras {
+        cam.target.focus = goal;
+    }
+}
+
+/// A pulsing ring over the dead end of the entry road while the city is not connected.
+fn draw_stub_marker(view: Option<Res<SimView>>, time: Res<Time<Real>>, mut gizmos: Gizmos) {
+    let Some(stub) = view.as_deref().and_then(demand_panel::unconnected_stub) else {
+        return;
+    };
+    let Some(terrain) = view.as_deref().and_then(|v| v.terrain.as_deref()) else {
+        return;
+    };
+    let pulse = 0.5 + 0.5 * (time.elapsed_secs() * 4.0).sin();
+    let at = Vec3::new(stub.x, terrain.height(stub) + 1.0, stub.y);
+    let iso = Isometry3d::new(at, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2));
+    gizmos.circle(iso, 14.0 + 10.0 * pulse, Color::srgb(1.0, 0.85, 0.1));
 }
 
 fn toggle_debug(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<UiState>) {

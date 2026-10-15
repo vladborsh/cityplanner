@@ -144,6 +144,9 @@ pub struct CityStats {
     pub generation: u64,
     /// Tick of the last recompute.
     pub tick: u64,
+    /// Whether new residents can arrive (§5.1): true without an `Outside` node (old saves,
+    /// scenes), otherwise true when a residential building is connected to one by road.
+    pub connected_to_highway: bool,
     pub population: u32,
     pub households: u32,
     pub adults: u32,
@@ -190,6 +193,7 @@ pub fn update_city_stats(
     zones: Res<ZoneGrid>,
     citizens: Res<CitizenGrid>,
     net: Res<NetGraph>,
+    reach: Res<cp_net::EntryReach>,
     agents: Res<Agents>,
     trips: Res<TripBook>,
     land: Res<LandGrids>,
@@ -206,7 +210,10 @@ pub fn update_city_stats(
     let db = &*content.0;
     let demands = [demand.r, demand.c, demand.i, demand.o];
     if stage == 0 {
-        let mut next = CityStats::default();
+        let mut next = CityStats {
+            connected_to_highway: !reach.is_active(),
+            ..Default::default()
+        };
         stage_citizens_traffic_land(
             &mut next, db, &citizens, &net, &agents, &trips, &land, &economy, &demands,
         );
@@ -225,6 +232,7 @@ pub fn update_city_stats(
             &zones,
             &citizens,
             (stage - 2) as u64,
+            &reach,
         ),
         _ => {
             // Publish.
@@ -362,6 +370,7 @@ fn stage_buildings(
     zones: &ZoneGrid,
     citizens: &CitizenGrid,
     half: u64,
+    reach: &cp_net::EntryReach,
 ) {
     let sources_of = |name: &str| db.service_id(name).map(|id| db.service(id));
     for (id, b) in buildings.iter() {
@@ -375,6 +384,13 @@ fn stage_buildings(
             BuildingState::Active => s.buildings.active += 1,
             BuildingState::Abandoned => s.buildings.abandoned += 1,
             BuildingState::Burned => s.buildings.burned += 1,
+        }
+        if reach.is_active()
+            && zone_index(def.zone).is_some_and(|k| k < 2)
+            && def.households > 0
+            && b.access().is_some_and(|a| reach.reaches(a.segment))
+        {
+            s.connected_to_highway = true;
         }
         let f = b.flags;
         s.buildings.no_water += u32::from(f.has(BuildingFlags::NO_WATER));

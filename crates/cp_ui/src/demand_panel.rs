@@ -17,6 +17,26 @@ use crate::panels::{UiState, zone_group_demand};
 use crate::style::Sizes;
 use crate::windows::{color, zone_tooltip};
 
+/// The notice of §5.1 when new residents cannot arrive.
+pub const NOT_CONNECTED: &str = "City not connected to the highway — new residents do not arrive";
+
+/// Where the entry road's attachment ends (the stub's dead end), if the map has one and the
+/// city is known not to be connected to it. Stats are published after the first 64 ticks;
+/// before that the field is its default and says nothing.
+pub fn unconnected_stub(view: &SimView) -> Option<bevy::math::Vec2> {
+    if view.city.tick == 0 || view.city.connected_to_highway {
+        return None;
+    }
+    Some(
+        view.terrain
+            .as_deref()?
+            .meta()
+            .entry_road
+            .as_ref()?
+            .stub_end(),
+    )
+}
+
 /// Where one column was drawn.
 #[derive(Clone, Copy, Debug)]
 pub struct Column {
@@ -38,6 +58,10 @@ pub struct DemandRects {
     pub fold: Option<egui::Rect>,
     /// The button that opens the window "Demand by zone".
     pub details: Option<egui::Rect>,
+    /// The "show" button of the not-connected notice, when the notice is visible.
+    pub show_stub: Option<egui::Rect>,
+    /// The notice is on screen.
+    pub notice: bool,
 }
 
 /// Draws the panel into `root` (after the left panels, so it takes the rest of the width).
@@ -65,6 +89,10 @@ pub fn demand_panel(
                         state.demand_collapsed = false;
                     }
                     ui.label("Demand");
+                    if unconnected_stub(view).is_some() {
+                        rects.notice = true;
+                        ui.colored_label(egui::Color32::YELLOW, format!("⚠ {NOT_CONNECTED}"));
+                    }
                 });
                 return;
             }
@@ -96,6 +124,21 @@ pub fn demand_panel(
                         tools.zone.zone = zone;
                     }
                     rects.columns.push(col.0);
+                }
+                if let Some(stub) = unconnected_stub(view) {
+                    rects.notice = true;
+                    ui.vertical(|ui| {
+                        ui.add_space(8.0);
+                        ui.set_max_width(260.0);
+                        ui.colored_label(egui::Color32::YELLOW, format!("⚠ {NOT_CONNECTED}"));
+                        let r = ui
+                            .button("Show")
+                            .on_hover_text("Centre the camera on the dead end");
+                        rects.show_stub = Some(r.rect);
+                        if r.clicked() {
+                            state.camera_goal = Some(stub);
+                        }
+                    });
                 }
             });
         });
@@ -339,5 +382,53 @@ mod tests {
         let rig = Rig::new(SimRunner::new(1).view());
         assert_eq!(rig.rects.columns.len(), 6);
         assert!(!zone_tooltip(&rig.view, ZoneType::Industrial).is_empty());
+    }
+
+    fn view_on_flatlands(connected: bool) -> SimView {
+        let terrain = std::sync::Arc::new(
+            cp_terrain::Terrain::load(
+                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../assets/maps/flatlands"),
+            )
+            .unwrap(),
+        );
+        let mut sim = SimRunner::new(1);
+        sim.set_terrain(terrain);
+        let mut view = sim.view();
+        let city = std::sync::Arc::make_mut(&mut view.city);
+        city.tick = 64;
+        city.connected_to_highway = connected;
+        view
+    }
+
+    #[test]
+    fn the_not_connected_notice_shows_only_while_unconnected_and_show_centres_the_camera() {
+        let rig = Rig::new(view_on_flatlands(true));
+        assert!(!rig.rects.notice && rig.rects.show_stub.is_none());
+
+        let mut rig = Rig::new(view_on_flatlands(false));
+        assert!(rig.rects.notice);
+        let btn = rig.rects.show_stub.expect("a show button");
+        assert!(rig.state.camera_goal.is_none());
+        rig.click(btn.center());
+        let stub = rig
+            .view
+            .terrain
+            .as_deref()
+            .unwrap()
+            .meta()
+            .entry_road
+            .as_ref()
+            .unwrap()
+            .stub_end();
+        assert_eq!(rig.state.camera_goal, Some(stub));
+
+        // A city that has not published stats yet, or a map without an entry road, says nothing.
+        let mut view = view_on_flatlands(false);
+        std::sync::Arc::make_mut(&mut view.city).tick = 0;
+        assert!(!Rig::new(view).rects.notice);
+        let mut view = view_with(0.0, 0.0, 0.0, 0.0);
+        std::sync::Arc::make_mut(&mut view.city).tick = 64;
+        assert!(!Rig::new(view).rects.notice);
     }
 }

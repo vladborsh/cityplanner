@@ -201,3 +201,94 @@ fn new_game_says_why_when_the_road_types_are_wrong() {
     let e = flat_with("highway_1w_2l", "nope").new_game().unwrap_err();
     assert!(e.contains("stub"), "{e}");
 }
+
+/// T-117: residents arrive only into houses connected to the entry highway (§5.1, §9.1).
+#[test]
+fn residents_arrive_only_when_the_street_is_connected_to_the_entry_highway() {
+    use bevy_math::Vec3;
+    use cp_content::ZoneType;
+    use cp_core::curve::CubicBezier3;
+    use cp_core::time::TICKS_PER_DAY;
+    use cp_net::Elevation;
+    use cp_zone::{ZoneCellRef, ZoneGrid};
+
+    let db = content();
+    let terrain = map("flatlands");
+    let e = terrain.meta().entry_road.clone().unwrap();
+    let mut sim = sim_on(Arc::clone(&terrain));
+    sim.new_game().unwrap();
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
+    *sim.world_mut().resource_mut::<cp_economy::Decay>() = cp_economy::Decay::disabled();
+
+    let (end, dir) = (e.stub_end(), e.direction());
+    let side = Vec2::new(-dir.y, dir.x);
+    let y = |p: Vec2| Vec3::new(p.x, terrain.height(p), p.y);
+    let a = end + side * 120.0;
+    let b = a + dir * 160.0;
+    let road = db.road_id("basic_2l").unwrap();
+    let def = db.road(road).clone();
+    let street = sim
+        .world_mut()
+        .resource_mut::<NetGraph>()
+        .add_segment(
+            &def,
+            road,
+            cp_core::curve::CubicBezier3::line(y(a), y(b)),
+            Elevation::Ground,
+        )
+        .unwrap();
+    sim.tick_once();
+    {
+        let mut grid = sim.world_mut().resource_mut::<ZoneGrid>();
+        let blocks: Vec<_> = grid
+            .blocks_of(street)
+            .into_iter()
+            .flatten()
+            .map(|id| (id, grid.block(id).unwrap().cell_count()))
+            .collect();
+        assert!(!blocks.is_empty(), "the street has zone blocks");
+        for (id, cells) in blocks {
+            for cell in 0..cells {
+                grid.set_zone(
+                    ZoneCellRef {
+                        block: id,
+                        cell: cell as u16,
+                    },
+                    ZoneType::ResLow,
+                );
+            }
+        }
+    }
+    let households = |sim: &SimRunner| {
+        sim.world()
+            .resource::<cp_citizen::CitizenGrid>()
+            .household_count()
+    };
+    for _ in 0..2 * TICKS_PER_DAY {
+        sim.tick_once();
+    }
+    let buildings = sim
+        .world()
+        .resource::<cp_building::BuildingGrid>()
+        .iter()
+        .count();
+    assert!(buildings > 0, "houses were built");
+    assert_eq!(households(&sim), 0, "nobody arrives without a connection");
+    assert!(!sim.view().city.connected_to_highway);
+
+    // Connect the street to the end of the stub.
+    sim.world_mut()
+        .resource_mut::<NetGraph>()
+        .add_segment(
+            &def,
+            road,
+            CubicBezier3::line(y(end), y(a)),
+            Elevation::Ground,
+        )
+        .unwrap();
+    for _ in 0..TICKS_PER_DAY {
+        sim.tick_once();
+    }
+    assert!(households(&sim) > 0, "households arrive once connected");
+    assert!(sim.view().city.connected_to_highway);
+}

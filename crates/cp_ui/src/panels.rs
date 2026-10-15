@@ -30,6 +30,9 @@ pub struct UiState {
     pub metrics_open: bool,
     /// The bottom demand panel is folded into its 28 px strip (T-099; not saved).
     pub demand_collapsed: bool,
+    /// Where the "show" button of the not-connected notice wants the camera (XZ, metres);
+    /// taken by `apply_camera_goal` (T-117; not saved).
+    pub camera_goal: Option<bevy::math::Vec2>,
     /// The view (overlay) menu and the settings menu of the top bar are open.
     pub view_menu_open: bool,
     pub settings_open: bool,

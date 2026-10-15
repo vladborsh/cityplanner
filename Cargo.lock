@@ -2462,6 +2462,7 @@ dependencies = [
  "cp_building",
  "cp_content",
  "cp_core",
+ "cp_net",
  "cp_terrain",
  "serde",
 ]

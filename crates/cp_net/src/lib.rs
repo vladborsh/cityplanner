@@ -7,6 +7,7 @@ pub mod control;
 pub mod graph;
 pub mod junction;
 pub mod model;
+pub mod reach;
 pub mod run;
 
 pub use build::{
@@ -23,6 +24,7 @@ pub use junction::{
     Arm, Junction, JunctionGeometry, compute_junction, refresh_geometry, update_junctions,
 };
 pub use model::*;
+pub use reach::{EntryReach, update_entry_reach};
 pub use run::road_run;
 
 /// Crate name, used by the skeleton smoke test.
