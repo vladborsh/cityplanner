@@ -10,7 +10,7 @@ use cp_render::{LightingSettings, Overlay, OverlayState};
 use cp_sim::SimView;
 use cp_tools::{
     ActiveTool, CommandOutbox, PALETTE, ToolState, UtilityMode, ZoneToolKind, format_money,
-    snap_label, zone_color, zone_name,
+    snap_label, zone_name,
 };
 use cp_utility::UtilityNet;
 
@@ -30,6 +30,8 @@ pub struct UiState {
     pub budget_open: bool,
     pub demand_open: bool,
     pub metrics_open: bool,
+    /// The bottom demand panel is folded into its 28 px strip (T-099; not saved).
+    pub demand_collapsed: bool,
     /// Slider drafts of the budget window.
     pub budget: crate::budget::BudgetDraft,
 }
@@ -471,14 +473,27 @@ pub fn zones_panel(
         });
     });
     section(ui, "Zone", |ui| {
-        for zone in PALETTE {
-            if zone_card(ui, zone, view, tools.zone.zone == zone).clicked() {
-                tools.zone.zone = zone;
-                if tools.active != ActiveTool::Zone {
-                    tools.select(ActiveTool::Zone);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
+            for zone in PALETTE {
+                let tile = tool_tile(
+                    ui,
+                    TileIcon::Icon(crate::icons::zone_icon(zone)),
+                    zone_name(zone),
+                    tools.zone.zone == zone,
+                );
+                let tile = match view {
+                    Some(view) => tile.on_hover_text(crate::windows::zone_tooltip(view, zone)),
+                    None => tile,
+                };
+                if tile.clicked() {
+                    tools.zone.zone = zone;
+                    if tools.active != ActiveTool::Zone {
+                        tools.select(ActiveTool::Zone);
+                    }
                 }
             }
-        }
+        });
     });
     if ui.button("Demand by zone ▸").clicked() {
         state.demand_open = true;
@@ -495,59 +510,6 @@ pub fn zone_group_demand(zone: cp_content::ZoneType, d: &Demand) -> (&'static st
         Z::Industrial => ("I", d.i),
         Z::Office | Z::None => ("O", d.o),
     }
-}
-
-/// A zone card: the colour square with the group letter, the name and the group's demand bar.
-fn zone_card(
-    ui: &mut egui::Ui,
-    zone: cp_content::ZoneType,
-    view: Option<&SimView>,
-    selected: bool,
-) -> egui::Response {
-    let [r, g, b] = zone_color(zone);
-    let color = egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
-    let inner = egui::Frame::group(ui.style())
-        .fill(if selected {
-            ui.visuals().selection.bg_fill
-        } else {
-            ui.visuals().faint_bg_color
-        })
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                let letter = zone_group_demand(zone, &Demand::default()).0;
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(Sizes::SWATCH, Sizes::SWATCH),
-                    egui::Sense::hover(),
-                );
-                ui.painter().rect_filled(rect, 4.0, color);
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    letter,
-                    egui::FontId::proportional(15.0),
-                    egui::Color32::BLACK,
-                );
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new(zone_name(zone)).strong());
-                    if let Some(view) = view {
-                        let (letter, v) = zone_group_demand(zone, &view.demand);
-                        ui.add(
-                            egui::ProgressBar::new(crate::budget::demand_fraction(v))
-                                .desired_width(120.0)
-                                .desired_height(8.0)
-                                .fill(color),
-                        )
-                        .on_hover_text(format!("{letter} demand {v:+.0}"));
-                    }
-                });
-            });
-        });
-    ui.interact(
-        inner.response.rect,
-        inner.response.id.with("card"),
-        egui::Sense::click(),
-    )
 }
 
 /// The Roads category: tools, mode, elevation and the road types as cards (see [`crate::roads`]).

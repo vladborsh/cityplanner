@@ -23,6 +23,12 @@ impl Sizes {
     pub const TILE_ROUNDING: f32 = 6.0;
     /// Gap between tiles of a grid.
     pub const TILE_GAP: f32 = 4.0;
+    /// The bottom demand panel: height, collapsed height, zone icon, bar and column width.
+    pub const DEMAND_H: f32 = 120.0;
+    pub const DEMAND_COLLAPSED_H: f32 = 28.0;
+    pub const DEMAND_ICON: f32 = 40.0;
+    pub const DEMAND_BAR_H: f32 = 36.0;
+    pub const DEMAND_COL_W: f32 = 64.0;
     /// Height of the top bar.
     pub const TOP_BAR_H: f32 = 44.0;
     /// Icons of the top bar.
@@ -35,8 +41,6 @@ impl Sizes {
     pub const SECTION_ICON: f32 = 20.0;
     /// Icon in front of a text row (cards of the services panel).
     pub const ROW_ICON: f32 = 24.0;
-    /// Square swatch of a zone card.
-    pub const SWATCH: f32 = 26.0;
     /// Padding between an icon button's frame and its icon.
     pub const BUTTON_PAD: f32 = 2.0;
     /// Text sizes, points.

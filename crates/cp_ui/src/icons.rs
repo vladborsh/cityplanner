@@ -58,6 +58,13 @@ icons! {
     PowerLine => "power_line",
     Remove => "remove",
     Building => "building",
+    // Zone types (T-099): one silhouette each.
+    ZoneResLow => "zone_res_low",
+    ZoneResHigh => "zone_res_high",
+    ZoneComLow => "zone_com_low",
+    ZoneComHigh => "zone_com_high",
+    ZoneIndustrial => "zone_industrial",
+    ZoneOffice => "zone_office",
     // Windows.
     Budget => "budget",
     Demand => "demand",
@@ -106,6 +113,19 @@ impl Icon {
 /// per-def icons exist (T-105) every name maps to the generic building icon.
 pub fn def_icon(_name: &str) -> egui::ImageSource<'static> {
     Icon::Building.image()
+}
+
+/// The icon of a zone type (the six that can be painted); `None` has none.
+pub fn zone_icon(zone: cp_content::ZoneType) -> Icon {
+    use cp_content::ZoneType as Z;
+    match zone {
+        Z::ResLow => Icon::ZoneResLow,
+        Z::ResHigh => Icon::ZoneResHigh,
+        Z::ComLow => Icon::ZoneComLow,
+        Z::ComHigh => Icon::ZoneComHigh,
+        Z::Industrial => Icon::ZoneIndustrial,
+        Z::Office | Z::None => Icon::ZoneOffice,
+    }
 }
 
 /// Colour of the class corner of a road tile.
@@ -289,6 +309,34 @@ mod tests {
             if path.extension().is_some_and(|e| e == "png") {
                 let stem = path.file_stem().unwrap().to_str().unwrap().to_string();
                 assert!(stems.contains(&stem.as_str()), "{stem}.png has no Icon");
+            }
+        }
+    }
+
+    #[test]
+    fn the_six_zone_icons_are_pairwise_different_files() {
+        use cp_content::ZoneType as Z;
+        let zones = [
+            Z::ResLow,
+            Z::ResHigh,
+            Z::ComLow,
+            Z::ComHigh,
+            Z::Industrial,
+            Z::Office,
+        ];
+        let bytes: Vec<Vec<u8>> = zones
+            .iter()
+            .map(|&z| {
+                std::fs::read(icons_dir().join(format!("{}.png", zone_icon(z).stem()))).unwrap()
+            })
+            .collect();
+        for i in 0..bytes.len() {
+            for j in i + 1..bytes.len() {
+                assert_ne!(
+                    bytes[i], bytes[j],
+                    "{:?} and {:?} are the same picture",
+                    zones[i], zones[j]
+                );
             }
         }
     }

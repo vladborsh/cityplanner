@@ -14,6 +14,7 @@ use cp_tools::{CommandOutbox, ToolState, UiCapture};
 pub mod budget;
 pub mod buildings;
 pub mod debug;
+pub mod demand_panel;
 pub mod files;
 pub mod frame;
 pub mod icons;
@@ -117,6 +118,7 @@ fn draw_ui(
     );
     palette(&mut root, &mut state, view.content.as_deref());
     tool_panel(&mut root, &mut state, Some(&view), &mut tools, &mut overlay);
+    demand_panel::demand_panel(&mut root, &view, &mut state, &mut tools);
     {
         let st = &mut *state;
         budget::budget_window(ctx, &mut st.budget_open, &view, &mut st.budget, &mut outbox);

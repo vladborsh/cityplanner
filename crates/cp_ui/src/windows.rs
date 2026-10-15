@@ -71,7 +71,24 @@ pub fn demand_formula(zone: ZoneType) -> &'static str {
     }
 }
 
-fn color(zone: ZoneType) -> egui::Color32 {
+/// The hover text of a zone's demand bar or tile: the group's value, the free homes or jobs of
+/// the type and the formula (one text for the window, the panel and the tiles).
+pub fn zone_tooltip(view: &SimView, zone: ZoneType) -> String {
+    let (letter, v) = zone_group_demand(zone, &view.demand);
+    let free = ZONES
+        .iter()
+        .position(|&z| z == zone)
+        .and_then(|i| view.city.zones.get(i))
+        .map(|s| row(zone, s).free)
+        .unwrap_or_default();
+    format!(
+        "{}\n{letter} demand {v:+.0} (−100…+100, the middle is zero)\n{free}\n{}",
+        zone_name(zone),
+        demand_formula(zone)
+    )
+}
+
+pub(crate) fn color(zone: ZoneType) -> egui::Color32 {
     let [r, g, b] = zone_color(zone);
     egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
