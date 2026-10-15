@@ -41,6 +41,8 @@ fn db() -> ContentDb {
         building_src("plant", Some("plant"), "{}"),
         building_src("tower", Some("tower"), "{Power: 10.0}"),
         service_src("tower", "Water", 300),
+        building_src("treatment", Some("treatment"), "{Power: 40.0}"),
+        service_src("treatment", "Sewage", 1500),
         service_src("pump", "Water", 25),
         service_src("outflow", "Sewage", 100),
         service_src("plant", "Power", 25),
@@ -273,4 +275,29 @@ fn a_water_tower_supplies_its_pipe_component_without_power() {
     let m3 = compute_supply(&db, &b, &g);
     assert_eq!(bits(&m3, houses[0]) & BuildingFlags::NO_SEWAGE, 0);
     let _ = outflow;
+}
+
+/// T-110: a treatment plant (a Sewage source standing on land beside a road, far from any
+/// water) serves the houses of its pipe component, but only while the component holds a
+/// water source — a pump or a tower.
+#[test]
+fn a_treatment_plant_works_only_with_a_water_source_in_its_component() {
+    let db = db();
+    let mut g = UtilityGraph::new();
+    line(&mut g, UtilityNet::Pipe, 0.0, 200.0);
+    let build = |source: Option<&str>| {
+        let mut b = BuildingGrid::new();
+        if let Some(s) = source {
+            add(&mut b, &db, s, 0.0, 10.0);
+        }
+        add(&mut b, &db, "treatment", 150.0, 10.0);
+        let h = add(&mut b, &db, "house", 100.0, 10.0);
+        (compute_supply(&db, &b, &g), h)
+    };
+    for source in ["pump", "tower"] {
+        let (m, h) = build(Some(source));
+        assert_eq!(bits(&m, h) & BuildingFlags::NO_SEWAGE, 0, "with a {source}");
+    }
+    let (m, h) = build(None);
+    assert_ne!(bits(&m, h) & BuildingFlags::NO_SEWAGE, 0, "no water source");
 }

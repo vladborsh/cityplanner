@@ -13,9 +13,10 @@
 //!   component they are attached to. Consumers in that component, in ascending `BuildingId`,
 //!   subtract their `consumption[Water]`; the first one that does not fit and every later one
 //!   get `NO_WATER` (the deficit cuts the highest ids first).
-//! * **Sewage.** The same with outflows (`Sewage`), but an outflow only works when its pipe
-//!   component also holds a working pump ("an outflow with no connection to water does not
-//!   work").
+//! * **Sewage.** The same with the sewage sources (service kind `Sewage`: outflows and
+//!   treatment plants), but such a source only works when its pipe component also holds a
+//!   working water source (service kind `Water`: a pump or a water tower; "a sewage source
+//!   with no connection to water does not work").
 //! * **Power.** Plants (`Power`) add capacity to the line component they are attached to (a
 //!   plant with no line is a pool of its own). From the pool a BFS runs in layers: layer 0
 //!   is the buildings attached to the pool's lines (and the plants), each following layer is

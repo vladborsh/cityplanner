@@ -31,6 +31,11 @@
 //! 4096 ticks moves. Checked: with the committed content of before this change (no tower, the
 //! turbine with its one job) all four old values reproduce exactly.
 
+//! **T-110.** Re-recorded again, ids only: `sewage_treatment_plant` sorts between
+//! `sewage_outflow_station` and `water_pump_station`, so the dense building ids after it moved
+//! by one. Checked: with the plant's two files taken out of the content, all four values of the
+//! T-109 header above reproduce exactly (and the bench-10k baseline too).
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -115,10 +120,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0xfc843bd4b3f3881b, "state at load");
+    assert_eq!(sim.checksum(), 0xffd3dbf19b051083, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x843f8e13886a0d17,
+        0xda29a542894c3f1b,
         "load + 4096 ticks"
     );
 }
@@ -144,7 +149,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0x3df678be02cbfbc4, "state at load");
+    assert_eq!(sim.checksum(), 0xd267e0b3e8b7c5f, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -152,7 +157,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x63aca7d88431c500, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0xa108a09e7365381d, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

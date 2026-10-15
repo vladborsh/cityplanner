@@ -76,3 +76,6 @@ mod tests {
 
 #[cfg(test)]
 mod free_tests;
+
+#[cfg(test)]
+mod treatment_tests;

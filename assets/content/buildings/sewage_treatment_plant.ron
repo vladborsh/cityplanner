@@ -1,0 +1,15 @@
+Building((
+    id: "sewage_treatment_plant",
+    name: "Sewage treatment plant",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 2),
+    jobs: (2, 3, 1, 0),
+    consumption: {Power: 40.0},
+    tax_base: 0.0,
+    cost: 25000.0,
+    upkeep_week: 600.0,
+    style: (floors: 1, roof: Flat, palette: "utility_grey"),
+    service: Some("sewage_treatment_plant"),
+    icon: "sewage_treatment_plant",
+))

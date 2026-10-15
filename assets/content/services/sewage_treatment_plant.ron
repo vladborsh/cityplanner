@@ -1,0 +1,9 @@
+Service((
+    id: "sewage_treatment_plant",
+    name: "Sewage treatment plant",
+    kind: Sewage,
+    radius_m: 800.0,
+    capacity: 1500,
+    site: Land,
+    vehicles: [],
+))
