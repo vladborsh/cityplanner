@@ -2,14 +2,19 @@
 //! health, deathcare, fire, police and education buildings, and how far along the roads each
 //! one reaches. Sits above `cp_building`/`cp_net` and below `cp_economy`/`cp_sim`.
 //!
-//! This crate holds the road coverage of every service kind ([`ServiceCoverage`]); the state
-//! the service rows keep per building arrives with T-135.
+//! This crate holds the road coverage of every service kind ([`ServiceCoverage`]), the
+//! serialized per-building state the service rows fill ([`ServiceState`]) and the daily
+//! capacity helper [`nearest_facility`].
 
 pub mod coverage;
+pub mod facility;
+pub mod state;
 
 pub use coverage::{
-    COVERAGE_PERIOD, ServiceCoverage, ServicePlugin, rebuild_coverage, update_coverage,
+    COVERAGE_PERIOD, RoadGraph, ServiceCoverage, ServicePlugin, rebuild_coverage, update_coverage,
 };
+pub use facility::{nearest_facility, purge_removed_services, reset_daily_capacity};
+pub use state::{BuildingServices, Facility, Fire, ServiceProblems, ServiceState, ServiceSummary};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_service";

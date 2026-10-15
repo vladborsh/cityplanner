@@ -445,6 +445,10 @@ pub fn purge_buildings(
     grid.ensure_derived();
     book.ensure_derived();
     let gone = |b: BuildingId| removed.contains(&b);
+    // Bodies waiting at a demolished deathcare building vanish with it; schoolchildren of a
+    // demolished school have none (T-135).
+    grid.dead.retain(|b, _| !gone(*b));
+    grid.clear_schools(gone);
     let homes: Vec<_> = grid
         .households()
         .filter(|(_, h)| gone(h.home))

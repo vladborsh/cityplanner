@@ -28,7 +28,7 @@ fn main() {
         net: d.net,
         zones: d.zones,
         buildings: cp_save::migrate::BuildingGridV12::from(&d.buildings),
-        citizens: d.citizens,
+        citizens: (&d.citizens).into(),
         paths: d.paths,
         utilities: d.utilities,
     };

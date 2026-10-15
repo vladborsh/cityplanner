@@ -60,7 +60,7 @@ fn v14_fixture_migrates_with_the_demand_of_a_new_city_and_round_trips() {
         net: l.data.net.clone(),
         zones: l.data.zones.clone(),
         buildings: cp_save::migrate::BuildingGridV18::from(&l.data.buildings),
-        citizens: l.data.citizens.clone(),
+        citizens: (&l.data.citizens).into(),
         paths: l.data.paths.clone(),
         utilities: l.data.utilities.clone(),
         trips: l.data.trips.clone(),

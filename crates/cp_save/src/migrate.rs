@@ -8,10 +8,11 @@ use cp_building::{
     AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingId, BuildingState, Demand,
     Footprint, Lot,
 };
-use cp_citizen::{CitizenGrid, TripBook};
+use cp_citizen::{Citizen, CitizenGrid, Household, Location, TripBook};
 use cp_citizen::{CitizenId, TripId};
 use cp_core::{Arena, Cost};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
+use cp_district::{DistrictMap, Districts};
 use cp_economy::{Budgets, Decay, DemandAcc, EconomyState, LandGrids, TaxRates, WeekReport};
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
@@ -135,7 +136,7 @@ pub struct SaveDataV7 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGridV12,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
 }
 
 /// Version 8: the body as written by format 8 (pending path requests, before utilities).
@@ -150,7 +151,7 @@ pub struct SaveDataV8 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGridV12,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
 }
 
@@ -166,7 +167,7 @@ pub struct SaveDataV9 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGridV12,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
 }
@@ -183,7 +184,7 @@ pub struct SaveDataV10 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGridV12,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
@@ -301,7 +302,7 @@ pub struct SaveDataV11 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGridV12,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
@@ -407,7 +408,7 @@ pub struct SaveDataV12 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGridV12,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
@@ -426,7 +427,7 @@ pub struct SaveDataV13 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGridV18,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
@@ -445,7 +446,7 @@ pub struct SaveDataV14 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGridV18,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
@@ -466,7 +467,7 @@ pub struct SaveDataV15 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGridV18,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
@@ -490,7 +491,7 @@ pub struct SaveDataV16 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGridV18,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
@@ -515,7 +516,7 @@ pub struct SaveDataV17 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGridV18,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
@@ -541,7 +542,7 @@ pub struct SaveDataV18 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGridV18,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
@@ -603,7 +604,7 @@ pub struct SaveDataV20 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGrid,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
@@ -617,9 +618,128 @@ pub struct SaveDataV20 {
     pub def_names: crate::DefNames,
 }
 
-/// v20 → v21 (T-131): the district map and records were added; an old save has no districts.
-pub fn migrate_v20_to_v21(v20: SaveDataV20) -> SaveData {
+/// A citizen as formats up to 21 wrote it (before `sick_since` and `school`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CitizenV21 {
+    pub age_days: u32,
+    pub education: u8,
+    pub household: cp_citizen::HouseholdId,
+    pub home: Option<cp_building::BuildingId>,
+    pub work: Option<cp_building::BuildingId>,
+    pub work_level: u8,
+    pub location: Location,
+    pub wellbeing: u8,
+    pub has_car: bool,
+}
+
+/// The citizen grid as formats up to 21 wrote it (before the `dead` table).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CitizenGridV21 {
+    citizens: Arena<CitizenV21>,
+    households: Arena<Household>,
+}
+
+impl From<&CitizenGrid> for CitizenGridV21 {
+    /// Drops the T-135 fields: for the legacy writers and the tests only.
+    fn from(g: &CitizenGrid) -> Self {
+        let (citizens, households) = g.parts();
+        Self {
+            citizens: citizens.map(|c| CitizenV21 {
+                age_days: c.age_days,
+                education: c.education,
+                household: c.household,
+                home: c.home,
+                work: c.work,
+                work_level: c.work_level,
+                location: c.location,
+                wellbeing: c.wellbeing,
+                has_car: c.has_car,
+            }),
+            households: households.clone(),
+        }
+    }
+}
+
+/// Version 21: the body as written by format 21 (districts; no service state).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV21 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    pub zones: ZoneGrid,
+    pub buildings: BuildingGrid,
+    pub citizens: CitizenGridV21,
+    pub paths: SavedPaths,
+    pub utilities: UtilityGraph,
+    pub trips: TripBook,
+    pub agents: Agents,
+    pub treasury: Treasury,
+    pub economy: EconomyState,
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    pub land: LandGrids,
+    pub decay: Decay,
+    pub def_names: crate::DefNames,
+    pub district_map: DistrictMap,
+    pub districts: Districts,
+}
+
+/// v21 → v22 (T-135): citizens got `sick_since` and `school`, the citizen grid its `dead`
+/// table, and the service state and the saved coverage were added; all start empty.
+pub fn migrate_v21_to_v22(v21: SaveDataV21) -> SaveData {
+    let (citizens, households) = (v21.citizens.citizens, v21.citizens.households);
     SaveData {
+        tick: v21.tick,
+        rng: v21.rng,
+        speed: v21.speed,
+        queue: v21.queue,
+        log: v21.log,
+        tiles: v21.tiles,
+        net: v21.net,
+        zones: v21.zones,
+        buildings: v21.buildings,
+        citizens: CitizenGrid::from_parts(
+            citizens.map(|c| Citizen {
+                age_days: c.age_days,
+                education: c.education,
+                household: c.household,
+                home: c.home,
+                work: c.work,
+                work_level: c.work_level,
+                location: c.location,
+                wellbeing: c.wellbeing,
+                has_car: c.has_car,
+                sick_since: None,
+                school: None,
+            }),
+            households,
+            Default::default(),
+        ),
+        paths: v21.paths,
+        utilities: v21.utilities,
+        trips: v21.trips,
+        agents: v21.agents,
+        treasury: v21.treasury,
+        economy: v21.economy,
+        demand: v21.demand,
+        demand_acc: v21.demand_acc,
+        land: v21.land,
+        decay: v21.decay,
+        def_names: v21.def_names,
+        district_map: v21.district_map,
+        districts: v21.districts,
+        service_state: Default::default(),
+        coverage: Default::default(),
+    }
+}
+
+/// v20 → v21 (T-131): the district map and records were added; an old save has no districts.
+pub fn migrate_v20_to_v21(v20: SaveDataV20) -> SaveDataV21 {
+    SaveDataV21 {
         tick: v20.tick,
         rng: v20.rng,
         speed: v20.speed,
@@ -658,7 +778,7 @@ pub struct SaveDataV19 {
     pub net: NetGraph,
     pub zones: ZoneGrid,
     pub buildings: BuildingGrid,
-    pub citizens: CitizenGrid,
+    pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
     pub utilities: UtilityGraph,
     pub trips: TripBook,
@@ -1076,7 +1196,7 @@ pub fn migrate_v6_to_v7(v6: SaveDataV6) -> SaveDataV7 {
         net: v6.net,
         zones: v6.zones,
         buildings: v6.buildings,
-        citizens: CitizenGrid::default(),
+        citizens: CitizenGridV21::default(),
     }
 }
 
@@ -1154,8 +1274,8 @@ fn from_v16(v: SaveDataV16) -> SaveData {
 }
 
 fn from_v17(v: SaveDataV17) -> SaveData {
-    migrate_v20_to_v21(migrate_v19_to_v20(migrate_v18_to_v19(migrate_v17_to_v18(
-        v,
+    migrate_v21_to_v22(migrate_v20_to_v21(migrate_v19_to_v20(migrate_v18_to_v19(
+        migrate_v17_to_v18(v),
     ))))
 }
 
@@ -1241,12 +1361,15 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         15 => Ok(from_v15(dec(body)?)),
         16 => Ok(from_v16(dec(body)?)),
         17 => Ok(from_v17(dec(body)?)),
-        18 => Ok(migrate_v20_to_v21(migrate_v19_to_v20(migrate_v18_to_v19(
+        18 => Ok(migrate_v21_to_v22(migrate_v20_to_v21(migrate_v19_to_v20(
+            migrate_v18_to_v19(dec(body)?),
+        )))),
+        19 => Ok(migrate_v21_to_v22(migrate_v20_to_v21(migrate_v19_to_v20(
             dec(body)?,
         )))),
-        19 => Ok(migrate_v20_to_v21(migrate_v19_to_v20(dec(body)?))),
-        20 => Ok(migrate_v20_to_v21(dec(body)?)),
-        21 => dec(body),
+        20 => Ok(migrate_v21_to_v22(migrate_v20_to_v21(dec(body)?))),
+        21 => Ok(migrate_v21_to_v22(dec(body)?)),
+        22 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

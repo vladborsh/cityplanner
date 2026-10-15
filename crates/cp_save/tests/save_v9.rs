@@ -96,7 +96,7 @@ fn v8_fixture_migrates_to_no_utilities_and_the_frozen_writer_reproduces_it() {
         net: d.net.clone(),
         zones: d.zones.clone(),
         buildings: cp_save::migrate::BuildingGridV12::from(&d.buildings),
-        citizens: d.citizens.clone(),
+        citizens: (&d.citizens).into(),
         paths: d.paths.clone(),
     };
     assert_eq!(

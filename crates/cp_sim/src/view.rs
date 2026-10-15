@@ -107,6 +107,9 @@ pub struct SimView {
     /// Service coverage of the roads by kind, for the overlays (T-134). Shared: re-cloned
     /// only when it was recomputed.
     pub service: Arc<cp_service::ServiceCoverage>,
+    /// Service problems per building (bits of `ServiceProblems`) and the facilities' day
+    /// counters, read-only. Shared: re-cloned only when the state changed.
+    pub service_state: Arc<cp_service::ServiceState>,
     /// The city summary for the panels, recomputed every 64 ticks (§13.6). Shared: re-cloned
     /// only when it was recomputed.
     pub city: Arc<crate::stats::CityStats>,
@@ -170,6 +173,9 @@ pub(crate) type AgentCache = Option<Arc<AgentSnapshot>>;
 /// `(generation, snapshot)` of the last `SimView::city`.
 /// `(generation, snapshot)` of the last `SimView::service`.
 pub(crate) type ServiceCache = Option<(u64, Arc<cp_service::ServiceCoverage>)>;
+
+/// `(revision, snapshot)` of the last `SimView::service_state`.
+pub(crate) type ServiceStateCache = Option<(u64, Arc<cp_service::ServiceState>)>;
 
 pub(crate) type CityCache = Option<(u64, Arc<crate::stats::CityStats>)>;
 
@@ -284,6 +290,24 @@ impl SimRunner {
         }
         let snap = Arc::new(cov.cloned().unwrap_or_default());
         *cache = Some((generation, Arc::clone(&snap)));
+        snap
+    }
+
+    /// The service-state snapshot for `SimView::service_state`, cached by revision.
+    fn service_state_snapshot(&self) -> Arc<cp_service::ServiceState> {
+        let st = self.world().get_resource::<cp_service::ServiceState>();
+        let rev = st.map_or(0, cp_service::ServiceState::revision);
+        let mut cache = self
+            .service_state_cache
+            .lock()
+            .expect("service state cache");
+        if let Some((r, snap)) = cache.as_ref()
+            && *r == rev
+        {
+            return Arc::clone(snap);
+        }
+        let snap = Arc::new(st.cloned().unwrap_or_default());
+        *cache = Some((rev, Arc::clone(&snap)));
         snap
     }
 
@@ -441,6 +465,7 @@ impl SimRunner {
             economy: self.world().resource::<cp_economy::EconomyState>().clone(),
             utilities: self.utilities_snapshot(),
             service: self.service_snapshot(),
+            service_state: self.service_state_snapshot(),
             city: self.city_snapshot(),
             junctions,
         }

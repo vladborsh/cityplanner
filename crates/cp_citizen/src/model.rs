@@ -43,6 +43,10 @@ pub struct Citizen {
     pub location: Location,
     pub wellbeing: u8,
     pub has_car: bool,
+    /// Since when the citizen is sick (T-135); `None` = healthy. The health row fills it.
+    pub sick_since: Option<Tick>,
+    /// The school the citizen goes to (T-135); `None` = none. The education row fills it.
+    pub school: Option<BuildingId>,
 }
 
 impl Citizen {

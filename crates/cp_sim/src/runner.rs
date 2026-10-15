@@ -63,6 +63,8 @@ pub struct SimRunner {
     /// `SimView::city` cache, keyed by `CityStats::generation`.
     /// `SimView::service` cache, keyed by `ServiceCoverage::generation`.
     pub(crate) service_cache: std::sync::Mutex<crate::view::ServiceCache>,
+    /// `SimView::service_state` cache, keyed by `ServiceState::revision`.
+    pub(crate) service_state_cache: std::sync::Mutex<crate::view::ServiceStateCache>,
     pub(crate) city_cache: std::sync::Mutex<crate::view::CityCache>,
 }
 
@@ -149,6 +151,9 @@ impl SimRunner {
         world
             .resource_mut::<SimChecksum>()
             .register("districts", crate::checksum::district_part);
+        world
+            .resource_mut::<SimChecksum>()
+            .register("services", crate::checksum::service_part);
         world.init_resource::<crate::view::ArenaGauges>();
         let building_cap = world.resource::<SimLimits>().buildings;
         let limits = *world.resource::<SimLimits>();
@@ -203,8 +208,15 @@ impl SimRunner {
                 .in_set(SimPhase::Citizens)
                 .before(cp_citizen::update_citizens),
         );
+        // The service state of those buildings goes first: the purge above drains the list.
+        schedule.add_systems(
+            cp_service::purge_removed_services
+                .in_set(SimPhase::Citizens)
+                .before(cp_traffic::purge_removed_buildings),
+        );
         schedule.add_systems(cp_utility::update_supply.in_set(SimPhase::Utilities));
         schedule.add_systems(cp_service::update_coverage.in_set(SimPhase::Services));
+        schedule.add_systems(cp_service::reset_daily_capacity.in_set(SimPhase::Services));
         schedule.add_systems(cp_economy::settle_week.in_set(SimPhase::Economy));
         schedule.add_systems(cp_economy::update_demand.in_set(SimPhase::Economy));
         schedule.add_systems(cp_economy::update_city.in_set(SimPhase::Economy));
@@ -255,6 +267,7 @@ impl SimRunner {
             agents_cache: Default::default(),
             land_cache: Default::default(),
             service_cache: Default::default(),
+            service_state_cache: Default::default(),
             city_cache: Default::default(),
         }
     }

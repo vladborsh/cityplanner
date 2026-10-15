@@ -1,5 +1,7 @@
 //! The citizen and household arenas, plus derived occupancy tables.
 
+use std::collections::BTreeMap;
+
 use bevy_ecs::resource::Resource;
 use cp_building::BuildingId;
 use cp_core::{Arena, Tick};
@@ -95,19 +97,51 @@ impl Derived {
 pub struct CitizenGrid {
     citizens: Arena<Citizen>,
     households: Arena<Household>,
+    /// Bodies waiting at each deathcare building (T-135); the deathcare row fills it.
+    pub dead: BTreeMap<BuildingId, u16>,
     #[serde(skip)]
     derived: Derived,
 }
 
 impl PartialEq for CitizenGrid {
     fn eq(&self, other: &Self) -> bool {
-        self.citizens == other.citizens && self.households == other.households
+        self.citizens == other.citizens
+            && self.households == other.households
+            && self.dead == other.dead
     }
 }
 
 impl CitizenGrid {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Drops the school of every citizen whose school `gone` says is demolished.
+    pub fn clear_schools(&mut self, gone: impl Fn(BuildingId) -> bool) {
+        for (_, c) in self.citizens.iter_mut() {
+            if c.school.is_some_and(&gone) {
+                c.school = None;
+            }
+        }
+    }
+
+    /// The arenas as saved, for the frozen save types.
+    pub fn parts(&self) -> (&Arena<Citizen>, &Arena<Household>) {
+        (&self.citizens, &self.households)
+    }
+
+    /// A grid from saved arenas; the occupancy tables are rebuilt on demand.
+    pub fn from_parts(
+        citizens: Arena<Citizen>,
+        households: Arena<Household>,
+        dead: BTreeMap<BuildingId, u16>,
+    ) -> Self {
+        Self {
+            citizens,
+            households,
+            dead,
+            derived: Derived::default(),
+        }
     }
 
     pub fn citizen(&self, id: CitizenId) -> Option<&Citizen> {
@@ -226,6 +260,8 @@ impl CitizenGrid {
                 location: Location::Moving,
                 wellbeing: 50,
                 has_car,
+                sick_since: None,
+                school: None,
             }));
         }
         self.households.get_mut(hid).expect("just inserted").members = slots;

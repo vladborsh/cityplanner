@@ -35,6 +35,12 @@ fn content() -> Arc<ContentDb> {
             ("r/street.ron".into(), ROAD.into()),
             ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
             ("b/clinic.ron".into(), building.into()),
+            (
+                "b/house.ron".into(),
+                r#"Building((id: "house", name: "house", zone: ResLow, level: 1, lot: (1, 1),
+                households: 4, styles: ["p"], service: None))"#
+                    .into(),
+            ),
             ("s/clinic.ron".into(), service.into()),
         ])
         .unwrap_or_else(|e| panic!("{e}")),
@@ -132,4 +138,87 @@ fn a_demolished_building_stops_covering_at_the_next_recompute() {
         segs.iter()
             .all(|&s| cov.on_segment(ServiceKind::Health, s) == 0.0)
     );
+}
+
+/// A building of `def` on segment `seg` at `t`.
+fn put(world: &mut World, def: &str, seg: SegmentId, t: f32) -> BuildingId {
+    let db = world.resource::<SimContent>().0.clone();
+    world.resource_mut::<BuildingGrid>().insert(Building {
+        def: db.building_id(def).unwrap(),
+        footprint: Footprint::Lot(Lot {
+            block: Id::new(0, 0),
+            col: 0,
+            w: 1,
+            d: 1,
+        }),
+        level: 1,
+        state: BuildingState::Active,
+        ready_at: Tick(0),
+        pos: Vec2::new(0.0, 5.0),
+        rot: 0.0,
+        access: Some(AccessPoint { segment: seg, t }),
+        flags: BuildingFlags::default(),
+        level_progress: 0.0,
+    })
+}
+
+#[test]
+fn the_nearest_facility_with_room_wins_and_a_full_one_is_skipped() {
+    let (mut world, _, near, segs) = town();
+    // A second clinic at the far end and a house at 250 m: the far clinic is 150 m away, the
+    // first one 250 m.
+    let far = put(&mut world, "clinic", segs[3], 0.5);
+    let house = put(&mut world, "house", segs[2], 0.5);
+    let ask = |world: &World| {
+        let db = world.resource::<SimContent>().0.clone();
+        nearest_facility(
+            world.resource::<NetGraph>(),
+            world.resource::<BuildingGrid>(),
+            &db,
+            world.resource::<ServiceState>(),
+            ServiceKind::Health,
+            house,
+        )
+    };
+    assert_eq!(ask(&world), Some(far));
+    // The far clinic is used up for today (capacity 10): the next one is chosen.
+    world
+        .resource_mut::<ServiceState>()
+        .facility_mut(far)
+        .used_today = 10;
+    assert_eq!(ask(&world), Some(near));
+    // A new day starts with room again.
+    let mut day = Schedule::default();
+    day.add_systems(reset_daily_capacity);
+    run_at(&mut world, &mut day, cp_core::time::TICKS_PER_DAY);
+    assert_eq!(ask(&world), Some(far));
+    // Nothing of another kind.
+    let db = world.resource::<SimContent>().0.clone();
+    assert_eq!(
+        nearest_facility(
+            world.resource::<NetGraph>(),
+            world.resource::<BuildingGrid>(),
+            &db,
+            world.resource::<ServiceState>(),
+            ServiceKind::Fire,
+            house
+        ),
+        None
+    );
+}
+
+#[test]
+fn demolishing_a_building_drops_its_service_records() {
+    let (mut world, _, clinic, _) = town();
+    {
+        let mut st = world.resource_mut::<ServiceState>();
+        st.get_mut(clinic).garbage = 7;
+        st.facility_mut(clinic).stored = 3;
+    }
+    world.resource_mut::<BuildingGrid>().remove(clinic);
+    let mut purge = Schedule::default();
+    purge.add_systems(purge_removed_services);
+    purge.run(&mut world);
+    let st = world.resource::<ServiceState>();
+    assert!(st.get(clinic).is_none() && st.facility(clinic).is_none());
 }

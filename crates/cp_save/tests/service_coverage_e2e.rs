@@ -60,8 +60,21 @@ fn a_load_in_the_middle_of_the_cycle_has_the_same_coverage_and_checksum() {
             .insert(template);
     }
     // Two cycles in, then 20 ticks past the boundary.
-    while a.tick().0 % 64 != 20 || a.world().resource::<ServiceCoverage>().generation < 2 {
+    let start = a.world().resource::<ServiceCoverage>().generation;
+    while a.tick().0 % 64 != 20 || a.world().resource::<ServiceCoverage>().generation < start + 2 {
         a.tick_once();
+    }
+    // A road disappears after the boundary: `a` keeps reading the coverage of the boundary
+    // until the next one, and so must the loaded runner.
+    {
+        let net = a.world().resource::<cp_net::NetGraph>();
+        let last = net.segments().last().unwrap().0;
+        let fresh_before = a.world().resource::<ServiceCoverage>().clone();
+        a.world_mut()
+            .resource_mut::<cp_net::NetGraph>()
+            .remove_segment(last)
+            .unwrap();
+        assert_eq!(*a.world().resource::<ServiceCoverage>(), fresh_before);
     }
     let bytes = save_runner(&a, hash, "flatlands").unwrap();
     let mut b = runner(&content);

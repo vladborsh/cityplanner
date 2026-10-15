@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 21;
+pub const FORMAT_VERSION: u32 = 22;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -203,6 +203,11 @@ pub struct SaveData {
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
     pub districts: Districts,
+    /// Per-building service state and facility counters. Added in v22.
+    pub service_state: cp_service::ServiceState,
+    /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
+    /// sim reads the values of that boundary until the next one. Added in v22.
+    pub coverage: cp_service::ServiceCoverage,
 }
 
 impl SaveData {
@@ -264,6 +269,8 @@ impl SaveData {
                 .map_or_else(DefNames::default, |c| DefNames::from_content(&c.0)),
             district_map: world.resource::<DistrictMap>().clone(),
             districts: world.resource::<Districts>().clone(),
+            service_state: world.resource::<cp_service::ServiceState>().clone(),
+            coverage: world.resource::<cp_service::ServiceCoverage>().clone(),
         }
     }
 
@@ -301,6 +308,14 @@ impl SaveData {
         world.insert_resource(self.decay);
         world.insert_resource(self.district_map);
         world.insert_resource(self.districts);
+        world.insert_resource(self.service_state);
+        // The snapshot cache is keyed by the generation, which a load must change.
+        let mut coverage = self.coverage;
+        coverage.generation = world
+            .get_resource::<cp_service::ServiceCoverage>()
+            .map_or(0, |c| c.generation)
+            + 1;
+        world.insert_resource(coverage);
         // The pathfinder reads the segment load last published to it (saved with the agents).
         let published = cp_traffic::CongestionMap(self.agents.load.published.clone());
         world.insert_resource(self.agents);
@@ -315,8 +330,6 @@ impl SaveData {
         world
             .resource_mut::<cp_traffic::PathNetwork>()
             .set_congestion(published);
-        // Derived from the net and the buildings, not saved.
-        cp_service::rebuild_coverage(world);
     }
 }
 
@@ -710,6 +723,11 @@ pub fn load_into_runner(
         loaded.warnings.extend(more);
     }
     loaded.data.restore(sim.world_mut());
+    // A save from before v22 carries no coverage: compute it now rather than wait for the
+    // next boundary. Newer saves restore exactly what was saved.
+    if loaded.header.format_version < 22 {
+        cp_service::rebuild_coverage(sim.world_mut());
+    }
     Ok((loaded.header, loaded.warnings))
 }
 

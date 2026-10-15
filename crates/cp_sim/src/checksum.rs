@@ -120,6 +120,13 @@ pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_district::Districts>());
 }
 
+/// Checksum part of the services: the road coverage (sampled at the 64-tick boundaries, so
+/// part of the state) and the per-building service state.
+pub(crate) fn service_part(world: &World, h: &mut Fnv1a) {
+    h.write_serialized(world.resource::<cp_service::ServiceCoverage>());
+    h.write_serialized(world.resource::<cp_service::ServiceState>());
+}
+
 /// Checksum part of trips (`cp_citizen::TripBook`).
 pub(crate) fn trip_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_citizen::TripBook>());

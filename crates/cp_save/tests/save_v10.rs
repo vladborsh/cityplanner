@@ -57,7 +57,7 @@ fn v9_fixture_migrates_to_no_trips_and_keeps_its_world() {
         net: l.data.net.clone(),
         zones: l.data.zones.clone(),
         buildings: cp_save::migrate::BuildingGridV12::from(&l.data.buildings),
-        citizens: l.data.citizens.clone(),
+        citizens: (&l.data.citizens).into(),
         paths: l.data.paths.clone(),
         utilities: l.data.utilities.clone(),
     };
