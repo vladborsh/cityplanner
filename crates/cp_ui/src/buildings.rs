@@ -3,12 +3,17 @@
 //! the existing [`ToolState`].
 
 use bevy_egui::egui;
-use cp_content::{BuildingDefId, ContentDb, ServiceKind};
+use cp_content::{BuildingDefId, ContentDb, ServiceKind, ServiceSite, UtilityKind};
 use cp_core::Cost;
+use cp_render::{Overlay, OverlayState};
 use cp_sim::SimView;
-use cp_tools::{ActiveTool, ToolState, format_money};
+use cp_tools::{ActiveTool, ToolState, UtilityMode, format_money};
+use cp_utility::UtilityNet;
 
 use crate::icons::Icon;
+use crate::net_summary::NetTab;
+use crate::style::Sizes;
+use crate::tile::{TileIcon, tool_tile};
 
 /// What a card shows, taken from the building and its service definition.
 #[derive(Clone, Debug, PartialEq)]
@@ -22,6 +27,8 @@ pub struct Card {
     pub lot: (u8, u8),
     /// The icon of the building (`BuildingDef.icon`).
     pub icon: String,
+    /// Where the building may stand (`ServiceDef.site`).
+    pub site: ServiceSite,
 }
 
 /// The cards of one service kind.
@@ -48,6 +55,7 @@ pub fn groups(content: &ContentDb) -> Vec<Group> {
             capacity: service.capacity,
             lot: def.lot,
             icon: def.icon.clone(),
+            site: service.site,
         };
         match out.iter_mut().find(|g| g.kind == service.kind) {
             Some(g) => g.cards.push(card),
@@ -99,31 +107,190 @@ pub fn select(tools: &mut ToolState, id: BuildingDefId) {
     tools.building.def = Some(id);
 }
 
-/// The panel: a header with an icon per service kind, then its cards.
-pub fn buildings_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
+/// One section of the panel: the buildings of a service kind (water and sewage share one)
+/// and, for the networks, their tools.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Section {
+    pub kind: ServiceKind,
+    pub cards: Vec<Card>,
+    /// The network this section builds (`Water` also carries the sewage buildings).
+    pub net: Option<NetTab>,
+}
+
+impl Section {
+    pub fn title(&self) -> String {
+        kind_label(self.kind)
+    }
+}
+
+/// The sections in [`ServiceKind`] order. A section without buildings and without a network
+/// is not drawn (a kind with no content has none).
+pub fn sections(content: &ContentDb) -> Vec<Section> {
+    let mut out: Vec<Section> = Vec::new();
+    for g in groups(content) {
+        // One pipe network: sewage buildings sit in the Water section (§13.7).
+        let kind = if g.kind == ServiceKind::Sewage {
+            ServiceKind::Water
+        } else {
+            g.kind
+        };
+        match out.iter_mut().find(|s| s.kind == kind) {
+            Some(s) => s.cards.extend(g.cards),
+            None => out.push(Section {
+                kind,
+                cards: g.cards,
+                net: None,
+            }),
+        }
+    }
+    for (kind, net, util) in [
+        (ServiceKind::Water, NetTab::Water, UtilityKind::Water),
+        (ServiceKind::Power, NetTab::Power, UtilityKind::Power),
+    ] {
+        if content.utility_for_kind(util).is_none() {
+            continue;
+        }
+        match out.iter_mut().find(|s| s.kind == kind) {
+            Some(s) => s.net = Some(net),
+            None => out.push(Section {
+                kind,
+                cards: Vec::new(),
+                net: Some(net),
+            }),
+        }
+    }
+    out.sort_by_key(|s| s.kind);
+    out
+}
+
+/// What a network section builds with.
+fn net_parts(net: NetTab) -> (UtilityKind, UtilityNet, Overlay) {
+    match net {
+        NetTab::Water => (UtilityKind::Water, UtilityNet::Pipe, Overlay::Water),
+        NetTab::Power => (UtilityKind::Power, UtilityNet::Power, Overlay::Power),
+    }
+}
+
+/// The plate under a section's tiles for the selected building's site (`ServiceDef.site`).
+pub fn site_note(site: ServiceSite) -> String {
+    match site {
+        ServiceSite::OnWater => "Stands on water: at least one lot cell over water".to_string(),
+        ServiceSite::Shore => format!(
+            "Stands on the shore: lot on land, water no farther than {:.0} m",
+            ServiceSite::SHORE_REACH_M
+        ),
+        ServiceSite::Land => "Land only".to_string(),
+    }
+}
+
+/// The panel: a section per service kind with a header, the network summary, one row of tiles
+/// (network tool, the buildings, remove tool) and the site plate of the selected building.
+/// Picking a tile of a network section also switches the map overlay to that network.
+pub fn buildings_panel(
+    ui: &mut egui::Ui,
+    view: Option<&SimView>,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+) {
     let Some(content) = view.and_then(|v| v.content.as_deref()) else {
         return;
     };
-    for group in groups(content) {
+    for section in sections(content) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            kind_icon(group.kind).show(ui, crate::style::Sizes::SECTION_ICON);
-            ui.strong(kind_label(group.kind));
+            kind_icon(section.kind).show(ui, Sizes::SECTION_ICON);
+            ui.strong(section.title());
         });
-        for card in &group.cards {
-            let selected = tools.active == ActiveTool::Place && tools.building.def == Some(card.id);
-            let button = egui::Button::image_and_text(
-                egui::Image::new(crate::icons::def_icon(&card.icon)).fit_to_exact_size(egui::vec2(
-                    crate::style::Sizes::ROW_ICON,
-                    crate::style::Sizes::ROW_ICON,
-                )),
-                card_text(card),
-            )
-            .selected(selected)
-            .min_size(egui::vec2(ui.available_width(), 0.0));
-            if ui.add(button).clicked() {
-                select(tools, card.id);
+        let net = section.net.map(net_parts);
+        if let (Some(tab), Some(view)) = (section.net, view) {
+            crate::net_summary::network_summary(ui, view, tab);
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
+            if let Some((kind, _, shown)) = net
+                && let Some((_, def)) = content.utility_for_kind(kind)
+            {
+                let on = tools.active == ActiveTool::Utility && tools.utility.kind == kind;
+                if tool_tile(ui, TileIcon::Def(&def.icon), &def.name, on)
+                    .on_hover_text(format!("{}: click to start, click to end", def.name))
+                    .clicked()
+                {
+                    if on {
+                        tools.select(ActiveTool::None);
+                    } else {
+                        tools.select(ActiveTool::Utility);
+                        tools.utility.set_kind(kind);
+                        overlay.active = shown;
+                    }
+                }
             }
+            for card in &section.cards {
+                let on = tools.active == ActiveTool::Place && tools.building.def == Some(card.id);
+                if tool_tile(ui, TileIcon::Def(&card.icon), &card.name, on)
+                    .on_hover_text(card_text(card))
+                    .clicked()
+                {
+                    select(tools, card.id);
+                    if let Some((_, _, shown)) = net {
+                        overlay.active = shown;
+                    }
+                }
+            }
+            if let Some((_, remove_net, shown)) = net {
+                let on = tools.active == ActiveTool::UtilityRemove
+                    && tools.remove_net == Some(remove_net);
+                let (icon, name) = match section.net {
+                    Some(NetTab::Power) => (Icon::RemoveLine, "Remove line"),
+                    _ => (Icon::RemovePipe, "Remove pipe"),
+                };
+                if tool_tile(ui, TileIcon::Icon(icon), name, on)
+                    .on_hover_text("Hover a piece and click to remove it")
+                    .clicked()
+                {
+                    if on {
+                        tools.select(ActiveTool::None);
+                    } else {
+                        tools.select(ActiveTool::UtilityRemove);
+                        tools.remove_net = Some(remove_net);
+                        overlay.active = shown;
+                    }
+                }
+            }
+        });
+        // The drawing mode of the network tool, under the row.
+        if let Some((kind, _, _)) = net
+            && tools.active == ActiveTool::Utility
+            && tools.utility.kind == kind
+        {
+            ui.weak("Mode");
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
+                for (mode, icon, label, hover) in [
+                    (UtilityMode::Straight, Icon::Road, "Straight", "Two clicks"),
+                    (
+                        UtilityMode::Polyline,
+                        Icon::FreeRoad,
+                        "Polyline",
+                        "Enter ends",
+                    ),
+                ] {
+                    if tool_tile(ui, TileIcon::Icon(icon), label, tools.utility.mode == mode)
+                        .on_hover_text(hover)
+                        .clicked()
+                    {
+                        tools.utility.set_mode(mode);
+                    }
+                }
+            });
+        }
+        // The site of the selected building of this section.
+        if tools.active == ActiveTool::Place
+            && let Some(card) = section
+                .cards
+                .iter()
+                .find(|c| Some(c.id) == tools.building.def)
+        {
+            ui.colored_label(egui::Color32::from_rgb(150, 190, 240), site_note(card.site));
         }
     }
 }
@@ -179,20 +346,21 @@ mod tests {
         let first = groups(view.content.as_deref().unwrap())[0].cards[0].clone();
         let ctx = egui::Context::default();
         let mut tools = ToolState::default();
-        let draw = |tools: &mut ToolState, events| {
+        let mut overlay = OverlayState::default();
+        let draw = |tools: &mut ToolState, overlay: &mut OverlayState, events| {
             frame_texts(&ctx, input(0.0, events), |ui| {
-                buildings_panel(ui, Some(&view), tools)
+                buildings_panel(ui, Some(&view), tools, overlay)
             })
         };
-        let texts = draw(&mut tools, vec![]);
+        let texts = draw(&mut tools, &mut overlay, vec![]);
         let (_, at) = texts
             .iter()
             .find(|(t, _)| t.starts_with(&first.name))
             .expect("the card is drawn");
         assert_eq!(tools.active, ActiveTool::None);
         let [down, up] = click(*at + egui::vec2(4.0, 4.0));
-        draw(&mut tools, down);
-        draw(&mut tools, up);
+        draw(&mut tools, &mut overlay, down);
+        draw(&mut tools, &mut overlay, up);
         assert_eq!(tools.active, ActiveTool::Place);
         assert_eq!(tools.building.def, Some(first.id));
         // The text of a card carries the price, upkeep and lot.

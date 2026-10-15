@@ -23,7 +23,7 @@ pub mod utility;
 pub mod zone;
 pub mod zone_lines;
 
-pub use building::{BuildingTool, PlacementGhost, pick_building};
+pub use building::{BuildingTool, PlacementGhost, error_text, pick_building};
 pub use bulldozer::pick_segment;
 pub use cp_render::UiCapture;
 pub use outbox::CommandOutbox;

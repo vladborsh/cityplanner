@@ -12,9 +12,7 @@ use cp_sim::SimView;
 use cp_tools::ToolState;
 
 use crate::icons::Icon;
-use crate::panels::{
-    UiState, bulldozer_panel, roads_panel, services_panel, utility_panel, verdict, zones_panel,
-};
+use crate::panels::{UiState, bulldozer_panel, roads_panel, services_panel, verdict, zones_panel};
 use crate::style::Sizes;
 
 /// Build-menu categories. A category without tools is not drawn ([`Category::available`]).
@@ -22,8 +20,6 @@ use crate::style::Sizes;
 pub enum Category {
     Roads,
     Zones,
-    Water,
-    Power,
     Buildings,
     Bulldozer,
     /// Public transport (M3): no tools yet.
@@ -33,11 +29,9 @@ pub enum Category {
 }
 
 impl Category {
-    pub const ALL: [Category; 8] = [
+    pub const ALL: [Category; 6] = [
         Category::Roads,
         Category::Zones,
-        Category::Water,
-        Category::Power,
         Category::Buildings,
         Category::Bulldozer,
         Category::Transit,
@@ -48,8 +42,6 @@ impl Category {
         match self {
             Category::Roads => "Roads",
             Category::Zones => "Zones",
-            Category::Water => "Water",
-            Category::Power => "Power",
             Category::Buildings => "Buildings",
             Category::Bulldozer => "Bulldozer",
             Category::Transit => "Transit",
@@ -62,8 +54,6 @@ impl Category {
         match self {
             Category::Roads => Icon::Roads,
             Category::Zones => Icon::Zones,
-            Category::Water => Icon::Water,
-            Category::Power => Icon::Power,
             Category::Buildings => Icon::Buildings,
             Category::Bulldozer => Icon::Bulldozer,
             Category::Transit | Category::Districts => Icon::Info,
@@ -79,7 +69,7 @@ impl Category {
             Category::Buildings => {
                 content.is_some_and(|c| c.buildings().any(|(_, d)| d.service.is_some()))
             }
-            Category::Zones | Category::Water | Category::Power | Category::Bulldozer => true,
+            Category::Zones | Category::Bulldozer => true,
             Category::Transit | Category::Districts => false,
         }
     }
@@ -194,10 +184,7 @@ pub fn tool_panel(
             egui::ScrollArea::vertical().show(ui, |ui| match category {
                 Category::Roads => roads_panel(ui, view, tools),
                 Category::Zones => zones_panel(ui, view, tools, state),
-                Category::Water | Category::Power => {
-                    utility_panel(ui, view, tools, overlay, category)
-                }
-                Category::Buildings => services_panel(ui, view, tools),
+                Category::Buildings => services_panel(ui, view, tools, overlay),
                 Category::Bulldozer => bulldozer_panel(ui, tools),
                 Category::Transit | Category::Districts => {
                     ui.weak("Nothing to build here yet.");
@@ -533,14 +520,15 @@ mod tests {
 
     /// §13.7: every tile of every construction panel is one size, with a square icon frame.
     #[test]
-    fn every_tile_of_the_roads_zones_water_and_power_panels_is_88_with_a_64_square_icon() {
+    fn every_tile_of_the_roads_zones_buildings_and_bulldozer_panels_is_88_with_a_64_square_icon() {
         for (category, tool) in [
             (Category::Roads, ActiveTool::Road),
             (Category::Roads, ActiveTool::Upgrade),
             (Category::Zones, ActiveTool::Zone),
-            (Category::Water, ActiveTool::Utility),
-            (Category::Power, ActiveTool::Utility),
-            (Category::Water, ActiveTool::None),
+            (Category::Buildings, ActiveTool::Utility),
+            (Category::Buildings, ActiveTool::Place),
+            (Category::Buildings, ActiveTool::UtilityRemove),
+            (Category::Buildings, ActiveTool::None),
             (Category::Bulldozer, ActiveTool::Bulldozer),
         ] {
             let mut rig = Rig::new();
@@ -590,8 +578,6 @@ mod tests {
             vec![
                 Category::Roads,
                 Category::Zones,
-                Category::Water,
-                Category::Power,
                 Category::Buildings,
                 Category::Bulldozer
             ]
@@ -600,15 +586,7 @@ mod tests {
         assert!(!drawn.contains(&Category::Districts));
         // Without content the road and building tools do not exist either.
         let none = Category::available(None);
-        assert_eq!(
-            none,
-            vec![
-                Category::Zones,
-                Category::Water,
-                Category::Power,
-                Category::Bulldozer
-            ]
-        );
+        assert_eq!(none, vec![Category::Zones, Category::Bulldozer]);
     }
 
     #[test]
@@ -756,14 +734,20 @@ mod tests {
     fn digit_keys_open_the_categories_in_palette_order() {
         let ctx = egui::Context::default();
         let available = Category::available(Some(&content()));
-        assert_eq!(available.len(), 6);
+        assert_eq!(
+            available,
+            [
+                Category::Roads,
+                Category::Zones,
+                Category::Buildings,
+                Category::Bulldozer
+            ]
+        );
         let keys = [
             egui::Key::Num1,
             egui::Key::Num2,
             egui::Key::Num3,
             egui::Key::Num4,
-            egui::Key::Num5,
-            egui::Key::Num6,
         ];
         for (n, k) in keys.into_iter().enumerate() {
             let mut got = None;
@@ -774,7 +758,7 @@ mod tests {
         }
         // Past the last category, and with a modifier held, nothing happens.
         let mut got = Some(Category::Roads);
-        frame(&ctx, input(10.0, vec![key(egui::Key::Num7)]), |ui| {
+        frame(&ctx, input(10.0, vec![key(egui::Key::Num5)]), |ui| {
             got = hotkey(ui.ctx(), &available);
         });
         assert_eq!(got, None);
@@ -791,6 +775,129 @@ mod tests {
             got = hotkey(ui.ctx(), &available);
         });
         assert_eq!(got, None);
+    }
+
+    /// T-102: the Buildings panel has a section per service kind (water and sewage share one)
+    /// in kind order, each a row of tiles: the network tool, the buildings, remove.
+    #[test]
+    fn the_buildings_panel_has_water_then_power_sections_with_network_tools_beside_the_buildings() {
+        use cp_content::ServiceKind;
+        let mut rig = Rig::new();
+        rig.screen = egui::vec2(1280.0, 3000.0);
+        rig.click_category(Category::Buildings);
+        let content = rig.view.content.clone().unwrap();
+        let sections = crate::buildings::sections(&content);
+        let kinds: Vec<ServiceKind> = sections.iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, [ServiceKind::Water, ServiceKind::Power]);
+        // Water: the pipe, every Water and Sewage service building, remove; Power likewise.
+        let service = |kinds: &[ServiceKind]| {
+            content
+                .buildings()
+                .filter(|(_, d)| {
+                    d.service
+                        .as_deref()
+                        .and_then(|s| content.service_id(s))
+                        .is_some_and(|s| kinds.contains(&content.service(s).kind))
+                })
+                .count()
+        };
+        assert_eq!(
+            sections[0].cards.len(),
+            service(&[ServiceKind::Water, ServiceKind::Sewage])
+        );
+        assert_eq!(sections[1].cards.len(), service(&[ServiceKind::Power]));
+        let tiles = tiles(&mut rig);
+        let expect: usize = sections.iter().map(|s| s.cards.len() + 2).sum();
+        assert_eq!(tiles.len(), expect);
+        let texts = rig.frame_texts(vec![]);
+        let names: Vec<&str> = texts.iter().map(|(t, _)| t.as_str()).collect();
+        for want in [
+            "Water",
+            "Power",
+            "Pipe",
+            "Water pump",
+            "Sewage outflow",
+            "Remove pipe",
+            "Power line",
+            "Coal power plant",
+            "Wind turbine",
+            "Remove line",
+        ] {
+            assert!(names.contains(&want), "{want:?} missing from {names:?}");
+        }
+    }
+
+    #[test]
+    fn the_tiles_of_the_buildings_panel_set_the_tools_and_the_overlay() {
+        use cp_render::Overlay;
+        use cp_utility::UtilityNet;
+        let mut rig = Rig::new();
+        rig.screen = egui::vec2(1280.0, 3000.0);
+        rig.click_category(Category::Buildings);
+        rig.click_label("Water pump");
+        let pump = rig
+            .view
+            .content
+            .as_ref()
+            .unwrap()
+            .building_id("water_pump_station");
+        assert_eq!(rig.tools.active, ActiveTool::Place);
+        assert_eq!(rig.tools.building.def, pump);
+        assert_eq!(rig.overlay.active, Overlay::Water);
+
+        rig.overlay.active = Overlay::Off;
+        rig.click_label("Pipe");
+        assert_eq!(rig.tools.active, ActiveTool::Utility);
+        assert_eq!(rig.tools.utility.kind, cp_content::UtilityKind::Water);
+        assert_eq!(rig.overlay.active, Overlay::Water);
+
+        rig.click_label("Remove line");
+        assert_eq!(rig.tools.active, ActiveTool::UtilityRemove);
+        assert_eq!(rig.tools.remove_net, Some(UtilityNet::Power));
+        assert_eq!(rig.overlay.active, Overlay::Power);
+
+        rig.click_label("Coal power plant");
+        assert_eq!(rig.tools.active, ActiveTool::Place);
+        assert_eq!(rig.overlay.active, Overlay::Power);
+    }
+
+    #[test]
+    fn the_site_plate_names_the_site_of_the_selected_building() {
+        use cp_content::ServiceSite;
+        let mut rig = Rig::new();
+        rig.screen = egui::vec2(1280.0, 3000.0);
+        rig.click_category(Category::Buildings);
+        for (label, site) in [
+            ("Water pump", ServiceSite::OnWater),
+            ("Sewage outflow", ServiceSite::Shore),
+            ("Wind turbine", ServiceSite::Land),
+        ] {
+            rig.click_label(label);
+            let text = rig.frame(vec![]);
+            let note = crate::buildings::site_note(site);
+            assert!(text.contains(&note), "{label}: {note:?} not in {text}");
+        }
+        assert_ne!(
+            crate::buildings::site_note(ServiceSite::OnWater),
+            crate::buildings::site_note(ServiceSite::Shore)
+        );
+        assert!(crate::buildings::site_note(ServiceSite::Shore).contains("16"));
+    }
+
+    #[test]
+    fn the_verdict_for_a_missing_water_site_differs_for_the_pump_and_the_outflow() {
+        use cp_building::BuildingError;
+        use cp_content::ServiceSite;
+        let pump = cp_tools::error_text(&BuildingError::NeedsWater, ServiceSite::OnWater);
+        let outflow = cp_tools::error_text(&BuildingError::NeedsWater, ServiceSite::Shore);
+        assert_ne!(pump, outflow);
+        assert!(pump.contains("water") && outflow.contains("shore"));
+        let wet = cp_tools::error_text(&BuildingError::Water, ServiceSite::Land);
+        assert!(wet.contains("land only"), "{wet}");
+        assert_eq!(
+            cp_tools::error_text(&BuildingError::NoRoad, ServiceSite::Land),
+            BuildingError::NoRoad.to_string()
+        );
     }
 
     #[test]

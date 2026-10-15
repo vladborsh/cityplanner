@@ -6,7 +6,13 @@ use bevy_egui::egui;
 use cp_content::UtilityKind;
 use cp_sim::{CityStats, SimView};
 
-use crate::palette::Category;
+/// Which networks a section of the Buildings panel summarises.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetTab {
+    /// Water and sewage (one pipe network).
+    Water,
+    Power,
+}
 
 /// One network's line.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,9 +33,9 @@ impl NetRow {
 }
 
 /// The networks of a panel: water and sewage on the Water panel, power on the Power panel.
-pub fn rows(stats: &CityStats, tab: Category) -> Vec<NetRow> {
+pub fn rows(stats: &CityStats, tab: NetTab) -> Vec<NetRow> {
     let kinds: &[(UtilityKind, &'static str)] = match tab {
-        Category::Power => &[(UtilityKind::Power, "Power")],
+        NetTab::Power => &[(UtilityKind::Power, "Power")],
         _ => &[
             (UtilityKind::Water, "Water"),
             (UtilityKind::Sewage, "Sewage"),
@@ -65,7 +71,7 @@ pub fn row_text(r: &NetRow) -> String {
 
 /// Draws the summary; a network whose use exceeds its capacity, or with buildings lacking the
 /// supply, is coloured as a warning (red for an overload, amber for missing supply).
-pub fn network_summary(ui: &mut egui::Ui, view: &SimView, tab: Category) {
+pub fn network_summary(ui: &mut egui::Ui, view: &SimView, tab: NetTab) {
     for r in rows(&view.city, tab) {
         let text = row_text(&r);
         if r.overloaded() {
@@ -91,7 +97,7 @@ mod tests {
     use cp_sim::scenario::{GridCityConfig, grid_city};
     use cp_sim::stats::NetStats;
 
-    fn drawn(view: &SimView, tab: Category) -> Vec<String> {
+    fn drawn(view: &SimView, tab: NetTab) -> Vec<String> {
         let ctx = egui::Context::default();
         frame_texts(&ctx, input(0.0, vec![]), |ui| {
             network_summary(ui, view, tab);
@@ -123,21 +129,21 @@ mod tests {
             s.utilities[0] = net(1, 1000.0, 400.0, 0);
             s.utilities[1] = net(1, 1000.0, 300.0, 0);
         });
-        let texts = drawn(&with, Category::Water);
-        assert!(texts.contains(&row_text(&rows(&with.city, Category::Water)[0])));
+        let texts = drawn(&with, NetTab::Water);
+        assert!(texts.contains(&row_text(&rows(&with.city, NetTab::Water)[0])));
         assert!(texts.iter().any(|t| t.contains("Water: 1 source · capacity 1000 · use 400 · 0 without supply")));
         assert!(texts.iter().any(|t| t.starts_with("Sewage: 1 source")));
         assert!(
-            rows(&with.city, Category::Water)
+            rows(&with.city, NetTab::Water)
                 .iter()
                 .all(|r| !r.overloaded())
         );
 
         // Without any pump: no source, 25 buildings dry, use beyond (zero) capacity: warning.
         let without = with_stats(|s| s.utilities[0] = net(0, 0.0, 250.0, 25));
-        let r = rows(&without.city, Category::Water);
+        let r = rows(&without.city, NetTab::Water);
         assert!(r[0].overloaded() && r[0].unsupplied == 25 && r[0].sources == 0);
-        let texts = drawn(&without, Category::Water);
+        let texts = drawn(&without, NetTab::Water);
         assert!(
             texts
                 .iter()
@@ -146,13 +152,13 @@ mod tests {
 
         // The Power panel shows power only.
         let power = with_stats(|s| s.utilities[2] = net(2, 600.0, 100.0, 0));
-        let texts = drawn(&power, Category::Power);
+        let texts = drawn(&power, NetTab::Power);
         assert!(texts.iter().any(|t| t.starts_with("Power: 2 sources")));
         assert!(!texts.iter().any(|t| t.starts_with("Water")));
         // Before the first count: a hint, not a wall of zeros.
         let fresh = with_stats(|s| s.generation = 0);
         assert!(
-            drawn(&fresh, Category::Power)
+            drawn(&fresh, NetTab::Power)
                 .iter()
                 .any(|t| t.contains("next count"))
         );
@@ -174,14 +180,14 @@ mod tests {
         let view = sim.view();
         let stats = &view.city;
         assert!(stats.generation > 0);
-        let water = &rows(stats, Category::Water);
+        let water = &rows(stats, NetTab::Water);
         assert_eq!(water[0].unsupplied, stats.utilities[0].unsupplied);
         assert_eq!(water[0].sources, 0, "no pump on flatlands");
         assert!(water[0].unsupplied > 0, "so the buildings are dry");
-        let power = &rows(stats, Category::Power);
+        let power = &rows(stats, NetTab::Power);
         assert!(power[0].sources > 0 && power[0].capacity > 0.0);
         assert_eq!(power[0].consumption, stats.utilities[2].consumption);
-        let texts = drawn(&view, Category::Power);
+        let texts = drawn(&view, NetTab::Power);
         // A warning line carries a leading sign.
         assert!(
             texts.iter().any(|t| t.ends_with(&row_text(&power[0]))),

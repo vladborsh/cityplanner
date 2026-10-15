@@ -6,8 +6,8 @@
 use std::f32::consts::FRAC_PI_2;
 
 use bevy_math::Vec2;
-use cp_building::{BuildingId, validate_placement};
-use cp_content::BuildingDefId;
+use cp_building::{BuildingError, BuildingId, validate_placement};
+use cp_content::{BuildingDefId, ServiceSite};
 use cp_core::Cost;
 use cp_sim::SimView;
 use cp_zone::ZoneCellRef;
@@ -30,6 +30,22 @@ impl BuildingTool {
 
     pub fn rot(&self) -> f32 {
         f32::from(self.quarters) * FRAC_PI_2
+    }
+}
+
+/// The ghost's reason for a refused placement, in the player's words: the water errors say
+/// what the type needs (`site`), the rest is the command's own text.
+pub fn error_text(e: &BuildingError, site: ServiceSite) -> String {
+    match (e, site) {
+        (BuildingError::NeedsWater, ServiceSite::OnWater) => {
+            "needs water under the lot: put at least one cell over water".to_string()
+        }
+        (BuildingError::NeedsWater, _) => format!(
+            "needs a shore: the lot on land with water within {:.0} m",
+            ServiceSite::SHORE_REACH_M
+        ),
+        (BuildingError::Water, _) => "water here: this building goes on land only".to_string(),
+        _ => e.to_string(),
     }
 }
 
@@ -68,7 +84,14 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
                 cells: view.zones.cell_at(hover).into_iter().collect(),
                 valid: false,
                 cost: None,
-                error: Some(e.to_string()),
+                error: Some(error_text(
+                    &e,
+                    db.building(def)
+                        .service
+                        .as_deref()
+                        .and_then(|s| db.service_id(s))
+                        .map_or(ServiceSite::Land, |s| db.service(s).site),
+                )),
             },
         },
     )

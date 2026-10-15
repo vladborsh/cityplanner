@@ -4,15 +4,13 @@
 use bevy::prelude::Resource;
 use bevy_egui::egui;
 use cp_building::Demand;
-use cp_content::UtilityKind;
 use cp_core::SimSpeed;
 use cp_render::{LightingSettings, Overlay, OverlayState};
 use cp_sim::SimView;
 use cp_tools::{
-    ActiveTool, CommandOutbox, PALETTE, ToolState, UtilityMode, ZoneToolKind, format_money,
-    snap_label, zone_name,
+    ActiveTool, CommandOutbox, PALETTE, ToolState, ZoneToolKind, format_money, snap_label,
+    zone_name,
 };
-use cp_utility::UtilityNet;
 
 use crate::files::{FileMenu, toggle_saves};
 use crate::icons::Icon;
@@ -443,14 +441,14 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ui.weak("Hover a spot beside a road. T rotates, Esc leaves the tool.");
             }
         },
-        (Category::Water | Category::Power, ActiveTool::Utility) => match &tools.utility_ghost {
+        (Category::Buildings, ActiveTool::Utility) => match &tools.utility_ghost {
             Some(g) if g.valid => ok(ui, "can build", g.cost, String::new()),
             Some(g) => bad(ui, &g.errors, "cannot build here"),
             None => {
                 ui.weak("Click to start. Buildings within 40 m of the network are connected. Esc cancels.");
             }
         },
-        (Category::Water | Category::Power, ActiveTool::UtilityRemove) => {
+        (Category::Buildings, ActiveTool::UtilityRemove) => {
             ui.weak("Hover a piece and click to remove it. Esc leaves the tool.");
         }
         (Category::Zones, ActiveTool::Zone) => {
@@ -471,8 +469,8 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
         (Category::Bulldozer, ActiveTool::Bulldozer) => {
             ui.weak("Hover a building or road segment, click to remove it. Esc leaves the tool.");
         }
-        (Category::Water | Category::Power, _) => {
-            ui.weak("Pick a tool; the overlay shows the network and which buildings lack supply.");
+        (Category::Buildings, _) => {
+            ui.weak("Pick a building or a network tool; the overlay shows the network and which buildings lack supply.");
         }
         _ => {
             ui.weak("Pick a tool.");
@@ -482,8 +480,13 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
 
 /// The Buildings category: the service buildings of the content as cards, grouped by service
 /// kind (see [`crate::buildings`]). T rotates the building.
-pub fn services_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
-    crate::buildings::buildings_panel(ui, view, tools);
+pub fn services_panel(
+    ui: &mut egui::Ui,
+    view: Option<&SimView>,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+) {
+    crate::buildings::buildings_panel(ui, view, tools, overlay);
 }
 
 /// The Bulldozer category: the one tool.
@@ -494,96 +497,6 @@ pub fn bulldozer_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
             ActiveTool::None
         } else {
             ActiveTool::Bulldozer
-        });
-    }
-}
-
-/// The Water and Power categories (`tab` picks which): the pipe or power-line tools, the remove
-/// tool and the modes. Picking a tool also switches the map overlay to that network (pipes
-/// are underground and only the Water overlay shows them).
-pub fn utility_panel(
-    ui: &mut egui::Ui,
-    view: Option<&SimView>,
-    tools: &mut ToolState,
-    overlay: &mut OverlayState,
-    tab: Category,
-) {
-    if let Some(view) = view {
-        section(ui, "Network", |ui| {
-            crate::net_summary::network_summary(ui, view, tab);
-        });
-    }
-    let (kinds, net, shown): (&[(UtilityKind, Icon, &str)], _, _) = if tab == Category::Power {
-        (
-            &[(UtilityKind::Power, Icon::PowerLine, "Power line")],
-            UtilityNet::Power,
-            Overlay::Power,
-        )
-    } else {
-        (
-            &[(UtilityKind::Water, Icon::Pipe, "Pipe")],
-            UtilityNet::Pipe,
-            Overlay::Water,
-        )
-    };
-    section(ui, "Tools", |ui| {
-        ui.horizontal_wrapped(|ui| {
-            for &(kind, icon, label) in kinds {
-                let selected = tools.active == ActiveTool::Utility && tools.utility.kind == kind;
-                // The def's own icon (T-105); the interface icon before the content is there.
-                let def_icon = view
-                    .and_then(|v| v.content.as_deref())
-                    .and_then(|c| c.utility_for_kind(kind))
-                    .map(|(_, d)| d.icon.as_str());
-                let tile_icon = def_icon.map_or(TileIcon::Icon(icon), TileIcon::Def);
-                if tool_tile(ui, tile_icon, label, selected).clicked() {
-                    if selected {
-                        tools.select(ActiveTool::None);
-                    } else {
-                        tools.select(ActiveTool::Utility);
-                        tools.utility.set_kind(kind);
-                        overlay.active = shown;
-                    }
-                }
-            }
-            let removing =
-                tools.active == ActiveTool::UtilityRemove && tools.remove_net == Some(net);
-            let remove_icon = if tab == Category::Power {
-                Icon::RemoveLine
-            } else {
-                Icon::RemovePipe
-            };
-            if tool_button(ui, remove_icon, "Remove", removing).clicked() {
-                if removing {
-                    tools.select(ActiveTool::None);
-                } else {
-                    tools.select(ActiveTool::UtilityRemove);
-                    tools.remove_net = Some(net);
-                    overlay.active = shown;
-                }
-            }
-        });
-    });
-    if tools.active == ActiveTool::Utility {
-        section(ui, "Mode", |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for (mode, label, hover) in [
-                    (UtilityMode::Straight, "Straight", "Two clicks"),
-                    (UtilityMode::Polyline, "Polyline", "Enter ends"),
-                ] {
-                    let icon = if mode == UtilityMode::Straight {
-                        Icon::Road
-                    } else {
-                        Icon::FreeRoad
-                    };
-                    if tool_button(ui, icon, label, tools.utility.mode == mode)
-                        .on_hover_text(hover)
-                        .clicked()
-                    {
-                        tools.utility.set_mode(mode);
-                    }
-                }
-            });
         });
     }
 }
@@ -1032,47 +945,6 @@ mod tests {
         assert!(
             tools.zone.corner.is_none(),
             "leaving the tool cancels the rectangle"
-        );
-    }
-
-    #[test]
-    fn utility_tabs_activate_their_tools_and_switch_the_overlay() {
-        let ctx = egui::Context::default();
-        let mut tools = ToolState::default();
-        let mut overlay = OverlayState::default();
-        let view = SimRunner::new(1).view();
-        let draw = |tools: &mut ToolState, overlay: &mut OverlayState, tab| {
-            crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
-                utility_panel(ui, Some(&view), tools, overlay, tab);
-            });
-        };
-        draw(&mut tools, &mut overlay, Category::Water);
-        assert_eq!(tools.active, ActiveTool::None);
-        assert_eq!(overlay.active, Overlay::Off);
-
-        // What a click on "Power line" does, then the panel draws with and without a ghost.
-        tools.select(ActiveTool::Utility);
-        tools.utility.set_kind(cp_content::UtilityKind::Power);
-        overlay.active = Overlay::Power;
-        draw(&mut tools, &mut overlay, Category::Power);
-        tools.utility_ghost = Some(cp_tools::Ghost {
-            polylines: vec![],
-            valid: false,
-            cost: None,
-            errors: vec!["outside the land you own".into()],
-            half_width: 0.0,
-            snap: Default::default(),
-            warnings: Vec::new(),
-            chevrons: Vec::new(),
-        });
-        draw(&mut tools, &mut overlay, Category::Power);
-        tools.select(ActiveTool::UtilityRemove);
-        tools.remove_net = Some(UtilityNet::Power);
-        draw(&mut tools, &mut overlay, Category::Power);
-        tools.select(ActiveTool::None);
-        assert!(
-            tools.utility_ghost.is_none(),
-            "leaving the tool clears the ghost"
         );
     }
 
