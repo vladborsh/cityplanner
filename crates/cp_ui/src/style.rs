@@ -21,6 +21,8 @@ impl Sizes {
     pub const TILE_PAD: f32 = 4.0;
     /// Corner radius of the icon frame.
     pub const TILE_ROUNDING: f32 = 6.0;
+    /// Gap between tiles of a grid.
+    pub const TILE_GAP: f32 = 4.0;
     /// Height of the top bar.
     pub const TOP_BAR_H: f32 = 44.0;
     /// Icons of the top bar.
@@ -35,8 +37,6 @@ impl Sizes {
     pub const ROW_ICON: f32 = 24.0;
     /// Square swatch of a zone card.
     pub const SWATCH: f32 = 26.0;
-    /// Height of the lane-profile strip of a road card (until the tiles of T-098).
-    pub const PROFILE_H: f32 = 22.0;
     /// Padding between an icon button's frame and its icon.
     pub const BUTTON_PAD: f32 = 2.0;
     /// Text sizes, points.

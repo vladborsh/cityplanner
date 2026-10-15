@@ -1,10 +1,10 @@
 //! The UI icons (T-082): self-made SVGs in `assets/ui/icons/src`, rendered to 128×128 PNGs in
 //! `assets/ui/icons` by `tools/assets/icons.mjs` and compiled in with `include_image!`, so a
 //! desktop and a WASM build carry the same bytes and nothing is loaded at run time.
-//! [`road_profile`] is the one procedural icon: the cross-section of a road type.
+//! [`road_tile`] is the procedural icon of a road type.
 
 use bevy_egui::egui;
-use cp_content::{LaneKind, RoadDef};
+use cp_content::{LaneKind, RoadClass, RoadDef};
 
 macro_rules! icons {
     ($($variant:ident => $file:literal),+ $(,)?) => {
@@ -108,47 +108,133 @@ pub fn def_icon(_name: &str) -> egui::ImageSource<'static> {
     Icon::Building.image()
 }
 
-/// Colour of a lane in the profile icon.
-fn lane_colour(kind: LaneKind) -> egui::Color32 {
-    match kind {
-        LaneKind::Car => egui::Color32::from_gray(70),
-        LaneKind::Bus => egui::Color32::from_rgb(150, 70, 60),
-        LaneKind::Tram => egui::Color32::from_rgb(120, 120, 130),
-        LaneKind::Bike => egui::Color32::from_rgb(60, 130, 80),
-        LaneKind::Pedestrian => egui::Color32::from_rgb(170, 160, 140),
+/// Colour of the class corner of a road tile.
+pub fn class_colour(class: RoadClass) -> egui::Color32 {
+    match class {
+        RoadClass::Local => egui::Color32::from_rgb(160, 160, 175),
+        RoadClass::Collector => egui::Color32::from_rgb(90, 150, 225),
+        RoadClass::Arterial => egui::Color32::from_rgb(235, 175, 60),
+        RoadClass::Highway => egui::Color32::from_rgb(215, 80, 70),
     }
 }
 
-/// The cross-section of `def`, lanes side by side scaled to `size` (the profile's width spans
-/// the icon's width). Lane `offset` is the lateral centre from the axis, positive to the left.
-pub fn road_profile(ui: &mut egui::Ui, def: &RoadDef, size: egui::Vec2) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
-    if !ui.is_rect_visible(rect) {
-        return response;
-    }
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 2.0, egui::Color32::from_gray(30));
-    let span = def.width.max(0.1);
-    let x_of = |lateral: f32| rect.center().x - lateral / span * rect.width();
-    let lane_h = rect.height() * 0.7;
-    let lane_rect = |centre: f32, width: f32| {
-        egui::Rect::from_center_size(
-            egui::pos2(x_of(centre), rect.center().y),
-            egui::vec2(width / span * rect.width(), lane_h),
+/// Share of the square's width the widest road of the content takes.
+const ROAD_TILE_FILL: f32 = 0.8;
+const GRASS: egui::Color32 = egui::Color32::from_rgb(76, 120, 66);
+const ASPHALT: egui::Color32 = egui::Color32::from_gray(62);
+const MARK_YELLOW: egui::Color32 = egui::Color32::from_rgb(235, 190, 50);
+
+/// The icon of a road type (T-098): a straight piece of the road seen **from straight above**,
+/// running vertically through the whole square on grass, as wide as the road is (the widest
+/// road of the content takes 80 % of the square: `widest` metres). Lanes keep their colours,
+/// a yellow centre line divides opposing directions, a white dash lines separate lanes of one
+/// direction, one-way roads carry arrows, a coloured corner names the class and a crossed
+/// square marks a road that cannot be zoned.
+pub fn road_tile_scaled(painter: &egui::Painter, def: &RoadDef, rect: egui::Rect, widest: f32) {
+    let px = rect.width() * ROAD_TILE_FILL / widest.max(0.1);
+    let x_of = |lateral: f32| rect.center().x - lateral * px;
+    let band = |lo: f32, hi: f32| {
+        egui::Rect::from_min_max(
+            egui::pos2(x_of(hi), rect.top()),
+            egui::pos2(x_of(lo), rect.bottom()),
         )
     };
+    painter.rect_filled(rect, 0.0, GRASS);
+    let half = def.width * 0.5;
+    painter.rect_filled(band(-half, half), 0.0, ASPHALT);
     if def.median_width > 0.0 {
         painter.rect_filled(
-            lane_rect(0.0, def.median_width),
+            band(-def.median_width * 0.5, def.median_width * 0.5),
             0.0,
             egui::Color32::from_rgb(70, 110, 60),
         );
     }
     for lane in &def.lanes {
-        let r = lane_rect(lane.offset, lane.width);
-        painter.rect_filled(r.shrink2(egui::vec2(0.5, 0.0)), 0.0, lane_colour(lane.kind));
+        let colour = match lane.kind {
+            LaneKind::Car => ASPHALT,
+            LaneKind::Bus => egui::Color32::from_rgb(150, 70, 60),
+            LaneKind::Tram => egui::Color32::from_rgb(120, 120, 130),
+            LaneKind::Bike => egui::Color32::from_rgb(60, 140, 85),
+            LaneKind::Pedestrian => egui::Color32::from_rgb(190, 182, 165),
+        };
+        let (lo, hi) = (
+            lane.offset - lane.width * 0.5,
+            lane.offset + lane.width * 0.5,
+        );
+        painter.rect_filled(band(lo, hi), 0.0, colour);
     }
-    response.on_hover_text(format!("{} — {:.0} m wide", def.name, def.width))
+    // Markings between neighbouring vehicle lanes.
+    let mut cars: Vec<&cp_content::LaneDef> = def
+        .lanes
+        .iter()
+        .filter(|l| matches!(l.kind, LaneKind::Car | LaneKind::Bus))
+        .collect();
+    cars.sort_by(|a, b| a.offset.total_cmp(&b.offset));
+    for pair in cars.windows(2) {
+        let x = x_of((pair[0].offset + pair[1].offset) * 0.5);
+        if pair[0].dir != pair[1].dir {
+            let w = (px * 0.2).max(1.5);
+            painter.rect_filled(
+                egui::Rect::from_x_y_ranges(x - w..=x + w, rect.y_range()),
+                0.0,
+                MARK_YELLOW,
+            );
+        } else {
+            let dash = rect.height() / 10.0;
+            let mut y = rect.top() + dash * 0.5;
+            while y < rect.bottom() {
+                painter.rect_filled(
+                    egui::Rect::from_x_y_ranges(
+                        x - 0.7..=x + 0.7,
+                        y..=(y + dash * 0.5).min(rect.bottom()),
+                    ),
+                    0.0,
+                    egui::Color32::from_gray(225),
+                );
+                y += dash;
+            }
+        }
+    }
+    // Direction arrows (travel runs up the tile) on the lanes of a one-way road.
+    if def.is_one_way() {
+        for lane in cars.iter().filter(|l| l.kind == LaneKind::Car) {
+            let w = (lane.width * px * 0.55).clamp(4.0, 12.0);
+            for f in [0.3, 0.72] {
+                let (cx, top) = (x_of(lane.offset), rect.top() + rect.height() * f);
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        egui::pos2(cx, top),
+                        egui::pos2(cx + w * 0.5, top + w),
+                        egui::pos2(cx - w * 0.5, top + w),
+                    ],
+                    egui::Color32::from_gray(235),
+                    egui::Stroke::NONE,
+                ));
+            }
+        }
+    }
+    // The class, as a coloured corner bar.
+    painter.rect_filled(
+        egui::Rect::from_min_size(rect.min + egui::vec2(3.0, 3.0), egui::vec2(14.0, 5.0)),
+        2.0,
+        class_colour(def.class),
+    );
+    if !def.allows_zoning {
+        let r = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 15.0, rect.top() + 3.0),
+            egui::vec2(12.0, 12.0),
+        );
+        painter.rect_filled(r, 2.0, egui::Color32::from_rgb(170, 60, 50));
+        painter.line_segment(
+            [r.left_bottom(), r.right_top()],
+            egui::Stroke::new(1.5, egui::Color32::WHITE),
+        );
+    }
+}
+
+/// [`road_tile_scaled`] with `def` itself as the widest road.
+pub fn road_tile(painter: &egui::Painter, def: &RoadDef, rect: egui::Rect) {
+    road_tile_scaled(painter, def, rect, def.width);
 }
 
 #[cfg(test)]

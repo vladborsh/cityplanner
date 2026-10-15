@@ -409,7 +409,7 @@ mod tests {
             rig.click_label(&c.name);
             assert_eq!(rig.tools.road.road, Some(c.id));
         }
-        assert!(rig.frame(vec![]).contains("no zoning") == cards.iter().any(|c| !c.allows_zoning),);
+        // ("no zoning" is in the tile's tooltip now: `roads::tile_tooltip`, tested there.)
     }
 
     #[test]

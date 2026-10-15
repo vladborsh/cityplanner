@@ -10,6 +10,8 @@ use cp_tools::{
 };
 
 use crate::icons::{self, Icon};
+use crate::style::Sizes;
+use crate::tile::{TileIcon, tool_tile};
 
 /// What a card shows, taken from the road definition.
 #[derive(Clone, Debug, PartialEq)]
@@ -75,35 +77,34 @@ pub fn elevation_text(level: u8) -> String {
     }
 }
 
-fn card(ui: &mut egui::Ui, content: &ContentDb, c: &Card, selected: bool) -> egui::Response {
-    let fill = if selected {
-        ui.visuals().selection.bg_fill
-    } else {
-        ui.visuals().faint_bg_color
+/// The hover text of a road tile: everything the tile itself leaves out.
+pub fn tile_tooltip(c: &Card) -> String {
+    let mut text = format!(
+        "{}\n{}\n{}/m · {}/m/wk",
+        c.name,
+        card_summary(c),
+        format_money(c.cost_per_m),
+        format_money(c.upkeep_per_m_week)
+    );
+    if !c.allows_zoning {
+        text.push_str("\nno zoning");
+    }
+    text
+}
+
+/// One tile of the grid: the procedural icon, the name, the numbers on hover.
+fn road_tile_widget(
+    ui: &mut egui::Ui,
+    content: &ContentDb,
+    widest: f32,
+    c: &Card,
+    selected: bool,
+) -> egui::Response {
+    let def = content.road(c.id);
+    let draw = |painter: &egui::Painter, rect: egui::Rect| {
+        icons::road_tile_scaled(painter, def, rect, widest);
     };
-    let inner = egui::Frame::group(ui.style()).fill(fill).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        icons::road_profile(
-            ui,
-            content.road(c.id),
-            egui::vec2(ui.available_width(), crate::style::Sizes::PROFILE_H),
-        );
-        ui.strong(&c.name);
-        ui.label(card_summary(c));
-        ui.label(format!(
-            "{}/m · {}/m/wk",
-            format_money(c.cost_per_m),
-            format_money(c.upkeep_per_m_week)
-        ));
-        if !c.allows_zoning {
-            ui.colored_label(egui::Color32::from_rgb(230, 180, 60), "no zoning");
-        }
-    });
-    ui.interact(
-        inner.response.rect,
-        inner.response.id.with("road_card"),
-        egui::Sense::click(),
-    )
+    tool_tile(ui, TileIcon::Draw(&draw), &c.name, selected).on_hover_text(tile_tooltip(c))
 }
 
 /// The Roads category panel.
@@ -184,14 +185,173 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
     }
     ui.add_space(4.0);
     ui.weak(if building { "Road type" } else { "Upgrade to" });
-    let mut last = None;
-    for c in &cards {
-        if last != Some(c.class) {
-            ui.strong(class_label(c.class));
-            last = Some(c.class);
+    let widest = content.roads().map(|(_, d)| d.width).fold(0.0, f32::max);
+    // One row of tiles per class, three to a row.
+    let mut classes: Vec<RoadClass> = cards.iter().map(|c| c.class).collect();
+    classes.dedup();
+    for class in classes {
+        ui.strong(class_label(class));
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
+            for c in cards.iter().filter(|c| c.class == class) {
+                if road_tile_widget(ui, content, widest, c, tools.road.road == Some(c.id)).clicked()
+                {
+                    tools.road.road = Some(c.id);
+                }
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::{click, frame_texts, input};
+    use crate::tile::take_rects;
+
+    fn content() -> ContentDb {
+        ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content")).unwrap()
+    }
+
+    /// One frame of the Roads panel (road tool active) in a 300 px panel on a tall screen.
+    fn draw(
+        ctx: &egui::Context,
+        t: f64,
+        events: Vec<egui::Event>,
+        content: &ContentDb,
+        tools: &mut ToolState,
+    ) -> Vec<(String, egui::Pos2)> {
+        let mut raw = input(t, events);
+        raw.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1280.0, 3000.0),
+        ));
+        frame_texts(ctx, raw, |ui| {
+            let mut root = crate::panels::root_ui(ui.ctx());
+            egui::Panel::left("p")
+                .exact_size(Sizes::TOOL_PANEL_W)
+                .show(&mut root, |ui| roads_panel(ui, Some(content), tools));
+        })
+    }
+
+    fn road_tiles(ctx: &egui::Context, n: usize) -> Vec<(egui::Rect, egui::Rect)> {
+        let all = take_rects(ctx).0;
+        all[all.len() - n..].to_vec()
+    }
+
+    #[test]
+    fn the_types_are_tiles_in_card_order_three_to_a_row_under_one_header_per_class() {
+        let content = content();
+        let cards = cards(&content);
+        let mut tools = ToolState::default();
+        tools.select(ActiveTool::Road);
+        let ctx = egui::Context::default();
+        draw(&ctx, 0.0, vec![], &content, &mut tools);
+        take_rects(&ctx);
+        let texts = draw(&ctx, 0.1, vec![], &content, &mut tools);
+        let tiles = road_tiles(&ctx, cards.len());
+        // The square rule (§13.7).
+        for (tile, icon) in &tiles {
+            assert_eq!(tile.size(), Sizes::tile());
+            assert_eq!(icon.size(), Sizes::tile_icon());
         }
-        if card(ui, content, c, tools.road.road == Some(c.id)).clicked() {
-            tools.road.road = Some(c.id);
+        // Order: left to right, rows top to bottom; at most three to a row.
+        let mut rows: Vec<Vec<egui::Rect>> = Vec::new();
+        for (tile, _) in &tiles {
+            match rows.last_mut() {
+                Some(row) if (row[0].top() - tile.top()).abs() < 1.0 => row.push(*tile),
+                _ => rows.push(vec![*tile]),
+            }
         }
+        assert!(rows.iter().all(|r| r.len() <= 3), "{rows:?}");
+        assert!(
+            rows.iter().any(|r| r.len() == 3) || cards.len() < 3,
+            "no row holds three tiles: {rows:?}"
+        );
+        for row in &rows {
+            assert!(row.windows(2).all(|w| w[1].left() > w[0].right() - 0.5));
+        }
+        // Names follow the card order.
+        let names: Vec<&str> = texts
+            .iter()
+            .filter(|(t, _)| cards.iter().any(|c| &c.name == t))
+            .map(|(t, _)| t.as_str())
+            .collect();
+        let expect: Vec<&str> = cards.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, expect);
+        // One header per class.
+        let classes = {
+            let mut c: Vec<_> = cards.iter().map(|c| c.class).collect();
+            c.dedup();
+            c
+        };
+        let headers = texts
+            .iter()
+            .filter(|(t, _)| classes.iter().any(|c| t == class_label(*c)))
+            .count();
+        assert_eq!(headers, classes.len());
+    }
+
+    #[test]
+    fn a_click_on_a_tile_selects_the_road_type() {
+        let content = content();
+        let cards = cards(&content);
+        let mut tools = ToolState::default();
+        tools.select(ActiveTool::Road);
+        let ctx = egui::Context::default();
+        draw(&ctx, 0.0, vec![], &content, &mut tools);
+        take_rects(&ctx);
+        draw(&ctx, 0.1, vec![], &content, &mut tools);
+        let tiles = road_tiles(&ctx, cards.len());
+        for (i, c) in cards.iter().enumerate().rev() {
+            let [down, up] = click(tiles[i].0.center());
+            draw(&ctx, 0.2 + i as f64, down, &content, &mut tools);
+            draw(&ctx, 0.25 + i as f64, up, &content, &mut tools);
+            assert_eq!(tools.road.road, Some(c.id), "{}", c.name);
+        }
+    }
+
+    #[test]
+    fn the_tooltip_has_the_numbers_the_tile_leaves_out() {
+        let content = content();
+        for c in cards(&content) {
+            let text = tile_tooltip(&c);
+            assert!(text.contains(&c.name));
+            assert!(text.contains("km/h"), "{text}");
+            assert!(text.contains("lane"), "{text}");
+            assert!(text.contains(&format_money(c.cost_per_m)), "{text}");
+            assert_eq!(text.contains("no zoning"), !c.allows_zoning);
+        }
+    }
+
+    /// How many filled polygons (the arrows) a road tile paints.
+    fn arrows(def: &cp_content::RoadDef) -> usize {
+        fn count(shape: &egui::Shape) -> usize {
+            match shape {
+                egui::Shape::Path(_) => 1,
+                egui::Shape::Vec(v) => v.iter().map(count).sum(),
+                _ => 0,
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut n = 0;
+        let mut out = ctx.run_ui(input(0.0, vec![]), |ui| {
+            let rect = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), Sizes::tile_icon());
+            icons::road_tile(ui.painter(), def, rect);
+        });
+        out.textures_delta.clear();
+        for clipped in &out.shapes {
+            n += count(&clipped.shape);
+        }
+        n
+    }
+
+    #[test]
+    fn one_way_roads_show_arrows_and_two_way_streets_none() {
+        let content = content();
+        let road = |id: &str| content.road(content.road_id(id).unwrap());
+        assert_eq!(arrows(road("basic_2l")), 0);
+        assert!(arrows(road("highway_1w_1l")) > 0);
+        assert!(arrows(road("highway_1w_4l")) > arrows(road("highway_1w_1l")));
     }
 }
