@@ -484,8 +484,8 @@ fn extrude(
         .then(|| carriageway(graph, seg, &bands))
         .flatten();
     let chevrons = chevron.map_or_else(Vec::new, |_| chevron_rows(length));
-    let s_list = ring_positions(length, is_straight(&curve), has_dashes, &chevrons);
-    let rings: Vec<Ring> = s_list.iter().map(|&s| frame.ring(s)).collect();
+    let base = ring_positions(length, is_straight(&curve), has_dashes, &chevrons);
+    let (s_list, rings) = ground::rings(&frame, graph, geo, terrain, seg, base);
     // Ring pairs `k - 1, k` that hold a chevron.
     let chevron_row = |k: usize| {
         k > 0
@@ -812,7 +812,7 @@ pub fn build_junction_piece(
     if n.elevation == Elevation::Tunnel {
         return None;
     }
-    let ys = polygon_heights(graph, j);
+    let ys = ground::heights(graph, geo, terrain, j);
     let mut m = MeshData::default();
     let verts: Vec<u32> = j
         .polygon
@@ -914,6 +914,8 @@ pub fn segment_fingerprint(graph: &NetGraph, geo: &JunctionGeometry, id: Segment
         }
     }
     for (node, at_start) in [(seg.start, true), (seg.end, false)] {
+        // The ground level at a junction depends on all its arms.
+        fnv(&mut h, geo.get(node).map_or(0, |j| j.revision as u32));
         match arm_of(geo, node, id, at_start) {
             Some(a) => {
                 fnv(&mut h, a.trim_t.to_bits());
@@ -1105,7 +1107,9 @@ impl RoadSet {
 }
 
 pub mod band;
+mod ground;
 pub use band::{BAND_LIFT, BAND_STEP, band_data, band_mesh, band_polyline, to_mesh};
+pub use ground::{CLEARANCE, lod_height, max_mesh_height};
 
 #[cfg(test)]
 mod tests;

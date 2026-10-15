@@ -19,10 +19,14 @@ struct World {
 }
 
 fn world() -> World {
+    world_on("flatlands")
+}
+
+fn world_on(map: &str) -> World {
     let content =
         Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
     let terrain =
-        Arc::new(Terrain::load(&Path::new(ROOT).join("../../assets/maps/flatlands")).unwrap());
+        Arc::new(Terrain::load(&Path::new(ROOT).join("../../assets/maps").join(map)).unwrap());
     let mut sim = SimRunner::new(1);
     sim.set_terrain(Arc::clone(&terrain));
     sim.set_content(Arc::clone(&content));
@@ -611,4 +615,79 @@ fn chevrons_do_not_change_the_carriageway_area() {
         "area {area} vs {}",
         7.5 * len
     );
+}
+
+/// BUG-025: the deck of every ground road type is above the terrain (bilinear ground and the
+/// triangles of every LOD's mesh) at each deck vertex and each deck triangle edge midpoint.
+#[test]
+fn ground_roads_stay_above_the_terrain_mesh() {
+    const EPS: f32 = 0.05;
+    for map in ["flatlands", "river_valley"] {
+        let mut w = world_on(map);
+        let roads: Vec<String> = w.content.roads().map(|(_, d)| d.id.clone()).collect();
+        let mut built = 0;
+        for (k, road) in roads.iter().enumerate() {
+            // Several lines per type, in different directions, over uneven ground.
+            for (i, (dx, dz)) in [(400.0, 0.0), (0.0, 400.0), (280.0, 280.0), (300.0, -150.0)]
+                .into_iter()
+                .enumerate()
+            {
+                let x = 1500.0 + 1000.0 * i as f32 + 60.0 * k as f32;
+                let z = 3000.0 + 90.0 * k as f32;
+                w.line(
+                    road,
+                    (x, z + 450.0 * (dz < 0.0) as i32 as f32),
+                    (x + dx, z + dz + 450.0 * (dz < 0.0) as i32 as f32),
+                );
+            }
+        }
+        let v = w.view();
+        let (set, _) = w.set(&v);
+        let heights = |p: Vec2| {
+            (0..crate::chunk::LOD_COUNT)
+                .map(|l| lod_height(&w.terrain, l, p))
+                .fold(w.terrain.height(p), f32::max)
+        };
+        let check = |m: &MeshData, what: &str| {
+            let pos: Vec<Vec3> = positions(m).collect();
+            let up = |i: u32| m.normals[i as usize][1] > 0.9;
+            for (i, p) in pos.iter().enumerate() {
+                if up(i as u32) {
+                    let h = heights(Vec2::new(p.x, p.z));
+                    assert!(p.y >= h + EPS, "{map} {what}: vertex {p} below terrain {h}");
+                }
+            }
+            for t in m.indices.chunks(3) {
+                if !t.iter().all(|&i| up(i)) {
+                    continue;
+                }
+                for (a, b) in [(0, 1), (1, 2), (2, 0)] {
+                    let mid = (pos[t[a] as usize] + pos[t[b] as usize]) * 0.5;
+                    let h = heights(Vec2::new(mid.x, mid.z));
+                    assert!(
+                        mid.y >= h + EPS,
+                        "{map} {what}: edge midpoint {mid} below terrain {h}"
+                    );
+                }
+            }
+        };
+        for (id, seg) in v.net.segments() {
+            if seg.elevation != Elevation::Ground {
+                continue;
+            }
+            let piece = set.piece(PieceKey::Segment(id)).unwrap();
+            check(&piece.near, "segment near");
+            check(&piece.far, "segment far");
+            built += 1;
+        }
+        for (node, _) in v.junctions.iter() {
+            if let Some(piece) = set.piece(PieceKey::Junction(*node)) {
+                check(&piece.near, "junction");
+            }
+        }
+        assert!(
+            built >= roads.len(),
+            "{map}: only {built} ground segments built"
+        );
+    }
 }
