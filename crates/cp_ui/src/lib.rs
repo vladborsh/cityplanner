@@ -23,6 +23,8 @@ pub mod net_summary;
 pub mod palette;
 pub mod panels;
 pub mod roads;
+pub mod style;
+pub mod tile;
 pub mod windows;
 
 pub use debug::{DebugData, PhaseTimes, TickRate};
@@ -96,6 +98,7 @@ fn draw_ui(
     let ctx = contexts.ctx_mut()?;
     if !*loaders_installed {
         egui_extras::install_image_loaders(ctx);
+        style::install(ctx);
         *loaders_installed = true;
     }
     let available = Category::available(view.content.as_deref());

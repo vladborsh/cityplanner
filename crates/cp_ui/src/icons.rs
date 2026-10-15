@@ -1,4 +1,4 @@
-//! The UI icons (T-082): self-made SVGs in `assets/ui/icons/src`, rendered to 64×64 PNGs in
+//! The UI icons (T-082): self-made SVGs in `assets/ui/icons/src`, rendered to 128×128 PNGs in
 //! `assets/ui/icons` by `tools/assets/icons.mjs` and compiled in with `include_image!`, so a
 //! desktop and a WASM build carry the same bytes and nothing is loaded at run time.
 //! [`road_profile`] is the one procedural icon: the cross-section of a road type.
@@ -68,10 +68,44 @@ icons! {
 }
 
 impl Icon {
+    /// An icon of `size` points as a widget with a fixed footprint: the space is taken even
+    /// while the image is still loading (or cannot load), so layouts do not jump.
+    pub fn show(self, ui: &mut egui::Ui, size: f32) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+        if ui.is_rect_visible(rect) {
+            egui::Image::new(self.image()).paint_at(ui, rect);
+        }
+        response
+    }
+
+    /// An icon button of exactly `size` + `pad` on each side (palette, top bar).
+    pub fn button(self, ui: &mut egui::Ui, size: f32, pad: f32, selected: bool) -> egui::Response {
+        let side = size + 2.0 * pad;
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
+        if ui.is_rect_visible(rect) {
+            let visuals = ui.style().interact_selectable(&response, selected);
+            ui.painter().rect(
+                rect,
+                visuals.corner_radius,
+                visuals.weak_bg_fill,
+                visuals.bg_stroke,
+                egui::StrokeKind::Inside,
+            );
+            egui::Image::new(self.image()).paint_at(ui, rect.shrink(pad));
+        }
+        response
+    }
+
     /// An icon image of `size` points.
     pub fn sized(self, size: f32) -> egui::Image<'static> {
         egui::Image::new(self.image()).fit_to_exact_size(egui::vec2(size, size))
     }
+}
+
+/// The icon of a content def by name (`BuildingDef.icon`, `UtilityDef.icon`, T-105). Until the
+/// per-def icons exist (T-105) every name maps to the generic building icon.
+pub fn def_icon(_name: &str) -> egui::ImageSource<'static> {
+    Icon::Building.image()
 }
 
 /// Colour of a lane in the profile icon.
@@ -126,12 +160,12 @@ mod tests {
     }
 
     #[test]
-    fn every_icon_has_a_64_by_64_png_and_an_svg_source() {
+    fn every_icon_has_a_128_by_128_png_and_an_svg_source() {
         for icon in Icon::ALL {
             let png = icons_dir().join(format!("{}.png", icon.stem()));
             let (w, h) =
                 image::image_dimensions(&png).unwrap_or_else(|e| panic!("{}: {e}", png.display()));
-            assert_eq!((w, h), (64, 64), "{}", png.display());
+            assert_eq!((w, h), (128, 128), "{}", png.display());
             let svg = icons_dir().join("src").join(format!("{}.svg", icon.stem()));
             assert!(svg.is_file(), "missing source {}", svg.display());
         }

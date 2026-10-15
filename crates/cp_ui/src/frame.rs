@@ -5,6 +5,7 @@
 use bevy_egui::egui;
 
 use crate::icons::Icon;
+use crate::style::Sizes;
 
 /// A window under construction; [`Win::show`] draws it.
 pub struct Win<'a> {
@@ -52,7 +53,7 @@ impl Win<'_> {
         }
         let out = win.show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.add(self.icon.sized(20.0));
+                self.icon.show(ui, Sizes::WINDOW_ICON);
                 ui.strong(self.title);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.small_button("✖").on_hover_text("Close").clicked() {
@@ -123,7 +124,10 @@ mod tests {
         draw(&ctx, 0.0, vec![], &mut open, &mut bounds);
         draw(&ctx, 0.05, vec![], &mut open, &mut bounds);
         // The close button is at the right end of the header row.
-        let pos = egui::pos2(bounds.right() - 14.0, bounds.top() + 20.0);
+        let pos = egui::pos2(
+            bounds.right() - 14.0,
+            bounds.top() + 10.0 + Sizes::WINDOW_ICON * 0.5,
+        );
         let button = |pressed| egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,

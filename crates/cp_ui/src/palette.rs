@@ -1,6 +1,6 @@
 //! The left palette and the tool panel beside it (`architecture/system-design.md` §13.6).
 //!
-//! The palette is a 56 px column with one icon per [`Category`]; clicking one (or pressing its
+//! The palette is a 72 px column with one icon per [`Category`]; clicking one (or pressing its
 //! number key, 1…6) opens that category's 300 px tool panel, clicking it again closes the
 //! panel. The panel has a header, the tool buttons and options of the category, and the pinned
 //! "cost · verdict" block at the bottom.
@@ -15,11 +15,7 @@ use crate::icons::Icon;
 use crate::panels::{
     UiState, bulldozer_panel, roads_panel, services_panel, utility_panel, verdict, zones_panel,
 };
-
-/// Width of the palette column, points.
-pub const PALETTE_WIDTH: f32 = 56.0;
-/// Width of the tool panel, points.
-pub const TOOL_PANEL_WIDTH: f32 = 300.0;
+use crate::style::Sizes;
 
 /// Build-menu categories. A category without tools is not drawn ([`Category::available`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,14 +102,15 @@ pub fn palette(
 ) -> Vec<(Category, egui::Rect)> {
     let mut rects = Vec::new();
     egui::Panel::left("palette")
-        .exact_size(PALETTE_WIDTH)
+        .exact_size(Sizes::PALETTE_W)
         .resizable(false)
         .show(root, |ui| {
             ui.vertical_centered(|ui| {
                 for (n, c) in Category::available(content).into_iter().enumerate() {
                     let selected = state.category == Some(c);
-                    let r = ui
-                        .add(egui::Button::image(c.icon().sized(32.0)).selected(selected))
+                    let r = c
+                        .icon()
+                        .button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, selected)
                         .on_hover_text(format!("{} ({})", c.label(), n + 1));
                     rects.push((c, r.rect));
                     if r.clicked() {
@@ -179,11 +176,11 @@ pub fn tool_panel(
 ) -> Option<egui::Rect> {
     let category = state.category?;
     let out = egui::Panel::left("tool_panel")
-        .exact_size(TOOL_PANEL_WIDTH)
+        .exact_size(Sizes::TOOL_PANEL_W)
         .resizable(false)
         .show(root, |ui| {
             ui.horizontal(|ui| {
-                ui.add(category.icon().sized(28.0));
+                category.icon().show(ui, Sizes::PANEL_HEADER_ICON);
                 ui.heading(category.label());
             });
             ui.separator();
@@ -241,6 +238,8 @@ mod tests {
         t: f64,
         palette: Vec<(Category, egui::Rect)>,
         panel: Option<egui::Rect>,
+        /// Screen size of the frames.
+        screen: egui::Vec2,
     }
 
     impl Rig {
@@ -254,6 +253,7 @@ mod tests {
                 t: 0.0,
                 palette: Vec::new(),
                 panel: None,
+                screen: egui::vec2(1280.0, 720.0),
             };
             rig.frame(vec![]);
             rig.frame(vec![]);
@@ -279,9 +279,12 @@ mod tests {
                 view,
                 palette: pal,
                 panel,
+                screen,
                 t,
             } = self;
-            frame_texts(ctx, input(*t, events), |ui| {
+            let mut raw = input(*t, events);
+            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, *screen));
+            frame_texts(ctx, raw, |ui| {
                 let mut root = crate::panels::root_ui(ui.ctx());
                 *pal = palette(&mut root, state, view.content.as_deref());
                 *panel = tool_panel(&mut root, state, Some(view), tools, overlay);
@@ -396,10 +399,12 @@ mod tests {
             "{cards:?}"
         );
         let mut rig = Rig::new();
+        // Tall enough for every card (the list grows until T-098 makes it a grid).
+        rig.screen = egui::vec2(1280.0, 3000.0);
         rig.click_category(Category::Roads);
         rig.click_label("Build");
         assert_eq!(rig.tools.active, ActiveTool::Road);
-        // The panel scrolls, so only the first cards are painted; click the first two.
+        // Click the first two.
         for c in &cards[..2] {
             rig.click_label(&c.name);
             assert_eq!(rig.tools.road.road, Some(c.id));
@@ -499,17 +504,81 @@ mod tests {
     }
 
     #[test]
-    fn the_palette_is_56_wide_and_the_tool_panel_300() {
+    fn the_palette_is_72_wide_with_52_icons_and_the_tool_panel_300() {
         let mut rig = Rig::new();
-        let pal = rig.palette[0].1;
-        assert!(pal.width() < PALETTE_WIDTH);
+        for (c, r) in &rig.palette {
+            assert!(
+                r.width() >= Sizes::PALETTE_ICON && r.height() >= Sizes::PALETTE_ICON,
+                "{c:?}: {r:?}"
+            );
+            assert!(r.width() <= Sizes::PALETTE_W, "{c:?}: {r:?}");
+        }
         rig.click_category(Category::Roads);
         let panel = rig.panel.unwrap();
-        assert_eq!(panel.width(), TOOL_PANEL_WIDTH);
-        assert_eq!(
-            panel.min.x, PALETTE_WIDTH,
-            "the panel sits right of the palette"
+        assert_eq!(panel.width(), Sizes::TOOL_PANEL_W);
+        // (The panel's rectangle starts half a stroke inside its outer edge.)
+        assert!(
+            (panel.min.x - Sizes::PALETTE_W).abs() <= 1.0,
+            "the panel sits right of the palette: {}",
+            panel.min.x
         );
+    }
+
+    /// The tiles one frame of the open panel draws: `(tile, icon frame)`.
+    fn tiles(rig: &mut Rig) -> Vec<(egui::Rect, egui::Rect)> {
+        crate::tile::take_rects(&rig.ctx);
+        rig.frame(vec![]);
+        crate::tile::take_rects(&rig.ctx).0
+    }
+
+    /// §13.7: every tile of every construction panel is one size, with a square icon frame.
+    #[test]
+    fn every_tile_of_the_roads_zones_water_and_power_panels_is_88_with_a_64_square_icon() {
+        for (category, tool) in [
+            (Category::Roads, ActiveTool::Road),
+            (Category::Roads, ActiveTool::Upgrade),
+            (Category::Zones, ActiveTool::Zone),
+            (Category::Water, ActiveTool::Utility),
+            (Category::Power, ActiveTool::Utility),
+            (Category::Water, ActiveTool::None),
+            (Category::Bulldozer, ActiveTool::Bulldozer),
+        ] {
+            let mut rig = Rig::new();
+            rig.click_category(category);
+            rig.tools.select(tool);
+            let tiles = tiles(&mut rig);
+            assert!(!tiles.is_empty(), "{category:?}/{tool:?}: no tiles");
+            for (tile, icon) in tiles {
+                assert_eq!(tile.size(), Sizes::tile(), "{category:?}/{tool:?}");
+                assert_eq!(icon.size(), Sizes::tile_icon(), "{category:?}/{tool:?}");
+                assert_eq!(icon.width(), icon.height());
+            }
+        }
+    }
+
+    #[test]
+    fn the_top_bar_is_44_high() {
+        let ctx = egui::Context::default();
+        let mut sim = SimRunner::new(1);
+        sim.set_content(content());
+        let view = sim.view();
+        let mut bar = None;
+        for t in [0.0, 0.1] {
+            frame(&ctx, input(t, vec![]), |ui| {
+                let mut root = crate::panels::root_ui(ui.ctx());
+                let rects = crate::panels::top_bar(
+                    &mut root,
+                    &view,
+                    &mut cp_tools::CommandOutbox::default(),
+                    &mut OverlayState::default(),
+                    &mut cp_render::LightingSettings::default(),
+                    &mut UiState::default(),
+                    &mut crate::files::FileMenu::default(),
+                );
+                bar = rects.bar;
+            });
+        }
+        assert_eq!(bar.unwrap().height(), Sizes::TOP_BAR_H);
     }
 
     #[test]
@@ -609,8 +678,8 @@ mod tests {
             "Build",
             "Mode",
             "Straight",
-            "Curve (3 clicks)",
-            "Free (Enter ends)",
+            "Curve",
+            "Free",
             "Road type",
             "Elevation (PgUp / PgDn)",
         ] {

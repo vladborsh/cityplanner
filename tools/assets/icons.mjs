@@ -1,4 +1,4 @@
-// Renders the self-made UI icons: assets/ui/icons/src/*.svg -> assets/ui/icons/*.png, 64x64.
+// Renders the self-made UI icons: assets/ui/icons/src/*.svg -> assets/ui/icons/*.png, 128x128.
 // Not part of the build; the PNGs are committed.
 //
 //   cd tools/assets && npm install
@@ -10,7 +10,7 @@ import { Resvg } from '@resvg/resvg-js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../assets/ui/icons');
 const src = path.join(root, 'src');
-const SIZE = 64;
+const SIZE = 128;
 
 for (const file of fs.readdirSync(src).filter((f) => f.endsWith('.svg')).sort()) {
   const svg = fs.readFileSync(path.join(src, file));

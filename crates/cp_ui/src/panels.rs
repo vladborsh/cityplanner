@@ -18,6 +18,8 @@ use crate::files::{FileMenu, toggle_saves};
 use crate::icons::Icon;
 use crate::palette::Category;
 use crate::set_speed;
+use crate::style::Sizes;
+use crate::tile::{TileIcon, tool_tile, tool_tile_enabled};
 
 #[derive(Resource, Debug, Default)]
 pub struct UiState {
@@ -123,6 +125,8 @@ pub fn overlay_buttons(ui: &mut egui::Ui, state: &mut OverlayState) -> Vec<(Over
 /// Where the clickable parts of the top bar were drawn (tests click them).
 #[derive(Clone, Debug, Default)]
 pub struct TopRects {
+    /// The whole bar (its height is [`Sizes::TOP_BAR_H`]).
+    pub bar: Option<egui::Rect>,
     pub speeds: Vec<(SimSpeed, egui::Rect)>,
     pub windows: Vec<(UiWindow, egui::Rect)>,
 }
@@ -140,59 +144,63 @@ pub fn top_bar(
     files: &mut FileMenu,
 ) -> TopRects {
     let mut rects = TopRects::default();
-    egui::Panel::top("top_bar").show(root, |ui| {
-        ui.horizontal(|ui| {
-            crate::budget::money_label(ui, view);
-            for w in UiWindow::ALL {
-                let on = match w {
-                    UiWindow::Budget => state.budget_open,
-                    UiWindow::Demand => state.demand_open,
-                    UiWindow::Metrics => state.metrics_open,
-                    UiWindow::Saves => files.open,
-                    UiWindow::Debug => state.debug_open,
-                };
-                let r = ui
-                    .add(egui::Button::image(w.icon().sized(20.0)).selected(on))
-                    .on_hover_text(w.label());
-                rects.windows.push((w, r.rect));
-                if r.clicked() {
-                    match w {
-                        UiWindow::Budget => state.budget_open = !on,
-                        UiWindow::Demand => state.demand_open = !on,
-                        UiWindow::Metrics => state.metrics_open = !on,
-                        UiWindow::Saves => toggle_saves(files),
-                        UiWindow::Debug => state.debug_open = !on,
+    let bar = egui::Panel::top("top_bar")
+        .exact_size(Sizes::TOP_BAR_H)
+        .show(root, |ui| {
+            ui.horizontal_centered(|ui| {
+                crate::budget::money_label(ui, view);
+                for w in UiWindow::ALL {
+                    let on = match w {
+                        UiWindow::Budget => state.budget_open,
+                        UiWindow::Demand => state.demand_open,
+                        UiWindow::Metrics => state.metrics_open,
+                        UiWindow::Saves => files.open,
+                        UiWindow::Debug => state.debug_open,
+                    };
+                    let r = w
+                        .icon()
+                        .button(ui, Sizes::TOP_BAR_ICON, Sizes::BUTTON_PAD, on)
+                        .on_hover_text(w.label());
+                    rects.windows.push((w, r.rect));
+                    if r.clicked() {
+                        match w {
+                            UiWindow::Budget => state.budget_open = !on,
+                            UiWindow::Demand => state.demand_open = !on,
+                            UiWindow::Metrics => state.metrics_open = !on,
+                            UiWindow::Saves => toggle_saves(files),
+                            UiWindow::Debug => state.debug_open = !on,
+                        }
                     }
                 }
-            }
-            ui.separator();
-            crate::budget::demand_bars(ui, &view.demand);
-            ui.separator();
-            ui.label(format!("👥 {}", view.city.population))
-                .on_hover_text("Residents");
-            ui.separator();
-            ui.label(format_time(view));
-            ui.separator();
-            for (speed, label) in SPEEDS {
-                let r = ui.selectable_label(view.speed == speed, label);
-                rects.speeds.push((speed, r.rect));
-                if r.clicked() && view.speed != speed {
-                    outbox.push(set_speed(speed));
+                ui.separator();
+                crate::budget::demand_bars(ui, &view.demand);
+                ui.separator();
+                ui.label(format!("👥 {}", view.city.population))
+                    .on_hover_text("Residents");
+                ui.separator();
+                ui.label(format_time(view));
+                ui.separator();
+                for (speed, label) in SPEEDS {
+                    let r = ui.selectable_label(view.speed == speed, label);
+                    rects.speeds.push((speed, r.rect));
+                    if r.clicked() && view.speed != speed {
+                        outbox.push(set_speed(speed));
+                    }
                 }
-            }
-            ui.separator();
-            overlay_buttons(ui, overlay);
-            ui.separator();
-            // Render only: the game clock and everyone's routine keep running at night.
-            ui.checkbox(&mut lighting.always_day, "Всегда день");
+                ui.separator();
+                overlay_buttons(ui, overlay);
+                ui.separator();
+                // Render only: the game clock and everyone's routine keep running at night.
+                ui.checkbox(&mut lighting.always_day, "Всегда день");
+            });
         });
-    });
+    rects.bar = Some(bar.response.rect);
     rects
 }
 
-/// An icon + label button of a tool panel.
+/// A tool of a tool panel: the one tile of every construction tool (see [`crate::tile`]).
 pub fn tool_button(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -> egui::Response {
-    ui.add(egui::Button::image_and_text(icon.sized(22.0), label).selected(selected))
+    tool_tile(ui, TileIcon::Icon(icon), label, selected)
 }
 
 /// A titled section of a tool panel.
@@ -363,7 +371,7 @@ pub fn utility_panel(
         (
             &[
                 (UtilityKind::Water, Icon::PipeWater, "Water pipe"),
-                (UtilityKind::Sewage, Icon::PipeSewage, "Sewage pipe"),
+                (UtilityKind::Sewage, Icon::PipeSewage, "Sewage"),
             ],
             UtilityNet::Pipe,
             Overlay::Water,
@@ -399,12 +407,17 @@ pub fn utility_panel(
     if tools.active == ActiveTool::Utility {
         section(ui, "Mode", |ui| {
             ui.horizontal_wrapped(|ui| {
-                for (mode, label) in [
-                    (UtilityMode::Straight, "Straight (2 clicks)"),
-                    (UtilityMode::Polyline, "Polyline (Enter ends)"),
+                for (mode, label, hover) in [
+                    (UtilityMode::Straight, "Straight", "Two clicks"),
+                    (UtilityMode::Polyline, "Polyline", "Enter ends"),
                 ] {
-                    if ui
-                        .selectable_label(tools.utility.mode == mode, label)
+                    let icon = if mode == UtilityMode::Straight {
+                        Icon::Road
+                    } else {
+                        Icon::FreeRoad
+                    };
+                    if tool_button(ui, icon, label, tools.utility.mode == mode)
+                        .on_hover_text(hover)
                         .clicked()
                     {
                         tools.utility.set_mode(mode);
@@ -444,9 +457,14 @@ pub fn zones_panel(
                     tools.zone.set_kind(kind);
                 }
             }
-            if ui
-                .add_enabled(tools.active == ActiveTool::Zone, egui::Button::new("✖ Off"))
-                .clicked()
+            if tool_tile_enabled(
+                ui,
+                TileIcon::Icon(Icon::Remove),
+                "Off",
+                false,
+                tools.active == ActiveTool::Zone,
+            )
+            .clicked()
             {
                 tools.select(ActiveTool::None);
             }
@@ -498,8 +516,10 @@ fn zone_card(
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 let letter = zone_group_demand(zone, &Demand::default()).0;
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(Sizes::SWATCH, Sizes::SWATCH),
+                    egui::Sense::hover(),
+                );
                 ui.painter().rect_filled(rect, 4.0, color);
                 ui.painter().text(
                     rect.center(),

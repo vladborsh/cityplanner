@@ -104,14 +104,17 @@ pub fn buildings_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut To
     for group in groups(content) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.add(kind_icon(group.kind).sized(18.0));
+            kind_icon(group.kind).show(ui, crate::style::Sizes::SECTION_ICON);
             ui.strong(kind_label(group.kind));
         });
         for card in &group.cards {
             let selected = tools.active == ActiveTool::Place && tools.building.def == Some(card.id);
-            let button = egui::Button::image_and_text(Icon::Building.sized(22.0), card_text(card))
-                .selected(selected)
-                .min_size(egui::vec2(ui.available_width(), 0.0));
+            let button = egui::Button::image_and_text(
+                Icon::Building.sized(crate::style::Sizes::ROW_ICON),
+                card_text(card),
+            )
+            .selected(selected)
+            .min_size(egui::vec2(ui.available_width(), 0.0));
             if ui.add(button).clicked() {
                 select(tools, card.id);
             }

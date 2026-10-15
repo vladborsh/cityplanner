@@ -86,7 +86,7 @@ fn card(ui: &mut egui::Ui, content: &ContentDb, c: &Card, selected: bool) -> egu
         icons::road_profile(
             ui,
             content.road(c.id),
-            egui::vec2(ui.available_width(), 22.0),
+            egui::vec2(ui.available_width(), crate::style::Sizes::PROFILE_H),
         );
         ui.strong(&c.name);
         ui.label(card_summary(c));
@@ -146,8 +146,8 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
         ui.horizontal_wrapped(|ui| {
             for (mode, icon, label) in [
                 (RoadMode::Straight, Icon::Road, "Straight"),
-                (RoadMode::Curve, Icon::Curve, "Curve (3 clicks)"),
-                (RoadMode::Free, Icon::FreeRoad, "Free (Enter ends)"),
+                (RoadMode::Curve, Icon::Curve, "Curve"),
+                (RoadMode::Free, Icon::FreeRoad, "Free"),
             ] {
                 if crate::panels::tool_button(ui, icon, label, tools.road.mode == mode).clicked() {
                     tools.road.set_mode(mode);
