@@ -10,7 +10,6 @@ use bevy::window::PrimaryWindow;
 use cp_core::Cost;
 use cp_net::{
     NetCommand, RoadBuildError, RoadPath, SegmentId, SnapReport, SnapReportKind, one_way_report,
-    road_run,
 };
 use cp_render::camera::math::ray_terrain_hit;
 use cp_render::{RtsCamera, UiCapture};
@@ -19,7 +18,10 @@ use cp_sim::{SimCommand, SimView};
 use crate::CommandOutbox;
 use crate::band::{BandState, sync_bands};
 use crate::building::{BuildingTool, PlacementGhost, pick_building, preview as place_preview};
-use crate::bulldozer::{PICK_RADIUS, pick_segment, remove_run_commands, run_outside_owned};
+use crate::bulldozer::{
+    PICK_RADIUS, Span, demolition, pick_segment, remove_run_commands, span_commands,
+    spans_outside_owned,
+};
 use crate::road::{
     MarkerKind, RoadMarker, RoadTool, chevron_lines, preview_report, quantized, road_is_one_way,
     road_markers, sample_curve,
@@ -88,6 +90,10 @@ pub struct ToolState {
     pub highlight: Vec<SegmentId>,
     /// The highlighted run leaves the bought tiles: drawn red, no command on click (§5.1).
     pub highlight_outside: bool,
+    /// The exact pieces the bulldozer would take (§6.7); `highlight` lists their segments.
+    pub spans: Vec<Span>,
+    /// `Shift` is held: the bulldozer takes the whole road run.
+    pub shift: bool,
     /// What the upgrade tool would do to the run under the cursor (T-081).
     pub upgrade_preview: Option<crate::upgrade::UpgradePreview>,
     pub zone: ZoneTool,
@@ -132,6 +138,7 @@ impl ToolState {
         self.ghost = None;
         self.highlight.clear();
         self.highlight_outside = false;
+        self.spans.clear();
         self.upgrade_preview = None;
         self.ghost_key = None;
         self.zone.cancel();
@@ -318,6 +325,9 @@ fn tool_hover(
     state.alt = keys
         .as_deref()
         .is_some_and(|k| k.pressed(KeyCode::AltLeft) || k.pressed(KeyCode::AltRight));
+    state.shift = keys
+        .as_deref()
+        .is_some_and(|k| k.pressed(KeyCode::ShiftLeft) || k.pressed(KeyCode::ShiftRight));
     let (Some(view), Ok(window), Ok((camera, transform))) =
         (view, window.single(), camera.single())
     else {
@@ -332,14 +342,13 @@ fn tool_hover(
     match (state.active, hover) {
         (ActiveTool::Bulldozer, Some(p)) => {
             state.building_highlight = pick_building(&view, p);
-            state.highlight = if state.building_highlight.is_some() {
+            state.spans = if state.building_highlight.is_some() {
                 Vec::new()
             } else {
-                pick_segment(&view.net, p, PICK_RADIUS)
-                    .map(|seg| road_run(&view.net, seg))
-                    .unwrap_or_default()
+                demolition(&view.net, p, PICK_RADIUS, state.shift)
             };
-            state.highlight_outside = run_outside_owned(&view.net, &view.tiles, &state.highlight);
+            state.highlight = state.spans.iter().map(|s| s.0).collect();
+            state.highlight_outside = spans_outside_owned(&view.net, &view.tiles, &state.spans);
         }
         (ActiveTool::Upgrade, Some(p)) => {
             let preview = match (state.road.road, view.content.as_deref()) {
@@ -394,6 +403,7 @@ fn tool_hover(
         _ => {
             state.highlight.clear();
             state.highlight_outside = false;
+            state.spans.clear();
             state.upgrade_preview = None;
             state.building_highlight = None;
             state.place_ghost = None;
@@ -581,10 +591,15 @@ pub fn tool_click(
                 outbox.push(SimCommand::Building(BuildingCommand::Demolish { building }));
                 state.building_highlight = None;
             } else if !state.highlight.is_empty() && !state.highlight_outside {
-                for command in remove_run_commands(&state.highlight) {
+                let commands = match view.as_deref() {
+                    Some(v) if !state.spans.is_empty() => span_commands(&v.net, &state.spans),
+                    _ => remove_run_commands(&state.highlight),
+                };
+                for command in commands {
                     outbox.push(command);
                 }
                 state.highlight.clear();
+                state.spans.clear();
             }
         }
         ActiveTool::Upgrade => {

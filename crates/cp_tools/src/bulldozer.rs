@@ -1,7 +1,10 @@
 //! The segment bulldozer: finds the segment under the cursor.
 
 use bevy_math::Vec2;
-use cp_net::{NetCommand, NetGraph, SegmentId, curve_outside_owned};
+use cp_net::{
+    NetCommand, NetGraph, PART_SNAP, SegmentId, curve_outside_owned, locate, road_run, span, stops,
+    stretch,
+};
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
 
@@ -27,6 +30,87 @@ pub fn pick_segment(net: &NetGraph, p: Vec2, radius: f32) -> Option<SegmentId> {
         }
     }
     best.map(|(_, id)| id)
+}
+
+/// A piece of a segment the bulldozer takes: `(segment, s0, s1)`, arc lengths from the
+/// segment's start.
+pub type Span = (SegmentId, f32, f32);
+
+/// What a click at `p` takes (`architecture/system-design.md` §6.7): the part of the stretch
+/// under the cursor between the nearest stops on either side (a junction, a corner, a dead end,
+/// a change of road type or height, or a control point), or with `whole_run` the whole road
+/// run (Shift). Ends within [`PART_SNAP`] of a segment end are moved onto it, exactly as
+/// `RemovePart` does, so what is highlighted is what goes.
+pub fn demolition(net: &NetGraph, p: Vec2, radius: f32, whole_run: bool) -> Vec<Span> {
+    let Some(seg) = pick_segment(net, p, radius) else {
+        return Vec::new();
+    };
+    if whole_run {
+        return road_run(net, seg)
+            .into_iter()
+            .filter_map(|id| net.segment(id).map(|s| (id, 0.0, s.length)))
+            .collect();
+    }
+    let Some(st) = stretch(net, seg) else {
+        return Vec::new();
+    };
+    let Some(s) = net.segment(seg) else {
+        return Vec::new();
+    };
+    let (t, _) = s.curve.nearest_xz(p);
+    let Some(along) = locate(net, seg, s.curve.arc_table().t_to_s(t)) else {
+        return Vec::new();
+    };
+    let stops = stops(net, &st);
+    let Some(last) = stops.len().checked_sub(1) else {
+        return Vec::new();
+    };
+    // The first stop beyond the cursor closes the piece, the one before it opens it.
+    let hi = stops
+        .iter()
+        .position(|q| q.along > along + 1e-3)
+        .unwrap_or(last)
+        .max(1);
+    span(net, &st, stops[hi - 1].along, stops[hi].along)
+        .into_iter()
+        .filter_map(|(id, s0, s1)| {
+            let len = net.segment(id)?.length;
+            let s0 = if s0 < PART_SNAP { 0.0 } else { s0 };
+            let s1 = if s1 > len - PART_SNAP { len } else { s1 };
+            (s1 - s0 >= cp_net::MIN_SEGMENT_LENGTH).then_some((id, s0, s1))
+        })
+        .collect()
+}
+
+/// `RemoveSegment` for a piece that is a whole segment, `RemovePart` otherwise; one command per
+/// span, in order. The tool pushes them all in one frame, so they run in one tick.
+pub fn span_commands(net: &NetGraph, spans: &[Span]) -> Vec<SimCommand> {
+    spans
+        .iter()
+        .map(|&(seg, s0, s1)| {
+            let whole = net
+                .segment(seg)
+                .is_some_and(|s| s0 <= 0.0 && s1 >= s.length);
+            SimCommand::Net(if whole {
+                NetCommand::RemoveSegment { seg }
+            } else {
+                NetCommand::RemovePart { seg, s0, s1 }
+            })
+        })
+        .collect()
+}
+
+/// Whether any segment touched leaves the bought tiles (`RemovePart` checks the whole segment).
+pub fn spans_outside_owned(net: &NetGraph, tiles: &TileOwnership, spans: &[Span]) -> bool {
+    spans.iter().any(|&(id, ..)| {
+        net.segment(id)
+            .is_some_and(|s| curve_outside_owned(tiles, &s.curve).is_some())
+    })
+}
+
+/// Total length of the spans, metres.
+pub fn spans_length(spans: &[Span]) -> f32 {
+    spans.iter().map(|&(_, a, b)| b - a).sum()
 }
 
 /// One `RemoveSegment` per segment of a road run, in run order. The tool pushes them all in

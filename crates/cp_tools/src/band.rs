@@ -29,6 +29,7 @@ pub fn band_geometry(
     view: &SimView,
     ghost: Option<&Ghost>,
     run: &[SegmentId],
+    parts: &[crate::bulldozer::Span],
     run_outside: bool,
 ) -> MeshData {
     let terrain = view.terrain.as_deref();
@@ -51,6 +52,20 @@ pub fn band_geometry(
                 colour,
             ));
         }
+    }
+    for &(id, s0, s1) in parts {
+        let (Some(seg), Some(content)) = (view.net.segment(id), view.content.as_deref()) else {
+            continue;
+        };
+        let table = seg.curve.arc_table();
+        let piece = seg.curve.sub_curve(table.s_to_t(s0), table.s_to_t(s1));
+        add(band_polyline(
+            &sample_curve(&piece, 4.0),
+            content.road(seg.road).width * 0.5,
+            terrain,
+            BAND_LIFT + 0.05,
+            if run_outside { GHOST_BAD } else { HIGHLIGHT },
+        ));
     }
     for &id in run {
         let (Some(seg), Some(content)) = (view.net.segment(id), view.content.as_deref()) else {
@@ -80,6 +95,7 @@ pub struct BandState {
 struct BandKey {
     ghost: Option<Ghost>,
     run: Vec<SegmentId>,
+    parts: Vec<crate::bulldozer::Span>,
     run_outside: bool,
     net_ptr: usize,
 }
@@ -98,21 +114,36 @@ pub fn sync_bands(
         .ghost
         .clone()
         .filter(|_| state.active == ActiveTool::Road);
-    let run = if matches!(state.active, ActiveTool::Bulldozer | ActiveTool::Upgrade) {
+    let bulldozer = state.active == ActiveTool::Bulldozer && !state.spans.is_empty();
+    let run = if state.active == ActiveTool::Upgrade
+        || (state.active == ActiveTool::Bulldozer && !bulldozer)
+    {
         state.highlight.clone()
+    } else {
+        Vec::new()
+    };
+    let parts = if bulldozer {
+        state.spans.clone()
     } else {
         Vec::new()
     };
     let key = BandKey {
         ghost,
         run,
+        parts,
         run_outside: state.highlight_outside,
         net_ptr: Arc::as_ptr(&view.net) as usize,
     };
     if bands.key.as_ref() == Some(&key) {
         return;
     }
-    let data = band_geometry(&view, key.ghost.as_ref(), &key.run, key.run_outside);
+    let data = band_geometry(
+        &view,
+        key.ghost.as_ref(),
+        &key.run,
+        &key.parts,
+        key.run_outside,
+    );
     bands.key = Some(key);
     if let Some(e) = bands.entity.take() {
         commands.entity(e).despawn();
@@ -182,7 +213,7 @@ mod tests {
     #[test]
     fn the_highlight_band_is_as_wide_as_the_road_and_orange() {
         let (sim, seg, width) = sim();
-        let m = band_geometry(&sim.view(), None, &[seg], false);
+        let m = band_geometry(&sim.view(), None, &[seg], &[], false);
         assert!(!m.indices.is_empty());
         assert!((x_extent(&m) - width * 0.5).abs() < 1e-3);
         assert!(m.colors.iter().all(|c| *c == HIGHLIGHT));
@@ -203,15 +234,15 @@ mod tests {
             chevrons: Vec::new(),
         };
         let view = sim.view();
-        let ok = band_geometry(&view, Some(&ghost(true, 6.0)), &[], false);
+        let ok = band_geometry(&view, Some(&ghost(true, 6.0)), &[], &[], false);
         assert!((x_extent(&ok) - 6.0).abs() < 1e-3);
         assert!(ok.colors.iter().all(|c| *c == GHOST_OK));
-        let bad = band_geometry(&view, Some(&ghost(false, 14.0)), &[], false);
+        let bad = band_geometry(&view, Some(&ghost(false, 14.0)), &[], &[], false);
         assert!((x_extent(&bad) - 14.0).abs() < 1e-3);
         assert!(bad.colors.iter().all(|c| *c == GHOST_BAD));
         // A line-only ghost (no width) and no run draw nothing.
         assert!(
-            band_geometry(&view, Some(&ghost(true, 0.0)), &[], false)
+            band_geometry(&view, Some(&ghost(true, 0.0)), &[], &[], false)
                 .indices
                 .is_empty()
         );

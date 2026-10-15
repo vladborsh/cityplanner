@@ -27,7 +27,9 @@ pub use building::{
     ALIGN_REACH_M, BuildingTool, ConnectionHint, FREE_ROT_STEP, FreeGhost, PlacementGhost,
     connection_hint, error_text, pick_building,
 };
-pub use bulldozer::pick_segment;
+pub use bulldozer::{
+    Span, demolition, pick_segment, span_commands, spans_length, spans_outside_owned,
+};
 pub use cp_render::UiCapture;
 pub use outbox::CommandOutbox;
 pub use pick::{Inspected, Picked, pick};

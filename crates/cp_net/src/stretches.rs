@@ -261,6 +261,29 @@ pub fn stops(graph: &NetGraph, st: &Stretch) -> Vec<StretchPoint> {
     out
 }
 
+/// The pieces of the stretch between `a` and `b` metres from the anchor (`a < b`), one per
+/// segment touched: `(segment, s0, s1)` with `s0 < s1` measured from the segment's own start,
+/// in order from the anchor. Pieces shorter than a millimetre are left out.
+pub fn span(graph: &NetGraph, st: &Stretch, a: f32, b: f32) -> Vec<(SegmentId, f32, f32)> {
+    let mut out = Vec::new();
+    for (id, forward, offset) in layout(graph, st) {
+        let Some(len) = graph.segment(id).map(|s| s.length) else {
+            continue;
+        };
+        let (lo, hi) = (a.max(offset), b.min(offset + len));
+        if hi - lo < 1e-3 {
+            continue;
+        }
+        let (l, h) = (lo - offset, hi - offset);
+        out.push(if forward {
+            (id, l, h)
+        } else {
+            (id, len - h, len - l)
+        });
+    }
+    out
+}
+
 /// The position on the stretch containing `seg` (arc length from its anchor) of the point
 /// `s_on_seg` metres from the start of `seg`. `None` for an unknown segment.
 pub fn locate(graph: &NetGraph, seg: SegmentId, s_on_seg: f32) -> Option<f32> {

@@ -18,7 +18,7 @@ pub use build::{
     ZONE_CELL, one_way_report, pier_positions, quantize_path, segment_cost, validate_road_path,
     validate_road_path_report,
 };
-pub use command::{NetCommand, NetError, apply, build_unowned, curve_outside_owned};
+pub use command::{NetCommand, NetError, PART_SNAP, apply, build_unowned, curve_outside_owned};
 pub use connections::{LaneConnection, Links, PedLink, PedLinkKind, Turn};
 pub use control::{ControlPlan, LightPlan, Phase, Priority, Signal};
 pub use graph::{MIN_SEGMENT_LENGTH, NODE_REUSE_EPS, NetGraph, NetOpError, SplitResult};
@@ -29,7 +29,8 @@ pub use model::*;
 pub use reach::{EntryReach, update_entry_reach};
 pub use run::road_run;
 pub use stretches::{
-    CORNER_DEG, Stretch, StretchPoint, cell_ticks, control_points, locate, stops, stretch, unlocate,
+    CORNER_DEG, Stretch, StretchPoint, cell_ticks, control_points, locate, span, stops, stretch,
+    unlocate,
 };
 
 /// Crate name, used by the skeleton smoke test.
