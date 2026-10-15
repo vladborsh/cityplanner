@@ -449,7 +449,7 @@ mod tests {
         for (_, d) in db.utilities() {
             names.push((d.id.clone(), d.icon.clone()));
         }
-        assert!(names.len() >= 7, "{names:?}");
+        assert!(names.len() >= 6, "{names:?}"); // one pipe since T-101
         let mut seen: Vec<(String, Vec<u8>)> = Vec::new();
         for (def, icon) in &names {
             assert!(def_icon_exists(icon), "{def}: icon {icon:?} does not exist");
