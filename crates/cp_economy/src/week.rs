@@ -5,10 +5,11 @@
 //! same code the sim does. Every line is an integer number of cents, rounded once per line
 //! ([`Cost::scaled`]); lines are summed in id order.
 //!
-//! * **Tax**, per `Active` building: `tax_base × rate × occupancy`, `rate = pct / 100`,
-//!   `occupancy = (households + filled jobs) / (household capacity + job slots)`, at most 1.
-//!   The *level factor* of the formula is 1: a building's level is its definition (`apt_high_3`
-//!   is level 3), and `tax_base` is already per definition.
+//! * **Tax**, per `Active` building, `rate = pct / 100`: residential
+//!   `rate × households_living × tax_household[level]`; workplaces
+//!   `rate × Σ filled_jobs[edu] × tax_job[edu] × level_mul[level]`; plus the optional
+//!   `tax_base × rate × occupancy` surcharge (0 unless a definition sets it). The level is the
+//!   definition's (`apt_high_3` is level 3). Tables are in `balance.ron` (T-128).
 //! * **Roads**, per segment: `length × upkeep_per_m_week × budget(Roads) / 100`; the upkeep is
 //!   that of the elevated or bridge variant for such segments.
 //! * **Service buildings**, per `Active` building with a service: `upkeep_week × budget(kind)
@@ -69,17 +70,27 @@ pub fn week_report(i: &WeekInputs, week: u64) -> WeekReport {
         if let Some(zone_slot) = (def.zone as usize).checked_sub(1)
             && let Some(rate) = st.taxes.get(def.zone)
         {
+            let bal = i.content.balance();
+            let rate_f = f64::from(rate) / 100.0;
+            let lvl = usize::from(def.level.max(1)) - 1;
+            let homes = f64::from(i.citizens.households_in(id).min(def.households));
+            let mut tax = Cost::scaled(bal.tax_household[lvl.min(4)], rate_f * homes);
+            let mul = f64::from(bal.level_mul[lvl.min(2)]);
+            for (edu, &per_job) in bal.tax_job.iter().enumerate() {
+                let filled = f64::from(i.citizens.jobs_filled(id, edu).min(def.jobs[edu]));
+                tax += Cost::scaled(per_job, rate_f * filled * mul);
+            }
             let cap =
                 u32::from(def.households) + def.jobs.iter().map(|&j| u32::from(j)).sum::<u32>();
-            if cap > 0 {
+            if cap > 0 && def.tax_base > 0.0 {
                 let filled = u32::from(i.citizens.households_in(id))
                     + (0..4)
                         .map(|l| u32::from(i.citizens.jobs_filled(id, l)))
                         .sum::<u32>();
                 let filled = filled.min(cap);
-                let factor = f64::from(rate) * f64::from(filled) / (100.0 * f64::from(cap));
-                r.income_by_zone[zone_slot] += Cost::scaled(def.tax_base, factor);
+                tax += Cost::scaled(def.tax_base, rate_f * f64::from(filled) / f64::from(cap));
             }
+            r.income_by_zone[zone_slot] += tax;
         }
         if let Some(service) = def.service.as_deref().and_then(|s| i.content.service_id(s)) {
             let kind = i.content.service(service).kind;

@@ -114,6 +114,13 @@ pub struct Balance {
     /// building is abandoned, and until it is demolished (counted from the first problem).
     pub abandon_days: f32,
     pub demolish_days: f32,
+    /// Weekly tax of one household living in a residential building of level 1..=5 at a 100%
+    /// rate (T-128).
+    pub tax_household: [f32; 5],
+    /// Weekly tax of one filled job of education 0..=3 at a 100% rate (T-128).
+    pub tax_job: [f32; 4],
+    /// Multiplier of `tax_job` by building level 1..=3 (commercial, industrial, office).
+    pub level_mul: [f32; 3],
 }
 
 impl Balance {
@@ -139,6 +146,9 @@ impl Balance {
         v.extend(self.level_com_land);
         v.extend(self.level_ind_edu);
         v.extend(self.level_office_edu);
+        v.extend(self.tax_household);
+        v.extend(self.tax_job);
+        v.extend(self.level_mul);
         v
     }
 }
@@ -172,6 +182,9 @@ impl Default for Balance {
             level_checks: 3,
             abandon_days: 7.0,
             demolish_days: 14.0,
+            tax_household: [110.0, 140.0, 175.0, 215.0, 260.0],
+            tax_job: [30.0, 45.0, 65.0, 90.0],
+            level_mul: [1.0, 1.2, 1.45],
         }
     }
 }
@@ -371,6 +384,8 @@ pub struct BuildingDef {
     /// Consumption per game day by utility.
     #[serde(default)]
     pub consumption: BTreeMap<UtilityKind, f32>,
+    /// Optional extra tax base on top of the household / job tax (T-128); 0 when omitted.
+    #[serde(default)]
     pub tax_base: f32,
     /// Price of a service building placed by the player, currency units (zoned buildings
     /// spawn for free).

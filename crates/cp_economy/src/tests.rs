@@ -52,11 +52,11 @@ fn content() -> Arc<ContentDb> {
         ContentDb::from_sources(vec![
             ("r/street.ron".into(), ROAD.into()),
             ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
-            building("house", "ResLow", "households: 4, tax_base: 40.0,", "None"),
+            building("house", "ResLow", "households: 4, tax_base: 0.0,", "None"),
             building(
                 "shop",
                 "ComLow",
-                "jobs: (4, 0, 0, 0), tax_base: 30.0,",
+                "jobs: (4, 0, 0, 0), tax_base: 0.0,",
                 "None",
             ),
             building(
@@ -180,33 +180,34 @@ fn balance(world: &World) -> Cost {
 /// Hand calculation, all in currency units (the test compares cents).
 ///
 /// **Week 1**, default settings (taxes 9%, budgets 100%):
-/// * tax: house 1 has 3 of 4 flats let: 40 × 0.09 × 3/4 = 2.70; house 2: 40 × 0.09 × 1/4 =
-///   0.90; the empty house 0; the one under construction 0; the shop has 2 of 4 jobs:
-///   30 × 0.09 × 2/4 = 1.35; the pump has `tax_base` 0. Income 4.95.
+/// * tax (T-128: households × 110 for level 1, jobs × 30 for education 0, × 1.0): house 1
+///   has 3 households: 110 × 0.09 × 3 = 29.70; house 2: 110 × 0.09 = 9.90; the empty house 0;
+///   the one under construction 0; the shop has 2 filled jobs: 30 × 0.09 × 2 = 5.40;
+///   the pump has no tax. Income 45.00.
 /// * roads: (100 + 60) m × 0.5 = 80.00
 /// * buildings: the pump 300.00
 /// * utilities: pipe 50 m × 0.02 = 1.00, power line 40 m × 0.03 = 1.20, total 2.20
-/// * week: 4.95 − 80.00 − 300.00 − 2.20 = −377.25, so 70 000.00 → 69 622.75
+/// * week: 45.00 − 80.00 − 300.00 − 2.20 = −337.20, so 70 000.00 → 69 662.80
 ///
 /// **Week 2**, after commercial tax 12%, roads 120%, water 50%, power 150%:
-/// * tax: 2.70 + 0.90 + 30 × 0.12 × 2/4 (1.80) = 5.40
+/// * tax: 29.70 + 9.90 + 30 × 0.12 × 2 (7.20) = 46.80
 /// * roads: 80.00 × 1.2 = 96.00; the pump (water) 300.00 × 0.5 = 150.00
 /// * utilities: the pipe (water) 1.00 × 0.5 = 0.50, the line (power) 1.20 × 1.5 = 1.80
-/// * week: 5.40 − 96.00 − 150.00 − 0.50 − 1.80 = −242.90, so 69 622.75 → 69 379.85
+/// * week: 46.80 − 96.00 − 150.00 − 0.50 − 1.80 = −201.50, so 69 662.80 → 69 461.30
 #[test]
 fn weekly_balance_matches_the_hand_calculation() {
     let (mut world, mut schedule) = city();
     run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
     let r = world.resource::<EconomyState>().last_week;
     assert_eq!(r.week, 1);
-    assert_eq!(r.income(), Cost(495));
-    assert_eq!(r.income_by_zone[0], Cost(360)); // ResLow
-    assert_eq!(r.income_by_zone[2], Cost(135)); // ComLow
+    assert_eq!(r.income(), Cost(4_500));
+    assert_eq!(r.income_by_zone[0], Cost(3_960)); // ResLow
+    assert_eq!(r.income_by_zone[2], Cost(540)); // ComLow
     assert_eq!(r.road_upkeep, Cost(8_000));
     assert_eq!(r.building_upkeep, Cost(30_000));
     assert_eq!(r.utility_upkeep, Cost(220));
-    assert_eq!(r.balance(), Cost(-37_725));
-    assert_eq!(balance(&world), Cost(6_962_275));
+    assert_eq!(r.balance(), Cost(-33_720));
+    assert_eq!(balance(&world), Cost(6_966_280));
 
     for cmd in [
         EconomyCommand::SetTaxRate {
@@ -231,12 +232,12 @@ fn weekly_balance_matches_the_hand_calculation() {
     run_at(&mut world, &mut schedule, 2 * TICKS_PER_WEEK);
     let r = world.resource::<EconomyState>().last_week;
     assert_eq!(r.week, 2);
-    assert_eq!(r.income(), Cost(540));
+    assert_eq!(r.income(), Cost(4_680));
     assert_eq!(r.road_upkeep, Cost(9_600));
     assert_eq!(r.building_upkeep, Cost(15_000));
     assert_eq!(r.utility_upkeep, Cost(50 + 180));
-    assert_eq!(r.balance(), Cost(-24_290));
-    assert_eq!(balance(&world), Cost(6_937_985));
+    assert_eq!(r.balance(), Cost(-20_150));
+    assert_eq!(balance(&world), Cost(6_946_130));
 }
 
 #[test]
@@ -260,7 +261,7 @@ fn upkeep_may_push_the_treasury_below_the_debt_floor() {
     run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
     assert_eq!(
         balance(&world),
-        Cost(cp_core::treasury::DEBT_FLOOR.0 - 37_725)
+        Cost(cp_core::treasury::DEBT_FLOOR.0 - 33_720)
     );
 }
 
@@ -622,11 +623,11 @@ mod city {
             ContentDb::from_sources(vec![
                 ("r/street.ron".into(), ROAD.into()),
                 ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
-                building("house", "ResLow", "households: 4, tax_base: 40.0,", "None"),
+                building("house", "ResLow", "households: 4, tax_base: 0.0,", "None"),
                 building(
                     "factory",
                     "Industrial",
-                    "jobs: (4, 0, 0, 0), tax_base: 30.0,",
+                    "jobs: (4, 0, 0, 0), tax_base: 0.0,",
                     "None",
                 ),
                 utility("water_pipe", "Water", 0.02),
