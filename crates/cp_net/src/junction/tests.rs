@@ -529,3 +529,28 @@ fn refresh_geometry_fills_dirty_nodes_and_leaves_the_dirty_set_alone() {
     // The sim's own state is untouched: the same nodes are still dirty for the next tick.
     assert_eq!(g.dirty_nodes().collect::<Vec<_>>(), dirty);
 }
+
+/// BUG-029: a reflex gap of 180-210 degrees next to long setbacks (the other gaps are narrow)
+/// made the chord between two arms cut the node out of the polygon. Found by a sweep of 400k
+/// random stars, 10 failed; these are two of them.
+#[test]
+fn a_reflex_gap_under_210_degrees_with_long_setbacks_keeps_the_node_inside() {
+    let db = content();
+    for spec in [
+        vec![
+            (290.01697, 183.18942, "highway_1w_3l"),
+            (496.66174, 190.68333, "highway_1w_3l"),
+            (550.24506, 164.69635, "large_6l"),
+            (615.655, 193.17348, "large_6l"),
+        ],
+        vec![
+            (127.46087, 196.46645, "highway_1w_3l"),
+            (336.17078, 171.64767, "basic_2l"),
+            (404.20416, 140.34453, "large_6l"),
+            (456.62292, 197.48096, "large_6l"),
+        ],
+    ] {
+        let (g, n, _) = star(&db, &spec);
+        check_junction(&compute_junction(&g, n, 1).unwrap());
+    }
+}

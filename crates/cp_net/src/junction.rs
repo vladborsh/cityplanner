@@ -297,6 +297,20 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
                         let t = (diff.x * db.y - diff.y * db.x) / cross;
                         pts.push(a.left + da * t);
                     }
+                } else if gap > std::f32::consts::PI {
+                    // A reflex gap that is not wide enough for the edge lines to meet at a
+                    // sensible point: a straight chord from `a.left` to `b.right` cuts the node
+                    // out of the polygon when the setbacks are long (BUG-029). Then pass at the
+                    // road edge instead, on the bisector of the gap. A chord that keeps the
+                    // node inside (the straight join) is left alone.
+                    let chord = b.right - a.left;
+                    let inside = (chord.x * (c.y - a.left.y) - chord.y * (c.x - a.left.x))
+                        / chord.length().max(1e-3);
+                    if inside < 0.5 {
+                        let mid = a.angle + gap * 0.5;
+                        let reach = (a.width.max(b.width)) * 0.5;
+                        pts.push(c + Vec2::new(mid.cos(), mid.sin()) * reach);
+                    }
                 }
             }
             let mut out: Vec<Vec2> = Vec::with_capacity(pts.len());
