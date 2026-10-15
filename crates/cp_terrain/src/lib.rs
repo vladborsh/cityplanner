@@ -19,6 +19,7 @@
 //! is `max(sea_level, mask)` (water is static). `water_depth` is the bilinear
 //! interpolation of the per-node depth `surface - ground`; `<= 0` means dry.
 
+mod entry;
 mod ownership;
 
 use std::fs::File;
@@ -30,6 +31,7 @@ use bevy_ecs::resource::Resource;
 use bevy_math::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
+pub use entry::{LANE_OFFSET, MERGE_LENGTH, MIN_EDGE_MARGIN};
 pub use ownership::{TILE_COUNT, TILES_PER_SIDE, TileOwnership};
 
 /// Crate name, used by the skeleton smoke test.
@@ -61,6 +63,37 @@ pub struct MapMeta {
     pub start_tile: (u8, u8),
     /// Outside connection points, world `(x, z)` in metres.
     pub external_connections: Vec<(f32, f32)>,
+    /// The highway that enters the start tile on a new game (`system-design.md` §5.1). Maps on
+    /// disk must have one ([`Terrain::load`] checks it); maps built in code may omit it. Not part
+    /// of [`Terrain::map_hash`].
+    #[serde(default)]
+    pub entry_road: Option<EntryRoad>,
+}
+
+/// The entry highway of a map: from an outside connection on the map edge to a junction inside
+/// the start tile, and an arterial stub that the player continues.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EntryRoad {
+    /// Index into [`MapMeta::external_connections`]; `path[0]` is that point.
+    pub connection: usize,
+    /// Centre line from the map edge to the junction, world `(x, z)`.
+    pub path: Vec<(f32, f32)>,
+    /// Road type id of both one-way highways (a `Highway`-class road).
+    pub highway: String,
+    /// Road type id of the stub that continues from the junction along the last leg.
+    pub stub: String,
+    /// Length of the stub, metres.
+    pub stub_m: f32,
+}
+
+/// What [`Terrain::map_hash`] encodes of [`MapMeta`]: the fields as they were before
+/// `entry_road`, so adding it changed no map's hash (and no save got a `MapMismatch`).
+#[derive(Serialize)]
+struct HashMeta<'a> {
+    name: &'a str,
+    sea_level: f32,
+    start_tile: (u8, u8),
+    external_connections: &'a [(f32, f32)],
 }
 
 #[derive(Debug)]
@@ -145,7 +178,9 @@ impl Terrain {
             ron::from_str(&text).map_err(|e| TerrainError::Ron(ron_path, e.to_string()))?;
         let height = read_png16(&dir.join("height.png"))?;
         let water = read_png16(&dir.join("water.png"))?;
-        Self::from_samples(meta, &height, &water)
+        let terrain = Self::from_samples(meta, &height, &water)?;
+        terrain.require_entry_road()?;
+        Ok(terrain)
     }
 
     /// Same as [`Terrain::load`] but from file contents already in memory (`map.ron` text,
@@ -159,7 +194,20 @@ impl Terrain {
             .map_err(|e| TerrainError::Ron(PathBuf::from("map.ron"), e.to_string()))?;
         let height = decode_png16(height_png, Path::new("height.png"))?;
         let water = decode_png16(water_png, Path::new("water.png"))?;
-        Self::from_samples(meta, &height, &water)
+        let terrain = Self::from_samples(meta, &height, &water)?;
+        terrain.require_entry_road()?;
+        Ok(terrain)
+    }
+
+    /// A map from disk needs a valid entry highway (`map.ron: entry_road`).
+    fn require_entry_road(&self) -> Result<(), TerrainError> {
+        if self.meta.entry_road.is_none() {
+            return Err(TerrainError::BadMeta(
+                "entry_road is missing (every map needs the highway that enters the start tile)"
+                    .into(),
+            ));
+        }
+        self.validate_entry().map_err(TerrainError::BadMeta)
     }
 
     /// Builds terrain from raw `u16` samples (row-major, `GRID * GRID` each).
@@ -214,7 +262,13 @@ impl Terrain {
                     h = h.wrapping_mul(PRIME);
                 }
             };
-            let meta = postcard::to_stdvec(&self.meta).expect("MapMeta serialises");
+            let meta = postcard::to_stdvec(&HashMeta {
+                name: &self.meta.name,
+                sea_level: self.meta.sea_level,
+                start_tile: self.meta.start_tile,
+                external_connections: &self.meta.external_connections,
+            })
+            .expect("MapMeta serialises");
             feed(&(meta.len() as u64).to_le_bytes());
             feed(&meta);
             for field in [&self.ground, &self.depth] {

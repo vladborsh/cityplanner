@@ -214,6 +214,44 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
     }
 }
 
+/// Builds a road along `path` for the game itself, not for the player: tile ownership is not
+/// checked (the entry highway crosses tiles that are not bought) and nothing is charged.
+/// Snaps are off except onto existing nodes. Same validation and application as
+/// [`NetCommand::BuildRoad`] otherwise; used by `cp_sim::new_game` (`system-design.md` §5.1).
+pub fn build_unowned(world: &mut World, road: RoadDefId, path: RoadPath) -> Result<(), NetError> {
+    let content = world
+        .get_resource::<SimContent>()
+        .map(|c| c.0.clone())
+        .ok_or(NetError::Missing("content"))?;
+    let terrain = world
+        .get_resource::<SimTerrain>()
+        .map(|t| t.0.clone())
+        .ok_or(NetError::Missing("terrain"))?;
+    let mut tiles = TileOwnership::none();
+    for tz in 0..cp_terrain::TILES_PER_SIDE {
+        for tx in 0..cp_terrain::TILES_PER_SIDE {
+            tiles.set(tx, tz, true);
+        }
+    }
+    world.resource_scope(|_, mut graph: bevy_ecs::change_detection::Mut<NetGraph>| {
+        let req = RoadPathRequest {
+            road,
+            path,
+            elevation: ElevationMode::Ground,
+            snap: SnapOptions {
+                node: true,
+                segment: false,
+                angle: false,
+                zone_grid: false,
+            },
+        };
+        let plan = validate_road_path(&graph, &terrain, &tiles, &content, &req)
+            .map_err(NetError::Build)?;
+        check_plan(&graph, &plan).map_err(NetError::from)?;
+        apply_plan(&mut graph, &content, &plan).map_err(NetError::from)
+    })
+}
+
 /// The plan's splits grouped by original segment (plan order of first appearance), each
 /// group's parameters sorted and deduplicated.
 fn grouped_splits(plan: &RoadBuildPlan) -> Vec<(SegmentId, Vec<f32>)> {

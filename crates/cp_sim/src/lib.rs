@@ -3,6 +3,7 @@
 pub mod checksum;
 pub mod command;
 pub mod inspect;
+pub mod new_game;
 pub mod overlay;
 pub mod phase;
 pub mod plugin;

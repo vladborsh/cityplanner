@@ -206,6 +206,14 @@ pub fn build_sim(
             warn!("scene command rejected: {reason}");
         }
     }
+    if scene.is_none() {
+        // A new game: the highway that enters the start tile (§5.1). Scenes and saves start
+        // from an empty network, as the benches do.
+        match sim.new_game() {
+            Ok(()) => info!("new game: entry highway built"),
+            Err(e) => warn!("new game: {e}"),
+        }
+    }
     sim
 }
 

@@ -158,6 +158,7 @@ fn zone_cells_on_a_slope_stay_above_the_terrain_mesh() {
         sea_level: 0.0,
         start_tile: (2, 2),
         external_connections: vec![],
+        entry_road: None,
     };
     let h: Vec<u16> = (0..GRID * GRID)
         .map(|k| {
@@ -672,6 +673,7 @@ fn the_zone_fill_clears_the_coarse_terrain_lods_seen_from_afar() {
         sea_level: 0.0,
         start_tile: (2, 2),
         external_connections: vec![],
+        entry_road: None,
     };
     let h: Vec<u16> = (0..GRID * GRID)
         .map(|k| {

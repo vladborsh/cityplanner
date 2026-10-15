@@ -16,6 +16,7 @@ fn meta(sea: f32) -> MapMeta {
         sea_level: sea,
         start_tile: (2, 2),
         external_connections: vec![],
+        entry_road: None,
     }
 }
 

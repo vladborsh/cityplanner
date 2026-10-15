@@ -180,6 +180,7 @@ mod tests {
             sea_level: 1.0,
             start_tile: (2, 2),
             external_connections: vec![],
+            entry_road: None,
         };
         let n = GRID * GRID;
         let terrain = Terrain::from_samples(meta, &vec![1000; n], &vec![0; n]).unwrap();

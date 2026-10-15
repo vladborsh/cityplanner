@@ -27,6 +27,7 @@ fn terrain(sea: f32, f: impl Fn(f32, f32) -> f32) -> Terrain {
         sea_level: sea,
         start_tile: (2, 2),
         external_connections: vec![],
+        entry_road: None,
     };
     Terrain::from_samples(meta, &hs, &vec![0; GRID * GRID]).unwrap()
 }

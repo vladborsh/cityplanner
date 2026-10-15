@@ -20,10 +20,11 @@ checksum). So these print the same checksum, as long as the client starts at tic
 
 ```
 cp_bench   --map flatlands --ticks 512 --warmup 0 --seed 1
-cp_desktop --map flatlands --hour 0 --headless 512
+cp_desktop --map flatlands --hour 0 --headless 512 --scene bare
 ```
 
-Note `cp_desktop` defaults to `--hour 10` (it starts at tick 1706, so `--headless 512` ends at
+(`--scene bare` is an unknown scene that builds nothing: a start without `--scene` is a new game and
+builds the map's entry highway, which changes the checksum.) Note `cp_desktop` defaults to `--hour 10` (it starts at tick 1706, so `--headless 512` ends at
 tick 2218 with another checksum); pass `--hour 0` to compare with the bench, which starts at
 tick 0. Covered by `apps/bench/tests/map_checksum_e2e.rs`.
 

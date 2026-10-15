@@ -16,6 +16,7 @@ fn meta(sea: f32) -> MapMeta {
         sea_level: sea,
         start_tile: (2, 2),
         external_connections: vec![],
+        entry_road: None,
     }
 }
 
@@ -267,4 +268,153 @@ fn from_bytes_reports_errors() {
     let dir = map_dir("flatlands");
     let ron = std::fs::read_to_string(dir.join("map.ron")).unwrap();
     assert!(Terrain::from_bytes(&ron, b"not a png", b"not a png").is_err());
+}
+
+// ---- entry road (T-115) ----
+
+/// A map with sea level `sea`, flat ground of 50 m, and `entry` as its entry road: the
+/// connection at the north edge of tile column 2, the start tile `(2, 2)`.
+fn with_entry(sea: f32, entry: Option<EntryRoad>) -> Terrain {
+    let mut m = meta(sea);
+    m.external_connections = vec![(5120.0, 0.0)];
+    m.entry_road = entry;
+    Terrain::from_samples(m, &vec![enc(50.0); GRID * GRID], &vec![0; GRID * GRID]).unwrap()
+}
+
+fn entry(path: Vec<(f32, f32)>) -> EntryRoad {
+    EntryRoad {
+        connection: 0,
+        path,
+        highway: "highway_1w_2l".into(),
+        stub: "large_6l".into(),
+        stub_m: 48.0,
+    }
+}
+
+fn straight() -> EntryRoad {
+    entry(vec![(5120.0, 0.0), (5120.0, 4300.0)])
+}
+
+#[test]
+fn a_good_entry_road_validates_and_no_entry_road_is_an_error() {
+    assert_eq!(with_entry(0.0, Some(straight())).validate_entry(), Ok(()));
+    let e = with_entry(0.0, None).validate_entry().unwrap_err();
+    assert!(e.contains("entry_road is missing"), "{e}");
+}
+
+#[test]
+fn an_entry_road_that_ends_outside_the_start_tile_or_too_close_to_its_edge_is_an_error() {
+    // Still in tile (2, 1).
+    let e = with_entry(0.0, Some(entry(vec![(5120.0, 0.0), (5120.0, 3000.0)])))
+        .validate_entry()
+        .unwrap_err();
+    assert!(e.contains("inside start tile"), "{e}");
+    // Inside, but 30 m from the tile edge.
+    let e = with_entry(0.0, Some(entry(vec![(5120.0, 0.0), (5120.0, 4126.0)])))
+        .validate_entry()
+        .unwrap_err();
+    assert!(e.contains("64 m"), "{e}");
+    // The junction is fine, but the stub leaves the tile.
+    let mut r = entry(vec![(5120.0, 0.0), (5120.0, 6000.0)]);
+    r.stub_m = 200.0;
+    let e = with_entry(0.0, Some(r)).validate_entry().unwrap_err();
+    assert!(e.contains("stub"), "{e}");
+}
+
+#[test]
+fn an_entry_road_needs_its_connection_and_must_start_on_it() {
+    let mut r = straight();
+    r.connection = 3;
+    assert!(
+        with_entry(0.0, Some(r))
+            .validate_entry()
+            .unwrap_err()
+            .contains("connection 3")
+    );
+    let e = with_entry(0.0, Some(entry(vec![(5200.0, 0.0), (5120.0, 4300.0)])))
+        .validate_entry()
+        .unwrap_err();
+    assert!(e.contains("not at external connection"), "{e}");
+}
+
+#[test]
+fn an_entry_road_across_water_or_with_a_sharp_corner_is_an_error() {
+    // Sea level above the ground: the whole map is under water.
+    let e = with_entry(60.0, Some(straight()))
+        .validate_entry()
+        .unwrap_err();
+    assert!(e.contains("water"), "{e}");
+    // A right angle at (5120, 2000).
+    let e = with_entry(
+        0.0,
+        Some(entry(vec![
+            (5120.0, 0.0),
+            (5120.0, 2000.0),
+            (5700.0, 2000.0),
+            (5700.0, 4300.0),
+        ])),
+    )
+    .validate_entry()
+    .unwrap_err();
+    assert!(e.contains("angle"), "{e}");
+    // A gentle bend (20°) is fine.
+    let ok = entry(vec![
+        (5120.0, 0.0),
+        (5120.0, 2000.0),
+        (5120.0 + 2300.0 * 0.364, 4300.0),
+    ]);
+    assert_eq!(with_entry(0.0, Some(ok)).validate_entry(), Ok(()));
+}
+
+#[test]
+fn a_steep_entry_road_is_an_error() {
+    let mut hs = vec![enc(50.0); GRID * GRID];
+    for z in 0..GRID {
+        for x in 0..GRID {
+            hs[z * GRID + x] = enc(50.0 + z as f32 * 1.0); // 10 % grade along z
+        }
+    }
+    let mut m = meta(0.0);
+    m.external_connections = vec![(5120.0, 0.0)];
+    m.entry_road = Some(straight());
+    let t = Terrain::from_samples(m, &hs, &vec![0; GRID * GRID]).unwrap();
+    let e = t.validate_entry().unwrap_err();
+    assert!(e.contains("slope"), "{e}");
+}
+
+/// Adding `entry_road` to `MapMeta` must not change any map's identity (saves would all be
+/// `MapMismatch`): the values are those from before the field existed.
+#[test]
+fn map_hashes_of_the_committed_maps_are_unchanged() {
+    let hash = |m: &str| Terrain::load(&map_dir(m)).unwrap().map_hash();
+    assert_eq!(hash("flatlands"), 0x197e_0a80_bc6b_e309);
+    assert_eq!(hash("river_valley"), 0xff1f_12b7_9cb5_2345);
+    // And the hash ignores the entry road itself.
+    let a = with_entry(0.0, Some(straight())).map_hash();
+    let b = with_entry(0.0, None).map_hash();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn committed_maps_have_a_valid_entry_road() {
+    for m in ["flatlands", "river_valley"] {
+        let t = Terrain::load(&map_dir(m)).unwrap_or_else(|e| panic!("{m}: {e}"));
+        assert_eq!(t.validate_entry(), Ok(()), "{m}");
+    }
+}
+
+#[test]
+fn a_map_on_disk_without_entry_road_does_not_load() {
+    let dir = std::env::temp_dir().join("cp-terrain-no-entry-map");
+    std::fs::create_dir_all(&dir).unwrap();
+    for f in ["height.png", "water.png"] {
+        std::fs::copy(map_dir("flatlands").join(f), dir.join(f)).unwrap();
+    }
+    std::fs::write(
+        dir.join("map.ron"),
+        "(name: \"x\", sea_level: 20.0, start_tile: (2, 2), external_connections: [(5120.0, 0.0)])",
+    )
+    .unwrap();
+    let e = Terrain::load(&dir).unwrap_err().to_string();
+    assert!(e.contains("entry_road is missing"), "{e}");
 }

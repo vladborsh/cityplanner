@@ -38,10 +38,12 @@ fn bench_checksum(extra: &[&str], tag: &str) -> String {
     json["checksum"].as_str().unwrap().to_string()
 }
 
-/// What `cp_desktop --map M --hour 0 --headless N` does: `cp_app::load_sim`, then N ticks.
+/// What `cp_desktop --map M --hour 0 --headless N --scene bare` does: `cp_app::load_sim` with a
+/// scene that builds nothing (a plain start is a new game and adds the entry highway, which the
+/// bench does not build), then N ticks.
 fn client_checksum(map: &str) -> String {
     let terrain = Terrain::load(&root().join("assets/maps").join(map)).unwrap();
-    let mut sim = cp_app::build_sim(terrain, SimLimits::desktop(), 0.0, false, None);
+    let mut sim = cp_app::build_sim(terrain, SimLimits::desktop(), 0.0, false, Some("bare"));
     for _ in 0..TICKS {
         sim.tick_once();
     }

@@ -319,6 +319,7 @@ fn set_terrain_after_loading_a_fixture_keeps_the_saved_ownership() {
         sea_level: 1.0,
         start_tile: (0, 0),
         external_connections: vec![],
+        entry_road: None,
     };
     let terrain = Arc::new(Terrain::from_samples(meta, &vec![1000; n], &vec![0; n]).unwrap());
     for name in ["v0-basic.sav", "v1-basic.sav", "v2-basic.sav"] {
@@ -428,6 +429,7 @@ fn flat_at(start: (u8, u8), tag: u16) -> Arc<Terrain> {
         sea_level: 0.0,
         start_tile: start,
         external_connections: vec![],
+        entry_road: None,
     };
     Arc::new(Terrain::from_samples(meta, &vec![tag; GRID * GRID], &vec![0; GRID * GRID]).unwrap())
 }

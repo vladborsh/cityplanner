@@ -7,4 +7,14 @@
         (10240.0, 5120.0),
         (5120.0, 10240.0),
     ],
+    entry_road: Some((
+        connection: 0,
+        path: [
+            (5120.0, 0.0),
+            (5120.0, 4300.0),
+        ],
+        highway: "highway_1w_2l",
+        stub: "large_6l",
+        stub_m: 48.0,
+    )),
 )
