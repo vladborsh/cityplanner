@@ -4,7 +4,7 @@ use bevy_math::{Vec2, Vec3};
 use cp_building::{
     AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingId, BuildingState, Lot,
 };
-use cp_content::{BuildingDefId, ContentDb, RoofKind};
+use cp_content::{BuildingDefId, ContentDb, Massing, RoofKind, ZoneType};
 use cp_core::{Id, Tick};
 use cp_net::{NetGraph, SegmentId};
 use cp_terrain::Terrain;
@@ -111,7 +111,10 @@ fn height_follows_floors_and_roof() {
         let (_, hi) = extent(&p.far);
         let rise = hi.y - ground - PLINTH - walls;
         match style.roof {
-            RoofKind::Flat | RoofKind::Shed | RoofKind::Mansard => {
+            RoofKind::Flat if style.massing == Massing::Sawtooth => {
+                assert!(rise > 1.0 && rise < 2.5, "{}: sawtooth rise {rise}", def.id)
+            }
+            RoofKind::Flat => {
                 assert!(rise.abs() < 0.6, "{}: flat roof rise {rise}", def.id)
             }
             _ => assert!(rise > 1.0 && rise < 5.0, "{}: pitched rise {rise}", def.id),
@@ -220,7 +223,7 @@ fn facade_variation_comes_from_the_id_and_is_deterministic() {
     let e = env();
     let (def_id, def) =
         e.db.buildings()
-            .find(|(_, d)| d.styles[0].starts_with("legacy_suburb_warm"))
+            .find(|(_, d)| d.zone == ZoneType::ResLow)
             .unwrap();
     let b = building(def_id, &e.db, BuildingState::Active, 0);
     let mesh = |i: u32| build_building(id(i), &b, def, &e.net, &e.terrain, &e.db, Tick(0)).near;
@@ -375,9 +378,9 @@ fn construction_stage_spans_the_buildings_own_duration() {
     }
 }
 
-/// T-111: the mesh of every shipped def has the vertex counts it had before styles moved into
-/// content (`baseline_counts.txt`, recorded on the code before the change): the shipped defs
-/// each use one legacy style, so nothing about the geometry changes.
+/// T-111: a def that still uses a one-box `legacy_*` style (the service buildings until T-114)
+/// has the near vertex count it had before styles moved into content (`baseline_counts.txt`,
+/// recorded on the code before the change), and no more mid and far ones.
 #[test]
 fn meshes_keep_their_vertex_counts_after_the_style_move() {
     let e = env();
@@ -390,6 +393,9 @@ fn meshes_keep_their_vertex_counts_after_the_style_move() {
             e.db.buildings()
                 .find(|(_, d)| d.id == name)
                 .unwrap_or_else(|| panic!("def {name} is gone"));
+        if !def.styles.iter().all(|s| s.starts_with("legacy_")) {
+            continue;
+        }
         let b = building(def_id, &e.db, BuildingState::Active, 0);
         let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
         let got = [
@@ -398,10 +404,16 @@ fn meshes_keep_their_vertex_counts_after_the_style_move() {
             p.far.positions.len(),
         ];
         let want = [near, mid, far].map(|v| v.parse::<usize>().unwrap());
-        assert_eq!(got, want, "{name}: vertices near/mid/far");
+        // Near is unchanged; mid merges the wall bands between floors and far has no foundation
+        // skirt (T-113), so they may only have got smaller.
+        assert_eq!(got[0], want[0], "{name}: near vertices");
+        assert!(
+            got[1] <= want[1] && got[2] <= want[2],
+            "{name}: {got:?} vs {want:?}"
+        );
         seen += 1;
     }
-    assert_eq!(seen, e.db.buildings().count());
+    assert!(seen >= 5, "{seen} legacy defs");
 }
 
 fn four_style_db() -> ContentDb {
@@ -509,6 +521,67 @@ fn vertex_limit(massing: &str) -> [usize; 3] {
     }
 }
 
+/// Builds one building and checks that every detail level is a sound mesh; returns the vertex
+/// counts (near, mid, far).
+fn check_building(
+    e: &Env,
+    db: &ContentDb,
+    def_id: BuildingDefId,
+    i: u32,
+    state: BuildingState,
+    ready: u64,
+) -> [usize; 3] {
+    let def = db.building(def_id);
+    let b = building(def_id, db, state, ready);
+    let p = build_building(id(i), &b, def, &e.net, &e.terrain, db, Tick(300));
+    let what = format!("{} #{i} {state:?}", def.id);
+    let (hw, hd) = (f32::from(def.lot.0) * 4.0, f32::from(def.lot.1) * 4.0);
+    // The foundation reaches 0.3 m below the lowest box corner, so nothing may sit
+    // lower than the lowest ground under the lot.
+    let lot_floor = (0..81)
+        .map(|k| {
+            let (i, j) = ((k / 9) as f32 / 4.0 - 1.0, (k % 9) as f32 / 4.0 - 1.0);
+            e.terrain
+                .height(Vec2::new(b.pos.x + i * hw, b.pos.y + j * hd))
+        })
+        .fold(f32::MAX, f32::min);
+    for m in [&p.near, &p.mid, &p.far] {
+        assert!(!m.positions.is_empty(), "{what}");
+        assert_eq!(m.positions.len(), m.normals.len());
+        assert_eq!(m.positions.len(), m.colors.len());
+        assert!(m.indices.len().is_multiple_of(3));
+        assert!(m.indices.iter().all(|&k| (k as usize) < m.positions.len()));
+        for (pos, n) in m.positions.iter().zip(&m.normals) {
+            assert!(pos.iter().chain(n).all(|v| v.is_finite()), "{what} NaN");
+            let len = Vec3::from_array(*n).length();
+            assert!((len - 1.0).abs() < 1e-3, "{what}: normal length {len}");
+            // Inside the lot (x/z), and not below the ground by more than the
+            // foundation's 0.3 m.
+            assert!((pos[0] - b.pos.x).abs() <= hw + 1e-3, "{what}: x {pos:?}");
+            assert!((pos[2] - b.pos.y).abs() <= hd + 1e-3, "{what}: z {pos:?}");
+            assert!(pos[1] >= lot_floor - 0.31, "{what}: below ground {pos:?}");
+        }
+        for t in m.indices.chunks(3) {
+            let q = |k: u32| Vec3::from_array(m.positions[k as usize]);
+            let area = (q(t[1]) - q(t[0])).cross(q(t[2]) - q(t[0])).length() * 0.5;
+            assert!(area > 1e-6, "{what}: degenerate triangle ({area})");
+        }
+    }
+    if state != BuildingState::UnderConstruction {
+        let n = [
+            p.near.positions.len(),
+            p.mid.positions.len(),
+            p.far.positions.len(),
+        ];
+        assert!(n[2] <= n[1] && n[1] <= n[0], "{what}: LOD vertices {n:?}");
+    }
+    [
+        p.near.positions.len(),
+        p.mid.positions.len(),
+        p.far.positions.len(),
+    ]
+}
+
 /// T-112: every shape × roof is a sound mesh in every state and detail level.
 #[test]
 fn every_shape_and_roof_builds_a_sound_mesh_inside_its_lot() {
@@ -518,56 +591,11 @@ fn every_shape_and_roof_builds_a_sound_mesh_inside_its_lot() {
     for (def_id, def) in db.buildings() {
         let massing = MASSINGS.iter().find(|m| def.id.starts_with(*m)).unwrap();
         for i in 0..24u32 {
-            for (state, ready) in [
-                (BuildingState::Active, 0),
-                (BuildingState::Abandoned, 0),
-                (BuildingState::Burned, 0),
-                (BuildingState::UnderConstruction, 1000),
-            ] {
-                let b = building(def_id, &db, state, ready);
-                let p = build_building(id(i), &b, def, &e.net, &e.terrain, &db, Tick(300));
-                let what = format!("{} #{i} {state:?}", def.id);
-                let (hw, hd) = (f32::from(def.lot.0) * 4.0, f32::from(def.lot.1) * 4.0);
-                // The foundation reaches 0.3 m below the lowest box corner, so nothing may sit
-                // lower than the lowest ground under the lot.
-                let lot_floor = (0..81)
-                    .map(|k| {
-                        let (i, j) = ((k / 9) as f32 / 4.0 - 1.0, (k % 9) as f32 / 4.0 - 1.0);
-                        e.terrain
-                            .height(Vec2::new(b.pos.x + i * hw, b.pos.y + j * hd))
-                    })
-                    .fold(f32::MAX, f32::min);
-                for (lod, m) in [&p.near, &p.mid, &p.far].into_iter().enumerate() {
-                    assert!(!m.positions.is_empty(), "{what}");
-                    assert_eq!(m.positions.len(), m.normals.len());
-                    assert_eq!(m.positions.len(), m.colors.len());
-                    assert!(m.indices.len().is_multiple_of(3));
-                    assert!(m.indices.iter().all(|&k| (k as usize) < m.positions.len()));
-                    for (pos, n) in m.positions.iter().zip(&m.normals) {
-                        assert!(pos.iter().chain(n).all(|v| v.is_finite()), "{what} NaN");
-                        let len = Vec3::from_array(*n).length();
-                        assert!((len - 1.0).abs() < 1e-3, "{what}: normal length {len}");
-                        // Inside the lot (x/z), and not below the ground by more than the
-                        // foundation's 0.3 m.
-                        assert!((pos[0] - b.pos.x).abs() <= hw + 1e-3, "{what}: x {pos:?}");
-                        assert!((pos[2] - b.pos.y).abs() <= hd + 1e-3, "{what}: z {pos:?}");
-                        assert!(pos[1] >= lot_floor - 0.31, "{what}: below ground {pos:?}");
-                    }
-                    for t in m.indices.chunks(3) {
-                        let q = |k: u32| Vec3::from_array(m.positions[k as usize]);
-                        let area = (q(t[1]) - q(t[0])).cross(q(t[2]) - q(t[0])).length() * 0.5;
-                        assert!(area > 1e-6, "{what}: degenerate triangle ({area})");
-                    }
-                    let w = worst.entry(massing).or_default();
-                    w[lod] = w[lod].max(m.positions.len());
-                }
-                if state != BuildingState::UnderConstruction {
-                    let n = [
-                        p.near.positions.len(),
-                        p.mid.positions.len(),
-                        p.far.positions.len(),
-                    ];
-                    assert!(n[2] <= n[1] && n[1] <= n[0], "{what}: LOD vertices {n:?}");
+            for (state, ready) in STATES {
+                let n = check_building(&e, &db, def_id, i, state, ready);
+                let w = worst.entry(massing).or_default();
+                for k in 0..3 {
+                    w[k] = w[k].max(n[k]);
                 }
             }
         }
@@ -584,6 +612,33 @@ fn every_shape_and_roof_builds_a_sound_mesh_inside_its_lot() {
             );
         }
     }
+}
+
+const STATES: [(BuildingState, u64); 4] = [
+    (BuildingState::Active, 0),
+    (BuildingState::Abandoned, 0),
+    (BuildingState::Burned, 0),
+    (BuildingState::UnderConstruction, 1000),
+];
+
+/// T-113: the same checks on every shipped def with the shipped styles.
+#[test]
+fn every_shipped_style_builds_a_sound_mesh() {
+    let e = env();
+    let mut seen = BTreeSet::new();
+    for (def_id, def) in e.db.buildings() {
+        for i in 0..60u32 {
+            for (state, ready) in STATES {
+                check_building(&e, &e.db, def_id, i, state, ready);
+            }
+            seen.insert(variant(&e.db, id(i), def).0.id.clone());
+        }
+    }
+    assert_eq!(
+        seen.len(),
+        e.db.styles().count(),
+        "a shipped style never drawn: {seen:?}"
+    );
 }
 
 /// T-112: the shapes really differ: each massing and roof adds geometry to the plain box.
@@ -609,4 +664,65 @@ fn massings_have_their_silhouettes() {
     assert!(size("Sawtooth_Flat_4x4") > boxy);
     assert!(size("Box_Mansard_4x4") > boxy);
     assert!(size("Box_Shed_4x4") > boxy);
+}
+
+/// T-113 authoring aid: average vertices per style on its defs' lots (near / mid / far),
+/// `cargo test -p cp_render style_cost_table -- --ignored --nocapture`.
+#[test]
+#[ignore = "prints a table"]
+fn style_cost_table() {
+    let e = env();
+    let mut rows = BTreeMap::<String, (usize, [usize; 3])>::new();
+    for (def_id, def) in e.db.buildings().filter(|(_, d)| d.service.is_none()) {
+        let b = building(def_id, &e.db, BuildingState::Active, 0);
+        for i in 0..200u32 {
+            let (style, _) = variant(&e.db, id(i), def);
+            let p = build_building(id(i), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+            let r = rows.entry(style.id.clone()).or_default();
+            r.0 += 1;
+            r.1[0] += p.near.positions.len();
+            r.1[1] += p.mid.positions.len();
+            r.1[2] += p.far.positions.len();
+        }
+    }
+    for (name, (n, v)) in rows {
+        println!("{name:<32} {:>6} {:>5} {:>4}", v[0] / n, v[1] / n, v[2] / n);
+    }
+}
+
+/// T-113 authoring aid: per def, the average near / mid / far vertices of its looks against the
+/// plain box it replaced.
+#[test]
+#[ignore = "prints a table"]
+fn def_cost_table() {
+    let e = env();
+    let base: BTreeMap<&str, Vec<f32>> = include_str!("baseline_counts.txt")
+        .lines()
+        .map(|l| {
+            let v: Vec<&str> = l.split(' ').collect();
+            (v[0], (1..4).map(|k| v[k].parse().unwrap()).collect())
+        })
+        .collect();
+    for (def_id, def) in e.db.buildings().filter(|(_, d)| d.service.is_none()) {
+        let b = building(def_id, &e.db, BuildingState::Active, 0);
+        let mut sum = [0usize; 3];
+        for i in 0..200u32 {
+            let p = build_building(id(i), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+            sum[0] += p.near.positions.len();
+            sum[1] += p.mid.positions.len();
+            sum[2] += p.far.positions.len();
+        }
+        let bl = &base[def.id.as_str()];
+        println!(
+            "{:<12} lot {:?}  near {:>5} ({:.2}x)  mid {:>4} ({:.2}x)  far {:>3} ({:.2}x)",
+            def.id,
+            def.lot,
+            sum[0] / 200,
+            sum[0] as f32 / 200.0 / bl[0],
+            sum[1] / 200,
+            sum[1] as f32 / 200.0 / bl[1],
+            sum[2] / 200,
+            sum[2] as f32 / 200.0 / bl[2]
+        );
+    }
 }

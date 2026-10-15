@@ -1,0 +1,15 @@
+Style((
+    id: "com_high_mall_podium_c",
+    massing: TowerOnPodium,
+    roof: Flat,
+    floors: (11, 15),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.84, 0.80, 0.72), (0.78, 0.84, 0.88)],
+        roof: [(0.34, 0.34, 0.36)],
+        trim: [(0.40, 0.36, 0.32)],
+        glass: (0.16, 0.26, 0.34),
+    ),
+    facade: Shopfront,
+    details: [RooftopUnits, Sign],
+))

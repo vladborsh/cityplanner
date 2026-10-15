@@ -1,0 +1,15 @@
+Style((
+    id: "res_high_podium_tower_c",
+    massing: TowerOnPodium,
+    roof: Flat,
+    floors: (14, 22),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.70, 0.78, 0.84), (0.62, 0.72, 0.80), (0.76, 0.80, 0.84)],
+        roof: [(0.34, 0.36, 0.40)],
+        trim: [(0.40, 0.46, 0.52)],
+        glass: (0.14, 0.26, 0.38),
+    ),
+    facade: Curtain,
+    details: [RooftopUnits],
+))

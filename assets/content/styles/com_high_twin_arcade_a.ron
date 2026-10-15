@@ -1,0 +1,15 @@
+Style((
+    id: "com_high_twin_arcade_a",
+    massing: TwinBlocks,
+    roof: Flat,
+    floors: (3, 5),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.52, 0.66, 0.86), (0.60, 0.72, 0.90)],
+        roof: [(0.30, 0.32, 0.36)],
+        trim: [(0.90, 0.92, 0.94)],
+        glass: (0.12, 0.24, 0.40),
+    ),
+    facade: Curtain,
+    details: [RooftopUnits, Awning],
+))

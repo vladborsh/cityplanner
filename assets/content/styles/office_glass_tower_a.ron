@@ -1,0 +1,15 @@
+Style((
+    id: "office_glass_tower_a",
+    massing: Box,
+    roof: Flat,
+    floors: (3, 4),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.30, 0.42, 0.55), (0.26, 0.38, 0.52), (0.34, 0.46, 0.58)],
+        roof: [(0.28, 0.30, 0.33)],
+        trim: [(0.22, 0.28, 0.35)],
+        glass: (0.12, 0.28, 0.42),
+    ),
+    facade: Curtain,
+    details: [RooftopUnits],
+))

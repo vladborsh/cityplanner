@@ -25,3 +25,5 @@ bevy = { workspace = true, features = ["3d"] }
 
 [dev-dependencies]
 cp_zone.workspace = true
+# Writes the raster pictures of tests/building_budget.rs.
+png.workspace = true

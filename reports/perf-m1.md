@@ -297,3 +297,42 @@ TwinBlocks 7290 / 1272 / 104, Sawtooth 5728 / 758 / 102. For T-113: the budget i
 over the city, so details (balconies are capped at 16, fences are one board per cell, tanks 41
 vertices each) should stay on a minority of styles; `mid`/`far` carry no details. T-113 must
 re-measure vertices and the frame on bench-100k with the final styles.
+
+## Building looks on a grid city (T-113)
+
+Final styles (60 `StyleDef`s for zoned buildings, one `legacy_*` for services; floor bands per level,
+see `assets/content/styles/README.md`), headless mesh counts over **every building** of a built
+`grid_city` (flatlands, seed 1), `cargo test -p cp_render --release --test building_budget --
+--ignored --nocapture`. "Baseline" is the same buildings as the plain boxes they replaced (the
+pre-T-111 counts of their def, `baseline_counts.txt`). One chunk = one batch per LOD (256 m), so
+draw calls do not depend on the number of looks. A vertex is 40 bytes (position, normal, colour).
+
+| city | buildings / chunks | LOD | vertices (all buildings) | MB | triangles | avg per building | vs baseline | budget |
+|---|---|---|---|---|---|---|---|---|
+| 10k  | 2 572 / 60  | near | 2 559 062  | 102 | 1 277 890 | 995 | **1.37×** | ≤ 1.5× |
+|      |             | mid  | 421 576    | 17  | 209 772   | 164 | **1.06×** | ≤ 1.2× |
+|      |             | far  | 92 916     | 3.7 | 45 442    | 36  | **0.90×** | ≤ 1.2× |
+| 100k | 36 856 / 400 | near | 14 847 110 | 594 | 7 383 774 | 403 | **1.32×** | ≤ 1.5× |
+|      |             | mid  | 2 948 542  | 118 | 1 434 538 | 80  | **0.83×** | ≤ 1.2× |
+|      |             | far  | 1 430 902  | 57  | 675 718   | 39  | **0.89×** | ≤ 1.2× |
+
+(All buildings at one LOD is the worst case; the camera sees `near` only within 450 m.) Per zone type
+at 100k, near / mid / far vs baseline: ResLow 1.24 / 0.71 / 0.89 (24 858 buildings), ComLow 1.32 /
+0.69 / 0.71, Industrial 1.11 / 0.74 / 0.95, ResHigh 1.53 / 1.34 / 1.05, ComHigh 1.17 / 0.97 / 1.02,
+Office 1.45 / 1.04 / 0.81. The tall zones sit at the near limit; the grid city has few of them, a city
+with many high-rise districts would be over 1.5× near unless balconies/units are trimmed.
+
+What it took to get there (first measurement with the same styles but one floor range per look:
+near 1.69×, mid 1.18×, far 0.86× at 100k): (1) styles come in floor bands per level (a level-1
+building is not 6 floors), (2) the `mid` level draws one glass band per floor and merges the wall
+band above one window with the one below the next (same picture), and a one- or two-floor wall is
+one quad at `mid` (bands are invisible there), (3) no foundation skirt at `far`, (4) the fence is
+single-sided and balconies are capped at 10. The legacy `mid`/`far` counts only went down (the
+pinned-count test now allows that).
+
+The frame itself was **not** measured: there is no headless frame harness here (the numbers above are
+mesh totals, not milliseconds); the GPU/CPU frame on `bench-100k` still needs the desktop run.
+
+Plan and oblique rasters of the densest street of each zone type (software renderer in the same
+test, roads as grey ribbons, no terrain relief): `reports/t-113/<zone>-plan.png` and
+`<zone>-oblique.png`.

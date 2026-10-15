@@ -1,0 +1,15 @@
+Style((
+    id: "industrial_tank_works_a",
+    massing: Box,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (0.80, 1.00),
+    palette: (
+        walls: [(0.58, 0.60, 0.62), (0.50, 0.54, 0.58)],
+        roof: [(0.34, 0.36, 0.38)],
+        trim: [(0.26, 0.28, 0.30)],
+        glass: (0.20, 0.24, 0.28),
+    ),
+    facade: Industrial,
+    details: [Tanks, LoadingDock],
+))

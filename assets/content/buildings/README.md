@@ -27,11 +27,11 @@ households / jobs per education level, consumption (water, sewage, power per gam
 `tax_base`, floors and roofs. They only need to be plausible and monotone in the level.
 `house_low_1` is the original M1 sample and is kept as is.
 
-## Looks (T-111)
+## Looks (T-111, T-113)
 
 A building's look is not in its def: `styles: ["..."]` lists ids of `StyleDef`s in
-`assets/content/styles/*.ron` (massing, roof, floors and lot-fill ranges, palette, facade,
-details; `system-design.md` §8.2). Which one a building gets, and its floors, fill and colours
-inside the style, is a hash of its `BuildingId` in `cp_render::building::variant`, not sim state.
-Today every def lists one `legacy_<palette>_<roof>_<floors>` style that reproduces its old look;
-T-113 adds the varied styles. A dangling style id is a load error.
+`assets/content/styles/*.ron` (see the README there). Which one a building gets, and its floors,
+fill and colours inside the style, is a hash of its `BuildingId` in
+`cp_render::building::variant`, not sim state. Each def lists two or three of its zone type's five
+styles so that every (zone type, level) pair shows at least four looks; a dangling style id is a
+load error. Floors are the style's, so the `floors` of the old `style:` field is gone.

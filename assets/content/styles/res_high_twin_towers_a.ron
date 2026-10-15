@@ -1,0 +1,15 @@
+Style((
+    id: "res_high_twin_towers_a",
+    massing: TwinBlocks,
+    roof: Flat,
+    floors: (4, 8),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.54, 0.72, 0.70), (0.62, 0.76, 0.72), (0.48, 0.64, 0.66)],
+        roof: [(0.30, 0.34, 0.36)],
+        trim: [(0.85, 0.88, 0.86)],
+        glass: (0.14, 0.24, 0.30),
+    ),
+    facade: Ribbon,
+    details: [Balconies, RooftopUnits],
+))

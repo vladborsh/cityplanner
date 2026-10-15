@@ -348,7 +348,8 @@ fn wall(
         }
     };
     let dead = matches!(cx.state, BuildingState::Burned);
-    if lod == Lod::Far || floors == 0 {
+    // Beyond 450 m a one- or two-floor wall has no visible bands: one quad, as in the far level.
+    if lod == Lod::Far || floors == 0 || (lod == Lod::Mid && floors <= 2) {
         q(m, 0.0, width, y0, y0 + height, cx.wall);
         return;
     }
@@ -358,13 +359,21 @@ fn wall(
         let fy = y0 + fh * fl as f32;
         let ground = fl == 0;
         if lod == Lod::Mid {
-            // A wall band and a glass band per floor.
+            // A glass band per floor and the wall bands between them: the wall above one
+            // window and the wall below the next are one quad.
             let sill = fy + fh * st.sill;
             let top = sill + fh * st.win_h;
-            q(m, 0.0, width, fy, sill, cx.wall);
             let glass = if dead { mul(cx.glass, 0.3) } else { cx.glass };
+            if ground {
+                q(m, 0.0, width, fy, sill, cx.wall);
+            }
             q(m, 0.0, width, sill, top, glass);
-            q(m, 0.0, width, top, fy + fh, cx.wall);
+            let next = if fl + 1 == floors {
+                fy + fh
+            } else {
+                fy + fh + fh * st.sill
+            };
+            q(m, 0.0, width, top, next, cx.wall);
             continue;
         }
         let (sill_h, win_h) = if ground && front && st.shopfront {
@@ -785,7 +794,8 @@ pub fn build_building(
         let ring = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
         for (i, vcx, _) in &boxes {
             let v = &plan.vols[*i];
-            if v.below > 0 {
+            // No foundation skirt beyond the mid distance: it is a few dark pixels there.
+            if v.below > 0 || lod == Lod::Far {
                 continue;
             }
             for k in 0..4 {

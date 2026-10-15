@@ -1,0 +1,15 @@
+Style((
+    id: "res_high_slab_block_a",
+    massing: Box,
+    roof: Flat,
+    floors: (4, 8),
+    footprint_fill: (0.80, 1.00),
+    palette: (
+        walls: [(0.60, 0.60, 0.58), (0.66, 0.65, 0.60), (0.54, 0.55, 0.57)],
+        roof: [(0.32, 0.32, 0.33)],
+        trim: [(0.45, 0.45, 0.45)],
+        glass: (0.16, 0.22, 0.28),
+    ),
+    facade: Punched,
+    details: [Balconies, RooftopUnits],
+))

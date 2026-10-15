@@ -1,0 +1,15 @@
+Style((
+    id: "com_low_arcade_l_a",
+    massing: LShape,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.82, 0.52, 0.40), (0.76, 0.46, 0.38)],
+        roof: [(0.34, 0.32, 0.32)],
+        trim: [(0.90, 0.86, 0.78)],
+        glass: (0.20, 0.28, 0.34),
+    ),
+    facade: Shopfront,
+    details: [Awning],
+))

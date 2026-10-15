@@ -1,0 +1,15 @@
+Style((
+    id: "office_stepped_hq_c",
+    massing: Stepped,
+    roof: Flat,
+    floors: (8, 12),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.36, 0.44, 0.40), (0.30, 0.38, 0.36)],
+        roof: [(0.24, 0.28, 0.28)],
+        trim: [(0.20, 0.26, 0.24)],
+        glass: (0.10, 0.24, 0.28),
+    ),
+    facade: Curtain,
+    details: [RooftopUnits],
+))

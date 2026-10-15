@@ -1,0 +1,15 @@
+Style((
+    id: "com_low_gabled_store_a",
+    massing: Box,
+    roof: Gabled,
+    floors: (1, 1),
+    footprint_fill: (0.80, 1.00),
+    palette: (
+        walls: [(0.88, 0.74, 0.40), (0.80, 0.64, 0.34)],
+        roof: [(0.44, 0.26, 0.18), (0.38, 0.24, 0.18)],
+        trim: [(0.34, 0.24, 0.16)],
+        glass: (0.20, 0.28, 0.34),
+    ),
+    facade: Shopfront,
+    details: [Awning, Sign, Chimney],
+))

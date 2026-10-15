@@ -1,0 +1,15 @@
+Style((
+    id: "industrial_warehouse_shed_a",
+    massing: Box,
+    roof: Shed,
+    floors: (1, 1),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.40, 0.52, 0.50), (0.48, 0.56, 0.46)],
+        roof: [(0.36, 0.40, 0.38)],
+        trim: [(0.24, 0.28, 0.28)],
+        glass: (0.20, 0.24, 0.26),
+    ),
+    facade: Industrial,
+    details: [LoadingDock],
+))

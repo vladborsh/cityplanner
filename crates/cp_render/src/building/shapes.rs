@@ -520,7 +520,7 @@ pub fn details(m: &mut MeshData, dc: &DetailCx, list: &[Detail]) {
                 let width = front.hu * 2.0;
                 let bays = ((width / dc.bay).round() as u32).max(1);
                 let bw = width / bays as f32;
-                let mut left = 16;
+                let mut left = 10;
                 'floors: for fl in 1..front.floors {
                     for i in (1..bays).step_by(2) {
                         if left == 0 {
@@ -588,7 +588,8 @@ pub fn details(m: &mut MeshData, dc: &DetailCx, list: &[Detail]) {
                             let (u, v) = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
                             f.at(u, v, ground(u, v) + h)
                         };
-                        for nn in [n, -n] {
+                        {
+                            let nn = n;
                             flat_quad(
                                 m,
                                 [p(t0, 0.4), p(t1, 0.4), p(t1, 1.1), p(t0, 1.1)],

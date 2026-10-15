@@ -1,0 +1,15 @@
+Style((
+    id: "res_low_slate_mansard_a",
+    massing: Box,
+    roof: Mansard,
+    floors: (1, 2),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.62, 0.66, 0.72), (0.70, 0.72, 0.76), (0.58, 0.62, 0.66)],
+        roof: [(0.26, 0.28, 0.32), (0.22, 0.24, 0.28)],
+        trim: [(0.85, 0.86, 0.88)],
+        glass: (0.16, 0.22, 0.28),
+    ),
+    facade: Punched,
+    details: [Chimney],
+))

@@ -1,0 +1,15 @@
+Style((
+    id: "com_high_stepped_plaza_a",
+    massing: Stepped,
+    roof: Flat,
+    floors: (3, 5),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.86, 0.72, 0.50), (0.80, 0.66, 0.46)],
+        roof: [(0.36, 0.34, 0.32)],
+        trim: [(0.34, 0.28, 0.22)],
+        glass: (0.18, 0.26, 0.32),
+    ),
+    facade: Shopfront,
+    details: [Awning],
+))

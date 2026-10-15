@@ -1,0 +1,15 @@
+Style((
+    id: "com_low_twin_shops_b",
+    massing: TwinBlocks,
+    roof: Hipped,
+    floors: (1, 2),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.66, 0.54, 0.72), (0.90, 0.84, 0.70)],
+        roof: [(0.40, 0.30, 0.34), (0.34, 0.32, 0.38)],
+        trim: [(0.30, 0.22, 0.26)],
+        glass: (0.20, 0.26, 0.34),
+    ),
+    facade: Shopfront,
+    details: [Awning, Sign],
+))

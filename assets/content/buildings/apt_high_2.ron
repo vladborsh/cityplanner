@@ -8,5 +8,5 @@ Building((
     households: 14,
     consumption: {Water: 8.8, Sewage: 8.8, Power: 15.7},
     tax_base: 84.0,
-    styles: ["legacy_city_concrete_flat_8"],
+    styles: ["res_high_slab_block_a", "res_high_brick_terrace_a"],
 ))

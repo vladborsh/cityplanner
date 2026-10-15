@@ -1,0 +1,15 @@
+Style((
+    id: "res_high_mansard_hotel_a",
+    massing: Box,
+    roof: Mansard,
+    floors: (4, 8),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.86, 0.82, 0.72), (0.80, 0.76, 0.66)],
+        roof: [(0.30, 0.40, 0.38), (0.26, 0.34, 0.34)],
+        trim: [(0.92, 0.90, 0.84)],
+        glass: (0.16, 0.22, 0.26),
+    ),
+    facade: Punched,
+    details: [Chimney],
+))

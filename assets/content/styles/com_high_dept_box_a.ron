@@ -1,0 +1,15 @@
+Style((
+    id: "com_high_dept_box_a",
+    massing: Box,
+    roof: Flat,
+    floors: (3, 5),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.70, 0.30, 0.28), (0.74, 0.38, 0.30)],
+        roof: [(0.30, 0.28, 0.28)],
+        trim: [(0.88, 0.84, 0.76)],
+        glass: (0.18, 0.24, 0.30),
+    ),
+    facade: Shopfront,
+    details: [RooftopUnits, Sign, Awning],
+))

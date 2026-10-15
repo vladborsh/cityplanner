@@ -1,0 +1,15 @@
+Style((
+    id: "res_low_semi_pair_b",
+    massing: TwinBlocks,
+    roof: Gabled,
+    floors: (2, 3),
+    footprint_fill: (0.80, 1.00),
+    palette: (
+        walls: [(0.62, 0.78, 0.60), (0.84, 0.66, 0.66), (0.88, 0.84, 0.55), (0.60, 0.72, 0.82)],
+        roof: [(0.40, 0.28, 0.24), (0.34, 0.34, 0.36)],
+        trim: [(0.95, 0.95, 0.92)],
+        glass: (0.20, 0.26, 0.32),
+    ),
+    facade: Punched,
+    details: [Fence],
+))

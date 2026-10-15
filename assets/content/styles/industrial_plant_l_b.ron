@@ -1,0 +1,15 @@
+Style((
+    id: "industrial_plant_l_b",
+    massing: LShape,
+    roof: Flat,
+    floors: (1, 2),
+    footprint_fill: (0.80, 1.00),
+    palette: (
+        walls: [(0.78, 0.68, 0.34), (0.70, 0.62, 0.36)],
+        roof: [(0.38, 0.38, 0.36)],
+        trim: [(0.30, 0.28, 0.22)],
+        glass: (0.20, 0.22, 0.24),
+    ),
+    facade: Industrial,
+    details: [Chimney, Tanks],
+))

@@ -152,7 +152,7 @@ const AAA_HOUSE: (&str, &str) = (
     "content/buildings/aaa_test_house.ron",
     r#"Building((id: "aaa_test_house", name: "Test house", zone: ResLow, level: 1, lot: (2, 2),
         households: 1, consumption: {Water: 1.0, Sewage: 1.0, Power: 1.5}, tax_base: 10.0,
-        styles: ["legacy_suburb_warm_gabled_2"]))"#,
+        styles: ["res_low_cottage_gabled_a"]))"#,
 );
 
 /// Every committed fixture, from v0 to the m1 and bench saves.

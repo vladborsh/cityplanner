@@ -2562,6 +2562,7 @@ dependencies = [
  "cp_terrain",
  "cp_utility",
  "cp_zone",
+ "png 0.17.16",
 ]
 
 [[package]]

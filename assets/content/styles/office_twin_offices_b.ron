@@ -1,0 +1,15 @@
+Style((
+    id: "office_twin_offices_b",
+    massing: TwinBlocks,
+    roof: Flat,
+    floors: (5, 7),
+    footprint_fill: (0.85, 1.00),
+    palette: (
+        walls: [(0.78, 0.68, 0.54), (0.70, 0.62, 0.50)],
+        roof: [(0.32, 0.30, 0.30)],
+        trim: [(0.40, 0.34, 0.28)],
+        glass: (0.14, 0.22, 0.30),
+    ),
+    facade: Ribbon,
+    details: [RooftopUnits],
+))

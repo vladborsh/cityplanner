@@ -7,5 +7,5 @@ Building((
     households: 1,
     consumption: {Water: 1.0, Sewage: 1.0, Power: 1.5},
     tax_base: 10.0,
-    styles: ["legacy_suburb_warm_gabled_2"],
+    styles: ["res_low_cottage_gabled_a", "res_low_slate_mansard_a"],
 ))

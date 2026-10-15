@@ -353,9 +353,52 @@ fn every_building_references_existing_styles_and_a_dangling_one_is_rejected() {
             assert!(db.style_id(s).is_some(), "{}: style {s}", d.id);
         }
     }
-    let e = errs(mutate("house_low_1.ron", "legacy_", "ghost_"));
+    let e = errs(mutate("house_low_1.ron", "res_low_", "ghost_"));
     assert!(
         e.contains("house_low_1.ron: styles[0]: unknown style `ghost_"),
         "{e}"
+    );
+}
+
+/// T-113 (§8.2): every (zone type, level) draws from at least four different styles across its
+/// defs, and every zone type has at least five different massing × roof × palette combinations.
+#[test]
+fn every_zone_and_level_has_four_looks_and_every_zone_five_combinations() {
+    use std::collections::{BTreeMap, BTreeSet};
+    let db = ContentDb::load_dir(root()).unwrap();
+    let mut per_level: BTreeMap<(ZoneType, u8), BTreeSet<&str>> = BTreeMap::new();
+    let mut combos: BTreeMap<ZoneType, BTreeSet<String>> = BTreeMap::new();
+    for (_, d) in db.buildings().filter(|(_, d)| d.service.is_none()) {
+        for s in &d.styles {
+            per_level.entry((d.zone, d.level)).or_default().insert(s);
+            let st = db.style(db.style_id(s).unwrap());
+            combos
+                .entry(d.zone)
+                .or_default()
+                .insert(format!("{:?} {:?} {:?}", st.massing, st.roof, st.palette));
+        }
+    }
+    assert_eq!(
+        per_level.len(),
+        5 + 5 + 3 * 4,
+        "every (zone, level) is covered"
+    );
+    for ((zone, level), styles) in &per_level {
+        assert!(styles.len() >= 4, "{zone:?} level {level}: only {styles:?}");
+    }
+    assert_eq!(combos.len(), 6);
+    for (zone, c) in &combos {
+        assert!(c.len() >= 5, "{zone:?}: only {} combinations", c.len());
+    }
+    // At least five looks per zone type (the tall zones have one set per height band), none unused.
+    let used: BTreeSet<&str> = per_level.values().flatten().copied().collect();
+    for (_, s) in db.styles().filter(|(_, s)| !s.id.starts_with("legacy_")) {
+        assert!(used.contains(s.id.as_str()), "style {} is unused", s.id);
+    }
+    assert!(
+        db.styles()
+            .filter(|(_, s)| !s.id.starts_with("legacy_"))
+            .count()
+            >= 30
     );
 }
