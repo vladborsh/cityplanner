@@ -709,3 +709,141 @@ fn the_zone_fill_clears_the_coarse_terrain_lods_seen_from_afar() {
         }
     }
 }
+
+// ---- owned tile border (BUG-028) ----
+
+mod tile_border {
+    use super::*;
+    use crate::overlay::tiles::{BORDER_LIFT, SHADE_LIFT, border_edges, border_mesh, shade_mesh};
+    use bevy_math::Vec2;
+    use cp_terrain::{MAP_SIZE, TILE_SIZE, TileOwnership};
+
+    fn length(edges: &[(Vec2, Vec2)]) -> f32 {
+        edges.iter().map(|(a, b)| a.distance(*b)).sum()
+    }
+
+    #[test]
+    fn the_start_set_has_a_closed_outer_contour_of_24_km_and_no_inner_edges() {
+        let tiles = TileOwnership::m1_around((2, 2));
+        let edges = border_edges(&tiles);
+        assert!(
+            (length(&edges) - 4.0 * 3.0 * TILE_SIZE).abs() < 1.0,
+            "{}",
+            length(&edges)
+        );
+        for (a, b) in &edges {
+            // One side open, the other not: the contour is never between two open tiles.
+            let mid = (*a + *b) * 0.5;
+            let n = (*b - *a).perp().normalize() * 1.0;
+            let (p, q) = (mid + n, mid - n);
+            assert_ne!(
+                tiles.contains_point(p),
+                tiles.contains_point(q),
+                "{a} -> {b}"
+            );
+        }
+        // Closed: every corner is shared by exactly two edges.
+        let mut ends: Vec<(i32, i32)> = edges
+            .iter()
+            .flat_map(|(a, b)| [*a, *b])
+            .map(|p| (p.x.round() as i32, p.y.round() as i32))
+            .collect();
+        ends.sort();
+        for c in ends.chunk_by(|a, b| a == b) {
+            assert_eq!(c.len(), 2, "{c:?}");
+        }
+    }
+
+    #[test]
+    fn the_border_mesh_lies_above_every_terrain_lod_and_faces_up() {
+        let t = terrain();
+        let tiles = TileOwnership::m1_around((2, 2));
+        // Seen from far away the coarse LODs are on show.
+        for cam in [None, Some(Vec3::new(5000.0, 9000.0, 5000.0))] {
+            let m = border_mesh(&tiles, &t, cam, 4.0);
+            assert!(faces_up(&m));
+            assert!(m.positions.len() > 24_000 / 2 * 2, "tessellated every 2 m");
+            for p in &m.positions {
+                let q = bevy_math::Vec2::new(p[0], p[2]);
+                let h = terrain_mesh_height(&t, q);
+                assert!(p[1] >= h + BORDER_LIFT - 1e-3, "{p:?} vs {h}");
+                if cam.is_some() {
+                    for l in 1..crate::chunk::LOD_COUNT {
+                        assert!(p[1] >= crate::road::lod_height(&t, l, q) + BORDER_LIFT - 1e-3);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_start_tile_in_the_corner_is_clipped_at_the_map_edge() {
+        let t = terrain();
+        let tiles = TileOwnership::m1_around((0, 0));
+        let edges = border_edges(&tiles);
+        // 2x2 open tiles: only the two inner sides facing closed tiles, 2 tiles long each.
+        assert!((length(&edges) - 4.0 * TILE_SIZE).abs() < 1.0);
+        for (a, b) in &edges {
+            for p in [a, b] {
+                assert!(p.x >= 0.0 && p.y >= 0.0 && p.x <= MAP_SIZE && p.y <= MAP_SIZE);
+            }
+        }
+        let m = border_mesh(&tiles, &t, None, 4.0);
+        assert!(!m.indices.is_empty());
+        assert!(m.positions.iter().all(|p| p[0] >= -3.0 && p[2] >= -3.0));
+        assert!(
+            border_mesh(&TileOwnership::none(), &t, None, 4.0)
+                .indices
+                .is_empty()
+        );
+        // Everything open: no contour at all.
+        let mut all = TileOwnership::none();
+        for z in 0..5 {
+            for x in 0..5 {
+                all.set(x, z, true);
+            }
+        }
+        assert!(border_edges(&all).is_empty());
+    }
+
+    #[test]
+    fn the_veil_covers_exactly_the_tiles_that_are_not_open() {
+        let t = terrain();
+        let tiles = TileOwnership::m1_around((2, 2));
+        let m = shade_mesh(&tiles, &t, None);
+        assert!(faces_up(&m));
+        let mut area = 0.0f64;
+        for tri in m.indices.chunks(3) {
+            let p = |i: u32| m.positions[i as usize];
+            let (a, b, c) = (p(tri[0]), p(tri[1]), p(tri[2]));
+            area += ((b[0] - a[0]) as f64 * (c[2] - a[2]) as f64
+                - (c[0] - a[0]) as f64 * (b[2] - a[2]) as f64)
+                .abs()
+                * 0.5;
+            let mid = bevy_math::Vec2::new((a[0] + b[0] + c[0]) / 3.0, (a[2] + b[2] + c[2]) / 3.0);
+            assert!(
+                !tiles.contains_point(mid),
+                "veil over an open tile at {mid}"
+            );
+        }
+        let closed = (25 - tiles.open_count()) as f64;
+        assert!(
+            (area - closed * (TILE_SIZE as f64).powi(2)).abs() < 1.0,
+            "{area}"
+        );
+        for p in &m.positions {
+            let h = terrain_mesh_height(&t, bevy_math::Vec2::new(p[0], p[2]));
+            assert!(p[1] >= h + SHADE_LIFT - 1e-3);
+        }
+        assert!(
+            shade_mesh(
+                &TileOwnership::m1_around((2, 2)),
+                &t,
+                Some(Vec3::new(5000.0, 9000.0, 5000.0))
+            )
+            .indices
+            .len()
+                == m.indices.len()
+        );
+    }
+}

@@ -23,7 +23,9 @@ use cp_terrain::{MAP_SIZE, Terrain};
 use crate::chunk::{MeshData, select_lod, terrain_mesh_height};
 use crate::material::VertexColorMaterial;
 
+mod tiles;
 mod utility;
+pub use tiles::{border_edges, border_mesh, shade_mesh};
 pub use utility::{
     BuildingStatus, UtilityLayer, building_status, coverage_counts, status_color,
     utility_overlay_mesh,
@@ -205,7 +207,7 @@ pub fn zone_mesh(zones: &ZoneOverlay, terrain: &Terrain) -> MeshData {
 /// Terrain height the zone layers drape on: the LOD0 mesh, and, for cells that the camera at
 /// `cam` sees on a coarser terrain LOD, the highest of the LODs on show there (a coarse
 /// triangle can pass above the fine mesh, which would bury the layer).
-fn drape_height(terrain: &Terrain, cam: Option<Vec3>, p: bevy::math::Vec2) -> f32 {
+pub(crate) fn drape_height(terrain: &Terrain, cam: Option<Vec3>, p: bevy::math::Vec2) -> f32 {
     let h = terrain_mesh_height(terrain, p);
     let Some(cam) = cam else { return h };
     let d = cam.distance(Vec3::new(p.x, h, p.y));
@@ -323,13 +325,32 @@ pub fn ribbon_at(
     } else {
         ((len / LINE_STEP).ceil() as usize).max(1)
     };
+    ribbon_with(m, a, b, w, color, len / n as f32, &|q| {
+        terrain_mesh_height(terrain, q) + lift
+    });
+}
+
+/// A ribbon of width `w` along `a → b`, cut every `step` m at most, each vertex at `height(xz)`.
+pub fn ribbon_with(
+    m: &mut MeshData,
+    a: bevy::math::Vec2,
+    b: bevy::math::Vec2,
+    w: f32,
+    color: [f32; 4],
+    step: f32,
+    height: &dyn Fn(bevy::math::Vec2) -> f32,
+) {
+    let len = a.distance(b);
+    if len < 1e-3 {
+        return;
+    }
+    let n = ((len / step).ceil() as usize).max(1);
     let d = (b - a) / len;
     let side = bevy::math::Vec2::new(d.y, -d.x) * (w * 0.5);
     let mut prev: Option<[u32; 2]> = None;
     for i in 0..=n {
         let p = a.lerp(b, i as f32 / n as f32);
-        let cur = [p + side, p - side]
-            .map(|q| push(m, [q.x, terrain_mesh_height(terrain, q) + lift, q.y], color));
+        let cur = [p + side, p - side].map(|q| push(m, [q.x, height(q), q.y], color));
         if let Some([pl, pr]) = prev {
             // l = p + side runs to the right of d (XZ with z down), so this faces up.
             m.indices
@@ -484,9 +505,15 @@ impl Plugin for OverlayPlugin {
         app.init_resource::<OverlayState>()
             .init_resource::<ZoningMode>()
             .init_resource::<OverlayLayers>()
+            .init_resource::<tiles::TileLayers>()
             .add_systems(
                 Update,
-                (sync_overlay_meshes, apply_overlay_visibility).chain(),
+                (
+                    sync_overlay_meshes,
+                    tiles::sync_tile_layers,
+                    apply_overlay_visibility,
+                )
+                    .chain(),
             );
     }
 }
