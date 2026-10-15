@@ -61,6 +61,10 @@ const KEY_ANGLES_DEG: [f32; 6] = [45.0, -45.0, 90.0, -90.0, 135.0, -135.0];
 const SAMPLE_STEP: f32 = 4.0;
 /// Distance between bridge/elevated piers, metres.
 pub const PIER_SPACING: f32 = 48.0;
+/// One zoning cell, metres: the build step and the tick spacing of a stretch (§6.7).
+pub const ZONE_CELL: f32 = 8.0;
+/// Distance between the control points of a stretch (8 cells), metres (§6.7).
+pub const CONTROL_SPACING: f32 = 64.0;
 /// Crossings closer than this (metres) to an auto-cut point replace it.
 const CUT_MERGE: f32 = 0.5;
 

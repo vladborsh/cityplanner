@@ -9,12 +9,13 @@ pub mod junction;
 pub mod model;
 pub mod reach;
 pub mod run;
+pub mod stretches;
 
 pub use build::{
-    AppliedSnap, DemolishRef, ElevationMode, NodeRef, OneWayWarning, PIER_SPACING, PlannedSegment,
-    PlannedSplit, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SnapKind, SnapOptions,
-    SnapReport, SnapReportKind, one_way_report, pier_positions, segment_cost, validate_road_path,
-    validate_road_path_report,
+    AppliedSnap, CONTROL_SPACING, DemolishRef, ElevationMode, NodeRef, OneWayWarning, PIER_SPACING,
+    PlannedSegment, PlannedSplit, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest,
+    SnapKind, SnapOptions, SnapReport, SnapReportKind, ZONE_CELL, one_way_report, pier_positions,
+    segment_cost, validate_road_path, validate_road_path_report,
 };
 pub use command::{NetCommand, NetError, apply, build_unowned, curve_outside_owned};
 pub use connections::{LaneConnection, Links, PedLink, PedLinkKind, Turn};
@@ -26,6 +27,9 @@ pub use junction::{
 pub use model::*;
 pub use reach::{EntryReach, update_entry_reach};
 pub use run::road_run;
+pub use stretches::{
+    CORNER_DEG, Stretch, StretchPoint, cell_ticks, control_points, locate, stops, stretch, unlocate,
+};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_net";
