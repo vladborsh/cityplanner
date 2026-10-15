@@ -197,3 +197,121 @@ fn ten_thousand_flagged_buildings_fit_the_render_prep_budget() {
     // §14 gives render preparation 3 ms in all (this runs at the test profile's opt-level 1).
     assert!(best < 3.0, "{best} ms");
 }
+
+/// Draws the four icons side by side from the real mesh (camera straight above, painter's
+/// order = index order) and checks each shows its plate colour and a glyph. With
+/// `T125_RASTER=<path>` set it also writes the picture there (reports/t-125/icons.png).
+#[test]
+fn the_four_icons_rasterise_square_and_distinct() {
+    const CELL: usize = 128;
+    let facing = Facing {
+        position: Vec3::new(0.0, 100.0, 0.0),
+        right: Vec3::X,
+        up: Vec3::NEG_Z,
+    };
+    let n = Problem::ALL.len();
+    let size = icon_size(100.0);
+    // The icon fills about 100 of the cell's 128 pixels.
+    let scale = 100.0 / size;
+    let spacing = CELL as f32 / scale;
+    let icons: Vec<_> = Problem::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, p)| IconInstance {
+            id: id(i as u32),
+            problem: *p,
+            pos: Vec3::new(i as f32 * spacing, 0.0, 0.0),
+        })
+        .collect();
+    let m = build_mesh(&icons, &facing);
+    let (w, h) = (CELL * n, CELL);
+    let mut img = vec![[236u8, 238, 240]; w * h];
+    let px = |v: [f32; 3]| {
+        (
+            (v[0] + spacing / 2.0) * scale,
+            (v[2] + spacing / 2.0) * scale,
+        )
+    };
+    for t in m.indices.chunks(3) {
+        let q: Vec<(f32, f32)> = t.iter().map(|&i| px(m.positions[i as usize])).collect();
+        let c = m.colors[t[0] as usize];
+        let col = [0, 1, 2].map(|k| (c[k].powf(1.0 / 2.2) * 255.0) as u8);
+        let (x0, x1) = (
+            q.iter()
+                .map(|p| p.0)
+                .fold(f32::MAX, f32::min)
+                .floor()
+                .max(0.0) as usize,
+            q.iter()
+                .map(|p| p.0)
+                .fold(f32::MIN, f32::max)
+                .ceil()
+                .min(w as f32) as usize,
+        );
+        let (y0, y1) = (
+            q.iter()
+                .map(|p| p.1)
+                .fold(f32::MAX, f32::min)
+                .floor()
+                .max(0.0) as usize,
+            q.iter()
+                .map(|p| p.1)
+                .fold(f32::MIN, f32::max)
+                .ceil()
+                .min(h as f32) as usize,
+        );
+        let edge = |a: (f32, f32), b: (f32, f32), p: (f32, f32)| {
+            (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
+        };
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let p = (x as f32 + 0.5, y as f32 + 0.5);
+                let (e0, e1, e2) = (
+                    edge(q[0], q[1], p),
+                    edge(q[1], q[2], p),
+                    edge(q[2], q[0], p),
+                );
+                if (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0) {
+                    img[y * w + x] = col;
+                }
+            }
+        }
+    }
+    // Square: the dark border spans the same pixels in height and width for every icon.
+    let icon_px = (size * scale) as usize;
+    let mut sigs = std::collections::BTreeSet::new();
+    for i in 0..n {
+        let cell: Vec<_> = (0..h)
+            .flat_map(|y| (0..CELL).map(move |x| (x, y)))
+            .map(|(x, y)| img[y * w + i * CELL + x])
+            .collect();
+        let dark = |c: &[u8; 3]| c.iter().all(|&v| v < 100);
+        let (mut xs, mut ys) = ((usize::MAX, 0), (usize::MAX, 0));
+        for (k, c) in cell.iter().enumerate() {
+            if dark(c) {
+                let (x, y) = (k % CELL, k / CELL);
+                xs = (xs.0.min(x), xs.1.max(x));
+                ys = (ys.0.min(y), ys.1.max(y));
+            }
+        }
+        assert!(
+            xs.1 - xs.0 + 1 >= icon_px - 2 && ys.1 - ys.0 + 1 >= icon_px - 2,
+            "icon {i} is not a full square"
+        );
+        assert!(
+            (xs.1 - xs.0).abs_diff(ys.1 - ys.0) <= 1,
+            "icon {i} not square"
+        );
+        sigs.insert(cell);
+    }
+    assert_eq!(sigs.len(), n, "icons must differ");
+    if let Ok(path) = std::env::var("T125_RASTER") {
+        let file = std::fs::File::create(path).unwrap();
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut wr = enc.write_header().unwrap();
+        let data: Vec<u8> = img.iter().flatten().copied().collect();
+        wr.write_image_data(&data).unwrap();
+    }
+}
