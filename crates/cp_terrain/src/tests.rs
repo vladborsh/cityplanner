@@ -405,7 +405,12 @@ fn committed_maps_have_a_valid_entry_road() {
 
 #[test]
 fn a_map_on_disk_without_entry_road_does_not_load() {
-    let dir = std::env::temp_dir().join("cp-terrain-no-entry-map");
+    // Unique per process and test: slots and concurrent runs share the temp directory.
+    let dir = std::env::temp_dir().join(format!(
+        "cp-terrain-no-entry-map-{}-{}",
+        std::process::id(),
+        "a_map_on_disk_without_entry_road_does_not_load"
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     for f in ["height.png", "water.png"] {
         std::fs::copy(map_dir("flatlands").join(f), dir.join(f)).unwrap();
@@ -415,6 +420,8 @@ fn a_map_on_disk_without_entry_road_does_not_load() {
         "(name: \"x\", sea_level: 20.0, start_tile: (2, 2), external_connections: [(5120.0, 0.0)])",
     )
     .unwrap();
-    let e = Terrain::load(&dir).unwrap_err().to_string();
+    let result = Terrain::load(&dir);
+    std::fs::remove_dir_all(&dir).unwrap();
+    let e = result.unwrap_err().to_string();
     assert!(e.contains("entry_road is missing"), "{e}");
 }
