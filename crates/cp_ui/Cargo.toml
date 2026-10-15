@@ -20,6 +20,7 @@ cp_economy.workspace = true
 cp_building.workspace = true
 cp_core.workspace = true
 cp_render.workspace = true
+cp_district.workspace = true
 bevy.workspace = true
 bevy_egui.workspace = true
 egui_extras.workspace = true

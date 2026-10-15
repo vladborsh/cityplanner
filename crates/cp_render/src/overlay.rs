@@ -23,9 +23,13 @@ use cp_terrain::{MAP_SIZE, Terrain};
 use crate::chunk::{MeshData, select_lod, terrain_mesh_height};
 use crate::material::VertexColorMaterial;
 
+mod districts;
 mod tiles;
 mod utility;
 mod zone_chunks;
+pub use districts::{
+    DistrictLayer, DistrictLayers, DistrictsMode, contour_edges, contour_mesh, fill_mesh,
+};
 pub use tiles::{border_edges, border_mesh, shade_mesh};
 pub use utility::{
     BuildingStatus, UtilityLayer, building_status, coverage_counts, status_color,
@@ -46,10 +50,12 @@ pub enum Overlay {
     Water,
     /// Power lines, their reach and the power state of buildings.
     Power,
+    /// District cells and borders (T-133).
+    Districts,
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 7] = [
+    pub const ALL: [Overlay; 8] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
@@ -57,6 +63,7 @@ impl Overlay {
         Overlay::Pollution,
         Overlay::Water,
         Overlay::Power,
+        Overlay::Districts,
     ];
 
     pub fn label(self) -> &'static str {
@@ -68,6 +75,7 @@ impl Overlay {
             Overlay::Pollution => "Pollution",
             Overlay::Water => "Water",
             Overlay::Power => "Power",
+            Overlay::Districts => "Districts",
         }
     }
 }
@@ -506,11 +514,14 @@ impl Plugin for OverlayPlugin {
             .init_resource::<ZoningMode>()
             .init_resource::<OverlayLayers>()
             .init_resource::<tiles::TileLayers>()
+            .init_resource::<DistrictsMode>()
+            .init_resource::<districts::DistrictLayers>()
             .add_systems(
                 Update,
                 (
                     sync_overlay_meshes,
                     tiles::sync_tile_layers,
+                    districts::sync_district_layers,
                     apply_overlay_visibility,
                 )
                     .chain(),

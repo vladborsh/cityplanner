@@ -17,6 +17,22 @@ pub const NAME_MAX: usize = 32;
 /// Colours the UI cycles through: a district's `color` is `(id - 1) % PALETTE_LEN`.
 pub const PALETTE_LEN: u8 = 12;
 
+/// Colours of the palette indices (sRGB), what the overlay and the district list draw.
+pub const PALETTE_RGB: [[u8; 3]; PALETTE_LEN as usize] = [
+    [230, 80, 70],
+    [60, 140, 230],
+    [90, 190, 90],
+    [240, 190, 50],
+    [170, 100, 210],
+    [60, 200, 200],
+    [240, 130, 50],
+    [220, 100, 160],
+    [130, 170, 60],
+    [100, 100, 220],
+    [160, 120, 80],
+    [150, 150, 160],
+];
+
 /// A cell of the district grid: `(column, row)`, `0..SIDE` each.
 pub type Cell = (u16, u16);
 
@@ -125,6 +141,11 @@ impl DistrictMap {
                 *c = 0;
             }
         }
+    }
+
+    /// The cell's centre in world metres.
+    pub fn cell_center((c, r): Cell) -> Vec2 {
+        Vec2::new((f32::from(c) + 0.5) * CELL_M, (f32::from(r) + 0.5) * CELL_M)
     }
 
     /// Cells of `district`, row-major.

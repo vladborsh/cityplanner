@@ -44,6 +44,7 @@ icons! {
     Power => "power",
     Buildings => "buildings",
     Bulldozer => "bulldozer",
+    Districts => "districts",
     // Tools.
     Road => "road",
     Curve => "curve",
@@ -53,6 +54,10 @@ icons! {
     ZoneBrushLarge => "zone_brush_l",
     ZoneRect => "zone_rect",
     ZoneEraser => "zone_eraser",
+    DistrictBrushSmall => "district_brush_s",
+    DistrictBrushLarge => "district_brush_l",
+    DistrictErase => "district_erase",
+    DistrictNew => "district_new",
     Pipe => "pipe",
     PowerLine => "power_line",
     Remove => "remove",
@@ -71,6 +76,7 @@ icons! {
     OverlayPollution => "overlay_pollution",
     OverlayWater => "overlay_water",
     OverlayPower => "overlay_power",
+    OverlayDistricts => "overlay_districts",
     RemovePipe => "remove_pipe",
     RemoveLine => "remove_line",
     // Zone types (T-099): one silhouette each.
@@ -175,6 +181,7 @@ pub fn overlay_icon(overlay: cp_render::Overlay) -> Icon {
         O::Pollution => Icon::OverlayPollution,
         O::Water => Icon::OverlayWater,
         O::Power => Icon::OverlayPower,
+        O::Districts => Icon::OverlayDistricts,
     }
 }
 

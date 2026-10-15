@@ -1,7 +1,7 @@
 //! The left palette and the tool panel beside it (`architecture/system-design.md` §13.6).
 //!
 //! The palette is a 72 px column with one icon per [`Category`]; clicking one (or pressing its
-//! number key, 1…6) opens that category's 300 px tool panel, clicking it again closes the
+//! number key, 1…5) opens that category's 300 px tool panel, clicking it again closes the
 //! panel. The panel has a header, the tool buttons and options of the category, and the pinned
 //! "cost · verdict" block at the bottom.
 
@@ -9,7 +9,7 @@ use bevy_egui::egui;
 use cp_content::ContentDb;
 use cp_render::OverlayState;
 use cp_sim::SimView;
-use cp_tools::ToolState;
+use cp_tools::{CommandOutbox, ToolState};
 
 use crate::icons::Icon;
 use crate::panels::{UiState, bulldozer_panel, roads_panel, services_panel, verdict, zones_panel};
@@ -24,7 +24,7 @@ pub enum Category {
     Bulldozer,
     /// Public transport (M3): no tools yet.
     Transit,
-    /// Districts (M4): no tools yet.
+    /// Districts: brushes, the district list and its taxes (M2).
     Districts,
 }
 
@@ -49,28 +49,29 @@ impl Category {
         }
     }
 
-    /// Transit and Districts have no icon yet; they are never drawn without tools.
+    /// Transit has no icon yet; it is never drawn without tools.
     pub fn icon(self) -> Icon {
         match self {
             Category::Roads => Icon::Roads,
             Category::Zones => Icon::Zones,
             Category::Buildings => Icon::Buildings,
             Category::Bulldozer => Icon::Bulldozer,
-            Category::Transit | Category::Districts => Icon::Info,
+            Category::Districts => Icon::Districts,
+            Category::Transit => Icon::Info,
         }
     }
 
     /// Whether the category has a tool to offer with `content`: roads need a road type,
-    /// buildings a placeable service building, the others are always there; Transit and
-    /// Districts have none before M3 / M4.
+    /// buildings a placeable service building, the others are always there; Transit has none
+    /// before M3.
     pub fn has_tools(self, content: Option<&ContentDb>) -> bool {
         match self {
             Category::Roads => content.is_some_and(|c| c.roads().next().is_some()),
             Category::Buildings => {
                 content.is_some_and(|c| c.buildings().any(|(_, d)| d.service.is_some()))
             }
-            Category::Zones | Category::Bulldozer => true,
-            Category::Transit | Category::Districts => false,
+            Category::Zones | Category::Bulldozer | Category::Districts => true,
+            Category::Transit => false,
         }
     }
 
@@ -163,6 +164,7 @@ pub fn tool_panel(
     view: Option<&SimView>,
     tools: &mut ToolState,
     overlay: &mut OverlayState,
+    outbox: &mut CommandOutbox,
 ) -> Option<egui::Rect> {
     let category = state.category?;
     let out = egui::Panel::left("tool_panel")
@@ -186,7 +188,8 @@ pub fn tool_panel(
                 Category::Zones => zones_panel(ui, view, tools, state),
                 Category::Buildings => services_panel(ui, view, tools, overlay),
                 Category::Bulldozer => bulldozer_panel(ui, tools),
-                Category::Transit | Category::Districts => {
+                Category::Districts => crate::districts::districts_panel(ui, view, tools, outbox),
+                Category::Transit => {
                     ui.weak("Nothing to build here yet.");
                 }
             });
@@ -221,6 +224,7 @@ mod tests {
         state: UiState,
         tools: ToolState,
         overlay: OverlayState,
+        outbox: CommandOutbox,
         view: SimView,
         t: f64,
         palette: Vec<(Category, egui::Rect)>,
@@ -236,6 +240,7 @@ mod tests {
                 state: UiState::default(),
                 tools: ToolState::default(),
                 overlay: OverlayState::default(),
+                outbox: CommandOutbox::default(),
                 view: view(),
                 t: 0.0,
                 palette: Vec::new(),
@@ -263,6 +268,7 @@ mod tests {
                 state,
                 tools,
                 overlay,
+                outbox,
                 view,
                 palette: pal,
                 panel,
@@ -274,7 +280,7 @@ mod tests {
             frame_texts(ctx, raw, |ui| {
                 let mut root = crate::panels::root_ui(ui.ctx());
                 *pal = palette(&mut root, state, view.content.as_deref());
-                *panel = tool_panel(&mut root, state, Some(view), tools, overlay);
+                *panel = tool_panel(&mut root, state, Some(view), tools, overlay, outbox);
             })
         }
 
@@ -530,6 +536,7 @@ mod tests {
             (Category::Buildings, ActiveTool::UtilityRemove),
             (Category::Buildings, ActiveTool::None),
             (Category::Bulldozer, ActiveTool::Bulldozer),
+            (Category::Districts, ActiveTool::District),
         ] {
             let mut rig = Rig::new();
             rig.click_category(category);
@@ -579,14 +586,17 @@ mod tests {
                 Category::Roads,
                 Category::Zones,
                 Category::Buildings,
-                Category::Bulldozer
+                Category::Bulldozer,
+                Category::Districts
             ]
         );
         assert!(!drawn.contains(&Category::Transit));
-        assert!(!drawn.contains(&Category::Districts));
         // Without content the road and building tools do not exist either.
         let none = Category::available(None);
-        assert_eq!(none, vec![Category::Zones, Category::Bulldozer]);
+        assert_eq!(
+            none,
+            vec![Category::Zones, Category::Bulldozer, Category::Districts]
+        );
     }
 
     #[test]
@@ -696,7 +706,14 @@ mod tests {
         } = &mut rig;
         let mut out = ctx.run_ui(input(*t, vec![]), |ui| {
             let mut root = crate::panels::root_ui(ui.ctx());
-            tool_panel(&mut root, state, Some(view), tools, overlay);
+            tool_panel(
+                &mut root,
+                state,
+                Some(view),
+                tools,
+                overlay,
+                &mut CommandOutbox::default(),
+            );
         });
         out.textures_delta.clear();
         fn walk(s: &egui::epaint::Shape, at: &mut Option<f32>) {
@@ -724,7 +741,6 @@ mod tests {
             assert!(text.contains(c.label()), "{c:?}: {text}");
         }
         rig.click_category(Category::Bulldozer);
-        rig.click_category(Category::Bulldozer);
         assert_eq!(rig.state.category, Some(Category::Bulldozer));
         rig.click_label("Bulldozer");
         assert_eq!(rig.tools.active, ActiveTool::Bulldozer);
@@ -740,7 +756,8 @@ mod tests {
                 Category::Roads,
                 Category::Zones,
                 Category::Buildings,
-                Category::Bulldozer
+                Category::Bulldozer,
+                Category::Districts
             ]
         );
         let keys = [
@@ -748,6 +765,7 @@ mod tests {
             egui::Key::Num2,
             egui::Key::Num3,
             egui::Key::Num4,
+            egui::Key::Num5,
         ];
         for (n, k) in keys.into_iter().enumerate() {
             let mut got = None;
@@ -758,7 +776,7 @@ mod tests {
         }
         // Past the last category, and with a modifier held, nothing happens.
         let mut got = Some(Category::Roads);
-        frame(&ctx, input(10.0, vec![key(egui::Key::Num5)]), |ui| {
+        frame(&ctx, input(10.0, vec![key(egui::Key::Num6)]), |ui| {
             got = hotkey(ui.ctx(), &available);
         });
         assert_eq!(got, None);
@@ -923,5 +941,81 @@ mod tests {
         for d in digits {
             assert!(!others.contains(&d));
         }
+    }
+
+    /// A rig whose view has one district ("Hill", id 1) with the given ResLow override.
+    fn rig_with_district(resl_tax: Option<u8>) -> Rig {
+        use cp_district::{DistrictCommand, DistrictId};
+        use cp_sim::SimCommand;
+        let mut sim = SimRunner::new(1);
+        sim.set_content(content());
+        let cmds = [
+            DistrictCommand::Create {
+                name: "Hill".into(),
+            },
+            DistrictCommand::SetTax {
+                district: DistrictId(1),
+                zone: cp_content::ZoneType::ResLow,
+                pct: resl_tax,
+            },
+        ];
+        for c in cmds {
+            sim.push_command(SimCommand::District(c), sim.tick());
+            sim.tick_once();
+        }
+        let mut rig = Rig::new();
+        rig.view = sim.view();
+        rig.click_category(Category::Districts);
+        rig.tools.district.selected = Some(DistrictId(1));
+        rig.frame(vec![]);
+        rig
+    }
+
+    #[test]
+    fn the_districts_category_is_the_fifth_and_new_district_creates_and_selects_one() {
+        use cp_district::{DistrictCommand, DistrictId};
+        use cp_sim::SimCommand;
+        let mut rig = Rig::new();
+        assert_eq!(
+            Category::available(rig.view.content.as_deref())[4],
+            Category::Districts
+        );
+        rig.click_category(Category::Districts);
+        rig.click_label("New district");
+        assert_eq!(
+            rig.outbox.iter().cloned().collect::<Vec<_>>(),
+            vec![SimCommand::District(DistrictCommand::Create {
+                name: "District 1".into()
+            })]
+        );
+        assert_eq!(rig.tools.district.selected, Some(DistrictId(1)));
+        assert_eq!(rig.tools.active, ActiveTool::District);
+    }
+
+    #[test]
+    fn the_own_rate_switch_sends_set_tax_some_and_none() {
+        use cp_district::{DistrictCommand, DistrictId};
+        use cp_sim::SimCommand;
+        let set = |pct| {
+            SimCommand::District(DistrictCommand::SetTax {
+                district: DistrictId(1),
+                zone: cp_content::ZoneType::ResLow,
+                pct,
+            })
+        };
+        // Off -> on: starts at the city rate (9 %).
+        let mut rig = rig_with_district(None);
+        rig.click_label("R low");
+        assert_eq!(
+            rig.outbox.iter().cloned().collect::<Vec<_>>(),
+            vec![set(Some(9))]
+        );
+        // On -> off.
+        let mut rig = rig_with_district(Some(20));
+        rig.click_label("R low");
+        assert_eq!(
+            rig.outbox.iter().cloned().collect::<Vec<_>>(),
+            vec![set(None)]
+        );
     }
 }

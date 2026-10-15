@@ -357,7 +357,7 @@ pub fn tool_button(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -
 }
 
 /// A titled section of a tool panel.
-fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+pub(crate) fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(4.0);
     ui.weak(title);
     add(ui);
@@ -482,6 +482,18 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 _ => "hold and drag to paint".to_string(),
             };
             ui.weak(format!("{what} — {n} cells under the cursor. Esc cancels."));
+        }
+        (Category::Districts, ActiveTool::District) if tools.district.selected.is_none() => {
+            ui.weak("Choose a district in the list (or press New district), then paint.");
+        }
+        (Category::Districts, ActiveTool::District) => {
+            let n = tools.district_preview.len();
+            ui.weak(format!(
+                "hold and drag to paint — {n} cells under the cursor. Esc leaves the brush."
+            ));
+        }
+        (Category::Districts, _) => {
+            ui.weak("Pick a brush or create a district; the overlay shows the districts.");
         }
         (Category::Zones, _) => {
             ui.weak("Pick a zoning tool or a zone type to show the zone grid.");

@@ -23,6 +23,7 @@ cp_core.workspace = true
 bevy_math.workspace = true
 bevy.workspace = true
 cp_terrain.workspace = true
+cp_district.workspace = true
 
 [dev-dependencies]
 cp_save.workspace = true

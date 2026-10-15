@@ -15,6 +15,7 @@ pub mod budget;
 pub mod buildings;
 pub mod debug;
 pub mod demand_panel;
+pub mod districts;
 pub mod files;
 pub mod frame;
 pub mod icons;
@@ -65,7 +66,10 @@ impl Plugin for UiPlugin {
                     draw_stub_marker,
                 ),
             )
-            .add_systems(EguiPrimaryContextPass, draw_ui);
+            .add_systems(
+                EguiPrimaryContextPass,
+                (draw_ui, districts::draw_labels).chain(),
+            );
     }
 }
 
@@ -153,7 +157,14 @@ fn draw_ui(
         &mut files,
     );
     palette(&mut root, &mut state, view.content.as_deref());
-    tool_panel(&mut root, &mut state, Some(&view), &mut tools, &mut overlay);
+    tool_panel(
+        &mut root,
+        &mut state,
+        Some(&view),
+        &mut tools,
+        &mut overlay,
+        &mut outbox,
+    );
     demand_panel::demand_panel(&mut root, &view, &mut state, &mut tools);
     {
         let st = &mut *state;

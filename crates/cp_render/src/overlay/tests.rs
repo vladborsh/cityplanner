@@ -103,7 +103,7 @@ fn overlay_state_defaults_to_off_and_lists_every_overlay_once() {
     let mut all = Overlay::ALL.to_vec();
     all.sort_by_key(|o| o.label());
     all.dedup();
-    assert_eq!(all.len(), 7);
+    assert_eq!(all.len(), 8);
 }
 
 #[test]
@@ -305,7 +305,12 @@ fn switching_overlays_shows_that_layer_and_the_zone_grid_stays_on() {
     for o in Overlay::ALL {
         app.world_mut().resource_mut::<OverlayState>().active = o;
         app.update(); // one frame
-        let mut want: Vec<_> = if o == Overlay::Off { vec![] } else { vec![o] };
+        // The district overlay is its own layer (`DistrictLayers`), not one of these.
+        let mut want: Vec<_> = if o == Overlay::Off || o == Overlay::Districts {
+            vec![]
+        } else {
+            vec![o]
+        };
         // BUG-026: the zone fill is on with every overlay that does not recolour the ground.
         if zone_fill_visible(o) && !want.contains(&Overlay::Zones) {
             want.push(Overlay::Zones);

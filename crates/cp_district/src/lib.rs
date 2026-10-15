@@ -16,7 +16,7 @@ pub mod map;
 pub use command::{DistrictCommand, DistrictError, TAX_MAX, TAX_MIN, apply};
 pub use map::{
     CELL_M, Cell, District, DistrictId, DistrictMap, Districts, MAX_DISTRICTS, NAME_MAX,
-    PALETTE_LEN, SIDE, district_at, zone_slot,
+    PALETTE_LEN, PALETTE_RGB, SIDE, district_at, zone_slot,
 };
 
 #[cfg(test)]

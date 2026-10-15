@@ -24,7 +24,9 @@ pub use building_render::{BuildingRenderPlugin, BuildingStats};
 pub use camera::{CameraSettings, RtsCamera, RtsCameraPlugin};
 pub use chunk::terrain_mesh_height;
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
-pub use overlay::{LINE_STEP, Overlay, OverlayPlugin, OverlayState, ZoningMode, ribbon_at};
+pub use overlay::{
+    DistrictsMode, LINE_STEP, Overlay, OverlayPlugin, OverlayState, ZoningMode, ribbon_at,
+};
 pub use problem_render::{ProblemIconPlugin, ProblemIconStats};
 pub use road_render::{RoadRenderPlugin, RoadStats};
 pub use sun::LightingSettings;

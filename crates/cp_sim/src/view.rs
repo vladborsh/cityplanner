@@ -81,6 +81,9 @@ pub struct SimView {
     /// All buildings as of this snapshot, for mesh building. Shared like `net`: re-cloned
     /// only when `BuildingGrid::revision` changed.
     pub buildings: Arc<BuildingGrid>,
+    /// The district grid and records (T-133), shared: re-cloned only when they changed.
+    pub district_map: Arc<cp_district::DistrictMap>,
+    pub districts: Arc<cp_district::Districts>,
     /// The content database (road types, building styles, ...), for tools, the build menu and
     /// mesh building; `None` for a sim without content.
     pub content: Option<Arc<ContentDb>>,
@@ -120,6 +123,12 @@ pub struct LoanOfferView {
     pub available: bool,
     pub active: Option<cp_economy::Loan>,
 }
+
+/// The cached `SimView` district snapshots.
+pub type DistrictCache = (
+    Option<Arc<cp_district::DistrictMap>>,
+    Option<Arc<cp_district::Districts>>,
+);
 
 impl SimView {
     /// The bank's offers with their state. Empty for a sim without content.
@@ -293,6 +302,35 @@ impl SimRunner {
         snap
     }
 
+    /// `SimView::district_map`: the cached copy while the grid is equal to it (a 100 KB compare
+    /// a view, instead of a copy).
+    fn district_map_snapshot(&self) -> Arc<cp_district::DistrictMap> {
+        let now = self.world().get_resource::<cp_district::DistrictMap>();
+        let mut cache = self.district_cache.lock().expect("district cache");
+        if let Some(snap) = cache.0.as_ref()
+            && now.is_none_or(|n| **snap == *n)
+        {
+            return Arc::clone(snap);
+        }
+        let snap = Arc::new(now.cloned().unwrap_or_default());
+        cache.0 = Some(Arc::clone(&snap));
+        snap
+    }
+
+    /// `SimView::districts`, cached like [`SimRunner::district_map_snapshot`].
+    fn districts_snapshot(&self) -> Arc<cp_district::Districts> {
+        let now = self.world().get_resource::<cp_district::Districts>();
+        let mut cache = self.district_cache.lock().expect("district cache");
+        if let Some(snap) = cache.1.as_ref()
+            && now.is_none_or(|n| **snap == *n)
+        {
+            return Arc::clone(snap);
+        }
+        let snap = Arc::new(now.cloned().unwrap_or_default());
+        cache.1 = Some(Arc::clone(&snap));
+        snap
+    }
+
     /// The building snapshot for `SimView::buildings`, cached while the grid is unchanged.
     fn buildings_snapshot(&self) -> Arc<BuildingGrid> {
         let grid = self.world().get_resource::<BuildingGrid>();
@@ -389,6 +427,8 @@ impl SimRunner {
             stats: self.stats(),
             net: self.net_snapshot(&junctions),
             buildings: self.buildings_snapshot(),
+            district_map: self.district_map_snapshot(),
+            districts: self.districts_snapshot(),
             zones: self.zone_snapshot(),
             content: self
                 .world()

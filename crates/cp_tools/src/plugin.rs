@@ -46,6 +46,8 @@ pub enum ActiveTool {
     Upgrade,
     /// Zoning: fill block, brushes, rectangle, eraser.
     Zone,
+    /// The district brush (Districts panel).
+    District,
     /// Placing a service building (type chosen in the Services tab, T rotates).
     Place,
     /// Drawing pipes or power lines (Water / Power tabs).
@@ -97,6 +99,9 @@ pub struct ToolState {
     /// What the upgrade tool would do to the run under the cursor (T-081).
     pub upgrade_preview: Option<crate::upgrade::UpgradePreview>,
     pub zone: ZoneTool,
+    pub district: crate::district::DistrictTool,
+    /// Cells the district brush would change at the cursor (the highlight).
+    pub district_preview: Vec<cp_district::Cell>,
     pub building: BuildingTool,
     pub utility: UtilityTool,
     /// Which network the remove tool picks from.
@@ -143,12 +148,22 @@ impl ToolState {
         self.ghost_key = None;
         self.zone.cancel();
         self.zone_preview.clear();
+        self.district.cancel();
+        self.district_preview.clear();
         self.place_ghost = None;
         self.building_highlight = None;
         self.utility.cancel();
         self.utility_ghost = None;
         self.utility_key = None;
         self.link_highlight = None;
+    }
+}
+
+/// Tells the renderer whether the district brush is active (the district overlay shows then).
+fn sync_districts_mode(state: Res<ToolState>, mut mode: ResMut<cp_render::DistrictsMode>) {
+    let on = state.active == ActiveTool::District;
+    if mode.0 != on {
+        mode.0 = on;
     }
 }
 
@@ -208,6 +223,8 @@ impl Plugin for ToolsPlugin {
             .init_resource::<crate::zone_lines::ZoneLines>()
             .init_resource::<cp_render::ZoningMode>()
             .add_systems(Update, sync_zoning_mode)
+            .init_resource::<cp_render::DistrictsMode>()
+            .add_systems(Update, sync_districts_mode)
             .init_resource::<cp_render::PipeLayers>()
             .add_systems(Update, sync_pipe_layers.after(tool_hover))
             .init_resource::<UiCapture>()
@@ -373,6 +390,9 @@ fn tool_hover(
         (ActiveTool::Zone, Some(p)) => {
             state.zone_preview = state.zone.preview(&view.zones, p);
         }
+        (ActiveTool::District, Some(p)) => {
+            state.district_preview = state.district.preview(p);
+        }
         (ActiveTool::Utility, Some(p)) => {
             let key = UtilityGhostKey {
                 hover: (p.x.round() as i32, p.y.round() as i32),
@@ -410,6 +430,7 @@ fn tool_hover(
             state.building_highlight = None;
             state.place_ghost = None;
             state.zone_preview.clear();
+            state.district_preview.clear();
             state.link_highlight = None;
             if state.active != ActiveTool::Utility {
                 state.utility_ghost = None;
@@ -572,6 +593,17 @@ pub fn tool_click(
 ) {
     if buttons.just_released(MouseButton::Left) {
         state.zone.end_stroke();
+        state.district.end_stroke();
+    }
+    if state.active == ActiveTool::District
+        && !capture.pointer_blocked()
+        && let (Some(view), Some(p)) = (view.as_deref(), state.hover)
+        && (buttons.just_pressed(MouseButton::Left) || buttons.pressed(MouseButton::Left))
+    {
+        if let Some(cmd) = state.district.drag(&view.district_map, p) {
+            outbox.push(SimCommand::District(cmd));
+        }
+        return;
     }
     if state.active == ActiveTool::Zone
         && !capture.pointer_blocked()
@@ -659,11 +691,38 @@ pub fn tool_click(
                 outbox.push(SimCommand::Utility(UtilityCommand::RemoveLink { link }));
             }
         }
-        ActiveTool::None | ActiveTool::Zone => {}
+        ActiveTool::None | ActiveTool::Zone | ActiveTool::District => {}
     }
 }
 
 fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Gizmos) {
+    if state.active == ActiveTool::District
+        && let Some(view) = view.as_deref()
+    {
+        let color = match (state.district.kind, state.district.selected) {
+            (crate::district::DistrictToolKind::Erase, _) | (_, None) => {
+                Color::srgb(0.95, 0.95, 0.95)
+            }
+            (_, Some(id)) => view.districts.get(id).map_or(Color::WHITE, |d| {
+                let c =
+                    cp_district::PALETTE_RGB[usize::from(d.color) % cp_district::PALETTE_RGB.len()];
+                Color::srgb_u8(c[0], c[1], c[2])
+            }),
+        };
+        let height = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.8;
+        for &cell in &state.district_preview {
+            let c = cp_district::DistrictMap::cell_center(cell);
+            let h = cp_district::CELL_M * 0.5;
+            let k = [
+                Vec2::new(c.x - h, c.y - h),
+                Vec2::new(c.x + h, c.y - h),
+                Vec2::new(c.x + h, c.y + h),
+                Vec2::new(c.x - h, c.y + h),
+            ]
+            .map(|q| Vec3::new(q.x, height(q), q.y));
+            gizmos.linestrip([k[0], k[1], k[2], k[3], k[0]], color);
+        }
+    }
     if let Some(ghost) = &state.utility_ghost
         && state.active == ActiveTool::Utility
         && crate::utility::ghost_is_gizmo(state.utility.kind)

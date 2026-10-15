@@ -51,6 +51,7 @@ pub struct SimRunner {
     pub(crate) zone_cache: std::sync::Mutex<crate::overlay::ZoneCache>,
     /// `SimView::buildings` cache, keyed by the grid's revision.
     pub(crate) buildings_cache: std::sync::Mutex<crate::view::BuildingsCache>,
+    pub(crate) district_cache: std::sync::Mutex<crate::view::DistrictCache>,
     /// `SimView::zones` cache, keyed by `ZoneGrid::revision`.
     pub(crate) zone_grid_cache: std::sync::Mutex<crate::view::ZoneCache>,
     /// `SimView::utilities` cache, keyed by a fingerprint of the links.
@@ -248,6 +249,7 @@ impl SimRunner {
             net_cache: Default::default(),
             zone_cache: Default::default(),
             buildings_cache: Default::default(),
+            district_cache: Default::default(),
             zone_grid_cache: Default::default(),
             utilities_cache: Default::default(),
             agents_cache: Default::default(),
