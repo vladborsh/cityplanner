@@ -1,0 +1,15 @@
+// Silhouette of a service building (T-114): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "service_coal_plant",
+    massing: CoalPlant,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.50, 0.44, 0.40), (0.56, 0.48, 0.42)],
+        roof: [(0.20, 0.20, 0.22)],
+        trim: [(0.74, 0.22, 0.18)],
+        glass: (0.20, 0.22, 0.24),
+    ),
+    facade: Industrial,
+))

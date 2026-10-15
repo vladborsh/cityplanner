@@ -1,0 +1,15 @@
+// Silhouette of a service building (T-114): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "service_water_tower",
+    massing: WaterTower,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.40, 0.62, 0.78), (0.46, 0.66, 0.80)],
+        roof: [(0.34, 0.38, 0.42)],
+        trim: [(0.62, 0.64, 0.66)],
+        glass: (0.18, 0.28, 0.36),
+    ),
+    facade: Industrial,
+))

@@ -617,3 +617,624 @@ impl XzPair for Vec3 {
         bevy_math::Vec2::new(self.x, self.z)
     }
 }
+
+// ---------------------------------------------------------------------------------------
+// Service buildings (T-114): one silhouette per service massing
+
+/// Whether `m` is one of the service silhouettes (built by [`service`], not from boxes).
+pub fn is_service(m: Massing) -> bool {
+    matches!(
+        m,
+        Massing::PumpHouse
+            | Massing::Outflow
+            | Massing::CoalPlant
+            | Massing::WindTurbine
+            | Massing::WaterTower
+            | Massing::TreatmentPlant
+    )
+}
+
+/// An upright (optionally tapered) cylinder with `n` sides; `top` closes it with a cap.
+#[allow(clippy::too_many_arguments)]
+fn cyl(
+    m: &mut MeshData,
+    f: &Frame,
+    (cu, cv): (f32, f32),
+    (r0, r1): (f32, f32),
+    (y0, y1): (f32, f32),
+    n: usize,
+    side: [f32; 4],
+    top: Option<[f32; 4]>,
+) {
+    let p = |k: usize, r: f32, y: f32| {
+        let a = k as f32 / n as f32 * std::f32::consts::TAU;
+        f.at(cu + r * a.cos(), cv + r * a.sin(), y)
+    };
+    let slope = (r0 - r1) / (y1 - y0).max(1e-3);
+    for k in 0..n {
+        let mid = (k as f32 + 0.5) / n as f32 * std::f32::consts::TAU;
+        let nrm = (f.dir(mid.cos(), mid.sin()) + Vec3::Y * slope).normalize_or_zero();
+        flat_quad(
+            m,
+            [
+                p(k, r0, y0),
+                p(k + 1, r0, y0),
+                p(k + 1, r1, y1),
+                p(k, r1, y1),
+            ],
+            nrm,
+            side,
+        );
+    }
+    if let Some(col) = top.filter(|_| r1 > 1e-3) {
+        let centre = push_vertex(m, f.at(cu, cv, y1), Vec3::Y, col);
+        let ring: Vec<u32> = (0..n)
+            .map(|k| push_vertex(m, p(k, r1, y1), Vec3::Y, col))
+            .collect();
+        for k in 0..n {
+            tri(m, centre, ring[k], ring[(k + 1) % n], Vec3::Y);
+        }
+    }
+}
+
+/// A cone of `n` triangles from a base circle to an apex.
+fn cone(
+    m: &mut MeshData,
+    f: &Frame,
+    (cu, cv): (f32, f32),
+    r: f32,
+    (y0, y1): (f32, f32),
+    n: usize,
+    col: [f32; 4],
+) {
+    let p = |k: usize| {
+        let a = k as f32 / n as f32 * std::f32::consts::TAU;
+        f.at(cu + r * a.cos(), cv + r * a.sin(), y0)
+    };
+    let apex = f.at(cu, cv, y1);
+    let slope = r / (y1 - y0).max(1e-3);
+    for k in 0..n {
+        let mid = (k as f32 + 0.5) / n as f32 * std::f32::consts::TAU;
+        let nrm = (f.dir(mid.cos(), mid.sin()) + Vec3::Y * slope).normalize_or_zero();
+        let v = [
+            push_vertex(m, p(k), nrm, col),
+            push_vertex(m, p(k + 1), nrm, col),
+            push_vertex(m, apex, nrm, col),
+        ];
+        tri(m, v[0], v[1], v[2], nrm);
+    }
+}
+
+/// What a service silhouette is built from.
+pub struct ServiceCx<'a> {
+    pub f: &'a Frame,
+    /// Half extents of the lot volume and its centre offset along `v` (as for the boxes).
+    pub hu: f32,
+    pub hv: f32,
+    pub cv: f32,
+    /// Top of the plinth, and the ground under the lowest corner.
+    pub base: f32,
+    pub lo: f32,
+    pub wall: [f32; 4],
+    pub roof: [f32; 4],
+    pub trim: [f32; 4],
+    pub glass: [f32; 4],
+    pub lod: super::Lod,
+}
+
+/// The rotor of a wind turbine: drawn as its own mesh (it turns with the frame clock, which is
+/// a view effect only), hub at `hub`, blades in the plane perpendicular to `axis`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rotor {
+    pub hub: Vec3,
+    pub axis: Vec3,
+    pub radius: f32,
+    pub color: [f32; 4],
+}
+
+/// Blade length of the turbine, metres.
+const BLADE: f32 = 17.0;
+/// Hub height above the plinth, metres.
+const HUB_H: f32 = 38.0;
+
+/// The rotor of a turbine standing on `sc`, if `massing` is a wind turbine.
+pub fn rotor(massing: Massing, sc: &ServiceCx) -> Option<Rotor> {
+    (massing == Massing::WindTurbine).then(|| {
+        let axis = sc.f.dir(0.0, -1.0).normalize_or_zero();
+        let p = sc.f.at(0.0, sc.cv - 1.6, sc.base + HUB_H + 0.9);
+        Rotor {
+            hub: p,
+            axis,
+            radius: BLADE,
+            color: sc.wall,
+        }
+    })
+}
+
+/// The rotor mesh around the origin, blades in the XY plane facing +Z, turned by `angle`.
+pub fn rotor_mesh(r: &Rotor, angle: f32) -> MeshData {
+    let mut m = MeshData::default();
+    let n = Vec3::Z;
+    for k in 0..3 {
+        let a = angle + k as f32 * std::f32::consts::TAU / 3.0;
+        let (d, p) = (
+            Vec3::new(a.cos(), a.sin(), 0.0),
+            Vec3::new(-a.sin(), a.cos(), 0.0),
+        );
+        let pts = [
+            d * 1.0 - p * 0.7,
+            d * 1.0 + p * 0.7,
+            d * r.radius + p * 0.2,
+            d * r.radius - p * 0.2,
+        ];
+        for nn in [n, -n] {
+            flat_quad(&mut m, pts, nn, r.color);
+        }
+    }
+    // The hub: a small octagon.
+    let centre = push_vertex(&mut m, Vec3::new(0.0, 0.0, 0.0), n, mul(r.color, 0.8));
+    let ring: Vec<u32> = (0..8)
+        .map(|k| {
+            let a = k as f32 / 8.0 * std::f32::consts::TAU;
+            push_vertex(
+                &mut m,
+                Vec3::new(a.cos(), a.sin(), 0.0) * 0.9,
+                n,
+                mul(r.color, 0.8),
+            )
+        })
+        .collect();
+    for k in 0..8 {
+        tri(&mut m, centre, ring[k], ring[(k + 1) % 8], n);
+        tri(&mut m, centre, ring[k], ring[(k + 1) % 8], -n);
+    }
+    m
+}
+
+/// `rotor_mesh` placed in the world at `angle`: for tests and rasters.
+pub fn rotor_world(r: &Rotor, angle: f32) -> MeshData {
+    let q = bevy_math::Quat::from_rotation_arc(Vec3::Z, r.axis);
+    let mut m = rotor_mesh(r, angle);
+    for (p, n) in m.positions.iter_mut().zip(m.normals.iter_mut()) {
+        *p = (q * Vec3::from_array(*p) + r.hub).to_array();
+        *n = (q * Vec3::from_array(*n)).to_array();
+    }
+    m
+}
+
+/// Draws the silhouette of a service `massing`. `near` has every part, `mid` the main solids,
+/// `far` the main solids with fewer sides.
+pub fn service(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
+    use super::Lod;
+    let (f, b) = (sc.f, sc.base);
+    let (hu, hv, cv) = (sc.hu, sc.hv, sc.cv);
+    let near = sc.lod == Lod::Near;
+    let far = sc.lod == Lod::Far;
+    let n = if near { 8 } else { 6 };
+    let fnd = [0.30, 0.30, 0.30, 1.0];
+    let dark = mul(sc.trim, 0.55);
+    // The pad every silhouette stands on, reaching down to the lowest ground.
+    let pad = |m: &mut MeshData, (cu, cvv): (f32, f32), (pu, pv): (f32, f32), top: f32| {
+        block(
+            m,
+            f,
+            (cu, cvv),
+            (pu, pv),
+            sc.lo - 0.3,
+            b + top,
+            fnd,
+            [0.55, 0.55, 0.53, 1.0],
+        );
+    };
+    match massing {
+        Massing::PumpHouse => {
+            pad(m, (0.0, cv), (0.85 * hu, 0.8 * hv), 0.25);
+            let y = b + 0.25;
+            block(
+                m,
+                f,
+                (-0.2 * hu, cv + 0.15 * hv),
+                (0.38 * hu, 0.38 * hv),
+                y,
+                y + 3.4,
+                sc.wall,
+                sc.roof,
+            );
+            if !far {
+                // The riser: a pipe standing beside the hut.
+                cyl(
+                    m,
+                    f,
+                    (0.55 * hu, cv - 0.4 * hv),
+                    (0.5, 0.5),
+                    (y, y + 4.2),
+                    n,
+                    sc.trim,
+                    Some(dark),
+                );
+            }
+            if near {
+                block(
+                    m,
+                    f,
+                    (-0.2 * hu, cv + 0.15 * hv),
+                    (0.42 * hu, 0.42 * hv),
+                    y + 3.4,
+                    y + 3.7,
+                    sc.roof,
+                    mul(sc.roof, 0.9),
+                );
+                // The intake: a pipe from the pad edge down into the water.
+                cyl(
+                    m,
+                    f,
+                    (0.55 * hu, cv - 0.9 * hv),
+                    (0.42, 0.42),
+                    (sc.lo - 0.3, y + 2.2),
+                    n,
+                    dark,
+                    Some(sc.trim),
+                );
+                block(
+                    m,
+                    f,
+                    (0.55 * hu, cv - 0.65 * hv),
+                    (0.3, 0.3 * hv),
+                    y + 1.9,
+                    y + 2.2,
+                    dark,
+                    sc.trim,
+                );
+            }
+        }
+        Massing::Outflow => {
+            pad(m, (0.0, cv), (0.95 * hu, 0.9 * hv), 0.25);
+            let y = b + 0.25;
+            block(
+                m,
+                f,
+                (-0.5 * hu, cv + 0.1 * hv),
+                (0.34 * hu, 0.6 * hv),
+                y,
+                y + 3.0,
+                sc.wall,
+                sc.roof,
+            );
+            // The outfall: a wide culvert running out to the water, with a headwall.
+            block(
+                m,
+                f,
+                (0.3 * hu, cv),
+                (0.55 * hu, 0.4 * hv),
+                y,
+                y + 1.3,
+                sc.trim,
+                mul(sc.trim, 0.8),
+            );
+            if !far {
+                block(
+                    m,
+                    f,
+                    (0.88 * hu, cv),
+                    (0.1 * hu, 0.8 * hv),
+                    y,
+                    y + 2.0,
+                    sc.wall,
+                    sc.roof,
+                );
+            }
+            if near {
+                for s in [-1.0f32, 1.0] {
+                    cyl(
+                        m,
+                        f,
+                        (0.1 * hu, cv + s * 0.2 * hv),
+                        (0.3, 0.3),
+                        (y + 1.3, y + 2.1),
+                        6,
+                        dark,
+                        Some(sc.trim),
+                    );
+                }
+                block(
+                    m,
+                    f,
+                    (-0.5 * hu, cv + 0.1 * hv),
+                    (0.38 * hu, 0.64 * hv),
+                    y + 3.0,
+                    y + 3.3,
+                    sc.roof,
+                    mul(sc.roof, 0.9),
+                );
+            }
+        }
+        Massing::CoalPlant => {
+            pad(m, (0.0, cv), (0.95 * hu, 0.95 * hv), 0.3);
+            let y = b + 0.3;
+            block(
+                m,
+                f,
+                (-0.3 * hu, cv + 0.1 * hv),
+                (0.55 * hu, 0.4 * hv),
+                y,
+                y + 9.0,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.55 * hu, cv + 0.1 * hv),
+                (0.28 * hu, 0.3 * hv),
+                y,
+                y + 15.0,
+                mul(sc.wall, 0.85),
+                sc.roof,
+            );
+            for s in [0.38f32, 0.72] {
+                cyl(
+                    m,
+                    f,
+                    (s * hu, cv - 0.5 * hv),
+                    (1.2, 0.85),
+                    (y, y + 30.0),
+                    n,
+                    sc.wall,
+                    Some(dark),
+                );
+                if !far {
+                    cyl(
+                        m,
+                        f,
+                        (s * hu, cv - 0.5 * hv),
+                        (0.95, 0.9),
+                        (y + 26.0, y + 28.0),
+                        n,
+                        sc.trim,
+                        None,
+                    );
+                }
+            }
+            if !far {
+                cone(
+                    m,
+                    f,
+                    (-0.62 * hu, cv - 0.6 * hv),
+                    0.24 * hu.min(hv) * 2.0,
+                    (y, y + 4.5),
+                    n,
+                    mul(sc.roof, 1.4),
+                );
+            }
+            if near {
+                block(
+                    m,
+                    f,
+                    (-0.3 * hu, cv - 0.35 * hv),
+                    (0.4 * hu, 0.08 * hv),
+                    y,
+                    y + 2.2,
+                    mul(sc.wall, 0.8),
+                    sc.trim,
+                );
+                block(
+                    m,
+                    f,
+                    (-0.3 * hu, cv + 0.1 * hv),
+                    (0.57 * hu, 0.42 * hv),
+                    y + 9.0,
+                    y + 9.5,
+                    sc.roof,
+                    mul(sc.roof, 0.9),
+                );
+            }
+        }
+        Massing::WindTurbine => {
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (1.7, 1.7),
+                (sc.lo - 0.3, b + 0.3),
+                n,
+                fnd,
+                Some(sc.trim),
+            );
+            let y = b + 0.3;
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.95, 0.45),
+                (y, b + HUB_H),
+                n,
+                sc.wall,
+                None,
+            );
+            // The nacelle, long axis along v.
+            block(
+                m,
+                f,
+                (0.0, cv - 0.2),
+                (0.6, 1.5),
+                b + HUB_H,
+                b + HUB_H + 1.8,
+                mul(sc.wall, 0.95),
+                sc.wall,
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (0.0, cv - 1.1),
+                    (0.45, 0.2),
+                    y,
+                    y + 2.1,
+                    sc.trim,
+                    sc.trim,
+                );
+                cyl(
+                    m,
+                    f,
+                    (0.0, cv),
+                    (0.98, 0.98),
+                    (y + 8.0, y + 8.6),
+                    n,
+                    sc.trim,
+                    None,
+                );
+            }
+        }
+        Massing::WaterTower => {
+            let (lu, lv) = (0.42 * hu, 0.42 * hv);
+            let top = b + 13.0;
+            if far {
+                cyl(
+                    m,
+                    f,
+                    (0.0, cv),
+                    (1.4, 1.4),
+                    (sc.lo - 0.3, top),
+                    6,
+                    sc.trim,
+                    None,
+                );
+            } else {
+                for (su, sv) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                    block(
+                        m,
+                        f,
+                        (su * lu, cv + sv * lv),
+                        (0.35, 0.35),
+                        sc.lo - 0.3,
+                        top,
+                        sc.trim,
+                        sc.trim,
+                    );
+                }
+            }
+            let r = 0.62 * hu.min(hv);
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (r, r),
+                (top, top + 6.0),
+                n,
+                sc.wall,
+                Some(sc.roof),
+            );
+            cone(m, f, (0.0, cv), r, (top + 6.0, top + 8.4), n, sc.roof);
+            if near {
+                for sv in [-1.0f32, 1.0] {
+                    block(
+                        m,
+                        f,
+                        (0.0, cv + sv * lv),
+                        (lu, 0.15),
+                        b + 6.0,
+                        b + 6.3,
+                        dark,
+                        dark,
+                    );
+                }
+                for su in [-1.0f32, 1.0] {
+                    block(
+                        m,
+                        f,
+                        (su * lu, cv),
+                        (0.15, lv),
+                        b + 6.0,
+                        b + 6.3,
+                        dark,
+                        dark,
+                    );
+                }
+                cyl(
+                    m,
+                    f,
+                    (0.0, cv),
+                    (r + 0.15, r + 0.15),
+                    (top + 2.6, top + 3.0),
+                    n,
+                    sc.trim,
+                    None,
+                );
+            }
+        }
+        Massing::TreatmentPlant => {
+            pad(m, (0.0, cv), (0.97 * hu, 0.95 * hv), 0.25);
+            let y = b + 0.25;
+            block(
+                m,
+                f,
+                (-0.4 * hu, cv + 0.5 * hv),
+                (0.45 * hu, 0.36 * hv),
+                y,
+                y + 4.2,
+                sc.wall,
+                sc.roof,
+            );
+            let r = (0.34 * hu).min(0.36 * hv);
+            for s in [-0.45f32, 0.45] {
+                cyl(
+                    m,
+                    f,
+                    (s * hu, cv - 0.38 * hv),
+                    (r, r),
+                    (y, y + 1.8),
+                    if near { 12 } else { 8 },
+                    sc.trim,
+                    Some(sc.glass),
+                );
+            }
+            if !far {
+                block(
+                    m,
+                    f,
+                    (0.0, cv - 0.38 * hv),
+                    (0.45 * hu, 0.12 * hv),
+                    y + 0.4,
+                    y + 0.9,
+                    dark,
+                    dark,
+                );
+            }
+            if near {
+                block(
+                    m,
+                    f,
+                    (-0.4 * hu, cv + 0.5 * hv),
+                    (0.49 * hu, 0.4 * hv),
+                    y + 4.2,
+                    y + 4.5,
+                    sc.roof,
+                    mul(sc.roof, 0.9),
+                );
+                block(
+                    m,
+                    f,
+                    (0.5 * hu, cv + 0.55 * hv),
+                    (0.12 * hu, 0.2 * hv),
+                    y,
+                    y + 2.6,
+                    mul(sc.wall, 0.9),
+                    sc.roof,
+                );
+                for s in [-0.45f32, 0.45] {
+                    block(
+                        m,
+                        f,
+                        (s * hu, cv - 0.38 * hv),
+                        (0.1, r),
+                        y + 1.8,
+                        y + 2.1,
+                        dark,
+                        dark,
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}

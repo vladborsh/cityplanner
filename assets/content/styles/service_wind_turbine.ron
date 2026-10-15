@@ -1,0 +1,15 @@
+// Silhouette of a service building (T-114): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "service_wind_turbine",
+    massing: WindTurbine,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.93, 0.94, 0.95)],
+        roof: [(0.70, 0.72, 0.74)],
+        trim: [(0.85, 0.20, 0.18)],
+        glass: (0.20, 0.26, 0.32),
+    ),
+    facade: Industrial,
+))

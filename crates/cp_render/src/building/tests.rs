@@ -102,7 +102,7 @@ fn every_def_builds_valid_meshes_that_fit_their_lot() {
 fn height_follows_floors_and_roof() {
     let e = env();
     let ground = e.terrain.height(Vec2::new(5120.0, 5120.0));
-    for (def_id, def) in e.db.buildings() {
+    for (def_id, def) in e.db.buildings().filter(|(_, d)| d.service.is_none()) {
         let b = building(def_id, &e.db, BuildingState::Active, 0);
         let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
         let st = facade_style(def.zone, def.level);
@@ -376,44 +376,6 @@ fn construction_stage_spans_the_buildings_own_duration() {
             STAGES - 1
         );
     }
-}
-
-/// T-111: a def that still uses a one-box `legacy_*` style (the service buildings until T-114)
-/// has the near vertex count it had before styles moved into content (`baseline_counts.txt`,
-/// recorded on the code before the change), and no more mid and far ones.
-#[test]
-fn meshes_keep_their_vertex_counts_after_the_style_move() {
-    let e = env();
-    let mut seen = 0;
-    for line in include_str!("baseline_counts.txt").lines() {
-        let [name, near, mid, far] = line.split(' ').collect::<Vec<_>>()[..] else {
-            panic!("bad line {line}");
-        };
-        let (def_id, def) =
-            e.db.buildings()
-                .find(|(_, d)| d.id == name)
-                .unwrap_or_else(|| panic!("def {name} is gone"));
-        if !def.styles.iter().all(|s| s.starts_with("legacy_")) {
-            continue;
-        }
-        let b = building(def_id, &e.db, BuildingState::Active, 0);
-        let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
-        let got = [
-            p.near.positions.len(),
-            p.mid.positions.len(),
-            p.far.positions.len(),
-        ];
-        let want = [near, mid, far].map(|v| v.parse::<usize>().unwrap());
-        // Near is unchanged; mid merges the wall bands between floors and far has no foundation
-        // skirt (T-113), so they may only have got smaller.
-        assert_eq!(got[0], want[0], "{name}: near vertices");
-        assert!(
-            got[1] <= want[1] && got[2] <= want[2],
-            "{name}: {got:?} vs {want:?}"
-        );
-        seen += 1;
-    }
-    assert!(seen >= 5, "{seen} legacy defs");
 }
 
 fn four_style_db() -> ContentDb {
@@ -725,4 +687,121 @@ fn def_cost_table() {
             sum[2] as f32 / 200.0 / bl[2]
         );
     }
+}
+
+fn service_def<'a>(e: &'a Env, name: &str) -> (BuildingDefId, &'a BuildingDef) {
+    e.db.buildings().find(|(_, d)| d.id == name).unwrap()
+}
+
+/// T-114: each service silhouette is a mesh of its own: three LODs shrinking, taller than a
+/// plain box for the tall ones, and the six differ from each other.
+#[test]
+fn the_six_service_silhouettes_are_distinct_and_tall_where_they_should_be() {
+    let e = env();
+    let ground = e.terrain.height(Vec2::new(5120.0, 5120.0));
+    let mut heights = BTreeMap::new();
+    let mut shapes = BTreeSet::new();
+    for name in [
+        "water_pump_station",
+        "sewage_outflow_station",
+        "coal_power_plant",
+        "wind_turbine",
+        "water_tower",
+        "sewage_treatment_plant",
+    ] {
+        let (def_id, def) = service_def(&e, name);
+        let b = building(def_id, &e.db, BuildingState::Active, 0);
+        let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+        assert!(p.near.triangle_count() > p.mid.triangle_count(), "{name}");
+        assert!(p.mid.triangle_count() >= p.far.triangle_count(), "{name}");
+        let (lo, hi) = extent(&p.far);
+        heights.insert(name, hi.y - ground);
+        shapes.insert((
+            p.near.positions.len(),
+            p.mid.positions.len(),
+            p.far.positions.len(),
+        ));
+        // Only the turbine has a rotor.
+        assert_eq!(p.rotor.is_some(), name == "wind_turbine", "{name}");
+        assert!(lo.y < hi.y);
+    }
+    assert_eq!(shapes.len(), 6, "{shapes:?}");
+    // Heights: pump and outflow huts are low, the coal chimneys, the tower and the mast tall.
+    assert!(heights["water_pump_station"] < 8.0 && heights["sewage_outflow_station"] < 6.0);
+    assert!(heights["coal_power_plant"] > 28.0);
+    assert!(heights["wind_turbine"] > 36.0);
+    assert!(heights["water_tower"] > 18.0);
+    assert!(heights["sewage_treatment_plant"] < 8.0);
+}
+
+/// T-114: the turbine's rotor is three blades around the hub, in the plane perpendicular to its
+/// axis, turning only by the angle given (a view effect: the mesh is rebuilt from the angle).
+#[test]
+fn the_rotor_has_three_blades_turned_by_the_angle() {
+    let e = env();
+    let (def_id, def) = service_def(&e, "wind_turbine");
+    let b = building(def_id, &e.db, BuildingState::Active, 0);
+    let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+    let r = p.rotor.unwrap();
+    assert!(r.axis.y.abs() < 1e-4 && (r.axis.length() - 1.0).abs() < 1e-4);
+    let tower_top = extent(&p.far).1.y;
+    assert!(
+        (r.hub.y - tower_top).abs() < 3.0,
+        "hub {} tower {tower_top}",
+        r.hub.y
+    );
+    let (a, c) = (rotor_world(&r, 0.0), rotor_world(&r, 0.5));
+    assert_eq!(a.positions.len(), c.positions.len());
+    assert_ne!(a.positions, c.positions);
+    // Every vertex is within the blade radius of the hub and in the plane of the rotor.
+    for pos in a.positions.iter().chain(&c.positions) {
+        let d = Vec3::from_array(*pos) - r.hub;
+        assert!(d.length() <= r.radius + 0.05, "{d:?}");
+        assert!(d.dot(r.axis).abs() < 1e-3, "{d:?}");
+    }
+    // A full turn of 120 degrees looks the same.
+    let third = rotor_world(&r, std::f32::consts::TAU / 3.0);
+    let (lo0, hi0) = extent(&a);
+    let (lo1, hi1) = extent(&third);
+    assert!((lo0 - lo1).length() < 1e-2 && (hi0 - hi1).length() < 1e-2);
+    // An abandoned or burned turbine does not turn.
+    for s in [BuildingState::Abandoned, BuildingState::Burned] {
+        let b = building(def_id, &e.db, s, 0);
+        let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+        assert!(p.rotor.is_none());
+    }
+}
+
+/// T-114: a pump placed on water stands on the water surface, not on the bed.
+#[test]
+fn a_pump_on_water_stands_above_the_surface() {
+    let e = env();
+    let terrain = Terrain::load(&Path::new(ROOT).join("../../assets/maps/river_valley")).unwrap();
+    // A spot whose whole 2x2 lot is under water.
+    let mut spot = None;
+    'scan: for iz in (0..1024).step_by(8) {
+        for ix in (0..1024).step_by(8) {
+            let p = Vec2::new(ix as f32 * 10.0, iz as f32 * 10.0);
+            let wet = [(-8.0, -8.0), (8.0, -8.0), (8.0, 8.0), (-8.0, 8.0)]
+                .iter()
+                .all(|(dx, dz)| terrain.water_depth(p + Vec2::new(*dx, *dz)) > 1.0);
+            if wet {
+                spot = Some(p);
+                break 'scan;
+            }
+        }
+    }
+    let p = spot.expect("river_valley has water");
+    let (def_id, def) = service_def(&e, "water_pump_station");
+    let mut b = building(def_id, &e.db, BuildingState::Active, 0);
+    b.pos = p;
+    let piece = build_building(id(1), &b, def, &e.net, &terrain, &e.db, Tick(0));
+    let surface = terrain.height(p) + terrain.water_depth(p);
+    let (lo, hi) = extent(&piece.near);
+    assert!(hi.y > surface + 3.0, "hut top {} surface {surface}", hi.y);
+    // Nothing of the pad or hut sits below the surface except the foundation and the intake
+    // pipe down to the bed: the hut walls (vertices above the pad) all start at or above it.
+    let hut_bottoms = piece.far.positions.iter().filter(|v| v[1] > surface - 0.05);
+    assert!(hut_bottoms.count() > 0);
+    assert!(lo.y < surface, "the foundation reaches the bed");
 }

@@ -1,0 +1,15 @@
+// Silhouette of a service building (T-114): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "service_outflow",
+    massing: Outflow,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.60, 0.62, 0.56), (0.54, 0.58, 0.52)],
+        roof: [(0.30, 0.32, 0.30)],
+        trim: [(0.70, 0.62, 0.30)],
+        glass: (0.20, 0.24, 0.22),
+    ),
+    facade: Industrial,
+))

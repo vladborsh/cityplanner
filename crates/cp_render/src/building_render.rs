@@ -14,7 +14,7 @@ use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_sim::SimView;
 
-use crate::building::{BuildingSet, select_level};
+use crate::building::{BuildingSet, Rotor, rotor_mesh, select_level};
 use crate::chunk::MeshData;
 use crate::material::VertexColorMaterial;
 
@@ -26,7 +26,7 @@ impl Plugin for BuildingRenderPlugin {
             .init_resource::<BuildingState>()
             .add_systems(
                 Update,
-                (sync_buildings, update_building_lods)
+                (sync_buildings, update_building_lods, spin_rotors)
                     .chain()
                     .in_set(BuildingSync),
             );
@@ -68,10 +68,24 @@ pub(crate) struct BuildingState {
     last_bucket: u64,
     chunks: BTreeMap<(i32, i32), Entity>,
     material: Option<Handle<VertexColorMaterial>>,
+    /// Turbine rotors: the entity and the rotor it was built for.
+    rotors: BTreeMap<cp_building::BuildingId, (Entity, Rotor)>,
 }
 
 /// Construction looks change every quarter day; re-check a few times per stage.
 const REFRESH_TICKS: u64 = TICKS_PER_DAY / 16;
+
+/// A turning rotor (view only: the angle comes from the frame clock, never from the sim).
+#[derive(Component)]
+struct RotorSpin {
+    /// Turn at this angle plus the clock, radians.
+    phase: f32,
+    /// Rotation that takes +Z to the rotor axis.
+    facing: Quat,
+}
+
+/// Radians per second of a rotor.
+const ROTOR_SPEED: f32 = 1.1;
 
 fn to_bevy_mesh(m: MeshData) -> Mesh {
     Mesh::new(
@@ -116,6 +130,40 @@ fn sync_buildings(
         .material
         .get_or_insert_with(|| materials.add(VertexColorMaterial::opaque(0.85, 0.05)))
         .clone();
+
+    if up.rebuilt > 0 || up.removed > 0 || state.rotors.is_empty() {
+        let want: BTreeMap<_, _> = state.set.rotors().map(|(id, r)| (id, *r)).collect();
+        let stale: Vec<_> = state
+            .rotors
+            .iter()
+            .filter(|(id, (_, r))| want.get(id) != Some(r))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in stale {
+            if let Some((e, _)) = state.rotors.remove(&id) {
+                commands.entity(e).despawn();
+            }
+        }
+        for (id, r) in want {
+            if state.rotors.contains_key(&id) {
+                continue;
+            }
+            let facing = Quat::from_rotation_arc(Vec3::Z, r.axis);
+            let e = commands
+                .spawn((
+                    Mesh3d(meshes.add(to_bevy_mesh(rotor_mesh(&r, 0.0)))),
+                    MeshMaterial3d(material.clone()),
+                    Transform::from_translation(r.hub).with_rotation(facing),
+                    RotorSpin {
+                        phase: id.index as f32 * 0.7,
+                        facing,
+                    },
+                    Name::new("wind rotor"),
+                ))
+                .id();
+            state.rotors.insert(id, (e, r));
+        }
+    }
 
     for chunk in &up.dirty_chunks {
         let built: Vec<_> = (0..3).map(|l| state.set.chunk_mesh(*chunk, l)).collect();
@@ -207,4 +255,11 @@ fn update_building_lods(
         }
     }
     stats.drawn_triangles = drawn;
+}
+
+fn spin_rotors(time: Res<Time>, mut rotors: Query<(&RotorSpin, &mut Transform)>) {
+    let t = time.elapsed_secs();
+    for (spin, mut tf) in &mut rotors {
+        tf.rotation = spin.facing * Quat::from_rotation_z(spin.phase + t * ROTOR_SPEED);
+    }
 }

@@ -9,7 +9,7 @@ Building((
     tax_base: 0.0,
     cost: 8000.0,
     upkeep_week: 200.0,
-    styles: ["legacy_utility_grey_flat_1"],
+    styles: ["service_outflow"],
     service: Some("sewage_outflow"),
     icon: "sewage_outflow_station",
 ))

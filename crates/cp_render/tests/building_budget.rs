@@ -393,3 +393,83 @@ fn rasters(view: &cp_sim::SimView, out: &Path) {
         println!("raster {name} at {c:?}");
     }
 }
+
+// ---------------------------------------------------------------------------------------
+// T-114: the six service silhouettes
+
+#[test]
+#[ignore = "writes PNGs; run in release"]
+fn service_rasters() {
+    use cp_building::{Building, BuildingFlags, BuildingState, Footprint};
+    use cp_net::NetGraph;
+    let content = content();
+    let terrain = terrain();
+    let net = NetGraph::new();
+    let out = std::env::var("BUDGET_OUT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            PathBuf::from(std::env::var("CARGO_TARGET_DIR").unwrap_or("target".into()))
+                .join("building-rasters")
+        });
+    std::fs::create_dir_all(&out).unwrap();
+    let names = [
+        "water_pump_station",
+        "sewage_outflow_station",
+        "coal_power_plant",
+        "wind_turbine",
+        "water_tower",
+        "sewage_treatment_plant",
+    ];
+    let origin = Vec2::new(5120.0, 5120.0);
+    let mut all = Vec::new();
+    for (k, name) in names.iter().enumerate() {
+        let (def_id, def) = content.buildings().find(|(_, d)| d.id == *name).unwrap();
+        let b = Building {
+            def: def_id,
+            footprint: Footprint::Free {
+                w: def.lot.0,
+                d: def.lot.1,
+            },
+            level: 1,
+            state: BuildingState::Active,
+            ready_at: cp_core::Tick(0),
+            pos: origin + Vec2::new((k as f32 - 2.5) * 36.0, 0.0),
+            rot: 0.0,
+            access: None,
+            flags: BuildingFlags::default(),
+            level_progress: 0.0,
+        };
+        let id = cp_core::Id::new(k as u32 + 1, 0);
+        let piece = build_building(id, &b, def, &net, &terrain, &content, cp_core::Tick(0));
+        let mut meshes = vec![piece.near.clone()];
+        if let Some(r) = piece.rotor {
+            meshes.push(cp_render::building::rotor_world(&r, 0.35));
+        }
+        let ground = terrain.height(b.pos);
+        // One close picture per building (oblique, 9 px/m) ...
+        let cam = Cam::new(
+            Vec3::new(b.pos.x, ground + 8.0, b.pos.y),
+            35.0,
+            32.0,
+            9.0,
+            560,
+            480,
+        );
+        let mut img = Image::new(560, 480, [0.36, 0.45, 0.29]);
+        for m in &meshes {
+            img.mesh(&cam, m);
+        }
+        img.save(&out.join(format!("service-{name}.png")));
+        all.extend(meshes);
+    }
+    // ... and the row from about 200 m up, oblique and plan.
+    let centre = Vec3::new(origin.x, terrain.height(origin) + 5.0, origin.y);
+    for (kind, yaw, pitch, ppm) in [("oblique", 20.0, 40.0, 4.2), ("plan", 0.0, 90.0, 4.2)] {
+        let cam = Cam::new(centre, yaw, pitch, ppm, 1000, 420);
+        let mut img = Image::new(1000, 420, [0.36, 0.45, 0.29]);
+        for m in &all {
+            img.mesh(&cam, m);
+        }
+        img.save(&out.join(format!("services-row-{kind}.png")));
+    }
+}

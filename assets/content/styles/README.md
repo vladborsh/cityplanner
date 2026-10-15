@@ -19,7 +19,10 @@ one a building gets, and its floors, lot fill and colours inside the style, is a
 * **Every (zone type, level) draws from at least four different styles** across its two defs
   (`<name>_N` and `<name>_Nb`, two styles each), and each zone type has at least five different
   massing × roof × palette combinations. `content_e2e` tests both.
-* Service buildings keep one `legacy_*` one-box style until their silhouettes (T-114).
+* Service buildings have one `service_*` style each (T-114); their massing (`PumpHouse`, `Outflow`,
+  `CoalPlant`, `WindTurbine`, `WaterTower`, `TreatmentPlant`) is drawn by
+  `cp_render::building::shapes::service`, so the roof, floors and palette are what they say but
+  the shape is fixed in code.
 * Details cost vertices (`near` only): balconies are capped at 16, a tank is 41 vertices, a fence
   is one board per cell. The §14 budget counts the average over the city (near ≤ 1.5×, mid and far
   ≤ 1.2× the plain-box buildings): `cargo test -p cp_render --release --test building_budget --

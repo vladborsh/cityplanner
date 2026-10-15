@@ -26,6 +26,8 @@
 
 mod shapes;
 
+pub use shapes::{Rotor, rotor_mesh, rotor_world};
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_math::{Vec2, Vec3};
@@ -233,6 +235,8 @@ pub fn construction_stage(b: &Building, total: u64, tick: Tick) -> u8 {
 /// The three detail levels of one building plus its bounds.
 #[derive(Clone, Debug, Default)]
 pub struct BuildingPiece {
+    /// The turning rotor of a wind turbine; its blades are not in the meshes below.
+    pub rotor: Option<Rotor>,
     pub near: MeshData,
     pub mid: MeshData,
     pub far: MeshData,
@@ -713,7 +717,8 @@ pub fn build_building(
             let p = f.c + f.u * (v.cu + su * v.hu) + f.v * (v.cv + sv * v.hv);
             let y = terrain.height(p);
             lo = lo.min(y);
-            hi = hi.max(y);
+            // A building on water (a pump) stands on the surface, not on the bed.
+            hi = hi.max(y + terrain.water_depth(p).max(0.0));
         }
     }
     let base = hi + PLINTH;
@@ -788,7 +793,29 @@ pub fn build_building(
         MeshData::default(),
         MeshData::default(),
     ];
+    let service_cx = |lod| shapes::ServiceCx {
+        f: &f,
+        hu,
+        hv,
+        cv,
+        base,
+        lo,
+        wall: wallc,
+        roof: roofc,
+        trim: trimc,
+        glass: glassc,
+        lod,
+    };
+    let silhouette =
+        shapes::is_service(style_def.massing) && b.state != BuildingState::UnderConstruction;
+    let rotor = (silhouette && b.state == BuildingState::Active)
+        .then(|| shapes::rotor(style_def.massing, &service_cx(Lod::Near)))
+        .flatten();
     for (m, lod) in pieces.iter_mut().zip([Lod::Near, Lod::Mid, Lod::Far]) {
+        if silhouette {
+            shapes::service(m, style_def.massing, &service_cx(lod));
+            continue;
+        }
         // Foundation of every box that stands on the ground.
         let fnd = [0.30, 0.30, 0.30, 1.0];
         let ring = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
@@ -923,6 +950,7 @@ pub fn build_building(
     let [near, mid, far] = pieces;
     let (min, max) = bounds(&near);
     BuildingPiece {
+        rotor,
         near,
         mid,
         far,
@@ -1000,6 +1028,13 @@ impl BuildingSet {
 
     pub fn chunks(&self) -> impl Iterator<Item = &(i32, i32)> {
         self.by_chunk.keys()
+    }
+
+    /// The rotors of the wind turbines, in building-id order.
+    pub fn rotors(&self) -> impl Iterator<Item = (BuildingId, &Rotor)> {
+        self.pieces
+            .iter()
+            .filter_map(|(id, e)| e.piece.rotor.as_ref().map(|r| (*id, r)))
     }
 
     pub fn piece(&self, id: BuildingId) -> Option<&BuildingPiece> {

@@ -440,7 +440,7 @@ mod tests {
                     r#"Building((id: "{id}", name: "T", zone: Industrial, level: 1,
                     lot: (2, 2), jobs: (0, 0, 0, 0), consumption: {{}}, tax_base: 0.0,
                     cost: 5000.0, upkeep_week: 1.0,
-                    styles: ["legacy_utility_grey_flat_1"],
+                    styles: ["service_water_tower"],
                     service: Some("{id}"), icon: "wind_turbine"))"#
                 ),
             ));

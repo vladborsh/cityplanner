@@ -392,13 +392,39 @@ fn every_zone_and_level_has_four_looks_and_every_zone_five_combinations() {
     }
     // At least five looks per zone type (the tall zones have one set per height band), none unused.
     let used: BTreeSet<&str> = per_level.values().flatten().copied().collect();
-    for (_, s) in db.styles().filter(|(_, s)| !s.id.starts_with("legacy_")) {
+    for (_, s) in db.styles().filter(|(_, s)| !s.id.starts_with("service_")) {
         assert!(used.contains(s.id.as_str()), "style {} is unused", s.id);
     }
     assert!(
         db.styles()
-            .filter(|(_, s)| !s.id.starts_with("legacy_"))
+            .filter(|(_, s)| !s.id.starts_with("service_"))
             .count()
             >= 30
     );
+}
+
+/// T-114: the six service buildings have six different silhouettes (massings), each its own
+/// `service_*` style.
+#[test]
+fn the_six_service_buildings_have_six_different_silhouettes() {
+    use std::collections::BTreeSet;
+    let db = ContentDb::load_dir(root()).unwrap();
+    let mut massings = BTreeSet::new();
+    let mut n = 0;
+    for (_, d) in db.buildings().filter(|(_, d)| d.service.is_some()) {
+        assert_eq!(d.styles.len(), 1, "{}", d.id);
+        assert!(
+            d.styles[0].starts_with("service_"),
+            "{}: {:?}",
+            d.id,
+            d.styles
+        );
+        massings.insert(format!(
+            "{:?}",
+            db.style(db.style_id(&d.styles[0]).unwrap()).massing
+        ));
+        n += 1;
+    }
+    assert_eq!(n, 6);
+    assert_eq!(massings.len(), 6, "{massings:?}");
 }
