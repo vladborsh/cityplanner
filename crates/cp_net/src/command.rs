@@ -48,7 +48,16 @@ pub enum NetCommand {
     /// Installs or removes a traffic light at a junction (>= 3 segments). The choice is
     /// then manual: the auto-install rule leaves the node alone.
     ToggleTrafficLight { node: NodeId },
+    /// Removes the part of a segment between the arc lengths `s0 < s1` measured from its
+    /// `start` (§6.7). An end within [`PART_SNAP`] of the segment's start or end moves onto it
+    /// (no remnant shorter than one zoning cell); both ends on the ends is `RemoveSegment`.
+    /// The remnants keep the segment's orientation and road; the cut nodes become dead ends.
+    /// Appended last: older logs read and replay as before.
+    RemovePart { seg: SegmentId, s0: f32, s1: f32 },
 }
+
+/// A `RemovePart` end closer than this (metres) to an end of the segment moves onto that end.
+pub const PART_SNAP: f32 = 8.0;
 
 /// Validation failure of a NetCommand; wrapped into `CommandError::Rejected` by the dispatcher.
 #[derive(Clone, Debug, PartialEq)]
@@ -58,6 +67,8 @@ pub enum NetError {
     /// `BuildRoad` failed validation; every problem found.
     Build(Vec<RoadBuildError>),
     UnknownSegment(SegmentId),
+    /// `RemovePart` with `s0 >= s1` or a non-finite length.
+    BadPartRange,
     UnknownRoad(RoadDefId),
     /// `UpgradeSegment` to the road the segment already has.
     SameRoad,
@@ -100,6 +111,7 @@ impl fmt::Display for NetError {
                 Ok(())
             }
             Self::UnknownSegment(s) => write!(f, "unknown segment {s:?}"),
+            Self::BadPartRange => write!(f, "part to remove is empty or not a range"),
             Self::UnknownRoad(r) => write!(f, "unknown road type {r:?}"),
             Self::SameRoad => write!(f, "segment already has this road type"),
             Self::NoElevatedVariant(r) => write!(f, "road type {r:?} has no elevated variant"),
@@ -240,6 +252,39 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
             check_owned(world, *seg)?;
             let mut graph = world.resource_mut::<NetGraph>();
             graph.remove_segment(*seg)?;
+            Ok(Cost::ZERO)
+        }
+        NetCommand::RemovePart { seg, s0, s1 } => {
+            if !(s0.is_finite() && s1.is_finite() && s0 < s1) {
+                return Err(NetError::BadPartRange);
+            }
+            let content = content()?;
+            check_owned(world, *seg)?;
+            let mut graph = world.resource_mut::<NetGraph>();
+            let s = graph.segment(*seg).ok_or(NetError::UnknownSegment(*seg))?;
+            let (len, road, curve) = (s.length, s.road, s.curve);
+            let s0 = if *s0 < PART_SNAP { 0.0 } else { *s0 };
+            let s1 = if *s1 > len - PART_SNAP { len } else { *s1 };
+            if s0 >= s1 {
+                return Err(NetError::BadPartRange);
+            }
+            // Cuts only where the part does not already reach the end. A split checks all its
+            // pieces before it changes anything, so a failure leaves the graph as it was.
+            let table = curve.arc_table();
+            let mut ts = Vec::with_capacity(2);
+            if s0 > 0.0 {
+                ts.push(table.s_to_t(s0));
+            }
+            if s1 < len {
+                ts.push(table.s_to_t(s1));
+            }
+            if ts.is_empty() {
+                graph.remove_segment(*seg)?;
+            } else {
+                let split = graph.split_segments(content.road(road), *seg, &ts)?;
+                let middle = split.segments[usize::from(s0 > 0.0)];
+                graph.remove_segment(middle)?;
+            }
             Ok(Cost::ZERO)
         }
         NetCommand::ToggleTrafficLight { node } => {
@@ -396,5 +441,156 @@ mod tests {
 
         apply(&mut w, &NetCommand::RemoveSegment { seg: inside }).unwrap();
         assert!(w.resource::<NetGraph>().segment(inside).is_none());
+    }
+
+    fn lengths(w: &World) -> Vec<(f32, f32)> {
+        let g = w.resource::<NetGraph>();
+        let mut v: Vec<_> = g
+            .segments()
+            .map(|(_, s)| (s.curve.p0.x, s.length))
+            .collect();
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        v
+    }
+
+    fn part_world() -> (World, SegmentId) {
+        let (tx, tz) = cp_terrain::Terrain::tile_of(Vec2::new(100.0, 1000.0));
+        let (mut w, road) = world(&[(tx, tz)]);
+        let seg = add(&mut w, road, 100.0, 190.0);
+        (w, seg)
+    }
+
+    #[test]
+    fn remove_part_cuts_out_the_middle_and_leaves_dead_ends() {
+        let (mut w, seg) = part_world();
+        let lanes = w.resource::<NetGraph>().segment(seg).unwrap().lanes.len();
+        let cost = apply(
+            &mut w,
+            &NetCommand::RemovePart {
+                seg,
+                s0: 20.0,
+                s1: 60.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(cost, Cost::ZERO);
+        let v = lengths(&w);
+        assert_eq!(v.len(), 2);
+        assert!((v[0].1 - 20.0).abs() < 0.01 && (v[0].0 - 100.0).abs() < 0.01);
+        assert!((v[1].1 - 30.0).abs() < 0.01 && (v[1].0 - 160.0).abs() < 0.01);
+        let g = w.resource::<NetGraph>();
+        assert_eq!(g.node_count(), 4);
+        for (_, s) in g.segments() {
+            assert_eq!(s.lanes.len(), lanes, "lanes rebuilt");
+            assert!(s.curve.p3.x > s.curve.p0.x, "still start to end");
+            for n in [s.start, s.end] {
+                assert!(g.node(n).unwrap().segments.len() == 1);
+                assert_eq!(g.node(n).unwrap().kind, crate::model::NodeKind::End);
+            }
+        }
+    }
+
+    #[test]
+    fn remove_part_near_an_end_takes_the_remnant_with_it() {
+        let (mut w, seg) = part_world();
+        apply(
+            &mut w,
+            &NetCommand::RemovePart {
+                seg,
+                s0: 3.0,
+                s1: 60.0,
+            },
+        )
+        .unwrap();
+        let v = lengths(&w);
+        assert_eq!(v.len(), 1);
+        assert!((v[0].1 - 30.0).abs() < 0.01 && (v[0].0 - 160.0).abs() < 0.01);
+
+        let (mut w, seg) = part_world();
+        apply(
+            &mut w,
+            &NetCommand::RemovePart {
+                seg,
+                s0: 30.0,
+                s1: 85.0,
+            },
+        )
+        .unwrap();
+        let v = lengths(&w);
+        assert_eq!(v.len(), 1);
+        assert!((v[0].1 - 30.0).abs() < 0.01 && (v[0].0 - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn remove_part_of_the_whole_length_is_remove_segment() {
+        let (mut w, seg) = part_world();
+        let len = w.resource::<NetGraph>().segment(seg).unwrap().length;
+        let (mut r, rseg) = part_world();
+        apply(
+            &mut w,
+            &NetCommand::RemovePart {
+                seg,
+                s0: 0.0,
+                s1: len,
+            },
+        )
+        .unwrap();
+        apply(&mut r, &NetCommand::RemoveSegment { seg: rseg }).unwrap();
+        assert_eq!(w.resource::<NetGraph>(), r.resource::<NetGraph>());
+        assert_eq!(w.resource::<NetGraph>().segment_count(), 0);
+    }
+
+    #[test]
+    fn remove_part_with_a_bad_range_or_segment_changes_nothing() {
+        let (mut w, seg) = part_world();
+        let before = w.resource::<NetGraph>().clone();
+        for (s0, s1) in [
+            (60.0, 20.0),
+            (40.0, 40.0),
+            (f32::NAN, 50.0),
+            (10.0, f32::INFINITY),
+        ] {
+            let r = apply(&mut w, &NetCommand::RemovePart { seg, s0, s1 });
+            assert!(matches!(r, Err(NetError::BadPartRange)), "{s0} {s1}");
+        }
+        // Both ends snap to the ends only if the range is a range: 3 < 5 < 8 collapses.
+        let r = apply(
+            &mut w,
+            &NetCommand::RemovePart {
+                seg,
+                s0: 90.0,
+                s1: 95.0,
+            },
+        );
+        assert!(r.is_err());
+        let ghost = SegmentId::new(60_000, 0);
+        let r = apply(
+            &mut w,
+            &NetCommand::RemovePart {
+                seg: ghost,
+                s0: 0.0,
+                s1: 50.0,
+            },
+        );
+        assert!(r.is_err());
+        assert_eq!(w.resource::<NetGraph>(), &before);
+    }
+
+    #[test]
+    fn remove_part_outside_the_bought_tiles_is_not_owned() {
+        let t = cp_terrain::TILE_SIZE;
+        let (tx, tz) = cp_terrain::Terrain::tile_of(Vec2::new(100.0, 1000.0));
+        let (mut w, road) = world(&[(tx, tz)]);
+        let half = add(&mut w, road, t - 50.0, t + 50.0);
+        let r = apply(
+            &mut w,
+            &NetCommand::RemovePart {
+                seg: half,
+                s0: 20.0,
+                s1: 60.0,
+            },
+        );
+        assert!(matches!(r, Err(NetError::NotOwned { .. })));
+        assert_eq!(w.resource::<NetGraph>().segment_count(), 1);
     }
 }

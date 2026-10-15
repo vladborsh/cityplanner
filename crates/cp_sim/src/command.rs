@@ -54,6 +54,7 @@ impl SimCommand {
             SimCommand::Building(BuildingCommand::Place { def, .. }) => *def = building(*def),
             SimCommand::SetSpeed { .. }
             | SimCommand::Net(NetCommand::RemoveSegment { .. })
+            | SimCommand::Net(NetCommand::RemovePart { .. })
             | SimCommand::Net(NetCommand::ToggleTrafficLight { .. })
             | SimCommand::Building(BuildingCommand::Demolish { .. })
             | SimCommand::Zone(_)
