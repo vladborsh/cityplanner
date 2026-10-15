@@ -438,7 +438,24 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                         "cannot place here",
                     );
                 }
-                ui.weak("T rotates, Esc leaves the tool.");
+                match &g.free {
+                    Some(f) => {
+                        if let Some(h) = &f.hint {
+                            let color = if h.connects {
+                                egui::Color32::LIGHT_GREEN
+                            } else {
+                                egui::Color32::YELLOW
+                            };
+                            ui.colored_label(color, &h.text);
+                        }
+                        ui.weak(
+                            "T turns 15°, Shift+T along the nearest road, Esc leaves the tool.",
+                        );
+                    }
+                    None => {
+                        ui.weak("T rotates, Esc leaves the tool.");
+                    }
+                }
             }
             None => {
                 ui.weak("Hover a spot beside a road. T rotates, Esc leaves the tool.");

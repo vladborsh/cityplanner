@@ -222,6 +222,7 @@ impl Plugin for ToolsPlugin {
 pub fn tool_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     capture: Res<UiCapture>,
+    view: Option<Res<SimView>>,
     mut state: ResMut<ToolState>,
     mut outbox: ResMut<CommandOutbox>,
 ) {
@@ -245,7 +246,9 @@ pub fn tool_hotkeys(
         outbox.push(state.utility.command(path));
     }
     if state.active == ActiveTool::Place && keys.just_pressed(KeyCode::KeyT) {
-        state.building.rotate();
+        let align = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+        let hover = state.hover;
+        state.building.turn(view.as_deref(), hover, align);
     }
     if keys.just_pressed(KeyCode::Escape) {
         if state.active == ActiveTool::Zone && state.zone.corner.is_some() {
@@ -555,12 +558,17 @@ pub fn tool_click(
         }
         ActiveTool::Place => {
             if let Some(def) = state.building.def
-                && state.place_ghost.as_ref().is_some_and(|g| g.valid)
+                && let Some(g) = state.place_ghost.as_ref().filter(|g| g.valid)
             {
+                // A free-standing ghost carries its own pose (the cursor rounded to 1 m).
+                let (pos, rot) = match &g.free {
+                    Some(f) => (f.pos, f.rot),
+                    None => (p, state.building.rot()),
+                };
                 outbox.push(SimCommand::Building(BuildingCommand::Place {
                     def,
-                    pos: p,
-                    rot: state.building.rot(),
+                    pos,
+                    rot,
                 }));
             }
         }
@@ -642,12 +650,54 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
             Color::srgb(0.95, 0.2, 0.2)
         };
         draw_cells(view, &g.cells, color, &mut gizmos);
+        if let Some(f) = &g.free {
+            draw_free(view, f, color, &mut gizmos);
+        }
     }
     if let (Some(view), Some(id)) = (view.as_deref(), state.building_highlight)
         && let Some(b) = view.buildings.get(id)
     {
         let cells: Vec<ZoneCellRef> = b.lot().map(|l| l.cells().collect()).unwrap_or_default();
         draw_cells(view, &cells, Color::srgb(1.0, 0.6, 0.1), &mut gizmos);
+    }
+}
+
+/// The rectangle of a free-standing ghost, the connection circle (40 m) around it and a line
+/// to the network it would connect to.
+fn draw_free(view: &SimView, f: &crate::FreeGhost, color: Color, gizmos: &mut Gizmos) {
+    let height = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.6;
+    let k = f.polygon.map(|q| Vec3::new(q.x, height(q), q.y));
+    gizmos.linestrip([k[0], k[1], k[2], k[3], k[0]], color);
+    gizmos.line(k[0], k[2], color);
+    gizmos.line(k[1], k[3], color);
+    let ring = Color::srgba(0.4, 0.8, 1.0, 0.7);
+    const SEGMENTS: usize = 48;
+    gizmos.linestrip(
+        (0..=SEGMENTS).map(|i| {
+            let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            let p = f.pos + Vec2::new(a.cos(), a.sin()) * cp_utility::LINE_REACH_M;
+            Vec3::new(p.x, height(p), p.y)
+        }),
+        ring,
+    );
+    if let Some(h) = &f.hint
+        && let Some(t) = h.target
+    {
+        let (a, b) = (f.pos, t);
+        let lit = Color::srgb(1.0, 0.85, 0.2);
+        gizmos.line(
+            Vec3::new(a.x, height(a), a.y),
+            Vec3::new(b.x, height(b), b.y),
+            lit,
+        );
+        gizmos.circle(
+            Isometry3d::new(
+                Vec3::new(b.x, height(b), b.y),
+                Quat::from_rotation_arc(Vec3::Z, Vec3::Y),
+            ),
+            3.0,
+            lit,
+        );
     }
 }
 

@@ -393,6 +393,7 @@ mod tests {
             valid: true,
             cost: Some(Cost(1_200_000)),
             error: None,
+            free: None,
         });
         let ok = drawn(&tools);
         assert!(ok.contains("can place") && ok.contains("12,000"), "{ok}");
@@ -402,6 +403,7 @@ mod tests {
             valid: false,
             cost: None,
             error: Some("not on water".into()),
+            free: None,
         });
         let bad = drawn(&tools);
         assert!(
