@@ -39,8 +39,8 @@ pub use plugin::{
 };
 pub use road::{
     CHEVRON_SPACING, ELEVATION_STEP, MAX_ELEVATION_LEVEL, MarkerKind, RoadMarker, RoadMode,
-    RoadTool, chevron_lines, format_money, preview, preview_report, quantized, road_is_one_way,
-    road_markers, snap_label,
+    RoadTool, TOO_CLOSE, chevron_lines, format_money, preview, preview_report, quantized,
+    road_is_one_way, road_markers, snap_label, too_close,
 };
 pub use upgrade::{UpgradePreview, upgrade_commands, upgrade_preview};
 pub use utility::{LINK_PICK_RADIUS, UtilityMode, UtilityTool, pick_link};

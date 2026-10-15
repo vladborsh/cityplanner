@@ -1182,6 +1182,8 @@ pub fn one_way_report(
     out
 }
 
+mod clearance;
+pub use clearance::{ClearanceWarning, clearance_report};
 mod quantize;
 pub use quantize::{CONTROL_LINE_TOL, StepContext, quantize_path};
 

@@ -23,8 +23,8 @@ use crate::bulldozer::{
     spans_outside_owned,
 };
 use crate::road::{
-    MarkerKind, RoadMarker, RoadTool, chevron_lines, preview_report, quantized, road_is_one_way,
-    road_markers, sample_curve,
+    MarkerKind, RoadMarker, RoadTool, TOO_CLOSE, chevron_lines, preview_report, quantized,
+    road_is_one_way, road_markers, sample_curve, too_close,
 };
 use crate::upgrade::{upgrade_commands, upgrade_preview};
 use crate::utility::{
@@ -288,7 +288,9 @@ pub fn tool_hotkeys(
             Some(v) => quantized(v, req, state.alt).0,
             None => req,
         };
-        outbox.push(build_command(req));
+        if !view.as_deref().is_some_and(|v| too_close(v, &req)) {
+            outbox.push(build_command(req));
+        }
     }
 }
 
@@ -446,6 +448,24 @@ pub fn compute_ghost_alt(view: &SimView, tool: &RoadTool, hover: Vec2, alt: bool
         report = step;
     }
     Some(match result {
+        Ok(plan)
+            if !cp_net::clearance_report(&view.net, view.content.as_deref()?, &plan).is_empty() =>
+        {
+            Ghost {
+                polylines: plan
+                    .segments
+                    .iter()
+                    .map(|s| sample_curve(&s.curve, 3.0))
+                    .collect(),
+                valid: false,
+                cost: None,
+                errors: vec![TOO_CLOSE.to_string()],
+                half_width,
+                snap: report,
+                warnings: Vec::new(),
+                chevrons: Vec::new(),
+            }
+        }
         Ok(plan) => {
             let content = view.content.as_deref()?;
             let one_way = road_is_one_way(content.road(plan.road));
@@ -582,7 +602,9 @@ pub fn tool_click(
                     Some(v) => quantized(v, req, state.alt).0,
                     None => req,
                 };
-                outbox.push(build_command(req));
+                if !view.as_deref().is_some_and(|v| too_close(v, &req)) {
+                    outbox.push(build_command(req));
+                }
             }
             state.ghost_key = None;
         }

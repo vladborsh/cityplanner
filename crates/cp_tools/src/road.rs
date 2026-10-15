@@ -6,8 +6,8 @@ use cp_core::Cost;
 use cp_core::curve::CubicBezier3;
 use cp_net::{
     ElevationMode, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SnapOptions,
-    SnapReport, SnapReportKind, StepContext, cell_ticks, control_points, quantize_path, stretch,
-    validate_road_path, validate_road_path_report,
+    SnapReport, SnapReportKind, StepContext, cell_ticks, clearance_report, control_points,
+    quantize_path, stretch, validate_road_path, validate_road_path_report,
 };
 use cp_sim::SimView;
 
@@ -175,6 +175,18 @@ pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRe
     };
     let (path, report) = quantize_path(&req, &cx);
     (RoadPathRequest { path, ..req }, report)
+}
+
+/// The verdict shown when a new road runs less than one cell from another (§6.7, T-124).
+pub const TOO_CLOSE: &str = "too close to another road: leave a cell (8 m) or connect";
+
+/// Does the path of `req` pass validation but run closer than one cell to an existing road? The
+/// tool then draws a red ghost and sends no command; the command itself does not check this.
+pub fn too_close(view: &SimView, req: &RoadPathRequest) -> bool {
+    let (Some(content), Some(Ok(plan))) = (view.content.as_deref(), preview(view, req)) else {
+        return false;
+    };
+    !clearance_report(&view.net, content, &plan).is_empty()
 }
 
 /// What a control-point marker of the road tool stands for.
