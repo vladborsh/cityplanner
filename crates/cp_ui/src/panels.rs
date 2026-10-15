@@ -32,6 +32,9 @@ pub struct UiState {
     pub metrics_open: bool,
     /// The bottom demand panel is folded into its 28 px strip (T-099; not saved).
     pub demand_collapsed: bool,
+    /// The view (overlay) menu and the settings menu of the top bar are open.
+    pub view_menu_open: bool,
+    pub settings_open: bool,
     /// Slider drafts of the budget window.
     pub budget: crate::budget::BudgetDraft,
 }
@@ -109,33 +112,79 @@ pub fn root_ui(ctx: &egui::Context) -> egui::Ui {
     )
 }
 
-/// The overlay switcher: one selectable label per overlay. Returns each label's rectangle
-/// (tests use it to click them). Selecting writes `state`; the render side flips layer
-/// visibility on the same frame.
-pub fn overlay_buttons(ui: &mut egui::Ui, state: &mut OverlayState) -> Vec<(Overlay, egui::Rect)> {
-    let mut rects = Vec::new();
-    for o in Overlay::ALL {
-        let r = ui.selectable_label(state.active == o, o.label());
-        rects.push((o, r.rect));
-        if r.clicked() {
-            state.active = o;
-        }
-    }
-    rects
-}
-
 /// Where the clickable parts of the top bar were drawn (tests click them).
 #[derive(Clone, Debug, Default)]
 pub struct TopRects {
     /// The whole bar (its height is [`Sizes::TOP_BAR_H`]).
     pub bar: Option<egui::Rect>,
     pub speeds: Vec<(SimSpeed, egui::Rect)>,
+    /// The window switches; the budget's is the balance.
     pub windows: Vec<(UiWindow, egui::Rect)>,
+    /// The view button, and (while its menu is open) the overlay icons of the menu.
+    pub view: Option<egui::Rect>,
+    pub overlays: Vec<(Overlay, egui::Rect)>,
+    /// The settings button and (while its menu is open) the always-day switch.
+    pub settings: Option<egui::Rect>,
+    pub always_day: Option<egui::Rect>,
+    /// Width of what the bar draws: left group + centre + right group.
+    pub content_width: f32,
 }
 
-/// Top bar: the window switches (budget, demand, metrics, saves, debug) with the money next to
-/// the budget, demand bars, population (stub), date/time, speed buttons, overlay switcher and
-/// the always-day lighting toggle. A speed click pushes `SetSpeed` into `outbox`.
+/// Whether the O key was pressed (opens the view menu): not with a modifier, not while a text
+/// field has the keyboard.
+pub fn view_hotkey(ctx: &egui::Context) -> bool {
+    if ctx.egui_wants_keyboard_input() {
+        return false;
+    }
+    ctx.input(|i| {
+        i.events.iter().any(|e| {
+            matches!(
+                e,
+                egui::Event::Key {
+                    key: egui::Key::O,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                    ..
+                } if !modifiers.any()
+            )
+        })
+    })
+}
+
+/// A popup under `anchor`, shown while `*open`; a press anywhere else closes it. Returns the
+/// popup's rectangle while it is open.
+fn popup(
+    ctx: &egui::Context,
+    id: &str,
+    anchor: egui::Rect,
+    open: &mut bool,
+    add: impl FnOnce(&mut egui::Ui),
+) -> Option<egui::Rect> {
+    if !*open {
+        return None;
+    }
+    let area = egui::Area::new(egui::Id::new(("top_popup", id)))
+        .order(egui::Order::Foreground)
+        .fixed_pos(anchor.left_bottom() + egui::vec2(0.0, Sizes::TILE_GAP))
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, add);
+        });
+    let rect = area.response.rect;
+    let outside = ctx.input(|i| i.pointer.any_pressed())
+        && ctx
+            .pointer_interact_pos()
+            .is_some_and(|p| !rect.contains(p) && !anchor.contains(p));
+    if outside {
+        *open = false;
+    }
+    Some(rect)
+}
+
+/// Top bar, city status only: balance (a click opens the budget) and population on the left;
+/// clock and the speed icons in the middle; on the right the view and settings menus and the
+/// window icons (demand, metrics, saves, debug). A speed click pushes `SetSpeed` into
+/// `outbox`. The overlays and the always-day switch live in the two popups.
 pub fn top_bar(
     root: &mut egui::Ui,
     view: &SimView,
@@ -146,59 +195,160 @@ pub fn top_bar(
     files: &mut FileMenu,
 ) -> TopRects {
     let mut rects = TopRects::default();
+    let ctx = root.ctx().clone();
     let bar = egui::Panel::top("top_bar")
         .exact_size(Sizes::TOP_BAR_H)
         .show(root, |ui| {
-            ui.horizontal_centered(|ui| {
-                crate::budget::money_label(ui, view);
-                for w in UiWindow::ALL {
-                    let on = match w {
-                        UiWindow::Budget => state.budget_open,
-                        UiWindow::Demand => state.demand_open,
-                        UiWindow::Metrics => state.metrics_open,
-                        UiWindow::Saves => files.open,
-                        UiWindow::Debug => state.debug_open,
-                    };
-                    let r = w
-                        .icon()
-                        .button(ui, Sizes::TOP_BAR_ICON, Sizes::BUTTON_PAD, on)
-                        .on_hover_text(w.label());
-                    rects.windows.push((w, r.rect));
-                    if r.clicked() {
-                        match w {
-                            UiWindow::Budget => state.budget_open = !on,
-                            UiWindow::Demand => state.demand_open = !on,
-                            UiWindow::Metrics => state.metrics_open = !on,
-                            UiWindow::Saves => toggle_saves(files),
-                            UiWindow::Debug => state.debug_open = !on,
-                        }
+            let full = ui.max_rect();
+            let mid = egui::Rect::from_center_size(
+                full.center(),
+                egui::vec2(Sizes::TOP_CENTER_W, full.height()),
+            );
+            let scope = |ui: &mut egui::Ui, rect: egui::Rect, layout: egui::Layout| {
+                ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout))
+            };
+            let centred = egui::Layout::left_to_right(egui::Align::Center);
+            // Left: the balance (opens the budget) and the population.
+            let mut left = scope(
+                ui,
+                egui::Rect::from_min_max(full.min, egui::pos2(mid.left(), full.max.y)),
+                centred,
+            );
+            let money = crate::budget::money_label(&mut left, view);
+            let money = left.interact(money.rect, money.id.with("open"), egui::Sense::click());
+            rects.windows.push((UiWindow::Budget, money.rect));
+            if money
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                state.budget_open = !state.budget_open;
+            }
+            left.label(format!("👥 {}", view.city.population))
+                .on_hover_text("Residents");
+            // Middle: clock and speeds.
+            let mut centre = scope(ui, mid, centred);
+            centre.label(format_time(view));
+            for (speed, label) in SPEEDS {
+                let r = crate::icons::speed_icon(speed)
+                    .button(
+                        &mut centre,
+                        Sizes::TOP_BAR_ICON,
+                        Sizes::BUTTON_PAD,
+                        view.speed == speed,
+                    )
+                    .on_hover_text(label);
+                rects.speeds.push((speed, r.rect));
+                if r.clicked() && view.speed != speed {
+                    outbox.push(set_speed(speed));
+                }
+            }
+            // Right (laid out right to left): the window icons, settings, view.
+            let mut right = scope(
+                ui,
+                egui::Rect::from_min_max(egui::pos2(mid.right(), full.min.y), full.max),
+                egui::Layout::right_to_left(egui::Align::Center),
+            );
+            for w in UiWindow::ALL
+                .into_iter()
+                .rev()
+                .filter(|w| *w != UiWindow::Budget)
+            {
+                let on = match w {
+                    UiWindow::Budget => state.budget_open,
+                    UiWindow::Demand => state.demand_open,
+                    UiWindow::Metrics => state.metrics_open,
+                    UiWindow::Saves => files.open,
+                    UiWindow::Debug => state.debug_open,
+                };
+                let r = w
+                    .icon()
+                    .button(&mut right, Sizes::TOP_BAR_ICON, Sizes::BUTTON_PAD, on)
+                    .on_hover_text(w.label());
+                rects.windows.push((w, r.rect));
+                if r.clicked() {
+                    match w {
+                        UiWindow::Budget => state.budget_open = !on,
+                        UiWindow::Demand => state.demand_open = !on,
+                        UiWindow::Metrics => state.metrics_open = !on,
+                        UiWindow::Saves => toggle_saves(files),
+                        UiWindow::Debug => state.debug_open = !on,
                     }
                 }
-                ui.separator();
-                crate::budget::demand_bars(ui, &view.demand);
-                ui.separator();
-                ui.label(format!("👥 {}", view.city.population))
-                    .on_hover_text("Residents");
-                ui.separator();
-                ui.label(format_time(view));
-                ui.separator();
-                for (speed, label) in SPEEDS {
-                    let r = ui.selectable_label(view.speed == speed, label);
-                    rects.speeds.push((speed, r.rect));
-                    if r.clicked() && view.speed != speed {
-                        outbox.push(set_speed(speed));
-                    }
-                }
-                ui.separator();
-                overlay_buttons(ui, overlay);
-                ui.separator();
-                // Render only: the game clock and everyone's routine keep running at night.
-                ui.checkbox(&mut lighting.always_day, "Всегда день");
-            });
+            }
+            right.separator();
+            let r = Icon::Settings
+                .button(
+                    &mut right,
+                    Sizes::TOP_BAR_ICON,
+                    Sizes::BUTTON_PAD,
+                    state.settings_open,
+                )
+                .on_hover_text("Settings");
+            rects.settings = Some(r.rect);
+            if r.clicked() {
+                state.settings_open = !state.settings_open;
+                state.view_menu_open = false;
+            }
+            // The view button shows the active overlay.
+            let r = crate::icons::overlay_icon(overlay.active)
+                .button(
+                    &mut right,
+                    Sizes::TOP_BAR_ICON,
+                    Sizes::BUTTON_PAD,
+                    state.view_menu_open,
+                )
+                .on_hover_text(format!("View: {} (O)", overlay.active.label()));
+            rects.view = Some(r.rect);
+            if r.clicked() {
+                state.view_menu_open = !state.view_menu_open;
+                state.settings_open = false;
+            }
+            rects.content_width =
+                left.min_rect().width() + Sizes::TOP_CENTER_W + right.min_rect().width();
         });
     rects.bar = Some(bar.response.rect);
+    if let Some(anchor) = rects.view {
+        let mut chosen = false;
+        popup(&ctx, "view", anchor, &mut state.view_menu_open, |ui| {
+            egui::Grid::new("view_grid")
+                .spacing(egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP))
+                .show(ui, |ui| {
+                    for (n, o) in Overlay::ALL.into_iter().enumerate() {
+                        let r = crate::icons::overlay_icon(o)
+                            .button(
+                                ui,
+                                Sizes::VIEW_MENU_ICON,
+                                Sizes::BUTTON_PAD,
+                                overlay.active == o,
+                            )
+                            .on_hover_text(o.label());
+                        rects.overlays.push((o, r.rect));
+                        if r.clicked() {
+                            overlay.active = o;
+                            chosen = true;
+                        }
+                        if n % VIEW_COLUMNS == VIEW_COLUMNS - 1 {
+                            ui.end_row();
+                        }
+                    }
+                });
+        });
+        if chosen {
+            state.view_menu_open = false;
+        }
+    }
+    if let Some(anchor) = rects.settings {
+        popup(&ctx, "settings", anchor, &mut state.settings_open, |ui| {
+            // Render only: the game clock and everyone's routine keep running at night.
+            let r = ui.checkbox(&mut lighting.always_day, "Всегда день");
+            rects.always_day = Some(r.rect);
+        });
+    }
     rects
 }
+
+/// Columns of the view menu's icon grid (2 rows of 4).
+const VIEW_COLUMNS: usize = 4;
 
 /// A tool of a tool panel: the one tile of every construction tool (see [`crate::tile`]).
 pub fn tool_button(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -> egui::Response {
@@ -696,33 +846,160 @@ mod tests {
         assert!(tools.ghost.is_none(), "switching tools clears the ghost");
     }
 
-    #[test]
-    fn clicking_an_overlay_label_selects_it() {
-        let ctx = egui::Context::default();
-        let mut state = OverlayState::default();
-        let mut rects = Vec::new();
-        crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
-            rects = overlay_buttons(ui, &mut state);
-        });
-        assert_eq!(rects.len(), Overlay::ALL.len());
-        for want in [Overlay::Zones, Overlay::Pollution, Overlay::Off] {
-            let pos = rects.iter().find(|(o, _)| *o == want).unwrap().1.center();
-            let button = |pressed| egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
+    /// A top bar that keeps its state between frames.
+    struct Bar {
+        ctx: egui::Context,
+        view: SimView,
+        state: UiState,
+        overlay: OverlayState,
+        lighting: LightingSettings,
+        rects: TopRects,
+        t: f64,
+    }
+
+    impl Bar {
+        fn new() -> Self {
+            let mut bar = Bar {
+                ctx: egui::Context::default(),
+                view: SimRunner::new(1).view(),
+                state: UiState::default(),
+                overlay: OverlayState::default(),
+                lighting: LightingSettings::default(),
+                rects: TopRects::default(),
+                t: 0.0,
             };
-            for (t, events) in [
-                (1.0, vec![egui::Event::PointerMoved(pos), button(true)]),
-                (1.1, vec![button(false)]),
-            ] {
-                crate::testutil::frame(&ctx, input(t, events), |ui| {
-                    overlay_buttons(ui, &mut state);
-                });
-            }
-            assert_eq!(state.active, want);
+            bar.frame(vec![]);
+            bar.frame(vec![]);
+            bar
         }
+
+        fn frame(&mut self, events: Vec<egui::Event>) -> Vec<(String, egui::Pos2)> {
+            self.t += 0.1;
+            let Bar {
+                ctx,
+                view,
+                state,
+                overlay,
+                lighting,
+                rects,
+                t,
+            } = self;
+            crate::testutil::frame_texts(ctx, input(*t, events), |ui| {
+                *rects = top_bar(
+                    ui,
+                    view,
+                    &mut CommandOutbox::default(),
+                    overlay,
+                    lighting,
+                    state,
+                    &mut FileMenu::default(),
+                );
+            })
+        }
+
+        fn click(&mut self, pos: egui::Pos2) {
+            let [down, up] = crate::testutil::click(pos);
+            self.frame(down);
+            self.frame(up);
+            self.frame(vec![]);
+        }
+    }
+
+    #[test]
+    fn the_top_bar_has_no_rcio_bars_and_no_text_overlay_buttons_or_switch() {
+        let mut bar = Bar::new();
+        let texts: Vec<String> = bar.frame(vec![]).into_iter().map(|(t, _)| t).collect();
+        for gone in ["R", "C", "I", "O", "Всегда день"] {
+            assert!(!texts.iter().any(|t| t == gone), "{gone:?} in {texts:?}");
+        }
+        for o in Overlay::ALL {
+            assert!(!texts.iter().any(|t| t == o.label()), "{o:?} in {texts:?}");
+        }
+    }
+
+    #[test]
+    fn the_view_button_opens_a_grid_and_a_click_on_an_icon_selects_the_overlay_and_closes_it() {
+        let mut bar = Bar::new();
+        assert!(bar.rects.overlays.is_empty());
+        bar.click(bar.rects.view.unwrap().center());
+        assert!(bar.state.view_menu_open);
+        assert_eq!(bar.rects.overlays.len(), Overlay::ALL.len());
+        bar.frame(vec![]);
+        // 2 rows of 4.
+        let ys: std::collections::BTreeSet<i32> = bar
+            .rects
+            .overlays
+            .iter()
+            .map(|(_, r)| r.top().round() as i32)
+            .collect();
+        assert_eq!(ys.len(), 2, "{:?}", bar.rects.overlays);
+        let at = bar
+            .rects
+            .overlays
+            .iter()
+            .find(|(o, _)| *o == Overlay::Traffic)
+            .unwrap()
+            .1
+            .center();
+        bar.click(at);
+        assert_eq!(bar.overlay.active, Overlay::Traffic);
+        assert!(!bar.state.view_menu_open);
+    }
+
+    #[test]
+    fn the_settings_menu_holds_the_always_day_switch() {
+        let mut bar = Bar::new();
+        assert!(!bar.lighting.always_day);
+        bar.click(bar.rects.settings.unwrap().center());
+        assert!(bar.state.settings_open);
+        bar.frame(vec![]);
+        bar.click(bar.rects.always_day.unwrap().center());
+        assert!(bar.lighting.always_day);
+        bar.click(bar.rects.always_day.unwrap().center());
+        assert!(!bar.lighting.always_day);
+    }
+
+    #[test]
+    fn a_press_elsewhere_closes_a_menu() {
+        let mut bar = Bar::new();
+        bar.click(bar.rects.view.unwrap().center());
+        assert!(bar.state.view_menu_open);
+        bar.click(egui::pos2(600.0, 500.0));
+        assert!(!bar.state.view_menu_open);
+    }
+
+    #[test]
+    fn the_o_key_opens_the_view_menu_unless_a_modifier_or_a_text_field_has_it() {
+        let ctx = egui::Context::default();
+        let key = |modifiers| egui::Event::Key {
+            key: egui::Key::O,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let mut seen = Vec::new();
+        for (t, events) in [
+            (0.0, vec![key(egui::Modifiers::NONE)]),
+            (0.1, vec![key(egui::Modifiers::CTRL)]),
+            (0.2, vec![]),
+        ] {
+            crate::testutil::frame(&ctx, input(t, events), |ui| {
+                seen.push(view_hotkey(ui.ctx()));
+            });
+        }
+        assert_eq!(seen, [true, false, false]);
+    }
+
+    #[test]
+    fn the_bars_content_fits_a_1280_wide_window() {
+        let bar = Bar::new();
+        assert!(bar.rects.content_width > 0.0);
+        assert!(
+            bar.rects.content_width <= 1280.0,
+            "{}",
+            bar.rects.content_width
+        );
     }
 
     #[test]

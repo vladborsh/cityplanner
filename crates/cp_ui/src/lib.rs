@@ -33,7 +33,7 @@ pub use files::{FileMenu, FileRequest, SaveEntry, file_window};
 pub use icons::Icon;
 pub use info::{InfoRects, info_panel};
 pub use palette::{Category, palette, tool_panel};
-pub use panels::{TopRects, UiState, UiWindow, overlay_buttons, root_ui, top_bar};
+pub use panels::{TopRects, UiState, UiWindow, root_ui, top_bar};
 
 pub struct UiPlugin;
 
@@ -105,6 +105,10 @@ fn draw_ui(
     let available = Category::available(view.content.as_deref());
     if let Some(c) = palette::hotkey(ctx, &available) {
         palette::toggle(&mut state, c);
+    }
+    if panels::view_hotkey(ctx) {
+        state.view_menu_open = !state.view_menu_open;
+        state.settings_open = false;
     }
     let mut root = root_ui(ctx);
     top_bar(

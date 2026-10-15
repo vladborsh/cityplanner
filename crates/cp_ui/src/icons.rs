@@ -58,6 +58,20 @@ icons! {
     PowerLine => "power_line",
     Remove => "remove",
     Building => "building",
+    // Top bar (T-100): speeds, the view and settings menus, one icon per overlay.
+    SpeedPause => "speed_pause",
+    Speed1 => "speed_1",
+    Speed2 => "speed_2",
+    Speed3 => "speed_3",
+    View => "view",
+    Settings => "settings",
+    OverlayOff => "overlay_off",
+    OverlayTraffic => "overlay_traffic",
+    OverlayZones => "overlay_zones",
+    OverlayLandValue => "overlay_land_value",
+    OverlayPollution => "overlay_pollution",
+    OverlayWater => "overlay_water",
+    OverlayPower => "overlay_power",
     // Zone types (T-099): one silhouette each.
     ZoneResLow => "zone_res_low",
     ZoneResHigh => "zone_res_high",
@@ -113,6 +127,31 @@ impl Icon {
 /// per-def icons exist (T-105) every name maps to the generic building icon.
 pub fn def_icon(_name: &str) -> egui::ImageSource<'static> {
     Icon::Building.image()
+}
+
+/// The icon of an overlay (the view menu and the view button).
+pub fn overlay_icon(overlay: cp_render::Overlay) -> Icon {
+    use cp_render::Overlay as O;
+    match overlay {
+        O::Off => Icon::OverlayOff,
+        O::Traffic => Icon::OverlayTraffic,
+        O::Zones => Icon::OverlayZones,
+        O::LandValue => Icon::OverlayLandValue,
+        O::Pollution => Icon::OverlayPollution,
+        O::Water => Icon::OverlayWater,
+        O::Power => Icon::OverlayPower,
+    }
+}
+
+/// The icon of a simulation speed.
+pub fn speed_icon(speed: cp_core::SimSpeed) -> Icon {
+    use cp_core::SimSpeed as S;
+    match speed {
+        S::Pause => Icon::SpeedPause,
+        S::X1 => Icon::Speed1,
+        S::X2 => Icon::Speed2,
+        S::X3 => Icon::Speed3,
+    }
 }
 
 /// The icon of a zone type (the six that can be painted); `None` has none.

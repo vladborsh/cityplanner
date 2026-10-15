@@ -9,7 +9,6 @@
 use std::ops::RangeInclusive;
 
 use bevy_egui::egui;
-use cp_building::Demand;
 use cp_content::{ServiceKind, ZoneType};
 use cp_core::Cost;
 use cp_core::treasury::DEBT_FLOOR;
@@ -85,26 +84,6 @@ pub fn money_label(ui: &mut egui::Ui, view: &SimView) -> egui::Response {
 pub fn demand_fraction(v: f32) -> f32 {
     let v = if v.is_nan() { 0.0 } else { v };
     (v.clamp(-DEMAND_RANGE, DEMAND_RANGE) + DEMAND_RANGE) / (2.0 * DEMAND_RANGE)
-}
-
-/// The four RCIO bars (residential, commercial, industrial, office); the middle of a bar is
-/// zero demand.
-pub fn demand_bars(ui: &mut egui::Ui, d: &Demand) {
-    for (letter, value, rgb) in [
-        ("R", d.r, (80, 190, 90)),
-        ("C", d.c, (90, 130, 240)),
-        ("I", d.i, (230, 200, 60)),
-        ("O", d.o, (180, 110, 220)),
-    ] {
-        ui.label(letter);
-        ui.add(
-            egui::ProgressBar::new(demand_fraction(value))
-                .desired_width(34.0)
-                .desired_height(10.0)
-                .fill(egui::Color32::from_rgb(rgb.0, rgb.1, rgb.2)),
-        )
-        .on_hover_text(format!("{letter} demand {value:+.0}"));
-    }
 }
 
 /// What a tax slider sends.

@@ -29,6 +29,10 @@ impl Sizes {
     pub const DEMAND_ICON: f32 = 40.0;
     pub const DEMAND_BAR_H: f32 = 36.0;
     pub const DEMAND_COL_W: f32 = 64.0;
+    /// Width of the middle group of the top bar (clock and speeds).
+    pub const TOP_CENTER_W: f32 = 360.0;
+    /// Icons of the view menu.
+    pub const VIEW_MENU_ICON: f32 = 40.0;
     /// Height of the top bar.
     pub const TOP_BAR_H: f32 = 44.0;
     /// Icons of the top bar.
