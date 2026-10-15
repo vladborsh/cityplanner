@@ -340,3 +340,25 @@ fn utilities_survive_save_load_and_are_checksummed() {
     d.tick_once();
     assert_ne!(c.checksum(), d.checksum());
 }
+
+/// T-101: one pipe. A command log that builds with `Sewage` (old logs, old clients) gives the
+/// same utility graph, the same cost and the same treasury as the same log with `Water`.
+#[test]
+fn a_sewage_build_link_is_the_same_as_a_water_one() {
+    let path = [(5000.0, 5000.0), (5120.0, 5000.0), (5120.0, 5090.0)];
+    let play = |kind| {
+        let mut sim = runner(1);
+        let o = run(&mut sim, vec![build(kind, &path)]);
+        let cost = o[0].result.clone().expect("built");
+        let balance = sim
+            .world()
+            .resource::<cp_core::treasury::Treasury>()
+            .balance;
+        (graph(&sim), cost, balance)
+    };
+    let (g_w, c_w, b_w) = play(UtilityKind::Water);
+    let (g_s, c_s, b_s) = play(UtilityKind::Sewage);
+    assert_eq!(g_w, g_s);
+    assert_eq!((c_w, b_w), (c_s, b_s));
+    assert!(g_s.links().count() >= 1);
+}

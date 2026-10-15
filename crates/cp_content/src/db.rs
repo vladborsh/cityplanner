@@ -253,11 +253,16 @@ impl ContentDb {
         }
     }
 
-    /// The utility definition for `kind` (the first by sorted id), if the content has one.
+    /// The utility definition for `kind`, if the content has one. There is one pipe for water
+    /// and sewage (`system-design.md` §10): `Sewage` is the same definition as `Water`.
     pub fn utility_for_kind(
         &self,
         kind: crate::kinds::UtilityKind,
     ) -> Option<(UtilityDefId, &UtilityDef)> {
+        let kind = match kind {
+            crate::kinds::UtilityKind::Sewage => crate::kinds::UtilityKind::Water,
+            k => k,
+        };
         self.utilities().find(|(_, d)| d.kind == kind)
     }
 
@@ -869,10 +874,7 @@ mod tests {
             .find(|(_, d)| d.id == "water_pump_station")
             .unwrap();
         assert_eq!(pump.icon, "water_pump_station");
-        let sewage = db.utilities().find(|(_, d)| d.id == "sewage_pipe");
-        if let Some((_, d)) = sewage {
-            // Explicit and different from the id.
-            assert_eq!(d.icon, "pipe_sewage");
-        }
+        // One pipe (T-101): no sewage pipe any more.
+        assert!(db.utilities().all(|(_, d)| d.id != "sewage_pipe"));
     }
 }

@@ -324,3 +324,19 @@ fn hash_is_independent_of_number_spelling_but_distinguishes_negative_zero() {
     .expect("-0.0 is a valid non-negative width");
     assert_ne!(base, neg.content_hash());
 }
+
+/// T-101: water and sewage share one pipe; a utility of kind `Sewage` is a content error.
+#[test]
+fn a_sewage_utility_is_rejected_and_the_committed_content_has_one_pipe() {
+    let e = errs(mutate("water_pipe", "kind: Water", "kind: Sewage"));
+    assert!(e.contains("share one pipe"), "{e}");
+    let db = ContentDb::load_dir(root()).unwrap();
+    let kinds: Vec<_> = db.utilities().map(|(_, d)| d.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            cp_content::UtilityKind::Power,
+            cp_content::UtilityKind::Water
+        ]
+    );
+}

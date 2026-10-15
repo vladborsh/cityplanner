@@ -221,7 +221,7 @@ fn service_sites(
         out.push(place(outflow, shore));
         if let Some(street) = nearest_street(shore) {
             out.push(SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
-                kind: UtilityKind::Sewage,
+                kind: UtilityKind::Water,
                 path: vec![shore, street],
             }));
         }
@@ -284,11 +284,11 @@ pub fn grid_city(
         script.sim.tick_once();
     }
 
-    // Utilities: a power line, a water pipe and a sewage pipe along every street, wind
+    // Utilities: a power line and a pipe along every street, wind
     // turbines on lots at the edge of the lattice (they stay unpainted), and, where the map
     // has water in the owned tiles, a pump on it and an outflow on the shore.
     let mut utilities = Vec::new();
-    for kind in [UtilityKind::Power, UtilityKind::Water, UtilityKind::Sewage] {
+    for kind in [UtilityKind::Power, UtilityKind::Water] {
         for &(from, to) in &runs {
             utilities.push(SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
                 kind,

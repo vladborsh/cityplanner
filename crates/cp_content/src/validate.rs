@@ -146,6 +146,12 @@ pub fn vehicle(d: &VehicleDef) -> Problems {
 pub fn utility(d: &UtilityDef) -> Problems {
     let mut c = Check(Vec::new());
     c.not_empty("id", &d.id);
+    if d.kind == crate::kinds::UtilityKind::Sewage {
+        c.bad(
+            "kind",
+            "Sewage is not a utility: water and sewage share one pipe (kind: Water)",
+        );
+    }
     c.non_negative("cost_per_m", d.cost_per_m);
     c.non_negative("upkeep_per_m_week", d.upkeep_per_m_week);
     c.positive("min_link_m", d.min_link_m);

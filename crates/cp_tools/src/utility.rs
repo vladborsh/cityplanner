@@ -28,7 +28,7 @@ pub enum UtilityMode {
 /// State of the pipe / power-line tool.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UtilityTool {
-    /// `Water` / `Sewage` pipes (one network) or `Power` lines.
+    /// `Water` (the one pipe) or `Power` lines.
     pub kind: UtilityKind,
     pub mode: UtilityMode,
     /// Points clicked so far in the current drawing.
@@ -47,6 +47,12 @@ impl Default for UtilityTool {
 
 impl UtilityTool {
     pub fn set_kind(&mut self, kind: UtilityKind) {
+        // One pipe for water and sewage: the tool only builds `Water` or `Power`.
+        let kind = if kind == UtilityKind::Sewage {
+            UtilityKind::Water
+        } else {
+            kind
+        };
         if self.kind != kind {
             self.kind = kind;
             self.points.clear();

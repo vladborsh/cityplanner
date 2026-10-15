@@ -49,13 +49,19 @@ impl T {
 }
 
 #[test]
-fn content_has_a_definition_per_kind() {
+fn content_has_a_definition_per_network_and_sewage_uses_the_pipe() {
     let db = content();
-    for k in [UtilityKind::Water, UtilityKind::Sewage, UtilityKind::Power] {
+    for k in [UtilityKind::Water, UtilityKind::Power] {
         let (_, d) = db.utility_for_kind(k).unwrap();
         assert_eq!(d.kind, k);
         assert!(d.cost_per_m > 0.0 && d.max_link_m >= 2.0 * d.min_link_m);
     }
+    // One pipe: `Sewage` asks for the same definition as `Water`.
+    assert_eq!(
+        db.utility_for_kind(UtilityKind::Sewage).map(|(id, _)| id),
+        db.utility_for_kind(UtilityKind::Water).map(|(id, _)| id)
+    );
+    assert_eq!(db.utilities().count(), 2, "one pipe and one power line");
 }
 
 #[test]

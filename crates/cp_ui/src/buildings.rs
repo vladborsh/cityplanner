@@ -69,7 +69,7 @@ fn kind_icon(kind: ServiceKind) -> Icon {
     match kind {
         ServiceKind::Water => Icon::Water,
         ServiceKind::Power => Icon::Power,
-        ServiceKind::Sewage => Icon::PipeSewage,
+        ServiceKind::Sewage => Icon::Pipe,
         ServiceKind::Roads => Icon::Roads,
     }
 }

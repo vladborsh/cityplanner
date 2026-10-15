@@ -521,10 +521,7 @@ pub fn utility_panel(
         )
     } else {
         (
-            &[
-                (UtilityKind::Water, Icon::PipeWater, "Water pipe"),
-                (UtilityKind::Sewage, Icon::PipeSewage, "Sewage"),
-            ],
+            &[(UtilityKind::Water, Icon::Pipe, "Pipe")],
             UtilityNet::Pipe,
             Overlay::Water,
         )

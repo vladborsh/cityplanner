@@ -1,6 +1,6 @@
 Utility((
     id: "water_pipe",
-    name: "Water pipe",
+    name: "Pipe",
     kind: Water,
     cost_per_m: 4.0,
     upkeep_per_m_week: 0.02,

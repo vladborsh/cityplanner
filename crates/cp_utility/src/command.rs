@@ -25,8 +25,9 @@ use crate::plan::{PathProblem, PlanInputs, apply_plan, plan_link_path};
 /// Commands handled by this crate.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum UtilityCommand {
-    /// Builds a pipe (`Water`, `Sewage`: one shared network) or power line (`Power`) along
-    /// `path` (straight legs between the points, world XZ).
+    /// Builds a pipe (`Water`; `Sewage` is a synonym kept for old command logs, there is one
+    /// pipe for both) or a power line (`Power`) along `path` (straight legs between the
+    /// points, world XZ).
     BuildLink { kind: UtilityKind, path: Vec<Vec2> },
     /// Removes one link (nodes left without links go with it).
     RemoveLink { link: UtilityLinkId },
