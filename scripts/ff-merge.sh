@@ -8,7 +8,7 @@
 #   2. <branch> is checked out in THIS worktree, with a clean tree (untracked, non-ignored files count as dirty), so the gate tests exactly
 #      the commit that will land;
 #   3. <branch> contains the coordinator's current master ("rebase first" otherwise);
-#   4. scripts/gate.sh prints PASS;
+#   4. scripts/gate.sh prints PASS (fmt, clippy, nextest, doctests, sim checks; needs cargo-nextest);
 #   5. master did not move while the gate ran.
 # Then: git -C $CITYPLANNER_COORD merge --ff-only <branch>. Never pushes.
 #

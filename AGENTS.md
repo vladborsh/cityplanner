@@ -13,9 +13,14 @@ wrong. Project context lives in `PROJECT.md`; system designs live in `architectu
 
 - Green means `scripts/gate.sh` prints `PASS: N tests` (exit 0). It runs, each as its own
   command and stopping at the first failure: `cargo fmt --check`,
-  `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
+  `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo nextest run --workspace --test-threads 6` (the `test` step), `cargo test --workspace --doc`,
   `scripts/check-sim-deps.sh` and `scripts/check-isolated-clippy.sh`, with output in
-  `$CARGO_TARGET_DIR/gate/<step>.log`. Report the test count from its `PASS` line. Untracked, non-ignored files make it
+  `$CARGO_TARGET_DIR/gate/<step>.log`. `PASS: N` counts the nextest tests plus the doctests.
+  The gate needs `cargo-nextest` (`cargo install cargo-nextest --locked`; it fails and says so
+  if missing, it never falls back to `cargo test`). Test threads: `GATE_TEST_THREADS` (default 6).
+  The dev/test profile builds workspace crates at `opt-level = 1` and dependencies at 2.
+  Report the test count from its `PASS` line. Untracked, non-ignored files make it
   `FAIL: untracked` (`git add` or gitignore them). Never pipe
   cargo output (`| tail`, `| grep`) when checking green: it hides a failing exit status.
   Merge only with `scripts/ff-merge.sh <branch>`, which refuses unless the branch contains the

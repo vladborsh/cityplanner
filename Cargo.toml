@@ -65,6 +65,13 @@ cp_ui = { path = "crates/cp_ui" }
 # SimRng forks per entity per tick; ChaCha and the generic rand_core code monomorphised
 # in cp_core are ~100x slower unoptimised, which made sim tests take minutes.
 # Optimising them in dev/test builds does not affect determinism.
+#
+# Test profile (T-095): workspace crates at opt-level 1, dependencies at 2. The heavy e2e
+# tests spin up a whole city; unoptimised they dominated the gate.
+[profile.dev]
+opt-level = 1
+[profile.dev.package."*"]
+opt-level = 2
 [profile.dev.package.rand_chacha]
 opt-level = 3
 [profile.dev.package.ppv-lite86]
