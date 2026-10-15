@@ -12,8 +12,8 @@ use bevy_egui::egui;
 use cp_content::{ServiceKind, ZoneType};
 use cp_core::Cost;
 use cp_core::treasury::DEBT_FLOOR;
-use cp_economy::EconomyCommand;
 use cp_economy::state::{BUDGET_MAX, BUDGET_MIN, BUDGETED, TAX_MAX, TAX_MIN, TAXED_ZONES};
+use cp_economy::{EconomyCommand, Loan};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, format_money, zone_name};
 
@@ -111,16 +111,23 @@ pub enum BudgetTab {
     Overview,
     Taxes,
     Budgets,
+    Loans,
 }
 
 impl BudgetTab {
-    pub const ALL: [BudgetTab; 3] = [BudgetTab::Overview, BudgetTab::Taxes, BudgetTab::Budgets];
+    pub const ALL: [BudgetTab; 4] = [
+        BudgetTab::Overview,
+        BudgetTab::Taxes,
+        BudgetTab::Budgets,
+        BudgetTab::Loans,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             BudgetTab::Overview => "Overview",
             BudgetTab::Taxes => "Taxes",
             BudgetTab::Budgets => "Service budgets",
+            BudgetTab::Loans => "Loans",
         }
     }
 }
@@ -221,6 +228,8 @@ pub struct Overview {
     pub road_upkeep: Cost,
     pub building_upkeep: Cost,
     pub utility_upkeep: Cost,
+    /// Last week's loan payments (principal and interest); part of `upkeep`.
+    pub loan_payments: Cost,
     /// Balance of every hourly history sample (7 game days at most), oldest first.
     pub balance_history: Vec<f32>,
 }
@@ -248,13 +257,14 @@ pub fn overview(view: &SimView) -> Overview {
             .map(|(i, z)| (*z, week.income_by_zone[i]))
             .collect(),
         income: week.income(),
-        upkeep: week.upkeep(),
+        upkeep: week.upkeep() + week.loan_payments,
         net: week.balance(),
         roads_sum: roads.iter().map(|r| r.upkeep_week).sum(),
         roads,
         road_upkeep: week.road_upkeep,
         building_upkeep: week.building_upkeep,
         utility_upkeep: week.utility_upkeep,
+        loan_payments: week.loan_payments,
         balance_history: view
             .city
             .history
@@ -309,6 +319,9 @@ pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
         ui.label("Pipes and power lines");
         ui.label(format_money(o.utility_upkeep));
         ui.end_row();
+        ui.label("Loans");
+        ui.label(format_money(o.loan_payments));
+        ui.end_row();
     });
 }
 
@@ -345,6 +358,7 @@ pub fn budget_contents(
         BudgetTab::Overview => overview_tab(ui, view),
         BudgetTab::Taxes => taxes_tab(ui, view, draft, outbox),
         BudgetTab::Budgets => budgets_tab(ui, view, draft, outbox),
+        BudgetTab::Loans => loans_tab(ui, view, outbox),
     }
 }
 
@@ -397,6 +411,99 @@ fn budgets_tab(
             outbox.push(budget_command(kind, pct));
         }
     }
+}
+
+/// The Loans tab (T-130): the bank's offers with a Take button, then the active loans with a
+/// pay-off button. Only sends `TakeLoan` / `RepayLoan`; the sim checks the rest.
+fn loans_tab(ui: &mut egui::Ui, view: &SimView, outbox: &mut CommandOutbox) {
+    let offers = view.loan_offers();
+    ui.strong("Bank offers");
+    if offers.is_empty() {
+        ui.weak("The bank has no offers.");
+    }
+    for o in &offers {
+        let weekly = Loan::new(o.index, &o.offer, view.tick).weekly();
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!(
+                    "{}  ·  {}% interest  ·  {} weeks",
+                    format_money(Cost::from_units(o.offer.amount)),
+                    o.offer.interest_pct,
+                    o.offer.weeks
+                ));
+                let label = if o.active.is_some() { "Taken" } else { "Take" };
+                let r = ui.add_enabled(o.available, egui::Button::new(label));
+                let r = if o.active.is_some() {
+                    r.on_disabled_hover_text("Already taken; pay it off to take it again.")
+                } else if o.available {
+                    r
+                } else {
+                    r.on_disabled_hover_text(format!(
+                        "The bank wants {} residents.",
+                        o.offer.min_population
+                    ))
+                };
+                if r.clicked() {
+                    outbox.push(take_loan_command(o.index));
+                }
+            });
+            ui.weak(format!(
+                "Weekly payment {}{}",
+                format_money(weekly),
+                if o.offer.min_population > 0 {
+                    format!("  ·  from {} residents", o.offer.min_population)
+                } else {
+                    String::new()
+                }
+            ));
+        });
+    }
+    ui.separator();
+    ui.strong("Active loans");
+    if view.economy.loans.is_empty() {
+        ui.weak("No active loans.");
+    }
+    for l in &view.economy.loans {
+        ui.group(|ui| {
+            ui.label(format!(
+                "Offer {}: debt left {}, interest left {}",
+                u16::from(l.offer) + 1,
+                format_money(l.principal_left),
+                format_money(l.interest_left)
+            ));
+            ui.horizontal(|ui| {
+                ui.label(format!(
+                    "{} weeks left  ·  {} a week",
+                    l.weeks_left,
+                    format_money(l.weekly())
+                ));
+                let can = view.treasury.balance >= l.principal_left;
+                let r = ui.add_enabled(
+                    can,
+                    egui::Button::new(format!(
+                        "Pay off early — {}",
+                        format_money(l.principal_left)
+                    )),
+                );
+                let r = if can {
+                    r
+                } else {
+                    r.on_disabled_hover_text("Not enough money.")
+                };
+                if r.clicked() {
+                    outbox.push(repay_loan_command(l.offer));
+                }
+            });
+        });
+    }
+}
+
+pub fn take_loan_command(offer: u8) -> SimCommand {
+    SimCommand::Economy(EconomyCommand::TakeLoan { offer })
+}
+
+pub fn repay_loan_command(offer: u8) -> SimCommand {
+    SimCommand::Economy(EconomyCommand::RepayLoan { offer })
 }
 
 #[cfg(test)]
@@ -805,5 +912,64 @@ mod tests {
                 .iter()
                 .any(|t| t == "Income by zone")
         );
+    }
+
+    /// Draws the Loans tab, then clicks along a grid of points until a command appears.
+    fn click_for_command(view: &SimView) -> Option<SimCommand> {
+        for y in (30..600).step_by(6) {
+            for x in (20..600).step_by(12) {
+                let pos = egui::pos2(x as f32, y as f32);
+                let ctx = egui::Context::default();
+                let mut draft = BudgetDraft::on(BudgetTab::Loans);
+                let mut outbox = CommandOutbox::default();
+                let ev = |pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                for (t, events) in [
+                    (0.0, vec![]),
+                    (0.1, vec![egui::Event::PointerMoved(pos), ev(true)]),
+                    (0.2, vec![ev(false)]),
+                ] {
+                    crate::testutil::frame(&ctx, input(t, events), |ui| {
+                        budget_contents(ui, view, &mut draft, &mut outbox);
+                    });
+                }
+                if let Some(c) = outbox.iter().next() {
+                    return Some(c.clone());
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn the_loans_tab_takes_a_loan_and_pays_one_off_through_the_outbox() {
+        use std::sync::Arc;
+        let db = Arc::new(
+            cp_content::ContentDb::load_dir(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/content"
+            ))
+            .unwrap(),
+        );
+        let mut sim = SimRunner::new(1);
+        sim.set_content(db);
+        // No loan yet: the only reachable button is "Take" of the open offer (the others need
+        // residents), and it sends TakeLoan for offer 0.
+        assert_eq!(click_for_command(&sim.view()), Some(take_loan_command(0)));
+        // One active loan: the pay-off button shows its debt and sends RepayLoan.
+        sim.push_command(take_loan_command(0), sim.tick());
+        sim.tick_once();
+        let view = sim.view();
+        let loan = *view.economy.loan(0).expect("taken");
+        assert_eq!(loan.weeks_left, 26);
+        let cmd = click_for_command(&view);
+        assert_eq!(cmd, Some(repay_loan_command(0)));
+        // Without the money the button is dead.
+        sim.world_mut().resource_mut::<cp_core::Treasury>().balance = Cost(100);
+        assert_eq!(click_for_command(&sim.view()), None);
     }
 }
