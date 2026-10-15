@@ -77,7 +77,13 @@ metres, pivot at ground centre, +Y up, +Z front). Source packs are not committed
 
 ## UI icons — self-made, CC0
 
-The icons of the UI (`assets/ui/icons/*.png`, 64×64) were drawn for this project as SVG
+The icons of the UI (`assets/ui/icons/*.png`, 128×128) were drawn for this project as SVG
 (`assets/ui/icons/src/*.svg`) and are rendered by `tools/assets/icons.mjs`
 (`@resvg/resvg-js`). They are dedicated to the public domain under CC0 1.0 Universal
 (https://creativecommons.org/publicdomain/zero/1.0/). No third-party icon pack is used.
+
+T-105 adds the icons of the content defs (`BuildingDef.icon`, `UtilityDef.icon`): one silhouette
+each for the water pumping station, the sewage outflow, the coal plant, the wind turbine, the
+water pipe and the two remove tools (`water_pump_station`, `sewage_outflow_station`,
+`coal_power_plant`, `wind_turbine`, `water_pipe`, `remove_pipe`, `remove_line`), the same way
+(self-made SVG, CC0, no third-party pack).

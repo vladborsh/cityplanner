@@ -20,6 +20,8 @@ pub struct Card {
     /// Supply per game day, in the unit of the buildings' `consumption`.
     pub capacity: u32,
     pub lot: (u8, u8),
+    /// The icon of the building (`BuildingDef.icon`).
+    pub icon: String,
 }
 
 /// The cards of one service kind.
@@ -45,6 +47,7 @@ pub fn groups(content: &ContentDb) -> Vec<Group> {
             upkeep_week: Cost::from_units(def.upkeep_week),
             capacity: service.capacity,
             lot: def.lot,
+            icon: def.icon.clone(),
         };
         match out.iter_mut().find(|g| g.kind == service.kind) {
             Some(g) => g.cards.push(card),
@@ -110,7 +113,10 @@ pub fn buildings_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut To
         for card in &group.cards {
             let selected = tools.active == ActiveTool::Place && tools.building.def == Some(card.id);
             let button = egui::Button::image_and_text(
-                Icon::Building.sized(crate::style::Sizes::ROW_ICON),
+                egui::Image::new(crate::icons::def_icon(&card.icon)).fit_to_exact_size(egui::vec2(
+                    crate::style::Sizes::ROW_ICON,
+                    crate::style::Sizes::ROW_ICON,
+                )),
                 card_text(card),
             )
             .selected(selected)

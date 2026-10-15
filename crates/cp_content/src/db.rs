@@ -327,6 +327,18 @@ impl ContentDb {
         let services = table(services, |d| &d.id, validate::service, &mut errors);
         let vehicles = table(vehicles, |d| &d.id, validate::vehicle, &mut errors);
         let utilities = table(utilities, |d| &d.id, validate::utility, &mut errors);
+        let (mut buildings, mut utilities) = (buildings, utilities);
+        // The icon of a def is data; a def without one uses the icon named like itself.
+        for d in &mut buildings.defs {
+            if d.icon.is_empty() {
+                d.icon = d.id.clone();
+            }
+        }
+        for d in &mut utilities.defs {
+            if d.icon.is_empty() {
+                d.icon = d.id.clone();
+            }
+        }
 
         // A Highway outranks every other class at a junction.
         let top_other = roads
@@ -834,5 +846,33 @@ mod tests {
         let bad = r#"Balance((walk_limit_m: -1.0))"#;
         let e = errors(&[("a.ron", bad)]);
         assert!(e.iter().any(|m| m.contains("walk_limit_m")), "{e:?}");
+    }
+
+    /// T-105: a def's icon is data: the id when the RON has none, the RON's when it has.
+    #[test]
+    fn a_def_icon_defaults_to_its_id_and_an_explicit_one_is_read() {
+        let db = ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content"))
+            .unwrap();
+        let (_, apt) = db
+            .buildings()
+            .find(|(_, d)| d.id == "apt_high_1")
+            .expect("a zoned building");
+        assert_eq!(apt.icon, "apt_high_1");
+        for (_, d) in db.buildings() {
+            assert!(!d.icon.is_empty(), "{}", d.id);
+        }
+        for (_, d) in db.utilities() {
+            assert!(!d.icon.is_empty(), "{}", d.id);
+        }
+        let (_, pump) = db
+            .buildings()
+            .find(|(_, d)| d.id == "water_pump_station")
+            .unwrap();
+        assert_eq!(pump.icon, "water_pump_station");
+        let sewage = db.utilities().find(|(_, d)| d.id == "sewage_pipe");
+        if let Some((_, d)) = sewage {
+            // Explicit and different from the id.
+            assert_eq!(d.icon, "pipe_sewage");
+        }
     }
 }

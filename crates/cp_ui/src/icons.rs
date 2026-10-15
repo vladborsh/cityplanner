@@ -72,6 +72,8 @@ icons! {
     OverlayPollution => "overlay_pollution",
     OverlayWater => "overlay_water",
     OverlayPower => "overlay_power",
+    RemovePipe => "remove_pipe",
+    RemoveLine => "remove_line",
     // Zone types (T-099): one silhouette each.
     ZoneResLow => "zone_res_low",
     ZoneResHigh => "zone_res_high",
@@ -123,10 +125,44 @@ impl Icon {
     }
 }
 
-/// The icon of a content def by name (`BuildingDef.icon`, `UtilityDef.icon`, T-105). Until the
-/// per-def icons exist (T-105) every name maps to the generic building icon.
-pub fn def_icon(_name: &str) -> egui::ImageSource<'static> {
-    Icon::Building.image()
+include!(concat!(env!("OUT_DIR"), "/def_icons.rs"));
+
+/// The PNG named `name` among the compiled-in icons (`assets/ui/icons/<name>.png`).
+fn def_icon_bytes(name: &str) -> Option<&'static [u8]> {
+    DEF_ICONS
+        .binary_search_by_key(&name, |(n, _)| n)
+        .ok()
+        .map(|i| DEF_ICONS[i].1)
+}
+
+/// Whether `name` is an icon that exists (the fallback is used otherwise).
+pub fn def_icon_exists(name: &str) -> bool {
+    def_icon_bytes(name).is_some()
+}
+
+/// The icon of a content def by name (`BuildingDef.icon`, `UtilityDef.icon`, T-105), from the
+/// table `build.rs` makes of `assets/ui/icons/*.png`. An unknown name falls back to
+/// [`Icon::Building`] and is logged once.
+pub fn def_icon(name: &str) -> egui::ImageSource<'static> {
+    match def_icon_bytes(name) {
+        Some(bytes) => egui::ImageSource::Bytes {
+            uri: format!("bytes://def_icon/{name}.png").into(),
+            bytes: egui::load::Bytes::Static(bytes),
+        },
+        None => {
+            warn_once(name);
+            Icon::Building.image()
+        }
+    }
+}
+
+fn warn_once(name: &str) {
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<std::collections::BTreeSet<String>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(Mutex::default);
+    if seen.lock().expect("warned names").insert(name.to_string()) {
+        bevy::log::warn!("no icon named {name:?} in assets/ui/icons; using the building icon");
+    }
 }
 
 /// The icon of an overlay (the view menu and the view button).
@@ -340,16 +376,24 @@ mod tests {
         }
     }
 
+    /// Every PNG is an interface icon (an `Icon` variant) or the icon of a content def; the
+    /// table of def icons has them all.
     #[test]
-    fn no_png_without_an_icon_variant() {
-        let stems: Vec<_> = Icon::ALL.iter().map(|i| i.stem()).collect();
+    fn every_png_is_in_the_def_icon_table() {
+        let mut n = 0;
         for entry in std::fs::read_dir(icons_dir()).unwrap() {
             let path = entry.unwrap().path();
             if path.extension().is_some_and(|e| e == "png") {
                 let stem = path.file_stem().unwrap().to_str().unwrap().to_string();
-                assert!(stems.contains(&stem.as_str()), "{stem}.png has no Icon");
+                assert!(def_icon_exists(&stem), "{stem}.png is not in the table");
+                n += 1;
             }
         }
+        assert_eq!(n, DEF_ICONS.len());
+        assert!(
+            DEF_ICONS.windows(2).all(|w| w[0].0 < w[1].0),
+            "table is sorted"
+        );
     }
 
     #[test]
@@ -377,6 +421,47 @@ mod tests {
                     zones[i], zones[j]
                 );
             }
+        }
+    }
+
+    #[test]
+    fn an_unknown_def_icon_falls_back_to_the_building_icon_and_a_known_one_does_not() {
+        assert!(!def_icon_exists("no_such_icon"));
+        assert!(def_icon_exists("water_pump_station"));
+        assert_eq!(def_icon("no_such_icon").uri(), Icon::Building.image().uri());
+        assert_ne!(
+            def_icon("water_pump_station").uri(),
+            Icon::Building.image().uri()
+        );
+    }
+
+    /// T-105: every service building and every utility of the content has its own icon that
+    /// exists (not the fallback) as a 128×128 PNG, and no two share a name or the same bytes.
+    #[test]
+    fn every_service_building_and_utility_has_its_own_existing_icon() {
+        let db = cp_content::ContentDb::load_dir(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"),
+        )
+        .unwrap();
+        let mut names: Vec<(String, String)> = Vec::new();
+        for (_, d) in db.buildings().filter(|(_, d)| d.service.is_some()) {
+            names.push((d.id.clone(), d.icon.clone()));
+        }
+        for (_, d) in db.utilities() {
+            names.push((d.id.clone(), d.icon.clone()));
+        }
+        assert!(names.len() >= 7, "{names:?}");
+        let mut seen: Vec<(String, Vec<u8>)> = Vec::new();
+        for (def, icon) in &names {
+            assert!(def_icon_exists(icon), "{def}: icon {icon:?} does not exist");
+            let png = icons_dir().join(format!("{icon}.png"));
+            assert_eq!(image::image_dimensions(&png).unwrap(), (128, 128), "{icon}");
+            let bytes = std::fs::read(&png).unwrap();
+            for (other, b) in &seen {
+                assert_ne!(other, icon, "{def} shares the icon name {icon}");
+                assert_ne!(b, &bytes, "{def}: {icon} has the same picture as {other}");
+            }
+            seen.push((icon.clone(), bytes));
         }
     }
 

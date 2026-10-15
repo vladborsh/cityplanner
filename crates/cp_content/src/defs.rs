@@ -312,6 +312,10 @@ pub struct BuildingDef {
     /// [`default_build_hours`] of the lot.
     #[serde(default)]
     pub build_hours: f32,
+    /// Name of the UI icon (`assets/ui/icons/<icon>.png`); empty in the RON means the def's
+    /// `id` (filled in when the content is loaded).
+    #[serde(default)]
+    pub icon: String,
 }
 
 impl BuildingDef {
@@ -407,4 +411,8 @@ pub struct UtilityDef {
     /// Longest link, metres; longer legs of a path are cut into equal pieces.
     pub max_link_m: f32,
     pub mesh: String,
+    /// Name of the UI icon (`assets/ui/icons/<icon>.png`); empty in the RON means the def's
+    /// `id` (filled in when the content is loaded).
+    #[serde(default)]
+    pub icon: String,
 }

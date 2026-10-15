@@ -533,7 +533,13 @@ pub fn utility_panel(
         ui.horizontal_wrapped(|ui| {
             for &(kind, icon, label) in kinds {
                 let selected = tools.active == ActiveTool::Utility && tools.utility.kind == kind;
-                if tool_button(ui, icon, label, selected).clicked() {
+                // The def's own icon (T-105); the interface icon before the content is there.
+                let def_icon = view
+                    .and_then(|v| v.content.as_deref())
+                    .and_then(|c| c.utility_for_kind(kind))
+                    .map(|(_, d)| d.icon.as_str());
+                let tile_icon = def_icon.map_or(TileIcon::Icon(icon), TileIcon::Def);
+                if tool_tile(ui, tile_icon, label, selected).clicked() {
                     if selected {
                         tools.select(ActiveTool::None);
                     } else {
@@ -545,7 +551,12 @@ pub fn utility_panel(
             }
             let removing =
                 tools.active == ActiveTool::UtilityRemove && tools.remove_net == Some(net);
-            if tool_button(ui, Icon::Remove, "Remove", removing).clicked() {
+            let remove_icon = if tab == Category::Power {
+                Icon::RemoveLine
+            } else {
+                Icon::RemovePipe
+            };
+            if tool_button(ui, remove_icon, "Remove", removing).clicked() {
                 if removing {
                     tools.select(ActiveTool::None);
                 } else {

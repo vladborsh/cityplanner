@@ -7,4 +7,5 @@ Utility((
     min_link_m: 4.0,
     max_link_m: 100.0,
     mesh: "utility/sewage_pipe",
+    icon: "pipe_sewage",
 ))

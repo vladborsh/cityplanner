@@ -7,4 +7,5 @@ Utility((
     min_link_m: 8.0,
     max_link_m: 200.0,
     mesh: "utility/power_line",
+    icon: "power_line",
 ))
