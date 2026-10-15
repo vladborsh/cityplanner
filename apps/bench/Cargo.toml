@@ -21,7 +21,10 @@ cp_traffic.workspace = true
 cp_core.workspace = true
 # Real worker threads for the pathfinding bench.
 bevy_tasks = { workspace = true, features = ["multi_threaded"] }
-bevy_ecs.workspace = true
+# The multi-threaded schedule executor, as in the desktop (where feature unification turns it
+# on): without it the bench would time a single-threaded scheduler and miss par_iter overheads
+# (T-057). Not a sim crate; cp_sim itself stays without the feature.
+bevy_ecs = { workspace = true, features = ["multi_threaded"] }
 serde.workspace = true
 bevy_math.workspace = true
 serde_json = "1"

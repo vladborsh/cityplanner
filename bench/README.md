@@ -33,6 +33,19 @@ Phase times come from marker systems that `apps/bench` schedules between the pha
 systems per tick, equal in baseline and current, so it cancels in the comparison. `total`
 is measured around the whole `tick_once` and also includes the checksum and bookkeeping.
 
+## Executor and threads (T-057)
+
+`cp_bench` enables `bevy_ecs/multi_threaded` for itself (it is not a sim crate; `cp_sim` has the
+feature only in its dev-dependencies, for the `par_iter` determinism test). Without it, a
+stand-alone `cargo build -p cp_bench` would time bevy_ecs' single-threaded executor, while the
+desktop gets the multi-threaded one by feature unification, and the phase times would not
+describe the game. Check with `cargo tree -p cp_bench -e features,normal -i bevy_ecs` (shows
+`bevy_ecs feature "multi_threaded"`) and `cargo tree -p cp_sim -e features,normal -i bevy_ecs`
+(shows no feature). The size of the global compute task pool is printed as `task pool
+threads=N` and stored in the result JSON as `pool_threads`; `compare` notes when the baseline
+and the current run differ in it. Baselines from before T-057 were timed on the
+single-threaded executor and are not comparable.
+
 ## CI gate (job `bench`)
 
 Release build, 5 runs, per-phase **median of the 5 run medians**, compared with

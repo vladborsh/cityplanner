@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use bevy_tasks::ComputeTaskPool;
 use cp_prof::{History, InjectedSleep, PHASES, PhaseClock, PhaseTiming};
 use cp_sim::{SimPhase, SimRunner};
 use report::{MapInfo, NamedStat, Report, SCHEMA, SaveInfo, stat_of};
@@ -229,6 +230,7 @@ fn run(o: &Opts) -> Result<Report, String> {
         warmup_ticks: o.warmup,
         runs: 1,
         git_sha: git_sha(),
+        pool_threads: ComputeTaskPool::try_get().map(|p| p.thread_num() as u32),
         map,
         save,
         checksum: format!("{checksum:016x}"),
@@ -441,6 +443,10 @@ fn print_table(r: &Report) {
         "scenario={} seed={} ticks={} (+{} warmup) runs={} checksum={}",
         r.scenario, r.seed, r.ticks, r.warmup_ticks, r.runs, r.checksum
     );
+    match r.pool_threads {
+        Some(n) => println!("task pool threads={n} (bevy_ecs multi_threaded executor)"),
+        None => println!("task pool threads=unknown (report predates T-057)"),
+    }
     if let Some(m) = &r.map {
         println!("map {} loaded in {:.2} ms", m.path, m.load_ms);
     }
@@ -507,6 +513,12 @@ fn real_main(args: Vec<String>) -> Result<ExitCode, String> {
             }
             let (b, c) = (read_report(base)?, read_report(cur)?);
             let regressions = report::compare(&b, &c, threshold, floor)?;
+            if b.pool_threads != c.pool_threads {
+                eprintln!(
+                    "note: task pool threads differ (baseline {:?}, current {:?}): the numbers are only comparable on the same machine",
+                    b.pool_threads, c.pool_threads
+                );
+            }
             if regressions.is_empty() {
                 println!(
                     "bench OK: no phase or total median above max(baseline, {floor} ms) x {:.2}",
@@ -567,6 +579,27 @@ mod tests {
         assert_eq!(a.phases.len(), SimPhase::ORDER.len());
         assert_eq!(a.checksum, b.checksum);
         assert!(a.total.median_ms > 0.0);
+    }
+
+    #[test]
+    fn the_report_names_the_task_pool_threads() {
+        let r = run(&opts(&[])).unwrap();
+        let n = r
+            .pool_threads
+            .expect("the sim runner starts the compute pool");
+        assert!(n >= 1);
+        assert_eq!(
+            Some(n as usize),
+            ComputeTaskPool::try_get().map(|p| p.thread_num())
+        );
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"pool_threads\""));
+        // Reports written before T-057 have no such field and still load.
+        let old = json.replace(&format!("\"pool_threads\":{n},"), "");
+        assert_eq!(
+            serde_json::from_str::<Report>(&old).unwrap().pool_threads,
+            None
+        );
     }
 
     #[test]

@@ -51,6 +51,10 @@ pub struct Report {
     /// Runs this report aggregates (1 for a single run).
     pub runs: u32,
     pub git_sha: Option<String>,
+    /// Threads of the global compute task pool that `par_iter` systems and the multi-threaded
+    /// schedule executor run on (T-057). Absent in reports older than that.
+    #[serde(default)]
+    pub pool_threads: Option<u32>,
     pub map: Option<MapInfo>,
     /// Set when the run started from `--save`.
     #[serde(default)]
@@ -198,6 +202,7 @@ mod tests {
             warmup_ticks: 0,
             runs: 1,
             git_sha: None,
+            pool_threads: None,
             map: None,
             save: None,
             checksum: "00".into(),
