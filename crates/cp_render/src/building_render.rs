@@ -24,7 +24,12 @@ impl Plugin for BuildingRenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BuildingStats>()
             .init_resource::<BuildingState>()
-            .add_systems(Update, (sync_buildings, update_building_lods).chain());
+            .add_systems(
+                Update,
+                (sync_buildings, update_building_lods)
+                    .chain()
+                    .in_set(BuildingSync),
+            );
     }
 }
 
@@ -51,9 +56,13 @@ pub struct BuildingChunk {
     tris: [usize; 3],
 }
 
+/// The systems that bring the building meshes up to date; the problem icons run after them.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BuildingSync;
+
 #[derive(Resource, Default)]
-struct BuildingState {
-    set: BuildingSet,
+pub(crate) struct BuildingState {
+    pub(crate) set: BuildingSet,
     last: Option<Arc<BuildingGrid>>,
     /// Tick bucket at which construction looks were last refreshed.
     last_bucket: u64,

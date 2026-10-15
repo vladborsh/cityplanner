@@ -74,6 +74,8 @@ low and industrial outside) and runs the sim, with demand held high, until `targ
 live there; then the clock runs on to 07:00 so a bench starts in the morning rush. Everything
 goes through commands; the starting balance is the scenario's documented `funds` setting.
 Same `(target_pop, seed, map, content)` gives the same city (checksum and save bytes).
+`target_pop` is the population at which growth stops; the settled fixture's population is higher
+(`bench-10k` ≈ 16.8k citizens).
 It needs a map without water in the way: use `flatlands` (the pump and outflow are only placed
 where the owned tiles have water).
 
