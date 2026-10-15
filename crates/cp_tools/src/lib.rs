@@ -32,12 +32,13 @@ pub use cp_render::UiCapture;
 pub use outbox::CommandOutbox;
 pub use pick::{Inspected, Picked, pick};
 pub use plugin::{
-    ActiveTool, Ghost, ToolState, ToolsPlugin, compute_ghost, compute_utility_ghost, tool_click,
-    tool_hotkeys,
+    ActiveTool, Ghost, ToolState, ToolsPlugin, compute_ghost, compute_ghost_alt,
+    compute_utility_ghost, tool_click, tool_hotkeys,
 };
 pub use road::{
-    CHEVRON_SPACING, ELEVATION_STEP, MAX_ELEVATION_LEVEL, RoadMode, RoadTool, chevron_lines,
-    format_money, preview, preview_report, road_is_one_way, snap_label,
+    CHEVRON_SPACING, ELEVATION_STEP, MAX_ELEVATION_LEVEL, MarkerKind, RoadMarker, RoadMode,
+    RoadTool, chevron_lines, format_money, preview, preview_report, quantized, road_is_one_way,
+    road_markers, snap_label,
 };
 pub use upgrade::{UpgradePreview, upgrade_commands, upgrade_preview};
 pub use utility::{LINK_PICK_RADIUS, UtilityMode, UtilityTool, pick_link};

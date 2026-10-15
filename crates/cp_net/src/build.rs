@@ -179,6 +179,11 @@ pub enum SnapReportKind {
         perpendicular: bool,
     },
     Step(i32),
+    /// The length went to the perpendicular through a control point of a neighbouring stretch
+    /// that lies this many metres from its anchor (label `⊥ 64`, §6.7).
+    ControlLine(i32),
+    /// The length was rounded to this many metres (a multiple of 8).
+    CellStep(i32),
 }
 
 /// The snap at the cursor and, for angle and guide snaps, the guide line through the snapped
@@ -1176,6 +1181,9 @@ pub fn one_way_report(
     }
     out
 }
+
+mod quantize;
+pub use quantize::{CONTROL_LINE_TOL, StepContext, quantize_path};
 
 #[cfg(test)]
 mod tests;

@@ -9,7 +9,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use cp_core::Cost;
 use cp_net::{
-    NetCommand, RoadBuildError, RoadPath, SegmentId, SnapReport, one_way_report, road_run,
+    NetCommand, RoadBuildError, RoadPath, SegmentId, SnapReport, SnapReportKind, one_way_report,
+    road_run,
 };
 use cp_render::camera::math::ray_terrain_hit;
 use cp_render::{RtsCamera, UiCapture};
@@ -19,7 +20,10 @@ use crate::CommandOutbox;
 use crate::band::{BandState, sync_bands};
 use crate::building::{BuildingTool, PlacementGhost, pick_building, preview as place_preview};
 use crate::bulldozer::{PICK_RADIUS, pick_segment, remove_run_commands, run_outside_owned};
-use crate::road::{RoadTool, chevron_lines, preview_report, road_is_one_way, sample_curve};
+use crate::road::{
+    MarkerKind, RoadMarker, RoadTool, chevron_lines, preview_report, quantized, road_is_one_way,
+    road_markers, sample_curve,
+};
 use crate::upgrade::{upgrade_commands, upgrade_preview};
 use crate::utility::{
     LINK_PICK_RADIUS, UtilityTool, link_line, pick_link, plan_polylines, preview as utility_preview,
@@ -75,6 +79,11 @@ pub struct ToolState {
     pub ghost: Option<Ghost>,
     /// Terrain point under the cursor (XZ).
     pub hover: Option<Vec2>,
+    /// `Alt` is held: the road tool neither joins nor steps the length (§6.7).
+    pub alt: bool,
+    /// Control points of the roads around the cursor (and the 8 m ticks of the one it is next
+    /// to) while the road tool is active (§6.7).
+    pub markers: Vec<RoadMarker>,
     /// Segments the bulldozer would remove: the whole road run under the cursor (T-070).
     pub highlight: Vec<SegmentId>,
     /// The highlighted run leaves the bought tiles: drawn red, no command on click (§5.1).
@@ -111,6 +120,7 @@ struct UtilityGhostKey {
 #[derive(Clone, PartialEq, Debug)]
 struct GhostKey {
     hover: (i32, i32),
+    alt: bool,
     road: RoadTool,
     net_ptr: usize,
 }
@@ -267,6 +277,10 @@ pub fn tool_hotkeys(
         && let Some(req) = state.road.finish_free()
     {
         state.ghost_key = None;
+        let req = match view.as_deref() {
+            Some(v) => quantized(v, req, state.alt).0,
+            None => req,
+        };
         outbox.push(build_command(req));
     }
 }
@@ -298,8 +312,12 @@ fn tool_hover(
     capture: Res<UiCapture>,
     window: Query<&Window, With<PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
+    keys: Option<Res<ButtonInput<KeyCode>>>,
     mut state: ResMut<ToolState>,
 ) {
+    state.alt = keys
+        .as_deref()
+        .is_some_and(|k| k.pressed(KeyCode::AltLeft) || k.pressed(KeyCode::AltRight));
     let (Some(view), Ok(window), Ok((camera, transform))) =
         (view, window.single(), camera.single())
     else {
@@ -363,11 +381,13 @@ fn tool_hover(
         (ActiveTool::Road, Some(p)) => {
             let key = GhostKey {
                 hover: (p.x.round() as i32, p.y.round() as i32),
+                alt: state.alt,
                 road: state.road.clone(),
                 net_ptr: std::sync::Arc::as_ptr(&view.net) as usize,
             };
             if state.ghost_key.as_ref() != Some(&key) {
-                state.ghost = compute_ghost(&view, &state.road, p);
+                state.ghost = compute_ghost_alt(&view, &state.road, p, state.alt);
+                state.markers = road_markers(&view, p);
                 state.ghost_key = Some(key);
             }
         }
@@ -385,6 +405,7 @@ fn tool_hover(
             }
             if state.active != ActiveTool::Road {
                 state.ghost = None;
+                state.markers.clear();
             }
         }
     }
@@ -393,13 +414,27 @@ fn tool_hover(
 /// The ghost for the road tool with the cursor at `hover`, or `None` when nothing is drawn
 /// yet (or there is no road type / terrain / content).
 pub fn compute_ghost(view: &SimView, tool: &RoadTool, hover: Vec2) -> Option<Ghost> {
+    compute_ghost_alt(view, tool, hover, false)
+}
+
+/// [`compute_ghost`] with the `Alt` state: the path is quantized to the 8 m step and the joins
+/// of §6.7 first (what `BuildRoad` will be sent), unless `alt`.
+pub fn compute_ghost_alt(view: &SimView, tool: &RoadTool, hover: Vec2, alt: bool) -> Option<Ghost> {
     let path = tool.path_with_hover(hover)?;
-    let req = tool.request(path.clone())?;
+    let (req, step) = quantized(view, tool.request(path)?, alt);
+    let path = req.path.clone();
     let half_width = view
         .content
         .as_deref()
         .map_or(0.0, |c| c.road(req.road).width * 0.5);
-    let (result, report) = preview_report(view, &req)?;
+    let (result, mut report) = preview_report(view, &req)?;
+    // The step's own snap (a control-point perpendicular, a joined tick) is what the player
+    // should see, unless the validator found something more specific for the last vertex.
+    if matches!(step.kind, SnapReportKind::ControlLine(_))
+        || (report.kind == SnapReportKind::None && step.kind != SnapReportKind::None)
+    {
+        report = step;
+    }
     Some(match result {
         Ok(plan) => {
             let content = view.content.as_deref()?;
@@ -533,6 +568,10 @@ pub fn tool_click(
     match state.active {
         ActiveTool::Road => {
             if let Some(req) = state.road.click(p) {
+                let req = match view.as_deref() {
+                    Some(v) => quantized(v, req, state.alt).0,
+                    None => req,
+                };
                 outbox.push(build_command(req));
             }
             state.ghost_key = None;
@@ -640,6 +679,45 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
             Vec3::new(b.x, y(b), b.y),
             Color::srgba(0.4, 0.8, 1.0, 0.8),
         );
+    }
+    if state.active == ActiveTool::Road
+        && let Some(view) = view.as_deref()
+    {
+        let y = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.7;
+        let at = |p: Vec2, dx: f32, dz: f32| Vec3::new(p.x + dx, y(p), p.y + dz);
+        let lit = state
+            .ghost
+            .as_ref()
+            .filter(|g| matches!(g.snap.kind, SnapReportKind::ControlLine(_)))
+            .and_then(|g| g.snap.guide)
+            .map(|(a, b)| (a + b) * 0.5);
+        for m in &state.markers {
+            match m.kind {
+                MarkerKind::Control => {
+                    let highlighted = lit.is_some_and(|c| c.distance(m.pos) < 1.0);
+                    let (r, color) = if highlighted {
+                        (3.5, Color::srgb(1.0, 0.85, 0.2))
+                    } else {
+                        (2.2, Color::srgba(0.4, 0.8, 1.0, 0.9))
+                    };
+                    gizmos.linestrip(
+                        [
+                            at(m.pos, r, 0.0),
+                            at(m.pos, 0.0, r),
+                            at(m.pos, -r, 0.0),
+                            at(m.pos, 0.0, -r),
+                            at(m.pos, r, 0.0),
+                        ],
+                        color,
+                    );
+                }
+                MarkerKind::Tick => {
+                    let color = Color::srgba(0.4, 0.8, 1.0, 0.6);
+                    gizmos.line(at(m.pos, -0.8, 0.0), at(m.pos, 0.8, 0.0), color);
+                    gizmos.line(at(m.pos, 0.0, -0.8), at(m.pos, 0.0, 0.8), color);
+                }
+            }
+        }
     }
     if let (Some(view), Some(g)) = (view.as_deref(), &state.place_ghost)
         && state.active == ActiveTool::Place

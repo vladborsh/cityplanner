@@ -6,7 +6,8 @@ use cp_core::Cost;
 use cp_core::curve::CubicBezier3;
 use cp_net::{
     ElevationMode, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SnapOptions,
-    SnapReport, SnapReportKind, validate_road_path, validate_road_path_report,
+    SnapReport, SnapReportKind, StepContext, cell_ticks, control_points, quantize_path, stretch,
+    validate_road_path, validate_road_path_report,
 };
 use cp_sim::SimView;
 
@@ -159,6 +160,83 @@ pub fn preview(
     ))
 }
 
+/// `req` with its path quantized to the 8 m step and the joins of §6.7 (`Alt` switches them
+/// off), plus what the quantizing snapped. The ghost and the `BuildRoad` command both use the
+/// result, so what is drawn is what is built. Without content there is nothing to look up and
+/// `req` comes back as it is.
+pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRequest, SnapReport) {
+    let Some(content) = view.content.as_deref() else {
+        return (req, SnapReport::default());
+    };
+    let cx = StepContext {
+        graph: &view.net,
+        content,
+        alt,
+    };
+    let (path, report) = quantize_path(&req, &cx);
+    (RoadPathRequest { path, ..req }, report)
+}
+
+/// What a control-point marker of the road tool stands for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarkerKind {
+    /// A control point: every 64 m from the anchor of a stretch (drawn as a diamond).
+    Control,
+    /// An 8 m tick, shown while the cursor is within a cell of a road edge (a small cross).
+    Tick,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoadMarker {
+    pub pos: Vec2,
+    pub kind: MarkerKind,
+}
+
+/// The markers the road tool draws around the cursor `hover`: the control points of every
+/// ground stretch within [`GUIDE_RADIUS`] of it and, when the cursor is within one cell of a
+/// road's edge, the 8 m ticks of that road's stretch. Derived from the graph; nothing is stored.
+pub fn road_markers(view: &SimView, hover: Vec2) -> Vec<RoadMarker> {
+    let Some(content) = view.content.as_deref() else {
+        return Vec::new();
+    };
+    let graph = &*view.net;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    let mut near_edge: Option<(f32, cp_net::SegmentId)> = None;
+    for (id, s) in graph.segments() {
+        if s.elevation != cp_net::Elevation::Ground
+            || s.curve.bounds_distance_xz(hover) > cp_net::build::GUIDE_RADIUS + 1e-3
+        {
+            continue;
+        }
+        let (_, d) = s.curve.nearest_xz(hover);
+        let reach = content.road(s.road).width * 0.5 + cp_net::ZONE_CELL;
+        if d <= reach && near_edge.is_none_or(|(bd, _)| d < bd) {
+            near_edge = Some((d, id));
+        }
+        if d > cp_net::build::GUIDE_RADIUS || seen.contains(&id) {
+            continue;
+        }
+        let Some(st) = stretch(graph, id) else {
+            continue;
+        };
+        seen.extend(st.segments.iter().copied());
+        out.extend(control_points(graph, &st).into_iter().map(|p| RoadMarker {
+            pos: Vec2::new(p.pos.x, p.pos.z),
+            kind: MarkerKind::Control,
+        }));
+    }
+    if let Some((_, id)) = near_edge
+        && let Some(st) = stretch(graph, id)
+    {
+        out.extend(cell_ticks(graph, &st).into_iter().map(|p| RoadMarker {
+            pos: Vec2::new(p.pos.x, p.pos.z),
+            kind: MarkerKind::Tick,
+        }));
+    }
+    out
+}
+
 /// [`preview`] plus the snap at the cursor (also for an invalid path).
 pub fn preview_report(
     view: &SimView,
@@ -218,6 +296,7 @@ pub fn snap_label(kind: SnapReportKind) -> Option<String> {
         SnapReportKind::Guide { perpendicular } => {
             Some(if perpendicular { "⊥" } else { "∥" }.to_string())
         }
+        SnapReportKind::ControlLine(d) => Some(format!("⊥ {d}")),
         _ => None,
     }
 }
@@ -281,6 +360,11 @@ mod tests {
             .as_deref(),
             Some("⊥")
         );
+        assert_eq!(
+            snap_label(SnapReportKind::ControlLine(64)).as_deref(),
+            Some("⊥ 64")
+        );
+        assert_eq!(snap_label(SnapReportKind::CellStep(48)), None);
         assert_eq!(snap_label(SnapReportKind::Step(15)), None);
         assert_eq!(snap_label(SnapReportKind::Node), None);
     }
