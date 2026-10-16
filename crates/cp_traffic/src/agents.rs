@@ -534,6 +534,10 @@ pub fn route_trips(
             }
             continue;
         }
+        // Riders belong to `cp_transit` (T-159).
+        if trip.mode == TripMode::Transit {
+            continue;
+        }
         let access = buildings
             .get(trip.from)
             .zip(buildings.get(trip.to))
@@ -546,6 +550,7 @@ pub fn route_trips(
         let mode = match trip.mode {
             TripMode::Walk => Mode::Pedestrian,
             TripMode::Car => Mode::Car,
+            TripMode::Transit => continue,
         };
         let RequestId(request) = service.submit(&pnet, *tick, PathRequest { mode, from, to });
         agents.requests.insert(request, tid);

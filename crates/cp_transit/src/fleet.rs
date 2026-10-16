@@ -60,6 +60,8 @@ impl TransitFleet {
 pub struct TransitLedger {
     /// Upkeep of the buses out on lines this week.
     pub upkeep: Cost,
+    /// Fares taken at boarding this week (T-159). Added in v31.
+    pub fares: Cost,
 }
 
 impl TransitLedger {

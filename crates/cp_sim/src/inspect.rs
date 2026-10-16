@@ -517,5 +517,6 @@ fn trip_state(s: &TripState) -> String {
         TripState::Planned => "planned".to_string(),
         TripState::AwaitingPath { .. } => "finding a route".to_string(),
         TripState::Agent => "under way".to_string(),
+        TripState::Transit => "on public transport".to_string(),
     }
 }

@@ -125,7 +125,7 @@ pub fn choose_mode(distance_m: f32, has_car: bool, walk_limit_m: f32) -> TripMod
 /// Abstract travel time, ticks (at least 1).
 pub fn travel_ticks(distance_m: f32, mode: TripMode) -> u64 {
     let speed = match mode {
-        TripMode::Walk => WALK_SPEED_MPS,
+        TripMode::Walk | TripMode::Transit => WALK_SPEED_MPS,
         TripMode::Car => CAR_SPEED_MPS,
     };
     ((distance_m / speed / MOVE_SECONDS_PER_TICK).ceil() as u64).max(1)
@@ -302,7 +302,10 @@ pub fn update_routine(
                 complete_trip(&mut grid, &mut book, &buildings, &rng, now, tid);
             }
             // In `cp_traffic`'s hands; it completes them itself.
-            TripState::Planned | TripState::AwaitingPath { .. } | TripState::Agent => {}
+            TripState::Planned
+            | TripState::AwaitingPath { .. }
+            | TripState::Agent
+            | TripState::Transit => {}
         }
     }
 

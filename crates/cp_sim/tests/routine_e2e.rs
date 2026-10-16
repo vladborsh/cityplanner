@@ -193,7 +193,10 @@ fn every_trip_finishes_and_nobody_is_in_two_places() {
                 }
                 TripState::Scheduled { .. } => assert_eq!(loc, Location::Shop),
                 // Routed or being carried by an agent: the citizen is on the move.
-                TripState::Planned | TripState::AwaitingPath { .. } | TripState::Agent => {
+                TripState::Planned
+                | TripState::AwaitingPath { .. }
+                | TripState::Agent
+                | TripState::Transit => {
                     assert_eq!(loc, Location::Moving, "{:?} but {loc:?}", t.state)
                 }
             }

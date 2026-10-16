@@ -1883,7 +1883,7 @@ pub struct SaveDataV28 {
     /// Fire engines and garbage trucks on their way (T-151). Added in v27.
     pub service_runs: ServiceRunsV28,
     /// Bus stops and lines (T-153). Added in v28.
-    pub transit: cp_transit::TransitNet,
+    pub transit: TransitNetV30,
 }
 
 /// v27 → v28 (T-153): stops and lines. A save from before it has none.
@@ -1917,7 +1917,7 @@ pub fn migrate_v27_to_v28(v27: SaveDataV27) -> SaveDataV28 {
         shortage: v27.shortage,
         progress: v27.progress,
         service_runs: v27.service_runs,
-        transit: cp_transit::TransitNet::default(),
+        transit: TransitNetV30::default(),
     }
 }
 
@@ -2056,12 +2056,25 @@ pub struct SaveDataV29 {
     /// with keep, since v29.
     pub service_runs: cp_traffic::ServiceRuns,
     /// Bus stops and lines (T-153). Added in v28.
-    pub transit: cp_transit::TransitNet,
+    pub transit: TransitNetV30,
+}
+
+/// The transit state as v28–v30 wrote it: no riders, no line statistics.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TransitNetV30 {
+    pub stops: Arena<cp_transit::Stop>,
+    pub lines: Arena<cp_transit::Line>,
+}
+
+/// The transit ledger as v30 wrote it: no fares.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransitLedgerV30 {
+    pub upkeep: Cost,
 }
 
 /// v29 → v30 (T-156): buses and the transit ledger. A save from before it has neither.
-pub fn migrate_v29_to_v30(v29: SaveDataV29) -> SaveData {
-    SaveData {
+pub fn migrate_v29_to_v30(v29: SaveDataV29) -> SaveDataV30 {
+    SaveDataV30 {
         tick: v29.tick,
         rng: v29.rng,
         speed: v29.speed,
@@ -2092,7 +2105,117 @@ pub fn migrate_v29_to_v30(v29: SaveDataV29) -> SaveData {
         service_runs: v29.service_runs,
         transit: v29.transit,
         fleet: cp_transit::TransitFleet::default(),
-        ledger: cp_transit::TransitLedger::default(),
+        ledger: TransitLedgerV30::default(),
+    }
+}
+
+/// Version 30: the body as written by format 30 (buses; no riders).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV30 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    /// Zone blocks, painted types and cell validity. Added in v5.
+    pub zones: ZoneGrid,
+    /// Buildings (lots, state, access points). Added in v6.
+    /// Includes the ids removed and not yet drained since v13.
+    pub buildings: BuildingGrid,
+    /// Citizens and households. Added in v7.
+    pub citizens: CitizenGrid,
+    /// Pathfinding requests in flight (id, submit tick, request, congestion read, stale
+    /// flag). Added in v8; see `cp_traffic::service` for why this makes load + N ticks equal
+    /// the continuous run.
+    pub paths: SavedPaths,
+    /// Pipe and power-line networks. Added in v9.
+    pub utilities: UtilityGraph,
+    /// Trips in flight and the routine's counters. Added in v10.
+    pub trips: TripBook,
+    /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
+    /// agents carry the segment load since v12; vehicles carry their re-route request id
+    /// since v17.
+    pub agents: cp_traffic::Agents,
+    /// The city's money. Added in v14.
+    pub treasury: Treasury,
+    /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
+    pub economy: EconomyState,
+    /// Smoothed demand and the sums of the cycle in progress. Added in v15.
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    /// Pollution, noise and land value grids. Added in v16.
+    pub land: LandGrids,
+    /// Abandonment timers. Added in v16.
+    pub decay: Decay,
+    /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
+    /// [`DefNames`] and [`SaveData::remap_defs`].
+    pub def_names: crate::DefNames,
+    /// The district grid and the district records. Added in v21.
+    pub district_map: DistrictMap,
+    pub districts: Districts,
+    /// Per-building service state and facility counters. Added in v22; fires name their
+    /// station since v24.
+    pub service_state: cp_service::ServiceState,
+    /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
+    /// sim reads the values of that boundary until the next one. Added in v22.
+    pub coverage: cp_service::ServiceCoverage,
+    /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
+    pub shortage: cp_economy::WorkerShortage,
+    /// The population milestone reached. Added in v25.
+    pub progress: cp_sim::Progress,
+    /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
+    /// with keep, since v29.
+    pub service_runs: cp_traffic::ServiceRuns,
+    /// Bus stops and lines (T-153). Added in v28.
+    pub transit: TransitNetV30,
+    /// Buses out on the lines and the week's transit money (T-156). Added in v30.
+    pub fleet: cp_transit::TransitFleet,
+    pub ledger: TransitLedgerV30,
+}
+
+/// v30 → v31 (T-159): riders, line statistics and fares. A save from before it has none.
+pub fn migrate_v30_to_v31(v30: SaveDataV30) -> SaveData {
+    SaveData {
+        tick: v30.tick,
+        rng: v30.rng,
+        speed: v30.speed,
+        queue: v30.queue,
+        log: v30.log,
+        tiles: v30.tiles,
+        net: v30.net,
+        zones: v30.zones,
+        buildings: v30.buildings,
+        citizens: v30.citizens,
+        paths: v30.paths,
+        utilities: v30.utilities,
+        trips: v30.trips,
+        agents: v30.agents,
+        treasury: v30.treasury,
+        economy: v30.economy,
+        demand: v30.demand,
+        demand_acc: v30.demand_acc,
+        land: v30.land,
+        decay: v30.decay,
+        def_names: v30.def_names,
+        district_map: v30.district_map,
+        districts: v30.districts,
+        service_state: v30.service_state,
+        coverage: v30.coverage,
+        shortage: v30.shortage,
+        progress: v30.progress,
+        service_runs: v30.service_runs,
+        transit: cp_transit::TransitNet {
+            stops: v30.transit.stops,
+            lines: v30.transit.lines,
+            ..Default::default()
+        },
+        fleet: v30.fleet,
+        ledger: cp_transit::TransitLedger {
+            upkeep: v30.ledger.upkeep,
+            ..Default::default()
+        },
     }
 }
 
@@ -2111,7 +2234,7 @@ fn from_v27(v: SaveDataV27) -> SaveData {
 }
 
 fn from_v29(v: SaveDataV29) -> SaveData {
-    migrate_v29_to_v30(v)
+    migrate_v30_to_v31(migrate_v29_to_v30(v))
 }
 
 fn from_v16(v: SaveDataV16) -> SaveData {
@@ -2222,7 +2345,8 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         27 => Ok(from_v27(dec(body)?)),
         28 => Ok(from_v29(migrate_v28_to_v29(dec(body)?))),
         29 => Ok(from_v29(dec(body)?)),
-        30 => dec(body),
+        30 => Ok(migrate_v30_to_v31(dec(body)?)),
+        31 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

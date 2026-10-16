@@ -2706,6 +2706,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_math",
  "cp_building",
+ "cp_citizen",
  "cp_content",
  "cp_core",
  "cp_net",

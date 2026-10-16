@@ -42,6 +42,9 @@ pub enum TripPurpose {
 pub enum TripMode {
     Walk,
     Car,
+    /// By bus (or later metro/train): owned by `cp_transit` from the moment `choose_transit`
+    /// picks it (T-159). Appended in save format 31.
+    Transit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +59,9 @@ pub enum TripState {
     AwaitingPath { request: u64 },
     /// An agent (pedestrian or vehicle, owned by `cp_traffic`) is carrying out the trip.
     Agent,
+    /// Carried out by `cp_transit` (a `Journey` in `TransitNet::riders`); it completes the
+    /// trip itself. Appended in save format 31.
+    Transit,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -75,7 +81,10 @@ impl Trip {
         match self.state {
             TripState::Scheduled { depart_at } => Some(depart_at),
             TripState::InTransit { arrive_at } => Some(arrive_at),
-            TripState::Planned | TripState::AwaitingPath { .. } | TripState::Agent => None,
+            TripState::Planned
+            | TripState::AwaitingPath { .. }
+            | TripState::Agent
+            | TripState::Transit => None,
         }
     }
 }
@@ -202,6 +211,13 @@ impl TripBook {
             if state == TripState::Planned {
                 self.planned.insert(id);
             }
+        }
+    }
+
+    /// Changes the mode of a trip (`cp_transit::choose_transit`, T-159).
+    pub fn set_mode(&mut self, id: TripId, mode: TripMode) {
+        if let Some(t) = self.trips.get_mut(id) {
+            t.mode = mode;
         }
     }
 

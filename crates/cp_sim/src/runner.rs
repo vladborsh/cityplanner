@@ -299,6 +299,7 @@ impl SimRunner {
                 cp_traffic::advance_service_runs,
                 // Buses: stops reached, next legs and new departures (T-156).
                 cp_transit::run_lines,
+                cp_transit::run_riders,
                 cp_traffic::route_trips,
                 cp_traffic::route_service_runs,
             )
@@ -317,6 +318,12 @@ impl SimRunner {
             cp_citizen::update_routine
                 .in_set(SimPhase::Citizens)
                 .after(cp_citizen::update_lifecycle),
+        );
+        // Trips that a bus beats walking or driving become riders (T-159).
+        schedule.add_systems(
+            cp_transit::choose_transit
+                .in_set(SimPhase::Citizens)
+                .after(cp_citizen::update_routine),
         );
         schedule.add_systems(
             crate::progress::update_progress

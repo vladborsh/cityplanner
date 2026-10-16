@@ -223,6 +223,21 @@ pub struct Balance {
     pub dwell_s: f32,
     /// Weekly upkeep of one bus that is out on a line, currency units. // tune later
     pub bus_upkeep_week: f32,
+    /// Straight-line metres from a trip's ends within which a stop can be used (T-159).
+    /// // tune later
+    pub transit_walk_m: f32,
+    /// Seconds added to the estimate of a ride for the bother of it (T-159). // tune later
+    pub transit_penalty_s: f32,
+    /// A car owner rides when `cost_transit < car_bias × cost_car` (T-159). // tune later
+    pub car_bias: f32,
+    /// Metres per second a car is assumed to make, for the choice of mode only (T-159).
+    /// // tune later
+    pub car_speed_est: f32,
+    /// Seconds (movement clock) a rider waits at a stop before the trip goes on abstractly
+    /// (T-159). // tune later
+    pub max_wait_s: f32,
+    /// Price of one boarding, currency units (T-159). // tune later
+    pub transit_fare: f32,
 }
 
 /// One loan the bank offers (`balance.ron` `loan_offers`). Interest is simple, for the whole
@@ -297,6 +312,12 @@ impl Balance {
             self.bus_stop_cost,
             self.dwell_s,
             self.bus_upkeep_week,
+            self.transit_walk_m,
+            self.transit_penalty_s,
+            self.car_bias,
+            self.car_speed_est,
+            self.max_wait_s,
+            self.transit_fare,
         ]);
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
@@ -372,6 +393,12 @@ impl Default for Balance {
             bus_stop_cost: 500.0,
             dwell_s: 10.0,
             bus_upkeep_week: 120.0,
+            transit_walk_m: 600.0,
+            transit_penalty_s: 120.0,
+            car_bias: 1.0,
+            car_speed_est: 9.0,
+            max_wait_s: 900.0,
+            transit_fare: 2.0,
         }
     }
 }

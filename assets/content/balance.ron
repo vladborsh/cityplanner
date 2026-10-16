@@ -141,4 +141,12 @@ Balance((
     // Seconds a bus stands at a stop, and the weekly upkeep of a bus out on a line.
     dwell_s: 10.0,
     bus_upkeep_week: 120.0,
+    // Riders (T-159): stop reach from a trip's ends, penalty per ride, car bias, assumed car
+    // speed (m/s), longest wait before the trip goes on abstractly, fare per boarding.
+    transit_walk_m: 600.0,
+    transit_penalty_s: 120.0,
+    car_bias: 1.0,
+    car_speed_est: 9.0,
+    max_wait_s: 900.0,
+    transit_fare: 2.0,
 ))

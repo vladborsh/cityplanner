@@ -3,8 +3,12 @@
 use bevy_ecs::resource::Resource;
 use bevy_math::Vec2;
 use cp_building::BuildingId;
-use cp_core::{Arena, Id};
+use std::collections::BTreeMap;
+
+use cp_citizen::TripId;
+use cp_core::{Arena, Id, Tick};
 use cp_net::SegmentId;
+use cp_traffic::RunId;
 use cp_traffic::Side;
 use serde::{Deserialize, Serialize};
 
@@ -88,16 +92,69 @@ pub struct Line {
     pub state: LineState,
 }
 
-/// All stops and lines. Serialized sim state, part of the checksum.
+/// One ride of a journey: on `line` from stop `board` to stop `alight`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ride {
+    pub line: LineId,
+    pub board: StopId,
+    pub alight: StopId,
+}
+
+/// Where a rider is in its journey. Append-only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Stage {
+    /// Walking to the boarding stop (a walking run).
+    WalkTo { run: RunId },
+    /// In the queue of the boarding stop since `since`.
+    Waiting { since: Tick },
+    /// Inside bus `bus`, not an agent.
+    Riding { bus: crate::fleet::BusId },
+    /// Walking from the alighting stop to the goal (a walking run).
+    WalkFrom { run: RunId },
+    /// Carried on by the clock: the line failed, the wait was too long or a run was lost.
+    Abstract { arrive_at: Tick },
+}
+
+/// The plan of one trip by public transport (§16 M3 A "Пассажиры"): up to two rides (transfers
+/// come with T-165), `leg` the one in hand.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Journey {
+    pub legs: Vec<Ride>,
+    pub leg: u8,
+    pub stage: Stage,
+}
+
+impl Journey {
+    pub fn ride(&self) -> Option<Ride> {
+        self.legs.get(usize::from(self.leg)).copied()
+    }
+}
+
+/// What a line carried and holds now (§16 M3 A "Статистика линии").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineStats {
+    pub riders_today: u32,
+    pub riders_week: u32,
+    pub waiting: u32,
+    pub vehicles_out: u16,
+}
+
+/// All stops, lines and riders. Serialized sim state, part of the checksum.
 #[derive(Resource, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TransitNet {
     pub stops: Arena<Stop>,
     pub lines: Arena<Line>,
+    /// Trips by public transport under way (T-159). Added in v31.
+    pub riders: BTreeMap<TripId, Journey>,
+    pub stats: BTreeMap<LineId, LineStats>,
 }
 
 impl TransitNet {
     pub fn is_empty(&self) -> bool {
-        self.stops.is_empty() && self.lines.is_empty()
+        self.stops.is_empty()
+            && self.lines.is_empty()
+            && self.riders.is_empty()
+            && self.stats.is_empty()
     }
 
     /// The access point the pathfinder routes a bus to.
