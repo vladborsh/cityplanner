@@ -3,7 +3,7 @@
 //! Once a day, in 64 buckets by `BuildingId.index % 64` (one bucket every 64 ticks), an `Active`
 //! industrial building adds `goods_per_worker × filled jobs` to its stock (up to
 //! `goods_stock_cap`) and a commercial one takes `goods_per_job × filled jobs` off. A factory
-//! holding a `goods_truck_load` sends a truck (a `Truck` run of `cp_traffic`) to the shop with the
+//! holding a `goods_truck_load` sends a truck (a `Cargo` run of `cp_traffic`) to the shop with the
 //! least stock within `freight_radius_m` (straight-line distance; a tie goes to the smaller
 //! `BuildingId`); the load leaves the factory at once and is added to the shop when the truck is
 //! there (with the vehicle pool full the run arrives abstractly). A shop that has stood empty for
@@ -129,7 +129,7 @@ pub fn run_goods(
                     && !goods.hauls.values().any(|h| h.from == id)
                     && let Some(to) = pick_shop(&buildings, &goods, db, id, bal.freight_radius_m)
                 {
-                    let run = runs.start(VehicleKind::Truck, id, to);
+                    let run = runs.start(VehicleKind::Cargo, id, to);
                     *goods.stock.get_mut(&id).expect("just set") -= bal.goods_truck_load;
                     goods.hauls.insert(
                         run,

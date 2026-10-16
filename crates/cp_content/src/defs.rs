@@ -890,6 +890,8 @@ pub enum VehicleKind {
     Emergency = 3,
     /// A metro train (T-163).
     Metro = 4,
+    /// A goods truck (T-169b): its own spec and mesh, apart from the garbage `Truck`.
+    Cargo = 5,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -22,7 +22,7 @@ pub const VEHICLE_DETAIL_HEIGHT: f32 = 220.0;
 /// Below this camera height pedestrians use the detailed mesh, else the single-box one.
 pub const PEDESTRIAN_DETAIL_HEIGHT: f32 = 90.0;
 /// Number of vehicle kinds (`VehicleKind` variants).
-pub const VEHICLE_KINDS: usize = 4;
+pub const VEHICLE_KINDS: usize = 6;
 /// A pose that moved further than this in one snapshot step is a teleport (new lane after a
 /// network change, ...): not interpolated.
 const TELEPORT: f32 = 60.0;
@@ -86,6 +86,9 @@ impl Default for VehicleLooks {
                 Vec3::new(2.4, 3.2, 8.5),
                 Vec3::new(2.5, 3.1, 12.0),
                 Vec3::new(2.0, 1.9, 5.2),
+                // Metro (drawn elsewhere) and the goods truck.
+                Vec3::new(2.0, 1.9, 5.2),
+                Vec3::new(2.5, 3.4, 12.0),
             ],
         }
     }

@@ -53,11 +53,13 @@ pub enum Problem {
     Crime,
     /// `BuildingFlags::NO_WORKERS`: too few workers.
     NoWorkers,
+    /// `BuildingFlags::NO_GOODS` (T-169b): a shop with empty shelves.
+    NoGoods,
     Abandoned,
 }
 
 impl Problem {
-    pub const ALL: [Problem; 10] = [
+    pub const ALL: [Problem; 11] = [
         Problem::Fire,
         Problem::NoRoad,
         Problem::NoPower,
@@ -67,6 +69,7 @@ impl Problem {
         Problem::Garbage,
         Problem::Crime,
         Problem::NoWorkers,
+        Problem::NoGoods,
         Problem::Abandoned,
     ];
 
@@ -103,6 +106,9 @@ impl Problems {
             | svc(ServiceProblems::CRIME, Problem::Crime);
         if flags.has(BuildingFlags::NO_WORKERS) {
             set |= Problem::NoWorkers.bit();
+        }
+        if flags.has(BuildingFlags::NO_GOODS) {
+            set |= Problem::NoGoods.bit();
         }
         if flags.has(BuildingFlags::NO_ROAD) || flags.has(BuildingFlags::NO_PATH) {
             set |= Problem::NoRoad.bit();
@@ -333,6 +339,7 @@ fn plate(p: Problem) -> [f32; 4] {
         Problem::Garbage => [0.46, 0.38, 0.20, 1.0],
         Problem::Crime => [0.20, 0.26, 0.58, 1.0],
         Problem::NoWorkers => [0.58, 0.36, 0.70, 1.0],
+        Problem::NoGoods => [0.08, 0.55, 0.55, 1.0],
     }
 }
 
@@ -506,6 +513,28 @@ fn glyph(p: Problem) -> (&'static [Shape], [f32; 4]) {
                 ),
                 (
                     &[[-0.03, -0.4], [0.03, -0.4], [0.03, -0.34], [-0.03, -0.34]],
+                    WHITE,
+                ),
+            ],
+            plate_color,
+        ),
+        // An empty crate: an open box seen from the front, hollow inside, flaps at the top.
+        Problem::NoGoods => (
+            &[
+                (
+                    &[[-0.32, -0.32], [0.32, -0.32], [0.32, 0.14], [-0.32, 0.14]],
+                    WHITE,
+                ),
+                (
+                    &[[-0.24, -0.24], [0.24, -0.24], [0.24, 0.06], [-0.24, 0.06]],
+                    [0.04, 0.30, 0.30, 1.0],
+                ),
+                (
+                    &[[-0.34, 0.14], [-0.06, 0.14], [-0.14, 0.34], [-0.30, 0.34]],
+                    WHITE,
+                ),
+                (
+                    &[[0.06, 0.14], [0.34, 0.14], [0.30, 0.34], [0.14, 0.34]],
                     WHITE,
                 ),
             ],

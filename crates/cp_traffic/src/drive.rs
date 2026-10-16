@@ -118,7 +118,7 @@ pub struct VehicleSpecs {
 }
 
 /// Number of `cp_content::VehicleKind` variants.
-pub const VEHICLE_KINDS: usize = 4;
+pub const VEHICLE_KINDS: usize = 6;
 
 impl VehicleSpecs {
     pub fn from_content(db: &cp_content::ContentDb) -> Self {

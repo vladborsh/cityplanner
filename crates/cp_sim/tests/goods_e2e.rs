@@ -42,7 +42,7 @@ fn content() -> Arc<ContentDb> {
         ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
         (
             "v/truck.ron".into(),
-            r#"Vehicle((id: "truck", name: "truck", kind: Truck, length: 8.0, width: 2.5,
+            r#"Vehicle((id: "truck", name: "truck", kind: Cargo, length: 12.0, width: 2.5,
             max_speed_kmh: 60.0, accel: 1.2, decel: 4.0, min_gap: 2.0, mesh: "m"))"#
                 .into(),
         ),
@@ -232,4 +232,41 @@ fn goods_are_deterministic() {
         t.sim.checksum()
     };
     assert_eq!(run(), run());
+}
+
+#[test]
+fn goods_trucks_are_cargo_trucks_not_garbage_trucks() {
+    // The shipped content has the cargo truck.
+    let real =
+        ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content")).unwrap();
+    let (_, def) = real
+        .vehicles()
+        .find(|(_, d)| d.id == "truck_basic")
+        .expect("truck_basic");
+    assert_eq!(def.kind, cp_content::VehicleKind::Cargo);
+    // And a goods run is one: its kind, and the vehicle on the road.
+    let mut t = town(&[900.0], 2);
+    for _ in 0..4096 * 4 {
+        t.sim.tick_once();
+        if !t.sim.world().resource::<Goods>().hauls.is_empty()
+            && t.sim
+                .world()
+                .resource::<cp_traffic::Agents>()
+                .vehicle_count()
+                > 0
+        {
+            break;
+        }
+    }
+    let runs = t.sim.world().resource::<ServiceRuns>();
+    assert!(
+        runs.iter()
+            .all(|(_, r)| r.kind == cp_content::VehicleKind::Cargo as u8)
+    );
+    let agents = t.sim.world().resource::<cp_traffic::Agents>();
+    assert!(
+        agents
+            .vehicles()
+            .any(|(_, v)| v.kind_id() == cp_content::VehicleKind::Cargo as u8)
+    );
 }

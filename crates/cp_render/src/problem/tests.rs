@@ -59,6 +59,7 @@ fn each_service_problem_gives_its_own_icon() {
         (0, S::GARBAGE, Problem::Garbage),
         (0, S::CRIME, Problem::Crime),
         (BuildingFlags::NO_WORKERS, 0, Problem::NoWorkers),
+        (BuildingFlags::NO_GOODS, 0, Problem::NoGoods),
     ];
     let mut seen = std::collections::BTreeSet::new();
     for (flags, bits, want) in cases {
@@ -69,7 +70,7 @@ fn each_service_problem_gives_its_own_icon() {
         assert!(icons[0].pos.y > 12.0, "over the roof");
         seen.insert(format!("{:?}", plate(want)));
     }
-    assert_eq!(seen.len(), 6, "six different plates");
+    assert_eq!(seen.len(), 7, "seven different plates");
     // No icon for a service problem of a building that is not Active.
     for state in [
         BuildingState::Abandoned,
@@ -173,8 +174,8 @@ fn no_flags_no_icon_and_no_icons_while_building_or_burned() {
     let all = 0xFF;
     assert!(marked_one(all, BuildingState::UnderConstruction).is_empty());
     assert!(marked_one(all, BuildingState::Burned).is_empty());
-    // Flags that show no icon (no customers, no goods).
-    let other = BuildingFlags::NO_CUSTOMERS | BuildingFlags::NO_GOODS;
+    // Flags that show no icon (no customers).
+    let other = BuildingFlags::NO_CUSTOMERS;
     assert!(marked_one(other, BuildingState::Active).is_empty());
 }
 

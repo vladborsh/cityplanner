@@ -90,6 +90,25 @@ pub fn vehicle_mesh(kind: usize, detail: usize) -> MeshData {
             );
             wheels(&mut m, &[0.35, -0.3, -0.42]);
         }
+        5 => {
+            // Goods truck (T-169b): a short cab with a glass front, a long box trailer on a
+            // lower chassis, a neutral light grey that takes no instance colour.
+            push_box(&mut m, [-0.5, 0.12, 0.28], [0.5, 0.78, 0.5], TINT);
+            push_box(&mut m, [-0.46, 0.5, 0.46], [0.46, 0.74, 0.505], GLASS);
+            push_box(
+                &mut m,
+                [-0.45, 0.12, -0.5],
+                [0.45, 0.2, 0.26],
+                [0.25, 0.25, 0.27, 0.0],
+            );
+            push_box(
+                &mut m,
+                [-0.52, 0.2, -0.5],
+                [0.52, 1.0, 0.22],
+                [0.78, 0.79, 0.76, 0.0],
+            );
+            wheels(&mut m, &[0.4, -0.2, -0.4]);
+        }
         2 => {
             // Bus (T-158): a blue lower body, a cream upper one with a window band along the
             // sides and glass at both ends, a grey roof. The lower body takes the instance colour: the colour of the bus's line.
