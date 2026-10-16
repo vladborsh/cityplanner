@@ -34,22 +34,36 @@ fn service_src(id: &str, kind: &str, cap: u32) -> (String, String) {
 }
 
 fn db() -> ContentDb {
-    ContentDb::from_sources(vec![
-        ("style/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
-        building_src("house", None, "{Water: 10.0, Sewage: 10.0, Power: 10.0}"),
-        building_src("pump", Some("pump"), "{}"),
-        building_src("outflow", Some("outflow"), "{}"),
-        building_src("plant", Some("plant"), "{}"),
-        building_src("tower", Some("tower"), "{Power: 10.0}"),
-        service_src("tower", "Water", 300),
-        building_src("treatment", Some("treatment"), "{Power: 40.0}"),
-        service_src("treatment", "Sewage", 1500),
-        service_src("pump", "Water", 25),
-        service_src("outflow", "Sewage", 100),
-        service_src("plant", "Power", 25),
-        building_src("bigplant", Some("bigplant"), "{}"),
-        service_src("bigplant", "Power", 100),
-    ])
+    db_with("")
+}
+
+/// The test content with an extra `balance.ron` body (`""` = none: the default `networks`).
+fn db_with(balance: &str) -> ContentDb {
+    let mut extra = Vec::new();
+    if !balance.is_empty() {
+        extra.push(("balance.ron".to_string(), format!("Balance(({balance}))")));
+    }
+    ContentDb::from_sources(
+        extra
+            .into_iter()
+            .chain([
+                ("style/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
+                building_src("house", None, "{Water: 10.0, Sewage: 10.0, Power: 10.0}"),
+                building_src("pump", Some("pump"), "{}"),
+                building_src("outflow", Some("outflow"), "{}"),
+                building_src("plant", Some("plant"), "{}"),
+                building_src("tower", Some("tower"), "{Power: 10.0}"),
+                service_src("tower", "Water", 300),
+                building_src("treatment", Some("treatment"), "{Power: 40.0}"),
+                service_src("treatment", "Sewage", 1500),
+                service_src("pump", "Water", 25),
+                service_src("outflow", "Sewage", 100),
+                service_src("plant", "Power", 25),
+                building_src("bigplant", Some("bigplant"), "{}"),
+                service_src("bigplant", "Power", 100),
+            ])
+            .collect(),
+    )
     .unwrap_or_else(|e| panic!("{e}"))
 }
 
@@ -117,8 +131,8 @@ fn a_building_far_from_the_pipe_has_no_water() {
     let mut g = UtilityGraph::new();
     line(&mut g, UtilityNet::Pipe, 0.0, 100.0);
     add(&mut b, &db, "pump", 0.0, 10.0);
-    let near = add(&mut b, &db, "house", 50.0, 39.0);
-    let far = add(&mut b, &db, "house", 50.0, 45.0);
+    let near = add(&mut b, &db, "house", 50.0, 60.0);
+    let far = add(&mut b, &db, "house", 50.0, 70.0);
     let m = compute_supply(&db, &b, &g);
     assert_eq!(bits(&m, near) & BuildingFlags::NO_WATER, 0);
     assert_ne!(bits(&m, far) & BuildingFlags::NO_WATER, 0);
@@ -218,28 +232,28 @@ fn the_system_writes_flags_every_64_ticks_only() {
     assert!(f.has(BuildingFlags::NO_SEWAGE));
 }
 
-/// The coverage band the player sees is `BUILDING_REACH` wide: that is the supply rule.
+/// The coverage band the player sees is `pipe_reach_m` wide: that is the supply rule.
 #[test]
 fn the_coverage_band_half_width_is_the_supply_reach() {
-    assert_eq!(plan::BUILDING_REACH, LINE_REACH_M);
     let db = db();
+    let reach = db.balance().networks.pipe_reach_m;
     let mut b = BuildingGrid::new();
     let mut g = UtilityGraph::new();
     line(&mut g, UtilityNet::Pipe, 0.0, 100.0);
     add(&mut b, &db, "pump", 0.0, 10.0);
     // A 1x1 lot is 8 m wide: its edge counts, so its centre may be 4 m further out.
-    let inside = add(&mut b, &db, "house", 50.0, plan::BUILDING_REACH + 3.0);
-    let outside = add(&mut b, &db, "house", 50.0, plan::BUILDING_REACH + 5.0);
+    let inside = add(&mut b, &db, "house", 50.0, reach + 3.0);
+    let outside = add(&mut b, &db, "house", 50.0, reach + 5.0);
     let m = compute_supply(&db, &b, &g);
     assert_eq!(
         bits(&m, inside) & BuildingFlags::NO_WATER,
         0,
-        "edge at 39 m: connected"
+        "edge just inside the reach: connected"
     );
     assert_ne!(
         bits(&m, outside) & BuildingFlags::NO_WATER,
         0,
-        "edge at 41 m: not"
+        "edge just outside: not"
     );
 }
 
@@ -274,9 +288,9 @@ fn a_water_tower_supplies_its_pipe_component_without_power() {
     );
     assert_eq!(bits(&m, tower) & BuildingFlags::NO_WATER, 0);
 
-    // Out of reach of the pipe (45 m): it gives nothing.
+    // Out of reach of the pipe (75 m): it gives nothing.
     let mut b2 = BuildingGrid::new();
-    let far = add(&mut b2, &db, "tower", 100.0, 45.0);
+    let far = add(&mut b2, &db, "tower", 100.0, 75.0);
     let h = add(&mut b2, &db, "house", 100.0, 10.0);
     let m2 = compute_supply(&db, &b2, &g);
     assert_ne!(bits(&m2, h) & BuildingFlags::NO_WATER, 0);
@@ -341,8 +355,8 @@ fn add_sized(
 }
 
 /// BUG-036: a 3x3 house right beside a free-standing 2x2 turbine gets current without a line, a
-/// chain of three neighbouring houses from the turbine is served whole, and a house 40 m away
-/// is not.
+/// chain of three neighbouring houses from the turbine is served whole, and a house 80 m
+/// (edge to edge) away is not.
 #[test]
 fn power_passes_between_neighbouring_footprints_not_between_far_ones() {
     let db = db();
@@ -354,7 +368,7 @@ fn power_passes_between_neighbouring_footprints_not_between_far_ones() {
     let h1 = add_sized(&mut b, &db, "house", 3, false, 20.0, 0.0);
     let h2 = add_sized(&mut b, &db, "house", 3, false, 44.0, 0.0);
     let h3 = add_sized(&mut b, &db, "house", 3, false, 68.0, 0.0);
-    let far = add_sized(&mut b, &db, "house", 3, false, 0.0, 80.0);
+    let far = add_sized(&mut b, &db, "house", 3, false, 0.0, 100.0);
     let m = compute_supply(&db, &b, &g);
     for (name, id) in [("turbine", turbine), ("h1", h1), ("h2", h2), ("h3", h3)] {
         assert_eq!(bits(&m, id) & BuildingFlags::NO_POWER, 0, "{name}");
@@ -362,7 +376,7 @@ fn power_passes_between_neighbouring_footprints_not_between_far_ones() {
     assert_ne!(
         bits(&m, far) & BuildingFlags::NO_POWER,
         0,
-        "edge gap of 60 m, no chain"
+        "edge gap of 80 m, no chain"
     );
 }
 
@@ -405,4 +419,62 @@ fn a_plant_powers_a_block_without_a_line_and_a_line_bridges_a_field() {
         .unwrap();
     let m = compute_supply(&db, &b, &g);
     assert_eq!(bits(&m, across) & BuildingFlags::NO_POWER, 0, "bridged");
+}
+
+/// T-181: power crosses the default `power_gap_m` (64 m between footprint edges), not more, and
+/// the content decides: a wider gap in `balance.ron` powers the house that was out of reach.
+#[test]
+fn the_power_gap_comes_from_the_content() {
+    // 1x1 lots are 8 m wide: a centre distance of 68 m is an edge gap of 60 m.
+    let powered = |db: &ContentDb, x: f32| {
+        let mut b = BuildingGrid::new();
+        add(&mut b, db, "plant", 0.0, 0.0);
+        let h = add(&mut b, db, "house", x, 0.0);
+        bits(&compute_supply(db, &b, &UtilityGraph::new()), h) & BuildingFlags::NO_POWER == 0
+    };
+    let db = db();
+    assert!(powered(&db, 68.0), "gap of 60 m: power passes");
+    assert!(!powered(&db, 78.0), "gap of 70 m: it does not");
+    let wide = db_with("networks: (power_gap_m: 80.0)");
+    assert!(powered(&wide, 78.0), "the content widened the gap");
+    let narrow = db_with("networks: (power_gap_m: 20.0)");
+    assert!(!powered(&narrow, 68.0), "and narrowed it");
+    assert_ne!(db.content_hash(), wide.content_hash());
+}
+
+/// T-181: a power line picks up a house 75 m away (`line_reach_m` 80); a pipe only 64 m.
+#[test]
+fn the_line_and_pipe_reach_come_from_the_content() {
+    let db = db();
+    let mut b = BuildingGrid::new();
+    let mut g = UtilityGraph::new();
+    line(&mut g, UtilityNet::Power, 0.0, 100.0);
+    line(&mut g, UtilityNet::Pipe, 0.0, 100.0);
+    add(&mut b, &db, "plant", 0.0, 10.0);
+    add(&mut b, &db, "pump", 0.0, 10.0);
+    let near = add(&mut b, &db, "house", 50.0, 75.0);
+    let far = add(&mut b, &db, "house", 50.0, -95.0);
+    let m = compute_supply(&db, &b, &g);
+    assert_eq!(
+        bits(&m, near) & BuildingFlags::NO_POWER,
+        0,
+        "line within 80 m"
+    );
+    assert_ne!(
+        bits(&m, far) & BuildingFlags::NO_POWER,
+        0,
+        "line beyond 80 m"
+    );
+    assert_ne!(
+        bits(&m, near) & BuildingFlags::NO_WATER,
+        0,
+        "75 m is beyond pipe_reach_m 64"
+    );
+    let wide = db_with("networks: (pipe_reach_m: 90.0)");
+    let m = compute_supply(&wide, &b, &g);
+    assert_eq!(
+        bits(&m, near) & BuildingFlags::NO_WATER,
+        0,
+        "a longer pipe reach"
+    );
 }

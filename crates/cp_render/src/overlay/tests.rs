@@ -356,7 +356,7 @@ mod utility_overlays {
     use cp_content::UtilityKind;
     use cp_core::{Id, Tick};
     use cp_sim::SimCommand;
-    use cp_utility::{LINE_REACH_M, UtilityCommand};
+    use cp_utility::UtilityCommand;
 
     fn put(sim: &mut SimRunner, def: &str, x: f32, z: f32, lot: Lot) {
         let db = sim.view().content.unwrap();
@@ -503,13 +503,14 @@ mod utility_overlays {
                 .colors
                 .contains(&status_color(UtilityLayer::Power, BuildingStatus::Supplied))
         );
-        // The band reaches LINE_REACH_M either side of the line.
+        // The band reaches `line_reach_m` either side of the line.
+        let line_reach = sim.view().content.unwrap().balance().networks.line_reach_m;
         let z_max = power
             .positions
             .iter()
             .map(|p| p[2])
             .fold(f32::MIN, f32::max);
-        assert!((z_max - (5020.0 + LINE_REACH_M)).abs() < 1.0, "{z_max}");
+        assert!((z_max - (5020.0 + line_reach)).abs() < 1.0, "{z_max}");
 
         // The water layer is the pipe, not the power line; pipes are drawn here only.
         let water = mesh(UtilityLayer::Water);

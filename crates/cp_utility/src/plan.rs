@@ -31,10 +31,9 @@ use crate::graph::{UtilityGraph, UtilityLinkId, UtilityNet, UtilityNodeId};
 pub const NODE_SNAP_RADIUS: f32 = 6.0;
 pub const LINK_SNAP_RADIUS: f32 = 3.0;
 pub const SAMPLE_STEP: f32 = 8.0;
-/// How far a pipe reaches buildings, metres (the coverage band's half width; equal to
-/// [`crate::LINE_REACH_M`], the supply rule). Also: buildings farther than this from a leg's
-/// bounding circle are skipped quickly.
-pub const BUILDING_REACH: f32 = 40.0;
+/// Buildings farther than this from a leg's bounding circle are skipped quickly (a quick cull,
+/// larger than any building's half size; not a game rule).
+const BUILDING_CULL_M: f32 = 40.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PathProblem {
@@ -120,7 +119,7 @@ fn lift(w: &PlanInputs, p: Vec2) -> Vec3 {
 fn building_on_leg(w: &PlanInputs, a: Vec2, b: Vec2) -> Option<BuildingId> {
     let (grid, zones) = w.buildings?;
     let mid = (a + b) * 0.5;
-    let reach = a.distance(b) * 0.5 + BUILDING_REACH;
+    let reach = a.distance(b) * 0.5 + BUILDING_CULL_M;
     for (id, bld) in grid.iter() {
         if bld.pos.distance(mid) > reach {
             continue;

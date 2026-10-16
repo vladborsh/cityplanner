@@ -1019,7 +1019,7 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
     }
 }
 
-/// The rectangle of a free-standing ghost, the connection circle (40 m) around it and a line
+/// The rectangle of a free-standing ghost, the connection circle (the network's reach) around it and a line
 /// to the network it would connect to.
 fn draw_free(view: &SimView, f: &crate::FreeGhost, color: Color, gizmos: &mut Gizmos) {
     let height = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.6;
@@ -1029,14 +1029,17 @@ fn draw_free(view: &SimView, f: &crate::FreeGhost, color: Color, gizmos: &mut Gi
     gizmos.line(k[1], k[3], color);
     let ring = Color::srgba(0.4, 0.8, 1.0, 0.7);
     const SEGMENTS: usize = 48;
-    gizmos.linestrip(
-        (0..=SEGMENTS).map(|i| {
-            let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
-            let p = f.pos + Vec2::new(a.cos(), a.sin()) * cp_utility::LINE_REACH_M;
-            Vec3::new(p.x, height(p), p.y)
-        }),
-        ring,
-    );
+    // The reach circle only for a type that hooks into a network.
+    if let Some(h) = &f.hint {
+        gizmos.linestrip(
+            (0..=SEGMENTS).map(|i| {
+                let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+                let p = f.pos + Vec2::new(a.cos(), a.sin()) * h.reach;
+                Vec3::new(p.x, height(p), p.y)
+            }),
+            ring,
+        );
+    }
     if let Some(h) = &f.hint
         && let Some(t) = h.target
     {

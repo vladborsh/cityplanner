@@ -615,6 +615,17 @@ impl ContentDb {
                         .to_string(),
                 ));
             }
+            if b.networks
+                .knobs()
+                .iter()
+                .any(|v| !(*v > 0.0 && *v <= Networks::MAX_M))
+            {
+                errors.push(ContentError::new(
+                    path,
+                    Some("networks"),
+                    format!("power_gap_m, line_reach_m and pipe_reach_m must be in 0..={} (exclusive of 0)", Networks::MAX_M),
+                ));
+            }
             if b.level_checks == 0 {
                 errors.push(ContentError::new(
                     path,
@@ -664,6 +675,12 @@ impl ContentDb {
                 }
                 fnv1a(&mut hash, &b.level_checks.to_le_bytes());
                 fnv1a(&mut hash, &[b.decay_mask]);
+            }
+            if b.networks != defaults.networks {
+                fnv1a(&mut hash, b"networks");
+                for v in b.networks.knobs() {
+                    fnv1a(&mut hash, &v.to_bits().to_le_bytes());
+                }
             }
             if b.loan_offers != defaults.loan_offers {
                 fnv1a(&mut hash, b"loans");
@@ -1078,6 +1095,27 @@ mod tests {
         let b2 = b.replace("600.0", "700.0");
         let other = ContentDb::from_sources(src(&[("a.ron", ROAD), ("balance.ron", &b2)])).unwrap();
         assert_ne!(with.content_hash(), other.content_hash());
+    }
+
+    #[test]
+    fn network_distances_are_validated_and_hashed() {
+        let ok = |n: &str| {
+            let b = format!("Balance((networks: ({n})))");
+            ContentDb::from_sources(src(&[("a.ron", ROAD), ("balance.ron", &b)]))
+        };
+        let base = ok("power_gap_m: 64.0").unwrap();
+        assert_eq!(base.balance().networks.line_reach_m, 80.0);
+        assert_ne!(
+            base.content_hash(),
+            ok("power_gap_m: 70.0").unwrap().content_hash()
+        );
+        for bad in [
+            "power_gap_m: 0.0",
+            "line_reach_m: -1.0",
+            "pipe_reach_m: 1000.0",
+        ] {
+            assert!(ok(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

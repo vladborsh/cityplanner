@@ -238,6 +238,41 @@ pub struct Balance {
     pub max_wait_s: f32,
     /// Price of one boarding, currency units (T-159). // tune later
     pub transit_fare: f32,
+    /// How far water, sewage and power reach (T-181).
+    pub networks: Networks,
+}
+
+/// Distances of the pipe and power networks, metres (`balance.ron` `networks`, T-181). Tune later.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Networks {
+    /// The largest gap between the footprint edges of two buildings over which one passes power
+    /// on to the other.
+    pub power_gap_m: f32,
+    /// How far a building's footprint edge may be from a power line to be attached to it.
+    pub line_reach_m: f32,
+    /// The same for a pipe (water and sewage).
+    pub pipe_reach_m: f32,
+}
+
+impl Networks {
+    /// Upper bound of every distance: keeps the lookup grids small.
+    pub const MAX_M: f32 = 400.0;
+
+    /// The distances in declaration order, for validation and the content hash.
+    pub fn knobs(&self) -> [f32; 3] {
+        [self.power_gap_m, self.line_reach_m, self.pipe_reach_m]
+    }
+}
+
+impl Default for Networks {
+    fn default() -> Self {
+        Self {
+            power_gap_m: 64.0,
+            line_reach_m: 80.0,
+            pipe_reach_m: 64.0,
+        }
+    }
 }
 
 /// One loan the bank offers (`balance.ron` `loan_offers`). Interest is simple, for the whole
@@ -399,6 +434,7 @@ impl Default for Balance {
             car_speed_est: 9.0,
             max_wait_s: 900.0,
             transit_fare: 2.0,
+            networks: Networks::default(),
         }
     }
 }

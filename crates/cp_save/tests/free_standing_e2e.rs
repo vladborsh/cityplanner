@@ -142,6 +142,10 @@ fn a_free_standing_building_is_placed_powered_blocks_cells_and_survives_save_and
     );
     place(&mut sim, tower, near, 0.0).unwrap();
     assert_eq!(tower_ids(&sim, tower).len(), 2);
+    // A third tower in the field, beyond the line reach (80 m) and the power gap (64 m) of
+    // everything else (T-181 raised both).
+    let lone = Vec2::new(5190.0, 5190.0);
+    place(&mut sim, tower, lone, 0.0).unwrap();
 
     for _ in 0..TICKS_PER_DAY {
         sim.tick_once();
@@ -165,12 +169,21 @@ fn a_free_standing_building_is_placed_powered_blocks_cells_and_survives_save_and
     );
     let near_tower = g
         .iter()
-        .find(|(_, b)| b.def == tower && b.pos != far)
+        .find(|(_, b)| b.def == tower && b.pos == near)
         .map(|(_, b)| b.flags)
         .unwrap();
     assert!(
-        near_tower.has(BuildingFlags::NO_POWER),
-        "the other tower is out of reach of the line: the power flag means something"
+        !near_tower.has(BuildingFlags::NO_POWER),
+        "the other tower is within the line reach and the gap of the powered ones"
+    );
+    let lone_tower = g
+        .iter()
+        .find(|(_, b)| b.def == tower && b.pos == lone)
+        .map(|(_, b)| b.flags)
+        .unwrap();
+    assert!(
+        lone_tower.has(BuildingFlags::NO_POWER),
+        "out of reach of the line: the power flag means something"
     );
 
     // The cells under the near tower are invalid; the far one touches none.

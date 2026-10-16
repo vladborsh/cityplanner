@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_sim::SimView;
 use cp_terrain::Terrain;
-use cp_utility::{BUILDING_REACH, UtilityGraph, UtilityNet};
+use cp_utility::{UtilityGraph, UtilityNet};
 
 use crate::chunk::{MeshData, terrain_mesh_height};
 use crate::material::VertexColorMaterial;
@@ -365,6 +365,7 @@ pub fn built_pipe_meshes(
     graph: &UtilityGraph,
     terrain: &Terrain,
     visible: bool,
+    reach: f32,
 ) -> Option<(MeshData, MeshData)> {
     if !visible {
         return None;
@@ -376,7 +377,7 @@ pub fn built_pipe_meshes(
         .collect();
     Some((
         pipe_mesh(&curves, terrain),
-        coverage_band_mesh(&curves, BUILDING_REACH, terrain, BAND_COLOR),
+        coverage_band_mesh(&curves, reach, terrain, BAND_COLOR),
     ))
 }
 
@@ -483,6 +484,13 @@ fn sync_pipes(
         .clone();
     let tkey = std::ptr::from_ref(terrain) as usize;
     let st = &mut *state;
+    // The pipe reach of the content (`balance.ron` `networks`), the half width of the band.
+    let reach = view
+        .content
+        .as_deref()
+        .map_or(cp_content::Networks::default().pipe_reach_m, |db| {
+            db.balance().networks.pipe_reach_m
+        });
 
     // The built network.
     let stale = !st
@@ -501,7 +509,7 @@ fn sync_pipes(
         }
         st.graph = Some(Arc::clone(&view.utilities));
         st.terrain = tkey;
-        if let Some((pipes, band)) = built_pipe_meshes(&view.utilities, terrain, true) {
+        if let Some((pipes, band)) = built_pipe_meshes(&view.utilities, terrain, true, reach) {
             st.built.extend(spawn_mesh(
                 &mut commands,
                 &mut meshes,
@@ -547,12 +555,7 @@ fn sync_pipes(
             &mut commands,
             &mut meshes,
             blended.clone(),
-            coverage_band_mesh(
-                &g.curves,
-                BUILDING_REACH,
-                terrain,
-                [rgb[0], rgb[1], rgb[2], 0.18],
-            ),
+            coverage_band_mesh(&g.curves, reach, terrain, [rgb[0], rgb[1], rgb[2], 0.18]),
             "pipe ghost coverage",
         ));
     }
@@ -664,6 +667,7 @@ fn sync_power(
 
 #[cfg(test)]
 mod tests {
+    const BUILDING_REACH: f32 = 40.0;
     use super::*;
     use bevy::math::Vec3;
     use cp_core::curve::CubicBezier3;
@@ -881,10 +885,10 @@ mod tests {
     fn built_pipes_and_their_band_exist_only_while_pipes_are_visible() {
         let t = slope();
         let g = line_graph();
-        assert!(built_pipe_meshes(&g, &t, false).is_none());
-        let (pipes, band) = built_pipe_meshes(&g, &t, true).unwrap();
+        assert!(built_pipe_meshes(&g, &t, false, BUILDING_REACH).is_none());
+        let (pipes, band) = built_pipe_meshes(&g, &t, true, BUILDING_REACH).unwrap();
         assert!(!pipes.indices.is_empty() && !band.indices.is_empty());
-        let (p, b) = built_pipe_meshes(&UtilityGraph::new(), &t, true).unwrap();
+        let (p, b) = built_pipe_meshes(&UtilityGraph::new(), &t, true, BUILDING_REACH).unwrap();
         assert!(p.indices.is_empty() && b.indices.is_empty());
     }
 

@@ -149,4 +149,14 @@ Balance((
     car_speed_est: 9.0,
     max_wait_s: 900.0,
     transit_fare: 2.0,
+
+    // --- Networks (T-181): distances of water, sewage and power // tune later ---
+    // power_gap_m: largest gap between the footprint edges of two buildings over which one
+    //   passes power on to the other. line_reach_m / pipe_reach_m: how far a building's edge may
+    //   be from a power line / pipe. Tool hints, reach circles and overlays read the same values.
+    networks: (
+        power_gap_m: 64.0,
+        line_reach_m: 80.0,
+        pipe_reach_m: 64.0,
+    ),
 ))

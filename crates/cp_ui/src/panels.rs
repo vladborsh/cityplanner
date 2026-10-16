@@ -524,7 +524,7 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
             Some(g) if g.valid => ok(ui, "can build", g.cost, String::new()),
             Some(g) => bad(ui, &g.errors, "cannot build here"),
             None => {
-                ui.weak("Click to start. Buildings within 40 m of the network are connected. Esc cancels.");
+                ui.weak("Click to start. Buildings within reach of the network are connected (the band shows the reach). Esc cancels.");
             }
         },
         (Category::Buildings, ActiveTool::UtilityRemove) => {

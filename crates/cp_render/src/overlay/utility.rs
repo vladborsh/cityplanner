@@ -10,7 +10,7 @@ use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingState};
 use cp_content::{ContentDb, ServiceKind, UtilityKind};
 use cp_core::curve::to_xz;
 use cp_terrain::Terrain;
-use cp_utility::{Coverage, LINE_REACH_M, UtilityGraph, UtilityNet};
+use cp_utility::{Coverage, UtilityGraph, UtilityNet, reach_m};
 use cp_zone::ZoneGrid;
 
 use super::{LIFT, flat};
@@ -48,9 +48,9 @@ pub enum BuildingStatus {
 pub const PIPE: [f32; 4] = [0.15, 0.45, 0.95, 0.95];
 /// Power-line centre line.
 pub const LINE: [f32; 4] = [0.95, 0.80, 0.10, 0.95];
-/// The band of [`LINE_REACH_M`] each side of a pipe.
+/// The band of the pipe reach (`balance.ron`) each side of a pipe.
 pub const WATER_BAND: [f32; 4] = [0.20, 0.60, 0.90, 0.14];
-/// The band of [`LINE_REACH_M`] each side of a power line.
+/// The band of the line reach (`balance.ron`) each side of a power line.
 pub const POWER_BAND: [f32; 4] = [0.95, 0.85, 0.20, 0.14];
 
 const LINE_WIDTH_M: f32 = 3.0;
@@ -183,8 +183,9 @@ pub fn utility_overlay_mesh(
         UtilityLayer::Power => (LINE, POWER_BAND),
     };
     let mut m = MeshData::default();
+    let reach = reach_m(&db.balance().networks, net);
     for (_, l) in graph.links().filter(|(_, l)| l.net == net) {
-        ribbon(&mut m, l, LINE_REACH_M, LIFT, band, terrain);
+        ribbon(&mut m, l, reach, LIFT, band, terrain);
     }
     for (_, b) in buildings.iter() {
         if let Some(s) = building_status(layer, db, b) {
@@ -205,7 +206,7 @@ pub fn coverage_counts(
     buildings: &BuildingGrid,
     db: &ContentDb,
 ) -> (usize, usize) {
-    let cov = Coverage::new(graph, layer.net());
+    let cov = Coverage::new(graph, layer.net(), &db.balance().networks);
     let (mut yes, mut no) = (0, 0);
     for (_, b) in buildings.iter() {
         if building_status(layer, db, b).is_none() {

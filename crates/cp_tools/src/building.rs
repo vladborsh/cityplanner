@@ -14,7 +14,7 @@ use cp_content::{BuildingDefId, ContentDb, ServiceKind, ServiceSite};
 use cp_core::Cost;
 use cp_core::curve::to_xz;
 use cp_sim::SimView;
-use cp_utility::{LINE_REACH_M, POWER_GAP_M, UtilityNet};
+use cp_utility::{UtilityNet, reach_m};
 use cp_zone::ZoneCellRef;
 
 /// Pick distance from a building's lot centre before the exact cell test, metres.
@@ -168,6 +168,8 @@ pub struct ConnectionHint {
     /// The point of the pipe, line or powered building it would connect to, when in reach.
     pub target: Option<Vec2>,
     pub connects: bool,
+    /// The reach of `net` (`balance.ron` `networks`), the radius of the circle the tool draws.
+    pub reach: f32,
     pub text: String,
 }
 
@@ -181,8 +183,8 @@ fn network_of(kind: ServiceKind) -> Option<UtilityNet> {
 }
 
 /// Whether the building of `def` placed at `pos` would connect to the network of its service:
-/// a pipe or power line within [`LINE_REACH_M`], or (power) a supplied building within
-/// [`POWER_GAP_M`] (edge to edge). `None` for a type with no network. The view's content must know `def`.
+/// a pipe or power line within its reach, or (power) a supplied building within
+/// `power_gap_m` (edge to edge) -- both from `balance.ron` `networks`. `None` for a type with no network. The view's content must know `def`.
 pub fn connection_hint(view: &SimView, def: BuildingDefId, pos: Vec2) -> Option<ConnectionHint> {
     let db = view.content.as_deref()?;
     let service = db
@@ -194,9 +196,9 @@ pub fn connection_hint(view: &SimView, def: BuildingDefId, pos: Vec2) -> Option<
     let net = network_of(service.kind)?;
     let half = |size: (u8, u8)| f32::from(size.0.max(size.1)) * cp_building::FOOTPRINT_CELL_M * 0.5;
     let my_half = half(db.building(def).lot);
-    let line = view
-        .utilities
-        .nearest_link(net, pos, LINE_REACH_M + my_half);
+    let nets = &db.balance().networks;
+    let reach = reach_m(nets, net);
+    let line = view.utilities.nearest_link(net, pos, reach + my_half);
     let mut target =
         line.and_then(|(id, t, _)| view.utilities.link(id).map(|l| to_xz(l.curve.point(t))));
     let mut what = match net {
@@ -204,14 +206,14 @@ pub fn connection_hint(view: &SimView, def: BuildingDefId, pos: Vec2) -> Option<
         UtilityNet::Power => "the power line",
     };
     if target.is_none() && net == UtilityNet::Power {
-        // A supplied building passes the current on (edge to edge, 32 m).
+        // A supplied building passes the current on (edge to edge).
         target = view
             .buildings
             .iter()
             .filter(|(_, b)| {
                 b.state == BuildingState::Active && !b.flags.has(BuildingFlags::NO_POWER)
             })
-            .filter(|(_, b)| b.pos.distance(pos) - my_half - half(b.size()) <= POWER_GAP_M)
+            .filter(|(_, b)| b.pos.distance(pos) - my_half - half(b.size()) <= nets.power_gap_m)
             .map(|(_, b)| b.pos)
             .min_by(|a, b| a.distance(pos).total_cmp(&b.distance(pos)));
         what = "a powered building";
@@ -219,16 +221,18 @@ pub fn connection_hint(view: &SimView, def: BuildingDefId, pos: Vec2) -> Option<
     let text = match (target.is_some(), net) {
         (true, _) => format!("will connect to {what}"),
         (false, UtilityNet::Pipe) => {
-            format!("no pipe within {LINE_REACH_M:.0} m — lay a pipe")
+            format!("no pipe within {reach:.0} m — lay a pipe")
         }
         (false, UtilityNet::Power) => format!(
-            "no power line within {LINE_REACH_M:.0} m, no powered building within {POWER_GAP_M:.0} m — build a line"
+            "no power line within {reach:.0} m, no powered building within {:.0} m — build a line",
+            nets.power_gap_m
         ),
     };
     Some(ConnectionHint {
         net,
         target,
         connects: target.is_some(),
+        reach,
         text,
     })
 }
@@ -689,9 +693,9 @@ mod tests {
         );
         let t = near.target.unwrap();
         assert!((t.y - 5100.0).abs() < 0.5, "{t:?}");
-        let far = connection_hint(&view, def, Vec2::new(5100.0, 5160.0)).unwrap();
+        let far = connection_hint(&view, def, Vec2::new(5100.0, 5200.0)).unwrap();
         assert!(!far.connects && far.target.is_none());
-        assert!(far.text.contains("no pipe within 40 m"), "{far:?}");
+        assert!(far.text.contains("no pipe within 64 m"), "{far:?}");
         // The same spot shows up in the ghost.
         let ghost = preview(&view, &tool(&c, "test_tower"), Vec2::new(5100.0, 5130.0)).unwrap();
         assert!(ghost.free.unwrap().hint.unwrap().connects);
@@ -699,6 +703,9 @@ mod tests {
         let turbine = c.building_id("test_turbine").unwrap();
         let h = connection_hint(&view, turbine, Vec2::new(5100.0, 5130.0)).unwrap();
         assert!(!h.connects && h.net == UtilityNet::Power && h.text.contains("power line"));
+        // The circle of the tool is the line reach of the content (T-181).
+        assert_eq!(h.reach, c.balance().networks.line_reach_m);
+        assert_eq!(near.reach, c.balance().networks.pipe_reach_m);
         // A road type has no hint of its own.
         assert!(
             connection_hint(

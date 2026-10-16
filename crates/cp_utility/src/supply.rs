@@ -7,9 +7,9 @@
 //! function of the content, the buildings and the utility graph.
 //!
 //! * **Reach.** A building is *attached* to a network when its footprint edge is within
-//!   [`LINE_REACH_M`] (40 m) of one of its links (its centre is within 40 m plus the building's
-//!   half size, [`Site::half`]); it then belongs to the connected component of the nearest
-//!   link.
+//!   `line_reach_m` (power, 80 m) or `pipe_reach_m` (pipes, 64 m) of `balance.ron` `networks` of
+//!   one of its links (its centre is within that plus the building's half size, [`Site::half`]);
+//!   it then belongs to the connected component of the nearest link.
 //! * **Water.** Pumps (service kind `Water`, `Active`) add their `capacity` to the pipe
 //!   component they are attached to. Consumers in that component, in ascending `BuildingId`,
 //!   subtract their `consumption[Water]`; the first one that does not fit and every later one
@@ -21,7 +21,7 @@
 //! * **Power.** Plants (`Power`) add capacity to the line component they are attached to (a
 //!   plant with no line is a pool of its own). From the pool a BFS runs in layers: layer 0
 //!   is the buildings attached to the pool's lines (and the plants), each following layer is
-//!   the buildings whose footprint edge is within [`POWER_GAP_M`] (32 m) of the
+//!   the buildings whose footprint edge is within `power_gap_m` (64 m) of the
 //!   footprint edge of a building *supplied* in the previous one (BUG-036: centre distances
 //!   never got within 30 m for 3×3 lots). Within a layer buildings are served in ascending id; the first that does not fit
 //!   and everything after it (this layer and later ones) get `NO_POWER`. Pools are
@@ -36,7 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use cp_building::{BuildingFlags, BuildingGrid, BuildingId, BuildingState};
-use cp_content::{ContentDb, ServiceKind, SimContent, UtilityKind};
+use cp_content::{ContentDb, Networks, ServiceKind, SimContent, UtilityKind};
 use cp_core::Tick;
 use cp_core::curve::to_xz;
 
@@ -44,13 +44,14 @@ use crate::graph::{UtilityGraph, UtilityLinkId, UtilityNet};
 
 /// Recompute period, ticks (§2: utilities run every 64 ticks).
 pub const SUPPLY_PERIOD: u64 = 64;
-/// How far a building may be from a pipe or power line, metres.
-pub const LINE_REACH_M: f32 = 40.0;
-/// The largest gap between the footprint edges of two buildings over which one passes power on
-/// to the other, metres: wider than the widest road that allows zoning (28 m), so power crosses a
-/// street between facing lots (tune later). Footprints are taken as circles of half the longer
-/// side around the centre.
-pub const POWER_GAP_M: f32 = 32.0;
+
+/// How far a building may be from a link of `net`, metres (`balance.ron` `networks`).
+pub fn reach_m(n: &Networks, net: UtilityNet) -> f32 {
+    match net {
+        UtilityNet::Pipe => n.pipe_reach_m,
+        UtilityNet::Power => n.line_reach_m,
+    }
+}
 
 const LINK_SAMPLE_M: f32 = 16.0;
 const BUCKET_M: f32 = 64.0;
@@ -71,16 +72,18 @@ fn bucket(p: Vec2, size: f32) -> (i32, i32) {
 
 /// Link lookup of one network: which component a position is attached to.
 pub(crate) struct Attach {
+    /// Reach of this network, metres.
+    reach: f32,
     buckets: BTreeMap<(i32, i32), Vec<UtilityLinkId>>,
     comp_of_link: BTreeMap<UtilityLinkId, u32>,
     /// XZ bounding box of each link's control points: a Bézier curve lies inside it, so a
-    /// position farther than [`LINE_REACH_M`] from the box cannot be within reach of the curve
+    /// position farther than `reach` from the box cannot be within reach of the curve
     /// and the (expensive) exact nearest-point search is skipped for that link.
     bbox: BTreeMap<UtilityLinkId, (Vec2, Vec2)>,
 }
 
 impl Attach {
-    pub(crate) fn build(graph: &UtilityGraph, net: UtilityNet) -> Self {
+    pub(crate) fn build(graph: &UtilityGraph, net: UtilityNet, reach: f32) -> Self {
         let comps = graph.components(net);
         let label: BTreeMap<_, _> = comps.labels.iter().copied().collect();
         let mut buckets: BTreeMap<(i32, i32), Vec<UtilityLinkId>> = BTreeMap::new();
@@ -106,15 +109,16 @@ impl Attach {
             }
         }
         Self {
+            reach,
             buckets,
             comp_of_link,
             bbox,
         }
     }
 
-    /// The component of the nearest link within [`LINE_REACH_M`] of `p`.
+    /// The component of the nearest link within the reach of `p`.
     pub(crate) fn comp_at(&self, graph: &UtilityGraph, p: Vec2, half: f32) -> Option<u32> {
-        let reach = LINE_REACH_M + half;
+        let reach = self.reach + half;
         let (bx, bz) = bucket(p, BUCKET_M);
         let span = (reach / BUCKET_M).ceil() as i32;
         let mut cand = BTreeSet::new();
@@ -144,7 +148,7 @@ impl Attach {
 /// The sites binned by cells in a dense grid over their bounding box (cell
 /// contents in ascending site index): the neighbour lookup of the power BFS is an array index.
 struct HopGrid {
-    /// Cell side: the longest centre distance of two buildings within [`POWER_GAP_M`].
+    /// Cell side: the longest centre distance of two buildings within the power gap.
     cell: f32,
     x0: i32,
     z0: i32,
@@ -155,8 +159,8 @@ struct HopGrid {
 }
 
 impl HopGrid {
-    fn build(sites: &[Site]) -> Self {
-        let cell = POWER_GAP_M + 2.0 * sites.iter().fold(0.0f32, |m, s| m.max(s.half));
+    fn build(sites: &[Site], gap: f32) -> Self {
+        let cell = gap + 2.0 * sites.iter().fold(0.0f32, |m, s| m.max(s.half));
         let cells: Vec<(i32, i32)> = sites.iter().map(|s| bucket(s.pos, cell)).collect();
         let (x0, x1) = cells
             .iter()
@@ -240,7 +244,7 @@ pub struct AttachCache {
 type DefSupply = ([f32; 3], Option<(ServiceKind, f32)>);
 
 /// FNV-1a over every link: network, endpoints and curve.
-fn graph_fingerprint(graph: &UtilityGraph) -> u64 {
+fn graph_fingerprint(graph: &UtilityGraph, nets: &Networks) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     let mut mix = |v: u32| {
         for b in v.to_le_bytes() {
@@ -248,6 +252,8 @@ fn graph_fingerprint(graph: &UtilityGraph) -> u64 {
             h = h.wrapping_mul(0x0000_0100_0000_01b3);
         }
     };
+    mix(nets.line_reach_m.to_bits());
+    mix(nets.pipe_reach_m.to_bits());
     for (id, l) in graph.links() {
         mix(id.index);
         mix(id.generation);
@@ -290,6 +296,8 @@ pub fn compute_supply_cached(
     graph: &UtilityGraph,
     cache: &mut AttachCache,
 ) -> Vec<u8> {
+    let nets = &db.balance().networks;
+    let power_gap = nets.power_gap_m;
     // Needs and source of each building def, once.
     let defs: Vec<DefSupply> = db
         .buildings()
@@ -336,7 +344,7 @@ pub fn compute_supply_cached(
     };
 
     // The component of each building in the pipe and in the power network.
-    let fingerprint = graph_fingerprint(graph);
+    let fingerprint = graph_fingerprint(graph, nets);
     if cache.graph != fingerprint {
         cache.graph = fingerprint;
         cache.attach = None;
@@ -354,8 +362,8 @@ pub fn compute_supply_cached(
         let pair = hit.unwrap_or_else(|| {
             let (pipes, lines) = cache.attach.get_or_insert_with(|| {
                 (
-                    Attach::build(graph, UtilityNet::Pipe),
-                    Attach::build(graph, UtilityNet::Power),
+                    Attach::build(graph, UtilityNet::Pipe, nets.pipe_reach_m),
+                    Attach::build(graph, UtilityNet::Power, nets.line_reach_m),
                 )
             });
             let pair = (
@@ -415,7 +423,7 @@ pub fn compute_supply_cached(
 
     // --- power ---
     let attached: Vec<Option<u32>> = comps.iter().map(|c| c.1).collect();
-    let hop = HopGrid::build(&sites);
+    let hop = HopGrid::build(&sites, power_gap);
     // Pools: line components (ascending) first, then unattached plants by id.
     enum Pool {
         Comp(u32),
@@ -460,7 +468,7 @@ pub fn compute_supply_cached(
                                 let gap = sites[j].pos.distance(sites[i].pos)
                                     - sites[i].half
                                     - sites[j].half;
-                                if !visited[j] && gap <= POWER_GAP_M {
+                                if !visited[j] && gap <= power_gap {
                                     next.insert(j);
                                 }
                             }
@@ -512,16 +520,16 @@ pub fn update_supply(
     }
 }
 
-/// Which positions a network reaches (within [`LINE_REACH_M`] of one of its links), for the
+/// Which positions a network reaches (within its reach of one of its links), for the
 /// coverage overlay. Built once per graph, then asked per position.
 pub struct Coverage {
     attach: Attach,
 }
 
 impl Coverage {
-    pub fn new(graph: &UtilityGraph, net: UtilityNet) -> Self {
+    pub fn new(graph: &UtilityGraph, net: UtilityNet, nets: &Networks) -> Self {
         Self {
-            attach: Attach::build(graph, net),
+            attach: Attach::build(graph, net, reach_m(nets, net)),
         }
     }
 

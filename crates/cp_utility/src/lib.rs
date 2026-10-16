@@ -15,12 +15,12 @@ pub use graph::{
     UtilityNodeId,
 };
 pub use plan::{
-    BUILDING_REACH, LinkPlan, PathProblem, PlanInputs, PlanNode, PlannedLink, PlannedSplit,
-    apply_plan, plan_link_path,
+    LinkPlan, PathProblem, PlanInputs, PlanNode, PlannedLink, PlannedSplit, apply_plan,
+    plan_link_path,
 };
 pub use supply::{
-    AttachCache, Coverage, LINE_REACH_M, POWER_GAP_M, SUPPLY_PERIOD, compute_supply,
-    compute_supply_cached, update_supply,
+    AttachCache, Coverage, SUPPLY_PERIOD, compute_supply, compute_supply_cached, reach_m,
+    update_supply,
 };
 
 /// Crate name, used by the skeleton smoke test.
