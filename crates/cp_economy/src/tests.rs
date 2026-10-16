@@ -197,34 +197,34 @@ fn balance(world: &World) -> Cost {
 /// Hand calculation, all in currency units (the test compares cents).
 ///
 /// **Week 1**, default settings (taxes 9%, budgets 100%):
-/// * tax (T-128: households × 110 for level 1, jobs × 30 for education 0, × 1.0): house 1
-///   has 3 households: 110 × 0.09 × 3 = 29.70; house 2: 110 × 0.09 = 9.90; the empty house 0;
-///   the one under construction 0; the shop has 2 filled jobs: 30 × 0.09 × 2 = 5.40;
-///   the pump has no tax. Income 45.00.
+/// * tax (T-187: households × 264 for level 1, jobs × 54 for education 0, × 1.0): house 1
+///   has 3 households: 264 × 0.09 × 3 = 71.28; house 2: 264 × 0.09 = 23.76; the empty house 0;
+///   the one under construction 0; the shop has 2 filled jobs: 54 × 0.09 × 2 = 9.72;
+///   the pump has no tax. Income 104.76.
 /// * roads: (100 + 60) m × 0.5 = 80.00
 /// * buildings: the pump 300.00
 /// * utilities: pipe 50 m × 0.02 = 1.00, power line 40 m × 0.03 = 1.20, total 2.20
-/// * week: 45.00 − 80.00 − 300.00 − 2.20 = −337.20, so 70 000.00 → 69 662.80
+/// * week: 104.76 − 80.00 − 300.00 − 2.20 = −277.44, so 70 000.00 → 69 722.56
 ///
 /// **Week 2**, after commercial tax 12%, roads 120%, water 50%, power 150%:
-/// * tax: 29.70 + 9.90 + 30 × 0.12 × 2 (7.20) = 46.80
+/// * tax: 71.28 + 23.76 + 54 × 0.12 × 2 (12.96) = 108.00
 /// * roads: 80.00 × 1.2 = 96.00; the pump (water) 300.00 × 0.5 = 150.00
 /// * utilities: the pipe (water) 1.00 × 0.5 = 0.50, the line (power) 1.20 × 1.5 = 1.80
-/// * week: 46.80 − 96.00 − 150.00 − 0.50 − 1.80 = −201.50, so 69 662.80 → 69 461.30
+/// * week: 108.00 − 96.00 − 150.00 − 0.50 − 1.80 = −140.30, so 69 722.56 → 69 582.26
 #[test]
 fn weekly_balance_matches_the_hand_calculation() {
     let (mut world, mut schedule) = city();
     run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
     let r = world.resource::<EconomyState>().last_week;
     assert_eq!(r.week, 1);
-    assert_eq!(r.income(), Cost(4_500));
-    assert_eq!(r.income_by_zone[0], Cost(3_960)); // ResLow
-    assert_eq!(r.income_by_zone[2], Cost(540)); // ComLow
+    assert_eq!(r.income(), Cost(10_476));
+    assert_eq!(r.income_by_zone[0], Cost(9_504)); // ResLow
+    assert_eq!(r.income_by_zone[2], Cost(972)); // ComLow
     assert_eq!(r.road_upkeep, Cost(8_000));
     assert_eq!(r.building_upkeep, Cost(30_000));
     assert_eq!(r.utility_upkeep, Cost(220));
-    assert_eq!(r.balance(), Cost(-33_720));
-    assert_eq!(balance(&world), Cost(6_966_280));
+    assert_eq!(r.balance(), Cost(-27_744));
+    assert_eq!(balance(&world), Cost(6_972_256));
 
     for cmd in [
         EconomyCommand::SetTaxRate {
@@ -249,12 +249,12 @@ fn weekly_balance_matches_the_hand_calculation() {
     run_at(&mut world, &mut schedule, 2 * TICKS_PER_WEEK);
     let r = world.resource::<EconomyState>().last_week;
     assert_eq!(r.week, 2);
-    assert_eq!(r.income(), Cost(4_680));
+    assert_eq!(r.income(), Cost(10_800));
     assert_eq!(r.road_upkeep, Cost(9_600));
     assert_eq!(r.building_upkeep, Cost(15_000));
     assert_eq!(r.utility_upkeep, Cost(50 + 180));
-    assert_eq!(r.balance(), Cost(-20_150));
-    assert_eq!(balance(&world), Cost(6_946_130));
+    assert_eq!(r.balance(), Cost(-14_030));
+    assert_eq!(balance(&world), Cost(6_958_226));
 }
 
 #[test]
@@ -284,7 +284,7 @@ fn upkeep_may_push_the_treasury_below_the_debt_floor() {
     run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
     assert_eq!(
         balance(&world),
-        Cost(cp_core::treasury::DEBT_FLOOR.0 - 33_720)
+        Cost(cp_core::treasury::DEBT_FLOOR.0 - 27_744)
     );
 }
 
@@ -1176,11 +1176,11 @@ fn a_district_rate_replaces_the_city_rate_for_its_buildings() {
     }
     run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
     let rows = world.resource::<DistrictIncome>().rows.clone();
-    // 110 per household: the hill pays 20 % of one, the rest 9 % of three plus the shop's
-    // two jobs (30 each).
+    // 264 per household: the hill pays 20 % of one, the rest 9 % of three plus the shop's
+    // two jobs (54 each).
     assert_eq!(
         rows,
-        vec![(None, Cost(2_970 + 540)), (Some(d), Cost(2_200))]
+        vec![(None, Cost(7_128 + 972)), (Some(d), Cost(5_280))]
     );
     let r = world.resource::<EconomyState>().last_week;
     assert_eq!(rows.iter().map(|(_, c)| *c).sum::<Cost>(), r.income());
@@ -1197,7 +1197,7 @@ fn a_district_rate_replaces_the_city_rate_for_its_buildings() {
     .unwrap();
     run_at(&mut world, &mut schedule, 2 * TICKS_PER_WEEK);
     let rows = world.resource::<DistrictIncome>().rows.clone();
-    assert_eq!(rows[1], (Some(d), Cost(990)));
+    assert_eq!(rows[1], (Some(d), Cost(2_376)));
 }
 
 /// BUG-040: tax and upkeep are booked every game hour; the 168 shares add up to the weekly
@@ -1206,7 +1206,7 @@ fn a_district_rate_replaces_the_city_rate_for_its_buildings() {
 fn income_and_upkeep_are_booked_every_hour_and_add_up_to_the_week() {
     use crate::{MoneyFlow, hour_share};
     use cp_core::time::TICKS_PER_DAY;
-    for x in [0i64, 1, 6, 167, 168, 4_500, -33_720, 1_234_567] {
+    for x in [0i64, 1, 6, 167, 168, 4_500, -27_744, 1_234_567] {
         let sum: i64 = (1..=168).map(|k| hour_share(Cost(x), k).0).sum();
         assert_eq!(sum, x, "{x}");
     }
@@ -1234,10 +1234,10 @@ fn income_and_upkeep_are_booked_every_hour_and_add_up_to_the_week() {
     );
     // The rest of the week brings the balance to the weekly figure of the old formula.
     run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
-    assert_eq!(balance(&world), start + Cost(-33_720));
+    assert_eq!(balance(&world), start + Cost(-27_744));
     assert_eq!(world.resource::<MoneyFlow>().hours.len(), 48);
     assert_eq!(
         world.resource::<MoneyFlow>().week_to_date.net(),
-        Cost(-33_720)
+        Cost(-27_744)
     );
 }

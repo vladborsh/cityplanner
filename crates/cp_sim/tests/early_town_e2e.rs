@@ -90,4 +90,13 @@ fn money_is_booked_every_hour_and_the_early_town_is_about_break_even_per_day() {
         day.net().0,
         day.income().0
     );
+    // T-187: the starter water/power/sewage town earns about twice what it costs.
+    let costs =
+        day.road_upkeep + day.utility_upkeep + day.services.iter().copied().sum::<cp_core::Cost>();
+    assert!(
+        day.income().0 as f64 >= 1.8 * costs.0 as f64,
+        "income {} against costs {}",
+        day.income().0,
+        costs.0
+    );
 }
