@@ -12,6 +12,7 @@
 
 use bevy_math::Vec3;
 use cp_building::{Building, BuildingFlags, BuildingId, BuildingState};
+use cp_service::{ServiceProblems, ServiceState};
 
 use crate::chunk::MeshData;
 
@@ -35,33 +36,52 @@ pub const LIFT_M: f32 = 3.0;
 /// several shows them in this order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Problem {
+    /// `ServiceProblems::FIRE` (T-126): the building burns.
+    Fire,
     /// `NO_ROAD` / `NO_PATH`: the building cannot be reached.
     NoRoad,
     NoPower,
     /// `NO_WATER` and `NO_SEWAGE`: for the player both are "the pipe" (T-101), one icon.
     NoWater,
+    /// `ServiceProblems::DEAD`: bodies in the building.
+    Dead,
+    /// `ServiceProblems::SICK`: sick residents.
+    Sick,
+    /// `ServiceProblems::GARBAGE`: the garbage is not collected.
+    Garbage,
+    /// `ServiceProblems::CRIME`: a crime was committed.
+    Crime,
+    /// `BuildingFlags::NO_WORKERS`: too few workers.
+    NoWorkers,
     Abandoned,
 }
 
 impl Problem {
-    pub const ALL: [Problem; 4] = [
+    pub const ALL: [Problem; 10] = [
+        Problem::Fire,
         Problem::NoRoad,
         Problem::NoPower,
         Problem::NoWater,
+        Problem::Dead,
+        Problem::Sick,
+        Problem::Garbage,
+        Problem::Crime,
+        Problem::NoWorkers,
         Problem::Abandoned,
     ];
 
-    fn bit(self) -> u8 {
-        1 << self as u8
+    fn bit(self) -> u16 {
+        1 << self as u16
     }
 }
 
 /// The set of problems of one building, as a bit set over [`Problem`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Problems(pub u8);
+pub struct Problems(pub u16);
 
 impl Problems {
-    pub fn of(b: &Building) -> Self {
+    /// The problems of `b`; `service` are its `ServiceProblems` bits (shown while it is Active).
+    pub fn of(b: &Building, service: ServiceProblems) -> Self {
         // Under construction and burned-out buildings carry no problem icons.
         let (flags, abandoned) = match b.state {
             BuildingState::Active => (b.flags, false),
@@ -69,6 +89,21 @@ impl Problems {
             BuildingState::UnderConstruction | BuildingState::Burned => return Self(0),
         };
         let mut set = 0;
+        let svc = |bit: u16, p: Problem| {
+            if !abandoned && service.has(bit) {
+                p.bit()
+            } else {
+                0
+            }
+        };
+        set |= svc(ServiceProblems::FIRE, Problem::Fire)
+            | svc(ServiceProblems::DEAD, Problem::Dead)
+            | svc(ServiceProblems::SICK, Problem::Sick)
+            | svc(ServiceProblems::GARBAGE, Problem::Garbage)
+            | svc(ServiceProblems::CRIME, Problem::Crime);
+        if flags.has(BuildingFlags::NO_WORKERS) {
+            set |= Problem::NoWorkers.bit();
+        }
         if flags.has(BuildingFlags::NO_ROAD) || flags.has(BuildingFlags::NO_PATH) {
             set |= Problem::NoRoad.bit();
         }
@@ -151,11 +186,12 @@ pub struct IconInstance {
 /// e.g. its mesh is not built yet).
 pub fn mark<'a>(
     buildings: impl Iterator<Item = (BuildingId, &'a Building)>,
+    state: &ServiceState,
     top: impl Fn(BuildingId) -> Option<Vec3>,
 ) -> Vec<Marked> {
     buildings
         .filter_map(|(id, b)| {
-            let problems = Problems::of(b);
+            let problems = Problems::of(b, state.problems_of(id));
             if problems.is_empty() {
                 return None;
             }
@@ -201,7 +237,7 @@ impl Lod {
 struct Cell {
     buildings: u32,
     counts: [u32; Problem::ALL.len()],
-    problems: u8,
+    problems: u16,
     sum: Vec3,
     first: u32,
     first_id: Option<BuildingId>,
@@ -291,6 +327,12 @@ fn plate(p: Problem) -> [f32; 4] {
         Problem::NoPower => [0.95, 0.74, 0.12, 1.0],
         Problem::NoWater => [0.16, 0.50, 0.85, 1.0],
         Problem::Abandoned => [0.48, 0.50, 0.54, 1.0],
+        Problem::Fire => [0.86, 0.34, 0.07, 1.0],
+        Problem::Dead => [0.52, 0.48, 0.64, 1.0],
+        Problem::Sick => [0.18, 0.60, 0.34, 1.0],
+        Problem::Garbage => [0.46, 0.38, 0.20, 1.0],
+        Problem::Crime => [0.20, 0.26, 0.58, 1.0],
+        Problem::NoWorkers => [0.58, 0.36, 0.70, 1.0],
     }
 }
 
@@ -330,6 +372,140 @@ fn glyph(p: Problem) -> (&'static [Shape], [f32; 4]) {
                         [0.20, -0.04],
                         [0.0, 0.0],
                     ],
+                    WHITE,
+                ),
+            ],
+            plate_color,
+        ),
+        // A flame of two tongues, hot core in the bigger one.
+        Problem::Fire => (
+            &[
+                (&[[-0.30, -0.32], [-0.04, -0.32], [-0.18, 0.12]], WHITE),
+                (&[[-0.12, -0.36], [0.30, -0.36], [0.10, 0.40]], WHITE),
+                (
+                    &[[-0.02, -0.34], [0.20, -0.34], [0.10, -0.02]],
+                    [0.95, 0.74, 0.12, 1.0],
+                ),
+            ],
+            plate_color,
+        ),
+        // A gravestone with a cross.
+        Problem::Dead => (
+            &[
+                (
+                    &[
+                        [-0.22, -0.34],
+                        [0.22, -0.34],
+                        [0.22, 0.10],
+                        [0.12, 0.32],
+                        [-0.12, 0.32],
+                        [-0.22, 0.10],
+                    ],
+                    WHITE,
+                ),
+                (
+                    &[[-0.03, -0.08], [0.03, -0.08], [0.03, 0.22], [-0.03, 0.22]],
+                    DARK,
+                ),
+                (
+                    &[[-0.12, 0.08], [0.12, 0.08], [0.12, 0.14], [-0.12, 0.14]],
+                    DARK,
+                ),
+            ],
+            plate_color,
+        ),
+        // A medical cross.
+        Problem::Sick => (
+            &[
+                (
+                    &[[-0.10, -0.34], [0.10, -0.34], [0.10, 0.34], [-0.10, 0.34]],
+                    WHITE,
+                ),
+                (
+                    &[[-0.34, -0.10], [0.34, -0.10], [0.34, 0.10], [-0.34, 0.10]],
+                    WHITE,
+                ),
+            ],
+            plate_color,
+        ),
+        // A bin with a lid and ribs.
+        Problem::Garbage => (
+            &[
+                (
+                    &[[-0.18, -0.34], [0.18, -0.34], [0.24, 0.16], [-0.24, 0.16]],
+                    WHITE,
+                ),
+                (
+                    &[[-0.32, 0.16], [0.32, 0.16], [0.32, 0.26], [-0.32, 0.26]],
+                    WHITE,
+                ),
+                (
+                    &[[-0.04, 0.26], [0.04, 0.26], [0.04, 0.34], [-0.04, 0.34]],
+                    WHITE,
+                ),
+                (
+                    &[[-0.12, -0.26], [-0.07, -0.26], [-0.07, 0.08], [-0.12, 0.08]],
+                    DARK,
+                ),
+                (
+                    &[[0.07, -0.26], [0.12, -0.26], [0.12, 0.08], [0.07, 0.08]],
+                    DARK,
+                ),
+            ],
+            plate_color,
+        ),
+        // A burglar's mask with eye holes.
+        Problem::Crime => (
+            &[
+                (
+                    &[
+                        [-0.22, -0.22],
+                        [0.22, -0.22],
+                        [0.36, 0.08],
+                        [0.22, 0.24],
+                        [-0.22, 0.24],
+                        [-0.36, 0.08],
+                    ],
+                    WHITE,
+                ),
+                (
+                    &[[-0.24, -0.06], [-0.12, -0.06], [-0.08, 0.04], [-0.26, 0.04]],
+                    DARK,
+                ),
+                (
+                    &[[0.12, -0.06], [0.24, -0.06], [0.26, 0.04], [0.08, 0.04]],
+                    DARK,
+                ),
+            ],
+            plate_color,
+        ),
+        // A hard hat over a question mark.
+        Problem::NoWorkers => (
+            &[
+                (
+                    &[
+                        [0.3, 0.0],
+                        [0.22, 0.26],
+                        [0.0, 0.36],
+                        [-0.22, 0.26],
+                        [-0.3, 0.0],
+                    ],
+                    WHITE,
+                ),
+                (
+                    &[[-0.36, -0.08], [0.36, -0.08], [0.36, 0.0], [-0.36, 0.0]],
+                    WHITE,
+                ),
+                (
+                    &[[-0.1, -0.22], [0.1, -0.22], [0.1, -0.16], [-0.1, -0.16]],
+                    WHITE,
+                ),
+                (
+                    &[[0.04, -0.3], [0.1, -0.3], [0.1, -0.22], [0.04, -0.22]],
+                    WHITE,
+                ),
+                (
+                    &[[-0.03, -0.4], [0.03, -0.4], [0.03, -0.34], [-0.03, -0.34]],
                     WHITE,
                 ),
             ],

@@ -34,10 +34,87 @@ fn building(state: BuildingState, flags: u8) -> Building {
 }
 
 fn marked_one(flags: u8, state: BuildingState) -> Vec<Marked> {
+    marked_with(flags, 0, state)
+}
+
+/// A building with building `flags` and `ServiceProblems` bits `service`.
+fn marked_with(flags: u8, service: u16, state: BuildingState) -> Vec<Marked> {
     let b = building(state, flags);
-    mark(std::iter::once((id(1), &b)), |_| {
+    let mut st = cp_service::ServiceState::default();
+    st.get_mut(id(1)).problems = cp_service::ServiceProblems(service);
+    mark(std::iter::once((id(1), &b)), &st, |_| {
         Some(Vec3::new(100.0, 12.0, 100.0))
     })
+}
+
+/// T-126: each service bit gives its own icon over the building.
+#[test]
+fn each_service_problem_gives_its_own_icon() {
+    use cp_service::ServiceProblems as S;
+    let cam = Vec3::new(100.0, 50.0, 100.0);
+    let cases = [
+        (0, S::FIRE, Problem::Fire),
+        (0, S::DEAD, Problem::Dead),
+        (0, S::SICK, Problem::Sick),
+        (0, S::GARBAGE, Problem::Garbage),
+        (0, S::CRIME, Problem::Crime),
+        (BuildingFlags::NO_WORKERS, 0, Problem::NoWorkers),
+    ];
+    let mut seen = std::collections::BTreeSet::new();
+    for (flags, bits, want) in cases {
+        let marked = marked_with(flags, bits, BuildingState::Active);
+        let icons = collect_now(&marked, cam, 0.3);
+        assert_eq!(icons.len(), 1, "{want:?}");
+        assert_eq!(icons[0].problem, want);
+        assert!(icons[0].pos.y > 12.0, "over the roof");
+        seen.insert(format!("{:?}", plate(want)));
+    }
+    assert_eq!(seen.len(), 6, "six different plates");
+    // No icon for a service problem of a building that is not Active.
+    for state in [
+        BuildingState::Abandoned,
+        BuildingState::Burned,
+        BuildingState::UnderConstruction,
+    ] {
+        let m = marked_with(0, S::FIRE | S::CRIME, state);
+        assert!(
+            m.iter()
+                .all(|m| !m.problems.has(Problem::Fire) && !m.problems.has(Problem::Crime))
+        );
+    }
+}
+
+/// T-126: the order of importance, one icon per second.
+#[test]
+fn every_problem_at_once_takes_turns_in_the_order_of_importance() {
+    use cp_service::ServiceProblems as S;
+    let flags = BuildingFlags::NO_ROAD
+        | BuildingFlags::NO_POWER
+        | BuildingFlags::NO_WATER
+        | BuildingFlags::NO_WORKERS;
+    let marked = marked_with(
+        flags,
+        S::FIRE | S::DEAD | S::SICK | S::GARBAGE | S::CRIME,
+        BuildingState::Active,
+    );
+    let cam = Vec3::new(100.0, 50.0, 100.0);
+    let order: Vec<Problem> = (0..9)
+        .map(|k| collect_now(&marked, cam, k as f32 + 0.5)[0].problem)
+        .collect();
+    assert_eq!(
+        order,
+        [
+            Problem::Fire,
+            Problem::NoRoad,
+            Problem::NoPower,
+            Problem::NoWater,
+            Problem::Dead,
+            Problem::Sick,
+            Problem::Garbage,
+            Problem::Crime,
+            Problem::NoWorkers,
+        ]
+    );
 }
 
 #[test]
@@ -96,8 +173,8 @@ fn no_flags_no_icon_and_no_icons_while_building_or_burned() {
     let all = 0xFF;
     assert!(marked_one(all, BuildingState::UnderConstruction).is_empty());
     assert!(marked_one(all, BuildingState::Burned).is_empty());
-    // Flags that are not problems shown in M1 (no workers, no customers, no goods).
-    let other = BuildingFlags::NO_WORKERS | BuildingFlags::NO_CUSTOMERS | BuildingFlags::NO_GOODS;
+    // Flags that show no icon (no customers, no goods).
+    let other = BuildingFlags::NO_CUSTOMERS | BuildingFlags::NO_GOODS;
     assert!(marked_one(other, BuildingState::Active).is_empty());
 }
 
@@ -352,9 +429,10 @@ fn the_icons_and_their_clusters_rasterise_square_and_distinct() {
         right: Vec3::X,
         up: Vec3::NEG_Z,
     };
-    // Four single icons, then the same four as clusters with a count badge.
+    // One single icon of every problem, then four clusters with a count badge.
     let n = Problem::ALL.len();
-    let counts = [1, 1, 1, 1, 37, 128, 1204, 9999];
+    let mut counts = vec![1; n];
+    counts.extend([37, 128, 1204, 9999]);
     let total = counts.len();
     let size = icon_size(100.0);
     // The icon fills about 90 of the cell's 128 pixels.
