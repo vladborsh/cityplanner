@@ -345,13 +345,11 @@ fn only_changed_pieces_are_rebuilt() {
     // One more street end-to-end beside the lattice: only its neighbourhood changes.
     w.line("basic_2l", (X0 + 500.0, Z0), (X0 + 500.0, Z0 + 90.0));
     let v2 = w.view();
-    let t0 = std::time::Instant::now();
     let edit = set.update(&v2.net, &v2.junctions, &w.terrain);
-    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    // Counted, not timed (BUG-034): only the neighbourhood is rebuilt; the time is in
+    // `road_perf_30x30_grid_and_one_edit`'s report.
     assert!(edit.rebuilt >= 1 && edit.rebuilt <= 6, "{edit:?}");
     assert!(set.piece_count() > before);
-    // Generous in unoptimised test builds; the release number is reported by the bench.
-    assert!(ms < 50.0, "incremental update took {ms} ms");
 }
 
 #[test]
@@ -399,6 +397,20 @@ fn chunk_meshes_merge_pieces_with_valid_indices() {
 /// `cargo test --release -p cp_render road_perf -- --nocapture` prints the numbers.
 #[test]
 fn road_perf_30x30_grid_and_one_edit() {
+    road_perf();
+}
+
+/// BUG-034: the 2 ms edit budget is wall-clock, so it is not in the gate. Run with
+/// `cargo test -p cp_render --release road_perf_edit_budget -- --ignored`.
+#[test]
+#[ignore = "wall-clock budget (2 ms per edit); run alone in release"]
+fn road_perf_edit_budget() {
+    let ms = road_perf();
+    assert!(ms <= 2.0, "edit took {ms} ms");
+}
+
+/// Builds the lattice, edits it once and returns the edit's update + merge time, ms.
+fn road_perf() -> f64 {
     let mut w = world();
     // Unoptimised builds run a smaller lattice to keep `cargo test` quick.
     let n = if cfg!(debug_assertions) { 8 } else { 30 };
@@ -447,13 +459,7 @@ fn road_perf_30x30_grid_and_one_edit() {
     );
     assert!(full.rebuilt >= n * n + 2 * n * (n - 1));
     assert!(edit.rebuilt <= 12, "{edit:?}");
-    if !cfg!(debug_assertions) {
-        assert!(
-            edit_ms + merge_ms <= 2.0,
-            "edit took {} ms",
-            edit_ms + merge_ms
-        );
-    }
+    edit_ms + merge_ms
 }
 
 /// After edits, the incrementally maintained set equals one built from scratch.

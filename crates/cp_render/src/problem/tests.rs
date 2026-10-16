@@ -376,8 +376,10 @@ fn mesh_has_the_icons_facing_the_camera_and_valid_indices() {
     }
 }
 
-#[test]
-fn ten_thousand_flagged_buildings_fit_the_render_prep_budget() {
+/// Collect + mesh 10k flagged buildings in two layouts: `(spacing, icons drawn, best ms)`.
+/// The time is for the ignored budget test; the counted test asserts only the counts.
+fn ten_thousand_flagged_buildings() -> Vec<(f32, usize, f32)> {
+    let mut runs = Vec::new();
     // (spacing m, camera): all of them near (10k single icons, the worst case for the mesh),
     // and a 1.2 km city seen from its middle (singles and clusters mixed).
     for (spacing, cam, all_single) in [
@@ -413,8 +415,26 @@ fn ten_thousand_flagged_buildings_fit_the_render_prep_budget() {
         } else {
             assert!(drawn < 10_000);
         }
-        // §14 gives render preparation 3 ms in all (this runs at the test profile's opt-level 1).
-        assert!(best < 3.0, "{best} ms");
+        runs.push((spacing, drawn, best));
+    }
+    runs
+}
+
+#[test]
+fn ten_thousand_flagged_buildings_are_drawn_as_icons_and_clusters() {
+    let runs = ten_thousand_flagged_buildings();
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].1, 10_000);
+    assert!(runs[1].1 < 10_000);
+}
+
+/// BUG-034: the 3 ms limit is wall-clock, so it is not in the gate. Run with
+/// `cargo test -p cp_render --release ten_thousand_flagged_buildings_fit -- --ignored`.
+#[test]
+#[ignore = "wall-clock budget (§14: 3 ms); run alone in release"]
+fn ten_thousand_flagged_buildings_fit_the_render_prep_budget() {
+    for (spacing, _, best) in ten_thousand_flagged_buildings() {
+        assert!(best < 3.0, "spacing {spacing}: {best} ms");
     }
 }
 
