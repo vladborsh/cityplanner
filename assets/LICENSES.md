@@ -106,3 +106,16 @@ T-140 adds `cemetery` (gravestones behind a fence) and `crematorium` (a building
 `assets/ui/icons/src`, rendered by `tools/assets/icons.mjs`, CC0, no third-party pack.
 
 T-141 adds `elementary_school` (a house with a bell), `high_school` (a block with a flag) and `university` (a portico with columns): self-made SVGs in `assets/ui/icons/src`, rendered by `tools/assets/icons.mjs`, CC0, no third-party pack.
+
+## Fonts — SIL Open Font License 1.1 (T-184, exception to "CC0 only" approved by the user)
+
+Symbol fallbacks for egui (warning, tick, cross, arrows, money, people, parallel/perpendicular
+signs), embedded with `include_bytes!` by `cp_ui::style`. Subsets of the upstream fonts made with
+`pyftsubset --no-hinting` (glyph ranges below); the licence text is `assets/fonts/OFL.txt`. The
+fonts are not renamed-reserved; the subset keeps the upstream family names and is not sold.
+
+- `assets/fonts/NotoSansSymbols2-subset.ttf` — Noto Sans Symbols 2 (The Noto Project Authors),
+  https://github.com/notofonts/symbols, OFL 1.1. U+2190–21FF, U+23E9–23FA, U+25A0–25FA and
+  U+25FC–25FF (U+25FB is left out: it is egui's replacement glyph), U+2600–26FF, U+2700–27BF, U+2B00–2BFF, U+1F4B0.
+- `assets/fonts/NotoSansMath-subset.ttf` — Noto Sans Math (The Noto Project Authors),
+  https://github.com/notofonts/math, OFL 1.1. U+2200–22FF, U+263B.

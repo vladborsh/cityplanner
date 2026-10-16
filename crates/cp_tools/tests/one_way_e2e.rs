@@ -4,7 +4,7 @@
 //!
 //! Manual check (the same steps, in the window): pick the road tool and "Highway, 3 lanes
 //! (one-way)", click and hover: chevrons point the way you drew; draw a second highway toward
-//! the end of the first: the panel lists "! two one-way roads meet head-on" in yellow, and the
+//! the end of the first: the panel lists "⚠ two one-way roads meet head-on" in yellow, and the
 //! click still builds.
 
 use std::path::Path;

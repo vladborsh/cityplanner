@@ -56,7 +56,7 @@ impl Win<'_> {
                 self.icon.show(ui, Sizes::WINDOW_ICON);
                 ui.strong(self.title);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("x").on_hover_text("Close").clicked() {
+                    if ui.small_button("✖").on_hover_text("Close").clicked() {
                         close = true;
                     }
                 });

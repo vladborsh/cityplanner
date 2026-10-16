@@ -44,18 +44,21 @@ mod tests {
         assert!(found.len() > 3, "the scan found nothing: {found:?}");
 
         let ctx = egui::Context::default();
-        // One pass so the default fonts are loaded.
-        crate::testutil::frame(
-            &ctx,
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(800.0, 600.0),
-                )),
-                ..Default::default()
-            },
-            |_| {},
-        );
+        crate::style::install(&ctx);
+        // The first pass loads the fonts, the second applies the ones `install` set.
+        for _ in 0..2 {
+            crate::testutil::frame(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |_| {},
+            );
+        }
         let font = egui::FontId::proportional(13.0);
         let missing: Vec<String> = found
             .iter()

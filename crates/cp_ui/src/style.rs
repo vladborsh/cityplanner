@@ -60,9 +60,43 @@ impl Sizes {
     }
 }
 
+/// Symbol fonts (OFL, `assets/LICENSES.md`) for the glyphs egui's own fonts lack or draw as a
+/// square (⚠ ✔ ✖ ▸ ▾ ∥ ⊥ 💰 ☻, T-184). They hold no Latin letters, so they go first in the
+/// family: egui treats every glyph of the face that holds its replacement character (◻) as
+/// missing, and the default emoji face is that one (so ◻ is left out of the subsets).
+const SYMBOL_FONTS: [(&str, &[u8]); 2] = [
+    (
+        "noto_symbols2",
+        include_bytes!("../../../assets/fonts/NotoSansSymbols2-subset.ttf"),
+    ),
+    (
+        "noto_math",
+        include_bytes!("../../../assets/fonts/NotoSansMath-subset.ttf"),
+    ),
+];
+
+fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    for (name, bytes) in SYMBOL_FONTS {
+        fonts.font_data.insert(
+            name.to_owned(),
+            std::sync::Arc::new(egui::FontData::from_static(bytes)),
+        );
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            fonts
+                .families
+                .entry(family)
+                .or_default()
+                .insert(0, name.to_owned());
+        }
+    }
+    ctx.set_fonts(fonts);
+}
+
 /// Sets the text sizes of the egui style: `Body` 15 pt, `Small` 13 pt (and the headings and
 /// buttons that follow the body size). Called once at start.
 pub fn install(ctx: &egui::Context) {
+    install_fonts(ctx);
     ctx.all_styles_mut(|style| {
         for (text_style, size) in [
             (egui::TextStyle::Body, Sizes::BODY_PT),

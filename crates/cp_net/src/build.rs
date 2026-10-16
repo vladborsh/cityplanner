@@ -205,7 +205,7 @@ pub enum SnapReportKind {
     },
     Step(i32),
     /// The length went to the perpendicular through a control point of a neighbouring stretch
-    /// that lies this many metres from its anchor (label `_|_ 64`, §6.7).
+    /// that lies this many metres from its anchor (label `⊥ 64`, §6.7).
     ControlLine(i32),
     /// The length was rounded to this many metres (a multiple of 8).
     CellStep(i32),

@@ -83,7 +83,7 @@ pub fn demand_panel(
         .show(root, |ui| {
             if state.demand_collapsed {
                 ui.horizontal_centered(|ui| {
-                    let r = ui.small_button("^").on_hover_text("Show demand");
+                    let r = ui.small_button("▴").on_hover_text("Show demand");
                     rects.fold = Some(r.rect);
                     if r.clicked() {
                         state.demand_collapsed = false;
@@ -91,7 +91,7 @@ pub fn demand_panel(
                     ui.label("Demand");
                     if unconnected_stub(view).is_some() {
                         rects.notice = true;
-                        ui.colored_label(egui::Color32::YELLOW, format!("! {NOT_CONNECTED}"));
+                        ui.colored_label(egui::Color32::YELLOW, format!("⚠ {NOT_CONNECTED}"));
                     }
                 });
                 return;
@@ -101,13 +101,13 @@ pub fn demand_panel(
                 ui.vertical(|ui| {
                     ui.set_width(Sizes::DEMAND_COL_W);
                     ui.strong("Demand");
-                    let r = ui.small_button("v").on_hover_text("Fold the panel");
+                    let r = ui.small_button("▾").on_hover_text("Fold the panel");
                     rects.fold = Some(r.rect);
                     if r.clicked() {
                         state.demand_collapsed = true;
                     }
                     let r = ui
-                        .small_button(">")
+                        .small_button("▸")
                         .on_hover_text("Demand by zone (window)");
                     rects.details = Some(r.rect);
                     if r.clicked() {
@@ -130,7 +130,7 @@ pub fn demand_panel(
                     ui.vertical(|ui| {
                         ui.add_space(8.0);
                         ui.set_max_width(260.0);
-                        ui.colored_label(egui::Color32::YELLOW, format!("! {NOT_CONNECTED}"));
+                        ui.colored_label(egui::Color32::YELLOW, format!("⚠ {NOT_CONNECTED}"));
                         let r = ui
                             .button("Show")
                             .on_hover_text("Centre the camera on the dead end");

@@ -71,7 +71,8 @@ fn debt_colour(level: DebtLevel) -> egui::Color32 {
 /// The balance label of the top bar, coloured by [`DebtLevel`].
 pub fn money_label(ui: &mut egui::Ui, view: &SimView) -> egui::Response {
     let b = view.treasury.balance;
-    let text = egui::RichText::new(format_money(b)).color(debt_colour(debt_level(b)));
+    let text =
+        egui::RichText::new(format!("💰 {}", format_money(b))).color(debt_colour(debt_level(b)));
     let r = ui.label(text);
     let tip = match debt_warning(b) {
         Some(w) => format!("{w}\n\n{}", trend_breakdown(view)),
@@ -629,7 +630,7 @@ pub fn budget_contents(
         }
     });
     if let Some(w) = debt_warning(balance) {
-        ui.colored_label(debt_colour(debt_level(balance)), format!("! {w}"));
+        ui.colored_label(debt_colour(debt_level(balance)), format!("⚠ {w}"));
     }
     ui.horizontal(|ui| {
         for tab in BudgetTab::ALL {

@@ -257,7 +257,7 @@ pub fn top_bar(
             {
                 state.budget_open = !state.budget_open;
             }
-            left.label(format!("Pop {}", view.city.population))
+            left.label(format!("☻ {}", view.city.population))
                 .on_hover_text("Residents");
             crate::budget::population_trend_label(&mut left, view);
             // Middle: clock and speeds.
@@ -432,17 +432,14 @@ pub fn plan_length(g: &cp_tools::Ghost) -> f32 {
 pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
     let ok = |ui: &mut egui::Ui, text: &str, cost: Option<cp_core::Cost>, extra: String| {
         let cost = cost.map_or(String::new(), |c| format!("{} · ", format_money(c)));
-        ui.colored_label(
-            egui::Color32::LIGHT_GREEN,
-            format!("{cost}OK {text}{extra}"),
-        );
+        ui.colored_label(egui::Color32::LIGHT_GREEN, format!("{cost}✔ {text}{extra}"));
     };
     let bad = |ui: &mut egui::Ui, errors: &[String], fallback: &str| {
         if errors.is_empty() {
-            ui.colored_label(egui::Color32::LIGHT_RED, format!("x {fallback}"));
+            ui.colored_label(egui::Color32::LIGHT_RED, format!("✖ {fallback}"));
         }
         for e in errors {
-            ui.colored_label(egui::Color32::LIGHT_RED, format!("x {e}"));
+            ui.colored_label(egui::Color32::LIGHT_RED, format!("✖ {e}"));
         }
     };
     match (category, tools.active) {
@@ -457,7 +454,7 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 );
                 // One-way direction warnings (§6.6): yellow, they never block the build.
                 for w in &g.warnings {
-                    ui.colored_label(egui::Color32::YELLOW, format!("! {w}"));
+                    ui.colored_label(egui::Color32::YELLOW, format!("⚠ {w}"));
                 }
             }
             Some(g) => bad(ui, &g.errors, "cannot build here"),
@@ -479,7 +476,7 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                     format!(" · {n} segment{}", if n == 1 { "" } else { "s" }),
                 );
                 if let Some(w) = u.warning() {
-                    ui.colored_label(egui::Color32::YELLOW, format!("! {w}"));
+                    ui.colored_label(egui::Color32::YELLOW, format!("⚠ {w}"));
                 }
             }
             None => {
@@ -553,7 +550,7 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ),
                 Some(g) if g.route.len() > 1 => {
                     if let Some(e) = &g.error {
-                        ui.colored_label(egui::Color32::YELLOW, format!("! {e}"));
+                        ui.colored_label(egui::Color32::YELLOW, format!("⚠ {e}"));
                     }
                     ui.weak(format!(
                         "{} stop{} · {}. Click the first stop to close the line.",
@@ -700,7 +697,7 @@ pub fn zones_panel(
             }
         });
     });
-    if ui.button("Demand by zone >").clicked() {
+    if ui.button("Demand by zone ▸").clicked() {
         state.demand_open = true;
     }
 }
@@ -1163,6 +1160,6 @@ mod tests {
                 &mut FileMenu::default(),
             );
         });
-        assert!(texts.iter().any(|(t, _)| t == "Pop 12345"), "{texts:?}");
+        assert!(texts.iter().any(|(t, _)| t == "☻ 12345"), "{texts:?}");
     }
 }
