@@ -185,3 +185,40 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
         "the jam clears: {trips_at_load} -> {trips_after} trips in flight"
     );
 }
+
+/// T-139: the sick-by-home index is derived, not saved; a save taken mid-day with sick citizens
+/// loads and runs on to the very state of the run that never stopped.
+#[test]
+fn a_save_with_sick_citizens_resumes_like_the_continuous_run() {
+    let (_, content) = env();
+    let mut a = loaded(&fixture("m1-small.sav"));
+    for _ in 0..1500 {
+        a.tick_once();
+    }
+    let now = a.tick();
+    {
+        let mut g = a.world_mut().resource_mut::<CitizenGrid>();
+        g.ensure_derived();
+        let ids: Vec<_> = g.citizens().map(|(id, _)| id).step_by(3).collect();
+        assert!(ids.len() > 100);
+        for id in ids {
+            g.set_sick(id, Some(now));
+        }
+    }
+    let bytes = save_runner(&a, content.content_hash(), "flatlands").unwrap();
+    let mut b = loaded(&bytes);
+    assert_eq!(a.checksum(), b.checksum(), "state at load");
+    for _ in 0..256 {
+        a.tick_once();
+        b.tick_once();
+    }
+    assert_eq!(a.checksum(), b.checksum(), "load + 256 ticks");
+    let sick = |s: &SimRunner| {
+        s.world()
+            .resource::<CitizenGrid>()
+            .citizens()
+            .filter(|(_, c)| c.sick_since.is_some())
+            .count()
+    };
+    assert_eq!(sick(&a), sick(&b));
+}
