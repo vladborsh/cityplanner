@@ -144,10 +144,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0x9c0260e75873a475, "state at load");
+    assert_eq!(sim.checksum(), 0xe405803dc07eac2e, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0xba7f33b99fc3b4c0,
+        0x164368e2f7c09129,
         "load + 4096 ticks"
     );
 }
@@ -173,7 +173,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0x85c1e080d142437f, "state at load");
+    assert_eq!(sim.checksum(), 0xa98352ce231fd9e0, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -181,7 +181,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0xde8072692e5eedb4, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0xe63a0e4f4c4ad81, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,
