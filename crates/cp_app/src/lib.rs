@@ -52,8 +52,11 @@ pub struct GamePlugin {
     pub phase_timing: bool,
     /// Add the egui UI (`cp_ui`). The browser build cannot yet: see `apps/web/README.md`.
     pub ui: bool,
-    /// Light the world as at noon at any hour (`--always-day`); toggled at runtime in the UI.
+    /// Light the world with the fixed afternoon sun at any hour (`--always-day`); toggled at
+    /// runtime in the UI. The player's setting defaults to on (T-178).
     pub always_day: bool,
+    /// Run the day and night cycle whatever the settings say (`--day-night`, or `--hour`).
+    pub day_night: bool,
     /// Optional test scene, e.g. `grid:10` (see [`scene`]).
     pub scene: Option<String>,
     /// Render into this image instead of a window (`--hidden`: no window exists).
@@ -87,7 +90,7 @@ impl Plugin for GamePlugin {
             scene: self.scene.clone(),
         })
         .insert_resource(cp_render::LightingSettings {
-            always_day: self.always_day || settings.always_day,
+            always_day: !self.day_night && (self.always_day || settings.always_day),
         })
         .insert_resource(settings.camera_settings())
         .init_resource::<PhaseTimes>()
@@ -152,6 +155,12 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         // Close to the grid centre, looking along a street (see `scene`).
         "street" => (Vec3::new(c - 140.0, 35.0, c + 60.0), Vec3::new(c, 0.0, c)),
         "junction" => (Vec3::new(c - 30.0, 16.0, c + 38.0), Vec3::new(c, 0.0, c)),
+        // Low over the grid looking into the always-day sun (it stands west-south-west): the
+        // glint on the asphalt, shadows lying towards the camera (T-178).
+        "sun" => (
+            Vec3::new(c + 160.0, 12.0, c - 90.0),
+            Vec3::new(c - 100.0, 6.0, c + 50.0),
+        ),
         "showcase" => (
             Vec3::new(c + 20.0, 330.0, c + 440.0),
             Vec3::new(c + 20.0, 0.0, c + 20.0),

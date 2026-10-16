@@ -11,17 +11,24 @@ pub struct LightingSettings {
     pub always_day: bool,
 }
 
-/// Midday, `GameTime::day_fraction() == 0.5`.
-fn noon() -> GameTime {
+/// The fixed time of the always-day light, 15:00: a warm afternoon sun about 41° above the
+/// horizon, low enough for long shadows and for a glint on the asphalt (T-178).
+pub const ALWAYS_DAY_HOUR: f32 = 15.0;
+
+fn afternoon() -> GameTime {
     GameTime {
         day: 0,
-        tick_of_day: (cp_core::time::TICKS_PER_DAY / 2) as u32,
+        tick_of_day: (ALWAYS_DAY_HOUR / 24.0 * cp_core::time::TICKS_PER_DAY as f32) as u32,
     }
 }
 
-/// [`sun_state`] of `time`, or of noon when `settings.always_day` is on.
+/// [`sun_state`] of `time`, or of the fixed afternoon when `settings.always_day` is on.
 pub fn lit_state(time: GameTime, settings: LightingSettings) -> SunState {
-    sun_state(if settings.always_day { noon() } else { time })
+    sun_state(if settings.always_day {
+        afternoon()
+    } else {
+        time
+    })
 }
 
 /// Lighting for one instant. Colours are linear RGB.
@@ -110,10 +117,13 @@ mod tests {
     }
 
     #[test]
-    fn always_day_is_noon_at_any_time() {
+    fn always_day_is_the_afternoon_sun_at_any_time() {
         let on = LightingSettings { always_day: true };
         let off = LightingSettings::default();
-        let noon = at(12.0);
+        let noon = at(ALWAYS_DAY_HOUR);
+        let elevation = noon.to_sun[1].asin().to_degrees();
+        assert!((35.0..=45.0).contains(&elevation), "{elevation}°");
+        assert_eq!(noon.illuminance, 10_000.0, "full daylight");
         for h in [0.0, 2.0, 5.5, 12.0, 18.5, 23.9] {
             let t = Tick((h / 24.0 * TICKS_PER_DAY as f32) as u64 + 3 * TICKS_PER_DAY).game_time();
             assert_eq!(lit_state(t, on), noon, "{h} h");

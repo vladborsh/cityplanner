@@ -96,7 +96,7 @@ fn sync_roads(
     state.last_version = view.junctions.version();
     let material = state
         .material
-        .get_or_insert_with(|| materials.add(VertexColorMaterial::opaque(0.9, 0.04)))
+        .get_or_insert_with(|| materials.add(road_material()))
         .clone();
 
     for chunk in &up.dirty_chunks {
@@ -173,5 +173,34 @@ fn update_road_lods(
             c.far_active = far;
             mesh.0 = if far { c.far.clone() } else { c.near.clone() };
         }
+    }
+}
+
+/// Roughness of the asphalt (T-178): low enough for a sun glint at the right angle, not a mirror.
+pub const ASPHALT_ROUGHNESS: f32 = 0.45;
+/// Reflectance of the asphalt (Bevy's default is 0.5; 0.3 keeps the glint visible without
+/// blowing the road out to white).
+pub const ASPHALT_REFLECTANCE: f32 = 0.3;
+/// Roughness of everything else in the road mesh: pavements, kerbs, paint, piers (matte).
+pub const MATTE_ROUGHNESS: f32 = 0.9;
+
+/// The material of the road meshes: matte, except for the dark asphalt (linear grey 0.11),
+/// which is glossy.
+pub fn road_material() -> VertexColorMaterial {
+    VertexColorMaterial::opaque(MATTE_ROUGHNESS, 0.04)
+        .with_dark_gloss(ASPHALT_ROUGHNESS, ASPHALT_REFLECTANCE)
+}
+
+#[cfg(test)]
+mod material_tests {
+    use super::*;
+
+    #[test]
+    fn asphalt_is_glossy_within_the_range_and_the_rest_matte() {
+        let m = road_material();
+        assert!((0.35..=0.5).contains(&m.params.z), "{}", m.params.z);
+        assert_eq!(m.params.z, ASPHALT_ROUGHNESS);
+        assert!(m.params.x >= 0.85, "pavements and paint stay matte");
+        assert!(m.params.w > m.params.y, "the asphalt reflects more");
     }
 }

@@ -52,7 +52,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            always_day: false,
+            // T-178: the world is lit by the sun all the time unless the player turns the
+            // day and night cycle back on.
+            always_day: true,
             ui_scale: 1.0,
             camera: CameraPrefs::default(),
         }
@@ -234,5 +236,13 @@ mod tests {
         assert_eq!(Settings::load(&d), Settings::default(), "broken file");
         write("(ui_scale: 99.0)");
         assert_eq!(Settings::load(&d).ui_scale, *cp_ui::UI_SCALE_RANGE.end());
+    }
+
+    /// T-178: the sun is on all day unless the player turns the cycle back on.
+    #[test]
+    fn always_day_is_the_default() {
+        assert!(Settings::default().always_day);
+        let d = dir("default_day");
+        assert!(Settings::load(&d).always_day, "no file: always day");
     }
 }

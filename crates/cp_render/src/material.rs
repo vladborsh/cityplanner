@@ -26,7 +26,8 @@ impl From<&VertexColorMaterial> for VertexColorKey {
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 #[bind_group_data(VertexColorKey)]
 pub struct VertexColorMaterial {
-    /// x = perceptual roughness, y = reflectance.
+    /// x = perceptual roughness, y = reflectance; z, w = roughness and reflectance of the
+    /// dark (glossy) surfaces such as asphalt, 0 = none (see `vertex_color.wesl`).
     #[uniform(0)]
     pub params: Vec4,
     /// Alpha-blend using the vertex alpha (water) instead of drawing opaque.
@@ -43,6 +44,15 @@ impl VertexColorMaterial {
             blend: false,
             depth_bias: false,
         }
+    }
+
+    /// Dark surfaces of the mesh (vertex colour darker than asphalt grey) get `roughness` and
+    /// `reflectance` instead, so a sun glint shows on them and not on kerbs, paint or
+    /// pavements (T-178).
+    pub fn with_dark_gloss(mut self, roughness: f32, reflectance: f32) -> Self {
+        self.params.z = roughness;
+        self.params.w = reflectance;
+        self
     }
 
     pub fn with_depth_bias(self, depth_bias: bool) -> Self {

@@ -331,3 +331,29 @@ fn collect_stats(
     }
     *stats = s;
 }
+
+#[cfg(test)]
+mod sun_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    /// T-178: the sun casts cascaded shadows over the RTS camera's range, near ones sharp.
+    #[test]
+    fn the_sun_has_cascaded_shadows_on() {
+        let mut world = World::new();
+        world.run_system_once(spawn_sun).unwrap();
+        let mut q = world
+            .query_filtered::<(&DirectionalLight, &bevy::light::CascadeShadowConfig), With<Sun>>();
+        let (light, cascades) = q.single(&world).unwrap();
+        assert!(light.shadow_maps_enabled);
+        assert_eq!(cascades.bounds.len(), 4);
+        assert!(
+            cascades.bounds[0] <= 100.0,
+            "the first cascade is close: sharp shadows"
+        );
+        assert!(
+            *cascades.bounds.last().unwrap() >= 2000.0,
+            "far enough for the RTS camera"
+        );
+    }
+}
