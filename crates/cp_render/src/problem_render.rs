@@ -53,7 +53,7 @@ struct ProblemIcons {
     entity: Option<Entity>,
 }
 
-fn to_bevy_mesh(m: crate::chunk::MeshData) -> Mesh {
+pub(crate) fn to_bevy_mesh(m: crate::chunk::MeshData) -> Mesh {
     Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,

@@ -8,6 +8,8 @@ pub mod building;
 pub mod building_render;
 pub mod camera;
 pub mod chunk;
+pub mod fire_fx;
+pub mod fire_render;
 pub mod material;
 pub mod overlay;
 pub mod problem;
@@ -23,6 +25,7 @@ pub use agent_render::{AgentRenderPlugin, AgentRenderStats, TickFraction};
 pub use building_render::{BuildingRenderPlugin, BuildingStats};
 pub use camera::{CameraSettings, RtsCamera, RtsCameraPlugin};
 pub use chunk::terrain_mesh_height;
+pub use fire_render::{FireFxPlugin, FireFxStats};
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{
     DistrictsMode, LINE_STEP, Overlay, OverlayPlugin, OverlayState, ZoningMode, ribbon_at,

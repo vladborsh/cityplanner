@@ -218,6 +218,27 @@ fn abandoned_is_duller_and_burned_is_lower_and_dark() {
     assert!(extent(&burned.far).1.y < extent(&active.far).1.y - 1.0);
 }
 
+/// T-143: a burned building is charred all over and shows no windows (the glass is the colour
+/// of the wall), at every detail level.
+#[test]
+fn a_burned_building_is_charred_and_windowless() {
+    let e = env();
+    let (def_id, def) =
+        e.db.buildings()
+            .find(|(_, d)| d.service.is_none() && d.zone == ZoneType::ComHigh)
+            .unwrap();
+    let b = building(def_id, &e.db, BuildingState::Burned, 0);
+    let p = build_building(id(2), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+    for (name, m) in [("near", &p.near), ("mid", &p.mid), ("far", &p.far)] {
+        let bright = m
+            .colors
+            .iter()
+            .map(|c| c[0].max(c[1]).max(c[2]))
+            .fold(0.0, f32::max);
+        assert!(bright <= 0.3, "{name}: brightest vertex channel {bright}");
+    }
+}
+
 #[test]
 fn facade_variation_comes_from_the_id_and_is_deterministic() {
     let e = env();

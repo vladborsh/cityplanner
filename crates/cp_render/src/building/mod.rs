@@ -398,7 +398,7 @@ fn wall(
             // window and the wall below the next are one quad.
             let sill = fy + fh * st.sill;
             let top = sill + fh * st.win_h;
-            let glass = if dead { mul(cx.glass, 0.3) } else { cx.glass };
+            let glass = if dead { cx.wall } else { cx.glass };
             if ground {
                 q(m, 0.0, width, fy, sill, cx.wall);
             }
@@ -423,7 +423,8 @@ fn wall(
         let shade = |i: u32| -> f32 {
             let h = hash2(cx.seed, wall_id * 131 + fl, i);
             match cx.state {
-                BuildingState::Burned => 0.25,
+                // Burned out: the glass is the colour of the charred wall, no windows show.
+                BuildingState::Burned => 1.0,
                 BuildingState::Abandoned => 0.45 + (h % 3) as f32 * 0.05,
                 _ => 0.85 + (h % 5) as f32 * 0.08,
             }
@@ -770,7 +771,7 @@ pub fn build_building(
             wallc = [0.09, 0.08, 0.08, 1.0];
             roofc = [0.06, 0.05, 0.05, 1.0];
             trimc = [0.07, 0.06, 0.06, 1.0];
-            glassc = [0.04, 0.04, 0.04, 1.0];
+            glassc = wallc;
         }
         _ => {}
     }

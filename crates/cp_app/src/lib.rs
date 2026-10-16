@@ -22,9 +22,9 @@ use cp_core::time::TICKS_PER_DAY;
 use cp_core::{SimLimits, Tick};
 use cp_prof::{PhaseClock, PhaseTiming};
 use cp_render::{
-    AgentRenderPlugin, AgentRenderStats, BuildingRenderPlugin, OverlayPlugin, ProblemIconPlugin,
-    RoadRenderPlugin, RtsCamera, RtsCameraPlugin, TerrainRenderPlugin, TickFraction,
-    UtilityRenderPlugin,
+    AgentRenderPlugin, AgentRenderStats, BuildingRenderPlugin, FireFxPlugin, OverlayPlugin,
+    ProblemIconPlugin, RoadRenderPlugin, RtsCamera, RtsCameraPlugin, TerrainRenderPlugin,
+    TickFraction, UtilityRenderPlugin,
 };
 use cp_sim::{SimPhase, SimRunner, SimView};
 use cp_terrain::{MAP_SIZE, Terrain};
@@ -92,6 +92,7 @@ impl Plugin for GamePlugin {
             UtilityRenderPlugin,
             BuildingRenderPlugin,
             ProblemIconPlugin,
+            FireFxPlugin,
             AgentRenderPlugin,
             RtsCameraPlugin,
         ))
