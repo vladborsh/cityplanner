@@ -131,7 +131,9 @@ fn variant_at<'a>(
     let pick_style = match site {
         Some((block, col)) => {
             let base = (u64::from(block) + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 40;
-            base as usize + usize::from(col) + usize::from(col / 4)
+            // Odd stride per block: some blocks walk the styles forwards, some backwards.
+            let stride = if base & 1 == 0 { 1 } else { 3 };
+            base as usize + stride * usize::from(col) + usize::from(col / 4)
         }
         None => draw(0),
     };
