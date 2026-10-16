@@ -111,7 +111,12 @@ fn road_tile_widget(
 }
 
 /// The Roads category panel.
-pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut ToolState) {
+pub fn roads_panel(
+    ui: &mut egui::Ui,
+    content: Option<&ContentDb>,
+    tools: &mut ToolState,
+    types_folded: &mut bool,
+) {
     ui.add_space(4.0);
     ui.weak("Tools");
     ui.horizontal_wrapped(|ui| {
@@ -141,9 +146,6 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
         }
     });
     let building = tools.active == ActiveTool::Road;
-    if !building && tools.active != ActiveTool::Upgrade {
-        return;
-    }
     if building {
         ui.add_space(4.0);
         ui.weak("Mode");
@@ -191,7 +193,18 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
         tools.road.road = cards.first().map(|c| c.id);
     }
     ui.add_space(4.0);
-    ui.weak(if building { "Road type" } else { "Upgrade to" });
+    let upgrading = tools.active == ActiveTool::Upgrade;
+    let title = if upgrading { "Upgrade to" } else { "Road type" };
+    // BUG-044: the section is open until the player folds it, whatever the tool.
+    if ui
+        .button(format!("{} {title}", if *types_folded { "▸" } else { "▾" }))
+        .clicked()
+    {
+        *types_folded = !*types_folded;
+    }
+    if *types_folded {
+        return;
+    }
     let widest = content.roads().map(|(_, d)| d.width).fold(0.0, f32::max);
     // One row of tiles per class, three to a row.
     let mut classes: Vec<RoadClass> = cards.iter().map(|c| c.class).collect();
@@ -204,6 +217,9 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
                 if road_tile_widget(ui, content, widest, c, tools.road.road == Some(c.id)).clicked()
                 {
                     tools.road.road = Some(c.id);
+                    if !upgrading && !building {
+                        tools.select(ActiveTool::Road);
+                    }
                 }
             }
         });
@@ -237,7 +253,9 @@ mod tests {
             let mut root = crate::panels::root_ui(ui.ctx());
             egui::Panel::left("p")
                 .exact_size(Sizes::TOOL_PANEL_W)
-                .show(&mut root, |ui| roads_panel(ui, Some(content), tools));
+                .show(&mut root, |ui| {
+                    roads_panel(ui, Some(content), tools, &mut false)
+                });
         })
     }
 
@@ -360,5 +378,49 @@ mod tests {
         assert_eq!(arrows(road("basic_2l")), 0);
         assert!(arrows(road("highway_1w_1l")) > 0);
         assert!(arrows(road("highway_1w_4l")) > arrows(road("highway_1w_1l")));
+    }
+
+    /// BUG-044: the road types are listed whatever the tool; only the header folds them.
+    #[test]
+    fn the_type_section_is_open_for_every_tool_and_folds_only_on_its_header() {
+        let content = content();
+        let cards = cards(&content);
+        let ctx = egui::Context::default();
+        let mut tools = ToolState::default();
+        let mut folded = false;
+        let mut t = 0.0;
+        let mut shows_types =
+            |tools: &mut ToolState, folded: &mut bool, events: Vec<egui::Event>| {
+                t += 0.1;
+                let mut raw = input(t, events);
+                raw.screen_rect = Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 3000.0),
+                ));
+                let texts = frame_texts(&ctx, raw, |ui| {
+                    let mut root = crate::panels::root_ui(ui.ctx());
+                    egui::Panel::left("p")
+                        .exact_size(Sizes::TOOL_PANEL_W)
+                        .show(&mut root, |ui| {
+                            roads_panel(ui, Some(&content), tools, folded)
+                        });
+                });
+                texts.iter().any(|(s, _)| s == &cards[0].name)
+            };
+        // Just opened, no tool: open.
+        assert!(shows_types(&mut tools, &mut folded, vec![]));
+        // Into the bulldozer and out again (B, Esc): still open.
+        tools.select(ActiveTool::Bulldozer);
+        assert!(shows_types(&mut tools, &mut folded, vec![]));
+        tools.select(ActiveTool::None);
+        assert!(shows_types(&mut tools, &mut folded, vec![]));
+        // The player folds it by the header; a tool change leaves it folded.
+        folded = true;
+        tools.select(ActiveTool::Bulldozer);
+        assert!(!shows_types(&mut tools, &mut folded, vec![]));
+        tools.select(ActiveTool::None);
+        assert!(!shows_types(&mut tools, &mut folded, vec![]));
+        tools.select(ActiveTool::Road);
+        assert!(!shows_types(&mut tools, &mut folded, vec![]));
     }
 }

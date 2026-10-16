@@ -58,6 +58,8 @@ pub struct UiState {
     pub lines: crate::lines::LinesDraft,
     /// The bottom demand panel is folded into its 28 px strip (T-099; not saved).
     pub demand_collapsed: bool,
+    /// The player folded the road-type section of the Roads panel (BUG-044; not saved).
+    pub road_types_folded: bool,
     /// Where the "show" button of the not-connected notice wants the camera (XZ, metres);
     /// taken by `apply_camera_goal` (T-117; not saved).
     pub camera_goal: Option<bevy::math::Vec2>,
@@ -715,9 +717,14 @@ pub fn zone_group_demand(zone: cp_content::ZoneType, d: &Demand) -> (&'static st
 }
 
 /// The Roads category: tools, mode, elevation and the road types as cards (see [`crate::roads`]).
-pub fn roads_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
+pub fn roads_panel(
+    ui: &mut egui::Ui,
+    view: Option<&SimView>,
+    tools: &mut ToolState,
+    state: &mut UiState,
+) {
     let content = view.and_then(|v| v.content.as_deref());
-    crate::roads::roads_panel(ui, content, tools);
+    crate::roads::roads_panel(ui, content, tools, &mut state.road_types_folded);
 }
 
 #[cfg(test)]
@@ -858,9 +865,10 @@ mod tests {
         let mut tools = ToolState::default();
         tools.select(ActiveTool::Road);
         assert!(tools.road.road.is_none());
-        let draw = |tools: &mut ToolState| {
+        let mut ui_state = UiState::default();
+        let mut draw = |tools: &mut ToolState| {
             crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
-                roads_panel(ui, Some(&view), tools);
+                roads_panel(ui, Some(&view), tools, &mut ui_state);
             });
         };
         draw(&mut tools);

@@ -184,7 +184,7 @@ pub fn tool_panel(
                     verdict(ui, category, tools);
                 });
             egui::ScrollArea::vertical().show(ui, |ui| match category {
-                Category::Roads => roads_panel(ui, view, tools),
+                Category::Roads => roads_panel(ui, view, tools, state),
                 Category::Zones => zones_panel(ui, view, tools, state),
                 Category::Buildings => services_panel(ui, view, tools, overlay),
                 Category::Bulldozer => bulldozer_panel(ui, tools),
@@ -674,7 +674,7 @@ mod tests {
             "Straight",
             "Curve",
             "Free",
-            "Road type",
+            "▾ Road type",
             "Elevation (PgUp / PgDn)",
         ] {
             assert!(all.contains(&want), "{want:?} missing from {all:?}");
