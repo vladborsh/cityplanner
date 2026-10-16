@@ -478,3 +478,42 @@ fn the_line_and_pipe_reach_come_from_the_content() {
         "a longer pipe reach"
     );
 }
+
+/// BUG-042: a tower within reach of a spur it is drawn to and of the street pipe the houses are
+/// on (the two not joined by a node) serves both: one network, the houses have water. The same
+/// goes for a plant between two power lines.
+#[test]
+fn a_source_joins_every_network_of_its_net_within_reach() {
+    let db = db();
+    let mut b = BuildingGrid::new();
+    let mut g = UtilityGraph::new();
+    // The street pipe, and a spur 30 m north of it that stops short of it.
+    line(&mut g, UtilityNet::Pipe, 0.0, 200.0);
+    let p = |x: f32, z: f32| Vec3::new(5000.0 + x, 0.0, 5000.0 + z);
+    let (a, c) = (
+        g.add_node(UtilityNet::Pipe, p(100.0, -30.0)),
+        g.add_node(UtilityNet::Pipe, p(160.0, -30.0)),
+    );
+    g.add_link(a, c, CubicBezier3::line(p(100.0, -30.0), p(160.0, -30.0)))
+        .unwrap();
+    let tower = add(&mut b, &db, "tower", 130.0, -45.0);
+    let house = add(&mut b, &db, "house", 40.0, 15.0);
+    let missing = compute_supply(&db, &b, &g);
+    assert_eq!(bits(&missing, house) & BuildingFlags::NO_WATER, 0);
+    assert_eq!(bits(&missing, tower) & BuildingFlags::NO_WATER, 0);
+
+    // Power: a plant between two lines that do not touch.
+    let mut g = UtilityGraph::new();
+    line(&mut g, UtilityNet::Power, 0.0, 100.0);
+    let (a, c) = (
+        g.add_node(UtilityNet::Power, p(100.0, -30.0)),
+        g.add_node(UtilityNet::Power, p(160.0, -30.0)),
+    );
+    g.add_link(a, c, CubicBezier3::line(p(100.0, -30.0), p(160.0, -30.0)))
+        .unwrap();
+    let mut b = BuildingGrid::new();
+    add(&mut b, &db, "plant", 130.0, -45.0);
+    let far = add(&mut b, &db, "house", 10.0, 15.0);
+    let missing = compute_supply(&db, &b, &g);
+    assert_eq!(bits(&missing, far) & BuildingFlags::NO_POWER, 0);
+}

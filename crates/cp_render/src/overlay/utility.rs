@@ -262,6 +262,8 @@ pub fn utility_report(
         half: f32,
         status: BuildingStatus,
         comp: Option<u32>,
+        /// Every component in reach of a source: it joins them (BUG-042).
+        reach: Vec<u32>,
     }
     let mut items: Vec<Item> = Vec::new();
     for (id, b) in buildings.iter() {
@@ -275,20 +277,25 @@ pub fn utility_report(
             half,
             status,
             comp: cov.component(graph, b.pos, half),
+            reach: if status == BuildingStatus::Source {
+                cov.components_in_reach(graph, b.pos, half)
+            } else {
+                Vec::new()
+            },
         });
     }
     // Union-find over the items, then the line components (nodes after the items).
     let mut comp_node: BTreeMap<u32, usize> = BTreeMap::new();
     for it in &items {
-        if let Some(c) = it.comp {
+        for c in it.comp.iter().chain(&it.reach) {
             let next = items.len() + comp_node.len();
-            comp_node.entry(c).or_insert(next);
+            comp_node.entry(*c).or_insert(next);
         }
     }
     let mut parent: Vec<usize> = (0..items.len() + comp_node.len()).collect();
     for (i, it) in items.iter().enumerate() {
-        if let Some(c) = it.comp {
-            union(&mut parent, i, comp_node[&c]);
+        for c in it.comp.iter().chain(&it.reach) {
+            union(&mut parent, i, comp_node[c]);
         }
     }
     if layer == UtilityLayer::Power {

@@ -118,6 +118,37 @@ impl Attach {
 
     /// The component of the nearest link within the reach of `p`.
     pub(crate) fn comp_at(&self, graph: &UtilityGraph, p: Vec2, half: f32) -> Option<u32> {
+        self.nearest(graph, p, half).map(|(_, c)| c)
+    }
+
+    /// Every component with a link within the reach of `p`, ascending.
+    pub(crate) fn comps_at(&self, graph: &UtilityGraph, p: Vec2, half: f32) -> Vec<u32> {
+        let mut all = BTreeSet::new();
+        self.within(graph, p, half, |_, _, c| {
+            all.insert(c);
+        });
+        all.into_iter().collect()
+    }
+
+    fn nearest(&self, graph: &UtilityGraph, p: Vec2, half: f32) -> Option<(f32, u32)> {
+        let mut best: Option<(f32, UtilityLinkId, u32)> = None;
+        self.within(graph, p, half, |d, id, c| {
+            if best.is_none_or(|(bd, _, _)| d < bd) {
+                best = Some((d, id, c));
+            }
+        });
+        best.map(|(d, _, c)| (d, c))
+    }
+
+    /// Calls `f(distance, link, component)` for every link of the network within the reach of
+    /// `p`, in ascending link id.
+    fn within(
+        &self,
+        graph: &UtilityGraph,
+        p: Vec2,
+        half: f32,
+        mut f: impl FnMut(f32, UtilityLinkId, u32),
+    ) {
         let reach = self.reach + half;
         let (bx, bz) = bucket(p, BUCKET_M);
         let span = (reach / BUCKET_M).ceil() as i32;
@@ -129,19 +160,18 @@ impl Attach {
                 }
             }
         }
-        let mut best: Option<(f32, UtilityLinkId)> = None;
         for id in cand {
             let (lo, hi) = self.bbox[&id];
             let off = (lo - p).max(p - hi).max(Vec2::ZERO);
             if off.length() > reach {
                 continue;
             }
-            let (_, d) = graph.link(id)?.curve.nearest_xz(p);
-            if d <= reach && best.is_none_or(|(bd, _)| d < bd) {
-                best = Some((d, id));
+            let Some(link) = graph.link(id) else { continue };
+            let (_, d) = link.curve.nearest_xz(p);
+            if d <= reach {
+                f(d, id, self.comp_of_link[&id]);
             }
         }
-        best.map(|(_, id)| self.comp_of_link[&id])
     }
 }
 
@@ -214,6 +244,42 @@ impl HopGrid {
         let c = z as usize * self.w + x as usize;
         &self.items[self.start[c] as usize..self.start[c + 1] as usize]
     }
+}
+
+/// Component -> the smallest component it is joined with by a source of `wanted` kinds that has
+/// links of both within its reach. Components that join nothing are absent.
+fn source_joins(
+    sites: &[Site],
+    graph: &UtilityGraph,
+    attach: &Attach,
+    wanted: impl Fn(ServiceKind) -> bool,
+) -> BTreeMap<u32, u32> {
+    let mut parent: BTreeMap<u32, u32> = BTreeMap::new();
+    fn root(parent: &BTreeMap<u32, u32>, mut x: u32) -> u32 {
+        while let Some(&p) = parent.get(&x) {
+            if p == x {
+                break;
+            }
+            x = p;
+        }
+        x
+    }
+    for s in sites {
+        let Some((kind, _)) = s.source else { continue };
+        if !wanted(kind) {
+            continue;
+        }
+        let near = attach.comps_at(graph, s.pos, s.half);
+        for pair in near.windows(2) {
+            let (a, b) = (root(&parent, pair[0]), root(&parent, pair[1]));
+            if a != b {
+                let (lo, hi) = (a.min(b), a.max(b));
+                parent.insert(hi, lo);
+                parent.entry(lo).or_insert(lo);
+            }
+        }
+    }
+    parent.keys().map(|&c| (c, root(&parent, c))).collect()
 }
 
 fn kind_index(k: UtilityKind) -> usize {
@@ -379,6 +445,26 @@ pub fn compute_supply_cached(
         comps.push(pair);
     }
 
+    // A source stands on every network of its net within reach, and so joins them (BUG-042: a
+    // tower beside a spur and a street pipe that are not joined by a node served only the
+    // nearer one).
+    if sites.iter().any(|s| s.source.is_some()) {
+        let (pipes, lines) = cache.attach.get_or_insert_with(|| {
+            (
+                Attach::build(graph, UtilityNet::Pipe, nets.pipe_reach_m),
+                Attach::build(graph, UtilityNet::Power, nets.line_reach_m),
+            )
+        });
+        let pipe_join = source_joins(&sites, graph, pipes, |k| {
+            matches!(k, ServiceKind::Water | ServiceKind::Sewage)
+        });
+        let line_join = source_joins(&sites, graph, lines, |k| k == ServiceKind::Power);
+        for c in &mut comps {
+            c.0 = c.0.map(|x| pipe_join.get(&x).copied().unwrap_or(x));
+            c.1 = c.1.map(|x| line_join.get(&x).copied().unwrap_or(x));
+        }
+    }
+
     // --- pipes: water, then sewage ---
     let comp: Vec<Option<u32>> = comps.iter().map(|c| c.0).collect();
     let mut water_cap: BTreeMap<u32, f32> = BTreeMap::new();
@@ -537,6 +623,11 @@ impl Coverage {
     /// network, the rule buildings use to attach.
     pub fn covers(&self, graph: &UtilityGraph, p: Vec2, half: f32) -> bool {
         self.attach.comp_at(graph, p, half).is_some()
+    }
+
+    /// Every component of the network within reach of `p`: the ones a source there joins.
+    pub fn components_in_reach(&self, graph: &UtilityGraph, p: Vec2, half: f32) -> Vec<u32> {
+        self.attach.comps_at(graph, p, half)
     }
 
     /// The connected component of the network a building at `p` attaches to, if in reach.
