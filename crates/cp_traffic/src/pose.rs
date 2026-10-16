@@ -22,6 +22,9 @@ pub struct VehiclePose {
     pub yaw: f32,
     /// Metres per second.
     pub speed: f32,
+    /// Colour the vehicle is drawn in, when it has one of its own: the colour of the line of a
+    /// bus (`cp_sim` fills it in, T-163). `None` = the kind's colour.
+    pub tint: Option<[u8; 3]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -38,7 +41,8 @@ pub struct AgentFrame {
     pub pedestrians: Vec<PedestrianPose>,
 }
 
-fn key(index: u32, generation: u32) -> AgentKey {
+/// The key of agent `index` / `generation` in an [`AgentFrame`].
+pub fn agent_key(index: u32, generation: u32) -> AgentKey {
     u64::from(generation) << 32 | u64::from(index)
 }
 
@@ -96,11 +100,12 @@ impl Agents {
             .filter_map(|(id, v)| {
                 let (pos, yaw) = vehicle_pose(v, self.specs().of(v).length * 0.5, graph, net, geo)?;
                 Some(VehiclePose {
-                    key: key(id.index, id.generation),
+                    key: agent_key(id.index, id.generation),
                     kind: v.kind_id(),
                     pos,
                     yaw,
                     speed: v.speed,
+                    tint: None,
                 })
             })
             .collect();
@@ -108,7 +113,7 @@ impl Agents {
             .pedestrians()
             .filter(|(_, p)| p.started)
             .map(|(id, p)| PedestrianPose {
-                key: key(id.index, id.generation),
+                key: agent_key(id.index, id.generation),
                 pos: p.pos,
             })
             .collect();

@@ -611,6 +611,25 @@ impl PathGraph {
         total
     }
 
+    /// The length of a route over the track graph, metres (T-163).
+    pub fn rail_path_length(&self, path: &crate::astar::CarPath) -> f32 {
+        let len = |l: LaneId| {
+            self.rail_slot(l)
+                .and_then(|i| self.rail[i as usize].as_ref())
+                .map_or(0.0, |n| n.len)
+        };
+        if path.steps.is_empty() {
+            return (path.goal_s - path.start_s).max(0.0);
+        }
+        let mut total = (len(path.start) - path.start_s).max(0.0) + path.goal_s;
+        for (i, &(_, to)) in path.steps.iter().enumerate() {
+            if i + 1 < path.steps.len() {
+                total += len(to);
+            }
+        }
+        total
+    }
+
     /// The route of a car path as a ground-plane polyline, a point about every `step` metres
     /// along each lane it runs on (T-157: the ribbon of a line). Junction connections show as
     /// the straight hop between one lane's last point and the next lane's first.

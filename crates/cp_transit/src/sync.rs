@@ -137,10 +137,10 @@ pub fn replan_line(
         .iter()
         .filter_map(|&s| transit.access(s).map(|a| (s, a)))
         .collect();
-    let plan = if stops.len() == l.stops.len() {
-        plan_line(graph, &stops)
-    } else {
-        plan_line(graph, &[])
+    let plan = match (stops.len() == l.stops.len(), l.mode) {
+        (true, crate::TransitMode::Metro) => crate::plan::plan_metro(graph, &stops),
+        (true, _) => plan_line(graph, &stops),
+        (false, _) => plan_line(graph, &[]),
     };
     if let Some(l) = transit.lines.get_mut(line) {
         l.state = match (plan.is_ok(), l.state) {

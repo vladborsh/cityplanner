@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use bevy_ecs::resource::Resource;
-use cp_traffic::{Access, CarPath, CongestionMap, PathGraph, find_car_path};
+use cp_traffic::{Access, CarPath, CongestionMap, PathGraph, Side, find_car_path, find_rail_path};
 
 use crate::model::{LineId, StopId};
 
@@ -17,6 +17,9 @@ pub struct Leg {
     pub length_m: f32,
     /// Estimated travel time on an empty road, seconds.
     pub time_s: f32,
+    /// Where the leg starts and ends (for a train: the lane side at each end, T-163).
+    pub start: Access,
+    pub goal: Access,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,10 +77,133 @@ pub fn plan_line(graph: &PathGraph, stops: &[(StopId, Access)]) -> LinePlan {
                     time_s: path.cost,
                     length_m,
                     path,
+                    start: *a,
+                    goal: *b,
                 });
             }
             Err(_) => plan.errors.push(PlanError::NoPath { leg, from, to }),
         }
+    }
+    plan
+}
+
+/// The stop a train is at on position `pos` of the out-and-back ride of a line of `n` stops:
+/// `0, 1, .., n-1, n-2, .., 1`, then round again (T-163).
+pub fn visit_index(n: usize, pos: usize) -> usize {
+    let m = 2 * (n - 1);
+    let p = pos % m;
+    if p < n { p } else { m - p }
+}
+
+/// Positions of the ride of a line of `n` stops (`2 (n - 1)`; `n >= 2`).
+pub fn visits(n: usize) -> usize {
+    2 * n.saturating_sub(1)
+}
+
+/// Whether the train turns round at position `pos` (the two ends of the line).
+pub fn is_terminus(n: usize, pos: usize) -> bool {
+    let p = pos % visits(n).max(1);
+    p == 0 || p == n - 1
+}
+
+/// The cheapest ride so far: its cost and the `(departure side, arrival side)` of each leg.
+type Chain = Option<(f32, Vec<(usize, usize)>)>;
+
+/// Routes the out-and-back ride of a metro line over the track graph (T-163): one leg per
+/// position of the ride (`visits(n)` legs). A train keeps its lane from stop to stop and takes
+/// the opposite lane of the same platform at a terminus, so the side it arrives on decides
+/// the side it leaves on. The sides are chosen for the cheapest closed ride; the plan is empty
+/// of legs (and has errors) when no choice closes it.
+pub fn plan_metro(graph: &PathGraph, stops: &[(StopId, Access)]) -> LinePlan {
+    let mut plan = LinePlan::default();
+    let n = stops.len();
+    if n < 2 {
+        plan.errors.push(PlanError::TooFewStops);
+        return plan;
+    }
+    let m = visits(n);
+    let at = |pos: usize, side: Side| Access {
+        side,
+        ..stops[visit_index(n, pos)].1
+    };
+    // cost[pos][departure side][arrival side] of the leg from `pos` to `pos + 1`.
+    let sides = [Side::Right, Side::Left];
+    let mut table: Vec<[[Option<CarPath>; 2]; 2]> = Vec::with_capacity(m);
+    for pos in 0..m {
+        let mut cell: [[Option<CarPath>; 2]; 2] = Default::default();
+        for (d, &ds) in sides.iter().enumerate() {
+            for (a, &as_) in sides.iter().enumerate() {
+                cell[d][a] = find_rail_path(graph, &at(pos, ds), &at(pos + 1, as_)).ok();
+            }
+        }
+        table.push(cell);
+    }
+    let cost = |p: &Option<CarPath>| p.as_ref().map(|p| p.cost);
+    // Walk the ride for each side the first leg may start on; the best closed ride wins.
+    let mut best: Chain = None;
+    for d0 in 0..2 {
+        // dp[arrival side at the next position] = (cost, sides chosen so far)
+        let mut states: [Chain; 2] = [None, None];
+        for a in 0..2 {
+            if let Some(c) = cost(&table[0][d0][a]) {
+                states[a] = Some((c, vec![(d0, a)]));
+            }
+        }
+        for (pos, legs) in table.iter().enumerate().skip(1) {
+            let mut next: [Chain; 2] = [None, None];
+            for (arrived, st) in states.iter().enumerate() {
+                let Some((c0, chain)) = st else { continue };
+                // Departure side: the same lane, or the opposite one at a terminus.
+                let d = if is_terminus(n, pos) {
+                    1 - arrived
+                } else {
+                    arrived
+                };
+                for a in 0..2 {
+                    let Some(c) = cost(&legs[d][a]) else {
+                        continue;
+                    };
+                    if next[a].as_ref().is_none_or(|(b, _)| c0 + c < *b) {
+                        let mut ch = chain.clone();
+                        ch.push((d, a));
+                        next[a] = Some((c0 + c, ch));
+                    }
+                }
+            }
+            states = next;
+        }
+        // Closing: arriving at position 0 again on the lane the first leg left from, mirrored.
+        for (arrived, st) in states.iter().enumerate() {
+            if let Some((c, chain)) = st
+                && 1 - arrived == d0
+                && best.as_ref().is_none_or(|(b, _)| *c < *b)
+            {
+                best = Some((*c, chain.clone()));
+            }
+        }
+    }
+    let Some((_, chain)) = best else {
+        plan.errors.push(PlanError::NoPath {
+            leg: 0,
+            from: stops[0].0,
+            to: stops[n - 1].0,
+        });
+        return plan;
+    };
+    for (pos, &(d, a)) in chain.iter().enumerate() {
+        let path = table[pos][d][a].clone().expect("chosen");
+        let length_m = graph.rail_path_length(&path);
+        plan.length_m += length_m;
+        plan.cycle_s += path.cost;
+        plan.legs.push(Leg {
+            from: stops[visit_index(n, pos)].0,
+            to: stops[visit_index(n, pos + 1)].0,
+            time_s: path.cost,
+            length_m,
+            start: at(pos, sides[d]),
+            goal: at(pos + 1, sides[a]),
+            path,
+        });
     }
     plan
 }

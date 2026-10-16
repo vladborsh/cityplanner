@@ -11,7 +11,6 @@ const GLASS: [f32; 4] = [0.05, 0.07, 0.10, 0.0];
 const TYRE: [f32; 4] = [0.02, 0.02, 0.02, 0.0];
 const SKIN: [f32; 4] = [0.60, 0.42, 0.32, 0.0];
 const TINT: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-const BUS_BLUE: [f32; 4] = [0.12, 0.36, 0.75, 0.0];
 const BUS_CREAM: [f32; 4] = [0.93, 0.90, 0.80, 0.0];
 const BUS_ROOF: [f32; 4] = [0.55, 0.58, 0.62, 0.0];
 
@@ -93,9 +92,8 @@ pub fn vehicle_mesh(kind: usize, detail: usize) -> MeshData {
         }
         2 => {
             // Bus (T-158): a blue lower body, a cream upper one with a window band along the
-            // sides and glass at both ends, a grey roof. Fixed colours: the line's colour is not
-            // known to an agent batch.
-            push_box(&mut m, [-0.5, 0.1, -0.5], [0.5, 0.52, 0.5], BUS_BLUE);
+            // sides and glass at both ends, a grey roof. The lower body takes the instance colour: the colour of the bus's line.
+            push_box(&mut m, [-0.5, 0.1, -0.5], [0.5, 0.52, 0.5], TINT);
             push_box(&mut m, [-0.5, 0.52, -0.5], [0.5, 0.98, 0.5], BUS_CREAM);
             push_box(&mut m, [-0.505, 0.6, -0.46], [0.505, 0.88, 0.46], GLASS);
             push_box(&mut m, [-0.46, 0.6, 0.495], [0.46, 0.9, 0.505], GLASS);

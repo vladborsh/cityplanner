@@ -8,11 +8,11 @@ use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_WEEK};
 use cp_core::{Cost, Tick};
 use cp_net::NetGraph;
 use cp_service::RoadGraph;
-use cp_traffic::{Agents, RunPoint, RunState, ServiceRuns};
+use cp_traffic::{Access, Agents, RunPoint, RunState, ServiceRuns, Side};
 
 use crate::fleet::{Bus, BusPhase, TransitFleet, TransitLedger};
 use crate::model::{LineId, LineState, StopId, TransitMode, TransitNet};
-use crate::plan::LinePlans;
+use crate::plan::{LinePlans, is_terminus, visits};
 
 fn ticks_of(seconds: f32) -> u64 {
     ((seconds / MOVE_SECONDS_PER_TICK).ceil() as u64).max(1)
@@ -100,7 +100,13 @@ pub fn run_lines(
     }
 
     if now.0 > 0 && now.0.is_multiple_of(TICKS_PER_WEEK) {
-        ledger.upkeep += Cost::scaled(balance.bus_upkeep_week, fleet.buses.len() as f64);
+        for (_, bus) in fleet.buses.iter() {
+            let per_week = match transit.lines.get(bus.line).map(|l| l.mode) {
+                Some(TransitMode::Metro) => balance.metro_upkeep_week,
+                _ => balance.bus_upkeep_week,
+            };
+            ledger.upkeep += Cost::scaled(per_week, 1.0);
+        }
     }
 
     // The buses, in id order.
@@ -128,11 +134,38 @@ pub fn run_lines(
             }
             (_, BusPhase::Leaving) if standing => {
                 set_phase(&mut fleet, id, BusPhase::Dwell { idx: 0, until: now });
-                dwell(&mut fleet, id, now, balance.dwell_s);
+                let turn = turn_s(&transit, bus, 0, balance.metro_turn_s);
+                dwell(&mut fleet, id, now, balance.dwell_s + turn);
             }
             (_, BusPhase::Driving { idx }) if standing => {
                 set_phase(&mut fleet, id, BusPhase::Dwell { idx, until: now });
-                dwell(&mut fleet, id, now, balance.dwell_s);
+                let turn = turn_s(&transit, bus, idx, balance.metro_turn_s);
+                dwell(&mut fleet, id, now, balance.dwell_s + turn);
+            }
+            (_, BusPhase::Dwell { idx, until })
+                if standing
+                    && now >= until
+                    && transit
+                        .lines
+                        .get(bus.line)
+                        .is_some_and(|l| l.mode == TransitMode::Metro) =>
+            {
+                match metro_next(&transit, &fleet, &plans, id, bus, idx) {
+                    Some((next, goal, reverse)) => {
+                        let to = RunPoint::Access(goal);
+                        let _ = if reverse {
+                            runs.continue_run_reversed(bus.run, to)
+                        } else {
+                            runs.continue_run(bus.run, to)
+                        };
+                        set_phase(&mut fleet, id, BusPhase::Driving { idx: next });
+                    }
+                    None => {
+                        // No depot to drive to: a train that is not wanted is taken off here.
+                        runs.release(bus.run, &mut agents);
+                        fleet.buses.remove(id);
+                    }
+                }
             }
             (_, BusPhase::Dwell { idx, until }) if standing && now >= until => {
                 send_on(&transit, &fleet, &mut runs, id, bus, idx);
@@ -151,10 +184,14 @@ pub fn run_lines(
         let Some(line) = transit.lines.get(line_id) else {
             continue;
         };
-        if line.mode != TransitMode::Bus || line.stops.len() < 2 {
+        if line.mode == TransitMode::Train || line.stops.len() < 2 {
             continue;
         }
         if line.state == LineState::Broken {
+            continue;
+        }
+        if line.mode == TransitMode::Metro {
+            send_metro(&mut transit, &plans, &mut fleet, &mut runs, line_id, now);
             continue;
         }
         let active = fleet
@@ -282,4 +319,118 @@ fn next_phase(
         Some((next, stop)) if transit.access(stop).is_some() => BusPhase::Driving { idx: next },
         _ => BusPhase::ToDepot,
     }
+}
+
+/// Seconds a train stands longer to turn round when it is at the end of its line.
+fn turn_s(transit: &TransitNet, bus: Bus, idx: u16, turn_s: f32) -> f32 {
+    match transit.lines.get(bus.line) {
+        Some(l) if l.mode == TransitMode::Metro && is_terminus(l.stops.len(), usize::from(idx)) => {
+            turn_s
+        }
+        _ => 0.0,
+    }
+}
+
+/// Where a train standing at position `idx` of its ride goes next: the next position, the
+/// place on the track it goes to and whether it turns round first; `None` when it is surplus
+/// or its line cannot be run.
+fn metro_next(
+    transit: &TransitNet,
+    fleet: &TransitFleet,
+    plans: &LinePlans,
+    id: crate::BusId,
+    bus: Bus,
+    idx: u16,
+) -> Option<(u16, Access, bool)> {
+    let line = transit.lines.get(bus.line)?;
+    let n = line.stops.len();
+    if line.state == LineState::Broken || n < 2 {
+        return None;
+    }
+    let plan = plans.get(bus.line).filter(|p| p.is_ok())?;
+    if plan.legs.len() != visits(n) {
+        return None;
+    }
+    let rank = fleet
+        .of_line(bus.line)
+        .filter(|(_, b)| b.phase != BusPhase::ToDepot)
+        .position(|(b, _)| b == id)?;
+    if rank >= usize::from(line.vehicles) {
+        return None;
+    }
+    let pos = usize::from(idx) % visits(n);
+    let leg = plan.legs.get(pos)?;
+    Some((
+        ((pos + 1) % visits(n)) as u16,
+        leg.goal,
+        is_terminus(n, pos),
+    ))
+}
+
+/// Sends a train of the metro line `line_id` out of its first station when the line has fewer
+/// trains than it asks for and the headway is up. The train appears on the first platform (there
+/// is no depot) and runs the out-and-back ride from there.
+fn send_metro(
+    transit: &mut TransitNet,
+    plans: &LinePlans,
+    fleet: &mut TransitFleet,
+    runs: &mut ServiceRuns,
+    line_id: LineId,
+    now: Tick,
+) {
+    let Some(line) = transit.lines.get(line_id) else {
+        return;
+    };
+    let n = line.stops.len();
+    let active = fleet
+        .of_line(line_id)
+        .filter(|(_, b)| b.phase != BusPhase::ToDepot)
+        .count();
+    let wanted = usize::from(line.vehicles);
+    let Some(plan) = plans
+        .get(line_id)
+        .filter(|p| p.is_ok() && p.legs.len() == visits(n))
+    else {
+        return;
+    };
+    if active >= wanted {
+        return;
+    }
+    let cycle = plan.cycle_s;
+    let headway = (ticks_of(cycle) / wanted as u64).max(1);
+    let due = fleet
+        .last_out
+        .get(&line_id)
+        .is_none_or(|t| now.0 >= t.0 + headway);
+    if !due {
+        return;
+    }
+    let Some(crate::model::StopKind::Station { building, .. }) =
+        transit.stops.get(line.stops[0]).map(|s| s.kind)
+    else {
+        return;
+    };
+    // The train stands at the first platform on the lane it arrives on: the first leg leaves
+    // from the opposite one, after the turn.
+    let start = plan.legs[0].start;
+    let arrived = Access {
+        side: match start.side {
+            Side::Left => Side::Right,
+            Side::Right => Side::Left,
+        },
+        ..start
+    };
+    let run = runs.start_run(
+        VehicleKind::Metro,
+        RunPoint::Access(arrived),
+        RunPoint::Access(arrived),
+        true,
+    );
+    fleet.buses.insert(Bus {
+        line: line_id,
+        depot: building,
+        run,
+        phase: BusPhase::Leaving,
+    });
+    fleet.last_out.insert(line_id, now);
 }

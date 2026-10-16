@@ -87,7 +87,7 @@ pub enum TransitError {
     WrongStopKind,
     /// That building has no station stop.
     NoStation(BuildingId),
-    /// The mode has no road line yet (metro and train lines need stations).
+    /// The mode has no lines yet (intercity trains come later).
     ModeNotAvailable(TransitMode),
     Stop(StopError),
     Vehicles(u8),
@@ -273,7 +273,7 @@ pub fn apply(world: &mut World, cmd: &TransitCommand) -> Result<Cost, TransitErr
             .ok_or(TransitError::Missing)?;
         let (cost, touched) = match cmd {
             TransitCommand::CreateLine { mode, stops } => {
-                if *mode != TransitMode::Bus {
+                if *mode == TransitMode::Train {
                     return Err(TransitError::ModeNotAvailable(*mode));
                 }
                 let (resolved, fresh) = resolve(net, db, &transit, *mode, stops)?;
@@ -283,7 +283,13 @@ pub fn apply(world: &mut World, cmd: &TransitCommand) -> Result<Cost, TransitErr
                 let n = transit.lines.len() + 1;
                 let line = transit.lines.insert(Line {
                     mode: *mode,
-                    name: format!("Bus {n}"),
+                    name: format!(
+                        "{} {n}",
+                        match mode {
+                            TransitMode::Metro => "Metro",
+                            _ => "Bus",
+                        }
+                    ),
                     color: ((n - 1) % usize::from(PALETTE_LEN)) as u8,
                     stops: ids,
                     vehicles: DEFAULT_LINE_VEHICLES,

@@ -238,6 +238,14 @@ pub struct Balance {
     pub max_wait_s: f32,
     /// Price of one boarding, currency units (T-159). // tune later
     pub transit_fare: f32,
+    /// Weekly upkeep of one metro train that is out on a line, currency units (T-163).
+    /// // tune later
+    pub metro_upkeep_week: f32,
+    /// Price of one boarding of a metro train, currency units (T-163). // tune later
+    pub metro_fare: f32,
+    /// Seconds (movement clock) a train needs to turn round at the end of its line (T-163).
+    /// // tune later
+    pub metro_turn_s: f32,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
 }
@@ -353,6 +361,9 @@ impl Balance {
             self.car_speed_est,
             self.max_wait_s,
             self.transit_fare,
+            self.metro_upkeep_week,
+            self.metro_fare,
+            self.metro_turn_s,
         ]);
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
@@ -434,6 +445,9 @@ impl Default for Balance {
             car_speed_est: 9.0,
             max_wait_s: 900.0,
             transit_fare: 2.0,
+            metro_upkeep_week: 400.0,
+            metro_fare: 3.0,
+            metro_turn_s: 30.0,
             networks: Networks::default(),
         }
     }
@@ -806,6 +820,8 @@ pub enum VehicleKind {
     Truck = 1,
     Bus = 2,
     Emergency = 3,
+    /// A metro train (T-163).
+    Metro = 4,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

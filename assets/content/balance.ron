@@ -149,6 +149,11 @@ Balance((
     car_speed_est: 9.0,
     max_wait_s: 900.0,
     transit_fare: 2.0,
+    // Metro (T-163): weekly upkeep of a train out on a line, price of a boarding, seconds a
+    // train needs to turn round at a terminus.
+    metro_upkeep_week: 400.0,
+    metro_fare: 3.0,
+    metro_turn_s: 30.0,
 
     // --- Networks (T-181): distances of water, sewage and power // tune later ---
     // power_gap_m: largest gap between the footprint edges of two buildings over which one

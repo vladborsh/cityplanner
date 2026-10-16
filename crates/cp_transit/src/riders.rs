@@ -16,7 +16,7 @@ use cp_traffic::{Agents, RunPoint, RunState, ServiceRuns};
 
 use crate::fleet::{BusPhase, TransitFleet, TransitLedger};
 use crate::model::{Journey, LineId, LineState, Ride, Stage, StopId, TransitMode, TransitNet};
-use crate::plan::LinePlans;
+use crate::plan::{LinePlans, is_terminus, visit_index, visits};
 
 fn ticks_of(seconds: f32) -> u64 {
     ((seconds / MOVE_SECONDS_PER_TICK).ceil() as u64).max(1)
@@ -82,7 +82,7 @@ pub fn choose_transit(
         };
         let mut best: Option<(f32, Ride)> = None;
         for (line_id, line) in transit.lines.iter() {
-            if line.mode != TransitMode::Bus
+            if line.mode == TransitMode::Train
                 || line.state != LineState::Ok
                 || line.stops.len() < 2
                 || !fleet
@@ -94,7 +94,13 @@ pub fn choose_transit(
             let Some(plan) = plans.get(line_id).filter(|p| p.is_ok()) else {
                 continue;
             };
-            if plan.legs.len() != line.stops.len() {
+            let metro = line.mode == TransitMode::Metro;
+            let expected = if metro {
+                visits(line.stops.len())
+            } else {
+                line.stops.len()
+            };
+            if plan.legs.len() != expected {
                 continue;
             }
             let Some((ib, wa)) = nearest_stop(&transit, &line.stops, pa, balance.transit_walk_m)
@@ -110,10 +116,30 @@ pub fn choose_transit(
             }
             let n = line.stops.len();
             let mut ride = 0.0;
-            let mut i = ib;
-            while i != ia {
-                ride += plan.legs[i].time_s + balance.dwell_s;
-                i = (i + 1) % n;
+            if metro {
+                // Out and back: the first position of the ride that is the boarding stop, either
+                // way round, to the next one that is the alighting stop; the quicker counts.
+                ride = f32::INFINITY;
+                for start in 0..visits(n) {
+                    if visit_index(n, start) != ib {
+                        continue;
+                    }
+                    let (mut t, mut pos) = (0.0, start);
+                    while visit_index(n, pos) != ia || pos == start {
+                        t += plan.legs[pos % visits(n)].time_s + balance.dwell_s;
+                        if is_terminus(n, pos + 1) {
+                            t += balance.metro_turn_s;
+                        }
+                        pos += 1;
+                    }
+                    ride = ride.min(t);
+                }
+            } else {
+                let mut i = ib;
+                while i != ia {
+                    ride += plan.legs[i].time_s + balance.dwell_s;
+                    i = (i + 1) % n;
+                }
             }
             let headway = plan.cycle_s / f32::from(line.vehicles.max(1));
             let cost = wa / WALK_SPEED_MPS
@@ -198,10 +224,11 @@ pub fn run_riders(
         }
     }
     let max_wait = ticks_of(balance.max_wait_s);
-    let capacity = db
-        .vehicles()
-        .find(|(_, v)| v.kind == VehicleKind::Bus)
-        .map_or(0, |(_, v)| usize::from(v.capacity));
+    let capacity_of = |kind: VehicleKind| {
+        db.vehicles()
+            .find(|(_, v)| v.kind == kind)
+            .map_or(0, |(_, v)| usize::from(v.capacity))
+    };
     let pos_of_stop = |t: &TransitNet, s: StopId| t.stops.get(s).map(|st| st.pos);
     let pos_of_building = |b: cp_building::BuildingId| buildings.get(b).map(|b| b.pos);
 
@@ -213,8 +240,42 @@ pub fn run_riders(
         let Some(line) = transit.lines.get(bus.line) else {
             continue;
         };
-        let Some(&stop) = line.stops.get(usize::from(idx)) else {
+        let metro = line.mode == TransitMode::Metro;
+        // A bus's phase names a stop of the ring, a train's a position of its out-and-back ride.
+        let stop_idx = if metro && line.stops.len() >= 2 {
+            visit_index(line.stops.len(), usize::from(idx))
+        } else {
+            usize::from(idx)
+        };
+        let Some(&stop) = line.stops.get(stop_idx) else {
             continue;
+        };
+        let capacity = capacity_of(if metro {
+            VehicleKind::Metro
+        } else {
+            VehicleKind::Bus
+        });
+        let fare = if metro {
+            balance.metro_fare
+        } else {
+            balance.transit_fare
+        };
+        // The stops a train serves before it turns round: only riders bound for one of them
+        // get in.
+        let ahead: Vec<StopId> = if metro {
+            let n = line.stops.len();
+            let mut v = Vec::new();
+            let mut pos = usize::from(idx) + 1;
+            loop {
+                v.push(line.stops[visit_index(n, pos)]);
+                if is_terminus(n, pos) || v.len() > n {
+                    break;
+                }
+                pos += 1;
+            }
+            v
+        } else {
+            Vec::new()
         };
         // Out.
         let leaving: Vec<TripId> = transit
@@ -250,7 +311,11 @@ pub fn run_riders(
             .riders
             .iter()
             .filter_map(|(&t, j)| match (j.stage, j.ride()) {
-                (Stage::Waiting { since }, Some(r)) if r.line == bus.line && r.board == stop => {
+                (Stage::Waiting { since }, Some(r))
+                    if r.line == bus.line
+                        && r.board == stop
+                        && (!metro || ahead.contains(&r.alight)) =>
+                {
                     Some((since, t))
                 }
                 _ => None,
@@ -261,7 +326,7 @@ pub fn run_riders(
             if let Some(j) = transit.riders.get_mut(&tid) {
                 j.stage = Stage::Riding { bus: bus_id };
             }
-            ledger.fares += Cost::scaled(balance.transit_fare, 1.0);
+            ledger.fares += Cost::scaled(fare, 1.0);
             let s = transit.stats.entry(bus.line).or_default();
             s.riders_today += 1;
             s.riders_week += 1;

@@ -525,7 +525,9 @@ impl SimRunner {
             world.get_resource::<JunctionGeometry>(),
         ) {
             (Some(agents), Some(pnet), Some(net), Some(geo)) => {
-                Arc::new(agents.frame(pnet.graph(), net, geo))
+                let mut frame = agents.frame(pnet.graph(), net, geo);
+                tint_buses(world, agents, &mut frame);
+                Arc::new(frame)
             }
             _ => Arc::default(),
         };
@@ -646,6 +648,36 @@ impl SimRunner {
                 .collect(),
             commands_pending: world.resource::<CommandQueue<SimCommand>>().len(),
             commands_applied: world.resource::<CommandLog<SimCommand>>().len(),
+        }
+    }
+}
+
+/// Gives the buses of lines the colour of their line (T-163): the run of a bus names its
+/// vehicle, the bus its line.
+fn tint_buses(world: &World, agents: &cp_traffic::Agents, frame: &mut AgentFrame) {
+    let (Some(fleet), Some(transit)) = (
+        world.get_resource::<cp_transit::TransitFleet>(),
+        world.get_resource::<cp_transit::TransitNet>(),
+    ) else {
+        return;
+    };
+    let mut by_run: std::collections::BTreeMap<cp_traffic::RunId, [u8; 3]> = Default::default();
+    for (_, bus) in fleet.buses.iter() {
+        if let Some(line) = transit.lines.get(bus.line) {
+            let i = usize::from(line.color) % cp_transit::LINE_PALETTE_RGB.len();
+            by_run.insert(bus.run, cp_transit::LINE_PALETTE_RGB[i]);
+        }
+    }
+    if by_run.is_empty() {
+        return;
+    }
+    for (id, v) in agents.vehicles() {
+        let Some(color) = cp_traffic::run_of(v).and_then(|r| by_run.get(&r)) else {
+            continue;
+        };
+        let key = cp_traffic::agent_key(id.index, id.generation);
+        if let Ok(i) = frame.vehicles.binary_search_by_key(&key, |p| p.key) {
+            frame.vehicles[i].tint = Some(*color);
         }
     }
 }

@@ -23,6 +23,7 @@ fn veh(key: u64, x: f32, yaw: f32) -> VehiclePose {
         pos: Vec3::new(x, 0.0, 0.0),
         yaw,
         speed: 10.0,
+        tint: None,
     }
 }
 

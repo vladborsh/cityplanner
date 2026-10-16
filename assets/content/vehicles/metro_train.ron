@@ -1,0 +1,13 @@
+Vehicle((
+    id: "metro_train",
+    name: "Metro train",
+    kind: Metro,
+    length: 60.0,
+    width: 3.0,
+    max_speed_kmh: 80.0, // tune later
+    accel: 1.0,
+    decel: 1.2,
+    min_gap: 5.0,
+    capacity: 180, // tune later
+    mesh: "vehicle/metro_train",
+))

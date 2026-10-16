@@ -294,7 +294,10 @@ pub fn build_vehicles(
             let kind = usize::from(c.kind).min(VEHICLE_KINDS - 1);
             let hash = mix(c.key);
             let size = looks.sizes[kind];
-            let col = vehicle_color(kind, hash);
+            let col = c
+                .tint
+                .map(|t| t.map(|v| f32::from(v) / 255.0))
+                .unwrap_or_else(|| vehicle_color(kind, hash));
             out.vehicles[kind][detail].push(InstanceData {
                 pos_yaw: [pos.x, pos.y, pos.z, yaw],
                 scale_phase: [size.x, size.y, size.z, 0.0],

@@ -203,6 +203,27 @@ impl ServiceRuns {
         Ok(())
     }
 
+    /// [`Self::continue_run`] for a train that turns round at the end of its line (T-163): the
+    /// next leg starts from the opposite lane of the same segment at the same place (the other
+    /// `side` of the access point it stands at). The turn-round time is the caller's to wait.
+    pub fn continue_run_reversed(&mut self, id: RunId, to: RunPoint) -> Result<(), RunError> {
+        let run = self.runs.get(&id).ok_or(RunError::NoSuchRun)?;
+        let RunPoint::Access(at) = run.to else {
+            return Err(RunError::NotAtGoal);
+        };
+        self.continue_run(id, to)?;
+        if let Some(run) = self.runs.get_mut(&id) {
+            run.from = RunPoint::Access(Access {
+                side: match at.side {
+                    Side::Left => Side::Right,
+                    Side::Right => Side::Left,
+                },
+                ..at
+            });
+        }
+        Ok(())
+    }
+
     /// Ends a run and takes its vehicle, if any, off the road, freeing its slot in the pool.
     /// Works in every state; returns whether the run existed.
     pub fn release(&mut self, id: RunId, agents: &mut Agents) -> bool {
@@ -314,6 +335,17 @@ fn run_request(
         RunPoint::Access(a) => Some(a),
         _ => None,
     };
+    if run.kind == VehicleKind::Metro as u8 {
+        // A train goes between two places on the track, on the lanes the access points name.
+        let (RunPoint::Access(from), RunPoint::Access(to)) = (run.from, run.to) else {
+            return None;
+        };
+        return Some(PathRequest {
+            mode: Mode::Rail,
+            from,
+            to,
+        });
+    }
     if from_lane.is_none()
         && let (Some(a), Some(b)) = (plain(run.from), plain(run.to))
     {
@@ -470,6 +502,13 @@ pub fn receive_service_paths(
         }
         match &outcome.result {
             PathResult::Stale => runs.set_state(id, RunState::Planned),
+            // A train is not an agent: it arrives when the route's time is up.
+            PathResult::Rail(Ok(path)) if run.kind == VehicleKind::Metro as u8 => runs.set_state(
+                id,
+                RunState::Timer {
+                    arrive_at: Tick(tick.0 + travel_ticks(path.cost)),
+                },
+            ),
             PathResult::Car(Ok(path)) => {
                 if agents.vehicle_count() < limits.vehicles as usize {
                     agents.spawn_service_vehicle(Vehicle {

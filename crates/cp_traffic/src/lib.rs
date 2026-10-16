@@ -25,7 +25,7 @@ pub use graph::{
     Access, CONGESTION_K, CongestionMap, LEFT_TURN_PENALTY, PED_SPEED, PathGraph, SegEnd, Side,
     U_TURN_PENALTY,
 };
-pub use pose::{AgentFrame, AgentKey, PedestrianPose, VehiclePose};
+pub use pose::{AgentFrame, AgentKey, PedestrianPose, VehiclePose, agent_key};
 pub use runs::{
     RunError, RunId, RunPoint, RunState, SERVICE_GEN, ServiceRun, ServiceRuns, WALK_KIND,
     advance_service_runs, receive_service_paths, route_service_runs, run_of, walk_run_of,
