@@ -937,4 +937,46 @@ mod blockers {
         assert_eq!(w.grid.blockers().len(), 1);
         assert_ne!(before.valid_cells(), w.grid.valid_cells());
     }
+
+    /// BUG-033: adding and removing rectangles one at a time (only the changed ones are
+    /// revalidated) gives exactly the validity masks of setting the final list at once.
+    #[test]
+    fn incremental_blockers_match_a_full_recompute() {
+        let mut inc = world();
+        let cells: Vec<ZoneCellRef> = {
+            let (block, b) = inc.grid.blocks().next().unwrap();
+            (0..b.cell_count() as u16)
+                .step_by(3)
+                .map(|cell| ZoneCellRef { block, cell })
+                .collect()
+        };
+        let quads: Vec<_> = cells
+            .iter()
+            .enumerate()
+            .map(|(i, &c)| rect(&inc.grid, c, 0.3 + 0.1 * (i % 6) as f32))
+            .collect();
+        let mut list = Vec::new();
+        for q in &quads {
+            list.push(*q);
+            inc.grid.set_blockers(list.clone());
+        }
+        // Drop every other one, then move one.
+        let mut keep: Vec<_> = quads.iter().copied().step_by(2).collect();
+        inc.grid.set_blockers(keep.clone());
+        keep[0] = quads[1];
+        inc.grid.set_blockers(keep.clone());
+
+        let mut full = world();
+        full.grid.set_blockers(keep);
+        let masks = |g: &ZoneGrid| -> Vec<bool> {
+            g.blocks()
+                .flat_map(|(block, b)| {
+                    (0..b.cell_count() as u16).map(move |cell| ZoneCellRef { block, cell })
+                })
+                .map(|c| g.is_valid(c))
+                .collect()
+        };
+        assert_eq!(masks(&inc.grid), masks(&full.grid));
+        assert_ne!(masks(&inc.grid), masks(&world().grid));
+    }
 }

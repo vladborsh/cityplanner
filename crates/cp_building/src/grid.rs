@@ -38,6 +38,15 @@ pub struct BuildingGrid {
     /// Produced by the `Commands` phase and drained a phase later, so a save taken on pause
     /// right after a `Demolish` still holds it: it is saved (since format 13) and hashed.
     removed: Vec<BuildingId>,
+    /// Ids of the free-standing buildings (§8.1); derived, rebuilt on demand like `pending`.
+    #[serde(skip)]
+    free: BTreeSet<BuildingId>,
+    #[serde(skip)]
+    free_ready: bool,
+    /// Changes whenever a free-standing building is added, removed or touched through
+    /// `get_mut`, and on creation and load: the zone grid's blockers need a refresh only then.
+    #[serde(skip, default = "next_revision")]
+    free_epoch: u64,
 }
 
 impl Default for BuildingGrid {
@@ -48,6 +57,9 @@ impl Default for BuildingGrid {
             pending_ready: false,
             revision: next_revision(),
             removed: Vec::new(),
+            free: BTreeSet::new(),
+            free_ready: false,
+            free_epoch: next_revision(),
         }
     }
 }
@@ -82,6 +94,9 @@ impl BuildingGrid {
     /// Mutable access; counts as a change for [`BuildingGrid::revision`].
     pub fn get_mut(&mut self, id: BuildingId) -> Option<&mut Building> {
         self.revision = next_revision();
+        if self.free.contains(&id) {
+            self.free_epoch = next_revision();
+        }
         self.buildings.get_mut(id)
     }
 
@@ -118,7 +133,14 @@ impl BuildingGrid {
         self.revision = next_revision();
         let under = b.state == BuildingState::UnderConstruction;
         let ready = b.ready_at.0;
+        let is_free = matches!(b.footprint, crate::model::Footprint::Free { .. });
         let id = self.buildings.insert(b);
+        if is_free {
+            self.free_epoch = next_revision();
+            if self.free_ready {
+                self.free.insert(id);
+            }
+        }
         if under && self.pending_ready {
             self.pending.insert((ready, id));
         }
@@ -130,6 +152,10 @@ impl BuildingGrid {
         let b = self.buildings.remove(id)?;
         self.revision = next_revision();
         self.pending.remove(&(b.ready_at.0, id));
+        if matches!(b.footprint, crate::model::Footprint::Free { .. }) {
+            self.free_epoch = next_revision();
+            self.free.remove(&id);
+        }
         self.removed.push(id);
         Some(b)
     }
@@ -151,6 +177,30 @@ impl BuildingGrid {
         self.revision = next_revision();
         self.buildings.get_mut(id).expect("building").flags.0 = new;
         true
+    }
+
+    /// See the field: compare with the value of the last refresh of the zone blockers.
+    pub fn free_epoch(&self) -> u64 {
+        self.free_epoch
+    }
+
+    /// The rectangles of the free-standing buildings in id order, for
+    /// `ZoneGrid::set_blockers`. Walks only those buildings once the index is built.
+    pub fn free_quads(&mut self) -> Vec<cp_zone::geom::Quad> {
+        if !self.free_ready {
+            self.free = self
+                .buildings
+                .iter()
+                .filter(|(_, b)| matches!(b.footprint, crate::model::Footprint::Free { .. }))
+                .map(|(id, _)| id)
+                .collect();
+            self.free_ready = true;
+        }
+        self.free
+            .iter()
+            .filter_map(|&id| self.buildings.get(id))
+            .map(|b| b.footprint_polygon())
+            .collect()
     }
 
     /// The saved parts: the building arena and the pending removed ids.
@@ -343,5 +393,40 @@ mod revision_tests {
         assert_ne!(loaded.revision(), before);
         assert_ne!(loaded.revision(), loaded2.revision());
         assert_eq!(loaded, g, "contents survive; only the revision is new");
+    }
+
+    /// BUG-033: the zone blockers are refreshed only when a free-standing building changes.
+    #[test]
+    fn the_free_epoch_moves_only_for_free_standing_buildings() {
+        let mut g = BuildingGrid::new();
+        assert!(g.free_quads().is_empty());
+        let e0 = g.free_epoch();
+        let lot = g.insert(building());
+        g.get_mut(lot).unwrap().level = 2;
+        g.remove(lot);
+        assert_eq!(g.free_epoch(), e0, "lot buildings never touch it");
+
+        let free = || Building {
+            footprint: crate::model::Footprint::Free { w: 2, d: 2 },
+            access: None,
+            pos: bevy_math::Vec2::new(500.0, 500.0),
+            ..building()
+        };
+        let id = g.insert(free());
+        let e1 = g.free_epoch();
+        assert_ne!(e1, e0);
+        assert_eq!(g.free_quads().len(), 1);
+        g.get_mut(id).unwrap().pos = bevy_math::Vec2::new(600.0, 500.0);
+        let e2 = g.free_epoch();
+        assert_ne!(e2, e1, "a moved free building");
+        g.insert(free());
+        assert_eq!(g.free_quads().len(), 2);
+        g.remove(id);
+        assert_ne!(g.free_epoch(), e2);
+        assert_eq!(g.free_quads().len(), 1);
+        // A grid loaded from bytes rebuilds the list from its buildings.
+        let bytes = postcard::to_stdvec(&g).unwrap();
+        let mut loaded: BuildingGrid = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(loaded.free_quads(), g.free_quads());
     }
 }

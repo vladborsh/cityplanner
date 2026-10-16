@@ -259,9 +259,10 @@ pub fn update_buildings(
     mut synced: Local<u64>,
 ) {
     buildings.finish_construction(tick.0);
-    if *synced != buildings.revision() {
-        *synced = buildings.revision();
-        crate::free::sync_blockers(&mut zones, &buildings);
+    if *synced != buildings.free_epoch() {
+        *synced = buildings.free_epoch();
+        let quads = buildings.free_quads();
+        zones.set_blockers(quads);
     }
     revalidate_access(&net, &mut buildings, tick.0);
     let Some(content) = content else { return };

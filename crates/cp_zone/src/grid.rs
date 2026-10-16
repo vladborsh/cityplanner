@@ -223,6 +223,45 @@ fn bucket_range(b: Bounds, size: f32) -> impl Iterator<Item = (i32, i32)> {
     (x0..=x1).flat_map(move |x| (z0..=z1).map(move |z| (x, z)))
 }
 
+/// The rectangles in exactly one of `old` and `new` (as multisets, compared bit for bit).
+fn quads_changed(old: &[Quad], new: &[Quad]) -> Vec<Quad> {
+    let key = |q: &Quad| q.map(|p| [p.x.to_bits(), p.y.to_bits()]);
+    let sorted = |list: &[Quad]| {
+        let mut v: Vec<_> = list.iter().map(|q| (key(q), *q)).collect();
+        v.sort_by_key(|e| e.0);
+        v
+    };
+    let (a, b) = (sorted(old), sorted(new));
+    let (mut i, mut j) = (0, 0);
+    let mut out = Vec::new();
+    while i < a.len() || j < b.len() {
+        match (a.get(i), b.get(j)) {
+            (Some(x), Some(y)) if x.0 == y.0 => {
+                i += 1;
+                j += 1;
+            }
+            (Some(x), Some(y)) if x.0 < y.0 => {
+                out.push(x.1);
+                i += 1;
+            }
+            (Some(_), Some(y)) => {
+                out.push(y.1);
+                j += 1;
+            }
+            (Some(x), None) => {
+                out.push(x.1);
+                i += 1;
+            }
+            (None, Some(y)) => {
+                out.push(y.1);
+                j += 1;
+            }
+            (None, None) => unreachable!(),
+        }
+    }
+    out
+}
+
 fn inflate(b: Bounds, by: f32) -> Bounds {
     (b.0 - Vec2::splat(by), b.1 + Vec2::splat(by))
 }
@@ -256,6 +295,10 @@ pub struct ZoneGrid {
     /// masks already account for them).
     #[serde(skip)]
     blockers: Vec<Quad>,
+    /// `blockers` by [`BLOCK_BUCKET`] bucket (indices into the list), so a cell looks only at
+    /// the rectangles near it. Derived from `blockers`.
+    #[serde(skip)]
+    blocker_buckets: BTreeMap<(i32, i32), Vec<u32>>,
     /// The map, for the water and slope rule. Derived input, not saved; set with
     /// [`ZoneGrid::set_terrain`].
     #[serde(skip)]
@@ -707,13 +750,21 @@ impl ZoneGrid {
         if self.blockers == blockers {
             return;
         }
-        let old = std::mem::replace(&mut self.blockers, blockers);
+        // Only the rectangles that came or went change any cell (BUG-033).
+        let changed = quads_changed(&self.blockers, &blockers);
+        self.blockers = blockers;
+        self.blocker_buckets.clear();
+        for (i, q) in self.blockers.iter().enumerate() {
+            for key in bucket_range(quad_aabb(q), BLOCK_BUCKET) {
+                self.blocker_buckets.entry(key).or_default().push(i as u32);
+            }
+        }
         self.revision = next_revision();
         if !self.index.built {
             return;
         }
         let mut work: BTreeSet<ZoneBlockId> = BTreeSet::new();
-        for q in old.iter().chain(self.blockers.iter()) {
+        for q in &changed {
             let region = inflate(quad_aabb(q), REACH);
             for key in bucket_range(region, BLOCK_BUCKET) {
                 if let Some(set) = self.index.block_buckets.get(&key) {
@@ -735,13 +786,20 @@ impl ZoneGrid {
         }
         let (lo, hi) = o.aabb();
         let cell = o.corners();
-        self.blockers.iter().any(|q| {
-            let (qlo, qhi) = quad_aabb(q);
-            if qhi.x < lo.x || qlo.x > hi.x || qhi.y < lo.y || qlo.y > hi.y {
-                return false;
-            }
-            quad_contains(&crate::geom::ccw(q), o.c)
-                || quad_intersection_area(&cell, q) >= 0.5 * (2.0 * o.half) * (2.0 * o.half)
+        bucket_range((lo, hi), BLOCK_BUCKET).any(|key| {
+            self.blocker_buckets
+                .get(&key)
+                .into_iter()
+                .flatten()
+                .any(|&i| {
+                    let q = &self.blockers[i as usize];
+                    let (qlo, qhi) = quad_aabb(q);
+                    if qhi.x < lo.x || qlo.x > hi.x || qhi.y < lo.y || qlo.y > hi.y {
+                        return false;
+                    }
+                    quad_contains(&crate::geom::ccw(q), o.c)
+                        || quad_intersection_area(&cell, q) >= 0.5 * (2.0 * o.half) * (2.0 * o.half)
+                })
         })
     }
 
