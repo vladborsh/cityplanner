@@ -145,6 +145,8 @@ pub fn sections(view: &SimView) -> Vec<Section> {
         spark: spark(s, |h| h.pollution),
     });
 
+    out.push(services_section(view));
+
     out.push(Section {
         title: "Budget",
         rows: vec![
@@ -155,6 +157,83 @@ pub fn sections(view: &SimView) -> Vec<Section> {
         spark: spark(s, |h| h.balance.0 as f32),
     });
     out
+}
+
+/// The M2 services (T-137): per kind the share of the buildings with people in them that a
+/// service reaches, then the garbage piled up, the sick, the dead, fires and crime. A kind
+/// with no building yet, and a count of nothing, read "—".
+fn services_section(view: &SimView) -> Section {
+    use cp_building::BuildingState;
+    use cp_content::ServiceKind;
+    const NONE: &str = "—";
+    let kinds = [
+        (ServiceKind::Garbage, "Garbage coverage"),
+        (ServiceKind::Health, "Health coverage"),
+        (ServiceKind::Deathcare, "Deathcare coverage"),
+        (ServiceKind::Fire, "Fire coverage"),
+        (ServiceKind::Police, "Police coverage"),
+        (ServiceKind::Education, "Education coverage"),
+    ];
+    let mut rows = Vec::new();
+    let db = view.content.as_deref();
+    for (kind, label) in kinds {
+        let mut have = false;
+        let (mut served, mut total) = (0u32, 0u32);
+        if let Some(db) = db {
+            for (_, b) in view
+                .buildings
+                .iter()
+                .filter(|(_, b)| b.state == BuildingState::Active)
+            {
+                let def = db.building(b.def);
+                let svc = def
+                    .service
+                    .as_deref()
+                    .and_then(|s| db.service_id(s))
+                    .map(|s| db.service(s).kind);
+                if svc == Some(kind) {
+                    have = true;
+                }
+                if svc.is_none() && (def.households > 0 || def.jobs.iter().any(|&j| j > 0)) {
+                    total += 1;
+                    served += u32::from(view.service.coverage_of(kind, b) > 0.0);
+                }
+            }
+        }
+        rows.push(row(
+            label,
+            if have && total > 0 {
+                percent(served as f32 / total as f32)
+            } else {
+                NONE.to_string()
+            },
+        ));
+    }
+    let garbage: u32 = view
+        .service_state
+        .records()
+        .map(|(_, r)| u32::from(r.garbage))
+        .sum();
+    let counts = view.service_state.summary().counts;
+    let count = |n: u32| {
+        if n == 0 {
+            NONE.to_string()
+        } else {
+            n.to_string()
+        }
+    };
+    rows.push(row("Garbage piled up", count(garbage)));
+    rows.push(row("Sick", count(counts[1])));
+    rows.push(row("Dead", count(counts[2])));
+    rows.push(row("Fires", count(counts[3])));
+    rows.push(row("Crime", count(counts[4])));
+    // Students and places arrive with the education rows.
+    rows.push(row("Students / places", NONE));
+    Section {
+        title: "Services",
+        rows,
+        spark: None,
+    }
 }
 
 /// A line through `values` filling `size`, scaled to their own min and max (flat when they
@@ -286,6 +365,54 @@ mod tests {
             metrics_window(ui.ctx(), &mut open, &view);
         });
         assert!(shown.is_empty());
+    }
+
+    #[test]
+    fn the_services_section_shows_the_coverage_from_the_view_and_dashes_for_nothing() {
+        use cp_building::{AccessPoint, BuildingGrid, BuildingState};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let terrain = Arc::new(Terrain::load(&root.join("assets/maps/flatlands")).unwrap());
+        let content = Arc::new(ContentDb::load_dir(root.join("assets/content")).unwrap());
+        let (mut sim, _) = grid_city(
+            200,
+            3,
+            terrain,
+            Arc::clone(&content),
+            &GridCityConfig::default(),
+        );
+        let secs = sections(&sim.view());
+        assert_eq!(value(&secs, "Services", "Garbage coverage"), "—");
+        // A landfill on the first street.
+        let seg = sim
+            .world()
+            .resource::<cp_net::NetGraph>()
+            .segments()
+            .next()
+            .unwrap()
+            .0;
+        let mut b = sim
+            .world()
+            .resource::<BuildingGrid>()
+            .iter()
+            .next()
+            .unwrap()
+            .1
+            .clone();
+        b.def = content.building_id("landfill").unwrap();
+        b.state = BuildingState::Active;
+        b.set_access(Some(AccessPoint {
+            segment: seg,
+            t: 0.5,
+        }));
+        sim.world_mut().resource_mut::<BuildingGrid>().insert(b);
+        for _ in 0..128 {
+            sim.tick_once();
+        }
+        let secs = sections(&sim.view());
+        let got = value(&secs, "Services", "Garbage coverage");
+        assert!(got.ends_with(" %") && got != "0 %", "{got}");
+        assert_eq!(value(&secs, "Services", "Fire coverage"), "—");
+        assert_eq!(value(&secs, "Services", "Sick"), "—");
     }
 
     #[test]

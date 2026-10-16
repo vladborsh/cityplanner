@@ -77,6 +77,12 @@ icons! {
     OverlayWater => "overlay_water",
     OverlayPower => "overlay_power",
     OverlayDistricts => "overlay_districts",
+    OverlayGarbage => "overlay_garbage",
+    OverlayHealth => "overlay_health",
+    OverlayDeathcare => "overlay_deathcare",
+    OverlayFire => "overlay_fire",
+    OverlayPolice => "overlay_police",
+    OverlayEducation => "overlay_education",
     RemovePipe => "remove_pipe",
     RemoveLine => "remove_line",
     // Zone types (T-099): one silhouette each.
@@ -182,6 +188,12 @@ pub fn overlay_icon(overlay: cp_render::Overlay) -> Icon {
         O::Water => Icon::OverlayWater,
         O::Power => Icon::OverlayPower,
         O::Districts => Icon::OverlayDistricts,
+        O::Garbage => Icon::OverlayGarbage,
+        O::Health => Icon::OverlayHealth,
+        O::Deathcare => Icon::OverlayDeathcare,
+        O::Fire => Icon::OverlayFire,
+        O::Police => Icon::OverlayPolice,
+        O::Education => Icon::OverlayEducation,
     }
 }
 

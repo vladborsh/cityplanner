@@ -142,7 +142,13 @@ fn ribbon(
 }
 
 /// Lot cells of `b` as flat quads.
-fn lot_quads(m: &mut MeshData, b: &Building, zones: &ZoneGrid, terrain: &Terrain, c: [f32; 4]) {
+pub(super) fn lot_quads(
+    m: &mut MeshData,
+    b: &Building,
+    zones: &ZoneGrid,
+    terrain: &Terrain,
+    c: [f32; 4],
+) {
     let Some(lot) = b.lot() else {
         return;
     };

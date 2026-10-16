@@ -16,8 +16,8 @@ pub use checksum::{Fnv1a, SimChecksum};
 pub use command::{DebugCommand, SimCommand, dispatch_commands, init_command_resources};
 pub use cp_traffic::{AgentFrame, PedestrianPose, VehiclePose};
 pub use inspect::{
-    BuildingInfo, CitizenInfo, Inspection, SegmentInfo, Selection, TripInfo, Trouble, VehicleInfo,
-    flag_names, key_parts,
+    BuildingInfo, CitizenInfo, Inspection, SegmentInfo, Selection, ServiceInfo, TripInfo, Trouble,
+    VehicleInfo, flag_names, key_parts,
 };
 pub use overlay::{OverlayData, ScalarGrid, ZoneCellView, ZoneOverlay};
 pub use phase::SimPhase;

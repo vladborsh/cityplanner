@@ -881,14 +881,14 @@ mod tests {
         assert!(bar.state.view_menu_open);
         assert_eq!(bar.rects.overlays.len(), Overlay::ALL.len());
         bar.frame(vec![]);
-        // 2 rows of 4.
+        // 4 rows of 4 (the last holds two).
         let ys: std::collections::BTreeSet<i32> = bar
             .rects
             .overlays
             .iter()
             .map(|(_, r)| r.top().round() as i32)
             .collect();
-        assert_eq!(ys.len(), 2, "{:?}", bar.rects.overlays);
+        assert_eq!(ys.len(), 4, "{:?}", bar.rects.overlays);
         let at = bar
             .rects
             .overlays

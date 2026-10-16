@@ -79,13 +79,12 @@ fn kind_icon(kind: ServiceKind) -> Icon {
         ServiceKind::Power => Icon::Power,
         ServiceKind::Sewage => Icon::Pipe,
         ServiceKind::Roads => Icon::Roads,
-        // The M2 services get their own icons with their UI rows.
-        ServiceKind::Garbage
-        | ServiceKind::Health
-        | ServiceKind::Deathcare
-        | ServiceKind::Fire
-        | ServiceKind::Police
-        | ServiceKind::Education => Icon::Roads,
+        ServiceKind::Garbage => Icon::OverlayGarbage,
+        ServiceKind::Health => Icon::OverlayHealth,
+        ServiceKind::Deathcare => Icon::OverlayDeathcare,
+        ServiceKind::Fire => Icon::OverlayFire,
+        ServiceKind::Police => Icon::OverlayPolice,
+        ServiceKind::Education => Icon::OverlayEducation,
     }
 }
 
@@ -239,6 +238,8 @@ pub fn buildings_panel(
                 {
                     select(tools, card.id);
                     if let Some((_, _, shown)) = net {
+                        overlay.active = shown;
+                    } else if let Some(shown) = Overlay::for_service(section.kind) {
                         overlay.active = shown;
                     }
                 }

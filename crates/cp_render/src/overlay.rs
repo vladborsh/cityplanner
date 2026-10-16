@@ -15,7 +15,7 @@ use bevy::camera::primitives::Aabb;
 use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use cp_content::ZoneType;
+use cp_content::{ServiceKind, ZoneType};
 use cp_net::NetGraph;
 use cp_sim::{ScalarGrid, SimView, ZoneOverlay};
 use cp_terrain::{MAP_SIZE, Terrain};
@@ -24,12 +24,14 @@ use crate::chunk::{MeshData, select_lod, terrain_mesh_height};
 use crate::material::VertexColorMaterial;
 
 mod districts;
+mod service;
 mod tiles;
 mod utility;
 mod zone_chunks;
 pub use districts::{
     DistrictLayer, DistrictLayers, DistrictsMode, contour_edges, contour_mesh, fill_mesh,
 };
+pub use service::{coverage_color, service_overlay_mesh};
 pub use tiles::{border_edges, border_mesh, shade_mesh};
 pub use utility::{
     BuildingStatus, UtilityLayer, building_status, coverage_counts, status_color,
@@ -52,10 +54,17 @@ pub enum Overlay {
     Power,
     /// District cells and borders (T-133).
     Districts,
+    /// Road coverage and the buildings of one M2 service kind (T-137).
+    Garbage,
+    Health,
+    Deathcare,
+    Fire,
+    Police,
+    Education,
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 8] = [
+    pub const ALL: [Overlay; 14] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
@@ -64,7 +73,41 @@ impl Overlay {
         Overlay::Water,
         Overlay::Power,
         Overlay::Districts,
+        Overlay::Garbage,
+        Overlay::Health,
+        Overlay::Deathcare,
+        Overlay::Fire,
+        Overlay::Police,
+        Overlay::Education,
     ];
+
+    /// The overlay of an M2 service kind; `None` for the utility kinds (their own overlays).
+    pub fn for_service(kind: ServiceKind) -> Option<Overlay> {
+        Some(match kind {
+            ServiceKind::Garbage => Overlay::Garbage,
+            ServiceKind::Health => Overlay::Health,
+            ServiceKind::Deathcare => Overlay::Deathcare,
+            ServiceKind::Fire => Overlay::Fire,
+            ServiceKind::Police => Overlay::Police,
+            ServiceKind::Education => Overlay::Education,
+            ServiceKind::Water | ServiceKind::Power | ServiceKind::Roads | ServiceKind::Sewage => {
+                return None;
+            }
+        })
+    }
+
+    /// The service kind this overlay shows the coverage of.
+    pub fn service_kind(self) -> Option<ServiceKind> {
+        Some(match self {
+            Overlay::Garbage => ServiceKind::Garbage,
+            Overlay::Health => ServiceKind::Health,
+            Overlay::Deathcare => ServiceKind::Deathcare,
+            Overlay::Fire => ServiceKind::Fire,
+            Overlay::Police => ServiceKind::Police,
+            Overlay::Education => ServiceKind::Education,
+            _ => return None,
+        })
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -76,6 +119,12 @@ impl Overlay {
             Overlay::Water => "Water",
             Overlay::Power => "Power",
             Overlay::Districts => "Districts",
+            Overlay::Garbage => "Garbage",
+            Overlay::Health => "Health",
+            Overlay::Deathcare => "Deathcare",
+            Overlay::Fire => "Fire",
+            Overlay::Police => "Police",
+            Overlay::Education => "Education",
         }
     }
 }
@@ -417,9 +466,19 @@ pub fn road_mesh(
     net: &NetGraph,
     load: &std::collections::BTreeMap<cp_net::SegmentId, f32>,
 ) -> MeshData {
+    road_ribbons(net, |id| {
+        Some(load.get(&id).map_or(NO_DATA, |l| traffic_color(*l)))
+    })
+}
+
+/// A ribbon along every segment `color` gives a colour to.
+pub(crate) fn road_ribbons(
+    net: &NetGraph,
+    color: impl Fn(cp_net::SegmentId) -> Option<[f32; 4]>,
+) -> MeshData {
     let mut m = MeshData::default();
     for (id, seg) in net.segments() {
-        let color = load.get(&id).map_or(NO_DATA, |l| traffic_color(*l));
+        let Some(color) = color(id) else { continue };
         let half = seg
             .lanes
             .iter()
@@ -566,6 +625,8 @@ struct OverlayLayers {
     pollution: LayerSource,
     water: LayerSource,
     power: LayerSource,
+    /// One layer per M2 service kind, in [`SERVICE_OVERLAYS`] order.
+    service: [LayerSource; 6],
     material: Option<Handle<VertexColorMaterial>>,
     terrain_key: usize,
 }
@@ -768,8 +829,50 @@ fn sync_overlay_meshes(
                 false,
             );
         }
+        // The service layers depend on the coverage, the road network, the buildings and the
+        // zone grid (lot footprints).
+        let key = ptr(&view.service)
+            ^ ptr(&view.net).rotate_left(7)
+            ^ ptr(&view.buildings).rotate_left(13)
+            ^ ptr(&view.zones).rotate_left(29);
+        for (src, which) in l.service.iter_mut().zip(SERVICE_OVERLAYS) {
+            let Some(kind) = which.service_kind() else {
+                continue;
+            };
+            upsert(
+                src,
+                key,
+                which,
+                || {
+                    service_overlay_mesh(
+                        kind,
+                        &view.net,
+                        &view.service,
+                        &view.buildings,
+                        &view.zones,
+                        db,
+                        terrain,
+                    )
+                },
+                &material,
+                &mut commands,
+                &mut meshes,
+                terrain_changed,
+                false,
+            );
+        }
     }
 }
+
+/// The overlays of the M2 service kinds.
+const SERVICE_OVERLAYS: [Overlay; 6] = [
+    Overlay::Garbage,
+    Overlay::Health,
+    Overlay::Deathcare,
+    Overlay::Fire,
+    Overlay::Police,
+    Overlay::Education,
+];
 
 /// Shows the active layer, and the zone grid (see [`zone_fill_visible`]). Runs every frame after the sync (cheap: a handful of
 /// entities), so a switch and a rebuild in the same frame never show a stale layer.

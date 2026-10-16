@@ -61,6 +61,21 @@ pub struct BuildingInfo {
     pub noise: f32,
     pub tax_base: f32,
     pub footprint: Vec<cp_zone::ZoneCellRef>,
+    /// Garbage piled up in the building (T-136).
+    pub garbage: u16,
+    /// Set when the building is a service facility (T-137).
+    pub service: Option<ServiceInfo>,
+}
+
+/// The day's throughput and stock of a service building.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ServiceInfo {
+    pub kind: cp_content::ServiceKind,
+    pub used_today: u32,
+    pub capacity: u32,
+    pub stored: u32,
+    /// 0 when the building keeps no stock.
+    pub storage: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -199,6 +214,32 @@ impl SimRunner {
                     }
                 });
                 let grids = w.resource::<LandGrids>();
+                let svc = w.get_resource::<cp_service::ServiceState>();
+                let service = def
+                    .service
+                    .as_deref()
+                    .and_then(|s| db.service_id(s))
+                    .map(|s| db.service(s))
+                    .filter(|s| s.kind >= cp_content::ServiceKind::Garbage)
+                    .map(|s| {
+                        let f = svc
+                            .and_then(|st| st.facility(id))
+                            .copied()
+                            .unwrap_or_default();
+                        ServiceInfo {
+                            kind: s.kind,
+                            used_today: f.used_today,
+                            capacity: s.capacity,
+                            stored: f.stored,
+                            storage: s.storage,
+                        }
+                    });
+                let mut problems = flag_names(b.flags);
+                if svc
+                    .is_some_and(|st| st.problems_of(id).has(cp_service::ServiceProblems::GARBAGE))
+                {
+                    problems.push("garbage");
+                }
                 Some(Inspection::Building(BuildingInfo {
                     id,
                     def: def.id.clone(),
@@ -208,7 +249,7 @@ impl SimRunner {
                     level_progress: b.level_progress,
                     state: b.state,
                     lot: b.size(),
-                    problems: flag_names(b.flags),
+                    problems,
                     households,
                     apartments: def.households,
                     residents,
@@ -220,6 +261,8 @@ impl SimRunner {
                     noise: grids.noise_at(b.pos),
                     tax_base: def.tax_base,
                     footprint: cp_building::held_cells(w.resource::<cp_zone::ZoneGrid>(), b),
+                    garbage: svc.and_then(|st| st.get(id)).map_or(0, |r| r.garbage),
+                    service,
                 }))
             }
             Selection::Citizen(id) => {
@@ -381,6 +424,19 @@ impl Inspection {
                             ));
                         }
                     }
+                }
+                if let Some(sv) = b.service {
+                    r.push(row("Service", format!("{:?}", sv.kind)));
+                    r.push(row(
+                        "Served today",
+                        format!("{} of {}", sv.used_today, sv.capacity),
+                    ));
+                    if sv.storage > 0 {
+                        r.push(row("Stored", format!("{} of {}", sv.stored, sv.storage)));
+                    }
+                }
+                if b.garbage > 0 {
+                    r.push(row("Garbage", b.garbage.to_string()));
                 }
                 r.push(row(
                     "Problems",
