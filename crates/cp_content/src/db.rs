@@ -380,7 +380,7 @@ impl ContentDb {
                 Ok(ContentFile::Vehicle(d)) => vehicles.push((path, d)),
                 Ok(ContentFile::Utility(d)) => utilities.push((path, d)),
                 Ok(ContentFile::Style(d)) => styles.push((path, d)),
-                Ok(ContentFile::Balance(d)) => balances.push((path, d)),
+                Ok(ContentFile::Balance(d)) => balances.push((path, *d)),
                 Ok(ContentFile::Milestones(d)) => milestone_files.push((path, d)),
                 Err(e) => errors.push(ContentError::new(&path, None, format!("parse error: {e}"))),
             }

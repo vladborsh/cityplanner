@@ -119,6 +119,8 @@ impl SimRunner {
         cp_service::ServicePlugin::init(&mut world);
         world.init_resource::<cp_transit::TransitNet>();
         world.init_resource::<cp_transit::LinePlans>();
+        world.init_resource::<cp_transit::TransitFleet>();
+        world.init_resource::<cp_transit::TransitLedger>();
         world.init_resource::<cp_economy::EconomyState>();
         world.init_resource::<cp_economy::DistrictIncome>();
         world.init_resource::<cp_economy::DemandAcc>();
@@ -295,6 +297,8 @@ impl SimRunner {
             (
                 cp_traffic::move_agents,
                 cp_traffic::advance_service_runs,
+                // Buses: stops reached, next legs and new departures (T-156).
+                cp_transit::run_lines,
                 cp_traffic::route_trips,
                 cp_traffic::route_service_runs,
             )

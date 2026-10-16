@@ -85,6 +85,8 @@ fn kind_icon(kind: ServiceKind) -> Icon {
         ServiceKind::Fire => Icon::OverlayFire,
         ServiceKind::Police => Icon::OverlayPolice,
         ServiceKind::Education => Icon::OverlayEducation,
+        // A stand-in until the depot has its own icon (T-158).
+        ServiceKind::Transit => Icon::Roads,
     }
 }
 

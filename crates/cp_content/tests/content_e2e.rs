@@ -448,7 +448,9 @@ fn the_eleven_m2_service_buildings_have_eleven_different_silhouettes() {
         let Some(svc) = d.service.as_deref().and_then(|s| db.service_id(s)) else {
             continue;
         };
-        if db.service(svc).kind < ServiceKind::Garbage {
+        if db.service(svc).kind < ServiceKind::Garbage
+            || db.service(svc).kind >= ServiceKind::Transit
+        {
             continue;
         }
         assert_eq!(d.styles.len(), 1, "{}", d.id);

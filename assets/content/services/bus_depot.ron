@@ -1,0 +1,10 @@
+// Numbers: tune later. `capacity` is the number of buses assigned to the depot; `radius_m` is
+// not used by transit (the depot has no coverage).
+Service((
+    id: "bus_depot",
+    name: "Bus Depot",
+    kind: Transit,
+    radius_m: 100.0,
+    capacity: 10,
+    vehicles: [],
+))

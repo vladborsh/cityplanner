@@ -1,0 +1,285 @@
+//! Buses on their lines (§16 M3 A "Депо и автобусы"): the `Agents`-phase system that sends
+//! buses out of the depots, keeps them going round the ring and takes the surplus back.
+
+use bevy_ecs::system::{Res, ResMut};
+use cp_building::{AccessPoint, BuildingFlags, BuildingGrid, BuildingId, BuildingState};
+use cp_content::{ServiceKind, SimContent, VehicleKind};
+use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_WEEK};
+use cp_core::{Cost, Tick};
+use cp_net::NetGraph;
+use cp_service::RoadGraph;
+use cp_traffic::{Agents, RunPoint, RunState, ServiceRuns};
+
+use crate::fleet::{Bus, BusPhase, TransitFleet, TransitLedger};
+use crate::model::{LineId, LineState, StopId, TransitMode, TransitNet};
+use crate::plan::LinePlans;
+
+fn ticks_of(seconds: f32) -> u64 {
+    ((seconds / MOVE_SECONDS_PER_TICK).ceil() as u64).max(1)
+}
+
+/// The depot nearest by road to `stop` that has a place left for a bus.
+fn find_depot(
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+    db: &cp_content::ContentDb,
+    fleet: &TransitFleet,
+    stop: StopId,
+    transit: &TransitNet,
+) -> Option<BuildingId> {
+    let st = transit.stops.get(stop)?;
+    let seg = net.segment(st.kind.segment())?;
+    let origin = AccessPoint {
+        segment: st.kind.segment(),
+        t: (st.kind.s() / seg.length.max(1e-3)).clamp(0.0, 1.0),
+    };
+    let g = RoadGraph::new(net);
+    let dist = g.node_distances(origin, f32::INFINITY);
+    let mut best: Option<(f32, BuildingId)> = None;
+    for (id, b) in buildings.iter() {
+        if b.state != BuildingState::Active || b.flags.has(BuildingFlags::NO_POWER) {
+            continue;
+        }
+        let Some(to) = b.access() else { continue };
+        let Some(svc) = db
+            .building(b.def)
+            .service
+            .as_deref()
+            .and_then(|s| db.service_id(s))
+            .map(|s| db.service(s))
+        else {
+            continue;
+        };
+        if svc.kind != ServiceKind::Transit {
+            continue;
+        }
+        let assigned = fleet
+            .buses
+            .iter()
+            .filter(|(_, bus)| bus.depot == id)
+            .count();
+        if assigned >= svc.capacity as usize {
+            continue;
+        }
+        let d = g.distance_to(&dist, origin, to);
+        if d.is_finite() && best.is_none_or(|(bd, _)| d < bd) {
+            best = Some((d, id));
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
+/// `Agents` phase, after `move_agents` and before `route_trips`.
+///
+/// * every bus whose run stands at a stop waits `dwell_s`, then drives to the next stop of the
+///   ring; a bus beyond the line's `vehicles`, or on a `Broken` or deleted line, drives to its
+///   depot instead and is taken off the road there;
+/// * a line with fewer buses than `vehicles` sends one out of the nearest depot with room every
+///   `headway = cycle_s / vehicles`; without such a depot the line is `NoDepot`;
+/// * a bus whose run failed (the road under it went) is gone;
+/// * every week each bus out on a line costs `bus_upkeep_week` in the [`TransitLedger`].
+#[allow(clippy::too_many_arguments)]
+pub fn run_lines(
+    tick: Res<Tick>,
+    content: Option<Res<SimContent>>,
+    net: Res<NetGraph>,
+    buildings: Res<BuildingGrid>,
+    plans: Res<LinePlans>,
+    mut transit: ResMut<TransitNet>,
+    mut fleet: ResMut<TransitFleet>,
+    mut ledger: ResMut<TransitLedger>,
+    mut runs: ResMut<ServiceRuns>,
+    mut agents: ResMut<Agents>,
+) {
+    let Some(content) = content else { return };
+    let db = &*content.0;
+    let balance = db.balance();
+    let now = *tick;
+    if fleet.is_empty() && transit.lines.is_empty() {
+        return;
+    }
+
+    if now.0 > 0 && now.0.is_multiple_of(TICKS_PER_WEEK) {
+        ledger.upkeep += Cost::scaled(balance.bus_upkeep_week, fleet.buses.len() as f64);
+    }
+
+    // The buses, in id order.
+    let ids: Vec<_> = fleet.buses.iter().map(|(id, _)| id).collect();
+    for id in ids {
+        let Some(bus) = fleet.buses.get(id).copied() else {
+            continue;
+        };
+        let Some(run) = runs.get(bus.run).copied() else {
+            fleet.buses.remove(id);
+            continue;
+        };
+        let standing = matches!(
+            run.state,
+            RunState::Parked { .. } | RunState::Arrived { .. }
+        );
+        match (run.state, bus.phase) {
+            (RunState::Failed, _) => {
+                runs.release(bus.run, &mut agents);
+                fleet.buses.remove(id);
+            }
+            (_, BusPhase::ToDepot) if standing => {
+                runs.release(bus.run, &mut agents);
+                fleet.buses.remove(id);
+            }
+            (_, BusPhase::Leaving) if standing => {
+                set_phase(&mut fleet, id, BusPhase::Dwell { idx: 0, until: now });
+                dwell(&mut fleet, id, now, balance.dwell_s);
+            }
+            (_, BusPhase::Driving { idx }) if standing => {
+                set_phase(&mut fleet, id, BusPhase::Dwell { idx, until: now });
+                dwell(&mut fleet, id, now, balance.dwell_s);
+            }
+            (_, BusPhase::Dwell { idx, until }) if standing && now >= until => {
+                send_on(&transit, &fleet, &mut runs, id, bus, idx);
+                // `send_on` changes the phase through the fleet below.
+                let next = next_phase(&transit, &fleet, id, bus, idx);
+                set_phase(&mut fleet, id, next);
+            }
+            _ => {}
+        }
+    }
+
+    // Lines: send buses out, or note that nothing can be sent.
+    let line_ids: Vec<LineId> = transit.lines.iter().map(|(id, _)| id).collect();
+    fleet.last_out.retain(|l, _| transit.lines.contains(*l));
+    for line_id in line_ids {
+        let Some(line) = transit.lines.get(line_id) else {
+            continue;
+        };
+        if line.mode != TransitMode::Bus || line.stops.len() < 2 {
+            continue;
+        }
+        if line.state == LineState::Broken {
+            continue;
+        }
+        let active = fleet
+            .of_line(line_id)
+            .filter(|(_, b)| b.phase != BusPhase::ToDepot)
+            .count();
+        let wanted = usize::from(line.vehicles);
+        if active >= wanted {
+            if line.state == LineState::NoDepot {
+                set_line_state(&mut transit, line_id, LineState::Ok);
+            }
+            continue;
+        }
+        let first = line.stops[0];
+        let Some(depot) = find_depot(&net, &buildings, db, &fleet, first, &transit) else {
+            set_line_state(&mut transit, line_id, LineState::NoDepot);
+            continue;
+        };
+        if line.state == LineState::NoDepot {
+            set_line_state(&mut transit, line_id, LineState::Ok);
+        }
+        let cycle = plans.get(line_id).map_or(0.0, |p| p.cycle_s);
+        let headway = (ticks_of(cycle) / wanted as u64).max(1);
+        let due = fleet
+            .last_out
+            .get(&line_id)
+            .is_none_or(|t| now.0 >= t.0 + headway);
+        if !due {
+            continue;
+        }
+        let Some(access) = transit.access(first) else {
+            continue;
+        };
+        let run = runs.start_run(
+            VehicleKind::Bus,
+            RunPoint::Building(depot),
+            RunPoint::Access(access),
+            true,
+        );
+        fleet.buses.insert(Bus {
+            line: line_id,
+            depot,
+            run,
+            phase: BusPhase::Leaving,
+        });
+        fleet.last_out.insert(line_id, now);
+    }
+}
+
+fn set_phase(fleet: &mut TransitFleet, id: crate::BusId, phase: BusPhase) {
+    if let Some(b) = fleet.buses.get_mut(id) {
+        b.phase = phase;
+    }
+}
+
+fn set_line_state(transit: &mut TransitNet, line: LineId, state: LineState) {
+    if let Some(l) = transit.lines.get_mut(line)
+        && l.state != state
+    {
+        l.state = state;
+    }
+}
+
+/// Starts the dwell of a bus that has just arrived: it leaves `dwell_s` from now.
+fn dwell(fleet: &mut TransitFleet, id: crate::BusId, now: Tick, dwell_s: f32) {
+    if let Some(b) = fleet.buses.get_mut(id)
+        && let BusPhase::Dwell { idx, .. } = b.phase
+    {
+        b.phase = BusPhase::Dwell {
+            idx,
+            until: Tick(now.0 + ticks_of(dwell_s)),
+        };
+    }
+}
+
+/// Where a bus standing at stop `idx` goes next: the next stop of its ring, or the depot when it
+/// is surplus or its line is broken or gone.
+fn target(
+    transit: &TransitNet,
+    fleet: &TransitFleet,
+    id: crate::BusId,
+    bus: Bus,
+    idx: u16,
+) -> Option<(u16, StopId)> {
+    let line = transit.lines.get(bus.line)?;
+    if line.state == LineState::Broken || line.stops.len() < 2 {
+        return None;
+    }
+    // Buses already on their way home do not count: a new one is not surplus because of them.
+    let rank = fleet
+        .of_line(bus.line)
+        .filter(|(_, b)| b.phase != BusPhase::ToDepot)
+        .position(|(b, _)| b == id)?;
+    if rank >= usize::from(line.vehicles) {
+        return None;
+    }
+    let next = (usize::from(idx) + 1) % line.stops.len();
+    Some((next as u16, line.stops[next]))
+}
+
+fn send_on(
+    transit: &TransitNet,
+    fleet: &TransitFleet,
+    runs: &mut ServiceRuns,
+    id: crate::BusId,
+    bus: Bus,
+    idx: u16,
+) {
+    let to = match target(transit, fleet, id, bus, idx) {
+        Some((_, stop)) => transit.access(stop).map(RunPoint::Access),
+        None => None,
+    }
+    .unwrap_or(RunPoint::Building(bus.depot));
+    let _ = runs.continue_run(bus.run, to);
+}
+
+fn next_phase(
+    transit: &TransitNet,
+    fleet: &TransitFleet,
+    id: crate::BusId,
+    bus: Bus,
+    idx: u16,
+) -> BusPhase {
+    match target(transit, fleet, id, bus, idx) {
+        Some((next, stop)) if transit.access(stop).is_some() => BusPhase::Driving { idx: next },
+        _ => BusPhase::ToDepot,
+    }
+}

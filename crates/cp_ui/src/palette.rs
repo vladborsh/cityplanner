@@ -816,7 +816,8 @@ mod tests {
                 ServiceKind::Deathcare,
                 ServiceKind::Fire,
                 ServiceKind::Police,
-                ServiceKind::Education
+                ServiceKind::Education,
+                ServiceKind::Transit
             ]
         );
         // Water: the pipe, every Water and Sewage service building, remove; Power likewise.

@@ -1,0 +1,13 @@
+Vehicle((
+    id: "bus_basic",
+    name: "Bus",
+    kind: Bus,
+    length: 12.0,
+    width: 2.5,
+    max_speed_kmh: 60.0, // tune later
+    accel: 1.2,
+    decel: 3.5,
+    min_gap: 2.0,
+    capacity: 60, // tune later
+    mesh: "vehicle/car_basic",
+))

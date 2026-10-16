@@ -43,6 +43,8 @@ pub enum ServiceKind {
     Fire = 7,
     Police = 8,
     Education = 9,
+    /// Appended in T-156 (M3): the bus depot.
+    Transit = 10,
 }
 
 /// Where a service building may stand (checked by `cp_building::validate_placement`).

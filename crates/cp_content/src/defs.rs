@@ -58,7 +58,7 @@ pub enum ContentFile {
     /// Appended in T-111.
     Style(StyleDef),
     /// Global balance knobs (`balance.ron`); at most one file.
-    Balance(Balance),
+    Balance(Box<Balance>),
     /// Population milestones (`milestones.ron`); at most one file. Appended in T-149.
     Milestones(MilestonesDef),
 }
@@ -219,6 +219,10 @@ pub struct Balance {
     pub decay_service_mask: u16,
     /// Price of one bus stop, currency units (T-153). // tune later
     pub bus_stop_cost: f32,
+    /// Seconds (movement clock) a bus stands at a stop (T-156). // tune later
+    pub dwell_s: f32,
+    /// Weekly upkeep of one bus that is out on a line, currency units. // tune later
+    pub bus_upkeep_week: f32,
 }
 
 /// One loan the bank offers (`balance.ron` `loan_offers`). Interest is simple, for the whole
@@ -291,6 +295,8 @@ impl Balance {
             self.land_crime,
             self.res_service_cover,
             self.bus_stop_cost,
+            self.dwell_s,
+            self.bus_upkeep_week,
         ]);
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
@@ -364,6 +370,8 @@ impl Default for Balance {
             res_service_cover: 0.3,
             decay_service_mask: 5,
             bus_stop_cost: 500.0,
+            dwell_s: 10.0,
+            bus_upkeep_week: 120.0,
         }
     }
 }
@@ -710,6 +718,9 @@ pub struct VehicleDef {
     /// Standstill bumper-to-bumper gap to the car ahead, metres.
     #[serde(default = "default_min_gap")]
     pub min_gap: f32,
+    /// Passengers it carries (buses, trains); 0 for the rest (T-156).
+    #[serde(default)]
+    pub capacity: u16,
     pub mesh: String,
 }
 

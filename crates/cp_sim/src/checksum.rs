@@ -146,6 +146,14 @@ pub(crate) fn service_part(world: &World, h: &mut Fnv1a) {
     if !transit.is_empty() {
         h.write_serialized(transit);
     }
+    let fleet = world.resource::<cp_transit::TransitFleet>();
+    if !fleet.is_empty() {
+        h.write_serialized(fleet);
+    }
+    let ledger = world.resource::<cp_transit::TransitLedger>();
+    if !ledger.is_empty() {
+        h.write_serialized(ledger);
+    }
 }
 
 /// Checksum part of trips (`cp_citizen::TripBook`).

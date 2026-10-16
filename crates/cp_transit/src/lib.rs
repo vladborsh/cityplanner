@@ -10,18 +10,22 @@
 //! * [`TransitCommand`] / [`apply`] — the player's side.
 
 pub mod command;
+pub mod fleet;
 pub mod model;
 pub mod plan;
 pub mod rules;
+pub mod run;
 pub mod sync;
 
 pub use command::{StopRef, TransitCommand, TransitError, apply};
+pub use fleet::{Bus, BusId, BusPhase, TransitFleet, TransitLedger};
 pub use model::{
     DEFAULT_LINE_VEHICLES, Line, LineId, LineState, MAX_LINE_STOPS, MAX_LINE_VEHICLES, PALETTE_LEN,
     Stop, StopId, StopKind, TransitMode, TransitNet,
 };
 pub use plan::{Leg, LinePlan, LinePlans, PlanError, plan_line};
 pub use rules::{STOP_NODE_CLEARANCE, STOP_SNAP, STOP_SPACING, StopError, check_road_stop};
+pub use run::run_lines;
 pub use sync::{rebind_stops, update_transit};
 
 /// Crate name, used by the skeleton smoke test.

@@ -138,4 +138,7 @@ Balance((
     // --- Transit (system-design §16 M3 A): all // tune later ---
     // Price of one bus stop, currency units.
     bus_stop_cost: 500.0,
+    // Seconds a bus stands at a stop, and the weekly upkeep of a bus out on a line.
+    dwell_s: 10.0,
+    bus_upkeep_week: 120.0,
 ))

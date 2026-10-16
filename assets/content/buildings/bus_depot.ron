@@ -1,0 +1,15 @@
+Building((
+    id: "bus_depot",
+    name: "Bus Depot",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 2),
+    jobs: (4, 0, 0, 0),
+    tax_base: 0.0,
+    cost: 15000.0,
+    upkeep_week: 400.0,
+    // Stand-ins until the depot has its own look and icon (T-158).
+    styles: ["service_fire_station"],
+    service: Some("bus_depot"),
+    icon: "fire_station",
+))

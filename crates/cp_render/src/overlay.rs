@@ -94,7 +94,11 @@ impl Overlay {
             ServiceKind::Fire => Overlay::Fire,
             ServiceKind::Police => Overlay::Police,
             ServiceKind::Education => Overlay::Education,
-            ServiceKind::Water | ServiceKind::Power | ServiceKind::Roads | ServiceKind::Sewage => {
+            ServiceKind::Water
+            | ServiceKind::Power
+            | ServiceKind::Roads
+            | ServiceKind::Sewage
+            | ServiceKind::Transit => {
                 return None;
             }
         })

@@ -2709,6 +2709,7 @@ dependencies = [
  "cp_content",
  "cp_core",
  "cp_net",
+ "cp_service",
  "cp_terrain",
  "cp_traffic",
  "serde",
