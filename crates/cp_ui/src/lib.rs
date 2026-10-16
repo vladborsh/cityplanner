@@ -11,6 +11,7 @@ use cp_render::{LightingSettings, OverlayState};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, ToolState, UiCapture};
 
+pub mod advisor;
 pub mod budget;
 pub mod buildings;
 pub mod bulldozer_bar;
@@ -50,6 +51,7 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(EguiPlugin::default())
             .init_resource::<UiState>()
+            .add_message::<advisor::AdvisorShown>()
             .init_resource::<OverlayState>()
             .init_resource::<LightingSettings>()
             .init_resource::<TickRate>()
@@ -143,6 +145,7 @@ pub(crate) struct UiFrame<'a> {
     pub inspected: &'a cp_tools::Inspected,
     pub picked: &'a mut cp_tools::Picked,
     pub toast: &'a mut milestone::MilestoneToast,
+    pub advisor: &'a mut advisor::Advisor,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -160,13 +163,14 @@ fn draw_ui(
     mut files: ResMut<FileMenu>,
     inspected: Res<cp_tools::Inspected>,
     mut picked: ResMut<cp_tools::Picked>,
-    mut loaders_installed: Local<bool>,
-    mut toast: Local<milestone::MilestoneToast>,
+    mut local: Local<(bool, milestone::MilestoneToast, advisor::Advisor)>,
+    mut shown: MessageWriter<advisor::AdvisorShown>,
 ) -> Result {
     let Some(view) = view else {
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;
+    let (loaders_installed, toast, advisor) = &mut *local;
     if !*loaders_installed {
         egui_extras::install_image_loaders(ctx);
         style::install(ctx);
@@ -187,9 +191,13 @@ fn draw_ui(
             files: &mut files,
             inspected: &inspected,
             picked: &mut picked,
-            toast: &mut toast,
+            toast,
+            advisor,
         },
     );
+    if let Some(severity) = advisor.just_shown.take() {
+        shown.write(advisor::AdvisorShown { severity });
+    }
     Ok(())
 }
 
@@ -209,6 +217,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         inspected,
         picked,
         toast,
+        advisor,
     } = f;
     let available = Category::available(view.content.as_deref());
     if let Some(c) = palette::hotkey(ctx, &available) {
@@ -252,6 +261,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     }
     file_window(ctx, files);
     milestone::milestone_toast(ctx, view, toast);
+    advisor::advisor_snackbar(ctx, view, state, overlay, advisor);
     land::confirm_window(ctx, view, &mut state.budget.buy_tile, outbox);
     info_panel(ctx, inspected, picked, Some(view), tools, outbox);
     let line_out = lines::line_info_panel(ctx, view, picked, &mut state.lines, outbox);
@@ -448,6 +458,7 @@ mod capture_tests {
         inspected: cp_tools::Inspected,
         picked: cp_tools::Picked,
         toast: milestone::MilestoneToast,
+        advisor: advisor::Advisor,
     }
 
     impl Rig {
@@ -472,6 +483,7 @@ mod capture_tests {
                 inspected: cp_tools::Inspected::default(),
                 picked: cp_tools::Picked::default(),
                 toast: milestone::MilestoneToast::default(),
+                advisor: advisor::Advisor::default(),
             }
         }
 
@@ -492,6 +504,7 @@ mod capture_tests {
                     inspected: &self.inspected,
                     picked: &mut self.picked,
                     toast: &mut self.toast,
+                    advisor: &mut self.advisor,
                 },
             );
         }

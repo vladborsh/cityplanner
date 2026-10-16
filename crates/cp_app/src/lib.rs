@@ -115,6 +115,8 @@ impl Plugin for GamePlugin {
                 prefs: cp_ui::Prefs {
                     ui_scale: settings.ui_scale,
                     camera: settings.camera_settings(),
+                    advisor: settings.advisor,
+                    advisor_problems_only: settings.advisor_problems_only,
                 },
                 ..default()
             })

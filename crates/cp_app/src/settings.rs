@@ -47,6 +47,9 @@ pub struct Settings {
     pub always_day: bool,
     pub ui_scale: f32,
     pub camera: CameraPrefs,
+    /// The city advisor snackbar (T-188) and whether it only names problems.
+    pub advisor: bool,
+    pub advisor_problems_only: bool,
 }
 
 impl Default for Settings {
@@ -57,6 +60,8 @@ impl Default for Settings {
             always_day: true,
             ui_scale: 1.0,
             camera: CameraPrefs::default(),
+            advisor: true,
+            advisor_problems_only: true,
         }
     }
 }
@@ -155,6 +160,8 @@ impl Settings {
                 zoom_step: camera.zoom_step,
                 edge_pan: camera.edge_pan,
             },
+            advisor: ui.prefs.advisor,
+            advisor_problems_only: ui.prefs.advisor_problems_only,
         }
     }
 }
@@ -217,6 +224,8 @@ mod tests {
                 edge_pan: false,
                 ..CameraPrefs::default()
             },
+            advisor: false,
+            advisor_problems_only: false,
         };
         s.save(&d).unwrap();
         assert_eq!(Settings::load(&d), s);

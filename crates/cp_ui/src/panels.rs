@@ -27,6 +27,9 @@ pub struct Prefs {
     pub ui_scale: f32,
     /// Camera sensitivities; copied to the `CameraSettings` resource when edited.
     pub camera: cp_render::CameraSettings,
+    /// The city advisor snackbar (T-188) and whether it keeps to problems (no needs).
+    pub advisor: bool,
+    pub advisor_problems_only: bool,
 }
 
 impl Default for Prefs {
@@ -34,6 +37,8 @@ impl Default for Prefs {
         Self {
             ui_scale: 1.0,
             camera: cp_render::CameraSettings::default(),
+            advisor: true,
+            advisor_problems_only: true,
         }
     }
 }
@@ -401,6 +406,11 @@ pub fn top_bar(
                 cam.zoom_step = 1.0 - zoom;
             }
             ui.checkbox(&mut cam.edge_pan, "Сдвиг у края экрана");
+            ui.checkbox(&mut prefs.advisor, "City advisor");
+            ui.add_enabled(
+                prefs.advisor,
+                egui::Checkbox::new(&mut prefs.advisor_problems_only, "Only problems"),
+            );
         });
     }
     rects
