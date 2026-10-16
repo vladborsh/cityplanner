@@ -29,6 +29,7 @@ use cp_core::time::TICKS_PER_WEEK;
 use cp_core::{Cost, Tick, Treasury};
 use cp_district::{DistrictId, DistrictMap, Districts, district_at};
 use cp_net::{Elevation, NetGraph, Segment};
+use cp_transit::TransitLedger;
 use cp_utility::{UtilityGraph, UtilityNet};
 
 use crate::state::{DistrictIncome, EconomyState, Loan, WeekReport};
@@ -156,13 +157,14 @@ pub fn settle_week(
     mut district_income: ResMut<DistrictIncome>,
     district_map: Res<DistrictMap>,
     districts: Res<Districts>,
+    ledger: Option<ResMut<TransitLedger>>,
 ) {
     if tick.0 == 0 || !tick.0.is_multiple_of(TICKS_PER_WEEK) {
         return;
     }
     let Some(content) = content else { return };
     citizens.ensure_derived();
-    let (report, rows) = week_detail(
+    let (mut report, rows) = week_detail(
         &WeekInputs {
             content: &content.0,
             net: &net,
@@ -179,6 +181,12 @@ pub fn settle_week(
         week: tick.0 / TICKS_PER_WEEK,
         rows,
     };
+    // The week's transit money, summed by `cp_transit`, is booked and starts over (T-160).
+    if let Some(mut ledger) = ledger {
+        report.transit_fares = ledger.fares;
+        report.transit_upkeep = ledger.upkeep;
+        *ledger = TransitLedger::default();
+    }
     treasury.balance += report.balance();
     for loan in &mut state.loans {
         loan.pay_week();

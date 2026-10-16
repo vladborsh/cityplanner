@@ -233,6 +233,9 @@ pub struct Overview {
     pub utility_upkeep: Cost,
     /// Last week's loan payments (principal and interest); part of `upkeep`.
     pub loan_payments: Cost,
+    /// Last week's fares (part of `income`) and bus upkeep (part of `upkeep`), T-160.
+    pub transit_fares: Cost,
+    pub transit_upkeep: Cost,
     /// Balance of every hourly history sample (7 game days at most), oldest first.
     pub balance_history: Vec<f32>,
 }
@@ -259,8 +262,8 @@ pub fn overview(view: &SimView) -> Overview {
             .enumerate()
             .map(|(i, z)| (*z, week.income_by_zone[i]))
             .collect(),
-        income: week.income(),
-        upkeep: week.upkeep() + week.loan_payments,
+        income: week.income() + week.transit_fares,
+        upkeep: week.upkeep() + week.loan_payments + week.transit_upkeep,
         net: week.balance(),
         roads_sum: roads.iter().map(|r| r.upkeep_week).sum(),
         roads,
@@ -268,6 +271,8 @@ pub fn overview(view: &SimView) -> Overview {
         building_upkeep: week.building_upkeep,
         utility_upkeep: week.utility_upkeep,
         loan_payments: week.loan_payments,
+        transit_fares: week.transit_fares,
+        transit_upkeep: week.transit_upkeep,
         balance_history: view
             .city
             .history
@@ -298,6 +303,9 @@ pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
             ui.label(format_money(*cost));
             ui.end_row();
         }
+        ui.label("Fares");
+        ui.label(format_money(o.transit_fares));
+        ui.end_row();
     });
     ui.separator();
     ui.strong("Expenses");
@@ -321,6 +329,9 @@ pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
         ui.end_row();
         ui.label("Pipes and power lines");
         ui.label(format_money(o.utility_upkeep));
+        ui.end_row();
+        ui.label("Public transport");
+        ui.label(format_money(o.transit_upkeep));
         ui.end_row();
         ui.label("Loans");
         ui.label(format_money(o.loan_payments));

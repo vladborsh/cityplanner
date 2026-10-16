@@ -610,7 +610,7 @@ pub struct SaveDataV20 {
     pub trips: TripBook,
     pub agents: Agents,
     pub treasury: Treasury,
-    pub economy: EconomyState,
+    pub economy: EconomyStateV31,
     pub demand: Demand,
     pub demand_acc: DemandAcc,
     pub land: LandGrids,
@@ -692,7 +692,7 @@ pub struct SaveDataV22 {
     /// The city's money. Added in v14.
     pub treasury: Treasury,
     /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
-    pub economy: EconomyState,
+    pub economy: EconomyStateV31,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -763,7 +763,7 @@ pub struct SaveDataV21 {
     pub trips: TripBook,
     pub agents: Agents,
     pub treasury: Treasury,
-    pub economy: EconomyState,
+    pub economy: EconomyStateV31,
     pub demand: Demand,
     pub demand_acc: DemandAcc,
     pub land: LandGrids,
@@ -897,10 +897,10 @@ pub fn migrate_v19_to_v20(v19: SaveDataV19) -> SaveDataV20 {
         trips: v19.trips,
         agents: v19.agents,
         treasury: v19.treasury,
-        economy: EconomyState {
+        economy: EconomyStateV31 {
             taxes: v19.economy.taxes,
             budgets: v19.economy.budgets,
-            last_week: WeekReport {
+            last_week: WeekReportV31 {
                 week: w.week,
                 income_by_zone: w.income_by_zone,
                 road_upkeep: w.road_upkeep,
@@ -1387,7 +1387,7 @@ pub struct SaveDataV23 {
     /// The city's money. Added in v14.
     pub treasury: Treasury,
     /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
-    pub economy: EconomyState,
+    pub economy: EconomyStateV31,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -1522,7 +1522,7 @@ pub struct SaveDataV24 {
     /// The city's money. Added in v14.
     pub treasury: Treasury,
     /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
-    pub economy: EconomyState,
+    pub economy: EconomyStateV31,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -1613,7 +1613,7 @@ pub struct SaveDataV25 {
     /// The city's money. Added in v14.
     pub treasury: Treasury,
     /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
-    pub economy: EconomyState,
+    pub economy: EconomyStateV31,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -1704,7 +1704,7 @@ pub struct SaveDataV26 {
     /// The city's money. Added in v14.
     pub treasury: Treasury,
     /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
-    pub economy: EconomyState,
+    pub economy: EconomyStateV31,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -1796,7 +1796,7 @@ pub struct SaveDataV27 {
     /// The city's money. Added in v14.
     pub treasury: Treasury,
     /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
-    pub economy: EconomyState,
+    pub economy: EconomyStateV31,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -1856,7 +1856,7 @@ pub struct SaveDataV28 {
     /// The city's money. Added in v14.
     pub treasury: Treasury,
     /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
-    pub economy: EconomyState,
+    pub economy: EconomyStateV31,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -2028,7 +2028,7 @@ pub struct SaveDataV29 {
     /// The city's money. Added in v14.
     pub treasury: Treasury,
     /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
-    pub economy: EconomyState,
+    pub economy: EconomyStateV31,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -2141,7 +2141,7 @@ pub struct SaveDataV30 {
     /// The city's money. Added in v14.
     pub treasury: Treasury,
     /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
-    pub economy: EconomyState,
+    pub economy: EconomyStateV31,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -2175,9 +2175,29 @@ pub struct SaveDataV30 {
     pub ledger: TransitLedgerV30,
 }
 
+/// The week report as formats 20 to 31 wrote it (before the transit lines).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WeekReportV31 {
+    pub week: u64,
+    pub income_by_zone: [Cost; 6],
+    pub road_upkeep: Cost,
+    pub building_upkeep: Cost,
+    pub utility_upkeep: Cost,
+    pub loan_payments: Cost,
+}
+
+/// The economy state as formats 20 to 31 wrote it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EconomyStateV31 {
+    pub taxes: TaxRates,
+    pub budgets: Budgets,
+    pub last_week: WeekReportV31,
+    pub loans: Vec<cp_economy::Loan>,
+}
+
 /// v30 → v31 (T-159): riders, line statistics and fares. A save from before it has none.
-pub fn migrate_v30_to_v31(v30: SaveDataV30) -> SaveData {
-    SaveData {
+pub fn migrate_v30_to_v31(v30: SaveDataV30) -> SaveDataV31 {
+    SaveDataV31 {
         tick: v30.tick,
         rng: v30.rng,
         speed: v30.speed,
@@ -2219,6 +2239,125 @@ pub fn migrate_v30_to_v31(v30: SaveDataV30) -> SaveData {
     }
 }
 
+/// Version 31: the body as written by format 31 (riders; the week report without transit).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV31 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    /// Zone blocks, painted types and cell validity. Added in v5.
+    pub zones: ZoneGrid,
+    /// Buildings (lots, state, access points). Added in v6.
+    /// Includes the ids removed and not yet drained since v13.
+    pub buildings: BuildingGrid,
+    /// Citizens and households. Added in v7.
+    pub citizens: CitizenGrid,
+    /// Pathfinding requests in flight (id, submit tick, request, congestion read, stale
+    /// flag). Added in v8; see `cp_traffic::service` for why this makes load + N ticks equal
+    /// the continuous run.
+    pub paths: SavedPaths,
+    /// Pipe and power-line networks. Added in v9.
+    pub utilities: UtilityGraph,
+    /// Trips in flight and the routine's counters. Added in v10.
+    pub trips: TripBook,
+    /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
+    /// agents carry the segment load since v12; vehicles carry their re-route request id
+    /// since v17.
+    pub agents: cp_traffic::Agents,
+    /// The city's money. Added in v14.
+    pub treasury: Treasury,
+    /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
+    pub economy: EconomyStateV31,
+    /// Smoothed demand and the sums of the cycle in progress. Added in v15.
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    /// Pollution, noise and land value grids. Added in v16.
+    pub land: LandGrids,
+    /// Abandonment timers. Added in v16.
+    pub decay: Decay,
+    /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
+    /// [`DefNames`] and [`SaveData::remap_defs`].
+    pub def_names: crate::DefNames,
+    /// The district grid and the district records. Added in v21.
+    pub district_map: DistrictMap,
+    pub districts: Districts,
+    /// Per-building service state and facility counters. Added in v22; fires name their
+    /// station since v24.
+    pub service_state: cp_service::ServiceState,
+    /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
+    /// sim reads the values of that boundary until the next one. Added in v22.
+    pub coverage: cp_service::ServiceCoverage,
+    /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
+    pub shortage: cp_economy::WorkerShortage,
+    /// The population milestone reached. Added in v25.
+    pub progress: cp_sim::Progress,
+    /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
+    /// with keep, since v29.
+    pub service_runs: cp_traffic::ServiceRuns,
+    /// Bus stops and lines (T-153). Added in v28.
+    pub transit: cp_transit::TransitNet,
+    /// Buses out on the lines and the week's transit money (T-156). Added in v30.
+    pub fleet: cp_transit::TransitFleet,
+    pub ledger: cp_transit::TransitLedger,
+}
+
+/// v31 → v32 (T-160): the week report gets the transit fares and upkeep. A save from before it
+/// has zeros.
+pub fn migrate_v31_to_v32(v31: SaveDataV31) -> SaveData {
+    let w = v31.economy.last_week;
+    SaveData {
+        tick: v31.tick,
+        rng: v31.rng,
+        speed: v31.speed,
+        queue: v31.queue,
+        log: v31.log,
+        tiles: v31.tiles,
+        net: v31.net,
+        zones: v31.zones,
+        buildings: v31.buildings,
+        citizens: v31.citizens,
+        paths: v31.paths,
+        utilities: v31.utilities,
+        trips: v31.trips,
+        agents: v31.agents,
+        treasury: v31.treasury,
+        economy: EconomyState {
+            taxes: v31.economy.taxes,
+            budgets: v31.economy.budgets,
+            last_week: WeekReport {
+                week: w.week,
+                income_by_zone: w.income_by_zone,
+                road_upkeep: w.road_upkeep,
+                building_upkeep: w.building_upkeep,
+                utility_upkeep: w.utility_upkeep,
+                loan_payments: w.loan_payments,
+                transit_fares: Cost::ZERO,
+                transit_upkeep: Cost::ZERO,
+            },
+            loans: v31.economy.loans,
+        },
+        demand: v31.demand,
+        demand_acc: v31.demand_acc,
+        land: v31.land,
+        decay: v31.decay,
+        def_names: v31.def_names,
+        district_map: v31.district_map,
+        districts: v31.districts,
+        service_state: v31.service_state,
+        coverage: v31.coverage,
+        shortage: v31.shortage,
+        progress: v31.progress,
+        service_runs: v31.service_runs,
+        transit: v31.transit,
+        fleet: v31.fleet,
+        ledger: v31.ledger,
+    }
+}
+
 /// Everything from a v22 body to the current format.
 fn from_v22(v: SaveDataV22) -> SaveData {
     let v = migrate_v24_to_v25(migrate_v23_to_v24(migrate_v22_to_v23(v)));
@@ -2234,7 +2373,7 @@ fn from_v27(v: SaveDataV27) -> SaveData {
 }
 
 fn from_v29(v: SaveDataV29) -> SaveData {
-    migrate_v30_to_v31(migrate_v29_to_v30(v))
+    migrate_v31_to_v32(migrate_v30_to_v31(migrate_v29_to_v30(v)))
 }
 
 fn from_v16(v: SaveDataV16) -> SaveData {
@@ -2345,8 +2484,9 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         27 => Ok(from_v27(dec(body)?)),
         28 => Ok(from_v29(migrate_v28_to_v29(dec(body)?))),
         29 => Ok(from_v29(dec(body)?)),
-        30 => Ok(migrate_v30_to_v31(dec(body)?)),
-        31 => dec(body),
+        30 => Ok(migrate_v31_to_v32(migrate_v30_to_v31(dec(body)?))),
+        31 => Ok(migrate_v31_to_v32(dec(body)?)),
+        32 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

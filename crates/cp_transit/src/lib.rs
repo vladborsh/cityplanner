@@ -19,7 +19,7 @@ pub mod run;
 pub mod sync;
 pub mod view;
 
-pub use command::{StopRef, TransitCommand, TransitError, apply};
+pub use command::{MAX_LINE_NAME, StopRef, TransitCommand, TransitError, apply};
 pub use fleet::{Bus, BusId, BusPhase, TransitFleet, TransitLedger};
 pub use model::{
     DEFAULT_LINE_VEHICLES, Journey, Line, LineId, LineState, LineStats, MAX_LINE_STOPS,

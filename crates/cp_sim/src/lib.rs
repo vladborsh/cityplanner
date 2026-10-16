@@ -28,7 +28,7 @@ pub use progress::{PROGRESS_PERIOD, Progress};
 pub use runner::{MAX_TICKS_PER_STEP, SimRunner, run_headless, run_headless_with};
 pub use stats::CityStats;
 pub use view::{
-    AgentSnapshot, ArenaFill, ArenaGauges, LoanOfferView, SimStats, SimTerrain, SimView,
+    AgentSnapshot, ArenaFill, ArenaGauges, LineView, LoanOfferView, SimStats, SimTerrain, SimView,
 };
 
 /// Crate name, used by the skeleton smoke test.

@@ -117,6 +117,27 @@ pub struct SimView {
     pub progress: crate::Progress,
     /// Stops, lines and the routes of the lines (T-157), shared: rebuilt only when they changed.
     pub transit: Arc<cp_transit::TransitView>,
+    /// The transit lines with their figures (T-160), in line id order.
+    pub lines: Vec<LineView>,
+    /// Fares and bus upkeep of the week in progress.
+    pub transit_ledger: cp_transit::TransitLedger,
+}
+
+/// One transit line as the Lines window shows it (T-160).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LineView {
+    pub id: cp_transit::LineId,
+    pub name: String,
+    pub mode: cp_transit::TransitMode,
+    pub color: u8,
+    pub stops: usize,
+    /// Buses asked for, and buses out on the road now.
+    pub vehicles: u8,
+    pub vehicles_out: u16,
+    pub state: cp_transit::LineState,
+    pub riders_today: u32,
+    pub riders_week: u32,
+    pub waiting: u32,
 }
 
 /// A bank offer for the Loans tab: the content row, whether the city may take it now, and the
@@ -496,6 +517,8 @@ impl SimRunner {
             treasury: *self.world().resource::<cp_core::Treasury>(),
             progress: *self.world().resource::<crate::Progress>(),
             economy: self.world().resource::<cp_economy::EconomyState>().clone(),
+            lines: self.line_views(),
+            transit_ledger: *self.world().resource::<cp_transit::TransitLedger>(),
             utilities: self.utilities_snapshot(),
             transit: self.transit_snapshot(),
             service: self.service_snapshot(),
@@ -503,6 +526,30 @@ impl SimRunner {
             city: self.city_snapshot(),
             junctions,
         }
+    }
+
+    fn line_views(&self) -> Vec<LineView> {
+        let net = self.world().resource::<cp_transit::TransitNet>();
+        let fleet = self.world().resource::<cp_transit::TransitFleet>();
+        net.lines
+            .iter()
+            .map(|(id, l)| {
+                let s = net.stats.get(&id).copied().unwrap_or_default();
+                LineView {
+                    id,
+                    name: l.name.clone(),
+                    mode: l.mode,
+                    color: l.color,
+                    stops: l.stops.len(),
+                    vehicles: l.vehicles,
+                    vehicles_out: fleet.of_line(id).count() as u16,
+                    state: l.state,
+                    riders_today: s.riders_today,
+                    riders_week: s.riders_week,
+                    waiting: s.waiting,
+                }
+            })
+            .collect()
     }
 
     fn city_snapshot(&self) -> Arc<crate::stats::CityStats> {

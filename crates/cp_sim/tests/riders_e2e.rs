@@ -385,3 +385,59 @@ fn deleting_the_line_mid_journey_ends_the_trips_without_a_panic() {
     assert!(t.sim.world().resource::<TransitNet>().riders.is_empty());
     assert!(t.sim.world().resource::<TripBook>().is_empty());
 }
+
+#[test]
+fn the_weekly_settlement_books_fares_and_bus_upkeep_and_the_treasury_follows() {
+    use cp_core::time::TICKS_PER_WEEK;
+    use cp_core::{Cost, Treasury};
+    use cp_economy::EconomyState;
+
+    let mut t = town(&plain(), 800.0);
+    t.line();
+    t.household(3, false);
+    t.run(120);
+    t.send_all();
+    t.run(1500);
+    let boardings: u32 = t
+        .sim
+        .world()
+        .resource::<TransitNet>()
+        .stats
+        .values()
+        .map(|s| s.riders_week)
+        .sum();
+    let buses = t.sim.world().resource::<TransitFleet>().buses.len();
+    assert!(
+        boardings >= 3 && buses >= 1,
+        "{boardings} boardings, {buses} buses"
+    );
+    let b = t
+        .sim
+        .world()
+        .resource::<cp_content::SimContent>()
+        .0
+        .balance()
+        .clone();
+    let before = t.sim.world().resource::<Treasury>().balance;
+    t.sim.world_mut().insert_resource(Tick(TICKS_PER_WEEK - 1));
+    t.run(3);
+    let w = t.sim.world().resource::<EconomyState>().last_week;
+    assert_eq!(w.week, 1);
+    assert_eq!(
+        w.transit_fares,
+        Cost::scaled(b.transit_fare, f64::from(boardings))
+    );
+    assert_eq!(
+        w.transit_upkeep,
+        Cost::scaled(b.bus_upkeep_week, buses as f64)
+    );
+    assert_eq!(
+        t.sim.world().resource::<Treasury>().balance,
+        before + w.balance(),
+        "the treasury changes by the week's balance, fares and upkeep included"
+    );
+    assert!(
+        t.sim.world().resource::<TransitLedger>().is_empty(),
+        "the ledger starts over"
+    );
+}

@@ -110,6 +110,11 @@ pub struct WeekReport {
     /// Weekly loan payments, principal and interest (T-129).
     #[serde(default)]
     pub loan_payments: Cost,
+    /// Fares taken and the upkeep of the buses, from the transit ledger (T-160). Added in v32.
+    #[serde(default)]
+    pub transit_fares: Cost,
+    #[serde(default)]
+    pub transit_upkeep: Cost,
 }
 
 impl WeekReport {
@@ -123,7 +128,10 @@ impl WeekReport {
 
     /// Income minus upkeep and loan payments: the change of the treasury that week.
     pub fn balance(&self) -> Cost {
-        self.income() - self.upkeep() - self.loan_payments
+        self.income() + self.transit_fares
+            - self.upkeep()
+            - self.transit_upkeep
+            - self.loan_payments
     }
 }
 

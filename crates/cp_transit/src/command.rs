@@ -21,6 +21,9 @@ use crate::plan::LinePlans;
 use crate::rules::{StopError, check_road_stop};
 use crate::sync::replan_line;
 
+/// Longest line name, characters.
+pub const MAX_LINE_NAME: usize = 24;
+
 /// A stop named by a command.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum StopRef {
@@ -61,6 +64,11 @@ pub enum TransitCommand {
     RemoveStop {
         stop: StopId,
     },
+    /// Gives a line a new name (T-160): 1..=[`MAX_LINE_NAME`] characters after trimming.
+    RenameLine {
+        line: LineId,
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -84,6 +92,8 @@ pub enum TransitError {
     Stop(StopError),
     Vehicles(u8),
     Color(u8),
+    /// Empty or longer than [`MAX_LINE_NAME`] characters.
+    Name,
     Funds(InsufficientFunds),
 }
 
@@ -102,6 +112,7 @@ impl fmt::Display for TransitError {
             Self::Stop(e) => write!(f, "{e}"),
             Self::Vehicles(n) => write!(f, "{n} vehicles: at most {MAX_LINE_VEHICLES}"),
             Self::Color(c) => write!(f, "colour {c}: the palette has {PALETTE_LEN}"),
+            Self::Name => write!(f, "a line name has 1..={MAX_LINE_NAME} characters"),
             Self::Funds(e) => write!(
                 f,
                 "insufficient funds: need {}, have {}",
@@ -312,6 +323,18 @@ pub fn apply(world: &mut World, cmd: &TransitCommand) -> Result<Cost, TransitErr
                     .get_mut(*line)
                     .ok_or(TransitError::NoSuchLine(*line))?
                     .color = *color;
+                (Cost::ZERO, None)
+            }
+            TransitCommand::RenameLine { line, name } => {
+                let name = name.trim();
+                if name.is_empty() || name.chars().count() > MAX_LINE_NAME {
+                    return Err(TransitError::Name);
+                }
+                transit
+                    .lines
+                    .get_mut(*line)
+                    .ok_or(TransitError::NoSuchLine(*line))?
+                    .name = name.to_string();
                 (Cost::ZERO, None)
             }
             TransitCommand::RemoveStop { stop } => {

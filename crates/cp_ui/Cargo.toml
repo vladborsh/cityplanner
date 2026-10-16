@@ -12,7 +12,6 @@ disallowed_methods = "allow"
 
 [dependencies]
 cp_sim.workspace = true
-cp_transit.workspace = true
 cp_tools.workspace = true
 cp_content.workspace = true
 cp_net.workspace = true
@@ -22,6 +21,7 @@ cp_building.workspace = true
 cp_core.workspace = true
 cp_render.workspace = true
 cp_district.workspace = true
+cp_transit.workspace = true
 cp_terrain.workspace = true
 bevy.workspace = true
 bevy_egui.workspace = true
@@ -30,3 +30,4 @@ image.workspace = true
 
 [dev-dependencies]
 cp_citizen.workspace = true
+cp_traffic.workspace = true

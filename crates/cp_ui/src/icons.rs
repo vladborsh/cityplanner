@@ -101,6 +101,7 @@ icons! {
     Budget => "budget",
     Demand => "demand",
     Metrics => "metrics",
+    Lines => "lines",
     Saves => "saves",
     Debug => "debug",
     Info => "info",

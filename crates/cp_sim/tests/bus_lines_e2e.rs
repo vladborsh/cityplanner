@@ -270,6 +270,12 @@ fn each_bus_out_on_a_line_costs_its_weekly_upkeep_at_the_end_of_the_week() {
         .0
         .balance()
         .bus_upkeep_week;
-    let ledger = t.sim.world().resource::<cp_transit::TransitLedger>().upkeep;
-    assert_eq!(ledger, cp_core::Cost::scaled(per_bus, buses));
+    // The weekly settlement (T-160) takes the ledger into the report.
+    let booked = t
+        .sim
+        .world()
+        .resource::<cp_economy::EconomyState>()
+        .last_week
+        .transit_upkeep;
+    assert_eq!(booked, cp_core::Cost::scaled(per_bus, buses));
 }

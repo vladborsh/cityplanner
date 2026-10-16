@@ -52,6 +52,10 @@ pub struct UiState {
     pub budget_open: bool,
     pub demand_open: bool,
     pub metrics_open: bool,
+    /// The Lines window (T-160).
+    pub lines_open: bool,
+    /// Name drafts of the Lines window.
+    pub lines: crate::lines::LinesDraft,
     /// The bottom demand panel is folded into its 28 px strip (T-099; not saved).
     pub demand_collapsed: bool,
     /// Where the "show" button of the not-connected notice wants the camera (XZ, metres);
@@ -70,15 +74,17 @@ pub enum UiWindow {
     Budget,
     Demand,
     Metrics,
+    Lines,
     Saves,
     Debug,
 }
 
 impl UiWindow {
-    pub const ALL: [UiWindow; 5] = [
+    pub const ALL: [UiWindow; 6] = [
         UiWindow::Budget,
         UiWindow::Demand,
         UiWindow::Metrics,
+        UiWindow::Lines,
         UiWindow::Saves,
         UiWindow::Debug,
     ];
@@ -88,6 +94,7 @@ impl UiWindow {
             UiWindow::Budget => "Budget",
             UiWindow::Demand => "Demand",
             UiWindow::Metrics => "Metrics",
+            UiWindow::Lines => "Lines",
             UiWindow::Saves => "Save / Load",
             UiWindow::Debug => "Debug (F3)",
         }
@@ -98,6 +105,7 @@ impl UiWindow {
             UiWindow::Budget => Icon::Budget,
             UiWindow::Demand => Icon::Demand,
             UiWindow::Metrics => Icon::Metrics,
+            UiWindow::Lines => Icon::Lines,
             UiWindow::Saves => Icon::Saves,
             UiWindow::Debug => Icon::Debug,
         }
@@ -282,6 +290,7 @@ pub fn top_bar(
                     UiWindow::Budget => state.budget_open,
                     UiWindow::Demand => state.demand_open,
                     UiWindow::Metrics => state.metrics_open,
+                    UiWindow::Lines => state.lines_open,
                     UiWindow::Saves => files.open,
                     UiWindow::Debug => state.debug_open,
                 };
@@ -295,6 +304,7 @@ pub fn top_bar(
                         UiWindow::Budget => state.budget_open = !on,
                         UiWindow::Demand => state.demand_open = !on,
                         UiWindow::Metrics => state.metrics_open = !on,
+                        UiWindow::Lines => state.lines_open = !on,
                         UiWindow::Saves => toggle_saves(files),
                         UiWindow::Debug => state.debug_open = !on,
                     }
@@ -1100,6 +1110,7 @@ mod tests {
                 UiWindow::Budget => state.budget_open,
                 UiWindow::Demand => state.demand_open,
                 UiWindow::Metrics => state.metrics_open,
+                UiWindow::Lines => state.lines_open,
                 UiWindow::Saves => files.open,
                 UiWindow::Debug => state.debug_open,
             };
@@ -1115,6 +1126,7 @@ mod tests {
                 UiWindow::Budget => state.budget_open,
                 UiWindow::Demand => state.demand_open,
                 UiWindow::Metrics => state.metrics_open,
+                UiWindow::Lines => state.lines_open,
                 UiWindow::Saves => files.open,
                 UiWindow::Debug => state.debug_open,
             };

@@ -21,6 +21,7 @@ pub mod frame;
 pub mod icons;
 pub mod info;
 pub mod land;
+pub mod lines;
 pub mod metrics;
 pub mod milestone;
 pub mod net_summary;
@@ -190,6 +191,7 @@ fn draw_ui(
         budget::budget_window(ctx, &mut st.budget_open, &view, &mut st.budget, &mut outbox);
         windows::demand_window(ctx, &mut st.demand_open, &view);
         metrics::metrics_window(ctx, &mut st.metrics_open, &view);
+        lines::lines_window(ctx, &mut st.lines_open, &view, &mut st.lines, &mut outbox);
     }
     if state.debug_open {
         debug::debug_window(
