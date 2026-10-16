@@ -123,7 +123,7 @@ fn valley_entry_path() -> Vec<(f32, f32)> {
 /// highway runs through one, and meadows cover about half of the rest as clearings of
 /// 600-1500 m between the hills.
 fn meadow(x: f32, z: f32, entry: &[(f32, f32)]) -> f32 {
-    let clearings = smoothstep(0.42, 0.52, fbm(x, z, 1400.0, SEED + 60));
+    let clearings = smoothstep(0.30, 0.62, noise(x, z, 3000.0, SEED + 60));
     let start = 1.0
         - smoothstep(
             1450.0,
@@ -134,7 +134,7 @@ fn meadow(x: f32, z: f32, entry: &[(f32, f32)]) -> f32 {
         .iter()
         .map(|&(px, pz)| ((x - px).powi(2) + (z - pz).powi(2)).sqrt())
         .fold(f32::MAX, f32::min);
-    let corridor = 1.0 - smoothstep(200.0, 500.0, road);
+    let corridor = 1.0 - smoothstep(250.0, 1150.0, road);
     clearings.max(start).max(corridor)
 }
 
@@ -149,16 +149,16 @@ fn river_valley() -> Map {
             let cx = 5120.0 + 1400.0 * (z / 1900.0).sin() + 500.0 * (z / 700.0 + 1.3).sin();
             let d = (x - cx).abs();
             let floor = 80.0 - z * 0.004;
-            let hills = 140.0 * fbm(x, z, 1800.0, SEED + 30) + 20.0 * fbm(x, z, 250.0, SEED + 40);
+            let hills = 90.0 * fbm(x, z, 2200.0, SEED + 30) + 10.0 * fbm(x, z, 500.0, SEED + 40);
             // Higher ground towards the edges of the map.
             let edge = (((x - 5120.0).powi(2) + (z - 5120.0).powi(2)).sqrt() - 3500.0) / 1500.0;
-            let rim = 90.0 * smoothstep(0.0, 1.0, edge) * fbm(x, z, 900.0, SEED + 90);
+            let rim = 60.0 * smoothstep(0.0, 1.0, edge) * fbm(x, z, 1500.0, SEED + 90);
             let carve = smoothstep(30.0, 220.0, d);
             let span = smoothstep(120.0, 1600.0, d);
             let m = meadow(x, z, &entry);
             // A meadow is a few metres of slow swell (well under 1 %) and a little grain.
             let gentle = 3.0 * fbm(x, z, 1500.0, SEED + 70) + 0.4 * fbm(x, z, 120.0, SEED + 80);
-            let rough = 6.0 * fbm(x, z, 400.0, SEED + 50) + (hills + rim) * span;
+            let rough = 6.0 * fbm(x, z, 600.0, SEED + 50) + (hills + rim) * span;
             let ground = floor - 4.0 + (4.0 + gentle + rough * (1.0 - m)) * carve;
             let surface = floor - 1.0;
             height[iz * GRID + ix] = to_u16(ground);
@@ -192,6 +192,42 @@ fn png16_bytes(data: &[u16]) -> Vec<u8> {
     out
 }
 
+/// Steepness of every sample: the largest height step to a neighbour over the spacing.
+fn slopes(height: &[u16]) -> Vec<f32> {
+    let h = |ix: usize, iz: usize| f32::from(height[iz * GRID + ix]) / 65535.0 * MAX_HEIGHT;
+    let mut out = vec![0.0; GRID * GRID];
+    for iz in 0..GRID {
+        for ix in 0..GRID {
+            let mut worst = 0.0f32;
+            for (dx, dz) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                let (nx, nz) = (ix as i32 + dx, iz as i32 + dz);
+                if (0..GRID as i32).contains(&nx) && (0..GRID as i32).contains(&nz) {
+                    worst = worst.max((h(nx as usize, nz as usize) - h(ix, iz)).abs() / SPACING);
+                }
+            }
+            out[iz * GRID + ix] = worst;
+        }
+    }
+    out
+}
+
+/// Slope map for a look at the terrain: 8-bit grey, white is 40 % and steeper.
+fn write_slope_map(path: &Path, height: &[u16]) {
+    let mut enc = png::Encoder::new(
+        BufWriter::new(fs::File::create(path).unwrap()),
+        GRID as u32,
+        GRID as u32,
+    );
+    enc.set_color(png::ColorType::Grayscale);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut w = enc.write_header().unwrap();
+    let bytes: Vec<u8> = slopes(height)
+        .iter()
+        .map(|s| (s / 0.4 * 255.0).clamp(0.0, 255.0) as u8)
+        .collect();
+    w.write_image_data(&bytes).unwrap();
+}
+
 fn write_png16(path: &Path, data: &[u16]) {
     fs::write(path, png16_bytes(data)).unwrap();
 }
@@ -213,8 +249,17 @@ fn write_map(root: &Path, map: &Map) {
 fn main() {
     let root = std::env::args()
         .nth(1)
+        .filter(|a| a != "--slope-map")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps"));
+    // `--slope-map <png>`: also writes the steepness of river_valley (a look, not committed).
+    if let Some(out) = std::env::args()
+        .nth(2)
+        .filter(|_| std::env::args().nth(1).as_deref() == Some("--slope-map"))
+    {
+        write_slope_map(Path::new(&out), &river_valley().height);
+        return;
+    }
     for map in [flatlands(), river_valley()] {
         write_map(&root, &map);
     }
@@ -316,5 +361,43 @@ mod tests {
                 map.meta.name
             );
         }
+    }
+
+    /// Steepest slope and largest one-sample height step along the borders of the meadows
+    /// (`0.02 < meadow < 0.98`), and the largest step anywhere on river_valley.
+    fn border_stats(map: &Map) -> (f32, f32, f32) {
+        let entry = valley_entry_path();
+        let sl = slopes(&map.height);
+        let (mut border, mut jump_border, mut jump_all) = (0.0f32, 0.0f32, 0.0f32);
+        for iz in 0..GRID {
+            for ix in 0..GRID {
+                let (x, z) = (ix as f32 * SPACING, iz as f32 * SPACING);
+                let m = meadow(x, z, &entry);
+                let s = sl[iz * GRID + ix];
+                jump_all = jump_all.max(s * SPACING);
+                if m > 0.02 && m < 0.98 {
+                    border = border.max(s);
+                    jump_border = jump_border.max(s * SPACING);
+                }
+            }
+        }
+        (border, jump_border, jump_all)
+    }
+
+    /// T-180: the meadows blend into the hills over a wide band: no cliff wall or step along
+    /// their borders, and no step above 3 m between two samples anywhere.
+    #[test]
+    fn meadow_borders_blend_into_the_hills_without_cliffs() {
+        let map = river_valley();
+        let (slope, border_step, any_step) = border_stats(&map);
+        println!(
+            "border slope {slope:.3}, border step {border_step:.2} m, max step {any_step:.2} m"
+        );
+        assert!(slope <= 0.25, "meadow border slope {slope}");
+        assert!(
+            border_step <= 2.5,
+            "step along a meadow border {border_step} m"
+        );
+        assert!(any_step <= 3.0, "step between two samples {any_step} m");
     }
 }

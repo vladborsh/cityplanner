@@ -174,18 +174,22 @@ fn a_steep_road_is_flagged_by_both() {
     };
     // Scan the owned area for a 60 m run on land steeper than the road's limit.
     let mut found = None;
-    'scan: for zi in (2300..7800).step_by(40) {
-        for xi in (2300..7800).step_by(40) {
-            let (a, b) = (
-                Vec2::new(xi as f32, zi as f32),
-                Vec2::new(xi as f32 + 60.0, zi as f32),
-            );
-            if is_land(&t, a)
-                && is_land(&t, b)
-                && (t.height(a) - t.height(b)).abs() / 60.0 > max * 1.5
-            {
-                found = Some((a, b));
-                break 'scan;
+    // (T-180 softened the hills of the valley: the steep runs are the river banks and the
+    // meadow borders, so look in both directions and just over the limit.)
+    'scan: for zi in (2300..7800).step_by(20) {
+        for xi in (2300..7800).step_by(20) {
+            for (dx, dz) in [(60.0, 0.0), (0.0, 60.0)] {
+                let (a, b) = (
+                    Vec2::new(xi as f32, zi as f32),
+                    Vec2::new(xi as f32 + dx, zi as f32 + dz),
+                );
+                if is_land(&t, a)
+                    && is_land(&t, b)
+                    && (t.height(a) - t.height(b)).abs() / 60.0 > max * 1.05
+                {
+                    found = Some((a, b));
+                    break 'scan;
+                }
             }
         }
     }
