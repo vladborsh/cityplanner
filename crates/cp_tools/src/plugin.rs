@@ -142,6 +142,7 @@ struct LineGhostKey {
 #[derive(Clone, PartialEq, Debug)]
 struct UtilityGhostKey {
     hover: (i32, i32),
+    alt: bool,
     tool: UtilityTool,
     graph_ptr: usize,
 }
@@ -560,11 +561,13 @@ fn tool_hover(
         (ActiveTool::Utility, Some(p)) => {
             let key = UtilityGhostKey {
                 hover: (p.x.round() as i32, p.y.round() as i32),
+                alt: state.alt,
                 tool: state.utility.clone(),
                 graph_ptr: std::sync::Arc::as_ptr(&view.utilities) as usize,
             };
             if state.utility_key.as_ref() != Some(&key) {
-                state.utility_ghost = compute_utility_ghost(&view, &state.utility, p);
+                state.utility_ghost =
+                    compute_utility_ghost_alt(&view, &state.utility, p, state.alt);
                 state.utility_key = Some(key);
             }
         }
@@ -712,6 +715,17 @@ pub fn compute_ghost_alt(view: &SimView, tool: &RoadTool, hover: Vec2, alt: bool
 /// The ghost for the pipe / power-line tool with the cursor at `hover`: green pieces of the
 /// plan when `BuildLink` would accept the path, the raw red path with every problem otherwise.
 pub fn compute_utility_ghost(view: &SimView, tool: &UtilityTool, hover: Vec2) -> Option<Ghost> {
+    compute_utility_ghost_alt(view, tool, hover, true)
+}
+
+/// [`compute_utility_ghost`] with the snaps of T-182 (angles, guides, nodes) unless `alt`.
+pub fn compute_utility_ghost_alt(
+    view: &SimView,
+    tool: &UtilityTool,
+    hover: Vec2,
+    alt: bool,
+) -> Option<Ghost> {
+    let (hover, snap) = crate::utility::snapped_cursor(view, tool, hover, alt);
     let path = tool.path_with_hover(hover)?;
     Some(match utility_preview(view, tool.kind, &path)? {
         Ok(plan) => Ghost {
@@ -720,7 +734,7 @@ pub fn compute_utility_ghost(view: &SimView, tool: &UtilityTool, hover: Vec2) ->
             cost: Some(plan.cost),
             errors: Vec::new(),
             half_width: 0.0,
-            snap: SnapReport::default(),
+            snap,
             warnings: Vec::new(),
             chevrons: Vec::new(),
         },
@@ -737,7 +751,7 @@ pub fn compute_utility_ghost(view: &SimView, tool: &UtilityTool, hover: Vec2) ->
             cost: None,
             errors: problems.iter().map(ToString::to_string).collect(),
             half_width: 0.0,
-            snap: SnapReport::default(),
+            snap,
             warnings: Vec::new(),
             chevrons: Vec::new(),
         },
@@ -887,6 +901,10 @@ pub fn tool_click(
         }
         ActiveTool::Utility => {
             let before = state.utility.clone();
+            let p = match view.as_deref() {
+                Some(v) => crate::utility::snapped_cursor(v, &state.utility, p, state.alt).0,
+                None => p,
+            };
             if let Some(path) = state.utility.click(p)
                 && let Some(cmd) =
                     crate::utility::chain_commit(view.as_deref(), &mut state.utility, before, path)
@@ -968,9 +986,11 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
             gizmos.line(*a, *b, color);
         }
     }
-    if let Some(ghost) = &state.ghost
-        && state.active == ActiveTool::Road
-        && let Some((a, b)) = ghost.snap.guide
+    if let Some(ghost) = match state.active {
+        ActiveTool::Road => state.ghost.as_ref(),
+        ActiveTool::Utility => state.utility_ghost.as_ref(),
+        _ => None,
+    } && let Some((a, b)) = ghost.snap.guide
     {
         let y = |p: Vec2| {
             view.as_deref()

@@ -521,10 +521,13 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
             }
         },
         (Category::Buildings, ActiveTool::Utility) => match &tools.utility_ghost {
-            Some(g) if g.valid => ok(ui, "can build", g.cost, String::new()),
+            Some(g) if g.valid => {
+                let snap = snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));
+                ok(ui, "can build", g.cost, snap)
+            }
             Some(g) => bad(ui, &g.errors, "cannot build here"),
             None => {
-                ui.weak("Click to start. Buildings within reach of the network are connected (the band shows the reach). Esc cancels.");
+                ui.weak("Click to start. Alt switches the snaps off. Buildings within reach of the network are connected (the band shows the reach). Esc cancels.");
             }
         },
         (Category::Buildings, ActiveTool::UtilityRemove) => {

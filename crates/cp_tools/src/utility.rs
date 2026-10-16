@@ -7,6 +7,10 @@
 
 use bevy_math::{Vec2, Vec3};
 use cp_content::UtilityKind;
+use cp_net::build::{
+    ANGLE_SNAP_TOL_DEG, ANGLE_STEP_DEG, GUIDE_HALF_LENGTH, GUIDE_RADIUS, KEY_ANGLE_TOL_DEG,
+};
+use cp_net::{SnapReport, SnapReportKind};
 use cp_sim::{SimCommand, SimView};
 use cp_utility::{
     LinkPlan, PathProblem, PlanInputs, PlanNode, UtilityCommand, UtilityGraph, UtilityLinkId,
@@ -127,6 +131,233 @@ pub fn chain_commit(
         return None;
     }
     Some(tool.command(path))
+}
+
+/// Radius within which the cursor jumps to a node of the network being drawn, metres.
+pub const NODE_PULL_RADIUS: f32 = 12.0;
+/// The key angles from a neighbouring direction, degrees (as the road tool's).
+const KEY_ANGLES: [f32; 6] = [45.0, -45.0, 90.0, -90.0, 135.0, -135.0];
+
+fn rotate(v: Vec2, deg: f32) -> Vec2 {
+    let (s, c) = deg.to_radians().sin_cos();
+    Vec2::new(v.x * c - v.y * s, v.x * s + v.y * c)
+}
+
+/// Signed angle in degrees from `a` to `b`, in `(-180, 180]`.
+fn signed_deg(a: Vec2, b: Vec2) -> f32 {
+    let ang = (b.y.atan2(b.x) - a.y.atan2(a.x)).to_degrees();
+    (ang + 180.0).rem_euclid(360.0) - 180.0
+}
+
+/// The directions a leg starting at `from` is measured against: the links of the network that
+/// leave a node at `from`, and the leg before `from` in the drawing, turned round (so that
+/// 180° is straight on and 90° is a right angle either way).
+fn direction_refs(view: &SimView, net: UtilityNet, tool: &UtilityTool, from: Vec2) -> Vec<Vec2> {
+    let mut refs = Vec::new();
+    if let [.., before, last] = tool.points.as_slice()
+        && last.distance(from) < 0.5
+        && let Some(d) = (*before - *last).try_normalize()
+    {
+        refs.push(d);
+    }
+    let g = &*view.utilities;
+    for (_, n) in g.nodes().filter(|(_, n)| n.net == net) {
+        if Vec2::new(n.pos.x, n.pos.z).distance(from) > 0.5 {
+            continue;
+        }
+        for l in &n.links {
+            let Some(link) = g.link(*l) else { continue };
+            let (a, b) = (
+                Vec2::new(link.curve.p0.x, link.curve.p0.z),
+                Vec2::new(link.curve.p3.x, link.curve.p3.z),
+            );
+            let other = if a.distance(from) < 0.5 { b } else { a };
+            if let Some(d) = (other - from).try_normalize() {
+                refs.push(d);
+            }
+        }
+    }
+    refs
+}
+
+/// The lines the cursor may run parallel or perpendicular to: roads (ground) and links of the
+/// same network within [`GUIDE_RADIUS`] of `p`, as unit tangents.
+fn guide_dirs(view: &SimView, net: UtilityNet, p: Vec2) -> Vec<Vec2> {
+    let mut out = Vec::new();
+    for (_, s) in view.net.segments() {
+        if s.elevation != cp_net::Elevation::Ground
+            || s.curve.bounds_distance_xz(p) > GUIDE_RADIUS + 1e-3
+        {
+            continue;
+        }
+        let (t, d) = s.curve.nearest_xz(p);
+        let tan = s.curve.tangent(t);
+        if d <= GUIDE_RADIUS
+            && let Some(u) = Vec2::new(tan.x, tan.z).try_normalize()
+        {
+            out.push(u);
+        }
+    }
+    for (_, l) in view.utilities.links().filter(|(_, l)| l.net == net) {
+        let (a, b) = (
+            Vec2::new(l.curve.p0.x, l.curve.p0.z),
+            Vec2::new(l.curve.p3.x, l.curve.p3.z),
+        );
+        let ab = b - a;
+        let t = if ab.length_squared() > 1e-6 {
+            ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        if (a + ab * t).distance(p) <= GUIDE_RADIUS
+            && let Some(u) = ab.try_normalize()
+        {
+            out.push(u);
+        }
+    }
+    out
+}
+
+/// The cursor `p` of a leg from `prev`, snapped the way the road tool does (T-182): to a node
+/// of the network within [`NODE_PULL_RADIUS`]; else the key angles (45/90/135°) from the
+/// directions at `prev` and the guides parallel or perpendicular to a road or a link near the
+/// cursor, within [`KEY_ANGLE_TOL_DEG`] — the smaller deviation wins, a key angle on a tie —
+/// then the [`ANGLE_STEP_DEG`] step. Returns the new point and what snapped it. `alt` turns
+/// every snap off.
+pub fn snap_cursor(
+    view: &SimView,
+    kind: UtilityKind,
+    tool: &UtilityTool,
+    prev: Vec2,
+    p: Vec2,
+    alt: bool,
+) -> (Vec2, SnapReport) {
+    let none = (p, SnapReport::default());
+    if alt {
+        return none;
+    }
+    let net = net_of(kind);
+    let nearest = view
+        .utilities
+        .nodes()
+        .filter(|(_, n)| n.net == net)
+        .map(|(_, n)| Vec2::new(n.pos.x, n.pos.z))
+        .filter(|q| q.distance(p) <= NODE_PULL_RADIUS && q.distance(prev) > 1e-3)
+        .min_by(|a, b| a.distance(p).total_cmp(&b.distance(p)));
+    if let Some(q) = nearest {
+        return (
+            q,
+            SnapReport {
+                kind: SnapReportKind::Node,
+                guide: None,
+            },
+        );
+    }
+    let d = p - prev;
+    let len = d.length();
+    if len < 1e-3 {
+        return none;
+    }
+    let refs = direction_refs(view, net, tool, prev);
+    // (deviation, direction, report kind)
+    let mut best: Option<(f32, Vec2, SnapReportKind, bool)> = None;
+    let mut consider = |dev: f32, dir: Vec2, kind: SnapReportKind, guide: bool| {
+        if dev <= KEY_ANGLE_TOL_DEG && best.is_none_or(|(b, ..)| dev < b) {
+            best = Some((dev, dir, kind, guide));
+        }
+    };
+    for &r in &refs {
+        let rel = signed_deg(r, d);
+        for target in KEY_ANGLES {
+            consider(
+                (rel - target).abs(),
+                rotate(r, target),
+                SnapReportKind::KeyAngle(target.abs() as i32),
+                false,
+            );
+        }
+    }
+    for tan in guide_dirs(view, net, p) {
+        for (dir, perpendicular) in [(tan, false), (Vec2::new(-tan.y, tan.x), true)] {
+            let dir = if d.dot(dir) >= 0.0 { dir } else { -dir };
+            consider(
+                signed_deg(dir, d).abs(),
+                dir,
+                SnapReportKind::Guide { perpendicular },
+                true,
+            );
+        }
+    }
+    if let Some((_, dir, kind, guide)) = best {
+        // A key angle keeps the leg's length; a guide takes the cursor's projection.
+        let at = if guide { d.dot(dir) } else { len };
+        let pos = prev + dir * at;
+        return (
+            pos,
+            SnapReport {
+                kind,
+                guide: Some((pos - dir * GUIDE_HALF_LENGTH, pos + dir * GUIDE_HALF_LENGTH)),
+            },
+        );
+    }
+    // The 15° step from the best direction.
+    let mut step: Option<(f32, Vec2, i32)> = None;
+    for &r in &refs {
+        let ang = signed_deg(r, d);
+        let n = (ang / ANGLE_STEP_DEG).round();
+        let dev = (ang - n * ANGLE_STEP_DEG).abs();
+        if dev <= ANGLE_SNAP_TOL_DEG && step.is_none_or(|(b, ..)| dev < b) {
+            step = Some((
+                dev,
+                rotate(r, n * ANGLE_STEP_DEG),
+                (n * ANGLE_STEP_DEG) as i32,
+            ));
+        }
+    }
+    match step {
+        Some((_, dir, deg)) => (
+            prev + dir * len,
+            SnapReport {
+                kind: SnapReportKind::Step(deg),
+                guide: None,
+            },
+        ),
+        None => none,
+    }
+}
+
+/// `p` snapped for the tool's current drawing; unchanged before the first click (the first
+/// point may still jump to a node).
+pub fn snapped_cursor(
+    view: &SimView,
+    tool: &UtilityTool,
+    p: Vec2,
+    alt: bool,
+) -> (Vec2, SnapReport) {
+    match tool.points.last() {
+        Some(&prev) => snap_cursor(view, tool.kind, tool, prev, p, alt),
+        None if alt => (p, SnapReport::default()),
+        None => {
+            let net = net_of(tool.kind);
+            let node = view
+                .utilities
+                .nodes()
+                .filter(|(_, n)| n.net == net)
+                .map(|(_, n)| Vec2::new(n.pos.x, n.pos.z))
+                .filter(|q| q.distance(p) <= NODE_PULL_RADIUS)
+                .min_by(|a, b| a.distance(p).total_cmp(&b.distance(p)));
+            match node {
+                Some(q) => (
+                    q,
+                    SnapReport {
+                        kind: SnapReportKind::Node,
+                        guide: None,
+                    },
+                ),
+                None => (p, SnapReport::default()),
+            }
+        }
+    }
 }
 
 /// The network a kind builds into.

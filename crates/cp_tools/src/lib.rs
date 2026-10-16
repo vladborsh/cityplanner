@@ -38,7 +38,7 @@ pub use outbox::CommandOutbox;
 pub use pick::{Inspected, Picked, pick, pick_line, pick_with};
 pub use plugin::{
     ActiveTool, Ghost, ToolState, ToolsPlugin, compute_ghost, compute_ghost_alt,
-    compute_utility_ghost, tool_click, tool_hotkeys,
+    compute_utility_ghost, compute_utility_ghost_alt, tool_click, tool_hotkeys,
 };
 pub use road::{
     CHEVRON_SPACING, ELEVATION_STEP, MAX_ELEVATION_LEVEL, MarkerKind, RoadMarker, RoadMode,
@@ -50,7 +50,9 @@ pub use transit::{
     route_summary,
 };
 pub use upgrade::{UpgradePreview, upgrade_commands, upgrade_preview};
-pub use utility::{LINK_PICK_RADIUS, UtilityMode, UtilityTool, pick_link};
+pub use utility::{
+    LINK_PICK_RADIUS, UtilityMode, UtilityTool, pick_link, snap_cursor, snapped_cursor,
+};
 pub use zone::{PALETTE, ZoneTool, ZoneToolKind, zone_color, zone_name};
 
 /// Crate name, used by the skeleton smoke test.
