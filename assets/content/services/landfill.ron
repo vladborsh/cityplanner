@@ -1,0 +1,10 @@
+// Numbers: tune later.
+Service((
+    id: "landfill",
+    name: "Landfill",
+    kind: Garbage,
+    radius_m: 1200.0,
+    capacity: 400,
+    storage: 20000,
+    vehicles: [],
+))

@@ -217,6 +217,13 @@ impl SimRunner {
         schedule.add_systems(cp_utility::update_supply.in_set(SimPhase::Utilities));
         schedule.add_systems(cp_service::update_coverage.in_set(SimPhase::Services));
         schedule.add_systems(cp_service::reset_daily_capacity.in_set(SimPhase::Services));
+        // After the reset and the coverage rebuild: it reads both.
+        schedule.add_systems(
+            cp_service::update_garbage
+                .in_set(SimPhase::Services)
+                .after(cp_service::update_coverage)
+                .after(cp_service::reset_daily_capacity),
+        );
         schedule.add_systems(cp_economy::settle_week.in_set(SimPhase::Economy));
         schedule.add_systems(cp_economy::update_demand.in_set(SimPhase::Economy));
         schedule.add_systems(cp_economy::update_city.in_set(SimPhase::Economy));

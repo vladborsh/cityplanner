@@ -2,7 +2,7 @@
 //! (§16 M2 D "Суточная ёмкость").
 
 use bevy_ecs::system::{Res, ResMut};
-use cp_building::{BuildingGrid, BuildingId, BuildingState};
+use cp_building::{BuildingFlags, BuildingGrid, BuildingId, BuildingState};
 use cp_content::{ContentDb, ServiceKind};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
@@ -13,7 +13,7 @@ use crate::state::ServiceState;
 
 /// The nearest Active building of `kind` by road from building `from` that still has room:
 /// fewer than `capacity` served today and, when the definition has a `storage`, less than that
-/// stored. Ties go to the smaller id. `None` when `from` has no access point or nothing
+/// stored. A building without power (`NO_POWER`) does not work and is skipped. Ties go to the smaller id. `None` when `from` has no access point or nothing
 /// reachable has room.
 pub fn nearest_facility(
     net: &NetGraph,
@@ -28,7 +28,7 @@ pub fn nearest_facility(
     let dist = g.node_distances(origin, f32::INFINITY);
     let mut best: Option<(f32, BuildingId)> = None;
     for (id, b) in buildings.iter() {
-        if b.state != BuildingState::Active {
+        if b.state != BuildingState::Active || b.flags.has(BuildingFlags::NO_POWER) {
             continue;
         }
         let Some(to) = b.access() else { continue };

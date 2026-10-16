@@ -8,16 +8,20 @@
 
 pub mod coverage;
 pub mod facility;
+pub mod garbage;
 pub mod state;
 
 pub use coverage::{
     COVERAGE_PERIOD, RoadGraph, ServiceCoverage, ServicePlugin, rebuild_coverage, update_coverage,
 };
 pub use facility::{nearest_facility, purge_removed_services, reset_daily_capacity};
+pub use garbage::update_garbage;
 pub use state::{BuildingServices, Facility, Fire, ServiceProblems, ServiceState, ServiceSummary};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_service";
 
+#[cfg(test)]
+mod garbage_tests;
 #[cfg(test)]
 mod tests;

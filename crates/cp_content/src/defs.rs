@@ -124,6 +124,12 @@ pub struct Balance {
     /// Loans the bank offers, by index (the index is what a save and a command name); at most
     /// 255, one active loan per offer (§16 M2).
     pub loan_offers: Vec<LoanOffer>,
+    /// Garbage a household makes per game day (T-136). // tune later
+    pub garbage_household: f32,
+    /// Garbage a filled job makes per game day. // tune later
+    pub garbage_job: f32,
+    /// Garbage piled up in a building from which it has the GARBAGE problem. // tune later
+    pub garbage_problem: f32,
 }
 
 /// One loan the bank offers (`balance.ron` `loan_offers`). Interest is simple, for the whole
@@ -167,6 +173,11 @@ impl Balance {
         v.extend(self.tax_household);
         v.extend(self.tax_job);
         v.extend(self.level_mul);
+        v.extend([
+            self.garbage_household,
+            self.garbage_job,
+            self.garbage_problem,
+        ]);
         v
     }
 }
@@ -204,6 +215,9 @@ impl Default for Balance {
             tax_job: [30.0, 45.0, 65.0, 90.0],
             level_mul: [1.0, 1.2, 1.45],
             loan_offers: default_loan_offers(),
+            garbage_household: 25.0,
+            garbage_job: 4.0,
+            garbage_problem: 100.0,
         }
     }
 }

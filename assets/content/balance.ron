@@ -66,4 +66,10 @@ Balance((
         (amount: 60000.0, interest_pct: 4.0, weeks: 52, min_population: 1000),
         (amount: 150000.0, interest_pct: 5.0, weeks: 104, min_population: 5000),
     ],
+
+    // --- Garbage (system-design §16 M2 D): per game day, collected by landfills and incinerators ---
+    // Per household and per filled job; a building from garbage_problem up has the GARBAGE problem. // tune later
+    garbage_household: 25.0,
+    garbage_job: 4.0,
+    garbage_problem: 100.0,
 ))

@@ -87,3 +87,6 @@ each for the water pumping station, the sewage outflow, the coal plant, the wind
 water pipe and the two remove tools (`water_pump_station`, `sewage_outflow_station`,
 `coal_power_plant`, `wind_turbine`, `water_pipe`, `remove_pipe`, `remove_line`), the same way
 (self-made SVG, CC0, no third-party pack).
+
+T-136 adds `landfill` (a heap with a bulldozer) and `incinerator` (a block with a chimney): self-made SVG
+in `assets/ui/icons/src`, rendered by `tools/assets/icons.mjs`, CC0, no third-party pack.

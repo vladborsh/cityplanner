@@ -1,0 +1,9 @@
+// Numbers: tune later. No stock: it burns what it takes; without power it does not work.
+Service((
+    id: "incinerator",
+    name: "Incinerator",
+    kind: Garbage,
+    radius_m: 1500.0,
+    capacity: 800,
+    vehicles: [],
+))

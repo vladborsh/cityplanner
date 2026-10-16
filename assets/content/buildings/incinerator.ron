@@ -1,0 +1,15 @@
+Building((
+    id: "incinerator",
+    name: "Incinerator",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 3),
+    jobs: (4, 4, 2, 0),
+    consumption: {Power: 60.0},
+    tax_base: 0.0,
+    cost: 40000.0,
+    upkeep_week: 900.0,
+    styles: ["service_coal_plant"],
+    service: Some("incinerator"),
+    icon: "incinerator",
+))

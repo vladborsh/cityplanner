@@ -806,7 +806,10 @@ mod tests {
         let content = rig.view.content.clone().unwrap();
         let sections = crate::buildings::sections(&content);
         let kinds: Vec<ServiceKind> = sections.iter().map(|s| s.kind).collect();
-        assert_eq!(kinds, [ServiceKind::Water, ServiceKind::Power]);
+        assert_eq!(
+            kinds,
+            [ServiceKind::Water, ServiceKind::Power, ServiceKind::Garbage]
+        );
         // Water: the pipe, every Water and Sewage service building, remove; Power likewise.
         let service = |kinds: &[ServiceKind]| {
             content
@@ -825,7 +828,11 @@ mod tests {
         );
         assert_eq!(sections[1].cards.len(), service(&[ServiceKind::Power]));
         let tiles = tiles(&mut rig);
-        let expect: usize = sections.iter().map(|s| s.cards.len() + 2).sum();
+        // The networks add their tool and remove; the Garbage section is just its buildings.
+        let expect: usize = sections
+            .iter()
+            .map(|s| s.cards.len() + if s.net.is_some() { 2 } else { 0 })
+            .sum();
         assert_eq!(tiles.len(), expect);
         let texts = rig.frame_texts(vec![]);
         let names: Vec<&str> = texts.iter().map(|(t, _)| t.as_str()).collect();

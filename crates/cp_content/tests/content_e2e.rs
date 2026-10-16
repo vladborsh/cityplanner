@@ -1,7 +1,7 @@
 //! Acceptance tests for `m0-data` content loading, driven from the committed
 //! `assets/content` files through the public API only.
 
-use cp_content::{ContentDb, LaneKind, RoadClass, ZoneType};
+use cp_content::{ContentDb, LaneKind, RoadClass, ServiceKind, ZoneType};
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
@@ -404,14 +404,20 @@ fn every_zone_and_level_has_four_looks_and_every_zone_five_combinations() {
 }
 
 /// T-114: the six service buildings have six different silhouettes (massings), each its own
-/// `service_*` style.
+/// `service_*` style. The M2 services (T-136 on) borrow these styles until T-147 draws their own.
 #[test]
 fn the_six_service_buildings_have_six_different_silhouettes() {
     use std::collections::BTreeSet;
     let db = ContentDb::load_dir(root()).unwrap();
     let mut massings = BTreeSet::new();
     let mut n = 0;
-    for (_, d) in db.buildings().filter(|(_, d)| d.service.is_some()) {
+    let m1 = |d: &cp_content::BuildingDef| {
+        d.service
+            .as_deref()
+            .and_then(|s| db.service_id(s))
+            .is_some_and(|s| db.service(s).kind <= ServiceKind::Sewage)
+    };
+    for (_, d) in db.buildings().filter(|(_, d)| m1(d)) {
         assert_eq!(d.styles.len(), 1, "{}", d.id);
         assert!(
             d.styles[0].starts_with("service_"),

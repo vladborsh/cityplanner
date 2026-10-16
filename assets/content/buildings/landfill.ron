@@ -1,0 +1,15 @@
+Building((
+    id: "landfill",
+    name: "Landfill",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 4),
+    jobs: (4, 2, 0, 0),
+    consumption: {},
+    tax_base: 0.0,
+    cost: 18000.0,
+    upkeep_week: 400.0,
+    styles: ["service_treatment_plant"],
+    service: Some("landfill"),
+    icon: "landfill",
+))
