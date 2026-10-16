@@ -189,7 +189,9 @@ pub fn tool_panel(
                 Category::Buildings => services_panel(ui, view, tools, overlay),
                 Category::Bulldozer => bulldozer_panel(ui, tools),
                 Category::Districts => crate::districts::districts_panel(ui, view, tools, outbox),
-                Category::Transit => crate::transit::transit_panel(ui, view, tools, overlay),
+                Category::Transit => {
+                    crate::transit::transit_panel(ui, view, tools, overlay, &mut state.lines_open)
+                }
             });
         });
     Some(out.response.rect)

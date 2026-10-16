@@ -1083,6 +1083,7 @@ fn tool_pick(
     view: Option<Res<SimView>>,
     fraction: Option<Res<cp_render::TickFraction>>,
     camera: Query<&GlobalTransform, With<RtsCamera>>,
+    overlay: Res<cp_render::OverlayState>,
     mut picked: ResMut<crate::Picked>,
 ) {
     if state.active != ActiveTool::None {
@@ -1103,7 +1104,8 @@ fn tool_pick(
     let ground = view.terrain.as_deref().map_or(0.0, |t| t.height(p));
     let height = cam.translation().y - ground;
     let alpha = fraction.map_or(1.0, |f| f.0);
-    picked.0 = crate::pick(&view, alpha, p, height);
+    let lines = overlay.active == cp_render::Overlay::Transit;
+    picked.0 = crate::pick_with(&view, alpha, p, height, lines);
 }
 
 /// Outlines the selection: a building's lot, a citizen's home and workplace (or the pedestrian
@@ -1181,6 +1183,17 @@ fn draw_selection(
                 s.line.iter().map(|p| *p + Vec3::Y * 0.9),
                 Color::srgb(1.0, 0.85, 0.2),
             );
+        }
+        Inspection::Line(l) => {
+            if let Some(route) = view.transit.routes.get(&l.id) {
+                gizmos.linestrip(
+                    route
+                        .points
+                        .iter()
+                        .map(|p| Vec3::new(p.x, ground(*p) + 1.4, p.y)),
+                    cyan,
+                );
+            }
         }
     }
 }

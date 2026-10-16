@@ -27,6 +27,54 @@ const REACH_PER_HEIGHT: f32 = 0.012;
 /// The thing under the cursor at `p` (terrain point), seen from `camera_height` metres above
 /// the ground, with the agents drawn `alpha` of the way between their last two poses.
 pub fn pick(view: &SimView, alpha: f32, p: Vec2, camera_height: f32) -> Option<Selection> {
+    pick_with(view, alpha, p, camera_height, false)
+}
+
+/// How far from a line's ribbon a click still means the line, metres.
+pub const RIBBON_PICK_RADIUS: f32 = 6.0;
+
+/// The transit line under `p`: one that calls at a stop within reach, else the one whose
+/// ribbon passes within [`RIBBON_PICK_RADIUS`] (the nearer wins).
+pub fn pick_line(view: &SimView, p: Vec2) -> Option<cp_transit::LineId> {
+    let stop = view
+        .transit
+        .net
+        .stops
+        .iter()
+        .map(|(_, st)| (st.pos.distance(p), st))
+        .filter(|(d, st)| *d <= crate::transit::STOP_PICK_RADIUS && !st.lines.is_empty())
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((_, st)) = stop {
+        return st.lines.first().copied();
+    }
+    let mut best: Option<(f32, cp_transit::LineId)> = None;
+    for (&id, route) in &view.transit.routes {
+        for w in route.points.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let ab = b - a;
+            let t = if ab.length_squared() > 0.0 {
+                ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let d = (a + ab * t).distance(p);
+            if d <= RIBBON_PICK_RADIUS && best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, id));
+            }
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
+/// [`pick`] that also finds transit lines (stops before buildings, ribbons before roads) while
+/// `lines` is set: the Transit view is showing them.
+pub fn pick_with(
+    view: &SimView,
+    alpha: f32,
+    p: Vec2,
+    camera_height: f32,
+    lines: bool,
+) -> Option<Selection> {
     let grow = camera_height.max(0.0) * REACH_PER_HEIGHT;
     let mut best: Option<(f32, Selection)> = None;
     let mut consider = |score: f32, sel: Selection| {
@@ -58,8 +106,25 @@ pub fn pick(view: &SimView, alpha: f32, p: Vec2, camera_height: f32) -> Option<S
     if let Some((_, sel)) = best {
         return Some(sel);
     }
+    if lines
+        && let Some(st) = view
+            .transit
+            .net
+            .stops
+            .iter()
+            .find(|(_, st)| {
+                !st.lines.is_empty() && st.pos.distance(p) <= crate::transit::STOP_PICK_RADIUS
+            })
+            .map(|(_, st)| st)
+        && let Some(&line) = st.lines.first()
+    {
+        return Some(Selection::Line(line));
+    }
     if let Some(id) = pick_building(view, p) {
         return Some(Selection::Building(id));
+    }
+    if lines && let Some(line) = pick_line(view, p) {
+        return Some(Selection::Line(line));
     }
     pick_segment(&view.net, p, PICK_RADIUS).map(Selection::Segment)
 }

@@ -251,6 +251,14 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     milestone::milestone_toast(ctx, view, toast);
     land::confirm_window(ctx, view, &mut state.budget.buy_tile, outbox);
     info_panel(ctx, inspected, picked, Some(view), tools, outbox);
+    let line_out = lines::line_info_panel(ctx, view, picked, &mut state.lines, outbox);
+    if let Some(line) = line_out.edit {
+        // The tool resets itself when it is selected, so fill it afterwards.
+        tools.select(cp_tools::ActiveTool::Line);
+        tools.line.begin_edit(view, line);
+        overlay.active = cp_render::Overlay::Transit;
+        picked.0 = None;
+    }
 }
 
 /// What egui owns, given the pointer position of the frame that just began and the layout of

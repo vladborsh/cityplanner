@@ -12,30 +12,15 @@ use cp_core::Cost;
 use cp_sim::{LineView, SimCommand, SimView};
 use cp_tools::{CommandOutbox, format_money};
 use cp_transit::{
-    LineId, LineState, MAX_LINE_NAME, MAX_LINE_VEHICLES, PALETTE_LEN, TransitCommand, TransitMode,
+    LINE_PALETTE_RGB, LineId, LineState, MAX_LINE_NAME, MAX_LINE_VEHICLES, PALETTE_LEN,
+    TransitCommand, TransitMode,
 };
 
 use crate::frame;
 use crate::icons::Icon;
 
-/// The colours of the line palette (`Line::color` is an index into it).
-pub const LINE_COLORS: [[u8; 3]; PALETTE_LEN as usize] = [
-    [230, 80, 70],
-    [235, 150, 50],
-    [235, 205, 60],
-    [140, 200, 70],
-    [60, 175, 105],
-    [60, 185, 195],
-    [70, 140, 225],
-    [100, 100, 220],
-    [160, 100, 215],
-    [215, 100, 190],
-    [150, 150, 155],
-    [170, 120, 80],
-];
-
 pub fn line_color(index: u8) -> egui::Color32 {
-    let [r, g, b] = LINE_COLORS[usize::from(index) % LINE_COLORS.len()];
+    let [r, g, b] = LINE_PALETTE_RGB[usize::from(index) % LINE_PALETTE_RGB.len()];
     egui::Color32::from_rgb(r, g, b)
 }
 
@@ -97,14 +82,7 @@ pub fn delete_command(line: LineId) -> SimCommand {
     SimCommand::Transit(TransitCommand::DeleteLine { line })
 }
 
-fn line_row(
-    ui: &mut egui::Ui,
-    view: &SimView,
-    l: &LineView,
-    draft: &mut LinesDraft,
-    outbox: &mut CommandOutbox,
-) {
-    // Colour: a swatch that opens the palette.
+fn color_menu(ui: &mut egui::Ui, l: &LineView, outbox: &mut CommandOutbox) {
     ui.menu_button(egui::RichText::new("⬛").color(line_color(l.color)), |ui| {
         egui::Grid::new(("line_palette", l.id)).show(ui, |ui| {
             for i in 0..PALETTE_LEN {
@@ -120,7 +98,10 @@ fn line_row(
             }
         });
     });
-    // Name: edited in place, sent when the field loses focus with a changed text.
+}
+
+/// The name field: edited in place, sent when it loses focus with a changed text.
+fn name_edit(ui: &mut egui::Ui, l: &LineView, draft: &mut LinesDraft, outbox: &mut CommandOutbox) {
     let name = draft.names.entry(l.id).or_insert_with(|| l.name.clone());
     let r = ui.add(
         egui::TextEdit::singleline(name)
@@ -138,9 +119,15 @@ fn line_row(
         // The sim's name changed under the draft (or the command went through).
         draft.names.remove(&l.id);
     }
-    ui.label(mode_name(l.mode));
-    ui.label(l.stops.to_string());
-    // Buses: a slider, one command when released.
+}
+
+/// The buses slider: one command when released.
+fn buses_slider(
+    ui: &mut egui::Ui,
+    l: &LineView,
+    draft: &mut LinesDraft,
+    outbox: &mut CommandOutbox,
+) {
     let mut n = draft.vehicles.get(&l.id).copied().unwrap_or(l.vehicles);
     let r = ui.add(egui::Slider::new(&mut n, 0..=MAX_LINE_VEHICLES));
     if r.changed() {
@@ -152,6 +139,40 @@ fn line_row(
     if n == l.vehicles && !r.dragged() {
         draft.vehicles.remove(&l.id);
     }
+}
+
+/// Delete asks twice. Returns whether the line was deleted.
+fn delete_button(
+    ui: &mut egui::Ui,
+    l: &LineView,
+    draft: &mut LinesDraft,
+    outbox: &mut CommandOutbox,
+) -> bool {
+    let pending = draft.confirm_delete == Some(l.id);
+    let label = if pending { "Sure?" } else { "Delete" };
+    if ui.small_button(label).clicked() {
+        if pending {
+            outbox.push(delete_command(l.id));
+            draft.confirm_delete = None;
+            return true;
+        }
+        draft.confirm_delete = Some(l.id);
+    }
+    false
+}
+
+fn line_row(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    l: &LineView,
+    draft: &mut LinesDraft,
+    outbox: &mut CommandOutbox,
+) {
+    color_menu(ui, l, outbox);
+    name_edit(ui, l, draft, outbox);
+    ui.label(mode_name(l.mode));
+    ui.label(l.stops.to_string());
+    buses_slider(ui, l, draft, outbox);
     ui.label(format!("{} out", l.vehicles_out));
     ui.label(l.riders_week.to_string());
     ui.label(l.waiting.to_string());
@@ -162,18 +183,92 @@ fn line_row(
         Some(t) => ui.colored_label(egui::Color32::from_rgb(240, 120, 60), t),
         None => ui.label("OK"),
     };
-    // Delete asks twice.
-    let pending = draft.confirm_delete == Some(l.id);
-    let label = if pending { "Sure?" } else { "Delete" };
-    if ui.small_button(label).clicked() {
-        if pending {
-            outbox.push(delete_command(l.id));
-            draft.confirm_delete = None;
-        } else {
-            draft.confirm_delete = Some(l.id);
-        }
-    }
+    delete_button(ui, l, draft, outbox);
     ui.end_row();
+}
+
+/// What the info panel of a line asks the app to do besides sending commands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LinePanelOut {
+    /// "Edit stops": start the line tool on this line.
+    pub edit: Option<LineId>,
+}
+
+/// The info panel of the selected line (a click on its ribbon or a stop, T-160b): the same
+/// controls as its row in the Lines window. The selection is dropped when the line is deleted
+/// or the panel closed.
+pub fn line_info_panel(
+    ctx: &egui::Context,
+    view: &SimView,
+    picked: &mut cp_tools::Picked,
+    draft: &mut LinesDraft,
+    outbox: &mut CommandOutbox,
+) -> LinePanelOut {
+    let mut out = LinePanelOut::default();
+    let Some(cp_sim::Selection::Line(id)) = picked.0 else {
+        return out;
+    };
+    let Some(l) = view.lines.iter().find(|l| l.id == id) else {
+        picked.0 = None;
+        return out;
+    };
+    let mut open = true;
+    let mut gone = false;
+    frame::window("line_info", Icon::Lines, "Line", &mut open)
+        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -8.0))
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                color_menu(ui, l, outbox);
+                name_edit(ui, l, draft, outbox);
+            });
+            let (fares, upkeep) = line_money(view, l);
+            egui::Grid::new("line_info_rows")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.weak("Mode");
+                    ui.label(mode_name(l.mode));
+                    ui.end_row();
+                    ui.weak("Stops");
+                    ui.label(l.stops.to_string());
+                    ui.end_row();
+                    ui.weak("Buses");
+                    buses_slider(ui, l, draft, outbox);
+                    ui.end_row();
+                    ui.weak("Out now");
+                    ui.label(l.vehicles_out.to_string());
+                    ui.end_row();
+                    ui.weak("Riders");
+                    ui.label(format!(
+                        "{} today, {} this week",
+                        l.riders_today, l.riders_week
+                    ));
+                    ui.end_row();
+                    ui.weak("Waiting");
+                    ui.label(l.waiting.to_string());
+                    ui.end_row();
+                    ui.weak("Fares / upkeep");
+                    ui.label(format!(
+                        "{} / {}",
+                        format_money(fares),
+                        format_money(upkeep)
+                    ));
+                    ui.end_row();
+                    ui.weak("State");
+                    ui.label(state_text(l.state).unwrap_or("OK"));
+                    ui.end_row();
+                });
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("Edit stops").clicked() {
+                    out.edit = Some(l.id);
+                }
+                gone = delete_button(ui, l, draft, outbox);
+            });
+        });
+    if !open || gone {
+        picked.0 = None;
+    }
+    out
 }
 
 /// The inside of the window (separate so tests can draw it into a plain `Ui`).
@@ -248,8 +343,8 @@ mod tests {
     use cp_transit::StopRef;
     use std::sync::Arc;
 
-    #[test]
-    fn the_window_lists_a_line_and_its_buttons_send_commands() {
+    /// A square town with one four-stop bus line.
+    fn town_with_line() -> (SimRunner, Arc<ContentDb>) {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let db = Arc::new(ContentDb::load_dir(root.join("assets/content")).unwrap());
         let mut sim = SimRunner::new(1);
@@ -298,6 +393,13 @@ mod tests {
         )
         .unwrap();
         sim.tick_once();
+        (sim, db)
+    }
+
+    #[test]
+    fn the_window_lists_a_line_and_its_buttons_send_commands() {
+        let (sim, db) = town_with_line();
+        let _ = &db;
         let view = sim.view();
         assert_eq!(view.lines.len(), 1);
         let l = view.lines[0].clone();
@@ -328,6 +430,39 @@ mod tests {
             );
         });
         assert!(texts.iter().any(|(t, _)| t.starts_with("No lines yet")));
+    }
+
+    /// T-160b: the panel of the selected line shows its figures; Edit stops asks the tool to take
+    /// the line over, Delete asks twice, then sends the command and drops the selection.
+    #[test]
+    fn the_line_info_panel_edits_and_deletes() {
+        let (sim, _) = town_with_line();
+        let view = sim.view();
+        let id = view.lines[0].id;
+        let ctx = egui::Context::default();
+        let mut picked = cp_tools::Picked(Some(cp_sim::Selection::Line(id)));
+        let (mut draft, mut outbox) = (LinesDraft::default(), CommandOutbox::default());
+        let mut texts = Vec::new();
+        let mut out = LinePanelOut::default();
+        for t in [0.0, 0.1, 0.2] {
+            texts = frame_texts(&ctx, input(t, vec![]), |ui| {
+                out = line_info_panel(ui.ctx(), &view, &mut picked, &mut draft, &mut outbox);
+            });
+        }
+        let has = |s: &str| texts.iter().any(|(t, _)| t == s);
+        assert!(
+            has("Edit stops") && has("Delete") && has("Riders"),
+            "{texts:?}"
+        );
+        assert_eq!(out.edit, None);
+        assert!(outbox.is_empty());
+
+        // A line that is gone drops the selection.
+        let empty = SimRunner::new(1).view();
+        frame_texts(&ctx, input(0.3, vec![]), |ui| {
+            line_info_panel(ui.ctx(), &empty, &mut picked, &mut draft, &mut outbox);
+        });
+        assert_eq!(picked.0, None);
     }
 
     #[test]

@@ -533,26 +533,31 @@ impl SimRunner {
 
     fn line_views(&self) -> Vec<LineView> {
         let net = self.world().resource::<cp_transit::TransitNet>();
-        let fleet = self.world().resource::<cp_transit::TransitFleet>();
         net.lines
             .iter()
-            .map(|(id, l)| {
-                let s = net.stats.get(&id).copied().unwrap_or_default();
-                LineView {
-                    id,
-                    name: l.name.clone(),
-                    mode: l.mode,
-                    color: l.color,
-                    stops: l.stops.len(),
-                    vehicles: l.vehicles,
-                    vehicles_out: fleet.of_line(id).count() as u16,
-                    state: l.state,
-                    riders_today: s.riders_today,
-                    riders_week: s.riders_week,
-                    waiting: s.waiting,
-                }
-            })
+            .filter_map(|(id, _)| self.line_view(id))
             .collect()
+    }
+
+    /// One transit line with its figures, or `None` if it is gone.
+    pub fn line_view(&self, id: cp_transit::LineId) -> Option<LineView> {
+        let net = self.world().resource::<cp_transit::TransitNet>();
+        let fleet = self.world().resource::<cp_transit::TransitFleet>();
+        let l = net.lines.get(id)?;
+        let s = net.stats.get(&id).copied().unwrap_or_default();
+        Some(LineView {
+            id,
+            name: l.name.clone(),
+            mode: l.mode,
+            color: l.color,
+            stops: l.stops.len(),
+            vehicles: l.vehicles,
+            vehicles_out: fleet.of_line(id).count() as u16,
+            state: l.state,
+            riders_today: s.riders_today,
+            riders_week: s.riders_week,
+            waiting: s.waiting,
+        })
     }
 
     fn city_snapshot(&self) -> Arc<crate::stats::CityStats> {

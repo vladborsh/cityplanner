@@ -35,7 +35,7 @@ pub use bulldozer::{
 pub use cp_render::UiCapture;
 pub use district::{DistrictTool, DistrictToolKind};
 pub use outbox::CommandOutbox;
-pub use pick::{Inspected, Picked, pick};
+pub use pick::{Inspected, Picked, pick, pick_line, pick_with};
 pub use plugin::{
     ActiveTool, Ghost, ToolState, ToolsPlugin, compute_ghost, compute_ghost_alt,
     compute_utility_ghost, tool_click, tool_hotkeys,

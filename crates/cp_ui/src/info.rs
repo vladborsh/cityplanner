@@ -33,6 +33,10 @@ pub fn info_panel(
     let Some(info) = &inspected.0 else {
         return rects;
     };
+    // A line has its own panel with controls (`lines::line_info_panel`).
+    if matches!(info, Inspection::Line(_)) {
+        return rects;
+    }
     let mut open = true;
     let title = info.title();
     crate::frame::window("info_panel", Icon::Info, &title, &mut open)

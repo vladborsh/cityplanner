@@ -27,6 +27,8 @@ pub enum Selection {
     Vehicle(u64),
     Pedestrian(u64),
     Segment(SegmentId),
+    /// A transit line (a click on its ribbon or one of its stops, T-160b).
+    Line(cp_transit::LineId),
 }
 
 /// Splits an `AgentKey` into arena `(index, generation)`.
@@ -147,6 +149,7 @@ pub enum Inspection {
     Citizen(CitizenInfo),
     Vehicle(VehicleInfo),
     Segment(SegmentInfo),
+    Line(crate::view::LineView),
 }
 
 pub fn flag_names(flags: BuildingFlags) -> Vec<&'static str> {
@@ -332,6 +335,7 @@ impl SimRunner {
                     route,
                 }))
             }
+            Selection::Line(id) => self.line_view(id).map(Inspection::Line),
             Selection::Segment(id) => {
                 let net = w.resource::<NetGraph>();
                 let s = net.segment(id)?;
@@ -374,6 +378,7 @@ impl Inspection {
             Inspection::Citizen(c) => format!("Citizen {}", c.id.index),
             Inspection::Vehicle(v) => format!("Vehicle {}", key_parts(v.key).0),
             Inspection::Segment(s) => format!("{} segment {}", s.name, s.id.index),
+            Inspection::Line(l) => format!("Line {}", l.name),
         }
     }
 
@@ -460,6 +465,17 @@ impl Inspection {
                 r.push(row("Noise", format!("{:.0}", b.noise)));
                 r
             }
+            Inspection::Line(l) => vec![
+                row("Mode", format!("{:?}", l.mode)),
+                row("Stops", l.stops.to_string()),
+                row("Buses", format!("{} of {} out", l.vehicles_out, l.vehicles)),
+                row(
+                    "Riders",
+                    format!("{} today, {} this week", l.riders_today, l.riders_week),
+                ),
+                row("Waiting", l.waiting.to_string()),
+                row("State", format!("{:?}", l.state)),
+            ],
             Inspection::Citizen(c) => vec![
                 row("Age", format!("{} years", c.age_years)),
                 row("Education", c.education.to_string()),

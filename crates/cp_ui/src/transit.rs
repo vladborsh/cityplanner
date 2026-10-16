@@ -59,9 +59,17 @@ pub fn has_tools(content: Option<&ContentDb>) -> bool {
     content.is_some_and(|c| !sections(c).is_empty())
 }
 
-/// Riders waiting at a stop. Zero until the riders exist (T-159).
-pub fn waiting_at(_view: &SimView, _stop: cp_transit::StopId) -> u32 {
-    0
+/// Riders waiting at a stop (T-159).
+pub fn waiting_at(view: &SimView, stop: cp_transit::StopId) -> u32 {
+    view.transit
+        .net
+        .riders
+        .values()
+        .filter(|j| {
+            matches!(j.stage, cp_transit::Stage::Waiting { .. })
+                && j.ride().is_some_and(|r| r.board == stop)
+        })
+        .count() as u32
 }
 
 pub fn transit_panel(
@@ -69,6 +77,7 @@ pub fn transit_panel(
     view: Option<&SimView>,
     tools: &mut ToolState,
     overlay: &mut OverlayState,
+    lines_open: &mut bool,
 ) {
     let Some(content) = view.and_then(|v| v.content.as_deref()) else {
         return;
@@ -96,6 +105,13 @@ pub fn transit_panel(
                         overlay.active = Overlay::Transit;
                     }
                 }
+            }
+            if section.mode == TransitMode::Bus
+                && tool_tile(ui, TileIcon::Icon(Icon::Lines), "Lines", *lines_open)
+                    .on_hover_text("The Lines window: riders, buses and money of every line.")
+                    .clicked()
+            {
+                *lines_open = !*lines_open;
             }
             for card in &section.cards {
                 let on = tools.active == ActiveTool::Place && tools.building.def == Some(card.id);

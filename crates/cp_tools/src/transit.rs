@@ -13,8 +13,8 @@ use cp_core::{Arena, Cost};
 use cp_sim::{SimCommand, SimView};
 use cp_traffic::{Access, Side};
 use cp_transit::{
-    LineRoute, MAX_LINE_STOPS, Stop, StopId, StopKind, StopRef, TransitCommand, TransitMode,
-    check_road_stop, next_line_color, plan_line, rules::pavement_offset,
+    LineId, LineRoute, MAX_LINE_STOPS, Stop, StopId, StopKind, StopRef, TransitCommand,
+    TransitMode, check_road_stop, next_line_color, plan_line, rules::pavement_offset,
 };
 
 use crate::bulldozer::pick_segment;
@@ -35,6 +35,9 @@ pub struct Placed {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LineTool {
     pub stops: Vec<Placed>,
+    /// The line whose stops are being redrawn: closing the ring sends `EditLine` for it
+    /// instead of `CreateLine` (T-160b).
+    pub editing: Option<LineId>,
 }
 
 /// What is under the cursor.
@@ -168,6 +171,28 @@ pub fn target_at(view: &SimView, tool: &LineTool, p: Vec2) -> Target {
 impl LineTool {
     pub fn cancel(&mut self) {
         self.stops.clear();
+        self.editing = None;
+    }
+
+    /// Starts redrawing `line`: its stops are placed, the player adds, drops or reorders
+    /// (undo, then click) and closes the ring again. `None` if the line is gone.
+    pub fn begin_edit(&mut self, view: &SimView, line: LineId) -> bool {
+        let net = &view.transit.net;
+        let Some(l) = net.lines.get(line) else {
+            return false;
+        };
+        self.stops = l
+            .stops
+            .iter()
+            .filter_map(|&s| {
+                Some(Placed {
+                    stop: StopRef::Existing(s),
+                    pos: net.stops.get(s)?.pos,
+                })
+            })
+            .collect();
+        self.editing = Some(line);
+        true
     }
 
     /// Takes the last stop away.
@@ -178,9 +203,13 @@ impl LineTool {
     /// The command that closing the ring now sends.
     pub fn command(&self) -> Option<SimCommand> {
         (self.stops.len() >= 2).then(|| {
-            SimCommand::Transit(TransitCommand::CreateLine {
-                mode: TransitMode::Bus,
-                stops: self.stops.iter().map(|p| p.stop).collect(),
+            let stops = self.stops.iter().map(|p| p.stop).collect();
+            SimCommand::Transit(match self.editing {
+                Some(line) => TransitCommand::EditLine { line, stops },
+                None => TransitCommand::CreateLine {
+                    mode: TransitMode::Bus,
+                    stops,
+                },
             })
         })
     }
@@ -193,6 +222,7 @@ impl LineTool {
             Target::Stop { closes: true, .. } => {
                 let cmd = self.command().expect("closing needs two stops");
                 self.stops.clear();
+                self.editing = None;
                 Click::Create(cmd)
             }
             Target::Stop { placed, .. } | Target::New(placed) => {
@@ -413,5 +443,53 @@ mod tests {
         let bad = line_ghost(&view, &tool, at(4.0, 3.0)).unwrap();
         assert_eq!(bad.hover.map(|h| h.1), Some(false));
         assert!(bad.error.is_some());
+    }
+
+    #[test]
+    fn a_click_on_a_stop_or_ribbon_picks_the_line_and_edit_sends_edit_line() {
+        use cp_sim::Selection;
+        let mut sim = town();
+        let mut tool = LineTool::default();
+        let view = sim.view();
+        for p in [at(60.0, 3.0), at(197.0, 100.0), at(100.0, 197.0)] {
+            tool.click(&view, p);
+        }
+        let first = tool.stops[0].pos;
+        let Click::Create(SimCommand::Transit(cmd)) = tool.click(&view, first) else {
+            panic!("closes");
+        };
+        cp_transit::apply(sim.world_mut(), &cmd).unwrap();
+        sim.tick_once();
+        let view = sim.view();
+        let line = view.transit.net.lines.iter().next().unwrap().0;
+        let stop = view.transit.net.stops.iter().next().unwrap().1.pos;
+        // Lines are only picked while the Transit view shows them.
+        assert_eq!(
+            crate::pick_with(&view, 1.0, stop, 50.0, true),
+            Some(Selection::Line(line))
+        );
+        assert!(!matches!(
+            crate::pick_with(&view, 1.0, stop, 50.0, false),
+            Some(Selection::Line(_))
+        ));
+        let mid = view.transit.routes[&line].points[40];
+        assert_eq!(
+            crate::pick_with(&view, 1.0, mid, 50.0, true),
+            Some(Selection::Line(line))
+        );
+        // Edit: the ring is back in the tool and closing it sends EditLine for that line.
+        let mut tool = LineTool::default();
+        assert!(tool.begin_edit(&view, line));
+        assert_eq!(tool.stops.len(), 3);
+        tool.undo();
+        assert_eq!(tool.click(&view, at(100.0, 197.0)), Click::Added);
+        let first = tool.stops[0].pos;
+        let Click::Create(SimCommand::Transit(TransitCommand::EditLine { line: l, stops })) =
+            tool.click(&view, first)
+        else {
+            panic!("an edit sends EditLine");
+        };
+        assert_eq!((l, stops.len()), (line, 3));
+        assert_eq!(tool.editing, None);
     }
 }
