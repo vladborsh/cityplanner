@@ -159,6 +159,15 @@ Balance((
     transfer_walk_m: 150.0,
     transfer_penalty_s: 60.0,
     transit_lines_cap: 8,
+    // Tourists (T-168) // tune later: visits a day with no shops and per commercial building,
+    // hours a visit lasts, money per visit, largest share of the vehicle pool they may hold,
+    // metres from the entry at which a shop is half as likely a goal.
+    tourism_base: 4.0,
+    tourism_per_com: 1.5,
+    tourism_visit_h: 2.0,
+    tourism_income: 12.0,
+    tourism_pool_share: 0.1,
+    tourism_reach_m: 1500.0,
 
     // --- Networks (T-181): distances of water, sewage and power // tune later ---
     // power_gap_m: largest gap between the footprint edges of two buildings over which one

@@ -62,6 +62,8 @@ pub struct TransitLedger {
     pub upkeep: Cost,
     /// Fares taken at boarding this week (T-159). Added in v31.
     pub fares: Cost,
+    /// What the visits of tourists brought this week (T-168). Added in v33.
+    pub tourism: Cost,
 }
 
 impl TransitLedger {

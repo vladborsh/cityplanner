@@ -207,6 +207,12 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
             [Some(day.fares), Some(week.fares), Some(last.transit_fares)],
         ));
     }
+    if day.tourism != Cost::ZERO || week.tourism != Cost::ZERO || last.tourism != Cost::ZERO {
+        income.push((
+            "Tourism".into(),
+            [Some(day.tourism), Some(week.tourism), Some(last.tourism)],
+        ));
+    }
     (income, expenses)
 }
 
@@ -427,6 +433,8 @@ pub struct Overview {
     /// Last week's fares (part of `income`) and bus upkeep (part of `upkeep`), T-160.
     pub transit_fares: Cost,
     pub transit_upkeep: Cost,
+    /// Last week's tourism income (part of `income`), T-168.
+    pub tourism: Cost,
     /// Balance of every hourly history sample (7 game days at most), oldest first.
     pub balance_history: Vec<f32>,
 }
@@ -453,7 +461,7 @@ pub fn overview(view: &SimView) -> Overview {
             .enumerate()
             .map(|(i, z)| (*z, week.income_by_zone[i]))
             .collect(),
-        income: week.income() + week.transit_fares,
+        income: week.income() + week.transit_fares + week.tourism,
         upkeep: week.upkeep() + week.loan_payments + week.transit_upkeep,
         net: week.balance(),
         roads_sum: roads.iter().map(|r| r.upkeep_week).sum(),
@@ -464,6 +472,7 @@ pub fn overview(view: &SimView) -> Overview {
         loan_payments: week.loan_payments,
         transit_fares: week.transit_fares,
         transit_upkeep: week.transit_upkeep,
+        tourism: week.tourism,
         balance_history: view
             .city
             .history
@@ -499,7 +508,7 @@ fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
                 (
                     day.income(),
                     week.income(),
-                    last.income() + last.transit_fares,
+                    last.income() + last.transit_fares + last.tourism,
                 ),
             ),
             (
@@ -571,6 +580,9 @@ pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
         }
         ui.label("Fares");
         ui.label(format_money(o.transit_fares));
+        ui.end_row();
+        ui.label("Tourism");
+        ui.label(format_money(o.tourism));
         ui.end_row();
     });
     ui.separator();

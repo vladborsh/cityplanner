@@ -18,6 +18,7 @@ pub mod rules;
 pub mod run;
 pub mod station;
 pub mod sync;
+pub mod tourists;
 pub mod trains;
 pub mod view;
 
@@ -33,6 +34,7 @@ pub use rules::{STOP_NODE_CLEARANCE, STOP_SNAP, STOP_SPACING, StopError, check_r
 pub use run::run_lines;
 pub use station::{add_station, platform_segment, remove_station, station_stop};
 pub use sync::{rebind_stops, update_transit};
+pub use tourists::{TOURISM_STREAM, Tourist, TouristPhase, Tourists, run_tourists};
 pub use trains::{MetroTrain, metro_trains};
 pub use view::{LINE_PALETTE_RGB, LineRoute, ROUTE_STEP, TransitView, next_line_color};
 

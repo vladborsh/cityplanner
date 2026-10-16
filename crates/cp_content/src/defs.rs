@@ -255,6 +255,19 @@ pub struct Balance {
     /// Most lines considered at either end of a trip when looking for a change (T-165).
     /// // tune later
     pub transit_lines_cap: u8,
+    /// Tourists (T-168): visits a day with no commercial building at all, and the visits a day
+    /// each commercial building adds. // tune later
+    pub tourism_base: f32,
+    pub tourism_per_com: f32,
+    /// Hours a tourist stays at the building (T-168). // tune later
+    pub tourism_visit_h: f32,
+    /// Money one visit brings, currency units (T-168). // tune later
+    pub tourism_income: f32,
+    /// Largest share of the vehicle pool tourists may hold at once (T-168). // tune later
+    pub tourism_pool_share: f32,
+    /// Metres of distance from the entry at which a building is half as likely a goal as one at
+    /// the entry (T-168). // tune later
+    pub tourism_reach_m: f32,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
 }
@@ -376,6 +389,12 @@ impl Balance {
             self.transfer_walk_m,
             self.transfer_penalty_s,
             f32::from(self.transit_lines_cap),
+            self.tourism_base,
+            self.tourism_per_com,
+            self.tourism_visit_h,
+            self.tourism_income,
+            self.tourism_pool_share,
+            self.tourism_reach_m,
         ]);
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
@@ -463,6 +482,12 @@ impl Default for Balance {
             transfer_walk_m: 150.0,
             transfer_penalty_s: 60.0,
             transit_lines_cap: 8,
+            tourism_base: 4.0,
+            tourism_per_com: 1.5,
+            tourism_visit_h: 2.0,
+            tourism_income: 12.0,
+            tourism_pool_share: 0.1,
+            tourism_reach_m: 1500.0,
             networks: Networks::default(),
         }
     }

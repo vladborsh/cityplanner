@@ -154,6 +154,11 @@ pub(crate) fn service_part(world: &World, h: &mut Fnv1a) {
     if !ledger.is_empty() {
         h.write_serialized(ledger);
     }
+    // Absent until the first tourist, so states without any keep the checksum they had.
+    let tourists = world.resource::<cp_transit::Tourists>();
+    if !tourists.is_empty() {
+        h.write_serialized(tourists);
+    }
 }
 
 /// Checksum part of trips (`cp_citizen::TripBook`).

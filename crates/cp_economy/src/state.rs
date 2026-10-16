@@ -115,6 +115,9 @@ pub struct WeekReport {
     pub transit_fares: Cost,
     #[serde(default)]
     pub transit_upkeep: Cost,
+    /// What the visits of tourists brought, from the transit ledger (T-168). Added in v33.
+    #[serde(default)]
+    pub tourism: Cost,
 }
 
 impl WeekReport {
@@ -128,7 +131,7 @@ impl WeekReport {
 
     /// Income minus upkeep and loan payments: the change of the treasury that week.
     pub fn balance(&self) -> Cost {
-        self.income() + self.transit_fares
+        self.income() + self.transit_fares + self.tourism
             - self.upkeep()
             - self.transit_upkeep
             - self.loan_payments
