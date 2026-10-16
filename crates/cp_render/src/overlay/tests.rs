@@ -351,7 +351,7 @@ fn switching_overlays_shows_that_layer_and_the_zone_grid_stays_on() {
 
 mod utility_overlays {
     use super::*;
-    use crate::overlay::utility::{LINE, PIPE, POWER_BAND, WATER_BAND};
+    use crate::overlay::utility::{LINE, PIPE, POWER_BAND};
     use cp_building::{AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingState, Lot};
     use cp_content::UtilityKind;
     use cp_core::{Id, Tick};
@@ -495,7 +495,16 @@ mod utility_overlays {
 
         let power = mesh(UtilityLayer::Power);
         assert!(faces_up(&power));
-        assert!(power.colors.contains(&LINE) && power.colors.contains(&POWER_BAND));
+        assert!(power.colors.contains(&LINE));
+        assert!(
+            power
+                .colors
+                .contains(&crate::overlay::utility::network_color(
+                    UtilityLayer::Power,
+                    0,
+                    POWER_BAND[3]
+                ))
+        );
         assert!(!power.colors.contains(&PIPE), "no pipes on the power layer");
         // The deficit shows red, the supplied house green (houses 0 and 1 have real cells).
         assert!(
@@ -515,13 +524,11 @@ mod utility_overlays {
         // The water layer is the pipe, not the power line; pipes are drawn here only.
         let water = mesh(UtilityLayer::Water);
         assert!(faces_up(&water));
-        assert!(water.colors.contains(&PIPE) && water.colors.contains(&WATER_BAND));
+        assert!(water.colors.contains(&PIPE));
         assert!(!water.colors.contains(&LINE));
         assert!(
-            water
-                .colors
-                .contains(&status_color(UtilityLayer::Water, BuildingStatus::NoWater)),
-            "houses without a pump are marked"
+            water.colors.contains(&crate::overlay::utility::DEFICIT),
+            "houses in reach of the pipe but without a pump are orange"
         );
     }
 
@@ -539,6 +546,90 @@ mod utility_overlays {
         super::utility::lot_quads(&mut m, &b, &view.zones, t, c);
         assert_eq!(m.positions.len(), 4, "one quad");
         assert!(m.colors.iter().all(|x| *x == c));
+    }
+
+    /// T-183: every source has its marker, the fill covers every supplied lot, the red and
+    /// orange lots are exactly the buildings with the utility flag, and the legend sums come
+    /// from the report.
+    #[test]
+    fn the_overlay_marks_sources_fills_the_network_and_flags_the_short() {
+        use crate::overlay::utility::{DEFICIT, network_color, utility_report};
+        let sim = district();
+        let view = sim.view();
+        let (db, t) = (
+            view.content.as_deref().unwrap(),
+            view.terrain.as_ref().unwrap(),
+        );
+        let layer = UtilityLayer::Power;
+        let report = utility_report(layer, &view.utilities, &view.buildings, db);
+        let mesh =
+            utility_overlay_mesh(layer, &view.utilities, &view.buildings, &view.zones, db, t);
+        let sources: usize = report.networks.iter().map(|n| n.sources.len()).sum();
+        assert_eq!(sources, 1, "the turbine");
+        assert!(
+            mesh.colors.contains(&[1.0, 1.0, 1.0, 0.95]),
+            "the ring of the source"
+        );
+        assert!(
+            mesh.colors.contains(&network_color(layer, 0, 0.22)),
+            "the fill"
+        );
+        // Every supplied building belongs to a network; the short ones are orange (in reach) or
+        // red (not), together exactly the buildings with NO_POWER.
+        let (mut short, mut supplied) = (0, 0);
+        for (id, b) in view.buildings.iter() {
+            match building_status(layer, db, b) {
+                Some(BuildingStatus::Supplied) => {
+                    supplied += 1;
+                    assert!(report.net_of[&id].is_some());
+                }
+                Some(BuildingStatus::NoPower) => {
+                    assert!(b.flags.has(BuildingFlags::NO_POWER));
+                    short += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(supplied, 200);
+        let n = &report.networks[0];
+        assert_eq!(short as u32, n.deficit + report.unconnected);
+        assert!(
+            n.capacity > 0.0 && n.demand > n.capacity,
+            "{n:?}: the deficit"
+        );
+        let _ = DEFICIT;
+    }
+
+    /// T-183: two networks that do not touch get two tints.
+    #[test]
+    fn two_separate_networks_get_two_hues() {
+        use crate::overlay::utility::{network_color, utility_report};
+        let mut sim = district();
+        let lot = Lot {
+            block: Id::new(99, 0),
+            col: 0,
+            w: 1,
+            d: 1,
+        };
+        put(&mut sim, "wind_turbine", 5800.0, 5030.0, lot);
+        put(&mut sim, "house_low_1", 5810.0, 5035.0, lot);
+        for _ in 0..70 {
+            sim.tick_once();
+        }
+        let view = sim.view();
+        let db = view.content.as_deref().unwrap();
+        let t = view.terrain.as_ref().unwrap();
+        let layer = UtilityLayer::Power;
+        let report = utility_report(layer, &view.utilities, &view.buildings, db);
+        assert_eq!(report.networks.len(), 2);
+        let mesh =
+            utility_overlay_mesh(layer, &view.utilities, &view.buildings, &view.zones, db, t);
+        for k in 0..2 {
+            assert!(
+                mesh.colors.contains(&network_color(layer, k, 0.22)),
+                "network {k}"
+            );
+        }
     }
 
     #[test]

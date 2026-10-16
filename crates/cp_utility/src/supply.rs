@@ -538,4 +538,9 @@ impl Coverage {
     pub fn covers(&self, graph: &UtilityGraph, p: Vec2, half: f32) -> bool {
         self.attach.comp_at(graph, p, half).is_some()
     }
+
+    /// The connected component of the network a building at `p` attaches to, if in reach.
+    pub fn component(&self, graph: &UtilityGraph, p: Vec2, half: f32) -> Option<u32> {
+        self.attach.comp_at(graph, p, half)
+    }
 }

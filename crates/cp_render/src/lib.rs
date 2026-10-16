@@ -28,6 +28,9 @@ pub use chunk::terrain_mesh_height;
 pub use fire_render::{FireFxPlugin, FireFxStats};
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{
+    BuildingStatus, NetworkStats, UtilityLayer, UtilityReport, network_color, utility_report,
+};
+pub use overlay::{
     DistrictsMode, LINE_STEP, LineGhost, Overlay, OverlayPlugin, OverlayState, ZoningMode,
     ribbon_at,
 };

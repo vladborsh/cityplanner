@@ -37,8 +37,8 @@ pub use service::{coverage_color, service_overlay_mesh};
 pub use tiles::{border_edges, border_mesh, shade_mesh};
 pub use transit::{LineGhost, line_color};
 pub use utility::{
-    BuildingStatus, UtilityLayer, building_status, coverage_counts, status_color,
-    utility_overlay_mesh,
+    BuildingStatus, NetworkStats, UtilityLayer, UtilityReport, building_status, coverage_counts,
+    network_color, status_color, utility_overlay_mesh, utility_report,
 };
 pub use zone_chunks::{BUILD_BUDGET, ChunkUpdate, ZoneChunks, ZoneStyle, chunk_of};
 

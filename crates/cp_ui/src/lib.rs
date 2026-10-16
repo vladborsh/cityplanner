@@ -34,6 +34,7 @@ pub mod style;
 pub mod tile;
 pub mod tiles;
 pub mod transit;
+pub mod utility_legend;
 pub mod windows;
 
 pub use debug::{DebugData, PhaseTimes, TickRate};
@@ -80,6 +81,7 @@ impl Plugin for UiPlugin {
                     districts::draw_labels,
                     land::land_overlay,
                     transit::transit_labels,
+                    utility_legend::utility_legend,
                 )
                     .chain(),
             );
