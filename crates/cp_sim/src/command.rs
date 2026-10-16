@@ -96,8 +96,16 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
         SimCommand::Net(c) => cp_net::apply(world, c)
             .map_err(|e| rejected_or_funds("net", &e, e.insufficient_funds())),
         SimCommand::Zone(c) => cp_zone::apply(world, c).map_err(|e| rejected("zone", e)),
-        SimCommand::Building(c) => cp_building::apply(world, c)
-            .map_err(|e| rejected_or_funds("building", &e, e.insufficient_funds())),
+        SimCommand::Building(c) => {
+            if let (BuildingCommand::Place { def, .. }, Some(content)) =
+                (c, world.get_resource::<cp_content::SimContent>())
+            {
+                let progress = world.get_resource::<crate::Progress>().copied();
+                crate::progress::check_unlocked(&progress.unwrap_or_default(), &content.0, *def)?;
+            }
+            cp_building::apply(world, c)
+                .map_err(|e| rejected_or_funds("building", &e, e.insufficient_funds()))
+        }
         SimCommand::Utility(c) => cp_utility::apply(world, c)
             .map_err(|e| rejected_or_funds("utility", &e, e.insufficient_funds())),
         SimCommand::Economy(c) => cp_economy::apply(world, c).map_err(|e| rejected("economy", e)),

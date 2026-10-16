@@ -38,7 +38,6 @@ fn the_v23_fixture_loads_without_fires_and_round_trips_with_a_station() {
         read_header(&again).unwrap().0.format_version,
         FORMAT_VERSION
     );
-    assert_eq!(FORMAT_VERSION, 24);
     let l2 = load_with_map(&again, content.content_hash(), h.map_hash).unwrap();
     assert_eq!(l.data, l2.data);
     assert_eq!(

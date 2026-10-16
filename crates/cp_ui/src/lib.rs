@@ -21,6 +21,7 @@ pub mod frame;
 pub mod icons;
 pub mod info;
 pub mod metrics;
+pub mod milestone;
 pub mod net_summary;
 pub mod palette;
 pub mod panels;
@@ -128,6 +129,7 @@ fn draw_ui(
     inspected: Res<cp_tools::Inspected>,
     mut picked: ResMut<cp_tools::Picked>,
     mut loaders_installed: Local<bool>,
+    mut toast: Local<milestone::MilestoneToast>,
 ) -> Result {
     let Some(view) = view else {
         return Ok(());
@@ -184,6 +186,7 @@ fn draw_ui(
         );
     }
     file_window(ctx, &mut files);
+    milestone::milestone_toast(ctx, &view, &mut toast);
     info_panel(ctx, &inspected, &mut picked);
     Ok(())
 }

@@ -1,0 +1,11 @@
+// Population milestones (T-149, design §16 M2). Reaching one unlocks buildings and raises the
+// tile purchase limit. The numbers are first guesses: tune later.
+Milestones((
+    milestones: [
+        (population: 0, name: "Village", unlocks: [], tiles: 9),
+        (population: 500, name: "Small town", unlocks: ["clinic", "elementary_school", "fire_station", "police_station", "landfill"], tiles: 12),
+        (population: 2000, name: "Town", unlocks: ["high_school", "cemetery", "crematorium", "incinerator"], tiles: 16),
+        (population: 5000, name: "Large town", unlocks: ["hospital"], tiles: 20),
+        (population: 10000, name: "Small city", unlocks: ["university"], tiles: 25),
+    ],
+))

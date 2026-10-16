@@ -59,6 +59,31 @@ pub enum ContentFile {
     Style(StyleDef),
     /// Global balance knobs (`balance.ron`); at most one file.
     Balance(Balance),
+    /// Population milestones (`milestones.ron`); at most one file. Appended in T-149.
+    Milestones(MilestonesDef),
+}
+
+/// The population milestones in ascending order. The first has population 0 and is where a new
+/// game starts; the buildings a milestone `unlocks` cannot be placed before it is reached, and
+/// `tiles` is how many tiles the player may own once it is (T-150).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MilestonesDef {
+    pub milestones: Vec<MilestoneDef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MilestoneDef {
+    /// Residents needed to reach it.
+    pub population: u32,
+    pub name: String,
+    /// Ids of the building defs that become placeable.
+    #[serde(default)]
+    pub unlocks: Vec<String>,
+    /// Tile purchase limit at this milestone (used by the tile purchase).
+    #[serde(default)]
+    pub tiles: u8,
 }
 
 /// Global balance knobs the Balance Analyst may tune (`assets/content/balance.ron`). Every

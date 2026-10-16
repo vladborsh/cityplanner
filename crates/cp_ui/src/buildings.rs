@@ -13,7 +13,7 @@ use cp_utility::UtilityNet;
 use crate::icons::Icon;
 use crate::net_summary::NetTab;
 use crate::style::Sizes;
-use crate::tile::{TileIcon, tool_tile};
+use crate::tile::{TileIcon, tool_tile, tool_tile_enabled};
 
 /// What a card shows, taken from the building and its service definition.
 #[derive(Clone, Debug, PartialEq)]
@@ -103,6 +103,16 @@ pub fn card_text(c: &Card) -> String {
         c.lot.0,
         c.lot.1
     )
+}
+
+/// Why `id` cannot be placed yet: the milestone it waits for (T-149); `None` when it is open.
+pub fn lock_text(view: &SimView, content: &ContentDb, id: BuildingDefId) -> Option<String> {
+    let m = view.progress.locked_by(content, id)?;
+    let ms = &content.milestones()[m];
+    Some(format!(
+        "Opens at {} residents ({})",
+        ms.population, ms.name
+    ))
 }
 
 /// Selects `id` for placing.
@@ -232,9 +242,20 @@ pub fn buildings_panel(
             }
             for card in &section.cards {
                 let on = tools.active == ActiveTool::Place && tools.building.def == Some(card.id);
-                if tool_tile(ui, TileIcon::Def(&card.icon), &card.name, on)
-                    .on_hover_text(card_text(card))
-                    .clicked()
+                let lock = view.and_then(|v| lock_text(v, content, card.id));
+                let hover = match &lock {
+                    Some(l) => format!("{l}\n{}", card_text(card)),
+                    None => card_text(card),
+                };
+                if tool_tile_enabled(
+                    ui,
+                    TileIcon::Def(&card.icon),
+                    &card.name,
+                    on,
+                    lock.is_none(),
+                )
+                .on_hover_text(hover)
+                .clicked()
                 {
                     select(tools, card.id);
                     if let Some((_, _, shown)) = net {

@@ -42,7 +42,7 @@
 //! | `Tick`, `SimRng`, `SimSpeed`, `CommandQueue`, `CommandLog` | yes |
 //! | `TileOwnership`, `NetGraph`, `ZoneGrid` (occupancy is rebuilt from the buildings), `BuildingGrid` (incl. the removed ids), `UtilityGraph`, `CitizenGrid` (occupancy tables rebuilt), `TripBook`, `Agents` (pools, lane state, segment load; drive tables rebuilt) | yes |
 //! | `PathService` (requests in flight) | yes, as `SavedPaths` |
-//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `DistrictMap`, `Districts` | yes |
+//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
 //! | `SimLimits`, `RoutineSettings`, `AgentSettings`, `SimContent`, `SimTerrain` | configuration of the runner, not of the game |
@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 24;
+pub const FORMAT_VERSION: u32 = 25;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -211,6 +211,8 @@ pub struct SaveData {
     pub coverage: cp_service::ServiceCoverage,
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: WorkerShortage,
+    /// The population milestone reached. Added in v25.
+    pub progress: cp_sim::Progress,
 }
 
 impl SaveData {
@@ -275,6 +277,7 @@ impl SaveData {
             service_state: world.resource::<cp_service::ServiceState>().clone(),
             coverage: world.resource::<cp_service::ServiceCoverage>().clone(),
             shortage: world.resource::<WorkerShortage>().clone(),
+            progress: *world.resource::<cp_sim::Progress>(),
         }
     }
 
@@ -314,6 +317,7 @@ impl SaveData {
         world.insert_resource(self.districts);
         world.insert_resource(self.service_state);
         world.insert_resource(self.shortage);
+        world.insert_resource(self.progress);
         // The snapshot cache is keyed by the generation, which a load must change.
         let mut coverage = self.coverage;
         coverage.generation = world

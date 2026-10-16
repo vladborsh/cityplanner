@@ -72,6 +72,11 @@ pub enum CommandError {
         available: Cost,
     },
     TileNotOwned,
+    /// The building is unlocked by a population milestone the city has not reached yet.
+    Locked {
+        milestone: String,
+        population: u32,
+    },
     /// A domain wraps its own validation error. Typed errors for previews come straight
     /// from the domain's pure validation functions, not from this outcome.
     Rejected {
@@ -91,6 +96,10 @@ impl fmt::Display for CommandError {
                 )
             }
             Self::TileNotOwned => write!(f, "tile not owned"),
+            Self::Locked {
+                milestone,
+                population,
+            } => write!(f, "locked until {milestone} ({population} residents)"),
             Self::Rejected { domain, reason } => write!(f, "{domain}: {reason}"),
         }
     }

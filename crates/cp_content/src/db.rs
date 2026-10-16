@@ -178,6 +178,7 @@ pub struct ContentDb {
     styles: Table<StyleDef>,
     placeholders: Placeholders,
     balance: Balance,
+    milestones: Vec<MilestoneDef>,
     content_hash: u64,
 }
 
@@ -304,6 +305,21 @@ impl ContentDb {
         self.utilities().find(|(_, d)| d.kind == kind)
     }
 
+    /// The population milestones (`milestones.ron`); empty when the file is absent, and then
+    /// nothing is locked.
+    pub fn milestones(&self) -> &[MilestoneDef] {
+        &self.milestones
+    }
+
+    /// The milestone (index into [`Self::milestones`]) that unlocks the building def `id`;
+    /// `None` for a def no milestone names, which is always available.
+    pub fn unlock_milestone(&self, id: BuildingDefId) -> Option<usize> {
+        let name = &self.buildings.defs.get(id.index())?.id;
+        self.milestones
+            .iter()
+            .position(|m| m.unlocks.iter().any(|u| u == name))
+    }
+
     /// The balance knobs (`balance.ron`; defaults when the file is absent).
     pub fn balance(&self) -> &Balance {
         &self.balance
@@ -355,6 +371,7 @@ impl ContentDb {
         let mut utilities: Vec<(String, UtilityDef)> = Vec::new();
         let mut styles: Vec<(String, StyleDef)> = Vec::new();
         let mut balances: Vec<(String, Balance)> = Vec::new();
+        let mut milestone_files: Vec<(String, MilestonesDef)> = Vec::new();
         for (path, text) in sources {
             match ron::from_str::<ContentFile>(&text) {
                 Ok(ContentFile::Road(d)) => roads.push((path, d)),
@@ -364,6 +381,7 @@ impl ContentDb {
                 Ok(ContentFile::Utility(d)) => utilities.push((path, d)),
                 Ok(ContentFile::Style(d)) => styles.push((path, d)),
                 Ok(ContentFile::Balance(d)) => balances.push((path, d)),
+                Ok(ContentFile::Milestones(d)) => milestone_files.push((path, d)),
                 Err(e) => errors.push(ContentError::new(&path, None, format!("parse error: {e}"))),
             }
         }
@@ -483,6 +501,16 @@ impl ContentDb {
                     ));
                 }
             }
+        }
+        if milestone_files.len() > 1 {
+            errors.push(ContentError::new(
+                &milestone_files[1].0,
+                None,
+                "more than one Milestones file".to_string(),
+            ));
+        }
+        if let Some((path, m)) = milestone_files.first() {
+            validate::milestones(path, m, &buildings.by_id, &mut errors);
         }
         if balances.len() > 1 {
             errors.push(ContentError::new(
@@ -632,6 +660,17 @@ impl ContentDb {
                 }
             }
         }
+        let milestones = milestone_files
+            .into_iter()
+            .next()
+            .map_or_else(Vec::new, |(_, m)| m.milestones);
+        if !milestones.is_empty() {
+            fnv1a(&mut hash, b"milestones");
+            fnv1a(
+                &mut hash,
+                &postcard::to_stdvec(&milestones).expect("milestones are serialisable"),
+            );
+        }
         Ok(Self {
             roads: roads.strip(),
             buildings: buildings.strip(),
@@ -641,6 +680,7 @@ impl ContentDb {
             styles: styles.strip(),
             placeholders: Placeholders::builtin(),
             balance: balance.unwrap_or_default(),
+            milestones,
             content_hash: hash,
         })
     }

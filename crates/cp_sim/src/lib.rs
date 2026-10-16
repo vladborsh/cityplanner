@@ -7,6 +7,7 @@ pub mod new_game;
 pub mod overlay;
 pub mod phase;
 pub mod plugin;
+pub mod progress;
 pub mod runner;
 pub mod scenario;
 pub mod stats;
@@ -22,6 +23,7 @@ pub use inspect::{
 pub use overlay::{OverlayData, ScalarGrid, ZoneCellView, ZoneOverlay};
 pub use phase::SimPhase;
 pub use plugin::{SimBuilder, SimPlugin};
+pub use progress::{PROGRESS_PERIOD, Progress};
 pub use runner::{MAX_TICKS_PER_STEP, SimRunner, run_headless, run_headless_with};
 pub use stats::CityStats;
 pub use view::{

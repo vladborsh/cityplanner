@@ -122,6 +122,7 @@ impl SimRunner {
         world.init_resource::<cp_economy::LandGrids>();
         world.init_resource::<cp_economy::Decay>();
         world.init_resource::<cp_economy::WorkerShortage>();
+        world.init_resource::<crate::progress::Progress>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
@@ -292,6 +293,11 @@ impl SimRunner {
             cp_citizen::update_routine
                 .in_set(SimPhase::Citizens)
                 .after(cp_citizen::update_lifecycle),
+        );
+        schedule.add_systems(
+            crate::progress::update_progress
+                .in_set(SimPhase::Stats)
+                .after(crate::stats::update_city_stats),
         );
         schedule.add_systems(update_checksum.in_set(ChecksumSet));
         Self {

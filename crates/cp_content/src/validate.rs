@@ -1,9 +1,10 @@
 //! Per-definition range checks. Each returns `(field, message)` pairs.
 
 use crate::defs::{
-    BuildingDef, LaneKind, RoadClass, RoadDef, RoadVariant, ServiceDef, StyleDef, UtilityDef,
-    VehicleDef,
+    BuildingDef, LaneKind, MilestonesDef, RoadClass, RoadDef, RoadVariant, ServiceDef, StyleDef,
+    UtilityDef, VehicleDef,
 };
+use crate::error::ContentError;
 use crate::kinds::ZoneType;
 
 /// Steepest grade a Highway may declare.
@@ -197,4 +198,54 @@ pub fn utility(d: &UtilityDef) -> Problems {
     }
     c.not_empty("mesh", &d.mesh);
     c.0
+}
+
+/// Checks `milestones.ron`: population 0 first and strictly rising, unique names, every unlock
+/// an existing building def named by one milestone only.
+pub fn milestones(
+    path: &str,
+    m: &MilestonesDef,
+    buildings: &std::collections::BTreeMap<String, u32>,
+    errors: &mut Vec<ContentError>,
+) {
+    let mut bad = |field: String, msg: String| {
+        errors.push(ContentError::new(path, Some(&field), msg));
+    };
+    if m.milestones.is_empty() {
+        bad("milestones".into(), "needs at least one milestone".into());
+    }
+    if m.milestones.len() > usize::from(u8::MAX) {
+        bad("milestones".into(), "at most 255 milestones".into());
+    }
+    let mut seen: std::collections::BTreeSet<&str> = Default::default();
+    for (i, ms) in m.milestones.iter().enumerate() {
+        if ms.name.trim().is_empty() {
+            bad(format!("milestones[{i}].name"), "must not be empty".into());
+        }
+        if i == 0 && ms.population != 0 {
+            bad(
+                "milestones[0].population".into(),
+                "the first milestone is the start: population 0".into(),
+            );
+        }
+        if i > 0 && ms.population <= m.milestones[i - 1].population {
+            bad(
+                format!("milestones[{i}].population"),
+                "must be above the previous milestone".into(),
+            );
+        }
+        for u in &ms.unlocks {
+            if !buildings.contains_key(u) {
+                bad(
+                    format!("milestones[{i}].unlocks"),
+                    format!("unknown building `{u}`"),
+                );
+            } else if !seen.insert(u) {
+                bad(
+                    format!("milestones[{i}].unlocks"),
+                    format!("`{u}` is unlocked by more than one milestone"),
+                );
+            }
+        }
+    }
 }

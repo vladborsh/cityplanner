@@ -15,6 +15,7 @@ impl SimRunner {
     /// the content; a map without `entry_road` (built in code) gets nothing. Call once, before
     /// the first tick.
     pub fn new_game(&mut self) -> Result<(), String> {
+        self.world_mut().insert_resource(crate::Progress::START);
         build_entry_road(self.world_mut())
     }
 }

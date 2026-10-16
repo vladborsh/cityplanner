@@ -113,6 +113,8 @@ pub struct SimView {
     /// The city summary for the panels, recomputed every 64 ticks (§13.6). Shared: re-cloned
     /// only when it was recomputed.
     pub city: Arc<crate::stats::CityStats>,
+    /// The population milestone reached (T-149), for locked tiles and the milestone notice.
+    pub progress: crate::Progress,
 }
 
 /// A bank offer for the Loans tab: the content row, whether the city may take it now, and the
@@ -462,6 +464,7 @@ impl SimRunner {
             agents: self.agent_snapshot(tick),
             demand: *self.world().resource::<cp_building::Demand>(),
             treasury: *self.world().resource::<cp_core::Treasury>(),
+            progress: *self.world().resource::<crate::Progress>(),
             economy: self.world().resource::<cp_economy::EconomyState>().clone(),
             utilities: self.utilities_snapshot(),
             service: self.service_snapshot(),

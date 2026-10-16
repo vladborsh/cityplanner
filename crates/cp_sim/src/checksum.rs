@@ -117,6 +117,11 @@ pub(crate) fn economy_part(world: &World, h: &mut Fnv1a) {
     if !shortage.since.is_empty() {
         h.write_serialized(shortage);
     }
+    // Absent while nothing is locked (the default), so such states keep their checksum.
+    let progress = world.resource::<crate::Progress>();
+    if *progress != crate::Progress::ALL {
+        h.write_serialized(progress);
+    }
 }
 
 /// Checksum part of the districts: the cell map and the district records.
