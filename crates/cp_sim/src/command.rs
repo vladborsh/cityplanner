@@ -27,7 +27,8 @@ pub enum SimCommand {
     /// Debug and demo commands: logged and replayed like any other, never sent by the game UI.
     Debug(DebugCommand),
     District(DistrictCommand),
-    // M2: Terrain(TerrainCommand). M3+: Transit, ...
+    Terrain(cp_terrain::TerrainCommand),
+    // M3+: Transit, ...
 }
 
 /// Commands for demos, benchmarks and tests (see [`SimCommand::Debug`]). Variants are only
@@ -63,6 +64,7 @@ impl SimCommand {
             | SimCommand::Utility(_)
             | SimCommand::Economy(_)
             | SimCommand::District(_)
+            | SimCommand::Terrain(_)
             | SimCommand::Debug(_) => {}
         }
     }
@@ -112,6 +114,7 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
         SimCommand::District(c) => {
             cp_district::apply(world, c).map_err(|e| rejected("district", e))
         }
+        SimCommand::Terrain(c) => crate::tiles::apply(world, c),
         SimCommand::Debug(c) => apply_debug(world, c),
     }
 }

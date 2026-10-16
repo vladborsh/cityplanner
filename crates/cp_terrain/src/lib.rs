@@ -19,6 +19,7 @@
 //! is `max(sea_level, mask)` (water is static). `water_depth` is the bilinear
 //! interpolation of the per-node depth `surface - ground`; `<= 0` means dry.
 
+mod command;
 mod entry;
 mod ownership;
 
@@ -31,6 +32,7 @@ use bevy_ecs::resource::Resource;
 use bevy_math::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
+pub use command::{TerrainCommand, ring};
 pub use entry::{LANE_OFFSET, MERGE_LENGTH, MIN_EDGE_MARGIN};
 pub use ownership::{TILE_COUNT, TILES_PER_SIDE, TileOwnership};
 

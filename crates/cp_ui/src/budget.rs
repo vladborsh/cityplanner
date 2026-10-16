@@ -138,6 +138,8 @@ pub struct BudgetDraft {
     pub tab: BudgetTab,
     taxes: [Option<Draft>; 6],
     budgets: [Option<Draft>; 4],
+    /// The tile the land section asks to confirm buying (T-150).
+    pub buy_tile: Option<(u8, u8)>,
 }
 
 impl BudgetDraft {
@@ -200,6 +202,7 @@ pub fn budget_window(
     )
     .show(ctx, |ui| {
         budget_contents(ui, view, draft, outbox);
+        crate::tiles::tile_section(ui, view, &mut draft.buy_tile, outbox);
     });
 }
 

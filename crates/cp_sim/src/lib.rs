@@ -11,6 +11,7 @@ pub mod progress;
 pub mod runner;
 pub mod scenario;
 pub mod stats;
+pub mod tiles;
 pub mod view;
 
 pub use checksum::{Fnv1a, SimChecksum};

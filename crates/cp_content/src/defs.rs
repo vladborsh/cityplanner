@@ -65,7 +65,7 @@ pub enum ContentFile {
 
 /// The population milestones in ascending order. The first has population 0 and is where a new
 /// game starts; the buildings a milestone `unlocks` cannot be placed before it is reached, and
-/// `tiles` is how many tiles the player may own once it is (T-150).
+/// `tiles` is how many more tiles the player may buy once it is (T-150).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MilestonesDef {
@@ -81,7 +81,7 @@ pub struct MilestoneDef {
     /// Ids of the building defs that become placeable.
     #[serde(default)]
     pub unlocks: Vec<String>,
-    /// Tile purchase limit at this milestone (used by the tile purchase).
+    /// Tiles this milestone lets the player buy on top of the start tile.
     #[serde(default)]
     pub tiles: u8,
 }
@@ -156,6 +156,9 @@ pub struct Balance {
     /// Loans the bank offers, by index (the index is what a save and a command name); at most
     /// 255, one active loan per offer (§16 M2).
     pub loan_offers: Vec<LoanOffer>,
+    /// Price of a tile by its ring: the Chebyshev distance from the start tile, 1..=4 (T-150).
+    /// // tune later
+    pub tile_price: [f32; 4],
     /// Garbage a household makes per game day (T-136). // tune later
     pub garbage_household: f32,
     /// Garbage a filled job makes per game day. // tune later
@@ -257,6 +260,7 @@ impl Balance {
         v.extend(self.tax_household);
         v.extend(self.tax_job);
         v.extend(self.level_mul);
+        v.extend(self.tile_price);
         v.extend([
             self.garbage_household,
             self.garbage_job,
@@ -324,6 +328,7 @@ impl Default for Balance {
             tax_job: [30.0, 45.0, 65.0, 90.0],
             level_mul: [1.0, 1.2, 1.45],
             loan_offers: default_loan_offers(),
+            tile_price: [5000.0, 10000.0, 20000.0, 40000.0],
             garbage_household: 25.0,
             garbage_job: 4.0,
             garbage_problem: 100.0,

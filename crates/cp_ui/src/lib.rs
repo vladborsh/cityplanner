@@ -28,6 +28,7 @@ pub mod panels;
 pub mod roads;
 pub mod style;
 pub mod tile;
+pub mod tiles;
 pub mod windows;
 
 pub use debug::{DebugData, PhaseTimes, TickRate};
