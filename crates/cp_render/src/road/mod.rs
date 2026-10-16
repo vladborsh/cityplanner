@@ -814,6 +814,14 @@ pub fn build_junction_piece(
         return None;
     }
     let ys = ground::heights(graph, geo, terrain, j);
+    // T-186: the outside of a bend is rounded; the arc points take the corner's height.
+    let (polygon, src) = corner::rounded_polygon(j, graph);
+    let ys: Vec<f32> = src.iter().map(|&i| ys[i]).collect();
+    let rounded = Junction {
+        polygon,
+        ..j.clone()
+    };
+    let j = &rounded;
     let mut m = MeshData::default();
     let verts: Vec<u32> = j
         .polygon

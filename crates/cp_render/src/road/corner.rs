@@ -12,11 +12,105 @@
 use bevy_math::{Vec2, Vec3};
 use cp_net::{Arm, Junction, NetGraph};
 
-use super::{CURB, KERB, SIDEWALK, cross_section, end_corners, flat_quad};
+use super::{CURB, KERB, SIDEWALK, cross_section, end_corners, flat_quad, push_vertex, tri};
 use crate::chunk::MeshData;
 
 /// Longest a mitre may reach, in sidewalk widths (sharp corners fall back to a plain offset).
 const MITRE_LIMIT: f32 = 4.0;
+
+/// Radius of the rounding of a sidewalk's curb corner at a junction mouth, metres (T-186). The
+/// patch is only as long as the neighbouring sidewalk is wide, so the radius is clamped to it.
+pub(super) const CURB_RADIUS: f32 = 3.0;
+/// Radius of the inner curb where a bend's outer corner is rounded, metres (T-186).
+pub(super) const BEND_RADIUS: f32 = 2.5;
+/// Longest turn of one arc segment, radians (a 90 degree corner gets 4 segments).
+const ARC_STEP: f32 = std::f32::consts::FRAC_PI_8;
+
+/// The arc of radius up to `radius` that rounds the corner `c` between the lines `c -> a` and
+/// `c -> b`, as points from the tangent point on `c -> a` to the one on `c -> b`. The tangent
+/// length is clamped to `reach_a` / `reach_b` (so the radius shrinks to fit). `None` when the
+/// corner is nearly straight or a needle, or the clamped radius is below `min_radius`.
+pub(super) fn fillet(
+    a: Vec2,
+    c: Vec2,
+    b: Vec2,
+    radius: f32,
+    min_radius: f32,
+    reach_a: f32,
+    reach_b: f32,
+) -> Option<Vec<Vec2>> {
+    let (u, v) = ((a - c).try_normalize()?, (b - c).try_normalize()?);
+    let phi = u.dot(v).clamp(-1.0, 1.0).acos();
+    // Interior angle between 6 and 174 degrees; the rest is a needle or a straight line.
+    if !(0.1..=std::f32::consts::PI - 0.1).contains(&phi) {
+        return None;
+    }
+    let half_tan = (phi * 0.5).tan();
+    let t = (radius / half_tan).min(reach_a).min(reach_b);
+    let r = t * half_tan;
+    if t < 0.05 || r < min_radius || !r.is_finite() {
+        return None;
+    }
+    let centre = c + (u + v).try_normalize()? * (r / (phi * 0.5).sin());
+    let (p, q) = (c + u * t, c + v * t);
+    let (a0, a1) = ((p - centre).to_angle(), (q - centre).to_angle());
+    let mut sweep = a1 - a0;
+    while sweep > std::f32::consts::PI {
+        sweep -= std::f32::consts::TAU;
+    }
+    while sweep < -std::f32::consts::PI {
+        sweep += std::f32::consts::TAU;
+    }
+    let n = ((sweep.abs() / ARC_STEP).ceil() as usize).clamp(2, 8);
+    Some(
+        (0..=n)
+            .map(|i| match i {
+                0 => p,
+                _ if i == n => q,
+                _ => centre + Vec2::from_angle(a0 + sweep * i as f32 / n as f32) * r,
+            })
+            .collect(),
+    )
+}
+
+/// `polygon` with the outer meeting points (corners no arm owns: the outside of a bend) rounded
+/// by an arc; `src[i]` is the index in `polygon` that point `i` of the result stands for.
+pub(super) fn rounded_polygon(j: &Junction, graph: &NetGraph) -> (Vec<Vec2>, Vec<usize>) {
+    let k = j.polygon.len();
+    let owned = |p: Vec2| {
+        j.arms
+            .iter()
+            .any(|a| a.right.distance(p) < 1e-4 || a.left.distance(p) < 1e-4)
+    };
+    let mut out = Vec::with_capacity(k);
+    let mut src = Vec::with_capacity(k);
+    for i in 0..k {
+        let (pv, v, nx) = (
+            j.polygon[(i + k - 1) % k],
+            j.polygon[i],
+            j.polygon[(i + 1) % k],
+        );
+        if !owned(v) && owned(pv) && owned(nx) {
+            // Sidewalk width of the arms whose corners are the neighbours.
+            let w = j
+                .arms
+                .iter()
+                .flat_map(|a| [a.right, a.left].map(|c| (a, c)))
+                .filter(|(_, c)| c.distance(pv) < 1e-4 || c.distance(nx) < 1e-4)
+                .map(|(a, c)| walk_width(graph, a, c))
+                .fold(0.0, f32::max);
+            let reach = |q: Vec2| 0.9 * v.distance(q);
+            if let Some(arc) = fillet(pv, v, nx, w + BEND_RADIUS, w + 0.3, reach(pv), reach(nx)) {
+                src.extend(std::iter::repeat_n(i, arc.len()));
+                out.extend(arc);
+                continue;
+            }
+        }
+        out.push(v);
+        src.push(i);
+    }
+    (out, src)
+}
 
 /// One band along polygon edge `from -> from + 1`.
 #[derive(Clone, Copy, Debug)]
@@ -91,7 +185,12 @@ pub(super) fn walks(graph: &NetGraph, j: &Junction) -> Vec<Walk> {
             let w = match (a, b) {
                 (Some(a), Some(b)) => a.max(b),
                 (Some(w), None) | (None, Some(w)) => w,
-                (None, None) => 0.0,
+                // Inside a rounded corner: the widest sidewalk at the ends of the run.
+                (None, None) => {
+                    let back = (1..k).find_map(|n| at_vertex[(i + k - n) % k]);
+                    let fwd = (1..k).find_map(|n| at_vertex[(i + 1 + n) % k]);
+                    back.into_iter().chain(fwd).fold(0.0, f32::max)
+                }
             };
             let len = j.polygon[i].distance(j.polygon[(i + 1) % k]);
             (w > 1e-3 && len > 1e-3).then_some(w.min(len * 0.5))
@@ -178,10 +277,12 @@ pub(super) fn build(
 /// A pavement patch in an inside corner where two arms' end lines meet at a polygon vertex
 /// (the T's two mouth corners, the inside of a bend, every corner of a cross): it joins the
 /// sidewalks of the two roads, so walkers can turn the corner without crossing asphalt.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct Patch {
     pub vertex: usize,
-    pub quad: [Vec2; 4],
+    /// The vertex, then the outline of the walk-side edge: `pa`, the rounded curb corner (an
+    /// arc, T-186; a single point where it cannot be rounded), `pb`.
+    pub outline: Vec<Vec2>,
 }
 
 pub(super) fn patches(graph: &NetGraph, j: &Junction) -> Vec<Patch> {
@@ -210,10 +311,12 @@ pub(super) fn patches(graph: &NetGraph, j: &Junction) -> Vec<Patch> {
         let x = line_hit(pa, axis_a, pb, axis_b)
             .filter(|x| x.distance(v) <= MITRE_LIMIT * wa.max(wb))
             .unwrap_or(pa + pb - v);
-        out.push(Patch {
-            vertex: i,
-            quad: [v, pa, x, pb],
-        });
+        let mut outline = vec![v];
+        match fillet(pa, x, pb, CURB_RADIUS, 0.0, x.distance(pa), x.distance(pb)) {
+            Some(arc) => outline.extend(arc),
+            None => outline.extend([pa, x, pb]),
+        }
+        out.push(Patch { vertex: i, outline });
     }
     out
 }
@@ -228,12 +331,25 @@ pub(super) fn build_patches(
     for pt in patches {
         let y = ys[pt.vertex];
         let at = |v: Vec2, up: f32| Vec3::new(v.x, y + up, v.y);
-        flat_quad(top, pt.quad.map(|v| at(v, CURB)), Vec3::Y, SIDEWALK);
-        // The two faces towards the road: pa -> x and x -> pb.
-        for (p, q) in [(pt.quad[1], pt.quad[2]), (pt.quad[2], pt.quad[3])] {
+        // A fan from the vertex over the (convex) outline.
+        let ids: Vec<u32> = pt
+            .outline
+            .iter()
+            .map(|&v| push_vertex(top, at(v, CURB), Vec3::Y, SIDEWALK))
+            .collect();
+        for w in ids[1..].windows(2) {
+            tri(top, ids[0], w[0], w[1], Vec3::Y);
+        }
+        // The faces towards the road, along the outline from `pa` to `pb`.
+        for w in pt.outline[1..].windows(2) {
+            let (p, q) = (w[0], w[1]);
             let n = (q - p).perp().try_normalize().unwrap_or(Vec2::Y);
-            // Away from the vertex: the quad's own side is towards it.
-            let away = if n.dot(pt.quad[0] - p) > 0.0 { -n } else { n };
+            // Away from the vertex: the outline's own side is towards it.
+            let away = if n.dot(pt.outline[0] - p) > 0.0 {
+                -n
+            } else {
+                n
+            };
             flat_quad(
                 kerb,
                 [at(p, CURB), at(q, CURB), at(q, 0.0), at(p, 0.0)],
@@ -241,5 +357,52 @@ pub(super) fn build_patches(
                 KERB,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod fillet_tests {
+    use super::*;
+
+    /// Corner at the origin with arms along +x and a direction `deg` degrees counter-clockwise.
+    fn corner(deg: f32, radius: f32, reach: f32) -> Option<Vec<Vec2>> {
+        let b = Vec2::from_angle(deg.to_radians()) * 20.0;
+        fillet(
+            Vec2::new(20.0, 0.0),
+            Vec2::ZERO,
+            b,
+            radius,
+            0.0,
+            reach,
+            reach,
+        )
+    }
+
+    #[test]
+    fn a_right_angle_is_a_quarter_circle_of_the_asked_radius() {
+        let arc = corner(90.0, 3.0, 20.0).unwrap();
+        assert!(arc.len() >= 5);
+        let centre = Vec2::new(3.0, 3.0);
+        for p in &arc {
+            assert!((p.distance(centre) - 3.0).abs() < 1e-3, "{p:?}");
+        }
+        assert!(arc[0].distance(Vec2::new(3.0, 0.0)) < 1e-3);
+        assert!(arc.last().unwrap().distance(Vec2::new(0.0, 3.0)) < 1e-3);
+    }
+
+    #[test]
+    fn the_radius_shrinks_to_the_reach_and_no_angle_gives_nan() {
+        let arc = corner(90.0, 3.0, 1.5).unwrap();
+        assert!((arc[0].x - 1.5).abs() < 1e-3);
+        for deg in [1.0, 5.0, 30.0, 90.0, 150.0, 175.0, 179.0, 180.0, 359.0] {
+            if let Some(arc) = corner(deg, 3.0, 10.0) {
+                assert!(arc.len() <= 9);
+                assert!(
+                    arc.iter().all(|p| p.is_finite() && p.length() <= 20.0),
+                    "{deg}: {arc:?}"
+                );
+            }
+        }
+        assert!(corner(1.0, 3.0, 10.0).is_none() && corner(179.0, 3.0, 10.0).is_none());
     }
 }

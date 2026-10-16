@@ -875,13 +875,18 @@ fn check_clean(w: &World, what: &str) {
         "{what}: sidewalk over the carriageway: {over} m2"
     );
     for (node, j) in v.junctions.iter() {
-        check_rim(&set, j, node, what);
+        check_rim(&set, &v.net, j, node, what);
     }
 }
 
 /// In the polygon of `j`, a sidewalk covers only the rim along an outer edge (never further
 /// from it than the widest sidewalk) and everything else is asphalt: no hole either.
-fn check_rim(set: &RoadSet, j: &Junction, node: &NodeId, what: &str) {
+fn check_rim(set: &RoadSet, graph: &NetGraph, j: &Junction, node: &NodeId, what: &str) {
+    // T-186: the outside of a bend is an arc; the canvas follows it.
+    let j = &Junction {
+        polygon: super::corner::rounded_polygon(j, graph).0,
+        ..j.clone()
+    };
     let m = &set.piece(PieceKey::Junction(*node)).unwrap().near;
     let (sw, asph) = (colour_tris(m, SIDEWALK), colour_tris(m, ASPHALT));
     let n = j.polygon.len();

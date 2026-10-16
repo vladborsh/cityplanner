@@ -143,6 +143,42 @@ pub fn build_zones(sim: &mut SimRunner) {
     }
 }
 
+/// Corner scene (T-186): an X crossing, T junctions and 90 degree bends of basic streets, for
+/// the rounded curbs. Look at it with `--cam corners`.
+pub const CORNERS: &str = "corners";
+
+/// Builds the [`CORNERS`] scene through the normal commands.
+pub fn build_corners(sim: &mut SimRunner) {
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    let p = |dx: f32, dz: f32| Vec2::new(c + dx, c + dz);
+    // Two streets cross (X); a street ends on the first (T) and a loop of three legs closes a
+    // block with two 90 degree bends.
+    for (from, to) in [
+        (p(-120.0, 0.0), p(-40.0, 0.0)),
+        (p(-40.0, 0.0), p(60.0, 0.0)),
+        (p(60.0, 0.0), p(120.0, 0.0)),
+        (p(-40.0, -80.0), p(-40.0, 0.0)),
+        (p(-40.0, 0.0), p(-40.0, 80.0)),
+        (p(-40.0, 80.0), p(60.0, 80.0)),
+        (p(60.0, 0.0), p(60.0, 80.0)),
+    ] {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: basic,
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+}
+
 /// Metro scene (T-164): a street, three metro stations beside it, the tunnels between the
 /// platforms and a metro line with two trains. Look at it with `--overlay underground`
 /// and `--cam metro`.

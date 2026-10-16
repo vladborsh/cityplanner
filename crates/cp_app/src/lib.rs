@@ -173,6 +173,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(5880.0, 55.0, 5640.0),
             Vec3::new(5900.0, 28.0, 5500.0),
         ),
+        // Over the junctions of the corner scene (`--scene corners`).
+        "corners" => (
+            Vec3::new(c - 20.0, 120.0, c + 120.0),
+            Vec3::new(c - 20.0, 0.0, c + 25.0),
+        ),
         "zones" => (
             Vec3::new(c - 60.0, 300.0, c + 150.0),
             Vec3::new(c - 60.0, 0.0, c - 10.0),
@@ -229,6 +234,9 @@ pub fn build_sim(
     } else if scene == Some(scene::TRAIN) {
         let ok = scene::build_train(&mut sim);
         info!("scene train: a train at the station: {ok}");
+    } else if scene == Some(scene::CORNERS) {
+        scene::build_corners(&mut sim);
+        info!("scene corners");
     } else if scene == Some(scene::ZONES) {
         scene::build_zones(&mut sim);
         info!("scene zones");
