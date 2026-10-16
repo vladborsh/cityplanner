@@ -111,6 +111,7 @@ impl SimRunner {
         world.init_resource::<cp_citizen::TripBook>();
         world.init_resource::<cp_citizen::RoutineSettings>();
         world.init_resource::<cp_traffic::Agents>();
+        world.init_resource::<cp_traffic::ServiceRuns>();
         world.init_resource::<cp_traffic::AgentSettings>();
         world.init_resource::<cp_core::Treasury>();
         world.init_resource::<cp_district::DistrictMap>();
@@ -275,9 +276,20 @@ impl SimRunner {
                 .in_set(SimPhase::Paths)
                 .after(cp_traffic::deliver_paths),
         );
+        // Routes of service runs (T-151) become vehicles after the citizens' trips.
+        schedule.add_systems(
+            cp_traffic::receive_service_paths
+                .in_set(SimPhase::Paths)
+                .after(cp_traffic::receive_paths),
+        );
         // Agents move first, then freshly planned trips ask for routes.
         schedule.add_systems(
-            (cp_traffic::move_agents, cp_traffic::route_trips)
+            (
+                cp_traffic::move_agents,
+                cp_traffic::advance_service_runs,
+                cp_traffic::route_trips,
+                cp_traffic::route_service_runs,
+            )
                 .chain()
                 .in_set(SimPhase::Agents),
         );

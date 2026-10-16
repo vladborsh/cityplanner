@@ -165,6 +165,8 @@ pub struct Balance {
     pub garbage_job: f32,
     /// Garbage piled up in a building from which it has the GARBAGE problem. // tune later
     pub garbage_problem: f32,
+    /// Garbage a building holds before a garbage truck is sent for it (T-151). // tune later
+    pub garbage_truck_min: f32,
     /// Chance per building and game day to catch fire with no fire cover (T-142). // tune later
     pub fire_base: f32,
     /// Share of `fire_base` a full fire coverage takes away.
@@ -265,6 +267,7 @@ impl Balance {
             self.garbage_household,
             self.garbage_job,
             self.garbage_problem,
+            self.garbage_truck_min,
             self.fire_base,
             self.fire_cover,
             self.fire_extinguish_hours,
@@ -332,6 +335,7 @@ impl Default for Balance {
             garbage_household: 25.0,
             garbage_job: 4.0,
             garbage_problem: 100.0,
+            garbage_truck_min: 50.0,
             fire_base: 0.002,
             fire_cover: 0.8,
             fire_extinguish_hours: 2.0,

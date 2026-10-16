@@ -1,13 +1,20 @@
 //! Garbage (§16 M2 D "Мусор"): buildings pile it up, landfills and incinerators take it away
 //! within their daily capacity, and a building that holds too much has the GARBAGE problem.
+//!
+//! (T-151) With `cp_traffic`'s [`ServiceRuns`] present the hand-over is a trip: a covered
+//! building holding `garbage_truck_min` gets a garbage truck from the nearest facility with
+//! room, and the garbage is taken (within the facility's room at that moment) when the truck
+//! arrives — by driving, or abstractly when the agent pool is full. A failed run takes it at
+//! once, as without runs. Without `ServiceRuns` every pass hands the garbage over at once.
 
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingState};
 use cp_citizen::CitizenGrid;
-use cp_content::{ServiceKind, SimContent};
+use cp_content::{ServiceKind, SimContent, VehicleKind};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_net::NetGraph;
+use cp_traffic::{RunState, ServiceRuns};
 
 use crate::coverage::{COVERAGE_PERIOD, ServiceCoverage};
 use crate::facility::nearest_facility;
@@ -28,6 +35,7 @@ pub fn update_garbage(
     citizens: Res<CitizenGrid>,
     coverage: Res<ServiceCoverage>,
     mut state: ResMut<ServiceState>,
+    mut runs: Option<ResMut<ServiceRuns>>,
 ) {
     let Some(content) = content else { return };
     let db = &content.0;
@@ -49,7 +57,31 @@ pub fn update_garbage(
         // The day's total spread over its 64 passes without losing the remainder.
         let made = per_day * (pass + 1) / PASSES_PER_DAY - per_day * pass / PASSES_PER_DAY;
         let mut garbage = u64::from(held) + made;
-        if garbage > 0
+        let truck = runs
+            .as_deref()
+            .and_then(|r| r.find(VehicleKind::Truck, id))
+            .map(|(run, r)| (run, r.state));
+        let hand_over_now = match (runs.as_deref_mut(), truck) {
+            (None, _) => true,
+            // The truck is here (or the run failed): take the garbage now.
+            (Some(r), Some((run, RunState::Arrived { .. } | RunState::Failed))) => {
+                r.remove(run);
+                true
+            }
+            (Some(_), Some(_)) => false,
+            (Some(r), None) => {
+                if garbage as f32 >= balance.garbage_truck_min
+                    && coverage.coverage_of(ServiceKind::Garbage, b) > 0.0
+                    && let Some(facility) =
+                        nearest_facility(&net, &buildings, db, &state, ServiceKind::Garbage, id)
+                {
+                    r.start(VehicleKind::Truck, facility, id);
+                }
+                false
+            }
+        };
+        if hand_over_now
+            && garbage > 0
             && coverage.coverage_of(ServiceKind::Garbage, b) > 0.0
             && let Some(facility) =
                 nearest_facility(&net, &buildings, db, &state, ServiceKind::Garbage, id)

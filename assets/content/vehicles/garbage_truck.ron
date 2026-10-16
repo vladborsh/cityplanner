@@ -1,0 +1,12 @@
+Vehicle((
+    id: "garbage_truck",
+    name: "Garbage truck",
+    kind: Truck,
+    length: 8.0,
+    width: 2.5,
+    max_speed_kmh: 60.0, // tune later
+    accel: 1.2,
+    decel: 4.0,
+    min_gap: 2.0,
+    mesh: "vehicle/car_basic",
+))

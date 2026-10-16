@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 26;
+pub const FORMAT_VERSION: u32 = 27;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -213,6 +213,8 @@ pub struct SaveData {
     pub shortage: WorkerShortage,
     /// The population milestone reached. Added in v25.
     pub progress: cp_sim::Progress,
+    /// Fire engines and garbage trucks on their way (T-151). Added in v27.
+    pub service_runs: cp_traffic::ServiceRuns,
 }
 
 impl SaveData {
@@ -278,6 +280,7 @@ impl SaveData {
             coverage: world.resource::<cp_service::ServiceCoverage>().clone(),
             shortage: world.resource::<WorkerShortage>().clone(),
             progress: *world.resource::<cp_sim::Progress>(),
+            service_runs: world.resource::<cp_traffic::ServiceRuns>().clone(),
         }
     }
 
@@ -318,6 +321,7 @@ impl SaveData {
         world.insert_resource(self.service_state);
         world.insert_resource(self.shortage);
         world.insert_resource(self.progress);
+        world.insert_resource(self.service_runs);
         // The snapshot cache is keyed by the generation, which a load must change.
         let mut coverage = self.coverage;
         coverage.generation = world

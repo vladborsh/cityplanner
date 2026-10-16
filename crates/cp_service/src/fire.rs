@@ -4,6 +4,10 @@
 //! One system, [`update_fire`], on the 64-tick buckets of [`crate::garbage`]:
 //! * an `Active` building without a fire ignites with `fire_base × (1 − fire_cover ×
 //!   coverage(Fire))` per game day;
+//! * (T-151) with `cp_traffic`'s [`ServiceRuns`] present the engine is a real vehicle: dispatch
+//!   starts a run from the station and the fire is out `fire_extinguish_hours` after the run
+//!   arrives (by driving, or abstractly when the agent pool is full); a failed run falls back
+//!   to extinguishing at once (no travel time). Without `ServiceRuns` only the estimate exists;
 //! * a fire looks for the nearest `Active`, powered station with an engine free (engines out
 //!   are counted in the station's `Facility::stored`, the station's `capacity` is how many
 //!   there are). The engine arrives after the road distance at `fire_engine_kmh` and works
@@ -18,10 +22,11 @@
 
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingId, BuildingState, burn, demolish_building};
-use cp_content::{ContentDb, ServiceKind, SimContent};
+use cp_content::{ContentDb, ServiceKind, SimContent, VehicleKind};
 use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_DAY, TICKS_PER_HOUR};
 use cp_core::{SimRng, Tick};
 use cp_net::NetGraph;
+use cp_traffic::{RunState, ServiceRuns};
 use cp_zone::ZoneGrid;
 
 use crate::coverage::{COVERAGE_PERIOD, ServiceCoverage};
@@ -39,6 +44,7 @@ fn dispatch(
     buildings: &BuildingGrid,
     db: &ContentDb,
     state: &mut ServiceState,
+    runs: Option<&mut ServiceRuns>,
     id: BuildingId,
     now: Tick,
 ) -> bool {
@@ -58,12 +64,49 @@ fn dispatch(
     let travel = (metres / speed / MOVE_SECONDS_PER_TICK).ceil() as u64;
     let work = (bal.fire_extinguish_hours * TICKS_PER_HOUR).round() as u64;
     state.facility_mut(station).stored += 1;
+    // A real engine: the fire goes out when its run arrives (`attend`); else the estimate.
+    let out_at = match runs {
+        Some(runs) => {
+            runs.start(VehicleKind::Emergency, station, id);
+            None
+        }
+        None => Some(Tick(now.0 + travel + work)),
+    };
     let s = state.get_mut(id);
     if let Some(f) = s.fire.as_mut() {
-        f.out_at = Some(Tick(now.0 + travel + work));
+        f.out_at = out_at;
         f.station = Some(station);
     }
     true
+}
+
+/// Follows the engine of the fire in `id` (dispatched, no `out_at` yet): when its run has
+/// arrived the extinguishing starts then; when it failed — or is gone — the road-distance
+/// estimate from now on is used.
+fn attend(
+    state: &mut ServiceState,
+    runs: &mut ServiceRuns,
+    db: &ContentDb,
+    id: BuildingId,
+    station: BuildingId,
+    now: Tick,
+) {
+    let work = (db.balance().fire_extinguish_hours * TICKS_PER_HOUR).round() as u64;
+    let out_at = match runs.find(VehicleKind::Emergency, id) {
+        Some((_, run)) => match run.state {
+            RunState::Arrived { at } => at.0 + work,
+            RunState::Failed => now.0 + work,
+            _ => return,
+        },
+        None => now.0 + work,
+    };
+    if let Some((run, _)) = runs.find(VehicleKind::Emergency, id) {
+        runs.remove(run);
+    }
+    if let Some(f) = state.get_mut(id).fire.as_mut() {
+        f.out_at = Some(Tick(out_at));
+        f.station = Some(station);
+    }
 }
 
 fn ignite(state: &mut ServiceState, id: BuildingId, now: Tick) {
@@ -87,6 +130,7 @@ pub fn update_fire(
     mut buildings: ResMut<BuildingGrid>,
     mut zones: ResMut<ZoneGrid>,
     mut state: ResMut<ServiceState>,
+    mut runs: Option<ResMut<ServiceRuns>>,
 ) {
     let Some(content) = content else { return };
     let db = &content.0;
@@ -114,10 +158,25 @@ pub fn update_fire(
                 let p = bal.fire_base * (1.0 - bal.fire_cover * cover) / PASSES_PER_DAY;
                 if rng.next_f32() < p {
                     ignite(&mut state, id, now);
-                    dispatch(&net, &buildings, db, &mut state, id, now);
+                    dispatch(
+                        &net,
+                        &buildings,
+                        db,
+                        &mut state,
+                        runs.as_deref_mut(),
+                        id,
+                        now,
+                    );
                 }
             }
-            (BuildingState::Active, Some(f)) => {
+            (BuildingState::Active, Some(mut f)) => {
+                // An engine on its way: its arrival starts the extinguishing.
+                if f.out_at.is_none()
+                    && let (Some(station), Some(runs)) = (f.station, runs.as_deref_mut())
+                {
+                    attend(&mut state, runs, db, id, station, now);
+                    f = state.get(id).and_then(|s| s.fire).unwrap_or(f);
+                }
                 if let Some(out) = f.out_at {
                     if now >= out {
                         if let Some(st) = f.station
@@ -132,11 +191,31 @@ pub fn update_fire(
                         continue;
                     }
                 } else if now.0 - f.since.0 >= burn_after {
+                    // The engine that never came: free it and call off its run.
+                    if let Some(st) = f.station
+                        && state.facility(st).is_some()
+                    {
+                        let fac = state.facility_mut(st);
+                        fac.stored = fac.stored.saturating_sub(1);
+                    }
+                    if let Some(runs) = runs.as_deref_mut()
+                        && let Some((run, _)) = runs.find(VehicleKind::Emergency, id)
+                    {
+                        runs.remove(run);
+                    }
                     burn(&mut buildings, id);
                     state.get_mut(id).problems.set(ServiceProblems::FIRE, false);
                     continue;
-                } else {
-                    dispatch(&net, &buildings, db, &mut state, id, now);
+                } else if f.station.is_none() {
+                    dispatch(
+                        &net,
+                        &buildings,
+                        db,
+                        &mut state,
+                        runs.as_deref_mut(),
+                        id,
+                        now,
+                    );
                 }
                 if rng.next_f32() < spread_p {
                     spread.push(id);
@@ -162,7 +241,15 @@ pub fn update_fire(
         });
         if let Some((nid, _)) = next.map(|(i, b)| (i, b.pos)) {
             ignite(&mut state, nid, now);
-            dispatch(&net, &buildings, db, &mut state, nid, now);
+            dispatch(
+                &net,
+                &buildings,
+                db,
+                &mut state,
+                runs.as_deref_mut(),
+                nid,
+                now,
+            );
         }
     }
 }

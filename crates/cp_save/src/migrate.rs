@@ -1640,8 +1640,8 @@ pub struct SaveDataV25 {
 }
 
 /// v25 → v26 (T-118): `TripPurpose::MoveIn` is appended; nothing in a v25 body changes.
-pub fn migrate_v25_to_v26(v25: SaveDataV25) -> SaveData {
-    SaveData {
+pub fn migrate_v25_to_v26(v25: SaveDataV25) -> SaveDataV26 {
+    SaveDataV26 {
         tick: v25.tick,
         rng: v25.rng,
         speed: v25.speed,
@@ -1672,10 +1672,102 @@ pub fn migrate_v25_to_v26(v25: SaveDataV25) -> SaveData {
     }
 }
 
+/// Version 26: the body as written by format 26 (`MoveIn` trips; no service runs).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV26 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    /// Zone blocks, painted types and cell validity. Added in v5.
+    pub zones: ZoneGrid,
+    /// Buildings (lots, state, access points). Added in v6.
+    /// Includes the ids removed and not yet drained since v13.
+    pub buildings: BuildingGrid,
+    /// Citizens and households. Added in v7.
+    pub citizens: CitizenGrid,
+    /// Pathfinding requests in flight (id, submit tick, request, congestion read, stale
+    /// flag). Added in v8; see `cp_traffic::service` for why this makes load + N ticks equal
+    /// the continuous run.
+    pub paths: SavedPaths,
+    /// Pipe and power-line networks. Added in v9.
+    pub utilities: UtilityGraph,
+    /// Trips in flight and the routine's counters. Added in v10.
+    pub trips: TripBook,
+    /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
+    /// agents carry the segment load since v12; vehicles carry their re-route request id
+    /// since v17.
+    pub agents: cp_traffic::Agents,
+    /// The city's money. Added in v14.
+    pub treasury: Treasury,
+    /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
+    pub economy: EconomyState,
+    /// Smoothed demand and the sums of the cycle in progress. Added in v15.
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    /// Pollution, noise and land value grids. Added in v16.
+    pub land: LandGrids,
+    /// Abandonment timers. Added in v16.
+    pub decay: Decay,
+    /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
+    /// [`crate::DefNames`] and `SaveData::remap_defs`.
+    pub def_names: crate::DefNames,
+    /// The district grid and the district records. Added in v21.
+    pub district_map: DistrictMap,
+    pub districts: Districts,
+    /// Per-building service state and facility counters. Added in v22; fires name their
+    /// station since v24.
+    pub service_state: cp_service::ServiceState,
+    /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
+    /// sim reads the values of that boundary until the next one. Added in v22.
+    pub coverage: cp_service::ServiceCoverage,
+    /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
+    pub shortage: cp_economy::WorkerShortage,
+    /// The population milestone reached. Added in v25.
+    pub progress: cp_sim::Progress,
+}
+
+/// v26 → v27 (T-151): service runs. A save from before it has none under way.
+pub fn migrate_v26_to_v27(v26: SaveDataV26) -> SaveData {
+    SaveData {
+        tick: v26.tick,
+        rng: v26.rng,
+        speed: v26.speed,
+        queue: v26.queue,
+        log: v26.log,
+        tiles: v26.tiles,
+        net: v26.net,
+        zones: v26.zones,
+        buildings: v26.buildings,
+        citizens: v26.citizens,
+        paths: v26.paths,
+        utilities: v26.utilities,
+        trips: v26.trips,
+        agents: v26.agents,
+        treasury: v26.treasury,
+        economy: v26.economy,
+        demand: v26.demand,
+        demand_acc: v26.demand_acc,
+        land: v26.land,
+        decay: v26.decay,
+        def_names: v26.def_names,
+        district_map: v26.district_map,
+        districts: v26.districts,
+        service_state: v26.service_state,
+        coverage: v26.coverage,
+        shortage: v26.shortage,
+        progress: v26.progress,
+        service_runs: cp_traffic::ServiceRuns::default(),
+    }
+}
+
 /// Everything from a v22 body to the current format.
 fn from_v22(v: SaveDataV22) -> SaveData {
-    migrate_v25_to_v26(migrate_v24_to_v25(migrate_v23_to_v24(migrate_v22_to_v23(
-        v,
+    migrate_v26_to_v27(migrate_v25_to_v26(migrate_v24_to_v25(migrate_v23_to_v24(
+        migrate_v22_to_v23(v),
     ))))
 }
 
@@ -1780,12 +1872,15 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         20 => Ok(from_v22(migrate_v21_to_v22(migrate_v20_to_v21(dec(body)?)))),
         21 => Ok(from_v22(migrate_v21_to_v22(dec(body)?))),
         22 => Ok(from_v22(dec(body)?)),
-        23 => Ok(migrate_v25_to_v26(migrate_v24_to_v25(migrate_v23_to_v24(
+        23 => Ok(migrate_v26_to_v27(migrate_v25_to_v26(migrate_v24_to_v25(
+            migrate_v23_to_v24(dec(body)?),
+        )))),
+        24 => Ok(migrate_v26_to_v27(migrate_v25_to_v26(migrate_v24_to_v25(
             dec(body)?,
         )))),
-        24 => Ok(migrate_v25_to_v26(migrate_v24_to_v25(dec(body)?))),
-        25 => Ok(migrate_v25_to_v26(dec(body)?)),
-        26 => dec(body),
+        25 => Ok(migrate_v26_to_v27(migrate_v25_to_v26(dec(body)?))),
+        26 => Ok(migrate_v26_to_v27(dec(body)?)),
+        27 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

@@ -10,6 +10,7 @@ pub mod demo;
 pub mod drive;
 pub mod graph;
 pub mod pose;
+pub mod runs;
 pub mod service;
 
 pub use agents::{
@@ -23,6 +24,10 @@ pub use graph::{
     U_TURN_PENALTY,
 };
 pub use pose::{AgentFrame, AgentKey, PedestrianPose, VehiclePose};
+pub use runs::{
+    RunId, RunState, SERVICE_GEN, ServiceRun, ServiceRuns, advance_service_runs,
+    receive_service_paths, route_service_runs, run_of,
+};
 pub use service::{
     Mode, PATH_DELAY_TICKS, PathNetwork, PathOutcome, PathRequest, PathResult, PathResults,
     PathService, RequestId, SavedPaths, SavedRequest, deliver_paths, update_path_network,

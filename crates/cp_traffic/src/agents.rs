@@ -258,6 +258,12 @@ impl Agents {
         Self::default()
     }
 
+    /// Puts a service vehicle (T-151) on the road: it waits for room at its start like a car.
+    pub(crate) fn spawn_service_vehicle(&mut self, v: Vehicle) {
+        let id = self.vehicles.insert(v);
+        self.drive.waiting.push(id);
+    }
+
     pub fn vehicle(&self, id: VehicleId) -> Option<&Vehicle> {
         self.vehicles.get(id)
     }
@@ -378,7 +384,7 @@ pub fn purge_removed_buildings(
 }
 
 /// The access point of a building as the path service wants it.
-fn access_of(net: &NetGraph, b: &Building) -> Option<Access> {
+pub(crate) fn access_of(net: &NetGraph, b: &Building) -> Option<Access> {
     let access = b.access()?;
     let seg = net.segment(access.segment)?;
     let s = seg.curve.arc_table().t_to_s(access.t);
@@ -426,7 +432,7 @@ fn move_in_request(net: &NetGraph, pnet: &PathNetwork, home: &Building) -> Optio
     })
 }
 
-fn travel_ticks(cost_s: f32) -> u64 {
+pub(crate) fn travel_ticks(cost_s: f32) -> u64 {
     ((cost_s / MOVE_SECONDS_PER_TICK).ceil() as u64).max(1)
 }
 
@@ -562,9 +568,16 @@ fn drop_vehicle(
     buildings: &BuildingGrid,
     rng: &SimRng,
     now: u64,
+    runs: &mut Option<ResMut<crate::runs::ServiceRuns>>,
 ) {
     if let Some(v) = agents.vehicles.remove(id) {
         agents.drive.remove(&v, id);
+        if let Some(run) = crate::runs::run_of(&v) {
+            if let Some(runs) = runs.as_deref_mut() {
+                runs.set_state(run, crate::runs::RunState::Failed);
+            }
+            return;
+        }
         complete_trip(grid, book, buildings, rng, now, v.trip);
     }
 }
@@ -582,6 +595,7 @@ pub fn receive_paths(
     mut book: ResMut<TripBook>,
     mut grid: ResMut<CitizenGrid>,
     mut agents: ResMut<Agents>,
+    mut runs: Option<ResMut<crate::runs::ServiceRuns>>,
 ) {
     book.ensure_derived();
     agents.ensure_derived(&book);
@@ -616,6 +630,7 @@ pub fn receive_paths(
                     &buildings,
                     &rng,
                     now,
+                    &mut runs,
                 );
             } else {
                 let again = agents
@@ -637,6 +652,7 @@ pub fn receive_paths(
                             &buildings,
                             &rng,
                             now,
+                            &mut runs,
                         );
                     }
                 }
@@ -957,6 +973,7 @@ pub fn move_agents(
     mut agents: ResMut<Agents>,
     mut grid: ResMut<CitizenGrid>,
     mut book: ResMut<TripBook>,
+    mut runs: Option<ResMut<crate::runs::ServiceRuns>>,
 ) {
     let now = tick.0;
     book.ensure_derived();
@@ -1075,13 +1092,25 @@ pub fn move_agents(
     stats.driven += fin.arrived.len() as u64;
     stats.invalid_vehicles += fin.invalid.len() as u64;
     stats.despawned_stuck += fin.stuck.len() as u64;
-    for v in fin
-        .arrived
+    let arrived = fin.arrived.into_iter().map(|v| (v, true));
+    let lost = gone
         .into_iter()
-        .chain(gone)
         .chain(fin.invalid)
         .chain(fin.stuck)
-    {
+        .map(|v| (v, false));
+    for (v, ok) in arrived.chain(lost) {
+        if let Some(run) = crate::runs::run_of(&v) {
+            // A service vehicle: its run reports to `cp_service` (a lost one makes it estimate).
+            if let Some(runs) = runs.as_deref_mut() {
+                let state = if ok {
+                    crate::runs::RunState::Arrived { at: Tick(now) }
+                } else {
+                    crate::runs::RunState::Failed
+                };
+                runs.set_state(run, state);
+            }
+            continue;
+        }
         complete_trip(&mut grid, &mut book, &buildings, &rng, now, v.trip);
     }
 }

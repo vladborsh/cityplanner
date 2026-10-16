@@ -81,6 +81,8 @@ Balance((
     garbage_household: 25.0,
     garbage_job: 4.0,
     garbage_problem: 100.0,
+    // A building holding this much garbage gets a garbage truck (T-151). // tune later
+    garbage_truck_min: 50.0,
 
     // --- Fire (system-design §16 M2 D): all // tune later ---
     // Chance per building and game day without cover; cover removes up to fire_cover of it.

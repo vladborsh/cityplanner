@@ -14,6 +14,7 @@ cp_citizen.workspace = true
 cp_content.workspace = true
 cp_core.workspace = true
 cp_net.workspace = true
+cp_traffic.workspace = true
 cp_zone.workspace = true
 bevy_ecs.workspace = true
 serde.workspace = true
