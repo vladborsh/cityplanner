@@ -201,3 +201,42 @@ fn zone_painting_waits_for_the_ui_to_let_go() {
     assert!(app.world().resource::<CommandOutbox>().is_empty());
     assert!(app.world().resource::<ToolState>().zone.corner.is_none());
 }
+
+/// BUG-035: every tool, armed as far as a headless world allows, ignores a click while the
+/// pointer is over the UI, and takes it once the pointer is on the map.
+#[test]
+fn no_tool_reacts_to_a_click_over_the_ui() {
+    let (sim, db) = sim();
+    let tools = [
+        ActiveTool::Road,
+        ActiveTool::Bulldozer,
+        ActiveTool::Upgrade,
+        ActiveTool::Zone,
+        ActiveTool::District,
+        ActiveTool::Place,
+        ActiveTool::Utility,
+        ActiveTool::UtilityRemove,
+        ActiveTool::Line,
+    ];
+    for tool in tools {
+        let mut app = app();
+        app.insert_resource(sim.view());
+        {
+            let mut state = app.world_mut().resource_mut::<ToolState>();
+            state.select(tool);
+            state.road.road = Some(db.road_id("basic_2l").unwrap());
+            state.building.def = db.building_id("bus_depot");
+        }
+        app.world_mut().resource_mut::<UiCapture>().pointer_over_ui = true;
+        click(&mut app);
+        click(&mut app);
+        let state = app.world().resource::<ToolState>();
+        assert!(
+            app.world().resource::<CommandOutbox>().is_empty(),
+            "{tool:?} sent a command through the UI"
+        );
+        assert_eq!(state.road.points.len(), 0, "{tool:?}: road point");
+        assert!(state.zone.corner.is_none(), "{tool:?}: zone corner");
+        assert!(state.line.stops.is_empty(), "{tool:?}: line stop");
+    }
+}

@@ -124,6 +124,23 @@ fn measure_tick_rate(
     }
 }
 
+/// Everything one frame of the UI reads and writes.
+pub(crate) struct UiFrame<'a> {
+    pub view: &'a SimView,
+    pub state: &'a mut UiState,
+    pub outbox: &'a mut CommandOutbox,
+    pub overlay: &'a mut OverlayState,
+    pub lighting: &'a mut LightingSettings,
+    pub camera: &'a mut cp_render::CameraSettings,
+    pub rate: &'a TickRate,
+    pub extra: Option<&'a debug::PhaseTimes>,
+    pub tools: &'a mut ToolState,
+    pub files: &'a mut FileMenu,
+    pub inspected: &'a cp_tools::Inspected,
+    pub picked: &'a mut cp_tools::Picked,
+    pub toast: &'a mut milestone::MilestoneToast,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_ui(
     mut contexts: EguiContexts,
@@ -151,24 +168,54 @@ fn draw_ui(
         style::install(ctx);
         *loaders_installed = true;
     }
+    draw_frame(
+        ctx,
+        UiFrame {
+            view: &view,
+            state: &mut state,
+            outbox: &mut outbox,
+            overlay: &mut overlay,
+            lighting: &mut lighting,
+            camera: &mut camera,
+            rate: &rate,
+            extra: extra.as_deref(),
+            tools: &mut tools,
+            files: &mut files,
+            inspected: &inspected,
+            picked: &mut picked,
+            toast: &mut toast,
+        },
+    );
+    Ok(())
+}
+
+/// The whole UI of one frame, drawn into `ctx`.
+pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
+    let UiFrame {
+        view,
+        state,
+        outbox,
+        overlay,
+        lighting,
+        camera,
+        rate,
+        extra,
+        tools,
+        files,
+        inspected,
+        picked,
+        toast,
+    } = f;
     let available = Category::available(view.content.as_deref());
     if let Some(c) = palette::hotkey(ctx, &available) {
-        palette::toggle(&mut state, c);
+        palette::toggle(state, c);
     }
     if panels::view_hotkey(ctx) {
         state.view_menu_open = !state.view_menu_open;
         state.settings_open = false;
     }
     let mut root = root_ui(ctx);
-    top_bar(
-        &mut root,
-        &view,
-        &mut outbox,
-        &mut overlay,
-        &mut lighting,
-        &mut state,
-        &mut files,
-    );
+    top_bar(&mut root, view, outbox, overlay, lighting, state, files);
     // The settings menu edits `state.prefs`; push it out to where it takes effect (T-069).
     if *camera != state.prefs.camera {
         *camera = state.prefs.camera.clone();
@@ -176,48 +223,63 @@ fn draw_ui(
     if (ctx.zoom_factor() - state.prefs.ui_scale).abs() > f32::EPSILON {
         ctx.set_zoom_factor(state.prefs.ui_scale);
     }
-    palette(&mut root, &mut state, view.content.as_deref());
-    tool_panel(
-        &mut root,
-        &mut state,
-        Some(&view),
-        &mut tools,
-        &mut overlay,
-        &mut outbox,
-    );
-    demand_panel::demand_panel(&mut root, &view, &mut state, &mut tools);
+    palette(&mut root, state, view.content.as_deref());
+    tool_panel(&mut root, state, Some(view), tools, overlay, outbox);
+    demand_panel::demand_panel(&mut root, view, state, tools);
+    remember_map_rect(ctx, &root);
     {
         let st = &mut *state;
-        budget::budget_window(ctx, &mut st.budget_open, &view, &mut st.budget, &mut outbox);
-        windows::demand_window(ctx, &mut st.demand_open, &view);
-        metrics::metrics_window(ctx, &mut st.metrics_open, &view);
-        lines::lines_window(ctx, &mut st.lines_open, &view, &mut st.lines, &mut outbox);
+        budget::budget_window(ctx, &mut st.budget_open, view, &mut st.budget, outbox);
+        windows::demand_window(ctx, &mut st.demand_open, view);
+        metrics::metrics_window(ctx, &mut st.metrics_open, view);
+        lines::lines_window(ctx, &mut st.lines_open, view, &mut st.lines, outbox);
     }
     if state.debug_open {
         debug::debug_window(
             ctx,
             &DebugData {
-                view: &view,
+                view,
                 ticks_per_sec: rate.per_sec(),
-                phases: extra.as_deref(),
+                phases: extra,
             },
             &mut state.debug_open,
         );
     }
-    file_window(ctx, &mut files);
-    milestone::milestone_toast(ctx, &view, &mut toast);
-    land::confirm_window(ctx, &view, &mut state.budget.buy_tile, &mut outbox);
-    info_panel(ctx, &inspected, &mut picked);
-    Ok(())
+    file_window(ctx, files);
+    milestone::milestone_toast(ctx, view, toast);
+    land::confirm_window(ctx, view, &mut state.budget.buy_tile, outbox);
+    info_panel(ctx, inspected, picked);
 }
 
 /// What egui owns, given the pointer position of the frame that just began and the layout of
 /// the last drawn one: `(pointer, keyboard)`.
 pub fn egui_owns_input(ctx: &egui::Context) -> (bool, bool) {
     (
-        ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input(),
+        ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || pointer_over_panels(ctx),
         ctx.egui_wants_keyboard_input(),
     )
+}
+
+/// Where the map shows between the docked panels, as of the last frame (BUG-035).
+const MAP_RECT: &str = "cp_map_rect";
+
+/// Remembers the part of the screen the docked panels left free. The panels are drawn into a
+/// background-layer `Ui`, which egui's own `is_pointer_over_egui` does not count, so the
+/// pointer is "over the UI" when it is on the screen but outside this rectangle.
+fn remember_map_rect(ctx: &egui::Context, root: &egui::Ui) {
+    let free = root.available_rect_before_wrap();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(MAP_RECT), free));
+}
+
+/// The pointer is on a docked panel (top bar, palette, tool panel, demand bar).
+pub fn pointer_over_panels(ctx: &egui::Context) -> bool {
+    let (Some(pos), Some(free)) = (
+        ctx.pointer_latest_pos(),
+        ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new(MAP_RECT))),
+    ) else {
+        return false;
+    };
+    ctx.viewport_rect().contains(pos) && !free.contains(pos)
 }
 
 /// Writes [`UiCapture`] for the camera and the tools. Runs in `PreUpdate`, right after
@@ -357,5 +419,160 @@ mod capture_tests {
         frame(&ctx, input(0.0, vec![]), &mut field);
         frame(&ctx, input(0.1, vec![]), &mut field);
         assert!(egui_owns_input(&ctx).1);
+    }
+
+    /// Everything a frame of the real UI reads and writes.
+    struct Rig {
+        view: SimView,
+        state: UiState,
+        outbox: CommandOutbox,
+        overlay: OverlayState,
+        lighting: LightingSettings,
+        camera: cp_render::CameraSettings,
+        rate: TickRate,
+        tools: ToolState,
+        files: FileMenu,
+        inspected: cp_tools::Inspected,
+        picked: cp_tools::Picked,
+        toast: milestone::MilestoneToast,
+    }
+
+    impl Rig {
+        fn new() -> Self {
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            let db = std::sync::Arc::new(
+                cp_content::ContentDb::load_dir(root.join("assets/content")).unwrap(),
+            );
+            let mut sim = cp_sim::SimRunner::new(1);
+            sim.set_content(db);
+            sim.tick_once();
+            Rig {
+                view: sim.view(),
+                state: UiState::default(),
+                outbox: CommandOutbox::default(),
+                overlay: OverlayState::default(),
+                lighting: LightingSettings::default(),
+                camera: cp_render::CameraSettings::default(),
+                rate: TickRate::default(),
+                tools: ToolState::default(),
+                files: FileMenu::default(),
+                inspected: cp_tools::Inspected::default(),
+                picked: cp_tools::Picked::default(),
+                toast: milestone::MilestoneToast::default(),
+            }
+        }
+
+        fn draw(&mut self, ctx: &egui::Context) {
+            draw_frame(
+                ctx,
+                UiFrame {
+                    view: &self.view,
+                    state: &mut self.state,
+                    outbox: &mut self.outbox,
+                    overlay: &mut self.overlay,
+                    lighting: &mut self.lighting,
+                    camera: &mut self.camera,
+                    rate: &self.rate,
+                    extra: None,
+                    tools: &mut self.tools,
+                    files: &mut self.files,
+                    inspected: &self.inspected,
+                    picked: &mut self.picked,
+                    toast: &mut self.toast,
+                },
+            );
+        }
+
+        /// The pointer positions of a 80 px grid over the screen that the UI owns at the start
+        /// of a frame (what `update_ui_capture` would write), after the UI settled.
+        fn owned(&mut self) -> Vec<(u32, u32)> {
+            let ctx = egui::Context::default();
+            egui_extras::install_image_loaders(&ctx);
+            let mut t = 0.0;
+            for _ in 0..4 {
+                t += 0.05;
+                frame(&ctx, input(t, vec![]), |ui| self.draw(ui.ctx()));
+            }
+            let mut out = Vec::new();
+            for y in (8..640).step_by(80).chain([648, 710]) {
+                for x in (8..1280).step_by(80) {
+                    t += 0.05;
+                    let mut owned = false;
+                    let ev = vec![egui::Event::PointerMoved(egui::pos2(x as f32, y as f32))];
+                    frame(&ctx, input(t, ev), |ui| {
+                        owned = egui_owns_input(ui.ctx()).0;
+                        self.draw(ui.ctx());
+                    });
+                    if owned {
+                        out.push((x, y));
+                    }
+                }
+            }
+            out
+        }
+    }
+
+    fn row(points: &[(u32, u32)], y: u32) -> usize {
+        points.iter().filter(|p| p.1 == y).count()
+    }
+
+    #[test]
+    fn the_docked_panels_own_the_pointer_and_the_map_between_them_does_not() {
+        let mut rig = Rig::new();
+        let base = rig.owned();
+        // Top bar and bottom demand bar across the whole width.
+        assert_eq!(row(&base, 8), 16, "top bar");
+        assert_eq!(
+            row(&base, 328),
+            1,
+            "only the palette is owned in the middle row"
+        );
+        assert_eq!(row(&base, 710), 16, "bottom bar");
+        // The palette on the left.
+        assert!(base.iter().any(|p| p.0 == 8 && p.1 == 328), "palette");
+        // The middle of the map is the map's.
+        assert!(
+            !base
+                .iter()
+                .any(|p| (408..=808).contains(&p.0) && (168..=568).contains(&p.1))
+        );
+        // The tool panel of an open category adds to what the UI owns.
+        rig.state.category = Some(Category::Roads);
+        assert!(rig.owned().len() > base.len(), "tool panel");
+    }
+
+    #[test]
+    fn every_window_and_menu_owns_the_pointer_where_it_is_drawn() {
+        let base = Rig::new().owned().len();
+        type Open = fn(&mut Rig);
+        let surfaces: [(&str, Open); 8] = [
+            ("budget", |r| r.state.budget_open = true),
+            ("demand", |r| r.state.demand_open = true),
+            ("metrics", |r| r.state.metrics_open = true),
+            ("lines", |r| r.state.lines_open = true),
+            ("debug", |r| r.state.debug_open = true),
+            ("saves", |r| r.files.open = true),
+            ("view menu", |r| r.state.view_menu_open = true),
+            ("settings", |r| r.state.settings_open = true),
+        ];
+        for (name, open) in surfaces {
+            let mut rig = Rig::new();
+            open(&mut rig);
+            let n = rig.owned().len();
+            assert!(n > base, "{name} owns no pointer area ({n} vs {base})");
+        }
+    }
+
+    #[test]
+    fn the_collapsed_demand_bar_still_owns_the_bottom_strip() {
+        let mut rig = Rig::new();
+        rig.state.demand_collapsed = true;
+        let owned = rig.owned();
+        assert_eq!(row(&owned, 710), 16);
+        assert_eq!(
+            row(&owned, 648),
+            1,
+            "the strip is thin: the map is free above it"
+        );
     }
 }
