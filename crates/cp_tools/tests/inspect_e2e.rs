@@ -124,8 +124,9 @@ fn building_panel_equals_the_records() {
         let grids = w.resource::<LandGrids>();
         assert_eq!(info.land_value, grids.value_at(b.pos));
         assert_eq!(info.pollution, grids.pollution_at(b.pos));
+        // The service problems (garbage, T-136) come after the flags.
         assert_eq!(
-            info.problems.len(),
+            info.problems.iter().filter(|p| **p != "garbage").count(),
             (0..8).filter(|k| b.flags.0 >> k & 1 == 1).count()
         );
     }
