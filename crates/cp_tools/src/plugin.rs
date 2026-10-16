@@ -54,6 +54,8 @@ pub enum ActiveTool {
     Utility,
     /// Removing the pipe or power-line piece under the cursor.
     UtilityRemove,
+    /// Drawing a bus line stop by stop (Transport category, T-157).
+    Line,
 }
 
 /// The road ghost: what the cursor would build.
@@ -116,9 +118,23 @@ pub struct ToolState {
     pub building_highlight: Option<BuildingId>,
     /// Cells the zoning tool would paint at the cursor (the highlight).
     pub zone_preview: Vec<ZoneCellRef>,
+    /// The bus-line tool (T-157), its ghost and the last refusal to show in the verdict.
+    pub line: crate::transit::LineTool,
+    pub line_ghost: Option<crate::transit::LineGhostInfo>,
+    pub line_notice: Option<String>,
+    /// The stop the bulldozer would remove.
+    pub stop_highlight: Option<cp_transit::StopId>,
     /// Inputs the current ghost was computed from; unchanged inputs skip the revalidation.
     ghost_key: Option<GhostKey>,
     utility_key: Option<UtilityGhostKey>,
+    line_key: Option<LineGhostKey>,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+struct LineGhostKey {
+    hover: (i32, i32),
+    tool: crate::transit::LineTool,
+    transit_ptr: usize,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -156,6 +172,27 @@ impl ToolState {
         self.utility_ghost = None;
         self.utility_key = None;
         self.link_highlight = None;
+        self.line.cancel();
+        self.line_ghost = None;
+        self.line_notice = None;
+        self.line_key = None;
+        self.stop_highlight = None;
+    }
+}
+
+/// Hands the line tool's ghost to the renderer.
+fn sync_line_ghost(state: Res<ToolState>, mut out: ResMut<cp_render::LineGhost>) {
+    let want = match (&state.line_ghost, state.active) {
+        (Some(g), ActiveTool::Line) => cp_render::LineGhost {
+            route: g.route.clone(),
+            color: g.color,
+            stops: g.stops.clone(),
+            hover: g.hover,
+        },
+        _ => cp_render::LineGhost::default(),
+    };
+    if *out != want {
+        *out = want;
     }
 }
 
@@ -249,6 +286,8 @@ impl Plugin for ToolsPlugin {
             .add_systems(Update, sync_districts_mode)
             .init_resource::<cp_render::PipeLayers>()
             .add_systems(Update, sync_pipe_layers.after(tool_hover))
+            .init_resource::<cp_render::LineGhost>()
+            .add_systems(Update, sync_line_ghost.after(tool_hover))
             .init_resource::<UiCapture>()
             .init_resource::<CommandOutbox>()
             .init_resource::<crate::Picked>()
@@ -301,6 +340,11 @@ pub fn tool_hotkeys(
         state.utility_key = None;
         outbox.push(state.utility.command(path));
     }
+    if state.active == ActiveTool::Line && keys.just_pressed(KeyCode::Backspace) {
+        state.line.undo();
+        state.line_key = None;
+        state.line_notice = None;
+    }
     if state.active == ActiveTool::Place && keys.just_pressed(KeyCode::KeyT) {
         let align = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
         let hover = state.hover;
@@ -309,6 +353,10 @@ pub fn tool_hotkeys(
     if keys.just_pressed(KeyCode::Escape) {
         if state.active == ActiveTool::Zone && state.zone.corner.is_some() {
             state.zone.cancel();
+        } else if state.active == ActiveTool::Line && !state.line.stops.is_empty() {
+            state.line.cancel();
+            state.line_key = None;
+            state.line_notice = None;
         } else if state.active == ActiveTool::Utility && !state.utility.points.is_empty() {
             state.utility.cancel();
             state.utility_key = None;
@@ -383,7 +431,12 @@ fn tool_hover(
     match (state.active, hover) {
         (ActiveTool::Bulldozer, Some(p)) => {
             state.building_highlight = pick_building(&view, p);
-            state.spans = if state.building_highlight.is_some() {
+            state.stop_highlight = if state.building_highlight.is_some() {
+                None
+            } else {
+                pick_stop(&view, p)
+            };
+            state.spans = if state.building_highlight.is_some() || state.stop_highlight.is_some() {
                 Vec::new()
             } else {
                 demolition(&view.net, p, PICK_RADIUS, state.shift)
@@ -405,6 +458,17 @@ fn tool_hover(
                 .as_ref()
                 .is_some_and(|u| u.errors.iter().any(|e| e == crate::upgrade::OUTSIDE_LAND));
             state.upgrade_preview = preview;
+        }
+        (ActiveTool::Line, Some(p)) => {
+            let key = LineGhostKey {
+                hover: (p.x.round() as i32, p.y.round() as i32),
+                tool: state.line.clone(),
+                transit_ptr: std::sync::Arc::as_ptr(&view.transit) as usize,
+            };
+            if state.line_key.as_ref() != Some(&key) {
+                state.line_ghost = crate::transit::line_ghost(&view, &state.line, p);
+                state.line_key = Some(key);
+            }
         }
         (ActiveTool::Place, Some(p)) => {
             state.place_ghost = place_preview(&view, &state.building, p);
@@ -450,6 +514,11 @@ fn tool_hover(
             state.spans.clear();
             state.upgrade_preview = None;
             state.building_highlight = None;
+            state.stop_highlight = None;
+            if state.active != ActiveTool::Line {
+                state.line_ghost = None;
+                state.line_key = None;
+            }
             state.place_ghost = None;
             state.zone_preview.clear();
             state.district_preview.clear();
@@ -464,6 +533,18 @@ fn tool_hover(
             }
         }
     }
+}
+
+/// The stop within reach of `p` (the bulldozer's target; stops come before roads).
+fn pick_stop(view: &SimView, p: Vec2) -> Option<cp_transit::StopId> {
+    view.transit
+        .net
+        .stops
+        .iter()
+        .map(|(id, st)| (st.pos.distance(p), id))
+        .filter(|(d, _)| *d <= crate::transit::STOP_PICK_RADIUS)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, id)| id)
 }
 
 /// The ghost for the road tool with the cursor at `hover`, or `None` when nothing is drawn
@@ -666,6 +747,10 @@ pub fn tool_click(
             if let Some(building) = state.building_highlight {
                 outbox.push(SimCommand::Building(BuildingCommand::Demolish { building }));
                 state.building_highlight = None;
+            } else if let Some(stop) = state.stop_highlight.take() {
+                outbox.push(SimCommand::Transit(
+                    cp_transit::TransitCommand::RemoveStop { stop },
+                ));
             } else if !state.highlight.is_empty() && !state.highlight_outside {
                 let commands = match view.as_deref() {
                     Some(v) if !state.spans.is_empty() => span_commands(&v.net, &state.spans),
@@ -708,6 +793,17 @@ pub fn tool_click(
             }
             state.utility_key = None;
         }
+        ActiveTool::Line => {
+            if let Some(view) = view.as_deref() {
+                state.line_notice = None;
+                match state.line.click(view, p) {
+                    crate::transit::Click::Create(cmd) => outbox.push(cmd),
+                    crate::transit::Click::Refused(why) => state.line_notice = Some(why),
+                    crate::transit::Click::Added | crate::transit::Click::Nothing => {}
+                }
+            }
+            state.line_key = None;
+        }
         ActiveTool::UtilityRemove => {
             if let Some(link) = state.link_highlight.take() {
                 outbox.push(SimCommand::Utility(UtilityCommand::RemoveLink { link }));
@@ -718,6 +814,19 @@ pub fn tool_click(
 }
 
 fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Gizmos) {
+    if let (Some(view), Some(stop)) = (view.as_deref(), state.stop_highlight)
+        && let Some(st) = view.transit.net.stops.get(stop)
+    {
+        let y = view.terrain.as_deref().map_or(0.0, |t| t.height(st.pos)) + 1.0;
+        gizmos.circle(
+            Isometry3d::new(
+                Vec3::new(st.pos.x, y, st.pos.y),
+                Quat::from_rotation_arc(Vec3::Z, Vec3::Y),
+            ),
+            3.5,
+            Color::srgb(0.95, 0.2, 0.2),
+        );
+    }
     if state.active == ActiveTool::District
         && let Some(view) = view.as_deref()
     {

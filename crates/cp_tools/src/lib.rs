@@ -19,6 +19,7 @@ mod outbox;
 pub mod pick;
 pub mod plugin;
 pub mod road;
+pub mod transit;
 pub mod upgrade;
 pub mod utility;
 pub mod zone;
@@ -43,6 +44,10 @@ pub use road::{
     CHEVRON_SPACING, ELEVATION_STEP, MAX_ELEVATION_LEVEL, MarkerKind, RoadMarker, RoadMode,
     RoadTool, TOO_CLOSE, chevron_lines, format_money, preview, preview_report, quantized,
     road_is_one_way, road_markers, snap_label, too_close,
+};
+pub use transit::{
+    Click, LineGhostInfo, LineTool, ROAD_PICK_RADIUS, STOP_PICK_RADIUS, Target, line_ghost,
+    route_summary,
 };
 pub use upgrade::{UpgradePreview, upgrade_commands, upgrade_preview};
 pub use utility::{LINK_PICK_RADIUS, UtilityMode, UtilityTool, pick_link};

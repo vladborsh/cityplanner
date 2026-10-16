@@ -17,6 +17,7 @@ pub mod riders;
 pub mod rules;
 pub mod run;
 pub mod sync;
+pub mod view;
 
 pub use command::{StopRef, TransitCommand, TransitError, apply};
 pub use fleet::{Bus, BusId, BusPhase, TransitFleet, TransitLedger};
@@ -29,6 +30,7 @@ pub use riders::{choose_transit, run_riders};
 pub use rules::{STOP_NODE_CLEARANCE, STOP_SNAP, STOP_SPACING, StopError, check_road_stop};
 pub use run::run_lines;
 pub use sync::{rebind_stops, update_transit};
+pub use view::{LINE_PALETTE_RGB, LineRoute, ROUTE_STEP, TransitView, next_line_color};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_transit";

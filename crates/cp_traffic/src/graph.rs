@@ -535,6 +535,32 @@ impl PathGraph {
         total
     }
 
+    /// The route of a car path as a ground-plane polyline, a point about every `step` metres
+    /// along each lane it runs on (T-157: the ribbon of a line). Junction connections show as
+    /// the straight hop between one lane's last point and the next lane's first.
+    pub fn car_path_points(&self, path: &crate::astar::CarPath, step: f32) -> Vec<Vec2> {
+        let step = step.max(0.5);
+        let lanes: Vec<LaneId> = path.lanes().collect();
+        let mut out = Vec::new();
+        for (i, &id) in lanes.iter().enumerate() {
+            let Some(node) = self.car_lane(id) else {
+                continue;
+            };
+            let from = if i == 0 { path.start_s } else { node.s_in };
+            let to = if i + 1 == lanes.len() {
+                path.goal_s
+            } else {
+                node.s_out
+            };
+            let (from, to) = (from.clamp(0.0, node.len), to.clamp(0.0, node.len));
+            let n = (((to - from).abs() / step).ceil() as usize).max(1);
+            for k in 0..=n {
+                out.push(node.point_at(from + (to - from) * k as f32 / n as f32));
+            }
+        }
+        out
+    }
+
     /// Is the connection `from → to` still in the network?
     pub fn has_connection(&self, from: LaneId, to: LaneId) -> bool {
         match (self.car_slot(from), self.car_slot(to)) {

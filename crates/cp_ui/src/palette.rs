@@ -22,10 +22,11 @@ pub enum Category {
     Zones,
     Buildings,
     Bulldozer,
-    /// Public transport (M3): no tools yet.
-    Transit,
     /// Districts: brushes, the district list and its taxes (M2).
     Districts,
+    /// Public transport (M3): the line tool and the depot. Last, so the hotkeys of the
+    /// others do not move.
+    Transit,
 }
 
 impl Category {
@@ -34,8 +35,8 @@ impl Category {
         Category::Zones,
         Category::Buildings,
         Category::Bulldozer,
-        Category::Transit,
         Category::Districts,
+        Category::Transit,
     ];
 
     pub fn label(self) -> &'static str {
@@ -44,12 +45,11 @@ impl Category {
             Category::Zones => "Zones",
             Category::Buildings => "Buildings",
             Category::Bulldozer => "Bulldozer",
-            Category::Transit => "Transit",
             Category::Districts => "Districts",
+            Category::Transit => "Transport",
         }
     }
 
-    /// Transit has no icon yet; it is never drawn without tools.
     pub fn icon(self) -> Icon {
         match self {
             Category::Roads => Icon::Roads,
@@ -57,13 +57,13 @@ impl Category {
             Category::Buildings => Icon::Buildings,
             Category::Bulldozer => Icon::Bulldozer,
             Category::Districts => Icon::Districts,
-            Category::Transit => Icon::Info,
+            Category::Transit => Icon::Transit,
         }
     }
 
     /// Whether the category has a tool to offer with `content`: roads need a road type,
-    /// buildings a placeable service building, the others are always there; Transit has none
-    /// before M3.
+    /// buildings a placeable service building, transport a mode with something to build; the
+    /// others are always there.
     pub fn has_tools(self, content: Option<&ContentDb>) -> bool {
         match self {
             Category::Roads => content.is_some_and(|c| c.roads().next().is_some()),
@@ -71,7 +71,7 @@ impl Category {
                 content.is_some_and(|c| c.buildings().any(|(_, d)| d.service.is_some()))
             }
             Category::Zones | Category::Bulldozer | Category::Districts => true,
-            Category::Transit => false,
+            Category::Transit => crate::transit::has_tools(content),
         }
     }
 
@@ -189,9 +189,7 @@ pub fn tool_panel(
                 Category::Buildings => services_panel(ui, view, tools, overlay),
                 Category::Bulldozer => bulldozer_panel(ui, tools),
                 Category::Districts => crate::districts::districts_panel(ui, view, tools, outbox),
-                Category::Transit => {
-                    ui.weak("Nothing to build here yet.");
-                }
+                Category::Transit => crate::transit::transit_panel(ui, view, tools, overlay),
             });
         });
     Some(out.response.rect)
@@ -537,6 +535,7 @@ mod tests {
             (Category::Buildings, ActiveTool::None),
             (Category::Bulldozer, ActiveTool::Bulldozer),
             (Category::Districts, ActiveTool::District),
+            (Category::Transit, ActiveTool::Line),
         ] {
             let mut rig = Rig::new();
             rig.click_category(category);
@@ -587,10 +586,10 @@ mod tests {
                 Category::Zones,
                 Category::Buildings,
                 Category::Bulldozer,
-                Category::Districts
+                Category::Districts,
+                Category::Transit
             ]
         );
-        assert!(!drawn.contains(&Category::Transit));
         // Without content the road and building tools do not exist either.
         let none = Category::available(None);
         assert_eq!(
@@ -757,7 +756,8 @@ mod tests {
                 Category::Zones,
                 Category::Buildings,
                 Category::Bulldozer,
-                Category::Districts
+                Category::Districts,
+                Category::Transit
             ]
         );
         let keys = [
@@ -766,6 +766,7 @@ mod tests {
             egui::Key::Num3,
             egui::Key::Num4,
             egui::Key::Num5,
+            egui::Key::Num6,
         ];
         for (n, k) in keys.into_iter().enumerate() {
             let mut got = None;
@@ -776,7 +777,7 @@ mod tests {
         }
         // Past the last category, and with a modifier held, nothing happens.
         let mut got = Some(Category::Roads);
-        frame(&ctx, input(10.0, vec![key(egui::Key::Num6)]), |ui| {
+        frame(&ctx, input(10.0, vec![key(egui::Key::Num7)]), |ui| {
             got = hotkey(ui.ctx(), &available);
         });
         assert_eq!(got, None);
@@ -817,8 +818,8 @@ mod tests {
                 ServiceKind::Fire,
                 ServiceKind::Police,
                 ServiceKind::Education,
-                ServiceKind::Transit
-            ]
+            ],
+            "the depot is in the Transport category"
         );
         // Water: the pipe, every Water and Sewage service building, remove; Power likewise.
         let service = |kinds: &[ServiceKind]| {

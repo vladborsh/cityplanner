@@ -45,6 +45,7 @@ icons! {
     Buildings => "buildings",
     Bulldozer => "bulldozer",
     Districts => "districts",
+    Transit => "transit",
     // Tools.
     Road => "road",
     Curve => "curve",
@@ -61,6 +62,8 @@ icons! {
     Pipe => "pipe",
     PowerLine => "power_line",
     Remove => "remove",
+    LineBus => "line_bus",
+    BusStop => "bus_stop",
     Building => "building",
     // Top bar (T-100): speeds, the view and settings menus, one icon per overlay.
     SpeedPause => "speed_pause",
@@ -84,6 +87,7 @@ icons! {
     OverlayPolice => "overlay_police",
     OverlayEducation => "overlay_education",
     OverlayLand => "overlay_land",
+    OverlayTransit => "overlay_transit",
     RemovePipe => "remove_pipe",
     RemoveLine => "remove_line",
     // Zone types (T-099): one silhouette each.
@@ -196,6 +200,7 @@ pub fn overlay_icon(overlay: cp_render::Overlay) -> Icon {
         O::Police => Icon::OverlayPolice,
         O::Education => Icon::OverlayEducation,
         O::Land => Icon::OverlayLand,
+        O::Transit => Icon::OverlayTransit,
     }
 }
 

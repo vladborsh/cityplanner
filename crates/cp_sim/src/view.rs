@@ -115,6 +115,8 @@ pub struct SimView {
     pub city: Arc<crate::stats::CityStats>,
     /// The population milestone reached (T-149), for locked tiles and the milestone notice.
     pub progress: crate::Progress,
+    /// Stops, lines and the routes of the lines (T-157), shared: rebuilt only when they changed.
+    pub transit: Arc<cp_transit::TransitView>,
 }
 
 /// A bank offer for the Loans tab: the content row, whether the city may take it now, and the
@@ -189,6 +191,9 @@ pub(crate) type BuildingsCache = Option<(u64, usize, Arc<BuildingGrid>)>;
 
 /// `(fingerprint of the links, snapshot)` of the last `SimView::utilities`.
 pub(crate) type UtilitiesCache = Option<(u64, Arc<UtilityGraph>)>;
+
+/// Last `SimView::transit`.
+pub(crate) type TransitCache = Option<Arc<cp_transit::TransitView>>;
 
 /// `(junction version, nodes, segments, snapshot)` of the last `SimView::net`.
 pub(crate) type NetCache = Option<(u64, usize, usize, Arc<NetGraph>)>;
@@ -401,6 +406,31 @@ impl SimRunner {
         snap
     }
 
+    /// The transit snapshot for `SimView::transit`, kept while the stops and lines, the plans
+    /// and the lane graph are the same.
+    fn transit_snapshot(&self) -> Arc<cp_transit::TransitView> {
+        let world = self.world();
+        let (Some(net), Some(plans), Some(pnet)) = (
+            world.get_resource::<cp_transit::TransitNet>(),
+            world.get_resource::<cp_transit::LinePlans>(),
+            world.get_resource::<cp_traffic::PathNetwork>(),
+        ) else {
+            return Arc::default();
+        };
+        let key = plans.fingerprint();
+        let mut cache = self.transit_cache.lock().expect("transit cache");
+        if let Some(snap) = cache.as_ref()
+            && snap.plans_key == key
+            && snap.net == *net
+            && Arc::ptr_eq(&snap.graph, pnet.graph())
+        {
+            return Arc::clone(snap);
+        }
+        let snap = Arc::new(cp_transit::TransitView::build(net, plans, pnet.graph()));
+        *cache = Some(Arc::clone(&snap));
+        snap
+    }
+
     /// The agent poses for `SimView::agents`, rebuilt only when the tick advanced.
     fn agent_snapshot(&self, tick: Tick) -> Arc<AgentSnapshot> {
         let mut cache = self.agents_cache.lock().expect("agents cache");
@@ -467,6 +497,7 @@ impl SimRunner {
             progress: *self.world().resource::<crate::Progress>(),
             economy: self.world().resource::<cp_economy::EconomyState>().clone(),
             utilities: self.utilities_snapshot(),
+            transit: self.transit_snapshot(),
             service: self.service_snapshot(),
             service_state: self.service_state_snapshot(),
             city: self.city_snapshot(),

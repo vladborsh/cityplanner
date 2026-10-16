@@ -30,6 +30,7 @@ pub mod roads;
 pub mod style;
 pub mod tile;
 pub mod tiles;
+pub mod transit;
 pub mod windows;
 
 pub use debug::{DebugData, PhaseTimes, TickRate};
@@ -71,7 +72,13 @@ impl Plugin for UiPlugin {
             )
             .add_systems(
                 EguiPrimaryContextPass,
-                (draw_ui, districts::draw_labels, land::land_overlay).chain(),
+                (
+                    draw_ui,
+                    districts::draw_labels,
+                    land::land_overlay,
+                    transit::transit_labels,
+                )
+                    .chain(),
             );
     }
 }

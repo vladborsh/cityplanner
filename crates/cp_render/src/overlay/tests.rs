@@ -103,7 +103,7 @@ fn overlay_state_defaults_to_off_and_lists_every_overlay_once() {
     let mut all = Overlay::ALL.to_vec();
     all.sort_by_key(|o| o.label());
     all.dedup();
-    assert_eq!(all.len(), 15);
+    assert_eq!(all.len(), 16);
 }
 
 #[test]
@@ -312,7 +312,10 @@ fn switching_overlays_shows_that_layer_and_the_zone_grid_stays_on() {
         app.world_mut().resource_mut::<OverlayState>().active = o;
         app.update(); // one frame
         // The district and land overlays are their own layers, not one of these.
-        let mut want: Vec<_> = if matches!(o, Overlay::Off | Overlay::Districts | Overlay::Land) {
+        let mut want: Vec<_> = if matches!(
+            o,
+            Overlay::Off | Overlay::Districts | Overlay::Land | Overlay::Transit
+        ) {
             vec![]
         } else {
             vec![o]

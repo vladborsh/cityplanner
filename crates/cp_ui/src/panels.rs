@@ -471,7 +471,7 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ui.weak("Pick a road type, then click a road to change its whole run. Esc leaves the tool.");
             }
         },
-        (Category::Buildings, ActiveTool::Place) => match &tools.place_ghost {
+        (Category::Buildings | Category::Transit, ActiveTool::Place) => match &tools.place_ghost {
             Some(g) => {
                 if g.valid {
                     ok(ui, "can place", g.cost, String::new());
@@ -515,6 +515,43 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
         (Category::Buildings, ActiveTool::UtilityRemove) => {
             ui.weak("Hover a piece and click to remove it. Esc leaves the tool.");
         }
+        (Category::Transit, ActiveTool::Line) => {
+            if let Some(notice) = &tools.line_notice {
+                bad(ui, std::slice::from_ref(notice), "cannot place a stop");
+            }
+            match &tools.line_ghost {
+                Some(g) if g.error.is_some() && g.hover.is_some_and(|h| !h.1) => {
+                    bad(
+                        ui,
+                        &g.error.iter().cloned().collect::<Vec<_>>(),
+                        "cannot stop here",
+                    );
+                }
+                Some(g) if g.closes => ok(
+                    ui,
+                    "click to close the line",
+                    Some(g.cost),
+                    format!(" · {}", cp_tools::route_summary(g)),
+                ),
+                Some(g) if g.route.len() > 1 => {
+                    if let Some(e) = &g.error {
+                        ui.colored_label(egui::Color32::YELLOW, format!("⚠ {e}"));
+                    }
+                    ui.weak(format!(
+                        "{} stop{} · {}. Click the first stop to close the line.",
+                        g.stops.len(),
+                        if g.stops.len() == 1 { "" } else { "s" },
+                        cp_tools::route_summary(g)
+                    ));
+                }
+                _ => {
+                    ui.weak("Click a road to put the first stop. Backspace undoes, Esc cancels.");
+                }
+            }
+        }
+        (Category::Transit, _) => {
+            ui.weak("Pick the bus line tool or the depot; the Transit view shows the lines.");
+        }
         (Category::Zones, ActiveTool::Zone) => {
             let n = tools.zone_preview.len();
             let what = match tools.zone.kind {
@@ -546,7 +583,7 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
             bad(ui, &["outside your land".to_string()], "cannot remove");
         }
         (Category::Bulldozer, ActiveTool::Bulldozer) => {
-            ui.weak("Hover a building or road segment, click to remove it. Esc leaves the tool.");
+            ui.weak("Hover a building, bus stop or road segment, click to remove it. Esc leaves the tool.");
         }
         (Category::Buildings, _) => {
             ui.weak("Pick a building or a network tool; the overlay shows the network and which buildings lack supply.");

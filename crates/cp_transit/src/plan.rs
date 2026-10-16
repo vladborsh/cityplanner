@@ -105,6 +105,24 @@ impl LinePlans {
         self.by_line.iter().map(|(id, p)| (*id, p))
     }
 
+    /// A number that changes whenever a plan does (generation and the shape of every plan).
+    pub fn fingerprint(&self) -> u64 {
+        let mut h = self.generation;
+        for (id, p) in &self.by_line {
+            for v in [
+                u64::from(id.index),
+                u64::from(id.generation),
+                p.legs.len() as u64,
+                p.errors.len() as u64,
+                u64::from(p.length_m.to_bits()),
+                u64::from(p.cycle_s.to_bits()),
+            ] {
+                h = h.wrapping_mul(0x100000001b3).wrapping_add(v);
+            }
+        }
+        h
+    }
+
     /// Marks the plans out of date (the lines changed).
     pub fn mark_dirty(&mut self) {
         self.dirty = true;

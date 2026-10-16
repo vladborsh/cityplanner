@@ -28,7 +28,8 @@ pub use chunk::terrain_mesh_height;
 pub use fire_render::{FireFxPlugin, FireFxStats};
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{
-    DistrictsMode, LINE_STEP, Overlay, OverlayPlugin, OverlayState, ZoningMode, ribbon_at,
+    DistrictsMode, LINE_STEP, LineGhost, Overlay, OverlayPlugin, OverlayState, ZoningMode,
+    ribbon_at,
 };
 pub use problem_render::{ProblemIconPlugin, ProblemIconStats};
 pub use road_render::{RoadRenderPlugin, RoadStats};

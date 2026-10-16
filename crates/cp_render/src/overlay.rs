@@ -27,6 +27,7 @@ mod districts;
 mod land;
 mod service;
 mod tiles;
+pub mod transit;
 mod utility;
 mod zone_chunks;
 pub use districts::{
@@ -34,6 +35,7 @@ pub use districts::{
 };
 pub use service::{coverage_color, service_overlay_mesh};
 pub use tiles::{border_edges, border_mesh, shade_mesh};
+pub use transit::{LineGhost, line_color};
 pub use utility::{
     BuildingStatus, UtilityLayer, building_status, coverage_counts, status_color,
     utility_overlay_mesh,
@@ -64,10 +66,12 @@ pub enum Overlay {
     Education,
     /// Owned, buyable and locked tiles, with the prices (T-152).
     Land,
+    /// Lines as coloured ribbons and the stops with the riders waiting (T-157).
+    Transit,
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 15] = [
+    pub const ALL: [Overlay; 16] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
@@ -83,6 +87,7 @@ impl Overlay {
         Overlay::Police,
         Overlay::Education,
         Overlay::Land,
+        Overlay::Transit,
     ];
 
     /// The overlay of an M2 service kind; `None` for the utility kinds (their own overlays).
@@ -134,6 +139,7 @@ impl Overlay {
             Overlay::Police => "Police",
             Overlay::Education => "Education",
             Overlay::Land => "Land",
+            Overlay::Transit => "Transit",
         }
     }
 }
@@ -585,6 +591,8 @@ impl Plugin for OverlayPlugin {
             .init_resource::<DistrictsMode>()
             .init_resource::<districts::DistrictLayers>()
             .init_resource::<land::LandLayer>()
+            .init_resource::<transit::LineGhost>()
+            .init_resource::<transit::TransitLayer>()
             .add_systems(
                 Update,
                 (
@@ -592,6 +600,7 @@ impl Plugin for OverlayPlugin {
                     tiles::sync_tile_layers,
                     districts::sync_district_layers,
                     land::sync_land_layer,
+                    transit::sync_transit_layer,
                     apply_overlay_visibility,
                 )
                     .chain(),

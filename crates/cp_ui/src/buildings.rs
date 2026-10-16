@@ -145,7 +145,11 @@ impl Section {
 /// is not drawn (a kind with no content has none).
 pub fn sections(content: &ContentDb) -> Vec<Section> {
     let mut out: Vec<Section> = Vec::new();
-    for g in groups(content) {
+    // Transit buildings live in the Transport category.
+    for g in groups(content)
+        .into_iter()
+        .filter(|g| g.kind != ServiceKind::Transit)
+    {
         // One pipe network: sewage buildings sit in the Water section (§13.7).
         let kind = if g.kind == ServiceKind::Sewage {
             ServiceKind::Water
