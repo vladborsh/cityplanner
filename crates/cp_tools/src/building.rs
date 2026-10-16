@@ -14,7 +14,7 @@ use cp_content::{BuildingDefId, ContentDb, ServiceKind, ServiceSite};
 use cp_core::Cost;
 use cp_core::curve::to_xz;
 use cp_sim::SimView;
-use cp_utility::{LINE_REACH_M, POWER_HOP_M, UtilityNet};
+use cp_utility::{LINE_REACH_M, POWER_GAP_M, UtilityNet};
 use cp_zone::ZoneCellRef;
 
 /// Pick distance from a building's lot centre before the exact cell test, metres.
@@ -160,7 +160,7 @@ fn network_of(kind: ServiceKind) -> Option<UtilityNet> {
 
 /// Whether the building of `def` placed at `pos` would connect to the network of its service:
 /// a pipe or power line within [`LINE_REACH_M`], or (power) a supplied building within
-/// [`POWER_HOP_M`]. `None` for a type with no network. The view's content must know `def`.
+/// [`POWER_GAP_M`] (edge to edge). `None` for a type with no network. The view's content must know `def`.
 pub fn connection_hint(view: &SimView, def: BuildingDefId, pos: Vec2) -> Option<ConnectionHint> {
     let db = view.content.as_deref()?;
     let service = db
@@ -170,7 +170,11 @@ pub fn connection_hint(view: &SimView, def: BuildingDefId, pos: Vec2) -> Option<
         .and_then(|s| db.service_id(s))
         .map(|s| db.service(s))?;
     let net = network_of(service.kind)?;
-    let line = view.utilities.nearest_link(net, pos, LINE_REACH_M);
+    let half = |size: (u8, u8)| f32::from(size.0.max(size.1)) * cp_building::FOOTPRINT_CELL_M * 0.5;
+    let my_half = half(db.building(def).lot);
+    let line = view
+        .utilities
+        .nearest_link(net, pos, LINE_REACH_M + my_half);
     let mut target =
         line.and_then(|(id, t, _)| view.utilities.link(id).map(|l| to_xz(l.curve.point(t))));
     let mut what = match net {
@@ -178,15 +182,15 @@ pub fn connection_hint(view: &SimView, def: BuildingDefId, pos: Vec2) -> Option<
         UtilityNet::Power => "the power line",
     };
     if target.is_none() && net == UtilityNet::Power {
-        // A supplied building passes the current on (30 m).
+        // A supplied building passes the current on (edge to edge, 8 m).
         target = view
             .buildings
             .iter()
             .filter(|(_, b)| {
                 b.state == BuildingState::Active && !b.flags.has(BuildingFlags::NO_POWER)
             })
+            .filter(|(_, b)| b.pos.distance(pos) - my_half - half(b.size()) <= POWER_GAP_M)
             .map(|(_, b)| b.pos)
-            .filter(|p| p.distance(pos) <= POWER_HOP_M)
             .min_by(|a, b| a.distance(pos).total_cmp(&b.distance(pos)));
         what = "a powered building";
     }
@@ -196,7 +200,7 @@ pub fn connection_hint(view: &SimView, def: BuildingDefId, pos: Vec2) -> Option<
             format!("no pipe within {LINE_REACH_M:.0} m — lay a pipe")
         }
         (false, UtilityNet::Power) => format!(
-            "no power line within {LINE_REACH_M:.0} m, no powered building within {POWER_HOP_M:.0} m — build a line"
+            "no power line within {LINE_REACH_M:.0} m, no powered building within {POWER_GAP_M:.0} m — build a line"
         ),
     };
     Some(ConnectionHint {

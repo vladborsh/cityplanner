@@ -19,7 +19,7 @@ pub use plan::{
     apply_plan, plan_link_path,
 };
 pub use supply::{
-    AttachCache, Coverage, LINE_REACH_M, POWER_HOP_M, SUPPLY_PERIOD, compute_supply,
+    AttachCache, Coverage, LINE_REACH_M, POWER_GAP_M, SUPPLY_PERIOD, compute_supply,
     compute_supply_cached, update_supply,
 };
 

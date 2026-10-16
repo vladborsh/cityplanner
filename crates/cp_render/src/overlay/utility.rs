@@ -150,6 +150,11 @@ pub(super) fn lot_quads(
     c: [f32; 4],
 ) {
     let Some(lot) = b.lot() else {
+        // A free-standing building (a wind turbine, a plant): its whole rectangle.
+        let k = b
+            .footprint_polygon()
+            .map(|q| [q.x, terrain.height(q) + LIFT + 0.15, q.y]);
+        flat(m, k, c);
         return;
     };
     for cell in lot.cells() {
@@ -206,7 +211,9 @@ pub fn coverage_counts(
         if building_status(layer, db, b).is_none() {
             continue;
         }
-        if cov.covers(graph, b.pos) {
+        let (w, d) = b.size();
+        let half = f32::from(w.max(d)) * cp_building::FOOTPRINT_CELL_M * 0.5;
+        if cov.covers(graph, b.pos, half) {
             yes += 1;
         } else {
             no += 1;

@@ -524,6 +524,22 @@ mod utility_overlays {
         );
     }
 
+    /// BUG-036: a free-standing building (a wind turbine) has no lot cells, yet the Power layer
+    /// marks its rectangle in its state colour.
+    #[test]
+    fn a_free_standing_building_is_marked_by_its_rectangle() {
+        let sim = district();
+        let view = sim.view();
+        let t = view.terrain.as_ref().unwrap();
+        let mut b = view.buildings.iter().next().unwrap().1.clone();
+        b.footprint = cp_building::Footprint::Free { w: 2, d: 2 };
+        let c = status_color(UtilityLayer::Power, BuildingStatus::NoPower);
+        let mut m = crate::chunk::MeshData::default();
+        super::utility::lot_quads(&mut m, &b, &view.zones, t, c);
+        assert_eq!(m.positions.len(), 4, "one quad");
+        assert!(m.colors.iter().all(|x| *x == c));
+    }
+
     #[test]
     fn coverage_counts_split_buildings_by_reach_of_their_network() {
         let mut sim = district();

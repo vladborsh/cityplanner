@@ -47,6 +47,8 @@ fn db() -> ContentDb {
         service_src("pump", "Water", 25),
         service_src("outflow", "Sewage", 100),
         service_src("plant", "Power", 25),
+        building_src("bigplant", Some("bigplant"), "{}"),
+        service_src("bigplant", "Power", 100),
     ])
     .unwrap_or_else(|e| panic!("{e}"))
 }
@@ -174,16 +176,20 @@ fn power_deficit_and_the_30_m_hop() {
     assert_eq!(bits(&m, on_line[1]) & BuildingFlags::NO_POWER, 0);
     assert_ne!(bits(&m, on_line[2]) & BuildingFlags::NO_POWER, 0);
 
-    // With a second plant there is room for a house 25 m past the line's reach, passed on by
-    // a supplied neighbour; one 60 m away gets nothing.
+    // A house past the line's reach (edge 40 m) is passed the current by a supplied neighbour
+    // 7 m away edge to edge (BUG-036: edges, not centres); one 60 m away gets nothing.
     let mut b = BuildingGrid::new();
     add(&mut b, &db, "plant", 0.0, 10.0);
     let a = add(&mut b, &db, "house", 50.0, 35.0);
-    let hopped = add(&mut b, &db, "house", 50.0, 62.0);
+    let hopped = add(&mut b, &db, "house", 50.0, 50.0);
     let lonely = add(&mut b, &db, "house", 50.0, 120.0);
     let m = compute_supply(&db, &b, &g);
     assert_eq!(bits(&m, a) & BuildingFlags::NO_POWER, 0);
-    assert_eq!(bits(&m, hopped) & BuildingFlags::NO_POWER, 0, "hop of 27 m");
+    assert_eq!(
+        bits(&m, hopped) & BuildingFlags::NO_POWER,
+        0,
+        "edge gap of 7 m"
+    );
     assert_ne!(bits(&m, lonely) & BuildingFlags::NO_POWER, 0);
 }
 
@@ -221,15 +227,20 @@ fn the_coverage_band_half_width_is_the_supply_reach() {
     let mut g = UtilityGraph::new();
     line(&mut g, UtilityNet::Pipe, 0.0, 100.0);
     add(&mut b, &db, "pump", 0.0, 10.0);
-    let inside = add(&mut b, &db, "house", 50.0, plan::BUILDING_REACH - 1.0);
-    let outside = add(&mut b, &db, "house", 50.0, plan::BUILDING_REACH + 1.0);
+    // A 1x1 lot is 8 m wide: its edge counts, so its centre may be 4 m further out.
+    let inside = add(&mut b, &db, "house", 50.0, plan::BUILDING_REACH + 3.0);
+    let outside = add(&mut b, &db, "house", 50.0, plan::BUILDING_REACH + 5.0);
     let m = compute_supply(&db, &b, &g);
     assert_eq!(
         bits(&m, inside) & BuildingFlags::NO_WATER,
         0,
-        "39 m: connected"
+        "edge at 39 m: connected"
     );
-    assert_ne!(bits(&m, outside) & BuildingFlags::NO_WATER, 0, "41 m: not");
+    assert_ne!(
+        bits(&m, outside) & BuildingFlags::NO_WATER,
+        0,
+        "edge at 41 m: not"
+    );
 }
 
 /// T-109: a water tower (a free-standing water source of 300 that itself needs 10 power) with
@@ -301,4 +312,52 @@ fn a_treatment_plant_works_only_with_a_water_source_in_its_component() {
     }
     let (m, h) = build(None);
     assert_ne!(bits(&m, h) & BuildingFlags::NO_SEWAGE, 0, "no water source");
+}
+
+/// A building of `cells` x `cells` (a lot, or free-standing) centred at `(x, z)`.
+fn add_sized(
+    grid: &mut BuildingGrid,
+    db: &ContentDb,
+    def: &str,
+    cells: u8,
+    free: bool,
+    x: f32,
+    z: f32,
+) -> BuildingId {
+    let id = add(grid, db, def, x, z);
+    let b = grid.get_mut(id).unwrap();
+    b.footprint = if free {
+        b.access = None;
+        cp_building::Footprint::Free { w: cells, d: cells }
+    } else {
+        cp_building::Footprint::Lot(Lot {
+            block: Id::new(0, 0),
+            col: 0,
+            w: cells,
+            d: cells,
+        })
+    };
+    id
+}
+
+/// BUG-036: a 3x3 house right beside a free-standing 2x2 turbine gets current without a line, a
+/// chain of three neighbouring houses from the turbine is served whole, and a house 40 m away
+/// is not.
+#[test]
+fn power_passes_between_neighbouring_footprints_not_between_far_ones() {
+    let db = db();
+    let g = UtilityGraph::new();
+    let mut b = BuildingGrid::new();
+    let turbine = add_sized(&mut b, &db, "bigplant", 2, true, 0.0, 0.0);
+    // Centres 20 m apart: the edges are 4 m apart, the centres were never within 30 m of each
+    // other for lots like these.
+    let h1 = add_sized(&mut b, &db, "house", 3, false, 20.0, 0.0);
+    let h2 = add_sized(&mut b, &db, "house", 3, false, 44.0, 0.0);
+    let h3 = add_sized(&mut b, &db, "house", 3, false, 68.0, 0.0);
+    let far = add_sized(&mut b, &db, "house", 3, false, 0.0, 40.0);
+    let m = compute_supply(&db, &b, &g);
+    for (name, id) in [("turbine", turbine), ("h1", h1), ("h2", h2), ("h3", h3)] {
+        assert_eq!(bits(&m, id) & BuildingFlags::NO_POWER, 0, "{name}");
+    }
+    assert_ne!(bits(&m, far) & BuildingFlags::NO_POWER, 0, "40 m, no chain");
 }

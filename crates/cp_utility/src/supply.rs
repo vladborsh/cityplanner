@@ -6,9 +6,10 @@
 //! next recompute after a load rewrites them). The computation is [`compute_supply`], a pure
 //! function of the content, the buildings and the utility graph.
 //!
-//! * **Reach.** A building is *attached* to a network when its position is within
-//!   [`LINE_REACH_M`] (40 m) of one of its links (the lot is within 40 m of the pipe); it then
-//!   belongs to the connected component of the nearest link.
+//! * **Reach.** A building is *attached* to a network when its footprint edge is within
+//!   [`LINE_REACH_M`] (40 m) of one of its links (its centre is within 40 m plus the building's
+//!   half size, [`Site::half`]); it then belongs to the connected component of the nearest
+//!   link.
 //! * **Water.** Pumps (service kind `Water`, `Active`) add their `capacity` to the pipe
 //!   component they are attached to. Consumers in that component, in ascending `BuildingId`,
 //!   subtract their `consumption[Water]`; the first one that does not fit and every later one
@@ -20,8 +21,9 @@
 //! * **Power.** Plants (`Power`) add capacity to the line component they are attached to (a
 //!   plant with no line is a pool of its own). From the pool a BFS runs in layers: layer 0
 //!   is the buildings attached to the pool's lines (and the plants), each following layer is
-//!   the buildings within [`POWER_HOP_M`] (30 m) of a building *supplied* in the previous
-//!   one. Within a layer buildings are served in ascending id; the first that does not fit
+//!   the buildings whose footprint edge is within [`POWER_GAP_M`] (8 m, one zone cell) of the
+//!   footprint edge of a building *supplied* in the previous one (BUG-036: centre distances
+//!   never got within 30 m for 3×3 lots). Within a layer buildings are served in ascending id; the first that does not fit
 //!   and everything after it (this layer and later ones) get `NO_POWER`. Pools are
 //!   processed in order of their line component, then unattached plants by id; a building
 //!   belongs to the first pool that reaches it.
@@ -44,8 +46,10 @@ use crate::graph::{UtilityGraph, UtilityLinkId, UtilityNet};
 pub const SUPPLY_PERIOD: u64 = 64;
 /// How far a building may be from a pipe or power line, metres.
 pub const LINE_REACH_M: f32 = 40.0;
-/// How far a supplied building passes power on to other buildings, metres.
-pub const POWER_HOP_M: f32 = 30.0;
+/// The largest gap between the footprint edges of two buildings over which one passes power on
+/// to the other, metres (one zone cell). Footprints are taken as circles of half the longer
+/// side around the centre.
+pub const POWER_GAP_M: f32 = 8.0;
 
 const LINK_SAMPLE_M: f32 = 16.0;
 const BUCKET_M: f32 = 64.0;
@@ -53,6 +57,8 @@ const BUCKET_M: f32 = 64.0;
 struct Site {
     id: BuildingId,
     pos: Vec2,
+    /// Half the longer side of the footprint, metres.
+    half: f32,
     needs: [f32; 3],
     /// `(kind, capacity)` of a utility source.
     source: Option<(ServiceKind, f32)>,
@@ -106,11 +112,13 @@ impl Attach {
     }
 
     /// The component of the nearest link within [`LINE_REACH_M`] of `p`.
-    pub(crate) fn comp_at(&self, graph: &UtilityGraph, p: Vec2) -> Option<u32> {
+    pub(crate) fn comp_at(&self, graph: &UtilityGraph, p: Vec2, half: f32) -> Option<u32> {
+        let reach = LINE_REACH_M + half;
         let (bx, bz) = bucket(p, BUCKET_M);
+        let span = (reach / BUCKET_M).ceil() as i32;
         let mut cand = BTreeSet::new();
-        for dx in -1..=1 {
-            for dz in -1..=1 {
+        for dx in -span..=span {
+            for dz in -span..=span {
                 if let Some(v) = self.buckets.get(&(bx + dx, bz + dz)) {
                     cand.extend(v.iter().copied());
                 }
@@ -120,11 +128,11 @@ impl Attach {
         for id in cand {
             let (lo, hi) = self.bbox[&id];
             let off = (lo - p).max(p - hi).max(Vec2::ZERO);
-            if off.length() > LINE_REACH_M {
+            if off.length() > reach {
                 continue;
             }
             let (_, d) = graph.link(id)?.curve.nearest_xz(p);
-            if d <= LINE_REACH_M && best.is_none_or(|(bd, _)| d < bd) {
+            if d <= reach && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, id));
             }
         }
@@ -132,9 +140,11 @@ impl Attach {
     }
 }
 
-/// The sites binned by [`POWER_HOP_M`] cells in a dense grid over their bounding box (cell
+/// The sites binned by cells in a dense grid over their bounding box (cell
 /// contents in ascending site index): the neighbour lookup of the power BFS is an array index.
 struct HopGrid {
+    /// Cell side: the longest centre distance of two buildings within [`POWER_GAP_M`].
+    cell: f32,
     x0: i32,
     z0: i32,
     w: usize,
@@ -145,7 +155,8 @@ struct HopGrid {
 
 impl HopGrid {
     fn build(sites: &[Site]) -> Self {
-        let cells: Vec<(i32, i32)> = sites.iter().map(|s| bucket(s.pos, POWER_HOP_M)).collect();
+        let cell = POWER_GAP_M + 2.0 * sites.iter().fold(0.0f32, |m, s| m.max(s.half));
+        let cells: Vec<(i32, i32)> = sites.iter().map(|s| bucket(s.pos, cell)).collect();
         let (x0, x1) = cells
             .iter()
             .fold((i32::MAX, i32::MIN), |a, c| (a.0.min(c.0), a.1.max(c.0)));
@@ -154,6 +165,7 @@ impl HopGrid {
             .fold((i32::MAX, i32::MIN), |a, c| (a.0.min(c.1), a.1.max(c.1)));
         if cells.is_empty() {
             return Self {
+                cell,
                 x0: 0,
                 z0: 0,
                 w: 0,
@@ -179,6 +191,7 @@ impl HopGrid {
             fill[a] += 1;
         }
         Self {
+            cell,
             x0,
             z0,
             w,
@@ -299,9 +312,11 @@ pub fn compute_supply_cached(
         .map(|(id, b)| {
             // A placeholder (a def the save named and the content lacks) needs and gives nothing.
             let (needs, source) = defs.get(b.def.index()).copied().unwrap_or(([0.0; 3], None));
+            let (w, d) = b.size();
             Site {
                 id,
                 pos: b.pos,
+                half: f32::from(w.max(d)) * cp_building::FOOTPRINT_CELL_M * 0.5,
                 needs,
                 source,
             }
@@ -342,7 +357,10 @@ pub fn compute_supply_cached(
                     Attach::build(graph, UtilityNet::Power),
                 )
             });
-            let pair = (pipes.comp_at(graph, s.pos), lines.comp_at(graph, s.pos));
+            let pair = (
+                pipes.comp_at(graph, s.pos, s.half),
+                lines.comp_at(graph, s.pos, s.half),
+            );
             if cache.by_building.len() <= i {
                 cache.by_building.resize(i + 1, None);
             }
@@ -434,12 +452,14 @@ pub fn compute_supply_cached(
                 if need <= 0.0 || (!exhausted && left >= need) {
                     left -= need;
                     served[i] = true;
-                    let (bx, bz) = bucket(sites[i].pos, POWER_HOP_M);
+                    let (bx, bz) = bucket(sites[i].pos, hop.cell);
                     for dx in -1..=1 {
                         for dz in -1..=1 {
                             for &j in hop.get(bx + dx, bz + dz) {
-                                if !visited[j] && sites[j].pos.distance(sites[i].pos) <= POWER_HOP_M
-                                {
+                                let gap = sites[j].pos.distance(sites[i].pos)
+                                    - sites[i].half
+                                    - sites[j].half;
+                                if !visited[j] && gap <= POWER_GAP_M {
                                     next.insert(j);
                                 }
                             }
@@ -504,8 +524,9 @@ impl Coverage {
         }
     }
 
-    /// Whether `p` (XZ) is within reach of the network, the rule buildings use to attach.
-    pub fn covers(&self, graph: &UtilityGraph, p: Vec2) -> bool {
-        self.attach.comp_at(graph, p).is_some()
+    /// Whether a building centred on `p` (XZ) with half size `half` is within reach of the
+    /// network, the rule buildings use to attach.
+    pub fn covers(&self, graph: &UtilityGraph, p: Vec2, half: f32) -> bool {
+        self.attach.comp_at(graph, p, half).is_some()
     }
 }
