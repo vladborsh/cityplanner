@@ -21,7 +21,7 @@
 //! * **Power.** Plants (`Power`) add capacity to the line component they are attached to (a
 //!   plant with no line is a pool of its own). From the pool a BFS runs in layers: layer 0
 //!   is the buildings attached to the pool's lines (and the plants), each following layer is
-//!   the buildings whose footprint edge is within [`POWER_GAP_M`] (8 m, one zone cell) of the
+//!   the buildings whose footprint edge is within [`POWER_GAP_M`] (32 m) of the
 //!   footprint edge of a building *supplied* in the previous one (BUG-036: centre distances
 //!   never got within 30 m for 3×3 lots). Within a layer buildings are served in ascending id; the first that does not fit
 //!   and everything after it (this layer and later ones) get `NO_POWER`. Pools are
@@ -47,9 +47,10 @@ pub const SUPPLY_PERIOD: u64 = 64;
 /// How far a building may be from a pipe or power line, metres.
 pub const LINE_REACH_M: f32 = 40.0;
 /// The largest gap between the footprint edges of two buildings over which one passes power on
-/// to the other, metres (one zone cell). Footprints are taken as circles of half the longer
+/// to the other, metres: wider than the widest road that allows zoning (28 m), so power crosses a
+/// street between facing lots (tune later). Footprints are taken as circles of half the longer
 /// side around the centre.
-pub const POWER_GAP_M: f32 = 8.0;
+pub const POWER_GAP_M: f32 = 32.0;
 
 const LINK_SAMPLE_M: f32 = 16.0;
 const BUCKET_M: f32 = 64.0;

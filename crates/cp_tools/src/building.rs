@@ -182,7 +182,7 @@ pub fn connection_hint(view: &SimView, def: BuildingDefId, pos: Vec2) -> Option<
         UtilityNet::Power => "the power line",
     };
     if target.is_none() && net == UtilityNet::Power {
-        // A supplied building passes the current on (edge to edge, 8 m).
+        // A supplied building passes the current on (edge to edge, 32 m).
         target = view
             .buildings
             .iter()

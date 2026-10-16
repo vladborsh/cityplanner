@@ -176,19 +176,19 @@ fn power_deficit_and_the_30_m_hop() {
     assert_eq!(bits(&m, on_line[1]) & BuildingFlags::NO_POWER, 0);
     assert_ne!(bits(&m, on_line[2]) & BuildingFlags::NO_POWER, 0);
 
-    // A house past the line's reach (edge 40 m) is passed the current by a supplied neighbour
-    // 7 m away edge to edge (BUG-036: edges, not centres); one 60 m away gets nothing.
+    // A house past the line's reach is passed the current by a supplied neighbour 19 m away
+    // edge to edge (BUG-036: edges, not centres); one far away gets nothing.
     let mut b = BuildingGrid::new();
     add(&mut b, &db, "plant", 0.0, 10.0);
     let a = add(&mut b, &db, "house", 50.0, 35.0);
-    let hopped = add(&mut b, &db, "house", 50.0, 50.0);
+    let hopped = add(&mut b, &db, "house", 50.0, 62.0);
     let lonely = add(&mut b, &db, "house", 50.0, 120.0);
     let m = compute_supply(&db, &b, &g);
     assert_eq!(bits(&m, a) & BuildingFlags::NO_POWER, 0);
     assert_eq!(
         bits(&m, hopped) & BuildingFlags::NO_POWER,
         0,
-        "edge gap of 7 m"
+        "edge gap of 19 m"
     );
     assert_ne!(bits(&m, lonely) & BuildingFlags::NO_POWER, 0);
 }
@@ -354,10 +354,55 @@ fn power_passes_between_neighbouring_footprints_not_between_far_ones() {
     let h1 = add_sized(&mut b, &db, "house", 3, false, 20.0, 0.0);
     let h2 = add_sized(&mut b, &db, "house", 3, false, 44.0, 0.0);
     let h3 = add_sized(&mut b, &db, "house", 3, false, 68.0, 0.0);
-    let far = add_sized(&mut b, &db, "house", 3, false, 0.0, 40.0);
+    let far = add_sized(&mut b, &db, "house", 3, false, 0.0, 80.0);
     let m = compute_supply(&db, &b, &g);
     for (name, id) in [("turbine", turbine), ("h1", h1), ("h2", h2), ("h3", h3)] {
         assert_eq!(bits(&m, id) & BuildingFlags::NO_POWER, 0, "{name}");
     }
-    assert_ne!(bits(&m, far) & BuildingFlags::NO_POWER, 0, "40 m, no chain");
+    assert_ne!(
+        bits(&m, far) & BuildingFlags::NO_POWER,
+        0,
+        "edge gap of 60 m, no chain"
+    );
+}
+
+/// The user's case (BUG-036): a plant with a block of houses round it and no line at all powers
+/// the houses on both sides of the streets; a house across a 100 m field only gets current once
+/// a line bridges the field.
+#[test]
+fn a_plant_powers_a_block_without_a_line_and_a_line_bridges_a_field() {
+    let db = db();
+    let mut b = BuildingGrid::new();
+    let plant = add_sized(&mut b, &db, "bigplant", 4, true, 0.0, 0.0);
+    // Two rows of three houses on either side of a 28 m street (the widest zonable road).
+    let mut block = Vec::new();
+    for z in [30.0, 82.0] {
+        for x in [20.0, 44.0, 68.0] {
+            block.push(add_sized(&mut b, &db, "house", 3, false, x, z));
+        }
+    }
+    // 100 m of field beyond the block.
+    let across = add_sized(&mut b, &db, "house", 3, false, 0.0, 206.0);
+    let mut g = UtilityGraph::new();
+    let m = compute_supply(&db, &b, &g);
+    assert_eq!(bits(&m, plant) & BuildingFlags::NO_POWER, 0);
+    for (i, h) in block.iter().enumerate() {
+        assert_eq!(bits(&m, *h) & BuildingFlags::NO_POWER, 0, "house {i}");
+    }
+    assert_ne!(
+        bits(&m, across) & BuildingFlags::NO_POWER,
+        0,
+        "across the field"
+    );
+
+    // A line along the field joins the far house to the plant's component.
+    let p = |z: f32| Vec3::new(5000.0, 0.0, 5000.0 + z);
+    let (a, c) = (
+        g.add_node(UtilityNet::Power, p(0.0)),
+        g.add_node(UtilityNet::Power, p(206.0)),
+    );
+    g.add_link(a, c, CubicBezier3::line(p(0.0), p(206.0)))
+        .unwrap();
+    let m = compute_supply(&db, &b, &g);
+    assert_eq!(bits(&m, across) & BuildingFlags::NO_POWER, 0, "bridged");
 }
