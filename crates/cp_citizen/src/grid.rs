@@ -271,6 +271,27 @@ impl CitizenGrid {
         c.sick_since = since;
     }
 
+    /// Enrols the citizen in `school`, or takes them out of it (`None`).
+    pub fn set_school(&mut self, id: CitizenId, school: Option<BuildingId>) {
+        if let Some(c) = self.citizens.get_mut(id) {
+            c.school = school;
+        }
+    }
+
+    /// Sets a citizen's age in game days (tests and scenarios).
+    pub fn set_age_days(&mut self, id: CitizenId, age_days: u32) {
+        if let Some(c) = self.citizens.get_mut(id) {
+            c.age_days = age_days;
+        }
+    }
+
+    /// Sets the education of a citizen (a graduation).
+    pub fn set_education(&mut self, id: CitizenId, education: u8) {
+        if let Some(c) = self.citizens.get_mut(id) {
+            c.education = education;
+        }
+    }
+
     /// Filled job slots of `level` in `building`.
     pub fn jobs_filled(&self, building: BuildingId, level: usize) -> u16 {
         self.derived.jobs.get(building).map_or(0, |j| j[level])

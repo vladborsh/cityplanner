@@ -1,0 +1,15 @@
+Building((
+    id: "elementary_school",
+    name: "Elementary school",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 2),
+    jobs: (0, 4, 2, 0),
+    consumption: {},
+    tax_base: 0.0,
+    cost: 15000.0,
+    upkeep_week: 400.0,
+    styles: ["service_pump_house"],
+    service: Some("elementary_school"),
+    icon: "elementary_school",
+))

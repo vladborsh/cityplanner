@@ -1,0 +1,15 @@
+Building((
+    id: "high_school",
+    name: "High school",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 3),
+    jobs: (0, 4, 6, 0),
+    consumption: {},
+    tax_base: 0.0,
+    cost: 30000.0,
+    upkeep_week: 800.0,
+    styles: ["service_treatment_plant"],
+    service: Some("high_school"),
+    icon: "high_school",
+))

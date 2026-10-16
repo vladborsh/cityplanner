@@ -334,7 +334,8 @@ pub fn update_citizens(
             grid.clear_job(cid);
         }
         let work = grid.citizen(cid).and_then(|c| c.work);
-        if work.is_some() || !c.is_adult() || c.location == Location::Moving {
+        // A student (T-141) does not take a job.
+        if work.is_some() || !c.is_adult() || c.school.is_some() || c.location == Location::Moving {
             continue;
         }
         let Some(home) = c.home.and_then(|h| buildings.get(h)) else {

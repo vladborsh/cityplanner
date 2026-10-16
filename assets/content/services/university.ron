@@ -1,0 +1,10 @@
+// Numbers: tune later. capacity = places.
+Service((
+    id: "university",
+    name: "University",
+    kind: Education,
+    radius_m: 2500.0,
+    capacity: 1000,
+    tier: 3,
+    vehicles: [],
+))

@@ -1,0 +1,15 @@
+Building((
+    id: "university",
+    name: "University",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 4),
+    jobs: (0, 0, 8, 8),
+    consumption: {},
+    tax_base: 0.0,
+    cost: 70000.0,
+    upkeep_week: 2000.0,
+    styles: ["service_water_tower"],
+    service: Some("university"),
+    icon: "university",
+))

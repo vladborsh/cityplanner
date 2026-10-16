@@ -227,8 +227,35 @@ fn services_section(view: &SimView) -> Section {
     rows.push(row("Dead", count(counts[2])));
     rows.push(row("Fires", count(counts[3])));
     rows.push(row("Crime", count(counts[4])));
-    // Students and places arrive with the education rows.
-    rows.push(row("Students / places", NONE));
+    // Students (kept in the schools' `stored`) and places (their capacity).
+    let (mut students, mut places) = (0u32, 0u32);
+    if let Some(db) = db {
+        for (id, b) in view
+            .buildings
+            .iter()
+            .filter(|(_, b)| b.state == BuildingState::Active)
+        {
+            let svc = db
+                .building(b.def)
+                .service
+                .as_deref()
+                .and_then(|s| db.service_id(s))
+                .map(|s| db.service(s))
+                .filter(|s| s.kind == ServiceKind::Education);
+            if let Some(svc) = svc {
+                places += svc.capacity;
+                students += view.service_state.facility(id).map_or(0, |f| f.stored);
+            }
+        }
+    }
+    rows.push(row(
+        "Students / places",
+        if places == 0 {
+            NONE.to_string()
+        } else {
+            format!("{students} / {places}")
+        },
+    ));
     Section {
         title: "Services",
         rows,

@@ -104,3 +104,5 @@ T-137 adds six overlay icons (`overlay_garbage`, `overlay_health`, `overlay_deat
 
 T-140 adds `cemetery` (gravestones behind a fence) and `crematorium` (a building with a chimney): self-made SVGs in
 `assets/ui/icons/src`, rendered by `tools/assets/icons.mjs`, CC0, no third-party pack.
+
+T-141 adds `elementary_school` (a house with a bell), `high_school` (a block with a flag) and `university` (a portico with columns): self-made SVGs in `assets/ui/icons/src`, rendered by `tools/assets/icons.mjs`, CC0, no third-party pack.

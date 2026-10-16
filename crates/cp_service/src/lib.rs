@@ -7,6 +7,7 @@
 //! capacity helper [`nearest_facility`].
 
 pub mod coverage;
+pub mod education;
 pub mod facility;
 pub mod fire;
 pub mod garbage;
@@ -15,6 +16,7 @@ pub mod state;
 pub use coverage::{
     COVERAGE_PERIOD, RoadGraph, ServiceCoverage, ServicePlugin, rebuild_coverage, update_coverage,
 };
+pub use education::update_education;
 pub use facility::{
     nearest_facility, nearest_facility_with, purge_removed_services, reset_daily_capacity,
 };
@@ -25,6 +27,8 @@ pub use state::{BuildingServices, Facility, Fire, ServiceProblems, ServiceState,
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_service";
 
+#[cfg(test)]
+mod education_tests;
 #[cfg(test)]
 mod fire_tests;
 #[cfg(test)]
