@@ -19,6 +19,7 @@ pub mod demand_panel;
 pub mod districts;
 pub mod files;
 pub mod frame;
+mod glyphs;
 pub mod icons;
 pub mod info;
 pub mod land;

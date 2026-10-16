@@ -75,9 +75,9 @@ pub fn network_summary(ui: &mut egui::Ui, view: &SimView, tab: NetTab) {
     for r in rows(&view.city, tab) {
         let text = row_text(&r);
         if r.overloaded() {
-            ui.colored_label(egui::Color32::LIGHT_RED, format!("⚠ {text}"));
+            ui.colored_label(egui::Color32::LIGHT_RED, format!("! {text}"));
         } else if r.unsupplied > 0 {
-            ui.colored_label(egui::Color32::from_rgb(240, 190, 60), format!("⚠ {text}"));
+            ui.colored_label(egui::Color32::from_rgb(240, 190, 60), format!("! {text}"));
         } else {
             ui.label(text);
         }

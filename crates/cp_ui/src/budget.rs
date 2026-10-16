@@ -71,8 +71,7 @@ fn debt_colour(level: DebtLevel) -> egui::Color32 {
 /// The balance label of the top bar, coloured by [`DebtLevel`].
 pub fn money_label(ui: &mut egui::Ui, view: &SimView) -> egui::Response {
     let b = view.treasury.balance;
-    let text =
-        egui::RichText::new(format!("💰 {}", format_money(b))).color(debt_colour(debt_level(b)));
+    let text = egui::RichText::new(format_money(b)).color(debt_colour(debt_level(b)));
     let r = ui.label(text);
     match debt_warning(b) {
         Some(w) => r.on_hover_text(w),
@@ -88,13 +87,39 @@ pub fn weekly_trend(view: &SimView) -> Option<Cost> {
     (p.tick > 0).then(|| Cost(p.net().0 * 7 - p.loans_week.0))
 }
 
-/// `▲ +$1,234.00/wk` or `▼ -$56.00/wk`.
+/// `+$1,234.00/wk` or `-$56.00/wk` (the arrow is drawn by [`trend_arrow`]).
 pub fn trend_text(weekly: Cost) -> String {
     if weekly.0 >= 0 {
-        format!("▲ +{}/wk", format_money(weekly))
+        format!("+{}/wk", format_money(weekly))
     } else {
-        format!("▼ -{}/wk", format_money(Cost(-weekly.0)))
+        format!("-{}/wk", format_money(Cost(-weekly.0)))
     }
+}
+
+/// The trend arrow: a filled triangle, up or down, drawn as a shape (the fonts have no ▲ / ▼,
+/// BUG-039). Returns the rectangle it took.
+pub fn trend_arrow(ui: &mut egui::Ui, up: bool, colour: egui::Color32) -> egui::Rect {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(9.0, 8.0), egui::Sense::hover());
+    let (l, r, t, b) = (rect.left(), rect.right(), rect.top(), rect.bottom());
+    let points = if up {
+        vec![
+            egui::pos2(l, b),
+            egui::pos2(r, b),
+            egui::pos2((l + r) / 2.0, t),
+        ]
+    } else {
+        vec![
+            egui::pos2(l, t),
+            egui::pos2(r, t),
+            egui::pos2((l + r) / 2.0, b),
+        ]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(
+        points,
+        colour,
+        egui::Stroke::NONE,
+    ));
+    rect
 }
 
 fn trend_colour(up: bool) -> egui::Color32 {
@@ -125,7 +150,9 @@ pub fn trend_label(ui: &mut egui::Ui, view: &SimView) {
     let Some(weekly) = weekly_trend(view) else {
         return;
     };
-    ui.label(egui::RichText::new(trend_text(weekly)).color(trend_colour(weekly.0 >= 0)))
+    let colour = trend_colour(weekly.0 >= 0);
+    trend_arrow(ui, weekly.0 >= 0, colour);
+    ui.label(egui::RichText::new(trend_text(weekly)).color(colour))
         .on_hover_text(trend_breakdown(view));
 }
 
@@ -168,14 +195,14 @@ pub fn payday_pop_ui(ui: &egui::Ui, view: &SimView, anchor: egui::Rect) {
     );
 }
 
-/// The population change over the last game day: `(net, text, hover)`; `▲ +N`, `▼ -N` or `0`.
+/// The population change over the last game day: `(net, text, hover)`; `+N`, `-N` or `0`.
 pub fn population_trend(view: &SimView) -> (i64, String, String) {
     let d = view.city.pop_day;
     let net = (d.arrived + d.born) as i64 - (d.left + d.died) as i64;
     let text = match net {
         0 => "0".to_string(),
-        n if n > 0 => format!("▲ +{n}"),
-        n => format!("▼ -{}", -n),
+        n if n > 0 => format!("+{n}"),
+        n => format!("-{}", -n),
     };
     let hover = format!(
         "Last day:\nMoved in +{}\nBorn +{}\nMoved out -{}\nDied -{}",
@@ -191,6 +218,9 @@ pub fn population_trend_label(ui: &mut egui::Ui, view: &SimView) {
         0 => egui::Color32::GRAY,
         n => trend_colour(n > 0),
     };
+    if net != 0 {
+        trend_arrow(ui, net > 0, c);
+    }
     ui.label(egui::RichText::new(text).color(c))
         .on_hover_text(hover);
 }
@@ -473,7 +503,7 @@ pub fn budget_contents(
         }
     });
     if let Some(w) = debt_warning(balance) {
-        ui.colored_label(debt_colour(debt_level(balance)), format!("⚠ {w}"));
+        ui.colored_label(debt_colour(debt_level(balance)), format!("! {w}"));
     }
     ui.horizontal(|ui| {
         for tab in BudgetTab::ALL {
@@ -660,8 +690,8 @@ mod tests {
         };
         // (1000 - 350) * 7 - 700 = 3850 cents.
         assert_eq!(weekly_trend(&view), Some(Cost(3_850)));
-        assert_eq!(trend_text(Cost(3_850)), "▲ +$38.50/wk");
-        assert_eq!(trend_text(Cost(-12_345)), "▼ -$123.45/wk");
+        assert_eq!(trend_text(Cost(3_850)), "+$38.50/wk");
+        assert_eq!(trend_text(Cost(-12_345)), "-$123.45/wk");
         view.tick = cp_core::Tick(4096 + 10);
         let (text, age) = payday_pop(&view).expect("just paid");
         assert_eq!(text, "+$6.50");
@@ -676,13 +706,13 @@ mod tests {
             left: 4,
             died: 1,
         };
-        assert_eq!(population_trend(&view).1, "▲ +10");
+        assert_eq!(population_trend(&view).1, "+10");
         let city = std::sync::Arc::make_mut(&mut view.city);
         city.pop_day = cp_citizen::PopFlow {
             left: 5,
             ..Default::default()
         };
-        assert_eq!(population_trend(&view).1, "▼ -5");
+        assert_eq!(population_trend(&view).1, "-5");
         let city = std::sync::Arc::make_mut(&mut view.city);
         city.pop_day = Default::default();
         assert_eq!(

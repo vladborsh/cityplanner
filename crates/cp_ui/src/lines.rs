@@ -83,21 +83,26 @@ pub fn delete_command(line: LineId) -> SimCommand {
 }
 
 fn color_menu(ui: &mut egui::Ui, l: &LineView, outbox: &mut CommandOutbox) {
-    ui.menu_button(egui::RichText::new("⬛").color(line_color(l.color)), |ui| {
-        egui::Grid::new(("line_palette", l.id)).show(ui, |ui| {
-            for i in 0..PALETTE_LEN {
-                let b = egui::Button::new(egui::RichText::new("⬛").color(line_color(i)))
+    ui.menu_button(
+        egui::RichText::new("    ").background_color(line_color(l.color)),
+        |ui| {
+            egui::Grid::new(("line_palette", l.id)).show(ui, |ui| {
+                for i in 0..PALETTE_LEN {
+                    let b = egui::Button::new(
+                        egui::RichText::new("    ").background_color(line_color(i)),
+                    )
                     .selected(i == l.color);
-                if ui.add(b).clicked() {
-                    outbox.push(color_command(l.id, i));
-                    ui.close();
+                    if ui.add(b).clicked() {
+                        outbox.push(color_command(l.id, i));
+                        ui.close();
+                    }
+                    if i % 4 == 3 {
+                        ui.end_row();
+                    }
                 }
-                if i % 4 == 3 {
-                    ui.end_row();
-                }
-            }
-        });
-    });
+            });
+        },
+    );
 }
 
 /// The name field: edited in place, sent when it loses focus with a changed text.

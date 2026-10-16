@@ -340,14 +340,14 @@ pub fn chevron_lines(curve: &CubicBezier3, length: f32) -> Vec<[Vec3; 2]> {
     out
 }
 
-/// The tool's label for a snap: `90°`, `45°`, `∥` or `⊥`; steps and plain snaps show none.
+/// The tool's label for a snap: `90°`, `45°`, `||` or `_|_`; steps and plain snaps show none.
 pub fn snap_label(kind: SnapReportKind) -> Option<String> {
     match kind {
         SnapReportKind::KeyAngle(d) => Some(format!("{d}°")),
         SnapReportKind::Guide { perpendicular } => {
-            Some(if perpendicular { "⊥" } else { "∥" }.to_string())
+            Some(if perpendicular { "_|_" } else { "||" }.to_string())
         }
-        SnapReportKind::ControlLine(d) => Some(format!("⊥ {d}")),
+        SnapReportKind::ControlLine(d) => Some(format!("_|_ {d}")),
         _ => None,
     }
 }
@@ -402,18 +402,18 @@ mod tests {
                 perpendicular: false
             })
             .as_deref(),
-            Some("∥")
+            Some("||")
         );
         assert_eq!(
             snap_label(SnapReportKind::Guide {
                 perpendicular: true
             })
             .as_deref(),
-            Some("⊥")
+            Some("_|_")
         );
         assert_eq!(
             snap_label(SnapReportKind::ControlLine(64)).as_deref(),
-            Some("⊥ 64")
+            Some("_|_ 64")
         );
         assert_eq!(snap_label(SnapReportKind::CellStep(48)), None);
         assert_eq!(snap_label(SnapReportKind::Step(15)), None);
