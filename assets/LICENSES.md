@@ -107,7 +107,7 @@ T-140 adds `cemetery` (gravestones behind a fence) and `crematorium` (a building
 
 T-141 adds `elementary_school` (a house with a bell), `high_school` (a block with a flag) and `university` (a portico with columns): self-made SVGs in `assets/ui/icons/src`, rendered by `tools/assets/icons.mjs`, CC0, no third-party pack.
 
-## Fonts — SIL Open Font License 1.1 (T-184, exception to "CC0 only" approved by the user)
+## Fonts — SIL Open Font License 1.1 (T-184, exception to "CC0 only", PENDING the user's approval)
 
 Symbol fallbacks for egui (warning, tick, cross, arrows, money, people, parallel/perpendicular
 signs), embedded with `include_bytes!` by `cp_ui::style`. Subsets of the upstream fonts made with
