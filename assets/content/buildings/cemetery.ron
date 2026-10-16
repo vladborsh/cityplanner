@@ -1,0 +1,15 @@
+Building((
+    id: "cemetery",
+    name: "Cemetery",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 4),
+    jobs: (2, 1, 0, 0),
+    consumption: {},
+    tax_base: 0.0,
+    cost: 15000.0,
+    upkeep_week: 300.0,
+    styles: ["service_treatment_plant"],
+    service: Some("cemetery"),
+    icon: "cemetery",
+))

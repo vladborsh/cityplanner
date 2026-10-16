@@ -1,0 +1,10 @@
+// Numbers: tune later. `capacity` is the bodies it takes per game day, `storage` how many it holds.
+Service((
+    id: "cemetery",
+    name: "Cemetery",
+    kind: Deathcare,
+    radius_m: 1200.0,
+    capacity: 20,
+    storage: 2000,
+    vehicles: [],
+))

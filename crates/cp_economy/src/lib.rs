@@ -7,6 +7,7 @@
 //! and [`settle_week`].
 
 pub mod command;
+pub mod deathcare;
 pub mod demand;
 pub mod growth;
 pub mod health;
@@ -16,6 +17,7 @@ pub mod state;
 pub mod week;
 
 pub use command::{EconomyCommand, EconomyError, apply};
+pub use deathcare::update_deathcare;
 pub use demand::{DemandAcc, smooth, update_demand};
 pub use growth::{CITY_PERIOD, Decay, WorkerShortage, level_for, update_city};
 pub use health::{HEALTH_STREAM, update_health};
@@ -30,6 +32,8 @@ pub use week::{WeekInputs, segment_upkeep, settle_week, week_detail, week_report
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_economy";
 
+#[cfg(test)]
+mod deathcare_tests;
 #[cfg(test)]
 mod health_tests;
 #[cfg(test)]

@@ -813,6 +813,7 @@ mod tests {
                 ServiceKind::Power,
                 ServiceKind::Garbage,
                 ServiceKind::Health,
+                ServiceKind::Deathcare,
                 ServiceKind::Fire,
                 ServiceKind::Police
             ]

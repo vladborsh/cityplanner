@@ -44,6 +44,9 @@
 //! by one. Checked: with the plant's two files taken out of the content, all four values of the
 //! T-109 header above reproduce exactly (and the bench-10k baseline too).
 
+//! **T-140.** Re-recorded again, all four values: the cemetery and the crematorium are in the
+//! content hash (state at load) and the dead are collected; the behaviour is otherwise unchanged.
+//!
 //! **T-139.** Re-recorded again, all four values: the new clinic and hospital are in the content
 //! hash (state at load), and the sick, the cured and the dead of the health row move the state
 //! after 4096 ticks.
@@ -141,10 +144,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0xa1b7d9eaff5fe281, "state at load");
+    assert_eq!(sim.checksum(), 0x9c0260e75873a475, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x96359a1297efe394,
+        0xba7f33b99fc3b4c0,
         "load + 4096 ticks"
     );
 }
@@ -170,7 +173,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0xdea816473e53a8ea, "state at load");
+    assert_eq!(sim.checksum(), 0x85c1e080d142437f, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -178,7 +181,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x1f7ef789597531af, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0xde8072692e5eedb4, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

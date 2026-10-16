@@ -1,0 +1,9 @@
+// Numbers: tune later. `capacity` is the bodies it burns per game day; without power it does not work.
+Service((
+    id: "crematorium",
+    name: "Crematorium",
+    kind: Deathcare,
+    radius_m: 1500.0,
+    capacity: 40,
+    vehicles: [],
+))

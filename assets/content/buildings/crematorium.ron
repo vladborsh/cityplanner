@@ -1,0 +1,15 @@
+Building((
+    id: "crematorium",
+    name: "Crematorium",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 2),
+    jobs: (2, 3, 0, 0),
+    consumption: {Power: 40.0},
+    tax_base: 0.0,
+    cost: 30000.0,
+    upkeep_week: 700.0,
+    styles: ["service_pump_house"],
+    service: Some("crematorium"),
+    icon: "crematorium",
+))

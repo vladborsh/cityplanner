@@ -101,3 +101,6 @@ T-139 adds `clinic` (a house with a cross) and `hospital` (a block with a cross 
 `assets/ui/icons/src`, rendered by `tools/assets/icons.mjs`, CC0, no third-party pack.
 
 T-137 adds six overlay icons (`overlay_garbage`, `overlay_health`, `overlay_deathcare`, `overlay_fire`, `overlay_police`, `overlay_education`): self-made SVG, CC0, same pipeline.
+
+T-140 adds `cemetery` (gravestones behind a fence) and `crematorium` (a building with a chimney): self-made SVGs in
+`assets/ui/icons/src`, rendered by `tools/assets/icons.mjs`, CC0, no third-party pack.
