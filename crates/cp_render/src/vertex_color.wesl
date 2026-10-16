@@ -14,6 +14,7 @@ import bevy_pbr::render::{
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> params: vec4<f32>;
 
 // x = factor on the alpha (1 = as drawn); only visible with an alpha-blended material
+// y = overlay dim (0..1): desaturate and darken the city so a data overlay reads (T-183b)
 @group(constants::MATERIAL_BIND_GROUP) @binding(1) var<uniform> fade: vec4<f32>;
 
 @fragment
@@ -32,6 +33,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
+    if fade.y > 0.0 {
+        let l = dot(out.color.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let grey = mix(out.color.rgb, vec3<f32>(l), 0.75 * fade.y);
+        out.color = vec4<f32>(grey * (1.0 - 0.4 * fade.y), out.color.a);
+    }
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }

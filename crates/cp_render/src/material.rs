@@ -9,6 +9,8 @@ use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
 
+use crate::overlay::{Overlay, OverlayState};
+
 /// Pipeline specialisation key of [`VertexColorMaterial`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct VertexColorKey {
@@ -31,7 +33,9 @@ pub struct VertexColorMaterial {
     #[uniform(0)]
     pub params: Vec4,
     /// x = factor on the alpha of every fragment (the Underground view fades the ground, T-164);
-    /// y, z, w unused.
+    /// y = how far the surface is desaturated and darkened (0 = not, 1 = fully) while a data
+    /// overlay is active (T-183b, written by [`sync_overlay_dim`]; overlay layers are never
+    /// dimmed); z, w unused.
     #[uniform(1)]
     pub fade: Vec4,
     /// Alpha-blend using the vertex alpha (water) instead of drawing opaque.
@@ -126,11 +130,78 @@ impl Material for VertexColorMaterial {
     }
 }
 
+/// Dim amount of the city while a data overlay is active.
+pub const OVERLAY_DIM: f32 = 1.0;
+
+/// Sets the dim uniform of every scene material from the active overlay: [`OVERLAY_DIM`] with
+/// any overlay, 0 with none. Overlay layers (depth-biased) keep their colours.
+pub fn sync_overlay_dim(
+    state: Res<OverlayState>,
+    mut materials: ResMut<Assets<VertexColorMaterial>>,
+) {
+    let target = if state.active == Overlay::Off {
+        0.0
+    } else {
+        OVERLAY_DIM
+    };
+    let stale: Vec<_> = materials
+        .iter()
+        .filter(|(_, m)| !m.depth_bias && m.fade.y != target)
+        .map(|(id, _)| id)
+        .collect();
+    for id in stale {
+        if let Some(mut m) = materials.get_mut(id) {
+            m.fade.y = target;
+        }
+    }
+}
+
 pub struct VertexColorMaterialPlugin;
 
 impl Plugin for VertexColorMaterialPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "vertex_color.wesl");
-        app.add_plugins(MaterialPlugin::<VertexColorMaterial>::default());
+        app.add_plugins(MaterialPlugin::<VertexColorMaterial>::default())
+            .init_resource::<OverlayState>()
+            .add_systems(Update, sync_overlay_dim);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dim_uniform_follows_the_overlay_state_and_spares_overlay_layers() {
+        let mut app = App::new();
+        app.init_resource::<OverlayState>()
+            .init_resource::<Assets<VertexColorMaterial>>()
+            .add_systems(Update, sync_overlay_dim);
+        let (scene, layer) = {
+            let mut mats = app
+                .world_mut()
+                .resource_mut::<Assets<VertexColorMaterial>>();
+            (
+                mats.add(VertexColorMaterial::opaque(0.9, 0.05)),
+                mats.add(VertexColorMaterial::blended(0.9, 0.05).with_depth_bias(true)),
+            )
+        };
+        let dim = |app: &App, h: &Handle<VertexColorMaterial>| {
+            app.world()
+                .resource::<Assets<VertexColorMaterial>>()
+                .get(h)
+                .unwrap()
+                .fade
+                .y
+        };
+        app.update();
+        assert_eq!(dim(&app, &scene), 0.0);
+        app.world_mut().resource_mut::<OverlayState>().active = Overlay::Power;
+        app.update();
+        assert_eq!(dim(&app, &scene), OVERLAY_DIM);
+        assert_eq!(dim(&app, &layer), 0.0);
+        app.world_mut().resource_mut::<OverlayState>().active = Overlay::Off;
+        app.update();
+        assert_eq!(dim(&app, &scene), 0.0);
     }
 }
