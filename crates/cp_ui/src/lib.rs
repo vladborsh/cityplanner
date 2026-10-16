@@ -250,7 +250,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     file_window(ctx, files);
     milestone::milestone_toast(ctx, view, toast);
     land::confirm_window(ctx, view, &mut state.budget.buy_tile, outbox);
-    info_panel(ctx, inspected, picked);
+    info_panel(ctx, inspected, picked, Some(view), tools, outbox);
 }
 
 /// What egui owns, given the pointer position of the frame that just began and the layout of

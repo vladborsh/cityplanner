@@ -24,7 +24,7 @@ use cp_terrain::{SimTerrain, Terrain, TileOwnership};
 use cp_zone::{BLOCK_DEPTH, ZoneCellRef, ZoneGrid};
 use serde::{Deserialize, Serialize};
 
-use crate::free::{is_free_standing, validate_free_placement};
+use crate::free::{is_free_standing, validate_free_placement, validate_free_placement_except};
 use crate::grid::BuildingGrid;
 use crate::model::{
     AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Footprint, Lot, build_ticks,
@@ -45,7 +45,19 @@ pub enum BuildingCommand {
     },
     /// Removes a building and frees its cells.
     Demolish { building: BuildingId },
+    /// Moves a service building to a new spot under the placement rules of its type (the
+    /// building's own cells and rectangle are not obstacles). The same entity: its state,
+    /// level and id stay, so everything keyed by the id (facility stock, workers) carries
+    /// over. Costs [`MOVE_COST_FRACTION`] of the price. Zoned buildings do not move.
+    Move {
+        building: BuildingId,
+        pos: Vec2,
+        rot: f32,
+    },
 }
+
+/// Share of a building's price a move costs. Free for now; tune later (T-177).
+pub const MOVE_COST_FRACTION: f32 = 0.0;
 
 /// Validation failure of a BuildingCommand; wrapped into `CommandError::Rejected` by the dispatcher.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,6 +177,23 @@ pub fn validate_placement(
     pos: Vec2,
     rot: f32,
 ) -> Result<PlacementPlan, BuildingError> {
+    validate_placement_except(db, zones, net, terrain, tiles, def, pos, rot, &[])
+}
+
+/// [`validate_placement`] for moving a building: the cells in `ignore` (the ones it holds now)
+/// count as free (T-177).
+#[allow(clippy::too_many_arguments)]
+pub fn validate_placement_except(
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    net: &NetGraph,
+    terrain: Option<&Terrain>,
+    tiles: Option<&TileOwnership>,
+    def: BuildingDefId,
+    pos: Vec2,
+    rot: f32,
+    ignore: &[ZoneCellRef],
+) -> Result<PlacementPlan, BuildingError> {
     if !cp_core::sane_point(pos) || !rot.is_finite() {
         return Err(BuildingError::BadCoordinates);
     }
@@ -206,12 +235,13 @@ pub fn validate_placement(
     let mut centres = Vec::new();
     for cell in lot.cells() {
         let centre = zones.cell_footprint(cell).ok_or(BuildingError::Blocked)?.c;
-        if zones.is_occupied(cell) {
+        let own = ignore.contains(&cell);
+        if zones.is_occupied(cell) && !own {
             return Err(BuildingError::Blocked);
         }
         // Cells over water are invalid for zoning (T-062). A building that stands on the
         // water (a pump) may cover them; anything else is told it is water, not "blocked".
-        if !zones.is_valid(cell) {
+        if !own && !zones.is_valid(cell) {
             match (wet(centre), site) {
                 (true, ServiceSite::OnWater) => {}
                 (true, _) => return Err(BuildingError::Water),
@@ -323,6 +353,64 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
             world.resource_mut::<ZoneGrid>().occupy(&plan.cells());
             charge_funds(world, plan.cost);
             Ok(plan.cost)
+        }
+        BuildingCommand::Move { building, pos, rot } => {
+            let (plan, cost) = {
+                let (Some(content), Some(zones), Some(net), Some(buildings)) = (
+                    world.get_resource::<SimContent>(),
+                    world.get_resource::<ZoneGrid>(),
+                    world.get_resource::<NetGraph>(),
+                    world.get_resource::<BuildingGrid>(),
+                ) else {
+                    return Err(BuildingError::Missing);
+                };
+                let b = buildings
+                    .get(*building)
+                    .ok_or(BuildingError::UnknownBuilding)?;
+                let def = b.def;
+                let terrain = world.get_resource::<SimTerrain>().map(|t| &*t.0);
+                let tiles = world.get_resource::<TileOwnership>();
+                let plan = if is_free_standing(&content.0, def) {
+                    validate_free_placement_except(
+                        &content.0,
+                        zones,
+                        net,
+                        buildings,
+                        terrain,
+                        tiles,
+                        def,
+                        *pos,
+                        *rot,
+                        Some(*building),
+                    )?
+                } else {
+                    let held = crate::grid::held_cells(zones, b);
+                    validate_placement_except(
+                        &content.0, zones, net, terrain, tiles, def, *pos, *rot, &held,
+                    )?
+                };
+                let cost = Cost::from_units(content.0.building(def).cost * MOVE_COST_FRACTION);
+                (plan, cost)
+            };
+            check_funds(world, cost).map_err(BuildingError::Funds)?;
+            let old = {
+                let zones = world.resource::<ZoneGrid>();
+                let buildings = world.resource::<BuildingGrid>();
+                crate::grid::held_cells(zones, &buildings.get(*building).unwrap().clone())
+            };
+            {
+                let mut buildings = world.resource_mut::<BuildingGrid>();
+                let b = buildings.get_mut(*building).unwrap();
+                b.footprint = plan.footprint;
+                b.pos = plan.pos;
+                b.rot = plan.rot;
+                b.access = plan.access;
+            }
+            let mut zones = world.resource_mut::<ZoneGrid>();
+            zones.release(&old);
+            zones.occupy(&plan.cells());
+            charge_funds(world, cost);
+            Ok(cost)
         }
         BuildingCommand::Demolish { building } => {
             let mut buildings = world

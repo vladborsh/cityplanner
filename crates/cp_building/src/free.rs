@@ -42,6 +42,26 @@ pub fn validate_free_placement(
     pos: Vec2,
     rot: f32,
 ) -> Result<PlacementPlan, BuildingError> {
+    validate_free_placement_except(
+        db, zones, net, buildings, terrain, tiles, def, pos, rot, None,
+    )
+}
+
+/// [`validate_free_placement`] for moving a building: `ignore` is the building being moved,
+/// which is not an obstacle to itself (T-177).
+#[allow(clippy::too_many_arguments)]
+pub fn validate_free_placement_except(
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+    terrain: Option<&Terrain>,
+    tiles: Option<&TileOwnership>,
+    def: BuildingDefId,
+    pos: Vec2,
+    rot: f32,
+    ignore: Option<crate::model::BuildingId>,
+) -> Result<PlacementPlan, BuildingError> {
     if !cp_core::sane_point(pos) || !rot.is_finite() || rot.abs() > 1.0e4 {
         return Err(BuildingError::BadCoordinates);
     }
@@ -130,7 +150,10 @@ pub fn validate_free_placement(
         }
     }
 
-    for (_, b) in buildings.iter() {
+    for (id, b) in buildings.iter() {
+        if Some(id) == ignore {
+            continue;
+        }
         let other = b.footprint_polygon();
         let (olo, ohi) = quad_aabb(&other);
         if ohi.x < lo.x || olo.x > hi.x || ohi.y < lo.y || olo.y > hi.y {

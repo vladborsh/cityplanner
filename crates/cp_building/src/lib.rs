@@ -9,9 +9,13 @@ pub mod model;
 pub mod spawn;
 
 pub use command::{
-    BuildingCommand, BuildingError, PlacementPlan, apply, oriented_lot, validate_placement,
+    BuildingCommand, BuildingError, MOVE_COST_FRACTION, PlacementPlan, apply, oriented_lot,
+    validate_placement, validate_placement_except,
 };
-pub use free::{ROAD_CLEARANCE_M, is_free_standing, sync_blockers, validate_free_placement};
+pub use free::{
+    ROAD_CLEARANCE_M, is_free_standing, sync_blockers, validate_free_placement,
+    validate_free_placement_except,
+};
 pub use grid::{BuildingGrid, burn, cells_under_lot, demolish_building, held_cells};
 pub use level::{rebuild, rebuild_candidate};
 pub use model::{

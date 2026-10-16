@@ -7,8 +7,8 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 use bevy_math::Vec2;
 use cp_building::{
-    BuildingError, BuildingFlags, BuildingId, BuildingState, footprint_quad, is_free_standing,
-    validate_free_placement, validate_placement,
+    BuildingError, BuildingFlags, BuildingId, BuildingState, MOVE_COST_FRACTION, footprint_quad,
+    is_free_standing, validate_free_placement_except, validate_placement_except,
 };
 use cp_content::{BuildingDefId, ContentDb, ServiceKind, ServiceSite};
 use cp_core::Cost;
@@ -31,9 +31,31 @@ pub struct BuildingTool {
     pub quarters: u8,
     /// Free turn of a free-standing type, radians in `[0, TAU)`.
     pub free_rot: f32,
+    /// The placed building this ghost carries to a new spot (T-177); `None` when placing a
+    /// new one. Its own cells and rectangle are no obstacle to it.
+    pub moving: Option<BuildingId>,
 }
 
 impl BuildingTool {
+    /// Picks `id` up: the ghost is a building of its type with its turn, and a click sends
+    /// `Move` instead of `Place`. `false` (nothing changes) for a building that is gone or not
+    /// a service building.
+    pub fn start_move(&mut self, view: &SimView, id: BuildingId) -> bool {
+        let Some((b, db)) = view.buildings.get(id).zip(view.content.as_deref()) else {
+            return false;
+        };
+        if db.building(b.def).service.is_none() {
+            return false;
+        }
+        *self = Self {
+            def: Some(b.def),
+            quarters: 0,
+            free_rot: b.rot.rem_euclid(TAU),
+            moving: Some(id),
+        };
+        true
+    }
+
     /// T key for a type on a road: next quarter turn.
     pub fn rotate(&mut self) {
         self.quarters = (self.quarters + 1) % 4;
@@ -211,6 +233,16 @@ pub fn connection_hint(view: &SimView, def: BuildingDefId, pos: Vec2) -> Option<
     })
 }
 
+/// What the ghost shows as the price: the placement price, or for a move its share
+/// ([`MOVE_COST_FRACTION`]).
+fn price(db: &ContentDb, def: BuildingDefId, tool: &BuildingTool, placing: Cost) -> Cost {
+    if tool.moving.is_some() {
+        Cost::from_units(db.building(def).cost * MOVE_COST_FRACTION)
+    } else {
+        placing
+    }
+}
+
 /// The ghost for `tool` with the cursor at `hover`; `None` without a selected type or content.
 pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<PlacementGhost> {
     let def = tool.def?;
@@ -218,8 +250,13 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
     if is_free_standing(db, def) {
         return Some(free_preview(view, db, tool, def, hover));
     }
+    let held = tool
+        .moving
+        .and_then(|id| view.buildings.get(id))
+        .map(|b| cp_building::held_cells(&view.zones, b))
+        .unwrap_or_default();
     Some(
-        match validate_placement(
+        match validate_placement_except(
             db,
             &view.zones,
             &view.net,
@@ -228,11 +265,12 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
             def,
             hover,
             tool.rot(),
+            &held,
         ) {
             Ok(plan) => PlacementGhost {
                 cells: plan.cells(),
                 valid: true,
-                cost: Some(plan.cost),
+                cost: Some(price(db, def, tool, plan.cost)),
                 ..Default::default()
             },
             Err(e) => PlacementGhost {
@@ -270,7 +308,7 @@ fn free_preview(
         polygon: footprint_quad(pos, rot, w, d),
         hint: connection_hint(view, def, pos),
     };
-    match validate_free_placement(
+    match validate_free_placement_except(
         db,
         &view.zones,
         &view.net,
@@ -280,10 +318,11 @@ fn free_preview(
         def,
         pos,
         rot,
+        tool.moving,
     ) {
         Ok(plan) => PlacementGhost {
             valid: true,
-            cost: Some(plan.cost),
+            cost: Some(price(db, def, tool, plan.cost)),
             free: Some(free),
             ..Default::default()
         },
@@ -356,6 +395,7 @@ mod tests {
             def: c.building_id("coal_power_plant"),
             quarters: 0,
             free_rot: 0.0,
+            moving: None,
         };
         let view = sim.view();
         let near = Vec2::new(3100.0, 3012.0);
@@ -378,6 +418,7 @@ mod tests {
             def: c.building_id("coal_power_plant"),
             quarters: 0,
             free_rot: 0.0,
+            moving: None,
         };
         for _ in 0..4 {
             tool.rotate();

@@ -62,6 +62,7 @@ impl SimCommand {
             | SimCommand::Net(NetCommand::RemovePart { .. })
             | SimCommand::Net(NetCommand::ToggleTrafficLight { .. })
             | SimCommand::Building(BuildingCommand::Demolish { .. })
+            | SimCommand::Building(BuildingCommand::Move { .. })
             | SimCommand::Zone(_)
             | SimCommand::Utility(_)
             | SimCommand::Economy(_)

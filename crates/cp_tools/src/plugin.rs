@@ -179,6 +179,19 @@ impl ToolState {
         self.line_notice = None;
         self.line_key = None;
         self.stop_highlight = None;
+        self.building.moving = None;
+    }
+
+    /// Picks the service building `id` up to carry it elsewhere (T-177): the placement tool
+    /// with its type, its rules and its ghost, ending in `Move`.
+    pub fn begin_move(&mut self, view: &SimView, id: BuildingId) -> bool {
+        let mut tool = BuildingTool::default();
+        if !tool.start_move(view, id) {
+            return false;
+        }
+        self.select(ActiveTool::Place);
+        self.building = tool;
+        true
     }
 }
 
@@ -734,6 +747,15 @@ pub fn tool_click(
     mut state: ResMut<ToolState>,
     mut outbox: ResMut<CommandOutbox>,
 ) {
+    // A right click puts a picked-up building back where it stood.
+    if buttons.just_pressed(MouseButton::Right)
+        && !capture.pointer_blocked()
+        && state.active == ActiveTool::Place
+        && state.building.moving.is_some()
+    {
+        state.select(ActiveTool::None);
+        return;
+    }
     if buttons.just_released(MouseButton::Left) {
         state.zone.end_stroke();
         state.district.end_stroke();
@@ -822,11 +844,20 @@ pub fn tool_click(
                     Some(f) => (f.pos, f.rot),
                     None => (p, state.building.rot()),
                 };
-                outbox.push(SimCommand::Building(BuildingCommand::Place {
-                    def,
-                    pos,
-                    rot,
-                }));
+                if let Some(building) = state.building.moving {
+                    outbox.push(SimCommand::Building(BuildingCommand::Move {
+                        building,
+                        pos,
+                        rot,
+                    }));
+                    state.select(ActiveTool::None);
+                } else {
+                    outbox.push(SimCommand::Building(BuildingCommand::Place {
+                        def,
+                        pos,
+                        rot,
+                    }));
+                }
             }
         }
         ActiveTool::Utility => {
