@@ -2,7 +2,7 @@
 //! Writes `flatlands` and `river_valley` (map.ron, height.png, water.png) under
 //! `assets/maps/` by default. Fixed seeds; output is committed, tests never regenerate it.
 
-use std::fs::{self, File};
+use std::fs;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
@@ -103,8 +103,44 @@ fn flatlands() -> Map {
     }
 }
 
-/// Hills with a meandering river running north to south.
+/// The entry highway's centre line of `river_valley`: from the north edge down the dry west
+/// bank of the river to the start tile, a long gentle curve (every turn is a few degrees).
+fn valley_entry_path() -> Vec<(f32, f32)> {
+    let x_at = |z: f32| 5120.0 - 20.0 * z / 4400.0 + 40.0 * (z / 1100.0).sin();
+    let mut path: Vec<(f32, f32)> = (0..55)
+        .map(|i| {
+            let z = i as f32 * 80.0;
+            (x_at(z), z)
+        })
+        .collect();
+    path[0] = (5120.0, 0.0);
+    path.push((x_at(4400.0), 4400.0));
+    path
+}
+
+/// How much of a point is a meadow, `0..=1` (T-180): wide flat clearings. Rules every new map
+/// has to keep (the tests of this crate check them): the start tile is a meadow, the entry
+/// highway runs through one, and meadows cover about half of the rest as clearings of
+/// 600-1500 m between the hills.
+fn meadow(x: f32, z: f32, entry: &[(f32, f32)]) -> f32 {
+    let clearings = smoothstep(0.42, 0.52, fbm(x, z, 1400.0, SEED + 60));
+    let start = 1.0
+        - smoothstep(
+            1450.0,
+            2200.0,
+            ((x - 5120.0).powi(2) + (z - 5120.0).powi(2)).sqrt(),
+        );
+    let road = entry
+        .iter()
+        .map(|&(px, pz)| ((x - px).powi(2) + (z - pz).powi(2)).sqrt())
+        .fold(f32::MAX, f32::min);
+    let corridor = 1.0 - smoothstep(200.0, 500.0, road);
+    clearings.max(start).max(corridor)
+}
+
+/// Hills and a meandering river running north to south, with wide meadows between the hills.
 fn river_valley() -> Map {
+    let entry = valley_entry_path();
     let mut height = vec![0u16; GRID * GRID];
     let mut water = vec![0u16; GRID * GRID];
     for iz in 0..GRID {
@@ -114,10 +150,16 @@ fn river_valley() -> Map {
             let d = (x - cx).abs();
             let floor = 80.0 - z * 0.004;
             let hills = 140.0 * fbm(x, z, 1800.0, SEED + 30) + 20.0 * fbm(x, z, 250.0, SEED + 40);
-            let carve = smoothstep(30.0, 140.0, d);
+            // Higher ground towards the edges of the map.
+            let edge = (((x - 5120.0).powi(2) + (z - 5120.0).powi(2)).sqrt() - 3500.0) / 1500.0;
+            let rim = 90.0 * smoothstep(0.0, 1.0, edge) * fbm(x, z, 900.0, SEED + 90);
+            let carve = smoothstep(30.0, 220.0, d);
             let span = smoothstep(120.0, 1600.0, d);
-            let ground =
-                floor - 4.0 + (4.0 + 6.0 * fbm(x, z, 400.0, SEED + 50) + hills * span) * carve;
+            let m = meadow(x, z, &entry);
+            // A meadow is a few metres of slow swell (well under 1 %) and a little grain.
+            let gentle = 3.0 * fbm(x, z, 1500.0, SEED + 70) + 0.4 * fbm(x, z, 120.0, SEED + 80);
+            let rough = 6.0 * fbm(x, z, 400.0, SEED + 50) + (hills + rim) * span;
+            let ground = floor - 4.0 + (4.0 + gentle + rough * (1.0 - m)) * carve;
             let surface = floor - 1.0;
             height[iz * GRID + ix] = to_u16(ground);
             if ground < surface && d < 120.0 {
@@ -131,89 +173,27 @@ fn river_valley() -> Map {
             sea_level: 5.0,
             start_tile: (2, 2),
             external_connections: vec![(5120.0, 0.0), (5120.0, 10240.0), (0.0, 5120.0)],
-            // Winds around the hills and the river: every leg turns at most 30 degrees, no
-            // water, grade under 6 % (found by a search over the generated terrain).
-            entry_road: Some(entry_road(
-                0,
-                vec![
-                    (5120.00, 0.00),
-                    (5133.89, 78.78),
-                    (5147.78, 157.56),
-                    (5175.14, 232.74),
-                    (5189.03, 311.52),
-                    (5202.92, 390.30),
-                    (5216.81, 469.08),
-                    (5230.70, 547.86),
-                    (5244.59, 626.64),
-                    (5258.48, 705.42),
-                    (5272.37, 784.20),
-                    (5286.26, 862.98),
-                    (5300.15, 941.76),
-                    (5314.04, 1020.54),
-                    (5327.93, 1099.32),
-                    (5341.82, 1178.10),
-                    (5341.82, 1258.10),
-                    (5341.82, 1338.10),
-                    (5341.82, 1418.10),
-                    (5341.82, 1498.10),
-                    (5327.93, 1576.88),
-                    (5314.04, 1655.66),
-                    (5300.15, 1734.44),
-                    (5286.26, 1813.22),
-                    (5272.37, 1892.00),
-                    (5258.48, 1970.78),
-                    (5244.59, 2049.56),
-                    (5230.70, 2128.34),
-                    (5216.81, 2207.12),
-                    (5216.81, 2287.12),
-                    (5216.81, 2367.12),
-                    (5216.81, 2447.12),
-                    (5216.81, 2527.12),
-                    (5216.81, 2607.12),
-                    (5216.81, 2687.12),
-                    (5230.70, 2765.90),
-                    (5258.06, 2841.08),
-                    (5285.42, 2916.26),
-                    (5299.31, 2995.04),
-                    (5313.20, 3073.82),
-                    (5340.56, 3149.00),
-                    (5391.98, 3210.28),
-                    (5443.40, 3271.56),
-                    (5483.40, 3340.84),
-                    (5510.76, 3416.02),
-                    (5524.65, 3494.80),
-                    (5538.54, 3573.58),
-                    (5565.90, 3648.76),
-                    (5617.32, 3710.04),
-                    (5644.68, 3785.22),
-                    (5658.57, 3864.00),
-                    (5658.57, 3944.00),
-                    (5658.57, 4024.00),
-                    (5672.46, 4102.78),
-                    (5686.35, 4181.56),
-                    (5686.35, 4261.56),
-                    (5686.35, 4341.56),
-                    (5686.35, 4421.56),
-                    (5679.40, 4460.95),
-                ],
-            )),
+            entry_road: Some(entry_road(0, entry)),
         },
         height,
         water,
     }
 }
 
-fn write_png16(path: &Path, data: &[u16]) {
-    let mut enc = png::Encoder::new(
-        BufWriter::new(File::create(path).unwrap()),
-        GRID as u32,
-        GRID as u32,
-    );
+fn png16_bytes(data: &[u16]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut enc = png::Encoder::new(BufWriter::new(&mut out), GRID as u32, GRID as u32);
     enc.set_color(png::ColorType::Grayscale);
     enc.set_depth(png::BitDepth::Sixteen);
     let mut w = enc.write_header().unwrap();
     let bytes: Vec<u8> = data.iter().flat_map(|v| v.to_be_bytes()).collect();
     w.write_image_data(&bytes).unwrap();
+    w.finish().unwrap();
+    out
+}
+
+fn write_png16(path: &Path, data: &[u16]) {
+    fs::write(path, png16_bytes(data)).unwrap();
 }
 
 fn write_map(root: &Path, map: &Map) {
@@ -237,5 +217,104 @@ fn main() {
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps"));
     for map in [flatlands(), river_valley()] {
         write_map(&root, &map);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy_math::Vec2;
+    use cp_terrain::{TILE_SIZE, Terrain};
+
+    /// Slope up to which ground is "flat" for building (T-180).
+    const FLAT_SLOPE: f32 = 0.04;
+    /// Smallest share of the start tile that is flat, and of its 3x3-lot windows (24 m) that
+    /// are flat everywhere. Every map the generator writes has to keep both.
+    const MIN_FLAT_SHARE: f32 = 0.70;
+    const MIN_OPEN_3X3_SHARE: f32 = 0.50;
+
+    fn terrain(map: &Map) -> Terrain {
+        Terrain::from_samples(map.meta.clone(), &map.height, &map.water).unwrap()
+    }
+
+    /// `(flat share of points, share of 24 m windows flat throughout)` of the start tile.
+    fn flat_shares(t: &Terrain) -> (f32, f32) {
+        let (tx, tz) = t.meta().start_tile;
+        let (x0, z0) = (f32::from(tx) * TILE_SIZE, f32::from(tz) * TILE_SIZE);
+        let flat = |x: f32, z: f32| {
+            let h = t.height(Vec2::new(x, z));
+            [(8.0, 0.0), (0.0, 8.0)]
+                .iter()
+                .all(|(dx, dz)| (t.height(Vec2::new(x + dx, z + dz)) - h).abs() / 8.0 <= FLAT_SLOPE)
+                && !t.is_water(Vec2::new(x, z))
+        };
+        let n = (TILE_SIZE / 16.0) as usize;
+        let mut yes = 0;
+        for i in 0..n {
+            for j in 0..n {
+                yes += usize::from(flat(x0 + i as f32 * 16.0, z0 + j as f32 * 16.0));
+            }
+        }
+        let w = (TILE_SIZE / 24.0) as usize - 1;
+        let mut open = 0;
+        for i in 0..w {
+            for j in 0..w {
+                let (wx, wz) = (x0 + i as f32 * 24.0, z0 + j as f32 * 24.0);
+                let all = (0..=3)
+                    .all(|a| (0..=3).all(|b| flat(wx + a as f32 * 8.0, wz + b as f32 * 8.0)));
+                open += usize::from(all);
+            }
+        }
+        (yes as f32 / (n * n) as f32, open as f32 / (w * w) as f32)
+    }
+
+    #[test]
+    fn every_map_has_a_flat_start_tile_and_a_valid_entry_road() {
+        for map in [flatlands(), river_valley()] {
+            let t = terrain(&map);
+            let (flat, open) = flat_shares(&t);
+            println!("{}: flat {flat:.2}, open 3x3 {open:.2}", map.meta.name);
+            assert!(
+                flat >= MIN_FLAT_SHARE,
+                "{}: flat share {flat}",
+                map.meta.name
+            );
+            assert!(
+                open >= MIN_OPEN_3X3_SHARE,
+                "{}: open 3x3 share {open}",
+                map.meta.name
+            );
+            t.validate_entry()
+                .unwrap_or_else(|e| panic!("{}: {e}", map.meta.name));
+        }
+    }
+
+    /// The committed files are what the generator writes (nothing edits them by hand).
+    #[test]
+    fn the_generator_reproduces_the_committed_maps() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps");
+        for map in [flatlands(), river_valley()] {
+            let dir = root.join(&map.meta.name);
+            assert_eq!(
+                fs::read(dir.join("height.png")).unwrap(),
+                png16_bytes(&map.height),
+                "{} height",
+                map.meta.name
+            );
+            assert_eq!(
+                fs::read(dir.join("water.png")).unwrap(),
+                png16_bytes(&map.water),
+                "{} water",
+                map.meta.name
+            );
+            let ron =
+                ron::ser::to_string_pretty(&map.meta, ron::ser::PrettyConfig::default()).unwrap();
+            assert_eq!(
+                fs::read_to_string(dir.join("map.ron")).unwrap(),
+                ron,
+                "{} meta",
+                map.meta.name
+            );
+        }
     }
 }

@@ -384,3 +384,50 @@ fn move_in_cars_drive_from_the_outside_node_and_the_household_arrives_with_them(
     };
     assert_eq!(run(), run(), "two runs differ");
 }
+
+/// T-180: on river_valley the start tile is open ground: from the end of the entry stub a
+/// `basic_2l` street of 200 m builds in four directions.
+#[test]
+fn river_valley_streets_build_in_four_directions_from_the_stub_end() {
+    use cp_net::{ElevationMode, NetCommand, RoadPath};
+    use cp_sim::SimCommand;
+
+    let db = content();
+    let terrain = map("river_valley");
+    let e = terrain.meta().entry_road.clone().unwrap();
+    let mut sim = sim_on(Arc::clone(&terrain));
+    sim.new_game().unwrap();
+    sim.tick_once();
+    let (end, dir) = (e.stub_end(), e.direction());
+    let left = Vec2::new(-dir.y, dir.x);
+    let road = db.road_id("basic_2l").unwrap();
+    for (name, d) in [
+        ("ahead", dir),
+        ("left", left),
+        ("right", -left),
+        ("ahead-left", (dir + left).normalize()),
+    ] {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road,
+                path: RoadPath::Straight {
+                    from: end,
+                    to: end + d * 200.0,
+                },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.apply_due_commands();
+        let out: Vec<_> = sim
+            .world_mut()
+            .resource_mut::<bevy_ecs::message::Messages<cp_core::CommandOutcome>>()
+            .drain()
+            .collect();
+        assert!(
+            out.last().unwrap().result.is_ok(),
+            "{name}: {:?}",
+            out.last().unwrap().result
+        );
+    }
+}

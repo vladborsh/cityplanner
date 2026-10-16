@@ -4248,6 +4248,7 @@ dependencies = [
 name = "mapgen"
 version = "0.0.0"
 dependencies = [
+ "bevy_math",
  "cp_terrain",
  "png 0.17.16",
  "ron",

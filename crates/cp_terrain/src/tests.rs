@@ -388,7 +388,8 @@ fn a_steep_entry_road_is_an_error() {
 fn map_hashes_of_the_committed_maps_are_unchanged() {
     let hash = |m: &str| Terrain::load(&map_dir(m)).unwrap().map_hash();
     assert_eq!(hash("flatlands"), 0x197e_0a80_bc6b_e309);
-    assert_eq!(hash("river_valley"), 0xff1f_12b7_9cb5_2345);
+    // river_valley: re-recorded by T-180 (meadows and a new entry road: the terrain changed).
+    assert_eq!(hash("river_valley"), 0xf490_f8bb_b4e1_15fd);
     // And the hash ignores the entry road itself.
     let a = with_entry(0.0, Some(straight())).map_hash();
     let b = with_entry(0.0, None).map_hash();
