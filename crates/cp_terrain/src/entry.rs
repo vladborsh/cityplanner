@@ -3,7 +3,7 @@
 
 use bevy_math::Vec2;
 
-use crate::{EntryRoad, MAP_SIZE, TILE_SIZE, Terrain};
+use crate::{EntryRail, EntryRoad, MAP_SIZE, TILE_SIZE, Terrain};
 
 /// Distance of the junction from the start tile's edge, at least, metres.
 pub const MIN_EDGE_MARGIN: f32 = 64.0;
@@ -215,6 +215,104 @@ impl Terrain {
                     }
                     prev = Some(h);
                 }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Steepest terrain along the entry railway (the `max_slope` of `rail_2t`).
+pub const RAIL_MAX_SLOPE: f32 = 0.04;
+
+impl EntryRail {
+    pub fn points(&self) -> Vec<Vec2> {
+        self.path.iter().map(|&(x, z)| Vec2::new(x, z)).collect()
+    }
+
+    /// The dead end inside the start tile: the last point.
+    pub fn dead_end(&self) -> Vec2 {
+        let (x, z) = *self.path.last().expect("path has points");
+        Vec2::new(x, z)
+    }
+
+    pub fn length(&self) -> f32 {
+        self.points().windows(2).map(|w| w[0].distance(w[1])).sum()
+    }
+}
+
+impl Terrain {
+    /// Checks the map's `entry_rail`, if it has one: starts on the map edge, ends inside the
+    /// start tile, gentle bends, dry and gentle ground. `Ok` without one.
+    pub fn validate_entry_rail(&self) -> Result<(), String> {
+        let meta = self.meta();
+        let Some(e) = meta.entry_rail.as_ref() else {
+            return Ok(());
+        };
+        let err = |m: String| Err(format!("entry_rail: {m}"));
+        if e.path.len() < 2 || e.path.iter().any(|p| !p.0.is_finite() || !p.1.is_finite()) {
+            return err("path needs at least two finite points".into());
+        }
+        let on_edge = |v: f32| v.abs() < 0.01 || (v - MAP_SIZE).abs() < 0.01;
+        let (sx, sz) = e.path[0];
+        if !on_edge(sx) && !on_edge(sz) {
+            return err(format!(
+                "the path starts at ({sx}, {sz}), not on the map edge"
+            ));
+        }
+        let pts = e.points();
+        if pts.windows(2).any(|w| w[0].distance(w[1]) < 8.0) {
+            return err("every leg of the path must be at least 8 m long".into());
+        }
+        for (i, w) in pts.windows(3).enumerate() {
+            let (a, b) = (w[0] - w[1], w[2] - w[1]);
+            let angle = a.angle_to(b).abs().to_degrees();
+            if angle < MIN_LEG_ANGLE_DEG {
+                return err(format!(
+                    "angle {angle:.0}° at path point {} is sharper than {MIN_LEG_ANGLE_DEG:.0}°",
+                    i + 1
+                ));
+            }
+        }
+        let tile = meta.start_tile;
+        let end = e.dead_end();
+        if !in_tile(end, tile, MIN_EDGE_MARGIN) {
+            return err(format!(
+                "the dead end ({}, {}) must lie inside start tile {tile:?}, at least {MIN_EDGE_MARGIN:.0} m from its edge",
+                end.x, end.y
+            ));
+        }
+        // Dry within 12 m of the centre line, gentle along it.
+        for w in pts.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let len = a.distance(b);
+            let n = (len / STEP).ceil().max(1.0) as usize;
+            let t = (b - a).normalize_or_zero();
+            let side = Vec2::new(t.y, -t.x);
+            let mut prev: Option<f32> = None;
+            for k in 0..=n {
+                let q = a.lerp(b, k as f32 / n as f32);
+                for off in [-12.0, 0.0, 12.0] {
+                    if self.is_water(q + side * off) {
+                        return err(format!(
+                            "water at ({:.0}, {:.0}); pick a path that does not cross it",
+                            q.x, q.y
+                        ));
+                    }
+                }
+                let h = self.height(q);
+                if let Some(ph) = prev {
+                    let slope = (h - ph).abs() / (len / n as f32);
+                    if slope > RAIL_MAX_SLOPE {
+                        return err(format!(
+                            "slope {:.0}% at ({:.0}, {:.0}) is over {:.0}%",
+                            slope * 100.0,
+                            q.x,
+                            q.y,
+                            RAIL_MAX_SLOPE * 100.0
+                        ));
+                    }
+                }
+                prev = Some(h);
             }
         }
         Ok(())

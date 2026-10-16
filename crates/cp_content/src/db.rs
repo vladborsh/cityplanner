@@ -454,12 +454,17 @@ impl ContentDb {
             let ok = roads
                 .get_id(&t.road)
                 .map(|r| &roads.defs[r as usize])
-                .is_some_and(|r| r.class == RoadClass::Rail && r.tunnel.is_some());
+                .is_some_and(|r| {
+                    r.class == RoadClass::Rail && (t.depth <= 0.0 || r.tunnel.is_some())
+                });
             if !ok {
                 errors.push(ContentError::new(
                     &buildings.files[i],
                     Some("track.road"),
-                    format!("`{}` is not a Rail road with a tunnel variant", t.road),
+                    format!(
+                        "`{}` is not a Rail road (with a tunnel variant when depth is above 0)",
+                        t.road
+                    ),
                 ));
             }
         }

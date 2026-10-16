@@ -32,7 +32,9 @@ pub use plan::{Leg, LinePlan, LinePlans, PlanError, plan_line, plan_metro};
 pub use riders::{choose_transit, run_riders};
 pub use rules::{STOP_NODE_CLEARANCE, STOP_SNAP, STOP_SPACING, StopError, check_road_stop};
 pub use run::run_lines;
-pub use station::{add_station, platform_segment, remove_station, station_stop};
+pub use station::{
+    add_station, platform_segment, remove_station, station_reaches_outside, station_stop,
+};
 pub use sync::{rebind_stops, update_transit};
 pub use tourists::{TOURISM_STREAM, Tourist, TouristPhase, Tourists, run_tourists};
 pub use trains::{MetroTrain, metro_trains};

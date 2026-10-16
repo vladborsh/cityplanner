@@ -53,6 +53,15 @@ pub fn sections(content: &ContentDb) -> Vec<Section> {
         .filter(|g| g.kind == ServiceKind::Transit)
         .flat_map(|g| g.cards)
         .partition(|c| content.building(c.id).track.is_some());
+    // A station with its platform on the ground belongs to the trains (T-166), one under the
+    // ground to the metro.
+    let (trains, stations): (Vec<Card>, Vec<Card>) = stations.into_iter().partition(|c| {
+        content
+            .building(c.id)
+            .track
+            .as_ref()
+            .is_some_and(|t| t.depth <= 0.0)
+    });
     let mut out = Vec::new();
     if !depots.is_empty() || content.roads().next().is_some() {
         out.push(Section {
@@ -63,21 +72,34 @@ pub fn sections(content: &ContentDb) -> Vec<Section> {
         });
     }
     // The track of the first station that lays one under ground: its road, at its depth.
-    let track = stations.iter().find_map(|c| {
-        let spec = content.building(c.id).track.as_ref()?;
-        let road = content.road_id(&spec.road)?;
-        let def = content.road(road);
-        (def.class == RoadClass::Rail && def.tunnel.is_some()).then(|| TrackTool {
-            road,
-            name: def.name.clone(),
-            depth: spec.depth,
+    let track_of = |cards: &[Card], tunnel: bool| {
+        cards.iter().find_map(|c| {
+            let spec = content.building(c.id).track.as_ref()?;
+            let road = content.road_id(&spec.road)?;
+            let def = content.road(road);
+            (def.class == RoadClass::Rail && (!tunnel || def.tunnel.is_some())).then(|| TrackTool {
+                road,
+                name: def.name.clone(),
+                depth: spec.depth,
+            })
         })
-    });
+    };
+    let track = track_of(&stations, true);
+    let train_track = track_of(&trains, false);
     if let Some(track) = track {
         out.push(Section {
             mode: TransitMode::Metro,
             cards: stations,
             line_tool: true,
+            track: Some(track),
+        });
+    }
+    // The line tool of the trains comes with T-167.
+    if let Some(track) = train_track {
+        out.push(Section {
+            mode: TransitMode::Train,
+            cards: trains,
+            line_tool: false,
             track: Some(track),
         });
     }
@@ -115,10 +137,10 @@ pub fn transit_panel(
     for section in sections(content) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            let icon = if section.mode == TransitMode::Metro {
-                Icon::MetroTrack
-            } else {
-                Icon::LineBus
+            let icon = match section.mode {
+                TransitMode::Metro => Icon::MetroTrack,
+                TransitMode::Train => Icon::RailTrack,
+                _ => Icon::LineBus,
             };
             icon.show(ui, Sizes::SECTION_ICON);
             ui.strong(section.title());
@@ -128,13 +150,30 @@ pub fn transit_panel(
             if let Some(track) = &section.track {
                 let on = tools.active == ActiveTool::Road
                     && tools.road.road == Some(track.road)
-                    && tools.road.tunnel_depth.is_some();
-                if tool_tile(ui, TileIcon::Icon(Icon::MetroTrack), "Metro track", on)
-                    .on_hover_text(format!(
-                        "{}: click two points to dig a tunnel {:.0} m deep, and on to go on. \
-                         Esc ends the chain. Join the platforms of the stations.",
-                        track.name, track.depth
-                    ))
+                    && tools.road.tunnel_depth.is_some() == (track.depth > 0.0);
+                let (icon, name, hint) = if track.depth > 0.0 {
+                    (
+                        Icon::MetroTrack,
+                        "Metro track",
+                        format!(
+                            "{}: click two points to dig a tunnel {:.0} m deep, and on to go on. \
+                             Esc ends the chain. Join the platforms of the stations.",
+                            track.name, track.depth
+                        ),
+                    )
+                } else {
+                    (
+                        Icon::RailTrack,
+                        "Railway",
+                        format!(
+                            "{}: click two points to lay a track on the ground, and on to go on. \
+                             Esc ends the chain. Join the railway from the map edge to a station.",
+                            track.name
+                        ),
+                    )
+                };
+                if tool_tile(ui, TileIcon::Icon(icon), name, on)
+                    .on_hover_text(hint)
                     .clicked()
                 {
                     if on {
@@ -215,7 +254,7 @@ pub fn transit_panel(
 /// Puts the road tool on the metro track: its type, in a tunnel at the depth of the platforms.
 pub fn select_track(tools: &mut ToolState, track: &TrackTool) {
     tools.road.road = Some(track.road);
-    tools.road.tunnel_depth = Some(track.depth);
+    tools.road.tunnel_depth = (track.depth > 0.0).then_some(track.depth);
     tools.road.level = 0;
 }
 
@@ -289,7 +328,7 @@ mod tests {
     fn the_bus_section_has_the_line_tool_and_the_depot_and_the_metro_one_the_track_and_stations() {
         let c = content();
         let s = sections(&c);
-        assert_eq!(s.len(), 2, "bus and metro; train comes with T-166");
+        assert_eq!(s.len(), 3, "bus, metro and train");
         assert_eq!(s[0].mode, TransitMode::Bus);
         assert!(s[0].line_tool && s[0].track.is_none());
         assert!(s[0].cards.iter().any(|c| c.name == "Bus Depot"));
@@ -304,6 +343,16 @@ mod tests {
         assert_eq!(c.road(track.road).id, "metro_track");
         assert_eq!(track.depth, 12.0);
         assert!(has_tools(Some(&c)) && !has_tools(None));
+        // T-166: the trains have the railway and the station, no line tool yet.
+        assert_eq!(s[2].mode, TransitMode::Train);
+        assert!(!s[2].line_tool);
+        assert!(s[2].cards.iter().any(|c| c.name == "Train Station"));
+        assert!(!s[1].cards.iter().any(|c| c.name == "Train Station"));
+        let rail = s[2].track.as_ref().expect("the railway tool");
+        assert_eq!(
+            (c.road(rail.road).id.as_str(), rail.depth),
+            ("rail_2t", 0.0)
+        );
     }
 
     #[test]

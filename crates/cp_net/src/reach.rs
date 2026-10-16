@@ -15,6 +15,7 @@ use bevy_math::{Vec2, Vec3};
 
 use crate::graph::NetGraph;
 use crate::model::{NodeId, NodeKind, SegmentId};
+use cp_content::LaneKind;
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct EntryReach {
@@ -43,13 +44,18 @@ impl EntryReach {
             .min_by(f32::total_cmp)
     }
 
-    /// Computes the reach of `graph`.
+    /// Computes the reach of `graph` over its roads: `Outside` nodes of a railway (T-166) and
+    /// the rails themselves are left to [`RailReach`].
     pub fn compute(graph: &NetGraph) -> Self {
+        Self::compute_for(graph, false)
+    }
+
+    fn compute_for(graph: &NetGraph, rail: bool) -> Self {
         let mut out = Self::default();
         let mut seen: BTreeSet<NodeId> = BTreeSet::new();
         let mut stack: Vec<NodeId> = Vec::new();
         for (id, n) in graph.nodes() {
-            if n.kind == NodeKind::Outside {
+            if n.kind == NodeKind::Outside && node_is_rail(graph, n) == rail {
                 out.outside.push(n.pos);
                 seen.insert(id);
                 stack.push(id);
@@ -58,7 +64,7 @@ impl EntryReach {
         while let Some(id) = stack.pop() {
             let Some(n) = graph.node(id) else { continue };
             for &s in &n.segments {
-                if !out.segments.insert(s) {
+                if is_rail_segment(graph, s) != rail || !out.segments.insert(s) {
                     continue;
                 }
                 if let Some(seg) = graph.segment(s) {
@@ -71,6 +77,52 @@ impl EntryReach {
             }
         }
         out
+    }
+}
+
+/// Whether segment `seg` is a railway (its lanes are rails).
+pub fn is_rail_segment(graph: &NetGraph, seg: SegmentId) -> bool {
+    graph
+        .segment(seg)
+        .and_then(|s| s.lanes.first())
+        .and_then(|&l| graph.lane(l))
+        .is_some_and(|l| l.kind == LaneKind::Rail)
+}
+
+/// Whether the first segment of `node` is a railway: an `Outside` node of the railway.
+pub fn node_is_rail(graph: &NetGraph, node: &crate::model::Node) -> bool {
+    node.segments
+        .first()
+        .is_some_and(|&s| is_rail_segment(graph, s))
+}
+
+/// Which rails connect to the map edge (T-166): the flood fill of [`EntryReach`] over the
+/// railway from the `Outside` nodes of rails. Derived, not saved, not hashed.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct RailReach(pub EntryReach);
+
+impl RailReach {
+    pub fn is_active(&self) -> bool {
+        self.0.is_active()
+    }
+
+    /// Whether rail segment `seg` is connected to the railway's `Outside` node.
+    pub fn reaches(&self, seg: SegmentId) -> bool {
+        self.0.reaches(seg)
+    }
+
+    pub fn compute(graph: &NetGraph) -> Self {
+        Self(EntryReach::compute_for(graph, true))
+    }
+}
+
+/// `Network`-phase system: recomputes [`RailReach`] when the graph changed.
+pub fn update_rail_reach(graph: Res<NetGraph>, mut reach: ResMut<RailReach>) {
+    if graph.is_changed() || reach.is_added() {
+        let next = RailReach::compute(&graph);
+        if *reach != next {
+            *reach = next;
+        }
     }
 }
 

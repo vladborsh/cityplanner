@@ -1,0 +1,15 @@
+// Silhouette of the train station (T-166): the pavilion of the metro station in brick.
+Style((
+    id: "service_train_station",
+    massing: MetroStation,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (0.9, 1.0),
+    palette: (
+        walls: [(0.60, 0.34, 0.26), (0.55, 0.32, 0.25)],
+        roof: [(0.28, 0.30, 0.34)],
+        trim: [(0.92, 0.80, 0.55)],
+        glass: (0.30, 0.36, 0.44),
+    ),
+    facade: Curtain,
+))

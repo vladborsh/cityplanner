@@ -232,6 +232,7 @@ fn lake_terrain() -> cp_terrain::Terrain {
         start_tile: (1, 1),
         external_connections: vec![],
         entry_road: None,
+        entry_rail: None,
     };
     let _ = SPACING;
     Terrain::from_samples(meta, &height, &vec![0u16; GRID * GRID]).unwrap()

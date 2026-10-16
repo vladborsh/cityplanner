@@ -42,6 +42,7 @@ fn terrain(sea: f32) -> Arc<Terrain> {
         start_tile: (2, 2),
         external_connections: vec![],
         entry_road: None,
+        entry_rail: None,
     };
     Arc::new(Terrain::from_samples(meta, &vec![1000; GRID * GRID], &vec![0; GRID * GRID]).unwrap())
 }

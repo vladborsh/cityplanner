@@ -70,6 +70,22 @@ pub struct MapMeta {
     /// of [`Terrain::map_hash`].
     #[serde(default)]
     pub entry_road: Option<EntryRoad>,
+    /// The railway that enters the start tile on a new game (T-166): from a point on the map
+    /// edge to a dead end in the start tile. Optional; not part of [`Terrain::map_hash`]. A map
+    /// on disk that has one is checked on load ([`Terrain::validate_entry_rail`]).
+    #[serde(default)]
+    pub entry_rail: Option<EntryRail>,
+}
+
+/// The entry railway of a map: a line from the map edge to a dead end inside the start tile
+/// (the player lays a station on it). Its edge point is its own `Outside` node, not one of
+/// [`MapMeta::external_connections`] (those are in the map hash).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EntryRail {
+    /// Centre line from the map edge to the dead end, world `(x, z)`.
+    pub path: Vec<(f32, f32)>,
+    /// Road type id of the railway (a `Rail`-class road, `rail_2t`).
+    pub road: String,
 }
 
 /// The entry highway of a map: from an outside connection on the map edge to a junction inside
@@ -209,7 +225,8 @@ impl Terrain {
                     .into(),
             ));
         }
-        self.validate_entry().map_err(TerrainError::BadMeta)
+        self.validate_entry().map_err(TerrainError::BadMeta)?;
+        self.validate_entry_rail().map_err(TerrainError::BadMeta)
     }
 
     /// Builds terrain from raw `u16` samples (row-major, `GRID * GRID` each).

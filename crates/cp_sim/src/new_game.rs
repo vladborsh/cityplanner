@@ -1,5 +1,5 @@
 //! What a new game starts with (`architecture/system-design.md` §5.1): the entry highway from
-//! the map edge into the start tile. Only [`SimRunner::new_game`] calls it; loading a save,
+//! the map edge and the entry railway into the start tile. Only [`SimRunner::new_game`] calls it; loading a save,
 //! scenes, benches and tests start from an empty network and keep their checksums.
 
 use bevy_ecs::world::World;
@@ -16,7 +16,8 @@ impl SimRunner {
     /// the first tick.
     pub fn new_game(&mut self) -> Result<(), String> {
         self.world_mut().insert_resource(crate::Progress::START);
-        build_entry_road(self.world_mut())
+        build_entry_road(self.world_mut())?;
+        build_entry_rail(self.world_mut())
     }
 }
 
@@ -74,5 +75,45 @@ pub fn build_entry_road(world: &mut World) -> Result<(), String> {
         };
         build_unowned(world, road, path).map_err(|err| format!("entry road, {what}: {err}"))?;
     }
+    Ok(())
+}
+
+/// Builds the entry railway of the attached map (T-166): an `Outside` node at the map edge and
+/// the track from it to its dead end in the start tile. A map without `entry_rail` gets nothing.
+pub fn build_entry_rail(world: &mut World) -> Result<(), String> {
+    let content = world
+        .get_resource::<SimContent>()
+        .map(|c| c.0.clone())
+        .ok_or("entry rail: no content in the sim")?;
+    let terrain = world
+        .get_resource::<SimTerrain>()
+        .map(|t| t.0.clone())
+        .ok_or("entry rail: no terrain in the sim")?;
+    let Some(e) = terrain.meta().entry_rail.clone() else {
+        return Ok(());
+    };
+    let road = content
+        .road_id(&e.road)
+        .ok_or_else(|| format!("entry rail: road type `{}` does not exist", e.road))?;
+    if content.road(road).class != RoadClass::Rail {
+        return Err(format!("entry rail: `{}` is not a Rail-class road", e.road));
+    }
+    let pts = e.points();
+    let edge = pts[0];
+    let y = terrain.height(edge);
+    world.resource_mut::<NetGraph>().add_node(
+        Vec3::new(edge.x, y, edge.y),
+        NodeKind::Outside,
+        Elevation::Ground,
+    );
+    let path = if pts.len() == 2 {
+        RoadPath::Straight {
+            from: pts[0],
+            to: pts[1],
+        }
+    } else {
+        RoadPath::Free(pts)
+    };
+    build_unowned(world, road, path).map_err(|err| format!("entry rail: {err}"))?;
     Ok(())
 }

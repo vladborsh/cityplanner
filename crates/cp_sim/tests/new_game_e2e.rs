@@ -80,7 +80,7 @@ fn a_new_game_builds_the_entry_highway_on_every_map() {
 
         let outside: Vec<_> = graph
             .nodes()
-            .filter(|(_, n)| n.kind == NodeKind::Outside)
+            .filter(|(_, n)| n.kind == NodeKind::Outside && !cp_net::node_is_rail(graph, n))
             .collect();
         assert_eq!(outside.len(), 2, "{name}: two Outside nodes");
         for (_, n) in &outside {
@@ -180,6 +180,7 @@ fn flat_with(highway: &str, stub: &str) -> SimRunner {
             stub: stub.into(),
             stub_m: 48.0,
         }),
+        entry_rail: None,
     };
     let h = (50.0 / cp_terrain::MAX_HEIGHT * 65535.0) as u16;
     let t = Terrain::from_samples(meta, &vec![h; GRID * GRID], &vec![0; GRID * GRID]).unwrap();

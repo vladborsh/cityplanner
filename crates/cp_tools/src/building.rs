@@ -518,6 +518,7 @@ mod tests {
             start_tile: (2, 2),
             external_connections: vec![],
             entry_road: None,
+            entry_rail: None,
         };
         Arc::new(Terrain::from_samples(meta, &hs, &vec![0; GRID * GRID]).unwrap())
     }

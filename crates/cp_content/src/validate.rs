@@ -154,11 +154,11 @@ pub fn building(d: &BuildingDef) -> Problems {
     }
     if let Some(t) = &d.track {
         c.positive("track.length_m", t.length_m);
-        // One piece: no longer than the longest segment the builder leaves uncut.
-        if t.length_m > 96.0 {
-            c.bad("track.length_m", "must be at most 96 (one segment)");
+        // A platform on the ground may be a few segments long (the builder cuts it).
+        if t.length_m > 256.0 {
+            c.bad("track.length_m", "must be at most 256");
         }
-        c.positive("track.depth", t.depth);
+        c.non_negative("track.depth", t.depth);
     }
     c.0
 }

@@ -323,7 +323,11 @@ pub fn platform_request(
             from: pos - half,
             to: pos + half,
         },
-        elevation: ElevationMode::Tunnel(track.depth),
+        elevation: if track.depth > 0.0 {
+            ElevationMode::Tunnel(track.depth)
+        } else {
+            ElevationMode::Ground
+        },
         // Only the ends snap, and onto nodes: the platform stays where the building is.
         snap: SnapOptions {
             node: true,
@@ -334,11 +338,12 @@ pub fn platform_request(
     })
 }
 
-/// Validates the platform of a station: one segment, no junction in it.
+/// Validates the platform of a station: no junction in it (a long ground platform is cut in a
+/// few segments, the first is the stop's).
 fn plan_platform(world: &World, req: &RoadPathRequest) -> Result<RoadBuildPlan, BuildingError> {
     let plan =
         cp_net::plan_build(world, req).map_err(|e| BuildingError::Platform(e.to_string()))?;
-    if plan.segments.len() != 1 || !plan.splits.is_empty() {
+    if plan.segments.is_empty() || !plan.splits.is_empty() {
         return Err(BuildingError::Platform(
             "it would cross another tunnel on the same depth".to_string(),
         ));

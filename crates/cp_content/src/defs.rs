@@ -787,12 +787,13 @@ pub struct BuildingDef {
     pub track: Option<TrackSpec>,
 }
 
-/// The track under a station: one segment of `road` along the building's axis, centred on it,
-/// in a tunnel `depth` metres below the ground (T-162).
+/// The track under a station: `road` along the building's axis, centred on it, in a tunnel
+/// `depth` metres below the ground (T-162); `depth: 0` lays it on the ground (the train
+/// station, T-166).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrackSpec {
-    /// Id of a `RoadDef` of class `Rail` that has a tunnel variant.
+    /// Id of a `RoadDef` of class `Rail` (with a tunnel variant when `depth` is above 0).
     pub road: String,
     pub length_m: f32,
     pub depth: f32,

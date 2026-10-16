@@ -30,7 +30,9 @@ pub use junction::{
     Arm, Junction, JunctionGeometry, compute_junction, refresh_geometry, update_junctions,
 };
 pub use model::*;
-pub use reach::{EntryReach, update_entry_reach};
+pub use reach::{
+    EntryReach, RailReach, is_rail_segment, node_is_rail, update_entry_reach, update_rail_reach,
+};
 pub use run::road_run;
 pub use stretches::{
     CORNER_DEG, Stretch, StretchPoint, cell_ticks, control_points, locate, span, stops, stretch,

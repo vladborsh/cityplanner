@@ -6,7 +6,7 @@ use std::fs;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
-use cp_terrain::{EntryRoad, GRID, MAX_HEIGHT, MapMeta, SPACING};
+use cp_terrain::{EntryRail, EntryRoad, GRID, MAX_HEIGHT, MapMeta, SPACING};
 
 const SEED: u32 = 0xC17_91A7;
 
@@ -70,6 +70,16 @@ fn entry_road(connection: usize, path: Vec<(f32, f32)>) -> EntryRoad {
     }
 }
 
+/// The entry railway: a straight line from the map edge to a dead end in the start tile, on
+/// ground that was checked to be dry and gentle (it must not touch the heights: that
+/// would change the map hash).
+fn entry_rail(path: Vec<(f32, f32)>) -> EntryRail {
+    EntryRail {
+        path,
+        road: "rail_2t".into(),
+    }
+}
+
 struct Map {
     meta: MapMeta,
     height: Vec<u16>,
@@ -97,6 +107,7 @@ fn flatlands() -> Map {
             start_tile: (2, 2),
             external_connections: vec![(5120.0, 0.0), (10240.0, 5120.0), (5120.0, 10240.0)],
             entry_road: Some(entry_road(0, vec![(5120.0, 0.0), (5120.0, 4300.0)])),
+            entry_rail: Some(entry_rail(vec![(10240.0, 5500.0), (6000.0, 5500.0)])),
         },
         height,
         water: vec![0; GRID * GRID],
@@ -174,6 +185,7 @@ fn river_valley() -> Map {
             start_tile: (2, 2),
             external_connections: vec![(5120.0, 0.0), (5120.0, 10240.0), (0.0, 5120.0)],
             entry_road: Some(entry_road(0, entry)),
+            entry_rail: Some(entry_rail(vec![(0.0, 4250.0), (4250.0, 4250.0)])),
         },
         height,
         water,

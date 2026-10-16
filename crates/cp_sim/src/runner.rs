@@ -106,6 +106,7 @@ impl SimRunner {
         world.init_resource::<NetGraph>();
         world.init_resource::<JunctionGeometry>();
         world.init_resource::<cp_net::EntryReach>();
+        world.init_resource::<cp_net::RailReach>();
         world.init_resource::<cp_zone::ZoneGrid>();
         world.init_resource::<cp_building::BuildingGrid>();
         world.init_resource::<cp_building::Demand>();
@@ -206,6 +207,11 @@ impl SimRunner {
         schedule.add_systems(cp_net::update_junctions.in_set(SimPhase::Network));
         schedule.add_systems(
             cp_net::update_entry_reach
+                .in_set(SimPhase::Network)
+                .after(cp_net::update_junctions),
+        );
+        schedule.add_systems(
+            cp_net::update_rail_reach
                 .in_set(SimPhase::Network)
                 .after(cp_net::update_junctions),
         );

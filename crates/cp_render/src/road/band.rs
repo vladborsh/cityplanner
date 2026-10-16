@@ -181,6 +181,7 @@ mod tests {
             start_tile: (2, 2),
             external_connections: vec![],
             entry_road: None,
+            entry_rail: None,
         };
         let n = GRID * GRID;
         let terrain = Terrain::from_samples(meta, &vec![1000; n], &vec![0; n]).unwrap();

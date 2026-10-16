@@ -4,7 +4,7 @@
 use bevy_ecs::world::World;
 use bevy_math::Vec2;
 use cp_building::{BuildingGrid, BuildingId};
-use cp_net::{NetGraph, SegmentId};
+use cp_net::{NetGraph, RailReach, SegmentId};
 use cp_traffic::Side;
 
 use crate::model::{Stop, StopId, StopKind, TransitNet};
@@ -22,6 +22,16 @@ pub fn platform_segment(transit: &TransitNet, building: BuildingId) -> Option<Se
     station_stop(transit, building)
         .and_then(|id| transit.stops.get(id))
         .map(|st| st.kind.segment())
+}
+
+/// Whether station `building` is joined by rail to the `Outside` node of the map's railway
+/// (T-166): a derived fact, read from [`RailReach`]; `false` for a station without a stop.
+pub fn station_reaches_outside(
+    transit: &TransitNet,
+    rail: &RailReach,
+    building: BuildingId,
+) -> bool {
+    platform_segment(transit, building).is_some_and(|seg| rail.reaches(seg))
 }
 
 /// Makes the stop of the station `building` on its platform `seg`, halfway along it. The

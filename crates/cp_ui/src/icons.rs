@@ -65,6 +65,7 @@ icons! {
     LineBus => "line_bus",
     LineMetro => "line_metro",
     MetroTrack => "metro_track",
+    RailTrack => "rail_track",
     BusStop => "bus_stop",
     Building => "building",
     // Top bar (T-100): speeds, the view and settings menus, one icon per overlay.
@@ -436,6 +437,8 @@ mod tests {
             Icon::OverlayUnderground.stem(),
             "metro_station",
             Icon::LineBus.stem(),
+            Icon::RailTrack.stem(),
+            "train_station",
         ];
         let bytes: Vec<Vec<u8>> = files
             .iter()

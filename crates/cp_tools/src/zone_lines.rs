@@ -302,6 +302,7 @@ mod tests {
             start_tile: (2, 2),
             external_connections: vec![],
             entry_road: None,
+            entry_rail: None,
         };
         let h: Vec<u16> = (0..GRID * GRID)
             .map(|k| 2000 + ((k % GRID) % 2) as u16 * 400)

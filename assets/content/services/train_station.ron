@@ -1,0 +1,10 @@
+// Numbers: tune later. `capacity` and `radius_m` are not used by transit: a station has no
+// coverage.
+Service((
+    id: "train_station",
+    name: "Train Station",
+    kind: Transit,
+    radius_m: 100.0,
+    capacity: 1,
+    vehicles: [],
+))

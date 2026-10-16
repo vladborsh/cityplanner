@@ -475,7 +475,7 @@ fn move_in_request(net: &NetGraph, pnet: &PathNetwork, home: &Building) -> Optio
     let g = pnet.graph();
     let (node, segment) = net
         .nodes()
-        .filter(|(_, n)| n.kind == NodeKind::Outside)
+        .filter(|(_, n)| n.kind == NodeKind::Outside && !cp_net::node_is_rail(net, n))
         .filter_map(|(id, n)| Some((id, *n.segments.first()?, n.pos)))
         .min_by(|a, b| {
             let d = |p: bevy_math::Vec3| to_xz(p).distance_squared(home.pos);

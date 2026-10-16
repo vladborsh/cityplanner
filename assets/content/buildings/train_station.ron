@@ -1,0 +1,16 @@
+// Train station (T-166): lays a 128 m rail_2t platform on the ground (depth 0) along its axis;
+// a rail joined to the entry railway of the map connects it to the outside. Numbers: tune later.
+Building((
+    id: "train_station",
+    name: "Train Station",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 2),
+    jobs: (6, 0, 0, 0),
+    tax_base: 0.0,
+    cost: 60000.0,
+    upkeep_week: 900.0,
+    styles: ["service_train_station"],
+    service: Some("train_station"),
+    track: Some((road: "rail_2t", length_m: 128.0, depth: 0.0)),
+))

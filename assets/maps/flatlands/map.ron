@@ -17,4 +17,11 @@
         stub: "large_6l",
         stub_m: 48.0,
     )),
+    entry_rail: Some((
+        path: [
+            (10240.0, 5500.0),
+            (6000.0, 5500.0),
+        ],
+        road: "rail_2t",
+    )),
 )
