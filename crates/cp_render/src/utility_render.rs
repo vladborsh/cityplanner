@@ -86,12 +86,21 @@ fn tips(graph: &UtilityGraph, node: &cp_utility::UtilityNode) -> [Vec3; 2] {
 
 /// Pylons and wires of the whole power network.
 pub fn power_mesh(graph: &UtilityGraph) -> MeshData {
+    power_mesh_colored(graph, PYLON_COLOR, WIRE_COLOR)
+}
+
+/// [`power_mesh`] with explicit colours (the ghost and the highlight).
+pub fn power_mesh_colored(
+    graph: &UtilityGraph,
+    pylon_color: [f32; 4],
+    wire_color: [f32; 4],
+) -> MeshData {
     let mut m = MeshData::default();
     for (_, n) in graph.nodes().filter(|(_, n)| n.net == UtilityNet::Power) {
         let top = n.pos + Vec3::Y * PYLON_HEIGHT;
-        prism(&mut m, n.pos, top, 1.0, PYLON_COLOR);
+        prism(&mut m, n.pos, top, 1.0, pylon_color);
         let [l, r] = tips(graph, n);
-        prism(&mut m, l, r, 0.5, PYLON_COLOR);
+        prism(&mut m, l, r, 0.5, pylon_color);
     }
     for (_, link) in graph.links().filter(|(_, l)| l.net == UtilityNet::Power) {
         let (Some(a), Some(b)) = (graph.node(link.a), graph.node(link.b)) else {
@@ -111,11 +120,33 @@ pub fn power_mesh(graph: &UtilityGraph) -> MeshData {
                 p.lerp(q, t) - Vec3::Y * (sag * 4.0 * t * (1.0 - t))
             };
             for i in 0..WIRE_STEPS {
-                prism(&mut m, at(i), at(i + 1), 0.15, WIRE_COLOR);
+                prism(&mut m, at(i), at(i + 1), 0.15, wire_color);
             }
         }
     }
     m
+}
+
+/// The power graph of a ghost: one node per distinct end point of `segments`, one link per
+/// segment (straight). What the power tool would build, or the raw path when it is invalid.
+pub fn ghost_graph(segments: &[[Vec3; 2]]) -> UtilityGraph {
+    let mut g = UtilityGraph::new();
+    let mut ids: Vec<(Vec3, cp_utility::UtilityNodeId)> = Vec::new();
+    let mut node =
+        |g: &mut UtilityGraph, p: Vec3| match ids.iter().find(|(q, _)| q.distance(p) < 0.05) {
+            Some((_, id)) => *id,
+            None => {
+                let id = g.add_node(UtilityNet::Power, p);
+                ids.push((p, id));
+                id
+            }
+        };
+    for [a, b] in segments {
+        let (na, nb) = (node(&mut g, *a), node(&mut g, *b));
+        // A degenerate segment (same node twice) is simply not a link.
+        let _ = g.add_link(na, nb, CubicBezier3::line(*a, *b));
+    }
+    g
 }
 
 // ---------------------------------------------------------------------------------------
@@ -358,6 +389,18 @@ pub struct PipeLayers {
     pub ghost: Option<PipeGhost>,
     /// The piece the remove tool would delete.
     pub highlight: Option<CubicBezier3>,
+    /// The power line the cursor would build (pylons and wires, translucent). Drawn whether or
+    /// not pipes are visible.
+    pub power_ghost: Option<PowerGhost>,
+    /// The power link the remove tool would delete, as its end points (drawn red).
+    pub power_highlight: Option<[Vec3; 2]>,
+}
+
+/// The straight pieces of a power-line plan and whether the plan is valid.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PowerGhost {
+    pub segments: Vec<[Vec3; 2]>,
+    pub valid: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -481,6 +524,8 @@ fn sync_pipes(
         visible: layers.visible,
         ghost: layers.ghost.clone().filter(|_| layers.visible),
         highlight: layers.highlight.filter(|_| layers.visible),
+        power_ghost: layers.power_ghost.clone(),
+        power_highlight: layers.power_highlight,
     };
     if st.shown.as_ref() == Some(&want) {
         return;
@@ -516,9 +561,30 @@ fn sync_pipes(
         st.ghost.extend(spawn_mesh(
             &mut commands,
             &mut meshes,
-            blended,
+            blended.clone(),
             pipe_mesh_colored(&[c], terrain, red, red),
             "pipe highlight",
+        ));
+    }
+    if let Some(g) = &want.power_ghost {
+        let rgb = if g.valid { GHOST_OK } else { GHOST_BAD };
+        let c = [rgb[0], rgb[1], rgb[2], 0.55];
+        st.ghost.extend(spawn_mesh(
+            &mut commands,
+            &mut meshes,
+            blended.clone(),
+            power_mesh_colored(&ghost_graph(&g.segments), c, c),
+            "power ghost",
+        ));
+    }
+    if let Some(seg) = want.power_highlight {
+        let red = [GHOST_BAD[0], GHOST_BAD[1], GHOST_BAD[2], 0.8];
+        st.ghost.extend(spawn_mesh(
+            &mut commands,
+            &mut meshes,
+            blended,
+            power_mesh_colored(&ghost_graph(&[seg]), red, red),
+            "power highlight",
         ));
     }
     st.shown = Some(want);
@@ -623,6 +689,32 @@ mod tests {
         )
         .unwrap();
         g
+    }
+
+    #[test]
+    fn power_ghost_has_a_pylon_per_plan_node_and_wires_per_link() {
+        let (a, b, c) = (
+            Vec3::new(0.0, 2.0, 0.0),
+            Vec3::new(60.0, 2.0, 0.0),
+            Vec3::new(60.0, 2.0, 60.0),
+        );
+        // Two links sharing node `b`: three nodes, two links.
+        let g = ghost_graph(&[[a, b], [b, c]]);
+        assert_eq!(g.node_count(), 3);
+        assert_eq!(g.link_count(), 2);
+        let tint = [0.2, 0.9, 0.3, 0.55];
+        let m = power_mesh_colored(&g, tint, tint);
+        assert!(m.triangle_count() > 0);
+        assert!(m.colors.iter().all(|c| *c == tint), "one translucent tint");
+        // Every node has a pylon: geometry reaches pylon height above each one.
+        for p in [a, b, c] {
+            assert!(
+                m.positions.iter().any(|q| (q[0] - p.x).abs() < 2.0
+                    && (q[2] - p.z).abs() < 2.0
+                    && (q[1] - (p.y + PYLON_HEIGHT)).abs() < 1.0),
+                "no pylon at {p}"
+            );
+        }
     }
 
     #[test]

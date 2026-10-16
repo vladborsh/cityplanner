@@ -28,7 +28,7 @@ use crate::road::{
 };
 use crate::upgrade::{upgrade_commands, upgrade_preview};
 use crate::utility::{
-    LINK_PICK_RADIUS, UtilityTool, link_line, pick_link, plan_polylines, preview as utility_preview,
+    LINK_PICK_RADIUS, UtilityTool, pick_link, plan_polylines, preview as utility_preview,
 };
 use crate::zone::ZoneTool;
 use cp_building::{BuildingCommand, BuildingId};
@@ -205,10 +205,32 @@ fn sync_pipe_layers(
         .and_then(|(v, id)| v.utilities.link(id))
         .filter(|l| l.net == UtilityNet::Pipe)
         .map(|l| l.curve);
+    let power_ghost = state
+        .utility_ghost
+        .as_ref()
+        .filter(|_| state.active == ActiveTool::Utility && state.utility.kind == UtilityKind::Power)
+        .map(|g| cp_render::PowerGhost {
+            segments: g
+                .polylines
+                .iter()
+                .flat_map(|l| l.windows(2))
+                .map(|w| [w[0], w[1]])
+                .collect(),
+            valid: g.valid,
+        });
+    let power_highlight = view
+        .as_deref()
+        .zip(state.link_highlight)
+        .filter(|_| state.active == ActiveTool::UtilityRemove)
+        .and_then(|(v, id)| v.utilities.link(id))
+        .filter(|l| l.net == UtilityNet::Power)
+        .map(|l| [l.curve.point(0.0), l.curve.point(1.0)]);
     let want = cp_render::PipeLayers {
         visible,
         ghost,
         highlight,
+        power_ghost,
+        power_highlight,
     };
     if *layers != want {
         *layers = want;
@@ -722,31 +744,6 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
             .map(|q| Vec3::new(q.x, height(q), q.y));
             gizmos.linestrip([k[0], k[1], k[2], k[3], k[0]], color);
         }
-    }
-    if let Some(ghost) = &state.utility_ghost
-        && state.active == ActiveTool::Utility
-        && crate::utility::ghost_is_gizmo(state.utility.kind)
-    {
-        let color = if ghost.valid {
-            Color::srgb(0.2, 0.9, 0.3)
-        } else {
-            Color::srgb(0.95, 0.2, 0.2)
-        };
-        for line in &ghost.polylines {
-            gizmos.linestrip(line.iter().map(|p| *p + Vec3::Y * 0.6), color);
-        }
-    }
-    if let (Some(view), Some(link)) = (view.as_deref(), state.link_highlight)
-        && view
-            .utilities
-            .link(link)
-            .is_some_and(|l| l.net != UtilityNet::Pipe)
-    {
-        let line = link_line(&view.utilities, link);
-        gizmos.linestrip(
-            line.iter().map(|p| *p + Vec3::Y * 0.8),
-            Color::srgb(1.0, 0.6, 0.1),
-        );
     }
     if let Some(ghost) = &state.ghost
         && state.active == ActiveTool::Road

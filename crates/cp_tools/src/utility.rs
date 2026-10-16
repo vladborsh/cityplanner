@@ -176,12 +176,6 @@ pub fn pipes_visible(
     }
 }
 
-/// Whether the utility ghost of `kind` is drawn as gizmo lines: only the power lines are; a
-/// pipe is a 3D mesh (T-103, `cp_render::PipeLayers`).
-pub fn ghost_is_gizmo(kind: UtilityKind) -> bool {
-    kind == UtilityKind::Power
-}
-
 /// The link of `net` nearest to `p` within `radius` (the remove tool's target).
 pub fn pick_link(
     graph: &UtilityGraph,
@@ -407,13 +401,5 @@ mod tests {
             st.active = tool;
             assert!(!vis(&st, Overlay::Off), "{tool:?}");
         }
-    }
-
-    /// The pipe ghost is a 3D mesh, not gizmo lines; only power lines keep their line ghost.
-    #[test]
-    fn only_power_ghosts_are_gizmo_lines() {
-        assert!(!ghost_is_gizmo(UtilityKind::Water));
-        assert!(!ghost_is_gizmo(UtilityKind::Sewage));
-        assert!(ghost_is_gizmo(UtilityKind::Power));
     }
 }
