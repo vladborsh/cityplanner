@@ -7,7 +7,7 @@ pub mod grid;
 pub use command::{ZoneCommand, ZoneError, apply, paint};
 pub use grid::{
     BLOCK_DEPTH, CELL_SIZE, MAX_CELL_SLOPE, PENETRATION_EPS, RoadZoning, Side, ZoneBlock,
-    ZoneBlockId, ZoneCellRef, ZoneGrid,
+    ZoneBlockId, ZoneCellRef, ZoneGrid, strip_layout,
 };
 
 use bevy_ecs::change_detection::DetectChanges;

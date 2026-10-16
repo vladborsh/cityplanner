@@ -43,6 +43,48 @@ pub fn parse_city(spec: &str) -> Option<usize> {
 /// Showcase scene: every building def in rows by zone, then a row of states.
 pub const SHOWCASE: &str = "showcase";
 
+/// Zone cell scene (BUG-043): a street built as four chained segments of different lengths and,
+/// beside it, a block of four streets. Look at it with `--overlay zones --cam zones`.
+pub const ZONES: &str = "zones";
+
+/// Builds the [`ZONES`] scene through the normal commands.
+pub fn build_zones(sim: &mut SimRunner) {
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    let mut x = c - 200.0;
+    let mut legs: Vec<(Vec2, Vec2)> = Vec::new();
+    for len in [90.0f32, 71.0, 85.0, 63.0] {
+        legs.push((Vec2::new(x, c), Vec2::new(x + len, c)));
+        x += len;
+    }
+    let (o, s) = (Vec2::new(c - 120.0, c + 60.0), 80.0);
+    let corners = [
+        o,
+        o + Vec2::new(s, 0.0),
+        o + Vec2::new(s, s),
+        o + Vec2::new(0.0, s),
+        o,
+    ];
+    for k in 0..4 {
+        legs.push((corners[k], corners[k + 1]));
+    }
+    for (from, to) in legs {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: basic,
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+}
+
 /// Metro scene (T-164): a street, three metro stations beside it, the tunnels between the
 /// platforms and a metro line with two trains. Look at it with `--overlay underground`
 /// and `--cam metro`.

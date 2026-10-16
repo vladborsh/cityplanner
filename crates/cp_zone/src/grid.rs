@@ -47,7 +47,12 @@ pub const ROAD_EPS: f32 = 0.05;
 const ROAD_BUCKET: f32 = 16.0;
 const BLOCK_BUCKET: f32 = 32.0;
 /// Larger than any cell's reach (half diagonal 5.66 m) plus a margin.
+/// Overlap with a cell of an older block that already removes the newer cell (BUG-043): a
+/// cell is never kept over another one, only grazing contact is let through.
+const CROSS_BLOCK_EPS: f32 = 0.05;
 const REACH: f32 = 12.0;
+/// Cosine of the largest bend at a degree-2 node that still counts as straight on (about 12°).
+const STRAIGHT_COS: f32 = 0.978;
 /// Spacing of road centre-line samples, metres.
 const ROAD_SAMPLE: f32 = 2.0;
 /// How far (m) a rebuilt cell may be from the old cell whose painted type it inherits.
@@ -153,11 +158,24 @@ impl ZoneBlock {
         let mut out = Vec::with_capacity(self.cell_count());
         for col in 0..self.cols {
             let s = self.s0 + (f32::from(col) + 0.5) * CELL_SIZE;
-            let t = table.s_to_t(s);
-            let p = to_xz(self.curve.point(t));
-            let tg = to_xz(self.curve.tangent(t))
-                .try_normalize()
-                .unwrap_or(Vec2::X);
+            // A cell that straddles the end of the stretch (it continues a straight neighbour,
+            // BUG-043) stands on the straight line beyond it.
+            let dir = |t: f32| {
+                to_xz(self.curve.tangent(t))
+                    .try_normalize()
+                    .unwrap_or(Vec2::X)
+            };
+            let (p, tg) = if s < 0.0 {
+                (to_xz(self.curve.point(0.0)) + dir(0.0) * s, dir(0.0))
+            } else if s > self.length {
+                (
+                    to_xz(self.curve.point(1.0)) + dir(1.0) * (s - self.length),
+                    dir(1.0),
+                )
+            } else {
+                let t = table.s_to_t(s);
+                (to_xz(self.curve.point(t)), dir(t))
+            };
             let u = tg;
             // Left of the travel direction in XZ is (t.z, -t.x), as in `offset_xz`.
             let v = Vec2::new(tg.y, -tg.x) * self.side.sign();
@@ -172,6 +190,21 @@ impl ZoneBlock {
             }
         }
         out
+    }
+}
+
+/// The layout of the cells along a stretch of `length` metres: the arc offset of the first
+/// column and the number of columns. Without `align` the row is centred (`floor(len / 8)`
+/// cells, the rest split over both ends); with `align` (see [`ZoneGrid::joint_alignment`], the
+/// start offset that continues a straight neighbour's row, BUG-043) the cells start there and
+/// the rest is left at the far end. The road tool's ghost lays its preview with this too.
+pub fn strip_layout(length: f32, align: Option<f32>) -> (f32, u16) {
+    match align {
+        Some(s0) => (s0, ((length - s0) / CELL_SIZE).floor().max(0.0) as u16),
+        None => {
+            let cols = (length / CELL_SIZE).floor() as u16;
+            ((length - f32::from(cols) * CELL_SIZE) / 2.0, cols)
+        }
     }
 }
 
@@ -485,6 +518,13 @@ impl ZoneGrid {
                 seg,
                 roads(seg.road),
                 &zone_curve[&id],
+                self.joint_alignment(
+                    net,
+                    roads,
+                    id,
+                    seg,
+                    ArcTable::build(&zone_curve[&id]).length(),
+                ),
                 &mut dirty,
                 &mut created,
             );
@@ -909,12 +949,14 @@ impl ZoneGrid {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_segment(
         &mut self,
         id: SegmentId,
         seg: &Segment,
         road: RoadZoning,
         zone_curve: &CubicBezier3,
+        align: Option<f32>,
         dirty: &mut Vec<Bounds>,
         created: &mut BTreeSet<ZoneBlockId>,
     ) {
@@ -926,11 +968,10 @@ impl ZoneGrid {
             return;
         }
         let length = ArcTable::build(zone_curve).length();
-        let cols = (length / CELL_SIZE).floor() as u16;
+        let (s0, cols) = strip_layout(length, align);
         if cols == 0 {
             return;
         }
-        let s0 = (length - f32::from(cols) * CELL_SIZE) / 2.0;
         let mut ids = [None, None];
         for (slot, side) in [Side::Left, Side::Right].into_iter().enumerate() {
             let n = usize::from(cols) * usize::from(BLOCK_DEPTH);
@@ -950,6 +991,74 @@ impl ZoneGrid {
             ids[slot] = Some(bid);
         }
         self.by_segment.insert(id, ids);
+    }
+
+    /// Where the first cell of a new segment `id` starts (`s0`) so that its row of cells continues
+    /// the row of a segment it joins at a degree-2 node and runs on straight into (BUG-043):
+    /// the cell edges meet at the joint, no gap. `None` for a segment with no such neighbour
+    /// that already has blocks (the cells are then centred as before).
+    pub fn joint_alignment(
+        &self,
+        net: &NetGraph,
+        roads: &dyn Fn(RoadDefId) -> RoadZoning,
+        id: SegmentId,
+        seg: &Segment,
+        length: f32,
+    ) -> Option<f32> {
+        let ours = roads(seg.road);
+        for at_start in [true, false] {
+            let node = if at_start { seg.start } else { seg.end };
+            let Some(n) = net.node(node).filter(|n| n.segments.len() == 2) else {
+                continue;
+            };
+            let Some(other) = n.segments.iter().copied().find(|&o| o != id) else {
+                continue;
+            };
+            let Some(o) = net.segment(other) else {
+                continue;
+            };
+            let theirs = roads(o.road);
+            if o.start == o.end
+                || o.elevation != Elevation::Ground
+                || !theirs.allows_zoning
+                || (theirs.half_width - ours.half_width).abs() > 1e-3
+            {
+                continue;
+            }
+            // Straight on: the directions leaving the joint are (nearly) opposite.
+            let leaving = |s: &Segment, from_start: bool| {
+                let t = to_xz(if from_start {
+                    s.curve.tangent(0.0)
+                } else {
+                    -s.curve.tangent(1.0)
+                });
+                t.try_normalize().unwrap_or(Vec2::X)
+            };
+            if leaving(seg, at_start).dot(leaving(o, o.start == node)) > -STRAIGHT_COS {
+                continue;
+            }
+            let Some(b) = self
+                .by_segment
+                .get(&other)
+                .and_then(|ids| ids[0])
+                .and_then(|b| self.blocks.get(b))
+            else {
+                continue;
+            };
+            // How far the neighbour's nearest cell edge is from the joint (negative: its cell
+            // reaches over the joint).
+            let free = if o.start == node {
+                b.s0
+            } else {
+                b.length - (b.s0 + f32::from(b.cols) * CELL_SIZE)
+            };
+            return Some(if at_start {
+                (-free).clamp(-CELL_SIZE, CELL_SIZE)
+            } else {
+                (length + free).rem_euclid(CELL_SIZE)
+            });
+        }
+        None
     }
 
     /// Validity mask of block `id` against roads and older blocks.
@@ -1025,7 +1134,7 @@ impl ZoneGrid {
                             block: oid,
                             cell: j as u16,
                         });
-                    if blocking && other.penetration(o) > PENETRATION_EPS {
+                    if blocking && other.penetration(o) > CROSS_BLOCK_EPS {
                         valid[i] = false;
                         break 'older;
                     }

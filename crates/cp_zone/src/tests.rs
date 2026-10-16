@@ -4,6 +4,7 @@ use cp_core::curve::CubicBezier3;
 use cp_net::{Elevation, NetGraph, SegmentId};
 
 use crate::command::paint;
+use crate::geom::Obb;
 use crate::*;
 
 fn db() -> ContentDb {
@@ -363,10 +364,14 @@ fn changes_rebuild_blocks_and_match_a_from_scratch_sync() {
     let new = w.grid.blocks_of(up);
     assert!(new[0].is_some() && new != old);
 
-    // The incremental result equals a from-scratch sync of the same net.
+    // The incremental result has the blocks of a from-scratch sync of the same net. (Not the
+    // same cells to the last one: a new segment continues the row of the straight neighbour it
+    // joins, so the layout depends on the order of building, BUG-043.)
     let mut fresh = ZoneGrid::new();
     fresh.sync(&w.net, &zoning(&w.db), &|_, s| s.curve);
-    assert_eq!(summary(&w.grid), summary(&fresh));
+    let keys =
+        |g: &ZoneGrid| -> Vec<_> { summary(g).into_iter().map(|(s, d, _)| (s, d)).collect() };
+    assert_eq!(keys(&w.grid), keys(&fresh));
     assert_no_double_cells(&w.grid);
 }
 
@@ -979,5 +984,151 @@ mod blockers {
         };
         assert_eq!(masks(&inc.grid), masks(&full.grid));
         assert_ne!(masks(&inc.grid), masks(&world().grid));
+    }
+}
+
+/// Valid cells of row `row` on `side` of every block, as (position along x, footprint).
+fn row_cells(w: &World, side: Side, row: u16) -> Vec<(f32, Obb)> {
+    let mut out = Vec::new();
+    for (bid, b) in w.grid.blocks() {
+        if b.side != side {
+            continue;
+        }
+        for col in 0..b.cols {
+            let i = usize::from(col) * usize::from(BLOCK_DEPTH) + usize::from(row);
+            if b.valid[i] {
+                let o = w
+                    .grid
+                    .cell_footprint(ZoneCellRef {
+                        block: bid,
+                        cell: i as u16,
+                    })
+                    .unwrap();
+                out.push((o.c.x, o));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out
+}
+
+/// BUG-043 A: a street built as chained segments gets one continuous row of cells, with no gap
+/// at the joints, like the same street in one piece.
+#[test]
+fn a_chained_straight_street_has_one_continuous_row() {
+    let mut w = World::new();
+    let mut x = 0.0;
+    for len in [90.0f32, 71.0, 85.0, 63.0] {
+        w.line("basic_2l", (x, 0.0), (x + len, 0.0));
+        x += len;
+    }
+    w.sync();
+    for side in [Side::Left, Side::Right] {
+        let cells = row_cells(&w, side, 0);
+        for pair in cells.windows(2) {
+            let gap = pair[1].0 - pair[0].0 - CELL_SIZE;
+            assert!(gap.abs() < 0.01, "{side:?}: gap {gap} at x = {}", pair[0].0);
+        }
+        // One piece of the same length has as many cells (within the tail at the ends).
+        let mut one = World::new();
+        one.line("basic_2l", (0.0, 0.0), (x, 0.0));
+        one.sync();
+        let n = row_cells(&one, side, 0).len();
+        assert!(
+            cells.len() + 1 >= n && cells.len() <= n + 1,
+            "{} vs {n}",
+            cells.len()
+        );
+    }
+}
+
+/// BUG-043 B: four streets around a square block leave no two cells over each other.
+#[test]
+fn a_block_of_four_streets_has_no_overlapping_cells() {
+    let mut w = World::new();
+    let s = 150.0;
+    w.line("basic_2l", (0.0, 0.0), (s, 0.0));
+    w.line("basic_2l", (s, 0.0), (s, s));
+    w.line("basic_2l", (s, s), (0.0, s));
+    w.line("basic_2l", (0.0, s), (0.0, 0.0));
+    w.sync();
+    let mut cells = Vec::new();
+    for (bid, b) in w.grid.blocks() {
+        for (i, ok) in b.valid.iter().enumerate() {
+            if *ok {
+                let r = ZoneCellRef {
+                    block: bid,
+                    cell: i as u16,
+                };
+                cells.push((r, w.grid.cell_footprint(r).unwrap()));
+            }
+        }
+    }
+    for i in 0..cells.len() {
+        for j in i + 1..cells.len() {
+            let p = cells[i].1.penetration(&cells[j].1);
+            assert!(
+                p < 0.05,
+                "{:?} and {:?} overlap by {p}",
+                cells[i].0,
+                cells[j].0
+            );
+        }
+    }
+}
+
+fn worst_overlap(w: &World) -> f32 {
+    let mut cells = Vec::new();
+    for (bid, b) in w.grid.blocks() {
+        for (i, ok) in b.valid.iter().enumerate() {
+            if *ok {
+                let r = ZoneCellRef {
+                    block: bid,
+                    cell: i as u16,
+                };
+                cells.push(w.grid.cell_footprint(r).unwrap());
+            }
+        }
+    }
+    let mut worst = 0.0f32;
+    for i in 0..cells.len() {
+        for j in i + 1..cells.len() {
+            worst = worst.max(cells[i].penetration(&cells[j]));
+        }
+    }
+    worst
+}
+
+/// BUG-043 B: blocks of streets of every size, in one or two pieces, straight or turned, leave
+/// no two cells over each other.
+#[test]
+fn blocks_of_any_size_and_angle_have_no_overlapping_cells() {
+    for angle in [0.0f32, 0.5, 0.9] {
+        let (sn, cs) = angle.sin_cos();
+        for s in [50.0f32, 57.0, 64.0, 71.0, 80.0, 93.0, 110.0] {
+            for pieces in [1usize, 2, 3] {
+                let mut w = World::new();
+                let rot =
+                    |p: (f32, f32)| (1000.0 + p.0 * cs - p.1 * sn, 1000.0 + p.0 * sn + p.1 * cs);
+                let corners = [(0.0, 0.0), (s, 0.0), (s, s * 0.8), (0.0, s), (0.0, 0.0)];
+                for k in 0..4 {
+                    let (a, b) = (corners[k], corners[k + 1]);
+                    for p in 0..pieces {
+                        let f = |t: f32| rot((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t));
+                        w.line(
+                            "basic_2l",
+                            f(p as f32 / pieces as f32),
+                            f((p + 1) as f32 / pieces as f32),
+                        );
+                    }
+                }
+                w.sync();
+                let worst = worst_overlap(&w);
+                assert!(
+                    worst < 0.05 + 1e-3,
+                    "angle {angle} s {s} pieces {pieces}: {worst}"
+                );
+            }
+        }
     }
 }
