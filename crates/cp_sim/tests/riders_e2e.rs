@@ -422,6 +422,14 @@ fn the_weekly_settlement_books_fares_and_bus_upkeep_and_the_treasury_follows() {
     t.sim.world_mut().insert_resource(Tick(TICKS_PER_WEEK - 1));
     t.run(3);
     let w = t.sim.world().resource::<EconomyState>().last_week;
+    let hour = t
+        .sim
+        .world()
+        .resource::<cp_economy::MoneyFlow>()
+        .hours
+        .back()
+        .unwrap()
+        .1;
     assert_eq!(w.week, 1);
     assert_eq!(
         w.transit_fares,
@@ -433,10 +441,11 @@ fn the_weekly_settlement_books_fares_and_bus_upkeep_and_the_treasury_follows() {
     );
     assert_eq!(
         t.sim.world().resource::<Treasury>().balance,
-        before + t.sim.world().resource::<cp_economy::Payday>().net() + w.transit_fares
+        before + hour.tax() - hour.road_upkeep - hour.utility_upkeep - hour.building_upkeep()
+            + w.transit_fares
             - w.transit_upkeep
             - w.loan_payments,
-        "the treasury changes by the seventh day's share and the week's fares, bus upkeep and loans"
+        "the treasury changes by the last hour's share and the week's fares, bus upkeep and loans"
     );
     assert!(
         t.sim.world().resource::<TransitLedger>().is_empty(),

@@ -116,7 +116,7 @@ fn city() -> (World, Schedule) {
     world.init_resource::<cp_district::DistrictMap>();
     world.init_resource::<cp_district::Districts>();
     world.init_resource::<DistrictIncome>();
-    world.init_resource::<Payday>();
+    world.init_resource::<crate::MoneyFlow>();
 
     // Two straight streets, 100 m and 60 m.
     let road = db.road_id("street").unwrap();
@@ -172,17 +172,19 @@ fn city() -> (World, Schedule) {
     (world, schedule)
 }
 
-/// Runs the schedule at `tick`. At a day boundary every day boundary since the last run is run
-/// too (the economy books a day at a time, T-179), so a test can jump from week to week.
+/// Runs the schedule at `tick`. Every game-hour boundary since the last run is run too (the
+/// economy books an hour at a time, BUG-040), so a test can jump from week to week.
 fn run_at(world: &mut World, schedule: &mut Schedule, tick: u64) {
     let from = world.get_resource::<Tick>().map_or(0, |t| t.0);
-    if tick.is_multiple_of(cp_core::time::TICKS_PER_DAY) {
-        let mut t = (from / cp_core::time::TICKS_PER_DAY + 1) * cp_core::time::TICKS_PER_DAY;
-        while t < tick {
-            world.insert_resource(Tick(t));
-            schedule.run(world);
-            t += cp_core::time::TICKS_PER_DAY;
+    let mut h = crate::game_hour(from) + 1;
+    loop {
+        let t = (h * cp_core::time::TICKS_PER_DAY).div_ceil(24);
+        if t >= tick {
+            break;
         }
+        world.insert_resource(Tick(t));
+        schedule.run(world);
+        h += 1;
     }
     world.insert_resource(Tick(tick));
     schedule.run(world);
@@ -256,17 +258,23 @@ fn weekly_balance_matches_the_hand_calculation() {
 }
 
 #[test]
-fn settles_once_per_week_boundary_and_never_at_tick_zero() {
+fn settles_once_per_hour_and_never_at_tick_zero() {
     let (mut world, mut schedule) = city();
-    for t in [0, 1, TICKS_PER_WEEK - 1] {
+    for t in [0, 1, 100] {
         run_at(&mut world, &mut schedule, t);
         assert_eq!(balance(&world), Treasury::default().balance, "tick {t}");
     }
-    run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
+    // The first hour boundary books one share; the same hour again books nothing.
+    run_at(&mut world, &mut schedule, 171);
     let after_one = balance(&world);
     assert_ne!(after_one, Treasury::default().balance);
-    run_at(&mut world, &mut schedule, TICKS_PER_WEEK + 1);
+    run_at(&mut world, &mut schedule, 172);
     assert_eq!(balance(&world), after_one);
+    // The week's report is settled once, on its boundary.
+    run_at(&mut world, &mut schedule, TICKS_PER_WEEK - 1);
+    assert_eq!(world.resource::<EconomyState>().last_week.week, 0);
+    run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
+    assert_eq!(world.resource::<EconomyState>().last_week.week, 1);
 }
 
 #[test]
@@ -1192,30 +1200,33 @@ fn a_district_rate_replaces_the_city_rate_for_its_buildings() {
     assert_eq!(rows[1], (Some(d), Cost(990)));
 }
 
-/// T-179: tax and upkeep are booked every day; the seven shares add up to the weekly figure.
+/// BUG-040: tax and upkeep are booked every game hour; the 168 shares add up to the weekly
+/// figure and every hour is in the money flow.
 #[test]
-fn income_and_upkeep_are_booked_every_day_and_add_up_to_the_week() {
-    use crate::{Payday, day_share};
+fn income_and_upkeep_are_booked_every_hour_and_add_up_to_the_week() {
+    use crate::{MoneyFlow, hour_share};
     use cp_core::time::TICKS_PER_DAY;
-    for x in [0i64, 1, 6, 7, 4_500, -33_720, 1_234_567] {
-        let sum: i64 = (1..=7).map(|k| day_share(Cost(x), k).0).sum();
+    for x in [0i64, 1, 6, 167, 168, 4_500, -33_720, 1_234_567] {
+        let sum: i64 = (1..=168).map(|k| hour_share(Cost(x), k).0).sum();
         assert_eq!(sum, x, "{x}");
     }
     let (mut world, mut schedule) = city();
     let start = balance(&world);
     run_at(&mut world, &mut schedule, TICKS_PER_DAY);
-    let p = *world.resource::<Payday>();
-    assert_eq!((p.tick, p.day), (TICKS_PER_DAY, 1));
-    assert!(
-        p.income > Cost::ZERO,
-        "taxes come in at the end of the first day"
-    );
-    assert_eq!(p.income, day_share(Cost(4_500), 1));
+    let f = world.resource::<MoneyFlow>().clone();
+    assert_eq!(f.hours.len(), 24, "one entry per game hour");
+    let booked: Cost = f.hours.iter().map(|(_, h)| h.net()).sum();
     assert_eq!(
         balance(&world),
-        start + p.net(),
-        "one day's share, no loans"
+        start + booked,
+        "the flow is what was booked"
     );
+    assert!(
+        f.hours.iter().all(|(_, h)| h.tax() > Cost::ZERO),
+        "taxes come in every hour"
+    );
+    let day = f.last_day(world.resource::<EconomyState>()).unwrap();
+    assert!(day.tax() > Cost::ZERO);
     assert_eq!(
         world.resource::<EconomyState>().last_week.week,
         0,
@@ -1224,5 +1235,9 @@ fn income_and_upkeep_are_booked_every_day_and_add_up_to_the_week() {
     // The rest of the week brings the balance to the weekly figure of the old formula.
     run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
     assert_eq!(balance(&world), start + Cost(-33_720));
-    assert_eq!(world.resource::<Payday>().day, 7);
+    assert_eq!(world.resource::<MoneyFlow>().hours.len(), 48);
+    assert_eq!(
+        world.resource::<MoneyFlow>().week_to_date.net(),
+        Cost(-33_720)
+    );
 }

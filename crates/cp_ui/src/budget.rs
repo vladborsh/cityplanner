@@ -13,7 +13,7 @@ use cp_content::{ServiceKind, ZoneType};
 use cp_core::Cost;
 use cp_core::treasury::DEBT_FLOOR;
 use cp_economy::state::{BUDGET_MAX, BUDGET_MIN, BUDGETED, TAX_MAX, TAX_MIN, TAXED_ZONES};
-use cp_economy::{EconomyCommand, Loan};
+use cp_economy::{EconomyCommand, Flow, Loan, SERVICE_ORDER, WeekReport};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, format_money, zone_name};
 
@@ -73,26 +73,25 @@ pub fn money_label(ui: &mut egui::Ui, view: &SimView) -> egui::Response {
     let b = view.treasury.balance;
     let text = egui::RichText::new(format_money(b)).color(debt_colour(debt_level(b)));
     let r = ui.label(text);
-    match debt_warning(b) {
-        Some(w) => r.on_hover_text(w),
-        None => r,
-    }
+    let tip = match debt_warning(b) {
+        Some(w) => format!("{w}\n\n{}", trend_breakdown(view)),
+        None => trend_breakdown(view),
+    };
+    r.on_hover_text(tip)
 }
 
-/// The treasury's change per week as the last day shows it (T-179): that day's tax income minus
-/// its upkeep, times seven, minus the weekly loan payments. `None` before the first day was
-/// settled (or after a load, until the next one).
-pub fn weekly_trend(view: &SimView) -> Option<Cost> {
-    let p = &view.payday;
-    (p.tick > 0).then(|| Cost(p.net().0 * 7 - p.loans_week.0))
+/// What the treasury gained or lost over the last 24 game hours (BUG-040); `None` before the
+/// first hour was booked (or after a load, until the next one).
+pub fn daily_trend(view: &SimView) -> Option<Cost> {
+    view.flow.last_day(&view.economy).map(|d| d.net())
 }
 
-/// `+$1,234.00/wk` or `-$56.00/wk` (the arrow is drawn by [`trend_arrow`]).
-pub fn trend_text(weekly: Cost) -> String {
-    if weekly.0 >= 0 {
-        format!("+{}/wk", format_money(weekly))
+/// `+$1,234.00/day` or `-$56.00/day` (the arrow is drawn by [`trend_arrow`]).
+pub fn trend_text(daily: Cost) -> String {
+    if daily.0 >= 0 {
+        format!("+{}/day", format_money(daily))
     } else {
-        format!("-{}/wk", format_money(Cost(-weekly.0)))
+        format!("-{}/day", format_money(Cost(-daily.0)))
     }
 }
 
@@ -130,69 +129,115 @@ fn trend_colour(up: bool) -> egui::Color32 {
     }
 }
 
-/// The breakdown shown on hovering the money trend: last day's income and upkeep by line,
-/// scaled to a week, and the loan payments.
+/// The name of a service line of the money flow.
+pub fn service_line_name(kind: ServiceKind) -> &'static str {
+    match kind {
+        ServiceKind::Water => "Water buildings",
+        ServiceKind::Power => "Power buildings",
+        ServiceKind::Roads => "Road buildings",
+        ServiceKind::Sewage => "Sewage buildings",
+        ServiceKind::Garbage => "Garbage",
+        ServiceKind::Health => "Health",
+        ServiceKind::Deathcare => "Deathcare",
+        ServiceKind::Fire => "Fire",
+        ServiceKind::Police => "Police",
+        ServiceKind::Education => "Education",
+        ServiceKind::Transit => "Bus depots",
+    }
+}
+
+/// One line of the money table: a name and its amount in each column.
+pub type FlowRow = (String, [Option<Cost>; 3]);
+
+/// The income and expense rows of the cash-flow table: columns last day, this week so far, last
+/// week (`None` where the figure is not kept). Expenses are positive numbers. Rows that are
+/// zero in every column are left out, except the zone taxes.
+pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, Vec<FlowRow>) {
+    let mut income: Vec<FlowRow> = Vec::new();
+    for (i, zone) in TAXED_ZONES.into_iter().enumerate() {
+        income.push((
+            format!("Tax: {}", zone_name(zone)),
+            [
+                Some(day.income_by_zone[i]),
+                Some(week.income_by_zone[i]),
+                Some(last.income_by_zone[i]),
+            ],
+        ));
+    }
+    let mut expenses: Vec<FlowRow> = vec![
+        (
+            "Roads".into(),
+            [
+                Some(day.road_upkeep),
+                Some(week.road_upkeep),
+                Some(last.road_upkeep),
+            ],
+        ),
+        (
+            "Pipes and power lines".into(),
+            [
+                Some(day.utility_upkeep),
+                Some(week.utility_upkeep),
+                Some(last.utility_upkeep),
+            ],
+        ),
+    ];
+    for (i, kind) in SERVICE_ORDER.into_iter().enumerate() {
+        if day.services[i] != Cost::ZERO || week.services[i] != Cost::ZERO {
+            expenses.push((
+                service_line_name(kind).into(),
+                [Some(day.services[i]), Some(week.services[i]), None],
+            ));
+        }
+    }
+    let rest = [
+        (
+            "Buses",
+            [day.transit_upkeep, week.transit_upkeep, last.transit_upkeep],
+        ),
+        ("Loans", [day.loans, week.loans, last.loan_payments]),
+    ];
+    for (name, c) in rest {
+        expenses.push((name.into(), c.map(Some)));
+    }
+    if day.fares != Cost::ZERO || week.fares != Cost::ZERO || last.transit_fares != Cost::ZERO {
+        income.push((
+            "Fares".into(),
+            [Some(day.fares), Some(week.fares), Some(last.transit_fares)],
+        ));
+    }
+    (income, expenses)
+}
+
+/// The text of the money tooltip: the last day's income and expenses by line.
 pub fn trend_breakdown(view: &SimView) -> String {
-    let p = &view.payday;
-    let wk = |c: Cost| format_money(Cost(c.0 * 7));
-    format!(
-        "Per week, by the last day:\nTaxes +{}\nRoads -{}\nBuildings -{}\nUtilities -{}\nLoans -{}",
-        wk(p.income),
-        wk(p.road_upkeep),
-        wk(p.building_upkeep),
-        wk(p.utility_upkeep),
-        format_money(p.loans_week),
-    )
+    let Some(day) = view.flow.last_day(&view.economy) else {
+        return "No hour booked yet.".to_string();
+    };
+    let (income, expenses) = flow_rows(&day, &day, &view.economy.last_week);
+    let mut out = String::from("Last 24 hours:");
+    for (name, c) in income {
+        if let Some(c) = c[0].filter(|c| c.0 != 0) {
+            out += &format!("\n{name} +{}", format_money(c));
+        }
+    }
+    for (name, c) in expenses {
+        if let Some(c) = c[0].filter(|c| c.0 != 0) {
+            out += &format!("\n{name} -{}", format_money(c));
+        }
+    }
+    out
 }
 
 /// The money trend next to the balance, green or red, with the breakdown on hover.
 pub fn trend_label(ui: &mut egui::Ui, view: &SimView) {
-    let Some(weekly) = weekly_trend(view) else {
+    let Some(daily) = daily_trend(view) else {
         return;
     };
-    let colour = trend_colour(weekly.0 >= 0);
-    trend_arrow(ui, weekly.0 >= 0, colour);
-    ui.label(egui::RichText::new(trend_text(weekly)).color(colour))
+    let colour = trend_colour(daily.0 >= 0);
+    trend_arrow(ui, daily.0 >= 0, colour);
+    ui.label(egui::RichText::new(trend_text(daily)).color(colour))
         .on_hover_text(trend_breakdown(view));
-}
-
-/// How long the "+$N" pop-up of a payday stays, in ticks.
-pub const PAYDAY_POP_TICKS: u64 = 120;
-
-/// The text and age fraction `0..1` of the payday pop-up, `None` when it is over (or nothing was
-/// booked).
-pub fn payday_pop(view: &SimView) -> Option<(String, f32)> {
-    let p = &view.payday;
-    let age = view.tick.0.checked_sub(p.tick)?;
-    (p.tick > 0 && age < PAYDAY_POP_TICKS).then(|| {
-        let n = p.net();
-        let sign = if n.0 >= 0 { "+" } else { "-" };
-        (
-            format!("{sign}{}", format_money(Cost(n.0.abs()))),
-            age as f32 / PAYDAY_POP_TICKS as f32,
-        )
-    })
-}
-
-/// The pop-up drawn under `anchor`, drifting down and fading out.
-pub fn payday_pop_ui(ui: &egui::Ui, view: &SimView, anchor: egui::Rect) {
-    let Some((text, t)) = payday_pop(view) else {
-        return;
-    };
-    let alpha = ((1.0 - t) * 255.0) as u8;
-    let up = view.payday.net().0 >= 0;
-    let c = if up {
-        egui::Color32::from_rgba_unmultiplied(120, 230, 130, alpha)
-    } else {
-        egui::Color32::from_rgba_unmultiplied(240, 90, 80, alpha)
-    };
-    ui.ctx().debug_painter().text(
-        anchor.left_bottom() + egui::vec2(0.0, 2.0 + 10.0 * t),
-        egui::Align2::LEFT_TOP,
-        text,
-        egui::FontId::proportional(13.0),
-        c,
-    );
 }
 
 /// The population change over the last game day: `(net, text, hover)`; `+N`, `-N` or `0`.
@@ -427,9 +472,84 @@ pub fn overview(view: &SimView) -> Overview {
     }
 }
 
+/// The cash-flow table (BUG-040): income by source and expenses by item for the last day, the
+/// week so far and the last week, and the balance of the last two days by hour.
+fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
+    let Some(day) = view.flow.last_day(&view.economy) else {
+        ui.weak("No game hour booked yet.");
+        return;
+    };
+    let week = &view.flow.week_to_date;
+    let last = &view.economy.last_week;
+    let (income, expenses) = flow_rows(&day, week, last);
+    let cell = |ui: &mut egui::Ui, c: Option<Cost>| {
+        ui.label(c.map_or("–".to_string(), format_money));
+    };
+    egui::Grid::new("cash_flow").striped(true).show(ui, |ui| {
+        ui.strong("");
+        ui.strong("Last day");
+        ui.strong("This week");
+        ui.strong("Last week");
+        ui.end_row();
+        for (title, rows, total) in [
+            (
+                "Income",
+                &income,
+                (
+                    day.income(),
+                    week.income(),
+                    last.income() + last.transit_fares,
+                ),
+            ),
+            (
+                "Expenses",
+                &expenses,
+                (
+                    day.expenses(),
+                    week.expenses(),
+                    last.upkeep() + last.transit_upkeep + last.loan_payments,
+                ),
+            ),
+        ] {
+            ui.strong(title);
+            ui.end_row();
+            for (name, c) in rows {
+                ui.label(name);
+                for c in c {
+                    cell(ui, *c);
+                }
+                ui.end_row();
+            }
+            ui.strong(format!("Total {}", title.to_lowercase()));
+            cell(ui, Some(total.0));
+            cell(ui, Some(total.1));
+            cell(ui, Some(total.2));
+            ui.end_row();
+        }
+        ui.strong("Net");
+        cell(ui, Some(day.net()));
+        cell(ui, Some(week.net()));
+        cell(ui, Some(last.balance()));
+        ui.end_row();
+    });
+    ui.weak("Balance, last 2 days, by hour");
+    let hours: Vec<f32> = view
+        .city
+        .history
+        .iter()
+        .rev()
+        .take(48)
+        .rev()
+        .map(|h| h.balance.0 as f32)
+        .collect();
+    crate::metrics::sparkline(ui, &hours, egui::vec2(260.0, 36.0));
+}
+
 /// The Overview tab: last week, the balance history, income by zone and the expenses.
 pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
     let o = overview(view);
+    cash_flow_table(ui, view);
+    ui.separator();
     ui.strong("Last week");
     egui::Grid::new("overview_week").show(ui, |ui| {
         for (name, cost) in [("Income", o.income), ("Expenses", o.upkeep), ("Net", o.net)] {
@@ -496,10 +616,16 @@ pub fn budget_contents(
     let balance = view.treasury.balance;
     ui.horizontal(|ui| {
         money_label(ui, view);
-        if week.week == 0 {
-            ui.weak("no week settled yet");
-        } else {
-            ui.label(format!("week {}", week.week));
+        match daily_trend(view) {
+            Some(d) => {
+                ui.label(egui::RichText::new(trend_text(d)).color(trend_colour(d.0 >= 0)));
+            }
+            None => {
+                ui.weak("no hour booked yet");
+            }
+        }
+        if week.week > 0 {
+            ui.label(format!("last settled: week {}", week.week));
         }
     });
     if let Some(w) = debt_warning(balance) {
@@ -529,10 +655,15 @@ fn taxes_tab(
     outbox: &mut CommandOutbox,
 ) {
     let (state, week) = (&view.economy, &view.economy.last_week);
-    ui.strong("Taxes (income last week)");
+    ui.strong("Taxes: last day, this week, last week");
+    let day = view.flow.last_day(state);
     egui::Grid::new("budget_taxes").show(ui, |ui| {
         for (i, zone) in TAXED_ZONES.into_iter().enumerate() {
             ui.label(zone_name(zone));
+            ui.label(format_money(
+                day.map_or(Cost::ZERO, |d| d.income_by_zone[i]),
+            ));
+            ui.label(format_money(view.flow.week_to_date.income_by_zone[i]));
             ui.label(format_money(week.income_by_zone[i]));
             let current = state.taxes.get(zone).unwrap_or(0);
             if let Some(pct) = pct_slider(ui, "", current, &mut draft.taxes[i], TAX_MIN..=TAX_MAX) {
@@ -673,31 +804,20 @@ mod tests {
     use cp_economy::EconomyState;
     use cp_sim::SimRunner;
 
-    /// T-179: the top bar's money trend takes the sign and the amount from the last day.
+    /// BUG-040: the top bar's money trend is the net of the last 24 hours, per day.
     #[test]
-    fn the_money_trend_shows_sign_and_week_amount_and_the_population_trend_its_balance() {
+    fn the_money_trend_shows_sign_and_day_amount_and_the_population_trend_its_balance() {
         let mut view = SimRunner::new(1).view();
-        assert_eq!(weekly_trend(&view), None, "before the first payday");
-        view.payday = cp_economy::Payday {
-            tick: 4096,
-            day: 1,
-            income: Cost(1_000),
-            road_upkeep: Cost(100),
-            building_upkeep: Cost(200),
-            utility_upkeep: Cost(50),
-            loans_week: Cost(700),
-            ..Default::default()
-        };
-        // (1000 - 350) * 7 - 700 = 3850 cents.
-        assert_eq!(weekly_trend(&view), Some(Cost(3_850)));
-        assert_eq!(trend_text(Cost(3_850)), "+$38.50/wk");
-        assert_eq!(trend_text(Cost(-12_345)), "-$123.45/wk");
-        view.tick = cp_core::Tick(4096 + 10);
-        let (text, age) = payday_pop(&view).expect("just paid");
-        assert_eq!(text, "+$6.50");
-        assert!(age < 0.1);
-        view.tick = cp_core::Tick(4096 + PAYDAY_POP_TICKS);
-        assert!(payday_pop(&view).is_none(), "the pop-up is over");
+        assert_eq!(daily_trend(&view), None, "before the first hour");
+        let mut f = Flow::default();
+        f.income_by_zone[0] = Cost(100);
+        f.road_upkeep = Cost(30);
+        view.flow.hours.push_back((1, f));
+        // One hour is scaled up to the day: (100 - 30) × 24.
+        assert_eq!(daily_trend(&view), Some(Cost(1_680)));
+        assert_eq!(trend_text(Cost(3_850)), "+$38.50/day");
+        assert_eq!(trend_text(Cost(-12_345)), "-$123.45/day");
+        assert!(trend_breakdown(&view).contains("Roads -"));
 
         let city = std::sync::Arc::make_mut(&mut view.city);
         city.pop_day = cp_citizen::PopFlow {

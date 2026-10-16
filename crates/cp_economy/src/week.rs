@@ -25,14 +25,15 @@ use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingState};
 use cp_citizen::CitizenGrid;
 use cp_content::{ContentDb, RoadDef, ServiceKind, SimContent, UtilityKind};
-use cp_core::time::{DAYS_PER_WEEK, TICKS_PER_DAY};
+use cp_core::time::TICKS_PER_DAY;
 use cp_core::{Cost, Tick, Treasury};
 use cp_district::{DistrictId, DistrictMap, Districts, district_at};
 use cp_net::{Elevation, NetGraph, Segment};
 use cp_transit::TransitLedger;
 use cp_utility::{UtilityGraph, UtilityNet};
 
-use crate::state::{DistrictIncome, EconomyState, Loan, Payday, WeekReport};
+use crate::flow::{FLOW_HOURS, Flow, MoneyFlow, SERVICE_KINDS};
+use crate::state::{DistrictIncome, EconomyState, Loan, WeekReport};
 
 fn percent(pct: u8) -> f64 {
     f64::from(pct) / 100.0
@@ -43,7 +44,8 @@ pub fn segment_upkeep(def: &RoadDef, seg: &Segment, budget_pct: u8) -> Cost {
     let per_m = match seg.elevation {
         Elevation::Elevated => def.elevated.as_ref().map(|v| v.upkeep_per_m_week),
         Elevation::Bridge => def.bridge.as_ref().map(|v| v.upkeep_per_m_week),
-        Elevation::Ground | Elevation::Tunnel => None,
+        Elevation::Tunnel => def.tunnel.as_ref().map(|v| v.upkeep_per_m_week),
+        Elevation::Ground => None,
     }
     .unwrap_or(def.upkeep_per_m_week);
     Cost::scaled(per_m, f64::from(seg.length) * percent(budget_pct))
@@ -72,6 +74,17 @@ pub fn week_report(i: &WeekInputs, week: u64) -> WeekReport {
 /// first, then districts in id order; a row exists for each district that has a taxable
 /// building. The rows sum to the report's income.
 pub fn week_detail(i: &WeekInputs, week: u64) -> (WeekReport, Vec<(Option<DistrictId>, Cost)>) {
+    let (r, rows, _) = week_lines(i, week);
+    (r, rows)
+}
+
+/// The tax income by district.
+pub type DistrictRows = Vec<(Option<DistrictId>, Cost)>;
+
+/// [`week_detail`] and the service upkeep by kind ([`SERVICE_ORDER`]; sums to
+/// `building_upkeep`).
+pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost; SERVICE_KINDS]) {
+    let mut services = [Cost::ZERO; SERVICE_KINDS];
     let mut by_district: BTreeMap<Option<DistrictId>, Cost> = BTreeMap::new();
     let mut r = WeekReport {
         week,
@@ -116,7 +129,11 @@ pub fn week_detail(i: &WeekInputs, week: u64) -> (WeekReport, Vec<(Option<Distri
         }
         if let Some(service) = def.service.as_deref().and_then(|s| i.content.service_id(s)) {
             let kind = i.content.service(service).kind;
-            r.building_upkeep += Cost::scaled(def.upkeep_week, percent(st.budgets.get(kind)));
+            let upkeep = Cost::scaled(def.upkeep_week, percent(st.budgets.get(kind)));
+            r.building_upkeep += upkeep;
+            if let Some(slot) = services.get_mut(kind as usize) {
+                *slot += upkeep;
+            }
         }
     }
 
@@ -138,22 +155,41 @@ pub fn week_detail(i: &WeekInputs, week: u64) -> (WeekReport, Vec<(Option<Distri
         }
     }
     r.loan_payments = st.loans.iter().map(Loan::weekly).sum();
-    (r, by_district.into_iter().collect())
+    (r, by_district.into_iter().collect(), services)
 }
 
-/// The `k`-th of seven shares (`k` in 1..=7) of a weekly amount: the differences of
-/// `floor(x·k/7)`, so the seven shares add up to `x` exactly and no cent is lost (T-179).
-pub fn day_share(x: Cost, k: u64) -> Cost {
-    let at = |k: u64| (i128::from(x.0) * i128::from(k)).div_euclid(7) as i64;
+/// Game hours in a week.
+pub const HOURS_PER_WEEK: u64 = 168;
+
+/// The `k`-th of `n` shares (`k` in 1..=n) of an amount: the differences of `floor(x·k/n)`, so
+/// the `n` shares add up to `x` exactly and no cent is lost.
+pub fn share(x: Cost, k: u64, n: u64) -> Cost {
+    let at = |k: u64| (i128::from(x.0) * i128::from(k)).div_euclid(i128::from(n)) as i64;
     Cost(at(k) - at(k - 1))
 }
 
-/// Economy phase (T-179): on every game day after tick 0 books that day's share (1/7, see
-/// [`day_share`]) of the weekly tax income and of the road, building and utility upkeep, by the
-/// same formula as [`week_report`], into the treasury (which may go below the debt floor; only
-/// purchases are refused there). On the week boundary (the seventh day) it also books the
-/// week's transit money and the loan payments, keeps the week's [`WeekReport`] in
-/// [`EconomyState::last_week`] and the district rows. The last day goes to [`Payday`].
+/// The `k`-th of seven daily shares (T-179).
+pub fn day_share(x: Cost, k: u64) -> Cost {
+    share(x, k, 7)
+}
+
+/// The `k`-th of the 168 hourly shares of a week (BUG-040).
+pub fn hour_share(x: Cost, k: u64) -> Cost {
+    share(x, k, HOURS_PER_WEEK)
+}
+
+/// The game hour `tick` is in (`tick × 24 / TICKS_PER_DAY`).
+pub fn game_hour(tick: u64) -> u64 {
+    tick * 24 / TICKS_PER_DAY
+}
+
+/// Economy phase (BUG-040): in the first tick of every game hour after tick 0 books that hour's
+/// share (1/168, see [`hour_share`]) of the weekly tax income and of the road, building and
+/// utility upkeep, by the same formula as [`week_report`], into the treasury (which may go
+/// below the debt floor; only purchases are refused there). The hour that ends the week (the
+/// 168th) also books the week's transit money and the loan payments, keeps the week's
+/// [`WeekReport`] in [`EconomyState::last_week`] and the district rows. What every hour booked
+/// goes to [`MoneyFlow`].
 #[allow(clippy::too_many_arguments)]
 pub fn settle_week(
     tick: Res<Tick>,
@@ -165,22 +201,22 @@ pub fn settle_week(
     mut state: ResMut<EconomyState>,
     mut treasury: ResMut<Treasury>,
     mut district_income: ResMut<DistrictIncome>,
-    mut payday: ResMut<Payday>,
+    mut flow: ResMut<MoneyFlow>,
     district_map: Res<DistrictMap>,
     districts: Res<Districts>,
     ledger: Option<ResMut<TransitLedger>>,
 ) {
-    if tick.0 == 0 || !tick.0.is_multiple_of(TICKS_PER_DAY) {
+    let hour = game_hour(tick.0);
+    if tick.0 == 0 || hour == game_hour(tick.0 - 1) {
         return;
     }
-    let day = tick.0 / TICKS_PER_DAY;
-    let k = match day % DAYS_PER_WEEK {
-        0 => DAYS_PER_WEEK,
-        d => d,
+    let k = match hour % HOURS_PER_WEEK {
+        0 => HOURS_PER_WEEK,
+        h => h,
     };
     let Some(content) = content else { return };
     citizens.ensure_derived();
-    let (mut report, rows) = week_detail(
+    let (mut report, rows, services) = week_lines(
         &WeekInputs {
             content: &content.0,
             net: &net,
@@ -191,39 +227,43 @@ pub fn settle_week(
             district_map: &district_map,
             districts: &districts,
         },
-        day.div_ceil(DAYS_PER_WEEK),
+        hour.div_ceil(HOURS_PER_WEEK),
     );
-    let mut today = Payday {
-        tick: tick.0,
-        day: k as u8,
-        income: day_share(report.income(), k),
-        road_upkeep: day_share(report.road_upkeep, k),
-        building_upkeep: day_share(report.building_upkeep, k),
-        utility_upkeep: day_share(report.utility_upkeep, k),
-        loans_week: report.loan_payments,
-        income_by_zone: report.income_by_zone.map(|c| day_share(c, k)),
+    let mut booked = Flow {
+        income_by_zone: report.income_by_zone.map(|c| hour_share(c, k)),
+        road_upkeep: hour_share(report.road_upkeep, k),
+        utility_upkeep: hour_share(report.utility_upkeep, k),
+        services: services.map(|c| hour_share(c, k)),
+        ..Flow::default()
     };
-    treasury.balance += today.net();
-    if k < DAYS_PER_WEEK {
-        *payday = today;
-        return;
+    treasury.balance += booked.net();
+    if k == 1 {
+        flow.week_to_date = Flow::default();
     }
-    *district_income = DistrictIncome {
-        week: day / DAYS_PER_WEEK,
-        rows,
-    };
-    // The week's transit money, summed by `cp_transit`, is booked and starts over (T-160).
-    if let Some(mut ledger) = ledger {
-        report.transit_fares = ledger.fares;
-        report.transit_upkeep = ledger.upkeep;
-        *ledger = TransitLedger::default();
+    if k == HOURS_PER_WEEK {
+        *district_income = DistrictIncome {
+            week: hour / HOURS_PER_WEEK,
+            rows,
+        };
+        // The week's transit money, summed by `cp_transit`, is booked and starts over (T-160).
+        if let Some(mut ledger) = ledger {
+            report.transit_fares = ledger.fares;
+            report.transit_upkeep = ledger.upkeep;
+            *ledger = TransitLedger::default();
+        }
+        treasury.balance += report.transit_fares - report.transit_upkeep - report.loan_payments;
+        booked.fares = report.transit_fares;
+        booked.transit_upkeep = report.transit_upkeep;
+        booked.loans = report.loan_payments;
+        for loan in &mut state.loans {
+            loan.pay_week();
+        }
+        state.loans.retain(|l| l.weeks_left > 0);
+        state.last_week = report;
     }
-    treasury.balance += report.transit_fares - report.transit_upkeep - report.loan_payments;
-    today.loans_week = report.loan_payments;
-    *payday = today;
-    for loan in &mut state.loans {
-        loan.pay_week();
+    flow.week_to_date.add(&booked);
+    if flow.hours.len() == FLOW_HOURS {
+        flow.hours.pop_front();
     }
-    state.loans.retain(|l| l.weeks_left > 0);
-    state.last_week = report;
+    flow.hours.push_back((hour, booked));
 }

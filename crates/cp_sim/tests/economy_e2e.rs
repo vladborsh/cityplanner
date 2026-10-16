@@ -228,22 +228,24 @@ fn the_week_settles_on_the_tick_and_replays_identically() {
     };
     let (mut a, mut b) = (build(), build());
     let start = balance(&a);
-    // T-179: upkeep is booked every day; between two day boundaries the balance stands still.
-    let mut day_end = start;
+    // BUG-040: upkeep is booked every game hour; between two hour boundaries the balance
+    // stands still.
+    let mut hour_end = start;
     while a.tick().0 < TICKS_PER_WEEK {
         a.tick_once();
         b.tick_once();
-        if a.tick().0 % cp_core::time::TICKS_PER_DAY == 1 {
-            day_end = balance(&a);
-            assert!(day_end.0 < start.0 || a.tick().0 == 1, "a day was booked");
+        let t = a.tick().0;
+        if cp_economy::game_hour(t - 1) != cp_economy::game_hour(t.saturating_sub(2)) {
+            hour_end = balance(&a);
+            assert!(hour_end.0 < start.0, "an hour was booked");
         } else {
-            assert_eq!(balance(&a), day_end, "nothing between two paydays");
+            assert_eq!(balance(&a), hour_end, "nothing between two hour boundaries");
         }
     }
     // Tick TICKS_PER_WEEK itself has not run yet (the counter is the next tick).
     a.tick_once();
     b.tick_once();
-    // 160 m × 0.1/m (basic street upkeep) × 150% = 24.00 over the seven daily shares.
+    // 160 m × 0.1/m (basic street upkeep) × 150% = 24.00 over the 168 hourly shares.
     assert_eq!(balance(&a), Cost(start.0 - 2_400));
     let r = a.world().resource::<EconomyState>().last_week;
     assert_eq!((r.week, r.road_upkeep), (1, Cost(2_400)));

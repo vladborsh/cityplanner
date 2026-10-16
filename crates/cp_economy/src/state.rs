@@ -135,37 +135,6 @@ impl WeekReport {
     }
 }
 
-/// What the last daily settlement booked (T-179): the day's share of the weekly income and
-/// upkeep, for the top bar (weekly estimate = day × 7, loans weekly) and the "+$N" pop-up.
-/// Derived: not saved and not in the checksum; empty after a load until the next day starts.
-#[derive(bevy_ecs::prelude::Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Payday {
-    /// Tick of the settlement; 0 = none yet.
-    pub tick: u64,
-    /// 1..=7: which day of the week it was (7 = the week boundary).
-    pub day: u8,
-    /// Booked that day: tax income, then the upkeep lines (positive numbers).
-    pub income: Cost,
-    pub road_upkeep: Cost,
-    pub building_upkeep: Cost,
-    pub utility_upkeep: Cost,
-    /// The weekly loan payments at that time (booked on the week boundary).
-    pub loans_week: Cost,
-    /// Tax income per zone type that day, in [`TAXED_ZONES`] order.
-    pub income_by_zone: [Cost; 6],
-}
-
-impl Payday {
-    pub fn upkeep(&self) -> Cost {
-        self.road_upkeep + self.building_upkeep + self.utility_upkeep
-    }
-
-    /// What the day added to the treasury (without loans and transit).
-    pub fn net(&self) -> Cost {
-        self.income - self.upkeep()
-    }
-}
-
 /// An active loan, one per offer at most. Serialized sim state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Loan {
