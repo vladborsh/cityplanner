@@ -19,8 +19,32 @@ use crate::set_speed;
 use crate::style::Sizes;
 use crate::tile::{TileIcon, tool_tile, tool_tile_enabled};
 
+/// What the settings menu edits besides the lighting switch (T-069). `cp_app` loads these
+/// from `settings.ron` at start and saves them when they change.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Prefs {
+    /// Scale of the whole UI (egui zoom factor).
+    pub ui_scale: f32,
+    /// Camera sensitivities; copied to the `CameraSettings` resource when edited.
+    pub camera: cp_render::CameraSettings,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Self {
+            ui_scale: 1.0,
+            camera: cp_render::CameraSettings::default(),
+        }
+    }
+}
+
+/// Range of the UI scale slider.
+pub const UI_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.75..=2.0;
+
 #[derive(Resource, Debug, Default)]
 pub struct UiState {
+    /// Settings edited in the settings menu.
+    pub prefs: Prefs,
     /// The category whose tool panel is open.
     pub category: Option<Category>,
     pub debug_open: bool,
@@ -343,6 +367,26 @@ pub fn top_bar(
             // Render only: the game clock and everyone's routine keep running at night.
             let r = ui.checkbox(&mut lighting.always_day, "Всегда день");
             rects.always_day = Some(r.rect);
+            let prefs = &mut state.prefs;
+            ui.add(egui::Slider::new(&mut prefs.ui_scale, UI_SCALE_RANGE).text("Масштаб UI"));
+            let cam = &mut prefs.camera;
+            ui.add(egui::Slider::new(&mut cam.pan_speed, 0.2..=3.0).text("Скорость сдвига"));
+            ui.add(
+                egui::Slider::new(&mut cam.key_rotate_speed, 0.4..=4.0).text("Скорость поворота"),
+            );
+            ui.add(
+                egui::Slider::new(&mut cam.drag_rotate_sens, 0.001..=0.02)
+                    .text("Чувствительность мыши"),
+            );
+            // Distance factor per notch: smaller = faster, shown the other way round.
+            let mut zoom = 1.0 - cam.zoom_step;
+            if ui
+                .add(egui::Slider::new(&mut zoom, 0.02..=0.4).text("Шаг зума"))
+                .changed()
+            {
+                cam.zoom_step = 1.0 - zoom;
+            }
+            ui.checkbox(&mut cam.edge_pan, "Сдвиг у края экрана");
         });
     }
     rects

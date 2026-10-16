@@ -37,7 +37,7 @@ pub use files::{FileMenu, FileRequest, SaveEntry, file_window};
 pub use icons::Icon;
 pub use info::{InfoRects, info_panel};
 pub use palette::{Category, palette, tool_panel};
-pub use panels::{TopRects, UiState, UiWindow, root_ui, top_bar};
+pub use panels::{Prefs, TopRects, UI_SCALE_RANGE, UiState, UiWindow, root_ui, top_bar};
 
 pub struct UiPlugin;
 
@@ -124,6 +124,7 @@ fn draw_ui(
     mut outbox: ResMut<CommandOutbox>,
     mut overlay: ResMut<OverlayState>,
     mut lighting: ResMut<LightingSettings>,
+    mut camera: ResMut<cp_render::CameraSettings>,
     rate: Res<TickRate>,
     extra: Option<Res<debug::PhaseTimes>>,
     mut tools: ResMut<ToolState>,
@@ -160,6 +161,13 @@ fn draw_ui(
         &mut state,
         &mut files,
     );
+    // The settings menu edits `state.prefs`; push it out to where it takes effect (T-069).
+    if *camera != state.prefs.camera {
+        *camera = state.prefs.camera.clone();
+    }
+    if (ctx.zoom_factor() - state.prefs.ui_scale).abs() > f32::EPSILON {
+        ctx.set_zoom_factor(state.prefs.ui_scale);
+    }
     palette(&mut root, &mut state, view.content.as_deref());
     tool_panel(
         &mut root,

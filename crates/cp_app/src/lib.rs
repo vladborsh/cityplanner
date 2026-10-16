@@ -8,6 +8,7 @@
 mod map;
 pub mod saves;
 pub mod scene;
+pub mod settings;
 
 pub use map::{MapLoadFailed, RawFile};
 
@@ -72,6 +73,12 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         let (pos, look) = camera_pose(&self.cam);
         let target = self.target.clone();
+        // The player's settings file (T-069); only the UI client has a settings menu.
+        let settings = if self.ui {
+            settings::Settings::load(&saves::data_dir())
+        } else {
+            settings::Settings::default()
+        };
         app.insert_resource(GameConfig {
             map: self.map.clone(),
             limits: self.limits,
@@ -80,8 +87,9 @@ impl Plugin for GamePlugin {
             scene: self.scene.clone(),
         })
         .insert_resource(cp_render::LightingSettings {
-            always_day: self.always_day,
+            always_day: self.always_day || settings.always_day,
         })
+        .insert_resource(settings.camera_settings())
         .init_resource::<PhaseTimes>()
         .init_resource::<CommandOutbox>()
         .add_plugins((
@@ -98,8 +106,19 @@ impl Plugin for GamePlugin {
         ))
         .add_systems(PreUpdate, step_sim);
         if self.ui {
-            app.add_plugins((UiPlugin, cp_tools::ToolsPlugin))
-                .add_systems(Update, (file_requests, inspect_selection));
+            app.insert_resource(cp_ui::UiState {
+                prefs: cp_ui::Prefs {
+                    ui_scale: settings.ui_scale,
+                    camera: settings.camera_settings(),
+                },
+                ..default()
+            })
+            .insert_resource(settings::SettingsSaver::new(settings))
+            .add_plugins((UiPlugin, cp_tools::ToolsPlugin))
+            .add_systems(
+                Update,
+                (file_requests, inspect_selection, settings::save_settings),
+            );
         }
         app.add_systems(Startup, move |mut commands: Commands| {
             let mut camera = commands.spawn((

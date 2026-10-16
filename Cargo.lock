@@ -2416,6 +2416,8 @@ dependencies = [
  "cp_tools",
  "cp_ui",
  "cp_zone",
+ "ron",
+ "serde",
 ]
 
 [[package]]

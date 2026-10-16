@@ -25,7 +25,7 @@ pub use math::Rig;
 use math::{owned_bounds, ray_terrain_hit, zoom_to_cursor};
 
 /// Sensitivities and smoothing. Insert your own before the plugin to override.
-#[derive(Resource, Clone, Debug)]
+#[derive(Resource, Clone, Debug, PartialEq)]
 pub struct CameraSettings {
     /// Pan speed in orbit distances per second (so panning scales with zoom).
     pub pan_speed: f32,
