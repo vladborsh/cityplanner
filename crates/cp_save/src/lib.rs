@@ -42,6 +42,7 @@
 //! | `Tick`, `SimRng`, `SimSpeed`, `CommandQueue`, `CommandLog` | yes |
 //! | `TileOwnership`, `NetGraph`, `ZoneGrid` (occupancy is rebuilt from the buildings), `BuildingGrid` (incl. the removed ids), `UtilityGraph`, `CitizenGrid` (occupancy tables rebuilt), `TripBook`, `Agents` (pools, lane state, segment load; drive tables rebuilt) | yes |
 //! | `PathService` (requests in flight) | yes, as `SavedPaths` |
+//! | `TransitNet` (stops and lines; the routes, `LinePlans`, are derived) | yes |
 //! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
@@ -78,7 +79,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 27;
+pub const FORMAT_VERSION: u32 = 28;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -215,6 +216,8 @@ pub struct SaveData {
     pub progress: cp_sim::Progress,
     /// Fire engines and garbage trucks on their way (T-151). Added in v27.
     pub service_runs: cp_traffic::ServiceRuns,
+    /// Bus stops and lines (T-153). Added in v28.
+    pub transit: cp_transit::TransitNet,
 }
 
 impl SaveData {
@@ -281,6 +284,7 @@ impl SaveData {
             shortage: world.resource::<WorkerShortage>().clone(),
             progress: *world.resource::<cp_sim::Progress>(),
             service_runs: world.resource::<cp_traffic::ServiceRuns>().clone(),
+            transit: world.resource::<cp_transit::TransitNet>().clone(),
         }
     }
 
@@ -322,6 +326,10 @@ impl SaveData {
         world.insert_resource(self.shortage);
         world.insert_resource(self.progress);
         world.insert_resource(self.service_runs);
+        world.insert_resource(self.transit);
+        // The routes are derived: the first Network phase after the load attaches the stops
+        // and plans every line again.
+        world.insert_resource(cp_transit::LinePlans::default());
         // The snapshot cache is keyed by the generation, which a load must change.
         let mut coverage = self.coverage;
         coverage.generation = world

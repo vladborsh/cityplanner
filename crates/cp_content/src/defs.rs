@@ -217,6 +217,8 @@ pub struct Balance {
     /// `ServiceProblems` bits that count towards abandonment next to `decay_mask`: GARBAGE and
     /// DEAD by default (1 | 4).
     pub decay_service_mask: u16,
+    /// Price of one bus stop, currency units (T-153). // tune later
+    pub bus_stop_cost: f32,
 }
 
 /// One loan the bank offers (`balance.ron` `loan_offers`). Interest is simple, for the whole
@@ -288,6 +290,7 @@ impl Balance {
             self.land_garbage,
             self.land_crime,
             self.res_service_cover,
+            self.bus_stop_cost,
         ]);
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
@@ -360,6 +363,7 @@ impl Default for Balance {
             res_level_services: [0, 0, 1, 2, 4],
             res_service_cover: 0.3,
             decay_service_mask: 5,
+            bus_stop_cost: 500.0,
         }
     }
 }

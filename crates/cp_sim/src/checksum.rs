@@ -136,10 +136,16 @@ pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
 }
 
 /// Checksum part of the services: the road coverage (sampled at the 64-tick boundaries, so
-/// part of the state) and the per-building service state.
+/// part of the state), the per-building service state and, once there is any, the transit net.
 pub(crate) fn service_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_service::ServiceCoverage>());
     h.write_serialized(world.resource::<cp_service::ServiceState>());
+    // Absent while there are no stops or lines, so such states keep the checksum they had
+    // before v28.
+    let transit = world.resource::<cp_transit::TransitNet>();
+    if !transit.is_empty() {
+        h.write_serialized(transit);
+    }
 }
 
 /// Checksum part of trips (`cp_citizen::TripBook`).

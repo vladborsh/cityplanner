@@ -117,6 +117,8 @@ impl SimRunner {
         world.init_resource::<cp_district::DistrictMap>();
         world.init_resource::<cp_district::Districts>();
         cp_service::ServicePlugin::init(&mut world);
+        world.init_resource::<cp_transit::TransitNet>();
+        world.init_resource::<cp_transit::LinePlans>();
         world.init_resource::<cp_economy::EconomyState>();
         world.init_resource::<cp_economy::DistrictIncome>();
         world.init_resource::<cp_economy::DemandAcc>();
@@ -269,6 +271,12 @@ impl SimRunner {
             cp_traffic::update_path_network
                 .in_set(SimPhase::Network)
                 .after(cp_net::update_junctions),
+        );
+        // Stops follow the network and the lines are re-planned on the fresh snapshot (T-153).
+        schedule.add_systems(
+            cp_transit::update_transit
+                .in_set(SimPhase::Network)
+                .after(cp_traffic::update_path_network),
         );
         schedule.add_systems(cp_traffic::deliver_paths.in_set(SimPhase::Paths));
         schedule.add_systems(

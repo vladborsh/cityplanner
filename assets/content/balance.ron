@@ -134,4 +134,8 @@ Balance((
     res_service_cover: 0.3,
     // Service problems that count towards abandonment: GARBAGE (1) and DEAD (4).
     decay_service_mask: 5,
+
+    // --- Transit (system-design §16 M3 A): all // tune later ---
+    // Price of one bus stop, currency units.
+    bus_stop_cost: 500.0,
 ))

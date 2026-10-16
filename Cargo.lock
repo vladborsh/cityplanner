@@ -2600,6 +2600,7 @@ dependencies = [
  "cp_sim",
  "cp_terrain",
  "cp_traffic",
+ "cp_transit",
  "cp_utility",
  "cp_zone",
  "postcard",
@@ -2640,6 +2641,7 @@ dependencies = [
  "cp_service",
  "cp_terrain",
  "cp_traffic",
+ "cp_transit",
  "cp_utility",
  "cp_zone",
  "postcard",
@@ -2694,6 +2696,21 @@ dependencies = [
  "cp_content",
  "cp_core",
  "cp_net",
+ "serde",
+]
+
+[[package]]
+name = "cp_transit"
+version = "0.0.0"
+dependencies = [
+ "bevy_ecs",
+ "bevy_math",
+ "cp_building",
+ "cp_content",
+ "cp_core",
+ "cp_net",
+ "cp_terrain",
+ "cp_traffic",
  "serde",
 ]
 

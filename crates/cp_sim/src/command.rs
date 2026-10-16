@@ -28,7 +28,9 @@ pub enum SimCommand {
     Debug(DebugCommand),
     District(DistrictCommand),
     Terrain(cp_terrain::TerrainCommand),
-    // M3+: Transit, ...
+    /// M3 (T-153): lines and stops.
+    Transit(cp_transit::TransitCommand),
+    // M3+: ...
 }
 
 /// Commands for demos, benchmarks and tests (see [`SimCommand::Debug`]). Variants are only
@@ -65,6 +67,7 @@ impl SimCommand {
             | SimCommand::Economy(_)
             | SimCommand::District(_)
             | SimCommand::Terrain(_)
+            | SimCommand::Transit(_)
             | SimCommand::Debug(_) => {}
         }
     }
@@ -115,6 +118,8 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
             cp_district::apply(world, c).map_err(|e| rejected("district", e))
         }
         SimCommand::Terrain(c) => crate::tiles::apply(world, c),
+        SimCommand::Transit(c) => cp_transit::apply(world, c)
+            .map_err(|e| rejected_or_funds("transit", &e, e.insufficient_funds())),
         SimCommand::Debug(c) => apply_debug(world, c),
     }
 }

@@ -508,6 +508,33 @@ impl PathGraph {
         self.car_edges.iter().map(Vec::len).sum()
     }
 
+    /// Length in metres of a car route: the stretch of the first lane after `start_s`, the
+    /// lanes in between, the stretch of the last lane up to `goal_s` and the junction
+    /// connections (T-153, the length of a line's leg).
+    pub fn car_path_length(&self, path: &crate::astar::CarPath) -> f32 {
+        let len = |l: LaneId| {
+            self.car_slot(l)
+                .and_then(|i| self.car[i as usize].as_ref())
+                .map_or(0.0, |n| n.len)
+        };
+        if path.steps.is_empty() {
+            return (path.goal_s - path.start_s).max(0.0);
+        }
+        let mut total = (len(path.start) - path.start_s).max(0.0) + path.goal_s;
+        for (i, &(from, to)) in path.steps.iter().enumerate() {
+            if i + 1 < path.steps.len() {
+                total += len(to);
+            }
+            if let Some(c) = self
+                .car_slot(from)
+                .and_then(|f| self.exits[f as usize].iter().find(|e| e.to == to))
+            {
+                total += c.length;
+            }
+        }
+        total
+    }
+
     /// Is the connection `from → to` still in the network?
     pub fn has_connection(&self, from: LaneId, to: LaneId) -> bool {
         match (self.car_slot(from), self.car_slot(to)) {

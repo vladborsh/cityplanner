@@ -1,0 +1,22 @@
+[package]
+name = "cp_transit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+cp_core.workspace = true
+cp_content.workspace = true
+cp_net.workspace = true
+cp_building.workspace = true
+cp_traffic.workspace = true
+bevy_ecs.workspace = true
+bevy_math.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+cp_terrain.workspace = true
