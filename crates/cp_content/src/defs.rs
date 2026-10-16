@@ -845,6 +845,11 @@ pub struct TrackSpec {
     pub road: String,
     pub length_m: f32,
     pub depth: f32,
+    /// A platform on the ground stands behind the building, not under it (BUG-046): its axis
+    /// is this many metres behind the building's back edge, away from the street. `None`: the
+    /// platform runs through the building's centre (the metro's, which is underground).
+    #[serde(default)]
+    pub behind_m: Option<f32>,
 }
 
 impl BuildingDef {

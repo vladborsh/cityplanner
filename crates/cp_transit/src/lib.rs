@@ -37,8 +37,8 @@ pub use riders::{choose_transit, run_riders};
 pub use rules::{STOP_NODE_CLEARANCE, STOP_SNAP, STOP_SPACING, StopError, check_road_stop};
 pub use run::run_lines;
 pub use station::{
-    add_station, connected_station, platform_segment, remove_station, station_reaches_outside,
-    station_stop,
+    add_station, connected_station, platform_ends, platform_segment, remove_station,
+    station_reaches_outside, station_stop,
 };
 pub use sync::{rebind_stops, update_transit};
 pub use tourists::{TOURISM_STREAM, Tourist, TouristPhase, Tourists, bring_by_train, run_tourists};

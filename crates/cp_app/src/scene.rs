@@ -73,8 +73,8 @@ pub fn build_train(sim: &mut SimRunner) -> bool {
         SimCommand::Net(NetCommand::BuildRoad {
             road: basic,
             path: RoadPath::Straight {
-                from: Vec2::new(end.x - 150.0, end.y + 22.0),
-                to: Vec2::new(end.x - 30.0, end.y + 22.0),
+                from: Vec2::new(end.x - 150.0, end.y + 28.5),
+                to: Vec2::new(end.x - 30.0, end.y + 28.5),
             },
             elevation: ElevationMode::Ground,
         }),

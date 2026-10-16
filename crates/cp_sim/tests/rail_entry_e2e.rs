@@ -141,7 +141,7 @@ fn a_station_joined_to_the_railway_reaches_the_outside_and_one_without_track_doe
     let def = db.road(road).clone();
     let y = |x: f32, z: f32| Vec3::new(x, terrain.height(Vec2::new(x, z)), z);
     for (x0, x1, z) in [
-        (end.x - 150.0, end.x - 30.0, end.y + 22.0),
+        (end.x - 150.0, end.x - 30.0, end.y + 28.5),
         (end.x - 1400.0, end.x - 1300.0, end.y - 678.0),
     ] {
         sim.world_mut()
@@ -165,4 +165,41 @@ fn a_station_joined_to_the_railway_reaches_the_outside_and_one_without_track_doe
     let rail = sim.world().resource::<RailReach>();
     assert!(station_reaches_outside(transit, rail, joined));
     assert!(!station_reaches_outside(transit, rail, alone));
+
+    // BUG-046: the building stands beside the platform, not on it: no cell of its lot comes
+    // within a rail's half width of the platform, and no rail lane runs through it.
+    for building in [joined, alone] {
+        let (a, b) = cp_transit::platform_ends(sim.world(), building).expect("a platform");
+        let grid = sim.world().resource::<BuildingGrid>();
+        let zones = sim.world().resource::<cp_zone::ZoneGrid>();
+        let lot = grid.get(building).unwrap().lot().expect("a lot");
+        for cell in lot.cells() {
+            let o = zones.cell_footprint(cell).unwrap();
+            let d = o.distance_to_segment(a, b);
+            assert!(
+                d >= 4.4,
+                "a cell of the station is {d} m from the platform axis"
+            );
+        }
+        let net = sim.world().resource::<NetGraph>();
+        let seg = cp_transit::platform_segment(sim.world().resource::<TransitNet>(), building)
+            .and_then(|s| net.segment(s))
+            .unwrap();
+        for &lane in &seg.lanes {
+            let curve = &net.lane(lane).unwrap().curve;
+            for piece in curve {
+                for k in 0..=8 {
+                    let p = piece.point(k as f32 / 8.0);
+                    let q = Vec2::new(p.x, p.z);
+                    for cell in lot.cells() {
+                        let o = zones.cell_footprint(cell).unwrap();
+                        assert!(
+                            o.distance_to_point(q) > 1.0,
+                            "a rail lane runs through the station"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

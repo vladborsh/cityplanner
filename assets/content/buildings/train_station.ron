@@ -12,5 +12,6 @@ Building((
     upkeep_week: 900.0,
     styles: ["service_train_station"],
     service: Some("train_station"),
-    track: Some((road: "rail_2t", length_m: 128.0, depth: 0.0)),
+    // The platform (rail_2t is 9 m wide) stands 6.5 m behind the building's back edge.
+    track: Some((road: "rail_2t", length_m: 128.0, depth: 0.0, behind_m: Some(6.5))),
 ))

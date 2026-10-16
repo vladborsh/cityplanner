@@ -65,7 +65,7 @@ fn world(station: bool) -> SimRunner {
         }
         if station {
             // The station's street, and the way from it to the houses.
-            let z = end.y + 22.0;
+            let z = end.y + 28.5;
             add(Vec2::new(end.x - 150.0, z), Vec2::new(end.x - 30.0, z));
             let mut p = Vec2::new(end.x - 150.0, z);
             let town = Vec2::new(a.x, z);

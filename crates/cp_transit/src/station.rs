@@ -54,6 +54,16 @@ pub fn connected_station(
     })
 }
 
+/// The two ends of the platform under station `building`, on the ground plane: where a track is
+/// joined to it (the road tool snaps onto these nodes).
+pub fn platform_ends(world: &World, building: BuildingId) -> Option<(Vec2, Vec2)> {
+    let seg = platform_segment(world.get_resource::<TransitNet>()?, building)?;
+    let net = world.get_resource::<NetGraph>()?;
+    let s = net.segment(seg)?;
+    let xz = |n| net.node(n).map(|n| Vec2::new(n.pos.x, n.pos.z));
+    Some((xz(s.start)?, xz(s.end)?))
+}
+
 /// Makes the stop of the station `building` on its platform `seg`, halfway along it. The
 /// pedestrian leg ends at the building's access point; `pos` is the building.
 pub fn add_station(world: &mut World, building: BuildingId, seg: SegmentId) -> Option<StopId> {

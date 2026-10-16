@@ -314,9 +314,22 @@ pub fn platform_request(
     pos: Vec2,
     rot: f32,
 ) -> Option<RoadPathRequest> {
+    platform_request_behind(db, def, pos, rot, Vec2::ZERO)
+}
+
+/// [`platform_request`] with the platform moved by `shift` (a platform behind the building,
+/// see [`platform_shift`]).
+pub fn platform_request_behind(
+    db: &ContentDb,
+    def: &BuildingDef,
+    pos: Vec2,
+    rot: f32,
+    shift: Vec2,
+) -> Option<RoadPathRequest> {
     let track = def.track.as_ref()?;
     let road = db.road_id(&track.road)?;
     let half = Vec2::new(rot.cos(), rot.sin()) * (track.length_m * 0.5);
+    let pos = pos + shift;
     Some(RoadPathRequest {
         road,
         path: RoadPath::Straight {
@@ -336,6 +349,28 @@ pub fn platform_request(
             zone_grid: false,
         },
     })
+}
+
+/// How far a ground platform stands from the centre of its building (BUG-046): back from the
+/// street, past the back edge of the lot and `behind_m` more, along the lot's depth axis (the
+/// cells' `v`, which points away from the road). Zero for a platform under the building or a
+/// building that stands free.
+pub fn platform_shift(world: &World, def: &BuildingDef, plan: &PlacementPlan) -> Vec2 {
+    let (Some(behind), Footprint::Lot(lot), Some(zones)) = (
+        def.track.as_ref().and_then(|t| t.behind_m),
+        &plan.footprint,
+        world.get_resource::<ZoneGrid>(),
+    ) else {
+        return Vec2::ZERO;
+    };
+    let Some(cell) = zones.cell_footprint(cp_zone::ZoneCellRef {
+        block: lot.block,
+        cell: lot.col * cp_zone::BLOCK_DEPTH,
+    }) else {
+        return Vec2::ZERO;
+    };
+    let depth = f32::from(lot.d) * 2.0 * cell.half_v;
+    cell.v * (depth * 0.5 + behind)
 }
 
 /// Validates the platform of a station: no junction in it (a long ground platform is cut in a
@@ -397,7 +432,9 @@ pub fn apply_placed(
             };
             let platform = {
                 let content = world.resource::<SimContent>();
-                match platform_request(&content.0, content.0.building(*def), plan.pos, plan.rot) {
+                let def = content.0.building(*def);
+                let shift = platform_shift(world, def, &plan);
+                match platform_request_behind(&content.0, def, plan.pos, plan.rot, shift) {
                     Some(req) => Some(plan_platform(world, &req)?),
                     None => None,
                 }
