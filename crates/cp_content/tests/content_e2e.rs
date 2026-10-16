@@ -54,9 +54,9 @@ fn mutate(file: &str, from: &str, to: &str) -> Vec<(String, String)> {
 }
 
 #[test]
-fn committed_content_loads_with_seven_road_types_in_four_classes() {
+fn committed_content_loads_with_nine_road_types_seven_roads_and_two_tracks() {
     let db = ContentDb::load_dir(root()).unwrap();
-    assert_eq!(db.roads().count(), 7);
+    assert_eq!(db.roads().count(), 9);
     let want = [
         ("basic_2l", RoadClass::Local, "Local street", false),
         (
@@ -120,7 +120,8 @@ fn committed_content_loads_with_seven_road_types_in_four_classes() {
     assert!((cost("highway_1w_2l") - 2.0 * cost("highway_1w_1l")).abs() < 1e-3);
     assert!((cost("highway_1w_3l") - 3.0 * cost("highway_1w_1l")).abs() < 1e-3);
     assert!((cost("highway_1w_4l") - 4.0 * cost("highway_1w_1l")).abs() < 1e-3);
-    // The existing ids keep their names; the new ones sort between them.
+    // The existing ids keep their names; the new ones sort between them, and the two Rail types
+    // (T-161) sort after every road, so no saved road index moves.
     let ids: Vec<&str> = db.roads().map(|(_, r)| r.id.as_str()).collect();
     assert_eq!(
         ids,
@@ -131,7 +132,9 @@ fn committed_content_loads_with_seven_road_types_in_four_classes() {
             "highway_1w_3l",
             "highway_1w_4l",
             "large_6l",
-            "medium_4l"
+            "medium_4l",
+            "metro_track",
+            "rail_2t"
         ]
     );
     let house = db.building(db.building_id("house_low_1").unwrap());

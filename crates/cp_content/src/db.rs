@@ -831,8 +831,9 @@ mod tests {
     use crate::kinds::{UtilityKind, ZoneType};
 
     /// Re-pinned for T-078: `RoadDef.class` is part of the hashed encoding (it was
-    /// 4353786976156915245 before).
-    const PINNED_SINGLE_ROAD_HASH: u64 = 3543843456772795126;
+    /// 4353786976156915245 before); and for T-161: `RoadDef.tunnel` and `RoadDef.ground` are
+    /// (it was 3543843456772795126 before).
+    const PINNED_SINGLE_ROAD_HASH: u64 = 10696934927935380879;
 
     const ROAD: &str = r#"Road((id: "r", name: "R", width: 10.0,
         lanes: [(kind: Car, dir: Forward, width: 3.0, offset: 0.0)],
@@ -859,7 +860,7 @@ mod tests {
     #[test]
     fn loads_shipped_content() {
         let db = real();
-        assert_eq!(db.roads().count(), 7);
+        assert_eq!(db.roads().count(), 9);
         // Dense ids follow sorted string ids.
         let names: Vec<_> = db.roads().map(|(_, d)| d.id.as_str()).collect();
         assert_eq!(
@@ -871,7 +872,9 @@ mod tests {
                 "highway_1w_3l",
                 "highway_1w_4l",
                 "large_6l",
-                "medium_4l"
+                "medium_4l",
+                "metro_track",
+                "rail_2t"
             ]
         );
         let hw = db.road(db.road_id("highway_1w_3l").unwrap());

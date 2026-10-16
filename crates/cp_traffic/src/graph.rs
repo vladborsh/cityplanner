@@ -205,6 +205,7 @@ pub(crate) struct PedEdge {
 struct SegLanes {
     car: Vec<(LaneId, f32)>,
     ped: Vec<(LaneId, f32)>,
+    rail: Vec<(LaneId, f32)>,
 }
 
 /// Immutable snapshot of the lane network for pathfinding. `Send + Sync`, shared by `Arc`.
@@ -215,6 +216,12 @@ pub struct PathGraph {
     pub(crate) ped: Vec<Option<LaneNode>>,
     pub(crate) ped_edges: Vec<Vec<PedEdge>>,
     pub(crate) max_car_speed: f32,
+    /// The track sub-graph (T-161), a graph of its own: a state is a `Rail` lane, an edge
+    /// joins a lane arriving at a node to a lane of another segment leaving it. Cars and
+    /// pedestrians never see it, trains never see roads.
+    pub(crate) rail: Vec<Option<LaneNode>>,
+    pub(crate) rail_edges: Vec<Vec<CarEdge>>,
+    pub(crate) max_rail_speed: f32,
     /// Per vehicle-lane slot: the connections leaving it.
     pub(crate) exits: Vec<Vec<ExitConn>>,
     /// Signal plans of the nodes with a light, as referenced by [`ExitConn::light`].
@@ -310,6 +317,8 @@ impl PathGraph {
             car_edges: vec![Vec::new(); slots],
             ped: vec![None; slots],
             ped_edges: vec![Vec::new(); slots * 2],
+            rail: vec![None; slots],
+            rail_edges: vec![Vec::new(); slots],
             exits: vec![Vec::new(); slots],
             ..Default::default()
         };
@@ -330,8 +339,13 @@ impl PathGraph {
             } else if lane.kind == LaneKind::Pedestrian {
                 sl.ped.push((id, lane.offset));
                 g.ped[id.index as usize] = Some(node);
+            } else if lane.kind == LaneKind::Rail {
+                g.max_rail_speed = g.max_rail_speed.max(node.speed);
+                sl.rail.push((id, lane.offset));
+                g.rail[id.index as usize] = Some(node);
             }
         }
+        g.build_rail_edges(net);
         // Vehicle edges: junction connections (nodes in id order => deterministic).
         for (node, junction) in geo.iter() {
             if net.node(*node).is_none() {
@@ -456,6 +470,68 @@ impl PathGraph {
             }
         }
         g
+    }
+
+    /// Joins the track lanes at every node where they meet: arriving lane to leaving lane of
+    /// another segment, straight on or round a bend, never back along the same segment (a train
+    /// turns round at a terminus, T-163). Nodes in id order, so the edge lists are stable.
+    fn build_rail_edges(&mut self, net: &NetGraph) {
+        for (node, n) in net.nodes() {
+            let mut arriving: Vec<u32> = Vec::new();
+            let mut leaving: Vec<u32> = Vec::new();
+            for &sid in &n.segments {
+                let Some(seg) = net.segment(sid) else {
+                    continue;
+                };
+                for &lid in &seg.lanes {
+                    let Some(slot) = self.rail_slot(lid) else {
+                        continue;
+                    };
+                    let forward = self.rail[slot as usize].as_ref().is_some_and(|l| l.forward);
+                    // A forward lane leaves the segment's start node and arrives at its end.
+                    let arrives = (seg.end == node) == forward;
+                    if arrives {
+                        arriving.push(slot);
+                    } else {
+                        leaving.push(slot);
+                    }
+                }
+            }
+            for &a in &arriving {
+                for &b in &leaving {
+                    let (la, lb) = (
+                        self.rail[a as usize].as_ref().expect("rail lane"),
+                        self.rail[b as usize].as_ref().expect("rail lane"),
+                    );
+                    if la.segment == lb.segment {
+                        continue;
+                    }
+                    self.rail_edges[a as usize].push(CarEdge {
+                        to: b,
+                        cost: la.last_point().distance(lb.first_point()) / lb.speed,
+                        lane_change: false,
+                    });
+                }
+            }
+        }
+    }
+
+    pub(crate) fn rail_slot(&self, id: LaneId) -> Option<u32> {
+        let l = self.rail.get(id.index as usize)?.as_ref()?;
+        (l.id == id).then_some(id.index)
+    }
+
+    /// Resolves an access point to a track lane, like [`Self::resolve_car`].
+    pub(crate) fn resolve_rail(&self, a: &Access) -> Option<(u32, f32)> {
+        let sl = self.segments.get(&a.segment)?;
+        let pick = pick_lane(&sl.rail, a.side)?;
+        let slot = self.rail_slot(pick)?;
+        let node = self.rail[slot as usize].as_ref()?;
+        Some((slot, node.lane_s(a.s)))
+    }
+
+    pub fn rail_lane_count(&self) -> usize {
+        self.rail.iter().flatten().count()
     }
 
     pub(crate) fn car_slot(&self, id: LaneId) -> Option<u32> {

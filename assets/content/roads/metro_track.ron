@@ -1,0 +1,22 @@
+// Metro track (T-161): two opposite Rail lanes, tunnel only. Numbers: tune later.
+Road((
+    id: "metro_track",
+    name: "Metro track (tunnel)",
+    class: Rail,
+    width: 8.0,
+    lanes: [
+        (kind: Rail, dir: Backward, width: 3.5, offset: 2.0),
+        (kind: Rail, dir: Forward, width: 3.5, offset: -2.0),
+    ],
+    median_width: 0.0,
+    speed_kmh: 80,
+    max_slope: 0.05,
+    cost_per_m: 0.0,
+    upkeep_per_m_week: 0.0,
+    allows_zoning: false,
+    rank: 1,
+    ground: false,
+    tunnel: Some((cost_per_m: 240.0, upkeep_per_m_week: 1.2, mesh: "road/metro_track_tunnel", depth: 12.0)),
+    mesh: "road/metro_track",
+    material: "road/rail",
+))

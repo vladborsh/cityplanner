@@ -2,7 +2,7 @@
 
 use crate::defs::{
     BuildingDef, LaneKind, MilestonesDef, RoadClass, RoadDef, RoadVariant, ServiceDef, StyleDef,
-    UtilityDef, VehicleDef,
+    TunnelVariant, UtilityDef, VehicleDef,
 };
 use crate::error::ContentError;
 use crate::kinds::ZoneType;
@@ -40,6 +40,15 @@ fn variant(c: &mut Check, name: &str, v: &Option<RoadVariant>) {
         c.non_negative(format!("{name}.cost_per_m"), v.cost_per_m);
         c.non_negative(format!("{name}.upkeep_per_m_week"), v.upkeep_per_m_week);
         c.not_empty(&format!("{name}.mesh"), &v.mesh);
+    }
+}
+
+fn tunnel(c: &mut Check, v: &Option<TunnelVariant>) {
+    if let Some(v) = v {
+        c.non_negative("tunnel.cost_per_m", v.cost_per_m);
+        c.non_negative("tunnel.upkeep_per_m_week", v.upkeep_per_m_week);
+        c.not_empty("tunnel.mesh", &v.mesh);
+        c.positive("tunnel.depth", v.depth);
     }
 }
 
@@ -86,6 +95,28 @@ pub fn road(d: &RoadDef) -> Problems {
             c.bad("max_slope", "a Highway's max_slope must be <= 0.06");
         }
     }
+    if d.class == RoadClass::Rail {
+        for (i, l) in d.lanes.iter().enumerate() {
+            if l.kind != LaneKind::Rail {
+                c.bad(
+                    format!("lanes[{i}].kind"),
+                    "a Rail road has Rail lanes only",
+                );
+            }
+        }
+        if d.allows_zoning {
+            c.bad("allows_zoning", "a Rail road does not allow zoning");
+        }
+    } else if let Some(i) = d.lanes.iter().position(|l| l.kind == LaneKind::Rail) {
+        c.bad(
+            format!("lanes[{i}].kind"),
+            "a Rail lane belongs to a road of class Rail",
+        );
+    }
+    if !d.ground && d.tunnel.is_none() {
+        c.bad("ground", "a road without a ground version needs a tunnel");
+    }
+    tunnel(&mut c, &d.tunnel);
     variant(&mut c, "elevated", &d.elevated);
     variant(&mut c, "bridge", &d.bridge);
     c.not_empty("mesh", &d.mesh);

@@ -1,0 +1,22 @@
+// Two-track railway on the ground, raised or bridged like a road (T-161). Numbers: tune later.
+Road((
+    id: "rail_2t",
+    name: "Railway (2 tracks)",
+    class: Rail,
+    width: 9.0,
+    lanes: [
+        (kind: Rail, dir: Backward, width: 3.5, offset: 2.25),
+        (kind: Rail, dir: Forward, width: 3.5, offset: -2.25),
+    ],
+    median_width: 0.0,
+    speed_kmh: 120,
+    max_slope: 0.04,
+    cost_per_m: 60.0,
+    upkeep_per_m_week: 0.4,
+    allows_zoning: false,
+    rank: 1,
+    elevated: Some((cost_per_m: 150.0, upkeep_per_m_week: 0.8, mesh: "road/rail_2t_elevated")),
+    bridge: Some((cost_per_m: 280.0, upkeep_per_m_week: 1.2, mesh: "road/rail_2t_bridge")),
+    mesh: "road/rail_2t",
+    material: "road/rail",
+))

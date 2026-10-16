@@ -236,6 +236,7 @@ pub fn class_colour(class: RoadClass) -> egui::Color32 {
         RoadClass::Collector => egui::Color32::from_rgb(90, 150, 225),
         RoadClass::Arterial => egui::Color32::from_rgb(235, 175, 60),
         RoadClass::Highway => egui::Color32::from_rgb(215, 80, 70),
+        RoadClass::Rail => egui::Color32::from_rgb(110, 110, 120),
     }
 }
 
@@ -274,7 +275,7 @@ pub fn road_tile_scaled(painter: &egui::Painter, def: &RoadDef, rect: egui::Rect
         let colour = match lane.kind {
             LaneKind::Car => ASPHALT,
             LaneKind::Bus => egui::Color32::from_rgb(150, 70, 60),
-            LaneKind::Tram => egui::Color32::from_rgb(120, 120, 130),
+            LaneKind::Tram | LaneKind::Rail => egui::Color32::from_rgb(120, 120, 130),
             LaneKind::Bike => egui::Color32::from_rgb(60, 140, 85),
             LaneKind::Pedestrian => egui::Color32::from_rgb(190, 182, 165),
         };

@@ -66,7 +66,7 @@ impl Category {
     /// others are always there.
     pub fn has_tools(self, content: Option<&ContentDb>) -> bool {
         match self {
-            Category::Roads => content.is_some_and(|c| c.roads().next().is_some()),
+            Category::Roads => content.is_some_and(|c| !crate::roads::cards(c).is_empty()),
             Category::Buildings => {
                 content.is_some_and(|c| c.buildings().any(|(_, d)| d.service.is_some()))
             }
@@ -384,7 +384,12 @@ mod tests {
     fn road_cards_match_the_content_in_class_and_lane_order_and_a_click_selects() {
         let db = content();
         let cards = crate::roads::cards(&db);
-        assert_eq!(cards.len(), db.roads().count());
+        assert_eq!(
+            cards.len(),
+            db.roads()
+                .filter(|(_, d)| d.class != cp_content::RoadClass::Rail)
+                .count()
+        );
         assert!(
             cards
                 .windows(2)

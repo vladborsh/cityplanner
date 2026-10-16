@@ -113,6 +113,10 @@ fn kinds(e: &[RoadBuildError]) -> Vec<&'static str> {
             RoadBuildError::WaterWithoutBridge { .. } => "WaterWithoutBridge",
             RoadBuildError::TooManySegments { .. } => "TooManySegments",
             RoadBuildError::TileNotOwned { .. } => "TileNotOwned",
+            RoadBuildError::NoTunnelVariant(_) => "NoTunnelVariant",
+            RoadBuildError::TunnelOnly(_) => "TunnelOnly",
+            RoadBuildError::RailCrossesRoad { .. } => "RailCrossesRoad",
+            RoadBuildError::TunnelClearance { .. } => "TunnelClearance",
         })
         .collect()
 }
@@ -1030,4 +1034,183 @@ fn auto_cuts_follow_the_control_points_and_leave_a_tail_of_32_to_96_m() {
             assert_eq!(*c, 64.0 * (i + 1) as f32);
         }
     }
+}
+
+// ---------- track and tunnels (T-161) ----------
+
+impl W {
+    /// An existing straight piece of `road` at height `y`.
+    fn add_as(&mut self, road: &str, a: Vec2, b: Vec2, y: f32, level: Elevation) -> SegmentId {
+        let id = self.road(road);
+        let def = self.db.road(id).clone();
+        let v = |p: Vec2| Vec3::new(p.x, y, p.y);
+        self.graph
+            .add_segment(&def, id, CubicBezier3::line(v(a), v(b)), level)
+            .unwrap()
+    }
+
+    fn rail(&self, road: &str, from: Vec2, to: Vec2, elevation: ElevationMode) -> RoadPathRequest {
+        RoadPathRequest {
+            road: self.road(road),
+            path: RoadPath::Straight { from, to },
+            elevation,
+            snap: no_snap(),
+        }
+    }
+}
+
+#[test]
+fn a_metro_tunnel_passes_under_a_river_and_needs_no_bridge() {
+    let mut w = W::new();
+    w.terrain = terrain(98.0, |x, _| 97.0 + 0.04 * (x - 5045.0).abs());
+    let depth =
+        w.db.road(w.road("metro_track"))
+            .tunnel
+            .as_ref()
+            .unwrap()
+            .depth;
+    let r = w.rail(
+        "metro_track",
+        at(-60.0, 0.0),
+        at(150.0, 0.0),
+        ElevationMode::Tunnel(depth),
+    );
+    let plan = w.run(&r).unwrap();
+    assert!(
+        plan.segments
+            .iter()
+            .all(|s| s.elevation == Elevation::Tunnel)
+    );
+    // The axis follows the terrain at the given depth, the river bed included.
+    for (i, p) in plan.new_nodes.iter().enumerate() {
+        let ground = w.terrain.height(to_xz(*p));
+        assert!((ground - p.y - depth).abs() < 0.01, "node {i}");
+    }
+    let per_m = w.db.road(r.road).tunnel.as_ref().unwrap().cost_per_m;
+    for s in &plan.segments {
+        assert_eq!(s.cost, segment_cost(s.length, per_m));
+    }
+    // The tunnel is the only version of the metro: not on the ground, not raised.
+    let mut ground = r.clone();
+    ground.elevation = ElevationMode::Ground;
+    assert_eq!(kinds(&w.run(&ground).unwrap_err()), ["TunnelOnly"]);
+    ground.elevation = ElevationMode::Elevated(4.0);
+    assert_eq!(kinds(&w.run(&ground).unwrap_err()), ["NoElevatedVariant"]);
+    // A road has no tunnel.
+    let road = w.rail(
+        "basic_2l",
+        at(0.0, 0.0),
+        at(80.0, 0.0),
+        ElevationMode::Tunnel(12.0),
+    );
+    assert_eq!(kinds(&w.run(&road).unwrap_err()), ["NoTunnelVariant"]);
+}
+
+#[test]
+fn a_tunnel_ignores_the_street_above_it_but_not_other_tunnels() {
+    let mut w = W::new();
+    w.add(at(45.0, -60.0), at(45.0, 60.0));
+    let r = w.rail(
+        "metro_track",
+        at(0.0, 0.0),
+        at(90.0, 0.0),
+        ElevationMode::Tunnel(12.0),
+    );
+    let plan = w.run(&r).unwrap();
+    assert!(plan.splits.is_empty(), "no node with the street above");
+
+    // Another tunnel on the same depth: a node.
+    let t = w.add_as(
+        "metro_track",
+        at(45.0, -60.0),
+        at(45.0, 60.0),
+        88.0,
+        Elevation::Tunnel,
+    );
+    let plan = w.run(&r).unwrap();
+    assert_eq!(plan.splits.len(), 1);
+    assert_eq!(plan.splits[0].segment, t);
+
+    // 8 m deeper (gap >= 5 m): they pass each other, no node.
+    let deep = w.rail(
+        "metro_track",
+        at(0.0, 0.0),
+        at(90.0, 0.0),
+        ElevationMode::Tunnel(20.0),
+    );
+    let plan = w.run(&deep).unwrap();
+    assert!(plan.splits.is_empty());
+    // 3 m deeper: neither a node nor room to pass.
+    let near = w.rail(
+        "metro_track",
+        at(0.0, 0.0),
+        at(90.0, 0.0),
+        ElevationMode::Tunnel(15.0),
+    );
+    assert_eq!(kinds(&w.run(&near).unwrap_err()), ["TunnelClearance"]);
+}
+
+#[test]
+fn track_never_crosses_a_road_in_the_level_but_may_pass_over_it() {
+    let mut w = W::new();
+    w.add(at(0.0, -150.0), at(0.0, 150.0));
+    let r = w.rail(
+        "rail_2t",
+        at(-200.0, 0.0),
+        at(200.0, 0.0),
+        ElevationMode::Ground,
+    );
+    assert_eq!(kinds(&w.run(&r).unwrap_err()), ["RailCrossesRoad"]);
+    // And a road does not cross a track at ground level either.
+    let mut w2 = W::new();
+    w2.add_as(
+        "rail_2t",
+        at(0.0, -150.0),
+        at(0.0, 150.0),
+        100.0,
+        Elevation::Ground,
+    );
+    let road = w2.straight(at(-100.0, 0.0), at(100.0, 0.0));
+    assert_eq!(kinds(&w2.run(&road).unwrap_err()), ["RailCrossesRoad"]);
+    // Raised, the track passes over the street without a node.
+    let mut over = r.clone();
+    over.elevation = ElevationMode::Elevated(4.0);
+    let plan = w.run(&over).unwrap();
+    assert!(plan.splits.is_empty());
+    // Two tracks at ground level meet in a node as roads do.
+    let mut w3 = W::new();
+    let t = w3.add_as(
+        "rail_2t",
+        at(0.0, -150.0),
+        at(0.0, 150.0),
+        100.0,
+        Elevation::Ground,
+    );
+    let plan = w3.run(&r).unwrap();
+    assert_eq!(plan.splits.len(), 1);
+    assert_eq!(plan.splits[0].segment, t);
+}
+
+#[test]
+fn track_and_road_do_not_share_a_node() {
+    let mut w = W::new();
+    let road = w.add(at(0.0, 0.0), at(80.0, 0.0));
+    let r = w.rail(
+        "rail_2t",
+        at(82.0, 0.0),
+        at(82.0, 90.0),
+        ElevationMode::Ground,
+    );
+    let mut r = r;
+    r.snap = SnapOptions::default();
+    let plan = w.run(&r).unwrap();
+    assert!(
+        plan.snaps
+            .iter()
+            .all(|s| !matches!(s.kind, SnapKind::Node(_) | SnapKind::Segment(_))),
+        "{:?}",
+        plan.snaps
+    );
+    assert!(plan.splits.is_empty());
+    let _ = road;
 }

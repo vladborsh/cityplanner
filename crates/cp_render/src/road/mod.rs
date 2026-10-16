@@ -174,6 +174,7 @@ fn lane_color(kind: LaneKind) -> ([f32; 4], f32) {
         LaneKind::Bike => (BIKE, 0.0),
         LaneKind::Tram => (TRAM, 0.0),
         LaneKind::Bus => (BUS, 0.0),
+        LaneKind::Rail => (TRAM, 0.0),
     }
 }
 

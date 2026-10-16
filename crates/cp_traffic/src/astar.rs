@@ -13,7 +13,9 @@ use bevy_math::Vec2;
 use cp_net::LaneId;
 use serde::{Deserialize, Serialize};
 
-use crate::graph::{Access, CONGESTION_K, CongestionMap, PED_SPEED, PathGraph, SegEnd};
+use crate::graph::{
+    Access, CONGESTION_K, CarEdge, CongestionMap, LaneNode, PED_SPEED, PathGraph, SegEnd,
+};
 
 /// No route exists (or an endpoint is not on a usable lane).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,19 +91,53 @@ pub fn find_car_path_lanes(
     car_route(graph, cong, (start, from_s), (goal, to_s))
 }
 
+/// Fastest route along the track between two access points (T-161). Trains do not slow each
+/// other down here (no congestion): a route is the shortest travel time over the rail graph.
+pub fn find_rail_path(graph: &PathGraph, from: &Access, to: &Access) -> Result<CarPath, NoPath> {
+    let (start, s0) = graph.resolve_rail(from).ok_or(NoPath)?;
+    let (goal, s1) = graph.resolve_rail(to).ok_or(NoPath)?;
+    route(
+        &graph.rail,
+        &graph.rail_edges,
+        graph.max_rail_speed,
+        &CongestionMap::default(),
+        (start, s0),
+        (goal, s1),
+    )
+}
+
 fn car_route(
     graph: &PathGraph,
+    cong: &CongestionMap,
+    start: (u32, f32),
+    goal: (u32, f32),
+) -> Result<CarPath, NoPath> {
+    route(
+        &graph.car,
+        &graph.car_edges,
+        graph.max_car_speed,
+        cong,
+        start,
+        goal,
+    )
+}
+
+/// A* over one lane graph (the road graph or the track graph).
+fn route(
+    lanes: &[Option<LaneNode>],
+    edges: &[Vec<CarEdge>],
+    max_speed: f32,
     cong: &CongestionMap,
     (start, s0): (u32, f32),
     (goal, s1): (u32, f32),
 ) -> Result<CarPath, NoPath> {
-    let lane = |i: u32| graph.car[i as usize].as_ref().expect("car lane");
+    let lane = |i: u32| lanes[i as usize].as_ref().expect("lane");
     let c = |i: u32| cong.get(lane(i).segment);
-    let vmax = graph.max_car_speed.max(0.1);
+    let vmax = max_speed.max(0.1);
     let goal_pos = lane(goal).point_at(s1);
     let h = |i: u32| lane(i).last_point().distance(goal_pos) / vmax;
 
-    let n = graph.car.len();
+    let n = lanes.len();
     let mut g = vec![f32::INFINITY; n];
     let mut parent = vec![NONE; n];
     let mut closed = vec![false; n];
@@ -124,7 +160,7 @@ fn car_route(
         if std::mem::replace(&mut closed[u as usize], true) {
             continue;
         }
-        for e in &graph.car_edges[u as usize] {
+        for e in &edges[u as usize] {
             let v = e.to;
             if v == goal {
                 let l = lane(v);

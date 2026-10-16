@@ -29,7 +29,7 @@
 //! independent of anything but the inputs.
 
 use bevy_math::{Vec2, Vec3};
-use cp_content::{ContentDb, LaneDir, LaneKind, RoadDefId};
+use cp_content::{ContentDb, LaneDir, LaneKind, RoadClass, RoadDefId};
 use cp_core::Cost;
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_terrain::{Terrain, TileOwnership};
@@ -65,6 +65,14 @@ pub const PIER_SPACING: f32 = 48.0;
 pub const ZONE_CELL: f32 = 8.0;
 /// Distance between the control points of a stretch (8 cells), metres (§6.7).
 pub const CONTROL_SPACING: f32 = 64.0;
+/// Tunnels whose axes differ by at most this many metres at a crossing are on the same depth:
+/// they meet in a node (T-161).
+pub const SAME_DEPTH_TOL: f32 = 1.5;
+/// Smallest vertical gap (axis to axis, metres) between two tunnels that cross without a node.
+/// A crossing with a gap between [`SAME_DEPTH_TOL`] and this is refused.
+pub const TUNNEL_CLEARANCE: f32 = 5.0;
+/// Deepest tunnel axis below the terrain, metres.
+pub const MAX_TUNNEL_DEPTH: f32 = 60.0;
 /// Crossings closer than this (metres) to an auto-cut point replace it.
 const CUT_MERGE: f32 = 0.5;
 
@@ -89,6 +97,9 @@ pub enum ElevationMode {
     Ground,
     /// Raised by `h` metres above the ground at each node.
     Elevated(f32),
+    /// Underground, the axis `d` metres below the terrain at each node (T-161). Appended last:
+    /// older command logs read as before.
+    Tunnel(f32),
 }
 
 /// The drawn path, in world XZ.
@@ -270,6 +281,15 @@ impl std::fmt::Display for RoadBuildError {
             Self::WaterWithoutBridge { .. } => write!(f, "water: raise the road to bridge it"),
             Self::TooManySegments { .. } => write!(f, "too many roads meet here"),
             Self::TileNotOwned { .. } => write!(f, "tile not owned"),
+            Self::NoTunnelVariant(_) => write!(f, "this road type cannot go underground"),
+            Self::TunnelOnly(_) => write!(f, "this track can only be built in a tunnel"),
+            Self::RailCrossesRoad { .. } => write!(f, "track and road cannot cross at one level"),
+            Self::TunnelClearance { .. } => {
+                write!(
+                    f,
+                    "tunnels crossing here need {TUNNEL_CLEARANCE:.0} m between them"
+                )
+            }
         }
     }
 }
@@ -320,6 +340,19 @@ pub enum RoadBuildError {
     TileNotOwned {
         pos: Vec3,
     },
+    /// `Tunnel` requested but the road type has no tunnel variant (T-161).
+    NoTunnelVariant(RoadDefId),
+    /// The road type has no version on the ground and was not asked for in a tunnel.
+    TunnelOnly(RoadDefId),
+    /// A path at ground level would cross a segment of the other kind (track against road)
+    /// without a bridge: they never share a node and never cross in the level.
+    RailCrossesRoad {
+        pos: Vec3,
+    },
+    /// Two tunnels cross closer than [`TUNNEL_CLEARANCE`] but not on one depth.
+    TunnelClearance {
+        pos: Vec3,
+    },
 }
 
 /// Money for one segment: `metres × cost_per_m` as cents, rounded once ([`Cost::scaled`], §11).
@@ -343,6 +376,9 @@ struct Vertex {
 struct Builder<'a> {
     graph: &'a NetGraph,
     terrain: &'a Terrain,
+    content: &'a ContentDb,
+    /// The road being built is track: it only meets track.
+    rail: bool,
     elev: ElevationMode,
     new_nodes: Vec<Vec3>,
     splits: Vec<PlannedSplit>,
@@ -355,6 +391,8 @@ impl Builder<'_> {
             ElevationMode::Ground => y,
             // Over water the deck is measured from the water surface.
             ElevationMode::Elevated(h) => y + self.terrain.water_depth(p).max(0.0) + h,
+            // Under water too: a tunnel is measured from the terrain (the river bed).
+            ElevationMode::Tunnel(d) => y - d,
         }
     }
 
@@ -417,12 +455,36 @@ impl Builder<'_> {
         }
     }
 
-    /// `any_level`: an elevated path's end vertex may snap to ground nodes too.
+    fn is_rail_road(&self, road: RoadDefId) -> bool {
+        self.content.road(road).class == RoadClass::Rail
+    }
+
+    /// Whether the node belongs to the track network (a segment of class `Rail` ends in it).
+    fn is_rail_node(&self, n: &crate::model::Node) -> bool {
+        n.segments
+            .iter()
+            .filter_map(|&s| self.graph.segment(s))
+            .any(|s| self.is_rail_road(s.road))
+    }
+
+    /// `any_level`: an elevated path's end vertex may snap to ground nodes too. Track meets
+    /// track and roads meet roads; a tunnel meets tunnel nodes of its own depth.
     fn nearest_node(&self, p: Vec2, any_level: bool) -> Option<NodeId> {
         let mut best: Option<(f32, NodeId)> = None;
-        let raised = matches!(self.elev, ElevationMode::Elevated(_));
         for (id, n) in self.graph.nodes() {
-            if !(raised && any_level) && (n.elevation != Elevation::Ground) != raised {
+            let level_ok = match self.elev {
+                ElevationMode::Ground => n.elevation == Elevation::Ground,
+                ElevationMode::Elevated(_) => match n.elevation {
+                    Elevation::Elevated | Elevation::Bridge => true,
+                    Elevation::Ground => any_level,
+                    Elevation::Tunnel => false,
+                },
+                ElevationMode::Tunnel(_) => {
+                    n.elevation == Elevation::Tunnel
+                        && (n.pos.y - self.ground_y(p)).abs() <= SAME_DEPTH_TOL
+                }
+            };
+            if !level_ok || self.is_rail_node(n) != self.rail {
                 continue;
             }
             let d = to_xz(n.pos).distance(p);
@@ -436,7 +498,7 @@ impl Builder<'_> {
     fn nearest_segment(&self, p: Vec2) -> Option<(SegmentId, f32)> {
         let mut best: Option<(f32, SegmentId, f32)> = None;
         for (id, s) in self.graph.segments() {
-            if s.elevation != Elevation::Ground {
+            if s.elevation != Elevation::Ground || self.is_rail_road(s.road) != self.rail {
                 continue;
             }
             // The box of the control points bounds the curve: far segments are not searched.
@@ -657,6 +719,7 @@ fn validate_inner(
     let height_ok = match req.elevation {
         ElevationMode::Ground => true,
         ElevationMode::Elevated(h) => cp_core::sane_coord(h),
+        ElevationMode::Tunnel(d) => cp_core::sane_coord(d) && d > 0.0 && d <= MAX_TUNNEL_DEPTH,
     };
     if !points_ok || !height_ok {
         return Err(vec![RoadBuildError::BadCoordinates]);
@@ -664,6 +727,7 @@ fn validate_inner(
     let def = content.road(req.road);
     let mut errors = Vec::new();
     let elevated = matches!(req.elevation, ElevationMode::Elevated(_));
+    let tunnel = matches!(req.elevation, ElevationMode::Tunnel(_));
     let variant = if elevated {
         match &def.elevated {
             Some(v) => Some(v),
@@ -672,12 +736,24 @@ fn validate_inner(
     } else {
         None
     };
-    let cost_per_m = variant.map_or(def.cost_per_m, |v| v.cost_per_m);
+    let cost_per_m = if tunnel {
+        match &def.tunnel {
+            Some(v) => v.cost_per_m,
+            None => return Err(vec![RoadBuildError::NoTunnelVariant(req.road)]),
+        }
+    } else if !elevated && !def.ground {
+        return Err(vec![RoadBuildError::TunnelOnly(req.road)]);
+    } else {
+        variant.map_or(def.cost_per_m, |v| v.cost_per_m)
+    };
     let seg_elevation = if elevated {
         Elevation::Elevated
+    } else if tunnel {
+        Elevation::Tunnel
     } else {
         Elevation::Ground
     };
+    let rail = def.class == RoadClass::Rail;
 
     // Raw vertices and the control point of a curve leg.
     let (raw, control): (Vec<Vec2>, Option<Vec2>) = match &req.path {
@@ -694,6 +770,8 @@ fn validate_inner(
     let mut b = Builder {
         graph,
         terrain,
+        content,
+        rail,
         elev: req.elevation,
         new_nodes: Vec::new(),
         splits: Vec::new(),
@@ -721,7 +799,7 @@ fn validate_inner(
         }
         if node.is_none()
             && req.snap.segment
-            && !elevated
+            && matches!(req.elevation, ElevationMode::Ground)
             && let Some((s, t)) = b.nearest_segment(p)
         {
             let r = b.split_at(s, t);
@@ -797,12 +875,32 @@ fn validate_inner(
         // is shorter than MIN_SEGMENT_LENGTH_BUILD is reported by the per-piece check below.
         let mut fixed: Vec<(f32, NodeRef)> = Vec::new();
         if !elevated {
+            let level = if tunnel {
+                Elevation::Tunnel
+            } else {
+                Elevation::Ground
+            };
             for (sid, seg) in graph.segments() {
-                if seg.elevation != Elevation::Ground {
+                if seg.elevation != level {
                     continue;
                 }
                 for (tc, ts) in leg.intersect_xz(&seg.curve) {
                     if !(0.002..=0.998).contains(&tc) || !(0.002..=0.998).contains(&ts) {
+                        continue;
+                    }
+                    let at = seg.curve.point(ts);
+                    if tunnel {
+                        // Same depth: a node. Far enough apart: they pass each other.
+                        let mine = b.ground_y(to_xz(leg.point(tc)));
+                        let gap = (mine - at.y).abs();
+                        if gap > SAME_DEPTH_TOL {
+                            if gap < TUNNEL_CLEARANCE {
+                                errors.push(RoadBuildError::TunnelClearance { pos: at });
+                            }
+                            continue;
+                        }
+                    } else if b.is_rail_road(seg.road) != rail {
+                        errors.push(RoadBuildError::RailCrossesRoad { pos: at });
                         continue;
                     }
                     let r = b.split_at(sid, ts);

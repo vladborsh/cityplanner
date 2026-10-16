@@ -439,6 +439,8 @@ pub enum LaneKind {
     Bike = 2,
     Tram = 3,
     Bus = 4,
+    /// Metro and rail track (T-161): only trains use it.
+    Rail = 5,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -478,6 +480,24 @@ pub enum RoadClass {
     Collector,
     Arterial,
     Highway,
+    /// Track for trains (T-161): Rail lanes only, a sub-network of its own.
+    Rail,
+}
+
+/// Underground version of a road type (T-161): its own price and mesh, and the depth below the
+/// ground the player gets by default.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TunnelVariant {
+    pub cost_per_m: f32,
+    pub upkeep_per_m_week: f32,
+    pub mesh: String,
+    /// Default depth of the tunnel axis below the terrain, metres.
+    pub depth: f32,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -506,6 +526,12 @@ pub struct RoadDef {
     pub elevated: Option<RoadVariant>,
     #[serde(default)]
     pub bridge: Option<RoadVariant>,
+    /// Underground version (T-161); `None` for a road that cannot be tunnelled.
+    #[serde(default)]
+    pub tunnel: Option<TunnelVariant>,
+    /// Whether the plain (on the ground) version exists; `false` for a tunnel-only type.
+    #[serde(default = "default_true")]
+    pub ground: bool,
     pub mesh: String,
     pub material: String,
 }

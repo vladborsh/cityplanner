@@ -38,7 +38,9 @@ use cp_core::Tick;
 use cp_net::{JunctionGeometry, NetGraph};
 use serde::{Deserialize, Serialize};
 
-use crate::astar::{CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_ped_path};
+use crate::astar::{
+    CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_ped_path, find_rail_path,
+};
 use crate::graph::{Access, CongestionMap, PathGraph};
 
 /// Ticks between submitting a request and applying its result.
@@ -58,6 +60,8 @@ pub enum Mode {
         from: cp_net::LaneId,
         to: cp_net::LaneId,
     },
+    /// A train's route over the track graph (T-161). Appended last.
+    Rail,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -71,6 +75,8 @@ pub struct PathRequest {
 pub enum PathResult {
     Car(Result<CarPath, NoPath>),
     Pedestrian(Result<PedPath, NoPath>),
+    /// A route over the track graph; the lanes are `Rail` lanes.
+    Rail(Result<CarPath, NoPath>),
     /// The network changed while the request was in flight; ask again.
     Stale,
 }
@@ -155,6 +161,7 @@ fn compute(graph: &PathGraph, cong: &CongestionMap, req: &PathRequest) -> PathRe
     match req.mode {
         Mode::Car => PathResult::Car(find_car_path(graph, cong, &req.from, &req.to)),
         Mode::Pedestrian => PathResult::Pedestrian(find_ped_path(graph, &req.from, &req.to)),
+        Mode::Rail => PathResult::Rail(find_rail_path(graph, &req.from, &req.to)),
         Mode::CarLanes { from, to } => PathResult::Car(find_car_path_lanes(
             graph,
             cong,

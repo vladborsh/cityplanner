@@ -28,10 +28,12 @@ pub struct Card {
     pub allows_zoning: bool,
 }
 
-/// One card per road type, ordered by class, then lanes, then name.
+/// One card per road type, ordered by class, then lanes, then name. Track (class `Rail`) is not
+/// a road: it comes with the metro tool (T-164).
 pub fn cards(content: &ContentDb) -> Vec<Card> {
     let mut out: Vec<Card> = content
         .roads()
+        .filter(|(_, def)| def.class != RoadClass::Rail)
         .map(|(id, def)| Card {
             id,
             name: def.name.clone(),
@@ -65,6 +67,7 @@ fn class_label(class: RoadClass) -> &'static str {
         RoadClass::Collector => "Collector",
         RoadClass::Arterial => "Arterial",
         RoadClass::Highway => "Highway",
+        RoadClass::Rail => "Rail",
     }
 }
 

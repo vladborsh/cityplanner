@@ -17,7 +17,7 @@ use std::fmt;
 
 use bevy_ecs::world::World;
 use bevy_math::{Vec2, Vec3};
-use cp_content::{RoadDefId, SimContent};
+use cp_content::{RoadClass, RoadDefId, SimContent};
 use cp_core::curve::CubicBezier3;
 use cp_core::treasury::{charge_funds, check_funds};
 use cp_core::{Cost, InsufficientFunds};
@@ -74,6 +74,11 @@ pub enum NetError {
     SameRoad,
     /// The segment is elevated but the new road type has no elevated variant.
     NoElevatedVariant(RoadDefId),
+    /// The segment is underground but the new road type has no tunnel variant.
+    NoTunnelVariant(RoadDefId),
+    /// `UpgradeSegment` between a road and a track type, or to a type that has no version on
+    /// the ground for a ground segment.
+    WrongKind(RoadDefId),
     /// A graph operation failed while applying a validated plan (state was restored).
     Op(NetOpError),
     /// The treasury cannot pay for the change.
@@ -115,6 +120,8 @@ impl fmt::Display for NetError {
             Self::UnknownRoad(r) => write!(f, "unknown road type {r:?}"),
             Self::SameRoad => write!(f, "segment already has this road type"),
             Self::NoElevatedVariant(r) => write!(f, "road type {r:?} has no elevated variant"),
+            Self::NoTunnelVariant(r) => write!(f, "road type {r:?} has no tunnel variant"),
+            Self::WrongKind(r) => write!(f, "road type {r:?} does not fit this segment"),
             Self::Op(e) => write!(f, "{e}"),
             Self::NotOwned { seg, .. } => write!(f, "segment {seg:?} is outside your land"),
             Self::Funds(e) => write!(
@@ -233,13 +240,25 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
             if s.road == *road {
                 return Err(NetError::SameRoad);
             }
-            let cost_per_m = if s.elevation == Elevation::Elevated {
-                def.elevated
-                    .as_ref()
-                    .ok_or(NetError::NoElevatedVariant(*road))?
-                    .cost_per_m
-            } else {
-                def.cost_per_m
+            let was_rail = content.road(s.road).class == RoadClass::Rail;
+            if was_rail != (def.class == RoadClass::Rail) {
+                return Err(NetError::WrongKind(*road));
+            }
+            let cost_per_m = match s.elevation {
+                Elevation::Elevated => {
+                    def.elevated
+                        .as_ref()
+                        .ok_or(NetError::NoElevatedVariant(*road))?
+                        .cost_per_m
+                }
+                Elevation::Tunnel => {
+                    def.tunnel
+                        .as_ref()
+                        .ok_or(NetError::NoTunnelVariant(*road))?
+                        .cost_per_m
+                }
+                _ if !def.ground => return Err(NetError::WrongKind(*road)),
+                _ => def.cost_per_m,
             };
             let cost = segment_cost(s.length, cost_per_m);
             check_funds(world, cost).map_err(NetError::Funds)?;
