@@ -97,7 +97,7 @@ impl Agents {
                 let (pos, yaw) = vehicle_pose(v, self.specs().of(v).length * 0.5, graph, net, geo)?;
                 Some(VehiclePose {
                     key: key(id.index, id.generation),
-                    kind: v.kind,
+                    kind: v.kind_id(),
                     pos,
                     yaw,
                     speed: v.speed,

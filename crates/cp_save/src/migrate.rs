@@ -1760,7 +1760,7 @@ pub fn migrate_v26_to_v27(v26: SaveDataV26) -> SaveDataV27 {
         coverage: v26.coverage,
         shortage: v26.shortage,
         progress: v26.progress,
-        service_runs: cp_traffic::ServiceRuns::default(),
+        service_runs: ServiceRunsV28::default(),
     }
 }
 
@@ -1821,12 +1821,74 @@ pub struct SaveDataV27 {
     /// The population milestone reached. Added in v25.
     pub progress: cp_sim::Progress,
     /// Fire engines and garbage trucks on their way (T-151). Added in v27.
-    pub service_runs: cp_traffic::ServiceRuns,
+    pub service_runs: ServiceRunsV28,
+}
+
+/// Version 28: the body as written by format 28 (bus stops and lines; runs between buildings only).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV28 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    /// Zone blocks, painted types and cell validity. Added in v5.
+    pub zones: ZoneGrid,
+    /// Buildings (lots, state, access points). Added in v6.
+    /// Includes the ids removed and not yet drained since v13.
+    pub buildings: BuildingGrid,
+    /// Citizens and households. Added in v7.
+    pub citizens: CitizenGrid,
+    /// Pathfinding requests in flight (id, submit tick, request, congestion read, stale
+    /// flag). Added in v8; see `cp_traffic::service` for why this makes load + N ticks equal
+    /// the continuous run.
+    pub paths: SavedPaths,
+    /// Pipe and power-line networks. Added in v9.
+    pub utilities: UtilityGraph,
+    /// Trips in flight and the routine's counters. Added in v10.
+    pub trips: TripBook,
+    /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
+    /// agents carry the segment load since v12; vehicles carry their re-route request id
+    /// since v17.
+    pub agents: cp_traffic::Agents,
+    /// The city's money. Added in v14.
+    pub treasury: Treasury,
+    /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
+    pub economy: EconomyState,
+    /// Smoothed demand and the sums of the cycle in progress. Added in v15.
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    /// Pollution, noise and land value grids. Added in v16.
+    pub land: LandGrids,
+    /// Abandonment timers. Added in v16.
+    pub decay: Decay,
+    /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
+    /// [`crate::DefNames`] and `SaveData::remap_defs`.
+    pub def_names: crate::DefNames,
+    /// The district grid and the district records. Added in v21.
+    pub district_map: DistrictMap,
+    pub districts: Districts,
+    /// Per-building service state and facility counters. Added in v22; fires name their
+    /// station since v24.
+    pub service_state: cp_service::ServiceState,
+    /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
+    /// sim reads the values of that boundary until the next one. Added in v22.
+    pub coverage: cp_service::ServiceCoverage,
+    /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
+    pub shortage: cp_economy::WorkerShortage,
+    /// The population milestone reached. Added in v25.
+    pub progress: cp_sim::Progress,
+    /// Fire engines and garbage trucks on their way (T-151). Added in v27.
+    pub service_runs: ServiceRunsV28,
+    /// Bus stops and lines (T-153). Added in v28.
+    pub transit: cp_transit::TransitNet,
 }
 
 /// v27 → v28 (T-153): stops and lines. A save from before it has none.
-pub fn migrate_v27_to_v28(v27: SaveDataV27) -> SaveData {
-    SaveData {
+pub fn migrate_v27_to_v28(v27: SaveDataV27) -> SaveDataV28 {
+    SaveDataV28 {
         tick: v27.tick,
         rng: v27.rng,
         speed: v27.speed,
@@ -1859,11 +1921,93 @@ pub fn migrate_v27_to_v28(v27: SaveDataV27) -> SaveData {
     }
 }
 
+/// A run as v28 wrote it: between two buildings, never kept.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ServiceRunV28 {
+    pub kind: u8,
+    pub from: BuildingId,
+    pub to: BuildingId,
+    pub state: cp_traffic::RunState,
+}
+
+/// The service runs as v27 and v28 wrote them.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ServiceRunsV28 {
+    next: u32,
+    runs: std::collections::BTreeMap<u32, ServiceRunV28>,
+}
+
+impl ServiceRunsV28 {
+    fn upgrade(self) -> cp_traffic::ServiceRuns {
+        cp_traffic::ServiceRuns::from_parts(
+            self.next,
+            self.runs
+                .into_iter()
+                .map(|(id, r)| {
+                    (
+                        id,
+                        cp_traffic::ServiceRun {
+                            kind: r.kind,
+                            from: cp_traffic::RunPoint::Building(r.from),
+                            to: cp_traffic::RunPoint::Building(r.to),
+                            keep: false,
+                            state: r.state,
+                        },
+                    )
+                })
+                .collect(),
+        )
+    }
+}
+
+/// v28 → v29 (T-154): runs go between points and may be kept. A v28 run is between two
+/// buildings and not kept.
+pub fn migrate_v28_to_v29(v28: SaveDataV28) -> SaveData {
+    SaveData {
+        tick: v28.tick,
+        rng: v28.rng,
+        speed: v28.speed,
+        queue: v28.queue,
+        log: v28.log,
+        tiles: v28.tiles,
+        net: v28.net,
+        zones: v28.zones,
+        buildings: v28.buildings,
+        citizens: v28.citizens,
+        paths: v28.paths,
+        utilities: v28.utilities,
+        trips: v28.trips,
+        agents: v28.agents,
+        treasury: v28.treasury,
+        economy: v28.economy,
+        demand: v28.demand,
+        demand_acc: v28.demand_acc,
+        land: v28.land,
+        decay: v28.decay,
+        def_names: v28.def_names,
+        district_map: v28.district_map,
+        districts: v28.districts,
+        service_state: v28.service_state,
+        coverage: v28.coverage,
+        shortage: v28.shortage,
+        progress: v28.progress,
+        service_runs: v28.service_runs.upgrade(),
+        transit: v28.transit,
+    }
+}
+
 /// Everything from a v22 body to the current format.
 fn from_v22(v: SaveDataV22) -> SaveData {
-    migrate_v27_to_v28(migrate_v26_to_v27(migrate_v25_to_v26(migrate_v24_to_v25(
-        migrate_v23_to_v24(migrate_v22_to_v23(v)),
-    ))))
+    let v = migrate_v24_to_v25(migrate_v23_to_v24(migrate_v22_to_v23(v)));
+    from_v25(v)
+}
+
+fn from_v25(v: SaveDataV25) -> SaveData {
+    from_v27(migrate_v26_to_v27(migrate_v25_to_v26(v)))
+}
+
+fn from_v27(v: SaveDataV27) -> SaveData {
+    migrate_v28_to_v29(migrate_v27_to_v28(v))
 }
 
 fn from_v16(v: SaveDataV16) -> SaveData {
@@ -1967,18 +2111,13 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         20 => Ok(from_v22(migrate_v21_to_v22(migrate_v20_to_v21(dec(body)?)))),
         21 => Ok(from_v22(migrate_v21_to_v22(dec(body)?))),
         22 => Ok(from_v22(dec(body)?)),
-        23 => Ok(migrate_v27_to_v28(migrate_v26_to_v27(migrate_v25_to_v26(
-            migrate_v24_to_v25(migrate_v23_to_v24(dec(body)?)),
-        )))),
-        24 => Ok(migrate_v27_to_v28(migrate_v26_to_v27(migrate_v25_to_v26(
-            migrate_v24_to_v25(dec(body)?),
-        )))),
-        25 => Ok(migrate_v27_to_v28(migrate_v26_to_v27(migrate_v25_to_v26(
-            dec(body)?,
-        )))),
-        26 => Ok(migrate_v27_to_v28(migrate_v26_to_v27(dec(body)?))),
-        27 => Ok(migrate_v27_to_v28(dec(body)?)),
-        28 => dec(body),
+        23 => Ok(from_v25(migrate_v24_to_v25(migrate_v23_to_v24(dec(body)?)))),
+        24 => Ok(from_v25(migrate_v24_to_v25(dec(body)?))),
+        25 => Ok(from_v25(dec(body)?)),
+        26 => Ok(from_v27(migrate_v26_to_v27(dec(body)?))),
+        27 => Ok(from_v27(dec(body)?)),
+        28 => Ok(migrate_v28_to_v29(dec(body)?)),
+        29 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

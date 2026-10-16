@@ -14,9 +14,9 @@ pub mod runs;
 pub mod service;
 
 pub use agents::{
-    AgentSettings, AgentStats, Agents, PED_CHUNK, PED_STEP, Pedestrian, PedestrianId, SegmentLoad,
-    Vehicle, VehicleId, crossing_of, move_agents, purge_removed_buildings, receive_paths,
-    route_trips, update_traffic_load,
+    AgentSettings, AgentStats, Agents, KIND_KEEP, KIND_MASK, KIND_PARKED, PED_CHUNK, PED_STEP,
+    Pedestrian, PedestrianId, SegmentLoad, Vehicle, VehicleId, crossing_of, move_agents,
+    purge_removed_buildings, receive_paths, route_trips, update_traffic_load,
 };
 pub use astar::{CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_ped_path};
 pub use graph::{
@@ -25,8 +25,8 @@ pub use graph::{
 };
 pub use pose::{AgentFrame, AgentKey, PedestrianPose, VehiclePose};
 pub use runs::{
-    RunId, RunState, SERVICE_GEN, ServiceRun, ServiceRuns, advance_service_runs,
-    receive_service_paths, route_service_runs, run_of,
+    RunError, RunId, RunPoint, RunState, SERVICE_GEN, ServiceRun, ServiceRuns,
+    advance_service_runs, receive_service_paths, route_service_runs, run_of,
 };
 pub use service::{
     Mode, PATH_DELAY_TICKS, PathNetwork, PathOutcome, PathRequest, PathResult, PathResults,

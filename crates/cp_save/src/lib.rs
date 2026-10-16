@@ -79,7 +79,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 28;
+pub const FORMAT_VERSION: u32 = 29;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -214,7 +214,8 @@ pub struct SaveData {
     pub shortage: WorkerShortage,
     /// The population milestone reached. Added in v25.
     pub progress: cp_sim::Progress,
-    /// Fire engines and garbage trucks on their way (T-151). Added in v27.
+    /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
+    /// with keep, since v29.
     pub service_runs: cp_traffic::ServiceRuns,
     /// Bus stops and lines (T-153). Added in v28.
     pub transit: cp_transit::TransitNet,

@@ -73,6 +73,9 @@ pub const STUCK_TICKS: u32 = 60;
 pub const HARD_CAP_FACTOR: u32 = 10;
 /// How many full lanes ahead the suspicion of a blocked car is followed.
 const LEADER_CHAIN: u32 = 8;
+/// Metres a keep vehicle stops short of its goal point (the front bumper), and the slack within
+/// which it counts as there.
+const KEEP_STOP_GAP: f32 = 0.3;
 /// Vehicles per parallel chunk of places.
 const CHUNK: usize = 64;
 /// Fewer vehicles than this are stepped on the calling thread.
@@ -139,7 +142,7 @@ impl VehicleSpecs {
 
     /// The spec of `v`'s kind.
     pub fn of(&self, v: &Vehicle) -> &VehicleSpec {
-        &self.by_kind[usize::from(v.kind).min(VEHICLE_KINDS - 1)]
+        &self.by_kind[usize::from(v.kind_id()).min(VEHICLE_KINDS - 1)]
     }
 }
 
@@ -382,6 +385,8 @@ enum Ev {
     /// Leaves its lane/connection forwards.
     Cross,
     Arrive,
+    /// A keep vehicle reached its goal: it stays there (T-154).
+    Park,
     Invalid,
 }
 
@@ -402,6 +407,8 @@ enum Place {
 #[derive(Default)]
 pub(crate) struct Finished {
     pub arrived: Vec<Vehicle>,
+    /// Keep vehicles that stopped at their goal this tick.
+    pub parked: Vec<VehicleId>,
     pub invalid: Vec<Vehicle>,
     pub stuck: Vec<Vehicle>,
 }
@@ -654,6 +661,17 @@ fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
     let mut prev: Option<&Vehicle> = None;
     for &id in list {
         let Some(v) = ctx.veh.get(id) else { continue };
+        if v.is_parked() {
+            // Stands at its goal until a run continues it; it still holds its place.
+            out.push(Upd {
+                id,
+                s: v.s,
+                v: 0.0,
+                ev: Ev::Stay,
+            });
+            prev = Some(v);
+            continue;
+        }
         let mut ev = Ev::Stay;
         let mut open = false;
         let leader: Option<Leader> = match prev {
@@ -699,13 +717,25 @@ fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
             (None, Some(c)) if leader.is_none_or(|l| c.0 < l.0) => Some(c),
             _ => leader,
         };
-        let (mut s, nv) = follow(v, spec_of(ctx, v), node.speed, leader);
         let next = v.path.steps.get(v.hop as usize);
+        // A keep vehicle brakes for its goal as for a standing leader and stops on it.
+        let goal = v.path.goal_s.clamp(node.s_in, node.s_out);
+        let leader = if next.is_none() && v.is_keep() {
+            let stop = (goal, 0.0, KEEP_STOP_GAP);
+            Some(leader.map_or(stop, |l| if l.0 < stop.0 { l } else { stop }))
+        } else {
+            leader
+        };
+        let (mut s, nv) = follow(v, spec_of(ctx, v), node.speed, leader);
         match next {
             Some(_) if open && s >= node.s_out => ev = Ev::Cross,
             Some(_) => s = s.min(node.s_out),
+            None if v.is_keep() => {
+                if goal - s <= KEEP_STOP_GAP + 0.5 && nv < 0.3 {
+                    ev = Ev::Park;
+                }
+            }
             None => {
-                let goal = v.path.goal_s.clamp(node.s_in, node.s_out);
                 if s >= goal {
                     ev = Ev::Arrive;
                 }
@@ -1021,7 +1051,7 @@ pub(crate) fn drive_tick(
     let mut stuck = Vec::new();
     for (id, suspicious) in flags {
         let v = vehicles.get_mut(id).expect("flagged vehicle");
-        if v.speed >= 0.1 {
+        if v.speed >= 0.1 || v.is_parked() {
             v.stuck_timer = 0;
             continue;
         }
@@ -1125,6 +1155,24 @@ fn apply(
                     st.remove(&v, u.id);
                     finished.arrived.push(v);
                 }
+            }
+            Ev::Park => {
+                let v = vehicles.get_mut(u.id).expect("vehicle");
+                let lane = v.lane();
+                v.path = crate::astar::CarPath {
+                    start: lane,
+                    start_s: u.s,
+                    steps: Vec::new(),
+                    goal: lane,
+                    goal_s: u.s,
+                    cost: 0.0,
+                };
+                v.hop = 0;
+                v.s = u.s;
+                v.speed = 0.0;
+                v.stuck_timer = 0;
+                v.kind |= crate::agents::KIND_PARKED;
+                finished.parked.push(u.id);
             }
             Ev::Invalid => {
                 if let Some(v) = vehicles.remove(u.id) {

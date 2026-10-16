@@ -322,7 +322,7 @@ impl SimRunner {
                     .collect();
                 Some(Inspection::Vehicle(VehicleInfo {
                     key,
-                    kind: v.kind,
+                    kind: v.kind_id(),
                     speed_mps: v.speed,
                     driver: v.citizen,
                     trip: trip_info(v.citizen),

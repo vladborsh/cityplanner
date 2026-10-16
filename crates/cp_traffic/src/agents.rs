@@ -127,7 +127,30 @@ pub struct Vehicle {
     pub reroute: Option<u64>,
 }
 
+/// Flag bits in [`Vehicle::kind`] (T-154; the byte keeps its place in saves). The low bits are
+/// the `cp_content::VehicleKind` number.
+pub const KIND_MASK: u8 = 0x0F;
+/// The vehicle of a keep run: it stops at its goal and stays instead of leaving the road.
+pub const KIND_KEEP: u8 = 0x80;
+/// A keep vehicle that has reached its goal and stands there.
+pub const KIND_PARKED: u8 = 0x40;
+
 impl Vehicle {
+    /// The `cp_content::VehicleKind` number, without the flag bits.
+    pub fn kind_id(&self) -> u8 {
+        self.kind & KIND_MASK
+    }
+
+    /// Stops at its goal and stays (a keep run).
+    pub fn is_keep(&self) -> bool {
+        self.kind & KIND_KEEP != 0
+    }
+
+    /// Stands at the goal of a keep run.
+    pub fn is_parked(&self) -> bool {
+        self.kind & KIND_PARKED != 0
+    }
+
     /// The lane it is on, or — inside a junction — the lane it came from.
     pub fn lane(&self) -> LaneId {
         if self.hop == 0 {
@@ -259,9 +282,33 @@ impl Agents {
     }
 
     /// Puts a service vehicle (T-151) on the road: it waits for room at its start like a car.
+    pub(crate) fn vehicle_mut(&mut self, id: VehicleId) -> Option<&mut Vehicle> {
+        self.vehicles.get_mut(id)
+    }
+
     pub(crate) fn spawn_service_vehicle(&mut self, v: Vehicle) {
         let id = self.vehicles.insert(v);
         self.drive.waiting.push(id);
+    }
+
+    /// Takes the vehicle of service run `run` off the road, wherever it is (T-154 `release`).
+    /// Returns whether there was one.
+    pub(crate) fn remove_run_vehicle(&mut self, run: crate::runs::RunId) -> bool {
+        let Some(id) = self
+            .vehicles
+            .iter()
+            .find(|(_, v)| crate::runs::run_of(v) == Some(run))
+            .map(|(id, _)| id)
+        else {
+            return false;
+        };
+        if let Some(v) = self.vehicles.remove(id) {
+            self.drive.remove(&v, id);
+            if let Some(r) = v.reroute {
+                self.reroutes.remove(&r);
+            }
+        }
+        true
     }
 
     pub fn vehicle(&self, id: VehicleId) -> Option<&Vehicle> {
@@ -1089,6 +1136,19 @@ pub fn move_agents(
         stuck_ticks,
         &specs,
     );
+    for id in &fin.parked {
+        if let Some(run) = vehicles.get(*id).and_then(crate::runs::run_of)
+            && let Some(runs) = runs.as_deref_mut()
+        {
+            runs.set_state(
+                run,
+                crate::runs::RunState::Parked {
+                    vehicle: *id,
+                    since: Tick(now),
+                },
+            );
+        }
+    }
     stats.driven += fin.arrived.len() as u64;
     stats.invalid_vehicles += fin.invalid.len() as u64;
     stats.despawned_stuck += fin.stuck.len() as u64;
