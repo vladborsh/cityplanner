@@ -159,6 +159,10 @@ pub(crate) fn service_part(world: &World, h: &mut Fnv1a) {
     if !tourists.is_empty() {
         h.write_serialized(tourists);
     }
+    let goods = world.resource::<cp_transit::Goods>();
+    if !goods.is_empty() {
+        h.write_serialized(goods);
+    }
 }
 
 /// Checksum part of trips (`cp_citizen::TripBook`).

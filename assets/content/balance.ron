@@ -168,6 +168,16 @@ Balance((
     tourism_income: 12.0,
     tourism_pool_share: 0.1,
     tourism_reach_m: 1500.0,
+    // Goods (T-169) // tune later: units made a day per filled industrial job, sold a day per
+    // filled shop job, most stored, one truck's load, metres a factory looks for a shop, days
+    // without stock before NO_GOODS, and whether NO_GOODS counts towards abandonment.
+    goods_per_worker: 0.5,
+    goods_per_job: 0.4,
+    goods_stock_cap: 100.0,
+    goods_truck_load: 20.0,
+    freight_radius_m: 1500.0,
+    goods_empty_days: 2.0,
+    goods_decay: false,
 
     // --- Networks (T-181): distances of water, sewage and power // tune later ---
     // power_gap_m: largest gap between the footprint edges of two buildings over which one

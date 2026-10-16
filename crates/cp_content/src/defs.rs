@@ -268,6 +268,19 @@ pub struct Balance {
     /// Metres of distance from the entry at which a building is half as likely a goal as one at
     /// the entry (T-168). // tune later
     pub tourism_reach_m: f32,
+    /// Goods (T-169): units an industrial building makes a day per filled job, units a
+    /// commercial building sells a day per filled job, the most a building stores, and the load
+    /// of one truck. // tune later
+    pub goods_per_worker: f32,
+    pub goods_per_job: f32,
+    pub goods_stock_cap: f32,
+    pub goods_truck_load: f32,
+    /// Metres within which a factory looks for a shop to supply (T-169). // tune later
+    pub freight_radius_m: f32,
+    /// Days a shop may stand without stock before `NO_GOODS` (T-169). // tune later
+    pub goods_empty_days: f32,
+    /// Whether `NO_GOODS` counts towards abandonment (T-169); off by default.
+    pub goods_decay: bool,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
 }
@@ -395,6 +408,13 @@ impl Balance {
             self.tourism_income,
             self.tourism_pool_share,
             self.tourism_reach_m,
+            self.goods_per_worker,
+            self.goods_per_job,
+            self.goods_stock_cap,
+            self.goods_truck_load,
+            self.freight_radius_m,
+            self.goods_empty_days,
+            f32::from(u8::from(self.goods_decay)),
         ]);
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
@@ -488,6 +508,13 @@ impl Default for Balance {
             tourism_income: 12.0,
             tourism_pool_share: 0.1,
             tourism_reach_m: 1500.0,
+            goods_per_worker: 0.5,
+            goods_per_job: 0.4,
+            goods_stock_cap: 100.0,
+            goods_truck_load: 20.0,
+            freight_radius_m: 1500.0,
+            goods_empty_days: 2.0,
+            goods_decay: false,
             networks: Networks::default(),
         }
     }

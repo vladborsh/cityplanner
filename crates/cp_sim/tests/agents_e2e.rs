@@ -329,6 +329,10 @@ fn agents_and_trips_stay_consistent_over_two_days_of_the_real_routine() {
             *carried.entry(p.trip).or_default() += 1;
         }
         for (_, v) in agents.vehicles() {
+            // Goods trucks (T-169) are service vehicles: no citizen, no trip.
+            if v.citizen.index == u32::MAX {
+                continue;
+            }
             *carried.entry(v.trip).or_default() += 1;
         }
         // Every agent carries a live trip in state Agent, and every such trip has one agent.

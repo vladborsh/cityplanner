@@ -245,7 +245,12 @@ pub fn update_city(
     let ids: Vec<BuildingId> = buildings.iter().map(|(id, _)| id).collect();
     decay.since.retain(|id, _| buildings.get(*id).is_some());
     shortage.since.retain(|id, _| buildings.get(*id).is_some());
-    let mask = bal.decay_mask;
+    // NO_GOODS counts only when the balance switch is on (T-169).
+    let mask = if bal.goods_decay {
+        bal.decay_mask
+    } else {
+        bal.decay_mask & !BuildingFlags::NO_GOODS
+    };
     let short_after = (bal.no_workers_days * TICKS_PER_DAY as f32) as u64;
     let decaying = decay.enabled;
     let abandon = (bal.abandon_days * TICKS_PER_DAY as f32) as u64;

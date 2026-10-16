@@ -11,6 +11,7 @@
 
 pub mod command;
 pub mod fleet;
+pub mod goods;
 pub mod model;
 pub mod plan;
 pub mod riders;
@@ -24,6 +25,7 @@ pub mod view;
 
 pub use command::{MAX_LINE_NAME, StopRef, TransitCommand, TransitError, apply};
 pub use fleet::{Bus, BusId, BusPhase, TransitFleet, TransitLedger};
+pub use goods::{GOODS_BUCKET_TICKS, Goods, Haul, run_goods};
 pub use model::{
     DEFAULT_LINE_VEHICLES, Journey, Line, LineId, LineState, LineStats, MAX_LINE_STOPS,
     MAX_LINE_VEHICLES, PALETTE_LEN, Ride, Stage, Stop, StopId, StopKind, TransitMode, TransitNet,

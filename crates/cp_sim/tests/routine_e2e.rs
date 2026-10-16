@@ -400,13 +400,20 @@ fn demolish_occupied_buildings(content: &Arc<ContentDb>, seed: u64) -> SimRunner
             .count();
         assert_eq!(
             agent_trips,
-            agents.pedestrian_count() + agents.vehicle_count(),
+            agents.pedestrian_count()
+                + agents
+                    .vehicles()
+                    .filter(|(_, v)| v.citizen.index != u32::MAX)
+                    .count(),
             "pools match the trips"
         );
         for (_, p) in agents.pedestrians() {
             assert!(book.get(p.trip).is_some(), "pedestrian of a missing trip");
         }
-        for (_, v) in agents.vehicles() {
+        for (_, v) in agents
+            .vehicles()
+            .filter(|(_, v)| v.citizen.index != u32::MAX)
+        {
             assert!(book.get(v.trip).is_some(), "vehicle of a missing trip");
         }
         assert!(agents.occupancy_is_live(), "no dead vehicle left in a lane");
