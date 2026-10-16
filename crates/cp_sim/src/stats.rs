@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, VecDeque};
 use bevy_ecs::prelude::*;
 use cp_building::{BuildingFlags, BuildingGrid, BuildingState, Demand};
 use cp_citizen::{CitizenGrid, PopFlow, TripBook, TripState};
-use cp_content::{RoadDefId, ServiceKind, SimContent, UtilityKind, ZoneType};
+use cp_content::{RoadClass, RoadDefId, ServiceKind, SimContent, UtilityKind, ZoneType};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{Cost, Tick, Treasury};
 use cp_economy::{EconomyState, LandGrids, segment_upkeep};
@@ -212,6 +212,34 @@ pub struct DistrictParams<'w> {
     income: Res<'w, cp_economy::DistrictIncome>,
 }
 
+/// Whether a road the player built is connected to the entry highway (BUG-041): some segment of
+/// `reach` that is neither a highway carriageway nor the stub the new game leaves at its end. It
+/// does not wait for houses: the street is joined as soon as it is.
+fn player_road_reaches_highway(
+    db: &cp_content::ContentDb,
+    net: &cp_net::NetGraph,
+    reach: &cp_net::EntryReach,
+    terrain: Option<&cp_terrain::SimTerrain>,
+) -> bool {
+    let stub = terrain
+        .and_then(|t| t.0.meta().entry_road.as_ref())
+        .map(|e| (e.junction(), e.stub_end()));
+    let on_stub = |p: bevy_math::Vec3| {
+        stub.is_some_and(|(a, b)| {
+            let q = bevy_math::Vec2::new(p.x, p.z);
+            let ab = b - a;
+            let t = ((q - a).dot(ab) / ab.length_squared().max(1e-6)).clamp(0.0, 1.0);
+            (a + ab * t).distance(q) < 1.0
+        })
+    };
+    net.segments().any(|(id, seg)| {
+        reach.reaches(id)
+            && db.road(seg.road).class != RoadClass::Highway
+            && !(net.node(seg.start).is_some_and(|n| on_stub(n.pos))
+                && net.node(seg.end).is_some_and(|n| on_stub(n.pos)))
+    })
+}
+
 /// `Stats`-phase system: recomputes [`CityStats`] every [`STATS_PERIOD`] ticks, in stages (see
 /// [`STAGE_TICKS`]); the published value changes at the last stage only.
 #[allow(clippy::too_many_arguments)]
@@ -223,6 +251,7 @@ pub fn update_city_stats(
     citizens: Res<CitizenGrid>,
     net: Res<NetGraph>,
     reach: Res<cp_net::EntryReach>,
+    terrain: Option<Res<cp_terrain::SimTerrain>>,
     agents: Res<Agents>,
     trips: Res<TripBook>,
     land: Res<LandGrids>,
@@ -241,7 +270,8 @@ pub fn update_city_stats(
     let demands = [demand.r, demand.c, demand.i, demand.o];
     if stage == 0 {
         let mut next = CityStats {
-            connected_to_highway: !reach.is_active(),
+            connected_to_highway: !reach.is_active()
+                || player_road_reaches_highway(db, &net, &reach, terrain.as_deref()),
             ..Default::default()
         };
         stage_citizens_traffic_land(
