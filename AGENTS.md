@@ -102,5 +102,5 @@ If you are not one of the slots above, take a new `../.cargo-target/<name>` and
 
 ## Assets
 
-- Only CC0 or self-made assets. Record every imported pack (name, URL, licence) in
+- Only CC0, self-made, or (for fonts only) SIL OFL 1.1 assets; ship OFL.txt next to the font. Record every imported pack (name, URL, licence) in
   `assets/LICENSES.md` in the same commit that adds it.
