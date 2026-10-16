@@ -85,7 +85,7 @@ fn first_building_is_active_within_700_ticks_of_painting() {
 }
 
 #[test]
-fn a_two_by_two_building_takes_round_three_hours() {
+fn a_two_by_two_service_is_active_at_once_while_its_build_time_stays_round_three_hours() {
     let content = content();
     let mut sim = SimRunner::new(1);
     sim.set_content(Arc::clone(&content));
@@ -131,5 +131,7 @@ fn a_two_by_two_building_takes_round_three_hours() {
         .unwrap()
         .1
         .clone();
-    assert_eq!(b.ready_at, Tick(start.0 + want));
+    // T-175: city services skip the construction stage.
+    assert_eq!(b.ready_at, Tick(start.0));
+    assert_eq!(b.state, BuildingState::Active);
 }

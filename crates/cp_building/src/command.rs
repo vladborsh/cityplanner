@@ -269,7 +269,7 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
             let limit = world
                 .get_resource::<SimLimits>()
                 .map_or(u32::MAX, |l| l.buildings);
-            let (plan, level, build) = {
+            let (plan, level, build, is_service) = {
                 let (Some(content), Some(zones), Some(net)) = (
                     world.get_resource::<SimContent>(),
                     world.get_resource::<ZoneGrid>(),
@@ -293,6 +293,7 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
                     plan,
                     content.0.building(*def).level,
                     build_ticks(content.0.building(*def)),
+                    content.0.building(*def).service.is_some(),
                 )
             };
             check_funds(world, plan.cost).map_err(BuildingError::Funds)?;
@@ -306,8 +307,13 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
                 def: *def,
                 footprint: plan.footprint,
                 level,
-                state: BuildingState::UnderConstruction,
-                ready_at: Tick(tick.0 + build),
+                // City services stand ready at once (T-175); zone houses keep their build time.
+                state: if is_service {
+                    BuildingState::Active
+                } else {
+                    BuildingState::UnderConstruction
+                },
+                ready_at: Tick(if is_service { tick.0 } else { tick.0 + build }),
                 pos: plan.pos,
                 rot: plan.rot,
                 access: plan.access,

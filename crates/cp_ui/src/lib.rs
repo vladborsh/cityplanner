@@ -13,6 +13,7 @@ use cp_tools::{CommandOutbox, ToolState, UiCapture};
 
 pub mod budget;
 pub mod buildings;
+pub mod bulldozer_bar;
 pub mod debug;
 pub mod demand_panel;
 pub mod districts;
@@ -227,6 +228,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     tool_panel(&mut root, state, Some(view), tools, overlay, outbox);
     demand_panel::demand_panel(&mut root, view, state, tools);
     remember_map_rect(ctx, &root);
+    bulldozer_bar::bulldozer_bar(ctx, tools);
     {
         let st = &mut *state;
         budget::budget_window(ctx, &mut st.budget_open, view, &mut st.budget, outbox);

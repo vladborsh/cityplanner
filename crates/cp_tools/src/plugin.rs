@@ -124,6 +124,8 @@ pub struct ToolState {
     pub line_notice: Option<String>,
     /// The stop the bulldozer would remove.
     pub stop_highlight: Option<cp_transit::StopId>,
+    /// The speed Space resumes after a pause (never `Pause`; `X1` until one was running).
+    pub resume_speed: cp_core::SimSpeed,
     /// Inputs the current ghost was computed from; unchanged inputs skip the revalidation.
     ghost_key: Option<GhostKey>,
     utility_key: Option<UtilityGhostKey>,
@@ -238,7 +240,12 @@ fn sync_pipe_layers(
     let highlight = view
         .as_deref()
         .zip(state.link_highlight)
-        .filter(|_| state.active == ActiveTool::UtilityRemove)
+        .filter(|_| {
+            matches!(
+                state.active,
+                ActiveTool::UtilityRemove | ActiveTool::Bulldozer
+            )
+        })
         .and_then(|(v, id)| v.utilities.link(id))
         .filter(|l| l.net == UtilityNet::Pipe)
         .map(|l| l.curve);
@@ -258,7 +265,12 @@ fn sync_pipe_layers(
     let power_highlight = view
         .as_deref()
         .zip(state.link_highlight)
-        .filter(|_| state.active == ActiveTool::UtilityRemove)
+        .filter(|_| {
+            matches!(
+                state.active,
+                ActiveTool::UtilityRemove | ActiveTool::Bulldozer
+            )
+        })
         .and_then(|(v, id)| v.utilities.link(id))
         .filter(|l| l.net == UtilityNet::Power)
         .map(|l| [l.curve.point(0.0), l.curve.point(1.0)]);
@@ -324,6 +336,20 @@ pub fn tool_hotkeys(
     // A text field has the keyboard (the save name): its keys are not hotkeys.
     if capture.keyboard_captured {
         return;
+    }
+    if keys.just_pressed(KeyCode::Space)
+        && let Some(v) = view.as_deref()
+    {
+        let next = if v.speed == cp_core::SimSpeed::Pause {
+            state.resume_speed
+        } else {
+            state.resume_speed = v.speed;
+            cp_core::SimSpeed::Pause
+        };
+        outbox.push(SimCommand::SetSpeed { speed: next });
+    }
+    if keys.just_pressed(KeyCode::KeyB) && state.active != ActiveTool::Bulldozer {
+        state.select(ActiveTool::Bulldozer);
     }
     if state.active == ActiveTool::Road {
         if keys.just_pressed(KeyCode::PageUp) {
@@ -443,6 +469,17 @@ fn tool_hover(
                 Vec::new()
             } else {
                 demolition(&view.net, p, PICK_RADIUS, state.shift)
+            };
+            // A pipe or power line only when no road is under the cursor.
+            state.link_highlight = if state.building_highlight.is_some()
+                || state.stop_highlight.is_some()
+                || !state.spans.is_empty()
+            {
+                None
+            } else {
+                [UtilityNet::Power, UtilityNet::Pipe]
+                    .into_iter()
+                    .find_map(|net| pick_link(&view.utilities, net, p, LINK_PICK_RADIUS))
             };
             state.highlight = state.spans.iter().map(|s| s.0).collect();
             state.highlight_outside = spans_outside_owned(&view.net, &view.tiles, &state.spans);
@@ -754,6 +791,8 @@ pub fn tool_click(
                 outbox.push(SimCommand::Transit(
                     cp_transit::TransitCommand::RemoveStop { stop },
                 ));
+            } else if let Some(link) = state.link_highlight.take() {
+                outbox.push(SimCommand::Utility(UtilityCommand::RemoveLink { link }));
             } else if !state.highlight.is_empty() && !state.highlight_outside {
                 let commands = match view.as_deref() {
                     Some(v) if !state.spans.is_empty() => span_commands(&v.net, &state.spans),

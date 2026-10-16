@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use bevy_ecs::message::Messages;
 use bevy_math::{Vec2, Vec3};
-use cp_building::{BuildingCommand, BuildingGrid, BuildingState, build_ticks};
+use cp_building::{BuildingCommand, BuildingGrid, BuildingState};
 use cp_content::{BuildingDefId, ContentDb};
 use cp_core::curve::CubicBezier3;
 use cp_core::{CommandError, CommandLog, CommandOutcome};
@@ -97,7 +97,8 @@ fn place_then_demolish_round_trip() {
         assert_eq!(g.len(), 1);
         assert_ne!(g.revision(), rev);
         let (id, b) = g.iter().next().unwrap();
-        assert_eq!(b.state, BuildingState::UnderConstruction);
+        // T-175: a service stands ready at once.
+        assert_eq!(b.state, BuildingState::Active);
         (id, b.lot().expect("a lot").cells().collect::<Vec<_>>())
     };
     assert_eq!(cells.len(), 9);
@@ -120,11 +121,7 @@ fn place_then_demolish_round_trip() {
     assert!(err.unwrap_err().contains("blocked"));
     assert_eq!(sim.world().resource::<BuildingGrid>().len(), 1);
 
-    // Finishes construction after its `build_hours`.
-    let build = build_ticks(c.building(c.building_id("coal_power_plant").unwrap()));
-    for _ in 0..=build {
-        sim.tick_once();
-    }
+    sim.tick_once();
     let g = sim.world().resource::<BuildingGrid>();
     assert_eq!(g.get(id).unwrap().state, BuildingState::Active);
 

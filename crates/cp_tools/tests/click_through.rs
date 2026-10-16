@@ -240,3 +240,76 @@ fn no_tool_reacts_to_a_click_over_the_ui() {
         assert!(state.line.stops.is_empty(), "{tool:?}: line stop");
     }
 }
+
+fn key(app: &mut App, code: KeyCode) {
+    use bevy::input::keyboard::{Key, KeyboardInput};
+    for state in [ButtonState::Pressed, ButtonState::Released] {
+        app.world_mut().write_message(KeyboardInput {
+            key_code: code,
+            logical_key: Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
+            state,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
+        app.update();
+    }
+}
+
+fn speed_commands(app: &App) -> Vec<cp_core::SimSpeed> {
+    app.world()
+        .resource::<CommandOutbox>()
+        .iter()
+        .filter_map(|c| match c {
+            SimCommand::SetSpeed { speed } => Some(*speed),
+            _ => None,
+        })
+        .collect()
+}
+
+/// T-175: Space pauses and resumes the last speed; not while a text field has the keyboard.
+#[test]
+fn space_toggles_pause_and_resumes_the_last_speed() {
+    let (mut sim, _) = sim();
+    sim.push_command(
+        SimCommand::SetSpeed {
+            speed: cp_core::SimSpeed::X3,
+        },
+        sim.tick(),
+    );
+    sim.apply_due_commands();
+    let mut app = app();
+    app.insert_resource(sim.view());
+    key(&mut app, KeyCode::Space);
+    assert_eq!(speed_commands(&app), [cp_core::SimSpeed::Pause]);
+
+    // The sim is paused now: Space resumes ×3.
+    let mut paused = sim.view();
+    paused.speed = cp_core::SimSpeed::Pause;
+    app.insert_resource(paused);
+    key(&mut app, KeyCode::Space);
+    assert_eq!(
+        speed_commands(&app),
+        [cp_core::SimSpeed::Pause, cp_core::SimSpeed::X3]
+    );
+
+    // A text field owns the keyboard: Space is a space.
+    app.world_mut()
+        .resource_mut::<UiCapture>()
+        .keyboard_captured = true;
+    key(&mut app, KeyCode::Space);
+    key(&mut app, KeyCode::KeyB);
+    assert_eq!(speed_commands(&app).len(), 2);
+    assert_eq!(app.world().resource::<ToolState>().active, ActiveTool::None);
+}
+
+/// T-175: B picks the bulldozer.
+#[test]
+fn b_selects_the_bulldozer() {
+    let mut app = app();
+    key(&mut app, KeyCode::KeyB);
+    assert_eq!(
+        app.world().resource::<ToolState>().active,
+        ActiveTool::Bulldozer
+    );
+}
