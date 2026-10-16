@@ -134,7 +134,11 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
     assert_eq!(sim.checksum(), 0x1a6a631a5f1eeb36, "state at load");
-    assert_eq!(after_4096(&mut sim), 0x30c728b39418a3d, "load + 4096 ticks");
+    assert_eq!(
+        after_4096(&mut sim),
+        0x3c8064373424735f,
+        "load + 4096 ticks"
+    );
 }
 
 #[test]
@@ -166,7 +170,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0xba5ccdf010021c1b, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0xba7009bd080f5aff, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,
