@@ -43,6 +43,10 @@ pub struct Fire {
     pub since: Tick,
     /// When a fire engine has put it out; `None` while it burns unattended.
     pub out_at: Option<Tick>,
+    /// The fire station whose engine is on its way or at work (it counts that engine in
+    /// `Facility::stored`). Added with T-142: no save before it holds a fire, so the layout
+    /// of the saved `None` is unchanged.
+    pub station: Option<BuildingId>,
 }
 
 /// What the services know about one building. The slot is reset when the building's id

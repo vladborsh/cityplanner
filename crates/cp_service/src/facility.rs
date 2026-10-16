@@ -3,13 +3,13 @@
 
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingFlags, BuildingGrid, BuildingId, BuildingState};
-use cp_content::{ContentDb, ServiceKind};
+use cp_content::{ContentDb, ServiceDef, ServiceKind};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_net::NetGraph;
 
 use crate::coverage::RoadGraph;
-use crate::state::ServiceState;
+use crate::state::{Facility, ServiceState};
 
 /// The nearest Active building of `kind` by road from building `from` that still has room:
 /// fewer than `capacity` served today and, when the definition has a `storage`, less than that
@@ -23,6 +23,23 @@ pub fn nearest_facility(
     kind: ServiceKind,
     from: BuildingId,
 ) -> Option<BuildingId> {
+    nearest_facility_with(net, buildings, db, state, kind, from, |used, svc| {
+        used.used_today < svc.capacity && (svc.storage == 0 || used.stored < svc.storage)
+    })
+    .map(|(id, _)| id)
+}
+
+/// [`nearest_facility`] with the "has room" test given by the caller, which also gets the
+/// road distance (metres) back. Fire stations count engines out in `Facility::stored`.
+pub fn nearest_facility_with(
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+    db: &ContentDb,
+    state: &ServiceState,
+    kind: ServiceKind,
+    from: BuildingId,
+    has_room: impl Fn(&Facility, &ServiceDef) -> bool,
+) -> Option<(BuildingId, f32)> {
     let origin = buildings.get(from)?.access()?;
     let g = RoadGraph::new(net);
     let dist = g.node_distances(origin, f32::INFINITY);
@@ -45,7 +62,7 @@ pub fn nearest_facility(
             continue;
         }
         let used = state.facility(id).copied().unwrap_or_default();
-        if used.used_today >= svc.capacity || (svc.storage > 0 && used.stored >= svc.storage) {
+        if !has_room(&used, svc) {
             continue;
         }
         let d = g.distance_to(&dist, origin, to);
@@ -54,7 +71,7 @@ pub fn nearest_facility(
             best = Some((d, id));
         }
     }
-    best.map(|(_, id)| id)
+    best.map(|(d, id)| (id, d))
 }
 
 /// Services phase: at the start of every game day the daily throughput of all facilities

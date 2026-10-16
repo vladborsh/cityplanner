@@ -80,6 +80,7 @@ fn hand_set_service_fields_survive_a_save_and_keep_the_checksum() {
         s.garbage = 12;
         s.crime = 3;
         s.fire = Some(Fire {
+            station: None,
             since: Tick(50),
             out_at: Some(Tick(60)),
         });

@@ -1,0 +1,10 @@
+// Numbers: tune later. `capacity` is the number of engines that can be out at once; without
+// power the station does not work.
+Service((
+    id: "fire_station",
+    name: "Fire Station",
+    kind: Fire,
+    radius_m: 1500.0,
+    capacity: 3,
+    vehicles: [],
+))

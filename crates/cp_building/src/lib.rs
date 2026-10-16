@@ -12,7 +12,7 @@ pub use command::{
     BuildingCommand, BuildingError, PlacementPlan, apply, oriented_lot, validate_placement,
 };
 pub use free::{ROAD_CLEARANCE_M, is_free_standing, sync_blockers, validate_free_placement};
-pub use grid::{BuildingGrid, cells_under_lot, demolish_building, held_cells};
+pub use grid::{BuildingGrid, burn, cells_under_lot, demolish_building, held_cells};
 pub use level::{rebuild, rebuild_candidate};
 pub use model::{
     AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, FOOTPRINT_CELL_M, Footprint,

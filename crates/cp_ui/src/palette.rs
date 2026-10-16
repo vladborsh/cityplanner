@@ -808,7 +808,12 @@ mod tests {
         let kinds: Vec<ServiceKind> = sections.iter().map(|s| s.kind).collect();
         assert_eq!(
             kinds,
-            [ServiceKind::Water, ServiceKind::Power, ServiceKind::Garbage]
+            [
+                ServiceKind::Water,
+                ServiceKind::Power,
+                ServiceKind::Garbage,
+                ServiceKind::Fire
+            ]
         );
         // Water: the pipe, every Water and Sewage service building, remove; Power likewise.
         let service = |kinds: &[ServiceKind]| {

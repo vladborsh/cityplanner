@@ -137,6 +137,22 @@ pub struct Balance {
     pub garbage_job: f32,
     /// Garbage piled up in a building from which it has the GARBAGE problem. // tune later
     pub garbage_problem: f32,
+    /// Chance per building and game day to catch fire with no fire cover (T-142). // tune later
+    pub fire_base: f32,
+    /// Share of `fire_base` a full fire coverage takes away.
+    pub fire_cover: f32,
+    /// Game hours an engine needs at the fire (after it has arrived) to put it out.
+    pub fire_extinguish_hours: f32,
+    /// Game hours an unattended fire takes to burn the building down (`Burned`).
+    pub fire_burn_hours: f32,
+    /// Game days a burned building stays before it is demolished.
+    pub burned_days: f32,
+    /// Chance per game hour that a burning building sets a neighbour on fire.
+    pub fire_spread: f32,
+    /// Reach of the spreading, metres between lot centres.
+    pub fire_spread_m: f32,
+    /// Speed of a fire engine on the road, km/h.
+    pub fire_engine_kmh: f32,
 }
 
 /// One loan the bank offers (`balance.ron` `loan_offers`). Interest is simple, for the whole
@@ -186,6 +202,14 @@ impl Balance {
             self.garbage_household,
             self.garbage_job,
             self.garbage_problem,
+            self.fire_base,
+            self.fire_cover,
+            self.fire_extinguish_hours,
+            self.fire_burn_hours,
+            self.burned_days,
+            self.fire_spread,
+            self.fire_spread_m,
+            self.fire_engine_kmh,
         ]);
         v
     }
@@ -230,6 +254,14 @@ impl Default for Balance {
             garbage_household: 25.0,
             garbage_job: 4.0,
             garbage_problem: 100.0,
+            fire_base: 0.002,
+            fire_cover: 0.8,
+            fire_extinguish_hours: 2.0,
+            fire_burn_hours: 6.0,
+            burned_days: 2.0,
+            fire_spread: 0.15,
+            fire_spread_m: 12.0,
+            fire_engine_kmh: 50.0,
         }
     }
 }

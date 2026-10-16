@@ -90,3 +90,6 @@ water pipe and the two remove tools (`water_pump_station`, `sewage_outflow_stati
 
 T-136 adds `landfill` (a heap with a bulldozer) and `incinerator` (a block with a chimney): self-made SVG
 in `assets/ui/icons/src`, rendered by `tools/assets/icons.mjs`, CC0, no third-party pack.
+
+T-142 adds `fire_station` (a depot with shutters and a flame): self-made SVG in `assets/ui/icons/src`, rendered
+by `tools/assets/icons.mjs`, CC0, no third-party pack.

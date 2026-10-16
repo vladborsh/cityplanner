@@ -257,6 +257,18 @@ pub fn held_cells(zones: &cp_zone::ZoneGrid, b: &Building) -> Vec<ZoneCellRef> {
     }
 }
 
+/// A fire has burned the building down: it becomes `Burned` (its people leave on the
+/// citizens' next update) until it is demolished. `false` when it is not `Active` or gone.
+pub fn burn(buildings: &mut BuildingGrid, id: BuildingId) -> bool {
+    match buildings.get_mut(id) {
+        Some(b) if b.state == BuildingState::Active => {
+            b.state = BuildingState::Burned;
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Removes a building and frees its lot cells in the zone grid. The future `Demolish`
 /// command uses this; citizens living or working there leave on their next update.
 pub fn demolish_building(
