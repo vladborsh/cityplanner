@@ -292,3 +292,95 @@ fn residents_arrive_only_when_the_street_is_connected_to_the_entry_highway() {
     assert!(households(&sim) > 0, "households arrive once connected");
     assert!(sim.view().city.connected_to_highway);
 }
+
+/// T-118: a connected new game's households drive in from the Outside node along the highway.
+#[test]
+fn move_in_cars_drive_from_the_outside_node_and_the_household_arrives_with_them() {
+    use bevy_math::Vec3;
+    use cp_citizen::{Location, TripBook, TripPurpose};
+    use cp_content::ZoneType;
+    use cp_core::curve::CubicBezier3;
+    use cp_core::time::TICKS_PER_DAY;
+    use cp_net::Elevation;
+    use cp_zone::{ZoneCellRef, ZoneGrid};
+
+    let run = || {
+        let db = content();
+        let terrain = map("flatlands");
+        let e = terrain.meta().entry_road.clone().unwrap();
+        let mut sim = sim_on(Arc::clone(&terrain));
+        sim.new_game().unwrap();
+        *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
+        *sim.world_mut().resource_mut::<cp_economy::Decay>() = cp_economy::Decay::disabled();
+        let (end, dir) = (e.stub_end(), e.direction());
+        let side = Vec2::new(-dir.y, dir.x);
+        let y = |p: Vec2| Vec3::new(p.x, terrain.height(p), p.y);
+        let (a, b) = (end + side * 120.0, end + side * 120.0 + dir * 160.0);
+        let road = db.road_id("basic_2l").unwrap();
+        let def = db.road(road).clone();
+        let street = {
+            let mut g = sim.world_mut().resource_mut::<NetGraph>();
+            let street = g
+                .add_segment(
+                    &def,
+                    road,
+                    CubicBezier3::line(y(a), y(b)),
+                    Elevation::Ground,
+                )
+                .unwrap();
+            g.add_segment(
+                &def,
+                road,
+                CubicBezier3::line(y(end), y(a)),
+                Elevation::Ground,
+            )
+            .unwrap();
+            street
+        };
+        sim.tick_once();
+        {
+            let mut grid = sim.world_mut().resource_mut::<ZoneGrid>();
+            let blocks: Vec<_> = grid
+                .blocks_of(street)
+                .into_iter()
+                .flatten()
+                .map(|id| (id, grid.block(id).unwrap().cell_count()))
+                .collect();
+            for (id, cells) in blocks {
+                for cell in 0..cells {
+                    grid.set_zone(
+                        ZoneCellRef {
+                            block: id,
+                            cell: cell as u16,
+                        },
+                        ZoneType::ResLow,
+                    );
+                }
+            }
+        }
+        let mut max_cars = 0usize;
+        for _ in 0..3 * TICKS_PER_DAY {
+            sim.tick_once();
+            let book = sim.world().resource::<TripBook>();
+            let agents = sim.world().resource::<cp_traffic::Agents>();
+            let cars: Vec<_> = agents
+                .vehicles()
+                .filter(|(_, v)| {
+                    book.get(v.trip)
+                        .is_some_and(|t| t.purpose == TripPurpose::MoveIn)
+                })
+                .collect();
+            max_cars = max_cars.max(cars.len());
+        }
+        assert!(max_cars > 0, "move-in cars were on the road");
+        let grid = sim.world().resource::<cp_citizen::CitizenGrid>();
+        assert!(grid.household_count() > 0);
+        let home = grid
+            .citizens()
+            .filter(|(_, c)| c.location == Location::Home)
+            .count();
+        assert!(home > 0, "households arrived");
+        (sim.checksum(), max_cars)
+    };
+    assert_eq!(run(), run(), "two runs differ");
+}

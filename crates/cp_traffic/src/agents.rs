@@ -39,12 +39,13 @@ use bevy_math::Vec2;
 use bevy_tasks::{ComputeTaskPool, TaskPool};
 use cp_building::{Building, BuildingFlags, BuildingGrid};
 use cp_citizen::{
-    CitizenGrid, CitizenId, TripBook, TripId, TripMode, TripState, cancel_trip, complete_trip,
+    CitizenGrid, CitizenId, TripBook, TripId, TripMode, TripPurpose, TripState, cancel_trip,
+    complete_trip,
 };
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_core::time::MOVE_SECONDS_PER_TICK;
 use cp_core::{Arena, Id, SimLimits, SimRng, Tick};
-use cp_net::{JunctionGeometry, LaneId, NetGraph, NodeId};
+use cp_net::{JunctionGeometry, LaneId, NetGraph, NodeId, NodeKind};
 use serde::{Deserialize, Serialize};
 
 use crate::astar::{CarPath, NoPath, PedPath};
@@ -397,6 +398,34 @@ fn access_of(net: &NetGraph, b: &Building) -> Option<Access> {
     })
 }
 
+/// The path request of a move-in car (T-118): from the lane leaving the `Outside` node nearest
+/// to `home` to the lane of the home's access point.
+fn move_in_request(net: &NetGraph, pnet: &PathNetwork, home: &Building) -> Option<PathRequest> {
+    let g = pnet.graph();
+    let (node, segment) = net
+        .nodes()
+        .filter(|(_, n)| n.kind == NodeKind::Outside)
+        .filter_map(|(id, n)| Some((id, *n.segments.first()?, n.pos)))
+        .min_by(|a, b| {
+            let d = |p: bevy_math::Vec3| to_xz(p).distance_squared(home.pos);
+            d(a.2).total_cmp(&d(b.2)).then(a.0.cmp(&b.0))
+        })
+        .map(|(id, seg, _)| (id, seg))?;
+    let from_start = net.segment(segment)?.start == node;
+    let (from, from_s) = g.entry_lane(segment, from_start)?;
+    let (to, to_s) = g.resolve_car_lane(&access_of(net, home)?)?;
+    let lane_access = |segment, s| Access {
+        segment,
+        s,
+        side: Side::Right,
+    };
+    Some(PathRequest {
+        mode: Mode::CarLanes { from, to },
+        from: lane_access(segment, from_s),
+        to: lane_access(segment, to_s),
+    })
+}
+
 fn travel_ticks(cost_s: f32) -> u64 {
     ((cost_s / MOVE_SECONDS_PER_TICK).ceil() as u64).max(1)
 }
@@ -419,6 +448,21 @@ pub fn route_trips(
         let Some(trip) = book.get(tid).cloned() else {
             continue;
         };
+        if trip.purpose == TripPurpose::MoveIn {
+            let request = buildings
+                .get(trip.to)
+                .and_then(|home| move_in_request(&net, &pnet, home));
+            match request {
+                Some(request) => {
+                    let RequestId(id) = service.submit(&pnet, *tick, request);
+                    agents.requests.insert(id, tid);
+                    book.set_state(tid, TripState::AwaitingPath { request: id });
+                }
+                // No way in from the highway: the household arrives abstractly.
+                None => cancel_trip(&mut grid, &mut book, tid),
+            }
+            continue;
+        }
         let access = buildings
             .get(trip.from)
             .zip(buildings.get(trip.to))
@@ -613,7 +657,8 @@ pub fn receive_paths(
         if matches!(
             outcome.result,
             PathResult::Pedestrian(Ok(_)) | PathResult::Car(Ok(_))
-        ) {
+        ) && trip.purpose != TripPurpose::MoveIn
+        {
             for b in [trip.from, trip.to] {
                 buildings.set_flag(b, BuildingFlags::NO_PATH, false);
             }
@@ -623,8 +668,10 @@ pub fn receive_paths(
             PathResult::Pedestrian(Err(NoPath)) | PathResult::Car(Err(NoPath)) => {
                 agents.stats.no_path += 1;
                 // Either end may be the cut-off one; a later successful trip clears the other.
-                for b in [trip.from, trip.to] {
-                    buildings.set_flag(b, BuildingFlags::NO_PATH, true);
+                if trip.purpose != TripPurpose::MoveIn {
+                    for b in [trip.from, trip.to] {
+                        buildings.set_flag(b, BuildingFlags::NO_PATH, true);
+                    }
                 }
                 cancel_trip(&mut grid, &mut book, tid);
             }

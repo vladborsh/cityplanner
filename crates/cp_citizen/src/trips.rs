@@ -32,6 +32,10 @@ pub enum TripPurpose {
     Work,
     Shop,
     Home,
+    /// A new household driving in from the `Outside` node of the entry highway to its home
+    /// (§5.1). `from == to == home`; `cp_traffic` starts the car at the Outside node. Appended
+    /// in save format 26.
+    MoveIn,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

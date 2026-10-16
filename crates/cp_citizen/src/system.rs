@@ -35,6 +35,7 @@ use crate::grid::CitizenGrid;
 use crate::model::{
     ADULT_AGE_DAYS, CitizenId, DAYS_PER_YEAR, HOUSEHOLD_MAX, HouseholdId, Location,
 };
+use crate::trips::{Trip, TripMode, TripPurpose, TripState};
 
 /// Citizens and households are visited in 256 buckets (§2).
 pub const CITIZEN_BUCKETS: u32 = 256;
@@ -246,7 +247,7 @@ pub fn update_citizens(
     reach: Option<Res<EntryReach>>,
     rng: Res<SimRng>,
     limits: Res<SimLimits>,
-    trips: Option<Res<crate::trips::TripBook>>,
+    mut trips: Option<ResMut<crate::trips::TripBook>>,
     mut grid: ResMut<CitizenGrid>,
 ) {
     let Some(content) = content else { return };
@@ -400,7 +401,23 @@ pub fn update_citizens(
         }
         let wealth = 50_000 + i64::from(rng.below(50_000));
         let arrive = Tick(now + arrival_delay(terrain.as_deref(), reach, pos));
-        grid.add_household(id, wealth, arrive, &members);
+        let hid = grid.add_household(id, wealth, arrive, &members);
+        // With an entry highway the first member drives in from the Outside node (T-118);
+        // `arrive` stays the abstract arrival if there is no route or no free agent.
+        if entry_rule && let Some(book) = trips.as_deref_mut() {
+            book.ensure_derived();
+            let driver = grid.household(hid).and_then(|h| h.member_ids().next());
+            if let Some(citizen) = driver {
+                book.add(Trip {
+                    citizen,
+                    from: id,
+                    to: id,
+                    purpose: TripPurpose::MoveIn,
+                    mode: TripMode::Car,
+                    state: TripState::Planned,
+                });
+            }
+        }
     }
 }
 

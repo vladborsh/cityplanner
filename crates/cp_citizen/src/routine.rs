@@ -217,6 +217,7 @@ pub fn complete_trip(
     match trip.purpose {
         TripPurpose::Work => set_location(grid, trip.citizen, Location::Work),
         TripPurpose::Home => set_location(grid, trip.citizen, Location::Home),
+        TripPurpose::MoveIn => grid.household_arrived(trip.citizen, now),
         TripPurpose::Shop => {
             set_location(grid, trip.citizen, Location::Shop);
             // Dwell, then head home.

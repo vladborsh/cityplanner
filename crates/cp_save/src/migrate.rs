@@ -1548,8 +1548,8 @@ pub struct SaveDataV24 {
 
 /// v24 → v25 (T-149): the milestone progress. A save from before it has every milestone
 /// (nothing is locked in a city that already exists).
-pub fn migrate_v24_to_v25(v24: SaveDataV24) -> SaveData {
-    SaveData {
+pub fn migrate_v24_to_v25(v24: SaveDataV24) -> SaveDataV25 {
+    SaveDataV25 {
         tick: v24.tick,
         rng: v24.rng,
         speed: v24.speed,
@@ -1580,9 +1580,103 @@ pub fn migrate_v24_to_v25(v24: SaveDataV24) -> SaveData {
     }
 }
 
+/// Version 25: the body as written by format 25 (milestone progress; move-in households
+/// appear at once, no `TripPurpose::MoveIn`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV25 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    /// Zone blocks, painted types and cell validity. Added in v5.
+    pub zones: ZoneGrid,
+    /// Buildings (lots, state, access points). Added in v6.
+    /// Includes the ids removed and not yet drained since v13.
+    pub buildings: BuildingGrid,
+    /// Citizens and households. Added in v7.
+    pub citizens: CitizenGrid,
+    /// Pathfinding requests in flight (id, submit tick, request, congestion read, stale
+    /// flag). Added in v8; see `cp_traffic::service` for why this makes load + N ticks equal
+    /// the continuous run.
+    pub paths: SavedPaths,
+    /// Pipe and power-line networks. Added in v9.
+    pub utilities: UtilityGraph,
+    /// Trips in flight and the routine's counters. Added in v10.
+    pub trips: TripBook,
+    /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
+    /// agents carry the segment load since v12; vehicles carry their re-route request id
+    /// since v17.
+    pub agents: cp_traffic::Agents,
+    /// The city's money. Added in v14.
+    pub treasury: Treasury,
+    /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
+    pub economy: EconomyState,
+    /// Smoothed demand and the sums of the cycle in progress. Added in v15.
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    /// Pollution, noise and land value grids. Added in v16.
+    pub land: LandGrids,
+    /// Abandonment timers. Added in v16.
+    pub decay: Decay,
+    /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
+    /// [`crate::DefNames`] and `SaveData::remap_defs`.
+    pub def_names: crate::DefNames,
+    /// The district grid and the district records. Added in v21.
+    pub district_map: DistrictMap,
+    pub districts: Districts,
+    /// Per-building service state and facility counters. Added in v22; fires name their
+    /// station since v24.
+    pub service_state: cp_service::ServiceState,
+    /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
+    /// sim reads the values of that boundary until the next one. Added in v22.
+    pub coverage: cp_service::ServiceCoverage,
+    /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
+    pub shortage: cp_economy::WorkerShortage,
+    /// The population milestone reached. Added in v25.
+    pub progress: cp_sim::Progress,
+}
+
+/// v25 → v26 (T-118): `TripPurpose::MoveIn` is appended; nothing in a v25 body changes.
+pub fn migrate_v25_to_v26(v25: SaveDataV25) -> SaveData {
+    SaveData {
+        tick: v25.tick,
+        rng: v25.rng,
+        speed: v25.speed,
+        queue: v25.queue,
+        log: v25.log,
+        tiles: v25.tiles,
+        net: v25.net,
+        zones: v25.zones,
+        buildings: v25.buildings,
+        citizens: v25.citizens,
+        paths: v25.paths,
+        utilities: v25.utilities,
+        trips: v25.trips,
+        agents: v25.agents,
+        treasury: v25.treasury,
+        economy: v25.economy,
+        demand: v25.demand,
+        demand_acc: v25.demand_acc,
+        land: v25.land,
+        decay: v25.decay,
+        def_names: v25.def_names,
+        district_map: v25.district_map,
+        districts: v25.districts,
+        service_state: v25.service_state,
+        coverage: v25.coverage,
+        shortage: v25.shortage,
+        progress: v25.progress,
+    }
+}
+
 /// Everything from a v22 body to the current format.
 fn from_v22(v: SaveDataV22) -> SaveData {
-    migrate_v24_to_v25(migrate_v23_to_v24(migrate_v22_to_v23(v)))
+    migrate_v25_to_v26(migrate_v24_to_v25(migrate_v23_to_v24(migrate_v22_to_v23(
+        v,
+    ))))
 }
 
 fn from_v16(v: SaveDataV16) -> SaveData {
@@ -1686,9 +1780,12 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         20 => Ok(from_v22(migrate_v21_to_v22(migrate_v20_to_v21(dec(body)?)))),
         21 => Ok(from_v22(migrate_v21_to_v22(dec(body)?))),
         22 => Ok(from_v22(dec(body)?)),
-        23 => Ok(migrate_v24_to_v25(migrate_v23_to_v24(dec(body)?))),
-        24 => Ok(migrate_v24_to_v25(dec(body)?)),
-        25 => dec(body),
+        23 => Ok(migrate_v25_to_v26(migrate_v24_to_v25(migrate_v23_to_v24(
+            dec(body)?,
+        )))),
+        24 => Ok(migrate_v25_to_v26(migrate_v24_to_v25(dec(body)?))),
+        25 => Ok(migrate_v25_to_v26(dec(body)?)),
+        26 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

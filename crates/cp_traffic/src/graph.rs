@@ -528,6 +528,25 @@ impl PathGraph {
         Some((slot, node.lane_s(a.s)))
     }
 
+    /// Like [`Self::resolve_car`], but gives the lane id.
+    pub(crate) fn resolve_car_lane(&self, a: &Access) -> Option<(LaneId, f32)> {
+        let (slot, s) = self.resolve_car(a)?;
+        Some((self.car[slot as usize].as_ref()?.id, s))
+    }
+
+    /// The lane (lowest id) of `segment` that runs away from its start (`from_start`) or its
+    /// end, with the lane metre where cars enter it: where a move-in car appears at an
+    /// `Outside` node (T-118).
+    pub(crate) fn entry_lane(&self, segment: SegmentId, from_start: bool) -> Option<(LaneId, f32)> {
+        let sl = self.segments.get(&segment)?;
+        sl.car
+            .iter()
+            .filter_map(|&(id, _)| self.car_lane(id))
+            .filter(|l| l.forward == from_start)
+            .min_by_key(|l| l.id)
+            .map(|l| (l.id, l.s_in))
+    }
+
     /// Resolves an access point to a sidewalk lane and the position on it (lane metres).
     pub(crate) fn resolve_ped(&self, a: &Access) -> Option<(u32, f32)> {
         let sl = self.segments.get(&a.segment)?;
