@@ -14,6 +14,7 @@ use bevy_egui::egui;
 use cp_building::{BuildingFlags, BuildingState};
 use cp_core::time::TICKS_PER_DAY;
 use cp_render::Overlay;
+use cp_service::ServiceProblems;
 use cp_sim::SimView;
 
 use crate::icons::Icon;
@@ -80,6 +81,45 @@ fn flagged(view: &SimView, bit: u8) -> (u32, Option<Vec2>) {
     }
     (n, first)
 }
+
+/// Service problems (`ServiceProblems` bit, advice id, text, icon, the service's overlay).
+const SERVICE_ADVICE: [(u16, &str, &str, Icon, Overlay); 5] = [
+    (
+        ServiceProblems::GARBAGE,
+        "garbage",
+        "buried in garbage",
+        Icon::OverlayGarbage,
+        Overlay::Garbage,
+    ),
+    (
+        ServiceProblems::SICK,
+        "sick",
+        "with sick residents",
+        Icon::OverlayHealth,
+        Overlay::Health,
+    ),
+    (
+        ServiceProblems::DEAD,
+        "dead",
+        "with uncollected dead",
+        Icon::OverlayDeathcare,
+        Overlay::Deathcare,
+    ),
+    (
+        ServiceProblems::FIRE,
+        "fire",
+        "on fire",
+        Icon::OverlayFire,
+        Overlay::Fire,
+    ),
+    (
+        ServiceProblems::CRIME,
+        "crime",
+        "hit by crime",
+        Icon::OverlayPolice,
+        Overlay::Police,
+    ),
+];
 
 /// All the advice the view gives now, unordered.
 pub fn collect(view: &SimView) -> Vec<Advice> {
@@ -203,6 +243,20 @@ pub fn collect(view: &SimView) -> Vec<Advice> {
                 n,
                 Icon::Building,
                 at.map(Action::Jump),
+            );
+        }
+    }
+    // Service problems per building (T-134 state): a count per kind.
+    let counts = view.service_state.summary().counts;
+    for (n, (_, id, text, icon, overlay)) in counts.into_iter().zip(SERVICE_ADVICE) {
+        if n > 0 {
+            push(
+                id,
+                sev(n),
+                format!("{} {text}", plural(n, "building", "buildings")),
+                n,
+                icon,
+                Some(Action::Overlay(overlay)),
             );
         }
     }
@@ -438,6 +492,35 @@ mod tests {
             a.text
         );
         assert_eq!(a.action, Some(Action::Overlay(Overlay::Water)));
+    }
+
+    #[test]
+    fn service_problems_give_advice_with_the_matching_overlay() {
+        use cp_service::{BuildingServices, ServiceProblems, ServiceState};
+        let mut v = no_water(0);
+        let sick = BuildingServices {
+            problems: ServiceProblems(ServiceProblems::SICK | ServiceProblems::GARBAGE),
+            ..BuildingServices::default()
+        };
+        let crime = BuildingServices {
+            problems: ServiceProblems(ServiceProblems::CRIME),
+            ..BuildingServices::default()
+        };
+        v.service_state = std::sync::Arc::new(ServiceState::from_parts(
+            vec![sick, sick, crime],
+            Default::default(),
+        ));
+        let all = collect(&v);
+        let get = |id| all.iter().find(|a| a.id == id).unwrap();
+        assert_eq!(get("sick").count, 2);
+        assert_eq!(get("sick").action, Some(Action::Overlay(Overlay::Health)));
+        assert_eq!(
+            get("garbage").action,
+            Some(Action::Overlay(Overlay::Garbage))
+        );
+        assert_eq!(get("crime").count, 1);
+        assert_eq!(get("crime").action, Some(Action::Overlay(Overlay::Police)));
+        assert!(all.iter().all(|a| a.id != "fire" && a.id != "dead"));
     }
 
     #[test]

@@ -61,7 +61,7 @@ impl Default for Settings {
             ui_scale: 1.0,
             camera: CameraPrefs::default(),
             advisor: true,
-            advisor_problems_only: true,
+            advisor_problems_only: false,
         }
     }
 }

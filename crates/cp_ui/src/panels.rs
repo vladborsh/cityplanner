@@ -38,7 +38,7 @@ impl Default for Prefs {
             ui_scale: 1.0,
             camera: cp_render::CameraSettings::default(),
             advisor: true,
-            advisor_problems_only: true,
+            advisor_problems_only: false,
         }
     }
 }

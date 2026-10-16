@@ -2735,6 +2735,7 @@ dependencies = [
  "cp_economy",
  "cp_net",
  "cp_render",
+ "cp_service",
  "cp_sim",
  "cp_terrain",
  "cp_tools",
