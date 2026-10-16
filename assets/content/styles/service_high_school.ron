@@ -1,0 +1,15 @@
+// Silhouette of a service building (T-147): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "service_high_school",
+    massing: HighSchool,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.76, 0.50, 0.40), (0.72, 0.46, 0.36)],
+        roof: [(0.30, 0.34, 0.40)],
+        trim: [(0.86, 0.82, 0.72)],
+        glass: (0.34, 0.56, 0.74),
+    ),
+    facade: Ribbon,
+))

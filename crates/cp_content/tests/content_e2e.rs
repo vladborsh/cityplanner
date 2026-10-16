@@ -434,3 +434,42 @@ fn the_six_service_buildings_have_six_different_silhouettes() {
     assert_eq!(n, 6);
     assert_eq!(massings.len(), 6, "{massings:?}");
 }
+
+/// T-147: the eleven M2 service buildings have eleven different massings, each its own
+/// `service_*` style, and none of them is one of the M1 six.
+#[test]
+fn the_eleven_m2_service_buildings_have_eleven_different_silhouettes() {
+    use std::collections::BTreeSet;
+    let db = ContentDb::load_dir(root()).unwrap();
+    let mut massings = BTreeSet::new();
+    let mut styles = BTreeSet::new();
+    let mut n = 0;
+    for (_, d) in db.buildings() {
+        let Some(svc) = d.service.as_deref().and_then(|s| db.service_id(s)) else {
+            continue;
+        };
+        if db.service(svc).kind < ServiceKind::Garbage {
+            continue;
+        }
+        assert_eq!(d.styles.len(), 1, "{}", d.id);
+        let st = db.style(db.style_id(&d.styles[0]).unwrap());
+        assert!(st.id.starts_with("service_"), "{}", d.id);
+        massings.insert(format!("{:?}", st.massing));
+        styles.insert(st.id.clone());
+        n += 1;
+    }
+    assert_eq!(n, 11);
+    assert_eq!(massings.len(), 11, "{massings:?}");
+    assert_eq!(styles.len(), 11);
+    for m1 in [
+        "PumpHouse",
+        "Outflow",
+        "CoalPlant",
+        "WindTurbine",
+        "WaterTower",
+        "TreatmentPlant",
+        "Box",
+    ] {
+        assert!(!massings.contains(m1), "{m1}");
+    }
+}

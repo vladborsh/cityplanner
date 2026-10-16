@@ -631,6 +631,17 @@ pub fn is_service(m: Massing) -> bool {
             | Massing::WindTurbine
             | Massing::WaterTower
             | Massing::TreatmentPlant
+            | Massing::Landfill
+            | Massing::Incinerator
+            | Massing::Clinic
+            | Massing::Hospital
+            | Massing::Cemetery
+            | Massing::Crematorium
+            | Massing::School
+            | Massing::HighSchool
+            | Massing::University
+            | Massing::FireStation
+            | Massing::PoliceStation
     )
 }
 
@@ -1231,6 +1242,732 @@ pub fn service(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                         y + 2.1,
                         dark,
                         dark,
+                    );
+                }
+            }
+        }
+        Massing::Landfill => {
+            pad(m, (0.0, cv), (0.95 * hu, 0.95 * hv), 0.25);
+            let y = b + 0.25;
+            let r = hu.min(hv);
+            cone(
+                m,
+                f,
+                (-0.15 * hu, cv + 0.1 * hv),
+                0.55 * r,
+                (y, y + 8.0),
+                n,
+                sc.wall,
+            );
+            cone(
+                m,
+                f,
+                (0.4 * hu, cv + 0.3 * hv),
+                0.32 * r,
+                (y, y + 4.5),
+                n,
+                mul(sc.wall, 0.85),
+            );
+            if !far {
+                // The fence round the tip.
+                for (c, h) in [
+                    ((0.0, cv - 0.93 * hv), (0.93 * hu, 0.03 * hv)),
+                    ((0.0, cv + 0.93 * hv), (0.93 * hu, 0.03 * hv)),
+                    ((-0.93 * hu, cv), (0.03 * hu, 0.93 * hv)),
+                    ((0.93 * hu, cv), (0.03 * hu, 0.93 * hv)),
+                ] {
+                    block(m, f, c, h, y, y + 1.8, sc.trim, sc.trim);
+                }
+            }
+            if near {
+                // The bulldozer: body, cab and blade.
+                let yel = [0.88, 0.68, 0.08, 1.0];
+                block(
+                    m,
+                    f,
+                    (0.45 * hu, cv - 0.5 * hv),
+                    (1.5, 1.0),
+                    y,
+                    y + 1.5,
+                    yel,
+                    yel,
+                );
+                block(
+                    m,
+                    f,
+                    (0.45 * hu, cv - 0.5 * hv),
+                    (0.8, 0.8),
+                    y + 1.5,
+                    y + 2.6,
+                    yel,
+                    dark,
+                );
+                block(
+                    m,
+                    f,
+                    (0.45 * hu, cv - 0.5 * hv - 1.4),
+                    (1.7, 0.2),
+                    y,
+                    y + 1.3,
+                    dark,
+                    dark,
+                );
+            }
+        }
+        Massing::Incinerator => {
+            pad(m, (0.0, cv), (0.95 * hu, 0.95 * hv), 0.25);
+            let y = b + 0.25;
+            block(
+                m,
+                f,
+                (-0.25 * hu, cv + 0.1 * hv),
+                (0.55 * hu, 0.6 * hv),
+                y,
+                y + 8.0,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (-0.25 * hu, cv - 0.7 * hv),
+                (0.3 * hu, 0.2 * hv),
+                y,
+                y + 4.0,
+                mul(sc.wall, 0.8),
+                sc.trim,
+            );
+            // One tall chimney.
+            cyl(
+                m,
+                f,
+                (0.62 * hu, cv - 0.2 * hv),
+                (1.6, 1.0),
+                (y, y + 36.0),
+                n,
+                sc.wall,
+                Some(dark),
+            );
+            if !far {
+                cyl(
+                    m,
+                    f,
+                    (0.62 * hu, cv - 0.2 * hv),
+                    (1.1, 1.05),
+                    (y + 30.0, y + 32.0),
+                    n,
+                    sc.trim,
+                    None,
+                );
+            }
+            if near {
+                cyl(
+                    m,
+                    f,
+                    (-0.5 * hu, cv + 0.1 * hv),
+                    (0.7, 0.7),
+                    (y + 8.0, y + 10.0),
+                    n,
+                    dark,
+                    Some(sc.trim),
+                );
+            }
+        }
+        Massing::Clinic => {
+            pad(m, (0.0, cv), (0.9 * hu, 0.9 * hv), 0.25);
+            let y = b + 0.25;
+            block(
+                m,
+                f,
+                (0.0, cv + 0.1 * hv),
+                (0.7 * hu, 0.55 * hv),
+                y,
+                y + 4.5,
+                sc.wall,
+                sc.roof,
+            );
+            // The cross on the roof.
+            let red = [0.85, 0.15, 0.15, 1.0];
+            block(
+                m,
+                f,
+                (0.0, cv - 0.1 * hv),
+                (0.3, 0.3),
+                y + 4.5,
+                y + 9.0,
+                red,
+                red,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv - 0.1 * hv),
+                (1.3, 0.3),
+                y + 6.2,
+                y + 7.4,
+                red,
+                red,
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (0.0, cv - 0.5 * hv),
+                    (0.2 * hu, 0.12 * hv),
+                    y,
+                    y + 3.0,
+                    sc.trim,
+                    sc.trim,
+                );
+            }
+        }
+        Massing::Hospital => {
+            pad(m, (0.0, cv), (0.95 * hu, 0.95 * hv), 0.25);
+            let y = b + 0.25;
+            block(
+                m,
+                f,
+                (0.15 * hu, cv + 0.2 * hv),
+                (0.7 * hu, 0.5 * hv),
+                y,
+                y + 14.0,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (-0.6 * hu, cv - 0.45 * hv),
+                (0.28 * hu, 0.32 * hv),
+                y,
+                y + 8.0,
+                mul(sc.wall, 0.92),
+                sc.roof,
+            );
+            let red = [0.85, 0.15, 0.15, 1.0];
+            block(
+                m,
+                f,
+                (0.15 * hu, cv + 0.2 * hv),
+                (0.4, 0.4),
+                y + 14.0,
+                y + 19.0,
+                red,
+                red,
+            );
+            block(
+                m,
+                f,
+                (0.15 * hu, cv + 0.2 * hv),
+                (1.6, 0.4),
+                y + 16.0,
+                y + 17.4,
+                red,
+                red,
+            );
+            // The helipad on the wing.
+            let rad = (0.28 * hu).min(0.32 * hv) * 0.9;
+            cyl(
+                m,
+                f,
+                (-0.6 * hu, cv - 0.45 * hv),
+                (rad, rad),
+                (y + 8.0, y + 8.3),
+                n,
+                sc.trim,
+                Some(mul(sc.trim, 1.1)),
+            );
+            if near {
+                let w = [0.95, 0.95, 0.95, 1.0];
+                for du in [-0.35f32, 0.35] {
+                    block(
+                        m,
+                        f,
+                        (-0.6 * hu + du * rad, cv - 0.45 * hv),
+                        (0.15, 0.55 * rad),
+                        y + 8.3,
+                        y + 8.4,
+                        w,
+                        w,
+                    );
+                }
+                block(
+                    m,
+                    f,
+                    (-0.6 * hu, cv - 0.45 * hv),
+                    (0.35 * rad, 0.15),
+                    y + 8.3,
+                    y + 8.4,
+                    w,
+                    w,
+                );
+            }
+        }
+        Massing::Cemetery => {
+            // A walled lawn with rows of gravestones and a chapel.
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.95 * hu, 0.95 * hv),
+                sc.lo - 0.3,
+                b + 0.2,
+                sc.wall,
+                mul(sc.wall, 1.05),
+            );
+            let y = b + 0.2;
+            if !far {
+                for (c, h) in [
+                    ((0.0, cv - 0.95 * hv), (0.95 * hu, 0.03 * hv)),
+                    ((0.0, cv + 0.95 * hv), (0.95 * hu, 0.03 * hv)),
+                    ((-0.95 * hu, cv), (0.03 * hu, 0.95 * hv)),
+                    ((0.95 * hu, cv), (0.03 * hu, 0.95 * hv)),
+                ] {
+                    block(m, f, c, h, y, y + 1.6, sc.trim, sc.trim);
+                }
+            }
+            block(
+                m,
+                f,
+                (0.0, cv + 0.62 * hv),
+                (0.22 * hu, 0.2 * hv),
+                y,
+                y + 4.2,
+                sc.roof,
+                mul(sc.roof, 0.9),
+            );
+            if !far {
+                cone(
+                    m,
+                    f,
+                    (0.0, cv + 0.62 * hv),
+                    0.26 * hu.min(hv) * 1.4,
+                    (y + 4.2, y + 7.0),
+                    n,
+                    mul(sc.roof, 1.2),
+                );
+                let (cols, rows) = if near { (6, 3) } else { (4, 2) };
+                for i in 0..cols {
+                    for j in 0..rows {
+                        let u = (-0.7 + 1.4 * (i as f32 + 0.5) / cols as f32) * hu;
+                        let v = cv - 0.6 * hv + j as f32 * 0.32 * hv;
+                        block(m, f, (u, v), (0.4, 0.12), y, y + 1.2, sc.trim, sc.trim);
+                    }
+                }
+            }
+        }
+        Massing::Crematorium => {
+            pad(m, (0.0, cv), (0.9 * hu, 0.9 * hv), 0.25);
+            let y = b + 0.25;
+            block(
+                m,
+                f,
+                (-0.1 * hu, cv + 0.1 * hv),
+                (0.6 * hu, 0.5 * hv),
+                y,
+                y + 5.0,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.55 * hu, cv - 0.25 * hv),
+                (0.25 * hu, 0.3 * hv),
+                y,
+                y + 3.4,
+                mul(sc.wall, 0.9),
+                sc.roof,
+            );
+            // A short, thin chimney.
+            cyl(
+                m,
+                f,
+                (-0.5 * hu, cv - 0.15 * hv),
+                (0.75, 0.55),
+                (y, y + 15.0),
+                n,
+                sc.trim,
+                Some(dark),
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (-0.1 * hu, cv - 0.45 * hv),
+                    (0.2 * hu, 0.1 * hv),
+                    y,
+                    y + 3.0,
+                    sc.trim,
+                    sc.trim,
+                );
+            }
+        }
+        Massing::School => {
+            pad(m, (0.0, cv), (0.95 * hu, 0.95 * hv), 0.25);
+            let y = b + 0.25;
+            // Two wings round a yard.
+            block(
+                m,
+                f,
+                (-0.15 * hu, cv + 0.5 * hv),
+                (0.75 * hu, 0.3 * hv),
+                y,
+                y + 5.0,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (-0.6 * hu, cv - 0.1 * hv),
+                (0.3 * hu, 0.45 * hv),
+                y,
+                y + 5.0,
+                mul(sc.wall, 0.92),
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.35 * hu, cv - 0.2 * hv),
+                (0.55 * hu, 0.55 * hv),
+                y,
+                y + 0.12,
+                mul(sc.trim, 0.8),
+                sc.trim,
+            );
+            // The bell turret and the flagpole.
+            block(
+                m,
+                f,
+                (-0.15 * hu, cv + 0.5 * hv),
+                (1.4, 1.4),
+                y + 5.0,
+                y + 7.6,
+                sc.wall,
+                sc.roof,
+            );
+            if !far {
+                cone(
+                    m,
+                    f,
+                    (-0.15 * hu, cv + 0.5 * hv),
+                    2.0,
+                    (y + 7.6, y + 10.2),
+                    n,
+                    sc.roof,
+                );
+                cyl(
+                    m,
+                    f,
+                    (0.8 * hu, cv - 0.7 * hv),
+                    (0.14, 0.12),
+                    (y, y + 9.0),
+                    6,
+                    [0.9, 0.9, 0.9, 1.0],
+                    None,
+                );
+            }
+            if near {
+                let red = [0.85, 0.2, 0.2, 1.0];
+                block(
+                    m,
+                    f,
+                    (0.8 * hu + 0.7, cv - 0.7 * hv),
+                    (0.7, 0.06),
+                    y + 7.4,
+                    y + 8.8,
+                    red,
+                    red,
+                );
+            }
+        }
+        Massing::HighSchool => {
+            pad(m, (0.0, cv), (0.95 * hu, 0.95 * hv), 0.25);
+            let y = b + 0.25;
+            // A centre block with a wing each side.
+            block(
+                m,
+                f,
+                (0.0, cv + 0.35 * hv),
+                (0.3 * hu, 0.35 * hv),
+                y,
+                y + 10.0,
+                sc.wall,
+                sc.roof,
+            );
+            for s in [-1.0f32, 1.0] {
+                block(
+                    m,
+                    f,
+                    (s * 0.68 * hu, cv),
+                    (0.28 * hu, 0.6 * hv),
+                    y,
+                    y + 6.5,
+                    mul(sc.wall, 0.92),
+                    sc.roof,
+                );
+            }
+            block(
+                m,
+                f,
+                (0.0, cv + 0.62 * hv),
+                (0.7 * hu, 0.12 * hv),
+                y,
+                y + 6.5,
+                mul(sc.wall, 0.88),
+                sc.roof,
+            );
+            if !far {
+                cyl(
+                    m,
+                    f,
+                    (0.0, cv + 0.35 * hv),
+                    (0.16, 0.14),
+                    (y + 10.0, y + 18.0),
+                    6,
+                    [0.9, 0.9, 0.9, 1.0],
+                    None,
+                );
+            }
+            if near {
+                let blue = [0.2, 0.35, 0.8, 1.0];
+                block(
+                    m,
+                    f,
+                    (0.9, cv + 0.35 * hv),
+                    (0.9, 0.06),
+                    y + 15.8,
+                    y + 17.6,
+                    blue,
+                    blue,
+                );
+                block(
+                    m,
+                    f,
+                    (0.0, cv + 0.0 * hv),
+                    (0.2 * hu, 0.1 * hv),
+                    y,
+                    y + 3.0,
+                    sc.trim,
+                    sc.trim,
+                );
+            }
+        }
+        Massing::University => {
+            pad(m, (0.0, cv), (0.95 * hu, 0.95 * hv), 0.25);
+            let y = b + 0.25;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.9 * hu, 0.85 * hv),
+                y,
+                y + 1.2,
+                sc.trim,
+                mul(sc.trim, 0.95),
+            );
+            let y = y + 1.2;
+            block(
+                m,
+                f,
+                (0.0, cv + 0.3 * hv),
+                (0.78 * hu, 0.4 * hv),
+                y,
+                y + 9.0,
+                sc.wall,
+                sc.roof,
+            );
+            // The portico: a row of columns under a beam and a pediment.
+            let cols = if near {
+                6
+            } else if far {
+                4
+            } else {
+                5
+            };
+            for k in 0..cols {
+                let u = (-0.68 + 1.36 * k as f32 / (cols - 1) as f32) * hu;
+                cyl(
+                    m,
+                    f,
+                    (u, cv - 0.35 * hv),
+                    (0.7, 0.7),
+                    (y, y + 9.0),
+                    if far { 4 } else { n },
+                    mul(sc.trim, 1.1),
+                    None,
+                );
+            }
+            block(
+                m,
+                f,
+                (0.0, cv - 0.35 * hv),
+                (0.78 * hu, 0.2 * hv),
+                y + 9.0,
+                y + 10.4,
+                sc.trim,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv - 0.35 * hv),
+                (0.55 * hu, 0.2 * hv),
+                y + 10.4,
+                y + 12.0,
+                sc.trim,
+                sc.roof,
+            );
+            // The dome behind it.
+            cyl(
+                m,
+                f,
+                (0.0, cv + 0.3 * hv),
+                (0.2 * hu, 0.2 * hu),
+                (y + 9.0, y + 12.5),
+                n,
+                sc.wall,
+                None,
+            );
+            cone(
+                m,
+                f,
+                (0.0, cv + 0.3 * hv),
+                0.2 * hu,
+                (y + 12.5, y + 18.0),
+                n,
+                sc.roof,
+            );
+        }
+        Massing::FireStation => {
+            pad(m, (0.0, cv), (0.95 * hu, 0.95 * hv), 0.25);
+            let y = b + 0.25;
+            block(
+                m,
+                f,
+                (-0.1 * hu, cv),
+                (0.75 * hu, 0.55 * hv),
+                y,
+                y + 6.5,
+                sc.wall,
+                sc.roof,
+            );
+            // The hose tower.
+            block(
+                m,
+                f,
+                (0.75 * hu, cv + 0.3 * hv),
+                (0.12 * hu, 0.16 * hv),
+                y,
+                y + 15.0,
+                mul(sc.wall, 0.9),
+                sc.trim,
+            );
+            // The engine doors.
+            for k in [-1.0f32, 0.0, 1.0] {
+                block(
+                    m,
+                    f,
+                    (-0.1 * hu + k * 0.45 * hu, cv - 0.56 * hv),
+                    (0.18 * hu, 0.04 * hv),
+                    y,
+                    y + 4.2,
+                    dark,
+                    dark,
+                );
+            }
+            if near {
+                block(
+                    m,
+                    f,
+                    (-0.1 * hu, cv - 0.85 * hv),
+                    (0.75 * hu, 0.12 * hv),
+                    y,
+                    y + 0.1,
+                    mul(sc.trim, 0.7),
+                    sc.trim,
+                );
+                block(
+                    m,
+                    f,
+                    (-0.1 * hu, cv),
+                    (0.77 * hu, 0.57 * hv),
+                    y + 6.5,
+                    y + 6.9,
+                    sc.roof,
+                    mul(sc.roof, 0.9),
+                );
+            }
+        }
+        Massing::PoliceStation => {
+            pad(m, (0.0, cv), (0.95 * hu, 0.95 * hv), 0.25);
+            let y = b + 0.25;
+            block(
+                m,
+                f,
+                (-0.15 * hu, cv + 0.05 * hv),
+                (0.6 * hu, 0.5 * hv),
+                y,
+                y + 7.0,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (-0.15 * hu, cv - 0.55 * hv),
+                (0.2 * hu, 0.1 * hv),
+                y,
+                y + 3.6,
+                sc.trim,
+                sc.trim,
+            );
+            // The blue beacon on the roof.
+            let blue = [0.15, 0.35, 1.0, 1.0];
+            cyl(
+                m,
+                f,
+                (-0.15 * hu, cv),
+                (0.6, 0.6),
+                (y + 7.0, y + 8.2),
+                n,
+                sc.trim,
+                None,
+            );
+            cyl(
+                m,
+                f,
+                (-0.15 * hu, cv),
+                (0.7, 0.5),
+                (y + 8.2, y + 9.8),
+                n,
+                blue,
+                Some(blue),
+            );
+            // The car park beside it.
+            block(
+                m,
+                f,
+                (0.65 * hu, cv - 0.2 * hv),
+                (0.28 * hu, 0.6 * hv),
+                y,
+                y + 0.1,
+                dark,
+                mul(dark, 1.2),
+            );
+            if near {
+                for k in 0..3 {
+                    block(
+                        m,
+                        f,
+                        (0.65 * hu, cv - 0.5 * hv + k as f32 * 0.35 * hv),
+                        (1.1, 0.8),
+                        y + 0.1,
+                        y + 1.1,
+                        [0.9, 0.9, 0.95, 1.0],
+                        blue,
                     );
                 }
             }

@@ -9,7 +9,7 @@ Building((
     tax_base: 0.0,
     cost: 70000.0,
     upkeep_week: 2000.0,
-    styles: ["service_water_tower"],
+    styles: ["service_university"],
     service: Some("university"),
     icon: "university",
 ))

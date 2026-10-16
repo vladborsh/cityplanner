@@ -455,6 +455,18 @@ pub enum Massing {
     WindTurbine = 9,
     WaterTower = 10,
     TreatmentPlant = 11,
+    /// The M2 service silhouettes (T-147).
+    Landfill = 12,
+    Incinerator = 13,
+    Clinic = 14,
+    Hospital = 15,
+    Cemetery = 16,
+    Crematorium = 17,
+    School = 18,
+    HighSchool = 19,
+    University = 20,
+    FireStation = 21,
+    PoliceStation = 22,
 }
 
 /// Facade pattern family of a style.

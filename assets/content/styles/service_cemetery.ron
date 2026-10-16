@@ -1,0 +1,15 @@
+// Silhouette of a service building (T-147): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "service_cemetery",
+    massing: Cemetery,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.30, 0.48, 0.28), (0.34, 0.52, 0.30)],
+        roof: [(0.45, 0.40, 0.38)],
+        trim: [(0.62, 0.62, 0.60)],
+        glass: (0.30, 0.30, 0.30),
+    ),
+    facade: Punched,
+))

@@ -400,6 +400,42 @@ fn rasters(view: &cp_sim::SimView, out: &Path) {
 #[test]
 #[ignore = "writes PNGs; run in release"]
 fn service_rasters() {
+    service_rasters_of(
+        &[
+            "water_pump_station",
+            "sewage_outflow_station",
+            "coal_power_plant",
+            "wind_turbine",
+            "water_tower",
+            "sewage_treatment_plant",
+        ],
+        "services-row",
+    );
+}
+
+/// T-147: the eleven M2 service silhouettes, one picture each and a row.
+#[test]
+#[ignore = "writes PNGs; run in release"]
+fn m2_service_rasters() {
+    service_rasters_of(
+        &[
+            "landfill",
+            "incinerator",
+            "clinic",
+            "hospital",
+            "cemetery",
+            "crematorium",
+            "elementary_school",
+            "high_school",
+            "university",
+            "fire_station",
+            "police_station",
+        ],
+        "services-m2-row",
+    );
+}
+
+fn service_rasters_of(names: &[&str], row: &str) {
     use cp_building::{Building, BuildingFlags, BuildingState, Footprint};
     use cp_net::NetGraph;
     let content = content();
@@ -412,14 +448,6 @@ fn service_rasters() {
                 .join("building-rasters")
         });
     std::fs::create_dir_all(&out).unwrap();
-    let names = [
-        "water_pump_station",
-        "sewage_outflow_station",
-        "coal_power_plant",
-        "wind_turbine",
-        "water_tower",
-        "sewage_treatment_plant",
-    ];
     let origin = Vec2::new(5120.0, 5120.0);
     let mut all = Vec::new();
     for (k, name) in names.iter().enumerate() {
@@ -433,7 +461,7 @@ fn service_rasters() {
             level: 1,
             state: BuildingState::Active,
             ready_at: cp_core::Tick(0),
-            pos: origin + Vec2::new((k as f32 - 2.5) * 36.0, 0.0),
+            pos: origin + Vec2::new((k as f32 - (names.len() as f32 - 1.0) / 2.0) * 36.0, 0.0),
             rot: 0.0,
             access: None,
             flags: BuildingFlags::default(),
@@ -465,11 +493,13 @@ fn service_rasters() {
     // ... and the row from about 200 m up, oblique and plan.
     let centre = Vec3::new(origin.x, terrain.height(origin) + 5.0, origin.y);
     for (kind, yaw, pitch, ppm) in [("oblique", 20.0, 40.0, 4.2), ("plan", 0.0, 90.0, 4.2)] {
+        // A longer row is drawn smaller to stay in the picture.
+        let ppm = ppm * (6.0 / names.len() as f32).min(1.0);
         let cam = Cam::new(centre, yaw, pitch, ppm, 1000, 420);
         let mut img = Image::new(1000, 420, [0.36, 0.45, 0.29]);
         for m in &all {
             img.mesh(&cam, m);
         }
-        img.save(&out.join(format!("services-row-{kind}.png")));
+        img.save(&out.join(format!("{row}-{kind}.png")));
     }
 }

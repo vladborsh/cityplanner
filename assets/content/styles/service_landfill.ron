@@ -1,0 +1,15 @@
+// Silhouette of a service building (T-147): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "service_landfill",
+    massing: Landfill,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.42, 0.34, 0.24), (0.38, 0.30, 0.22)],
+        roof: [(0.25, 0.22, 0.18)],
+        trim: [(0.55, 0.55, 0.52)],
+        glass: (0.30, 0.30, 0.30),
+    ),
+    facade: Industrial,
+))

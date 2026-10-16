@@ -755,6 +755,52 @@ fn the_six_service_silhouettes_are_distinct_and_tall_where_they_should_be() {
     assert!(heights["sewage_treatment_plant"] < 8.0);
 }
 
+/// T-147: the eleven M2 service buildings each have a silhouette of their own: three LODs that
+/// never grow with distance, no two alike, and heights that read right (chimneys and towers
+/// tall, the cemetery low).
+#[test]
+fn the_eleven_m2_service_silhouettes_are_distinct_and_build_at_every_lod() {
+    let e = env();
+    let ground = e.terrain.height(Vec2::new(5120.0, 5120.0));
+    let mut shapes = BTreeSet::new();
+    let mut heights = BTreeMap::new();
+    for name in [
+        "landfill",
+        "incinerator",
+        "clinic",
+        "hospital",
+        "cemetery",
+        "crematorium",
+        "elementary_school",
+        "high_school",
+        "university",
+        "fire_station",
+        "police_station",
+    ] {
+        let (def_id, def) = service_def(&e, name);
+        let b = building(def_id, &e.db, BuildingState::Active, 0);
+        let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+        let (n, m, f) = (
+            p.near.triangle_count(),
+            p.mid.triangle_count(),
+            p.far.triangle_count(),
+        );
+        assert!(n >= m && m >= f && n > f && f > 0, "{name}: {n} {m} {f}");
+        assert!(p.rotor.is_none(), "{name}");
+        shapes.insert((
+            p.near.positions.len(),
+            p.mid.positions.len(),
+            p.far.positions.len(),
+        ));
+        heights.insert(name, extent(&p.far).1.y - ground);
+    }
+    assert_eq!(shapes.len(), 11, "{shapes:?}");
+    assert!(heights["incinerator"] > 30.0, "{heights:?}");
+    assert!(heights["hospital"] > 15.0 && heights["university"] > 15.0);
+    assert!(heights["fire_station"] > 12.0, "hose tower");
+    assert!(heights["cemetery"] < 8.0 && heights["clinic"] < 11.0);
+}
+
 /// T-114: the turbine's rotor is three blades around the hub, in the plane perpendicular to its
 /// axis, turning only by the angle given (a view effect: the mesh is rebuilt from the angle).
 #[test]
