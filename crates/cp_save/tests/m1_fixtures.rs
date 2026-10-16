@@ -44,6 +44,10 @@
 //! by one. Checked: with the plant's two files taken out of the content, all four values of the
 //! T-109 header above reproduce exactly (and the bench-10k baseline too).
 
+//! **T-187.** Re-recorded again, the two "load + 4096 ticks" values only (state at load
+//! unchanged): `tax_household` x2.4 and `tax_job` x1.8 in balance.ron, so the treasury differs
+//! from the first booked day on.
+//!
 //! **T-179.** Re-recorded again, the two "load + 4096 ticks" values only (state at load unchanged): tax
 //! income and upkeep are booked every game day instead of at the week boundary, so the treasury
 //! (and with it the checksum) differs from the first day on.
@@ -158,7 +162,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     assert_eq!(sim.checksum(), 0x82f4e90f2b013bf0, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0xf9cbd8c0c98da6e4,
+        0x1d34991835c4f3e5,
         "load + 4096 ticks"
     );
 }
@@ -192,7 +196,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0xd4c8e301c05bbfb5, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x8ce960e8a4a14232, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,
