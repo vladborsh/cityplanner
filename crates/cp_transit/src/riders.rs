@@ -42,11 +42,65 @@ fn nearest_stop(
     best
 }
 
+/// Seconds a ride on `line` takes from stop index `ib` to stop index `ia` on an empty road:
+/// the legs and the dwell at each stop passed, and for a train the turn at the ends (the quicker
+/// of the ways round). `None` if the plan does not fit the line.
+fn ride_secs(
+    line: &crate::model::Line,
+    plan: &crate::plan::LinePlan,
+    balance: &cp_content::Balance,
+    ib: usize,
+    ia: usize,
+) -> Option<f32> {
+    let n = line.stops.len();
+    if line.mode == TransitMode::Metro {
+        // Out and back: the first position of the ride that is the boarding stop, either
+        // way round, to the next one that is the alighting stop; the quicker counts.
+        let mut ride = f32::INFINITY;
+        for start in 0..visits(n) {
+            if visit_index(n, start) != ib {
+                continue;
+            }
+            let (mut t, mut pos) = (0.0, start);
+            while visit_index(n, pos) != ia || pos == start {
+                t += plan.legs[pos % visits(n)].time_s + balance.dwell_s;
+                if is_terminus(n, pos + 1) {
+                    t += balance.metro_turn_s;
+                }
+                pos += 1;
+            }
+            ride = ride.min(t);
+        }
+        ride.is_finite().then_some(ride)
+    } else {
+        let mut ride = 0.0;
+        let mut i = ib;
+        while i != ia {
+            ride += plan.legs.get(i)?.time_s + balance.dwell_s;
+            i = (i + 1) % n;
+        }
+        Some(ride)
+    }
+}
+
+/// A line a rider can take now, with its stop nearest to one end of the trip.
+struct Near {
+    line: LineId,
+    /// Index in the line's stops, and the distance to it.
+    stop: usize,
+    walk: f32,
+    /// Seconds a rider waits on average: half the headway.
+    wait: f32,
+}
+
 /// `Citizens` phase, after `update_routine`: a freshly planned trip whose ends have a stop of
 /// one line within `transit_walk_m` takes the bus when the estimate beats walking (no car) or
-/// `car_bias ×` the car's estimate (car owner). No RNG: the order of trip ids decides.
+/// `car_bias ×` the car's estimate (car owner). With two lines it may change from one to the
+/// other (T-165): at a stop they share, or on foot between two stops within `transfer_walk_m`.
+/// No RNG: the order of line ids decides ties (the smaller wins).
 ///
-/// `cost_transit = walk_a/1.4 + headway/2 + ride + walk_b/1.4 + transit_penalty_s`.
+/// `cost_transit = walk_a/1.4 + headway/2 + ride + walk_b/1.4 + transit_penalty_s`; with a
+/// change, `+ walk_x/1.4 + headway₂/2 + ride₂ + transfer_penalty_s`.
 #[allow(clippy::too_many_arguments)]
 pub fn choose_transit(
     content: Option<Res<SimContent>>,
@@ -63,6 +117,29 @@ pub fn choose_transit(
     }
     let balance = content.0.balance();
     book.ensure_derived();
+    // The lines that run now and fit their plan, in line id order.
+    let usable: Vec<LineId> = transit
+        .lines
+        .iter()
+        .filter(|(id, line)| {
+            line.mode != TransitMode::Train
+                && line.state == LineState::Ok
+                && line.stops.len() >= 2
+                && fleet
+                    .of_line(*id)
+                    .any(|(_, bus)| bus.phase != BusPhase::ToDepot)
+                && plans.get(*id).is_some_and(|p| {
+                    p.is_ok()
+                        && p.legs.len()
+                            == if line.mode == TransitMode::Metro {
+                                visits(line.stops.len())
+                            } else {
+                                line.stops.len()
+                            }
+                })
+        })
+        .map(|(id, _)| id)
+        .collect();
     for tid in book.planned() {
         let Some(trip) = book.get(tid).cloned() else {
             continue;
@@ -80,86 +157,124 @@ pub fn choose_transit(
             TripMode::Car => balance.car_bias * dist * 1.3 / balance.car_speed_est.max(0.1),
             TripMode::Transit => continue,
         };
-        let mut best: Option<(f32, Ride)> = None;
-        for (line_id, line) in transit.lines.iter() {
-            if line.mode == TransitMode::Train
-                || line.state != LineState::Ok
-                || line.stops.len() < 2
-                || !fleet
-                    .of_line(line_id)
-                    .any(|(_, bus)| bus.phase != BusPhase::ToDepot)
-            {
-                continue;
-            }
-            let Some(plan) = plans.get(line_id).filter(|p| p.is_ok()) else {
-                continue;
-            };
-            let metro = line.mode == TransitMode::Metro;
-            let expected = if metro {
-                visits(line.stops.len())
-            } else {
-                line.stops.len()
-            };
-            if plan.legs.len() != expected {
-                continue;
-            }
-            let Some((ib, wa)) = nearest_stop(&transit, &line.stops, pa, balance.transit_walk_m)
-            else {
-                continue;
-            };
-            let Some((ia, wb)) = nearest_stop(&transit, &line.stops, pb, balance.transit_walk_m)
-            else {
-                continue;
-            };
-            if ib == ia {
-                continue;
-            }
-            let n = line.stops.len();
-            let mut ride = 0.0;
-            if metro {
-                // Out and back: the first position of the ride that is the boarding stop, either
-                // way round, to the next one that is the alighting stop; the quicker counts.
-                ride = f32::INFINITY;
-                for start in 0..visits(n) {
-                    if visit_index(n, start) != ib {
-                        continue;
-                    }
-                    let (mut t, mut pos) = (0.0, start);
-                    while visit_index(n, pos) != ia || pos == start {
-                        t += plan.legs[pos % visits(n)].time_s + balance.dwell_s;
-                        if is_terminus(n, pos + 1) {
-                            t += balance.metro_turn_s;
-                        }
-                        pos += 1;
-                    }
-                    ride = ride.min(t);
-                }
-            } else {
-                let mut i = ib;
-                while i != ia {
-                    ride += plan.legs[i].time_s + balance.dwell_s;
-                    i = (i + 1) % n;
-                }
-            }
-            let headway = plan.cycle_s / f32::from(line.vehicles.max(1));
-            let cost = wa / WALK_SPEED_MPS
-                + headway / 2.0
-                + ride
-                + wb / WALK_SPEED_MPS
-                + balance.transit_penalty_s;
-            if cost < baseline && best.is_none_or(|(c, _)| cost < c) {
-                best = Some((
-                    cost,
-                    Ride {
+        // The lines with a stop within reach of each end, nearest first, at most
+        // `transit_lines_cap` of them.
+        let near = |p: Vec2| -> Vec<Near> {
+            let mut v: Vec<Near> = usable
+                .iter()
+                .filter_map(|&line_id| {
+                    let line = transit.lines.get(line_id)?;
+                    let plan = plans.get(line_id)?;
+                    let (stop, walk) =
+                        nearest_stop(&transit, &line.stops, p, balance.transit_walk_m)?;
+                    Some(Near {
                         line: line_id,
-                        board: line.stops[ib],
-                        alight: line.stops[ia],
-                    },
-                ));
+                        stop,
+                        walk,
+                        wait: plan.cycle_s / f32::from(line.vehicles.max(1)) / 2.0,
+                    })
+                })
+                .collect();
+            v.sort_by(|x, y| x.walk.total_cmp(&y.walk).then(x.line.cmp(&y.line)));
+            v.truncate(usize::from(balance.transit_lines_cap));
+            v.sort_by_key(|n| n.line);
+            v
+        };
+        let (from, to) = (near(pa), near(pb));
+        let mut best: Option<(f32, Vec<Ride>)> = None;
+        let mut offer = |cost: f32, rides: Vec<Ride>| {
+            if cost < baseline && best.as_ref().is_none_or(|(c, _)| cost < *c) {
+                best = Some((cost, rides));
+            }
+        };
+        // One line.
+        for f in &from {
+            let Some(t) = to.iter().find(|t| t.line == f.line) else {
+                continue;
+            };
+            if f.stop == t.stop {
+                continue;
+            }
+            let (line, plan) = (
+                transit.lines.get(f.line).expect("usable"),
+                plans.get(f.line).expect("usable"),
+            );
+            let Some(ride) = ride_secs(line, plan, balance, f.stop, t.stop) else {
+                continue;
+            };
+            let cost = f.walk / WALK_SPEED_MPS
+                + f.wait
+                + ride
+                + t.walk / WALK_SPEED_MPS
+                + balance.transit_penalty_s;
+            offer(
+                cost,
+                vec![Ride {
+                    line: f.line,
+                    board: line.stops[f.stop],
+                    alight: line.stops[t.stop],
+                }],
+            );
+        }
+        // Two lines, changing at a shared stop or on foot between two stops.
+        for f in &from {
+            for t in to.iter().filter(|t| t.line != f.line) {
+                let (l1, l2) = (
+                    transit.lines.get(f.line).expect("usable"),
+                    transit.lines.get(t.line).expect("usable"),
+                );
+                let (p1, p2) = (
+                    plans.get(f.line).expect("usable"),
+                    plans.get(t.line).expect("usable"),
+                );
+                for (x, &sx) in l1.stops.iter().enumerate().filter(|(x, _)| *x != f.stop) {
+                    let Some(px) = transit.stops.get(sx).map(|s| s.pos) else {
+                        continue;
+                    };
+                    for (y, &sy) in l2.stops.iter().enumerate().filter(|(y, _)| *y != t.stop) {
+                        let Some(py) = transit.stops.get(sy).map(|s| s.pos) else {
+                            continue;
+                        };
+                        let walk = if sx == sy { 0.0 } else { px.distance(py) };
+                        if walk > balance.transfer_walk_m {
+                            continue;
+                        }
+                        let (Some(r1), Some(r2)) = (
+                            ride_secs(l1, p1, balance, f.stop, x),
+                            ride_secs(l2, p2, balance, y, t.stop),
+                        ) else {
+                            continue;
+                        };
+                        let cost = f.walk / WALK_SPEED_MPS
+                            + f.wait
+                            + r1
+                            + walk / WALK_SPEED_MPS
+                            + t.wait
+                            + r2
+                            + t.walk / WALK_SPEED_MPS
+                            + balance.transit_penalty_s
+                            + balance.transfer_penalty_s;
+                        offer(
+                            cost,
+                            vec![
+                                Ride {
+                                    line: f.line,
+                                    board: l1.stops[f.stop],
+                                    alight: sx,
+                                },
+                                Ride {
+                                    line: t.line,
+                                    board: sy,
+                                    alight: l2.stops[t.stop],
+                                },
+                            ],
+                        );
+                    }
+                }
             }
         }
-        let Some((_, ride)) = best else { continue };
-        let Some(at) = transit.walk_point(ride.board) else {
+        let Some((_, legs)) = best else { continue };
+        let Some(at) = transit.walk_point(legs[0].board) else {
             continue;
         };
         let run = runs.start_walk(RunPoint::Building(trip.from), at);
@@ -168,7 +283,7 @@ pub fn choose_transit(
         transit.riders.insert(
             tid,
             Journey {
-                legs: vec![ride],
+                legs,
                 leg: 0,
                 stage: Stage::WalkTo { run },
             },
@@ -176,15 +291,21 @@ pub fn choose_transit(
     }
 }
 
-/// The journey goes on abstractly from `from` (the clock decides when it ends).
-fn go_abstract(j: &mut Journey, now: Tick, transit_pos: Option<Vec2>, goal: Option<Vec2>) {
+/// The stage of a journey that goes on abstractly from `transit_pos` (the clock decides when
+/// it ends).
+fn go_abstract_stage(now: Tick, transit_pos: Option<Vec2>, goal: Option<Vec2>) -> Stage {
     let ticks = match (transit_pos, goal) {
         (Some(p), Some(g)) => travel_ticks(p.distance(g), TripMode::Walk),
         _ => 1,
     };
-    j.stage = Stage::Abstract {
+    Stage::Abstract {
         arrive_at: Tick(now.0 + ticks),
-    };
+    }
+}
+
+/// The journey goes on abstractly from `from`.
+fn go_abstract(j: &mut Journey, now: Tick, transit_pos: Option<Vec2>, goal: Option<Vec2>) {
+    j.stage = go_abstract_stage(now, transit_pos, goal);
 }
 
 /// `Agents` phase, after `run_lines`: moves every rider one step along its journey and lets the
@@ -293,10 +414,28 @@ pub fn run_riders(
             let Some(at) = transit.walk_point(stop) else {
                 continue;
             };
-            let run = runs.start_walk(at, RunPoint::Building(to));
-            if let Some(j) = transit.riders.get_mut(&tid) {
+            let Some(mut j) = transit.riders.get(&tid).cloned() else {
+                continue;
+            };
+            if usize::from(j.leg) + 1 < j.legs.len() {
+                // A change (T-165): on to the next line, at once when it is the same stop,
+                // else on foot.
+                j.leg += 1;
+                let board = j.legs[usize::from(j.leg)].board;
+                j.stage = if board == stop {
+                    Stage::Waiting { since: now }
+                } else if let Some(next) = transit.walk_point(board) {
+                    Stage::WalkTo {
+                        run: runs.start_walk(at, next),
+                    }
+                } else {
+                    go_abstract_stage(now, pos_of_stop(&transit, stop), pos_of_building(to))
+                };
+            } else {
+                let run = runs.start_walk(at, RunPoint::Building(to));
                 j.stage = Stage::WalkFrom { run };
             }
+            transit.riders.insert(tid, j);
         }
         // In: oldest first, then trip id.
         let load = transit
@@ -357,7 +496,16 @@ pub fn run_riders(
                 }
                 Some(RunState::Failed) | None => {
                     runs.release(run, &mut agents);
-                    go_abstract(&mut j, now, pos_of_building(trip.from), goal);
+                    // On a change the walk began at the stop the rider got out at.
+                    let from = match j
+                        .leg
+                        .checked_sub(1)
+                        .and_then(|l| j.legs.get(usize::from(l)))
+                    {
+                        Some(prev) => pos_of_stop(&transit, prev.alight),
+                        None => pos_of_building(trip.from),
+                    };
+                    go_abstract(&mut j, now, from, goal);
                 }
                 _ => {}
             },

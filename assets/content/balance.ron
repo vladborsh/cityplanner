@@ -154,6 +154,11 @@ Balance((
     metro_upkeep_week: 400.0,
     metro_fare: 3.0,
     metro_turn_s: 30.0,
+    // Changes (T-165): walk between two stops of different lines, extra penalty of a trip with
+    // a change, most lines looked at either end of a trip.
+    transfer_walk_m: 150.0,
+    transfer_penalty_s: 60.0,
+    transit_lines_cap: 8,
 
     // --- Networks (T-181): distances of water, sewage and power // tune later ---
     // power_gap_m: largest gap between the footprint edges of two buildings over which one

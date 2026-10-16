@@ -246,6 +246,15 @@ pub struct Balance {
     /// Seconds (movement clock) a train needs to turn round at the end of its line (T-163).
     /// // tune later
     pub metro_turn_s: f32,
+    /// Metres between a stop of one line and a stop of another within which a rider changes on
+    /// foot (T-165). // tune later
+    pub transfer_walk_m: f32,
+    /// Seconds added to the estimate of a trip with a change, on top of `transit_penalty_s`
+    /// (T-165). // tune later
+    pub transfer_penalty_s: f32,
+    /// Most lines considered at either end of a trip when looking for a change (T-165).
+    /// // tune later
+    pub transit_lines_cap: u8,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
 }
@@ -364,6 +373,9 @@ impl Balance {
             self.metro_upkeep_week,
             self.metro_fare,
             self.metro_turn_s,
+            self.transfer_walk_m,
+            self.transfer_penalty_s,
+            f32::from(self.transit_lines_cap),
         ]);
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
@@ -448,6 +460,9 @@ impl Default for Balance {
             metro_upkeep_week: 400.0,
             metro_fare: 3.0,
             metro_turn_s: 30.0,
+            transfer_walk_m: 150.0,
+            transfer_penalty_s: 60.0,
+            transit_lines_cap: 8,
             networks: Networks::default(),
         }
     }
