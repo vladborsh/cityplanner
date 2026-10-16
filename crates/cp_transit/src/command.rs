@@ -85,7 +85,7 @@ pub enum TransitError {
     NewStopsTooClose,
     /// A stop that does not fit the line's mode (a road stop on a metro line, say).
     WrongStopKind,
-    /// Stations come with T-162.
+    /// That building has no station stop.
     NoStation(BuildingId),
     /// The mode has no road line yet (metro and train lines need stations).
     ModeNotAvailable(TransitMode),
@@ -169,8 +169,16 @@ fn resolve(
     // The stops the command creates count as existing for the rule of the next one.
     let mut scratch = transit.stops.clone();
     for r in refs {
+        let existing = match *r {
+            StopRef::Existing(id) => Some(id),
+            StopRef::Station(b) => {
+                Some(crate::station::station_stop(transit, b).ok_or(TransitError::NoStation(b))?)
+            }
+            StopRef::NewRoad { .. } => None,
+        };
         match *r {
-            StopRef::Existing(id) => {
+            _ if existing.is_some() => {
+                let id = existing.expect("checked");
                 let st = transit.stops.get(id).ok_or(TransitError::NoSuchStop(id))?;
                 if !kind_fits(mode, &st.kind) {
                     return Err(TransitError::WrongStopKind);
@@ -205,7 +213,7 @@ fn resolve(
                 out.push(Resolved::New(fresh.len()));
                 fresh.push(NewStop { seg, s, side, pos });
             }
-            StopRef::Station(b) => return Err(TransitError::NoStation(b)),
+            _ => unreachable!("a station and an existing stop are resolved above"),
         }
     }
     Ok((out, fresh))

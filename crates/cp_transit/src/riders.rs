@@ -133,10 +133,10 @@ pub fn choose_transit(
             }
         }
         let Some((_, ride)) = best else { continue };
-        let Some(access) = transit.access(ride.board) else {
+        let Some(at) = transit.walk_point(ride.board) else {
             continue;
         };
-        let run = runs.start_walk(RunPoint::Building(trip.from), RunPoint::Access(access));
+        let run = runs.start_walk(RunPoint::Building(trip.from), at);
         book.set_mode(tid, TripMode::Transit);
         book.set_state(tid, TripState::Transit);
         transit.riders.insert(
@@ -229,10 +229,10 @@ pub fn run_riders(
         for tid in leaving {
             let Some(trip) = book.get(tid) else { continue };
             let to = trip.to;
-            let Some(access) = transit.access(stop) else {
+            let Some(at) = transit.walk_point(stop) else {
                 continue;
             };
-            let run = runs.start_walk(RunPoint::Access(access), RunPoint::Building(to));
+            let run = runs.start_walk(at, RunPoint::Building(to));
             if let Some(j) = transit.riders.get_mut(&tid) {
                 j.stage = Stage::WalkFrom { run };
             }

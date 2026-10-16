@@ -99,8 +99,20 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
             world.insert_resource(*speed);
             Ok(Cost::ZERO)
         }
-        SimCommand::Net(c) => cp_net::apply(world, c)
-            .map_err(|e| rejected_or_funds("net", &e, e.insufficient_funds())),
+        SimCommand::Net(c) => {
+            if let Some(seg) = platform_target(c)
+                && world
+                    .get_resource::<cp_transit::TransitNet>()
+                    .is_some_and(|t| is_platform(t, seg))
+            {
+                return Err(rejected(
+                    "net",
+                    "the platform of a station goes with its building",
+                ));
+            }
+            cp_net::apply(world, c)
+                .map_err(|e| rejected_or_funds("net", &e, e.insufficient_funds()))
+        }
         SimCommand::Zone(c) => cp_zone::apply(world, c).map_err(|e| rejected("zone", e)),
         SimCommand::Building(c) => {
             if let (BuildingCommand::Place { def, .. }, Some(content)) =
@@ -109,7 +121,7 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
                 let progress = world.get_resource::<crate::Progress>().copied();
                 crate::progress::check_unlocked(&progress.unwrap_or_default(), &content.0, *def)?;
             }
-            cp_building::apply(world, c)
+            apply_building(world, c)
                 .map_err(|e| rejected_or_funds("building", &e, e.insufficient_funds()))
         }
         SimCommand::Utility(c) => cp_utility::apply(world, c)
@@ -123,6 +135,47 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
             .map_err(|e| rejected_or_funds("transit", &e, e.insufficient_funds())),
         SimCommand::Debug(c) => apply_debug(world, c),
     }
+}
+
+/// The segment a net command would remove or change.
+fn platform_target(c: &NetCommand) -> Option<cp_net::SegmentId> {
+    match c {
+        NetCommand::RemoveSegment { seg }
+        | NetCommand::RemovePart { seg, .. }
+        | NetCommand::UpgradeSegment { seg, .. } => Some(*seg),
+        NetCommand::BuildRoad { .. } | NetCommand::ToggleTrafficLight { .. } => None,
+    }
+}
+
+fn is_platform(transit: &cp_transit::TransitNet, seg: cp_net::SegmentId) -> bool {
+    transit
+        .stops
+        .iter()
+        .any(|(_, st)| matches!(st.kind, cp_transit::StopKind::Station { seg: s, .. } if s == seg))
+}
+
+/// A building command with the part of it that lives in the network: a station comes with a
+/// platform and a stop (T-162), and leaves with them.
+fn apply_building(
+    world: &mut World,
+    c: &BuildingCommand,
+) -> Result<Cost, cp_building::BuildingError> {
+    let (cost, placed) = cp_building::apply_placed(world, c)?;
+    if let Some(cp_building::Placed {
+        building,
+        platform: Some(seg),
+    }) = placed
+    {
+        cp_transit::add_station(world, building, seg);
+    }
+    if let BuildingCommand::Demolish { building } = c
+        && let Some(seg) = cp_transit::remove_station(world, *building)
+        && let Some(mut net) = world.get_resource_mut::<cp_net::NetGraph>()
+    {
+        // The platform may have gone with a part of the network already.
+        let _ = net.remove_segment(seg);
+    }
+    Ok(cost)
 }
 
 fn apply_debug(world: &mut World, cmd: &DebugCommand) -> Result<Cost, CommandError> {

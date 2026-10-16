@@ -18,6 +18,10 @@ pub const STOP_SPACING: f32 = 24.0;
 /// segment after the network changed.
 pub const STOP_SNAP: f32 = 4.0;
 
+/// How far a station's platform may lie from the station and still carry its stop after the
+/// network changed (T-162).
+pub const STATION_SNAP: f32 = 2.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StopError {
     NoSuchSegment,

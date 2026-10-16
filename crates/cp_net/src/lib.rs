@@ -19,7 +19,10 @@ pub use build::{
     clearance_report, one_way_report, pier_positions, quantize_path, segment_cost,
     validate_road_path, validate_road_path_report,
 };
-pub use command::{NetCommand, NetError, PART_SNAP, apply, build_unowned, curve_outside_owned};
+pub use command::{
+    NetCommand, NetError, PART_SNAP, apply, apply_build_plan, build_unowned, curve_outside_owned,
+    plan_build,
+};
 pub use connections::{LaneConnection, Links, PedLink, PedLinkKind, Turn};
 pub use control::{ControlPlan, LightPlan, Phase, Priority, Signal};
 pub use graph::{MIN_SEGMENT_LENGTH, NODE_REUSE_EPS, NetGraph, NetOpError, SplitResult};

@@ -9,8 +9,8 @@ pub mod model;
 pub mod spawn;
 
 pub use command::{
-    BuildingCommand, BuildingError, MOVE_COST_FRACTION, PlacementPlan, apply, oriented_lot,
-    validate_placement, validate_placement_except,
+    BuildingCommand, BuildingError, MOVE_COST_FRACTION, Placed, PlacementPlan, apply, apply_placed,
+    oriented_lot, platform_request, validate_placement, validate_placement_except,
 };
 pub use free::{
     ROAD_CLEARANCE_M, is_free_standing, sync_blockers, validate_free_placement,

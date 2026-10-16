@@ -152,6 +152,14 @@ pub fn building(d: &BuildingDef) -> Problems {
     for (k, s) in d.styles.iter().enumerate() {
         c.not_empty(&format!("styles[{k}]"), s);
     }
+    if let Some(t) = &d.track {
+        c.positive("track.length_m", t.length_m);
+        // One piece: no longer than the longest segment the builder leaves uncut.
+        if t.length_m > 96.0 {
+            c.bad("track.length_m", "must be at most 96 (one segment)");
+        }
+        c.positive("track.depth", t.depth);
+    }
     c.0
 }
 

@@ -10,7 +10,7 @@ use cp_traffic::PathNetwork;
 
 use crate::model::{LineState, StopId, StopKind, TransitNet};
 use crate::plan::{LinePlan, LinePlans, plan_line};
-use crate::rules::{STOP_SNAP, pavement_offset, pavement_point};
+use crate::rules::{STATION_SNAP, STOP_SNAP, pavement_offset, pavement_point};
 
 /// Signed lateral distance of `pos` from the axis of `seg` (positive = left) and the arc
 /// length of its projection.
@@ -35,7 +35,32 @@ pub fn rebind_stops(net: &NetGraph, db: &ContentDb, transit: &mut TransitNet) ->
     let mut moves: Vec<(StopId, StopKind, Vec2)> = Vec::new();
     for id in ids {
         let st = transit.stops.get(id).expect("listed");
-        // Stations are bound to their building, not to a pavement.
+        // A station is bound to its platform: the tunnel segment under it, which a split
+        // may have replaced.
+        if let StopKind::Station { building, seg, .. } = st.kind {
+            if net.segment(seg).is_some() {
+                continue;
+            }
+            let hit = net
+                .segments()
+                .filter(|(_, g)| g.elevation == cp_net::Elevation::Tunnel)
+                .map(|(sid, g)| (g.curve.nearest_xz(st.pos).1, sid, g))
+                .filter(|(d, _, _)| *d <= STATION_SNAP)
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+            match hit {
+                Some((_, sid, g)) => {
+                    let (_, s_new) = project(g, st.pos);
+                    let kind = StopKind::Station {
+                        building,
+                        seg: sid,
+                        s: s_new,
+                    };
+                    moves.push((id, kind, st.pos));
+                }
+                None => gone.push(id),
+            }
+            continue;
+        }
         let StopKind::Road { seg, s } = st.kind else {
             continue;
         };

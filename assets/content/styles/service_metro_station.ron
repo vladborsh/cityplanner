@@ -1,0 +1,15 @@
+// Silhouette of the metro station (T-162): drawn as a Box until cp_render gets its own massing.
+Style((
+    id: "service_metro_station",
+    massing: MetroStation,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (0.9, 1.0),
+    palette: (
+        walls: [(0.40, 0.42, 0.50), (0.36, 0.38, 0.46)],
+        roof: [(0.28, 0.30, 0.34)],
+        trim: [(0.90, 0.20, 0.20)],
+        glass: (0.30, 0.36, 0.44),
+    ),
+    facade: Curtain,
+))

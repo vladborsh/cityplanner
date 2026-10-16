@@ -167,6 +167,15 @@ impl TransitNet {
         })
     }
 
+    /// Where a rider walks to or from: the pavement point of a road stop, the access point of
+    /// the building of a station (the platform is underground).
+    pub fn walk_point(&self, stop: StopId) -> Option<cp_traffic::RunPoint> {
+        match self.stops.get(stop)?.kind {
+            StopKind::Station { building, .. } => Some(cp_traffic::RunPoint::Building(building)),
+            StopKind::Road { .. } => self.access(stop).map(cp_traffic::RunPoint::Access),
+        }
+    }
+
     /// Takes `stop` out of the stops and out of every line.
     pub fn remove_stop(&mut self, stop: StopId) {
         if self.stops.remove(stop).is_none() {

@@ -19,7 +19,9 @@ use bevy_math::Vec2;
 use cp_content::{BuildingDef, BuildingDefId, ContentDb, ServiceSite, SimContent};
 use cp_core::treasury::{charge_funds, check_funds};
 use cp_core::{Cost, InsufficientFunds, SimLimits, Tick};
-use cp_net::NetGraph;
+use cp_net::{
+    ElevationMode, NetGraph, RoadBuildPlan, RoadPath, RoadPathRequest, SegmentId, SnapOptions,
+};
 use cp_terrain::{SimTerrain, Terrain, TileOwnership};
 use cp_zone::{BLOCK_DEPTH, ZoneCellRef, ZoneGrid};
 use serde::{Deserialize, Serialize};
@@ -88,6 +90,10 @@ pub enum BuildingError {
     Road,
     /// The ground under a free-standing building is steeper than `MAX_CELL_SLOPE`.
     TooSteep,
+    /// The platform under a station cannot be built (T-162); says why.
+    Platform(String),
+    /// A station is not moved: its platform stays where it is (T-162).
+    Fixed,
 }
 
 impl BuildingError {
@@ -125,6 +131,8 @@ impl fmt::Display for BuildingError {
             Self::UnknownBuilding => "no such building",
             Self::Road => "too close to a road",
             Self::TooSteep => "ground too steep",
+            Self::Platform(why) => return write!(f, "no room for the platform: {why}"),
+            Self::Fixed => "a station cannot be moved",
         })
     }
 }
@@ -291,8 +299,64 @@ pub fn validate_placement_except(
     })
 }
 
+/// What a `Place` made: the building and, for a station, the segment of its platform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Placed {
+    pub building: BuildingId,
+    pub platform: Option<SegmentId>,
+}
+
+/// The platform under a station of `def` standing at `pos` turned by `rot`: a request for one
+/// segment along the building's axis, centred on it (T-162). `None` for a def without track.
+pub fn platform_request(
+    db: &ContentDb,
+    def: &BuildingDef,
+    pos: Vec2,
+    rot: f32,
+) -> Option<RoadPathRequest> {
+    let track = def.track.as_ref()?;
+    let road = db.road_id(&track.road)?;
+    let half = Vec2::new(rot.cos(), rot.sin()) * (track.length_m * 0.5);
+    Some(RoadPathRequest {
+        road,
+        path: RoadPath::Straight {
+            from: pos - half,
+            to: pos + half,
+        },
+        elevation: ElevationMode::Tunnel(track.depth),
+        // Only the ends snap, and onto nodes: the platform stays where the building is.
+        snap: SnapOptions {
+            node: true,
+            segment: false,
+            angle: false,
+            zone_grid: false,
+        },
+    })
+}
+
+/// Validates the platform of a station: one segment, no junction in it.
+fn plan_platform(world: &World, req: &RoadPathRequest) -> Result<RoadBuildPlan, BuildingError> {
+    let plan =
+        cp_net::plan_build(world, req).map_err(|e| BuildingError::Platform(e.to_string()))?;
+    if plan.segments.len() != 1 || !plan.splits.is_empty() {
+        return Err(BuildingError::Platform(
+            "it would cross another tunnel on the same depth".to_string(),
+        ));
+    }
+    Ok(plan)
+}
+
 /// Validates and applies `cmd`, returning its cost.
 pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingError> {
+    apply_placed(world, cmd).map(|(cost, _)| cost)
+}
+
+/// [`apply`], and what a `Place` made. The station's platform and the building are one step:
+/// both are checked before the first change, and the platform is applied from its plan.
+pub fn apply_placed(
+    world: &mut World,
+    cmd: &BuildingCommand,
+) -> Result<(Cost, Option<Placed>), BuildingError> {
     match cmd {
         BuildingCommand::Place { def, pos, rot } => {
             let tick = world.get_resource::<Tick>().copied().unwrap_or_default();
@@ -326,14 +390,24 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
                     content.0.building(*def).service.is_some(),
                 )
             };
-            check_funds(world, plan.cost).map_err(BuildingError::Funds)?;
+            let platform = {
+                let content = world.resource::<SimContent>();
+                match platform_request(&content.0, content.0.building(*def), plan.pos, plan.rot) {
+                    Some(req) => Some(plan_platform(world, &req)?),
+                    None => None,
+                }
+            };
+            let total = platform
+                .as_ref()
+                .map_or(plan.cost, |p| Cost(plan.cost.0 + p.cost.0));
+            check_funds(world, total).map_err(BuildingError::Funds)?;
             let mut buildings = world
                 .get_resource_mut::<BuildingGrid>()
                 .ok_or(BuildingError::Missing)?;
             if buildings.len() >= limit as usize {
                 return Err(BuildingError::LimitReached);
             }
-            buildings.insert(Building {
+            let building = buildings.insert(Building {
                 def: *def,
                 footprint: plan.footprint,
                 level,
@@ -351,8 +425,16 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
                 level_progress: 0.0,
             });
             world.resource_mut::<ZoneGrid>().occupy(&plan.cells());
-            charge_funds(world, plan.cost);
-            Ok(plan.cost)
+            // The plan was checked against this very graph: it applies.
+            let platform = match platform {
+                Some(p) => cp_net::apply_build_plan(world, &p)
+                    .map_err(|e| BuildingError::Platform(e.to_string()))?
+                    .first()
+                    .copied(),
+                None => None,
+            };
+            charge_funds(world, total);
+            Ok((total, Some(Placed { building, platform })))
         }
         BuildingCommand::Move { building, pos, rot } => {
             let (plan, cost) = {
@@ -368,6 +450,9 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
                     .get(*building)
                     .ok_or(BuildingError::UnknownBuilding)?;
                 let def = b.def;
+                if content.0.building(def).track.is_some() {
+                    return Err(BuildingError::Fixed);
+                }
                 let terrain = world.get_resource::<SimTerrain>().map(|t| &*t.0);
                 let tiles = world.get_resource::<TileOwnership>();
                 let plan = if is_free_standing(&content.0, def) {
@@ -410,7 +495,7 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
             zones.release(&old);
             zones.occupy(&plan.cells());
             charge_funds(world, cost);
-            Ok(cost)
+            Ok((cost, None))
         }
         BuildingCommand::Demolish { building } => {
             let mut buildings = world
@@ -422,7 +507,7 @@ pub fn apply(world: &mut World, cmd: &BuildingCommand) -> Result<Cost, BuildingE
             let mut zones = world.resource_mut::<ZoneGrid>();
             let cells = crate::grid::held_cells(&zones, &b);
             zones.release(&cells);
-            Ok(Cost::ZERO)
+            Ok((Cost::ZERO, None))
         }
     }
 }

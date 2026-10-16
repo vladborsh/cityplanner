@@ -448,6 +448,21 @@ impl ContentDb {
                 }
             }
         }
+        // The track of a station is a tunnel of a Rail road (T-162).
+        for (i, b) in buildings.defs.iter().enumerate() {
+            let Some(t) = &b.track else { continue };
+            let ok = roads
+                .get_id(&t.road)
+                .map(|r| &roads.defs[r as usize])
+                .is_some_and(|r| r.class == RoadClass::Rail && r.tunnel.is_some());
+            if !ok {
+                errors.push(ContentError::new(
+                    &buildings.files[i],
+                    Some("track.road"),
+                    format!("`{}` is not a Rail road with a tunnel variant", t.road),
+                ));
+            }
+        }
         // A free-standing building (`road_access: false`, §8.1) has nobody who could reach it.
         for (i, b) in buildings.defs.iter().enumerate() {
             let Some(s) = b.service.as_deref().and_then(|s| services.get_id(s)) else {

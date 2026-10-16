@@ -353,6 +353,57 @@ pub fn build_unowned(world: &mut World, road: RoadDefId, path: RoadPath) -> Resu
     })
 }
 
+/// Validates a road for a caller that builds it together with something else (a station's
+/// platform, T-162): the checks of [`NetCommand::BuildRoad`] including ownership, but nothing
+/// is charged or changed. Hand the plan to [`apply_build_plan`] with the graph untouched in
+/// between.
+pub fn plan_build(world: &World, req: &RoadPathRequest) -> Result<RoadBuildPlan, NetError> {
+    let content = world
+        .get_resource::<SimContent>()
+        .ok_or(NetError::Missing("content"))?;
+    let terrain = world
+        .get_resource::<SimTerrain>()
+        .ok_or(NetError::Missing("terrain"))?;
+    let tiles = world
+        .get_resource::<TileOwnership>()
+        .ok_or(NetError::Missing("tile ownership"))?;
+    let graph = world
+        .get_resource::<NetGraph>()
+        .ok_or(NetError::Missing("net graph"))?;
+    let plan =
+        validate_road_path(graph, &terrain.0, tiles, &content.0, req).map_err(NetError::Build)?;
+    check_plan(graph, &plan).map_err(NetError::from)?;
+    Ok(plan)
+}
+
+/// Applies a plan of [`plan_build`] (no charge) and gives the ids of its segments in plan
+/// order.
+pub fn apply_build_plan(
+    world: &mut World,
+    plan: &RoadBuildPlan,
+) -> Result<Vec<SegmentId>, NetError> {
+    let content = world
+        .get_resource::<SimContent>()
+        .map(|c| c.0.clone())
+        .ok_or(NetError::Missing("content"))?;
+    let mut graph = world
+        .get_resource_mut::<NetGraph>()
+        .ok_or(NetError::Missing("net graph"))?;
+    for (seg, ts) in grouped_splits(plan) {
+        let road = graph
+            .segment(seg)
+            .ok_or(NetOpError::UnknownSegment(seg))?
+            .road;
+        graph.split_segments(content.road(road), seg, &ts)?;
+    }
+    let def = content.road(plan.road);
+    let mut ids = Vec::with_capacity(plan.segments.len());
+    for s in &plan.segments {
+        ids.push(graph.add_segment(def, plan.road, s.curve, s.elevation)?);
+    }
+    Ok(ids)
+}
+
 /// The plan's splits grouped by original segment (plan order of first appearance), each
 /// group's parameters sorted and deduplicated.
 fn grouped_splits(plan: &RoadBuildPlan) -> Vec<(SegmentId, Vec<f32>)> {

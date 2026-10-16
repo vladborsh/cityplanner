@@ -590,6 +590,8 @@ pub enum Massing {
     PoliceStation = 22,
     /// The bus depot (T-158): a hangar with gates and a yard of parked buses.
     BusDepot = 23,
+    /// The metro station (T-162).
+    MetroStation = 24,
 }
 
 /// Facade pattern family of a style.
@@ -690,6 +692,20 @@ pub struct BuildingDef {
     /// `id` (filled in when the content is loaded).
     #[serde(default)]
     pub icon: String,
+    /// The platform a station lays under itself (T-162); `None` for every other building.
+    #[serde(default)]
+    pub track: Option<TrackSpec>,
+}
+
+/// The track under a station: one segment of `road` along the building's axis, centred on it,
+/// in a tunnel `depth` metres below the ground (T-162).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrackSpec {
+    /// Id of a `RoadDef` of class `Rail` that has a tunnel variant.
+    pub road: String,
+    pub length_m: f32,
+    pub depth: f32,
 }
 
 impl BuildingDef {

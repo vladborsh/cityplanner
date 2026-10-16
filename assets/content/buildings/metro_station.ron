@@ -1,0 +1,16 @@
+// Metro station (T-162): lays a 96 m metro_track platform 12 m under itself along its axis.
+// Numbers: tune later.
+Building((
+    id: "metro_station",
+    name: "Metro Station",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 2),
+    jobs: (4, 0, 0, 0),
+    tax_base: 0.0,
+    cost: 40000.0,
+    upkeep_week: 600.0,
+    styles: ["service_metro_station"],
+    service: Some("metro_station"),
+    track: Some((road: "metro_track", length_m: 96.0, depth: 12.0)),
+))
