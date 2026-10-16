@@ -43,12 +43,13 @@ use cp_content::{Balance, ContentDb, SimContent, ZoneType};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_net::NetGraph;
+use cp_service::{ServiceCoverage, ServiceState};
 use cp_traffic::Agents;
 use cp_utility::UtilityGraph;
 use cp_zone::ZoneGrid;
 use serde::{Deserialize, Serialize};
 
-use crate::land::{LandGrids, LandInputs};
+use crate::land::{LandGrids, LandInputs, SERVICE_KINDS};
 
 /// Ticks between two passes.
 pub const CITY_PERIOD: u64 = 256;
@@ -92,6 +93,16 @@ pub struct WorkerShortage {
 pub fn level_for(thresholds: &[f32], value: f32) -> u8 {
     let n = thresholds.iter().filter(|&&t| value >= t).count().max(1);
     n as u8
+}
+
+/// The highest level up to `wanted` a home may stand at with `covered` of Health, Police, Fire
+/// and Education covered (`res_level_services`, T-146).
+pub fn service_cap(bal: &Balance, wanted: u8, covered: u8) -> u8 {
+    let mut level = wanted.clamp(1, 5);
+    while level > 1 && bal.res_level_services[usize::from(level) - 1] > covered {
+        level -= 1;
+    }
+    level
 }
 
 /// The level the surroundings of a building allow, or `None` if it has no say (an unstaffed
@@ -212,6 +223,8 @@ pub fn update_city(
     mut grids: ResMut<LandGrids>,
     mut decay: ResMut<Decay>,
     mut shortage: ResMut<WorkerShortage>,
+    coverage: Option<Res<ServiceCoverage>>,
+    services: Option<Res<ServiceState>>,
 ) {
     if tick.0 == 0 || !tick.0.is_multiple_of(CITY_PERIOD) {
         return;
@@ -225,6 +238,7 @@ pub fn update_city(
         net: &net,
         utilities: &utilities,
         load: &agents.load,
+        services: coverage.as_deref().zip(services.as_deref()),
     });
 
     let workers = worker_education(&citizens);
@@ -263,7 +277,10 @@ pub fn update_city(
             }
         }
         let flags = buildings.get(id).expect("checked").flags;
-        let problem = decaying && flags.0 & mask != 0;
+        let service_trouble = services
+            .as_ref()
+            .is_some_and(|s| s.problems_of(id).0 & bal.decay_service_mask != 0);
+        let problem = decaying && (flags.0 & mask != 0 || service_trouble);
         if !decaying {
             // Hook off: nothing is timed, abandoned or demolished.
         } else if !problem {
@@ -304,7 +321,19 @@ pub fn update_city(
             continue;
         }
         let utility_trouble = flags.0 & BuildingFlags::UTILITY_MASK != 0;
-        if let Some(wanted) = wanted_level(bal, def.zone, grids.value_at(pos), workers.get(id)) {
+        if let Some(mut wanted) = wanted_level(bal, def.zone, grids.value_at(pos), workers.get(id))
+        {
+            // Homes also need services in reach for the higher levels (T-146).
+            if matches!(def.zone, ZoneType::ResLow | ZoneType::ResHigh)
+                && let Some(cov) = coverage.as_deref()
+            {
+                let b = buildings.get(id).expect("active");
+                let covered = SERVICE_KINDS
+                    .into_iter()
+                    .filter(|&k| cov.coverage_of(k, b) >= bal.res_service_cover)
+                    .count() as u8;
+                wanted = service_cap(bal, wanted, covered);
+            }
             let may_rise = !utility_trouble;
             step_level(db, &mut buildings, &mut zones, &net, id, wanted, may_rise);
         }

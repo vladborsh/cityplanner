@@ -14,10 +14,38 @@ use cp_terrain::Terrain;
 
 const ROOT: &str = env!("CARGO_MANIFEST_DIR");
 
+/// The game content with the garbage and dead no longer counting towards abandonment: these
+/// towns have no landfill, and this test is about the supply (T-146).
+fn content_without_service_decay(dir: &Path) -> ContentDb {
+    fn walk(dir: &Path, out: &mut Vec<(String, String)>) {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap())
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let path = e.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|x| x == "ron") {
+                let mut text = std::fs::read_to_string(&path).unwrap();
+                if path.file_name().is_some_and(|n| n == "balance.ron") {
+                    assert!(text.contains("decay_service_mask: 5,"));
+                    text = text.replace("decay_service_mask: 5,", "decay_service_mask: 0,");
+                }
+                out.push((path.display().to_string(), text));
+            }
+        }
+    }
+    let mut sources = Vec::new();
+    walk(dir, &mut sources);
+    ContentDb::from_sources(sources).unwrap()
+}
+
 fn check(target: usize) {
     let root = Path::new(ROOT).join("../..");
     let terrain = Arc::new(Terrain::load(&root.join("assets/maps/flatlands")).unwrap());
-    let content = Arc::new(ContentDb::load_dir(root.join("assets/content")).unwrap());
+    let content = Arc::new(content_without_service_decay(&root.join("assets/content")));
     let (mut sim, report) = grid_city(target, 1, terrain, content, &GridCityConfig::default());
     assert!(report.reached && report.rejected.is_empty(), "{report:?}");
     let start = population(&sim);

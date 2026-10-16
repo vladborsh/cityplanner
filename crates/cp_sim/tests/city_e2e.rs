@@ -53,6 +53,11 @@ fn plain_content() -> Arc<ContentDb> {
         ContentDb::from_sources(vec![
             ("r/street.ron".into(), ROAD.into()),
             ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
+            // No services in these towns: homes rise without them (T-146 would cap them at 2).
+            (
+                "balance.ron".into(),
+                "Balance((res_level_services: (0, 0, 0, 0, 0)))".into(),
+            ),
             building("house_1", "ResLow", 1, (2, 2), "households: 4,"),
             building("house_2", "ResLow", 2, (2, 2), "households: 6,"),
             building("house_3", "ResLow", 3, (3, 2), "households: 8,"),

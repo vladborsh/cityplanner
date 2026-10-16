@@ -682,6 +682,7 @@ mod city {
             net: w.resource::<NetGraph>(),
             utilities: w.resource::<UtilityGraph>(),
             load,
+            services: None,
         })
     }
 
@@ -922,6 +923,90 @@ mod city {
             BuildingState::Active
         );
         assert!(w.resource::<Decay>().since.is_empty());
+    }
+
+    /// T-146: a full Health coverage on the nearest road raises the land value of the cell by
+    /// `land_service`; a building with GARBAGE or CRIME takes its share off its own cell.
+    #[test]
+    fn service_coverage_raises_land_value_and_garbage_lowers_it() {
+        use cp_service::{ServiceCoverage, ServiceProblems, ServiceState};
+        let (mut w, _, db) = world();
+        let road = db.road_id("street").unwrap();
+        let def = db.road(road).clone();
+        let seg = w
+            .resource_mut::<NetGraph>()
+            .add_segment(
+                &def,
+                road,
+                CubicBezier3::line(Vec3::new(640.0, 0.0, 672.0), Vec3::new(1280.0, 0.0, 672.0)),
+                Elevation::Ground,
+            )
+            .unwrap();
+        let dump = at(&mut w, &db, "house", BuildingState::Active, 2000.0);
+        let mut cover = ServiceCoverage::default();
+        let mut by_seg = vec![0.0; seg.index as usize + 1];
+        by_seg[seg.index as usize] = 1.0;
+        cover.set_kind(cp_content::ServiceKind::Health, by_seg);
+        let mut state = ServiceState::default();
+        let load = cp_traffic::SegmentLoad::default();
+        let compute = |w: &World, state: &ServiceState, cover: &ServiceCoverage| {
+            LandGrids::compute(&LandInputs {
+                content: &db,
+                buildings: w.resource::<BuildingGrid>(),
+                net: w.resource::<NetGraph>(),
+                utilities: w.resource::<UtilityGraph>(),
+                load: &load,
+                services: Some((cover, state)),
+            })
+        };
+        let bare = grids(&w, &db, &load);
+        let on = Vec2::new(960.0, 672.0);
+        let served = compute(&w, &state, &cover);
+        let gain = served.value_at(on) - bare.value_at(on);
+        assert!((gain - db.balance().land_service[0]).abs() < 1e-3, "{gain}");
+        state
+            .get_mut(dump)
+            .problems
+            .set(ServiceProblems::GARBAGE, true);
+        let at_dump = Vec2::new(2000.0, 640.0);
+        let dirty = compute(&w, &state, &cover).value_at(at_dump);
+        let clean = served.value_at(at_dump);
+        assert!(
+            (clean - dirty - db.balance().land_garbage).abs() < 1e-3,
+            "{clean} -> {dirty}"
+        );
+    }
+
+    /// T-146: without services a home stays at level 2; two kinds covered allow level 4.
+    #[test]
+    fn homes_need_services_for_the_higher_levels() {
+        let bal = cp_content::Balance::default();
+        assert_eq!(crate::growth::service_cap(&bal, 5, 0), 2);
+        assert_eq!(crate::growth::service_cap(&bal, 5, 1), 3);
+        assert_eq!(crate::growth::service_cap(&bal, 5, 2), 4);
+        assert_eq!(crate::growth::service_cap(&bal, 5, 4), 5);
+        assert_eq!(crate::growth::service_cap(&bal, 1, 0), 1);
+    }
+
+    /// T-146: GARBAGE (or DEAD) held for `abandon_days` abandons the building.
+    #[test]
+    fn garbage_held_for_a_week_abandons_the_building() {
+        use cp_service::{ServiceProblems, ServiceState};
+        let (mut w, mut s, db) = world();
+        w.init_resource::<ServiceState>();
+        let dump = at(&mut w, &db, "house", BuildingState::Active, 100.0);
+        w.resource_mut::<ServiceState>()
+            .get_mut(dump)
+            .problems
+            .set(ServiceProblems::GARBAGE, true);
+        let p = CITY_PERIOD;
+        run_pass(&mut w, &mut s, p);
+        assert_eq!(w.resource::<Decay>().since.get(&dump), Some(&Tick(p)));
+        run_pass(&mut w, &mut s, p + 7 * TICKS_PER_DAY);
+        assert_eq!(
+            w.resource::<BuildingGrid>().get(dump).unwrap().state,
+            BuildingState::Abandoned
+        );
     }
 
     #[test]

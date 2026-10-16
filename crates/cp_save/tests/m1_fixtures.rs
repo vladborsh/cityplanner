@@ -44,6 +44,10 @@
 //! by one. Checked: with the plant's two files taken out of the content, all four values of the
 //! T-109 header above reproduce exactly (and the bench-10k baseline too).
 
+//! **T-146.** Re-recorded again, the two "load + 4096 ticks" values only (state at load unchanged): land value now counts service coverage and
+//! garbage, homes need services for levels above 2, and garbage and dead count towards
+//! abandonment, so the state moves from the first city pass.
+//!
 //! **T-140.** Re-recorded again, all four values: the cemetery and the crematorium are in the
 //! content hash (state at load) and the dead are collected; the behaviour is otherwise unchanged.
 //!

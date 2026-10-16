@@ -175,6 +175,18 @@ pub struct Balance {
     pub sick_base: f32,
     /// Extra chance per game day per point (0..=100) of pollution at the home.
     pub sick_pollution: f32,
+    /// Land value a full coverage of Health, Police, Fire and Education adds (T-146). // tune later
+    pub land_service: [f32; 4],
+    /// Land value a building with the GARBAGE / CRIME problem takes from its cell.
+    pub land_garbage: f32,
+    pub land_crime: f32,
+    /// Services (of Health, Police, Fire, Education) covered at least `res_service_cover` a home
+    /// of level 1..=5 needs to stand at that level.
+    pub res_level_services: [u8; 5],
+    pub res_service_cover: f32,
+    /// `ServiceProblems` bits that count towards abandonment next to `decay_mask`: GARBAGE and
+    /// DEAD by default (1 | 4).
+    pub decay_service_mask: u16,
 }
 
 /// One loan the bank offers (`balance.ron` `loan_offers`). Interest is simple, for the whole
@@ -241,7 +253,11 @@ impl Balance {
             self.birth_chance,
             self.sick_base,
             self.sick_pollution,
+            self.land_garbage,
+            self.land_crime,
+            self.res_service_cover,
         ]);
+        v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
         v
     }
@@ -304,6 +320,12 @@ impl Default for Balance {
             birth_chance: 0.02,
             sick_base: 0.01,
             sick_pollution: 0.001,
+            land_service: [8.0, 6.0, 4.0, 8.0],
+            land_garbage: 8.0,
+            land_crime: 10.0,
+            res_level_services: [0, 0, 1, 2, 4],
+            res_service_cover: 0.3,
+            decay_service_mask: 5,
         }
     }
 }

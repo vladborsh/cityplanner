@@ -51,6 +51,21 @@ impl ServiceCoverage {
             .unwrap_or(0.0)
     }
 
+    /// Sets the coverage of `kind` per segment index (tests and scenarios; the coverage pass
+    /// computes it from the buildings).
+    pub fn set_kind(&mut self, kind: ServiceKind, by_segment: Vec<f32>) {
+        self.by_kind.insert(kind, by_segment);
+    }
+
+    /// [`Self::on_segment`] by the segment's arena index.
+    pub fn on_segment_index(&self, kind: ServiceKind, index: u32) -> f32 {
+        self.by_kind
+            .get(&kind)
+            .and_then(|v| v.get(index as usize))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
     /// Coverage of `kind` at a building: the value on its access segment (0 without one).
     pub fn coverage_of(&self, kind: ServiceKind, building: &Building) -> f32 {
         building

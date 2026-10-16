@@ -116,4 +116,17 @@ Balance((
     // Chance per game day to fall ill, plus this much per point (0..100) of pollution at the home.
     sick_base: 0.01,
     sick_pollution: 0.001,
+
+    // --- Service effects (system-design §16 M2 D "Эффекты"): all // tune later ---
+    // Land value a full coverage of Health, Police, Fire, Education adds to a cell.
+    land_service: (8.0, 6.0, 4.0, 8.0),
+    // Land value a building with GARBAGE / CRIME takes from its cell.
+    land_garbage: 8.0,
+    land_crime: 10.0,
+    // A home of level 1..5 needs this many of Health, Police, Fire, Education covered at least
+    // res_service_cover.
+    res_level_services: (0, 0, 1, 2, 4),
+    res_service_cover: 0.3,
+    // Service problems that count towards abandonment: GARBAGE (1) and DEAD (4).
+    decay_service_mask: 5,
 ))

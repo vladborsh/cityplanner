@@ -24,8 +24,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bevy_ecs::resource::Resource;
 use bevy_math::Vec2;
 use cp_building::{BuildingGrid, BuildingState};
-use cp_content::{Balance, ContentDb, ZoneType};
+use cp_content::{Balance, ContentDb, ServiceKind, ZoneType};
 use cp_net::NetGraph;
+use cp_service::{ServiceCoverage, ServiceProblems, ServiceState};
 use cp_terrain::MAP_SIZE;
 use cp_traffic::SegmentLoad;
 use cp_utility::{UtilityGraph, UtilityNet};
@@ -87,7 +88,17 @@ pub struct LandInputs<'a> {
     pub net: &'a NetGraph,
     pub utilities: &'a UtilityGraph,
     pub load: &'a SegmentLoad,
+    /// Service coverage and problems (T-146); `None` = no services in the land value.
+    pub services: Option<(&'a ServiceCoverage, &'a ServiceState)>,
 }
+
+/// The kinds whose coverage raises land value and housing levels, in `land_service` order.
+pub const SERVICE_KINDS: [ServiceKind; 4] = [
+    ServiceKind::Health,
+    ServiceKind::Police,
+    ServiceKind::Fire,
+    ServiceKind::Education,
+];
 
 fn centre(i: usize) -> Vec2 {
     Vec2::new(
@@ -172,12 +183,18 @@ impl LandGrids {
         }
 
         let mut road_dist = vec![f32::INFINITY; SIDE * SIDE];
+        let mut near_seg = vec![u32::MAX; SIDE * SIDE];
         let r = bal.noise_radius_m;
         for (id, seg) in i.net.segments() {
             let loud =
                 bal.noise_per_load * i.load.ema.get(id.index as usize).copied().unwrap_or(0.0);
             for p in samples(&seg.curve, seg.length) {
-                cells_near(p, ACCESS_REACH_M, |c, d| road_dist[c] = road_dist[c].min(d));
+                cells_near(p, ACCESS_REACH_M, |c, d| {
+                    if d < road_dist[c] {
+                        road_dist[c] = d;
+                        near_seg[c] = id.index;
+                    }
+                });
                 if loud > 0.0 {
                     cells_near(p, r, |c, d| {
                         g.noise[c] = g.noise[c].max(loud * (1.0 - d / r))
@@ -198,6 +215,31 @@ impl LandGrids {
             }
         }
 
+        // Services (T-146): coverage on the nearest road of the cell, and the garbage and crime
+        // of the buildings standing in it.
+        let mut service = vec![0.0f32; SIDE * SIDE];
+        if let Some((coverage, state)) = i.services {
+            for c in 0..SIDE * SIDE {
+                if near_seg[c] == u32::MAX {
+                    continue;
+                }
+                for (k, kind) in SERVICE_KINDS.into_iter().enumerate() {
+                    service[c] +=
+                        bal.land_service[k] * coverage.on_segment_index(kind, near_seg[c]);
+                }
+            }
+            for (id, b) in i.buildings.iter() {
+                let p = state.problems_of(id);
+                let cell = Self::index(b.pos);
+                if p.has(ServiceProblems::GARBAGE) {
+                    service[cell] -= bal.land_garbage;
+                }
+                if p.has(ServiceProblems::CRIME) {
+                    service[cell] -= bal.land_crime;
+                }
+            }
+        }
+
         for c in 0..SIDE * SIDE {
             g.pollution[c] = g.pollution[c].min(100.0);
             g.noise[c] = g.noise[c].min(100.0);
@@ -213,7 +255,8 @@ impl LandGrids {
                 + if water[c] { bal.land_water } else { 0.0 }
                 + if power[c] { bal.land_power } else { 0.0 }
                 - bal.land_pollution_weight * g.pollution[c]
-                - bal.land_noise_weight * g.noise[c];
+                - bal.land_noise_weight * g.noise[c]
+                + service[c];
             g.land_value[c] = v.clamp(0.0, 100.0);
         }
         g
