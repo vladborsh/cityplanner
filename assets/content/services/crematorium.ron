@@ -4,6 +4,6 @@ Service((
     name: "Crematorium",
     kind: Deathcare,
     radius_m: 1500.0,
-    capacity: 40,
+    capacity: 200,
     vehicles: [],
 ))

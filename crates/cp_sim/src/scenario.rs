@@ -128,7 +128,7 @@ const RESIDENTS_PER_CROSSING: f32 = 105.0;
 /// sewage 0.64–0.70, power 1.10–1.21 (BUG-031); the upper values.
 const WATER_PER_RESIDENT: f32 = 0.7;
 const SEWAGE_PER_RESIDENT: f32 = 0.7;
-const POWER_PER_RESIDENT: f32 = 1.22;
+const POWER_PER_RESIDENT: f32 = 1.4;
 
 /// `Place` commands for the wind turbines on lots of the outermost blocks, and, where the
 /// owned tiles have water, a pump on it and an outflow on the shore with a pipe from each
@@ -288,6 +288,56 @@ fn service_sites(
             placed += 1;
         }
     }
+
+    // City services (M2): one landfill, clinic, school ... per so many residents, on lots of
+    // blocks spread over the lattice (the nearest to the centre first, every few blocks), so a
+    // scripted city lives instead of drowning in garbage and crime.
+    let per = |people: f32| (residents / people).ceil().max(1.0) as usize;
+    let wanted: [(&str, usize); 9] = [
+        ("landfill", per(2000.0)),
+        ("cemetery", per(10_000.0)),
+        ("clinic", per(2500.0)),
+        ("hospital", per(6000.0)),
+        ("police_station", per(2500.0)),
+        ("fire_station", per(3000.0)),
+        ("elementary_school", per(1500.0)),
+        ("high_school", per(5000.0)),
+        ("university", per(10_000.0)),
+    ];
+    let mut queue: Vec<&str> = Vec::new();
+    for round in 0..wanted.iter().map(|w| w.1).max().unwrap_or(0) {
+        queue.extend(wanted.iter().filter(|w| w.1 > round).map(|w| w.0));
+    }
+    let candidates: Vec<Vec2> = blocks
+        .iter()
+        .rev()
+        .filter_map(|&(_, _, id, cols)| {
+            zones
+                .cell_footprint(ZoneCellRef {
+                    block: id,
+                    cell: (cols / 2) * BLOCK_DEPTH + 1,
+                })
+                .map(|o| o.c)
+        })
+        .collect();
+    let stride = (candidates.len() / queue.len().max(1)).max(1);
+    let mut next = 0;
+    for name in queue {
+        let Some(def) = content.building_id(name) else {
+            continue;
+        };
+        while next < candidates.len() {
+            let pos = candidates[next];
+            next += 1;
+            if taken.iter().any(|t| t.distance(pos) < 30.0) || !valid(def, pos) {
+                continue;
+            }
+            taken.push(pos);
+            out.push(place(def, pos));
+            next = (next + stride - 1).min(candidates.len());
+            break;
+        }
+    }
     out
 }
 
@@ -381,7 +431,7 @@ pub fn grid_city(
                 let cells: Vec<_> = zones
                     .block_cells(id)
                     .into_iter()
-                    .filter(|&c| zones.is_valid(c))
+                    .filter(|&c| zones.is_valid(c) && !zones.is_occupied(c))
                     .collect();
                 let p = b.curve.point(0.5);
                 let zone = zone_for(id.index, seed, Vec2::new(p.x, p.z).distance(centre));

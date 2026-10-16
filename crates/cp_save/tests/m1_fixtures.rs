@@ -44,6 +44,9 @@
 //! by one. Checked: with the plant's two files taken out of the content, all four values of the
 //! T-109 header above reproduce exactly (and the bench-10k baseline too).
 
+//! **T-148.** Re-recorded again, the two "load + 4096 ticks" values only: the balance pass changes the
+//! garbage, sickness and service numbers, so the state after a day moves.
+//!
 //! **T-146.** Re-recorded again, the two "load + 4096 ticks" values only (state at load unchanged): land value now counts service coverage and
 //! garbage, homes need services for levels above 2, and garbage and dead count towards
 //! abandonment, so the state moves from the first city pass.
@@ -151,7 +154,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     assert_eq!(sim.checksum(), 0xe405803dc07eac2e, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0xcda59987f1c06094,
+        0x98e4e0d14e7d5d89,
         "load + 4096 ticks"
     );
 }
@@ -185,7 +188,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0xdccc9baf760944c0, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x7a2e2c75f4010062, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

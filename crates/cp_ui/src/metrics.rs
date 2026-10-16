@@ -396,49 +396,26 @@ mod tests {
 
     #[test]
     fn the_services_section_shows_the_coverage_from_the_view_and_dashes_for_nothing() {
-        use cp_building::{AccessPoint, BuildingGrid, BuildingState};
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let terrain = Arc::new(Terrain::load(&root.join("assets/maps/flatlands")).unwrap());
         let content = Arc::new(ContentDb::load_dir(root.join("assets/content")).unwrap());
-        let (mut sim, _) = grid_city(
-            200,
-            3,
-            terrain,
-            Arc::clone(&content),
-            &GridCityConfig::default(),
-        );
-        let secs = sections(&sim.view());
+        // Nothing built: dashes.
+        let mut empty = cp_sim::SimRunner::new(3);
+        empty.set_content(Arc::clone(&content));
+        empty.tick_once();
+        let secs = sections(&empty.view());
         assert_eq!(value(&secs, "Services", "Garbage coverage"), "—");
-        // A landfill on the first street.
-        let seg = sim
-            .world()
-            .resource::<cp_net::NetGraph>()
-            .segments()
-            .next()
-            .unwrap()
-            .0;
-        let mut b = sim
-            .world()
-            .resource::<BuildingGrid>()
-            .iter()
-            .next()
-            .unwrap()
-            .1
-            .clone();
-        b.def = content.building_id("landfill").unwrap();
-        b.state = BuildingState::Active;
-        b.set_access(Some(AccessPoint {
-            segment: seg,
-            t: 0.5,
-        }));
-        sim.world_mut().resource_mut::<BuildingGrid>().insert(b);
+        assert_eq!(value(&secs, "Services", "Fire coverage"), "—");
+        // A scripted city brings its own services (T-148): their coverage shows as a share.
+        let (mut sim, _) = grid_city(200, 3, terrain, content, &GridCityConfig::default());
         for _ in 0..128 {
             sim.tick_once();
         }
         let secs = sections(&sim.view());
-        let got = value(&secs, "Services", "Garbage coverage");
-        assert!(got.ends_with(" %") && got != "0 %", "{got}");
-        assert_eq!(value(&secs, "Services", "Fire coverage"), "—");
+        for row in ["Garbage coverage", "Fire coverage"] {
+            let got = value(&secs, "Services", row);
+            assert!(got.ends_with(" %") && got != "0 %", "{row}: {got}");
+        }
     }
 
     #[test]

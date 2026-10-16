@@ -66,8 +66,8 @@ fn a_landfill_reports_served_today_and_stored_and_a_house_its_garbage() {
     };
     let r = rows(Selection::Building(dump));
     assert_eq!(get(&r, "Service").as_deref(), Some("Garbage"));
-    assert_eq!(get(&r, "Served today").as_deref(), Some("120 of 400"));
-    assert_eq!(get(&r, "Stored").as_deref(), Some("900 of 20000"));
+    assert_eq!(get(&r, "Served today").as_deref(), Some("120 of 5000"));
+    assert_eq!(get(&r, "Stored").as_deref(), Some("900 of 1000000"));
     let r = rows(Selection::Building(house));
     assert_eq!(get(&r, "Garbage").as_deref(), Some("42"));
     assert_eq!(get(&r, "Service"), None);

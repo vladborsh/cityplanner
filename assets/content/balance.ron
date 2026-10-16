@@ -78,11 +78,11 @@ Balance((
 
     // --- Garbage (system-design §16 M2 D): per game day, collected by landfills and incinerators ---
     // Per household and per filled job; a building from garbage_problem up has the GARBAGE problem. // tune later
-    garbage_household: 25.0,
-    garbage_job: 4.0,
-    garbage_problem: 100.0,
+    garbage_household: 4.0,
+    garbage_job: 1.0,
+    garbage_problem: 40.0,
     // A building holding this much garbage gets a garbage truck (T-151). // tune later
-    garbage_truck_min: 50.0,
+    garbage_truck_min: 20.0,
 
     // --- Fire (system-design §16 M2 D): all // tune later ---
     // Chance per building and game day without cover; cover removes up to fire_cover of it.
@@ -119,8 +119,8 @@ Balance((
 
     // --- Health (system-design §16 M2 D): all // tune later ---
     // Chance per game day to fall ill, plus this much per point (0..100) of pollution at the home.
-    sick_base: 0.01,
-    sick_pollution: 0.001,
+    sick_base: 0.003,
+    sick_pollution: 0.0002,
 
     // --- Service effects (system-design §16 M2 D "Эффекты"): all // tune later ---
     // Land value a full coverage of Health, Police, Fire, Education adds to a cell.

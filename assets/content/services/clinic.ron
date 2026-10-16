@@ -4,6 +4,6 @@ Service((
     name: "Clinic",
     kind: Health,
     radius_m: 600.0,
-    capacity: 20,
+    capacity: 60,
     vehicles: [],
 ))

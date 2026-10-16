@@ -44,6 +44,12 @@ fn content(capacity: u32, storage: u32) -> Arc<ContentDb> {
         ContentDb::from_sources(vec![
             ("r/street.ron".into(), ROAD.into()),
             ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
+            // The numbers these tests are written for, not the tuned game defaults.
+            (
+                "balance.ron".into(),
+                "Balance((garbage_household: 25.0, garbage_job: 4.0, garbage_problem: 100.0))"
+                    .into(),
+            ),
             ("b/house.ron".into(), b("house", 4, "None")),
             ("b/dump.ron".into(), b("dump", 0, "Some(\"dump\")")),
             ("b/burn.ron".into(), b("burn", 0, "Some(\"burn\")")),

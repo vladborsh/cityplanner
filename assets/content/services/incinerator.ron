@@ -4,6 +4,6 @@ Service((
     name: "Incinerator",
     kind: Garbage,
     radius_m: 1500.0,
-    capacity: 800,
+    capacity: 10000,
     vehicles: [],
 ))
