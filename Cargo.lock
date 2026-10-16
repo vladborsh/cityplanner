@@ -2530,6 +2530,7 @@ dependencies = [
  "cp_core",
  "cp_district",
  "cp_net",
+ "cp_service",
  "cp_terrain",
  "cp_traffic",
  "cp_utility",

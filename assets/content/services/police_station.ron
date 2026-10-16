@@ -1,0 +1,10 @@
+// Numbers: tune later. `capacity` is the crime it clears per game day; without power it does
+// not work.
+Service((
+    id: "police_station",
+    name: "Police Station",
+    kind: Police,
+    radius_m: 1200.0,
+    capacity: 200,
+    vehicles: [],
+))

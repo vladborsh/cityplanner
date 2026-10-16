@@ -93,3 +93,6 @@ in `assets/ui/icons/src`, rendered by `tools/assets/icons.mjs`, CC0, no third-pa
 
 T-142 adds `fire_station` (a depot with shutters and a flame): self-made SVG in `assets/ui/icons/src`, rendered
 by `tools/assets/icons.mjs`, CC0, no third-party pack.
+
+T-144 adds `police_station` (a station with a star and a beacon): self-made SVG in `assets/ui/icons/src`, rendered
+by `tools/assets/icons.mjs`, CC0, no third-party pack.

@@ -235,6 +235,11 @@ impl SimRunner {
         schedule.add_systems(cp_economy::settle_week.in_set(SimPhase::Economy));
         schedule.add_systems(cp_economy::update_demand.in_set(SimPhase::Economy));
         schedule.add_systems(cp_economy::update_city.in_set(SimPhase::Economy));
+        schedule.add_systems(
+            cp_economy::update_police
+                .in_set(SimPhase::Economy)
+                .after(cp_economy::update_city),
+        );
         schedule.add_systems(cp_citizen::update_citizens.in_set(SimPhase::Citizens));
         // Path snapshot after the junction links it is built from; results are applied in
         // the Paths phase (system-design §2: requests from tick t land exactly at t + 8).

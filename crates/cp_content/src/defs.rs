@@ -153,6 +153,14 @@ pub struct Balance {
     pub fire_spread_m: f32,
     /// Speed of a fire engine on the road, km/h.
     pub fire_engine_kmh: f32,
+    /// Crime a building makes per game day with no police cover on land worth 100 (T-144). // tune later
+    pub crime_base: f32,
+    /// Share of the crime a full police coverage takes away.
+    pub police_cover: f32,
+    /// Extra crime on cheap land: the rate is multiplied by `1 + crime_poor × (1 − land / 100)`.
+    pub crime_poor: f32,
+    /// Crime piled up in a building from which it has the CRIME problem.
+    pub crime_problem: f32,
 }
 
 /// One loan the bank offers (`balance.ron` `loan_offers`). Interest is simple, for the whole
@@ -210,6 +218,10 @@ impl Balance {
             self.fire_spread,
             self.fire_spread_m,
             self.fire_engine_kmh,
+            self.crime_base,
+            self.police_cover,
+            self.crime_poor,
+            self.crime_problem,
         ]);
         v
     }
@@ -262,6 +274,10 @@ impl Default for Balance {
             fire_spread: 0.15,
             fire_spread_m: 12.0,
             fire_engine_kmh: 50.0,
+            crime_base: 20.0,
+            police_cover: 0.9,
+            crime_poor: 1.0,
+            crime_problem: 100.0,
         }
     }
 }
