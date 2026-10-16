@@ -282,6 +282,11 @@ impl Agents {
     }
 
     /// Puts a service vehicle (T-151) on the road: it waits for room at its start like a car.
+    /// Puts a walking run's pedestrian (T-155) on the street.
+    pub(crate) fn spawn_service_pedestrian(&mut self, p: Pedestrian) {
+        self.pedestrians.insert(p);
+    }
+
     pub(crate) fn vehicle_mut(&mut self, id: VehicleId) -> Option<&mut Vehicle> {
         self.vehicles.get_mut(id)
     }
@@ -294,6 +299,15 @@ impl Agents {
     /// Takes the vehicle of service run `run` off the road, wherever it is (T-154 `release`).
     /// Returns whether there was one.
     pub(crate) fn remove_run_vehicle(&mut self, run: crate::runs::RunId) -> bool {
+        let walker = self
+            .pedestrians
+            .iter()
+            .find(|(_, p)| crate::runs::walk_run_of(p) == Some(run))
+            .map(|(id, _)| id);
+        if let Some(id) = walker {
+            self.pedestrians.remove(id);
+            return true;
+        }
         let Some(id) = self
             .vehicles
             .iter()
@@ -419,11 +433,15 @@ pub fn purge_removed_buildings(
     mut grid: ResMut<CitizenGrid>,
     mut book: ResMut<TripBook>,
     mut agents: ResMut<Agents>,
+    mut runs: Option<ResMut<crate::runs::ServiceRuns>>,
 ) {
     if !buildings.has_removed() {
         return;
     }
     let removed = buildings.take_removed();
+    if let Some(runs) = runs.as_deref_mut() {
+        crate::runs::fail_walks_to(runs, &mut agents, &removed);
+    }
     book.ensure_derived();
     agents.ensure_derived(&book);
     let cancelled = cp_citizen::purge_buildings(&mut grid, &mut book, &removed);
@@ -1068,13 +1086,26 @@ pub fn move_agents(
                 if let Some(p) = agents.pedestrians.remove(id) {
                     red += u64::from(p.waited);
                     agents.stats.walked += 1;
-                    complete_trip(&mut grid, &mut book, &buildings, &rng, now, p.trip);
+                    if let Some(run) = crate::runs::walk_run_of(&p) {
+                        // A walking run reports to its owner; the trip is not the walker's.
+                        if let Some(runs) = runs.as_deref_mut() {
+                            runs.set_state(run, crate::runs::RunState::Arrived { at: Tick(now) });
+                        }
+                    } else {
+                        complete_trip(&mut grid, &mut book, &buildings, &rng, now, p.trip);
+                    }
                 }
             }
             Step::Invalid => {
                 if let Some(p) = agents.pedestrians.remove(id) {
                     agents.stats.invalid_routes += 1;
-                    cancel_trip(&mut grid, &mut book, p.trip);
+                    if let Some(run) = crate::runs::walk_run_of(&p) {
+                        if let Some(runs) = runs.as_deref_mut() {
+                            runs.set_state(run, crate::runs::RunState::Failed);
+                        }
+                    } else {
+                        cancel_trip(&mut grid, &mut book, p.trip);
+                    }
                 }
             }
         }

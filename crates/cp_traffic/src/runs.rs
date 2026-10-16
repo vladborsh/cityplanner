@@ -28,7 +28,7 @@ use cp_core::{SimLimits, Tick};
 use cp_net::{LaneId, NetGraph, NodeId, NodeKind};
 use serde::{Deserialize, Serialize};
 
-use crate::agents::{Agents, KIND_KEEP, Vehicle, VehicleId, access_of, travel_ticks};
+use crate::agents::{Agents, KIND_KEEP, Pedestrian, Vehicle, VehicleId, access_of, travel_ticks};
 use crate::graph::{Access, PathGraph, Side};
 use crate::service::{Mode, PathNetwork, PathRequest, PathResult, PathResults, PathService};
 
@@ -36,6 +36,10 @@ use crate::service::{Mode, PathNetwork, PathRequest, PathResult, PathResults, Pa
 pub const SERVICE_GEN: u32 = u32::MAX;
 
 pub type RunId = u32;
+
+/// `ServiceRun::kind` of a walking run (T-155): a pedestrian, not a vehicle. No
+/// `cp_content::VehicleKind` has this number, so the saved layout of a run is unchanged.
+pub const WALK_KIND: u8 = u8::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RunState {
@@ -157,6 +161,27 @@ impl ServiceRuns {
         id
     }
 
+    /// Starts a walking run (T-155) between two points that have pavement: buildings or access
+    /// points. A pedestrian walks it from the pool of §9.4; on arrival the run is
+    /// [`RunState::Arrived`] and no trip is completed (the owner, `cp_transit`, runs the trip).
+    /// With the pool full it arrives after the walking time; if a building at either end is
+    /// demolished on the way it is [`RunState::Failed`].
+    pub fn start_walk(&mut self, from: RunPoint, to: RunPoint) -> RunId {
+        let id = self.next;
+        self.next += 1;
+        self.runs.insert(
+            id,
+            ServiceRun {
+                kind: WALK_KIND,
+                from,
+                to,
+                keep: false,
+                state: RunState::Planned,
+            },
+        );
+        id
+    }
+
     /// Sends a run that stands at its goal on to `to`, from where it stands. A parked vehicle
     /// asks for a route from its lane; a keep run that arrived abstractly (the pool was full)
     /// starts over from its old goal.
@@ -224,6 +249,11 @@ pub fn run_of(v: &Vehicle) -> Option<RunId> {
     (v.trip.generation == SERVICE_GEN).then_some(v.trip.index)
 }
 
+/// Whether `p` walks a walking run (T-155); its run is `p.trip.index`.
+pub fn walk_run_of(p: &crate::agents::Pedestrian) -> Option<RunId> {
+    (p.trip.generation == SERVICE_GEN).then_some(p.trip.index)
+}
+
 /// The vehicle lane and lane metre a run point stands for: `origin` for the start of a run (an
 /// `Outside` node is where the entry road's cars appear), otherwise for its goal (the lane
 /// that reaches the node).
@@ -267,6 +297,18 @@ fn run_request(
     run: &ServiceRun,
     from_lane: Option<(LaneId, f32)>,
 ) -> Option<PathRequest> {
+    if run.kind == WALK_KIND {
+        let pave = |p: RunPoint| match p {
+            RunPoint::Building(b) => access_of(net, buildings.get(b)?),
+            RunPoint::Access(a) => Some(a),
+            _ => None,
+        };
+        return Some(PathRequest {
+            mode: Mode::Pedestrian,
+            from: pave(run.from)?,
+            to: pave(run.to)?,
+        });
+    }
     let plain = |p: RunPoint| match p {
         RunPoint::Building(b) => access_of(net, buildings.get(b)?),
         RunPoint::Access(a) => Some(a),
@@ -394,6 +436,38 @@ pub fn receive_service_paths(
             }
             continue;
         }
+        if run.kind == WALK_KIND {
+            match &outcome.result {
+                PathResult::Stale => runs.set_state(id, RunState::Planned),
+                PathResult::Pedestrian(Ok(path)) => {
+                    if agents.pedestrian_count() < limits.pedestrians as usize {
+                        agents.spawn_service_pedestrian(Pedestrian {
+                            trip: TripId::new(id, SERVICE_GEN),
+                            citizen: CitizenId::new(u32::MAX, u32::MAX),
+                            route: path.clone(),
+                            leg: 0,
+                            s: 0.0,
+                            leg_len: 0.0,
+                            started: false,
+                            waited: 0,
+                            pos: bevy_math::Vec2::ZERO,
+                            cache: Default::default(),
+                        });
+                        runs.set_state(id, RunState::Driving);
+                    } else {
+                        agents.stats.abstract_trips += 1;
+                        runs.set_state(
+                            id,
+                            RunState::Timer {
+                                arrive_at: Tick(tick.0 + travel_ticks(path.cost)),
+                            },
+                        );
+                    }
+                }
+                _ => runs.set_state(id, RunState::Failed),
+            }
+            continue;
+        }
         match &outcome.result {
             PathResult::Stale => runs.set_state(id, RunState::Planned),
             PathResult::Car(Ok(path)) => {
@@ -438,5 +512,25 @@ pub fn advance_service_runs(tick: Res<Tick>, mut runs: ResMut<ServiceRuns>) {
         .collect();
     for (id, at) in due {
         runs.set_state(id, RunState::Arrived { at });
+    }
+}
+
+/// Fails the walking runs (T-155) that start or end at one of the `removed` buildings and takes
+/// their pedestrians off the street.
+pub(crate) fn fail_walks_to(runs: &mut ServiceRuns, agents: &mut Agents, removed: &[BuildingId]) {
+    let hit: Vec<RunId> = runs
+        .iter()
+        .filter(|(_, r)| r.kind == WALK_KIND)
+        .filter(|(_, r)| !matches!(r.state, RunState::Arrived { .. } | RunState::Failed))
+        .filter(|(_, r)| {
+            [r.from, r.to]
+                .iter()
+                .any(|p| matches!(p, RunPoint::Building(b) if removed.contains(b)))
+        })
+        .map(|(id, _)| id)
+        .collect();
+    for id in hit {
+        agents.remove_run_vehicle(id);
+        runs.set_state(id, RunState::Failed);
     }
 }

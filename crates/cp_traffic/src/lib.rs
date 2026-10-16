@@ -25,8 +25,8 @@ pub use graph::{
 };
 pub use pose::{AgentFrame, AgentKey, PedestrianPose, VehiclePose};
 pub use runs::{
-    RunError, RunId, RunPoint, RunState, SERVICE_GEN, ServiceRun, ServiceRuns,
-    advance_service_runs, receive_service_paths, route_service_runs, run_of,
+    RunError, RunId, RunPoint, RunState, SERVICE_GEN, ServiceRun, ServiceRuns, WALK_KIND,
+    advance_service_runs, receive_service_paths, route_service_runs, run_of, walk_run_of,
 };
 pub use service::{
     Mode, PATH_DELAY_TICKS, PathNetwork, PathOutcome, PathRequest, PathResult, PathResults,
