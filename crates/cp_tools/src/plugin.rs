@@ -24,7 +24,7 @@ use crate::bulldozer::{
 };
 use crate::road::{
     MarkerKind, RoadMarker, RoadTool, TOO_CLOSE, chevron_lines, preview_report, quantized,
-    road_is_one_way, road_markers, sample_curve, too_close,
+    road_is_one_way, road_markers, sample_curve,
 };
 use crate::upgrade::{upgrade_commands, upgrade_preview};
 use crate::utility::{
@@ -333,12 +333,16 @@ pub fn tool_hotkeys(
             state.road.lower();
         }
     }
-    if state.active == ActiveTool::Utility
-        && keys.just_pressed(KeyCode::Enter)
-        && let Some(path) = state.utility.finish()
-    {
-        state.utility_key = None;
-        outbox.push(state.utility.command(path));
+    if state.active == ActiveTool::Utility && keys.just_pressed(KeyCode::Enter) {
+        let before = state.utility.clone();
+        if let Some(path) = state.utility.finish() {
+            state.utility_key = None;
+            if let Some(cmd) =
+                crate::utility::chain_commit(view.as_deref(), &mut state.utility, before, path)
+            {
+                outbox.push(cmd);
+            }
+        }
     }
     if state.active == ActiveTool::Line && keys.just_pressed(KeyCode::Backspace) {
         state.line.undo();
@@ -366,17 +370,16 @@ pub fn tool_hotkeys(
             state.road.cancel();
         }
     }
-    if state.active == ActiveTool::Road
-        && keys.just_pressed(KeyCode::Enter)
-        && let Some(req) = state.road.finish_free()
-    {
-        state.ghost_key = None;
-        let req = match view.as_deref() {
-            Some(v) => quantized(v, req, state.alt).0,
-            None => req,
-        };
-        if !view.as_deref().is_some_and(|v| too_close(v, &req)) {
-            outbox.push(build_command(req));
+    if state.active == ActiveTool::Road && keys.just_pressed(KeyCode::Enter) {
+        let before = state.road.clone();
+        if let Some(req) = state.road.finish_free() {
+            state.ghost_key = None;
+            let alt = state.alt;
+            if let Some(req) =
+                crate::road::chain_commit(view.as_deref(), &mut state.road, before, req, alt)
+            {
+                outbox.push(build_command(req));
+            }
         }
     }
 }
@@ -732,12 +735,12 @@ pub fn tool_click(
     };
     match state.active {
         ActiveTool::Road => {
+            let before = state.road.clone();
             if let Some(req) = state.road.click(p) {
-                let req = match view.as_deref() {
-                    Some(v) => quantized(v, req, state.alt).0,
-                    None => req,
-                };
-                if !view.as_deref().is_some_and(|v| too_close(v, &req)) {
+                let alt = state.alt;
+                if let Some(req) =
+                    crate::road::chain_commit(view.as_deref(), &mut state.road, before, req, alt)
+                {
                     outbox.push(build_command(req));
                 }
             }
@@ -788,8 +791,12 @@ pub fn tool_click(
             }
         }
         ActiveTool::Utility => {
-            if let Some(path) = state.utility.click(p) {
-                outbox.push(state.utility.command(path));
+            let before = state.utility.clone();
+            if let Some(path) = state.utility.click(p)
+                && let Some(cmd) =
+                    crate::utility::chain_commit(view.as_deref(), &mut state.utility, before, path)
+            {
+                outbox.push(cmd);
             }
             state.utility_key = None;
         }

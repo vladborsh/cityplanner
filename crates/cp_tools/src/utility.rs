@@ -88,7 +88,8 @@ impl UtilityTool {
         }
         self.points.push(p);
         if self.mode == UtilityMode::Straight && self.points.len() == 2 {
-            return Some(std::mem::take(&mut self.points));
+            // A chain (T-176): the next piece starts where this one ends.
+            return Some(std::mem::replace(&mut self.points, vec![p]));
         }
         None
     }
@@ -98,7 +99,8 @@ impl UtilityTool {
         if self.mode != UtilityMode::Polyline || self.points.len() < 2 {
             return None;
         }
-        Some(std::mem::take(&mut self.points))
+        let last = *self.points.last()?;
+        Some(std::mem::replace(&mut self.points, vec![last]))
     }
 
     /// The command a finished `path` becomes.
@@ -108,6 +110,23 @@ impl UtilityTool {
             path,
         })
     }
+}
+
+/// Settles a click or Enter that completed a piece (T-176), like `road::chain_commit`: a path
+/// that does not validate is not sent and `tool` returns to `before` (the chain is kept).
+pub fn chain_commit(
+    view: Option<&SimView>,
+    tool: &mut UtilityTool,
+    before: UtilityTool,
+    path: Vec<Vec2>,
+) -> Option<SimCommand> {
+    if let Some(v) = view
+        && matches!(preview(v, tool.kind, &path), Some(Err(_)))
+    {
+        *tool = before;
+        return None;
+    }
+    Some(tool.command(path))
 }
 
 /// The network a kind builds into.
@@ -237,7 +256,7 @@ mod tests {
             Some(vec![Vec2::new(10.0, 10.0), Vec2::new(50.0, 10.0)])
         );
         let path = t.click(Vec2::new(90.0, 10.0)).unwrap();
-        assert!(t.points.is_empty(), "ready for the next line");
+        assert_eq!(t.points, [Vec2::new(90.0, 10.0)], "the chain goes on");
         assert_eq!(
             t.command(path.clone()),
             SimCommand::Utility(UtilityCommand::BuildLink {
@@ -256,10 +275,57 @@ mod tests {
         let path = t.click(Vec2::new(30.0, 30.0)).unwrap();
         assert_eq!(path.len(), 3);
         // Enter with fewer than two points does nothing; with two it finishes.
+        t.cancel();
         t.click(Vec2::ZERO);
         assert!(t.finish().is_none());
         t.click(Vec2::new(20.0, 0.0));
         assert_eq!(t.finish().map(|p| p.len()), Some(2));
+    }
+
+    /// T-176: pipes and lines chain too; Esc (`cancel`) ends the chain.
+    #[test]
+    fn a_chain_continues_from_the_last_point_and_cancel_ends_it() {
+        let mut t = tool(UtilityKind::Power, UtilityMode::Straight);
+        t.click(Vec2::new(0.0, 0.0));
+        t.click(Vec2::new(40.0, 0.0)).unwrap();
+        let next = t.click(Vec2::new(40.0, 40.0)).unwrap();
+        assert_eq!(next, [Vec2::new(40.0, 0.0), Vec2::new(40.0, 40.0)]);
+        t.cancel();
+        assert!(t.click(Vec2::new(90.0, 90.0)).is_none(), "a fresh start");
+
+        let mut p = tool(UtilityKind::Water, UtilityMode::Polyline);
+        for q in [(0.0, 0.0), (30.0, 0.0)] {
+            p.click(Vec2::new(q.0, q.1));
+        }
+        p.finish().unwrap();
+        p.click(Vec2::new(30.0, 30.0));
+        assert_eq!(
+            p.finish().unwrap(),
+            [Vec2::new(30.0, 0.0), Vec2::new(30.0, 30.0)]
+        );
+    }
+
+    /// A piece that does not validate is not sent and leaves the chain as it was.
+    #[test]
+    fn a_red_piece_does_not_drop_the_chain() {
+        let sim = sim();
+        let view = sim.view();
+        let mut t = tool(UtilityKind::Water, UtilityMode::Straight);
+        // Far outside the bought land: the plan is refused.
+        let (a, b) = (Vec2::new(100.0, 100.0), Vec2::new(190.0, 100.0));
+        t.click(a);
+        let before = t.clone();
+        let path = t.click(b).unwrap();
+        assert!(chain_commit(Some(&view), &mut t, before.clone(), path).is_none());
+        assert_eq!(t, before, "still waiting for the end of the piece");
+        // On owned land the same steps send a command and move the chain on.
+        let (a, b) = (Vec2::new(5000.0, 5000.0), Vec2::new(5090.0, 5000.0));
+        t.cancel();
+        t.click(a);
+        let before = t.clone();
+        let path = t.click(b).unwrap();
+        assert!(chain_commit(Some(&view), &mut t, before, path).is_some());
+        assert_eq!(t.points, [b]);
     }
 
     #[test]

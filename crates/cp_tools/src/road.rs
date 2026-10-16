@@ -107,7 +107,9 @@ impl RoadTool {
         })
     }
 
-    /// A click at `p`. Returns the finished request when this click completed the drawing.
+    /// A click at `p`. Returns the finished request when this click completed the drawing; the
+    /// tool then stays in a chain (T-176): the next piece starts at the last point (a curve's
+    /// tangent is free). `Esc` ([`Self::cancel`]) ends the chain.
     pub fn click(&mut self, p: Vec2) -> Option<RoadPathRequest> {
         self.road?;
         if self.mode == RoadMode::Free && self.points.last().is_some_and(|l| l.distance(p) < 1.0) {
@@ -115,7 +117,7 @@ impl RoadTool {
         }
         self.points.push(p);
         if self.clicks_needed() == Some(self.points.len()) {
-            let pts = std::mem::take(&mut self.points);
+            let pts = std::mem::replace(&mut self.points, vec![p]);
             let path = match self.mode {
                 RoadMode::Straight => RoadPath::Straight {
                     from: pts[0],
@@ -138,9 +140,46 @@ impl RoadTool {
         if self.mode != RoadMode::Free || self.points.len() < 2 {
             return None;
         }
-        let pts = std::mem::take(&mut self.points);
+        let last = *self.points.last()?;
+        let pts = std::mem::replace(&mut self.points, vec![last]);
         self.request(RoadPath::Free(pts))
     }
+}
+
+/// The end point of a path.
+fn path_end(path: &RoadPath) -> Option<Vec2> {
+    match path {
+        RoadPath::Straight { to, .. } | RoadPath::Curve { to, .. } => Some(*to),
+        RoadPath::Free(pts) => pts.last().copied(),
+    }
+}
+
+/// Settles a click that completed a piece (T-176): `tool` already stands in the chain state
+/// ([`RoadTool::click`]); `before` is the tool as it was before the click. A piece that does not
+/// validate (a red ghost, or too close to a road) is not sent and `tool` goes back to `before`,
+/// so the chain and its points are not lost. A good piece comes back quantized, the way
+/// `BuildRoad` is sent, and the chain continues from the end the quantizing gave it.
+pub fn chain_commit(
+    view: Option<&SimView>,
+    tool: &mut RoadTool,
+    before: RoadTool,
+    req: RoadPathRequest,
+    alt: bool,
+) -> Option<RoadPathRequest> {
+    let req = match view {
+        Some(v) => quantized(v, req, alt).0,
+        None => req,
+    };
+    if let Some(v) = view
+        && (matches!(preview(v, &req), Some(Err(_))) || too_close(v, &req))
+    {
+        *tool = before;
+        return None;
+    }
+    if let Some(end) = path_end(&req.path) {
+        tool.points = vec![end];
+    }
+    Some(req)
 }
 
 /// Validates `req` against the snapshot with the same pure function `BuildRoad` uses.
@@ -427,7 +466,11 @@ mod tests {
             }
         );
         assert_eq!(req.snap, SnapOptions::default());
-        assert!(t.points.is_empty(), "the tool is ready for the next road");
+        assert_eq!(
+            t.points,
+            [Vec2::new(9.0, 2.0)],
+            "the chain goes on from the last node"
+        );
     }
 
     #[test]
@@ -477,11 +520,99 @@ mod tests {
                 Vec2::new(30.0, 30.0)
             ])
         );
+        assert_eq!(t.points, [Vec2::new(30.0, 30.0)], "the chain goes on");
         // Enter with fewer than two points does nothing.
+        t.cancel();
         t.click(Vec2::ZERO);
         assert!(t.finish_free().is_none());
         t.click(Vec2::new(20.0, 0.0));
         assert!(t.finish_free().is_some());
+    }
+
+    /// T-176: after a piece the next one starts at its last point; Esc ends the chain.
+    #[test]
+    fn a_chain_continues_from_the_last_point_in_every_mode_and_cancel_ends_it() {
+        let mut t = tool(RoadMode::Straight);
+        t.click(Vec2::new(0.0, 0.0));
+        t.click(Vec2::new(40.0, 0.0)).unwrap();
+        let next = t.click(Vec2::new(40.0, 40.0)).unwrap();
+        assert_eq!(
+            next.path,
+            RoadPath::Straight {
+                from: Vec2::new(40.0, 0.0),
+                to: Vec2::new(40.0, 40.0)
+            },
+            "one click: start = the last node"
+        );
+        t.cancel();
+        assert!(t.points.is_empty(), "Esc ends the chain");
+        assert!(t.click(Vec2::new(90.0, 90.0)).is_none(), "a fresh start");
+
+        // A curve: the next piece starts at the end and takes control and end again.
+        let mut c = tool(RoadMode::Curve);
+        for p in [(0.0, 0.0), (30.0, 0.0), (30.0, 30.0)] {
+            c.click(Vec2::new(p.0, p.1));
+        }
+        assert_eq!(c.points, [Vec2::new(30.0, 30.0)]);
+        assert!(c.click(Vec2::new(30.0, 60.0)).is_none());
+        let req = c.click(Vec2::new(60.0, 60.0)).unwrap();
+        assert!(matches!(
+            req.path,
+            RoadPath::Curve { from, .. } if from == Vec2::new(30.0, 30.0)
+        ));
+
+        // Free: finishing keeps the last point as the start of the next polyline.
+        let mut f = tool(RoadMode::Free);
+        for p in [(0.0, 0.0), (30.0, 0.0)] {
+            f.click(Vec2::new(p.0, p.1));
+        }
+        f.finish_free().unwrap();
+        f.click(Vec2::new(30.0, 30.0));
+        let req = f.finish_free().unwrap();
+        assert_eq!(
+            req.path,
+            RoadPath::Free(vec![Vec2::new(30.0, 0.0), Vec2::new(30.0, 30.0)])
+        );
+    }
+
+    /// A piece that does not validate is not sent and leaves the chain as it was; a good one
+    /// moves the chain on to its end.
+    #[test]
+    fn a_red_piece_does_not_drop_the_chain() {
+        use std::path::Path;
+        use std::sync::Arc;
+        let root = env!("CARGO_MANIFEST_DIR");
+        let mut sim = cp_sim::SimRunner::new(1);
+        sim.set_terrain(Arc::new(
+            cp_terrain::Terrain::load(&Path::new(root).join("../../assets/maps/flatlands"))
+                .unwrap(),
+        ));
+        let db = Arc::new(
+            cp_content::ContentDb::load_dir(Path::new(root).join("../../assets/content")).unwrap(),
+        );
+        let road = db.road_id("basic_2l").unwrap();
+        sim.set_content(db);
+        let view = sim.view();
+        let mut t = RoadTool {
+            road: Some(road),
+            ..Default::default()
+        };
+        // Outside the bought land: refused.
+        t.click(Vec2::new(100.0, 100.0));
+        let before = t.clone();
+        let req = t.click(Vec2::new(200.0, 100.0)).unwrap();
+        assert!(chain_commit(Some(&view), &mut t, before.clone(), req, false).is_none());
+        assert_eq!(t, before);
+        // On owned land: sent, and the chain goes on from the end.
+        t.cancel();
+        t.click(Vec2::new(5000.0, 5000.0));
+        let before = t.clone();
+        let req = t.click(Vec2::new(5096.0, 5000.0)).unwrap();
+        let sent = chain_commit(Some(&view), &mut t, before, req, false).expect("valid");
+        let RoadPath::Straight { to, .. } = sent.path else {
+            panic!("straight")
+        };
+        assert_eq!(t.points, [to]);
     }
 
     #[test]
