@@ -102,6 +102,8 @@ pub struct SimView {
     pub demand: cp_building::Demand,
     /// The city's money (cents), read-only, for the top bar and the budget window.
     pub treasury: cp_core::Treasury,
+    /// What the last daily settlement booked (T-179): the top bar's trend and pop-up.
+    pub payday: cp_economy::Payday,
     /// Tax rates, budget percentages and the last settled week, read-only (budget window).
     pub economy: cp_economy::EconomyState,
     /// Service coverage of the roads by kind, for the overlays (T-134). Shared: re-cloned
@@ -515,6 +517,7 @@ impl SimRunner {
             agents: self.agent_snapshot(tick),
             demand: *self.world().resource::<cp_building::Demand>(),
             treasury: *self.world().resource::<cp_core::Treasury>(),
+            payday: *self.world().resource::<cp_economy::Payday>(),
             progress: *self.world().resource::<crate::Progress>(),
             economy: self.world().resource::<cp_economy::EconomyState>().clone(),
             lines: self.line_views(),

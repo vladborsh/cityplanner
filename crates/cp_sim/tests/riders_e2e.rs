@@ -433,8 +433,10 @@ fn the_weekly_settlement_books_fares_and_bus_upkeep_and_the_treasury_follows() {
     );
     assert_eq!(
         t.sim.world().resource::<Treasury>().balance,
-        before + w.balance(),
-        "the treasury changes by the week's balance, fares and upkeep included"
+        before + t.sim.world().resource::<cp_economy::Payday>().net() + w.transit_fares
+            - w.transit_upkeep
+            - w.loan_payments,
+        "the treasury changes by the seventh day's share and the week's fares, bus upkeep and loans"
     );
     assert!(
         t.sim.world().resource::<TransitLedger>().is_empty(),

@@ -124,6 +124,7 @@ impl SimRunner {
         world.init_resource::<cp_transit::TransitLedger>();
         world.init_resource::<cp_economy::EconomyState>();
         world.init_resource::<cp_economy::DistrictIncome>();
+        world.init_resource::<cp_economy::Payday>();
         world.init_resource::<cp_economy::DemandAcc>();
         world.init_resource::<cp_economy::LandGrids>();
         world.init_resource::<cp_economy::Decay>();

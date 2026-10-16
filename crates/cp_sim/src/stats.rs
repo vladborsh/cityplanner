@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use bevy_ecs::prelude::*;
 use cp_building::{BuildingFlags, BuildingGrid, BuildingState, Demand};
-use cp_citizen::{CitizenGrid, TripBook, TripState};
+use cp_citizen::{CitizenGrid, PopFlow, TripBook, TripState};
 use cp_content::{RoadDefId, ServiceKind, SimContent, UtilityKind, ZoneType};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{Cost, Tick, Treasury};
@@ -148,6 +148,8 @@ pub struct HistorySample {
     pub pollution: f32,
     /// R, C, I, O.
     pub demand: [f32; 4],
+    /// The running population flow at the sample (T-179).
+    pub flow: PopFlow,
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
@@ -160,6 +162,11 @@ pub struct CityStats {
     /// scenes), otherwise true when a residential building is connected to one by road.
     pub connected_to_highway: bool,
     pub population: u32,
+    /// Who came, was born, left and died since the start of the run, and in the last game day
+    /// (T-179, the top bar's population trend). Derived like the rest; the day figure counts from
+    /// the sample a day back, or from the first one while there is less history.
+    pub pop_flow: PopFlow,
+    pub pop_day: PopFlow,
     pub households: u32,
     pub adults: u32,
     pub employed: u32,
@@ -285,8 +292,22 @@ pub fn update_city_stats(
                     avg_load: next.traffic.avg_load,
                     pollution: next.land.avg_pollution,
                     demand: demands,
+                    flow: next.pop_flow,
                 });
             }
+            // The last day: against the newest sample at least a day old, else the oldest.
+            let base = history
+                .iter()
+                .rev()
+                .find(|h| h.tick + TICKS_PER_DAY <= tick.0)
+                .or_else(|| history.front())
+                .map_or(PopFlow::default(), |h| h.flow);
+            next.pop_day = PopFlow {
+                arrived: next.pop_flow.arrived.saturating_sub(base.arrived),
+                born: next.pop_flow.born.saturating_sub(base.born),
+                left: next.pop_flow.left.saturating_sub(base.left),
+                died: next.pop_flow.died.saturating_sub(base.died),
+            };
             let generation = stats.generation + 1;
             *stats = *next;
             stats.generation = generation;
@@ -313,6 +334,7 @@ fn stage_citizens_traffic_land(
     _demands: &[f32; 4],
 ) {
     s.population = citizens.citizen_count() as u32;
+    s.pop_flow = citizens.flow;
     s.households = citizens.household_count() as u32;
     for (_, c) in citizens.citizens() {
         if c.is_adult() {

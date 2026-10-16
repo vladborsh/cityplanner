@@ -173,4 +173,20 @@ mod tests {
         days(&mut b, 400, 3);
         assert_eq!(a, b);
     }
+
+    /// T-179: the flow counters tell who came, was born, left and died.
+    #[test]
+    fn the_flow_counts_arrivals_births_departures_and_deaths() {
+        let (mut g, home) = setup(&[(30 * 365, 0, false), (30 * 365, 0, false)]);
+        assert_eq!(g.flow.arrived, 2);
+        let hid = g.households().next().map(|(id, _)| id).unwrap();
+        g.add_newborn(hid).unwrap();
+        assert_eq!(g.flow.born, 1);
+        let victim = g.citizens().next().map(|(id, _)| id).unwrap();
+        g.remove_citizen(victim);
+        assert_eq!(g.flow.died, 1);
+        g.remove_household(hid);
+        assert_eq!(g.flow.left, 2, "the two who were left");
+        let _ = home;
+    }
 }

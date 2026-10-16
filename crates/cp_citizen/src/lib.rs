@@ -8,7 +8,7 @@ pub mod routine;
 pub mod system;
 pub mod trips;
 
-pub use grid::CitizenGrid;
+pub use grid::{CitizenGrid, PopFlow};
 pub use lifecycle::{LIFECYCLE_STREAM, run_lifecycle, update_lifecycle};
 pub use model::{
     ADULT_AGE_DAYS, Citizen, CitizenId, DAYS_PER_YEAR, HOUSEHOLD_MAX, Household, HouseholdId,

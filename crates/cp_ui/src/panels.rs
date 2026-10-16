@@ -248,6 +248,8 @@ pub fn top_bar(
                 centred,
             );
             let money = crate::budget::money_label(&mut left, view);
+            crate::budget::payday_pop_ui(&left, view, money.rect);
+            crate::budget::trend_label(&mut left, view);
             let money = left.interact(money.rect, money.id.with("open"), egui::Sense::click());
             rects.windows.push((UiWindow::Budget, money.rect));
             if money
@@ -258,6 +260,7 @@ pub fn top_bar(
             }
             left.label(format!("👥 {}", view.city.population))
                 .on_hover_text("Residents");
+            crate::budget::population_trend_label(&mut left, view);
             // Middle: clock and speeds.
             let mut centre = scope(ui, mid, centred);
             centre.label(format_time(view));

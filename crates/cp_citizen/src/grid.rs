@@ -107,6 +107,17 @@ impl Derived {
     }
 }
 
+/// Running totals of the people who came, were born, left and died (T-179, the top bar's
+/// population trend). Derived bookkeeping: not saved, not part of equality or the checksum; it
+/// starts again from zero after a load.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PopFlow {
+    pub arrived: u64,
+    pub born: u64,
+    pub left: u64,
+    pub died: u64,
+}
+
 /// All citizens and households.
 #[derive(Resource, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CitizenGrid {
@@ -116,6 +127,9 @@ pub struct CitizenGrid {
     pub dead: BTreeMap<BuildingId, u16>,
     #[serde(skip)]
     derived: Derived,
+    /// Who came, was born, left and died since the start of this run.
+    #[serde(skip)]
+    pub flow: PopFlow,
 }
 
 impl PartialEq for CitizenGrid {
@@ -156,6 +170,7 @@ impl CitizenGrid {
             households,
             dead,
             derived: Derived::default(),
+            flow: PopFlow::default(),
         }
     }
 
@@ -331,6 +346,7 @@ impl CitizenGrid {
             }));
         }
         self.households.get_mut(hid).expect("just inserted").members = slots;
+        self.flow.arrived += slots.iter().flatten().count() as u64;
         self.derived.add_home(home);
         hid
     }
@@ -359,6 +375,7 @@ impl CitizenGrid {
         };
         for cid in h.members.into_iter().flatten() {
             if let Some(c) = self.citizens.remove(cid) {
+                self.flow.left += 1;
                 if let Some(w) = c.work {
                     self.derived.remove_job(w, usize::from(c.work_level));
                 }
@@ -375,6 +392,7 @@ impl CitizenGrid {
     /// household too when nobody is left. Returns the citizen.
     pub fn remove_citizen(&mut self, id: CitizenId) -> Option<Citizen> {
         let c = self.citizens.remove(id)?;
+        self.flow.died += 1;
         if let Some(w) = c.work {
             self.derived.remove_job(w, usize::from(c.work_level));
         }
@@ -413,6 +431,7 @@ impl CitizenGrid {
             school: None,
         });
         self.households.get_mut(hid)?.members[slot] = Some(cid);
+        self.flow.born += 1;
         Some(cid)
     }
 

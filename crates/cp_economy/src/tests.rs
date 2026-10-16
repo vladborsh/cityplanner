@@ -116,6 +116,7 @@ fn city() -> (World, Schedule) {
     world.init_resource::<cp_district::DistrictMap>();
     world.init_resource::<cp_district::Districts>();
     world.init_resource::<DistrictIncome>();
+    world.init_resource::<Payday>();
 
     // Two straight streets, 100 m and 60 m.
     let road = db.road_id("street").unwrap();
@@ -171,7 +172,18 @@ fn city() -> (World, Schedule) {
     (world, schedule)
 }
 
+/// Runs the schedule at `tick`. At a day boundary every day boundary since the last run is run
+/// too (the economy books a day at a time, T-179), so a test can jump from week to week.
 fn run_at(world: &mut World, schedule: &mut Schedule, tick: u64) {
+    let from = world.get_resource::<Tick>().map_or(0, |t| t.0);
+    if tick.is_multiple_of(cp_core::time::TICKS_PER_DAY) {
+        let mut t = (from / cp_core::time::TICKS_PER_DAY + 1) * cp_core::time::TICKS_PER_DAY;
+        while t < tick {
+            world.insert_resource(Tick(t));
+            schedule.run(world);
+            t += cp_core::time::TICKS_PER_DAY;
+        }
+    }
     world.insert_resource(Tick(tick));
     schedule.run(world);
 }
@@ -1178,4 +1190,39 @@ fn a_district_rate_replaces_the_city_rate_for_its_buildings() {
     run_at(&mut world, &mut schedule, 2 * TICKS_PER_WEEK);
     let rows = world.resource::<DistrictIncome>().rows.clone();
     assert_eq!(rows[1], (Some(d), Cost(990)));
+}
+
+/// T-179: tax and upkeep are booked every day; the seven shares add up to the weekly figure.
+#[test]
+fn income_and_upkeep_are_booked_every_day_and_add_up_to_the_week() {
+    use crate::{Payday, day_share};
+    use cp_core::time::TICKS_PER_DAY;
+    for x in [0i64, 1, 6, 7, 4_500, -33_720, 1_234_567] {
+        let sum: i64 = (1..=7).map(|k| day_share(Cost(x), k).0).sum();
+        assert_eq!(sum, x, "{x}");
+    }
+    let (mut world, mut schedule) = city();
+    let start = balance(&world);
+    run_at(&mut world, &mut schedule, TICKS_PER_DAY);
+    let p = *world.resource::<Payday>();
+    assert_eq!((p.tick, p.day), (TICKS_PER_DAY, 1));
+    assert!(
+        p.income > Cost::ZERO,
+        "taxes come in at the end of the first day"
+    );
+    assert_eq!(p.income, day_share(Cost(4_500), 1));
+    assert_eq!(
+        balance(&world),
+        start + p.net(),
+        "one day's share, no loans"
+    );
+    assert_eq!(
+        world.resource::<EconomyState>().last_week.week,
+        0,
+        "the week's report waits for the boundary"
+    );
+    // The rest of the week brings the balance to the weekly figure of the old formula.
+    run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
+    assert_eq!(balance(&world), start + Cost(-33_720));
+    assert_eq!(world.resource::<Payday>().day, 7);
 }

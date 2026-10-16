@@ -25,14 +25,14 @@ use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingState};
 use cp_citizen::CitizenGrid;
 use cp_content::{ContentDb, RoadDef, ServiceKind, SimContent, UtilityKind};
-use cp_core::time::TICKS_PER_WEEK;
+use cp_core::time::{DAYS_PER_WEEK, TICKS_PER_DAY};
 use cp_core::{Cost, Tick, Treasury};
 use cp_district::{DistrictId, DistrictMap, Districts, district_at};
 use cp_net::{Elevation, NetGraph, Segment};
 use cp_transit::TransitLedger;
 use cp_utility::{UtilityGraph, UtilityNet};
 
-use crate::state::{DistrictIncome, EconomyState, Loan, WeekReport};
+use crate::state::{DistrictIncome, EconomyState, Loan, Payday, WeekReport};
 
 fn percent(pct: u8) -> f64 {
     f64::from(pct) / 100.0
@@ -141,9 +141,19 @@ pub fn week_detail(i: &WeekInputs, week: u64) -> (WeekReport, Vec<(Option<Distri
     (r, by_district.into_iter().collect())
 }
 
-/// Economy phase: on every week boundary after tick 0, books [`week_report`] into the
-/// treasury (which may go below the debt floor; only purchases are refused there) and keeps
-/// the report in [`EconomyState::last_week`].
+/// The `k`-th of seven shares (`k` in 1..=7) of a weekly amount: the differences of
+/// `floor(x·k/7)`, so the seven shares add up to `x` exactly and no cent is lost (T-179).
+pub fn day_share(x: Cost, k: u64) -> Cost {
+    let at = |k: u64| (i128::from(x.0) * i128::from(k)).div_euclid(7) as i64;
+    Cost(at(k) - at(k - 1))
+}
+
+/// Economy phase (T-179): on every game day after tick 0 books that day's share (1/7, see
+/// [`day_share`]) of the weekly tax income and of the road, building and utility upkeep, by the
+/// same formula as [`week_report`], into the treasury (which may go below the debt floor; only
+/// purchases are refused there). On the week boundary (the seventh day) it also books the
+/// week's transit money and the loan payments, keeps the week's [`WeekReport`] in
+/// [`EconomyState::last_week`] and the district rows. The last day goes to [`Payday`].
 #[allow(clippy::too_many_arguments)]
 pub fn settle_week(
     tick: Res<Tick>,
@@ -155,13 +165,19 @@ pub fn settle_week(
     mut state: ResMut<EconomyState>,
     mut treasury: ResMut<Treasury>,
     mut district_income: ResMut<DistrictIncome>,
+    mut payday: ResMut<Payday>,
     district_map: Res<DistrictMap>,
     districts: Res<Districts>,
     ledger: Option<ResMut<TransitLedger>>,
 ) {
-    if tick.0 == 0 || !tick.0.is_multiple_of(TICKS_PER_WEEK) {
+    if tick.0 == 0 || !tick.0.is_multiple_of(TICKS_PER_DAY) {
         return;
     }
+    let day = tick.0 / TICKS_PER_DAY;
+    let k = match day % DAYS_PER_WEEK {
+        0 => DAYS_PER_WEEK,
+        d => d,
+    };
     let Some(content) = content else { return };
     citizens.ensure_derived();
     let (mut report, rows) = week_detail(
@@ -175,10 +191,25 @@ pub fn settle_week(
             district_map: &district_map,
             districts: &districts,
         },
-        tick.0 / TICKS_PER_WEEK,
+        day.div_ceil(DAYS_PER_WEEK),
     );
+    let mut today = Payday {
+        tick: tick.0,
+        day: k as u8,
+        income: day_share(report.income(), k),
+        road_upkeep: day_share(report.road_upkeep, k),
+        building_upkeep: day_share(report.building_upkeep, k),
+        utility_upkeep: day_share(report.utility_upkeep, k),
+        loans_week: report.loan_payments,
+        income_by_zone: report.income_by_zone.map(|c| day_share(c, k)),
+    };
+    treasury.balance += today.net();
+    if k < DAYS_PER_WEEK {
+        *payday = today;
+        return;
+    }
     *district_income = DistrictIncome {
-        week: tick.0 / TICKS_PER_WEEK,
+        week: day / DAYS_PER_WEEK,
         rows,
     };
     // The week's transit money, summed by `cp_transit`, is booked and starts over (T-160).
@@ -187,7 +218,9 @@ pub fn settle_week(
         report.transit_upkeep = ledger.upkeep;
         *ledger = TransitLedger::default();
     }
-    treasury.balance += report.balance();
+    treasury.balance += report.transit_fares - report.transit_upkeep - report.loan_payments;
+    today.loans_week = report.loan_payments;
+    *payday = today;
     for loan in &mut state.loans {
         loan.pay_week();
     }
