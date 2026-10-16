@@ -1029,3 +1029,165 @@ mod zone_chunks {
         assert_eq!(seen.len(), frames);
     }
 }
+
+/// BUG-038: in a real new game (entry highway, only the start tile owned) a street built from the
+/// end of the highway has valid zone cells beside it.
+#[test]
+fn a_street_from_the_new_game_highway_has_zone_cells() {
+    use bevy::ecs::message::Messages;
+    use cp_core::CommandOutcome;
+    use cp_net::{ElevationMode, NetCommand, RoadPath};
+    use cp_sim::SimCommand;
+    let content =
+        Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
+    let t = terrain();
+    let mut sim = SimRunner::new(1);
+    sim.set_terrain(Arc::clone(&t));
+    sim.set_content(Arc::clone(&content));
+    sim.new_game().unwrap();
+    sim.tick_once();
+    let stub = t.meta().entry_road.as_ref().expect("entry road").stub_end();
+    let (tx, tz) = t.meta().start_tile;
+    let centre = bevy_math::Vec2::new(
+        (tx as f32 + 0.5) * cp_terrain::TILE_SIZE,
+        (tz as f32 + 0.5) * cp_terrain::TILE_SIZE,
+    );
+    let dir = (centre - stub).normalize();
+    let before = sim.view().overlays.zones.cells.len();
+    let tick = sim.tick();
+    sim.push_command(
+        SimCommand::Net(NetCommand::BuildRoad {
+            road: content.road_id("basic_2l").unwrap(),
+            path: RoadPath::Straight {
+                from: stub,
+                to: stub + dir * 160.0,
+            },
+            elevation: ElevationMode::Ground,
+        }),
+        tick,
+    );
+    sim.tick_once();
+    sim.tick_once();
+    let out: Vec<CommandOutcome> = sim
+        .world_mut()
+        .resource_mut::<Messages<CommandOutcome>>()
+        .drain()
+        .collect();
+    eprintln!("outcome {:?}", out.last().map(|o| &o.result));
+    let view = sim.view();
+    let valid = view.overlays.zones.cells.iter().filter(|c| c.valid).count();
+    eprintln!(
+        "stub {stub:?} segments={} cells {before} -> {} valid={valid}",
+        view.net.segments().count(),
+        view.overlays.zones.cells.len()
+    );
+    assert!(valid > 0, "no valid zone cell beside the new street");
+}
+
+/// BUG-038, whole path: a street built while the app runs makes the overlay systems spawn visible
+/// zone outline and fill entities with vertices, and a second change rebuilds them.
+#[test]
+fn a_street_built_at_runtime_gets_visible_zone_layers() {
+    use bevy::asset::AssetPlugin;
+    use bevy::ecs::message::Messages;
+    use cp_core::CommandOutcome;
+    use cp_net::{ElevationMode, NetCommand, RoadPath};
+    use cp_sim::SimCommand;
+    let content =
+        Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
+    let t = terrain();
+    let mut sim = SimRunner::new(1);
+    sim.set_terrain(Arc::clone(&t));
+    sim.set_content(Arc::clone(&content));
+    sim.new_game().unwrap();
+    sim.tick_once();
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .init_asset::<Mesh>()
+        .init_asset::<crate::material::VertexColorMaterial>()
+        .init_resource::<OverlayState>()
+        .init_resource::<ZoningMode>()
+        .init_resource::<OverlayLayers>()
+        .add_systems(
+            Update,
+            (sync_overlay_meshes, apply_overlay_visibility).chain(),
+        );
+    app.world_mut().spawn((
+        Camera3d::default(),
+        Transform::from_xyz(5120.0, 150.0, 4400.0)
+            .looking_at(Vec3::new(5120.0, 0.0, 4500.0), Vec3::Y),
+    ));
+    app.insert_resource(sim.view());
+    for _ in 0..3 {
+        app.update();
+    }
+    let layers = |app: &mut App| -> Vec<(bool, bool, usize)> {
+        let w = app.world_mut();
+        let mut q = w.query::<(&OverlayLayer, Option<&ZoneOutlines>, &Visibility, &Mesh3d)>();
+        let found: Vec<_> = q
+            .iter(w)
+            .filter(|(l, ..)| l.0 == Overlay::Zones)
+            .map(|(_, o, v, m)| (o.is_some(), *v == Visibility::Visible, m.0.id()))
+            .collect();
+        let meshes = w.resource::<Assets<Mesh>>();
+        found
+            .into_iter()
+            .map(|(o, v, id)| {
+                let n = meshes.get(id).map_or(0, |m| m.count_vertices());
+                (o, v, n)
+            })
+            .collect()
+    };
+    let before = layers(&mut app);
+
+    let stub = t.meta().entry_road.as_ref().unwrap().stub_end();
+    let (tx, tz) = t.meta().start_tile;
+    let centre = bevy_math::Vec2::new(
+        (tx as f32 + 0.5) * cp_terrain::TILE_SIZE,
+        (tz as f32 + 0.5) * cp_terrain::TILE_SIZE,
+    );
+    let dir = (centre - stub).normalize();
+    let tick = sim.tick();
+    sim.push_command(
+        SimCommand::Net(NetCommand::BuildRoad {
+            road: content.road_id("basic_2l").unwrap(),
+            path: RoadPath::Straight {
+                from: stub,
+                to: stub + dir * 160.0,
+            },
+            elevation: ElevationMode::Ground,
+        }),
+        tick,
+    );
+    sim.tick_once();
+    sim.tick_once();
+    sim.world_mut()
+        .resource_mut::<Messages<CommandOutcome>>()
+        .clear();
+    app.insert_resource(sim.view());
+    for _ in 0..10 {
+        app.update();
+    }
+    let after = layers(&mut app);
+    eprintln!("zone layers before {before:?} after {after:?}");
+    assert!(
+        after
+            .iter()
+            .any(|&(outline, visible, n)| outline && visible && n > 0),
+        "no visible zone outline mesh: {after:?}"
+    );
+    // Zoning mode (the Zones tool): the unpainted cells are filled too.
+    app.world_mut().resource_mut::<ZoningMode>().0 = true;
+    for _ in 0..10 {
+        app.update();
+    }
+    let zoning = layers(&mut app);
+    eprintln!("zoning mode {zoning:?}");
+    assert!(
+        zoning
+            .iter()
+            .any(|&(outline, visible, n)| !outline && visible && n > 0),
+        "no visible zone fill mesh in zoning mode: {zoning:?}"
+    );
+}

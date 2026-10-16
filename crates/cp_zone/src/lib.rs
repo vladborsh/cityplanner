@@ -39,9 +39,19 @@ pub fn update_zones(
     if !net.is_changed() && grid.index_ready() && !grid.terrain_dirty() {
         return;
     }
-    let db = &content.0;
+    sync_grid(&mut grid, &net, &content.0, &junctions);
+}
+
+/// Brings `grid` in line with `net` (what [`update_zones`] does once the net changed). Also used
+/// by `cp_sim` on a clone while the sim is paused, so a road built then shows its cells.
+pub fn sync_grid(
+    grid: &mut ZoneGrid,
+    net: &NetGraph,
+    db: &cp_content::ContentDb,
+    junctions: &JunctionGeometry,
+) {
     grid.sync(
-        &net,
+        net,
         &|id| {
             let d = db.road(id);
             RoadZoning {
@@ -49,7 +59,7 @@ pub fn update_zones(
                 half_width: d.width / 2.0,
             }
         },
-        &|id, seg| zoned_curve(&junctions, id, seg),
+        &|id, seg| zoned_curve(junctions, id, seg),
     );
 }
 

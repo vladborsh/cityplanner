@@ -67,6 +67,11 @@ pub struct SimRunner {
     /// `SimView::service_state` cache, keyed by `ServiceState::revision`.
     pub(crate) service_state_cache: std::sync::Mutex<crate::view::ServiceStateCache>,
     pub(crate) city_cache: std::sync::Mutex<crate::view::CityCache>,
+    /// `(junction version, nodes, segments)` of the net the last tick left the zone grid synced
+    /// with. While it differs from the net now (a road built while paused: no tick, so no zone
+    /// sync) the view shows a synced clone instead (BUG-038).
+    pub(crate) zones_synced: Option<crate::view::NetKey>,
+    pub(crate) zone_preview_cache: std::sync::Mutex<crate::view::ZonePreviewCache>,
 }
 
 fn multiplier(speed: SimSpeed) -> u128 {
@@ -333,7 +338,7 @@ impl SimRunner {
                 .after(crate::stats::update_city_stats),
         );
         schedule.add_systems(update_checksum.in_set(ChecksumSet));
-        Self {
+        let mut runner = Self {
             world,
             schedule,
             accumulator: 0,
@@ -349,7 +354,11 @@ impl SimRunner {
             service_cache: Default::default(),
             service_state_cache: Default::default(),
             city_cache: Default::default(),
-        }
+            zones_synced: None,
+            zone_preview_cache: Default::default(),
+        };
+        runner.zones_synced = runner.net_key();
+        runner
     }
 
     pub fn add_plugin(&mut self, plugin: &impl SimPlugin) -> &mut Self {
@@ -431,6 +440,7 @@ impl SimRunner {
             .update();
         self.schedule.run(&mut self.world);
         self.world.resource_mut::<Tick>().advance();
+        self.zones_synced = self.net_key();
     }
 
     /// Advances by `dt` of frame time at the current speed, stopping as soon as a command

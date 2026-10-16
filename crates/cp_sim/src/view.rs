@@ -219,6 +219,10 @@ pub(crate) type UtilitiesCache = Option<(u64, Arc<UtilityGraph>)>;
 pub(crate) type TransitCache = Option<Arc<cp_transit::TransitView>>;
 
 /// `(junction version, nodes, segments, snapshot)` of the last `SimView::net`.
+/// `(junction version, node count, segment count)`: changes when the net does.
+pub(crate) type NetKey = (u64, usize, usize);
+/// The zone grid synced with the net as of `NetKey` (see `SimRunner::zones_now`).
+pub(crate) type ZonePreviewCache = Option<(NetKey, Arc<cp_zone::ZoneGrid>)>;
 pub(crate) type NetCache = Option<(u64, usize, usize, Arc<NetGraph>)>;
 
 impl SimRunner {
@@ -242,6 +246,46 @@ impl SimRunner {
     /// road defs for `NetCommand`). Call before pushing commands that need content.
     pub fn set_content(&mut self, content: Arc<ContentDb>) {
         self.world_mut().insert_resource(SimContent(content));
+    }
+
+    /// Key of the net as it is now (`None` without the resources).
+    pub(crate) fn net_key(&self) -> Option<NetKey> {
+        let j = self.world().get_resource::<JunctionGeometry>()?;
+        let g = self.world().get_resource::<NetGraph>()?;
+        Some((j.version(), g.node_count(), g.segment_count()))
+    }
+
+    /// The zone grid the clients should draw: the world's, or, when the net changed since the
+    /// last tick (a road built while paused; the zone sync runs in the tick), a clone synced
+    /// with the net. Derived, never saved or hashed (BUG-038).
+    pub(crate) fn zones_now(&self) -> Option<Arc<cp_zone::ZoneGrid>> {
+        let now = self.net_key()?;
+        if self.zones_synced.is_none_or(|k| k == now) {
+            return None;
+        }
+        let mut cache = self.zone_preview_cache.lock().expect("zone preview");
+        if let Some((k, grid)) = cache.as_ref()
+            && *k == now
+        {
+            return Some(Arc::clone(grid));
+        }
+        let w = self.world();
+        let content = w.get_resource::<cp_content::SimContent>()?;
+        let mut grid = w.get_resource::<cp_zone::ZoneGrid>()?.clone();
+        if let Some(t) = w.get_resource::<cp_terrain::SimTerrain>()
+            && !grid.has_terrain(&t.0)
+        {
+            grid.set_terrain(Arc::clone(&t.0));
+        }
+        cp_zone::sync_grid(
+            &mut grid,
+            w.get_resource::<NetGraph>()?,
+            &content.0,
+            w.get_resource::<JunctionGeometry>()?,
+        );
+        let grid = Arc::new(grid);
+        *cache = Some((now, Arc::clone(&grid)));
+        Some(grid)
     }
 
     /// The network snapshot for `SimView::net`, cached while the network is unchanged.
@@ -279,7 +323,15 @@ impl SimRunner {
         }
         let (land_value, pollution) = self.land_overlays();
         OverlayData {
-            zones: zone_snapshot(self.world().get_resource::<cp_zone::ZoneGrid>(), &mut cache),
+            zones: {
+                let preview = self.zones_now();
+                zone_snapshot(
+                    preview
+                        .as_deref()
+                        .or(self.world().get_resource::<cp_zone::ZoneGrid>()),
+                    &mut cache,
+                )
+            },
             road_load: Arc::new(road_load),
             land_value,
             pollution,
@@ -343,7 +395,10 @@ impl SimRunner {
 
     /// The zone snapshot for `SimView::zones`, cached while the grid's revision is unchanged.
     fn zone_snapshot(&self) -> Arc<cp_zone::ZoneGrid> {
-        let grid = self.world().get_resource::<cp_zone::ZoneGrid>();
+        let preview = self.zones_now();
+        let grid = preview
+            .as_deref()
+            .or(self.world().get_resource::<cp_zone::ZoneGrid>());
         let rev = grid.map_or(0, cp_zone::ZoneGrid::revision);
         let mut cache = self.zone_grid_cache.lock().expect("zone cache");
         if let Some((r, snap)) = cache.as_ref()
