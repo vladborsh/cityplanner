@@ -42,7 +42,7 @@
 //! | `Tick`, `SimRng`, `SimSpeed`, `CommandQueue`, `CommandLog` | yes |
 //! | `TileOwnership`, `NetGraph`, `ZoneGrid` (occupancy is rebuilt from the buildings), `BuildingGrid` (incl. the removed ids), `UtilityGraph`, `CitizenGrid` (occupancy tables rebuilt), `TripBook`, `Agents` (pools, lane state, segment load; drive tables rebuilt) | yes |
 //! | `PathService` (requests in flight) | yes, as `SavedPaths` |
-//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `DistrictMap`, `Districts` | yes |
+//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `DistrictMap`, `Districts` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
 //! | `SimLimits`, `RoutineSettings`, `AgentSettings`, `SimContent`, `SimTerrain` | configuration of the runner, not of the game |
@@ -67,7 +67,7 @@ use cp_citizen::{CitizenGrid, TripBook};
 use cp_content::{BuildingDefId, ContentDb, DefKind, RoadDefId};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
 use cp_district::{DistrictMap, Districts};
-use cp_economy::{Decay, DemandAcc, EconomyState, LandGrids};
+use cp_economy::{Decay, DemandAcc, EconomyState, LandGrids, WorkerShortage};
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
 use cp_terrain::TileOwnership;
@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 22;
+pub const FORMAT_VERSION: u32 = 23;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -208,6 +208,8 @@ pub struct SaveData {
     /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
     /// sim reads the values of that boundary until the next one. Added in v22.
     pub coverage: cp_service::ServiceCoverage,
+    /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
+    pub shortage: WorkerShortage,
 }
 
 impl SaveData {
@@ -271,6 +273,7 @@ impl SaveData {
             districts: world.resource::<Districts>().clone(),
             service_state: world.resource::<cp_service::ServiceState>().clone(),
             coverage: world.resource::<cp_service::ServiceCoverage>().clone(),
+            shortage: world.resource::<WorkerShortage>().clone(),
         }
     }
 
@@ -309,6 +312,7 @@ impl SaveData {
         world.insert_resource(self.district_map);
         world.insert_resource(self.districts);
         world.insert_resource(self.service_state);
+        world.insert_resource(self.shortage);
         // The snapshot cache is keyed by the generation, which a load must change.
         let mut coverage = self.coverage;
         coverage.generation = world

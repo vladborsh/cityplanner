@@ -23,7 +23,12 @@
 //! (its households and workers leave on the citizens' next update), after `demolish_days` it
 //! is demolished through [`cp_building::demolish_building`] (the removed-ids list then purges
 //! the households, jobs, trips and agents that pointed at it). If the problems go away first,
-//! the entry is dropped and an abandoned building is active again.
+//! the entry is dropped and an abandoned building is active again. Only the flags in the
+//! balance `decay_mask` count (`NO_WORKERS` is off by default).
+//!
+//! **Workers.** An `Active` workplace with fewer filled jobs than `no_workers_ratio` of its
+//! slots for `no_workers_days` gets `NO_WORKERS` (timer in [`WorkerShortage`]); more workers
+//! clear it.
 
 use std::collections::BTreeMap;
 
@@ -47,8 +52,6 @@ use crate::land::{LandGrids, LandInputs};
 
 /// Ticks between two passes.
 pub const CITY_PERIOD: u64 = 256;
-/// Every flag bit `cp_building` defines: any of them is a problem.
-pub const PROBLEM_MASK: u8 = 0xFF;
 
 /// The abandonment timers: for each building in trouble, the tick of the pass that first saw
 /// the trouble. Serialized sim state.
@@ -76,6 +79,13 @@ impl Decay {
             since: BTreeMap::new(),
         }
     }
+}
+
+/// When each Active workplace first had too few workers (`no_workers_ratio`), for the
+/// `NO_WORKERS` flag (T-145). Serialized sim state (saved since v23).
+#[derive(Resource, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct WorkerShortage {
+    pub since: BTreeMap<BuildingId, Tick>,
 }
 
 /// The level `value` earns against ascending `thresholds` (level 1 is always earned).
@@ -201,6 +211,7 @@ pub fn update_city(
     mut zones: ResMut<ZoneGrid>,
     mut grids: ResMut<LandGrids>,
     mut decay: ResMut<Decay>,
+    mut shortage: ResMut<WorkerShortage>,
 ) {
     if tick.0 == 0 || !tick.0.is_multiple_of(CITY_PERIOD) {
         return;
@@ -219,18 +230,40 @@ pub fn update_city(
     let workers = worker_education(&citizens);
     let ids: Vec<BuildingId> = buildings.iter().map(|(id, _)| id).collect();
     decay.since.retain(|id, _| buildings.get(*id).is_some());
+    shortage.since.retain(|id, _| buildings.get(*id).is_some());
+    let mask = bal.decay_mask;
+    let short_after = (bal.no_workers_days * TICKS_PER_DAY as f32) as u64;
     let decaying = decay.enabled;
     let abandon = (bal.abandon_days * TICKS_PER_DAY as f32) as u64;
     let demolish = (bal.demolish_days * TICKS_PER_DAY as f32) as u64;
     let now = tick.0;
     for id in ids {
         let Some(b) = buildings.get(id) else { continue };
-        let (state, flags, pos) = (b.state, b.flags, b.pos);
+        let (state, pos) = (b.state, b.pos);
         if !matches!(state, BuildingState::Active | BuildingState::Abandoned) {
             decay.since.remove(&id);
+            shortage.since.remove(&id);
             continue;
         }
-        let problem = decaying && flags.0 & PROBLEM_MASK != 0;
+        if state == BuildingState::Active {
+            let def = db.building(b.def);
+            let slots: u32 = def.jobs.iter().map(|&j| u32::from(j)).sum();
+            let filled = workers.get(id).map_or(0, |(_, n)| n);
+            let short = def.service.is_none()
+                && slots > 0
+                && (filled as f32) < bal.no_workers_ratio * slots as f32;
+            if short {
+                let since = shortage.since.entry(id).or_insert(Tick(now)).0;
+                if now - since >= short_after {
+                    buildings.set_flag(id, BuildingFlags::NO_WORKERS, true);
+                }
+            } else {
+                shortage.since.remove(&id);
+                buildings.set_flag(id, BuildingFlags::NO_WORKERS, false);
+            }
+        }
+        let flags = buildings.get(id).expect("checked").flags;
+        let problem = decaying && flags.0 & mask != 0;
         if !decaying {
             // Hook off: nothing is timed, abandoned or demolished.
         } else if !problem {

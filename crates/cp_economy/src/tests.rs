@@ -669,6 +669,7 @@ mod city {
         w.init_resource::<ZoneGrid>();
         w.init_resource::<LandGrids>();
         w.init_resource::<Decay>();
+        w.init_resource::<crate::WorkerShortage>();
         let mut s = Schedule::default();
         s.add_systems(update_city);
         (w, s, db)
@@ -804,6 +805,47 @@ mod city {
     fn run_pass(w: &mut World, s: &mut Schedule, tick: u64) {
         w.insert_resource(Tick(tick));
         s.run(w);
+    }
+
+    /// T-145: a factory without workers gets NO_WORKERS after three days, is not abandoned
+    /// (the flag is off in the default `decay_mask`), and loses the flag when workers come.
+    #[test]
+    fn a_workplace_without_workers_is_flagged_after_three_days_and_cleared_when_staffed() {
+        let (mut w, mut s, db) = world();
+        let factory = at(&mut w, &db, "factory", BuildingState::Active, 100.0);
+        let home = at(&mut w, &db, "house", BuildingState::Active, 200.0);
+        let flag = |w: &World| {
+            w.resource::<BuildingGrid>()
+                .get(factory)
+                .unwrap()
+                .flags
+                .has(BuildingFlags::NO_WORKERS)
+        };
+        let p = CITY_PERIOD;
+        run_pass(&mut w, &mut s, p);
+        assert!(!flag(&w), "just seen");
+        run_pass(&mut w, &mut s, p + 3 * TICKS_PER_DAY - CITY_PERIOD);
+        assert!(!flag(&w), "2.94 days");
+        run_pass(&mut w, &mut s, p + 3 * TICKS_PER_DAY);
+        assert!(flag(&w), "3 days");
+        run_pass(&mut w, &mut s, p + 20 * TICKS_PER_DAY);
+        let b = w.resource::<BuildingGrid>().get(factory).unwrap();
+        assert_eq!(b.state, BuildingState::Active, "not in the decay mask");
+        assert!(w.resource::<Decay>().since.is_empty());
+        {
+            let mut c = w.resource_mut::<CitizenGrid>();
+            c.ensure_derived();
+            for _ in 0..2 {
+                c.add_household(home, 0, Tick(0), &[(30 * 365, 0, false)]);
+            }
+            let staff: Vec<_> = c.citizens().map(|(id, _)| id).collect();
+            for id in staff {
+                c.set_job(id, factory, 0);
+            }
+        }
+        run_pass(&mut w, &mut s, p + 21 * TICKS_PER_DAY);
+        assert!(!flag(&w), "half the slots are filled");
+        assert!(w.resource::<crate::WorkerShortage>().since.is_empty());
     }
 
     /// Timeline of a building with no water: first seen at pass P, abandoned 7 days later,

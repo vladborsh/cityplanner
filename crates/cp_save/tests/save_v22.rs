@@ -56,7 +56,6 @@ fn the_v21_fixture_loads_with_empty_service_state_and_round_trips() {
         read_header(&again).unwrap().0.format_version,
         FORMAT_VERSION
     );
-    assert_eq!(FORMAT_VERSION, 22);
     let l2 = load_with_map(&again, content.content_hash(), h.map_hash).unwrap();
     assert_eq!(l.data, l2.data);
 }

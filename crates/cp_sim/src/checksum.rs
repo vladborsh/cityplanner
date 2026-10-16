@@ -112,6 +112,11 @@ pub(crate) fn economy_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_economy::DemandAcc>());
     h.write_serialized(world.resource::<cp_economy::LandGrids>());
     h.write_serialized(world.resource::<cp_economy::Decay>());
+    // Absent when empty, so states without a shortage keep the checksum they had before v23.
+    let shortage = world.resource::<cp_economy::WorkerShortage>();
+    if !shortage.since.is_empty() {
+        h.write_serialized(shortage);
+    }
 }
 
 /// Checksum part of the districts: the cell map and the district records.

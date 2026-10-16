@@ -121,6 +121,7 @@ impl SimRunner {
         world.init_resource::<cp_economy::DemandAcc>();
         world.init_resource::<cp_economy::LandGrids>();
         world.init_resource::<cp_economy::Decay>();
+        world.init_resource::<cp_economy::WorkerShortage>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);

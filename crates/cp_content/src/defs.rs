@@ -114,6 +114,13 @@ pub struct Balance {
     /// building is abandoned, and until it is demolished (counted from the first problem).
     pub abandon_days: f32,
     pub demolish_days: f32,
+    /// Problem flags (`BuildingFlags` bits) that count towards abandonment; the others only
+    /// show. Default: all but `NO_WORKERS` (T-145).
+    pub decay_mask: u8,
+    /// A workplace with fewer filled jobs than this share of its slots for `no_workers_days`
+    /// game days gets `NO_WORKERS` (T-145).
+    pub no_workers_ratio: f32,
+    pub no_workers_days: f32,
     /// Weekly tax of one household living in a residential building of level 1..=5 at a 100%
     /// rate (T-128).
     pub tax_household: [f32; 5],
@@ -165,6 +172,8 @@ impl Balance {
             self.land_noise_weight,
             self.abandon_days,
             self.demolish_days,
+            self.no_workers_ratio,
+            self.no_workers_days,
         ];
         v.extend(self.level_res_land);
         v.extend(self.level_com_land);
@@ -211,6 +220,9 @@ impl Default for Balance {
             level_checks: 3,
             abandon_days: 7.0,
             demolish_days: 14.0,
+            decay_mask: 0xFB,
+            no_workers_ratio: 0.5,
+            no_workers_days: 3.0,
             tax_household: [110.0, 140.0, 175.0, 215.0, 260.0],
             tax_job: [30.0, 45.0, 65.0, 90.0],
             level_mul: [1.0, 1.2, 1.45],

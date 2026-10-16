@@ -49,6 +49,12 @@ Balance((
     // Days of an unbroken problem until abandoned, and until demolished (from the first problem).
     abandon_days: 7.0,
     demolish_days: 14.0,
+    // Flags that count towards abandonment (bits: 1 water, 2 power, 4 workers, 8 customers,
+    // 16 goods, 32 sewage, 64 road, 128 path). 251 = all but no-workers. // tune later
+    decay_mask: 251,
+    // NO_WORKERS: filled jobs below this share of the slots for this many days. // tune later
+    no_workers_ratio: 0.5,
+    no_workers_days: 3.0,
 
     // --- Tax (system-design §16 M2 A): weekly, at a 100% rate; the city rate scales it ---
     // Per household living in a residential building of level 1..5. // tune later

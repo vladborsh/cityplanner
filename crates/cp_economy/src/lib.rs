@@ -15,7 +15,7 @@ pub mod week;
 
 pub use command::{EconomyCommand, EconomyError, apply};
 pub use demand::{DemandAcc, smooth, update_demand};
-pub use growth::{CITY_PERIOD, Decay, PROBLEM_MASK, level_for, update_city};
+pub use growth::{CITY_PERIOD, Decay, WorkerShortage, level_for, update_city};
 pub use land::{CELL_M, LandGrids, LandInputs, SIDE};
 pub use state::{
     BUDGET_DEFAULT, BUDGET_MAX, BUDGET_MIN, BUDGETED, Budgets, DistrictIncome, EconomyState, Loan,
