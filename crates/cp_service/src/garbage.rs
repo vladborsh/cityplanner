@@ -17,7 +17,7 @@ use cp_net::NetGraph;
 use cp_traffic::{RunState, ServiceRuns};
 
 use crate::coverage::{COVERAGE_PERIOD, ServiceCoverage};
-use crate::facility::nearest_facility;
+use crate::facility::FacilityFinder;
 use crate::state::{ServiceProblems, ServiceState};
 
 /// Passes a building gets per game day (one every [`COVERAGE_PERIOD`] ticks).
@@ -42,6 +42,7 @@ pub fn update_garbage(
     let balance = db.balance();
     let bucket = tick.0 % COVERAGE_PERIOD;
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
+    let mut finder = None;
     for (id, b) in buildings.iter() {
         if u64::from(id.index) % COVERAGE_PERIOD != bucket || b.state != BuildingState::Active {
             continue;
@@ -72,8 +73,11 @@ pub fn update_garbage(
             (Some(r), None) => {
                 if garbage as f32 >= balance.garbage_truck_min
                     && coverage.coverage_of(ServiceKind::Garbage, b) > 0.0
-                    && let Some(facility) =
-                        nearest_facility(&net, &buildings, db, &state, ServiceKind::Garbage, id)
+                    && let Some(facility) = finder
+                        .get_or_insert_with(|| {
+                            FacilityFinder::new(&net, &buildings, db, ServiceKind::Garbage)
+                        })
+                        .nearest(&state, id)
                 {
                     r.start(VehicleKind::Truck, facility, id);
                 }
@@ -83,8 +87,11 @@ pub fn update_garbage(
         if hand_over_now
             && garbage > 0
             && coverage.coverage_of(ServiceKind::Garbage, b) > 0.0
-            && let Some(facility) =
-                nearest_facility(&net, &buildings, db, &state, ServiceKind::Garbage, id)
+            && let Some(facility) = finder
+                .get_or_insert_with(|| {
+                    FacilityFinder::new(&net, &buildings, db, ServiceKind::Garbage)
+                })
+                .nearest(&state, id)
         {
             let svc = buildings
                 .get(facility)

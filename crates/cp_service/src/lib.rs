@@ -18,7 +18,8 @@ pub use coverage::{
 };
 pub use education::update_education;
 pub use facility::{
-    nearest_facility, nearest_facility_with, purge_removed_services, reset_daily_capacity,
+    FacilityFinder, nearest_facility, nearest_facility_with, purge_removed_services,
+    reset_daily_capacity,
 };
 pub use fire::update_fire;
 pub use garbage::update_garbage;

@@ -222,3 +222,49 @@ fn demolishing_a_building_drops_its_service_records() {
     let st = world.resource::<ServiceState>();
     assert!(st.get(clinic).is_none() && st.facility(clinic).is_none());
 }
+
+#[test]
+fn the_bounded_search_finds_what_a_full_scan_of_distances_finds() {
+    let (mut world, _, _, segs) = town();
+    let clinics: Vec<_> = [(1, 0.2), (1, 0.8), (3, 0.5), (2, 0.5)]
+        .into_iter()
+        .map(|(s, t)| put(&mut world, "clinic", segs[s], t))
+        .collect();
+    let db = world.resource::<SimContent>().0.clone();
+    let (net, grid) = (
+        world.resource::<NetGraph>(),
+        world.resource::<BuildingGrid>(),
+    );
+    let g = crate::coverage::RoadGraph::new(net);
+    for (s, &segment) in segs.iter().enumerate() {
+        for t in [0.0, 0.3, 0.5, 1.0] {
+            let origin = AccessPoint { segment, t };
+            let dist = g.node_distances(origin, f32::INFINITY);
+            let mut want: Option<(f32, BuildingId)> = None;
+            for (id, b) in grid.iter() {
+                if db.building(b.def).service.is_none() {
+                    continue;
+                }
+                let d = g.distance_to(&dist, origin, b.access().unwrap());
+                if want.is_none_or(|(bd, _)| d < bd) {
+                    want = Some((d, id));
+                }
+            }
+            let mut me = grid.get(clinics[0]).unwrap().clone();
+            me.def = db.building_id("house").unwrap();
+            me.set_access(Some(origin));
+            let mut grid2 = grid.clone();
+            let house = grid2.insert(me);
+            let got = nearest_facility_with(
+                net,
+                &grid2,
+                &db,
+                world.resource::<ServiceState>(),
+                ServiceKind::Health,
+                house,
+                |_, _| true,
+            );
+            assert_eq!(got, want.map(|(d, id)| (id, d)), "from segment {s} t {t}");
+        }
+    }
+}

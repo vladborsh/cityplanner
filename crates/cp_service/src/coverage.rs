@@ -11,7 +11,8 @@
 //! load in the middle of a cycle must see those same values even if a road or a building
 //! changed since. [`rebuild_coverage`] is only for saves that carry none (formats before 22).
 
-use std::collections::BTreeMap;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap};
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Res, ResMut};
@@ -123,37 +124,92 @@ impl<'a> RoadGraph<'a> {
     /// Road distance from the access point to every node; unreached nodes and nodes beyond
     /// `limit` stay infinite. Roads are walked without regard to direction.
     pub fn node_distances(&self, from: AccessPoint, limit: f32) -> Vec<f32> {
-        let mut dist = vec![f32::INFINITY; self.adj.len()];
+        self.search(from, limit, |_, _| f32::INFINITY)
+    }
+
+    /// Heap Dijkstra behind [`Self::node_distances`]; see [`Self::search_scratch`].
+    pub(crate) fn search(
+        &self,
+        from: AccessPoint,
+        limit: f32,
+        settled: impl FnMut(usize, f32) -> f32,
+    ) -> Vec<f32> {
+        let mut sc = Scratch::new(self);
+        self.search_scratch(&mut sc, from, limit, settled);
+        sc.dist
+    }
+
+    /// Heap Dijkstra into `sc.dist`. `settled(node, d)` is called as each node gets its final
+    /// distance and returns a bound: the search stops at the first node farther than the bound,
+    /// so every node at or below it is final. Ties pop by node index.
+    pub(crate) fn search_scratch(
+        &self,
+        sc: &mut Scratch,
+        from: AccessPoint,
+        limit: f32,
+        mut settled: impl FnMut(usize, f32) -> f32,
+    ) {
+        sc.reset();
         let (Some(start), Some(s)) = (
             self.net.segment(from.segment),
             self.offset(from.segment, from.t),
         ) else {
-            return dist;
+            return;
         };
         let (a, b) = (start.start.index as usize, start.end.index as usize);
-        dist[a] = dist[a].min(s);
-        dist[b] = dist[b].min(start.length - s);
-        let mut done = vec![false; dist.len()];
-        // Dijkstra with a linear scan: the graphs are small and this runs every 64 ticks.
-        loop {
-            let mut best = None;
-            for (i, d) in dist.iter().enumerate() {
-                if !done[i] && d.is_finite() && best.is_none_or(|(_, bd)| *d < bd) {
-                    best = Some((i, *d));
-                }
+        sc.set(a, sc.dist[a].min(s));
+        sc.set(b, sc.dist[b].min(start.length - s));
+        // Non-negative f32 order as u32 bits.
+        let mut heap = BinaryHeap::new();
+        for n in [a, b] {
+            heap.push(Reverse((sc.dist[n].to_bits(), n)));
+        }
+        let mut bound = f32::INFINITY;
+        while let Some(Reverse((bits, u))) = heap.pop() {
+            let du = f32::from_bits(bits);
+            if sc.done[u] || du > sc.dist[u] {
+                continue;
             }
-            let Some((u, du)) = best else { break };
-            done[u] = true;
+            if du > bound {
+                break;
+            }
+            sc.done[u] = true;
+            bound = bound.min(settled(u, du));
             if du >= limit {
                 continue;
             }
             for &(v, len) in &self.adj[u] {
-                if du + len < dist[v] {
-                    dist[v] = du + len;
+                if du + len < sc.dist[v] {
+                    sc.set(v, du + len);
+                    heap.push(Reverse((sc.dist[v].to_bits(), v)));
                 }
             }
         }
-        dist
+    }
+
+    /// Lowers `tail[n]` for the ends of the segment of `to` to the metres from `to` to them.
+    pub(crate) fn add_tail(&self, tail: &mut [f32], touched: &mut Vec<usize>, to: AccessPoint) {
+        let (Some(seg), Some(s2)) = (self.net.segment(to.segment), self.offset(to.segment, to.t))
+        else {
+            return;
+        };
+        for (n, m) in [
+            (seg.start.index as usize, s2),
+            (seg.end.index as usize, seg.length - s2),
+        ] {
+            if tail[n].is_infinite() {
+                touched.push(n);
+            }
+            tail[n] = tail[n].min(m);
+        }
+    }
+
+    /// Distance along one segment between two access points on it.
+    pub(crate) fn same_segment(&self, a: AccessPoint, b: AccessPoint) -> f32 {
+        match (self.offset(a.segment, a.t), self.offset(b.segment, b.t)) {
+            (Some(x), Some(y)) => (x - y).abs(),
+            _ => f32::INFINITY,
+        }
     }
 
     /// Road distance from `from` (whose [`Self::node_distances`] are `dist`) to the access
@@ -267,5 +323,49 @@ impl ServicePlugin {
     pub fn init(world: &mut World) {
         world.init_resource::<ServiceCoverage>();
         world.init_resource::<crate::ServiceState>();
+    }
+}
+
+/// Reusable arrays of a search over one [`RoadGraph`]: only the nodes touched are reset.
+pub(crate) struct Scratch {
+    pub dist: Vec<f32>,
+    done: Vec<bool>,
+    touched: Vec<usize>,
+    pub tail: Vec<f32>,
+    pub tail_touched: Vec<usize>,
+}
+
+impl Scratch {
+    pub fn new(g: &RoadGraph) -> Self {
+        let n = g.adj.len();
+        Self {
+            dist: vec![f32::INFINITY; n],
+            done: vec![false; n],
+            touched: Vec::new(),
+            tail: vec![f32::INFINITY; n],
+            tail_touched: Vec::new(),
+        }
+    }
+
+    fn reset(&mut self) {
+        for &n in &self.touched {
+            self.dist[n] = f32::INFINITY;
+            self.done[n] = false;
+        }
+        self.touched.clear();
+    }
+
+    fn set(&mut self, n: usize, d: f32) {
+        if self.dist[n].is_infinite() {
+            self.touched.push(n);
+        }
+        self.dist[n] = d;
+    }
+
+    pub fn clear_tails(&mut self) {
+        for &n in &self.tail_touched {
+            self.tail[n] = f32::INFINITY;
+        }
+        self.tail_touched.clear();
     }
 }

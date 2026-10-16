@@ -15,9 +15,7 @@ use cp_citizen::CitizenGrid;
 use cp_content::{ServiceKind, SimContent};
 use cp_core::Tick;
 use cp_net::NetGraph;
-use cp_service::{
-    COVERAGE_PERIOD, ServiceCoverage, ServiceProblems, ServiceState, nearest_facility,
-};
+use cp_service::{COVERAGE_PERIOD, FacilityFinder, ServiceCoverage, ServiceProblems, ServiceState};
 
 /// Economy phase, after `update_health`.
 pub fn update_deathcare(
@@ -38,14 +36,18 @@ pub fn update_deathcare(
         .copied()
         .filter(|id| u64::from(id.index) % COVERAGE_PERIOD == bucket)
         .collect();
+    let mut finder = None;
     for id in homes {
         let mut dead = u32::from(grid.dead.get(&id).copied().unwrap_or(0));
         let covered = buildings
             .get(id)
             .is_some_and(|b| coverage.coverage_of(ServiceKind::Deathcare, b) > 0.0);
         while dead > 0 && covered {
-            let Some(station) =
-                nearest_facility(&net, &buildings, db, &state, ServiceKind::Deathcare, id)
+            let Some(station) = finder
+                .get_or_insert_with(|| {
+                    FacilityFinder::new(&net, &buildings, db, ServiceKind::Deathcare)
+                })
+                .nearest(&state, id)
             else {
                 break;
             };

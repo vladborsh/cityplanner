@@ -17,9 +17,7 @@ use cp_content::{ServiceKind, SimContent};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{SimRng, Tick};
 use cp_net::NetGraph;
-use cp_service::{
-    COVERAGE_PERIOD, ServiceCoverage, ServiceProblems, ServiceState, nearest_facility,
-};
+use cp_service::{COVERAGE_PERIOD, FacilityFinder, ServiceCoverage, ServiceProblems, ServiceState};
 
 use crate::land::LandGrids;
 
@@ -65,6 +63,7 @@ pub fn update_health(
     }
 
     // --- treatment ---
+    let mut finder = None;
     let bucket = tick.0 % COVERAGE_PERIOD;
     for (id, b) in buildings.iter() {
         if u64::from(id.index) % COVERAGE_PERIOD != bucket || b.state != BuildingState::Active {
@@ -76,8 +75,11 @@ pub fn update_health(
             let mut station = None;
             for cid in sick {
                 if station.is_none() {
-                    station =
-                        nearest_facility(&net, &buildings, db, &state, ServiceKind::Health, id);
+                    station = finder
+                        .get_or_insert_with(|| {
+                            FacilityFinder::new(&net, &buildings, db, ServiceKind::Health)
+                        })
+                        .nearest(&state, id);
                 }
                 let Some(s) = station else { break };
                 state.facility_mut(s).used_today += 1;

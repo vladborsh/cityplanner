@@ -2,13 +2,13 @@
 //! (§16 M2 D "Суточная ёмкость").
 
 use bevy_ecs::system::{Res, ResMut};
-use cp_building::{BuildingFlags, BuildingGrid, BuildingId, BuildingState};
+use cp_building::{AccessPoint, BuildingFlags, BuildingGrid, BuildingId, BuildingState};
 use cp_content::{ContentDb, ServiceDef, ServiceKind};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_net::NetGraph;
 
-use crate::coverage::RoadGraph;
+use crate::coverage::{RoadGraph, Scratch};
 use crate::state::{Facility, ServiceState};
 
 /// The nearest Active building of `kind` by road from building `from` that still has room:
@@ -40,38 +40,106 @@ pub fn nearest_facility_with(
     from: BuildingId,
     has_room: impl Fn(&Facility, &ServiceDef) -> bool,
 ) -> Option<(BuildingId, f32)> {
-    let origin = buildings.get(from)?.access()?;
-    let g = RoadGraph::new(net);
-    let dist = g.node_distances(origin, f32::INFINITY);
-    let mut best: Option<(f32, BuildingId)> = None;
-    for (id, b) in buildings.iter() {
-        if b.state != BuildingState::Active || b.flags.has(BuildingFlags::NO_POWER) {
-            continue;
+    FacilityFinder::new(net, buildings, db, kind).nearest_with(state, from, has_room)
+}
+
+/// Searches for the nearest facility of one kind many times in one system run: the road graph
+/// and the list of working facilities are built once; the room of each is read per search.
+pub struct FacilityFinder<'a> {
+    buildings: &'a BuildingGrid,
+    graph: RoadGraph<'a>,
+    /// Active, powered buildings of the kind in ascending id order.
+    cands: Vec<(BuildingId, AccessPoint, &'a ServiceDef)>,
+    scratch: Scratch,
+}
+
+impl<'a> FacilityFinder<'a> {
+    pub fn new(
+        net: &'a NetGraph,
+        buildings: &'a BuildingGrid,
+        db: &'a ContentDb,
+        kind: ServiceKind,
+    ) -> Self {
+        let mut cands = Vec::new();
+        for (id, b) in buildings.iter() {
+            if b.state != BuildingState::Active || b.flags.has(BuildingFlags::NO_POWER) {
+                continue;
+            }
+            let Some(to) = b.access() else { continue };
+            let Some(svc) = db
+                .building(b.def)
+                .service
+                .as_deref()
+                .and_then(|s| db.service_id(s))
+                .map(|s| db.service(s))
+            else {
+                continue;
+            };
+            if svc.kind == kind {
+                cands.push((id, to, svc));
+            }
         }
-        let Some(to) = b.access() else { continue };
-        let Some(svc) = db
-            .building(b.def)
-            .service
-            .as_deref()
-            .and_then(|s| db.service_id(s))
-            .map(|s| db.service(s))
-        else {
-            continue;
-        };
-        if svc.kind != kind {
-            continue;
-        }
-        let used = state.facility(id).copied().unwrap_or_default();
-        if !has_room(&used, svc) {
-            continue;
-        }
-        let d = g.distance_to(&dist, origin, to);
-        // Buildings come in ascending id order, so a strict `<` keeps the smaller id on a tie.
-        if d.is_finite() && best.is_none_or(|(bd, _)| d < bd) {
-            best = Some((d, id));
+        let graph = RoadGraph::new(net);
+        let scratch = Scratch::new(&graph);
+        Self {
+            buildings,
+            graph,
+            cands,
+            scratch,
         }
     }
-    best.map(|(d, id)| (id, d))
+
+    /// [`nearest_facility`] against the facilities this finder was built with.
+    pub fn nearest(&mut self, state: &ServiceState, from: BuildingId) -> Option<BuildingId> {
+        self.nearest_with(state, from, |used, svc| {
+            used.used_today < svc.capacity && (svc.storage == 0 || used.stored < svc.storage)
+        })
+        .map(|(id, _)| id)
+    }
+
+    /// [`nearest_facility_with`] against the facilities this finder was built with.
+    pub fn nearest_with(
+        &mut self,
+        state: &ServiceState,
+        from: BuildingId,
+        has_room: impl Fn(&Facility, &ServiceDef) -> bool,
+    ) -> Option<(BuildingId, f32)> {
+        let origin = self.buildings.get(from)?.access()?;
+        let g = &self.graph;
+        let open: Vec<(BuildingId, AccessPoint)> = self
+            .cands
+            .iter()
+            .filter(|(id, _, svc)| has_room(&state.facility(*id).copied().unwrap_or_default(), svc))
+            .map(|&(id, to, _)| (id, to))
+            .collect();
+        if open.is_empty() {
+            return None;
+        }
+        let sc = &mut self.scratch;
+        sc.clear_tails();
+        let mut bound = f32::INFINITY;
+        for &(_, to) in &open {
+            g.add_tail(&mut sc.tail, &mut sc.tail_touched, to);
+            if to.segment == origin.segment {
+                bound = bound.min(g.same_segment(origin, to));
+            }
+        }
+        let tail = std::mem::take(&mut sc.tail);
+        g.search_scratch(sc, origin, f32::INFINITY, |n, d| {
+            bound = bound.min(d + tail[n]);
+            bound
+        });
+        sc.tail = tail;
+        let mut best: Option<(f32, BuildingId)> = None;
+        for &(id, to) in &open {
+            let d = g.distance_to(&sc.dist, origin, to);
+            // Ascending ids, so a strict `<` keeps the smaller id on a tie.
+            if d.is_finite() && best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, id));
+            }
+        }
+        best.map(|(d, id)| (id, d))
+    }
 }
 
 /// Services phase: at the start of every game day the daily throughput of all facilities

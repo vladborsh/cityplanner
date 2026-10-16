@@ -9,9 +9,7 @@ use cp_content::{ServiceKind, SimContent, ZoneType};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_net::NetGraph;
-use cp_service::{
-    COVERAGE_PERIOD, ServiceCoverage, ServiceProblems, ServiceState, nearest_facility,
-};
+use cp_service::{COVERAGE_PERIOD, FacilityFinder, ServiceCoverage, ServiceProblems, ServiceState};
 
 use crate::land::LandGrids;
 
@@ -32,6 +30,7 @@ pub fn update_police(
     let bal = db.balance();
     let bucket = tick.0 % COVERAGE_PERIOD;
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
+    let mut finder = None;
     for (id, b) in buildings.iter() {
         if u64::from(id.index) % COVERAGE_PERIOD != bucket || b.state != BuildingState::Active {
             continue;
@@ -56,8 +55,11 @@ pub fn update_police(
         let mut crime = u64::from(held) + made;
         if crime > 0
             && cover > 0.0
-            && let Some(station) =
-                nearest_facility(&net, &buildings, db, &state, ServiceKind::Police, id)
+            && let Some(station) = finder
+                .get_or_insert_with(|| {
+                    FacilityFinder::new(&net, &buildings, db, ServiceKind::Police)
+                })
+                .nearest(&state, id)
         {
             let svc = buildings
                 .get(station)
