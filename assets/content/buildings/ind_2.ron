@@ -8,5 +8,5 @@ Building((
     jobs: (12, 12, 2, 0),
     consumption: {Water: 15.4, Sewage: 15.4, Power: 26.8},
     tax_base: 117.0,
-    styles: ["industrial_plant_l_b", "industrial_tank_works_b"],
+    styles: ["industrial_factory_saw_b", "industrial_mill_gabled_b", "industrial_plant_l_b", "industrial_tank_works_b"],
 ))

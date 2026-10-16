@@ -106,7 +106,7 @@ fn height_follows_floors_and_roof() {
         let b = building(def_id, &e.db, BuildingState::Active, 0);
         let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
         let st = facade_style(def.zone, def.level);
-        let (style, vp) = variant(&e.db, id(1), def);
+        let (style, vp) = variant_for(&e.db, id(1), &b, def);
         let walls = f32::from(vp.floors) * st.floor_h;
         let (_, hi) = extent(&p.far);
         let rise = hi.y - ground - PLINTH - walls;
@@ -638,7 +638,7 @@ fn style_cost_table() {
     for (def_id, def) in e.db.buildings().filter(|(_, d)| d.service.is_none()) {
         let b = building(def_id, &e.db, BuildingState::Active, 0);
         for i in 0..200u32 {
-            let (style, _) = variant(&e.db, id(i), def);
+            let (style, _) = variant_for(&e.db, id(i), &b, def);
             let p = build_building(id(i), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
             let r = rows.entry(style.id.clone()).or_default();
             r.0 += 1;

@@ -102,13 +102,42 @@ pub fn variant<'a>(
     id: BuildingId,
     def: &BuildingDef,
 ) -> (&'a StyleDef, VariantParams) {
+    variant_at(db, id, def, None)
+}
+
+/// [`variant`] for a placed building. On a lot the style also depends on where the lot is: a
+/// per-block offset plus the lot's column, so neighbours of one block (lots
+/// are a column or more apart) walk through the def's styles instead of drawing the same
+/// one by chance (BUG-030). Floors, fill and colours stay a hash of the id.
+pub fn variant_for<'a>(
+    db: &'a ContentDb,
+    id: BuildingId,
+    b: &Building,
+    def: &BuildingDef,
+) -> (&'a StyleDef, VariantParams) {
+    variant_at(db, id, def, b.lot().map(|l| (l.block.index, l.col)))
+}
+
+fn variant_at<'a>(
+    db: &'a ContentDb,
+    id: BuildingId,
+    def: &BuildingDef,
+    site: Option<(u32, u16)>,
+) -> (&'a StyleDef, VariantParams) {
     let h = variant_hash(id, def);
     // Independent draws: each takes its own 16 bits of two mixed words.
     let h2 = (h ^ (h >> 29)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
     let draw = |k: u32| (((if k < 4 { h } else { h2 }) >> ((k % 4) * 16)) & 0xffff) as usize;
+    let pick_style = match site {
+        Some((block, col)) => {
+            let base = (u64::from(block) + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 40;
+            base as usize + usize::from(col) + usize::from(col / 4)
+        }
+        None => draw(0),
+    };
     let style = def
         .styles
-        .get(draw(0) % def.styles.len().max(1))
+        .get(pick_style % def.styles.len().max(1))
         .and_then(|name| db.style_id(name))
         .map_or_else(|| db.style(StyleDefId(PLACEHOLDER_INDEX)), |s| db.style(s));
     let (f0, f1) = style.floors;
@@ -697,7 +726,7 @@ pub fn build_building(
         f32::from(b.size().0) * CELL_SIZE,
         f32::from(b.size().1) * CELL_SIZE,
     );
-    let (style_def, vp) = variant(db, id, def);
+    let (style_def, vp) = variant_for(db, id, b, def);
     // The volume covers `fill` of the lot area: both half-extents shrink by its square root.
     let shrink = vp.fill.clamp(0.0, 1.0).sqrt();
     let hu = ((w * 0.5 - SIDE_MARGIN) * shrink).max(1.0);
