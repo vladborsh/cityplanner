@@ -202,7 +202,7 @@ pub fn budget_window(
     )
     .show(ctx, |ui| {
         budget_contents(ui, view, draft, outbox);
-        crate::tiles::tile_section(ui, view, &mut draft.buy_tile, outbox);
+        crate::tiles::tile_section(ui, view, &mut draft.buy_tile);
     });
 }
 

@@ -24,6 +24,7 @@ use crate::chunk::{MeshData, select_lod, terrain_mesh_height};
 use crate::material::VertexColorMaterial;
 
 mod districts;
+mod land;
 mod service;
 mod tiles;
 mod utility;
@@ -61,10 +62,12 @@ pub enum Overlay {
     Fire,
     Police,
     Education,
+    /// Owned, buyable and locked tiles, with the prices (T-152).
+    Land,
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 14] = [
+    pub const ALL: [Overlay; 15] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
@@ -79,6 +82,7 @@ impl Overlay {
         Overlay::Fire,
         Overlay::Police,
         Overlay::Education,
+        Overlay::Land,
     ];
 
     /// The overlay of an M2 service kind; `None` for the utility kinds (their own overlays).
@@ -125,6 +129,7 @@ impl Overlay {
             Overlay::Fire => "Fire",
             Overlay::Police => "Police",
             Overlay::Education => "Education",
+            Overlay::Land => "Land",
         }
     }
 }
@@ -575,12 +580,14 @@ impl Plugin for OverlayPlugin {
             .init_resource::<tiles::TileLayers>()
             .init_resource::<DistrictsMode>()
             .init_resource::<districts::DistrictLayers>()
+            .init_resource::<land::LandLayer>()
             .add_systems(
                 Update,
                 (
                     sync_overlay_meshes,
                     tiles::sync_tile_layers,
                     districts::sync_district_layers,
+                    land::sync_land_layer,
                     apply_overlay_visibility,
                 )
                     .chain(),

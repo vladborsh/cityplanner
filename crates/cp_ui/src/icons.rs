@@ -83,6 +83,7 @@ icons! {
     OverlayFire => "overlay_fire",
     OverlayPolice => "overlay_police",
     OverlayEducation => "overlay_education",
+    OverlayLand => "overlay_land",
     RemovePipe => "remove_pipe",
     RemoveLine => "remove_line",
     // Zone types (T-099): one silhouette each.
@@ -194,6 +195,7 @@ pub fn overlay_icon(overlay: cp_render::Overlay) -> Icon {
         O::Fire => Icon::OverlayFire,
         O::Police => Icon::OverlayPolice,
         O::Education => Icon::OverlayEducation,
+        O::Land => Icon::OverlayLand,
     }
 }
 

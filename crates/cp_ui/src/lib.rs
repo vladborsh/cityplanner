@@ -20,6 +20,7 @@ pub mod files;
 pub mod frame;
 pub mod icons;
 pub mod info;
+pub mod land;
 pub mod metrics;
 pub mod milestone;
 pub mod net_summary;
@@ -70,7 +71,7 @@ impl Plugin for UiPlugin {
             )
             .add_systems(
                 EguiPrimaryContextPass,
-                (draw_ui, districts::draw_labels).chain(),
+                (draw_ui, districts::draw_labels, land::land_overlay).chain(),
             );
     }
 }
@@ -188,6 +189,7 @@ fn draw_ui(
     }
     file_window(ctx, &mut files);
     milestone::milestone_toast(ctx, &view, &mut toast);
+    land::confirm_window(ctx, &view, &mut state.budget.buy_tile, &mut outbox);
     info_panel(ctx, &inspected, &mut picked);
     Ok(())
 }

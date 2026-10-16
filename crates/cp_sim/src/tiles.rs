@@ -43,6 +43,38 @@ pub fn tile_price(content: Option<&ContentDb>, start: (u8, u8), tile: (u8, u8)) 
     Cost::from_units(prices[r - 1])
 }
 
+/// What a tile of the map is to the player.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TileState {
+    Owned,
+    /// Touches an owned tile and the milestone allows one more.
+    Buyable(Cost),
+    /// Touches an owned tile, but the milestone limit is reached.
+    NeedsMilestone,
+    /// Does not touch an owned tile.
+    Far,
+}
+
+/// The state of `tile` in `view`.
+pub fn tile_state(view: &crate::SimView, tile: (u8, u8)) -> TileState {
+    let (tx, tz) = (usize::from(tile.0), usize::from(tile.1));
+    if view.tiles.is_open(tx, tz) {
+        return TileState::Owned;
+    }
+    if !view.tiles.touches_owned(tx, tz) {
+        return TileState::Far;
+    }
+    let content = view.content.as_deref();
+    if view.tiles.open_count() >= tile_limit(content, view.progress) {
+        return TileState::NeedsMilestone;
+    }
+    let start = view
+        .terrain
+        .as_ref()
+        .map_or((2, 2), |t| t.meta().start_tile);
+    TileState::Buyable(tile_price(content, start, tile))
+}
+
 pub fn apply(world: &mut World, cmd: &TerrainCommand) -> Result<Cost, CommandError> {
     let TerrainCommand::BuyTile { tile } = *cmd;
     let (tx, tz) = (usize::from(tile.0), usize::from(tile.1));
