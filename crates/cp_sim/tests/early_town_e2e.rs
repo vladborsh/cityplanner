@@ -82,7 +82,8 @@ fn money_is_booked_every_hour_and_the_early_town_is_about_break_even_per_day() {
     );
     let pop = population(&sim);
     eprintln!("pop {pop} day {day:?}");
-    assert!((150..=700).contains(&pop), "{pop} residents");
+    // (Up from 700 with the block fit of T-185: facing strips now fill 8 rows, more cells grow.)
+    assert!((150..=1200).contains(&pop), "{pop} residents");
     assert!(
         day.net().0 * 20 >= -day.income().0,
         "balance per day {} against income {}",

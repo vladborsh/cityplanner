@@ -168,8 +168,8 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c - 60.0, -6.0, c + 10.0),
         ),
         "zones" => (
-            Vec3::new(c - 60.0, 260.0, c + 130.0),
-            Vec3::new(c - 60.0, 0.0, c + 30.0),
+            Vec3::new(c - 60.0, 300.0, c + 150.0),
+            Vec3::new(c - 60.0, 0.0, c - 10.0),
         ),
         "showcase" => (
             Vec3::new(c + 20.0, 330.0, c + 440.0),

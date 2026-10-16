@@ -2,19 +2,21 @@
 
 use bevy_math::Vec2;
 
-/// A cell footprint: a square of side `2 * half` with unit axes `u` (along the road) and
-/// `v` (away from it, perpendicular to `u`).
+/// A cell footprint: a rectangle with unit axes `u` (along the road) and `v` (away from it,
+/// perpendicular to `u`), `2 * half` long along `u` and `2 * half_v` deep along `v` (a square
+/// unless the cell was fitted to a block, T-185).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Obb {
     pub c: Vec2,
     pub u: Vec2,
     pub v: Vec2,
     pub half: f32,
+    pub half_v: f32,
 }
 
 impl Obb {
     pub fn corners(&self) -> [Vec2; 4] {
-        let (a, b) = (self.u * self.half, self.v * self.half);
+        let (a, b) = (self.u * self.half, self.v * self.half_v);
         [
             self.c - a - b,
             self.c + a - b,
@@ -25,7 +27,7 @@ impl Obb {
 
     /// Axis-aligned bounds `(min, max)`.
     pub fn aabb(&self) -> (Vec2, Vec2) {
-        let r = self.u.abs() * self.half + self.v.abs() * self.half;
+        let r = self.u.abs() * self.half + self.v.abs() * self.half_v;
         (self.c - r, self.c + r)
     }
 
@@ -37,14 +39,14 @@ impl Obb {
 
     /// Distance from `p` to the box (0 inside).
     pub fn distance_to_point(&self, p: Vec2) -> f32 {
-        let l = self.local(p).abs() - Vec2::splat(self.half);
+        let l = self.local(p).abs() - Vec2::new(self.half, self.half_v);
         l.max(Vec2::ZERO).length()
     }
 
     /// Distance from the segment `a`–`b` to the box (0 when they touch or cross).
     pub fn distance_to_segment(&self, a: Vec2, b: Vec2) -> f32 {
         let (la, lb) = (self.local(a), self.local(b));
-        if segment_hits_square(la, lb, self.half) {
+        if segment_hits_rect(la, lb, Vec2::new(self.half, self.half_v)) {
             return 0.0;
         }
         let mut best = self.distance_to_point(a).min(self.distance_to_point(b));
@@ -61,7 +63,7 @@ impl Obb {
         for axis in [self.u, self.v, other.u, other.v] {
             let proj = |o: &Obb| {
                 let c = o.c.dot(axis);
-                let r = o.half * (o.u.dot(axis).abs() + o.v.dot(axis).abs());
+                let r = o.half * o.u.dot(axis).abs() + o.half_v * o.v.dot(axis).abs();
                 (c - r, c + r)
             };
             let (a0, a1) = proj(self);
@@ -203,11 +205,11 @@ pub fn quad_segment_distance(q: &Quad, a: Vec2, b: Vec2) -> f32 {
     best
 }
 
-/// Does the segment `a`–`b` intersect the axis-aligned square `[-h, h]²`?
-fn segment_hits_square(a: Vec2, b: Vec2, h: f32) -> bool {
+/// Does the segment `a`–`b` intersect the axis-aligned rectangle `[-h.x, h.x] x [-h.y, h.y]`?
+fn segment_hits_rect(a: Vec2, b: Vec2, h: Vec2) -> bool {
     let d = b - a;
     let (mut t0, mut t1) = (0.0f32, 1.0f32);
-    for (p, q) in [(a.x, d.x), (a.y, d.y)] {
+    for (p, q, h) in [(a.x, d.x, h.x), (a.y, d.y, h.y)] {
         if q.abs() < 1e-9 {
             if p.abs() > h {
                 return false;
@@ -238,6 +240,7 @@ mod tests {
             u,
             v: Vec2::new(-u.y, u.x),
             half: 4.0,
+            half_v: 4.0,
         }
     }
 

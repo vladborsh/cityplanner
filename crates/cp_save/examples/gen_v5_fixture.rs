@@ -49,7 +49,7 @@ fn main() {
         log: d.log,
         tiles: d.tiles,
         net: d.net,
-        zones: d.zones,
+        zones: d.zones.to_v34(),
     };
     let bytes = encode_v5(
         &v5,

@@ -27,11 +27,13 @@ use bevy_math::Vec2;
 use cp_content::{RoadDefId, ZoneType};
 use cp_core::curve::{ArcTable, CubicBezier3, to_xz};
 use cp_core::{Arena, Id};
-use cp_net::{Elevation, NetGraph, Segment, SegmentId};
+use cp_net::{Elevation, NetGraph, NodeId, Segment, SegmentId};
 use cp_terrain::Terrain;
 use serde::{Deserialize, Serialize};
 
-use crate::geom::{Obb, Quad, quad_aabb, quad_contains, quad_intersection_area};
+use crate::geom::{
+    Obb, Quad, point_segment_distance, quad_aabb, quad_contains, quad_intersection_area,
+};
 
 /// Steepest ground a cell may stand on: rise over run at the cell centre (25 %).
 pub const MAX_CELL_SLOPE: f32 = 0.25;
@@ -73,7 +75,7 @@ struct Carried {
 
 impl Carried {
     fn axis_of(o: &Obb, inner: f32, row: u16) -> Vec2 {
-        o.c - o.v * (inner + (f32::from(row) + 0.5) * CELL_SIZE)
+        o.c - o.v * (inner + (f32::from(row) + 0.5) * 2.0 * o.half_v)
     }
 
     fn new(o: &Obb, inner: f32, row: u16, zone: ZoneType) -> Self {
@@ -137,6 +139,10 @@ pub struct ZoneBlock {
     pub cols: u16,
     /// Distance from the axis to the near edge of row 0.
     pub inner: f32,
+    /// Length of a cell along the road and depth of a row: [`CELL_SIZE`] unless the block was
+    /// fitted to its surroundings (T-185, `ZoneGrid::set_block_fit`).
+    pub cell_len: f32,
+    pub row_depth: f32,
     /// Painted type per cell (`ZoneType::None` until painted).
     pub zones: Vec<ZoneType>,
     /// Per cell: not blocked by a road, an older block, or a building.
@@ -157,7 +163,7 @@ impl ZoneBlock {
         let table = ArcTable::build(&self.curve);
         let mut out = Vec::with_capacity(self.cell_count());
         for col in 0..self.cols {
-            let s = self.s0 + (f32::from(col) + 0.5) * CELL_SIZE;
+            let s = self.s0 + (f32::from(col) + 0.5) * self.cell_len;
             // A cell that straddles the end of the stretch (it continues a straight neighbour,
             // BUG-043) stands on the straight line beyond it.
             let dir = |t: f32| {
@@ -180,12 +186,13 @@ impl ZoneBlock {
             // Left of the travel direction in XZ is (t.z, -t.x), as in `offset_xz`.
             let v = Vec2::new(tg.y, -tg.x) * self.side.sign();
             for row in 0..BLOCK_DEPTH {
-                let d = self.inner + (f32::from(row) + 0.5) * CELL_SIZE;
+                let d = self.inner + (f32::from(row) + 0.5) * self.row_depth;
                 out.push(Obb {
                     c: p + v * d,
                     u,
                     v,
-                    half: CELL_SIZE / 2.0,
+                    half: self.cell_len / 2.0,
+                    half_v: self.row_depth / 2.0,
                 });
             }
         }
@@ -208,9 +215,19 @@ pub fn strip_layout(length: f32, align: Option<f32>) -> (f32, u16) {
     }
 }
 
+/// The cells one side of a road would get (the road tool's ghost, T-185).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StripPreview {
+    pub side: Side,
+    pub cols: u16,
+    /// Column-major, `BLOCK_DEPTH` rows per column.
+    pub obbs: Vec<Obb>,
+    pub valid: Vec<bool>,
+}
+
 /// What a segment looked like when its blocks were built; a different value means rebuild.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Fingerprint {
+pub(crate) struct Fingerprint {
     curve: [u32; 12],
     length: u32,
     road: RoadDefId,
@@ -339,6 +356,10 @@ pub struct ZoneGrid {
     /// The terrain changed since the last [`ZoneGrid::sync`]: every block is revalidated.
     #[serde(skip)]
     terrain_dirty: bool,
+    /// Metres by which a nearly whole block is fitted to whole cells (T-185); `0` fits nothing.
+    /// Derived input from the balance, not saved; set with [`ZoneGrid::set_block_fit`].
+    #[serde(skip)]
+    fit_m: f32,
     /// Bumped on every change (paint, rebuild, validity, occupancy) so snapshots can be
     /// cached. Not saved, not part of equality.
     #[serde(skip, default = "next_revision")]
@@ -369,6 +390,51 @@ impl ZoneGrid {
     }
 
     /// Whether `terrain` is the map the grid already uses.
+    /// Sets the block fit in metres (`balance.ron` `zoning_block_fit_m`); it applies to the
+    /// segments built from now on, the cells already laid stay as they are.
+    /// A grid from the saved parts of an older format (`legacy`); everything derived is empty
+    /// and rebuilt on the first sync.
+    pub(crate) fn from_saved_parts(
+        blocks: Arena<ZoneBlock>,
+        by_segment: BTreeMap<SegmentId, [Option<ZoneBlockId>; 2]>,
+        fingerprints: BTreeMap<SegmentId, Fingerprint>,
+    ) -> Self {
+        Self {
+            blocks,
+            by_segment,
+            fingerprints,
+            ..Self::default()
+        }
+    }
+
+    /// This grid as format 34 wrote it (the legacy writers of `cp_save` and their tests): the
+    /// cell sizes are dropped, so only a grid of standard cells survives the trip unchanged.
+    pub fn to_v34(&self) -> crate::legacy::ZoneGridV34 {
+        crate::legacy::ZoneGridV34::from_parts(
+            self.blocks.map(|b| crate::legacy::ZoneBlockV34 {
+                segment: b.segment,
+                side: b.side,
+                curve: b.curve,
+                length: b.length,
+                s0: b.s0,
+                cols: b.cols,
+                inner: b.inner,
+                zones: b.zones.clone(),
+                valid: b.valid.clone(),
+            }),
+            self.by_segment.clone(),
+            self.fingerprints.clone(),
+        )
+    }
+
+    pub fn set_block_fit(&mut self, metres: f32) {
+        self.fit_m = metres.max(0.0);
+    }
+
+    pub fn block_fit(&self) -> f32 {
+        self.fit_m
+    }
+
     pub fn has_terrain(&self, terrain: &Arc<Terrain>) -> bool {
         self.terrain
             .as_ref()
@@ -525,6 +591,10 @@ impl ZoneGrid {
                     seg,
                     ArcTable::build(&zone_curve[&id]).length(),
                 ),
+                // Neither end a plain bend that a later segment may continue: a side of a block.
+                [seg.start, seg.end]
+                    .iter()
+                    .all(|n| net.node(*n).is_none_or(|n| n.segments.len() != 2)),
                 &mut dirty,
                 &mut created,
             );
@@ -838,7 +908,8 @@ impl ZoneGrid {
                         return false;
                     }
                     quad_contains(&crate::geom::ccw(q), o.c)
-                        || quad_intersection_area(&cell, q) >= 0.5 * (2.0 * o.half) * (2.0 * o.half)
+                        || quad_intersection_area(&cell, q)
+                            >= 0.5 * (2.0 * o.half) * (2.0 * o.half_v)
                 })
         })
     }
@@ -957,6 +1028,7 @@ impl ZoneGrid {
         road: RoadZoning,
         zone_curve: &CubicBezier3,
         align: Option<f32>,
+        fit_along: bool,
         dirty: &mut Vec<Bounds>,
         created: &mut BTreeSet<ZoneBlockId>,
     ) {
@@ -967,30 +1039,143 @@ impl ZoneGrid {
         if !road.allows_zoning || seg.elevation != Elevation::Ground {
             return;
         }
-        let length = ArcTable::build(zone_curve).length();
-        let (s0, cols) = strip_layout(length, align);
-        if cols == 0 {
+        let Some(drafts) = self.lay_strips(zone_curve, road, align, fit_along) else {
             return;
-        }
+        };
         let mut ids = [None, None];
-        for (slot, side) in [Side::Left, Side::Right].into_iter().enumerate() {
-            let n = usize::from(cols) * usize::from(BLOCK_DEPTH);
-            let bid = self.blocks.insert(ZoneBlock {
-                segment: id,
-                side,
-                curve: *zone_curve,
-                length,
-                s0,
-                cols,
-                inner: road.half_width,
-                zones: vec![ZoneType::None; n],
-                valid: vec![true; n],
-            });
+        for (slot, mut block) in drafts.into_iter().enumerate() {
+            block.segment = id;
+            let bid = self.blocks.insert(block);
             self.index_block(bid);
             created.insert(bid);
             ids[slot] = Some(bid);
         }
         self.by_segment.insert(id, ids);
+    }
+
+    /// The cells a stretch `zone_curve` of a road with `road` gets, as two blocks (left, right;
+    /// their `segment` is a placeholder). Used by the sync for a new segment and by the road
+    /// tool's ghost for the preview, so both lay exactly the same cells (T-185).
+    ///
+    /// `align` is the start offset that continues a neighbour's row ([`Self::joint_alignment`]);
+    /// without it, and with `fit_along` (neither end is a plain bend that a later segment
+    /// may continue) and a block fit set ([`Self::set_block_fit`]), the cells are stretched or
+    /// shrunk to fill the stretch exactly. Each side's rows are fitted to the road or older
+    /// strip that faces it when that leaves 4 rows within the fit of the free depth.
+    pub fn lay_strips(
+        &self,
+        zone_curve: &CubicBezier3,
+        road: RoadZoning,
+        align: Option<f32>,
+        fit_along: bool,
+    ) -> Option<[ZoneBlock; 2]> {
+        let length = ArcTable::build(zone_curve).length();
+        let (mut s0, mut cols) = strip_layout(length, align);
+        let mut cell_len = CELL_SIZE;
+        if align.is_none() && fit_along && self.fit_m > 0.0 {
+            // Never more cells than the standard layout has: the cells grow (by at most a
+            // quarter) to fill the stretch, so the growth of a town does not change.
+            let n = (length / CELL_SIZE).floor();
+            if n >= 4.0 && length / n <= CELL_SIZE * 1.25 {
+                (s0, cols, cell_len) = (0.0, n as u16, length / n);
+            }
+        }
+        if cols == 0 {
+            return None;
+        }
+        let n = usize::from(cols) * usize::from(BLOCK_DEPTH);
+        let mut out = [Side::Left, Side::Right].map(|side| ZoneBlock {
+            segment: cp_core::Id::new(u32::MAX, 0),
+            side,
+            curve: *zone_curve,
+            length,
+            s0,
+            cols,
+            inner: road.half_width,
+            cell_len,
+            row_depth: CELL_SIZE,
+            zones: vec![ZoneType::None; n],
+            valid: vec![true; n],
+        });
+        if self.fit_m > 0.0 {
+            for b in &mut out {
+                if let Some(rd) = self.fit_rows(b) {
+                    b.row_depth = rd;
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// The row depth that makes the 4 rows of `block` fill the free depth up to what faces it
+    /// (a road, or the cells of an older strip), when that depth is within the block fit of 4
+    /// standard rows. The nearest column decides (a cross street at a corner is not a facing
+    /// road, see below). `None`: keep the standard rows.
+    fn fit_rows(&self, block: &ZoneBlock) -> Option<f32> {
+        let table = ArcTable::build(&block.curve);
+        let reach = f32::from(BLOCK_DEPTH) * CELL_SIZE + self.fit_m;
+        let mut gaps: Vec<f32> = Vec::new();
+        for col in 0..block.cols {
+            let s = block.s0 + (f32::from(col) + 0.5) * block.cell_len;
+            let t = table.s_to_t(s.clamp(0.0, block.length));
+            let p = to_xz(block.curve.point(t));
+            let tg = to_xz(block.curve.tangent(t))
+                .try_normalize()
+                .unwrap_or(Vec2::X);
+            let v = Vec2::new(tg.y, -tg.x) * block.side.sign();
+            let mut d = 0.5;
+            while d <= reach {
+                let q = p + v * (block.inner + d);
+                if self.obstacle_at(q) {
+                    // What stands right at the road is a cross street (or its strip), not the
+                    // far side of the block.
+                    if d >= f32::from(BLOCK_DEPTH) * CELL_SIZE / 2.0 {
+                        gaps.push(d);
+                    }
+                    break;
+                }
+                d += 0.5;
+            }
+        }
+        if gaps.is_empty() {
+            return None;
+        }
+        gaps.sort_by(f32::total_cmp);
+        // The nearest column decides, so a facing road a few degrees off parallel never has a
+        // row cut off by the older strip (the far end is left with a wedge, narrower than a row).
+        let free = gaps[0];
+        let standard = f32::from(BLOCK_DEPTH) * CELL_SIZE;
+        let rd = free / f32::from(BLOCK_DEPTH);
+        ((free - standard).abs() <= self.fit_m
+            && (free - standard).abs() > 1e-3
+            && (0.75..=1.25).contains(&(rd / CELL_SIZE)))
+        .then_some(rd)
+    }
+
+    /// Whether `q` is on a road or on a valid cell of an existing block.
+    fn obstacle_at(&self, q: Vec2) -> bool {
+        let probe = (q - Vec2::splat(0.5), q + Vec2::splat(0.5));
+        for key in bucket_range(probe, ROAD_BUCKET) {
+            for (_, piece) in self.index.road_buckets.get(&key).into_iter().flatten() {
+                if point_segment_distance(q, piece.a, piece.b) < piece.half_width - ROAD_EPS {
+                    return true;
+                }
+            }
+        }
+        for key in bucket_range(probe, BLOCK_BUCKET) {
+            for bid in self.index.block_buckets.get(&key).into_iter().flatten() {
+                let (Some(b), Some(obbs)) = (self.blocks.get(*bid), self.index.obbs.get(bid))
+                else {
+                    continue;
+                };
+                for (j, o) in obbs.iter().enumerate() {
+                    if b.valid[j] && o.distance_to_point(q) <= 1e-3 {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// Where the first cell of a new segment `id` starts (`s0`) so that its row of cells continues
@@ -1005,15 +1190,52 @@ impl ZoneGrid {
         seg: &Segment,
         length: f32,
     ) -> Option<f32> {
-        let ours = roads(seg.road);
-        for at_start in [true, false] {
-            let node = if at_start { seg.start } else { seg.end };
-            let Some(n) = net.node(node).filter(|n| n.segments.len() == 2) else {
-                continue;
-            };
-            let Some(other) = n.segments.iter().copied().find(|&o| o != id) else {
-                continue;
-            };
+        let leaving = |from_start: bool| {
+            to_xz(if from_start {
+                seg.curve.tangent(0.0)
+            } else {
+                -seg.curve.tangent(1.0)
+            })
+            .try_normalize()
+            .unwrap_or(Vec2::X)
+        };
+        self.alignment_at(
+            net,
+            roads,
+            roads(seg.road),
+            length,
+            [
+                (Some(seg.start), leaving(true)),
+                (Some(seg.end), leaving(false)),
+            ],
+            Some(id),
+        )
+    }
+
+    /// [`Self::joint_alignment`] for a segment that need not be in the net yet (the road tool's
+    /// ghost): `ends` are its nodes with the direction leaving each of them along the segment;
+    /// `skip` is the segment itself when it is already in the net. A node counts when, without
+    /// `skip`, exactly one segment is at it (the segment becomes the second).
+    pub fn alignment_at(
+        &self,
+        net: &NetGraph,
+        roads: &dyn Fn(RoadDefId) -> RoadZoning,
+        ours: RoadZoning,
+        length: f32,
+        ends: [(Option<NodeId>, Vec2); 2],
+        skip: Option<SegmentId>,
+    ) -> Option<f32> {
+        for (k, (node, dir)) in ends.into_iter().enumerate() {
+            let at_start = k == 0;
+            let Some(node) = node else { continue };
+            let Some(n) = net.node(node) else { continue };
+            let others: Vec<SegmentId> = n
+                .segments
+                .iter()
+                .copied()
+                .filter(|s| Some(*s) != skip)
+                .collect();
+            let [other] = others[..] else { continue };
             let Some(o) = net.segment(other) else {
                 continue;
             };
@@ -1026,15 +1248,14 @@ impl ZoneGrid {
                 continue;
             }
             // Straight on: the directions leaving the joint are (nearly) opposite.
-            let leaving = |s: &Segment, from_start: bool| {
-                let t = to_xz(if from_start {
-                    s.curve.tangent(0.0)
-                } else {
-                    -s.curve.tangent(1.0)
-                });
-                t.try_normalize().unwrap_or(Vec2::X)
-            };
-            if leaving(seg, at_start).dot(leaving(o, o.start == node)) > -STRAIGHT_COS {
+            let theirs_dir = to_xz(if o.start == node {
+                o.curve.tangent(0.0)
+            } else {
+                -o.curve.tangent(1.0)
+            })
+            .try_normalize()
+            .unwrap_or(Vec2::X);
+            if dir.dot(theirs_dir) > -STRAIGHT_COS {
                 continue;
             }
             let Some(b) = self
@@ -1050,7 +1271,7 @@ impl ZoneGrid {
             let free = if o.start == node {
                 b.s0
             } else {
-                b.length - (b.s0 + f32::from(b.cols) * CELL_SIZE)
+                b.length - (b.s0 + f32::from(b.cols) * b.cell_len)
             };
             return Some(if at_start {
                 (-free).clamp(-CELL_SIZE, CELL_SIZE)
@@ -1061,10 +1282,75 @@ impl ZoneGrid {
         None
     }
 
+    /// The cells a road of `road` type would get along `curve`, with their validity against
+    /// what stands now: what the road tool's ghost draws (T-185). `nodes` are the existing
+    /// nodes the stretch starts and ends at (`None` for a new one). Laid by the same code as a
+    /// real segment's cells ([`Self::lay_strips`]); junction setbacks are not known before the
+    /// road exists, so a stretch that ends at a junction is laid from its full length.
+    pub fn preview_strips(
+        &self,
+        net: &NetGraph,
+        roads: &dyn Fn(RoadDefId) -> RoadZoning,
+        road: RoadDefId,
+        curve: &CubicBezier3,
+        nodes: [Option<NodeId>; 2],
+    ) -> Vec<StripPreview> {
+        let ours = roads(road);
+        if !ours.allows_zoning {
+            return Vec::new();
+        }
+        let length = ArcTable::build(curve).length();
+        let dir = |from_start: bool| {
+            to_xz(if from_start {
+                curve.tangent(0.0)
+            } else {
+                -curve.tangent(1.0)
+            })
+            .try_normalize()
+            .unwrap_or(Vec2::X)
+        };
+        let align = self.alignment_at(
+            net,
+            roads,
+            ours,
+            length,
+            [(nodes[0], dir(true)), (nodes[1], dir(false))],
+            None,
+        );
+        // Plain bends (an existing end with one segment, which the new one continues) stay
+        // unfitted along the road, as in `sync`.
+        let bend = nodes
+            .iter()
+            .flatten()
+            .any(|n| net.node(*n).is_some_and(|n| n.segments.len() == 1));
+        let Some(blocks) = self.lay_strips(curve, ours, align, !bend) else {
+            return Vec::new();
+        };
+        blocks
+            .into_iter()
+            .map(|b| {
+                let obbs = b.footprints();
+                let valid = self.valid_for(&obbs, None);
+                StripPreview {
+                    side: b.side,
+                    cols: b.cols,
+                    obbs,
+                    valid,
+                }
+            })
+            .collect()
+    }
+
     /// Validity mask of block `id` against roads and older blocks.
     fn compute_valid(&self, id: ZoneBlockId) -> Option<Vec<bool>> {
-        let block = self.blocks.get(id)?;
+        self.blocks.get(id)?;
         let obbs = self.index.obbs.get(&id)?;
+        Some(self.valid_for(obbs, Some(id)))
+    }
+
+    /// Validity of `obbs`, the cells of block `id` (or of a block that does not exist yet:
+    /// every existing block is then older).
+    fn valid_for(&self, obbs: &[Obb], id: Option<ZoneBlockId>) -> Vec<bool> {
         let depth = usize::from(BLOCK_DEPTH);
         let mut valid = vec![true; obbs.len()];
         for (i, o) in obbs.iter().enumerate() {
@@ -1089,9 +1375,11 @@ impl ZoneGrid {
                 continue;
             }
             // A building stands here.
-            if self.occupied.contains(&ZoneCellRef {
-                block: id,
-                cell: i as u16,
+            if id.is_some_and(|id| {
+                self.occupied.contains(&ZoneCellRef {
+                    block: id,
+                    cell: i as u16,
+                })
             }) {
                 valid[i] = false;
                 continue;
@@ -1121,7 +1409,7 @@ impl ZoneGrid {
             let mut older: BTreeSet<ZoneBlockId> = BTreeSet::new();
             for key in bucket_range(reach, BLOCK_BUCKET) {
                 if let Some(set) = self.index.block_buckets.get(&key) {
-                    older.extend(set.iter().copied().filter(|b| *b < id));
+                    older.extend(set.iter().copied().filter(|b| id.is_none_or(|id| *b < id)));
                 }
             }
             'older: for oid in older {
@@ -1140,8 +1428,7 @@ impl ZoneGrid {
                     }
                 }
             }
-            let _ = block;
         }
-        Some(valid)
+        valid
     }
 }

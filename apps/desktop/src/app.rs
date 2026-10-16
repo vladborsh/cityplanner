@@ -36,6 +36,9 @@ pub struct Options {
     pub day_night: bool,
     /// `--overlay zones|traffic|...`: start with that map overlay on (for screenshots).
     pub overlay: Option<cp_render::Overlay>,
+    /// `--ghost-demo basic_2l,x1,z1,x2,z2`: hold the road tool's ghost from (x1, z1) to the
+    /// cursor at (x2, z2) without a cursor (screenshots of the zone strip, T-185).
+    pub ghost_demo: Option<cp_tools::GhostDemo>,
 }
 
 impl Options {
@@ -59,6 +62,16 @@ impl Options {
                 cp_render::Overlay::ALL
                     .into_iter()
                     .find(|o| o.label().eq_ignore_ascii_case(&n))
+            }),
+            ghost_demo: value("--ghost-demo").and_then(|v| {
+                let mut it = v.split(',');
+                let road = it.next()?.to_string();
+                let n: Vec<f32> = it.filter_map(|x| x.parse().ok()).collect();
+                (n.len() == 4).then(|| cp_tools::GhostDemo {
+                    road,
+                    from: bevy::math::Vec2::new(n[0], n[1]),
+                    to: bevy::math::Vec2::new(n[2], n[3]),
+                })
             }),
             always_day: args.iter().any(|a| a == "--always-day"),
             day_night: args.iter().any(|a| a == "--day-night") || value("--hour").is_some(),
@@ -132,6 +145,13 @@ pub fn run(opts: Options) -> AppExit {
     }
     if let Some(active) = opts.overlay {
         app.insert_resource(cp_render::OverlayState { active });
+    }
+    if let Some(demo) = opts.ghost_demo {
+        // The tools only run with the UI; a held ghost for a hidden screenshot needs them.
+        if opts.hidden {
+            app.add_plugins(cp_tools::ToolsPlugin);
+        }
+        app.insert_resource(demo);
     }
     app.add_plugins((
         GamePlugin {

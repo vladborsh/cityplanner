@@ -24,6 +24,7 @@ pub mod upgrade;
 pub mod utility;
 pub mod zone;
 pub mod zone_lines;
+pub mod zone_preview;
 
 pub use building::{
     ALIGN_REACH_M, BuildingTool, ConnectionHint, FREE_ROT_STEP, FreeGhost, PlacementGhost,
@@ -37,7 +38,7 @@ pub use district::{DistrictTool, DistrictToolKind};
 pub use outbox::CommandOutbox;
 pub use pick::{Inspected, Picked, pick, pick_line, pick_with};
 pub use plugin::{
-    ActiveTool, Ghost, ToolState, ToolsPlugin, compute_ghost, compute_ghost_alt,
+    ActiveTool, Ghost, GhostDemo, ToolState, ToolsPlugin, compute_ghost, compute_ghost_alt,
     compute_utility_ghost, compute_utility_ghost_alt, tool_click, tool_hotkeys,
 };
 pub use road::{

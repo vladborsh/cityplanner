@@ -3,6 +3,7 @@
 pub mod command;
 pub mod geom;
 pub mod grid;
+pub mod legacy;
 
 pub use command::{ZoneCommand, ZoneError, apply, paint};
 pub use grid::{
@@ -50,6 +51,7 @@ pub fn sync_grid(
     db: &cp_content::ContentDb,
     junctions: &JunctionGeometry,
 ) {
+    grid.set_block_fit(db.balance().zoning_block_fit_m);
     grid.sync(
         net,
         &|id| {

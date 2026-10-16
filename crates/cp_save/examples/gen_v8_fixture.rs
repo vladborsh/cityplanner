@@ -56,7 +56,7 @@ fn main() {
         log: d.log,
         tiles: d.tiles,
         net: d.net,
-        zones: d.zones,
+        zones: d.zones.to_v34(),
         buildings: cp_save::migrate::BuildingGridV12::from(&d.buildings),
         citizens: (&d.citizens).into(),
         paths: d.paths,

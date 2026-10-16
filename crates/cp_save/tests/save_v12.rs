@@ -72,7 +72,7 @@ fn v11_fixture_migrates_and_keeps_running() {
         log: l.data.log.clone(),
         tiles: l.data.tiles,
         net: l.data.net.clone(),
-        zones: l.data.zones.clone(),
+        zones: l.data.zones.clone().to_v34(),
         buildings: cp_save::migrate::BuildingGridV12::from(&l.data.buildings),
         citizens: (&l.data.citizens).into(),
         paths: l.data.paths.clone(),

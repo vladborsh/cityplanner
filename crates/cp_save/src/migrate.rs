@@ -20,7 +20,6 @@ use cp_terrain::TileOwnership;
 use cp_traffic::CarPath;
 use cp_traffic::{AgentStats, Agents, Pedestrian, SavedPaths, SegmentLoad, Vehicle};
 use cp_utility::UtilityGraph;
-use cp_zone::ZoneGrid;
 use serde::{Deserialize, Serialize};
 
 use crate::{SaveData, SaveError};
@@ -107,7 +106,7 @@ pub struct SaveDataV5 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
 }
 
 /// Version 6: the body as written by format 6 (buildings, before citizens).
@@ -120,7 +119,7 @@ pub struct SaveDataV6 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV12,
 }
 
@@ -134,7 +133,7 @@ pub struct SaveDataV7 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV12,
     pub citizens: CitizenGridV21,
 }
@@ -149,7 +148,7 @@ pub struct SaveDataV8 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV12,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -165,7 +164,7 @@ pub struct SaveDataV9 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV12,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -182,7 +181,7 @@ pub struct SaveDataV10 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV12,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -300,7 +299,7 @@ pub struct SaveDataV11 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV12,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -406,7 +405,7 @@ pub struct SaveDataV12 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV12,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -425,7 +424,7 @@ pub struct SaveDataV13 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV18,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -444,7 +443,7 @@ pub struct SaveDataV14 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV18,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -465,7 +464,7 @@ pub struct SaveDataV15 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV18,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -489,7 +488,7 @@ pub struct SaveDataV16 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV18,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -514,7 +513,7 @@ pub struct SaveDataV17 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV18,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -540,7 +539,7 @@ pub struct SaveDataV18 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGridV18,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -602,7 +601,7 @@ pub struct SaveDataV20 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGrid,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -671,7 +670,7 @@ pub struct SaveDataV22 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     /// Buildings (lots, state, access points). Added in v6.
     /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
@@ -755,7 +754,7 @@ pub struct SaveDataV21 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGrid,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -861,7 +860,7 @@ pub struct SaveDataV19 {
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     pub buildings: BuildingGrid,
     pub citizens: CitizenGridV21,
     pub paths: SavedPaths,
@@ -1312,7 +1311,7 @@ pub fn migrate_v4_to_v5(v4: SaveDataV4) -> SaveDataV5 {
         log: v4.log,
         tiles: v4.tiles,
         net: v4.net,
-        zones: ZoneGrid::default(),
+        zones: cp_zone::legacy::ZoneGridV34::default(),
     }
 }
 
@@ -1366,7 +1365,7 @@ pub struct SaveDataV23 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     /// Buildings (lots, state, access points). Added in v6.
     /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
@@ -1501,7 +1500,7 @@ pub struct SaveDataV24 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     /// Buildings (lots, state, access points). Added in v6.
     /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
@@ -1592,7 +1591,7 @@ pub struct SaveDataV25 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     /// Buildings (lots, state, access points). Added in v6.
     /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
@@ -1683,7 +1682,7 @@ pub struct SaveDataV26 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     /// Buildings (lots, state, access points). Added in v6.
     /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
@@ -1775,7 +1774,7 @@ pub struct SaveDataV27 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     /// Buildings (lots, state, access points). Added in v6.
     /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
@@ -1835,7 +1834,7 @@ pub struct SaveDataV28 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     /// Buildings (lots, state, access points). Added in v6.
     /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
@@ -2007,7 +2006,7 @@ pub struct SaveDataV29 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     /// Buildings (lots, state, access points). Added in v6.
     /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
@@ -2120,7 +2119,7 @@ pub struct SaveDataV30 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     /// Buildings (lots, state, access points). Added in v6.
     /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
@@ -2250,7 +2249,7 @@ pub struct SaveDataV31 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     /// Buildings (lots, state, access points). Added in v6.
     /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
@@ -2398,7 +2397,7 @@ pub struct SaveDataV32 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     /// Buildings (lots, state, access points). Added in v6.
     /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
@@ -2523,7 +2522,7 @@ pub struct SaveDataV33 {
     pub tiles: TileOwnership,
     pub net: NetGraph,
     /// Zone blocks, painted types and cell validity. Added in v5.
-    pub zones: ZoneGrid,
+    pub zones: cp_zone::legacy::ZoneGridV34,
     /// Buildings (lots, state, access points). Added in v6.
     /// Includes the ids removed and not yet drained since v13.
     pub buildings: BuildingGrid,
@@ -2581,8 +2580,8 @@ pub struct SaveDataV33 {
 }
 
 /// v33 → v34 (T-169): goods. No building holds stock and no truck is on the road.
-pub fn migrate_v33_to_v34(v33: SaveDataV33) -> SaveData {
-    SaveData {
+pub fn migrate_v33_to_v34(v33: SaveDataV33) -> SaveDataV34 {
+    SaveDataV34 {
         tick: v33.tick,
         rng: v33.rng,
         speed: v33.speed,
@@ -2619,6 +2618,116 @@ pub fn migrate_v33_to_v34(v33: SaveDataV33) -> SaveData {
     }
 }
 
+/// Version 34: the body as written by format 34 (zone blocks with square cells only).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV34 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    /// Zone blocks, painted types and cell validity. Added in v5.
+    pub zones: cp_zone::legacy::ZoneGridV34,
+    /// Buildings (lots, state, access points). Added in v6.
+    /// Includes the ids removed and not yet drained since v13.
+    pub buildings: BuildingGrid,
+    /// Citizens and households. Added in v7.
+    pub citizens: CitizenGrid,
+    /// Pathfinding requests in flight (id, submit tick, request, congestion read, stale
+    /// flag). Added in v8; see `cp_traffic::service` for why this makes load + N ticks equal
+    /// the continuous run.
+    pub paths: SavedPaths,
+    /// Pipe and power-line networks. Added in v9.
+    pub utilities: UtilityGraph,
+    /// Trips in flight and the routine's counters. Added in v10.
+    pub trips: TripBook,
+    /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
+    /// agents carry the segment load since v12; vehicles carry their re-route request id
+    /// since v17.
+    pub agents: cp_traffic::Agents,
+    /// The city's money. Added in v14.
+    pub treasury: Treasury,
+    /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
+    pub economy: EconomyState,
+    /// Smoothed demand and the sums of the cycle in progress. Added in v15.
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    /// Pollution, noise and land value grids. Added in v16.
+    pub land: LandGrids,
+    /// Abandonment timers. Added in v16.
+    pub decay: Decay,
+    /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
+    /// [`DefNames`] and [`SaveData::remap_defs`].
+    pub def_names: crate::DefNames,
+    /// The district grid and the district records. Added in v21.
+    pub district_map: DistrictMap,
+    pub districts: Districts,
+    /// Per-building service state and facility counters. Added in v22; fires name their
+    /// station since v24.
+    pub service_state: cp_service::ServiceState,
+    /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
+    /// sim reads the values of that boundary until the next one. Added in v22.
+    pub coverage: cp_service::ServiceCoverage,
+    /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
+    pub shortage: cp_economy::WorkerShortage,
+    /// The population milestone reached. Added in v25.
+    pub progress: cp_sim::Progress,
+    /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
+    /// with keep, since v29.
+    pub service_runs: cp_traffic::ServiceRuns,
+    /// Bus stops and lines (T-153). Added in v28.
+    pub transit: cp_transit::TransitNet,
+    /// Buses out on the lines and the week's transit money (T-156). Added in v30.
+    pub fleet: cp_transit::TransitFleet,
+    pub ledger: cp_transit::TransitLedger,
+    /// Tourists on the way and the visits each building has had (T-168). Added in v33.
+    pub tourists: cp_transit::Tourists,
+    /// Stock of factories and shops and the trucks on the road (T-169). Added in v34.
+    pub goods: cp_transit::Goods,
+}
+
+/// v34 → v35 (T-185): zone blocks carry the length and depth of their cells (a block fitted
+/// to its surroundings has stretched ones). Every block of an older save has standard cells.
+pub fn migrate_v34_to_v35(v34: SaveDataV34) -> SaveData {
+    SaveData {
+        tick: v34.tick,
+        rng: v34.rng,
+        speed: v34.speed,
+        queue: v34.queue,
+        log: v34.log,
+        tiles: v34.tiles,
+        net: v34.net,
+        zones: v34.zones.into_current(),
+        buildings: v34.buildings,
+        citizens: v34.citizens,
+        paths: v34.paths,
+        utilities: v34.utilities,
+        trips: v34.trips,
+        agents: v34.agents,
+        treasury: v34.treasury,
+        economy: v34.economy,
+        demand: v34.demand,
+        demand_acc: v34.demand_acc,
+        land: v34.land,
+        decay: v34.decay,
+        def_names: v34.def_names,
+        district_map: v34.district_map,
+        districts: v34.districts,
+        service_state: v34.service_state,
+        coverage: v34.coverage,
+        shortage: v34.shortage,
+        progress: v34.progress,
+        service_runs: v34.service_runs,
+        transit: v34.transit,
+        fleet: v34.fleet,
+        ledger: v34.ledger,
+        tourists: v34.tourists,
+        goods: v34.goods,
+    }
+}
+
 /// Everything from a v22 body to the current format.
 fn from_v22(v: SaveDataV22) -> SaveData {
     let v = migrate_v24_to_v25(migrate_v23_to_v24(migrate_v22_to_v23(v)));
@@ -2634,8 +2743,8 @@ fn from_v27(v: SaveDataV27) -> SaveData {
 }
 
 fn from_v29(v: SaveDataV29) -> SaveData {
-    migrate_v33_to_v34(migrate_v32_to_v33(migrate_v31_to_v32(migrate_v30_to_v31(
-        migrate_v29_to_v30(v),
+    migrate_v34_to_v35(migrate_v33_to_v34(migrate_v32_to_v33(migrate_v31_to_v32(
+        migrate_v30_to_v31(migrate_v29_to_v30(v)),
     ))))
 }
 
@@ -2747,15 +2856,18 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         27 => Ok(from_v27(dec(body)?)),
         28 => Ok(from_v29(migrate_v28_to_v29(dec(body)?))),
         29 => Ok(from_v29(dec(body)?)),
-        30 => Ok(migrate_v33_to_v34(migrate_v32_to_v33(migrate_v31_to_v32(
-            migrate_v30_to_v31(dec(body)?),
+        30 => Ok(migrate_v34_to_v35(migrate_v33_to_v34(migrate_v32_to_v33(
+            migrate_v31_to_v32(migrate_v30_to_v31(dec(body)?)),
         )))),
-        31 => Ok(migrate_v33_to_v34(migrate_v32_to_v33(migrate_v31_to_v32(
+        31 => Ok(migrate_v34_to_v35(migrate_v33_to_v34(migrate_v32_to_v33(
+            migrate_v31_to_v32(dec(body)?),
+        )))),
+        32 => Ok(migrate_v34_to_v35(migrate_v33_to_v34(migrate_v32_to_v33(
             dec(body)?,
         )))),
-        32 => Ok(migrate_v33_to_v34(migrate_v32_to_v33(dec(body)?))),
-        33 => Ok(migrate_v33_to_v34(dec(body)?)),
-        34 => dec(body),
+        33 => Ok(migrate_v34_to_v35(migrate_v33_to_v34(dec(body)?))),
+        34 => Ok(migrate_v34_to_v35(dec(body)?)),
+        35 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

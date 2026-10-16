@@ -76,6 +76,10 @@ pub struct Ghost {
     pub warnings: Vec<String>,
     /// Direction chevrons of a one-way road, three segments each (road ghost only).
     pub chevrons: Vec<[Vec3; 2]>,
+    /// The zone cells the road will get and the 8-cell ticks along them (road ghost only).
+    pub zone: crate::zone_preview::ZoneStrip,
+    /// The 8-cell block guide near the cursor, if any (road ghost only).
+    pub block: Option<crate::zone_preview::BlockGuide>,
 }
 
 #[derive(Resource, Default, Debug)]
@@ -193,6 +197,55 @@ impl ToolState {
         self.select(ActiveTool::Place);
         self.building = tool;
         true
+    }
+}
+
+/// A road ghost held in place without a cursor (`--ghost-demo` of the desktop client, for
+/// screenshots of the zone strip and the block guides): the road tool with `road` and one point
+/// clicked at `from`, the cursor at `to`.
+#[derive(Resource, Clone, Debug)]
+pub struct GhostDemo {
+    pub road: String,
+    pub from: Vec2,
+    pub to: Vec2,
+}
+
+fn ghost_demo(
+    demo: Option<Res<GhostDemo>>,
+    view: Option<Res<SimView>>,
+    mut state: ResMut<ToolState>,
+) {
+    let (Some(demo), Some(view)) = (demo, view) else {
+        return;
+    };
+    let Some(road) = view.content.as_deref().and_then(|c| c.road_id(&demo.road)) else {
+        return;
+    };
+    if state.ghost.is_some() {
+        return;
+    }
+    state.active = ActiveTool::Road;
+    state.road.road = Some(road);
+    state.road.points = vec![demo.from];
+    state.hover = Some(demo.to);
+    let (road_tool, to) = (state.road.clone(), demo.to);
+    state.ghost = compute_ghost_alt(&view, &road_tool, to, false);
+}
+
+/// Hands the zone strip of the road ghost to the renderer (T-185).
+fn sync_zone_strip(state: Res<ToolState>, mut out: ResMut<cp_render::ZoneStripLayer>) {
+    let want: Vec<[Vec2; 4]> = match (&state.ghost, state.active) {
+        (Some(g), ActiveTool::Road) => g
+            .zone
+            .cells
+            .iter()
+            .filter(|c| c.valid)
+            .map(|c| c.corners)
+            .collect(),
+        _ => Vec::new(),
+    };
+    if out.cells != want {
+        out.cells = want;
     }
 }
 
@@ -339,6 +392,10 @@ impl Plugin for ToolsPlugin {
             .add_systems(Update, sync_pipe_layers.after(tool_hover))
             .init_resource::<cp_render::LineGhost>()
             .add_systems(Update, sync_line_ghost.after(tool_hover))
+            .add_systems(
+                Update,
+                (ghost_demo, sync_zone_strip).chain().after(tool_hover),
+            )
             .init_resource::<UiCapture>()
             .init_resource::<CommandOutbox>()
             .init_resource::<crate::Picked>()
@@ -637,6 +694,14 @@ pub fn compute_ghost(view: &SimView, tool: &RoadTool, hover: Vec2) -> Option<Gho
 /// [`compute_ghost`] with the `Alt` state: the path is quantized to the 8 m step and the joins
 /// of §6.7 first (what `BuildRoad` will be sent), unless `alt`.
 pub fn compute_ghost_alt(view: &SimView, tool: &RoadTool, hover: Vec2, alt: bool) -> Option<Ghost> {
+    // The 8-cell block guide may move the cursor onto the distance that closes a block (T-185).
+    let (hover, block) = crate::zone_preview::block_hover(view, tool, hover, alt);
+    let mut ghost = compute_ghost_inner(view, tool, hover, alt)?;
+    ghost.block = block;
+    Some(ghost)
+}
+
+fn compute_ghost_inner(view: &SimView, tool: &RoadTool, hover: Vec2, alt: bool) -> Option<Ghost> {
     let path = tool.path_with_hover(hover)?;
     let (req, step) = quantized(view, tool.request(path)?, alt);
     let path = req.path.clone();
@@ -669,6 +734,8 @@ pub fn compute_ghost_alt(view: &SimView, tool: &RoadTool, hover: Vec2, alt: bool
                 snap: report,
                 warnings: Vec::new(),
                 chevrons: Vec::new(),
+                zone: Default::default(),
+                block: None,
             }
         }
         Ok(plan) => {
@@ -697,6 +764,8 @@ pub fn compute_ghost_alt(view: &SimView, tool: &RoadTool, hover: Vec2, alt: bool
                 } else {
                     Vec::new()
                 },
+                zone: crate::zone_preview::zone_strip(view, &plan),
+                block: None,
             }
         }
         Err(errors) => Ghost {
@@ -708,6 +777,8 @@ pub fn compute_ghost_alt(view: &SimView, tool: &RoadTool, hover: Vec2, alt: bool
             snap: report,
             warnings: Vec::new(),
             chevrons: Vec::new(),
+            zone: Default::default(),
+            block: None,
         },
     })
 }
@@ -737,6 +808,8 @@ pub fn compute_utility_ghost_alt(
             snap,
             warnings: Vec::new(),
             chevrons: Vec::new(),
+            zone: Default::default(),
+            block: None,
         },
         Err(problems) => Ghost {
             polylines: vec![
@@ -754,6 +827,8 @@ pub fn compute_utility_ghost_alt(
             snap,
             warnings: Vec::new(),
             chevrons: Vec::new(),
+            zone: Default::default(),
+            block: None,
         },
     })
 }
@@ -834,6 +909,10 @@ pub fn tool_click(
     match state.active {
         ActiveTool::Road => {
             let before = state.road.clone();
+            // The click lands where the ghost ends, on the block guide if it snapped (T-185).
+            let p = view.as_deref().map_or(p, |v| {
+                crate::zone_preview::block_hover(v, &state.road, p, state.alt).0
+            });
             if let Some(req) = state.road.click(p) {
                 let alt = state.alt;
                 if let Some(req) =
@@ -1003,6 +1082,50 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
             Vec3::new(b.x, y(b), b.y),
             Color::srgba(0.4, 0.8, 1.0, 0.8),
         );
+    }
+    if let Some(ghost) = &state.ghost
+        && state.active == ActiveTool::Road
+        && let Some(view) = view.as_deref()
+    {
+        let y = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.45;
+        let at = |p: Vec2| Vec3::new(p.x, y(p), p.y);
+        // The outline of every cell the road would zone, light.
+        for c in ghost.zone.cells.iter().filter(|c| c.valid) {
+            let k = c.corners.map(at);
+            gizmos.linestrip(
+                [k[0], k[1], k[2], k[3], k[0]],
+                Color::srgba(0.8, 0.92, 1.0, 0.35),
+            );
+        }
+        // Ticks every 8 cells: a faint line across the band, a cross on its outer edge.
+        for [a, b] in &ghost.zone.ticks {
+            gizmos.line(at(*a), at(*b), Color::srgba(1.0, 0.95, 0.5, 0.45));
+            let d = (*b - *a).normalize_or_zero();
+            let n = Vec2::new(-d.y, d.x);
+            gizmos.line(
+                at(*b - n * 2.0 + d * 1.5),
+                at(*b + n * 2.0 + d * 1.5),
+                Color::srgb(1.0, 0.9, 0.3),
+            );
+        }
+        // The block guide: dashed, bright when the cursor sits on it.
+        if let Some(g) = &ghost.block {
+            let color = if g.snapped {
+                Color::srgb(1.0, 0.85, 0.2)
+            } else {
+                Color::srgba(1.0, 0.85, 0.2, 0.5)
+            };
+            for [a, b] in &g.lines {
+                let len = a.distance(*b);
+                let d = (*b - *a).normalize_or_zero();
+                let mut s = 0.0;
+                while s < len {
+                    let e = (s + 3.0).min(len);
+                    gizmos.line(at(*a + d * s), at(*a + d * e), color);
+                    s += 6.0;
+                }
+            }
+        }
     }
     if state.active == ActiveTool::Road
         && let Some(view) = view.as_deref()

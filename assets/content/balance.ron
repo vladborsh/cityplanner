@@ -168,6 +168,9 @@ Balance((
     tourism_income: 12.0,
     tourism_pool_share: 0.1,
     tourism_reach_m: 1500.0,
+    // Block fit (T-185) // tune later: metres by which a nearly 8 x 8 cell block (or a side that is
+    // nearly whole cells long) is fitted to whole cells by stretching or shrinking them.
+    zoning_block_fit_m: 6.0,
     // Goods (T-169) // tune later: units made a day per filled industrial job, sold a day per
     // filled shop job, most stored, one truck's load, metres a factory looks for a shop, days
     // without stock before NO_GOODS, and whether NO_GOODS counts towards abandonment.

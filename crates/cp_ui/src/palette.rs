@@ -480,6 +480,8 @@ mod tests {
             half_width: 3.0,
             snap: Default::default(),
             chevrons: Vec::new(),
+            zone: Default::default(),
+            block: None,
             warnings: vec!["one-way: arms face the same way".into()],
         });
         rig.frame(vec![]);
@@ -495,6 +497,8 @@ mod tests {
             half_width: 3.0,
             snap: Default::default(),
             chevrons: Vec::new(),
+            zone: Default::default(),
+            block: None,
             warnings: vec![],
         });
         let text = rig.frame(vec![]);
@@ -621,6 +625,8 @@ mod tests {
             snap: Default::default(),
             warnings: Vec::new(),
             chevrons: Vec::new(),
+            zone: Default::default(),
+            block: None,
         });
         let text = rig.frame(vec![]);
         assert!(text.contains("can build"), "{text}");
@@ -638,6 +644,8 @@ mod tests {
             snap: Default::default(),
             warnings: Vec::new(),
             chevrons: Vec::new(),
+            zone: Default::default(),
+            block: None,
         });
         let text = rig.frame(vec![]);
         assert!(text.contains("too steep (20%, max 12%)"), "{text}");
@@ -660,6 +668,8 @@ mod tests {
             snap: Default::default(),
             warnings: Vec::new(),
             chevrons: Vec::new(),
+            zone: Default::default(),
+            block: None,
         });
         let texts = rig.frame_texts(vec![]);
         for (text, at) in &texts {
@@ -696,6 +706,8 @@ mod tests {
             snap: Default::default(),
             warnings: Vec::new(),
             chevrons: Vec::new(),
+            zone: Default::default(),
+            block: None,
         });
         rig.frame(vec![]);
         // The panel fills the height under the top bar; the verdict is in its lower part.

@@ -1132,3 +1132,76 @@ fn blocks_of_any_size_and_angle_have_no_overlapping_cells() {
         }
     }
 }
+
+/// T-185: with the block fit on, a block between two facing streets that is nearly 8 rows
+/// deep is one clean grid of exactly 8 rows, however far off 64 m it is within the fit.
+/// `gap`: metres between the edges of the facing streets (they are 12 m wide).
+fn block_of(gap: f32, skew_deg: f32) -> World {
+    let depth = gap + 12.0;
+    let mut w = World::new();
+    w.grid.set_block_fit(6.0);
+    let len = 128.0;
+    // Two cross streets close the block; the facing street may be crooked.
+    w.line("basic_2l", (0.0, 0.0), (len, 0.0));
+    w.line("basic_2l", (0.0, 0.0), (0.0, depth));
+    w.line("basic_2l", (len, 0.0), (len, depth));
+    let k = skew_deg.to_radians().tan();
+    w.line("basic_2l", (0.0, depth), (len, depth + len * k));
+    w.sync();
+    w
+}
+
+/// Rows of the valid cells between the two streets, counted along the middle of the block.
+fn rows_across(w: &World, x: f32) -> Vec<(f32, f32)> {
+    let mut spans: Vec<(f32, f32)> = Vec::new();
+    for (bid, b) in w.grid.blocks() {
+        for (i, ok) in b.valid.iter().enumerate() {
+            if !*ok {
+                continue;
+            }
+            let o = w
+                .grid
+                .cell_footprint(ZoneCellRef {
+                    block: bid,
+                    cell: i as u16,
+                })
+                .unwrap();
+            if (o.c.x - x).abs() < o.half && o.u.x.abs() > 0.99 {
+                spans.push((o.c.y - o.half_v, o.c.y + o.half_v));
+            }
+        }
+    }
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    spans
+}
+
+#[test]
+fn blocks_nearly_8_cells_deep_are_fitted_to_one_clean_grid() {
+    for depth in [60.0f32, 64.0, 69.0] {
+        let w = block_of(depth, 0.0);
+        let spans = rows_across(&w, 60.0);
+        let inner: Vec<_> = spans
+            .iter()
+            .filter(|s| s.0 > 5.9 && s.1 < depth + 6.1)
+            .collect();
+        assert_eq!(inner.len(), 8, "gap {depth}: {inner:?}");
+        for pair in inner.windows(2) {
+            assert!(
+                (pair[1].0 - pair[0].1).abs() < 0.02,
+                "gap {depth}: gap or overlap between rows {pair:?}"
+            );
+        }
+        assert!((inner[0].0 - 6.0).abs() < 0.02 && (inner[7].1 - (depth + 6.0)).abs() < 0.02);
+        assert!(worst_overlap(&w) < 0.06, "gap {depth}");
+    }
+}
+
+#[test]
+fn a_slightly_skewed_block_still_has_no_overlap() {
+    let w = block_of(64.0, 3.0);
+    assert!(worst_overlap(&w) < 0.06);
+    // Eight rows across, none cut off, even at the middle of the crooked block.
+    let rows = rows_across(&w, 60.0);
+    let between: Vec<_> = rows.iter().filter(|r| r.0 > 5.9 && r.1 < 79.0).collect();
+    assert_eq!(between.len(), 8, "{rows:?}");
+}

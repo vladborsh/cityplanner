@@ -281,6 +281,10 @@ pub struct Balance {
     pub goods_empty_days: f32,
     /// Whether `NO_GOODS` counts towards abandonment (T-169); off by default.
     pub goods_decay: bool,
+    /// Metres by which a block that is nearly whole cells is fitted to them: the cells of a new
+    /// street are stretched or shrunk so a block 64 m deep (8 rows) or a side that is a whole
+    /// number of cells long comes out as one clean grid (T-185). // tune later
+    pub zoning_block_fit_m: f32,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
 }
@@ -415,6 +419,7 @@ impl Balance {
             self.freight_radius_m,
             self.goods_empty_days,
             f32::from(u8::from(self.goods_decay)),
+            self.zoning_block_fit_m,
         ]);
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
@@ -508,6 +513,7 @@ impl Default for Balance {
             tourism_income: 12.0,
             tourism_pool_share: 0.1,
             tourism_reach_m: 1500.0,
+            zoning_block_fit_m: 6.0,
             goods_per_worker: 0.5,
             goods_per_job: 0.4,
             goods_stock_cap: 100.0,

@@ -223,6 +223,7 @@ fn blocks_at_a_junction_start_beside_the_arms_not_inside_the_junction() {
             );
         }
     }
-    // Each 90 m arm loses its setback, so fewer columns than the untrimmed 11 per side.
-    assert!(cells < 8 * 11 * 4, "{cells}");
+    // Each 90 m arm loses its setback, so no more columns than the untrimmed 11 per side (the
+    // block fit stretches the cells of an arm to fill what is left, T-185).
+    assert!(cells <= 8 * 11 * 4, "{cells}");
 }

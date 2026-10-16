@@ -59,7 +59,7 @@ fn v5_fixture_migrates_to_no_buildings_and_keeps_its_zones() {
         log: l.data.log.clone(),
         tiles: l.data.tiles,
         net: l.data.net.clone(),
-        zones: l.data.zones.clone(),
+        zones: l.data.zones.clone().to_v34(),
     };
     assert_eq!(
         encode_v5(&v5, h.content_hash, &h.map_id, h.map_hash).unwrap(),

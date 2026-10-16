@@ -448,11 +448,16 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
         (Category::Roads, ActiveTool::Road) => match &tools.ghost {
             Some(g) if g.valid => {
                 let snap = snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));
+                // The 8-cell block guide's verdict (T-185).
+                let block = g
+                    .block
+                    .as_ref()
+                    .map_or(String::new(), |b| format!("  ▦ {}", b.note));
                 ok(
                     ui,
                     "can build",
                     g.cost,
-                    format!(" · {:.0} m{snap}", plan_length(g)),
+                    format!(" · {:.0} m{snap}{block}", plan_length(g)),
                 );
                 // One-way direction warnings (§6.6): yellow, they never block the build.
                 for w in &g.warnings {
@@ -887,6 +892,8 @@ mod tests {
             snap: Default::default(),
             warnings: Vec::new(),
             chevrons: Vec::new(),
+            zone: Default::default(),
+            block: None,
         });
         draw(&mut tools);
         tools.ghost = Some(Ghost {
@@ -898,6 +905,8 @@ mod tests {
             snap: Default::default(),
             warnings: Vec::new(),
             chevrons: Vec::new(),
+            zone: Default::default(),
+            block: None,
         });
         draw(&mut tools);
         tools.select(ActiveTool::Bulldozer);

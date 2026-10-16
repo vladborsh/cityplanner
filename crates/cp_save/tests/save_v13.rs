@@ -51,7 +51,7 @@ fn v12_fixture_migrates_with_an_empty_removed_list_and_round_trips() {
         log: l.data.log.clone(),
         tiles: l.data.tiles,
         net: l.data.net.clone(),
-        zones: l.data.zones.clone(),
+        zones: l.data.zones.clone().to_v34(),
         buildings: BuildingGridV12::from(&l.data.buildings),
         citizens: (&l.data.citizens).into(),
         paths: l.data.paths.clone(),

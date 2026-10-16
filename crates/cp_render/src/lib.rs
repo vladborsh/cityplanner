@@ -21,6 +21,7 @@ pub mod terrain;
 pub mod ui_capture;
 pub mod underground;
 pub mod utility_render;
+pub mod zone_ghost;
 
 pub use agent_render::{AgentRenderPlugin, AgentRenderStats, TickFraction};
 pub use building_render::{BuildingRenderPlugin, BuildingStats};
@@ -42,6 +43,7 @@ pub use terrain::{Sun, TerrainChunk, TerrainRenderPlugin, TerrainStats};
 pub use ui_capture::UiCapture;
 pub use underground::{UndergroundPlugin, UndergroundView};
 pub use utility_render::{PipeGhost, PipeLayers, PowerGhost, UtilityRenderPlugin, ghost_graph};
+pub use zone_ghost::{ZoneGhostPlugin, ZoneStripLayer};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_render";
