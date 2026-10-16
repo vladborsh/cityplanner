@@ -193,7 +193,7 @@ pub fn ghost_route_mesh(g: &LineGhost) -> MeshData {
 }
 
 /// An axis-aligned box of half sizes `h` centred on `c`.
-fn cuboid(m: &mut MeshData, c: Vec3, h: Vec3, color: [f32; 4]) {
+pub(crate) fn cuboid(m: &mut MeshData, c: Vec3, h: Vec3, color: [f32; 4]) {
     let faces: [(Vec3, Vec3, Vec3); 6] = [
         (Vec3::X, Vec3::Y, Vec3::Z),
         (Vec3::NEG_X, Vec3::Y, Vec3::NEG_Z),

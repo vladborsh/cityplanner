@@ -368,6 +368,17 @@ impl CitizenGrid {
         }
     }
 
+    /// Puts the arrival of the household of `citizen` off to `until` at the earliest (T-167: it
+    /// comes by train). Never brings it forward.
+    pub fn delay_household(&mut self, citizen: CitizenId, until: Tick) {
+        let Some(hid) = self.citizen(citizen).map(|c| c.household) else {
+            return;
+        };
+        if let Some(h) = self.household_mut(hid) {
+            h.arrive_at = Tick(h.arrive_at.0.max(until.0));
+        }
+    }
+
     /// Removes a household and all its members, freeing the apartment and their jobs.
     pub fn remove_household(&mut self, id: HouseholdId) -> bool {
         let Some(h) = self.households.remove(id) else {

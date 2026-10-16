@@ -42,7 +42,7 @@
 //! | `Tick`, `SimRng`, `SimSpeed`, `CommandQueue`, `CommandLog` | yes |
 //! | `TileOwnership`, `NetGraph`, `ZoneGrid` (occupancy is rebuilt from the buildings), `BuildingGrid` (incl. the removed ids), `UtilityGraph`, `CitizenGrid` (occupancy tables rebuilt), `TripBook`, `Agents` (pools, lane state, segment load; drive tables rebuilt) | yes |
 //! | `PathService` (requests in flight) | yes, as `SavedPaths` |
-//! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `Goods` (stops, lines, riders, line figures, buses, week's money, tourist visits, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
+//! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `Goods`, `Intercity` (stops, lines, riders, line figures, buses, week's money, tourist visits, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
 //! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
@@ -79,7 +79,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 35;
+pub const FORMAT_VERSION: u32 = 36;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -226,6 +226,8 @@ pub struct SaveData {
     pub tourists: cp_transit::Tourists,
     /// Stock of factories and shops and the trucks on the road (T-169). Added in v34.
     pub goods: cp_transit::Goods,
+    /// The intercity train and what it has brought (T-167). Added in v36.
+    pub intercity: cp_transit::Intercity,
 }
 
 impl SaveData {
@@ -297,6 +299,7 @@ impl SaveData {
             ledger: *world.resource::<cp_transit::TransitLedger>(),
             tourists: world.resource::<cp_transit::Tourists>().clone(),
             goods: world.resource::<cp_transit::Goods>().clone(),
+            intercity: world.resource::<cp_transit::Intercity>().clone(),
         }
     }
 
@@ -343,6 +346,7 @@ impl SaveData {
         world.insert_resource(self.ledger);
         world.insert_resource(self.tourists);
         world.insert_resource(self.goods);
+        world.insert_resource(self.intercity);
         // The routes are derived: the first Network phase after the load attaches the stops
         // and plans every line again.
         world.insert_resource(cp_transit::LinePlans::default());

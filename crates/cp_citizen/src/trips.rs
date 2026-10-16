@@ -221,6 +221,14 @@ impl TripBook {
         }
     }
 
+    /// Changes where a trip starts (the household that comes by train starts at the station,
+    /// T-167).
+    pub fn set_from(&mut self, id: TripId, from: BuildingId) {
+        if let Some(t) = self.trips.get_mut(id) {
+            t.from = from;
+        }
+    }
+
     /// Trips whose event tick is `<= now`, oldest first.
     pub fn due(&self, now: u64) -> Vec<TripId> {
         self.events

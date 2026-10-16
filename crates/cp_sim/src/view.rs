@@ -121,6 +121,8 @@ pub struct SimView {
     pub transit: Arc<cp_transit::TransitView>,
     /// The metro trains and where they are now (T-164), for the Underground view.
     pub metro_trains: Arc<Vec<cp_transit::MetroTrain>>,
+    /// The intercity train on the railway, if one is out (T-167).
+    pub intercity_train: Option<Arc<cp_transit::IntercityPose>>,
     /// The transit lines with their figures (T-160), in line id order.
     pub lines: Vec<LineView>,
     /// Fares and bus upkeep of the week in progress.
@@ -529,6 +531,19 @@ impl SimRunner {
         cp_transit::metro_trains(net, plans, fleet, runs, pnet.graph(), tick)
     }
 
+    /// The intercity train for `SimView::intercity_train` (none when no train is out).
+    fn intercity_train(&self, tick: Tick) -> Option<cp_transit::IntercityPose> {
+        let world = self.world();
+        let intercity = world.get_resource::<cp_transit::Intercity>()?;
+        intercity.train?;
+        cp_transit::intercity_pose(
+            intercity,
+            world.get_resource::<cp_traffic::ServiceRuns>()?,
+            world.get_resource::<cp_traffic::PathNetwork>()?.graph(),
+            tick,
+        )
+    }
+
     /// The agent poses for `SimView::agents`, rebuilt only when the tick advanced.
     fn agent_snapshot(&self, tick: Tick) -> Arc<AgentSnapshot> {
         let mut cache = self.agents_cache.lock().expect("agents cache");
@@ -602,6 +617,7 @@ impl SimRunner {
             utilities: self.utilities_snapshot(),
             transit: self.transit_snapshot(),
             metro_trains: Arc::new(self.metro_trains(tick)),
+            intercity_train: self.intercity_train(tick).map(Arc::new),
             service: self.service_snapshot(),
             service_state: self.service_state_snapshot(),
             city: self.city_snapshot(),

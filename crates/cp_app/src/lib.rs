@@ -102,6 +102,7 @@ impl Plugin for GamePlugin {
             OverlayPlugin,
             UtilityRenderPlugin,
             UndergroundPlugin,
+            cp_render::TrainRenderPlugin,
             BuildingRenderPlugin,
             ProblemIconPlugin,
             FireFxPlugin,
@@ -167,6 +168,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c - 60.0, 330.0, c + 330.0),
             Vec3::new(c - 60.0, -6.0, c + 10.0),
         ),
+        // The station at the dead end of the flatlands railway (`--scene train`).
+        "train" => (
+            Vec3::new(5880.0, 55.0, 5640.0),
+            Vec3::new(5900.0, 28.0, 5500.0),
+        ),
         "zones" => (
             Vec3::new(c - 60.0, 300.0, c + 150.0),
             Vec3::new(c - 60.0, 0.0, c - 10.0),
@@ -220,6 +226,9 @@ pub fn build_sim(
             .insert_resource(scene::DemoTraffic { cars, peds });
         scene::top_up_traffic(&mut sim);
         info!("scene traffic:{n}: up to {cars} cars, {peds} pedestrians");
+    } else if scene == Some(scene::TRAIN) {
+        let ok = scene::build_train(&mut sim);
+        info!("scene train: a train at the station: {ok}");
     } else if scene == Some(scene::ZONES) {
         scene::build_zones(&mut sim);
         info!("scene zones");

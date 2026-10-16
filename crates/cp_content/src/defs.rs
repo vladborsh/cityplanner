@@ -285,6 +285,13 @@ pub struct Balance {
     /// street are stretched or shrunk so a block 64 m deep (8 rows) or a side that is a whole
     /// number of cells long comes out as one clean grid (T-185). // tune later
     pub zoning_block_fit_m: f32,
+    /// Intercity trains (T-167): hours between two trains from the outside, hours a train
+    /// stands at the station, the share (percent) of arriving households that come by train when
+    /// a station is joined to the railway, and the tourists a train brings. // tune later
+    pub intercity_interval_h: f32,
+    pub intercity_dwell_h: f32,
+    pub move_in_by_train: u8,
+    pub tourism_by_train: u8,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
 }
@@ -420,6 +427,10 @@ impl Balance {
             self.goods_empty_days,
             f32::from(u8::from(self.goods_decay)),
             self.zoning_block_fit_m,
+            self.intercity_interval_h,
+            self.intercity_dwell_h,
+            f32::from(self.move_in_by_train),
+            f32::from(self.tourism_by_train),
         ]);
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
@@ -521,6 +532,10 @@ impl Default for Balance {
             freight_radius_m: 1500.0,
             goods_empty_days: 2.0,
             goods_decay: false,
+            intercity_interval_h: 6.0,
+            intercity_dwell_h: 0.5,
+            move_in_by_train: 40,
+            tourism_by_train: 8,
             networks: Networks::default(),
         }
     }
@@ -898,7 +913,47 @@ pub enum VehicleKind {
     Metro = 4,
     /// A goods truck (T-169b): its own spec and mesh, apart from the garbage `Truck`.
     Cargo = 5,
+    /// An intercity train (T-167): rides the railway from the map edge to a station.
+    Train = 6,
 }
+
+impl VehicleKind {
+    /// Every kind in number order: the tables indexed by `kind as usize` (`cp_traffic`'s specs,
+    /// the render's looks) have this many entries. The match in [`Self::number`] has no
+    /// wildcard, so a new variant does not compile until it is added here.
+    pub const ALL: [VehicleKind; 7] = [
+        Self::Car,
+        Self::Truck,
+        Self::Bus,
+        Self::Emergency,
+        Self::Metro,
+        Self::Cargo,
+        Self::Train,
+    ];
+    pub const COUNT: usize = Self::ALL.len();
+
+    const fn number(self) -> usize {
+        match self {
+            Self::Car => 0,
+            Self::Truck => 1,
+            Self::Bus => 2,
+            Self::Emergency => 3,
+            Self::Metro => 4,
+            Self::Cargo => 5,
+            Self::Train => 6,
+        }
+    }
+}
+
+// `ALL` lists the kinds in number order, and `kind as usize` is that number.
+const _: () = {
+    let mut i = 0;
+    while i < VehicleKind::COUNT {
+        assert!(VehicleKind::ALL[i].number() == i);
+        assert!(VehicleKind::ALL[i] as usize == i);
+        i += 1;
+    }
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -12,6 +12,7 @@
 pub mod command;
 pub mod fleet;
 pub mod goods;
+pub mod intercity;
 pub mod model;
 pub mod plan;
 pub mod riders;
@@ -26,6 +27,7 @@ pub mod view;
 pub use command::{MAX_LINE_NAME, StopRef, TransitCommand, TransitError, apply};
 pub use fleet::{Bus, BusId, BusPhase, TransitFleet, TransitLedger};
 pub use goods::{GOODS_BUCKET_TICKS, Goods, Haul, run_goods};
+pub use intercity::{Intercity, Train, TrainPhase, run_intercity};
 pub use model::{
     DEFAULT_LINE_VEHICLES, Journey, Line, LineId, LineState, LineStats, MAX_LINE_STOPS,
     MAX_LINE_VEHICLES, PALETTE_LEN, Ride, Stage, Stop, StopId, StopKind, TransitMode, TransitNet,
@@ -35,11 +37,12 @@ pub use riders::{choose_transit, run_riders};
 pub use rules::{STOP_NODE_CLEARANCE, STOP_SNAP, STOP_SPACING, StopError, check_road_stop};
 pub use run::run_lines;
 pub use station::{
-    add_station, platform_segment, remove_station, station_reaches_outside, station_stop,
+    add_station, connected_station, platform_segment, remove_station, station_reaches_outside,
+    station_stop,
 };
 pub use sync::{rebind_stops, update_transit};
-pub use tourists::{TOURISM_STREAM, Tourist, TouristPhase, Tourists, run_tourists};
-pub use trains::{MetroTrain, metro_trains};
+pub use tourists::{TOURISM_STREAM, Tourist, TouristPhase, Tourists, bring_by_train, run_tourists};
+pub use trains::{IntercityPose, MetroTrain, intercity_pose, metro_trains};
 pub use view::{LINE_PALETTE_RGB, LineRoute, ROUTE_STEP, TransitView, next_line_color};
 
 /// Crate name, used by the skeleton smoke test.

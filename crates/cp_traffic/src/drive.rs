@@ -118,7 +118,7 @@ pub struct VehicleSpecs {
 }
 
 /// Number of `cp_content::VehicleKind` variants.
-pub const VEHICLE_KINDS: usize = 6;
+pub const VEHICLE_KINDS: usize = cp_content::VehicleKind::COUNT;
 
 impl VehicleSpecs {
     pub fn from_content(db: &cp_content::ContentDb) -> Self {
@@ -142,7 +142,9 @@ impl VehicleSpecs {
 
     /// The spec of `v`'s kind.
     pub fn of(&self, v: &Vehicle) -> &VehicleSpec {
-        &self.by_kind[usize::from(v.kind_id()).min(VEHICLE_KINDS - 1)]
+        let kind = usize::from(v.kind_id());
+        debug_assert!(kind < VEHICLE_KINDS, "vehicle kind {kind} has no spec");
+        &self.by_kind[kind.min(VEHICLE_KINDS - 1)]
     }
 }
 

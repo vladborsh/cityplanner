@@ -181,6 +181,13 @@ Balance((
     freight_radius_m: 1500.0,
     goods_empty_days: 2.0,
     goods_decay: false,
+    // Intercity trains (T-167) // tune later: hours between trains from the outside, hours a
+    // train stands at the station, percent of arriving households that come by train (with a
+    // station on the railway), tourists a train brings.
+    intercity_interval_h: 6.0,
+    intercity_dwell_h: 0.5,
+    move_in_by_train: 40,
+    tourism_by_train: 8,
 
     // --- Networks (T-181): distances of water, sewage and power // tune later ---
     // power_gap_m: largest gap between the footprint edges of two buildings over which one

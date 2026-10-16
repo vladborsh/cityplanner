@@ -5,7 +5,8 @@
 //! The flow a day is `tourism_base + tourism_per_com × commercial buildings`; the number of cars
 //! at once is a share of the vehicle pool. With no `Outside` node (no entry highway) or no shop
 //! there are no visits. A visit is a keep run of `cp_traffic` plus a record here; the run does
-//! the driving, this system the decisions. Trains to a station are not done yet.
+//! the driving, this system the decisions. Those who come by train walk from the station
+//! ([`bring_by_train`], T-167).
 
 use std::collections::BTreeMap;
 
@@ -16,11 +17,13 @@ use cp_building::{BuildingGrid, BuildingId, BuildingState};
 use cp_content::{SimContent, VehicleKind, ZoneType};
 use cp_core::time::{TICKS_PER_DAY, TICKS_PER_HOUR, TICKS_PER_WEEK};
 use cp_core::{Cost, SimLimits, SimRng, Tick};
-use cp_net::{NetGraph, NodeId, NodeKind};
-use cp_traffic::{Agents, RunId, RunPoint, RunState, ServiceRuns};
+use cp_net::{NetGraph, NodeId, NodeKind, RailReach, node_is_rail};
+use cp_traffic::{Agents, RunId, RunPoint, RunState, ServiceRuns, WALK_KIND};
 use serde::{Deserialize, Serialize};
 
 use crate::fleet::TransitLedger;
+use crate::model::TransitNet;
+use crate::station::connected_station;
 
 /// RNG stream of the tourists' arrivals and goals.
 pub const TOURISM_STREAM: u64 = 0x7019_5757;
@@ -72,6 +75,8 @@ pub fn run_tourists(
     rng: Res<SimRng>,
     limits: Res<SimLimits>,
     net: Res<NetGraph>,
+    rail: Res<RailReach>,
+    transit: Res<TransitNet>,
     buildings: Res<BuildingGrid>,
     mut tourists: ResMut<Tourists>,
     mut ledger: ResMut<TransitLedger>,
@@ -116,7 +121,23 @@ pub fn run_tourists(
                 }
             }
             TouristPhase::Visiting { until } if now >= until => {
-                if runs.continue_run(id, RunPoint::Outside(t.entry)).is_ok() {
+                // A tourist who came by train walks back to the station (T-167).
+                if runs.get(id).is_some_and(|r| r.kind == WALK_KIND) {
+                    let home = connected_station(&transit, &rail, &buildings);
+                    runs.release(id, &mut agents);
+                    tourists.visits.remove(&id);
+                    if let Some(station) = home {
+                        let back = runs
+                            .start_walk(RunPoint::Building(t.goal), RunPoint::Building(station));
+                        tourists.visits.insert(
+                            back,
+                            Tourist {
+                                phase: TouristPhase::Leaving,
+                                ..t
+                            },
+                        );
+                    }
+                } else if runs.continue_run(id, RunPoint::Outside(t.entry)).is_ok() {
                     if let Some(v) = tourists.visits.get_mut(&id) {
                         v.phase = TouristPhase::Leaving;
                     }
@@ -136,7 +157,9 @@ pub fn run_tourists(
     // 2. New tourists.
     let entries: Vec<(NodeId, Vec2)> = net
         .nodes()
-        .filter(|(_, n)| n.kind == NodeKind::Outside && !n.segments.is_empty())
+        .filter(|(_, n)| {
+            n.kind == NodeKind::Outside && !n.segments.is_empty() && !node_is_rail(&net, n)
+        })
         .map(|(id, n)| (id, Vec2::new(n.pos.x, n.pos.z)))
         .collect();
     if entries.is_empty() {
@@ -187,6 +210,65 @@ pub fn run_tourists(
             RunPoint::Building(goal),
             true,
         );
+        tourists.visits.insert(
+            run,
+            Tourist {
+                goal,
+                entry,
+                phase: TouristPhase::Arriving,
+            },
+        );
+    }
+}
+
+/// `n` tourists step off the train at `station` and walk to shops, the nearer ones more likely
+/// (T-167). `entry` is the railway's `Outside` node; they leave on foot back to the station.
+/// Counts against the same cap as the cars.
+#[allow(clippy::too_many_arguments)]
+pub fn bring_by_train(
+    tourists: &mut Tourists,
+    runs: &mut ServiceRuns,
+    db: &cp_content::ContentDb,
+    buildings: &BuildingGrid,
+    limits: &SimLimits,
+    r: &mut SimRng,
+    station: BuildingId,
+    entry: NodeId,
+    n: u32,
+) {
+    let Some(from) = buildings.get(station).map(|b| b.pos) else {
+        return;
+    };
+    let balance = db.balance();
+    let shops: Vec<(BuildingId, Vec2)> = buildings
+        .iter()
+        .filter(|(_, b)| {
+            b.state == BuildingState::Active
+                && b.access().is_some()
+                && is_shop(db.building(b.def).zone)
+        })
+        .map(|(id, b)| (id, b.pos))
+        .collect();
+    if shops.is_empty() {
+        return;
+    }
+    let cap = (limits.vehicles as f32 * balance.tourism_pool_share) as usize;
+    let weight = |p: Vec2| 1.0 / (1.0 + p.distance(from) / balance.tourism_reach_m.max(1.0));
+    let total: f32 = shops.iter().map(|&(_, p)| weight(p)).sum();
+    for _ in 0..n {
+        if tourists.visits.len() >= cap {
+            break;
+        }
+        let mut pick = r.next_f32() * total;
+        let mut goal = shops[shops.len() - 1].0;
+        for &(id, p) in &shops {
+            pick -= weight(p);
+            if pick <= 0.0 {
+                goal = id;
+                break;
+            }
+        }
+        let run = runs.start_walk(RunPoint::Building(station), RunPoint::Building(goal));
         tourists.visits.insert(
             run,
             Tourist {

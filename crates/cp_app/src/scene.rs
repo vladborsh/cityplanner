@@ -43,6 +43,64 @@ pub fn parse_city(spec: &str) -> Option<usize> {
 /// Showcase scene: every building def in rows by zone, then a row of states.
 pub const SHOWCASE: &str = "showcase";
 
+/// Intercity train scene (T-167): a new game on flatlands with a train station at the dead end of
+/// the entry railway and a street beside it, run until the first train stands at the station.
+/// Look at it with `--cam train`.
+pub const TRAIN: &str = "train";
+
+/// Builds the [`TRAIN`] scene; returns whether a train stands at the station.
+pub fn build_train(sim: &mut SimRunner) -> bool {
+    use cp_building::BuildingCommand;
+    let db = embedded_content();
+    let terrain = sim.world().resource::<cp_terrain::SimTerrain>().0.clone();
+    if sim.new_game().is_err() {
+        return false;
+    }
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let Some(rail) = terrain.meta().entry_rail.as_ref() else {
+        return false;
+    };
+    let end = rail.dead_end();
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    let send = |sim: &mut SimRunner, cmd: SimCommand| {
+        sim.push_command(cmd, sim.tick());
+        sim.tick_once();
+    };
+    send(
+        sim,
+        SimCommand::Net(NetCommand::BuildRoad {
+            road: basic,
+            path: RoadPath::Straight {
+                from: Vec2::new(end.x - 150.0, end.y + 22.0),
+                to: Vec2::new(end.x - 30.0, end.y + 22.0),
+            },
+            elevation: ElevationMode::Ground,
+        }),
+    );
+    send(
+        sim,
+        SimCommand::Building(BuildingCommand::Place {
+            def: db.building_id("train_station").expect("train_station"),
+            pos: Vec2::new(end.x - 64.0, end.y),
+            rot: 0.0,
+        }),
+    );
+    for _ in 0..4000 {
+        sim.tick_once();
+        let standing = sim
+            .world()
+            .resource::<cp_transit::Intercity>()
+            .train
+            .is_some_and(|t| matches!(t.phase, cp_transit::TrainPhase::Dwell { .. }));
+        if standing {
+            return true;
+        }
+    }
+    false
+}
+
 /// Zone cell scene (BUG-043): a street built as four chained segments of different lengths and,
 /// beside it, a block of four streets. Look at it with `--overlay zones --cam zones`.
 pub const ZONES: &str = "zones";

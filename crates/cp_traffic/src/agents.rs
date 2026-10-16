@@ -519,7 +519,11 @@ pub fn route_trips(
         let Some(trip) = book.get(tid).cloned() else {
             continue;
         };
-        if trip.purpose == TripPurpose::MoveIn {
+        if trip.purpose == TripPurpose::MoveIn && trip.from == trip.to {
+            // Waiting for the train to the station (T-167): `cp_transit` holds it.
+            if trip.mode == TripMode::Transit {
+                continue;
+            }
             let request = buildings
                 .get(trip.to)
                 .and_then(|home| move_in_request(&net, &pnet, home));

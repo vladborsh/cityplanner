@@ -22,7 +22,7 @@ pub const VEHICLE_DETAIL_HEIGHT: f32 = 220.0;
 /// Below this camera height pedestrians use the detailed mesh, else the single-box one.
 pub const PEDESTRIAN_DETAIL_HEIGHT: f32 = 90.0;
 /// Number of vehicle kinds (`VehicleKind` variants).
-pub const VEHICLE_KINDS: usize = 6;
+pub const VEHICLE_KINDS: usize = cp_content::VehicleKind::COUNT;
 /// A pose that moved further than this in one snapshot step is a teleport (new lane after a
 /// network change, ...): not interpolated.
 const TELEPORT: f32 = 60.0;
@@ -89,6 +89,8 @@ impl Default for VehicleLooks {
                 // Metro (drawn elsewhere) and the goods truck.
                 Vec3::new(2.0, 1.9, 5.2),
                 Vec3::new(2.5, 3.4, 12.0),
+                // The intercity train (drawn by `train_render`; the size is for a look-up).
+                Vec3::new(3.0, 3.6, 120.0),
             ],
         }
     }
@@ -294,6 +296,11 @@ pub fn build_vehicles(
             if !cull.sees(pos, VEHICLE_RADIUS) {
                 return;
             }
+            debug_assert!(
+                usize::from(c.kind) < VEHICLE_KINDS,
+                "vehicle kind {} has no look",
+                c.kind
+            );
             let kind = usize::from(c.kind).min(VEHICLE_KINDS - 1);
             let hash = mix(c.key);
             let size = looks.sizes[kind];

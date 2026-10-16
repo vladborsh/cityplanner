@@ -163,6 +163,11 @@ pub(crate) fn service_part(world: &World, h: &mut Fnv1a) {
     if !goods.is_empty() {
         h.write_serialized(goods);
     }
+    // Same for the intercity service (T-167).
+    let intercity = world.resource::<cp_transit::Intercity>();
+    if !intercity.is_empty() {
+        h.write_serialized(intercity);
+    }
 }
 
 /// Checksum part of trips (`cp_citizen::TripBook`).

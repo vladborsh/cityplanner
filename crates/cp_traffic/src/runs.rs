@@ -41,6 +41,11 @@ pub type RunId = u32;
 /// `cp_content::VehicleKind` has this number, so the saved layout of a run is unchanged.
 pub const WALK_KIND: u8 = u8::MAX;
 
+/// Whether runs of this `ServiceRun::kind` ride the track (metro and intercity trains).
+pub fn is_rail_kind(kind: u8) -> bool {
+    kind == VehicleKind::Metro as u8 || kind == VehicleKind::Train as u8
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RunState {
     /// Waiting for `cp_traffic` to submit a path request.
@@ -335,7 +340,7 @@ fn run_request(
         RunPoint::Access(a) => Some(a),
         _ => None,
     };
-    if run.kind == VehicleKind::Metro as u8 {
+    if is_rail_kind(run.kind) {
         // A train goes between two places on the track, on the lanes the access points name.
         let (RunPoint::Access(from), RunPoint::Access(to)) = (run.from, run.to) else {
             return None;
@@ -503,7 +508,7 @@ pub fn receive_service_paths(
         match &outcome.result {
             PathResult::Stale => runs.set_state(id, RunState::Planned),
             // A train is not an agent: it arrives when the route's time is up.
-            PathResult::Rail(Ok(path)) if run.kind == VehicleKind::Metro as u8 => runs.set_state(
+            PathResult::Rail(Ok(path)) if is_rail_kind(run.kind) => runs.set_state(
                 id,
                 RunState::Timer {
                     arrive_at: Tick(tick.0 + travel_ticks(path.cost)),

@@ -158,6 +158,23 @@ fn vehicle_sizes_come_from_content() {
     let car = db.vehicle(db.vehicle_id("car_basic").expect("car_basic"));
     assert_eq!(looks.sizes[0].z, car.length);
     assert_eq!(looks.sizes[0].x, car.width);
+    // The intercity train (kind 6) has its own size, not the goods truck's it once fell back to.
+    let train = db.vehicle(db.vehicle_id("intercity").expect("intercity"));
+    assert_eq!(train.kind as usize, 6);
+    assert_eq!(looks.sizes[6].z, train.length);
+    assert_ne!(looks.sizes[6], looks.sizes[5]);
+    assert_ne!(
+        mesh::vehicle_mesh(6, 0).positions.len(),
+        mesh::vehicle_mesh(5, 0).positions.len()
+    );
+}
+
+#[test]
+fn every_vehicle_kind_has_a_look() {
+    assert_eq!(VEHICLE_KINDS, cp_content::VehicleKind::COUNT);
+    for kind in cp_content::VehicleKind::ALL {
+        assert!((kind as usize) < VEHICLE_KINDS);
+    }
 }
 
 #[test]

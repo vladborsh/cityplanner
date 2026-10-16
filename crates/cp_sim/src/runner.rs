@@ -130,6 +130,7 @@ impl SimRunner {
         world.init_resource::<cp_transit::TransitLedger>();
         world.init_resource::<cp_transit::Tourists>();
         world.init_resource::<cp_transit::Goods>();
+        world.init_resource::<cp_transit::Intercity>();
         world.init_resource::<cp_economy::EconomyState>();
         world.init_resource::<cp_economy::DistrictIncome>();
         world.init_resource::<cp_economy::MoneyFlow>();
@@ -319,6 +320,8 @@ impl SimRunner {
                 cp_transit::run_tourists,
                 // Factories make goods, shops sell them, trucks carry them (T-169).
                 cp_transit::run_goods,
+                // Intercity trains and the households and tourists they bring (T-167).
+                cp_transit::run_intercity,
                 cp_traffic::route_trips,
                 cp_traffic::route_service_runs,
             )

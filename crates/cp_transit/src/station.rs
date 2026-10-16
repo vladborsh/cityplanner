@@ -34,6 +34,26 @@ pub fn station_reaches_outside(
     platform_segment(transit, building).is_some_and(|seg| rail.reaches(seg))
 }
 
+/// The station trains stop at (T-167): the first stop in id order whose station is joined by rail
+/// to the map's railway and stands ready.
+pub fn connected_station(
+    transit: &TransitNet,
+    rail: &RailReach,
+    buildings: &BuildingGrid,
+) -> Option<BuildingId> {
+    transit.stops.iter().find_map(|(_, st)| match st.kind {
+        StopKind::Station { building, seg, .. }
+            if rail.reaches(seg)
+                && buildings
+                    .get(building)
+                    .is_some_and(|b| b.state == cp_building::BuildingState::Active) =>
+        {
+            Some(building)
+        }
+        _ => None,
+    })
+}
+
 /// Makes the stop of the station `building` on its platform `seg`, halfway along it. The
 /// pedestrian leg ends at the building's access point; `pos` is the building.
 pub fn add_station(world: &mut World, building: BuildingId, seg: SegmentId) -> Option<StopId> {

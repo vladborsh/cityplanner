@@ -90,6 +90,12 @@ pub fn vehicle_mesh(kind: usize, detail: usize) -> MeshData {
             );
             wheels(&mut m, &[0.35, -0.3, -0.42]);
         }
+        6 => {
+            // Intercity train (T-167): a long body with a window band; the client draws it car
+            // by car along the track (`train_render`), this is the one-piece stand-in.
+            push_box(&mut m, [-0.5, 0.1, -0.5], [0.5, 0.9, 0.5], TINT);
+            push_box(&mut m, [-0.52, 0.5, -0.45], [0.52, 0.75, 0.45], GLASS);
+        }
         5 => {
             // Goods truck (T-169b): a short cab with a glass front, a long box trailer on a
             // lower chassis, a neutral light grey that takes no instance colour.

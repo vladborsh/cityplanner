@@ -1,0 +1,15 @@
+// Intercity train (T-167): rides the railway from the map edge to the station and back. Not an
+// agent on the track: a timed run like the metro. Numbers: tune later.
+Vehicle((
+    id: "intercity",
+    name: "Intercity train",
+    kind: Train,
+    length: 120.0,
+    width: 3.0,
+    max_speed_kmh: 120.0, // tune later
+    accel: 0.8,
+    decel: 1.0,
+    min_gap: 5.0,
+    capacity: 300, // tune later
+    mesh: "vehicle/intercity",
+))
