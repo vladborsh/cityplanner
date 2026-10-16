@@ -285,6 +285,48 @@ impl CitizenGrid {
         true
     }
 
+    /// Removes one citizen (death): frees their job and their place in the household, and the
+    /// household too when nobody is left. Returns the citizen.
+    pub fn remove_citizen(&mut self, id: CitizenId) -> Option<Citizen> {
+        let c = self.citizens.remove(id)?;
+        if let Some(w) = c.work {
+            self.derived.remove_job(w, usize::from(c.work_level));
+        }
+        let mut empty = false;
+        if let Some(h) = self.households.get_mut(c.household) {
+            for slot in h.members.iter_mut().filter(|m| **m == Some(id)) {
+                *slot = None;
+            }
+            empty = h.members.iter().all(Option::is_none);
+        }
+        if empty {
+            self.remove_household(c.household);
+        }
+        Some(c)
+    }
+
+    /// Adds a newborn (0 days, education 0) to a household with a free place, at home.
+    pub fn add_newborn(&mut self, hid: HouseholdId) -> Option<CitizenId> {
+        let h = self.households.get(hid)?;
+        let slot = h.members.iter().position(Option::is_none)?;
+        let home = h.home;
+        let cid = self.citizens.insert(Citizen {
+            age_days: 0,
+            education: 0,
+            household: hid,
+            home: Some(home),
+            work: None,
+            work_level: 0,
+            location: Location::Home,
+            wellbeing: 50,
+            has_car: false,
+            sick_since: None,
+            school: None,
+        });
+        self.households.get_mut(hid)?.members[slot] = Some(cid);
+        Some(cid)
+    }
+
     /// Gives a citizen a job slot of `level` in `building`.
     pub fn set_job(&mut self, id: CitizenId, building: BuildingId, level: u8) {
         self.clear_job(id);

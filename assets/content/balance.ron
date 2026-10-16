@@ -101,4 +101,14 @@ Balance((
     police_cover: 0.9,
     crime_poor: 1.0,
     crime_problem: 100.0,
+
+    // --- Lifecycle (system-design §16 M2 D): all // tune later ---
+    // Chance per game day to die by age: (age in years, chance) points, linear between them,
+    // 0 before the first, flat after the last.
+    death_curve: [(60.0, 0.0), (70.0, 0.002), (80.0, 0.01), (90.0, 0.04), (100.0, 0.2)],
+    // Days of sickness after which the sick can die, and their chance per game day.
+    sick_death_days: 7.0,
+    sick_death_chance: 0.1,
+    // Chance per game day that a household of two adults aged 20-40 with a free place has a child.
+    birth_chance: 0.02,
 ))

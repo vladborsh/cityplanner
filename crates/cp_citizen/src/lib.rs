@@ -2,12 +2,14 @@
 //! `architecture/system-design.md` §9.1.
 
 pub mod grid;
+pub mod lifecycle;
 pub mod model;
 pub mod routine;
 pub mod system;
 pub mod trips;
 
 pub use grid::CitizenGrid;
+pub use lifecycle::{LIFECYCLE_STREAM, run_lifecycle, update_lifecycle};
 pub use model::{
     ADULT_AGE_DAYS, Citizen, CitizenId, DAYS_PER_YEAR, HOUSEHOLD_MAX, Household, HouseholdId,
     Location,

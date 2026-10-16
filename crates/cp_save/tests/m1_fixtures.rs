@@ -44,6 +44,10 @@
 //! by one. Checked: with the plant's two files taken out of the content, all four values of the
 //! T-109 header above reproduce exactly (and the bench-10k baseline too).
 
+//! **T-138.** Re-recorded again, the two "load + 4096 ticks" values only: citizens now age, die and
+//! have children once per game day, so the state after a day moves. The state at load is
+//! unchanged (no serialized type changed).
+//!
 //! **T-131 (save v21).** Re-recorded again: the sim checksum has a new part, the district map
 //! and records (empty in these files), so every value moves. The behaviour did not change: the
 //! districts are empty and nothing reads them yet; `save_v21.rs` runs the v20 fixture on to the
@@ -136,7 +140,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     assert_eq!(sim.checksum(), 0xbf17b7ba5fc78e2c, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x710e1b8e533e2d88,
+        0xd525df772fce6c2d,
         "load + 4096 ticks"
     );
 }
@@ -170,7 +174,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0xf6ec84583129ed85, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x885da7fc550cf858, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

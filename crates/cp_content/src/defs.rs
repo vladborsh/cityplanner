@@ -161,6 +161,16 @@ pub struct Balance {
     pub crime_poor: f32,
     /// Crime piled up in a building from which it has the CRIME problem.
     pub crime_problem: f32,
+    /// Chance per game day to die by age: `(age in years, chance)` points, linear between them,
+    /// 0 before the first and flat after the last (T-138). // tune later
+    pub death_curve: Vec<(f32, f32)>,
+    /// Game days of sickness after which the sick can die (T-138). // tune later
+    pub sick_death_days: f32,
+    /// Chance per game day to die once sick for `sick_death_days`.
+    pub sick_death_chance: f32,
+    /// Chance per game day that a household of two adults aged 20-40 with a free place has a
+    /// child.
+    pub birth_chance: f32,
 }
 
 /// One loan the bank offers (`balance.ron` `loan_offers`). Interest is simple, for the whole
@@ -222,7 +232,11 @@ impl Balance {
             self.police_cover,
             self.crime_poor,
             self.crime_problem,
+            self.sick_death_days,
+            self.sick_death_chance,
+            self.birth_chance,
         ]);
+        v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
         v
     }
 }
@@ -278,8 +292,23 @@ impl Default for Balance {
             police_cover: 0.9,
             crime_poor: 1.0,
             crime_problem: 100.0,
+            death_curve: default_death_curve(),
+            sick_death_days: 7.0,
+            sick_death_chance: 0.1,
+            birth_chance: 0.02,
         }
     }
+}
+
+/// The death curve of a content set without a `death_curve` entry. // tune later
+pub fn default_death_curve() -> Vec<(f32, f32)> {
+    vec![
+        (60.0, 0.0),
+        (70.0, 0.002),
+        (80.0, 0.01),
+        (90.0, 0.04),
+        (100.0, 0.2),
+    ]
 }
 
 /// The offers of a content set without a `loan_offers` entry. // tune later
