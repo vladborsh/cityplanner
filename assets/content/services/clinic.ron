@@ -1,0 +1,9 @@
+// Numbers: tune later. `capacity` is the sick it treats per game day.
+Service((
+    id: "clinic",
+    name: "Clinic",
+    kind: Health,
+    radius_m: 600.0,
+    capacity: 20,
+    vehicles: [],
+))

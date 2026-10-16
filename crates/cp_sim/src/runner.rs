@@ -240,6 +240,11 @@ impl SimRunner {
                 .in_set(SimPhase::Economy)
                 .after(cp_economy::update_city),
         );
+        schedule.add_systems(
+            cp_economy::update_health
+                .in_set(SimPhase::Economy)
+                .after(cp_economy::update_police),
+        );
         schedule.add_systems(cp_citizen::update_citizens.in_set(SimPhase::Citizens));
         schedule.add_systems(
             cp_citizen::update_lifecycle

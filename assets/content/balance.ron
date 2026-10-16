@@ -111,4 +111,9 @@ Balance((
     sick_death_chance: 0.1,
     // Chance per game day that a household of two adults aged 20-40 with a free place has a child.
     birth_chance: 0.02,
+
+    // --- Health (system-design §16 M2 D): all // tune later ---
+    // Chance per game day to fall ill, plus this much per point (0..100) of pollution at the home.
+    sick_base: 0.01,
+    sick_pollution: 0.001,
 ))

@@ -171,6 +171,10 @@ pub struct Balance {
     /// Chance per game day that a household of two adults aged 20-40 with a free place has a
     /// child.
     pub birth_chance: f32,
+    /// Chance per game day to fall ill at home with no pollution (T-139). // tune later
+    pub sick_base: f32,
+    /// Extra chance per game day per point (0..=100) of pollution at the home.
+    pub sick_pollution: f32,
 }
 
 /// One loan the bank offers (`balance.ron` `loan_offers`). Interest is simple, for the whole
@@ -235,6 +239,8 @@ impl Balance {
             self.sick_death_days,
             self.sick_death_chance,
             self.birth_chance,
+            self.sick_base,
+            self.sick_pollution,
         ]);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
         v
@@ -296,6 +302,8 @@ impl Default for Balance {
             sick_death_days: 7.0,
             sick_death_chance: 0.1,
             birth_chance: 0.02,
+            sick_base: 0.01,
+            sick_pollution: 0.001,
         }
     }
 }

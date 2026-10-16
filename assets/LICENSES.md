@@ -96,3 +96,6 @@ by `tools/assets/icons.mjs`, CC0, no third-party pack.
 
 T-144 adds `police_station` (a station with a star and a beacon): self-made SVG in `assets/ui/icons/src`, rendered
 by `tools/assets/icons.mjs`, CC0, no third-party pack.
+
+T-139 adds `clinic` (a house with a cross) and `hospital` (a block with a cross and a helipad): self-made SVGs in
+`assets/ui/icons/src`, rendered by `tools/assets/icons.mjs`, CC0, no third-party pack.

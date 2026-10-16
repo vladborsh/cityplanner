@@ -44,6 +44,10 @@
 //! by one. Checked: with the plant's two files taken out of the content, all four values of the
 //! T-109 header above reproduce exactly (and the bench-10k baseline too).
 
+//! **T-139.** Re-recorded again, all four values: the new clinic and hospital are in the content
+//! hash (state at load), and the sick, the cured and the dead of the health row move the state
+//! after 4096 ticks.
+//!
 //! **T-138.** Re-recorded again, the two "load + 4096 ticks" values only: citizens now age, die and
 //! have children once per game day, so the state after a day moves. The state at load is
 //! unchanged (no serialized type changed).
@@ -137,10 +141,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0xbf17b7ba5fc78e2c, "state at load");
+    assert_eq!(sim.checksum(), 0xa1b7d9eaff5fe281, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0xd525df772fce6c2d,
+        0x96359a1297efe394,
         "load + 4096 ticks"
     );
 }
@@ -166,7 +170,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0xfd56465bc04ae8d4, "state at load");
+    assert_eq!(sim.checksum(), 0xdea816473e53a8ea, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -174,7 +178,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x885da7fc550cf858, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x1f7ef789597531af, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

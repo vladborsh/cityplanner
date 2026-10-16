@@ -812,6 +812,7 @@ mod tests {
                 ServiceKind::Water,
                 ServiceKind::Power,
                 ServiceKind::Garbage,
+                ServiceKind::Health,
                 ServiceKind::Fire,
                 ServiceKind::Police
             ]

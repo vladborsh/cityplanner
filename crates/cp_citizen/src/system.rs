@@ -293,6 +293,11 @@ pub fn update_citizens(
                 employed += usize::from(c.work.is_some());
             }
         }
+        // Children whose adults have died leave the city (T-139).
+        if arrived && adults == 0 {
+            grid.remove_household(hid);
+            continue;
+        }
         let since = if arrived && adults > 0 && employed == 0 {
             Some(h.jobless_since.unwrap_or(Tick(now)))
         } else {

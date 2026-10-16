@@ -1,6 +1,6 @@
 //! The citizen and household arenas, plus derived occupancy tables.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_ecs::resource::Resource;
 use cp_building::BuildingId;
@@ -62,6 +62,8 @@ struct Derived {
     homes: PerBuilding<u16>,
     /// Filled job slots per education level.
     jobs: PerBuilding<[u16; 4]>,
+    /// The sick citizens by the building they live in (T-139).
+    sick: BTreeMap<BuildingId, BTreeSet<CitizenId>>,
 }
 
 impl Derived {
@@ -74,6 +76,19 @@ impl Derived {
             *n = n.saturating_sub(1);
             if *n == 0 {
                 self.homes.remove(b);
+            }
+        }
+    }
+
+    fn add_sick(&mut self, home: BuildingId, id: CitizenId) {
+        self.sick.entry(home).or_default().insert(id);
+    }
+
+    fn remove_sick(&mut self, home: BuildingId, id: CitizenId) {
+        if let Some(set) = self.sick.get_mut(&home) {
+            set.remove(&id);
+            if set.is_empty() {
+                self.sick.remove(&home);
             }
         }
     }
@@ -212,9 +227,14 @@ impl CitizenGrid {
         for (_, h) in self.households.iter() {
             d.add_home(h.home);
         }
-        for (_, c) in self.citizens.iter() {
+        for (id, c) in self.citizens.iter() {
             if let Some(w) = c.work {
                 d.add_job(w, usize::from(c.work_level));
+            }
+            if c.sick_since.is_some()
+                && let Some(h) = c.home
+            {
+                d.add_sick(h, id);
             }
         }
         d.ready = true;
@@ -224,6 +244,31 @@ impl CitizenGrid {
     /// Households living in `building` (needs [`Self::ensure_derived`]).
     pub fn households_in(&self, building: BuildingId) -> u16 {
         self.derived.homes.get(building).copied().unwrap_or(0)
+    }
+
+    /// The sick citizens living in `building`, in id order (needs [`Self::ensure_derived`]).
+    pub fn sick_in(&self, building: BuildingId) -> impl Iterator<Item = CitizenId> + '_ {
+        self.derived
+            .sick
+            .get(&building)
+            .into_iter()
+            .flatten()
+            .copied()
+    }
+
+    /// Sets or cures the sickness of a citizen (`since = None` cures).
+    pub fn set_sick(&mut self, id: CitizenId, since: Option<Tick>) {
+        let Some(c) = self.citizens.get_mut(id) else {
+            return;
+        };
+        if let Some(h) = c.home {
+            match (c.sick_since.is_some(), since.is_some()) {
+                (false, true) => self.derived.add_sick(h, id),
+                (true, false) => self.derived.remove_sick(h, id),
+                _ => {}
+            }
+        }
+        c.sick_since = since;
     }
 
     /// Filled job slots of `level` in `building`.
@@ -275,10 +320,13 @@ impl CitizenGrid {
             return false;
         };
         for cid in h.members.into_iter().flatten() {
-            if let Some(c) = self.citizens.remove(cid)
-                && let Some(w) = c.work
-            {
-                self.derived.remove_job(w, usize::from(c.work_level));
+            if let Some(c) = self.citizens.remove(cid) {
+                if let Some(w) = c.work {
+                    self.derived.remove_job(w, usize::from(c.work_level));
+                }
+                if let (Some(_), Some(home)) = (c.sick_since, c.home) {
+                    self.derived.remove_sick(home, cid);
+                }
             }
         }
         self.derived.remove_home(h.home);
@@ -291,6 +339,9 @@ impl CitizenGrid {
         let c = self.citizens.remove(id)?;
         if let Some(w) = c.work {
             self.derived.remove_job(w, usize::from(c.work_level));
+        }
+        if let (Some(_), Some(home)) = (c.sick_since, c.home) {
+            self.derived.remove_sick(home, id);
         }
         let mut empty = false;
         if let Some(h) = self.households.get_mut(c.household) {

@@ -505,3 +505,33 @@ fn a_full_pool_sends_the_overflow_abstract_and_every_trip_finishes() {
     let book = sim.world().resource::<TripBook>();
     assert!(book.completed > 300, "{} trips completed", book.completed);
 }
+
+#[test]
+fn the_sick_stay_home_from_work() {
+    let content = content();
+    let mut sim = grown(&content, 5, 7, 300);
+    let ids: Vec<_> = {
+        let g = sim.world().resource::<CitizenGrid>();
+        g.citizens().map(|(id, _)| id).collect()
+    };
+    let now = sim.tick();
+    {
+        let mut g = sim.world_mut().resource_mut::<CitizenGrid>();
+        g.ensure_derived();
+        for id in ids {
+            g.set_sick(id, Some(now));
+        }
+    }
+    for t in 0..TICKS_PER_DAY {
+        sim.tick_once();
+        if t % 64 == 0 {
+            let at_work = sim
+                .world()
+                .resource::<CitizenGrid>()
+                .citizens()
+                .filter(|(_, c)| c.location == Location::Work)
+                .count();
+            assert_eq!(at_work, 0, "tick {t}");
+        }
+    }
+}

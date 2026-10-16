@@ -1,0 +1,10 @@
+// Numbers: tune later. `capacity` is the sick it treats per game day; without power it does
+// not work.
+Service((
+    id: "hospital",
+    name: "Hospital",
+    kind: Health,
+    radius_m: 1500.0,
+    capacity: 100,
+    vehicles: [],
+))

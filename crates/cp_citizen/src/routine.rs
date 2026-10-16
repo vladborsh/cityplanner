@@ -347,6 +347,10 @@ fn decide(
     if !c.is_adult() || book.active_of(cid).is_some() {
         return;
     }
+    // The sick stay home (T-139); one who fell ill at work or a shop still goes home.
+    if c.sick_since.is_some() && c.location == Location::Home {
+        return;
+    }
     let Some(home) = c.home.filter(|h| is_active(buildings, *h)) else {
         return;
     };

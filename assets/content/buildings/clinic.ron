@@ -1,0 +1,15 @@
+Building((
+    id: "clinic",
+    name: "Clinic",
+    zone: Industrial,
+    level: 1,
+    lot: (2, 2),
+    jobs: (1, 3, 1, 0),
+    consumption: {Power: 10.0},
+    tax_base: 0.0,
+    cost: 12000.0,
+    upkeep_week: 300.0,
+    styles: ["service_pump_house"],
+    service: Some("clinic"),
+    icon: "clinic",
+))
