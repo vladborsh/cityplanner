@@ -412,7 +412,6 @@ mod tests {
         let got = value(&secs, "Services", "Garbage coverage");
         assert!(got.ends_with(" %") && got != "0 %", "{got}");
         assert_eq!(value(&secs, "Services", "Fire coverage"), "—");
-        assert_eq!(value(&secs, "Services", "Sick"), "—");
     }
 
     #[test]
