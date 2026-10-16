@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 23;
+pub const FORMAT_VERSION: u32 = 24;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -203,7 +203,8 @@ pub struct SaveData {
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
     pub districts: Districts,
-    /// Per-building service state and facility counters. Added in v22.
+    /// Per-building service state and facility counters. Added in v22; fires name their
+    /// station since v24.
     pub service_state: cp_service::ServiceState,
     /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
     /// sim reads the values of that boundary until the next one. Added in v22.

@@ -108,6 +108,18 @@ impl PartialEq for ServiceState {
 }
 
 impl ServiceState {
+    /// A state from its saved parts (the migrations of `cp_save`).
+    pub fn from_parts(
+        buildings: Vec<BuildingServices>,
+        facilities: BTreeMap<BuildingId, Facility>,
+    ) -> Self {
+        Self {
+            buildings,
+            facilities,
+            revision: 0,
+        }
+    }
+
     pub fn revision(&self) -> u64 {
         self.revision
     }
