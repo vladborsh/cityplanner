@@ -14,7 +14,7 @@ use cp_sim::SimView;
 use crate::building_render::{BuildingState, BuildingSync};
 use crate::fire_fx::{self, Burning};
 use crate::problem::Facing;
-use crate::problem_render::to_bevy_mesh;
+use crate::problem_render::{set_effect_visible, to_bevy_mesh};
 
 pub struct FireFxPlugin;
 
@@ -99,6 +99,11 @@ fn draw_fire(
     let fx = &mut *fx;
     let data = fire_fx::build_mesh(&fx.burning, &facing, time.elapsed_secs());
     stats.triangles = data.triangle_count();
+    // Nothing burning in range: hide the entity, do not upload an empty mesh (BUG-037).
+    if !set_effect_visible(!data.indices.is_empty(), fx.entity, &mut commands) {
+        stats.update_ms = start.elapsed().as_secs_f32() * 1000.0;
+        return;
+    }
     let mesh = to_bevy_mesh(data);
     match fx.mesh.clone() {
         Some(h) => {
@@ -129,4 +134,58 @@ fn draw_fire(
         }
     }
     stats.update_ms = start.elapsed().as_secs_f32() * 1000.0;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(Assets::<Mesh>::default())
+            .insert_resource(Assets::<StandardMaterial>::default())
+            .init_resource::<FireFx>()
+            .init_resource::<FireFxStats>()
+            .add_systems(Update, draw_fire);
+        app.world_mut()
+            .spawn((Camera3d::default(), GlobalTransform::default()));
+        app
+    }
+
+    /// BUG-037: with nothing to show no mesh is created or uploaded, however many frames run.
+    #[test]
+    fn an_empty_frame_creates_no_mesh() {
+        let mut app = app();
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 0);
+        assert!(app.world().resource::<FireFx>().entity.is_none());
+    }
+
+    /// BUG-037: once there was something and now there is not, the entity is hidden and its
+    /// mesh is left untouched (not overwritten with an empty one).
+    #[test]
+    fn an_empty_frame_hides_the_entity_and_keeps_the_mesh() {
+        let mut app = app();
+        let h = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(Mesh::from(Cuboid::default()));
+        let e = app
+            .world_mut()
+            .spawn((Mesh3d(h.clone()), Visibility::Visible))
+            .id();
+        {
+            let mut r = app.world_mut().resource_mut::<FireFx>();
+            r.mesh = Some(h.clone());
+            r.entity = Some(e);
+        }
+        app.update();
+        assert_eq!(app.world().get::<Visibility>(e), Some(&Visibility::Hidden));
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        assert_eq!(meshes.len(), 1);
+        assert!(meshes.get(&h).unwrap().count_vertices() > 0);
+    }
 }

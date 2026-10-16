@@ -133,6 +133,9 @@ pub(super) fn sync_land_layer(
     let data = land_mesh(terrain, cam, |tx, tz| {
         tile_color(states[tz * TILES_PER_SIDE + tx])
     });
+    if data.indices.is_empty() {
+        return;
+    }
     let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     for p in &data.positions {
         lo = lo.min(Vec3::from(*p));

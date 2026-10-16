@@ -116,7 +116,15 @@ fn draw_problem_icons(
     };
     let icons = &mut *icons;
     let shown = problem::collect(&icons.marked, &mut icons.lod, position, time.elapsed_secs());
-    let mesh = to_bevy_mesh(problem::build_mesh(&shown, &facing));
+    let data = problem::build_mesh(&shown, &facing);
+    stats.shown = shown.len();
+    // Nothing to show: hide the entity and leave the mesh alone (an empty mesh uploaded every
+    // frame makes Bevy log "contains no vertices", BUG-037).
+    if !set_effect_visible(!data.indices.is_empty(), icons.entity, &mut commands) {
+        stats.update_ms = start.elapsed().as_secs_f32() * 1000.0;
+        return;
+    }
+    let mesh = to_bevy_mesh(data);
     match icons.mesh.clone() {
         Some(h) => {
             let _ = meshes.insert(&h, mesh);
@@ -143,6 +151,77 @@ fn draw_problem_icons(
             icons.entity = Some(e);
         }
     }
-    stats.shown = shown.len();
     stats.update_ms = start.elapsed().as_secs_f32() * 1000.0;
+}
+
+/// Shows or hides the entity of a mesh rebuilt every frame; `true` when there is something to
+/// upload. Used for the per-frame effects (problem icons, fire) whose mesh is empty whenever
+/// nothing is in range.
+pub(crate) fn set_effect_visible(
+    show: bool,
+    entity: Option<Entity>,
+    commands: &mut Commands,
+) -> bool {
+    if let Some(e) = entity {
+        commands.entity(e).insert(if show {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+    }
+    show
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(Assets::<Mesh>::default())
+            .insert_resource(Assets::<StandardMaterial>::default())
+            .init_resource::<ProblemIcons>()
+            .init_resource::<ProblemIconStats>()
+            .add_systems(Update, draw_problem_icons);
+        app.world_mut()
+            .spawn((Camera3d::default(), GlobalTransform::default()));
+        app
+    }
+
+    /// BUG-037: with nothing to show no mesh is created or uploaded, however many frames run.
+    #[test]
+    fn an_empty_frame_creates_no_mesh() {
+        let mut app = app();
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 0);
+        assert!(app.world().resource::<ProblemIcons>().entity.is_none());
+    }
+
+    /// BUG-037: once there was something and now there is not, the entity is hidden and its
+    /// mesh is left untouched (not overwritten with an empty one).
+    #[test]
+    fn an_empty_frame_hides_the_entity_and_keeps_the_mesh() {
+        let mut app = app();
+        let h = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(Mesh::from(Cuboid::default()));
+        let e = app
+            .world_mut()
+            .spawn((Mesh3d(h.clone()), Visibility::Visible))
+            .id();
+        {
+            let mut r = app.world_mut().resource_mut::<ProblemIcons>();
+            r.mesh = Some(h.clone());
+            r.entity = Some(e);
+        }
+        app.update();
+        assert_eq!(app.world().get::<Visibility>(e), Some(&Visibility::Hidden));
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        assert_eq!(meshes.len(), 1);
+        assert!(meshes.get(&h).unwrap().count_vertices() > 0);
+    }
 }
