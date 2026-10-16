@@ -11,8 +11,11 @@ const GLASS: [f32; 4] = [0.05, 0.07, 0.10, 0.0];
 const TYRE: [f32; 4] = [0.02, 0.02, 0.02, 0.0];
 const SKIN: [f32; 4] = [0.60, 0.42, 0.32, 0.0];
 const TINT: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const BUS_BLUE: [f32; 4] = [0.12, 0.36, 0.75, 0.0];
+const BUS_CREAM: [f32; 4] = [0.93, 0.90, 0.80, 0.0];
+const BUS_ROOF: [f32; 4] = [0.55, 0.58, 0.62, 0.0];
 
-fn push_box(m: &mut MeshData, min: [f32; 3], max: [f32; 3], color: [f32; 4]) {
+pub(crate) fn push_box(m: &mut MeshData, min: [f32; 3], max: [f32; 3], color: [f32; 4]) {
     let [x0, y0, z0] = min;
     let [x1, y1, z1] = max;
     // (normal, four corners counter-clockwise seen from outside)
@@ -89,9 +92,15 @@ pub fn vehicle_mesh(kind: usize, detail: usize) -> MeshData {
             wheels(&mut m, &[0.35, -0.3, -0.42]);
         }
         2 => {
-            // Bus: one long body with a window band.
-            push_box(&mut m, [-0.5, 0.1, -0.5], [0.5, 1.0, 0.5], TINT);
-            push_box(&mut m, [-0.505, 0.5, -0.46], [0.505, 0.85, 0.46], GLASS);
+            // Bus (T-158): a blue lower body, a cream upper one with a window band along the
+            // sides and glass at both ends, a grey roof. Fixed colours: the line's colour is not
+            // known to an agent batch.
+            push_box(&mut m, [-0.5, 0.1, -0.5], [0.5, 0.52, 0.5], BUS_BLUE);
+            push_box(&mut m, [-0.5, 0.52, -0.5], [0.5, 0.98, 0.5], BUS_CREAM);
+            push_box(&mut m, [-0.505, 0.6, -0.46], [0.505, 0.88, 0.46], GLASS);
+            push_box(&mut m, [-0.46, 0.6, 0.495], [0.46, 0.9, 0.505], GLASS);
+            push_box(&mut m, [-0.46, 0.6, -0.505], [0.46, 0.9, -0.495], GLASS);
+            push_box(&mut m, [-0.45, 0.98, -0.45], [0.45, 1.0, 0.45], BUS_ROOF);
             wheels(&mut m, &[0.32, -0.32]);
         }
         _ => {
@@ -128,5 +137,24 @@ pub fn pedestrian_mesh(detail: usize) -> MeshData {
     );
     push_box(&mut m, [-0.22, 0.8, -0.12], [0.22, 1.45, 0.12], TINT);
     push_box(&mut m, [-0.1, 1.45, -0.1], [0.1, 1.75, 0.1], SKIN);
+    m
+}
+
+/// A bus shelter in metres (T-158): x along the road, z away from it (the open side faces the
+/// road, z < 0), origin on the pavement at the stop. Colours are fixed (alpha 0).
+pub fn shelter_mesh() -> MeshData {
+    const STEEL: [f32; 4] = [0.30, 0.33, 0.37, 0.0];
+    const ROOF: [f32; 4] = [0.15, 0.40, 0.78, 0.0];
+    const PANEL: [f32; 4] = [0.55, 0.72, 0.80, 0.0];
+    const BENCH: [f32; 4] = [0.45, 0.30, 0.18, 0.0];
+    let mut m = MeshData::default();
+    // Roof slab, back panel, two posts, a bench, and the stop pole with its sign.
+    push_box(&mut m, [-1.6, 2.4, -0.7], [1.6, 2.55, 0.9], ROOF);
+    push_box(&mut m, [-1.55, 0.2, 0.82], [1.55, 2.4, 0.9], PANEL);
+    push_box(&mut m, [-1.6, 0.0, -0.65], [-1.5, 2.4, -0.55], STEEL);
+    push_box(&mut m, [1.5, 0.0, -0.65], [1.6, 2.4, -0.55], STEEL);
+    push_box(&mut m, [-1.0, 0.45, 0.4], [1.0, 0.55, 0.78], BENCH);
+    push_box(&mut m, [2.2, 0.0, -0.9], [2.28, 3.0, -0.82], STEEL);
+    push_box(&mut m, [1.95, 2.7, -0.95], [2.55, 3.3, -0.85], ROOF);
     m
 }

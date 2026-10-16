@@ -469,14 +469,7 @@ mod tests {
         )
         .unwrap();
         let mut names: Vec<(String, String)> = Vec::new();
-        // The bus depot borrows the fire station's icon until it has its own (T-158).
-        let has_own_icon = |d: &cp_content::BuildingDef| {
-            d.service
-                .as_deref()
-                .and_then(|s| db.service_id(s))
-                .is_some_and(|s| db.service(s).kind != cp_content::ServiceKind::Transit)
-        };
-        for (_, d) in db.buildings().filter(|(_, d)| has_own_icon(d)) {
+        for (_, d) in db.buildings().filter(|(_, d)| d.service.is_some()) {
             names.push((d.id.clone(), d.icon.clone()));
         }
         for (_, d) in db.utilities() {

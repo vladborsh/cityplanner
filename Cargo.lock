@@ -2578,6 +2578,7 @@ dependencies = [
  "cp_service",
  "cp_sim",
  "cp_terrain",
+ "cp_traffic",
  "cp_transit",
  "cp_utility",
  "cp_zone",

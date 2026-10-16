@@ -642,6 +642,7 @@ pub fn is_service(m: Massing) -> bool {
             | Massing::University
             | Massing::FireStation
             | Massing::PoliceStation
+            | Massing::BusDepot
     )
 }
 
@@ -1968,6 +1969,70 @@ pub fn service(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                         y + 1.1,
                         [0.9, 0.9, 0.95, 1.0],
                         blue,
+                    );
+                }
+            }
+        }
+        Massing::BusDepot => {
+            pad(m, (0.0, cv), (0.95 * hu, 0.95 * hv), 0.25);
+            let y = b + 0.25;
+            // The hangar.
+            block(
+                m,
+                f,
+                (-0.15 * hu, cv + 0.15 * hv),
+                (0.7 * hu, 0.62 * hv),
+                y,
+                y + 6.0,
+                sc.wall,
+                sc.roof,
+            );
+            // The office at the corner.
+            block(
+                m,
+                f,
+                (0.72 * hu, cv + 0.5 * hv),
+                (0.2 * hu, 0.25 * hv),
+                y,
+                y + 8.5,
+                mul(sc.wall, 0.9),
+                sc.trim,
+            );
+            // Three wide gates in the front.
+            for k in [-1.0f32, 0.0, 1.0] {
+                block(
+                    m,
+                    f,
+                    (-0.15 * hu + k * 0.42 * hu, cv - 0.48 * hv),
+                    (0.17 * hu, 0.03 * hv),
+                    y,
+                    y + 4.4,
+                    dark,
+                    dark,
+                );
+            }
+            // The yard in front, with a bay stripe.
+            block(
+                m,
+                f,
+                (-0.1 * hu, cv - 0.72 * hv),
+                (0.8 * hu, 0.22 * hv),
+                y,
+                y + 0.08,
+                mul(dark, 1.15),
+                mul(dark, 1.3),
+            );
+            if near {
+                for k in 0..3 {
+                    block(
+                        m,
+                        f,
+                        (-0.15 * hu + (k as f32 - 1.0) * 0.42 * hu, cv - 0.72 * hv),
+                        (2.2, 1.1),
+                        y + 0.08,
+                        y + 3.0,
+                        [0.95, 0.75, 0.12, 1.0],
+                        [0.98, 0.82, 0.2, 1.0],
                     );
                 }
             }

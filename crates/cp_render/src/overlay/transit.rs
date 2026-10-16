@@ -175,6 +175,89 @@ pub fn ghost_mesh(g: &LineGhost, terrain: &Terrain) -> MeshData {
     m
 }
 
+/// The shelters of all stops as one mesh: always on, not part of the Transit view.
+pub fn shelters_mesh(t: &TransitView, net: &cp_net::NetGraph, terrain: &Terrain) -> MeshData {
+    let proto = crate::agent::mesh::shelter_mesh();
+    let mut m = MeshData::default();
+    for (_, stop) in t.net.stops.iter() {
+        let Some(seg) = net.segment(stop.kind.segment()) else {
+            continue;
+        };
+        let tt = seg.curve.arc_table().s_to_t(stop.kind.s());
+        let dir = cp_core::curve::to_xz(seg.curve.derivative(tt)).normalize_or_zero();
+        let left = Vec2::new(dir.y, -dir.x);
+        // Away from the road: the stop's own side of the centre line.
+        let out = match stop.side {
+            cp_traffic::Side::Left => left,
+            cp_traffic::Side::Right => -left,
+        };
+        // Local x runs along the road, z away from it.
+        let ground = terrain_mesh_height(terrain, stop.pos);
+        let base = m.positions.len() as u32;
+        let map = |v: [f32; 3]| {
+            let p = stop.pos + dir * v[0] + out * v[2];
+            [p.x, ground + v[1], p.y]
+        };
+        let rot = |n: [f32; 3]| {
+            let d = dir * n[0] + out * n[2];
+            [d.x, n[1], d.y]
+        };
+        for i in 0..proto.positions.len() {
+            m.positions.push(map(proto.positions[i]));
+            m.normals.push(rot(proto.normals[i]));
+            // Alpha 0 of the prototype means "fixed colour": opaque here.
+            let c = proto.colors[i];
+            m.colors.push([c[0], c[1], c[2], 1.0]);
+        }
+        m.indices.extend(proto.indices.iter().map(|i| base + i));
+    }
+    m
+}
+
+#[derive(Component)]
+pub struct StopShelters;
+
+#[derive(Resource, Default)]
+pub struct ShelterLayer {
+    entity: Option<Entity>,
+    key: Option<(usize, usize, usize)>,
+}
+
+pub(super) fn sync_shelters(
+    view: Option<Res<SimView>>,
+    overlay: Res<OverlayLayers>,
+    mut layer: ResMut<ShelterLayer>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let (Some(view), Some(material)) = (view, overlay.material.as_ref()) else {
+        return;
+    };
+    let Some(terrain) = view.terrain.as_ref() else {
+        return;
+    };
+    let key = (
+        ptr_of(&view),
+        std::sync::Arc::as_ptr(terrain).cast::<()>() as usize,
+        std::sync::Arc::as_ptr(&view.net).cast::<()>() as usize,
+    );
+    if layer.key == Some(key) {
+        return;
+    }
+    layer.key = Some(key);
+    if let Some(e) = layer.entity.take() {
+        commands.entity(e).despawn();
+    }
+    layer.entity = spawn(
+        &mut commands,
+        &mut meshes,
+        material,
+        shelters_mesh(&view.transit, &view.net, terrain),
+        "stop shelters",
+        StopShelters,
+    );
+}
+
 #[derive(Component)]
 pub struct TransitRibbons;
 
@@ -326,6 +409,26 @@ mod tests {
                     [tri[0], tri[1], tri[2]].map(|i| Vec3::from(m.positions[i as usize]));
                 assert!((b - a).cross(c - a).y > 0.0);
             }
+        }
+    }
+
+    #[test]
+    fn the_bus_and_the_shelter_are_clean_meshes_within_three_cars() {
+        use crate::agent::mesh::{shelter_mesh, vehicle_mesh};
+        let car = vehicle_mesh(0, 0).positions.len();
+        for m in [vehicle_mesh(2, 0), shelter_mesh()] {
+            assert!(
+                m.positions.len() <= car * 3,
+                "{} > {}",
+                m.positions.len(),
+                car * 3
+            );
+            for (p, n) in m.positions.iter().zip(&m.normals) {
+                assert!(p.iter().all(|v| v.is_finite()));
+                let len = Vec3::from(*n).length();
+                assert!((len - 1.0).abs() < 1e-4, "{n:?}");
+            }
+            assert!(m.indices.iter().all(|&i| (i as usize) < m.positions.len()));
         }
     }
 

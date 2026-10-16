@@ -562,6 +562,8 @@ pub enum Massing {
     University = 20,
     FireStation = 21,
     PoliceStation = 22,
+    /// The bus depot (T-158): a hangar with gates and a yard of parked buses.
+    BusDepot = 23,
 }
 
 /// Facade pattern family of a style.

@@ -13,6 +13,7 @@ disallowed_methods = "allow"
 [dependencies]
 cp_sim.workspace = true
 cp_transit.workspace = true
+cp_traffic.workspace = true
 cp_district.workspace = true
 cp_core.workspace = true
 cp_terrain.workspace = true

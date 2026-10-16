@@ -8,8 +8,7 @@ Building((
     tax_base: 0.0,
     cost: 15000.0,
     upkeep_week: 400.0,
-    // Stand-ins until the depot has its own look and icon (T-158).
-    styles: ["service_fire_station"],
+    styles: ["service_bus_depot"],
     service: Some("bus_depot"),
-    icon: "fire_station",
+    icon: "bus_depot",
 ))

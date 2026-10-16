@@ -593,6 +593,7 @@ impl Plugin for OverlayPlugin {
             .init_resource::<land::LandLayer>()
             .init_resource::<transit::LineGhost>()
             .init_resource::<transit::TransitLayer>()
+            .init_resource::<transit::ShelterLayer>()
             .add_systems(
                 Update,
                 (
@@ -601,6 +602,7 @@ impl Plugin for OverlayPlugin {
                     districts::sync_district_layers,
                     land::sync_land_layer,
                     transit::sync_transit_layer,
+                    transit::sync_shelters,
                     apply_overlay_visibility,
                 )
                     .chain(),
