@@ -1,4 +1,4 @@
-// Silhouette of the metro station (T-162): drawn as a Box until cp_render gets its own massing.
+// Silhouette of the metro station (T-162): an entrance pavilion over the platform (T-164).
 Style((
     id: "service_metro_station",
     massing: MetroStation,

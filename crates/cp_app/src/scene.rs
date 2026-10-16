@@ -43,6 +43,104 @@ pub fn parse_city(spec: &str) -> Option<usize> {
 /// Showcase scene: every building def in rows by zone, then a row of states.
 pub const SHOWCASE: &str = "showcase";
 
+/// Metro scene (T-164): a street, three metro stations beside it, the tunnels between the
+/// platforms and a metro line with two trains. Look at it with `--overlay underground`
+/// and `--cam metro`.
+pub const METRO: &str = "metro";
+
+/// Builds the [`METRO`] scene through the normal commands; returns the stations placed.
+pub fn build_metro(sim: &mut SimRunner) -> usize {
+    use cp_building::{BuildingCommand, BuildingGrid};
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    let metro = db.road_id("metro_track").expect("metro_track");
+    let send = |sim: &mut SimRunner, cmd: SimCommand| {
+        sim.push_command(cmd, sim.tick());
+        sim.tick_once();
+    };
+    for k in 0..6 {
+        let x = c - 600.0 + 200.0 * k as f32;
+        send(
+            sim,
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: basic,
+                path: RoadPath::Straight {
+                    from: Vec2::new(x, c),
+                    to: Vec2::new(x + 200.0, c),
+                },
+                elevation: ElevationMode::Ground,
+            }),
+        );
+    }
+    let xs = [c - 450.0, c - 100.0, c + 300.0];
+    let mut stations = Vec::new();
+    for x in xs {
+        send(
+            sim,
+            SimCommand::Building(BuildingCommand::Place {
+                def: db.building_id("metro_station").expect("metro_station"),
+                pos: Vec2::new(x, c + 12.0),
+                rot: 0.0,
+            }),
+        );
+        if let Some((id, _)) = sim.world().resource::<BuildingGrid>().iter().last() {
+            stations.push(id);
+        }
+    }
+    // The tunnels, platform end to platform end.
+    let ends: Vec<(Vec2, Vec2)> = {
+        let transit = sim.world().resource::<cp_transit::TransitNet>();
+        let net = sim.world().resource::<cp_net::NetGraph>();
+        let mut v: Vec<(Vec2, Vec2)> = transit
+            .stops
+            .iter()
+            .filter_map(|(_, s)| match s.kind {
+                cp_transit::StopKind::Station { seg, .. } => net.segment(seg),
+                _ => None,
+            })
+            .map(|s| {
+                let (a, b) = (net.node(s.start).unwrap().pos, net.node(s.end).unwrap().pos);
+                let (a, b) = (Vec2::new(a.x, a.z), Vec2::new(b.x, b.z));
+                if a.x < b.x { (a, b) } else { (b, a) }
+            })
+            .collect();
+        v.sort_by(|p, q| p.0.x.total_cmp(&q.0.x));
+        v
+    };
+    for w in ends.windows(2) {
+        send(
+            sim,
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: metro,
+                path: RoadPath::Straight {
+                    from: w[0].1,
+                    to: w[1].0,
+                },
+                elevation: ElevationMode::Tunnel(12.0),
+            }),
+        );
+    }
+    send(
+        sim,
+        SimCommand::Transit(cp_transit::TransitCommand::CreateLine {
+            mode: cp_transit::TransitMode::Metro,
+            stops: stations
+                .iter()
+                .map(|&b| cp_transit::StopRef::Station(b))
+                .collect(),
+        }),
+    );
+    // Let the trains out of the first station.
+    for _ in 0..40 {
+        sim.tick_once();
+    }
+    stations.len()
+}
+
 /// Parses `grid:N`.
 pub fn parse_grid(spec: &str) -> Option<usize> {
     spec.strip_prefix("grid:")?

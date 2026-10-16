@@ -13,9 +13,13 @@ import bevy_pbr::render::{
 // switches that off
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> params: vec4<f32>;
 
+// x = factor on the alpha (1 = as drawn); only visible with an alpha-blended material
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var<uniform> fade: vec4<f32>;
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_vertex_output(in, is_front, false);
+    pbr_input.material.base_color.a = pbr_input.material.base_color.a * fade.x;
     pbr_input.material.perceptual_roughness = params.x;
     pbr_input.material.reflectance = vec3<f32>(params.y);
     if params.z > 0.0 {

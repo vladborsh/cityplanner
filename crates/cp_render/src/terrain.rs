@@ -47,6 +47,14 @@ pub struct TerrainChunk {
     max: Vec3,
 }
 
+/// The huge plane of the sea (T-164: the Underground view fades it with the ground).
+#[derive(Component)]
+pub struct SeaPlane;
+
+/// The water surface of a chunk (rivers and lakes, T-164 as [`SeaPlane`]).
+#[derive(Component)]
+pub struct WaterSurface;
+
 /// The main light.
 #[derive(Component)]
 pub struct Sun;
@@ -130,6 +138,7 @@ fn begin_terrain(
                 MeshMaterial3d(sea_material),
                 Transform::from_xyz(MAP_SIZE / 2.0, sea_level, MAP_SIZE / 2.0),
                 NotShadowCaster,
+                SeaPlane,
                 Name::new("sea"),
             ));
         })
@@ -191,6 +200,7 @@ fn spawn_chunk(
             Mesh3d(meshes.add(to_bevy_mesh(w))),
             MeshMaterial3d(mats.water.clone()),
             NotShadowCaster,
+            WaterSurface,
         ));
     }
 }

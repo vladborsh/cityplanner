@@ -656,6 +656,45 @@ impl PathGraph {
         out
     }
 
+    /// The route of a rail path as a polyline with heights, a point about every `step` metres
+    /// along each track lane it runs on (T-164: the ribbon of a metro line and the ride of a
+    /// train along its leg).
+    pub fn rail_path_points3(
+        &self,
+        path: &crate::astar::CarPath,
+        step: f32,
+    ) -> Vec<bevy_math::Vec3> {
+        let step = step.max(0.5);
+        let lanes: Vec<LaneId> = path.lanes().collect();
+        let mut out = Vec::new();
+        for (i, &id) in lanes.iter().enumerate() {
+            let Some(node) = self
+                .rail_slot(id)
+                .and_then(|slot| self.rail[slot as usize].as_ref())
+            else {
+                continue;
+            };
+            let from = if i == 0 { path.start_s } else { node.s_in };
+            let to = if i + 1 == lanes.len() {
+                path.goal_s
+            } else {
+                node.s_out
+            };
+            let (from, to) = (from.clamp(0.0, node.len), to.clamp(0.0, node.len));
+            let n = (((to - from).abs() / step).ceil() as usize).max(1);
+            for k in 0..=n {
+                out.push(node.point3_at(from + (to - from) * k as f32 / n as f32));
+            }
+        }
+        out
+    }
+
+    /// Where an access point stands on its track lane (with the height), if the segment has one.
+    pub fn rail_access_point3(&self, a: &Access) -> Option<bevy_math::Vec3> {
+        let (slot, s) = self.resolve_rail(a)?;
+        Some(self.rail[slot as usize].as_ref()?.point3_at(s))
+    }
+
     /// Is the connection `from → to` still in the network?
     pub fn has_connection(&self, from: LaneId, to: LaneId) -> bool {
         match (self.car_slot(from), self.car_slot(to)) {

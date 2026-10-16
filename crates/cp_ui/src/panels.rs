@@ -404,7 +404,7 @@ pub fn top_bar(
     rects
 }
 
-/// Columns of the view menu's icon grid (2 rows of 4).
+/// Columns of the view menu's icon grid (5 rows of 4, the last with one).
 const VIEW_COLUMNS: usize = 4;
 
 /// A tool of a tool panel: the one tile of every construction tool (see [`crate::tile`]).
@@ -977,14 +977,14 @@ mod tests {
         assert!(bar.state.view_menu_open);
         assert_eq!(bar.rects.overlays.len(), Overlay::ALL.len());
         bar.frame(vec![]);
-        // 4 rows of 4 (the last holds two).
+        // 5 rows of 4 (the last holds one).
         let ys: std::collections::BTreeSet<i32> = bar
             .rects
             .overlays
             .iter()
             .map(|(_, r)| r.top().round() as i32)
             .collect();
-        assert_eq!(ys.len(), 4, "{:?}", bar.rects.overlays);
+        assert_eq!(ys.len(), 5, "{:?}", bar.rects.overlays);
         let at = bar
             .rects
             .overlays

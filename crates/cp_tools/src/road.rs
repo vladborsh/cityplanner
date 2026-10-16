@@ -33,13 +33,18 @@ pub struct RoadTool {
     pub road: Option<RoadDefId>,
     /// 0 = ground, otherwise raised by `level * ELEVATION_STEP`.
     pub level: u8,
+    /// Depth of the axis below the terrain for a road that is built in a tunnel only (the
+    /// metro track, T-164): the tool then draws `Tunnel(depth)` and the height keys do nothing.
+    pub tunnel_depth: Option<f32>,
     /// Points clicked so far in the current drawing.
     pub points: Vec<Vec2>,
 }
 
 impl RoadTool {
     pub fn elevation(&self) -> ElevationMode {
-        if self.level == 0 {
+        if let Some(depth) = self.tunnel_depth {
+            ElevationMode::Tunnel(depth)
+        } else if self.level == 0 {
             ElevationMode::Ground
         } else {
             ElevationMode::Elevated(f32::from(self.level) * ELEVATION_STEP)
@@ -47,10 +52,16 @@ impl RoadTool {
     }
 
     pub fn raise(&mut self) {
+        if self.tunnel_depth.is_some() {
+            return;
+        }
         self.level = (self.level + 1).min(MAX_ELEVATION_LEVEL);
     }
 
     pub fn lower(&mut self) {
+        if self.tunnel_depth.is_some() {
+            return;
+        }
         self.level = self.level.saturating_sub(1);
     }
 
@@ -443,6 +454,19 @@ mod tests {
         assert_eq!(t.level, MAX_ELEVATION_LEVEL);
         t.lower();
         assert_eq!(t.level, MAX_ELEVATION_LEVEL - 1);
+    }
+
+    /// T-164: the metro track tool draws in a tunnel; the height keys leave it alone.
+    #[test]
+    fn a_tunnel_tool_sends_tunnel_requests_and_ignores_the_height_keys() {
+        let mut t = tool(RoadMode::Straight);
+        t.tunnel_depth = Some(12.0);
+        t.raise();
+        assert_eq!(t.level, 0);
+        assert_eq!(t.elevation(), ElevationMode::Tunnel(12.0));
+        assert!(t.click(Vec2::new(0.0, 0.0)).is_none());
+        let req = t.click(Vec2::new(64.0, 0.0)).unwrap();
+        assert_eq!(req.elevation, ElevationMode::Tunnel(12.0));
     }
 
     #[test]

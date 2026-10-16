@@ -63,6 +63,8 @@ icons! {
     PowerLine => "power_line",
     Remove => "remove",
     LineBus => "line_bus",
+    LineMetro => "line_metro",
+    MetroTrack => "metro_track",
     BusStop => "bus_stop",
     Building => "building",
     // Top bar (T-100): speeds, the view and settings menus, one icon per overlay.
@@ -88,6 +90,7 @@ icons! {
     OverlayEducation => "overlay_education",
     OverlayLand => "overlay_land",
     OverlayTransit => "overlay_transit",
+    OverlayUnderground => "overlay_underground",
     RemovePipe => "remove_pipe",
     RemoveLine => "remove_line",
     // Zone types (T-099): one silhouette each.
@@ -202,6 +205,7 @@ pub fn overlay_icon(overlay: cp_render::Overlay) -> Icon {
         O::Education => Icon::OverlayEducation,
         O::Land => Icon::OverlayLand,
         O::Transit => Icon::OverlayTransit,
+        O::Underground => Icon::OverlayUnderground,
     }
 }
 
@@ -421,6 +425,35 @@ mod tests {
             DEF_ICONS.windows(2).all(|w| w[0].0 < w[1].0),
             "table is sorted"
         );
+    }
+
+    /// T-164: the metro icons (track, line, view) and the station's are four different pictures.
+    #[test]
+    fn the_metro_icons_are_pairwise_different_files() {
+        let files = [
+            Icon::MetroTrack.stem(),
+            Icon::LineMetro.stem(),
+            Icon::OverlayUnderground.stem(),
+            "metro_station",
+            Icon::LineBus.stem(),
+        ];
+        let bytes: Vec<Vec<u8>> = files
+            .iter()
+            .map(|f| std::fs::read(icons_dir().join(format!("{f}.png"))).unwrap())
+            .collect();
+        for i in 0..bytes.len() {
+            for j in i + 1..bytes.len() {
+                assert_ne!(
+                    bytes[i], bytes[j],
+                    "{} and {} are the same",
+                    files[i], files[j]
+                );
+            }
+        }
+        for f in &files {
+            let png = icons_dir().join(format!("{f}.png"));
+            assert_eq!(image::image_dimensions(&png).unwrap(), (128, 128), "{f}");
+        }
     }
 
     #[test]

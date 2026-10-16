@@ -200,6 +200,7 @@ fn sync_line_ghost(state: Res<ToolState>, mut out: ResMut<cp_render::LineGhost>)
     let want = match (&state.line_ghost, state.active) {
         (Some(g), ActiveTool::Line) => cp_render::LineGhost {
             route: g.route.clone(),
+            heights: g.heights.clone(),
             color: g.color,
             stops: g.stops.clone(),
             hover: g.hover,
@@ -208,6 +209,28 @@ fn sync_line_ghost(state: Res<ToolState>, mut out: ResMut<cp_render::LineGhost>)
     };
     if *out != want {
         *out = want;
+    }
+}
+
+/// Switches the Underground view on while a metro tool is in hand (T-164): the track tool,
+/// the line tool in metro mode and the placement of a building that lays a platform.
+fn sync_underground_auto(
+    state: Res<ToolState>,
+    view: Option<Res<SimView>>,
+    mut mode: ResMut<cp_render::UndergroundView>,
+) {
+    let want = match state.active {
+        ActiveTool::Road => state.road.tunnel_depth.is_some(),
+        ActiveTool::Line => state.line.mode != cp_transit::TransitMode::Bus,
+        ActiveTool::Place => state
+            .building
+            .def
+            .zip(view.as_deref().and_then(|v| v.content.as_deref()))
+            .is_some_and(|(id, db)| db.building(id).track.is_some()),
+        _ => false,
+    };
+    if mode.auto != want {
+        mode.auto = want;
     }
 }
 
@@ -307,6 +330,8 @@ impl Plugin for ToolsPlugin {
             .init_resource::<crate::zone_lines::ZoneLines>()
             .init_resource::<cp_render::ZoningMode>()
             .add_systems(Update, sync_zoning_mode)
+            .init_resource::<cp_render::UndergroundView>()
+            .add_systems(Update, sync_underground_auto)
             .init_resource::<cp_render::DistrictsMode>()
             .add_systems(Update, sync_districts_mode)
             .init_resource::<cp_render::PipeLayers>()

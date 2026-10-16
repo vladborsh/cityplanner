@@ -14,7 +14,7 @@ use cp_sim::{SimCommand, SimView};
 use cp_traffic::{Access, Side};
 use cp_transit::{
     LineId, LineRoute, MAX_LINE_STOPS, Stop, StopId, StopKind, StopRef, TransitCommand,
-    TransitMode, check_road_stop, next_line_color, plan_line, rules::pavement_offset,
+    TransitMode, check_road_stop, next_line_color, plan_line, plan_metro, rules::pavement_offset,
 };
 
 use crate::bulldozer::pick_segment;
@@ -35,6 +35,8 @@ pub struct Placed {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LineTool {
     pub stops: Vec<Placed>,
+    /// What the line is for: a bus line takes road stops, a metro line only stations (T-164).
+    pub mode: TransitMode,
     /// The line whose stops are being redrawn: closing the ring sends `EditLine` for it
     /// instead of `CreateLine` (T-160b).
     pub editing: Option<LineId>,
@@ -70,6 +72,8 @@ pub struct LineGhostInfo {
     pub hover: Option<(Vec2, bool)>,
     /// The route as a polyline, with the legs that have a path.
     pub route: Vec<Vec2>,
+    /// Height of each route point for a route on the track; empty on the street.
+    pub heights: Vec<f32>,
     pub color: u8,
     pub length_m: f32,
     pub cycle_s: f32,
@@ -112,6 +116,9 @@ pub fn target_at(view: &SimView, tool: &LineTool, p: Vec2) -> Target {
     let mut best: Option<(f32, StopId)> = None;
     for (id, st) in view.transit.net.stops.iter() {
         let d = st.pos.distance(p);
+        if matches!(st.kind, StopKind::Station { .. }) != (tool.mode != TransitMode::Bus) {
+            continue;
+        }
         if d <= STOP_PICK_RADIUS && best.is_none_or(|(bd, _)| d < bd) {
             best = Some((d, id));
         }
@@ -125,6 +132,10 @@ pub fn target_at(view: &SimView, tool: &LineTool, p: Vec2) -> Target {
             },
             closes: false,
         };
+    }
+    // A metro line stops at stations only: a click on a road is nothing.
+    if tool.mode != TransitMode::Bus {
+        return Target::Nothing;
     }
     let (Some(seg_id), Some(db)) = (
         pick_segment(&view.net, p, ROAD_PICK_RADIUS),
@@ -192,6 +203,7 @@ impl LineTool {
             })
             .collect();
         self.editing = Some(line);
+        self.mode = l.mode;
         true
     }
 
@@ -207,7 +219,7 @@ impl LineTool {
             SimCommand::Transit(match self.editing {
                 Some(line) => TransitCommand::EditLine { line, stops },
                 None => TransitCommand::CreateLine {
-                    mode: TransitMode::Bus,
+                    mode: self.mode,
                     stops,
                 },
             })
@@ -311,9 +323,17 @@ pub fn line_ghost(view: &SimView, tool: &LineTool, hover: Vec2) -> Option<LineGh
                 StopRef::Station(_) => {}
             }
         }
-        let plan = plan_line(&view.transit.graph, &planned);
-        let route = LineRoute::of_plan(&view.transit.graph, &plan);
+        let (plan, route) = if tool.mode == TransitMode::Metro {
+            let plan = plan_metro(&view.transit.graph, &planned);
+            let route = LineRoute::of_rail_plan(&view.transit.graph, &plan);
+            (plan, route)
+        } else {
+            let plan = plan_line(&view.transit.graph, &planned);
+            let route = LineRoute::of_plan(&view.transit.graph, &plan);
+            (plan, route)
+        };
         info.route = route.points;
+        info.heights = route.heights;
         info.length_m = plan.length_m;
         info.cycle_s = plan.cycle_s;
         if !plan.is_ok() {

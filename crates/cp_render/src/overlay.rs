@@ -68,10 +68,13 @@ pub enum Overlay {
     Land,
     /// Lines as coloured ribbons and the stops with the riders waiting (T-157).
     Transit,
+    /// The ground, roads and buildings see-through, with the tunnels, the metro lines and the
+    /// trains (T-164). Drawn by [`crate::underground`], not by the overlay layers.
+    Underground,
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 16] = [
+    pub const ALL: [Overlay; 17] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
@@ -88,6 +91,7 @@ impl Overlay {
         Overlay::Education,
         Overlay::Land,
         Overlay::Transit,
+        Overlay::Underground,
     ];
 
     /// The overlay of an M2 service kind; `None` for the utility kinds (their own overlays).
@@ -140,6 +144,7 @@ impl Overlay {
             Overlay::Education => "Education",
             Overlay::Land => "Land",
             Overlay::Transit => "Transit",
+            Overlay::Underground => "Underground",
         }
     }
 }
@@ -653,7 +658,7 @@ struct OverlayLayers {
     terrain_key: usize,
 }
 
-fn to_bevy_mesh(m: MeshData) -> Mesh {
+pub(crate) fn to_bevy_mesh(m: MeshData) -> Mesh {
     Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,

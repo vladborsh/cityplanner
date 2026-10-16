@@ -30,19 +30,28 @@ pub struct VertexColorMaterial {
     /// dark (glossy) surfaces such as asphalt, 0 = none (see `vertex_color.wesl`).
     #[uniform(0)]
     pub params: Vec4,
+    /// x = factor on the alpha of every fragment (the Underground view fades the ground, T-164);
+    /// y, z, w unused.
+    #[uniform(1)]
+    pub fade: Vec4,
     /// Alpha-blend using the vertex alpha (water) instead of drawing opaque.
     pub blend: bool,
     /// Pull the surface towards the camera in the depth test so a layer lying a few
     /// centimetres above the terrain (overlays) is not cut by it.
     pub depth_bias: bool,
+    /// Added to the distance an alpha-blended draw is sorted by: layers with a larger value
+    /// are drawn later, over the others (the tunnels over the see-through ground).
+    pub sort_bias: f32,
 }
 
 impl VertexColorMaterial {
     pub fn opaque(roughness: f32, reflectance: f32) -> Self {
         Self {
             params: Vec4::new(roughness, reflectance, 0.0, 0.0),
+            fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
             blend: false,
             depth_bias: false,
+            sort_bias: 0.0,
         }
     }
 
@@ -53,6 +62,17 @@ impl VertexColorMaterial {
         self.params.z = roughness;
         self.params.w = reflectance;
         self
+    }
+
+    /// Whether the surface is drawn see-through: alpha-blended with `alpha` on every fragment
+    /// (`1.0` and `blend` off give the surface back as it was).
+    pub fn set_see_through(&mut self, on: bool, alpha: f32) {
+        self.blend = on;
+        self.fade.x = if on { alpha } else { 1.0 };
+    }
+
+    pub fn with_sort_bias(self, sort_bias: f32) -> Self {
+        Self { sort_bias, ..self }
     }
 
     pub fn with_depth_bias(self, depth_bias: bool) -> Self {
@@ -70,6 +90,10 @@ impl VertexColorMaterial {
 impl Material for VertexColorMaterial {
     fn fragment_shader() -> ShaderRef {
         "embedded://cp_render/vertex_color.wesl".into()
+    }
+
+    fn depth_bias(&self) -> f32 {
+        self.sort_bias
     }
 
     fn alpha_mode(&self) -> AlphaMode {

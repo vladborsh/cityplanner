@@ -183,6 +183,10 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
         return;
     };
     let cards = cards(content);
+    // The metro track is the Transport panel's (T-164): coming back here drops it.
+    if tools.road.tunnel_depth.take().is_some() {
+        tools.road.road = None;
+    }
     if tools.road.road.is_none() {
         tools.road.road = cards.first().map(|c| c.id);
     }

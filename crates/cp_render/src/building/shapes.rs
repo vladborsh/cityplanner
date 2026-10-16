@@ -643,6 +643,7 @@ pub fn is_service(m: Massing) -> bool {
             | Massing::FireStation
             | Massing::PoliceStation
             | Massing::BusDepot
+            | Massing::MetroStation
     )
 }
 
@@ -2033,6 +2034,79 @@ pub fn service(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                         y + 3.0,
                         [0.95, 0.75, 0.12, 1.0],
                         [0.98, 0.82, 0.2, 1.0],
+                    );
+                }
+            }
+        }
+        Massing::MetroStation => {
+            // The entrance pavilion (T-164): the platform is 12 m underground, this is the
+            // way down: a glass hall under a wide flat roof, a dark portal in front and a
+            // red sign pylon beside it.
+            pad(m, (0.0, cv), (0.92 * hu, 0.92 * hv), 0.2);
+            let y = b + 0.2;
+            let glass = [0.30, 0.36, 0.44, 1.0];
+            block(
+                m,
+                f,
+                (0.0, cv + 0.05 * hv),
+                (0.55 * hu, 0.5 * hv),
+                y,
+                y + 4.2,
+                glass,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv + 0.05 * hv),
+                (0.7 * hu, 0.62 * hv),
+                y + 4.2,
+                y + 4.8,
+                sc.roof,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv - 0.45 * hv),
+                (0.22 * hu, 0.04 * hv),
+                y,
+                y + 3.2,
+                dark,
+                dark,
+            );
+            block(
+                m,
+                f,
+                (0.78 * hu, cv - 0.7 * hv),
+                (0.05 * hu, 0.05 * hv),
+                y,
+                y + 7.0,
+                sc.trim,
+                sc.trim,
+            );
+            block(
+                m,
+                f,
+                (0.78 * hu, cv - 0.7 * hv),
+                (0.13 * hu, 0.04 * hv),
+                y + 6.0,
+                y + 8.2,
+                sc.trim,
+                mul(sc.trim, 1.1),
+            );
+            if near {
+                // A hand rail down the stair on each side of the portal.
+                for k in [-1.0f32, 1.0] {
+                    block(
+                        m,
+                        f,
+                        (k * 0.3 * hu, cv - 0.62 * hv),
+                        (0.02 * hu, 0.16 * hv),
+                        y,
+                        y + 1.0,
+                        [0.7, 0.7, 0.72, 1.0],
+                        [0.75, 0.75, 0.78, 1.0],
                     );
                 }
             }

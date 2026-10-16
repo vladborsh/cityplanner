@@ -187,6 +187,17 @@ fn ring_params(c: &CubicBezier3) -> Vec<f32> {
 
 /// A tube around `axis` points (already lifted), with smooth normals; appended to `m`.
 fn tube(m: &mut MeshData, rings: &[(Vec3, Vec3)], radius: f32, color: [f32; 4]) {
+    tube_faces(m, rings, radius, color, PIPE_FACES);
+}
+
+/// [`tube`] with `faces` around (tunnels are wider than pipes and want more).
+pub(crate) fn tube_faces(
+    m: &mut MeshData,
+    rings: &[(Vec3, Vec3)],
+    radius: f32,
+    color: [f32; 4],
+    faces: usize,
+) {
     let base = m.positions.len() as u32;
     for &(c, t) in rings {
         let t = t.try_normalize().unwrap_or(Vec3::X);
@@ -195,15 +206,15 @@ fn tube(m: &mut MeshData, rings: &[(Vec3, Vec3)], radius: f32, color: [f32; 4]) 
             .try_normalize()
             .unwrap_or_else(|| Vec3::Z.cross(t).normalize_or_zero());
         let up = t.cross(side).normalize_or_zero();
-        for k in 0..PIPE_FACES {
-            let a = k as f32 / PIPE_FACES as f32 * std::f32::consts::TAU;
+        for k in 0..faces {
+            let a = k as f32 / faces as f32 * std::f32::consts::TAU;
             let n = side * a.cos() + up * a.sin();
             m.positions.push((c + n * radius).to_array());
             m.normals.push(n.to_array());
             m.colors.push(color);
         }
     }
-    let f = PIPE_FACES as u32;
+    let f = faces as u32;
     for r in 0..rings.len().saturating_sub(1) as u32 {
         for k in 0..f {
             let (a, b) = (base + r * f + k, base + r * f + (k + 1) % f);
@@ -421,7 +432,7 @@ struct PipeRender {
     blended: Option<Handle<VertexColorMaterial>>,
 }
 
-fn spawn_mesh(
+pub(crate) fn spawn_mesh(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     material: Handle<VertexColorMaterial>,

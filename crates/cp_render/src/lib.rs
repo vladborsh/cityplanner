@@ -19,6 +19,7 @@ pub mod road_render;
 pub mod sun;
 pub mod terrain;
 pub mod ui_capture;
+pub mod underground;
 pub mod utility_render;
 
 pub use agent_render::{AgentRenderPlugin, AgentRenderStats, TickFraction};
@@ -39,6 +40,7 @@ pub use road_render::{RoadRenderPlugin, RoadStats};
 pub use sun::LightingSettings;
 pub use terrain::{Sun, TerrainChunk, TerrainRenderPlugin, TerrainStats};
 pub use ui_capture::UiCapture;
+pub use underground::{UndergroundPlugin, UndergroundView};
 pub use utility_render::{PipeGhost, PipeLayers, PowerGhost, UtilityRenderPlugin, ghost_graph};
 
 /// Crate name, used by the skeleton smoke test.

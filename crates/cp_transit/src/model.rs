@@ -64,9 +64,12 @@ pub struct Stop {
 }
 
 /// Append-only (saved as the discriminant).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[repr(u8)]
 pub enum TransitMode {
+    #[default]
     Bus = 0,
     Metro = 1,
     Train = 2,

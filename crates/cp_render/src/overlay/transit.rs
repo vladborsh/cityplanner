@@ -36,6 +36,9 @@ pub fn line_color(index: u8, alpha: f32) -> [f32; 4] {
 pub struct LineGhost {
     /// The planned route as a polyline (empty while there is nothing to route).
     pub route: Vec<Vec2>,
+    /// Height of each route point for a route on the track (a metro line, T-164: it shows in
+    /// the Underground view, not on the ground); empty for a route on the street.
+    pub heights: Vec<f32>,
     /// Palette index of the line being drawn.
     pub color: u8,
     /// The stops placed so far.
@@ -127,6 +130,10 @@ pub fn transit_mesh(t: &TransitView, terrain: &Terrain) -> MeshData {
         let Some(line) = t.net.lines.get(*id) else {
             continue;
         };
+        // A metro line runs under the ground: the Underground view draws it.
+        if route.underground() {
+            continue;
+        }
         let alpha = if route.ok { 0.92 } else { 0.45 };
         ribbon(
             &mut m,
@@ -153,14 +160,16 @@ pub fn transit_mesh(t: &TransitView, terrain: &Terrain) -> MeshData {
 /// under the cursor (green when it may stand, red when not).
 pub fn ghost_mesh(g: &LineGhost, terrain: &Terrain) -> MeshData {
     let mut m = MeshData::default();
-    ribbon(
-        &mut m,
-        &g.route,
-        RIBBON_HALF_WIDTH,
-        RIBBON_LIFT + 0.3,
-        line_color(g.color, 0.75),
-        terrain,
-    );
+    if g.heights.is_empty() {
+        ribbon(
+            &mut m,
+            &g.route,
+            RIBBON_HALF_WIDTH,
+            RIBBON_LIFT + 0.3,
+            line_color(g.color, 0.75),
+            terrain,
+        );
+    }
     for &s in &g.stops {
         stop_marker(&mut m, s, line_color(g.color, 1.0), terrain);
     }

@@ -119,6 +119,8 @@ pub struct SimView {
     pub progress: crate::Progress,
     /// Stops, lines and the routes of the lines (T-157), shared: rebuilt only when they changed.
     pub transit: Arc<cp_transit::TransitView>,
+    /// The metro trains and where they are now (T-164), for the Underground view.
+    pub metro_trains: Arc<Vec<cp_transit::MetroTrain>>,
     /// The transit lines with their figures (T-160), in line id order.
     pub lines: Vec<LineView>,
     /// Fares and bus upkeep of the week in progress.
@@ -509,6 +511,24 @@ impl SimRunner {
         snap
     }
 
+    /// The metro trains for `SimView::metro_trains` (none without a metro line).
+    fn metro_trains(&self, tick: Tick) -> Vec<cp_transit::MetroTrain> {
+        let world = self.world();
+        let (Some(net), Some(plans), Some(fleet), Some(runs), Some(pnet)) = (
+            world.get_resource::<cp_transit::TransitNet>(),
+            world.get_resource::<cp_transit::LinePlans>(),
+            world.get_resource::<cp_transit::TransitFleet>(),
+            world.get_resource::<cp_traffic::ServiceRuns>(),
+            world.get_resource::<cp_traffic::PathNetwork>(),
+        ) else {
+            return Vec::new();
+        };
+        if fleet.buses.is_empty() {
+            return Vec::new();
+        }
+        cp_transit::metro_trains(net, plans, fleet, runs, pnet.graph(), tick)
+    }
+
     /// The agent poses for `SimView::agents`, rebuilt only when the tick advanced.
     fn agent_snapshot(&self, tick: Tick) -> Arc<AgentSnapshot> {
         let mut cache = self.agents_cache.lock().expect("agents cache");
@@ -581,6 +601,7 @@ impl SimRunner {
             transit_ledger: *self.world().resource::<cp_transit::TransitLedger>(),
             utilities: self.utilities_snapshot(),
             transit: self.transit_snapshot(),
+            metro_trains: Arc::new(self.metro_trains(tick)),
             service: self.service_snapshot(),
             service_state: self.service_state_snapshot(),
             city: self.city_snapshot(),

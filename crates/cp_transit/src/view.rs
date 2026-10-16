@@ -45,6 +45,9 @@ pub struct LineRoute {
     pub cycle_s: f32,
     /// Every leg has a path.
     pub ok: bool,
+    /// Height of each of `points` for a route on the track (metro, T-164); empty for a route
+    /// on the street. The ground view leaves such a route out: it shows in the Underground view.
+    pub heights: Vec<f32>,
 }
 
 impl LineRoute {
@@ -58,7 +61,32 @@ impl LineRoute {
             length_m: plan.length_m,
             cycle_s: plan.cycle_s,
             ok: plan.is_ok(),
+            heights: Vec::new(),
         }
+    }
+
+    /// The route of a plan over the track graph: the way the trains of a metro line ride.
+    pub fn of_rail_plan(graph: &PathGraph, plan: &LinePlan) -> Self {
+        let mut points = Vec::new();
+        let mut heights = Vec::new();
+        for leg in &plan.legs {
+            for p in graph.rail_path_points3(&leg.path, ROUTE_STEP) {
+                points.push(Vec2::new(p.x, p.z));
+                heights.push(p.y);
+            }
+        }
+        Self {
+            points,
+            length_m: plan.length_m,
+            cycle_s: plan.cycle_s,
+            ok: plan.is_ok(),
+            heights,
+        }
+    }
+
+    /// Whether the route runs on the track (under the ground).
+    pub fn underground(&self) -> bool {
+        !self.heights.is_empty()
     }
 }
 
@@ -79,7 +107,20 @@ impl TransitView {
             net: net.clone(),
             routes: plans
                 .iter()
-                .map(|(id, p)| (id, LineRoute::of_plan(graph, p)))
+                .map(|(id, p)| {
+                    let metro = net
+                        .lines
+                        .get(id)
+                        .is_some_and(|l| l.mode == crate::TransitMode::Metro);
+                    (
+                        id,
+                        if metro {
+                            LineRoute::of_rail_plan(graph, p)
+                        } else {
+                            LineRoute::of_plan(graph, p)
+                        },
+                    )
+                })
                 .collect(),
             plans_key: plans.fingerprint(),
             graph: Arc::clone(graph),
