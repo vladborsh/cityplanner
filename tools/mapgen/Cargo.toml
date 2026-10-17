@@ -12,8 +12,7 @@ disallowed_methods = "allow"
 
 [dependencies]
 cp_terrain.workspace = true
+cp_content.workspace = true
 png.workspace = true
 ron.workspace = true
-
-[dev-dependencies]
 bevy_math.workspace = true

@@ -157,3 +157,38 @@ impl SpecKind {
         SpecKind::SelfSufficient,
     ];
 }
+
+/// A raw resource of the map (T-205, M5). The order is stored in saves and is the channel order
+/// of `resources.png` (R, G, B, A), so it is **append-only**.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ResourceKind {
+    /// Fertile land (red channel). Not used up.
+    Farming = 0,
+    /// Forest (green channel). Not used up; grows back.
+    Forestry = 1,
+    /// Ore (blue channel). Deposits run out.
+    Ore = 2,
+    /// Oil (alpha channel). Deposits run out.
+    Oil = 3,
+}
+
+impl ResourceKind {
+    /// Every resource in kind order.
+    pub const ALL: [ResourceKind; 4] = [
+        ResourceKind::Farming,
+        ResourceKind::Forestry,
+        ResourceKind::Ore,
+        ResourceKind::Oil,
+    ];
+
+    /// Channel of `resources.png` (and slot in per-resource tables).
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// Ore and oil run out; land and forest do not.
+    pub const fn is_finite(self) -> bool {
+        matches!(self, Self::Ore | Self::Oil)
+    }
+}

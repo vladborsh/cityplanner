@@ -2662,6 +2662,7 @@ version = "0.0.0"
 dependencies = [
  "bevy_ecs",
  "bevy_math",
+ "cp_content",
  "cp_core",
  "png 0.17.16",
  "postcard",
@@ -4264,6 +4265,7 @@ name = "mapgen"
 version = "0.0.0"
 dependencies = [
  "bevy_math",
+ "cp_content",
  "cp_terrain",
  "png 0.17.16",
  "ron",

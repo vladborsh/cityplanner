@@ -52,6 +52,9 @@ pub struct SimRunner {
     /// `SimView::buildings` cache, keyed by the grid's revision.
     pub(crate) buildings_cache: std::sync::Mutex<crate::view::BuildingsCache>,
     pub(crate) district_cache: std::sync::Mutex<crate::view::DistrictCache>,
+    /// `SimView::deposits` cache, kept while the deposits are unchanged.
+    pub(crate) deposits_cache:
+        std::sync::Mutex<Option<std::sync::Arc<cp_terrain::ResourceDeposits>>>,
     /// `SimView::zones` cache, keyed by `ZoneGrid::revision`.
     pub(crate) zone_grid_cache: std::sync::Mutex<crate::view::ZoneCache>,
     /// `SimView::utilities` cache, keyed by a fingerprint of the links.
@@ -140,6 +143,7 @@ impl SimRunner {
         world.init_resource::<cp_economy::Decay>();
         world.init_resource::<cp_economy::WorkerShortage>();
         world.init_resource::<crate::progress::Progress>();
+        world.init_resource::<cp_terrain::ResourceDeposits>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
@@ -362,6 +366,7 @@ impl SimRunner {
             zone_cache: Default::default(),
             buildings_cache: Default::default(),
             district_cache: Default::default(),
+            deposits_cache: Default::default(),
             zone_grid_cache: Default::default(),
             utilities_cache: Default::default(),
             transit_cache: Default::default(),

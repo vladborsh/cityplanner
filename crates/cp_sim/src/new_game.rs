@@ -16,9 +16,28 @@ impl SimRunner {
     /// the first tick.
     pub fn new_game(&mut self) -> Result<(), String> {
         self.world_mut().insert_resource(crate::Progress::START);
+        fill_deposits(self.world_mut());
         build_entry_road(self.world_mut())?;
         build_entry_rail(self.world_mut())
     }
+}
+
+/// Fills the ore and oil deposits from the attached map's resource map: `richness ×
+/// balance.deposit_per_cell` per cell (T-205). A new game does it at the start; a save from
+/// before v41 gets it on load. Needs the terrain and the content; without them nothing changes.
+pub fn fill_deposits(world: &mut World) {
+    let (Some(terrain), Some(content)) = (
+        world.get_resource::<SimTerrain>().map(|t| t.0.clone()),
+        world
+            .get_resource::<cp_content::SimContent>()
+            .map(|c| c.0.clone()),
+    ) else {
+        return;
+    };
+    world.insert_resource(cp_terrain::ResourceDeposits::from_map(
+        terrain.resources(),
+        content.balance().deposit_per_cell,
+    ));
 }
 
 fn road_id(content: &cp_content::ContentDb, name: &str, what: &str) -> Result<RoadDefId, String> {

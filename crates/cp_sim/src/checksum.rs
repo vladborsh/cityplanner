@@ -142,6 +142,12 @@ pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
     if city.mask != 0 {
         h.write_serialized(city);
     }
+    // Absent until the deposits are filled from the map (a new game or a load with a map), so
+    // a sim without a resource map keeps its checksum.
+    let deposits = world.resource::<cp_terrain::ResourceDeposits>();
+    if !deposits.is_unfilled() {
+        h.write_serialized(deposits);
+    }
 }
 
 /// Checksum part of the services: the road coverage (sampled at the 64-tick boundaries, so

@@ -1,12 +1,16 @@
 //! Deterministic map generator: `cargo run -p mapgen [-- <out-dir>]`.
-//! Writes `flatlands` and `river_valley` (map.ron, height.png, water.png) under
+//! Writes `flatlands` and `river_valley` (map.ron, height.png, water.png, resources.png) under
 //! `assets/maps/` by default. Fixed seeds; output is committed, tests never regenerate it.
 
 use std::fs;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
-use cp_terrain::{EntryRail, EntryRoad, GRID, MAX_HEIGHT, MapMeta, SPACING};
+use bevy_math::Vec2;
+use cp_terrain::{
+    EntryRail, EntryRoad, GRID, MAX_HEIGHT, MapMeta, RES_CELL, RES_GRID, ResourceMap, SPACING,
+    Terrain,
+};
 
 const SEED: u32 = 0xC17_91A7;
 
@@ -192,6 +196,57 @@ fn river_valley() -> Map {
     }
 }
 
+/// The resource map of `map` (T-205): one RGBA pixel per 64 m, R fertile land, G forest, B ore,
+/// A oil. Nothing on water (the centre and the corners of the cell are dry or the cell is 0).
+/// Fertile land is flat ground in broad patches; forest hugs the water and the slopes; ore sits
+/// in blobs, richest on hills; oil in smaller blobs on the plains. All of it is noise with fixed
+/// seeds, so the output is deterministic.
+fn resources(map: &Map) -> ResourceMap {
+    let t = Terrain::from_samples(map.meta.clone(), &map.height, &map.water).unwrap();
+    let mut cells = Vec::with_capacity(RES_GRID * RES_GRID);
+    for cz in 0..RES_GRID {
+        for cx in 0..RES_GRID {
+            let c = ResourceMap::cell_centre(cx, cz);
+            let h = RES_CELL / 2.0;
+            let dry = [(0.0, 0.0), (-h, -h), (h, -h), (-h, h), (h, h)]
+                .iter()
+                .all(|&(dx, dz)| !t.is_water(Vec2::new(c.x + dx, c.y + dz)));
+            if !dry {
+                cells.push([0, 0, 0, 0]);
+                continue;
+            }
+            // Slope over one cell and the distance to the nearest water, sampled at 5 rings.
+            let slope = [(RES_CELL, 0.0), (0.0, RES_CELL)]
+                .iter()
+                .map(|&(dx, dz)| {
+                    (t.height(Vec2::new(c.x + dx, c.y + dz)) - t.height(c)).abs() / RES_CELL
+                })
+                .fold(0.0f32, f32::max);
+            let near_water = (1..=6)
+                .find(|&r| {
+                    let d = r as f32 * 160.0;
+                    [(d, 0.0), (-d, 0.0), (0.0, d), (0.0, -d)]
+                        .iter()
+                        .any(|&(dx, dz)| t.is_water(Vec2::new(c.x + dx, c.y + dz)))
+                })
+                .map_or(0.0, |r| 1.0 - (r as f32 - 1.0) / 6.0);
+            let flat = 1.0 - smoothstep(0.03, 0.12, slope);
+            let steep = smoothstep(0.02, 0.10, slope);
+            let (x, z) = (c.x, c.y);
+            let farm = smoothstep(0.42, 0.68, fbm(x, z, 1800.0, SEED + 100)) * flat;
+            let forest = (smoothstep(0.50, 0.72, fbm(x, z, 1300.0, SEED + 110))
+                .max(near_water * 0.7)
+                .max(steep * 0.8))
+                * (0.55 + 0.45 * fbm(x, z, 200.0, SEED + 111));
+            let ore = smoothstep(0.55, 0.75, fbm(x, z, 1100.0, SEED + 120)) * (0.45 + 0.55 * steep);
+            let oil = smoothstep(0.58, 0.76, fbm(x, z, 1500.0, SEED + 130)) * flat;
+            let px = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            cells.push([px(farm), px(forest), px(ore), px(oil)]);
+        }
+    }
+    ResourceMap::from_pixels(cells).unwrap()
+}
+
 fn png16_bytes(data: &[u16]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut enc = png::Encoder::new(BufWriter::new(&mut out), GRID as u32, GRID as u32);
@@ -255,6 +310,7 @@ fn write_map(root: &Path, map: &Map) {
     .unwrap();
     write_png16(&dir.join("height.png"), &map.height);
     write_png16(&dir.join("water.png"), &map.water);
+    fs::write(dir.join("resources.png"), resources(map).to_png()).unwrap();
     println!("wrote {}", dir.display());
 }
 
@@ -280,7 +336,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy_math::Vec2;
     use cp_terrain::{TILE_SIZE, Terrain};
 
     /// Slope up to which ground is "flat" for building (T-180).
@@ -364,6 +419,12 @@ mod tests {
                 "{} water",
                 map.meta.name
             );
+            assert_eq!(
+                fs::read(dir.join("resources.png")).unwrap(),
+                resources(&map).to_png(),
+                "{} resources",
+                map.meta.name
+            );
             let ron =
                 ron::ser::to_string_pretty(&map.meta, ron::ser::PrettyConfig::default()).unwrap();
             assert_eq!(
@@ -411,5 +472,33 @@ mod tests {
             "step along a meadow border {border_step} m"
         );
         assert!(any_step <= 3.0, "step between two samples {any_step} m");
+    }
+
+    /// T-205: every resource is somewhere on both maps (in enough cells to build on), and
+    /// there is none on water.
+    #[test]
+    fn resources_have_every_kind_and_none_on_water() {
+        use cp_content::ResourceKind;
+        for map in [flatlands(), river_valley()] {
+            let t = terrain(&map);
+            let res = resources(&map);
+            for kind in ResourceKind::ALL {
+                let rich = (0..RES_GRID * RES_GRID)
+                    .filter(|&i| res.richness(kind, i % RES_GRID, i / RES_GRID) >= 0.3)
+                    .count();
+                println!("{} {kind:?}: {rich} cells at 0.3+", map.meta.name);
+                assert!(rich >= 150, "{} {kind:?}: {rich} rich cells", map.meta.name);
+            }
+            for cz in 0..RES_GRID {
+                for cx in 0..RES_GRID {
+                    let c = ResourceMap::cell_centre(cx, cz);
+                    if t.is_water(c) {
+                        for kind in ResourceKind::ALL {
+                            assert_eq!(res.richness(kind, cx, cz), 0.0, "{cx},{cz} {kind:?}");
+                        }
+                    }
+                }
+            }
+        }
     }
 }

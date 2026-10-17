@@ -346,6 +346,9 @@ pub struct Balance {
     pub intercity_dwell_h: f32,
     pub move_in_by_train: u8,
     pub tourism_by_train: u8,
+    /// Ore and oil in a 64 m resource cell at richness 1 (T-205); the start is
+    /// `richness × deposit_per_cell`, rounded. // tune later
+    pub deposit_per_cell: f32,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
 }
@@ -489,6 +492,7 @@ impl Balance {
             self.intercity_dwell_h,
             f32::from(self.move_in_by_train),
             f32::from(self.tourism_by_train),
+            self.deposit_per_cell,
         ]);
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
@@ -598,6 +602,7 @@ impl Default for Balance {
             intercity_dwell_h: 0.5,
             move_in_by_train: 40,
             tourism_by_train: 8,
+            deposit_per_cell: 20_000.0,
             networks: Networks::default(),
         }
     }

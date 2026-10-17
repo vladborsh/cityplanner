@@ -18,10 +18,13 @@
 //! other value is the absolute elevation of the water surface at that node. The surface
 //! is `max(sea_level, mask)` (water is static). `water_depth` is the bilinear
 //! interpolation of the per-node depth `surface - ground`; `<= 0` means dry.
+//!
+//! `resources.png` (M5) is optional: 8-bit RGBA, one pixel per 64 m, see [`ResourceMap`].
 
 mod command;
 mod entry;
 mod ownership;
+mod resources;
 
 use std::fs::File;
 use std::io::BufReader;
@@ -35,6 +38,7 @@ use serde::{Deserialize, Serialize};
 pub use command::{TerrainCommand, ring};
 pub use entry::{LANE_OFFSET, MERGE_LENGTH, MIN_EDGE_MARGIN};
 pub use ownership::{TILE_COUNT, TILES_PER_SIDE, TileOwnership};
+pub use resources::{RES_CELL, RES_GRID, ResourceDeposits, ResourceMap};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_terrain";
@@ -146,6 +150,9 @@ pub struct Terrain {
     ground: Vec<f32>,
     /// Water depth per node, metres (`surface - ground`, may be negative).
     depth: Vec<f32>,
+    /// Richness of ore, oil, land and forest (`resources.png`); empty without the file. Not in
+    /// [`Terrain::map_hash`].
+    resources: ResourceMap,
     /// Lazily computed [`Terrain::map_hash`].
     hash: std::sync::OnceLock<u64>,
 }
@@ -196,7 +203,12 @@ impl Terrain {
             ron::from_str(&text).map_err(|e| TerrainError::Ron(ron_path, e.to_string()))?;
         let height = read_png16(&dir.join("height.png"))?;
         let water = read_png16(&dir.join("water.png"))?;
-        let terrain = Self::from_samples(meta, &height, &water)?;
+        let mut terrain = Self::from_samples(meta, &height, &water)?;
+        let res_path = dir.join("resources.png");
+        if res_path.exists() {
+            let file = File::open(&res_path).map_err(|e| TerrainError::Io(res_path.clone(), e))?;
+            terrain.resources = ResourceMap::decode(BufReader::new(file), &res_path)?;
+        }
         terrain.require_entry_road()?;
         Ok(terrain)
     }
@@ -208,11 +220,24 @@ impl Terrain {
         height_png: &[u8],
         water_png: &[u8],
     ) -> Result<Self, TerrainError> {
+        Self::from_bytes_with_resources(map_ron, height_png, water_png, None)
+    }
+
+    /// [`Terrain::from_bytes`] with the bytes of `resources.png`, if the map has one.
+    pub fn from_bytes_with_resources(
+        map_ron: &str,
+        height_png: &[u8],
+        water_png: &[u8],
+        resources_png: Option<&[u8]>,
+    ) -> Result<Self, TerrainError> {
         let meta: MapMeta = ron::from_str(map_ron)
             .map_err(|e| TerrainError::Ron(PathBuf::from("map.ron"), e.to_string()))?;
         let height = decode_png16(height_png, Path::new("height.png"))?;
         let water = decode_png16(water_png, Path::new("water.png"))?;
-        let terrain = Self::from_samples(meta, &height, &water)?;
+        let mut terrain = Self::from_samples(meta, &height, &water)?;
+        if let Some(bytes) = resources_png {
+            terrain.resources = ResourceMap::decode(bytes, Path::new("resources.png"))?;
+        }
         terrain.require_entry_road()?;
         Ok(terrain)
     }
@@ -263,6 +288,7 @@ impl Terrain {
             meta,
             ground,
             depth,
+            resources: ResourceMap::empty(),
             hash: std::sync::OnceLock::new(),
         })
     }
@@ -298,6 +324,17 @@ impl Terrain {
             }
             if h == 0 { 1 } else { h }
         })
+    }
+
+    /// This terrain with `resources` as its resource map (maps built in code; tests).
+    pub fn with_resources(mut self, resources: ResourceMap) -> Self {
+        self.resources = resources;
+        self
+    }
+
+    /// The resource map (empty when the map has no `resources.png`).
+    pub fn resources(&self) -> &ResourceMap {
+        &self.resources
     }
 
     pub fn meta(&self) -> &MapMeta {

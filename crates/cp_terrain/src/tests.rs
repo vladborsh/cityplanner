@@ -427,3 +427,117 @@ fn a_map_on_disk_without_entry_road_does_not_load() {
     let e = result.unwrap_err().to_string();
     assert!(e.contains("entry_road is missing"), "{e}");
 }
+
+// ---- Resource map and deposits (T-205) ----
+
+use cp_content::ResourceKind;
+
+#[test]
+fn both_maps_have_every_resource_and_none_on_water() {
+    for name in ["flatlands", "river_valley"] {
+        let t = Terrain::load(&map_dir(name)).unwrap();
+        let res = t.resources();
+        assert!(!res.is_empty(), "{name}");
+        for kind in ResourceKind::ALL {
+            let cells = (0..RES_GRID * RES_GRID)
+                .filter(|&i| res.richness(kind, i % RES_GRID, i / RES_GRID) > 0.0)
+                .count();
+            assert!(cells > 0, "{name} {kind:?}");
+        }
+        for cz in 0..RES_GRID {
+            for cx in 0..RES_GRID {
+                let c = ResourceMap::cell_centre(cx, cz);
+                if t.is_water(c) {
+                    for kind in ResourceKind::ALL {
+                        assert_eq!(res.richness(kind, cx, cz), 0.0, "{name} {cx},{cz} {kind:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn richness_at_is_the_value_of_the_pixel() {
+    let mut px = vec![[0u8; 4]; RES_GRID * RES_GRID];
+    px[3 * RES_GRID + 5] = [255, 0, 51, 128];
+    let map = ResourceMap::from_pixels(px).unwrap();
+    // Cell (5, 3) covers x 320..384, z 192..256; the whole pixel reads the same value.
+    for p in [(320.0, 192.0), (350.0, 230.0), (383.9, 255.9)] {
+        let p = Vec2::new(p.0, p.1);
+        assert_eq!(map.richness_at(ResourceKind::Farming, p), 1.0);
+        assert_eq!(map.richness_at(ResourceKind::Forestry, p), 0.0);
+        assert!((map.richness_at(ResourceKind::Ore, p) - 0.2).abs() < 1e-6);
+        assert!((map.richness_at(ResourceKind::Oil, p) - 128.0 / 255.0).abs() < 1e-6);
+    }
+    assert_eq!(
+        map.richness_at(ResourceKind::Farming, Vec2::new(384.0, 192.0)),
+        0.0
+    );
+    // Out of bounds clamps to the edge cell instead of panicking.
+    assert_eq!(
+        map.richness_at(ResourceKind::Oil, Vec2::new(-5.0, 1e9)),
+        0.0
+    );
+}
+
+#[test]
+fn a_map_without_the_file_has_no_resources_and_the_hash_ignores_them() {
+    let plain = synthetic(0.0, 50.0, 0);
+    assert!(plain.resources().is_empty());
+    assert_eq!(plain.resources().richness(ResourceKind::Ore, 3, 3), 0.0);
+    let px = vec![[9u8; 4]; RES_GRID * RES_GRID];
+    let with = plain
+        .clone()
+        .with_resources(ResourceMap::from_pixels(px).unwrap());
+    assert_eq!(plain.map_hash(), with.map_hash());
+
+    // A directory copy of flatlands without resources.png loads, empty.
+    let dir = std::env::temp_dir().join(format!("cp_terrain_nores_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for f in ["map.ron", "height.png", "water.png"] {
+        std::fs::copy(map_dir("flatlands").join(f), dir.join(f)).unwrap();
+    }
+    let t = Terrain::load(&dir).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(t.resources().is_empty());
+    assert_eq!(
+        t.map_hash(),
+        Terrain::load(&map_dir("flatlands")).unwrap().map_hash()
+    );
+}
+
+#[test]
+fn resources_png_round_trips_and_bad_images_are_errors() {
+    let px: Vec<[u8; 4]> = (0..RES_GRID * RES_GRID)
+        .map(|i| [i as u8, (i >> 3) as u8, (i >> 5) as u8, 255 - i as u8])
+        .collect();
+    let map = ResourceMap::from_pixels(px).unwrap();
+    let back = ResourceMap::decode(&map.to_png()[..], Path::new("r.png")).unwrap();
+    assert_eq!(map, back);
+    assert!(ResourceMap::decode(&b"not a png"[..], Path::new("r.png")).is_err());
+    assert!(ResourceMap::from_pixels(vec![[0; 4]; 3]).is_err());
+}
+
+#[test]
+fn deposits_start_as_richness_times_per_cell_and_are_used_up() {
+    let mut px = vec![[0u8; 4]; RES_GRID * RES_GRID];
+    px[0] = [255, 255, 255, 51];
+    let map = ResourceMap::from_pixels(px).unwrap();
+    let mut d = ResourceDeposits::from_map(&map, 1000.0);
+    assert!(!d.is_unfilled());
+    assert!(ResourceDeposits::default().is_unfilled());
+    assert_eq!(d.remaining(ResourceKind::Ore, 0, 0), 1000);
+    assert_eq!(d.remaining(ResourceKind::Oil, 0, 0), 200);
+    assert_eq!(d.remaining(ResourceKind::Ore, 1, 0), 0);
+    // Land and forest are not used up.
+    assert_eq!(d.remaining(ResourceKind::Farming, 0, 0), 0);
+    assert_eq!(d.take(ResourceKind::Forestry, 0, 0, 10), 0);
+    assert_eq!(d.take(ResourceKind::Ore, 0, 0, 300), 300);
+    assert_eq!(d.take(ResourceKind::Ore, 0, 0, 5000), 700);
+    assert_eq!(d.remaining_at(ResourceKind::Ore, Vec2::new(10.0, 10.0)), 0);
+    assert_eq!(d.take(ResourceKind::Ore, 0, 0, 1), 0);
+    // Postcard round trip.
+    let bytes = postcard::to_stdvec(&d).unwrap();
+    assert_eq!(postcard::from_bytes::<ResourceDeposits>(&bytes).unwrap(), d);
+}

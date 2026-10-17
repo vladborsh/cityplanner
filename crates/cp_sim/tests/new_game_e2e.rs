@@ -432,3 +432,33 @@ fn river_valley_streets_build_in_four_directions_from_the_stub_end() {
         );
     }
 }
+
+/// T-205: a new game on a map with a resource map starts with its ore and oil full; a game
+/// that is not started (no new game) has none.
+#[test]
+fn new_game_fills_the_deposits_from_the_resource_map() {
+    use cp_content::ResourceKind;
+    use cp_terrain::{RES_GRID, ResourceDeposits};
+    let terrain = map("flatlands");
+    let mut sim = sim_on(terrain.clone());
+    assert!(sim.world().resource::<ResourceDeposits>().is_unfilled());
+    sim.new_game().unwrap();
+    let per_cell = content().balance().deposit_per_cell;
+    let d = sim.world().resource::<ResourceDeposits>().clone();
+    assert!(!d.is_unfilled());
+    assert_eq!(sim.view().deposits.as_ref(), &d);
+    let mut any = false;
+    for cz in 0..RES_GRID {
+        for cx in 0..RES_GRID {
+            for (kind, got) in [
+                (ResourceKind::Ore, d.remaining(ResourceKind::Ore, cx, cz)),
+                (ResourceKind::Oil, d.remaining(ResourceKind::Oil, cx, cz)),
+            ] {
+                let want = (terrain.resources().richness(kind, cx, cz) * per_cell).round() as u16;
+                assert_eq!(got, want);
+                any |= want > 0;
+            }
+        }
+    }
+    assert!(any);
+}

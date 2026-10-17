@@ -43,6 +43,7 @@
 //! | `TileOwnership`, `NetGraph`, `ZoneGrid` (occupancy is rebuilt from the buildings), `BuildingGrid` (incl. the removed ids), `UtilityGraph`, `CitizenGrid` (occupancy tables rebuilt), `TripBook`, `Agents` (pools, lane state, segment load; drive tables rebuilt) | yes |
 //! | `PathService` (requests in flight) | yes, as `SavedPaths` |
 //! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `Goods`, `Intercity` (stops, lines, riders, line figures, buses, week's money, tourist visits, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
+//! | `ResourceDeposits` (ore and oil left per 64 m cell; a save from before v41 is filled from the map by `load_into_runner`) | yes |
 //! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
@@ -79,7 +80,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 40;
+pub const FORMAT_VERSION: u32 = 41;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -231,6 +232,9 @@ pub struct SaveData {
     pub goods: cp_transit::Goods,
     /// The intercity train and what it has brought (T-167). Added in v36.
     pub intercity: cp_transit::Intercity,
+    /// Ore and oil left per resource cell (T-205). Added in v41; older saves are filled from
+    /// the map by [`load_into_runner`] (empty here: a migration has no map).
+    pub deposits: cp_terrain::ResourceDeposits,
 }
 
 impl SaveData {
@@ -304,6 +308,7 @@ impl SaveData {
             tourists: world.resource::<cp_transit::Tourists>().clone(),
             goods: world.resource::<cp_transit::Goods>().clone(),
             intercity: world.resource::<cp_transit::Intercity>().clone(),
+            deposits: world.resource::<cp_terrain::ResourceDeposits>().clone(),
         }
     }
 
@@ -352,6 +357,7 @@ impl SaveData {
         world.insert_resource(self.tourists);
         world.insert_resource(self.goods);
         world.insert_resource(self.intercity);
+        world.insert_resource(self.deposits);
         // The routes are derived: the first Network phase after the load attaches the stops
         // and plans every line again.
         world.insert_resource(cp_transit::LinePlans::default());
@@ -769,6 +775,10 @@ pub fn load_into_runner(
         loaded.warnings.extend(more);
     }
     loaded.data.restore(sim.world_mut());
+    // A save from before v41 carries no deposits: they start full, from the map.
+    if loaded.header.format_version < 41 {
+        cp_sim::new_game::fill_deposits(sim.world_mut());
+    }
     // A save from before v22 carries no coverage: compute it now rather than wait for the
     // next boundary. Newer saves restore exactly what was saved.
     if loaded.header.format_version < 22 {

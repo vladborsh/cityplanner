@@ -46,6 +46,8 @@ struct PendingMap {
     ron: Handle<RawFile>,
     height: Handle<RawFile>,
     water: Handle<RawFile>,
+    /// Optional: a map without `resources.png` has no resources (T-205).
+    resources: Handle<RawFile>,
 }
 
 pub(crate) struct MapPlugin;
@@ -65,6 +67,7 @@ fn start_loading(mut commands: Commands, assets: Res<AssetServer>, cfg: Res<Game
         ron: load("map.ron"),
         height: load("height.png"),
         water: load("water.png"),
+        resources: load("resources.png"),
     });
 }
 
@@ -88,10 +91,21 @@ fn finish_loading(
     else {
         return;
     };
+    // `resources.png` may be missing; wait for it only while it is still loading.
+    let resources = match assets.get_load_state(&p.resources) {
+        Some(bevy::asset::LoadState::Failed(_) | bevy::asset::LoadState::NotLoaded) => None,
+        _ => match files.get(&p.resources) {
+            Some(r) => Some(r.0.as_slice()),
+            None => return,
+        },
+    };
     commands.remove_resource::<PendingMap>();
     let terrain = std::str::from_utf8(&ron.0)
         .map_err(|e| e.to_string())
-        .and_then(|text| Terrain::from_bytes(text, &height.0, &water.0).map_err(|e| e.to_string()));
+        .and_then(|text| {
+            Terrain::from_bytes_with_resources(text, &height.0, &water.0, resources)
+                .map_err(|e| e.to_string())
+        });
     match terrain {
         Ok(terrain) => {
             let sim = build_sim(
