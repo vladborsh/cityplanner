@@ -1,0 +1,11 @@
+Policy((
+    id: "recycling",
+    name: "Recycling",
+    kind: Recycling,
+    // Placeholder icon until T-193 draws one per policy.
+    icon: "overlay_garbage",
+    scope: Both,
+    // Per building under the policy per week. // tune later
+    cost_per_building_week: 2.0,
+    value: 0.3,
+))

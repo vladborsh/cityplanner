@@ -84,6 +84,8 @@ pub struct SimView {
     /// The district grid and records (T-133), shared: re-cloned only when they changed.
     pub district_map: Arc<cp_district::DistrictMap>,
     pub districts: Arc<cp_district::Districts>,
+    /// The policies switched on for the whole city (T-190); the definitions are in `content`.
+    pub city_policies: cp_district::CityPolicies,
     /// The content database (road types, building styles, ...), for tools, the build menu and
     /// mesh building; `None` for a sim without content.
     pub content: Option<Arc<ContentDb>>,
@@ -615,6 +617,11 @@ impl SimRunner {
             buildings: self.buildings_snapshot(),
             district_map: self.district_map_snapshot(),
             districts: self.districts_snapshot(),
+            city_policies: self
+                .world()
+                .get_resource::<cp_district::CityPolicies>()
+                .copied()
+                .unwrap_or_default(),
             zones: self.zone_snapshot(),
             content: self
                 .world()

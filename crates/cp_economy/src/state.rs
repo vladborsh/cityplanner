@@ -122,6 +122,9 @@ pub struct WeekReport {
     /// in v37.
     #[serde(default)]
     pub exports: Cost,
+    /// What the policies in force cost, per building under them (T-190). Added in v38.
+    #[serde(default)]
+    pub policies: Cost,
 }
 
 impl WeekReport {
@@ -139,6 +142,7 @@ impl WeekReport {
             - self.upkeep()
             - self.transit_upkeep
             - self.loan_payments
+            - self.policies
     }
 }
 

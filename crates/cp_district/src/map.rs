@@ -2,7 +2,7 @@
 
 use bevy_ecs::prelude::Resource;
 use bevy_math::Vec2;
-use cp_content::ZoneType;
+use cp_content::{PolicyKind, ZoneType};
 use cp_terrain::MAP_SIZE;
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +55,21 @@ pub struct District {
     /// Tax rate override in percent per zone type (slot as in [`zone_slot`]); `None` = the
     /// city rate.
     pub tax: [Option<u8>; 6],
+    /// Policies switched on here: bit `PolicyKind as u8` (T-190). Added in v38.
+    pub policies: u32,
+}
+
+/// The policies switched on for the whole city: bit `PolicyKind as u8`. Saved and checksummed
+/// (T-190, added in v38).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CityPolicies {
+    pub mask: u32,
+}
+
+impl CityPolicies {
+    pub fn has(&self, kind: PolicyKind) -> bool {
+        self.mask & kind.bit() != 0
+    }
 }
 
 /// The district records. District `n` is `list[n - 1]`.
@@ -161,4 +176,19 @@ impl DistrictMap {
 /// The district at world position `pos` (`x`, `z`), if any.
 pub fn district_at(map: &DistrictMap, pos: Vec2) -> Option<DistrictId> {
     map.get(DistrictMap::cell_of(pos)?)
+}
+
+/// Whether `kind` is on at world position `pos`: for the whole city, or in the district of
+/// the cell (T-190). O(1).
+pub fn policy_at(
+    map: &DistrictMap,
+    districts: &Districts,
+    city: &CityPolicies,
+    pos: Vec2,
+    kind: PolicyKind,
+) -> bool {
+    city.has(kind)
+        || district_at(map, pos)
+            .and_then(|d| districts.get(d))
+            .is_some_and(|d| d.policies & kind.bit() != 0)
 }

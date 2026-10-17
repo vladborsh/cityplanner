@@ -6,6 +6,7 @@ use std::path::Path;
 
 use crate::defs::*;
 use crate::error::{ContentError, ContentErrors};
+use crate::kinds::PolicyKind;
 use crate::validate;
 
 /// Default content root, relative to the working directory.
@@ -179,6 +180,8 @@ pub struct ContentDb {
     placeholders: Placeholders,
     balance: Balance,
     milestones: Vec<MilestoneDef>,
+    /// The policies, one per kind at most, in kind order (T-190).
+    policies: Vec<PolicyDef>,
     content_hash: u64,
 }
 
@@ -305,6 +308,16 @@ impl ContentDb {
         self.utilities().find(|(_, d)| d.kind == kind)
     }
 
+    /// The policies in kind order (at most one per kind).
+    pub fn policies(&self) -> &[PolicyDef] {
+        &self.policies
+    }
+
+    /// The definition of `kind`, if the content has one.
+    pub fn policy(&self, kind: PolicyKind) -> Option<&PolicyDef> {
+        self.policies.iter().find(|p| p.kind == kind)
+    }
+
     /// The population milestones (`milestones.ron`); empty when the file is absent, and then
     /// nothing is locked.
     pub fn milestones(&self) -> &[MilestoneDef] {
@@ -372,6 +385,7 @@ impl ContentDb {
         let mut styles: Vec<(String, StyleDef)> = Vec::new();
         let mut balances: Vec<(String, Balance)> = Vec::new();
         let mut milestone_files: Vec<(String, MilestonesDef)> = Vec::new();
+        let mut policy_files: Vec<(String, PolicyDef)> = Vec::new();
         for (path, text) in sources {
             match ron::from_str::<ContentFile>(&text) {
                 Ok(ContentFile::Road(d)) => roads.push((path, d)),
@@ -382,6 +396,7 @@ impl ContentDb {
                 Ok(ContentFile::Style(d)) => styles.push((path, d)),
                 Ok(ContentFile::Balance(d)) => balances.push((path, *d)),
                 Ok(ContentFile::Milestones(d)) => milestone_files.push((path, d)),
+                Ok(ContentFile::Policy(d)) => policy_files.push((path, d)),
                 Err(e) => errors.push(ContentError::new(&path, None, format!("parse error: {e}"))),
             }
         }
@@ -521,6 +536,24 @@ impl ContentDb {
                     ));
                 }
             }
+        }
+        policy_files.sort_by(|a, b| a.1.kind.cmp(&b.1.kind).then_with(|| a.0.cmp(&b.0)));
+        let mut policies: Vec<PolicyDef> = Vec::new();
+        let mut policy_paths: Vec<String> = Vec::new();
+        for (path, d) in policy_files {
+            for (field, msg) in validate::policy(&d) {
+                errors.push(ContentError::new(&path, Some(&field), msg));
+            }
+            if let Some(i) = policies.iter().position(|p| p.kind == d.kind) {
+                errors.push(ContentError::new(
+                    &path,
+                    Some("kind"),
+                    format!("{:?} is already defined in {}", d.kind, policy_paths[i]),
+                ));
+                continue;
+            }
+            policies.push(d);
+            policy_paths.push(path);
         }
         if milestone_files.len() > 1 {
             errors.push(ContentError::new(
@@ -708,6 +741,13 @@ impl ContentDb {
                 &postcard::to_stdvec(&milestones).expect("milestones are serialisable"),
             );
         }
+        if !policies.is_empty() {
+            fnv1a(&mut hash, b"policies");
+            fnv1a(
+                &mut hash,
+                &postcard::to_stdvec(&policies).expect("policies are serialisable"),
+            );
+        }
         Ok(Self {
             roads: roads.strip(),
             buildings: buildings.strip(),
@@ -718,6 +758,7 @@ impl ContentDb {
             placeholders: Placeholders::builtin(),
             balance: balance.unwrap_or_default(),
             milestones,
+            policies,
             content_hash: hash,
         })
     }
@@ -898,6 +939,13 @@ mod tests {
     fn loads_shipped_content() {
         let db = real();
         assert_eq!(db.roads().count(), 11);
+        // T-190: the eight policies, one per kind, in kind order.
+        let kinds: Vec<_> = db.policies().iter().map(|p| p.kind).collect();
+        assert_eq!(kinds, PolicyKind::ALL);
+        assert!(
+            db.policy(PolicyKind::TourismPromotion)
+                .is_some_and(|p| { p.scope == crate::kinds::PolicyScope::City && p.value == 0.25 })
+        );
         // Dense ids follow sorted string ids.
         let names: Vec<_> = db.roads().map(|(_, d)| d.id.as_str()).collect();
         assert_eq!(

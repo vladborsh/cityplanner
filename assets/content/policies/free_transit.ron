@@ -1,0 +1,11 @@
+Policy((
+    id: "free_transit",
+    name: "Free transit",
+    kind: FreeTransit,
+    // Placeholder icon until T-193 draws one per policy.
+    icon: "transit",
+    scope: Both,
+    // Per building under the policy per week. // tune later
+    cost_per_building_week: 2.5,
+    value: 0.5,
+))

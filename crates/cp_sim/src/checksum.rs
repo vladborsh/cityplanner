@@ -133,6 +133,11 @@ pub(crate) fn economy_part(world: &World, h: &mut Fnv1a) {
 pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_district::DistrictMap>());
     h.write_serialized(world.resource::<cp_district::Districts>());
+    // Absent while no city policy is on, so such states keep their checksum.
+    let city = world.resource::<cp_district::CityPolicies>();
+    if city.mask != 0 {
+        h.write_serialized(city);
+    }
 }
 
 /// Checksum part of the services: the road coverage (sampled at the 64-tick boundaries, so

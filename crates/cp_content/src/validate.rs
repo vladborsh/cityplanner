@@ -1,8 +1,8 @@
 //! Per-definition range checks. Each returns `(field, message)` pairs.
 
 use crate::defs::{
-    BuildingDef, LaneKind, MilestonesDef, RoadClass, RoadDef, RoadVariant, ServiceDef, StyleDef,
-    TunnelVariant, UtilityDef, VehicleDef,
+    BuildingDef, LaneKind, MilestonesDef, PolicyDef, RoadClass, RoadDef, RoadVariant, ServiceDef,
+    StyleDef, TunnelVariant, UtilityDef, VehicleDef,
 };
 use crate::error::ContentError;
 use crate::kinds::ZoneType;
@@ -287,4 +287,14 @@ pub fn milestones(
             }
         }
     }
+}
+
+pub fn policy(d: &PolicyDef) -> Problems {
+    let mut c = Check(Vec::new());
+    c.not_empty("id", &d.id);
+    c.not_empty("name", &d.name);
+    c.not_empty("icon", &d.icon);
+    c.non_negative("cost_per_building_week", d.cost_per_building_week);
+    c.non_negative("value", d.value);
+    c.0
 }

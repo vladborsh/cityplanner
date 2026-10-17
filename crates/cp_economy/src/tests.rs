@@ -71,6 +71,12 @@ fn content() -> Arc<ContentDb> {
                 capacity: 10, site: OnWater, vehicles: []))"#
                     .into(),
             ),
+            (
+                "p/recycling.ron".into(),
+                r#"Policy((id: "recycling", name: "r", kind: Recycling, icon: "i", scope: Both,
+                cost_per_building_week: 7.0, value: 0.3))"#
+                    .into(),
+            ),
             utility("water_pipe", "Water", 0.02),
             utility("power_line", "Power", 0.03),
         ])
@@ -115,6 +121,7 @@ fn city() -> (World, Schedule) {
     world.init_resource::<UtilityGraph>();
     world.init_resource::<cp_district::DistrictMap>();
     world.init_resource::<cp_district::Districts>();
+    world.init_resource::<cp_district::CityPolicies>();
     world.init_resource::<DistrictIncome>();
     world.init_resource::<crate::MoneyFlow>();
 
@@ -1239,5 +1246,77 @@ fn income_and_upkeep_are_booked_every_hour_and_add_up_to_the_week() {
     assert_eq!(
         world.resource::<MoneyFlow>().week_to_date.net(),
         Cost(-27_744)
+    );
+}
+
+#[test]
+fn a_policy_costs_its_weekly_price_for_each_active_building_under_it_and_nothing_without() {
+    // Without a policy the line is zero (the hand calculation above has no policies).
+    let (mut world, mut schedule) = city();
+    run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
+    assert_eq!(
+        world.resource::<EconomyState>().last_week.policies,
+        Cost::ZERO
+    );
+    assert_eq!(balance(&world), Cost(6_972_256));
+
+    // Recycling at 7.00 per building and week for the whole city: the five active buildings
+    // (not the one under construction) pay 35.00, booked by the hour, one seventh a day.
+    let (mut world, mut schedule) = city();
+    world.resource_mut::<cp_district::CityPolicies>().mask =
+        cp_content::PolicyKind::Recycling.bit();
+    run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
+    let r = world.resource::<EconomyState>().last_week;
+    assert_eq!(r.policies, Cost(3_500));
+    assert_eq!(r.balance(), Cost(-27_744 - 3_500));
+    assert_eq!(balance(&world), Cost(6_972_256 - 3_500));
+    let flow = world.resource::<crate::MoneyFlow>();
+    assert_eq!(flow.week_to_date.policies, Cost(3_500));
+    let day = flow.last_day(world.resource::<EconomyState>()).unwrap();
+    assert_eq!(day.policies, Cost(500));
+}
+
+#[test]
+fn a_district_policy_costs_only_the_buildings_inside_the_district() {
+    let (mut world, mut schedule) = city();
+    // The buildings stand at (5000, 5000): cell (156, 156). Paint it and switch Recycling on
+    // for that district only; a second district elsewhere has it on too and costs nothing.
+    let mut cmds = vec![
+        cp_district::DistrictCommand::Create { name: "In".into() },
+        cp_district::DistrictCommand::Create { name: "Out".into() },
+        cp_district::DistrictCommand::Paint {
+            cells: vec![(156, 156)],
+            district: cp_district::DistrictId(1),
+        },
+    ];
+    for d in [1, 2] {
+        cmds.push(cp_district::DistrictCommand::SetPolicy {
+            district: Some(cp_district::DistrictId(d)),
+            policy: cp_content::PolicyKind::Recycling,
+            on: d == 2,
+        });
+    }
+    for c in &cmds {
+        cp_district::apply(&mut world, c).unwrap();
+    }
+    run_at(&mut world, &mut schedule, TICKS_PER_WEEK);
+    assert_eq!(
+        world.resource::<EconomyState>().last_week.policies,
+        Cost::ZERO
+    );
+    // Now on in the district that holds the buildings.
+    cp_district::apply(
+        &mut world,
+        &cp_district::DistrictCommand::SetPolicy {
+            district: Some(cp_district::DistrictId(1)),
+            policy: cp_content::PolicyKind::Recycling,
+            on: true,
+        },
+    )
+    .unwrap();
+    run_at(&mut world, &mut schedule, 2 * TICKS_PER_WEEK);
+    assert_eq!(
+        world.resource::<EconomyState>().last_week.policies,
+        Cost(3_500)
     );
 }

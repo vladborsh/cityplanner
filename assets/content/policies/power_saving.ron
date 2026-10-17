@@ -1,0 +1,11 @@
+Policy((
+    id: "power_saving",
+    name: "Power saving",
+    kind: PowerSaving,
+    // Placeholder icon until T-193 draws one per policy.
+    icon: "overlay_power",
+    scope: Both,
+    // Per building under the policy per week. // tune later
+    cost_per_building_week: 1.5,
+    value: 0.15,
+))

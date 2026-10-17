@@ -27,7 +27,7 @@ use cp_citizen::CitizenGrid;
 use cp_content::{ContentDb, RoadDef, ServiceKind, SimContent, UtilityKind};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{Cost, Tick, Treasury};
-use cp_district::{DistrictId, DistrictMap, Districts, district_at};
+use cp_district::{CityPolicies, DistrictId, DistrictMap, Districts, district_at, policy_at};
 use cp_net::{Elevation, NetGraph, Segment};
 use cp_transit::TransitLedger;
 use cp_utility::{UtilityGraph, UtilityNet};
@@ -63,6 +63,8 @@ pub struct WeekInputs<'a> {
     /// Where districts are and what tax rates they override (T-132).
     pub district_map: &'a DistrictMap,
     pub districts: &'a Districts,
+    /// The policies on for the whole city (T-190).
+    pub city_policies: &'a CityPolicies,
 }
 
 /// What week `week` books. See the module docs for each line.
@@ -126,6 +128,12 @@ pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost
             }
             r.income_by_zone[zone_slot] += tax;
             *by_district.entry(district).or_insert(Cost::ZERO) += tax;
+        }
+        // Each policy in force at the building costs `cost_per_building_week` (T-190).
+        for p in i.content.policies() {
+            if policy_at(i.district_map, i.districts, i.city_policies, b.pos, p.kind) {
+                r.policies += Cost::scaled(p.cost_per_building_week, 1.0);
+            }
         }
         if let Some(service) = def.service.as_deref().and_then(|s| i.content.service_id(s)) {
             let kind = i.content.service(service).kind;
@@ -204,6 +212,7 @@ pub fn settle_week(
     mut flow: ResMut<MoneyFlow>,
     district_map: Res<DistrictMap>,
     districts: Res<Districts>,
+    city_policies: Res<CityPolicies>,
     ledger: Option<ResMut<TransitLedger>>,
 ) {
     let hour = game_hour(tick.0);
@@ -226,6 +235,7 @@ pub fn settle_week(
             state: &state,
             district_map: &district_map,
             districts: &districts,
+            city_policies: &city_policies,
         },
         hour.div_ceil(HOURS_PER_WEEK),
     );
@@ -233,6 +243,7 @@ pub fn settle_week(
         income_by_zone: report.income_by_zone.map(|c| hour_share(c, k)),
         road_upkeep: hour_share(report.road_upkeep, k),
         utility_upkeep: hour_share(report.utility_upkeep, k),
+        policies: hour_share(report.policies, k),
         services: services.map(|c| hour_share(c, k)),
         ..Flow::default()
     };

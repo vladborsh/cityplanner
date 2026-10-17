@@ -66,3 +66,64 @@ impl ServiceSite {
     /// How close water must be for [`ServiceSite::Shore`], metres.
     pub const SHORE_REACH_M: f32 = 16.0;
 }
+
+/// A city or district policy (T-190, M4). The order is the bit number in a policy mask
+/// (`District.policies`, `CityPolicies.mask`), so it is **append-only** like every enum here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum PolicyKind {
+    /// Less garbage from buildings.
+    Recycling = 0,
+    /// Less fire risk.
+    SmokeDetectors = 1,
+    /// Less crime growth.
+    NeighborhoodWatch = 2,
+    /// Less electricity use.
+    PowerSaving = 3,
+    /// Tall buildings stop at a level.
+    HighRiseBan = 4,
+    /// Trucks drive around the district.
+    HeavyTrafficBan = 5,
+    /// Free tickets, transit looks better when choosing a mode.
+    FreeTransit = 6,
+    /// More tourists (city only).
+    TourismPromotion = 7,
+}
+
+impl PolicyKind {
+    /// Every policy in bit order.
+    pub const ALL: [PolicyKind; 8] = [
+        PolicyKind::Recycling,
+        PolicyKind::SmokeDetectors,
+        PolicyKind::NeighborhoodWatch,
+        PolicyKind::PowerSaving,
+        PolicyKind::HighRiseBan,
+        PolicyKind::HeavyTrafficBan,
+        PolicyKind::FreeTransit,
+        PolicyKind::TourismPromotion,
+    ];
+
+    /// The bit of this policy in a policy mask.
+    pub const fn bit(self) -> u32 {
+        1 << (self as u8)
+    }
+}
+
+/// Where a policy may be switched on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum PolicyScope {
+    City = 0,
+    District = 1,
+    Both = 2,
+}
+
+impl PolicyScope {
+    pub fn allows_city(self) -> bool {
+        matches!(self, Self::City | Self::Both)
+    }
+
+    pub fn allows_district(self) -> bool {
+        matches!(self, Self::District | Self::Both)
+    }
+}

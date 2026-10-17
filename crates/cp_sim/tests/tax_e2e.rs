@@ -42,6 +42,7 @@ fn week(sim: &mut SimRunner, pct: u8) -> (Cost, Cost) {
             state: w.resource::<EconomyState>(),
             district_map: w.resource::<cp_district::DistrictMap>(),
             districts: w.resource::<cp_district::Districts>(),
+            city_policies: w.resource::<cp_district::CityPolicies>(),
         },
         1,
     );

@@ -123,6 +123,7 @@ impl SimRunner {
         world.init_resource::<cp_core::Treasury>();
         world.init_resource::<cp_district::DistrictMap>();
         world.init_resource::<cp_district::Districts>();
+        world.init_resource::<cp_district::CityPolicies>();
         cp_service::ServicePlugin::init(&mut world);
         world.init_resource::<cp_transit::TransitNet>();
         world.init_resource::<cp_transit::LinePlans>();

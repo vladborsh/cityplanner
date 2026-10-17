@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::kinds::{ServiceKind, ServiceSite, UtilityKind, ZoneType};
+use crate::kinds::{PolicyKind, PolicyScope, ServiceKind, ServiceSite, UtilityKind, ZoneType};
 
 macro_rules! def_id {
     ($(#[$m:meta])* $name:ident) => {
@@ -61,6 +61,24 @@ pub enum ContentFile {
     Balance(Box<Balance>),
     /// Population milestones (`milestones.ron`); at most one file. Appended in T-149.
     Milestones(MilestonesDef),
+    /// Appended in T-190.
+    Policy(PolicyDef),
+}
+
+/// A policy (T-190): which one, where it may be on, what it costs and its one number.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyDef {
+    pub id: String,
+    pub name: String,
+    pub kind: PolicyKind,
+    /// Icon name (a placeholder until T-193 draws one per policy).
+    pub icon: String,
+    pub scope: PolicyScope,
+    /// Currency units per building under the policy per week; charged daily as a seventh.
+    pub cost_per_building_week: f32,
+    /// The one number of the effect; what it means depends on `kind`.
+    pub value: f32,
 }
 
 /// The population milestones in ascending order. The first has population 0 and is where a new

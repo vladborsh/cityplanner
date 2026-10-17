@@ -47,6 +47,8 @@ pub struct Flow {
     /// Upkeep of the buses.
     pub transit_upkeep: Cost,
     pub loans: Cost,
+    /// The policies' cost (T-190), booked by the hour like the upkeep.
+    pub policies: Cost,
 }
 
 impl Flow {
@@ -68,6 +70,7 @@ impl Flow {
             + self.building_upkeep()
             + self.transit_upkeep
             + self.loans
+            + self.policies
     }
 
     pub fn net(&self) -> Cost {
@@ -88,6 +91,7 @@ impl Flow {
         self.utility_upkeep += o.utility_upkeep;
         self.transit_upkeep += o.transit_upkeep;
         self.loans += o.loans;
+        self.policies += o.policies;
     }
 
     /// `self × n / d` per line, rounded down (for scaling a part of a day up to a day).
@@ -103,6 +107,7 @@ impl Flow {
             services: self.services.map(f),
             transit_upkeep: f(self.transit_upkeep),
             loans: f(self.loans),
+            policies: f(self.policies),
         }
     }
 }

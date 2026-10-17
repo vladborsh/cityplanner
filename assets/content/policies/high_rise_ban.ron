@@ -1,0 +1,11 @@
+Policy((
+    id: "high_rise_ban",
+    name: "High-rise ban",
+    kind: HighRiseBan,
+    // Placeholder icon until T-193 draws one per policy.
+    icon: "zone_res_high",
+    scope: Both,
+    // Per building under the policy per week. // tune later
+    cost_per_building_week: 0.5,
+    value: 2.0,
+))

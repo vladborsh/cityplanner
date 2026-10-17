@@ -5,13 +5,13 @@
 use std::fmt;
 
 use bevy_ecs::world::World;
-use cp_content::ZoneType;
+use cp_content::{PolicyDef, PolicyKind, SimContent, ZoneType};
 use cp_core::Cost;
 use serde::{Deserialize, Serialize};
 
 use crate::map::{
-    Cell, District, DistrictId, DistrictMap, Districts, MAX_DISTRICTS, NAME_MAX, PALETTE_LEN, SIDE,
-    zone_slot,
+    Cell, CityPolicies, District, DistrictId, DistrictMap, Districts, MAX_DISTRICTS, NAME_MAX,
+    PALETTE_LEN, SIDE, zone_slot,
 };
 
 /// District tax override limits, percent (the same as the city rate's).
@@ -50,6 +50,12 @@ pub enum DistrictCommand {
         zone: ZoneType,
         pct: Option<u8>,
     },
+    /// Switches a policy on or off for a district (`Some`) or the whole city (`None`).
+    SetPolicy {
+        district: Option<DistrictId>,
+        policy: PolicyKind,
+        on: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,6 +70,10 @@ pub enum DistrictError {
     /// `ZoneType::None` pays no tax.
     NoTaxForZone,
     TaxOutOfRange(u8),
+    /// The content has no definition of this policy.
+    NoSuchPolicy(PolicyKind),
+    /// The policy cannot be switched on here (a city policy in a district or the other way).
+    PolicyScope(PolicyKind),
 }
 
 impl fmt::Display for DistrictError {
@@ -86,6 +96,8 @@ impl fmt::Display for DistrictError {
             Self::TaxOutOfRange(p) => {
                 write!(f, "tax rate {p}% is outside {TAX_MIN}..={TAX_MAX}%")
             }
+            Self::NoSuchPolicy(p) => write!(f, "there is no {p:?} policy"),
+            Self::PolicyScope(p) => write!(f, "{p:?} cannot be set here"),
         }
     }
 }
@@ -123,6 +135,25 @@ pub fn validate_tax(pct: Option<u8>) -> Result<(), DistrictError> {
     }
 }
 
+/// A policy command is valid when the policy is defined and its scope allows the target
+/// (`None` = the city); that a district exists is checked by the caller.
+pub fn validate_policy(
+    def: Option<&PolicyDef>,
+    kind: PolicyKind,
+    district: Option<DistrictId>,
+) -> Result<(), DistrictError> {
+    let def = def.ok_or(DistrictError::NoSuchPolicy(kind))?;
+    let allowed = match district {
+        Some(_) => def.scope.allows_district(),
+        None => def.scope.allows_city(),
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err(DistrictError::PolicyScope(kind))
+    }
+}
+
 /// Validates and applies `cmd`, returning its cost (always zero).
 pub fn apply(world: &mut World, cmd: &DistrictCommand) -> Result<Cost, DistrictError> {
     world.resource_scope(|world, mut districts: bevy_ecs::prelude::Mut<Districts>| {
@@ -149,6 +180,7 @@ pub fn apply(world: &mut World, cmd: &DistrictCommand) -> Result<Cost, DistrictE
                     name,
                     color: (slot % usize::from(PALETTE_LEN)) as u8,
                     tax: [None; 6],
+                    policies: 0,
                 };
                 if slot == districts.list.len() {
                     districts.list.push(Some(d));
@@ -194,6 +226,40 @@ pub fn apply(world: &mut World, cmd: &DistrictCommand) -> Result<Cost, DistrictE
                 validate_tax(*pct)?;
                 if let Some(d) = districts.get_mut(*district) {
                     d.tax[slot] = *pct;
+                }
+            }
+            DistrictCommand::SetPolicy {
+                district,
+                policy,
+                on,
+            } => {
+                if let Some(d) = district {
+                    exists(*d, &districts)?;
+                }
+                let def = world
+                    .get_resource::<SimContent>()
+                    .and_then(|c| c.0.policy(*policy));
+                validate_policy(def, *policy, *district)?;
+                let bit = policy.bit();
+                let set = |mask: &mut u32| {
+                    if *on {
+                        *mask |= bit;
+                    } else {
+                        *mask &= !bit;
+                    }
+                };
+                match district {
+                    Some(d) => {
+                        if let Some(d) = districts.get_mut(*d) {
+                            set(&mut d.policies);
+                        }
+                    }
+                    None => {
+                        let mut city = world
+                            .get_resource_mut::<CityPolicies>()
+                            .ok_or(DistrictError::Missing)?;
+                        set(&mut city.mask);
+                    }
                 }
             }
         }

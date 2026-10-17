@@ -201,6 +201,12 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
     for (name, c) in rest {
         expenses.push((name.into(), c.map(Some)));
     }
+    if day.policies != Cost::ZERO || week.policies != Cost::ZERO || last.policies != Cost::ZERO {
+        expenses.push((
+            "Policies".into(),
+            [Some(day.policies), Some(week.policies), Some(last.policies)],
+        ));
+    }
     if day.fares != Cost::ZERO || week.fares != Cost::ZERO || last.transit_fares != Cost::ZERO {
         income.push((
             "Fares".into(),
@@ -443,6 +449,8 @@ pub struct Overview {
     pub tourism: Cost,
     /// Last week's export income (part of `income`), T-170.
     pub exports: Cost,
+    /// Last week's policy costs (part of `upkeep`), T-190.
+    pub policies: Cost,
     /// Balance of every hourly history sample (7 game days at most), oldest first.
     pub balance_history: Vec<f32>,
 }
@@ -470,7 +478,7 @@ pub fn overview(view: &SimView) -> Overview {
             .map(|(i, z)| (*z, week.income_by_zone[i]))
             .collect(),
         income: week.income() + week.transit_fares + week.tourism + week.exports,
-        upkeep: week.upkeep() + week.loan_payments + week.transit_upkeep,
+        upkeep: week.upkeep() + week.loan_payments + week.transit_upkeep + week.policies,
         net: week.balance(),
         roads_sum: roads.iter().map(|r| r.upkeep_week).sum(),
         roads,
@@ -482,6 +490,7 @@ pub fn overview(view: &SimView) -> Overview {
         transit_upkeep: week.transit_upkeep,
         tourism: week.tourism,
         exports: week.exports,
+        policies: week.policies,
         balance_history: view
             .city
             .history
@@ -526,7 +535,7 @@ fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
                 (
                     day.expenses(),
                     week.expenses(),
-                    last.upkeep() + last.transit_upkeep + last.loan_payments,
+                    last.upkeep() + last.transit_upkeep + last.loan_payments + last.policies,
                 ),
             ),
         ] {
@@ -625,6 +634,9 @@ pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
         ui.end_row();
         ui.label("Loans");
         ui.label(format_money(o.loan_payments));
+        ui.end_row();
+        ui.label("Policies");
+        ui.label(format_money(o.policies));
         ui.end_row();
     });
 }

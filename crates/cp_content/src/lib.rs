@@ -12,4 +12,4 @@ pub use db::{
 };
 pub use defs::*;
 pub use error::{ContentError, ContentErrors};
-pub use kinds::{ServiceKind, ServiceSite, UtilityKind, ZoneType};
+pub use kinds::{PolicyKind, PolicyScope, ServiceKind, ServiceSite, UtilityKind, ZoneType};

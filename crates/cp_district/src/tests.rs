@@ -1,6 +1,8 @@
 use bevy_ecs::world::World;
 use bevy_math::Vec2;
-use cp_content::ZoneType;
+use std::sync::Arc;
+
+use cp_content::{ContentDb, PolicyKind, SimContent, ZoneType};
 
 use crate::*;
 
@@ -8,7 +10,119 @@ fn world() -> World {
     let mut w = World::new();
     w.init_resource::<DistrictMap>();
     w.init_resource::<Districts>();
+    w.init_resource::<CityPolicies>();
     w
+}
+
+fn policy_src(id: &str, kind: &str, scope: &str) -> (String, String) {
+    (
+        format!("p/{id}.ron"),
+        format!(
+            r#"Policy((id: "{id}", name: "{id}", kind: {kind}, icon: "i", scope: {scope},
+            cost_per_building_week: 1.0, value: 0.3))"#
+        ),
+    )
+}
+
+/// A world with Recycling (both), PowerSaving (district only) and TourismPromotion (city only).
+fn world_with_policies() -> World {
+    let mut w = world();
+    let db = ContentDb::from_sources(vec![
+        policy_src("recycling", "Recycling", "Both"),
+        policy_src("power_saving", "PowerSaving", "District"),
+        policy_src("tourism", "TourismPromotion", "City"),
+    ])
+    .unwrap_or_else(|e| panic!("{e}"));
+    w.insert_resource(SimContent(Arc::new(db)));
+    w
+}
+
+fn set_policy(
+    w: &mut World,
+    district: Option<DistrictId>,
+    policy: PolicyKind,
+    on: bool,
+) -> Result<cp_core::Cost, DistrictError> {
+    apply(
+        w,
+        &DistrictCommand::SetPolicy {
+            district,
+            policy,
+            on,
+        },
+    )
+}
+
+fn on_at(w: &World, x: f32, z: f32, kind: PolicyKind) -> bool {
+    policy_at(
+        w.resource::<DistrictMap>(),
+        w.resource::<Districts>(),
+        w.resource::<CityPolicies>(),
+        Vec2::new(x, z),
+        kind,
+    )
+}
+
+#[test]
+fn a_district_policy_holds_inside_the_district_and_not_outside() {
+    let mut w = world_with_policies();
+    create(&mut w, "Old town");
+    let d = DistrictId(1);
+    apply(
+        &mut w,
+        &DistrictCommand::Paint {
+            cells: vec![(10, 20)],
+            district: d,
+        },
+    )
+    .unwrap();
+    assert!(!on_at(&w, 330.0, 650.0, PolicyKind::Recycling));
+    set_policy(&mut w, Some(d), PolicyKind::Recycling, true).unwrap();
+    assert!(on_at(&w, 330.0, 650.0, PolicyKind::Recycling));
+    assert!(!on_at(&w, 400.0, 650.0, PolicyKind::Recycling));
+    assert!(!on_at(&w, 330.0, 650.0, PolicyKind::PowerSaving));
+    assert_eq!(w.resource::<Districts>().get(d).unwrap().policies, 1);
+    set_policy(&mut w, Some(d), PolicyKind::Recycling, false).unwrap();
+    assert!(!on_at(&w, 330.0, 650.0, PolicyKind::Recycling));
+}
+
+#[test]
+fn a_city_policy_holds_everywhere() {
+    let mut w = world_with_policies();
+    set_policy(&mut w, None, PolicyKind::Recycling, true).unwrap();
+    assert!(on_at(&w, 5000.0, 5000.0, PolicyKind::Recycling));
+    assert!(on_at(&w, 1.0, 1.0, PolicyKind::Recycling));
+    assert!(!on_at(&w, 1.0, 1.0, PolicyKind::PowerSaving));
+    assert_eq!(
+        w.resource::<CityPolicies>().mask,
+        PolicyKind::Recycling.bit()
+    );
+}
+
+#[test]
+fn a_policy_of_the_wrong_scope_or_for_a_missing_district_is_an_error_and_changes_nothing() {
+    let mut w = world_with_policies();
+    create(&mut w, "Old town");
+    let d = DistrictId(1);
+    // City-only in a district, district-only for the city, undefined, missing district.
+    assert_eq!(
+        set_policy(&mut w, Some(d), PolicyKind::TourismPromotion, true),
+        Err(DistrictError::PolicyScope(PolicyKind::TourismPromotion))
+    );
+    assert_eq!(
+        set_policy(&mut w, None, PolicyKind::PowerSaving, true),
+        Err(DistrictError::PolicyScope(PolicyKind::PowerSaving))
+    );
+    assert_eq!(
+        set_policy(&mut w, None, PolicyKind::FreeTransit, true),
+        Err(DistrictError::NoSuchPolicy(PolicyKind::FreeTransit))
+    );
+    assert_eq!(
+        set_policy(&mut w, Some(DistrictId(9)), PolicyKind::Recycling, true),
+        Err(DistrictError::NoSuchDistrict(DistrictId(9)))
+    );
+    assert_eq!(w.resource::<Districts>().get(d).unwrap().policies, 0);
+    assert_eq!(w.resource::<CityPolicies>().mask, 0);
 }
 
 fn create(w: &mut World, name: &str) {

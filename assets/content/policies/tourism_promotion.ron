@@ -1,0 +1,11 @@
+Policy((
+    id: "tourism_promotion",
+    name: "Tourism promotion",
+    kind: TourismPromotion,
+    // Placeholder icon until T-193 draws one per policy.
+    icon: "overlay_transit",
+    scope: City,
+    // Per building under the policy per week. // tune later
+    cost_per_building_week: 3.0,
+    value: 0.25,
+))

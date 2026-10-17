@@ -43,7 +43,7 @@
 //! | `TileOwnership`, `NetGraph`, `ZoneGrid` (occupancy is rebuilt from the buildings), `BuildingGrid` (incl. the removed ids), `UtilityGraph`, `CitizenGrid` (occupancy tables rebuilt), `TripBook`, `Agents` (pools, lane state, segment load; drive tables rebuilt) | yes |
 //! | `PathService` (requests in flight) | yes, as `SavedPaths` |
 //! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `Goods`, `Intercity` (stops, lines, riders, line figures, buses, week's money, tourist visits, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
-//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts` | yes |
+//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
 //! | `SimLimits`, `RoutineSettings`, `AgentSettings`, `SimContent`, `SimTerrain` | configuration of the runner, not of the game |
@@ -67,7 +67,7 @@ use cp_building::{BuildingGrid, Demand};
 use cp_citizen::{CitizenGrid, TripBook};
 use cp_content::{BuildingDefId, ContentDb, DefKind, RoadDefId};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
-use cp_district::{DistrictMap, Districts};
+use cp_district::{CityPolicies, DistrictMap, Districts};
 use cp_economy::{Decay, DemandAcc, EconomyState, LandGrids, WorkerShortage};
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
@@ -79,7 +79,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 37;
+pub const FORMAT_VERSION: u32 = 38;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -204,6 +204,9 @@ pub struct SaveData {
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
     pub districts: Districts,
+    /// The policies switched on for the whole city (T-190). Added in v38; a district's own are
+    /// in its record.
+    pub city_policies: CityPolicies,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -289,6 +292,7 @@ impl SaveData {
                 .map_or_else(DefNames::default, |c| DefNames::from_content(&c.0)),
             district_map: world.resource::<DistrictMap>().clone(),
             districts: world.resource::<Districts>().clone(),
+            city_policies: *world.resource::<CityPolicies>(),
             service_state: world.resource::<cp_service::ServiceState>().clone(),
             coverage: world.resource::<cp_service::ServiceCoverage>().clone(),
             shortage: world.resource::<WorkerShortage>().clone(),
@@ -337,6 +341,7 @@ impl SaveData {
         world.insert_resource(self.decay);
         world.insert_resource(self.district_map);
         world.insert_resource(self.districts);
+        world.insert_resource(self.city_policies);
         world.insert_resource(self.service_state);
         world.insert_resource(self.shortage);
         world.insert_resource(self.progress);

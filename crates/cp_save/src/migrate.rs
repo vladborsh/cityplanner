@@ -12,7 +12,7 @@ use cp_citizen::{Citizen, CitizenGrid, Household, Location, TripBook};
 use cp_citizen::{CitizenId, TripId};
 use cp_core::{Arena, Cost};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
-use cp_district::{DistrictMap, Districts};
+use cp_district::{CityPolicies, District, DistrictMap, Districts};
 use cp_economy::{Budgets, Decay, DemandAcc, EconomyState, LandGrids, TaxRates, WeekReport};
 use cp_net::NetGraph;
 use cp_sim::SimCommand;
@@ -704,7 +704,7 @@ pub struct SaveDataV22 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22.
     pub service_state: ServiceStateV23,
     /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
@@ -769,7 +769,7 @@ pub struct SaveDataV21 {
     pub decay: Decay,
     pub def_names: crate::DefNames,
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
 }
 
 /// v21 → v22 (T-135): citizens got `sick_since` and `school`, the citizen grid its `dead`
@@ -1399,7 +1399,7 @@ pub struct SaveDataV23 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22.
     pub service_state: ServiceStateV23,
     /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
@@ -1534,7 +1534,7 @@ pub struct SaveDataV24 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -1625,7 +1625,7 @@ pub struct SaveDataV25 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -1716,7 +1716,7 @@ pub struct SaveDataV26 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -1808,7 +1808,7 @@ pub struct SaveDataV27 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -1868,7 +1868,7 @@ pub struct SaveDataV28 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -2040,7 +2040,7 @@ pub struct SaveDataV29 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -2153,7 +2153,7 @@ pub struct SaveDataV30 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -2283,7 +2283,7 @@ pub struct SaveDataV31 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -2431,7 +2431,7 @@ pub struct SaveDataV32 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -2556,7 +2556,7 @@ pub struct SaveDataV33 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -2663,7 +2663,7 @@ pub struct SaveDataV34 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -2773,7 +2773,7 @@ pub struct SaveDataV35 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -2930,7 +2930,7 @@ pub struct SaveDataV36 {
     pub def_names: crate::DefNames,
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
-    pub districts: Districts,
+    pub districts: DistrictsV37,
     /// Per-building service state and facility counters. Added in v22; fires name their
     /// station since v24.
     pub service_state: cp_service::ServiceState,
@@ -2957,9 +2957,119 @@ pub struct SaveDataV36 {
     pub intercity: cp_transit::Intercity,
 }
 
+/// The week report as format 37 wrote it: no policies line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WeekReportV37 {
+    pub week: u64,
+    pub income_by_zone: [Cost; 6],
+    pub road_upkeep: Cost,
+    pub building_upkeep: Cost,
+    pub utility_upkeep: Cost,
+    pub loan_payments: Cost,
+    pub transit_fares: Cost,
+    pub transit_upkeep: Cost,
+    pub tourism: Cost,
+    pub exports: Cost,
+}
+
+/// The economy state as format 37 wrote it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EconomyStateV37 {
+    pub taxes: TaxRates,
+    pub budgets: Budgets,
+    pub last_week: WeekReportV37,
+    pub loans: Vec<cp_economy::Loan>,
+}
+
+/// A district as format 37 wrote it: no policies.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DistrictV37 {
+    pub name: String,
+    pub color: u8,
+    pub tax: [Option<u8>; 6],
+}
+
+/// The district records as formats 21 to 37 wrote them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DistrictsV37 {
+    pub list: Vec<Option<DistrictV37>>,
+}
+
+/// Version 37: the body as written by format 37 (goods trade; policies are not in it).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV37 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    /// Zone blocks, painted types and cell validity. Added in v5.
+    pub zones: cp_zone::ZoneGrid,
+    /// Buildings (lots, state, access points). Added in v6.
+    /// Includes the ids removed and not yet drained since v13.
+    pub buildings: BuildingGrid,
+    /// Citizens and households. Added in v7.
+    pub citizens: CitizenGrid,
+    /// Pathfinding requests in flight (id, submit tick, request, congestion read, stale
+    /// flag). Added in v8; see `cp_traffic::service` for why this makes load + N ticks equal
+    /// the continuous run.
+    pub paths: SavedPaths,
+    /// Pipe and power-line networks. Added in v9.
+    pub utilities: UtilityGraph,
+    /// Trips in flight and the routine's counters. Added in v10.
+    pub trips: TripBook,
+    /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
+    /// agents carry the segment load since v12; vehicles carry their re-route request id
+    /// since v17.
+    pub agents: cp_traffic::Agents,
+    /// The city's money. Added in v14.
+    pub treasury: Treasury,
+    /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
+    pub economy: EconomyStateV37,
+    /// Smoothed demand and the sums of the cycle in progress. Added in v15.
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    /// Pollution, noise and land value grids. Added in v16.
+    pub land: LandGrids,
+    /// Abandonment timers. Added in v16.
+    pub decay: Decay,
+    /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
+    /// [`DefNames`] and [`SaveData::remap_defs`].
+    pub def_names: crate::DefNames,
+    /// The district grid and the district records. Added in v21.
+    pub district_map: DistrictMap,
+    pub districts: DistrictsV37,
+    /// Per-building service state and facility counters. Added in v22; fires name their
+    /// station since v24.
+    pub service_state: cp_service::ServiceState,
+    /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
+    /// sim reads the values of that boundary until the next one. Added in v22.
+    pub coverage: cp_service::ServiceCoverage,
+    /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
+    pub shortage: cp_economy::WorkerShortage,
+    /// The population milestone reached. Added in v25.
+    pub progress: cp_sim::Progress,
+    /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
+    /// with keep, since v29.
+    pub service_runs: cp_traffic::ServiceRuns,
+    /// Bus stops and lines (T-153). Added in v28.
+    pub transit: cp_transit::TransitNet,
+    /// Buses out on the lines and the week's transit money (T-156). Added in v30.
+    pub fleet: cp_transit::TransitFleet,
+    pub ledger: cp_transit::TransitLedger,
+    /// Tourists on the way and the visits each building has had (T-168). Added in v33.
+    pub tourists: cp_transit::Tourists,
+    /// Stock of factories and shops and the trucks on the road (T-169). Added in v34.
+    pub goods: cp_transit::Goods,
+    /// The intercity train and what it has brought (T-167). Added in v36.
+    pub intercity: cp_transit::Intercity,
+}
+
 /// v36 → v37 (T-170): goods trade. Trucks are factory-to-shop hauls, nothing has been exported
 /// or imported, and the week report and the ledger get their export lines at zero.
-pub fn migrate_v36_to_v37(v36: SaveDataV36) -> SaveData {
+pub fn migrate_v36_to_v37(v36: SaveDataV36) -> SaveDataV37 {
     let w = v36.economy.last_week;
     let l = v36.ledger;
     let goods = cp_transit::Goods {
@@ -2981,7 +3091,7 @@ pub fn migrate_v36_to_v37(v36: SaveDataV36) -> SaveData {
             })
             .collect(),
     };
-    SaveData {
+    SaveDataV37 {
         tick: v36.tick,
         rng: v36.rng,
         speed: v36.speed,
@@ -3012,10 +3122,10 @@ pub fn migrate_v36_to_v37(v36: SaveDataV36) -> SaveData {
         transit: v36.transit,
         fleet: v36.fleet,
         tourists: v36.tourists,
-        economy: EconomyState {
+        economy: EconomyStateV37 {
             taxes: v36.economy.taxes,
             budgets: v36.economy.budgets,
-            last_week: WeekReport {
+            last_week: WeekReportV37 {
                 week: w.week,
                 income_by_zone: w.income_by_zone,
                 road_upkeep: w.road_upkeep,
@@ -3042,6 +3152,80 @@ pub fn migrate_v36_to_v37(v36: SaveDataV36) -> SaveData {
     }
 }
 
+/// v37 → v38 (T-190): policies. No district has one and the city has none; the week report
+/// gets its policies line at zero.
+pub fn migrate_v37_to_v38(v37: SaveDataV37) -> SaveData {
+    let w = v37.economy.last_week;
+    SaveData {
+        tick: v37.tick,
+        rng: v37.rng,
+        speed: v37.speed,
+        queue: v37.queue,
+        log: v37.log,
+        tiles: v37.tiles,
+        net: v37.net,
+        zones: v37.zones,
+        buildings: v37.buildings,
+        citizens: v37.citizens,
+        paths: v37.paths,
+        utilities: v37.utilities,
+        trips: v37.trips,
+        agents: v37.agents,
+        treasury: v37.treasury,
+        demand: v37.demand,
+        demand_acc: v37.demand_acc,
+        land: v37.land,
+        decay: v37.decay,
+        def_names: v37.def_names,
+        district_map: v37.district_map,
+        districts: Districts {
+            list: v37
+                .districts
+                .list
+                .into_iter()
+                .map(|d| {
+                    d.map(|d| District {
+                        name: d.name,
+                        color: d.color,
+                        tax: d.tax,
+                        policies: 0,
+                    })
+                })
+                .collect(),
+        },
+        city_policies: CityPolicies::default(),
+        service_state: v37.service_state,
+        coverage: v37.coverage,
+        shortage: v37.shortage,
+        progress: v37.progress,
+        service_runs: v37.service_runs,
+        transit: v37.transit,
+        fleet: v37.fleet,
+        tourists: v37.tourists,
+        economy: EconomyState {
+            taxes: v37.economy.taxes,
+            budgets: v37.economy.budgets,
+            last_week: WeekReport {
+                week: w.week,
+                income_by_zone: w.income_by_zone,
+                road_upkeep: w.road_upkeep,
+                building_upkeep: w.building_upkeep,
+                utility_upkeep: w.utility_upkeep,
+                loan_payments: w.loan_payments,
+                transit_fares: w.transit_fares,
+                transit_upkeep: w.transit_upkeep,
+                tourism: w.tourism,
+                exports: w.exports,
+                policies: Cost::ZERO,
+            },
+            loans: v37.economy.loans,
+        },
+        ledger: v37.ledger,
+        goods: v37.goods,
+        intercity: v37.intercity,
+    }
+}
+
 /// Everything from a v22 body to the current format.
 fn from_v22(v: SaveDataV22) -> SaveData {
     let v = migrate_v24_to_v25(migrate_v23_to_v24(migrate_v22_to_v23(v)));
@@ -3056,8 +3240,12 @@ fn from_v27(v: SaveDataV27) -> SaveData {
     from_v29(migrate_v28_to_v29(migrate_v27_to_v28(v)))
 }
 
+fn from_v36(v: SaveDataV36) -> SaveData {
+    migrate_v37_to_v38(migrate_v36_to_v37(v))
+}
+
 fn from_v29(v: SaveDataV29) -> SaveData {
-    migrate_v36_to_v37(migrate_v35_to_v36(migrate_v34_to_v35(migrate_v33_to_v34(
+    from_v36(migrate_v35_to_v36(migrate_v34_to_v35(migrate_v33_to_v34(
         migrate_v32_to_v33(migrate_v31_to_v32(migrate_v30_to_v31(migrate_v29_to_v30(
             v,
         )))),
@@ -3172,26 +3360,25 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         27 => Ok(from_v27(dec(body)?)),
         28 => Ok(from_v29(migrate_v28_to_v29(dec(body)?))),
         29 => Ok(from_v29(dec(body)?)),
-        30 => Ok(migrate_v36_to_v37(migrate_v35_to_v36(migrate_v34_to_v35(
+        30 => Ok(from_v36(migrate_v35_to_v36(migrate_v34_to_v35(
             migrate_v33_to_v34(migrate_v32_to_v33(migrate_v31_to_v32(migrate_v30_to_v31(
                 dec(body)?,
             )))),
         )))),
-        31 => Ok(migrate_v36_to_v37(migrate_v35_to_v36(migrate_v34_to_v35(
+        31 => Ok(from_v36(migrate_v35_to_v36(migrate_v34_to_v35(
             migrate_v33_to_v34(migrate_v32_to_v33(migrate_v31_to_v32(dec(body)?))),
         )))),
-        32 => Ok(migrate_v36_to_v37(migrate_v35_to_v36(migrate_v34_to_v35(
+        32 => Ok(from_v36(migrate_v35_to_v36(migrate_v34_to_v35(
             migrate_v33_to_v34(migrate_v32_to_v33(dec(body)?)),
         )))),
-        33 => Ok(migrate_v36_to_v37(migrate_v35_to_v36(migrate_v34_to_v35(
+        33 => Ok(from_v36(migrate_v35_to_v36(migrate_v34_to_v35(
             migrate_v33_to_v34(dec(body)?),
         )))),
-        34 => Ok(migrate_v36_to_v37(migrate_v35_to_v36(migrate_v34_to_v35(
-            dec(body)?,
-        )))),
-        35 => Ok(migrate_v36_to_v37(migrate_v35_to_v36(dec(body)?))),
-        36 => Ok(migrate_v36_to_v37(dec(body)?)),
-        37 => dec(body),
+        34 => Ok(from_v36(migrate_v35_to_v36(migrate_v34_to_v35(dec(body)?)))),
+        35 => Ok(from_v36(migrate_v35_to_v36(dec(body)?))),
+        36 => Ok(from_v36(dec(body)?)),
+        37 => Ok(migrate_v37_to_v38(dec(body)?)),
+        38 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
