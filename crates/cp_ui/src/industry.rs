@@ -247,6 +247,79 @@ pub fn industry_rows(view: &SimView, id: cp_building::BuildingId) -> Vec<(String
     out
 }
 
+/// The mode and cargo buttons of a warehouse's inspector (T-219): Balanced / Fill / Empty and
+/// "All cargo" or one cargo of its chain; each click sends `SetWarehouse`. Nothing for any
+/// other building. The buttons' rectangles go to `actions` (tests click them).
+pub fn warehouse_controls(
+    ui: &mut egui::Ui,
+    id: cp_building::BuildingId,
+    view: &SimView,
+    outbox: &mut CommandOutbox,
+    actions: &mut Vec<(String, egui::Rect)>,
+) {
+    use cp_industry::{IndustryCommand, WarehouseMode};
+    let Some(db) = view.content.as_deref() else {
+        return;
+    };
+    let Some(b) = view.buildings.get(id) else {
+        return;
+    };
+    let Some(spec) = db
+        .building(b.def)
+        .industry
+        .as_ref()
+        .filter(|i| i.role == IndustryRole::Warehouse)
+    else {
+        return;
+    };
+    let now = view.warehouses.get(id);
+    let mut send = |cargo: Option<CargoKind>, mode: WarehouseMode| {
+        outbox.push(SimCommand::Industry(IndustryCommand::SetWarehouse {
+            building: id,
+            cargo,
+            mode,
+        }));
+    };
+    ui.separator();
+    ui.horizontal(|ui| {
+        for (mode, label, hint) in [
+            (WarehouseMode::Balanced, "Balanced", "Keeps about half full"),
+            (
+                WarehouseMode::Fill,
+                "Fill",
+                "Takes cargo in, never gives it out",
+            ),
+            (
+                WarehouseMode::Empty,
+                "Empty",
+                "Gives cargo out and exports it, takes none",
+            ),
+        ] {
+            let r = ui
+                .selectable_label(now.mode == mode, label)
+                .on_hover_text(hint);
+            actions.push((label.to_string(), r.rect));
+            if r.clicked() && now.mode != mode {
+                send(now.cargo, mode);
+            }
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        let options = std::iter::once((None, "All cargo".to_string())).chain(
+            cp_industry::chain_cargo(db, spec.resource)
+                .into_iter()
+                .map(|c| (Some(c), format!("{c:?}"))),
+        );
+        for (cargo, label) in options {
+            let r = ui.selectable_label(now.cargo == cargo, &label);
+            actions.push((label, r.rect));
+            if r.clicked() && now.cargo != cargo {
+                send(cargo, now.mode);
+            }
+        }
+    });
+}
+
 fn area_panel(ui: &mut egui::Ui, view: &SimView, id: AreaId) {
     let Some(s) = area_summary(view, id) else {
         return;
@@ -501,7 +574,7 @@ pub fn industry_panel(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::testutil::{click, frame, input};
     use cp_sim::SimRunner;
@@ -661,7 +734,7 @@ mod tests {
     }
 
     /// A world with a Forestry area and a Farming area, painted over two spots.
-    fn world_with_areas(
+    pub(crate) fn world_with_areas(
         level: u8,
     ) -> (SimRunner, Arc<cp_content::ContentDb>, [bevy::math::Vec2; 2]) {
         let db = Arc::new(
@@ -704,7 +777,7 @@ mod tests {
         (sim, db, at)
     }
 
-    fn put(
+    pub(crate) fn put(
         sim: &mut SimRunner,
         db: &cp_content::ContentDb,
         name: &str,

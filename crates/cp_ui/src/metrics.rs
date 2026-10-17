@@ -114,6 +114,7 @@ pub fn sections(view: &SimView) -> Vec<Section> {
     });
 
     out.push(transport_section(view));
+    out.push(industry_section(view));
 
     let mut utilities = Vec::new();
     for (kind, name) in [
@@ -195,6 +196,70 @@ fn transport_section(view: &SimView) -> Section {
             ),
             row("Imports (week)", format!("{} loads", l.import_loads)),
             row("Buildings without goods", no_goods),
+        ],
+        spark: None,
+    }
+}
+
+/// The industrial areas (T-219): areas and their levels, chain buildings and jobs, what they
+/// hold, the buildings with a problem, and the cargo trade of the week (`IndustryLedger`).
+fn industry_section(view: &SimView) -> Section {
+    use cp_district::AreaKind;
+    let areas: Vec<_> = view
+        .areas
+        .iter()
+        .filter(|(_, a)| matches!(a.kind, AreaKind::Industry(_)))
+        .collect();
+    let levels: Vec<String> = areas.iter().map(|(_, a)| a.level.to_string()).collect();
+    let (mut buildings, mut jobs) = (0u32, 0u32);
+    if let Some(db) = view.content.as_deref() {
+        for (_, b) in view.buildings.iter() {
+            let def = db.building(b.def);
+            if def.industry.is_some() {
+                buildings += 1;
+                jobs += def.jobs.iter().map(|&j| u32::from(j)).sum::<u32>();
+            }
+        }
+    }
+    let stored: f32 = view
+        .industry
+        .stock
+        .keys()
+        .map(|&b| view.industry.total(b))
+        .sum();
+    let problems = view.industry.problems.len();
+    let l = &view.industry_ledger;
+    Section {
+        title: "Industry",
+        rows: vec![
+            row("Areas", areas.len()),
+            row(
+                "Area levels",
+                if levels.is_empty() {
+                    "—".to_string()
+                } else {
+                    levels.join(" · ")
+                },
+            ),
+            row("Chain buildings", format!("{buildings} · {jobs} jobs")),
+            row("Cargo stored", format!("{stored:.0}")),
+            row("Buildings with a problem", problems),
+            row(
+                "Cargo exports (week)",
+                format!("{} loads · {}", l.export_loads, format_money(l.exports)),
+            ),
+            row(
+                "Cargo imports (week)",
+                format!("{} loads · {}", l.import_loads, format_money(l.imports)),
+            ),
+            row(
+                "Last week: exports / imports",
+                format!(
+                    "{} / {}",
+                    format_money(l.last_exports),
+                    format_money(l.last_imports)
+                ),
+            ),
         ],
         spark: None,
     }
@@ -652,6 +717,40 @@ mod tests {
                 let r = sparkline(ui, &values, egui::vec2(100.0, 20.0));
                 assert_eq!(r.rect.size(), egui::vec2(100.0, 20.0));
             });
+        }
+    }
+
+    /// T-219: the Industry section counts the areas and sums the week's cargo trade.
+    #[test]
+    fn the_industry_section_shows_areas_and_the_ledger_of_the_week() {
+        use crate::industry::tests::{put, world_with_areas};
+        let (mut sim, db, at) = world_with_areas(2);
+        put(&mut sim, &db, "forest_main", at[0]);
+        put(&mut sim, &db, "farm_main", at[1]);
+        let mut st = cp_industry::IndustryState::default();
+        st.stock.insert(
+            cp_core::Id::new(0, 0),
+            vec![(cp_content::CargoKind::Logs, 40.0)],
+        );
+        sim.world_mut().insert_resource(st);
+        let mut view = sim.view();
+        view.industry_ledger.export_loads = 3;
+        view.industry_ledger.exports = cp_core::Cost(120_000);
+        view.industry_ledger.import_loads = 1;
+        let secs = sections(&view);
+        let v = |l: &str| value(&secs, "Industry", l).to_string();
+        assert_eq!(v("Areas"), "2");
+        assert_eq!(v("Area levels"), "2 · 1");
+        assert!(
+            v("Chain buildings").starts_with("2 "),
+            "{}",
+            v("Chain buildings")
+        );
+        assert!(v("Cargo exports (week)").starts_with("3 loads"));
+        assert!(v("Cargo imports (week)").starts_with("1 loads"));
+        let text = painted(&view);
+        for (_, value) in &secs.iter().find(|s| s.title == "Industry").unwrap().rows {
+            assert!(text.iter().any(|t| t == value), "{value:?} not painted");
         }
     }
 }

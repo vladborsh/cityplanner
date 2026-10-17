@@ -176,9 +176,151 @@ fn unique_advice(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
     out
 }
 
+/// The level of each industry area (by id) at the last look; `None` before the first look,
+/// which only takes the baseline.
+pub type LevelSeen = Option<BTreeMap<u8, u8>>;
+
+/// "Level up" advice (T-219) for the industry areas whose level rose since `seen`; `seen` is
+/// brought up to date. Each rise comes once (the count carries the level, which lifts the
+/// cooldown).
+pub fn level_advice(view: &SimView, seen: &mut LevelSeen) -> Vec<Advice> {
+    let now: BTreeMap<u8, u8> = view
+        .areas
+        .iter()
+        .filter(|(_, a)| matches!(a.kind, cp_district::AreaKind::Industry(_)))
+        .map(|(id, a)| (id.0, a.level))
+        .collect();
+    let Some(before) = seen.replace(now.clone()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (id, a) in view.areas.iter() {
+        if before.get(&id.0).is_some_and(|&l| a.level > l) {
+            out.push(Advice {
+                id: "industry_level_up",
+                severity: Severity::Info,
+                text: format!("{} reached level {}", a.name, a.level),
+                count: u32::from(a.level) * 100,
+                icon: Icon::Industry,
+                action: Some(Action::Panel(Category::Industry)),
+            });
+        }
+    }
+    out
+}
+
+/// Industry problems (T-219): areas without a main building, depleted and starved extractors
+/// and processors, full warehouses.
+fn industry_advice(view: &SimView, out: &mut Vec<Advice>) {
+    use cp_content::IndustryRole;
+    use cp_industry::IndustryProblem;
+    let Some(db) = view.content.as_deref() else {
+        return;
+    };
+    let bal = db.balance();
+    // Per industry area: (has a main building, other chain buildings).
+    let mut per_area: BTreeMap<u8, (bool, u32)> = BTreeMap::new();
+    let (mut depleted, mut no_input, mut full) = (0u32, 0u32, 0u32);
+    let (mut at_depleted, mut at_no_input, mut at_full) = (None, None, None);
+    for (id, b) in view.buildings.iter() {
+        let Some(spec) = &db.building(b.def).industry else {
+            continue;
+        };
+        let area = cp_district::area_at(&view.area_map, b.pos);
+        if let Some(a) = area {
+            let e = per_area.entry(a.0).or_default();
+            if spec.role == IndustryRole::Main {
+                e.0 = true;
+            } else {
+                e.1 += 1;
+            }
+        }
+        if b.state != BuildingState::Active {
+            continue;
+        }
+        match view.industry.problem_of(id) {
+            IndustryProblem::Depleted => {
+                depleted += 1;
+                at_depleted.get_or_insert(b.pos);
+            }
+            IndustryProblem::NoInput => {
+                no_input += 1;
+                at_no_input.get_or_insert(b.pos);
+            }
+            _ => {}
+        }
+        if spec.role == IndustryRole::Warehouse {
+            let level = area.and_then(|a| view.areas.get(a)).map_or(1, |a| a.level);
+            let cap = cp_industry::storage_cap(spec.storage, bal.industry_storage_per_level, level);
+            if cap > 0.0 && view.industry.total(id) >= cap * 0.98 {
+                full += 1;
+                at_full.get_or_insert(b.pos);
+            }
+        }
+    }
+    let idle: Vec<&str> = view
+        .areas
+        .iter()
+        .filter(|(id, a)| {
+            matches!(a.kind, cp_district::AreaKind::Industry(_))
+                && per_area
+                    .get(&id.0)
+                    .is_some_and(|&(main, others)| !main && others > 0)
+        })
+        .map(|(_, a)| a.name.as_str())
+        .collect();
+    if !idle.is_empty() {
+        let n = idle.len() as u32;
+        let text = if let [name] = idle[..] {
+            format!("{name} has no main building — its buildings stand idle")
+        } else {
+            format!("{n} industry areas have no main building — their buildings stand idle")
+        };
+        out.push(Advice {
+            id: "industry_no_main",
+            severity: Severity::Warn,
+            text,
+            count: n,
+            icon: Icon::Industry,
+            action: Some(Action::Panel(Category::Industry)),
+        });
+    }
+    let mut push = |id, n: u32, what: &str, at: Option<Vec2>| {
+        if n > 0 {
+            out.push(Advice {
+                id,
+                severity: Severity::Warn,
+                text: format!("{} {what}", plural(n, "building", "buildings")),
+                count: n,
+                icon: Icon::Industry,
+                action: Some(at.map_or(Action::Panel(Category::Industry), Action::Jump)),
+            });
+        }
+    };
+    push(
+        "industry_depleted",
+        depleted,
+        "on spent ground — move the extractors to a richer lot",
+        at_depleted,
+    );
+    push(
+        "industry_no_input",
+        no_input,
+        "waiting for input — feed the processors from the extractors or a warehouse",
+        at_no_input,
+    );
+    push(
+        "warehouse_full",
+        full,
+        "full warehouses — export, or set a warehouse to Empty",
+        at_full,
+    );
+}
+
 /// All the advice the view gives now, unordered.
 pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
     let mut out = unique_advice(view, seen);
+    industry_advice(view, &mut out);
     let city = &*view.city;
     let st = &city.buildings;
     let sev = |n: u32| {
@@ -422,6 +564,7 @@ pub struct Advisor {
     last: BTreeMap<&'static str, (u64, u32)>,
     shown: Option<Shown>,
     unique_seen: UniqueSeen,
+    level_seen: LevelSeen,
     /// Severity of the snackbar that appeared in the last frame (taken by `draw_ui`).
     pub just_shown: Option<Severity>,
 }
@@ -447,6 +590,7 @@ impl Advisor {
         let day = view.tick.0 / TICKS_PER_DAY;
         let on_screen = self.current(now).map(|a| a.severity);
         let mut all = collect(view, &mut self.unique_seen);
+        all.extend(level_advice(view, &mut self.level_seen));
         all.retain(|a| !(problems_only && a.severity == Severity::Info));
         all.retain(|a| match self.last.get(a.id) {
             None => true,
@@ -785,5 +929,62 @@ mod tests {
         assert_eq!(overlay.active, Overlay::Water);
         run(Action::Jump(Vec2::new(1.0, 2.0)), &mut state, &mut overlay);
         assert_eq!(state.camera_goal, Some(Vec2::new(1.0, 2.0)));
+    }
+
+    /// T-219: an area with chain buildings and no Main building gives `industry_no_main`; a
+    /// Main in the area takes it away. Spent ground, starved processors and a full warehouse
+    /// give their own advice.
+    #[test]
+    fn industry_advice_names_an_area_without_main_and_the_stuck_buildings() {
+        use crate::industry::tests::{put, world_with_areas};
+        use cp_industry::{IndustryProblem, IndustryState};
+        let (mut sim, db, at) = world_with_areas(1);
+        let ids = |sim: &cp_sim::SimRunner| -> Vec<&'static str> {
+            collect(&sim.view(), &mut None)
+                .iter()
+                .map(|a| a.id)
+                .collect()
+        };
+        assert!(!ids(&sim).contains(&"industry_no_main"));
+        let ex = put(&mut sim, &db, "forest_extractor_s", at[0]);
+        assert!(ids(&sim).contains(&"industry_no_main"), "{:?}", ids(&sim));
+        put(&mut sim, &db, "forest_main", at[0]);
+        assert!(!ids(&sim).contains(&"industry_no_main"));
+
+        let wh = put(&mut sim, &db, "forest_warehouse", at[0]);
+        let mut st = IndustryState::default();
+        st.problems.insert(ex, IndustryProblem::Depleted);
+        sim.world_mut().insert_resource(st.clone());
+        let got = ids(&sim);
+        assert!(got.contains(&"industry_depleted"), "{got:?}");
+        assert!(!got.contains(&"warehouse_full"));
+        st.problems.insert(ex, IndustryProblem::NoInput);
+        st.stock
+            .insert(wh, vec![(cp_content::CargoKind::Logs, 1.0e6)]);
+        sim.world_mut().insert_resource(st);
+        let got = ids(&sim);
+        assert!(got.contains(&"industry_no_input"), "{got:?}");
+        assert!(got.contains(&"warehouse_full"), "{got:?}");
+        assert!(!got.contains(&"industry_depleted"));
+    }
+
+    /// T-219: a rise of an area's level comes once; the first look is only the baseline.
+    #[test]
+    fn industry_level_up_comes_once_per_rise() {
+        use crate::industry::tests::world_with_areas;
+        let (mut sim, _, _) = world_with_areas(1);
+        let mut seen = None;
+        assert!(level_advice(&sim.view(), &mut seen).is_empty());
+        assert!(level_advice(&sim.view(), &mut seen).is_empty());
+        sim.world_mut()
+            .resource_mut::<cp_district::Areas>()
+            .get_mut(cp_district::AreaId(1))
+            .unwrap()
+            .level = 2;
+        let got = level_advice(&sim.view(), &mut seen);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, "industry_level_up");
+        assert!(got[0].text.contains("level 2"), "{}", got[0].text);
+        assert!(level_advice(&sim.view(), &mut seen).is_empty());
     }
 }

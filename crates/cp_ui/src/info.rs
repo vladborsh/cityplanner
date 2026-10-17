@@ -94,6 +94,15 @@ pub fn info_panel(
                                 });
                         }
                     }
+                    if let Some(view) = view {
+                        crate::industry::warehouse_controls(
+                            ui,
+                            b.id,
+                            view,
+                            outbox,
+                            &mut rects.actions,
+                        );
+                    }
                     if let (true, Some(view)) = (is_service, view) {
                         ui.separator();
                         building_actions(ui, b.id, view, picked, tools, outbox, &mut rects);
@@ -516,5 +525,93 @@ mod tests {
         let mut picked = Picked(None);
         let r = frame(&ctx, &seg, &mut picked, 0.0, vec![]);
         assert!(r.actions.is_empty());
+    }
+
+    /// T-219: a warehouse's card has the mode and cargo buttons; Fill and a cargo send
+    /// `SetWarehouse`, and a building that is not a warehouse has none.
+    #[test]
+    fn a_warehouse_card_sends_set_warehouse_for_the_mode_and_the_cargo() {
+        use crate::industry::tests::{put, world_with_areas};
+        use cp_industry::{IndustryCommand, WarehouseMode};
+        let (mut sim, db, at) = world_with_areas(1);
+        let wh = put(&mut sim, &db, "forest_warehouse", at[0]);
+        let other = put(&mut sim, &db, "forest_main", at[0]);
+        let make = |sim: &cp_sim::SimRunner, id| {
+            let info = Inspected(sim.inspect(Selection::Building(id)));
+            (sim.view(), id, info)
+        };
+        let world = make(&sim, wh);
+        let ctx = egui::Context::default();
+        let (mut picked, mut tools, mut outbox) = (
+            Picked(Some(Selection::Building(wh))),
+            ToolState::default(),
+            CommandOutbox::default(),
+        );
+        let mut r = InfoRects::default();
+        for k in 0..3 {
+            r = building_frame(
+                &ctx,
+                0.05 * f64::from(k),
+                vec![],
+                &world,
+                &mut picked,
+                &mut tools,
+                &mut outbox,
+            );
+        }
+        click_at(
+            &ctx,
+            1.0,
+            action(&r, "Fill"),
+            &world,
+            &mut picked,
+            &mut tools,
+            &mut outbox,
+        );
+        click_at(
+            &ctx,
+            2.0,
+            action(&r, "Logs"),
+            &world,
+            &mut picked,
+            &mut tools,
+            &mut outbox,
+        );
+        let sent: Vec<_> = outbox.iter().cloned().collect();
+        assert_eq!(
+            sent,
+            [
+                SimCommand::Industry(IndustryCommand::SetWarehouse {
+                    building: wh,
+                    cargo: None,
+                    mode: WarehouseMode::Fill,
+                }),
+                SimCommand::Industry(IndustryCommand::SetWarehouse {
+                    building: wh,
+                    cargo: Some(cp_content::CargoKind::Logs),
+                    mode: WarehouseMode::Balanced,
+                }),
+            ]
+        );
+
+        let world = make(&sim, other);
+        picked.0 = Some(Selection::Building(other));
+        let mut r = InfoRects::default();
+        for k in 0..3 {
+            r = building_frame(
+                &ctx,
+                5.0 + 0.05 * f64::from(k),
+                vec![],
+                &world,
+                &mut picked,
+                &mut tools,
+                &mut outbox,
+            );
+        }
+        assert!(
+            r.actions.iter().all(|(l, _)| l != "Fill"),
+            "{:?}",
+            r.actions
+        );
     }
 }
