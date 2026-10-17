@@ -353,7 +353,10 @@ mod tests {
             assert_eq!(v.game_time.hour(), 12);
             // The camera bounds read these: both maps open the 3x3 around (2, 2).
             assert_eq!(v.tiles, cp_terrain::TileOwnership::m1_around((2, 2)));
-            // PreUpdate stepping: one 50 ms frame at x1 is one tick.
+            // A new game starts paused (BUG-059); PreUpdate stepping: one 50 ms frame at x1 is
+            // one tick.
+            assert_eq!(sim.speed(), cp_core::SimSpeed::Pause);
+            sim.world_mut().insert_resource(cp_core::SimSpeed::X1);
             assert_eq!(sim.step(Duration::from_millis(50)), 1);
             assert_eq!(sim.view().tick, Tick(v.tick.0 + 1));
             assert_eq!(
