@@ -201,6 +201,13 @@ pub struct Balance {
     pub demand_shop_jobs_per_citizen: f32,
     /// Industrial job slots one commercial job slot needs goods from.
     pub demand_industry_jobs_per_shop_job: f32,
+    /// Unemployed adults up to this share of the adults do not count against residential
+    /// demand and move-in: a small town's commuters (BUG-057).
+    pub demand_commuter_share: f32,
+    /// ... but at least this many unemployed are always allowed.
+    pub demand_commuter_min: f32,
+    /// Weight of an unemployed manual worker in industrial demand.
+    pub demand_unemployed_industry_weight: f32,
     /// Pollution an active industrial building makes per level, at its own cell (`0..=100`
     /// scale), fading linearly to nothing at `pollution_radius_m` (§11).
     pub pollution_per_level: f32,
@@ -567,6 +574,9 @@ impl Default for Balance {
             demand_adults_per_home: 2.0,
             demand_shop_jobs_per_citizen: 0.2,
             demand_industry_jobs_per_shop_job: 0.5,
+            demand_commuter_share: 0.25,
+            demand_commuter_min: 20.0,
+            demand_unemployed_industry_weight: 2.0,
             pollution_per_level: 40.0,
             pollution_radius_m: 150.0,
             noise_per_load: 60.0,

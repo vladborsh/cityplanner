@@ -55,7 +55,7 @@ fn row(zone: ZoneType, s: &ZoneStats) -> ZoneRow {
 pub fn demand_formula(zone: ZoneType) -> &'static str {
     match zone {
         ZoneType::ResLow | ZoneType::ResHigh => {
-            "Residential demand = free jobs (weighted) − unemployed + base attraction, \
+            "Residential demand = free jobs (weighted) − unemployed above the commuter allowance + base attraction, \
              less vacant homes. Shared by both residential types."
         }
         ZoneType::ComLow | ZoneType::ComHigh => {
@@ -83,10 +83,49 @@ pub fn zone_lock(view: &SimView, zone: ZoneType) -> Option<String> {
     ))
 }
 
+/// "R demand 37/100" and, when it is low, why (one line each, ending in a newline).
+pub fn demand_line(view: &SimView, zone: ZoneType) -> String {
+    let (letter, v) = zone_group_demand(zone, &view.demand);
+    let shown = v.clamp(0.0, 100.0).round();
+    let mut text = format!("{letter} demand {shown:.0}/100\n");
+    if v < 20.0
+        && let Some(why) = low_demand_reason(view, zone)
+    {
+        text.push_str(&why);
+        text.push('\n');
+    }
+    text
+}
+
+/// The main reason a zone group's demand is low.
+fn low_demand_reason(view: &SimView, zone: ZoneType) -> Option<String> {
+    let city = &view.city;
+    Some(match zone {
+        ZoneType::ResLow | ZoneType::ResHigh => {
+            if city.unemployed > 0 {
+                format!(
+                    "No free jobs: {} unemployed — zone industry/commerce",
+                    city.unemployed
+                )
+            } else {
+                "Enough homes stand empty".to_string()
+            }
+        }
+        ZoneType::ComLow | ZoneType::ComHigh => {
+            "Enough shops for the residents — more residents need more shops".to_string()
+        }
+        ZoneType::Industrial => {
+            "Enough industry for the shops and no manual workers without a job".to_string()
+        }
+        ZoneType::Office | ZoneType::None => {
+            "Enough office jobs for the educated residents without a job".to_string()
+        }
+    })
+}
+
 /// The hover text of a zone's demand bar or tile: the group's value, the free homes or jobs of
 /// the type and the formula (one text for the window, the panel and the tiles).
 pub fn zone_tooltip(view: &SimView, zone: ZoneType) -> String {
-    let (letter, v) = zone_group_demand(zone, &view.demand);
     let free = ZONES
         .iter()
         .position(|&z| z == zone)
@@ -97,8 +136,9 @@ pub fn zone_tooltip(view: &SimView, zone: ZoneType) -> String {
         .map(|l| format!("Locked: {l}\n"))
         .unwrap_or_default();
     format!(
-        "{lock}{}\n{letter} demand {v:+.0} (−100…+100, the middle is zero)\n{free}\n{}",
+        "{lock}{}\n{}{free}\n{}",
         zone_name(zone),
+        demand_line(view, zone),
         demand_formula(zone)
     )
 }
@@ -149,7 +189,7 @@ pub fn demand_window(ctx: &egui::Context, open: &mut bool, view: &SimView) {
                 for r in rows(view) {
                     let tint = color(r.zone);
                     ui.colored_label(tint, zone_name(r.zone));
-                    let (letter, v) = zone_group_demand(r.zone, &view.demand);
+                    let (_, v) = zone_group_demand(r.zone, &view.demand);
                     ui.add(
                         egui::ProgressBar::new(demand_fraction(v))
                             .desired_width(90.0)
@@ -157,7 +197,8 @@ pub fn demand_window(ctx: &egui::Context, open: &mut bool, view: &SimView) {
                             .fill(tint),
                     )
                     .on_hover_text(format!(
-                        "{letter} demand {v:+.0} (−100…+100, the middle is zero)\n{}",
+                        "{}{}",
+                        demand_line(view, r.zone),
                         demand_formula(r.zone)
                     ));
                     ui.label(&r.cells);

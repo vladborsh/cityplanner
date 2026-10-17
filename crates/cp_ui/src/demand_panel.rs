@@ -1,6 +1,6 @@
 //! The bottom demand panel (T-099, `architecture/system-design.md` §13.7): a real panel under
 //! the 3D view, right of the palette and the tool panel, with one column per demand — its
-//! icon and a vertical demand bar from −100 to +100 with zero in the middle. Demand is one
+//! icon and a vertical demand bar from 0 (empty) to 100 (full), filling up. Demand is one
 //! scale each for residential, commercial, industrial and office (T-231), so there are four
 //! columns, R, C, I and O, whatever the density; O is greyed with a padlock while offices are
 //! locked. It folds into a 28 px strip.
@@ -51,7 +51,7 @@ pub struct Column {
     pub zone: ZoneType,
     /// The whole clickable column.
     pub rect: egui::Rect,
-    /// The bar's track (−100 at the bottom, +100 at the top).
+    /// The bar's track (0 at the bottom, 100 at the top).
     pub track: egui::Rect,
     /// Y of the bar's level: `track.bottom() - demand_fraction * track.height()`.
     pub level_y: f32,
@@ -185,9 +185,8 @@ fn column(ui: &mut egui::Ui, view: &SimView, zone: ZoneType) -> (Column, egui::R
     let (_, value) = zone_group_demand(zone, &view.demand);
     let level_y = track.bottom() - demand_fraction(value) * track.height();
     painter.rect_filled(track, 2.0, ui.visuals().extreme_bg_color);
-    // Fill from the zero line (the middle) to the level.
-    let mid = track.center().y;
-    let fill = egui::Rect::from_x_y_ranges(track.x_range(), level_y.min(mid)..=level_y.max(mid));
+    // Fill up from the bottom to the level; no demand = an empty bar.
+    let fill = egui::Rect::from_x_y_ranges(track.x_range(), level_y..=track.bottom());
     painter.rect_filled(
         fill,
         0.0,
@@ -196,10 +195,6 @@ fn column(ui: &mut egui::Ui, view: &SimView, zone: ZoneType) -> (Column, egui::R
         } else {
             color(zone)
         },
-    );
-    painter.line_segment(
-        [track.left_center(), track.right_center()],
-        egui::Stroke::new(1.0, ui.visuals().text_color()),
     );
     painter.rect_stroke(
         track,
@@ -304,6 +299,32 @@ mod tests {
                 .level_y
         };
         assert_ne!(level(ZoneType::ResLow), level(ZoneType::ComLow));
+    }
+
+    #[test]
+    fn a_negative_demand_is_an_empty_bar_never_below_the_base() {
+        let rig = Rig::new(view_with(-80.0, 0.0, 50.0, -1.0));
+        for col in &rig.rects.columns {
+            assert!(col.level_y <= col.track.bottom() + 1e-3, "{:?}", col.zone);
+        }
+        let r = &rig.rects.columns[0];
+        assert_eq!(r.level_y, r.track.bottom());
+        let i = &rig.rects.columns[2];
+        assert!((i.track.bottom() - i.level_y - i.track.height() * 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_tooltip_says_demand_out_of_100_and_why_it_is_low() {
+        let mut view = view_with(-30.0, 60.0, 0.0, 0.0);
+        std::sync::Arc::make_mut(&mut view.city).unemployed = 25;
+        let t = zone_tooltip(&view, ZoneType::ResLow);
+        assert!(t.contains("R demand 0/100"), "{t}");
+        assert!(t.contains("No free jobs: 25 unemployed"), "{t}");
+        let t = zone_tooltip(&view, ZoneType::ComLow);
+        assert!(
+            t.contains("C demand 60/100") && !t.contains("Enough shops"),
+            "{t}"
+        );
     }
 
     #[test]

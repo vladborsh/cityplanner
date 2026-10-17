@@ -11,7 +11,10 @@
 //! **Raw values** (clamped to ±100; `base[..]`, weights and factors are `Balance` knobs).
 //! Buildings under construction count as already standing, so the city does not order
 //! housing, shops or jobs again while the first ones are still being built:
-//! * `R = Σ weight(level) × free job slots − unemployed adults − vacant homes × adults per
+//! * unemployed adults count against R and move-in only above the commuter allowance
+//!   `max(commuter_min, commuter_share × adults)` (BUG-057); manual unemployed weigh
+//!   `demand_unemployed_industry_weight` in I.
+//! * `R = Σ weight(level) × free job slots − counted unemployed adults − vacant homes × adults per
 //!   home + base_R`
 //! * `C = citizens × shop jobs per citizen − commercial job slots + base_C`
 //! * `I = commercial job slots × industry per shop job − industrial job slots + unemployed
@@ -33,6 +36,9 @@ use serde::{Deserialize, Serialize};
 
 /// Largest magnitude of a raw demand value.
 const LIMIT: f32 = 100.0;
+
+/// Estimated share of the citizens that are adults, for the commuter allowance.
+const ADULT_SHARE: f32 = 0.7;
 
 /// The sums of the current cycle. Serialized sim state.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -57,11 +63,14 @@ impl DemandAcc {
     pub fn raw(&self, b: &Balance) -> [f32; 5] {
         let clamp = |v: f32| v.clamp(-LIMIT, LIMIT);
         let f = |n: u32| n as f32;
+        // Commuter allowance (BUG-057): a small town's unemployed work elsewhere. `DemandAcc`
+        // has no adult count (it is saved), so the adults are estimated from the citizens.
+        let adults = f(self.citizens) * ADULT_SHARE;
+        let allowance = b.demand_commuter_min.max(b.demand_commuter_share * adults);
+        let counted = (f(self.unemployed) - allowance).max(0.0);
         [
             clamp(
-                self.free_jobs_weighted
-                    - f(self.unemployed)
-                    - f(self.vacant_homes) * b.demand_adults_per_home
+                self.free_jobs_weighted - counted - f(self.vacant_homes) * b.demand_adults_per_home
                     + b.demand_base[0],
             ),
             clamp(
@@ -71,11 +80,11 @@ impl DemandAcc {
             clamp(
                 f(self.commercial_jobs) * b.demand_industry_jobs_per_shop_job
                     - f(self.industrial_jobs)
-                    + f(self.unemployed_manual)
+                    + f(self.unemployed_manual) * b.demand_unemployed_industry_weight
                     + b.demand_base[2],
             ),
             clamp(f(self.unemployed_educated) - f(self.free_office_jobs) + b.demand_base[3]),
-            clamp(self.free_jobs_weighted - f(self.unemployed) + b.demand_base[0]),
+            clamp(self.free_jobs_weighted - counted + b.demand_base[0]),
         ]
     }
 }

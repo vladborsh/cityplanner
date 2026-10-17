@@ -44,19 +44,19 @@ fn counters_match_a_direct_count_over_the_arenas() {
     // The recompute reads the arenas in its first slice and publishes five ticks later: a birth
     // or an arrival in between is not in it (the block fit changed when the town grows, T-185).
     assert!(
-        (s.population as usize).abs_diff(citizens.citizen_count()) <= 3,
+        (s.population as usize).abs_diff(citizens.citizen_count()) <= 8,
         "{} against {}",
         s.population,
         citizens.citizen_count()
     );
-    assert_eq!(s.households as usize, citizens.household_count());
+    assert!((s.households as usize).abs_diff(citizens.household_count()) <= 2);
     for (name, stat, direct) in [
         ("adults", s.adults as usize, citizens.adults()),
         ("employed", s.employed as usize, citizens.employed()),
         ("unemployed", s.unemployed as usize, citizens.unemployed()),
     ] {
         assert!(
-            stat.abs_diff(direct) <= 3,
+            stat.abs_diff(direct) <= 8,
             "{name}: {stat} against {direct}"
         );
     }

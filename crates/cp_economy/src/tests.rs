@@ -403,6 +403,27 @@ mod demand {
         assert_eq!(raw(DemandAcc::default()), [10.0, 5.0, 5.0, 0.0, 10.0]);
     }
 
+    /// BUG-057: 170 citizens, 25 unemployed, hardly any free jobs: people keep moving in.
+    #[test]
+    fn the_commuter_allowance_keeps_move_in_positive_until_unemployment_is_large() {
+        let town = |unemployed, manual| {
+            raw(DemandAcc {
+                citizens: 170,
+                free_jobs_weighted: 5.0,
+                unemployed,
+                unemployed_manual: manual,
+                ..DemandAcc::default()
+            })
+        };
+        let r = town(25, 25);
+        assert!(r[4] > 0.0 && r[0] > 0.0, "{r:?}");
+        // 100 of 170 jobless: the allowance (max(20, 0.25 * 119)) is used up.
+        let big = town(100, 100);
+        assert!(big[4] <= 0.0, "{big:?}");
+        // Unemployed manual workers make industry clearly wanted.
+        assert!(r[2] >= 50.0, "{r:?}");
+    }
+
     #[test]
     fn surplus_jobs_raise_r_and_surplus_housing_lowers_it() {
         let base = raw(DemandAcc::default())[0];
@@ -412,9 +433,9 @@ mod demand {
         });
         assert_eq!(jobs[0], base + 40.0);
         assert_eq!(jobs[4], base + 40.0, "move-in follows the jobs too");
-        // People without work lower it ...
+        // People without work beyond the commuter allowance (20 at least) lower it ...
         let jobless = raw(DemandAcc {
-            unemployed: 30,
+            unemployed: 50,
             ..DemandAcc::default()
         });
         assert_eq!(jobless[0], base - 30.0);
@@ -462,7 +483,7 @@ mod demand {
             unemployed_educated: 9,
             ..DemandAcc::default()
         });
-        assert_eq!(workers[2], base[2] + 7.0);
+        assert_eq!(workers[2], base[2] + 14.0, "weight 2 per manual worker");
         assert_eq!(workers[3], base[3] + 9.0);
         // A vacant office slot absorbs them.
         let offices = raw(DemandAcc {
@@ -592,9 +613,9 @@ mod demand {
         let d = after(&mut jobs, &mut s, 40);
         assert!(d.r > 40.0 && d.move_in > 40.0, "{d:?}");
 
-        // Five full houses and no work: 20 households of jobless adults.
+        // Twelve full houses and no work: 48 households of jobless adults, past the allowance.
         let (mut homes, mut s) = world();
-        let houses: Vec<_> = (0..5)
+        let houses: Vec<_> = (0..12)
             .map(|_| super::add(&mut homes, &db, "house", BuildingState::Active))
             .collect();
         {
@@ -608,7 +629,7 @@ mod demand {
         }
         let d = after(&mut homes, &mut s, 40);
         assert!(d.r < 0.0 && d.move_in < 0.0, "{d:?}");
-        // Shops for 20 residents: 4 shop jobs wanted, none there.
+        // Shops for 48 residents: ~10 shop jobs wanted, none there.
         assert!(d.c > 5.0, "{d:?}");
         // The jobless are manual workers: industry is wanted.
         assert!(d.i > 5.0, "{d:?}");

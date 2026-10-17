@@ -17,7 +17,7 @@ use cp_economy::{EconomyCommand, Flow, Loan, SERVICE_ORDER, WeekReport};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, format_money, zone_name};
 
-/// Demand values run from `-DEMAND_RANGE` (nobody wants it) to `+DEMAND_RANGE`.
+/// Demand bars show `0` (nobody wants it) to `DEMAND_RANGE`.
 pub const DEMAND_RANGE: f32 = 100.0;
 /// Headroom above the debt floor under which the warning turns strong: 5 000.00.
 pub const NEAR_FLOOR_MARGIN: Cost = Cost(500_000);
@@ -305,10 +305,11 @@ pub fn population_trend_label(ui: &mut egui::Ui, view: &SimView) {
         .on_hover_text(hover);
 }
 
-/// Fraction `0..=1` of a bar for a demand value (`0` is the middle).
+/// Fraction `0..=1` of a bar for a demand value: it fills up from the bottom, and a demand
+/// of zero or less is an empty bar (demand either exists or not).
 pub fn demand_fraction(v: f32) -> f32 {
     let v = if v.is_nan() { 0.0 } else { v };
-    (v.clamp(-DEMAND_RANGE, DEMAND_RANGE) + DEMAND_RANGE) / (2.0 * DEMAND_RANGE)
+    v.clamp(0.0, DEMAND_RANGE) / DEMAND_RANGE
 }
 
 /// What a tax slider sends.
@@ -929,10 +930,12 @@ mod tests {
     #[test]
     fn demand_bars_map_the_range_onto_the_bar() {
         assert_eq!(demand_fraction(-100.0), 0.0);
-        assert_eq!(demand_fraction(0.0), 0.5);
+        assert_eq!(demand_fraction(-0.5), 0.0);
+        assert_eq!(demand_fraction(0.0), 0.0);
+        assert_eq!(demand_fraction(50.0), 0.5);
         assert_eq!(demand_fraction(100.0), 1.0);
         assert_eq!(demand_fraction(1e9), 1.0);
-        assert_eq!(demand_fraction(f32::NAN), 0.5);
+        assert_eq!(demand_fraction(f32::NAN), 0.0);
     }
 
     #[test]

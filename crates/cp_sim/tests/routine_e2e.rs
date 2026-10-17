@@ -148,7 +148,9 @@ fn a_thousand_citizens_commute_with_morning_and_evening_peaks() {
     let evening = *hist[15..20].iter().max().unwrap() as f32;
     let night = hist[0..4].iter().sum::<u32>() as f32 / 4.0;
     assert!(
-        morning >= 1.5 * mean,
+        // 1.25: with the commuter allowance (BUG-057) more residents stay jobless, so the
+        // morning peak is a smaller share of the day's trips.
+        morning >= 1.25 * mean,
         "morning peak {morning} vs mean {mean}"
     );
     assert!(
