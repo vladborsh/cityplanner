@@ -207,7 +207,7 @@ pub(super) fn walks(graph: &NetGraph, j: &Junction) -> Vec<Walk> {
     };
     // The inner end of the band of edge `i` at its vertex `v` (`v` = `i` or `i + 1`), where
     // `other` is the neighbouring edge there.
-    let inner_at = |i: usize, v: usize, other: usize| -> Vec2 {
+    let inner_at = |i: usize, v: usize, other: usize| -> Option<Vec2> {
         let (p, d) = edge(i);
         let w = width[i].unwrap_or(0.0);
         let n = d.perp();
@@ -220,26 +220,35 @@ pub(super) fn walks(graph: &NetGraph, j: &Junction) -> Vec<Walk> {
                 let (q, e) = edge(other);
                 line_hit(off.0, off.1, q + e.perp() * w2, e)
             }
-            // An arm's end line: slide along it.
+            // An arm's end line: slide along it, but only along the line itself: at a reflex
+            // vertex (short arms on an obtuse bend) the offset meets the line's extension,
+            // outside the polygon (BUG-055); the band is then left out (`None`).
             None => {
                 let (q, e) = edge(other);
-                line_hit(off.0, off.1, q, e)
+                let len = j.polygon[(other + 1) % k].distance(q);
+                let hit = line_hit(off.0, off.1, q, e);
+                if hit.is_some_and(|h| !(-1e-3..=len + 1e-3).contains(&(h - q).dot(e))) {
+                    return None;
+                }
+                hit
             }
         };
-        hit.filter(|h| h.distance(base) <= MITRE_LIMIT * w.max(0.1))
-            .unwrap_or(plain)
+        Some(
+            hit.filter(|h| h.distance(base) <= MITRE_LIMIT * w.max(0.1))
+                .unwrap_or(plain),
+        )
     };
     (0..k)
         .filter(|&i| width[i].is_some())
-        .map(|i| {
+        .filter_map(|i| {
             let next = (i + 1) % k;
             let prev = (i + k - 1) % k;
-            Walk {
+            Some(Walk {
                 from: i,
                 to: next,
-                inner: [inner_at(i, i, prev), inner_at(i, next, next)],
+                inner: [inner_at(i, i, prev)?, inner_at(i, next, next)?],
                 inward: edge(i).1.perp(),
-            }
+            })
         })
         .collect()
 }

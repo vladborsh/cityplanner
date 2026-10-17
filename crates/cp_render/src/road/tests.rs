@@ -1093,13 +1093,18 @@ fn a_cross_has_pavement_in_its_four_corners_and_a_t_along_its_far_side() {
     assert!(!sw.iter().any(|t| in_tri(C + Vec2::new(0.0, 5.0), *t)));
 }
 
-/// BUG-054: on the outside of a bend the sidewalk is one band of constant width along the
+/// BUG-054 / BUG-055: on the outside of a bend the sidewalk is one band of constant width along the
 /// rounded corner: no mesh vertex lies outside the rounded canvas (spikes), and the band is as
 /// wide along the arc as beside it (no notch of asphalt).
 #[test]
 fn a_bend_has_one_smooth_outer_sidewalk_without_spikes_or_notches() {
     for len in [20.0f32, 30.0, 60.0, 90.0] {
-        for deg in [90.0f32, 60.0, 45.0] {
+        for deg in [90.0f32, 60.0, 45.0, 120.0, 135.0] {
+            // Two 20 m arms at an obtuse angle overlap each other's road (the segments' own
+            // sidewalks, not the junction's): out of this test's reach.
+            if deg > 100.0 && len < 30.0 {
+                continue;
+            }
             for reversed in [false, true] {
                 let mut w = world();
                 let a = C - Vec2::X * len;
