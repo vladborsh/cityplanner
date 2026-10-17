@@ -1,6 +1,7 @@
 //! `cp_sim` — simulation crate skeleton. See `architecture/system-design.md` §1.
 
 pub mod checksum;
+pub mod city_services;
 pub mod command;
 pub mod inspect;
 pub mod new_game;

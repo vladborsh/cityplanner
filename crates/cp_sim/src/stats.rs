@@ -178,6 +178,8 @@ pub struct CityStats {
     pub traffic: TrafficStats,
     /// Water, sewage, power.
     pub utilities: [NetStats; 3],
+    /// Supply against demand per sector (T-232), in `Sector::ALL` order.
+    pub services: Vec<crate::city_services::SectorBalance>,
     pub land: LandStats,
     /// By road type, ascending `RoadDefId`; road types without segments are absent.
     pub roads: Vec<RoadGroup>,
@@ -210,6 +212,8 @@ pub struct DistrictParams<'w> {
     map: Res<'w, cp_district::DistrictMap>,
     districts: Res<'w, cp_district::Districts>,
     income: Res<'w, cp_economy::DistrictIncome>,
+    coverage: Res<'w, cp_service::ServiceCoverage>,
+    unlocks: Option<Res<'w, cp_content::ServiceUnlocks>>,
 }
 
 /// Whether a road the player built is connected to the entry highway (BUG-041): some segment of
@@ -338,6 +342,17 @@ pub fn update_city_stats(
                 left: next.pop_flow.left.saturating_sub(base.left),
                 died: next.pop_flow.died.saturating_sub(base.died),
             };
+            next.services =
+                crate::city_services::city_services(&crate::city_services::BalanceInputs {
+                    db,
+                    buildings: &buildings,
+                    citizens: &citizens,
+                    coverage: &district.coverage,
+                    unlocks: district.unlocks.as_deref().copied().unwrap_or_default(),
+                    utilities: [0, 1, 2]
+                        .map(|k| (next.utilities[k].capacity, next.utilities[k].consumption)),
+                    died_today: next.pop_day.died as u32,
+                });
             let generation = stats.generation + 1;
             *stats = *next;
             stats.generation = generation;

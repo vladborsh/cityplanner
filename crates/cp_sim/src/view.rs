@@ -215,6 +215,12 @@ pub struct UniqueStatus {
 }
 
 impl SimView {
+    /// Supply against demand per sector for the City services window (T-232), in `Sector::ALL`
+    /// order; recomputed every 64 ticks with the city summary, empty before the first one.
+    pub fn city_services(&self) -> &[crate::city_services::SectorBalance] {
+        &self.city.services
+    }
+
     /// The bank's offers with their state. Empty for a sim without content.
     pub fn loan_offers(&self) -> Vec<LoanOfferView> {
         let Some(db) = &self.content else {

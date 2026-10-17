@@ -119,6 +119,8 @@ icons! {
     Budget => "budget",
     Demand => "demand",
     Metrics => "metrics",
+    Services => "services",
+    SewageTreatment => "sewage_treatment_plant",
     Lines => "lines",
     Saves => "saves",
     Debug => "debug",

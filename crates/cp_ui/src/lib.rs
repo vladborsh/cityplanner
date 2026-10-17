@@ -33,6 +33,7 @@ pub mod palette;
 pub mod panels;
 pub mod policies;
 pub mod roads;
+pub mod services;
 pub mod specs;
 pub mod style;
 pub mod tile;
@@ -122,6 +123,10 @@ fn draw_stub_marker(view: Option<Res<SimView>>, time: Res<Time<Real>>, mut gizmo
 fn toggle_debug(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<UiState>) {
     if keys.just_pressed(KeyCode::F3) {
         state.debug_open = !state.debug_open;
+    }
+    // City services (T-232).
+    if keys.just_pressed(KeyCode::F4) {
+        state.services_open = !state.services_open;
     }
 }
 
@@ -251,6 +256,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         budget::budget_window(ctx, &mut st.budget_open, view, &mut st.budget, outbox);
         windows::demand_window(ctx, &mut st.demand_open, view);
         metrics::metrics_window(ctx, &mut st.metrics_open, view);
+        services::services_window(ctx, &mut st.services_open, view, overlay);
         lines::lines_window(ctx, &mut st.lines_open, view, &mut st.lines, outbox);
         policies::city_policies_window(ctx, &mut st.policies_open, view, outbox);
     }
@@ -577,10 +583,11 @@ mod capture_tests {
     fn every_window_and_menu_owns_the_pointer_where_it_is_drawn() {
         let base = Rig::new().owned().len();
         type Open = fn(&mut Rig);
-        let surfaces: [(&str, Open); 9] = [
+        let surfaces: [(&str, Open); 10] = [
             ("budget", |r| r.state.budget_open = true),
             ("demand", |r| r.state.demand_open = true),
             ("metrics", |r| r.state.metrics_open = true),
+            ("services", |r| r.state.services_open = true),
             ("lines", |r| r.state.lines_open = true),
             ("policies", |r| r.state.policies_open = true),
             ("debug", |r| r.state.debug_open = true),

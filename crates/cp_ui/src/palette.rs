@@ -1057,6 +1057,7 @@ mod tests {
             egui::Key::PageUp,
             egui::Key::PageDown,
             egui::Key::F3,
+            egui::Key::F4,
         ];
         for d in digits {
             assert!(!others.contains(&d));
