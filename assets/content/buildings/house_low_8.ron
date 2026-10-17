@@ -1,0 +1,13 @@
+// T-236: fills the whole 4-row strip. Numbers // tune later.
+Building((
+    id: "house_low_8",
+    name: "Villa With Garden",
+    zone: ResLow,
+    level: 1,
+    lot: (4, 4),
+    households: 3,
+    consumption: {Water: 3.2, Sewage: 3.2, Power: 6.4},
+    build_hours: 3.0,
+    tax_base: 32.0,
+    styles: ["res_low_deep_villa_a", "res_low_deep_villa_b"],
+))

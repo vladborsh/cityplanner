@@ -1,0 +1,15 @@
+Style((
+    id: "res_low_townhouse_row_a",
+    massing: TwinBlocks,
+    roof: Gabled,
+    floors: (2, 2),
+    footprint_fill: (0.70, 0.90),
+    palette: (
+        walls: [(0.84, 0.70, 0.58), (0.78, 0.60, 0.52), (0.88, 0.82, 0.66)],
+        roof: [(0.46, 0.22, 0.18), (0.38, 0.24, 0.20)],
+        trim: [(0.92, 0.90, 0.84)],
+        glass: (0.18, 0.24, 0.30),
+    ),
+    facade: Punched,
+    details: [Chimney, Fence],
+))

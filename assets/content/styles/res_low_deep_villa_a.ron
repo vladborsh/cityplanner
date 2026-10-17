@@ -1,0 +1,15 @@
+Style((
+    id: "res_low_deep_villa_a",
+    massing: LShape,
+    roof: Hipped,
+    floors: (2, 2),
+    footprint_fill: (0.60, 0.80),
+    palette: (
+        walls: [(0.88, 0.84, 0.72), (0.82, 0.72, 0.60)],
+        roof: [(0.40, 0.24, 0.20)],
+        trim: [(0.95, 0.95, 0.90)],
+        glass: (0.18, 0.24, 0.30),
+    ),
+    facade: Punched,
+    details: [Chimney, Fence],
+))

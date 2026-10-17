@@ -768,6 +768,88 @@ pub fn build_zones_big(sim: &mut SimRunner) {
     sim.tick_once();
 }
 
+/// Grown blocks (T-236): a residential 8 x 8 and 8 x 16 block and an industrial 8 x 16 block,
+/// painted and built on until they are full. Look at it with `--cam grown`.
+pub const GROWN: &str = "grown";
+
+/// Builds the [`GROWN`] scene through the normal commands and lets the blocks grow.
+pub fn build_grown(sim: &mut SimRunner) {
+    use cp_zone::{ZoneCommand, ZoneGrid};
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    let hw = db.road(basic).width / 2.0;
+    // Streets across x with 64 m and 128 m between the road edges (8 and 16 cells), and
+    // crossing streets 64 m apart, one grid of 3 x 2 blocks.
+    let xs = [0.0, 64.0 + 2.0 * hw, 64.0 + 2.0 * hw + 128.0 + 2.0 * hw];
+    let zs = [0.0, 64.0 + 2.0 * hw, 2.0 * (64.0 + 2.0 * hw)];
+    let o = Vec2::new(c - 120.0, c - 60.0);
+    let mut legs: Vec<(Vec2, Vec2)> = Vec::new();
+    for &z in &zs {
+        for w in xs.windows(2) {
+            legs.push((o + Vec2::new(w[0], z), o + Vec2::new(w[1], z)));
+        }
+    }
+    for &x in &xs {
+        for w in zs.windows(2) {
+            legs.push((o + Vec2::new(x, w[0]), o + Vec2::new(x, w[1])));
+        }
+    }
+    for (from, to) in legs {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: basic,
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    sim.tick_once();
+    // Residential in the top row of blocks, industrial in the bottom row (by the block's
+    // middle).
+    let split = o.y + zs[1] + hw;
+    let paint: Vec<SimCommand> = {
+        let zones = sim.world().resource::<ZoneGrid>();
+        let mut res = Vec::new();
+        let mut ind = Vec::new();
+        for (id, _) in zones.blocks() {
+            for cell in zones.block_cells(id) {
+                if !zones.is_valid(cell) {
+                    continue;
+                }
+                match zones.cell_footprint(cell) {
+                    Some(f) if f.c.y < split => res.push(cell),
+                    Some(_) => ind.push(cell),
+                    None => {}
+                }
+            }
+        }
+        vec![
+            SimCommand::Zone(ZoneCommand::PaintZones {
+                cells: res,
+                zone: cp_content::ZoneType::ResLow,
+            }),
+            SimCommand::Zone(ZoneCommand::PaintZones {
+                cells: ind,
+                zone: cp_content::ZoneType::Industrial,
+            }),
+        ]
+    };
+    for cmd in paint {
+        sim.push_command(cmd, sim.tick());
+        sim.tick_once();
+    }
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
+    for _ in 0..4000 {
+        sim.tick_once();
+    }
+}
+
 /// Corner scene (T-186): an X crossing, T junctions and 90 degree bends of basic streets, for
 /// the rounded curbs. Look at it with `--cam corners`.
 pub const CORNERS: &str = "corners";

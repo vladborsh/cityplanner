@@ -1,0 +1,13 @@
+// T-236: fills the whole 4-row strip. Numbers // tune later.
+Building((
+    id: "house_low_6",
+    name: "Townhouse Row",
+    zone: ResLow,
+    level: 1,
+    lot: (2, 4),
+    households: 2,
+    consumption: {Water: 2.4, Sewage: 2.4, Power: 5.0},
+    build_hours: 3.0,
+    tax_base: 20.0,
+    styles: ["res_low_townhouse_row_a", "res_low_townhouse_row_b"],
+))

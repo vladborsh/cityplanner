@@ -1,0 +1,13 @@
+// T-236: fills the whole 4-row strip. Numbers // tune later.
+Building((
+    id: "house_low_9",
+    name: "Duplex With Garages",
+    zone: ResLow,
+    level: 1,
+    lot: (4, 3),
+    households: 2,
+    consumption: {Water: 2.6, Sewage: 2.6, Power: 5.4},
+    build_hours: 3.0,
+    tax_base: 24.0,
+    styles: ["res_low_duplex_garage_a", "res_low_duplex_garage_b"],
+))

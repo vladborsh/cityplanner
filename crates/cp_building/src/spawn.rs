@@ -126,6 +126,27 @@ pub fn spawnable(db: &ContentDb, zone: ZoneType, spec: Option<SpecKind>) -> Vec<
         .collect()
 }
 
+/// Picks one of the defs that fit by `roll`, weighted by lot area to the power 1.5 (T-236): a
+/// lot that fills the strip is far more likely than a 1x1 or 2x2, which stay for the gaps.
+/// Deterministic: the weights are integers and `roll` comes from the sim RNG stream.
+pub fn pick_def(db: &ContentDb, fitting: &[BuildingDefId], roll: u32) -> BuildingDefId {
+    let weight = |d: BuildingDefId| {
+        let (w, h) = db.building(d).lot;
+        let area = f32::from(w) * f32::from(h);
+        ((area.powf(1.5) * 16.0).round() as u64).max(1)
+    };
+    let total: u64 = fitting.iter().map(|d| weight(*d)).sum();
+    let mut at = u64::from(roll) % total.max(1);
+    for &d in fitting {
+        let w = weight(d);
+        if at < w {
+            return d;
+        }
+        at -= w;
+    }
+    fitting[fitting.len() - 1]
+}
+
 /// World position, yaw and access point of a lot.
 pub fn place(
     grid: &ZoneGrid,
@@ -320,6 +341,14 @@ pub fn update_buildings(
         if zone == ZoneType::None || !block.valid[i] || demand.get(zone) <= 0.0 {
             continue;
         }
+        // A column in a free run of full-depth columns: build from the start of the run, so the
+        // lots pack against each other and leave at most a narrow rest at the far end (T-236).
+        let mut col = col;
+        if lot_fits(block, col, 1, BLOCK_DEPTH as u8, zone) {
+            while col > 0 && lot_fits(block, col - 1, 1, BLOCK_DEPTH as u8, zone) {
+                col -= 1;
+            }
+        }
         // The district's specialisation of this zone type, at the chosen column (T-196).
         let spec = district_map
             .as_deref()
@@ -344,13 +373,14 @@ pub fn update_buildings(
         if fitting.is_empty() {
             continue;
         }
-        let def_id = fitting[choose as usize % fitting.len()];
+        let def_id = pick_def(db, &fitting, choose);
         let def = db.building(def_id);
+        let (w, d) = def.lot;
         let lot = Lot {
             block: id,
             col,
-            w: def.lot.0,
-            d: def.lot.1,
+            w,
+            d,
         };
         let Some((pos, rot, access)) = place(&zones, &net, id, &lot) else {
             continue;

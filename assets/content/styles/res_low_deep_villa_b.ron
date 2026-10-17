@@ -1,0 +1,15 @@
+Style((
+    id: "res_low_deep_villa_b",
+    massing: LShape,
+    roof: Gabled,
+    floors: (2, 3),
+    footprint_fill: (0.60, 0.80),
+    palette: (
+        walls: [(0.62, 0.76, 0.62), (0.86, 0.70, 0.66)],
+        roof: [(0.30, 0.30, 0.34)],
+        trim: [(0.95, 0.95, 0.92)],
+        glass: (0.18, 0.24, 0.30),
+    ),
+    facade: Punched,
+    details: [Balconies, Fence],
+))

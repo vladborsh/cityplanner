@@ -1,0 +1,15 @@
+Style((
+    id: "industrial_factory_hall_b",
+    massing: Sawtooth,
+    roof: Flat,
+    floors: (1, 2),
+    footprint_fill: (0.80, 0.98),
+    palette: (
+        walls: [(0.56, 0.62, 0.70), (0.50, 0.56, 0.62)],
+        roof: [(0.30, 0.32, 0.34)],
+        trim: [(0.22, 0.26, 0.30)],
+        glass: (0.18, 0.24, 0.30),
+    ),
+    facade: Industrial,
+    details: [Chimney, RooftopUnits],
+))

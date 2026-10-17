@@ -64,6 +64,6 @@ fn after_128(name: &str) -> (u64, usize) {
 fn old_fixtures_keep_their_water_sewage_and_power_flags_without_the_sewage_pipe() {
     let got = [after_128("m1-small.sav"), after_128("v17-basic.sav")];
     // (digest, buildings) recorded with the old content; m1-small re-recorded for BUG-047 (zone layout v2).
-    let want: [(u64, usize); 2] = [(183030451878976384, 195), (18166537202897433253, 43)];
+    let want: [(u64, usize); 2] = [(2849559857892872563, 196), (18166537202897433253, 43)];
     assert_eq!(got, want);
 }

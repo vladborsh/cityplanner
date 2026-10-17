@@ -1,0 +1,12 @@
+// T-236: fills the whole 4-row strip. Numbers // tune later.
+Building((
+    id: "ind_5",
+    name: "Factory Hall With Yard",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 4),
+    jobs: (14, 8, 2, 0),
+    consumption: {Water: 16.0, Sewage: 16.0, Power: 28.0},
+    tax_base: 125.0,
+    styles: ["industrial_factory_hall_a", "industrial_factory_hall_b"],
+))

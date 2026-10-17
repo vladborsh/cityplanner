@@ -31,7 +31,10 @@ pub use model::{
     Lot, build_ticks, footprint_quad,
 };
 pub use respec::{SPEC_STREAM, respec};
-pub use spawn::{BLOCK_BUCKETS, DEMAND_PERIOD, Demand, SPAWN_STREAM, place, update_buildings};
+pub use spawn::{
+    BLOCK_BUCKETS, DEMAND_PERIOD, Demand, SPAWN_STREAM, pick_def, place, spawnable,
+    update_buildings,
+};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_building";
