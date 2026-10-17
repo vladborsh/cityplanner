@@ -305,6 +305,18 @@ pub fn unique_rows(content: &ContentDb, def: &str) -> Vec<(String, String)> {
             "Land value".to_string(),
             format!("{:+.0} within {:.0} m", e.add, e.radius_m),
         ));
+        if e.green > 0.0 {
+            // T-237: what the neighbours get besides the price of their land.
+            out.push((
+                "Wellbeing".to_string(),
+                format!(
+                    "{:.0} % fewer sick, {:.0} % likelier to move in, within {:.0} m",
+                    e.green * cp_building::GREEN_SICK_CUT * 100.0,
+                    e.green * cp_building::GREEN_MOVE_IN_BONUS * 100.0,
+                    e.radius_m
+                ),
+            ));
+        }
     }
     if let Some(u) = &d.unique {
         out.push((

@@ -121,3 +121,86 @@ fn a_park_stands_ready_lifts_the_land_value_inside_its_radius_only_and_does_not_
     assert_eq!(far_with, far_without);
     assert_eq!(poll_with, poll_without);
 }
+
+/// T-237: the parks differ clearly and their effect is real: land value, fewer sick, more move-ins.
+#[test]
+fn the_four_parks_differ_and_help_their_neighbours() {
+    use cp_building::{GREEN_MOVE_IN_BONUS, ParkSite, green_at, move_in_passes, sick_chance};
+    let db = content();
+    let get = |id: &str| {
+        db.building(db.building_id(id).unwrap())
+            .land_effect
+            .unwrap_or_else(|| panic!("{id}"))
+    };
+    let (small, play, plaza, sports) = (
+        get("small_park"),
+        get("playground"),
+        get("plaza_fountain"),
+        get("sports_field"),
+    );
+    // Dearer parks lift the land more or reach further; the plaza is the land value one, the
+    // sports field the biggest reach, the playground the wellbeing one, the small park the cheap one.
+    assert!(plaza.add > sports.add && sports.add > play.add && play.add > small.add);
+    assert!(sports.radius_m > plaza.radius_m && plaza.radius_m > play.radius_m);
+    assert!(play.green > small.green && sports.green > plaza.green);
+    // Land value: +12 and more where it used to be +4..8, so a home beside a plaza climbs a level
+    // threshold (30 -> 45 -> 55 -> 65) a park-less one does not.
+    assert!(small.add >= 12.0);
+
+    // Wellbeing falls off with the distance and adds up from several parks, to 1.
+    let park = |p: Vec2, e: cp_content::LandEffect| ParkSite {
+        pos: p,
+        radius_m: e.radius_m,
+        green: e.green,
+    };
+    let here = Vec2::new(100.0, 100.0);
+    let one = [park(here, play)];
+    assert!((green_at(&one, here) - play.green).abs() < 1e-6);
+    assert!(green_at(&one, here + Vec2::new(60.0, 0.0)) < green_at(&one, here));
+    assert_eq!(green_at(&one, here + Vec2::new(500.0, 0.0)), 0.0);
+    let many = [park(here, play), park(here, sports), park(here, small)];
+    assert_eq!(green_at(&many, here), 1.0);
+
+    // Fewer fall ill beside a park, more households move in.
+    let (base, poll) = (0.003, 0.002);
+    assert!(sick_chance(base, poll, 0.8) < 0.6 * sick_chance(base, poll, 0.0));
+    let (mut near, mut far) = (0, 0);
+    for k in 0..20_000u32 {
+        let (gate, bonus) = (k % 2, (k / 2) % 100);
+        near += u32::from(move_in_passes(gate, bonus, 2, 0.8));
+        far += u32::from(move_in_passes(gate, bonus, 2, 0.0));
+    }
+    assert!(
+        near as f32 >= far as f32 * (1.0 + 0.5 * GREEN_MOVE_IN_BONUS * 0.8),
+        "{near} against {far}"
+    );
+}
+
+/// T-237: a home beside a plaza stands on land worth enough for a higher level than the same
+/// home far from it (growth takes the level from `level_for(level_res_land, land value)`).
+#[test]
+fn a_house_beside_a_plaza_is_allowed_a_higher_level_than_one_far_away() {
+    let c = content();
+    let run = |with: bool| {
+        let mut sim = world(&c);
+        if with {
+            place(&mut sim, "plaza_fountain", 2).unwrap();
+        }
+        for _ in 0..300 {
+            sim.tick_once();
+        }
+        let p = spot(&sim, 2) + Vec2::new(0.0, 40.0);
+        sim.world().resource::<LandGrids>().value_at(p)
+    };
+    let (beside, without) = (run(true), run(false));
+    let thresholds = c.balance().level_res_land;
+    let (up, base) = (
+        cp_economy::growth::level_for(&thresholds, beside),
+        cp_economy::growth::level_for(&thresholds, without),
+    );
+    assert!(beside >= without + 10.0, "{beside} against {without}");
+    assert!(
+        up > base,
+        "level {up} against {base} (land {beside} against {without})"
+    );
+}

@@ -13,5 +13,5 @@ Building((
     styles: ["park_playground"],
     service: Some("park"),
     icon: "playground",
-    land_effect: Some((add: 4.0, radius_m: 90.0)),
+    land_effect: Some((add: 14.0, radius_m: 110.0, green: 0.7)),
 ))

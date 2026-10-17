@@ -468,10 +468,17 @@ pub fn update_citizens(
             (is_residential(def.zone) && def.households > 0).then_some((id, def.households, b.pos))
         })
         .collect();
+    let parks = cp_building::park_sites(db, &buildings);
     for (id, apartments, pos) in visits {
         let gate = rng.below(MOVE_IN_ONE_IN);
-        if gate != 0
-            || demand.move_in <= 0.0
+        // A second draw every visit, so the stream does not depend on the outcome (T-237).
+        let bonus = rng.below(100);
+        if !cp_building::move_in_passes(
+            gate,
+            bonus,
+            MOVE_IN_ONE_IN,
+            cp_building::green_at(&parks, pos),
+        ) || demand.move_in <= 0.0
             || grid.households_in(id) >= apartments
             || grid.household_count() >= limits.households as usize
             || grid.citizen_count() + HOUSEHOLD_MAX > limits.citizens as usize

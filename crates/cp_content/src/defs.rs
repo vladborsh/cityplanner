@@ -1089,6 +1089,10 @@ pub enum UnlockCond {
 pub struct LandEffect {
     pub add: f32,
     pub radius_m: f32,
+    /// Wellbeing of the residents inside the radius, `0..=1` at the centre, falling off linearly
+    /// (T-237): fewer fall ill and more households move in. Parks only. // tune later
+    #[serde(default)]
+    pub green: f32,
     /// The district specialisation this building belongs to (T-196); `None` for every ordinary
     /// building. A specialised building is level 1 and never rises.
     #[serde(default)]

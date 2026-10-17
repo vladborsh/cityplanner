@@ -30,6 +30,7 @@ fn a_nineteen_year_old_enrols_in_the_university_and_takes_no_job() {
             .iter()
             .find(|(id, b)| {
                 b.state == BuildingState::Active
+                    && b.flags.0 == 0
                     && sim.world().resource::<CitizenGrid>().households_in(*id) > 0
             })
             .unwrap();
@@ -57,7 +58,11 @@ fn a_nineteen_year_old_enrols_in_the_university_and_takes_no_job() {
         g.set_location(id, Location::Moving);
         id
     };
+    // Kept on the move (the routine would send him home) until the school has visited him.
     for _ in 0..300 {
+        sim.world_mut()
+            .resource_mut::<CitizenGrid>()
+            .set_location(student, Location::Moving);
         sim.tick_once();
     }
     sim.world_mut()

@@ -13,5 +13,5 @@ Building((
     styles: ["park_plaza_fountain"],
     service: Some("park"),
     icon: "plaza_fountain",
-    land_effect: Some((add: 8.0, radius_m: 140.0)),
+    land_effect: Some((add: 24.0, radius_m: 150.0, green: 0.3)),
 ))

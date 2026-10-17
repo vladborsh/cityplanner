@@ -69,6 +69,7 @@ pub fn update_health(
     // --- falling ill ---
     let mut rng = rng.fork(HEALTH_STREAM, *tick);
     let bucket = (tick.0 % u64::from(CITIZEN_BUCKETS)) as u32;
+    let parks = cp_building::park_sites(db, &buildings);
     let healthy: Vec<_> = grid
         .citizens_bucket(CITIZEN_BUCKETS, bucket)
         .filter(|(_, c)| c.sick_since.is_none())
@@ -78,7 +79,11 @@ pub fn update_health(
         let Some(b) = buildings.get(home) else {
             continue;
         };
-        let p = (bal.sick_base + bal.sick_pollution * land.pollution_at(b.pos)) / VISITS_PER_DAY;
+        let p = cp_building::sick_chance(
+            bal.sick_base,
+            bal.sick_pollution * land.pollution_at(b.pos),
+            cp_building::green_at(&parks, b.pos),
+        ) / VISITS_PER_DAY;
         if rng.next_f32() < p {
             grid.set_sick(id, Some(*tick));
         }
