@@ -11,6 +11,10 @@
 //! * One-way segments (every car lane runs forward) get direction **chevrons** on the
 //!   carriageway axis every [`CHEVRON_SPACING`] metres, baked in as vertex-coloured
 //!   triangles that replace the asphalt under them (no overlay). Near mesh only.
+//! * A segment end at a junction of three or more arms gets a **zebra crossing** when its road
+//!   def asks for `crosswalks` (T-240): from [`ZEBRA_GAP`] behind the mouth, stripes parallel
+//!   to the road across everything at road level, [`ZEBRA_DEPTH`] long; the lane lines stop
+//!   [`ZEBRA_LINE_GAP`] before it. Baked into the surface like the dashes. Near mesh only.
 //! * Every piece has a `near` mesh (markings, kerbs, chevrons) and a `far` mesh (none).
 //! * [`RoadSet`] keeps the pieces and, given a new snapshot, rebuilds only pieces whose
 //!   inputs changed (segment fingerprint / junction revision).
@@ -21,7 +25,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_math::{Vec2, Vec3};
-use cp_content::{LaneDir, LaneKind};
+use cp_content::{ContentDb, LaneDir, LaneKind};
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_net::{
     Arm, Elevation, Junction, JunctionGeometry, NetGraph, NodeId, Segment, SegmentId,
@@ -54,6 +58,17 @@ const CHEVRON_LEN: f32 = 3.2;
 const CHEVRON_HALF: f32 = 1.4;
 /// Thickness of a chevron arm along the road, as a fraction of [`CHEVRON_LEN`].
 const CHEVRON_ARM: f32 = 0.15;
+
+/// Clear asphalt between the junction mouth and a zebra crossing, metres (T-240).
+pub const ZEBRA_GAP: f32 = 0.6;
+/// Length of a zebra crossing along the road, metres.
+pub const ZEBRA_DEPTH: f32 = 3.5;
+/// Width of a zebra stripe and of the gap between two stripes, metres.
+pub const ZEBRA_STRIPE: f32 = 0.5;
+/// Lane lines stop this far before a zebra crossing, metres.
+pub const ZEBRA_LINE_GAP: f32 = 1.0;
+/// Stripes keep at least this much asphalt to the kerb, metres.
+const ZEBRA_EDGE: f32 = 0.25;
 
 const ASPHALT: [f32; 4] = [0.11, 0.11, 0.12, 1.0];
 /// Gravel of a pedestrian path (T-222).
@@ -462,6 +477,67 @@ fn dash_on(s0: f32, s1: f32) -> bool {
     ((mid - DASH_PERIOD * 0.5) % DASH_PERIOD + DASH_PERIOD) % DASH_PERIOD < DASH_ON
 }
 
+/// What a stretch of a segment end holds instead of its lanes (T-240).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Zone {
+    /// Plain road surface: no lane lines.
+    Clear,
+    /// Zebra stripes.
+    Zebra,
+}
+
+/// Arc-length intervals of the zebra crossings of a segment of `length` and the clear stretches
+/// around them, for the ends that get one. A segment too short for its crossings gets none.
+fn zebra_zones(length: f32, start: bool, end: bool) -> Vec<(f32, f32, Zone)> {
+    let reach = ZEBRA_GAP + ZEBRA_DEPTH + ZEBRA_LINE_GAP;
+    let ends = usize::from(start) + usize::from(end);
+    if ends == 0 || length < reach * ends as f32 + 1.0 {
+        return Vec::new();
+    }
+    let one = [
+        (0.0, ZEBRA_GAP, Zone::Clear),
+        (ZEBRA_GAP, ZEBRA_GAP + ZEBRA_DEPTH, Zone::Zebra),
+        (ZEBRA_GAP + ZEBRA_DEPTH, reach, Zone::Clear),
+    ];
+    let mut z = Vec::new();
+    if start {
+        z.extend(one);
+    }
+    if end {
+        z.extend(
+            one.iter()
+                .rev()
+                .map(|&(a, b, k)| (length - b, length - a, k)),
+        );
+    }
+    z
+}
+
+/// Whether the segment end at `node` gets a zebra crossing: its road asks for them and the
+/// node is a junction of three or more arms.
+fn has_zebra(db: &ContentDb, geo: &JunctionGeometry, seg: &Segment, node: NodeId) -> bool {
+    seg.elevation != Elevation::Tunnel
+        && db.road(seg.road).crosswalks
+        && geo.get(node).is_some_and(|j| j.arms.len() >= 3)
+}
+
+/// Lateral intervals of the zebra stripes across `[lo, hi]`: centred on the middle, whole
+/// stripes only, [`ZEBRA_EDGE`] clear of both edges.
+pub fn zebra_stripes(lo: f32, hi: f32) -> Vec<(f32, f32)> {
+    let mid = (lo + hi) * 0.5;
+    let period = 2.0 * ZEBRA_STRIPE;
+    let n = ((hi - lo - 2.0 * ZEBRA_EDGE + ZEBRA_STRIPE) / period)
+        .floor()
+        .max(0.0) as i32;
+    let first = mid - (n as f32 * period - ZEBRA_STRIPE) * 0.5;
+    (0..n)
+        .map(|i| {
+            let a = first + i as f32 * period;
+            (a, a + ZEBRA_STRIPE)
+        })
+        .collect()
+}
+
 /// Skirt depth below `y`, so the terrain never shows through under the road edge.
 fn skirt_depth(terrain: &Terrain, p: Vec2, y: f32) -> f32 {
     (y - terrain.height(p) + 0.4).clamp(0.4, 8.0)
@@ -471,6 +547,7 @@ fn extrude(
     graph: &NetGraph,
     geo: &JunctionGeometry,
     terrain: &Terrain,
+    db: &ContentDb,
     id: SegmentId,
     markings: bool,
 ) -> Option<MeshData> {
@@ -498,8 +575,30 @@ fn extrude(
     let chevron = (markings && is_one_way(graph, seg))
         .then(|| carriageway(graph, seg, &bands))
         .flatten();
-    let chevrons = chevron.map_or_else(Vec::new, |_| chevron_rows(length));
-    let base = ring_positions(length, is_straight(&curve), has_dashes, &chevrons);
+    let zones = if markings && !is_path(graph, seg) {
+        zebra_zones(
+            length,
+            has_zebra(db, geo, seg, seg.start),
+            has_zebra(db, geo, seg, seg.end),
+        )
+    } else {
+        Vec::new()
+    };
+    let mut chevrons = chevron.map_or_else(Vec::new, |_| chevron_rows(length));
+    chevrons.retain(|&(a, b)| zones.iter().all(|z| b + 0.25 < z.0 || a - 0.25 > z.1));
+    let mut base = ring_positions(length, is_straight(&curve), has_dashes, &chevrons);
+    if !zones.is_empty() {
+        // Exact rings on the zone boundaries; none inside a zone (flat stretches anyway).
+        let cuts: Vec<f32> = zones.iter().flat_map(|z| [z.0, z.1]).collect();
+        base.retain(|&x| {
+            x <= 1e-4
+                || x >= length - 1e-4
+                || zones.iter().all(|z| x < z.0 - 0.25 || x > z.1 + 0.25)
+        });
+        base.extend(cuts);
+        base.sort_by(f32::total_cmp);
+        base.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
+    }
     let (s_list, rings) = ground::rings(&frame, graph, geo, terrain, seg, base);
     // Ring pairs `k - 1, k` that hold a chevron.
     let chevron_row = |k: usize| {
@@ -508,17 +607,24 @@ fn extrude(
                 .iter()
                 .any(|&(a, b)| (s_list[k - 1] - a).abs() < 1e-4 && (s_list[k] - b).abs() < 1e-4)
     };
+    // The zone of ring pair `k - 1, k`.
+    let zone_of = |k: usize| {
+        let mid = (s_list[k - 1] + s_list[k]) * 0.5;
+        zones.iter().find(|z| mid > z.0 && mid < z.1).map(|z| z.2)
+    };
     let up = Vec3::Y;
     let mut m = MeshData::default();
 
     // Surface bands.
     for b in &bands {
         let mut prev: Option<(u32, u32)> = None;
-        // Under a chevron the carriageway is drawn by `chevron_quads` instead.
+        // Under a chevron the carriageway is drawn by `chevron_quads` instead, in a zone
+        // everything at road level by `zone_quads`.
         let replaced = chevron.is_some_and(|(lo, hi)| in_range(b, lo, hi));
+        let level = b.raise < 1e-3;
         for (k, r) in rings.iter().enumerate() {
             let (lo, hi) = (r.at(b.lo, b.raise), r.at(b.hi, b.raise));
-            let skip = replaced && chevron_row(k);
+            let skip = k > 0 && ((replaced && chevron_row(k)) || (level && zone_of(k).is_some()));
             if b.dashed {
                 if k == 0 || skip {
                     continue;
@@ -549,6 +655,19 @@ fn extrude(
     if let Some((lo, hi)) = chevron {
         for k in (1..rings.len()).filter(|&k| chevron_row(k)) {
             chevron_quads(&mut m, &rings[k - 1], &rings[k], lo, hi);
+        }
+    }
+    if !zones.is_empty() {
+        let level: Vec<&Band> = bands.iter().filter(|b| b.raise < 1e-3).collect();
+        let lo = level.iter().map(|b| b.lo).fold(f32::MAX, f32::min);
+        let hi = level.iter().map(|b| b.hi).fold(f32::MIN, f32::max);
+        let stripes = zebra_stripes(lo, hi);
+        for k in 1..rings.len() {
+            let Some(zone) = zone_of(k) else { continue };
+            let paint: &[(f32, f32)] = if zone == Zone::Zebra { &stripes } else { &[] };
+            for b in &level {
+                zone_quads(&mut m, &rings[k - 1], &rings[k], b, paint);
+            }
         }
     }
 
@@ -647,6 +766,38 @@ fn extrude(
     Some(m)
 }
 
+/// Band `b` between rings `a` and `c` in a zone: its own surface without lane lines, white
+/// where a stripe of `paint` covers it.
+fn zone_quads(m: &mut MeshData, a: &Ring, c: &Ring, b: &Band, paint: &[(f32, f32)]) {
+    let base = if b.dashed || b.color == WHITE || b.color == YELLOW {
+        ASPHALT
+    } else {
+        b.color
+    };
+    let mut cuts = vec![(b.lo, base)];
+    for &(s0, s1) in paint {
+        if s1 <= b.lo || s0 >= b.hi {
+            continue;
+        }
+        cuts.push((s0.max(b.lo), WHITE));
+        if s1 < b.hi {
+            cuts.push((s1, base));
+        }
+    }
+    for (i, &(x0, color)) in cuts.iter().enumerate() {
+        let x1 = cuts.get(i + 1).map_or(b.hi, |n| n.0);
+        if x1 - x0 < 1e-4 {
+            continue;
+        }
+        flat_quad(
+            m,
+            [a.at(x0, 0.0), a.at(x1, 0.0), c.at(x1, 0.0), c.at(x0, 0.0)],
+            Vec3::Y,
+            color,
+        );
+    }
+}
+
 fn flat_tri(m: &mut MeshData, p: [Vec3; 3], c: [f32; 4]) {
     let v = p.map(|p| push_vertex(m, p, Vec3::Y, c));
     tri(m, v[0], v[1], v[2], Vec3::Y);
@@ -722,10 +873,11 @@ pub fn build_segment_piece(
     graph: &NetGraph,
     geo: &JunctionGeometry,
     terrain: &Terrain,
+    db: &ContentDb,
     id: SegmentId,
 ) -> Option<Piece> {
-    let near = extrude(graph, geo, terrain, id, true)?;
-    let far = extrude(graph, geo, terrain, id, false)?;
+    let near = extrude(graph, geo, terrain, db, id, true)?;
+    let far = extrude(graph, geo, terrain, db, id, false)?;
     Some(finish(near, far))
 }
 
@@ -1038,6 +1190,7 @@ impl RoadSet {
         graph: &NetGraph,
         geo: &JunctionGeometry,
         terrain: &Terrain,
+        db: &ContentDb,
     ) -> Update {
         let mut up = Update::default();
 
@@ -1086,7 +1239,7 @@ impl RoadSet {
             self.replace(
                 key,
                 stamp,
-                build_segment_piece(graph, geo, terrain, id),
+                build_segment_piece(graph, geo, terrain, db, id),
                 &mut up,
             );
         }

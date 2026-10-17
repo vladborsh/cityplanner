@@ -80,7 +80,7 @@ fn sync_roads(
     mut chunks: Query<&mut RoadChunk>,
 ) {
     let Some(view) = view else { return };
-    let Some(terrain) = view.terrain.as_ref() else {
+    let (Some(terrain), Some(db)) = (view.terrain.as_ref(), view.content.as_ref()) else {
         return;
     };
     let same_net = state
@@ -91,7 +91,7 @@ fn sync_roads(
         return;
     }
     let start = bevy::platform::time::Instant::now();
-    let up: Update = state.set.update(&view.net, &view.junctions, terrain);
+    let up: Update = state.set.update(&view.net, &view.junctions, terrain, db);
     state.last_net = Some(Arc::clone(&view.net));
     state.last_version = view.junctions.version();
     let material = state

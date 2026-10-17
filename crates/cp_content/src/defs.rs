@@ -808,6 +808,9 @@ pub struct RoadDef {
     /// only); 0 = none.
     #[serde(default)]
     pub pole_spacing_m: f32,
+    /// Zebra crossings on this road's arms of a junction (T-240, render only).
+    #[serde(default)]
+    pub crosswalks: bool,
     /// Priority rank at junctions: higher wins.
     pub rank: u8,
     #[serde(default)]

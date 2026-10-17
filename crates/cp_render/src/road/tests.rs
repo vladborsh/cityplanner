@@ -74,7 +74,7 @@ impl World {
     }
     fn set(&self, view: &SimView) -> (RoadSet, Update) {
         let mut set = RoadSet::default();
-        let up = set.update(&view.net, &view.junctions, &self.terrain);
+        let up = set.update(&view.net, &view.junctions, &self.terrain, &self.content);
         (set, up)
     }
 }
@@ -334,18 +334,18 @@ fn only_changed_pieces_are_rebuilt() {
     }
     let v1 = w.view();
     let mut set = RoadSet::default();
-    let first = set.update(&v1.net, &v1.junctions, &w.terrain);
+    let first = set.update(&v1.net, &v1.junctions, &w.terrain, &w.content);
     assert!(first.rebuilt >= 25 + 40, "{first:?}");
     let before = set.piece_count();
     // Nothing changed: nothing rebuilt.
-    let idle = set.update(&v1.net, &v1.junctions, &w.terrain);
+    let idle = set.update(&v1.net, &v1.junctions, &w.terrain, &w.content);
     assert_eq!((idle.rebuilt, idle.removed), (0, 0));
     assert!(idle.dirty_chunks.is_empty());
 
     // One more street end-to-end beside the lattice: only its neighbourhood changes.
     w.line("basic_2l", (X0 + 500.0, Z0), (X0 + 500.0, Z0 + 90.0));
     let v2 = w.view();
-    let edit = set.update(&v2.net, &v2.junctions, &w.terrain);
+    let edit = set.update(&v2.net, &v2.junctions, &w.terrain, &w.content);
     // Counted, not timed (BUG-034): only the neighbourhood is rebuilt; the time is in
     // `road_perf_30x30_grid_and_one_edit`'s report.
     assert!(edit.rebuilt >= 1 && edit.rebuilt <= 6, "{edit:?}");
@@ -366,7 +366,7 @@ fn removing_a_segment_drops_its_pieces() {
     w.sim.tick_once();
     w.sim.tick_once();
     let v2 = w.view();
-    let up = set.update(&v2.net, &v2.junctions, &w.terrain);
+    let up = set.update(&v2.net, &v2.junctions, &w.terrain, &w.content);
     assert!(up.removed >= 1, "{up:?}");
     assert!(set.piece_count() < n);
     let _ = Tick(0);
@@ -426,7 +426,7 @@ fn road_perf() -> f64 {
     let v1 = w.view();
     let mut set = RoadSet::default();
     let t = std::time::Instant::now();
-    let full = set.update(&v1.net, &v1.junctions, &w.terrain);
+    let full = set.update(&v1.net, &v1.junctions, &w.terrain, &w.content);
     let full_ms = t.elapsed().as_secs_f64() * 1000.0;
 
     // One more street segment attached to the lattice edge.
@@ -437,7 +437,7 @@ fn road_perf() -> f64 {
     );
     let v2 = w.view();
     let t = std::time::Instant::now();
-    let edit = set.update(&v2.net, &v2.junctions, &w.terrain);
+    let edit = set.update(&v2.net, &v2.junctions, &w.terrain, &w.content);
     let edit_ms = t.elapsed().as_secs_f64() * 1000.0;
     // Merging the touched chunks into meshes is part of a rebuild too.
     let t = std::time::Instant::now();
@@ -469,7 +469,7 @@ fn incremental_update_matches_a_fresh_build() {
     cross(&mut w, "basic_2l");
     let v = w.view();
     let mut inc = RoadSet::default();
-    inc.update(&v.net, &v.junctions, &w.terrain);
+    inc.update(&v.net, &v.junctions, &w.terrain, &w.content);
 
     // Edits: a branch, an upgrade of a segment, a removal.
     w.line(
@@ -478,7 +478,7 @@ fn incremental_update_matches_a_fresh_build() {
         (X0 + 190.0, Z0 + 190.0),
     );
     let v = w.view();
-    inc.update(&v.net, &v.junctions, &w.terrain);
+    inc.update(&v.net, &v.junctions, &w.terrain, &w.content);
     let (seg, _) = v.net.segments().next().unwrap();
     let big = w.content.road_id("medium_4l").unwrap();
     let tick = w.sim.tick();
@@ -489,7 +489,7 @@ fn incremental_update_matches_a_fresh_build() {
     w.sim.tick_once();
     w.sim.tick_once();
     let v = w.view();
-    inc.update(&v.net, &v.junctions, &w.terrain);
+    inc.update(&v.net, &v.junctions, &w.terrain, &w.content);
     let (seg, _) = v.net.segments().nth(2).unwrap();
     let tick = w.sim.tick();
     w.sim
@@ -497,10 +497,10 @@ fn incremental_update_matches_a_fresh_build() {
     w.sim.tick_once();
     w.sim.tick_once();
     let v = w.view();
-    inc.update(&v.net, &v.junctions, &w.terrain);
+    inc.update(&v.net, &v.junctions, &w.terrain, &w.content);
 
     let mut fresh = RoadSet::default();
-    fresh.update(&v.net, &v.junctions, &w.terrain);
+    fresh.update(&v.net, &v.junctions, &w.terrain, &w.content);
     assert_eq!(inc.piece_count(), fresh.piece_count());
     for far in [false, true] {
         assert_eq!(inc.triangle_count(far), fresh.triangle_count(far));
@@ -1336,4 +1336,108 @@ fn junctions_far_out_on_the_map_get_a_patch_in_every_corner() {
             );
         }
     }
+}
+
+/// T-240: the zebra stripes of each arm of the junction with `arms` arms: white triangles at
+/// least [`ZEBRA_STRIPE`] - 0.1 m wide across the road (lane lines are 0.12 m) on the arm's
+/// segment piece. Per arm: (stripe triangles, the mouth's half width, its corners).
+fn zebras(w: &World, arms: usize) -> (Vec<Vec<Tri2>>, Junction) {
+    let v = w.view();
+    let (set, _) = w.set(&v);
+    let (_, j) = v
+        .junctions
+        .iter()
+        .find(|(_, j)| j.arms.len() == arms)
+        .expect("junction");
+    let per_arm = j
+        .arms
+        .iter()
+        .map(|arm| {
+            let across = (arm.left - arm.right).normalize();
+            let m = &set.piece(PieceKey::Segment(arm.segment)).unwrap().near;
+            colour_tris(m, WHITE)
+                .into_iter()
+                .filter(|t| {
+                    let d: Vec<f32> = t.iter().map(|p| p.dot(across)).collect();
+                    let span = d.iter().fold(f32::MIN, |a, b| a.max(*b))
+                        - d.iter().fold(f32::MAX, |a, b| a.min(*b));
+                    span > ZEBRA_STRIPE - 0.1
+                })
+                .collect()
+        })
+        .collect();
+    (per_arm, j.clone())
+}
+
+#[test]
+fn zebras_lie_on_every_arm_of_a_t_and_an_x_inside_the_carriageway_and_outside_the_box() {
+    for def in SIDEWALK_ROADS {
+        for arms in [3usize, 4] {
+            // Arms of their own, 60 m each: no auto-cut joint beside the junction (BUG-069).
+            let mut w = world();
+            for k in 0..arms {
+                road_of(&mut w, def, C + dir(k as f32 * 90.0) * 60.0, C);
+            }
+            let (per_arm, j) = zebras(&w, arms);
+            assert_eq!(per_arm.len(), arms);
+            let poly = &j.polygon;
+            for (arm, tris) in j.arms.iter().zip(&per_arm) {
+                let what = format!("{def} {arms} arms, arm at {}", arm.angle.to_degrees());
+                // Two triangles a stripe, at least 3 stripes even on the narrowest road.
+                assert!(tris.len() >= 6, "{what}: {} stripe triangles", tris.len());
+                let mouth = (arm.left + arm.right) * 0.5;
+                let across = (arm.left - arm.right).normalize();
+                let out = Vec2::new(-across.y, across.x);
+                let out = if out.dot(mouth - to_xz(j.pos)) < 0.0 {
+                    -out
+                } else {
+                    out
+                };
+                // The kerbs: the outer edges of the carriageway (road width less sidewalks).
+                let kerb = arm.left.distance(arm.right) * 0.5 - 2.4;
+                for p in tris.iter().flatten() {
+                    let along = (*p - mouth).dot(out);
+                    assert!(
+                        (ZEBRA_GAP - 0.01..=ZEBRA_GAP + ZEBRA_DEPTH + 0.01).contains(&along),
+                        "{what}: stripe {along} m from the mouth"
+                    );
+                    assert!(
+                        (*p - mouth).dot(across).abs() < kerb,
+                        "{what}: stripe off the carriageway at {p:?}"
+                    );
+                    let inside = in_polygon(*p, poly)
+                        && (0..poly.len())
+                            .all(|i| dist_to_edge(*p, poly[i], poly[(i + 1) % poly.len()]) > 0.01);
+                    assert!(!inside, "{what}: stripe inside the junction at {p:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn highways_bends_and_short_pieces_get_no_zebra() {
+    let mut w = world();
+    for k in 0..3 {
+        road_of(&mut w, "highway_1w_2l", C + dir(k as f32 * 90.0) * 60.0, C);
+    }
+    let (per_arm, _) = zebras(&w, 3);
+    assert!(per_arm.iter().all(Vec::is_empty), "zebra on a highway");
+    let mut w = world();
+    corner(&mut w, "basic_2l", 90.0, false);
+    let (per_arm, _) = zebras(&w, 2);
+    assert!(per_arm.iter().all(Vec::is_empty), "zebra on a bend");
+    assert!(super::zebra_zones(9.0, true, true).is_empty());
+    assert_eq!(super::zebra_zones(30.0, true, false).len(), 3);
+}
+
+#[test]
+fn zebra_stripes_are_whole_and_centred() {
+    let s = zebra_stripes(-3.5, 3.5);
+    assert_eq!(s.len(), 7);
+    assert!((s[0].0 + s[6].1).abs() < 1e-5);
+    assert!(
+        s.iter()
+            .all(|&(a, b)| a >= -3.25 && b <= 3.25 && (b - a - ZEBRA_STRIPE).abs() < 1e-5)
+    );
 }

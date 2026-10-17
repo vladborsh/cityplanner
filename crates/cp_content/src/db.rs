@@ -1144,8 +1144,9 @@ mod tests {
 
     /// Re-pinned for T-078: `RoadDef.class` is part of the hashed encoding (it was
     /// 4353786976156915245 before); and for T-161: `RoadDef.tunnel` and `RoadDef.ground` are
-    /// (it was 3543843456772795126 before).
-    const PINNED_SINGLE_ROAD_HASH: u64 = 13796235179118518103;
+    /// (it was 3543843456772795126 before); and for T-240: `RoadDef.crosswalks` is (it was
+    /// 13796235179118518103 before).
+    const PINNED_SINGLE_ROAD_HASH: u64 = 6551891125851038056;
 
     const ROAD: &str = r#"Road((id: "r", name: "R", width: 10.0,
         lanes: [(kind: Car, dir: Forward, width: 3.0, offset: 0.0)],
