@@ -659,6 +659,30 @@ pub fn is_service(m: Massing) -> bool {
             | Massing::SpecOrganic
             | Massing::SpecItCluster
             | Massing::SpecSelfSufficient
+            | Massing::FarmMain
+            | Massing::FarmExtractorS
+            | Massing::FarmExtractorL
+            | Massing::FarmProcessorA
+            | Massing::FarmProcessorB
+            | Massing::FarmWarehouse
+            | Massing::ForestMain
+            | Massing::ForestExtractorS
+            | Massing::ForestExtractorL
+            | Massing::ForestProcessorA
+            | Massing::ForestProcessorB
+            | Massing::ForestWarehouse
+            | Massing::OreMain
+            | Massing::OreExtractorS
+            | Massing::OreExtractorL
+            | Massing::OreProcessorA
+            | Massing::OreProcessorB
+            | Massing::OreWarehouse
+            | Massing::OilMain
+            | Massing::OilExtractorS
+            | Massing::OilExtractorL
+            | Massing::OilProcessorA
+            | Massing::OilProcessorB
+            | Massing::OilWarehouse
     )
 }
 
@@ -3260,6 +3284,1201 @@ fn spec(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                 );
             }
         }
+        _ => chain(m, massing, sc),
+    }
+}
+
+const SOIL: [f32; 4] = [0.45, 0.34, 0.22, 1.0];
+const CROP_GOLD: [f32; 4] = [0.88, 0.76, 0.28, 1.0];
+const CROP_GREEN: [f32; 4] = [0.45, 0.65, 0.25, 1.0];
+const BARN_RED: [f32; 4] = [0.66, 0.22, 0.18, 1.0];
+const LOG: [f32; 4] = [0.50, 0.33, 0.18, 1.0];
+const PLANK: [f32; 4] = [0.86, 0.74, 0.52, 1.0];
+const STEEL: [f32; 4] = [0.60, 0.62, 0.66, 1.0];
+const DARK: [f32; 4] = [0.20, 0.20, 0.22, 1.0];
+const ORE_PILE: [f32; 4] = [0.45, 0.40, 0.38, 1.0];
+const TANK_WHITE: [f32; 4] = [0.90, 0.90, 0.88, 1.0];
+
+/// The M5 chain buildings (T-212, T-213): farm, forest, ore and oil, each with a main building,
+/// two extractors (small and large), two processors and a warehouse. Massing `40 + 6 r + k` is
+/// resource `r` (farm, forest, ore, oil) and role `k` (main, extractor S, extractor L,
+/// processor A, processor B, warehouse). Fields and clearings are flat (no box under them).
+fn chain(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
+    use super::Lod;
+    let (f, b) = (sc.f, sc.base);
+    let (hu, hv, cv) = (sc.hu, sc.hv, sc.cv);
+    let near = sc.lod == Lod::Near;
+    let far = sc.lod == Lod::Far;
+    let n = if near {
+        12
+    } else if far {
+        6
+    } else {
+        8
+    };
+    let fnd = [0.30, 0.30, 0.30, 1.0];
+    let r = hu.min(hv);
+    let idx = massing as u8 - Massing::FarmMain as u8;
+    let (res, role) = (idx / 6, idx % 6);
+    // The pad the building stands on; a field or clearing has soil instead.
+    let ground = |m: &mut MeshData, top: f32, col: [f32; 4]| {
+        block(
+            m,
+            f,
+            (0.0, cv),
+            (0.96 * hu, 0.96 * hv),
+            sc.lo - 0.3,
+            b + top,
+            fnd,
+            col,
+        );
+    };
+    let concrete = [0.55, 0.55, 0.53, 1.0];
+    match (res, role) {
+        // ---- Farming ----
+        (0, 0) => {
+            // The homestead: a house and a red barn with a silo.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (-0.45 * hu, cv - 0.2 * hv),
+                (0.35 * hu, 0.4 * hv),
+                y,
+                y + 4.5,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (-0.45 * hu, cv - 0.2 * hv),
+                (0.4 * hu, 0.45 * hv),
+                y + 4.5,
+                y + 6.0,
+                sc.roof,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.35 * hu, cv + 0.2 * hv),
+                (0.45 * hu, 0.5 * hv),
+                y,
+                y + 6.5,
+                BARN_RED,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.35 * hu, cv + 0.2 * hv),
+                (0.4 * hu, 0.45 * hv),
+                y + 6.5,
+                y + 8.5,
+                sc.roof,
+                sc.roof,
+            );
+            cyl(
+                m,
+                f,
+                (0.75 * hu, cv - 0.5 * hv),
+                (0.2 * r, 0.2 * r),
+                (y, y + 11.0),
+                n,
+                STEEL,
+                Some(sc.trim),
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (0.35 * hu, cv - 0.31 * hv),
+                    (0.18 * hu, 0.02 * hv),
+                    y,
+                    y + 4.0,
+                    sc.trim,
+                    sc.trim,
+                );
+            }
+        }
+        (0, 1) | (0, 2) => {
+            // A field with stripes of crops and a shed; the large one has a silo tower.
+            ground(m, 0.1, SOIL);
+            let y = b + 0.1;
+            let rows = if far {
+                4
+            } else if near {
+                10
+            } else {
+                7
+            };
+            for k in 0..rows {
+                let t = -0.85 + 1.7 * (k as f32 + 0.5) / rows as f32;
+                let col = if k % 2 == 0 { CROP_GOLD } else { CROP_GREEN };
+                block(
+                    m,
+                    f,
+                    (0.0, cv + t * hv * 0.85),
+                    (0.9 * hu, 0.8 * hv / rows as f32),
+                    y,
+                    y + 0.35,
+                    col,
+                    col,
+                );
+            }
+            block(
+                m,
+                f,
+                (0.7 * hu, cv - 0.8 * hv),
+                (0.2 * hu, 0.14 * hv),
+                y,
+                y + 3.0,
+                sc.wall,
+                sc.roof,
+            );
+            if role == 2 {
+                cyl(
+                    m,
+                    f,
+                    (0.7 * hu, cv + 0.6 * hv),
+                    (0.16 * r, 0.16 * r),
+                    (y, y + 12.0),
+                    n,
+                    STEEL,
+                    Some(sc.roof),
+                );
+            }
+        }
+        (0, 3) => {
+            // The cowshed: a long low barn under a long roof.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.85 * hu, 0.5 * hv),
+                y,
+                y + 4.0,
+                BARN_RED,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.92 * hu, 0.58 * hv),
+                y + 4.0,
+                y + 4.8,
+                sc.roof,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.7 * hu, 0.4 * hv),
+                y + 4.8,
+                y + 6.2,
+                sc.roof,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv - 0.5 * hv),
+                (0.7 * hu, 0.04 * hv),
+                y,
+                y + 3.0,
+                DARK,
+                DARK,
+            );
+            if near {
+                for k in 0..3 {
+                    block(
+                        m,
+                        f,
+                        ((-0.5 + 0.5 * k as f32) * hu, cv + 0.78 * hv),
+                        (0.14 * hu, 0.1 * hv),
+                        y,
+                        y + 1.0,
+                        STEEL,
+                        STEEL,
+                    );
+                }
+            }
+        }
+        (0, 4) => {
+            // The mill: a tall elevator with three silos beside it.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (-0.3 * hu, cv),
+                (0.3 * hu, 0.35 * hv),
+                y,
+                y + 16.0,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (-0.3 * hu, cv),
+                (0.12 * hu, 0.15 * hv),
+                y + 16.0,
+                y + 20.0,
+                sc.trim,
+                sc.roof,
+            );
+            for k in 0..3 {
+                cyl(
+                    m,
+                    f,
+                    (0.35 * hu, cv + (-0.5 + 0.5 * k as f32) * hv),
+                    (0.16 * r, 0.16 * r),
+                    (y, y + 9.0),
+                    n,
+                    STEEL,
+                    Some(sc.roof),
+                );
+            }
+            block(
+                m,
+                f,
+                (0.05 * hu, cv),
+                (0.12 * hu, 0.05 * hv),
+                y + 8.0,
+                y + 8.6,
+                DARK,
+                DARK,
+            );
+        }
+        (0, 5) => {
+            // The grain store: a hangar with a barrel roof.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.9 * hu, 0.8 * hv),
+                y,
+                y + 5.0,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.9 * hu, 0.6 * hv),
+                y + 5.0,
+                y + 6.5,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.9 * hu, 0.3 * hv),
+                y + 6.5,
+                y + 7.5,
+                sc.roof,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv - 0.8 * hv),
+                (0.4 * hu, 0.03 * hv),
+                y,
+                y + 4.0,
+                DARK,
+                DARK,
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (0.0, cv + 0.8 * hv),
+                    (0.12 * hu, 0.04 * hv),
+                    y + 5.0,
+                    y + 6.2,
+                    STEEL,
+                    STEEL,
+                );
+            }
+        }
+        // ---- Forestry ----
+        (1, 0) => {
+            // A log office with a stone chimney.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.6 * hu, 0.5 * hv),
+                y,
+                y + 4.5,
+                LOG,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.68 * hu, 0.56 * hv),
+                y + 4.5,
+                y + 5.5,
+                sc.roof,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.45 * hu, 0.4 * hv),
+                y + 5.5,
+                y + 7.0,
+                sc.roof,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.45 * hu, cv + 0.2 * hv),
+                (0.07 * hu, 0.07 * hv),
+                y,
+                y + 9.0,
+                STEEL,
+                STEEL,
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (-0.7 * hu, cv - 0.6 * hv),
+                    (0.2 * hu, 0.1 * hv),
+                    y,
+                    y + 1.2,
+                    PLANK,
+                    PLANK,
+                );
+            }
+        }
+        (1, 1) | (1, 2) => {
+            // A clearing with rows of log piles; the large one also has a loader post.
+            ground(m, 0.1, SOIL);
+            let y = b + 0.1;
+            let piles = if far { 2 } else { 4 };
+            for k in 0..piles {
+                let v = (-0.6 + 1.2 * k as f32 / (piles - 1).max(1) as f32) * hv;
+                let h = if near { 1.8 } else { 1.6 };
+                block(
+                    m,
+                    f,
+                    (-0.2 * hu, cv + v),
+                    (0.6 * hu, 0.12 * hv),
+                    y,
+                    y + h,
+                    LOG,
+                    PLANK,
+                );
+                if near {
+                    block(
+                        m,
+                        f,
+                        (-0.2 * hu, cv + v),
+                        (0.55 * hu, 0.08 * hv),
+                        y + h,
+                        y + h + 1.0,
+                        LOG,
+                        PLANK,
+                    );
+                }
+            }
+            block(
+                m,
+                f,
+                (0.7 * hu, cv - 0.7 * hv),
+                (0.18 * hu, 0.12 * hv),
+                y,
+                y + 3.0,
+                sc.wall,
+                sc.roof,
+            );
+            if role == 2 {
+                cyl(
+                    m,
+                    f,
+                    (0.7 * hu, cv + 0.4 * hv),
+                    (0.4, 0.3),
+                    (y, y + 10.0),
+                    6,
+                    STEEL,
+                    None,
+                );
+                block(
+                    m,
+                    f,
+                    (0.5 * hu, cv + 0.4 * hv),
+                    (0.2 * hu, 0.04 * hv),
+                    y + 9.0,
+                    y + 9.6,
+                    STEEL,
+                    STEEL,
+                );
+            }
+        }
+        (1, 3) => {
+            // The sawmill: a long shed with an open awning, logs on one side, planks on the other.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (0.0, cv + 0.3 * hv),
+                (0.85 * hu, 0.4 * hv),
+                y,
+                y + 5.0,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv + 0.3 * hv),
+                (0.9 * hu, 0.45 * hv),
+                y + 5.0,
+                y + 5.7,
+                sc.roof,
+                sc.roof,
+            );
+            for k in 0..4 {
+                let u = (-0.8 + 1.6 * k as f32 / 3.0) * hu;
+                cyl(
+                    m,
+                    f,
+                    (u, cv - 0.75 * hv),
+                    (0.3, 0.3),
+                    (y, y + 3.5),
+                    6,
+                    LOG,
+                    None,
+                );
+            }
+            block(
+                m,
+                f,
+                (0.0, cv - 0.6 * hv),
+                (0.9 * hu, 0.2 * hv),
+                y + 3.5,
+                y + 4.0,
+                sc.roof,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (-0.6 * hu, cv - 0.55 * hv),
+                (0.2 * hu, 0.12 * hv),
+                y,
+                y + 1.4,
+                LOG,
+                LOG,
+            );
+            block(
+                m,
+                f,
+                (0.6 * hu, cv - 0.55 * hv),
+                (0.2 * hu, 0.12 * hv),
+                y,
+                y + 1.2,
+                PLANK,
+                PLANK,
+            );
+        }
+        (1, 4) => {
+            // The paper mill: a big hall, a tall chimney and two tanks.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (-0.2 * hu, cv),
+                (0.6 * hu, 0.6 * hv),
+                y,
+                y + 8.0,
+                sc.wall,
+                sc.roof,
+            );
+            cyl(
+                m,
+                f,
+                (0.65 * hu, cv + 0.4 * hv),
+                (0.12 * r, 0.09 * r),
+                (y, y + 22.0),
+                n,
+                STEEL,
+                Some(DARK),
+            );
+            for k in 0..2 {
+                cyl(
+                    m,
+                    f,
+                    (0.6 * hu, cv + (-0.6 + 0.4 * k as f32) * hv),
+                    (0.18 * r, 0.18 * r),
+                    (y, y + 5.0),
+                    n,
+                    TANK_WHITE,
+                    Some(sc.roof),
+                );
+            }
+            if near {
+                for k in 0..3 {
+                    block(
+                        m,
+                        f,
+                        ((-0.6 + 0.4 * k as f32) * hu, cv),
+                        (0.08 * hu, 0.08 * hv),
+                        y + 8.0,
+                        y + 9.4,
+                        STEEL,
+                        STEEL,
+                    );
+                }
+            }
+        }
+        (1, 5) => {
+            // An open shed on posts with stacks of planks under it.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            for (u, v) in [
+                (-0.85, -0.7),
+                (0.85, -0.7),
+                (-0.85, 0.7),
+                (0.85, 0.7),
+                (0.0, -0.7),
+                (0.0, 0.7),
+            ] {
+                block(
+                    m,
+                    f,
+                    (u * hu, cv + v * hv),
+                    (0.3, 0.3),
+                    y,
+                    y + 5.0,
+                    LOG,
+                    LOG,
+                );
+            }
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.95 * hu, 0.85 * hv),
+                y + 5.0,
+                y + 5.8,
+                sc.roof,
+                sc.roof,
+            );
+            for k in 0..3 {
+                let u = (-0.55 + 0.55 * k as f32) * hu;
+                block(
+                    m,
+                    f,
+                    (u, cv),
+                    (0.2 * hu, 0.5 * hv),
+                    y,
+                    y + 2.5 - 0.4 * k as f32,
+                    PLANK,
+                    PLANK,
+                );
+            }
+        }
+        // ---- Ore ----
+        (2, 0) => {
+            // An office with a head frame.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (-0.4 * hu, cv),
+                (0.45 * hu, 0.5 * hv),
+                y,
+                y + 4.5,
+                sc.wall,
+                sc.roof,
+            );
+            headframe(m, f, (0.5 * hu, cv), 0.28 * r, y, 15.0, sc.trim, near);
+        }
+        (2, 1) => {
+            // An open pit: stepped terraces with a conveyor and a hopper.
+            ground(m, 0.15, ORE_PILE);
+            let y = b + 0.15;
+            for (k, w) in [0.9f32, 0.7, 0.5, 0.3].into_iter().enumerate() {
+                let c = 0.9 - 0.18 * k as f32;
+                block(
+                    m,
+                    f,
+                    (0.0, cv),
+                    (w * hu, w * hv),
+                    y + 0.3 * k as f32,
+                    y + 0.3 * (k + 1) as f32,
+                    [0.5 * c, 0.42 * c, 0.34 * c, 1.0],
+                    [0.55 * c, 0.46 * c, 0.38 * c, 1.0],
+                );
+            }
+            block(
+                m,
+                f,
+                (0.55 * hu, cv),
+                (0.35 * hu, 0.05 * hv),
+                y + 1.0,
+                y + 1.5,
+                STEEL,
+                DARK,
+            );
+            block(
+                m,
+                f,
+                (0.85 * hu, cv),
+                (0.08 * hu, 0.12 * hv),
+                y,
+                y + 3.5,
+                sc.wall,
+                sc.roof,
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (-0.3 * hu, cv - 0.8 * hv),
+                    (0.1 * hu, 0.08 * hv),
+                    y,
+                    y + 1.5,
+                    sc.trim,
+                    sc.trim,
+                );
+            }
+        }
+        (2, 2) => {
+            // A mine: a tall head frame over a shaft house, ore heaps beside it.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (-0.2 * hu, cv),
+                (0.4 * hu, 0.4 * hv),
+                y,
+                y + 4.5,
+                sc.wall,
+                sc.roof,
+            );
+            headframe(
+                m,
+                f,
+                (-0.2 * hu, cv),
+                0.34 * r,
+                y + 4.5,
+                20.0,
+                sc.trim,
+                near,
+            );
+            cone(
+                m,
+                f,
+                (0.6 * hu, cv - 0.4 * hv),
+                0.28 * r,
+                (y, y + 4.0),
+                n,
+                ORE_PILE,
+            );
+            if !far {
+                cone(
+                    m,
+                    f,
+                    (0.65 * hu, cv + 0.4 * hv),
+                    0.22 * r,
+                    (y, y + 3.0),
+                    n,
+                    ORE_PILE,
+                );
+            }
+        }
+        (2, 3) => {
+            // A blast furnace: a tall tapered stack, hot-blast stoves and pipes.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            cyl(
+                m,
+                f,
+                (-0.2 * hu, cv),
+                (0.3 * r, 0.2 * r),
+                (y, y + 8.0),
+                n,
+                STEEL,
+                None,
+            );
+            cyl(
+                m,
+                f,
+                (-0.2 * hu, cv),
+                (0.2 * r, 0.12 * r),
+                (y + 8.0, y + 20.0),
+                n,
+                sc.roof,
+                Some(DARK),
+            );
+            for k in 0..2 {
+                cyl(
+                    m,
+                    f,
+                    (0.5 * hu, cv + (-0.4 + 0.8 * k as f32) * hv),
+                    (0.14 * r, 0.14 * r),
+                    (y, y + 14.0),
+                    n,
+                    sc.wall,
+                    Some(sc.roof),
+                );
+            }
+            block(
+                m,
+                f,
+                (0.15 * hu, cv),
+                (0.35 * hu, 0.04 * hv),
+                y + 10.0,
+                y + 10.8,
+                DARK,
+                DARK,
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (-0.2 * hu, cv - 0.6 * hv),
+                    (0.2 * hu, 0.15 * hv),
+                    y,
+                    y + 3.0,
+                    sc.wall,
+                    sc.roof,
+                );
+            }
+        }
+        (2, 4) => {
+            // A glassworks: a hall, a domed furnace and a chimney.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (-0.2 * hu, cv),
+                (0.65 * hu, 0.6 * hv),
+                y,
+                y + 6.0,
+                sc.wall,
+                sc.roof,
+            );
+            cyl(
+                m,
+                f,
+                (0.5 * hu, cv),
+                (0.3 * r, 0.3 * r),
+                (y, y + 5.0),
+                n,
+                sc.glass,
+                None,
+            );
+            cyl(
+                m,
+                f,
+                (0.5 * hu, cv),
+                (0.3 * r, 0.1 * r),
+                (y + 5.0, y + 9.0),
+                n,
+                sc.glass,
+                Some(sc.trim),
+            );
+            cyl(
+                m,
+                f,
+                (-0.7 * hu, cv + 0.6 * hv),
+                (0.1 * r, 0.08 * r),
+                (y, y + 16.0),
+                n,
+                STEEL,
+                Some(DARK),
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (-0.2 * hu, cv - 0.6 * hv),
+                    (0.4 * hu, 0.03 * hv),
+                    y + 2.0,
+                    y + 4.0,
+                    sc.glass,
+                    sc.glass,
+                );
+            }
+        }
+        (2, 5) => {
+            // Bunkers: hoppers on legs.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            let k = if far { 2 } else { 3 };
+            for i in 0..k {
+                let u = (-0.6 + 1.2 * i as f32 / (k - 1) as f32) * hu;
+                for (du, dv) in [(-0.8, -0.8), (0.8, 0.8)] {
+                    block(
+                        m,
+                        f,
+                        (u + du * 0.16 * r, cv + dv * 0.16 * r),
+                        (0.3, 0.3),
+                        y,
+                        y + 4.0,
+                        STEEL,
+                        STEEL,
+                    );
+                }
+                cyl(
+                    m,
+                    f,
+                    (u, cv),
+                    (0.1 * r, 0.2 * r),
+                    (y + 3.0, y + 9.0),
+                    n,
+                    sc.wall,
+                    Some(sc.roof),
+                );
+            }
+        }
+        // ---- Oil ----
+        (3, 0) => {
+            // An office with a derrick as its logo.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (-0.4 * hu, cv),
+                (0.45 * hu, 0.5 * hv),
+                y,
+                y + 4.5,
+                sc.wall,
+                sc.roof,
+            );
+            cyl(
+                m,
+                f,
+                (0.5 * hu, cv),
+                (0.28 * r, 0.05 * r),
+                (y, y + 22.0),
+                4,
+                STEEL,
+                Some(DARK),
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (0.5 * hu, cv),
+                    (0.3 * r, 0.3 * r),
+                    y + 8.0,
+                    y + 8.5,
+                    DARK,
+                    DARK,
+                );
+            }
+        }
+        (3, 1) => {
+            // A pumpjack: a base, an A-frame, a walking beam with a horse head and a weight.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.3 * hu, 0.3 * hv),
+                y,
+                y + 0.8,
+                DARK,
+                DARK,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.06 * hu, 0.1 * hv),
+                y + 0.8,
+                y + 5.5,
+                STEEL,
+                STEEL,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.6 * hu, 0.06 * hv),
+                y + 5.5,
+                y + 6.2,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (-0.55 * hu, cv),
+                (0.08 * hu, 0.08 * hv),
+                y + 3.8,
+                y + 6.2,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.55 * hu, cv),
+                (0.1 * hu, 0.08 * hv),
+                y + 4.0,
+                y + 5.5,
+                DARK,
+                DARK,
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (0.8 * hu, cv),
+                    (0.1 * hu, 0.15 * hv),
+                    y,
+                    y + 2.0,
+                    sc.trim,
+                    sc.trim,
+                );
+            }
+        }
+        (3, 2) => {
+            // A drilling rig: a tall tapered derrick on a platform with a shed.
+            ground(m, 0.3, concrete);
+            let y = b + 0.3;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.5 * hu, 0.5 * hv),
+                y,
+                y + 1.0,
+                DARK,
+                DARK,
+            );
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.3 * r, 0.05 * r),
+                (y + 1.0, y + 32.0),
+                4,
+                STEEL,
+                Some(sc.trim),
+            );
+            block(
+                m,
+                f,
+                (0.7 * hu, cv - 0.6 * hv),
+                (0.2 * hu, 0.14 * hv),
+                y,
+                y + 3.0,
+                sc.wall,
+                sc.roof,
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (0.0, cv),
+                    (0.2 * r, 0.2 * r),
+                    y + 12.0,
+                    y + 12.6,
+                    DARK,
+                    DARK,
+                );
+            }
+        }
+        (3, 3) => {
+            // A refinery: three distillation columns, a flare and a pipe rack.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            for (k, h) in [24.0f32, 19.0, 15.0].into_iter().enumerate() {
+                cyl(
+                    m,
+                    f,
+                    ((-0.6 + 0.5 * k as f32) * hu, cv),
+                    (0.14 * r, 0.12 * r),
+                    (y, y + h),
+                    n,
+                    STEEL,
+                    Some(sc.roof),
+                );
+            }
+            cyl(
+                m,
+                f,
+                (0.7 * hu, cv + 0.5 * hv),
+                (0.06 * r, 0.05 * r),
+                (y, y + 20.0),
+                6,
+                DARK,
+                None,
+            );
+            cone(
+                m,
+                f,
+                (0.7 * hu, cv + 0.5 * hv),
+                0.07 * r,
+                (y + 20.0, y + 23.0),
+                6,
+                [1.0, 0.6, 0.15, 1.0],
+            );
+            block(
+                m,
+                f,
+                (0.0, cv - 0.5 * hv),
+                (0.8 * hu, 0.06 * hv),
+                y + 3.0,
+                y + 3.6,
+                DARK,
+                DARK,
+            );
+            if near {
+                cyl(
+                    m,
+                    f,
+                    (0.3 * hu, cv - 0.6 * hv),
+                    (0.15 * r, 0.15 * r),
+                    (y, y + 3.0),
+                    n,
+                    TANK_WHITE,
+                    Some(sc.roof),
+                );
+            }
+        }
+        (3, 4) => {
+            // A plastics works: a hall with spherical-looking tanks.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            block(
+                m,
+                f,
+                (-0.25 * hu, cv),
+                (0.6 * hu, 0.55 * hv),
+                y,
+                y + 6.0,
+                sc.wall,
+                sc.roof,
+            );
+            for k in 0..3 {
+                let v = (-0.55 + 0.55 * k as f32) * hv;
+                cyl(
+                    m,
+                    f,
+                    (0.6 * hu, cv + v),
+                    (0.12 * r, 0.2 * r),
+                    (y, y + 3.0),
+                    n,
+                    TANK_WHITE,
+                    None,
+                );
+                cyl(
+                    m,
+                    f,
+                    (0.6 * hu, cv + v),
+                    (0.2 * r, 0.06 * r),
+                    (y + 3.0, y + 6.0),
+                    n,
+                    TANK_WHITE,
+                    Some(sc.trim),
+                );
+            }
+            if near {
+                block(
+                    m,
+                    f,
+                    (-0.25 * hu, cv - 0.55 * hv),
+                    (0.4 * hu, 0.02 * hv),
+                    y + 2.0,
+                    y + 3.5,
+                    sc.glass,
+                    sc.glass,
+                );
+            }
+        }
+        (3, 5) => {
+            // A tank farm: short fat tanks with cone roofs.
+            ground(m, 0.2, concrete);
+            let y = b + 0.2;
+            let tanks = if far { 3 } else { 6 };
+            for k in 0..tanks {
+                let (c, rw) = (k % 3, k / 3);
+                let u = (-0.6 + 0.6 * c as f32) * hu;
+                let v = (-0.45 + 0.9 * rw as f32) * hv * if tanks == 3 { 0.0 } else { 1.0 };
+                cyl(
+                    m,
+                    f,
+                    (u, cv + v),
+                    (0.22 * r, 0.22 * r),
+                    (y, y + 5.0),
+                    n,
+                    TANK_WHITE,
+                    None,
+                );
+                cone(m, f, (u, cv + v), 0.23 * r, (y + 5.0, y + 6.4), n, sc.roof);
+            }
+        }
         _ => {}
+    }
+}
+
+/// A head frame: four slanted legs under a wheel house, `h` metres tall, with a pulley wheel.
+fn headframe(
+    m: &mut MeshData,
+    f: &Frame,
+    (cu, cv): (f32, f32),
+    w: f32,
+    y: f32,
+    h: f32,
+    col: [f32; 4],
+    near: bool,
+) {
+    cyl(m, f, (cu, cv), (w, 0.3 * w), (y, y + h), 4, col, None);
+    block(
+        m,
+        f,
+        (cu, cv),
+        (0.45 * w, 0.45 * w),
+        y + h,
+        y + h + 1.4,
+        DARK,
+        DARK,
+    );
+    if near {
+        cyl(
+            m,
+            f,
+            (cu, cv),
+            (0.3 * w, 0.3 * w),
+            (y + h + 1.4, y + h + 1.8),
+            8,
+            STEEL,
+            Some(col),
+        );
     }
 }

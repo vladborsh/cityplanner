@@ -1,0 +1,15 @@
+// Silhouette of an M5 chain building (T-212, T-213): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "chain_forest_processor_b",
+    massing: ForestProcessorB,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.75, 0.78, 0.80)],
+        roof: [(0.35, 0.40, 0.42)],
+        trim: [(0.92, 0.90, 0.85)],
+        glass: (0.40, 0.65, 0.82),
+    ),
+    facade: Punched,
+))

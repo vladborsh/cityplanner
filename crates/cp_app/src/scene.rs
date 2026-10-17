@@ -73,6 +73,35 @@ pub fn build_uniques(sim: &mut SimRunner) -> usize {
     })
 }
 
+/// M5 chain buildings scene (T-212, T-213): a row per resource (farm, forest, ore, oil), the
+/// main building, extractors, processors and warehouse along it. Look at it with `--cam chains`.
+pub const CHAINS: &str = "chains";
+
+/// Builds the [`CHAINS`] scene; returns how many buildings stand.
+pub fn build_chains(sim: &mut SimRunner) -> usize {
+    build_showcase_defs(sim, |db| {
+        let mut out = Vec::new();
+        for (row, res) in ["farm", "forest", "ore", "oil"].into_iter().enumerate() {
+            for (col, role) in [
+                "main",
+                "extractor_s",
+                "extractor_l",
+                "processor_a",
+                "processor_b",
+                "warehouse",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if let Some(id) = db.building_id(&format!("{res}_{role}")) {
+                    out.push((id, -125.0 + col as f32 * 50.0, row as f32 * 50.0));
+                }
+            }
+        }
+        out
+    })
+}
+
 /// Builds the [`SPECS`] scene; returns how many buildings stand.
 pub fn build_specs(sim: &mut SimRunner) -> usize {
     build_showcase_defs(sim, |db| {
