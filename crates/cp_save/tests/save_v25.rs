@@ -17,7 +17,7 @@ fn the_v24_fixture_loads_with_all_milestones_and_round_trips_with_a_lower_one() 
     let content = ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap();
     let mut l = load_with_map(&bytes, content.content_hash(), h.map_hash).unwrap();
     assert_eq!(l.data.progress, Progress::ALL);
-    l.data.progress = Progress { reached: 2 };
+    l.data.progress = Progress::at(2);
     let again = save_with_map(&l.data, h.content_hash, &h.map_id, h.map_hash).unwrap();
     assert_eq!(
         read_header(&again).unwrap().0.format_version,

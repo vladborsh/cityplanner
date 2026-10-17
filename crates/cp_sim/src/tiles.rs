@@ -21,7 +21,7 @@ fn rejected(reason: &str) -> CommandError {
 
 /// How many tiles the city may own at `progress`: the start tile and the `tiles` of every
 /// milestone reached. Without milestones in the content there is no limit.
-pub fn tile_limit(content: Option<&ContentDb>, progress: Progress) -> usize {
+pub fn tile_limit(content: Option<&ContentDb>, progress: &Progress) -> usize {
     let list = content.map_or(&[][..], |c| c.milestones());
     if list.is_empty() {
         return usize::MAX;
@@ -65,7 +65,7 @@ pub fn tile_state(view: &crate::SimView, tile: (u8, u8)) -> TileState {
         return TileState::Far;
     }
     let content = view.content.as_deref();
-    if view.tiles.open_count() >= tile_limit(content, view.progress) {
+    if view.tiles.open_count() >= tile_limit(content, &view.progress) {
         return TileState::NeedsMilestone;
     }
     let start = view
@@ -91,9 +91,9 @@ pub fn apply(world: &mut World, cmd: &TerrainCommand) -> Result<Cost, CommandErr
     let content = world.get_resource::<SimContent>().map(|c| Arc::clone(&c.0));
     let progress = world
         .get_resource::<Progress>()
-        .copied()
+        .cloned()
         .unwrap_or_default();
-    if owned.open_count() >= tile_limit(content.as_deref(), progress) {
+    if owned.open_count() >= tile_limit(content.as_deref(), &progress) {
         return Err(rejected("no more tiles until the next milestone"));
     }
     let start = world

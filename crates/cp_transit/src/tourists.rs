@@ -63,6 +63,10 @@ impl Tourists {
     }
 }
 
+/// Tourists a day per unit of weight: a unique building pulls `tourists_per_day / this` times
+/// what a shop does when the tourist picks a goal (T-200). // tune later
+const UNIQUE_WEIGHT_UNIT: f32 = 10.0;
+
 fn is_shop(z: ZoneType) -> bool {
     matches!(z, ZoneType::ComLow | ZoneType::ComHigh)
 }
@@ -166,14 +170,21 @@ pub fn run_tourists(
     if entries.is_empty() {
         return;
     }
-    let shops: Vec<(BuildingId, Vec2)> = buildings
+    // Goals: the shops (weight 1) and the unique buildings (weight by their tourists a day).
+    let (mut unique_per_day, mut shop_count) = (0.0, 0usize);
+    let shops: Vec<(BuildingId, Vec2, f32)> = buildings
         .iter()
-        .filter(|(_, b)| {
-            b.state == BuildingState::Active
-                && b.access().is_some()
-                && is_shop(db.building(b.def).zone)
+        .filter(|(_, b)| b.state == BuildingState::Active && b.access().is_some())
+        .filter_map(|(id, b)| {
+            let def = db.building(b.def);
+            if let Some(u) = def.unique.as_ref().filter(|u| u.tourists_per_day > 0.0) {
+                unique_per_day += u.tourists_per_day;
+                Some((id, b.pos, u.tourists_per_day / UNIQUE_WEIGHT_UNIT))
+            } else {
+                shop_count += usize::from(is_shop(def.zone));
+                is_shop(def.zone).then_some((id, b.pos, 1.0))
+            }
         })
-        .map(|(id, b)| (id, b.pos))
         .collect();
     if shops.is_empty() {
         return;
@@ -193,7 +204,9 @@ pub fn run_tourists(
         }
         _ => 1.0,
     };
-    let per_tick = (balance.tourism_base + balance.tourism_per_com * shops.len() as f32)
+    let per_tick = (balance.tourism_base
+        + balance.tourism_per_com * shop_count as f32
+        + unique_per_day)
         * promotion
         / TICKS_PER_DAY as f32;
     let mut r = rng.fork(TOURISM_STREAM, now);
@@ -206,12 +219,13 @@ pub fn run_tourists(
             break;
         }
         let (entry, from) = entries[r.below(entries.len() as u32) as usize];
-        let weight = |p: Vec2| 1.0 / (1.0 + p.distance(from) / balance.tourism_reach_m.max(1.0));
-        let total: f32 = shops.iter().map(|&(_, p)| weight(p)).sum();
+        let weight =
+            |p: Vec2, w: f32| w / (1.0 + p.distance(from) / balance.tourism_reach_m.max(1.0));
+        let total: f32 = shops.iter().map(|&(_, p, w)| weight(p, w)).sum();
         let mut pick = r.next_f32() * total;
         let mut goal = shops[shops.len() - 1].0;
-        for &(id, p) in &shops {
-            pick -= weight(p);
+        for &(id, p, w) in &shops {
+            pick -= weight(p, w);
             if pick <= 0.0 {
                 goal = id;
                 break;

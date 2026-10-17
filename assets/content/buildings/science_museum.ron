@@ -1,0 +1,18 @@
+// Numbers: tune later. Style and icon are stand-ins until T-202 / T-203.
+Building((
+    id: "science_museum",
+    name: "Science museum",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 3),
+    jobs: (0, 0, 0, 0),
+    consumption: {Power: 10.0},
+    tax_base: 0.0,
+    cost: 100000.0,
+    upkeep_week: 900.0,
+    styles: ["service_university"],
+    service: Some("landmark"),
+    icon: "university",
+    unique: Some((monument: false, unlock: [Population(6000), ServiceBuildings(kind: Education, n: 6)], tourists_per_day: 40.0)),
+    land_effect: Some((add: 12.0, radius_m: 220.0)),
+))

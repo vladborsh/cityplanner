@@ -75,7 +75,7 @@ mod tests {
         let mut sim = cp_sim::SimRunner::new(1);
         sim.set_content(content);
         sim.world_mut()
-            .insert_resource(cp_sim::Progress { reached });
+            .insert_resource(cp_sim::Progress::at(reached));
         sim.view()
     }
 

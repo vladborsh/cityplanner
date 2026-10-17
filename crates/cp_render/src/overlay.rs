@@ -107,7 +107,8 @@ impl Overlay {
             | ServiceKind::Power
             | ServiceKind::Roads
             | ServiceKind::Sewage
-            | ServiceKind::Transit => {
+            | ServiceKind::Transit
+            | ServiceKind::Landmark => {
                 return None;
             }
         })

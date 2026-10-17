@@ -71,7 +71,7 @@ fn a_neighbour_is_bought_for_its_ring_price_and_far_or_over_limit_tiles_are_refu
         buy(&mut s, (4, 3)),
         Err(CommandError::Rejected { .. })
     ));
-    s.world_mut().insert_resource(Progress { reached: 1 });
+    s.world_mut().insert_resource(Progress::at(1));
     buy(&mut s, (4, 3)).unwrap();
 }
 

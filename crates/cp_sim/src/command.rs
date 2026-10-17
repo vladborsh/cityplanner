@@ -119,8 +119,12 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
             if let (BuildingCommand::Place { def, .. }, Some(content)) =
                 (c, world.get_resource::<cp_content::SimContent>())
             {
-                let progress = world.get_resource::<crate::Progress>().copied();
-                crate::progress::check_unlocked(&progress.unwrap_or_default(), &content.0, *def)?;
+                let progress = world
+                    .get_resource::<crate::Progress>()
+                    .cloned()
+                    .unwrap_or_default();
+                let inputs = unlock_inputs(world, &content.0);
+                crate::progress::check_unlocked(&progress, &content.0, *def, &inputs)?;
             }
             apply_building(world, c)
                 .map_err(|e| rejected_or_funds("building", &e, e.insufficient_funds()))
@@ -343,4 +347,26 @@ mod tests {
         let back: CommandLog<SimCommand> = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(&back, log);
     }
+}
+
+/// What the unlock conditions of the unique buildings read, as of now.
+pub(crate) fn unlock_inputs(
+    world: &World,
+    db: &cp_content::ContentDb,
+) -> crate::progress::UnlockInputs {
+    crate::progress::UnlockInputs::gather(
+        db,
+        world
+            .get_resource::<cp_citizen::CitizenGrid>()
+            .map_or(0, |c| c.citizen_count() as u32),
+        world
+            .get_resource::<cp_building::BuildingGrid>()
+            .map_or(&Default::default(), |b| b),
+        world
+            .get_resource::<cp_district::Districts>()
+            .map_or(0, |d| d.iter().count() as u32),
+        world
+            .get_resource::<cp_transit::Tourists>()
+            .map_or(0, |t| t.visits_week),
+    )
 }

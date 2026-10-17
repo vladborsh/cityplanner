@@ -215,7 +215,7 @@ pub struct SaveData {
     pub coverage: cp_service::ServiceCoverage,
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: WorkerShortage,
-    /// The population milestone reached. Added in v25.
+    /// The population milestone reached (v25) and the unique buildings opened (v38).
     pub progress: cp_sim::Progress,
     /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
     /// with keep, since v29.
@@ -296,7 +296,7 @@ impl SaveData {
             service_state: world.resource::<cp_service::ServiceState>().clone(),
             coverage: world.resource::<cp_service::ServiceCoverage>().clone(),
             shortage: world.resource::<WorkerShortage>().clone(),
-            progress: *world.resource::<cp_sim::Progress>(),
+            progress: world.resource::<cp_sim::Progress>().clone(),
             service_runs: world.resource::<cp_traffic::ServiceRuns>().clone(),
             transit: world.resource::<cp_transit::TransitNet>().clone(),
             fleet: world.resource::<cp_transit::TransitFleet>().clone(),

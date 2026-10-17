@@ -1,0 +1,18 @@
+// Numbers: tune later. Style and icon are stand-ins until T-202 / T-203.
+Building((
+    id: "tv_tower",
+    name: "TV tower",
+    zone: Industrial,
+    level: 1,
+    lot: (2, 2),
+    jobs: (0, 0, 0, 0),
+    consumption: {Power: 10.0},
+    tax_base: 0.0,
+    cost: 120000.0,
+    upkeep_week: 1000.0,
+    styles: ["service_university"],
+    service: Some("landmark"),
+    icon: "university",
+    unique: Some((monument: false, unlock: [SpecBuildings(spec: "it_cluster", n: 10)], tourists_per_day: 25.0)),
+    land_effect: Some((add: 6.0, radius_m: 300.0)),
+))

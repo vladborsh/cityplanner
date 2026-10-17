@@ -632,7 +632,7 @@ impl SimRunner {
             demand: *self.world().resource::<cp_building::Demand>(),
             treasury: *self.world().resource::<cp_core::Treasury>(),
             flow: self.world().resource::<cp_economy::MoneyFlow>().clone(),
-            progress: *self.world().resource::<crate::Progress>(),
+            progress: self.world().resource::<crate::Progress>().clone(),
             economy: self.world().resource::<cp_economy::EconomyState>().clone(),
             lines: self.line_views(),
             transit_ledger: *self.world().resource::<cp_transit::TransitLedger>(),

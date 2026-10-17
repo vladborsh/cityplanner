@@ -240,6 +240,21 @@ impl LandGrids {
             }
         }
 
+        // Buildings that lift the land around them (T-200), falling off linearly to the radius.
+        let mut effect = vec![0.0f32; SIDE * SIDE];
+        for (_, b) in i.buildings.iter() {
+            if b.state != BuildingState::Active {
+                continue;
+            }
+            if let Some(e) = i.content.building(b.def).land_effect
+                && e.radius_m > 0.0
+            {
+                cells_near(b.pos, e.radius_m, |c, d| {
+                    effect[c] += e.add * (1.0 - d / e.radius_m)
+                });
+            }
+        }
+
         for c in 0..SIDE * SIDE {
             g.pollution[c] = g.pollution[c].min(100.0);
             g.noise[c] = g.noise[c].min(100.0);
@@ -256,7 +271,8 @@ impl LandGrids {
                 + if power[c] { bal.land_power } else { 0.0 }
                 - bal.land_pollution_weight * g.pollution[c]
                 - bal.land_noise_weight * g.noise[c]
-                + service[c];
+                + service[c]
+                + effect[c];
             g.land_value[c] = v.clamp(0.0, 100.0);
         }
         g

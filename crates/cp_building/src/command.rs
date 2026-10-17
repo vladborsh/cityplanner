@@ -94,6 +94,8 @@ pub enum BuildingError {
     Platform(String),
     /// A station is not moved: its platform stays where it is (T-162).
     Fixed,
+    /// A unique building stands in the city already (T-200): one per city.
+    UniqueBuilt,
 }
 
 impl BuildingError {
@@ -133,6 +135,7 @@ impl fmt::Display for BuildingError {
             Self::TooSteep => "ground too steep",
             Self::Platform(why) => return write!(f, "no room for the platform: {why}"),
             Self::Fixed => "a station cannot be moved",
+            Self::UniqueBuilt => "this unique building already stands in the city",
         })
     }
 }
@@ -411,6 +414,14 @@ pub fn apply_placed(
                 ) else {
                     return Err(BuildingError::Missing);
                 };
+                // One of each unique building per city, whatever state the first is in.
+                if content.0.building(*def).unique.is_some()
+                    && world
+                        .get_resource::<BuildingGrid>()
+                        .is_some_and(|g| g.iter().any(|(_, b)| b.def == *def))
+                {
+                    return Err(BuildingError::UniqueBuilt);
+                }
                 let terrain = world.get_resource::<SimTerrain>().map(|t| &*t.0);
                 let tiles = world.get_resource::<TileOwnership>();
                 let plan = if is_free_standing(&content.0, *def) {

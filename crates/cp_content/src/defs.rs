@@ -859,6 +859,58 @@ pub struct BuildingDef {
     /// The platform a station lays under itself (T-162); `None` for every other building.
     #[serde(default)]
     pub track: Option<TrackSpec>,
+    /// Set for a unique building or monument (T-200): one per city, unlocked by conditions.
+    #[serde(default)]
+    pub unique: Option<UniqueSpec>,
+    /// Land value this building adds around it (T-200), shared by M4 to M6 buildings.
+    #[serde(default)]
+    pub land_effect: Option<LandEffect>,
+}
+
+/// What makes a building unique (T-200, design §16 M4 C). Numbers: tune later.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UniqueSpec {
+    /// A monument (its own section of the build menu) rather than a unique building.
+    #[serde(default)]
+    pub monument: bool,
+    /// All of these must hold for the building to unlock; it stays unlocked after.
+    #[serde(default)]
+    pub unlock: Vec<UnlockCond>,
+    /// Tourists a day it adds to the city's flow, and the weight it has as a goal.
+    #[serde(default)]
+    pub tourists_per_day: f32,
+}
+
+/// One condition of an unlock. Append-only.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum UnlockCond {
+    Population(u32),
+    /// `n` buildings of a service kind stand (any state but demolished).
+    ServiceBuildings {
+        kind: ServiceKind,
+        n: u16,
+    },
+    /// Tourist visits in the week in progress.
+    TouristsWeek(u32),
+    /// `n` buildings of a district specialisation (by its id, e.g. `it_cluster`). Counts 0
+    /// until specialisations exist (T-196).
+    SpecBuildings {
+        spec: String,
+        n: u16,
+    },
+    /// This many unique buildings (monuments included) have been built.
+    UniquesBuilt(u8),
+    /// This many districts exist.
+    Districts(u8),
+}
+
+/// Land value around a building: `add` at its centre, falling off linearly to 0 at `radius_m`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LandEffect {
+    pub add: f32,
+    pub radius_m: f32,
 }
 
 /// The track under a station: `road` along the building's axis, centred on it, in a tunnel

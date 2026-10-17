@@ -1,0 +1,18 @@
+// Numbers: tune later. Style and icon are stand-ins until T-202 / T-203.
+Building((
+    id: "opera_house",
+    name: "Opera house",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 3),
+    jobs: (0, 0, 0, 0),
+    consumption: {Power: 10.0},
+    tax_base: 0.0,
+    cost: 90000.0,
+    upkeep_week: 900.0,
+    styles: ["service_university"],
+    service: Some("landmark"),
+    icon: "university",
+    unique: Some((monument: false, unlock: [TouristsWeek(300)], tourists_per_day: 40.0)),
+    land_effect: Some((add: 12.0, radius_m: 220.0)),
+))

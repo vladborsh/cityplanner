@@ -45,6 +45,8 @@ pub enum ServiceKind {
     Education = 9,
     /// Appended in T-156 (M3): the bus depot.
     Transit = 10,
+    /// Appended in T-200 (M4): unique buildings and monuments.
+    Landmark = 11,
 }
 
 /// Where a service building may stand (checked by `cp_building::validate_placement`).

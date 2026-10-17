@@ -125,7 +125,11 @@ pub(crate) fn economy_part(world: &World, h: &mut Fnv1a) {
     // Absent while nothing is locked (the default), so such states keep their checksum.
     let progress = world.resource::<crate::Progress>();
     if *progress != crate::Progress::ALL {
-        h.write_serialized(progress);
+        // `reached` alone is what v25 to v37 hashed; the unique buildings open come after it.
+        h.write_serialized(&progress.reached);
+        if !progress.unlocked.is_empty() {
+            h.write_serialized(&progress.unlocked);
+        }
     }
 }
 

@@ -1,0 +1,18 @@
+// Numbers: tune later. Style and icon are stand-ins until T-202 / T-203.
+Building((
+    id: "city_plaza",
+    name: "City plaza",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 3),
+    jobs: (0, 0, 0, 0),
+    consumption: {Power: 10.0},
+    tax_base: 0.0,
+    cost: 30000.0,
+    upkeep_week: 300.0,
+    styles: ["service_university"],
+    service: Some("landmark"),
+    icon: "university",
+    unique: Some((monument: false, unlock: [Population(1500)], tourists_per_day: 10.0)),
+    land_effect: Some((add: 8.0, radius_m: 160.0)),
+))

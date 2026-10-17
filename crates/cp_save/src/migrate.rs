@@ -1575,7 +1575,7 @@ pub fn migrate_v24_to_v25(v24: SaveDataV24) -> SaveDataV25 {
         service_state: v24.service_state,
         coverage: v24.coverage,
         shortage: v24.shortage,
-        progress: cp_sim::Progress::ALL,
+        progress: ProgressV37::ALL,
     }
 }
 
@@ -1635,7 +1635,7 @@ pub struct SaveDataV25 {
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: cp_economy::WorkerShortage,
     /// The population milestone reached. Added in v25.
-    pub progress: cp_sim::Progress,
+    pub progress: ProgressV37,
 }
 
 /// v25 → v26 (T-118): `TripPurpose::MoveIn` is appended; nothing in a v25 body changes.
@@ -1726,7 +1726,7 @@ pub struct SaveDataV26 {
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: cp_economy::WorkerShortage,
     /// The population milestone reached. Added in v25.
-    pub progress: cp_sim::Progress,
+    pub progress: ProgressV37,
 }
 
 /// v26 → v27 (T-151): service runs. A save from before it has none under way.
@@ -1818,7 +1818,7 @@ pub struct SaveDataV27 {
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: cp_economy::WorkerShortage,
     /// The population milestone reached. Added in v25.
-    pub progress: cp_sim::Progress,
+    pub progress: ProgressV37,
     /// Fire engines and garbage trucks on their way (T-151). Added in v27.
     pub service_runs: ServiceRunsV28,
 }
@@ -1878,7 +1878,7 @@ pub struct SaveDataV28 {
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: cp_economy::WorkerShortage,
     /// The population milestone reached. Added in v25.
-    pub progress: cp_sim::Progress,
+    pub progress: ProgressV37,
     /// Fire engines and garbage trucks on their way (T-151). Added in v27.
     pub service_runs: ServiceRunsV28,
     /// Bus stops and lines (T-153). Added in v28.
@@ -2050,7 +2050,7 @@ pub struct SaveDataV29 {
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: cp_economy::WorkerShortage,
     /// The population milestone reached. Added in v25.
-    pub progress: cp_sim::Progress,
+    pub progress: ProgressV37,
     /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
     /// with keep, since v29.
     pub service_runs: cp_traffic::ServiceRuns,
@@ -2163,7 +2163,7 @@ pub struct SaveDataV30 {
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: cp_economy::WorkerShortage,
     /// The population milestone reached. Added in v25.
-    pub progress: cp_sim::Progress,
+    pub progress: ProgressV37,
     /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
     /// with keep, since v29.
     pub service_runs: cp_traffic::ServiceRuns,
@@ -2293,7 +2293,7 @@ pub struct SaveDataV31 {
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: cp_economy::WorkerShortage,
     /// The population milestone reached. Added in v25.
-    pub progress: cp_sim::Progress,
+    pub progress: ProgressV37,
     /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
     /// with keep, since v29.
     pub service_runs: cp_traffic::ServiceRuns,
@@ -2441,7 +2441,7 @@ pub struct SaveDataV32 {
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: cp_economy::WorkerShortage,
     /// The population milestone reached. Added in v25.
-    pub progress: cp_sim::Progress,
+    pub progress: ProgressV37,
     /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
     /// with keep, since v29.
     pub service_runs: cp_traffic::ServiceRuns,
@@ -2566,7 +2566,7 @@ pub struct SaveDataV33 {
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: cp_economy::WorkerShortage,
     /// The population milestone reached. Added in v25.
-    pub progress: cp_sim::Progress,
+    pub progress: ProgressV37,
     /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
     /// with keep, since v29.
     pub service_runs: cp_traffic::ServiceRuns,
@@ -2673,7 +2673,7 @@ pub struct SaveDataV34 {
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: cp_economy::WorkerShortage,
     /// The population milestone reached. Added in v25.
-    pub progress: cp_sim::Progress,
+    pub progress: ProgressV37,
     /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
     /// with keep, since v29.
     pub service_runs: cp_traffic::ServiceRuns,
@@ -2783,7 +2783,7 @@ pub struct SaveDataV35 {
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: cp_economy::WorkerShortage,
     /// The population milestone reached. Added in v25.
-    pub progress: cp_sim::Progress,
+    pub progress: ProgressV37,
     /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
     /// with keep, since v29.
     pub service_runs: cp_traffic::ServiceRuns,
@@ -2940,7 +2940,7 @@ pub struct SaveDataV36 {
     /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
     pub shortage: cp_economy::WorkerShortage,
     /// The population milestone reached. Added in v25.
-    pub progress: cp_sim::Progress,
+    pub progress: ProgressV37,
     /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
     /// with keep, since v29.
     pub service_runs: cp_traffic::ServiceRuns,

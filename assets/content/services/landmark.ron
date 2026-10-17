@@ -1,0 +1,10 @@
+// Unique buildings and monuments (T-200): free-standing, no coverage (radius and capacity are placeholders). Numbers: tune later.
+Service((
+    id: "landmark",
+    name: "Landmark",
+    kind: Landmark,
+    radius_m: 100.0,
+    capacity: 1,
+    site: Land,
+    vehicles: [],
+))

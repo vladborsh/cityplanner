@@ -1,0 +1,18 @@
+// Numbers: tune later. Style and icon are stand-ins until T-202 / T-203.
+Building((
+    id: "clock_tower",
+    name: "Clock tower",
+    zone: Industrial,
+    level: 1,
+    lot: (2, 2),
+    jobs: (0, 0, 0, 0),
+    consumption: {Power: 10.0},
+    tax_base: 0.0,
+    cost: 40000.0,
+    upkeep_week: 350.0,
+    styles: ["service_university"],
+    service: Some("landmark"),
+    icon: "university",
+    unique: Some((monument: false, unlock: [Population(3000)], tourists_per_day: 15.0)),
+    land_effect: Some((add: 8.0, radius_m: 160.0)),
+))

@@ -86,6 +86,7 @@ fn kind_icon(kind: ServiceKind) -> Icon {
         ServiceKind::Police => Icon::OverlayPolice,
         ServiceKind::Education => Icon::OverlayEducation,
         ServiceKind::Transit => Icon::LineBus,
+        ServiceKind::Landmark => Icon::Buildings,
     }
 }
 
