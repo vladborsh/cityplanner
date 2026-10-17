@@ -161,7 +161,7 @@ fn winding_matches_normals_for_every_state() {
 }
 
 #[test]
-fn construction_grows_through_four_stages() {
+fn construction_grows_through_many_fine_stages() {
     let e = env();
     let (def_id, def) =
         e.db.buildings()
@@ -179,7 +179,8 @@ fn construction_grows_through_four_stages() {
     .iter()
     .map(|&t| construction_stage(&b, ready, Tick(t)))
     .collect();
-    assert_eq!(stages, [0, 1, 2, 3, 3]);
+    let n = STAGES;
+    assert_eq!(stages, [0, n / 4, n / 2, n * 3 / 4, n - 1]);
     let height = |tick: u64| {
         let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(tick));
         extent(&p.far).1.y
@@ -189,6 +190,15 @@ fn construction_grows_through_four_stages() {
         .map(|&t| height(t))
         .collect();
     assert!(hs.windows(2).all(|w| w[1] > w[0] + 0.5), "{hs:?}");
+    // No step of one stage is a jump: the climb is at most a floor high per stage.
+    let all: Vec<f32> = (0..STAGES)
+        .map(|k| height(ready * u64::from(k) / u64::from(STAGES) + 1))
+        .collect();
+    assert!(all.windows(2).all(|w| w[1] >= w[0]), "{all:?}");
+    assert!(
+        all.windows(2).all(|w| w[1] - w[0] < 1.5),
+        "a stage is a small step: {all:?}"
+    );
     // Near shows scaffolding (many more triangles than the plain core).
     let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
     assert!(p.near.triangle_count() > 3 * p.far.triangle_count());
@@ -196,6 +206,13 @@ fn construction_grows_through_four_stages() {
     let done = building(def_id, &e.db, BuildingState::Active, 0);
     let pd = build_building(id(1), &done, def, &e.net, &e.terrain, &e.db, Tick(0));
     assert!(extent(&pd.far).1.y >= hs[3]);
+    // The last stage is as tall as the finished building: the swap is no height jump.
+    assert!(
+        (extent(&pd.far).1.y - all[all.len() - 1]).abs() < 4.0,
+        "{} vs {}",
+        extent(&pd.far).1.y,
+        all[all.len() - 1]
+    );
 }
 
 #[test]
@@ -362,7 +379,7 @@ fn construction_stage_changes_trigger_a_rebuild_only_at_stage_boundaries() {
     assert_eq!(set.constructing(), 1);
     // Same stage: nothing to do.
     assert_eq!(
-        set.update(&grid, &e.net, &e.db, &e.terrain, Tick(100))
+        set.update(&grid, &e.net, &e.db, &e.terrain, Tick(1))
             .rebuilt,
         0
     );
@@ -373,7 +390,7 @@ fn construction_stage_changes_trigger_a_rebuild_only_at_stage_boundaries() {
             &e.net,
             &e.db,
             &e.terrain,
-            Tick(build_ticks(e.db.building(def)) / 4 + 1)
+            Tick(build_ticks(e.db.building(def)) / u64::from(STAGES) + 1)
         )
         .rebuilt,
         1

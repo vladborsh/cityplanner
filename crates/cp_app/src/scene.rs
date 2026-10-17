@@ -199,6 +199,41 @@ pub fn build_trucks(sim: &mut SimRunner) -> usize {
     kinds.len()
 }
 
+/// Construction scene (T-235): the same house at 0, 20, 40, 60, 80 and 99 % of its construction
+/// and, last, finished; the sim stands still. Look at it with `--cam construction`.
+pub const CONSTRUCTION: &str = "construction";
+
+/// Builds the [`CONSTRUCTION`] scene; returns how many buildings stand.
+pub fn build_construction(sim: &mut SimRunner, def_name: &str) -> usize {
+    use cp_building::BuildingState;
+    let now = sim.tick().0;
+    let n = build_showcase_with(
+        sim,
+        |db| {
+            let id = db.building_id(def_name).expect("the construction def");
+            (0..7)
+                .map(|i| (id, -150.0 + i as f32 * 50.0, 0.0))
+                .collect()
+        },
+        |i, d| {
+            let total = cp_building::build_ticks(d);
+            if i == 6 {
+                (BuildingState::Active, cp_core::Tick(0))
+            } else {
+                // `ready_at - tick` is what is left (the sim stands still from here).
+                let done = [0.0f32, 0.2, 0.4, 0.6, 0.8, 0.99][i];
+                (
+                    BuildingState::UnderConstruction,
+                    cp_core::Tick(now + ((1.0 - done) * total as f32).ceil() as u64),
+                )
+            }
+        },
+    );
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+    n
+}
+
 /// City parks scene (T-221): the four parks in a row. Look at it with `--cam parks`.
 pub const PARKS: &str = "parks";
 
@@ -246,7 +281,19 @@ fn build_showcase_defs(
     sim: &mut SimRunner,
     layout: impl Fn(&ContentDb) -> Vec<(cp_content::BuildingDefId, f32, f32)>,
 ) -> usize {
-    use cp_building::{AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingState, Lot};
+    build_showcase_with(sim, layout, |_, _| {
+        (cp_building::BuildingState::Active, cp_core::Tick(0))
+    })
+}
+
+/// [`build_showcase_defs`] with the state and `ready_at` of the `i`-th building chosen by
+/// `state_of(i, def)`.
+fn build_showcase_with(
+    sim: &mut SimRunner,
+    layout: impl Fn(&ContentDb) -> Vec<(cp_content::BuildingDefId, f32, f32)>,
+    state_of: impl Fn(usize, &cp_content::BuildingDef) -> (cp_building::BuildingState, cp_core::Tick),
+) -> usize {
+    use cp_building::{AccessPoint, Building, BuildingFlags, BuildingGrid, Lot};
     let db = embedded_content();
     let c = cp_terrain::MAP_SIZE / 2.0;
     let basic = db.road_id("basic_2l").expect("basic_2l");
@@ -272,8 +319,9 @@ fn build_showcase_defs(
         .expect("a segment");
     let defs = layout(&db);
     let mut grid = sim.world_mut().resource_mut::<BuildingGrid>();
-    for (id, dx, dz) in &defs {
+    for (i, (id, dx, dz)) in defs.iter().enumerate() {
         let d = db.building(*id);
+        let (state, ready_at) = state_of(i, d);
         grid.insert(Building {
             def: *id,
             footprint: cp_building::Footprint::Lot(Lot {
@@ -283,8 +331,8 @@ fn build_showcase_defs(
                 d: d.lot.1,
             }),
             level: d.level,
-            state: BuildingState::Active,
-            ready_at: cp_core::Tick(0),
+            state,
+            ready_at,
             pos: Vec2::new(c + dx, c - 130.0 + dz),
             rot: 0.0,
             access: Some(AccessPoint { segment, t: 0.5 }),

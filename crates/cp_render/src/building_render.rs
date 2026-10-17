@@ -72,8 +72,8 @@ pub(crate) struct BuildingState {
     rotors: BTreeMap<cp_building::BuildingId, (Entity, Rotor)>,
 }
 
-/// Construction looks change every quarter day; re-check a few times per stage.
-const REFRESH_TICKS: u64 = TICKS_PER_DAY / 16;
+/// A construction stage lasts a few dozen ticks (T-235): re-check about as often.
+const REFRESH_TICKS: u64 = TICKS_PER_DAY / 128;
 
 /// A turning rotor (view only: the angle comes from the frame clock, never from the sim).
 #[derive(Component)]

@@ -16,7 +16,7 @@
 //! Facade variation (wall colour from the palette, window shades, bay count) comes from a
 //! seed made of the building's id and def, never from RNG state.
 //!
-//! **Construction**: an `UnderConstruction` building shows one of four stages (a growing
+//! **Construction**: an `UnderConstruction` building shows one of [`STAGES`] stages (a growing
 //! concrete core inside a scaffolding frame), derived from `ready_at` and the tick;
 //! `Abandoned` is dulled with boarded windows; `Burned` is charred, lower and roofless.
 //!
@@ -49,8 +49,10 @@ pub const BUILDING_CHUNK: f32 = 256.0;
 pub const MID_DISTANCE: f32 = 450.0;
 /// No facade details beyond this (system-design §13.3), metres.
 pub const FAR_DISTANCE: f32 = 1500.0;
-/// Construction stages (`0..STAGES`).
-pub const STAGES: u8 = 4;
+/// Construction stages (`0..STAGES`). Fine enough that the core rises in steps of a few
+/// centimetres: it reads as a continuous climb at any game speed (T-235); the last stage is the
+/// finished height, so the swap to the finished model changes no height.
+pub const STAGES: u8 = 32;
 
 const SIDE_MARGIN: f32 = 1.0;
 const FRONT_SETBACK: f32 = 2.0;
@@ -652,7 +654,8 @@ fn scaffold(m: &mut MeshData, cx: &Ctx, top: f32) {
                 .normalize_or_zero();
         let floors = (h / 3.0).floor() as u32;
         for fl in 1..=floors {
-            let y = cx.base + fl as f32 * 3.0;
+            // `pa`/`pb` already stand at `cx.base`: the rail's height is relative to them.
+            let y = fl as f32 * 3.0;
             for nn in [normal, -normal] {
                 flat_quad(
                     m,
