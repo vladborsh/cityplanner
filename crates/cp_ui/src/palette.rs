@@ -108,7 +108,7 @@ pub fn palette(
                     let r = c
                         .icon()
                         .button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, selected)
-                        .on_hover_text(format!("{} ({})", c.label(), n + 1));
+                        .on_hover_text(format!("{} (Shift+{})", c.label(), n + 1));
                     rects.push((c, r.rect));
                     if r.clicked() {
                         toggle(state, c);
