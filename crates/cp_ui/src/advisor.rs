@@ -285,9 +285,15 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
             None,
         );
     }
+    // BUG-058: say why a shop has no goods.
+    let no_goods = if view.city.connected_to_highway {
+        "out of goods — the factories are too small or short of workers, importing"
+    } else {
+        "out of goods — no road to the highway for imports"
+    };
     for (id, bit, what) in [
         ("no_workers", BuildingFlags::NO_WORKERS, "short of workers"),
-        ("no_goods", BuildingFlags::NO_GOODS, "out of goods"),
+        ("no_goods", BuildingFlags::NO_GOODS, no_goods),
     ] {
         let (n, at) = flagged(view, bit);
         if n > 0 {

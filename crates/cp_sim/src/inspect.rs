@@ -72,10 +72,15 @@ pub struct BuildingInfo {
 }
 
 /// The goods a factory or shop holds, and the most it can hold.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GoodsInfo {
     pub stock: f32,
     pub cap: f32,
+    /// Shops (BUG-058): where the goods come from — the factory whose truck is on its way, the
+    /// nearest factory within reach, or `"Import"`.
+    pub supplier: Option<String>,
+    /// Shops: a truck with goods is on its way to it.
+    pub truck_on_the_way: bool,
 }
 
 /// The day's throughput and stock of a service building.
@@ -159,6 +164,31 @@ pub enum Inspection {
     Vehicle(VehicleInfo),
     Segment(SegmentInfo),
     Line(crate::view::LineView),
+}
+
+/// Name of the factory nearest to the shop `shop` within `radius`, if there is one.
+fn nearest_factory_name(
+    w: &bevy_ecs::world::World,
+    db: &cp_content::ContentDb,
+    shop: BuildingId,
+    radius: f32,
+) -> Option<String> {
+    let grid = w.resource::<cp_building::BuildingGrid>();
+    let origin = grid.get(shop)?.pos;
+    grid.iter()
+        .filter(|(_, b)| {
+            b.state == BuildingState::Active
+                && db.building(b.def).zone == cp_content::ZoneType::Industrial
+                && db.building(b.def).industry.is_none()
+                && b.pos.distance(origin) <= radius
+        })
+        .min_by(|a, b| {
+            a.1.pos
+                .distance(origin)
+                .total_cmp(&b.1.pos.distance(origin))
+                .then(a.0.cmp(&b.0))
+        })
+        .map(|(_, b)| db.building(b.def).name.clone())
 }
 
 pub fn flag_names(flags: BuildingFlags) -> Vec<&'static str> {
@@ -281,11 +311,31 @@ impl SimRunner {
                             | cp_content::ZoneType::ComLow
                             | cp_content::ZoneType::ComHigh
                     )
-                    .then(|| GoodsInfo {
-                        stock: w
-                            .get_resource::<cp_transit::Goods>()
-                            .map_or(0.0, |g| g.stock_of(id)),
-                        cap: bal.goods_stock_cap,
+                    .then(|| {
+                        let goods = w.get_resource::<cp_transit::Goods>();
+                        let shop = matches!(
+                            def.zone,
+                            cp_content::ZoneType::ComLow | cp_content::ZoneType::ComHigh
+                        );
+                        let inbound = goods.and_then(|g| {
+                            g.hauls
+                                .values()
+                                .find(|h| h.to == cp_transit::Endpoint::Building(id))
+                        });
+                        let supplier = shop.then(|| match inbound.map(|h| h.from) {
+                            Some(cp_transit::Endpoint::Building(f)) => {
+                                building_name(f).unwrap_or_default()
+                            }
+                            Some(cp_transit::Endpoint::Outside(_)) => "Import".to_string(),
+                            None => nearest_factory_name(w, db, id, bal.freight_radius_m)
+                                .unwrap_or_else(|| "Import".to_string()),
+                        });
+                        GoodsInfo {
+                            stock: goods.map_or(0.0, |g| g.stock_of(id)),
+                            cap: bal.goods_stock_cap,
+                            supplier,
+                            truck_on_the_way: inbound.is_some(),
+                        }
                     }),
                 }))
             }
@@ -461,8 +511,14 @@ impl Inspection {
                         r.push(row("Stored", format!("{} of {}", sv.stored, sv.storage)));
                     }
                 }
-                if let Some(g) = b.goods {
-                    r.push(row("Goods", format!("{:.0} of {:.0}", g.stock, g.cap)));
+                if let Some(g) = &b.goods {
+                    r.push(row("Goods", format!("{:.0} / {:.0}", g.stock, g.cap)));
+                    if let Some(s) = &g.supplier {
+                        r.push(row("Supplier", s.clone()));
+                    }
+                    if g.truck_on_the_way {
+                        r.push(row("Truck", "on the way".to_string()));
+                    }
                 }
                 if b.garbage > 0 {
                     r.push(row("Garbage", b.garbage.to_string()));

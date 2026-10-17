@@ -413,7 +413,7 @@ fn the_view_counts_the_trucks_and_the_card_shows_the_stock() {
     else {
         panic!("factory");
     };
-    let g = b.goods.expect("a factory keeps goods");
+    let g = b.goods.clone().expect("a factory keeps goods");
     assert_eq!(
         g.stock,
         t.sim.world().resource::<Goods>().stock_of(t.factory)
@@ -421,4 +421,134 @@ fn the_view_counts_the_trucks_and_the_card_shows_the_stock() {
     assert!(g.cap > 0.0);
     let rows = cp_sim::Inspection::Building(b).rows();
     assert!(rows.iter().any(|(l, _)| l == "Goods"), "{rows:?}");
+}
+
+// BUG-058: a weak factory must not starve the shops around it.
+
+/// Longest run of ticks the shop had `NO_GOODS` up, over `ticks` ticks.
+fn longest_no_goods(t: &mut Town, ticks: u64) -> u64 {
+    let (mut run, mut longest) = (0, 0);
+    for _ in 0..ticks {
+        t.sim.tick_once();
+        if flags(t, t.shops[0]).has(BuildingFlags::NO_GOODS) {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    longest
+}
+
+#[test]
+fn a_weak_factory_nearby_does_not_block_imports() {
+    // One worker makes 0.5 goods a day: a truck load of 20 takes 40 days.
+    let mut t = town_with(&[600.0], 1, true, true);
+    let mut imported = false;
+    for _ in 0..4096 * 3 {
+        t.sim.tick_once();
+        imported |= t
+            .sim
+            .world()
+            .resource::<Goods>()
+            .hauls
+            .values()
+            .any(|h| matches!(h.from, Endpoint::Outside(_)));
+    }
+    assert!(
+        imported,
+        "an import truck came although a factory stands near"
+    );
+    assert!(
+        t.sim.world().resource::<Goods>().stock_of(t.shops[0]) > 0.0,
+        "the shop has stock"
+    );
+}
+
+#[test]
+fn the_shop_is_never_out_of_goods_for_long_next_to_a_weak_factory() {
+    let mut t = town_with(&[600.0], 1, true, true);
+    let empty_after = (t
+        .sim
+        .view()
+        .content
+        .as_ref()
+        .unwrap()
+        .balance()
+        .goods_empty_days
+        * cp_core::time::TICKS_PER_DAY as f32) as u64;
+    let longest = longest_no_goods(&mut t, 4096 * 8);
+    assert!(longest <= empty_after, "NO_GOODS for {longest} ticks");
+}
+
+#[test]
+fn a_part_load_goes_to_an_empty_shop_without_an_entry_road() {
+    let mut t = town_with(&[600.0], 1, false, true);
+    let mut part = None;
+    for _ in 0..4096 * 12 {
+        t.sim.tick_once();
+        if let Some(h) = t.sim.world().resource::<Goods>().hauls.values().next() {
+            part = Some(h.load);
+            break;
+        }
+    }
+    let load = part.expect("the factory sent a part load");
+    assert!((5.0..20.0).contains(&load), "{load}");
+}
+
+#[test]
+fn a_well_stocked_city_factory_wins_over_the_import() {
+    let mut t = town_with(&[600.0], 2, true, true);
+    t.sim
+        .world_mut()
+        .resource_mut::<Goods>()
+        .stock
+        .insert(t.factory, 30.0);
+    let mut imported = false;
+    for _ in 0..4096 * 2 {
+        t.sim.tick_once();
+        imported |= t
+            .sim
+            .world()
+            .resource::<Goods>()
+            .hauls
+            .values()
+            .any(|h| matches!(h.from, Endpoint::Outside(_)));
+    }
+    assert!(!imported, "the factory had a load; no import");
+    assert!(t.sim.world().resource::<Goods>().stock_of(t.shops[0]) > 0.0);
+}
+
+#[test]
+fn the_shop_card_names_the_supplier_and_the_truck() {
+    let mut t = town_with(&[600.0], 0, true, false);
+    for _ in 0..4096 {
+        t.sim.tick_once();
+        if !t.sim.world().resource::<Goods>().hauls.is_empty() {
+            break;
+        }
+    }
+    let Some(cp_sim::Inspection::Building(b)) =
+        t.sim.inspect(cp_sim::Selection::Building(t.shops[0]))
+    else {
+        panic!("shop");
+    };
+    let g = b.goods.clone().unwrap();
+    assert_eq!(g.supplier.as_deref(), Some("Import"));
+    assert!(g.truck_on_the_way);
+    let rows = cp_sim::Inspection::Building(b).rows();
+    assert!(rows.iter().any(|(l, v)| l == "Supplier" && v == "Import"));
+    assert!(rows.iter().any(|(l, _)| l == "Truck"));
+}
+
+#[test]
+fn part_loads_and_imports_are_deterministic() {
+    let run = || {
+        let mut t = town_with(&[600.0], 1, true, true);
+        for _ in 0..4096 * 6 {
+            t.sim.tick_once();
+        }
+        t.sim.checksum()
+    };
+    assert_eq!(run(), run());
 }

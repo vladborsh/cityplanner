@@ -5,7 +5,8 @@
 //! `goods_stock_cap`) and a commercial one takes `goods_per_job × filled jobs` off. A factory
 //! holding a `goods_truck_load` sends a truck (a `Cargo` run of `cp_traffic`) to the shop with the
 //! least stock within `freight_radius_m` (straight-line distance; a tie goes to the smaller
-//! `BuildingId`); the load leaves the factory at once and is added to the shop when the truck is
+//! `BuildingId`); a factory holding a quarter of a load sends the part load to an empty shop
+//! (BUG-058). The load leaves the factory at once and is added to the shop when the truck is
 //! there (with the vehicle pool full the run arrives abstractly). A shop that has stood empty for
 //! `goods_empty_days` gets `NO_GOODS`; a delivery clears it. A run that fails (the shop was
 //! demolished on the way, no route) loses its load.
@@ -13,8 +14,9 @@
 //! **Exports and imports (T-170).** A factory holding a load with no shop within the radius sends
 //! the truck to the nearest `Outside` node of a highway instead: the load leaves the map and
 //! `export_price × load` goes to the [`TransitLedger`] (and on to the week report) when the truck
-//! is there. A shop below `goods_import_threshold` with no factory within the radius gets a truck
-//! from the nearest `Outside` node, free for the treasury (it is traffic on the entry road). With
+//! is there. A shop below `goods_import_threshold` with no factory within the radius that holds
+//! at least a quarter of a load (BUG-058; a weak factory does not block imports) and no truck on
+//! its way gets a truck from the nearest `Outside` node, free for the treasury (it is traffic on the entry road). With
 //! no `Outside` node nothing is exported or imported, as before.
 
 use std::collections::BTreeMap;
@@ -31,6 +33,9 @@ use cp_core::{Cost, Tick};
 use cp_net::{NetGraph, NodeId, NodeKind, node_is_rail};
 use cp_traffic::{Agents, RunId, RunPoint, RunState, ServiceRuns};
 use serde::{Deserialize, Serialize};
+
+/// A factory may send a part load of at least this share of `goods_truck_load` to an empty shop.
+const PARTIAL_LOAD_SHARE: f32 = 0.25;
 
 /// Ticks between two buckets: a day in 64 parts.
 pub const GOODS_BUCKET_TICKS: u64 = TICKS_PER_DAY / 64;
@@ -238,18 +243,30 @@ pub fn run_goods(
             ZoneType::Industrial => {
                 let s = goods.stock.entry(id).or_default();
                 *s = (*s + bal.goods_per_worker * filled(id)).min(bal.goods_stock_cap);
-                if *s >= bal.goods_truck_load
+                let stock = *s;
+                let full = stock >= bal.goods_truck_load;
+                // A small factory may send a part load (BUG-058) to a shop that stands empty.
+                let partial = !full && stock >= bal.goods_truck_load * PARTIAL_LOAD_SHARE;
+                if (full || partial)
                     && b.access().is_some()
                     && !goods
                         .hauls
                         .values()
                         .any(|h| h.from == Endpoint::Building(id))
                 {
-                    let to = match pick_shop(&buildings, &goods, db, id, bal.freight_radius_m) {
-                        Some(shop) => Some((Endpoint::Building(shop), RunPoint::Building(shop))),
-                        // Nobody to sell to nearby: the goods go out of the country.
-                        None => nearest_entry(b.pos)
-                            .map(|e| (Endpoint::Outside(e), RunPoint::Outside(e))),
+                    let load = stock.min(bal.goods_truck_load);
+                    let to = if partial {
+                        pick_empty_shop(&buildings, &goods, db, id, bal.freight_radius_m)
+                            .map(|shop| (Endpoint::Building(shop), RunPoint::Building(shop)))
+                    } else {
+                        match pick_shop(&buildings, &goods, db, id, bal.freight_radius_m) {
+                            Some(shop) => {
+                                Some((Endpoint::Building(shop), RunPoint::Building(shop)))
+                            }
+                            // Nobody to sell to nearby: the goods go out of the country.
+                            None => nearest_entry(b.pos)
+                                .map(|e| (Endpoint::Outside(e), RunPoint::Outside(e))),
+                        }
                     };
                     if let Some((to, point)) = to {
                         let run = runs.start_run(
@@ -258,13 +275,13 @@ pub fn run_goods(
                             point,
                             false,
                         );
-                        *goods.stock.get_mut(&id).expect("just set") -= bal.goods_truck_load;
+                        *goods.stock.get_mut(&id).expect("just set") -= load;
                         goods.hauls.insert(
                             run,
                             Haul {
                                 from: Endpoint::Building(id),
                                 to,
-                                load: bal.goods_truck_load,
+                                load,
                                 cargo: CargoKind::Goods,
                             },
                         );
@@ -287,7 +304,7 @@ pub fn run_goods(
                 if low
                     && b.access().is_some()
                     && !goods.hauls.values().any(|h| h.to == Endpoint::Building(id))
-                    && !has_supplier(&buildings, db, id, bal.freight_radius_m)
+                    && !has_stocked_supplier(&buildings, &goods, db, id, bal)
                     && let Some(entry) = nearest_entry(b.pos)
                 {
                     let run = runs.start_run(
@@ -351,21 +368,61 @@ fn pick_shop(
     best.map(|(_, id)| id)
 }
 
-/// Whether an active factory with a road stands within `radius` of the shop `shop`.
-fn has_supplier(
+/// The shop within `radius` of the factory `from` that has no stock (smaller id on a tie of
+/// distance order: the first by id) and no truck on its way.
+fn pick_empty_shop(
     buildings: &BuildingGrid,
+    goods: &Goods,
+    db: &cp_content::ContentDb,
+    from: BuildingId,
+    radius: f32,
+) -> Option<BuildingId> {
+    let origin = buildings.get(from)?.pos;
+    buildings
+        .iter()
+        .filter(|(id, b)| {
+            b.state == BuildingState::Active
+                && b.access().is_some()
+                && matches!(
+                    db.building(b.def).zone,
+                    ZoneType::ComLow | ZoneType::ComHigh
+                )
+                && db.building(b.def).industry.is_none()
+                && b.pos.distance(origin) <= radius
+                && goods.stock_of(*id) <= 0.0
+                && !goods
+                    .hauls
+                    .values()
+                    .any(|h| h.to == Endpoint::Building(*id))
+        })
+        .min_by(|a, b| {
+            a.1.pos
+                .distance(origin)
+                .total_cmp(&b.1.pos.distance(origin))
+                .then(a.0.cmp(&b.0))
+        })
+        .map(|(id, _)| id)
+}
+
+/// Whether an active factory with a road stands within the delivery radius of the shop `shop`
+/// and could send a load soon: it holds a truck load, or a part load while the shop is empty
+/// (BUG-058). A weak factory that cannot fill a truck does not block imports.
+fn has_stocked_supplier(
+    buildings: &BuildingGrid,
+    goods: &Goods,
     db: &cp_content::ContentDb,
     shop: BuildingId,
-    radius: f32,
+    bal: &cp_content::Balance,
 ) -> bool {
     let Some(origin) = buildings.get(shop).map(|b| b.pos) else {
         return false;
     };
-    buildings.iter().any(|(_, b)| {
+    buildings.iter().any(|(id, b)| {
         b.state == BuildingState::Active
             && b.access().is_some()
             && db.building(b.def).zone == ZoneType::Industrial
             && db.building(b.def).industry.is_none()
-            && b.pos.distance(origin) <= radius
+            && b.pos.distance(origin) <= bal.freight_radius_m
+            && goods.stock_of(id) >= bal.goods_truck_load * PARTIAL_LOAD_SHARE
     })
 }
