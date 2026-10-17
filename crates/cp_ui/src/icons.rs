@@ -66,6 +66,7 @@ icons! {
     LineMetro => "line_metro",
     MetroTrack => "metro_track",
     RailTrack => "rail_track",
+    FlipRoad => "flip_road",
     BusStop => "bus_stop",
     Building => "building",
     // Top bar (T-100): speeds, the view and settings menus, one icon per overlay.

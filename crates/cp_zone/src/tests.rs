@@ -1205,3 +1205,57 @@ fn a_slightly_skewed_block_still_has_no_overlap() {
     let between: Vec<_> = rows.iter().filter(|r| r.0 > 5.9 && r.1 < 79.0).collect();
     assert_eq!(between.len(), 8, "{rows:?}");
 }
+
+/// T-091: a segment that is turned round (`FlipSegment`) gets its blocks made again; what was
+/// painted stays on the same cells (the BUG-015 carry-over, by position, not by side).
+#[test]
+fn painted_zones_stay_on_the_same_ground_when_a_segment_is_flipped() {
+    use cp_content::ZoneType;
+    let mut w = World::new();
+    let seg = w.line("basic_2l", (1000.0, 1000.0), (1090.0, 1000.0));
+    w.sync();
+    // Paint the left block's row 0 and the right block's row 1.
+    for (slot, row) in [(0usize, 0u16), (1, 1)] {
+        let block = w.grid.blocks_of(seg)[slot].unwrap();
+        let cells: Vec<ZoneCellRef> = (0..w.grid.block(block).unwrap().cols)
+            .map(|col| ZoneCellRef {
+                block,
+                cell: col * BLOCK_DEPTH + row,
+            })
+            .collect();
+        for c in cells {
+            w.grid.set_zone(c, ZoneType::ResLow);
+        }
+    }
+    // The painted cells' centres before.
+    let centres = |w: &World| -> Vec<(i32, i32)> {
+        let mut v: Vec<(i32, i32)> = w
+            .grid
+            .blocks()
+            .flat_map(|(id, b)| {
+                (0..b.cell_count())
+                    .filter(move |i| b.zones[*i] != ZoneType::None)
+                    .map(move |i| (id, i))
+            })
+            .map(|(id, i)| {
+                let o = w
+                    .grid
+                    .cell_footprint(ZoneCellRef {
+                        block: id,
+                        cell: i as u16,
+                    })
+                    .unwrap();
+                ((o.c.x * 10.0).round() as i32, (o.c.y * 10.0).round() as i32)
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    let before = centres(&w);
+    assert!(!before.is_empty());
+    let def = w.db.road(w.road("basic_2l")).clone();
+    w.net.flip_segment(seg, &def).unwrap();
+    w.sync();
+    let after = centres(&w);
+    assert_eq!(before, after);
+}

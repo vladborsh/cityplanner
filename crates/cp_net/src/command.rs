@@ -54,6 +54,9 @@ pub enum NetCommand {
     /// The remnants keep the segment's orientation and road; the cut nodes become dead ends.
     /// Appended last: older logs read and replay as before.
     RemovePart { seg: SegmentId, s0: f32, s1: f32 },
+    /// Turns a one-way road round (T-091): the segment keeps its place and its type, but now
+    /// runs the other way. Fails with `NotOneWay` on a two-way road. Free.
+    FlipSegment { seg: SegmentId },
 }
 
 /// A `RemovePart` end closer than this (metres) to an end of the segment moves onto that end.
@@ -72,6 +75,8 @@ pub enum NetError {
     UnknownRoad(RoadDefId),
     /// `UpgradeSegment` to the road the segment already has.
     SameRoad,
+    /// `FlipSegment` on a road that has lanes both ways.
+    NotOneWay(SegmentId),
     /// The segment is elevated but the new road type has no elevated variant.
     NoElevatedVariant(RoadDefId),
     /// The segment is underground but the new road type has no tunnel variant.
@@ -119,6 +124,7 @@ impl fmt::Display for NetError {
             Self::BadPartRange => write!(f, "part to remove is empty or not a range"),
             Self::UnknownRoad(r) => write!(f, "unknown road type {r:?}"),
             Self::SameRoad => write!(f, "segment already has this road type"),
+            Self::NotOneWay(_) => write!(f, "only a one-way road can be turned round"),
             Self::NoElevatedVariant(r) => write!(f, "road type {r:?} has no elevated variant"),
             Self::NoTunnelVariant(r) => write!(f, "road type {r:?} has no tunnel variant"),
             Self::WrongKind(r) => write!(f, "road type {r:?} does not fit this segment"),
@@ -266,6 +272,19 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
             graph.upgrade_segment(*seg, def, *road)?;
             charge_funds(world, cost);
             Ok(cost)
+        }
+        NetCommand::FlipSegment { seg } => {
+            let content = content()?;
+            check_owned(world, *seg)?;
+            let mut graph = world.resource_mut::<NetGraph>();
+            let s = graph.segment(*seg).ok_or(NetError::UnknownSegment(*seg))?;
+            let road = s.road;
+            let def = content.road(road);
+            if !def.is_one_way() {
+                return Err(NetError::NotOneWay(*seg));
+            }
+            graph.flip_segment(*seg, def)?;
+            Ok(Cost::ZERO)
         }
         NetCommand::RemoveSegment { seg } => {
             check_owned(world, *seg)?;

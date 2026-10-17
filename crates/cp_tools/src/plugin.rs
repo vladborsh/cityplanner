@@ -56,6 +56,8 @@ pub enum ActiveTool {
     UtilityRemove,
     /// Drawing a bus line stop by stop (Transport category, T-157).
     Line,
+    /// Turning a one-way road round (T-091).
+    Flip,
 }
 
 /// The road ghost: what the cursor would build.
@@ -104,6 +106,8 @@ pub struct ToolState {
     pub shift: bool,
     /// What the upgrade tool would do to the run under the cursor (T-081).
     pub upgrade_preview: Option<crate::upgrade::UpgradePreview>,
+    /// What the flip tool would do to the run under the cursor (T-091).
+    pub flip_preview: Option<crate::flip::FlipPreview>,
     pub zone: ZoneTool,
     pub district: crate::district::DistrictTool,
     /// Cells the district brush would change at the cursor (the highlight).
@@ -168,6 +172,7 @@ impl ToolState {
         self.highlight_outside = false;
         self.spans.clear();
         self.upgrade_preview = None;
+        self.flip_preview = None;
         self.ghost_key = None;
         self.zone.cancel();
         self.zone_preview.clear();
@@ -595,6 +600,17 @@ fn tool_hover(
                 .is_some_and(|u| u.errors.iter().any(|e| e == crate::upgrade::OUTSIDE_LAND));
             state.upgrade_preview = preview;
         }
+        (ActiveTool::Flip, Some(p)) => {
+            let preview = view.content.as_deref().and_then(|content| {
+                pick_segment(&view.net, p, PICK_RADIUS)
+                    .map(|seg| crate::flip::flip_preview(&view.net, &view.tiles, content, seg))
+            });
+            state.highlight = preview.as_ref().map(|f| f.run.clone()).unwrap_or_default();
+            state.highlight_outside = preview
+                .as_ref()
+                .is_some_and(|f| f.errors.iter().any(|e| e == crate::upgrade::OUTSIDE_LAND));
+            state.flip_preview = preview;
+        }
         (ActiveTool::Line, Some(p)) => {
             let key = LineGhostKey {
                 hover: (p.x.round() as i32, p.y.round() as i32),
@@ -651,6 +667,7 @@ fn tool_hover(
             state.highlight_outside = false;
             state.spans.clear();
             state.upgrade_preview = None;
+            state.flip_preview = None;
             state.building_highlight = None;
             state.stop_highlight = None;
             if state.active != ActiveTool::Line {
@@ -943,6 +960,14 @@ pub fn tool_click(
                 }
                 state.highlight.clear();
                 state.spans.clear();
+            }
+        }
+        ActiveTool::Flip => {
+            if let Some(preview) = state.flip_preview.take() {
+                for command in crate::flip::flip_commands(&preview) {
+                    outbox.push(command);
+                }
+                state.highlight.clear();
             }
         }
         ActiveTool::Upgrade => {

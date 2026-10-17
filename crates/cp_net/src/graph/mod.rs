@@ -427,6 +427,38 @@ impl NetGraph {
         Ok(())
     }
 
+    /// Turns a segment round (`FlipSegment`, T-091): start and end change places, the curve
+    /// runs the other way and the lanes are made again from `def` along it, so a one-way
+    /// road's lanes now point the opposite way. Both end nodes are marked dirty, so the
+    /// junction plans and the lane connections there are recomputed in the Network phase.
+    pub fn flip_segment(&mut self, id: SegmentId, def: &RoadDef) -> Result<(), NetOpError> {
+        let seg = self
+            .segments
+            .get(id)
+            .ok_or(NetOpError::UnknownSegment(id))?;
+        let old_lanes = seg.lanes.clone();
+        let c = seg.curve;
+        let (start, end) = (seg.start, seg.end);
+        let curve = CubicBezier3 {
+            p0: c.p3,
+            p1: c.p2,
+            p2: c.p1,
+            p3: c.p0,
+        };
+        for l in old_lanes {
+            self.lanes.remove(l);
+        }
+        let lanes = self.build_lanes(id, def, &curve);
+        let seg = self.segments.get_mut(id).expect("checked above");
+        seg.curve = curve;
+        seg.start = end;
+        seg.end = start;
+        seg.lanes = lanes;
+        self.dirty.insert(start);
+        self.dirty.insert(end);
+        Ok(())
+    }
+
     /// The player's `ToggleTrafficLight`: a node with a light (automatic or not) becomes
     /// `ManualPriority`, any other `ManualTrafficLight`. Needs a junction (>= 3 segments).
     /// Marks the node dirty so the Network phase rebuilds its plan. Returns the new control.

@@ -509,6 +509,21 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ui.weak("Click to start a road. Esc cancels.");
             }
         },
+        (Category::Roads, ActiveTool::Flip) => match &tools.flip_preview {
+            Some(f) if !f.errors.is_empty() => bad(ui, &f.errors, "cannot flip"),
+            Some(f) => {
+                let n = f.run.len();
+                ok(
+                    ui,
+                    "can flip",
+                    None,
+                    format!(" · {n} segment{}", if n == 1 { "" } else { "s" }),
+                );
+            }
+            None => {
+                ui.weak("Click a one-way road to turn its whole run round. Esc leaves the tool.");
+            }
+        },
         (Category::Roads, ActiveTool::Upgrade) => match &tools.upgrade_preview {
             Some(u) if !u.errors.is_empty() => bad(ui, &u.errors, "cannot upgrade"),
             Some(u) if u.is_noop() => {

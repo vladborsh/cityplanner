@@ -15,6 +15,7 @@ pub mod band;
 pub mod building;
 pub mod bulldozer;
 pub mod district;
+pub mod flip;
 mod outbox;
 pub mod pick;
 pub mod plugin;
@@ -35,6 +36,7 @@ pub use bulldozer::{
 };
 pub use cp_render::UiCapture;
 pub use district::{DistrictTool, DistrictToolKind};
+pub use flip::{FlipPreview, NOT_ONE_WAY, flip_commands, flip_preview};
 pub use outbox::CommandOutbox;
 pub use pick::{Inspected, Picked, pick, pick_line, pick_with};
 pub use plugin::{

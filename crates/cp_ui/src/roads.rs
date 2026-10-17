@@ -145,6 +145,14 @@ pub fn roads_panel(
                 ActiveTool::Upgrade
             });
         }
+        let on = tools.active == ActiveTool::Flip;
+        if crate::panels::tool_button(ui, Icon::FlipRoad, "Flip", on).clicked() {
+            tools.select(if on {
+                ActiveTool::None
+            } else {
+                ActiveTool::Flip
+            });
+        }
         let on = tools.active == ActiveTool::Bulldozer;
         if crate::panels::tool_button(ui, Icon::Bulldozer, "Bulldozer", on).clicked() {
             tools.select(if on {

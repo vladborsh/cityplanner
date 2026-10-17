@@ -60,6 +60,7 @@ impl SimCommand {
             SimCommand::SetSpeed { .. }
             | SimCommand::Net(NetCommand::RemoveSegment { .. })
             | SimCommand::Net(NetCommand::RemovePart { .. })
+            | SimCommand::Net(NetCommand::FlipSegment { .. })
             | SimCommand::Net(NetCommand::ToggleTrafficLight { .. })
             | SimCommand::Building(BuildingCommand::Demolish { .. })
             | SimCommand::Building(BuildingCommand::Move { .. })
@@ -142,7 +143,8 @@ fn platform_target(c: &NetCommand) -> Option<cp_net::SegmentId> {
     match c {
         NetCommand::RemoveSegment { seg }
         | NetCommand::RemovePart { seg, .. }
-        | NetCommand::UpgradeSegment { seg, .. } => Some(*seg),
+        | NetCommand::UpgradeSegment { seg, .. }
+        | NetCommand::FlipSegment { seg } => Some(*seg),
         NetCommand::BuildRoad { .. } | NetCommand::ToggleTrafficLight { .. } => None,
     }
 }

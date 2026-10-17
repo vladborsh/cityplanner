@@ -74,9 +74,11 @@ impl Sound {
 /// of road segments is one `BuildRoad` per click, so one sound).
 pub fn sound_for_command(command: &SimCommand) -> Option<Sound> {
     match command {
-        SimCommand::Net(NetCommand::BuildRoad { .. } | NetCommand::UpgradeSegment { .. }) => {
-            Some(Sound::RoadBuilt)
-        }
+        SimCommand::Net(
+            NetCommand::BuildRoad { .. }
+            | NetCommand::UpgradeSegment { .. }
+            | NetCommand::FlipSegment { .. },
+        ) => Some(Sound::RoadBuilt),
         SimCommand::Net(NetCommand::RemoveSegment { .. } | NetCommand::RemovePart { .. }) => {
             Some(Sound::Demolish)
         }
