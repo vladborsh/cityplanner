@@ -45,6 +45,7 @@ pub struct ProblemIconStats {
 #[derive(Resource, Default)]
 struct ProblemIcons {
     last: Option<Arc<BuildingGrid>>,
+    industry: Option<Arc<cp_industry::IndustryState>>,
     state_revision: Option<u64>,
     /// Pieces known when `marked` was built; roofs appear a frame after the grid changes.
     pieces: usize,
@@ -77,19 +78,29 @@ fn refresh_marked(
         .last
         .as_ref()
         .is_none_or(|g| !Arc::ptr_eq(g, &view.buildings))
+        || icons
+            .industry
+            .as_ref()
+            .is_none_or(|g| !Arc::ptr_eq(g, &view.industry))
         || icons.state_revision != Some(view.service_state.revision())
         || icons.pieces != pieces;
     if !stale {
         return;
     }
-    icons.marked = problem::mark(view.buildings.iter(), &view.service_state, |id| {
-        buildings.set.piece(id).map(|p| {
-            let c = p.center();
-            Vec3::new(c.x, p.max.y, c.z)
-        })
-    });
+    icons.marked = problem::mark(
+        view.buildings.iter(),
+        &view.service_state,
+        &view.industry,
+        |id| {
+            buildings.set.piece(id).map(|p| {
+                let c = p.center();
+                Vec3::new(c.x, p.max.y, c.z)
+            })
+        },
+    );
     icons.lod.clear();
     icons.last = Some(Arc::clone(&view.buildings));
+    icons.industry = Some(Arc::clone(&view.industry));
     icons.pieces = pieces;
     icons.state_revision = Some(view.service_state.revision());
     stats.marked = icons.marked.len();

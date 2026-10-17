@@ -316,7 +316,7 @@ pub fn unique_rows(content: &ContentDb, def: &str) -> Vec<(String, String)> {
 }
 
 /// A padlock (locked) or a tick (built) in the corner of a tile.
-fn badge(ui: &egui::Ui, tile: egui::Rect, state: UniqueState) {
+pub(crate) fn badge(ui: &egui::Ui, tile: egui::Rect, state: UniqueState) {
     let (colour, size) = match state {
         UniqueState::Open => return,
         UniqueState::Locked => (egui::Color32::from_gray(210), 14.0),
@@ -643,6 +643,7 @@ mod tests {
             cost: Some(Cost(1_200_000)),
             error: None,
             free: None,
+            richness: None,
         });
         let ok = drawn(&tools);
         assert!(ok.contains("can place") && ok.contains("12,000"), "{ok}");
@@ -653,6 +654,7 @@ mod tests {
             cost: None,
             error: Some("not on water".into()),
             free: None,
+            richness: None,
         });
         let bad = drawn(&tools);
         assert!(

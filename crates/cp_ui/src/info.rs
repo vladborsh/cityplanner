@@ -78,7 +78,10 @@ pub fn info_panel(
                             .is_some_and(|d| db.building(d).service.is_some())
                     });
                     if let Some(db) = view.and_then(|v| v.content.as_deref()) {
-                        let rows = crate::buildings::unique_rows(db, &b.def);
+                        let mut rows = crate::buildings::unique_rows(db, &b.def);
+                        if let Some(v) = view {
+                            rows.extend(crate::industry::industry_rows(v, b.id));
+                        }
                         if !rows.is_empty() {
                             egui::Grid::new("unique_rows")
                                 .num_columns(2)

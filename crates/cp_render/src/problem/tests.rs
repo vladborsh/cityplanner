@@ -42,9 +42,52 @@ fn marked_with(flags: u8, service: u16, state: BuildingState) -> Vec<Marked> {
     let b = building(state, flags);
     let mut st = cp_service::ServiceState::default();
     st.get_mut(id(1)).problems = cp_service::ServiceProblems(service);
-    mark(std::iter::once((id(1), &b)), &st, |_| {
-        Some(Vec3::new(100.0, 12.0, 100.0))
-    })
+    mark(
+        std::iter::once((id(1), &b)),
+        &st,
+        &cp_industry::IndustryState::default(),
+        |_| Some(Vec3::new(100.0, 12.0, 100.0)),
+    )
+}
+
+/// T-211: the four industry problems each show their own icon over an Active building, and
+/// nothing over one that is not Active.
+#[test]
+fn each_industry_problem_gives_its_own_icon_only_over_an_active_building() {
+    use cp_industry::IndustryProblem as P;
+    let mut seen = Vec::new();
+    for (ip, want) in [
+        (P::NoMain, Problem::NoMain),
+        (P::NoInput, Problem::NoInput),
+        (P::Full, Problem::Full),
+        (P::Depleted, Problem::Depleted),
+    ] {
+        let mut ind = cp_industry::IndustryState::default();
+        ind.problems.insert(id(1), ip);
+        let top = |_| Some(Vec3::new(100.0, 12.0, 100.0));
+        let b = building(BuildingState::Active, 0);
+        let m = mark(
+            std::iter::once((id(1), &b)),
+            &cp_service::ServiceState::default(),
+            &ind,
+            top,
+        );
+        assert_eq!(m.len(), 1, "{ip:?}");
+        assert!(m[0].problems.has(want), "{ip:?}");
+        seen.push(m[0].problems.shown(0.0));
+        let b = building(BuildingState::UnderConstruction, 0);
+        assert!(
+            mark(
+                std::iter::once((id(1), &b)),
+                &cp_service::ServiceState::default(),
+                &ind,
+                top
+            )
+            .is_empty()
+        );
+    }
+    seen.dedup();
+    assert_eq!(seen.len(), 4);
 }
 
 /// T-126: each service bit gives its own icon over the building.

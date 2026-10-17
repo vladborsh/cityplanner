@@ -553,40 +553,50 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ui.weak("Pick a road type, then click a road to change its whole run. Esc leaves the tool.");
             }
         },
-        (Category::Buildings | Category::Transit, ActiveTool::Place) => match &tools.place_ghost {
-            Some(g) => {
-                if g.valid {
-                    ok(ui, "can place", g.cost, String::new());
-                } else {
-                    bad(
-                        ui,
-                        &g.error.iter().cloned().collect::<Vec<_>>(),
-                        "cannot place here",
-                    );
-                }
-                match &g.free {
-                    Some(f) => {
-                        if let Some(h) = &f.hint {
-                            let color = if h.connects {
-                                egui::Color32::LIGHT_GREEN
-                            } else {
-                                egui::Color32::YELLOW
-                            };
-                            ui.colored_label(color, &h.text);
-                        }
-                        ui.weak(
-                            "T turns 15°, Shift+T along the nearest road, Esc leaves the tool.",
+        (Category::Buildings | Category::Transit | Category::Industry, ActiveTool::Place) => {
+            match &tools.place_ghost {
+                Some(g) => {
+                    if let Some((have, need)) = g.richness {
+                        let color = if have >= need {
+                            egui::Color32::LIGHT_GREEN
+                        } else {
+                            egui::Color32::from_rgb(230, 90, 80)
+                        };
+                        ui.colored_label(color, format!("Lot richness {have}% (needs {need}%)"));
+                    }
+                    if g.valid {
+                        ok(ui, "can place", g.cost, String::new());
+                    } else {
+                        bad(
+                            ui,
+                            &g.error.iter().cloned().collect::<Vec<_>>(),
+                            "cannot place here",
                         );
                     }
-                    None => {
-                        ui.weak("T rotates, Esc leaves the tool.");
+                    match &g.free {
+                        Some(f) => {
+                            if let Some(h) = &f.hint {
+                                let color = if h.connects {
+                                    egui::Color32::LIGHT_GREEN
+                                } else {
+                                    egui::Color32::YELLOW
+                                };
+                                ui.colored_label(color, &h.text);
+                            }
+                            ui.weak(
+                                "T turns 15°, Shift+T along the nearest road, Esc leaves the tool.",
+                            );
+                        }
+                        None => {
+                            ui.weak("T rotates, Esc leaves the tool.");
+                        }
                     }
                 }
+                None => {
+                    ui.weak("Hover a spot beside a road. T rotates, Esc leaves the tool.");
+                }
             }
-            None => {
-                ui.weak("Hover a spot beside a road. T rotates, Esc leaves the tool.");
-            }
-        },
+        }
         (Category::Buildings, ActiveTool::Utility) => match &tools.utility_ghost {
             Some(g) if g.valid => {
                 let snap = snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));

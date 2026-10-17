@@ -55,11 +55,19 @@ pub enum Problem {
     NoWorkers,
     /// `BuildingFlags::NO_GOODS` (T-169b): a shop with empty shelves.
     NoGoods,
+    /// `IndustryProblem::NoMain` (T-211): a chain building in an area without a main building.
+    NoMain,
+    /// `IndustryProblem::NoInput`: a processor waits for its input.
+    NoInput,
+    /// `IndustryProblem::Full`: the storage is full.
+    Full,
+    /// `IndustryProblem::Depleted`: the ground under an extractor is spent.
+    Depleted,
     Abandoned,
 }
 
 impl Problem {
-    pub const ALL: [Problem; 11] = [
+    pub const ALL: [Problem; 15] = [
         Problem::Fire,
         Problem::NoRoad,
         Problem::NoPower,
@@ -70,6 +78,10 @@ impl Problem {
         Problem::Crime,
         Problem::NoWorkers,
         Problem::NoGoods,
+        Problem::NoMain,
+        Problem::NoInput,
+        Problem::Full,
+        Problem::Depleted,
         Problem::Abandoned,
     ];
 
@@ -123,6 +135,25 @@ impl Problems {
             set |= Problem::Abandoned.bit();
         }
         Self(set)
+    }
+
+    /// The same with the industry problem of the building added (T-211); nothing for a building
+    /// that has no icons (under construction, burned).
+    pub fn with_industry(self, p: cp_industry::IndustryProblem) -> Self {
+        use cp_industry::IndustryProblem as P;
+        if self.is_empty() && p == P::None {
+            return self;
+        }
+        Self(
+            self.0
+                | match p {
+                    P::None => 0,
+                    P::NoMain => Problem::NoMain.bit(),
+                    P::NoInput => Problem::NoInput.bit(),
+                    P::Full => Problem::Full.bit(),
+                    P::Depleted => Problem::Depleted.bit(),
+                },
+        )
     }
 
     pub fn is_empty(self) -> bool {
@@ -193,11 +224,15 @@ pub struct IconInstance {
 pub fn mark<'a>(
     buildings: impl Iterator<Item = (BuildingId, &'a Building)>,
     state: &ServiceState,
+    industry: &cp_industry::IndustryState,
     top: impl Fn(BuildingId) -> Option<Vec3>,
 ) -> Vec<Marked> {
     buildings
         .filter_map(|(id, b)| {
-            let problems = Problems::of(b, state.problems_of(id));
+            let mut problems = Problems::of(b, state.problems_of(id));
+            if b.state == BuildingState::Active {
+                problems = problems.with_industry(industry.problem_of(id));
+            }
             if problems.is_empty() {
                 return None;
             }
@@ -340,6 +375,10 @@ fn plate(p: Problem) -> [f32; 4] {
         Problem::Crime => [0.20, 0.26, 0.58, 1.0],
         Problem::NoWorkers => [0.58, 0.36, 0.70, 1.0],
         Problem::NoGoods => [0.08, 0.55, 0.55, 1.0],
+        Problem::NoMain => [0.40, 0.34, 0.62, 1.0],
+        Problem::NoInput => [0.82, 0.48, 0.12, 1.0],
+        Problem::Full => [0.12, 0.42, 0.62, 1.0],
+        Problem::Depleted => [0.52, 0.40, 0.30, 1.0],
     }
 }
 
@@ -536,6 +575,78 @@ fn glyph(p: Problem) -> (&'static [Shape], [f32; 4]) {
                 (
                     &[[0.06, 0.14], [0.34, 0.14], [0.30, 0.34], [0.14, 0.34]],
                     WHITE,
+                ),
+            ],
+            plate_color,
+        ),
+        // A house with a bar through it: no main building.
+        Problem::NoMain => (
+            &[
+                (&[[-0.34, 0.04], [0.34, 0.04], [0.0, 0.36]], WHITE),
+                (
+                    &[[-0.24, -0.34], [0.24, -0.34], [0.24, 0.04], [-0.24, 0.04]],
+                    WHITE,
+                ),
+                (
+                    &[[-0.36, -0.06], [0.36, -0.16], [0.36, -0.04], [-0.36, 0.06]],
+                    [0.40, 0.34, 0.62, 1.0],
+                ),
+            ],
+            plate_color,
+        ),
+        // An arrow down into an empty tray: waiting for input.
+        Problem::NoInput => (
+            &[
+                (&[[-0.18, 0.04], [0.0, -0.18], [0.18, 0.04]], WHITE),
+                (
+                    &[[-0.06, 0.04], [0.06, 0.04], [0.06, 0.38], [-0.06, 0.38]],
+                    WHITE,
+                ),
+                (
+                    &[[-0.32, -0.34], [0.32, -0.34], [0.32, -0.26], [-0.32, -0.26]],
+                    WHITE,
+                ),
+                (
+                    &[
+                        [-0.32, -0.34],
+                        [-0.24, -0.34],
+                        [-0.24, -0.12],
+                        [-0.32, -0.12],
+                    ],
+                    WHITE,
+                ),
+                (
+                    &[[0.24, -0.34], [0.32, -0.34], [0.32, -0.12], [0.24, -0.12]],
+                    WHITE,
+                ),
+            ],
+            plate_color,
+        ),
+        // A stacked crate with a stripe: the storage is full.
+        Problem::Full => (
+            &[
+                (
+                    &[[-0.34, -0.34], [0.34, -0.34], [0.34, 0.34], [-0.34, 0.34]],
+                    WHITE,
+                ),
+                (
+                    &[[-0.34, -0.04], [0.34, -0.04], [0.34, 0.04], [-0.34, 0.04]],
+                    [0.12, 0.42, 0.62, 1.0],
+                ),
+                (
+                    &[[-0.04, -0.34], [0.04, -0.34], [0.04, 0.34], [-0.04, 0.34]],
+                    [0.12, 0.42, 0.62, 1.0],
+                ),
+            ],
+            plate_color,
+        ),
+        // A heap with a dark hollow in it: nothing left in the ground.
+        Problem::Depleted => (
+            &[
+                (&[[-0.38, -0.30], [0.38, -0.30], [0.0, 0.34]], WHITE),
+                (
+                    &[[-0.14, -0.30], [0.14, -0.30], [0.08, -0.04], [-0.08, -0.04]],
+                    DARK,
                 ),
             ],
             plate_color,

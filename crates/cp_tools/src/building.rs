@@ -147,6 +147,10 @@ pub struct PlacementGhost {
     pub error: Option<String>,
     /// The rectangle of a free-standing type (§8.1); `None` for a type on a road.
     pub free: Option<FreeGhost>,
+    /// For an extractor (T-211): the average richness of the lot under the cursor and the least
+    /// the rules ask for, in percent. The rule itself is `cp_building::validate_industry_site`;
+    /// both use `cp_building::lot_richness`.
+    pub richness: Option<(u8, u8)>,
 }
 
 /// The ghost of a free-standing building: not tied to cells, so it carries its own pose.
@@ -259,6 +263,7 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
         .and_then(|id| view.buildings.get(id))
         .map(|b| cp_building::held_cells(&view.zones, b))
         .unwrap_or_default();
+    let richness = lot_richness_percent(view, db, def, hover, tool.rot(), &held);
     Some(
         match validate_placement_except(
             db,
@@ -294,6 +299,7 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
                 cells: plan.cells(),
                 valid: true,
                 cost: Some(price(db, def, tool, plan.cost)),
+                richness,
                 ..Default::default()
             },
             Err(e) => PlacementGhost {
@@ -301,6 +307,7 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
                 valid: false,
                 cost: None,
                 free: None,
+                richness,
                 error: Some(error_text(
                     &e,
                     db.building(def)
@@ -312,6 +319,45 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
             },
         },
     )
+}
+
+/// The lot richness of an extractor under the cursor (T-211): `(percent, needed percent)`, from
+/// the same function the placement rule uses. `None` for every other building.
+fn lot_richness_percent(
+    view: &SimView,
+    db: &ContentDb,
+    def: BuildingDefId,
+    hover: Vec2,
+    rot: f32,
+    held: &[ZoneCellRef],
+) -> Option<(u8, u8)> {
+    let spec = db.building(def).industry.as_ref()?;
+    if spec.role != cp_content::IndustryRole::Extractor {
+        return None;
+    }
+    let res = spec.resource?;
+    let terrain = view.terrain.as_deref()?;
+    let plan = validate_placement_except(
+        db,
+        &view.zones,
+        &view.net,
+        Some(terrain),
+        Some(&view.tiles),
+        def,
+        hover,
+        rot,
+        held,
+    )
+    .ok()?;
+    let have = cp_building::lot_richness(
+        terrain.resources(),
+        res,
+        &cp_building::plan_points(&view.zones, &plan),
+    );
+    Some((
+        (have * 100.0).round() as u8,
+        (db.balance().min_richness * 100.0).round() as u8,
+    ))
 }
 
 /// The ghost of a free-standing type: the cursor rounded to 1 m, no cells.
