@@ -36,3 +36,59 @@ pub fn mode_by_time(
         (None, None) => None,
     }
 }
+
+/// How long trips take, for the Traffic metrics (BUG-070): a running average of the time from
+/// asking for the route to arriving, in game minutes of the movement clock, on foot and by car.
+/// Derived while the game runs, never saved (it starts again after a load).
+#[derive(bevy_ecs::resource::Resource, Clone, Debug, Default)]
+pub struct TripTimes {
+    live: std::collections::BTreeMap<cp_citizen::TripId, (u64, usize)>,
+    /// Average minutes `[on foot, by car]`, `0` until a trip of that mode ended.
+    pub avg_minutes: [f32; 2],
+    seen: [bool; 2],
+}
+
+/// Weight of the newest trip in [`TripTimes::avg_minutes`].
+const TRIP_TIME_ALPHA: f32 = 0.01;
+
+/// Records when trips start routing and how long they took when they ended.
+pub fn track_trip_times(
+    tick: bevy_ecs::system::Res<cp_core::Tick>,
+    book: bevy_ecs::system::Res<cp_citizen::TripBook>,
+    mut times: bevy_ecs::system::ResMut<TripTimes>,
+) {
+    let now = tick.0;
+    let mut ended: Vec<(u64, usize)> = Vec::new();
+    times.live.retain(|id, (since, kind)| {
+        if book.get(*id).is_some() {
+            return true;
+        }
+        ended.push((now - *since, *kind));
+        false
+    });
+    for (ticks, kind) in ended {
+        let minutes = ticks as f32 * cp_core::time::MOVE_SECONDS_PER_TICK / 60.0;
+        if times.seen[kind] {
+            let a = times.avg_minutes[kind];
+            times.avg_minutes[kind] = a + (minutes - a) * TRIP_TIME_ALPHA;
+        } else {
+            times.avg_minutes[kind] = minutes;
+            times.seen[kind] = true;
+        }
+    }
+    let fresh: Vec<_> = book
+        .iter()
+        .filter(|(id, t)| {
+            matches!(t.state, cp_citizen::TripState::AwaitingPath { .. })
+                && !times.live.contains_key(id)
+        })
+        .filter_map(|(id, t)| match t.mode {
+            cp_citizen::TripMode::Walk => Some((id, 0)),
+            cp_citizen::TripMode::Car => Some((id, 1)),
+            cp_citizen::TripMode::Transit => None,
+        })
+        .collect();
+    for (id, kind) in fresh {
+        times.live.insert(id, (now, kind));
+    }
+}

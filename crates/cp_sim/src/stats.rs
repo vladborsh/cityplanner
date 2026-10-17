@@ -99,6 +99,8 @@ pub struct TrafficStats {
     pub trips_in_transit: u32,
     /// Trips under way by mode: on foot, by car, by transit (T-242).
     pub trips_by_mode: [u32; 3],
+    /// Average trip time in game minutes, on foot and by car (BUG-070); 0 until one ended.
+    pub trip_minutes: [f32; 2],
     /// Mean 2-hour load of all segments, `0..=1`.
     pub avg_load: f32,
     pub max_load: f32,
@@ -216,6 +218,7 @@ pub struct DistrictParams<'w> {
     income: Res<'w, cp_economy::DistrictIncome>,
     coverage: Res<'w, cp_service::ServiceCoverage>,
     unlocks: Option<Res<'w, cp_content::ServiceUnlocks>>,
+    trip_times: Res<'w, cp_traffic::TripTimes>,
 }
 
 /// Whether a road the player built is connected to the entry highway (BUG-041): some segment of
@@ -281,7 +284,16 @@ pub fn update_city_stats(
             ..Default::default()
         };
         stage_citizens_traffic_land(
-            &mut next, db, &citizens, &net, &agents, &trips, &land, &economy, &demands,
+            &mut next,
+            db,
+            &citizens,
+            &net,
+            &agents,
+            &trips,
+            &land,
+            &economy,
+            &demands,
+            &district.trip_times,
         );
         stats.next = Some(Box::new(next));
         return;
@@ -379,6 +391,7 @@ fn stage_citizens_traffic_land(
     land: &LandGrids,
     economy: &EconomyState,
     _demands: &[f32; 4],
+    trip_times: &cp_traffic::TripTimes,
 ) {
     s.population = citizens.citizen_count() as u32;
     s.pop_flow = citizens.flow;
@@ -408,6 +421,7 @@ fn stage_citizens_traffic_land(
             }] += 1;
         }
     }
+    s.traffic.trip_minutes = trip_times.avg_minutes;
     s.traffic.despawned_stuck = agents.stats.despawned_stuck;
     s.traffic.no_path = agents.stats.no_path;
     s.traffic.abstract_trips = agents.stats.abstract_trips;

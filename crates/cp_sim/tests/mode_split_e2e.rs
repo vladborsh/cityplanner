@@ -163,14 +163,38 @@ fn starter_town(days: u64) -> cp_sim::SimRunner {
 fn count_day(sim: &mut cp_sim::SimRunner) -> (usize, usize, usize) {
     let mut seen = BTreeSet::new();
     let (mut walk, mut car, mut transit) = (0, 0, 0);
+    // Trip -> (first tick with a path asked for, mode), and the durations of the trips that ended.
+    let mut live: std::collections::BTreeMap<cp_citizen::TripId, (u64, TripMode)> =
+        Default::default();
+    let (mut walk_ticks, mut walk_n, mut car_ticks, mut car_n) = (0u64, 0u64, 0u64, 0u64);
     for _ in 0..TICKS_PER_DAY {
         sim.tick_once();
-        for (id, t) in sim.world().resource::<TripBook>().iter() {
+        let now = sim.tick().0;
+        let book = sim.world().resource::<TripBook>();
+        live.retain(|id, (since, mode)| {
+            if book.get(*id).is_some() {
+                return true;
+            }
+            match mode {
+                TripMode::Walk => {
+                    walk_ticks += now - *since;
+                    walk_n += 1;
+                }
+                TripMode::Car => {
+                    car_ticks += now - *since;
+                    car_n += 1;
+                }
+                TripMode::Transit => {}
+            }
+            false
+        });
+        for (id, t) in book.iter() {
             // Count a trip once its path was asked for: the mode is final then (cp_traffic decides
             // it by time, T-242).
             if let TripState::AwaitingPath { request } = t.state
                 && seen.insert((id, request))
             {
+                live.insert(id, (now, t.mode));
                 match t.mode {
                     TripMode::Walk => walk += 1,
                     TripMode::Car => car += 1,
@@ -179,6 +203,19 @@ fn count_day(sim: &mut cp_sim::SimRunner) -> (usize, usize, usize) {
             }
         }
     }
+    // A tick is 2 s of the movement clock.
+    let avg = |t: u64, n: u64| {
+        if n == 0 {
+            0.0
+        } else {
+            2.0 * t as f64 / n as f64 / 60.0
+        }
+    };
+    eprintln!(
+        "DBG average trip time: walk {:.1} min ({walk_n} trips), car {:.1} min ({car_n} trips)",
+        avg(walk_ticks, walk_n),
+        avg(car_ticks, car_n)
+    );
     (walk, car, transit)
 }
 
@@ -267,4 +304,40 @@ fn in_a_spread_out_town_about_half_of_the_trips_are_by_car() {
     let (w, c) = (walk as f64 / n, car as f64 / n);
     assert!(c >= 0.2, "cars {c:.2}");
     assert!(w >= 0.2, "walk {w:.2}");
+}
+
+/// BUG-070: a dense 12 000-resident lattice does not gridlock: cars are not removed by the thousand
+/// (before: 6 700 a day, 60 % of the trips by car and 16 minutes a car trip). Cars see queues as
+/// the bad roads they are, so people walk the short trips when the streets jam.
+#[test]
+fn a_dense_lattice_does_not_gridlock() {
+    let content =
+        Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
+    let terrain =
+        Arc::new(Terrain::load(&Path::new(ROOT).join("../../assets/maps/flatlands")).unwrap());
+    let (mut sim, _) = grid_city(3000, 1, terrain, content, &GridCityConfig::default());
+    for _ in 0..TICKS_PER_DAY {
+        sim.tick_once();
+    }
+    let before = sim
+        .world()
+        .resource::<cp_traffic::Agents>()
+        .stats
+        .despawned_stuck;
+    let (walk, car, _) = count_day(&mut sim);
+    let stuck = sim
+        .world()
+        .resource::<cp_traffic::Agents>()
+        .stats
+        .despawned_stuck
+        - before;
+    assert!(population(&sim) > 10_000);
+    assert!(
+        stuck < 300,
+        "{stuck} cars vanished in a day ({car} car trips, {walk} on foot)"
+    );
+    assert!(car > 1000, "people still drive: {car} car trips");
+    // Driving is no longer the slow way: a car trip takes about as long as a walk, not three times.
+    let minutes = sim.world().resource::<cp_traffic::TripTimes>().avg_minutes;
+    assert!(minutes[1] < 8.0, "a car trip takes {:.1} min", minutes[1]);
 }

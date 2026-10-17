@@ -111,6 +111,10 @@ pub fn sections(view: &SimView) -> Vec<Section> {
                     t.trips_by_mode[0], t.trips_by_mode[1], t.trips_by_mode[2]
                 ),
             ),
+            row(
+                "Average trip (foot / car)",
+                format!("{:.1} / {:.1} min", t.trip_minutes[0], t.trip_minutes[1]),
+            ),
             row("Average load", percent(t.avg_load)),
             row("Maximum load", percent(t.max_load)),
             row("Overloaded segments", t.overloaded),

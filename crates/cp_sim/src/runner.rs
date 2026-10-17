@@ -125,6 +125,7 @@ impl SimRunner {
         world.init_resource::<cp_citizen::TripBook>();
         world.init_resource::<cp_citizen::RoutineSettings>();
         world.init_resource::<cp_traffic::Agents>();
+        world.init_resource::<cp_traffic::TripTimes>();
         world.init_resource::<cp_traffic::ServiceRuns>();
         world.init_resource::<cp_traffic::AgentSettings>();
         world.init_resource::<cp_core::Treasury>();
@@ -357,6 +358,7 @@ impl SimRunner {
                 cp_transit::run_intercity,
                 cp_traffic::route_trips,
                 cp_traffic::route_service_runs,
+                cp_traffic::track_trip_times,
             )
                 .chain()
                 .in_set(SimPhase::Agents),

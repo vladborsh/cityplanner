@@ -33,7 +33,7 @@ pub const U_TURN_PENALTY: f32 = 15.0;
 /// Extra seconds for a lateral hop to the neighbouring lane of the same direction.
 pub const LANE_CHANGE_COST: f32 = 2.0;
 /// Congestion weight `k` in `length / speed × (1 + k × congestion)`.
-pub const CONGESTION_K: f32 = 3.0;
+pub const CONGESTION_K: f32 = 30.0;
 
 /// Speed through a left or right turn, m/s (about 22 km/h).
 pub const TURN_SPEED: f32 = 6.0;

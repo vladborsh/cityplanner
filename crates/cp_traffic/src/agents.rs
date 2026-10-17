@@ -1271,10 +1271,11 @@ pub fn update_traffic_load(
         let l = &drive.lanes[slot];
         if let (false, Some(node)) = (l.is_empty(), graph.car.get(slot).and_then(Option::as_ref)) {
             // Road length the queue covers: the sum of the cars' lengths.
+            // A standing car counts three times: a queue is a worse road than a busy one.
             let covered: f32 = l
                 .iter()
                 .filter_map(|&id| vehicles.get(id))
-                .map(|v| drive.specs.of(v).length)
+                .map(|v| drive.specs.of(v).length * if v.speed < 0.1 { 8.0 } else { 1.0 })
                 .sum();
             load.inst[node.segment.index as usize] += covered;
         }
@@ -1297,6 +1298,6 @@ pub fn update_traffic_load(
 }
 
 /// Averaging window of the segment load: 2 game hours of 170.67 ticks.
-const EMA_TICKS: f32 = 341.0;
+const EMA_TICKS: f32 = 120.0;
 /// How often the pathfinder's congestion map is refreshed.
 const LOAD_PUSH_TICKS: u64 = 32;

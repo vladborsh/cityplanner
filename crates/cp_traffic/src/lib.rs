@@ -29,7 +29,7 @@ pub use graph::{
     U_TURN_PENALTY,
 };
 pub use heavy::HeavyBan;
-pub use mode::{ALWAYS_WALK_M, mode_by_time};
+pub use mode::{ALWAYS_WALK_M, TripTimes, mode_by_time, track_trip_times};
 pub use pose::{AgentFrame, AgentKey, PedestrianPose, VehiclePose, agent_key};
 pub use runs::{
     RunError, RunId, RunPoint, RunState, SERVICE_GEN, ServiceRun, ServiceRuns, WALK_KIND,
