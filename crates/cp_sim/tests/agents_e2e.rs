@@ -206,6 +206,14 @@ fn a_pool_of_ten_still_finishes_a_hundred_trips_and_drains() {
             break;
         }
     }
+    // Cargo trucks (BUG-058: a weak factory sends part loads, shops import sooner) are runs,
+    // not trips: let the ones still on their way arrive.
+    for _ in 0..TICKS_PER_DAY {
+        if sim.world().resource::<Agents>().vehicle_count() == 0 {
+            break;
+        }
+        sim.tick_once();
+    }
     let b = sim.world().resource::<TripBook>();
     let a = sim.world().resource::<Agents>();
     assert!(b.is_empty(), "all trips ended");
