@@ -982,6 +982,17 @@ pub fn build_building(
             shapes::details(m, &dc, &style_def.details);
         }
     }
+    // Trees and bushes in the free part of a low-density lot (T-234); the far level stays a
+    // plain box.
+    if def.zone == ZoneType::ResLow
+        && matches!(b.state, BuildingState::Active | BuildingState::Abandoned)
+        && !silhouette
+    {
+        let spots = shapes::garden_spots(w, d, (hu, hv, cv), sd);
+        let ground = |lu: f32, lv: f32| terrain.height(f.c + f.u * lu + f.v * lv);
+        shapes::garden(&mut pieces[0], &f, &spots, ground, true);
+        shapes::garden(&mut pieces[1], &f, &spots, ground, false);
+    }
     let [near, mid, far] = pieces;
     let (min, max) = bounds(&near);
     BuildingPiece {

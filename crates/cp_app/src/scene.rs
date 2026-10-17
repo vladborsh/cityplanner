@@ -264,6 +264,32 @@ pub fn build_construction(sim: &mut SimRunner, def_name: &str) -> usize {
     SLOTS
 }
 
+/// Garden scene (T-234): low-density homes in rows, each with its trees and bushes.
+/// Look at it with `--cam gardens`.
+pub const GARDENS: &str = "gardens";
+
+/// Builds the [`GARDENS`] scene; returns how many buildings stand.
+pub fn build_gardens(sim: &mut SimRunner) -> usize {
+    build_showcase_defs(sim, |db| {
+        let low: Vec<_> = db
+            .buildings()
+            .filter(|(_, d)| d.zone == cp_content::ZoneType::ResLow)
+            .map(|(i, _)| i)
+            .collect();
+        // Three rows of the low-density defs, repeated, so that several ids show.
+        (0..30)
+            .map(|k| {
+                let (row, col) = (k / 10, k % 10);
+                (
+                    low[k % low.len()],
+                    -225.0 + col as f32 * 50.0,
+                    row as f32 * 45.0,
+                )
+            })
+            .collect()
+    })
+}
+
 /// City parks scene (T-221): the four parks in a row. Look at it with `--cam parks`.
 pub const PARKS: &str = "parks";
 

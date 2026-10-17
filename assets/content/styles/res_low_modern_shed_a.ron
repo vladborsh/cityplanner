@@ -3,7 +3,7 @@ Style((
     massing: Box,
     roof: Shed,
     floors: (1, 2),
-    footprint_fill: (0.65, 0.95),
+    footprint_fill: (0.47, 0.75),
     palette: (
         walls: [(0.92, 0.92, 0.90), (0.78, 0.78, 0.76), (0.55, 0.42, 0.30)],
         roof: [(0.30, 0.32, 0.30)],

@@ -3,7 +3,7 @@ Style((
     massing: Box,
     roof: Mansard,
     floors: (2, 3),
-    footprint_fill: (0.85, 1.00),
+    footprint_fill: (0.67, 0.80),
     palette: (
         walls: [(0.62, 0.66, 0.72), (0.70, 0.72, 0.76), (0.58, 0.62, 0.66)],
         roof: [(0.26, 0.28, 0.32), (0.22, 0.24, 0.28)],

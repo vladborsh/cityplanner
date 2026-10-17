@@ -3,7 +3,7 @@ Style((
     massing: Box,
     roof: Gabled,
     floors: (1, 2),
-    footprint_fill: (0.70, 0.95),
+    footprint_fill: (0.52, 0.75),
     palette: (
         walls: [(0.82, 0.74, 0.62), (0.86, 0.80, 0.70), (0.78, 0.66, 0.50)],
         roof: [(0.50, 0.22, 0.17), (0.42, 0.20, 0.16)],

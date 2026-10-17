@@ -1206,3 +1206,84 @@ fn buildings_under_construction_have_their_own_batch_so_a_stage_never_remerges_t
     assert_eq!(up.rebuilt, 1);
     assert!(up.dirty_chunks.iter().all(|k| k.1), "{:?}", up.dirty_chunks);
 }
+
+#[test]
+fn low_density_homes_get_one_to_three_plants_inside_the_lot_and_off_the_house() {
+    use super::shapes::garden_spots;
+    let e = env();
+    let (mut lots, mut planted) = (0, 0);
+    for (def_id, def) in e.db.buildings().filter(|(_, d)| d.zone == ZoneType::ResLow) {
+        let (w, d) = (f32::from(def.lot.0) * 8.0, f32::from(def.lot.1) * 8.0);
+        for i in 0..40u32 {
+            let b = building(def_id, &e.db, BuildingState::Active, 0);
+            let (_, vp) = variant_for(&e.db, id(i), &b, def);
+            let shrink = vp.fill.sqrt();
+            let hu = ((w * 0.5 - 1.0) * shrink).max(1.0);
+            let hv = (((d - 3.0) * 0.5) * shrink).max(1.0);
+            let cv = 0.5;
+            let seed = seed(id(i), &b);
+            let spots = garden_spots(w, d, (hu, hv, cv), seed);
+            assert_eq!(
+                spots,
+                garden_spots(w, d, (hu, hv, cv), seed),
+                "deterministic"
+            );
+            assert!(spots.len() <= 3);
+            for s in &spots {
+                assert!(s.u - s.r >= -w / 2.0 - 1e-3 && s.u + s.r <= w / 2.0 + 1e-3);
+                assert!(s.v - s.r >= -d / 2.0 - 1e-3 && s.v + s.r <= d / 2.0 + 1e-3);
+                assert!(
+                    !(s.u.abs() < hu + 0.5 && (s.v - cv).abs() < hv + 0.5),
+                    "the trunk stands on the house: {s:?}"
+                );
+            }
+            lots += 1;
+            planted += usize::from(!spots.is_empty());
+        }
+    }
+    assert!(
+        planted * 10 >= lots * 7,
+        "{planted} of {lots} homes have a plant"
+    );
+}
+
+#[test]
+fn a_garden_is_valid_geometry_and_richer_near_than_mid() {
+    use super::shapes::{Spot, garden};
+    let f = Frame {
+        c: Vec2::new(100.0, 100.0),
+        u: Vec2::X,
+        v: Vec2::Y,
+    };
+    let spots: Vec<Spot> = (0..3u8)
+        .map(|kind| Spot {
+            u: f32::from(kind) * 4.0 - 4.0,
+            v: 5.0,
+            kind,
+            h: 4.0,
+            r: 1.3,
+            tint: 0.5,
+        })
+        .collect();
+    let draw = |near| {
+        let mut m = MeshData::default();
+        garden(&mut m, &f, &spots, |_, _| 2.0, near);
+        m
+    };
+    let (n, m) = (draw(true), draw(false));
+    for mesh in [&n, &m] {
+        assert!(mesh.triangle_count() > 20);
+        assert_eq!(mesh.positions.len(), mesh.normals.len());
+        assert!(
+            mesh.indices
+                .iter()
+                .all(|&i| (i as usize) < mesh.positions.len())
+        );
+        assert!(
+            mesh.positions
+                .iter()
+                .all(|p| p[1] >= 2.0 - 1e-3 && p[1] <= 2.0 + 4.0 * 1.2 + 1e-3)
+        );
+    }
+    assert!(n.triangle_count() > m.triangle_count());
+}

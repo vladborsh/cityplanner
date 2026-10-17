@@ -4525,6 +4525,137 @@ fn tree(m: &mut MeshData, f: &Frame, at: (f32, f32), y: f32, h: f32, n: usize, n
     }
 }
 
+/// One plant of a house garden, in lot-frame metres.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spot {
+    pub u: f32,
+    pub v: f32,
+    /// 0 conifer, 1 broadleaf, 2 bush.
+    pub kind: u8,
+    /// Height, metres.
+    pub h: f32,
+    /// Crown radius, metres.
+    pub r: f32,
+    /// Leaf tint, `0..1`.
+    pub tint: f32,
+}
+
+/// One to three plants in the free part of a `w` x `d` m lot (T-234): clear of the building
+/// (`hu`, `hv` half extents centred `cv` along v) and of each other, inside the lot. A function
+/// of `seed` alone (the building's id), never of the sim RNG. A lot the building fills
+/// has none.
+pub fn garden_spots(w: f32, d: f32, (hu, hv, cv): (f32, f32, f32), seed: u32) -> Vec<Spot> {
+    let mut x = seed.wrapping_mul(0x9e37_79b9) ^ 0x85eb_ca6b | 1;
+    let mut next = move || {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        x
+    };
+    let frac = |n: u32| (n % 1000) as f32 / 1000.0;
+    let want = 1 + next() % 3;
+    let mut out: Vec<Spot> = Vec::new();
+    for _ in 0..24 {
+        if out.len() as u32 >= want {
+            break;
+        }
+        let kind = (next() % 3) as u8;
+        let size = frac(next());
+        let h = match kind {
+            0 => 4.4 + size * 2.0,
+            1 => 4.0 + size * 1.8,
+            _ => 1.3 + size * 0.8,
+        };
+        let r = match kind {
+            0 => h * 0.32,
+            1 => h * 0.34,
+            _ => h * 0.55,
+        };
+        // The whole crown stays inside the lot and the trunk off the house; a crown may lean
+        // over a wall (yards are two or three metres wide).
+        let (ru, rv) = (w - 2.0 * r, d - 2.0 * r);
+        let (fu, fv, tint) = (frac(next()), frac(next()), frac(next()));
+        if ru <= 0.0 || rv <= 0.0 {
+            continue;
+        }
+        let u = -w * 0.5 + r + fu * ru;
+        let v = -d * 0.5 + r + fv * rv;
+        if u.abs() < hu + 0.5 + r * 0.4 && (v - cv).abs() < hv + 0.5 + r * 0.4 {
+            continue;
+        }
+        if out
+            .iter()
+            .any(|o| ((o.u - u).powi(2) + (o.v - v).powi(2)).sqrt() < (o.r + r) * 0.8)
+        {
+            continue;
+        }
+        out.push(Spot {
+            u,
+            v,
+            kind,
+            h,
+            r,
+            tint,
+        });
+    }
+    out
+}
+
+/// Draws a garden: conifers, round broadleaf trees and bushes standing at `ground(u, v)`.
+pub fn garden(
+    m: &mut MeshData,
+    f: &Frame,
+    spots: &[Spot],
+    ground: impl Fn(f32, f32) -> f32,
+    near: bool,
+) {
+    let n = if near { 8 } else { 5 };
+    for s in spots {
+        let y = ground(s.u, s.v);
+        let at = (s.u, s.v);
+        let t = s.tint;
+        let leaf = [0.18 + 0.10 * t, 0.46 + 0.14 * t, 0.2 + 0.08 * t, 1.0];
+        match s.kind {
+            0 => tree(m, f, at, y, s.h, n, near),
+            1 => {
+                cyl(m, f, at, (0.3, 0.24), (y, y + s.h * 0.5), 6, TRUNK, None);
+                cyl(
+                    m,
+                    f,
+                    at,
+                    (s.r * 0.75, s.r),
+                    (y + s.h * 0.4, y + s.h * 0.72),
+                    n,
+                    leaf,
+                    None,
+                );
+                cone(m, f, at, s.r, (y + s.h * 0.72, y + s.h), n, mul(leaf, 1.12));
+            }
+            _ => {
+                cyl(
+                    m,
+                    f,
+                    at,
+                    (s.r, s.r * 0.7),
+                    (y, y + s.h * 0.7),
+                    n,
+                    leaf,
+                    None,
+                );
+                cone(
+                    m,
+                    f,
+                    at,
+                    s.r * 0.7,
+                    (y + s.h * 0.7, y + s.h),
+                    n,
+                    mul(leaf, 1.1),
+                );
+            }
+        }
+    }
+}
+
 /// The city parks (T-221): flat lawns and pads with a few things standing on them.
 fn park(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
     use super::Lod;
