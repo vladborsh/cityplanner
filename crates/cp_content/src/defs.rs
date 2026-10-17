@@ -393,6 +393,10 @@ pub struct Balance {
     /// Ore and oil in a 64 m resource cell at richness 1 (T-205); the start is
     /// `richness × deposit_per_cell`, rounded. // tune later
     pub deposit_per_cell: f32,
+    /// Experience an area needs for levels 2 to 5 (T-209), and the share of storage each level
+    /// above the first adds. // tune later
+    pub industry_levels: [u32; 4],
+    pub industry_storage_per_level: f32,
     /// A resource extractor needs this average richness (`0..=1`) under its lot (T-208). // tune later
     pub min_richness: f32,
     /// How far water, sewage and power reach (T-181).
@@ -540,7 +544,9 @@ impl Balance {
             f32::from(self.tourism_by_train),
             self.deposit_per_cell,
             self.min_richness,
+            self.industry_storage_per_level,
         ]);
+        v.extend(self.industry_levels.map(|l| l as f32));
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
         v
@@ -651,6 +657,8 @@ impl Default for Balance {
             tourism_by_train: 8,
             deposit_per_cell: 20_000.0,
             min_richness: 0.3,
+            industry_levels: [2_000, 8_000, 25_000, 60_000],
+            industry_storage_per_level: 0.1,
             networks: Networks::default(),
         }
     }

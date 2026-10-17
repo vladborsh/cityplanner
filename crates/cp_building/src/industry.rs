@@ -19,13 +19,18 @@ use crate::model::{BuildingId, Footprint, footprint_quad};
 
 /// The centres of the 8 m cells a plan covers (lot cells, or the lattice of a free rectangle).
 pub fn plan_points(zones: &ZoneGrid, plan: &PlacementPlan) -> Vec<Vec2> {
-    match &plan.footprint {
+    footprint_points(zones, &plan.footprint, plan.pos, plan.rot)
+}
+
+/// The same for a footprint at a pose (a building that stands).
+pub fn footprint_points(zones: &ZoneGrid, footprint: &Footprint, pos: Vec2, rot: f32) -> Vec<Vec2> {
+    match footprint {
         Footprint::Lot(lot) => lot
             .cells()
             .filter_map(|c| zones.cell_footprint(c).map(|o| o.c))
             .collect(),
         Footprint::Free { w, d } => {
-            let q = footprint_quad(plan.pos, plan.rot, *w, *d);
+            let q = footprint_quad(pos, rot, *w, *d);
             let (ax, ay) = (q[1] - q[0], q[3] - q[0]);
             let (nu, nv) = (usize::from(*w), usize::from(*d));
             (0..nv)

@@ -54,6 +54,8 @@ pub struct SimRunner {
     pub(crate) district_cache: std::sync::Mutex<crate::view::DistrictCache>,
     /// `SimView::area_map` and `SimView::areas` caches.
     pub(crate) area_cache: std::sync::Mutex<crate::view::AreaCache>,
+    /// `SimView::industry` cache.
+    pub(crate) industry_cache: std::sync::Mutex<Option<std::sync::Arc<cp_industry::IndustryState>>>,
     /// `SimView::deposits` cache, kept while the deposits are unchanged.
     pub(crate) deposits_cache:
         std::sync::Mutex<Option<std::sync::Arc<cp_terrain::ResourceDeposits>>>,
@@ -148,6 +150,7 @@ impl SimRunner {
         world.init_resource::<cp_economy::WorkerShortage>();
         world.init_resource::<crate::progress::Progress>();
         world.init_resource::<cp_terrain::ResourceDeposits>();
+        world.init_resource::<cp_industry::IndustryState>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
@@ -329,6 +332,8 @@ impl SimRunner {
                 cp_transit::run_tourists,
                 // Factories make goods, shops sell them, trucks carry them (T-169).
                 cp_transit::run_goods,
+                // What the chain buildings of the industrial areas make (T-209).
+                cp_industry::run_industry,
                 // Intercity trains and the households and tourists they bring (T-167).
                 cp_transit::run_intercity,
                 cp_traffic::route_trips,
@@ -371,6 +376,7 @@ impl SimRunner {
             buildings_cache: Default::default(),
             district_cache: Default::default(),
             deposits_cache: Default::default(),
+            industry_cache: Default::default(),
             area_cache: Default::default(),
             zone_grid_cache: Default::default(),
             utilities_cache: Default::default(),

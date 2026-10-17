@@ -148,6 +148,11 @@ pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
         h.write_serialized(areas);
         h.write_serialized(world.resource::<cp_district::AreaMap>());
     }
+    // Absent while no chain building has stock or a problem (T-209).
+    let industry = world.resource::<cp_industry::IndustryState>();
+    if !industry.is_empty() {
+        h.write_serialized(industry);
+    }
     // Absent until the deposits are filled from the map (a new game or a load with a map), so
     // a sim without a resource map keeps its checksum.
     let deposits = world.resource::<cp_terrain::ResourceDeposits>();

@@ -20,7 +20,9 @@ pub use free::{
     validate_free_placement_except,
 };
 pub use grid::{BuildingGrid, burn, cells_under_lot, demolish_building, held_cells};
-pub use industry::{IndustryWorld, lot_richness, plan_points, validate_industry_site};
+pub use industry::{
+    IndustryWorld, footprint_points, lot_richness, plan_points, validate_industry_site,
+};
 pub use level::{rebuild, rebuild_candidate};
 pub use model::{
     AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, FOOTPRINT_CELL_M, Footprint,

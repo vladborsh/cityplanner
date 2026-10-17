@@ -44,7 +44,7 @@
 //! | `PathService` (requests in flight) | yes, as `SavedPaths` |
 //! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `Goods`, `Intercity` (stops, lines, riders, line figures, buses, week's money, tourist visits, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
 //! | `ResourceDeposits` (ore and oil left per 64 m cell; a save from before v41 is filled from the map by `load_into_runner`) | yes |
-//! | `AreaMap`, `Areas` | yes |
+//! | `AreaMap`, `Areas`, `IndustryState` (stock and problems of the chain buildings) | yes |
 //! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
@@ -81,7 +81,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 42;
+pub const FORMAT_VERSION: u32 = 43;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -239,6 +239,8 @@ pub struct SaveData {
     /// Ore and oil left per resource cell (T-205). Added in v41; older saves are filled from
     /// the map by [`load_into_runner`] (empty here: a migration has no map).
     pub deposits: cp_terrain::ResourceDeposits,
+    /// Stock and problems of the chain buildings (T-209). Added in v43.
+    pub industry: cp_industry::IndustryState,
 }
 
 impl SaveData {
@@ -315,6 +317,7 @@ impl SaveData {
             goods: world.resource::<cp_transit::Goods>().clone(),
             intercity: world.resource::<cp_transit::Intercity>().clone(),
             deposits: world.resource::<cp_terrain::ResourceDeposits>().clone(),
+            industry: world.resource::<cp_industry::IndustryState>().clone(),
         }
     }
 
@@ -366,6 +369,7 @@ impl SaveData {
         world.insert_resource(self.goods);
         world.insert_resource(self.intercity);
         world.insert_resource(self.deposits);
+        world.insert_resource(self.industry);
         // The routes are derived: the first Network phase after the load attaches the stops
         // and plans every line again.
         world.insert_resource(cp_transit::LinePlans::default());

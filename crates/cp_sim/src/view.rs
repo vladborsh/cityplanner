@@ -72,6 +72,8 @@ pub struct SimView {
     /// Ore and oil left per 64 m resource cell (T-205); the richness is `terrain.resources()`.
     /// Zero everywhere before a new game or a load fills it.
     pub deposits: Arc<cp_terrain::ResourceDeposits>,
+    /// Stock and problems of the chain buildings (T-209); the area level and xp are in `areas`.
+    pub industry: Arc<cp_industry::IndustryState>,
     pub stats: SimStats,
     /// Derived junction geometry (shortened-segment cut points and polygons) for mesh
     /// building. Compare `junctions.version()` with the last built version; junctions with a
@@ -497,6 +499,19 @@ impl SimRunner {
 
     /// `SimView::district_map`: the cached copy while the grid is equal to it (a 100 KB compare
     /// a view, instead of a copy).
+    fn industry_snapshot(&self) -> Arc<cp_industry::IndustryState> {
+        let now = self.world().get_resource::<cp_industry::IndustryState>();
+        let mut cache = self.industry_cache.lock().expect("industry cache");
+        if let Some(snap) = cache.as_ref()
+            && now.is_none_or(|n| **snap == *n)
+        {
+            return Arc::clone(snap);
+        }
+        let snap = Arc::new(now.cloned().unwrap_or_default());
+        *cache = Some(Arc::clone(&snap));
+        snap
+    }
+
     fn deposits_snapshot(&self) -> Arc<cp_terrain::ResourceDeposits> {
         let now = self.world().get_resource::<cp_terrain::ResourceDeposits>();
         let mut cache = self.deposits_cache.lock().expect("deposits cache");
@@ -718,6 +733,7 @@ impl SimRunner {
                 .copied()
                 .unwrap_or_default(),
             deposits: self.deposits_snapshot(),
+            industry: self.industry_snapshot(),
             stats: self.stats(),
             net: self.net_snapshot(&junctions),
             buildings: self.buildings_snapshot(),

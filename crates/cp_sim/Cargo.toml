@@ -22,6 +22,7 @@ cp_district.workspace = true
 cp_economy.workspace = true
 cp_service.workspace = true
 cp_transit.workspace = true
+cp_industry.workspace = true
 bevy_ecs.workspace = true
 bevy_math.workspace = true
 serde.workspace = true
