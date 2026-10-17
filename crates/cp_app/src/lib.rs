@@ -218,10 +218,13 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 38.0, 1.8, c),
         ),
         // The low-density homes with their gardens (`--scene gardens`).
-        "gardens" => (Vec3::new(c, 38.0, c + 40.0), Vec3::new(c, 0.0, c - 100.0)),
+        "gardens" => (
+            Vec3::new(c - 30.0, 14.0, c + 55.0),
+            Vec3::new(c - 30.0, 2.0, c),
+        ),
         "gardens-close" => (
-            Vec3::new(c - 140.0, 14.0, c - 70.0),
-            Vec3::new(c - 140.0, 2.0, c - 130.0),
+            Vec3::new(c - 30.0, 9.0, c + 34.0),
+            Vec3::new(c - 30.0, 3.0, c - 6.0),
         ),
         // The construction stages in a row, seen from the south (`--scene construction`).
         "construction" => (Vec3::new(c, 45.0, c + 120.0), Vec3::new(c, 12.0, c - 130.0)),
@@ -307,7 +310,7 @@ pub fn build_sim(
         let n = scene::build_chains(&mut sim);
         info!("scene chains: {n} buildings");
     } else if scene == Some(scene::GARDENS) {
-        let n = scene::build_gardens(&mut sim);
+        let n = scene::build_gardens(&mut sim, 14);
         info!("scene gardens: {n} buildings");
     } else if scene == Some(scene::CONSTRUCTION) {
         let n = scene::build_construction(&mut sim, "apt_high_2");

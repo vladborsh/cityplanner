@@ -264,30 +264,79 @@ pub fn build_construction(sim: &mut SimRunner, def_name: &str) -> usize {
     SLOTS
 }
 
-/// Garden scene (T-234): low-density homes in rows, each with its trees and bushes.
-/// Look at it with `--cam gardens`.
+/// Garden scene (T-234): one zoned street of low-density homes that the spawner built, each
+/// with its trees and bushes. Look at it with `--cam gardens` (or `gardens-close`).
 pub const GARDENS: &str = "gardens";
 
-/// Builds the [`GARDENS`] scene; returns how many buildings stand.
-pub fn build_gardens(sim: &mut SimRunner) -> usize {
-    build_showcase_defs(sim, |db| {
-        let low: Vec<_> = db
-            .buildings()
-            .filter(|(_, d)| d.zone == cp_content::ZoneType::ResLow)
-            .map(|(i, _)| i)
-            .collect();
-        // Three rows of the low-density defs, repeated, so that several ids show.
-        (0..30)
-            .map(|k| {
-                let (row, col) = (k / 10, k % 10);
-                (
-                    low[k % low.len()],
-                    -225.0 + col as f32 * 50.0,
-                    row as f32 * 45.0,
-                )
+/// Builds the [`GARDENS`] scene: a 240 m street with ResLow zoned on both sides, grown until
+/// `homes` buildings stand finished; the sim then stands still. Returns the building count.
+pub fn build_gardens(sim: &mut SimRunner, homes: usize) -> usize {
+    use cp_building::{BuildingGrid, BuildingState};
+    use cp_zone::{ZoneCellRef, ZoneGrid};
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    *sim.world_mut().resource_mut::<cp_economy::Decay>() = cp_economy::Decay::disabled();
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    sim.push_command(
+        SimCommand::Net(NetCommand::BuildRoad {
+            road: db.road_id("basic_2l").expect("basic_2l"),
+            path: RoadPath::Straight {
+                from: Vec2::new(c - 120.0, c),
+                to: Vec2::new(c + 120.0, c),
+            },
+            elevation: ElevationMode::Ground,
+        }),
+        sim.tick(),
+    );
+    for _ in 0..4 {
+        sim.tick_once();
+    }
+    let cells: Vec<ZoneCellRef> = {
+        let zones = sim.world().resource::<ZoneGrid>();
+        zones
+            .blocks()
+            .flat_map(|(id, b)| {
+                (0..b.cell_count() as u16).map(move |cell| ZoneCellRef { block: id, cell })
             })
             .collect()
-    })
+    };
+    {
+        let mut zones = sim.world_mut().resource_mut::<ZoneGrid>();
+        for cell in cells {
+            zones.set_zone(cell, cp_content::ZoneType::ResLow);
+        }
+    }
+    let finished = |sim: &SimRunner| {
+        let g = sim.world().resource::<BuildingGrid>();
+        g.iter()
+            .filter(|(_, b)| b.state == BuildingState::Active)
+            .count()
+    };
+    for _ in 0..40_000 {
+        sim.tick_once();
+        if finished(sim) >= homes {
+            break;
+        }
+    }
+    // No new sites: let the ones under way finish.
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(-1.0);
+    for _ in 0..20_000 {
+        let building = sim
+            .world()
+            .resource::<BuildingGrid>()
+            .iter()
+            .any(|(_, b)| b.state == BuildingState::UnderConstruction);
+        if !building {
+            break;
+        }
+        sim.tick_once();
+    }
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+    sim.world().resource::<BuildingGrid>().len()
 }
 
 /// City parks scene (T-221): the four parks in a row. Look at it with `--cam parks`.

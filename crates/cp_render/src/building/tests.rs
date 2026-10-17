@@ -1208,10 +1208,10 @@ fn buildings_under_construction_have_their_own_batch_so_a_stage_never_remerges_t
 }
 
 #[test]
-fn low_density_homes_get_one_to_three_plants_inside_the_lot_and_off_the_house() {
+fn low_density_homes_get_a_real_tree_and_bushes_inside_the_lot_and_off_the_house() {
     use super::shapes::garden_spots;
     let e = env();
-    let (mut lots, mut planted) = (0, 0);
+    let (mut lots, mut with_tree, mut crowded) = (0, 0, 0);
     for (def_id, def) in e.db.buildings().filter(|(_, d)| d.zone == ZoneType::ResLow) {
         let (w, d) = (f32::from(def.lot.0) * 8.0, f32::from(def.lot.1) * 8.0);
         for i in 0..40u32 {
@@ -1228,22 +1228,29 @@ fn low_density_homes_get_one_to_three_plants_inside_the_lot_and_off_the_house() 
                 garden_spots(w, d, (hu, hv, cv), seed),
                 "deterministic"
             );
-            assert!(spots.len() <= 3);
+            assert!(spots.len() <= 4);
             for s in &spots {
                 assert!(s.u - s.r >= -w / 2.0 - 1e-3 && s.u + s.r <= w / 2.0 + 1e-3);
                 assert!(s.v - s.r >= -d / 2.0 - 1e-3 && s.v + s.r <= d / 2.0 + 1e-3);
                 assert!(
-                    !(s.u.abs() < hu + 0.5 && (s.v - cv).abs() < hv + 0.5),
-                    "the trunk stands on the house: {s:?}"
+                    !(s.u.abs() < hu + 0.3 && (s.v - cv).abs() < hv + 0.3),
+                    "the plant stands on the house: {s:?}"
                 );
             }
             lots += 1;
-            planted += usize::from(!spots.is_empty());
+            // A real tree: 5.5 to 9 m (a tight lot gets a smaller one).
+            let tree = spots.iter().find(|s| s.kind < 2);
+            with_tree += usize::from(tree.is_some_and(|t| (5.5..=9.01).contains(&t.h)));
+            crowded += usize::from(spots.len() >= 2);
         }
     }
     assert!(
-        planted * 10 >= lots * 7,
-        "{planted} of {lots} homes have a plant"
+        with_tree * 10 >= lots * 8,
+        "{with_tree} of {lots} homes have a tree"
+    );
+    assert!(
+        crowded * 10 >= lots * 8,
+        "{crowded} of {lots} homes have 2+ plants"
     );
 }
 

@@ -4540,10 +4540,11 @@ pub struct Spot {
     pub tint: f32,
 }
 
-/// One to three plants in the free part of a `w` x `d` m lot (T-234): clear of the building
-/// (`hu`, `hv` half extents centred `cv` along v) and of each other, inside the lot. A function
-/// of `seed` alone (the building's id), never of the sim RNG. A lot the building fills
-/// has none.
+/// Two to four plants for a `w` x `d` m lot (T-234): a real tree 6 to 9 m tall (a conifer or a
+/// round broadleaf, in the back or side yard when there is room) and bushes as the extras. The
+/// whole crown stays inside the lot and the trunk off the house (`hu`, `hv` half extents
+/// centred `cv` along v), plants clear of each other. A function of `seed` alone (the
+/// building's id), never of the sim RNG. A lot that cannot take the tree gets what fits.
 pub fn garden_spots(w: f32, d: f32, (hu, hv, cv): (f32, f32, f32), seed: u32) -> Vec<Spot> {
     let mut x = seed.wrapping_mul(0x9e37_79b9) ^ 0x85eb_ca6b | 1;
     let mut next = move || {
@@ -4553,34 +4554,62 @@ pub fn garden_spots(w: f32, d: f32, (hu, hv, cv): (f32, f32, f32), seed: u32) ->
         x
     };
     let frac = |n: u32| (n % 1000) as f32 / 1000.0;
-    let want = 1 + next() % 3;
+    let want = 2 + next() % 3;
     let mut out: Vec<Spot> = Vec::new();
-    for _ in 0..24 {
+    // The tree first: a smaller one if the lot is tight.
+    let kind = (next() % 2) as u8;
+    let tint = frac(next());
+    let h0 = 6.0 + frac(next()) * 3.0;
+    let side_first = next() % 2 == 0;
+    for scale in [1.0f32, 0.9, 0.8, 0.7] {
+        let h = (h0 * scale).max(5.5);
+        let r = if kind == 0 { h * 0.24 } else { h * 0.27 };
+        // Where a trunk may stand so that the whole crown is inside the lot ...
+        let (u_lo, u_hi) = (-w * 0.5 + r, w * 0.5 - r);
+        let (v_lo, v_hi) = (-d * 0.5 + r, d * 0.5 - r);
+        if u_lo > u_hi || v_lo > v_hi {
+            continue;
+        }
+        // ... and off the house: the yards, the back one first.
+        let back = (u_lo, u_hi, v_lo.max(cv + hv + 0.3), v_hi);
+        let left = (u_lo, u_hi.min(-(hu + 0.3)), v_lo, v_hi);
+        let right = (u_lo.max(hu + 0.3), u_hi, v_lo, v_hi);
+        let front = (u_lo, u_hi, v_lo, v_hi.min(cv - hv - 0.3));
+        let sides = if side_first {
+            [left, right]
+        } else {
+            [right, left]
+        };
+        let yards = [back, sides[0], sides[1], front];
+        let Some(&(a, b, c, e)) = yards.iter().find(|y| y.0 <= y.1 && y.2 <= y.3) else {
+            continue;
+        };
+        let (fu, fv) = (frac(next()), frac(next()));
+        out.push(Spot {
+            u: a + fu * (b - a),
+            v: c + fv * (e - c),
+            kind,
+            h,
+            r,
+            tint,
+        });
+        break;
+    }
+    for _ in 0..40 {
         if out.len() as u32 >= want {
             break;
         }
-        let kind = (next() % 3) as u8;
-        let size = frac(next());
-        let h = match kind {
-            0 => 4.4 + size * 2.0,
-            1 => 4.0 + size * 1.8,
-            _ => 1.3 + size * 0.8,
-        };
-        let r = match kind {
-            0 => h * 0.32,
-            1 => h * 0.34,
-            _ => h * 0.55,
-        };
-        // The whole crown stays inside the lot and the trunk off the house; a crown may lean
-        // over a wall (yards are two or three metres wide).
+        let tint = frac(next());
+        let h = 1.2 + frac(next()) * 0.9;
+        let r = h * 0.5;
         let (ru, rv) = (w - 2.0 * r, d - 2.0 * r);
-        let (fu, fv, tint) = (frac(next()), frac(next()), frac(next()));
+        let (fu, fv) = (frac(next()), frac(next()));
         if ru <= 0.0 || rv <= 0.0 {
             continue;
         }
         let u = -w * 0.5 + r + fu * ru;
         let v = -d * 0.5 + r + fv * rv;
-        if u.abs() < hu + 0.5 + r * 0.4 && (v - cv).abs() < hv + 0.5 + r * 0.4 {
+        if u.abs() < hu + 0.3 + r * 0.4 && (v - cv).abs() < hv + 0.3 + r * 0.4 {
             continue;
         }
         if out
@@ -4592,7 +4621,7 @@ pub fn garden_spots(w: f32, d: f32, (hu, hv, cv): (f32, f32, f32), seed: u32) ->
         out.push(Spot {
             u,
             v,
-            kind,
+            kind: 2,
             h,
             r,
             tint,
@@ -4616,20 +4645,35 @@ pub fn garden(
         let t = s.tint;
         let leaf = [0.18 + 0.10 * t, 0.46 + 0.14 * t, 0.2 + 0.08 * t, 1.0];
         match s.kind {
-            0 => tree(m, f, at, y, s.h, n, near),
+            0 => {
+                // Conifer: a trunk and a tall cone (a second, narrower one near).
+                cyl(m, f, at, (0.32, 0.26), (y, y + s.h * 0.35), 6, TRUNK, None);
+                cone(m, f, at, s.r, (y + s.h * 0.22, y + s.h), n, leaf);
+                if near {
+                    cone(
+                        m,
+                        f,
+                        at,
+                        s.r * 0.72,
+                        (y + s.h * 0.5, y + s.h * 1.08),
+                        n,
+                        mul(leaf, 1.12),
+                    );
+                }
+            }
             1 => {
-                cyl(m, f, at, (0.3, 0.24), (y, y + s.h * 0.5), 6, TRUNK, None);
+                cyl(m, f, at, (0.34, 0.26), (y, y + s.h * 0.55), 6, TRUNK, None);
                 cyl(
                     m,
                     f,
                     at,
-                    (s.r * 0.75, s.r),
-                    (y + s.h * 0.4, y + s.h * 0.72),
+                    (s.r * 0.8, s.r),
+                    (y + s.h * 0.42, y + s.h * 0.78),
                     n,
                     leaf,
                     None,
                 );
-                cone(m, f, at, s.r, (y + s.h * 0.72, y + s.h), n, mul(leaf, 1.12));
+                cone(m, f, at, s.r, (y + s.h * 0.78, y + s.h), n, mul(leaf, 1.12));
             }
             _ => {
                 cyl(
