@@ -25,6 +25,12 @@ wrong. Project context lives in `PROJECT.md`; system designs live in `architectu
   cargo output (`| tail`, `| grep`) when checking green: it hides a failing exit status.
   Merge only with `scripts/ff-merge.sh <branch>`, which refuses unless the branch contains the
   coordinator's `master` and the gate passes, then fast-forwards (it never pushes).
+- Gate per merge vs per batch (user decision 2026-10-17): `ff-merge.sh` runs the QUICK gate
+  (`scripts/quick-gate.sh`: untracked check, fmt, clippy and nextest on the changed crates; content
+  or fixture changes add cp_content/cp_sim/cp_save; root build files fall back to the full gate).
+  `ff-merge.sh <branch> --full` runs the full `scripts/gate.sh`. The Tech Lead runs the full gate
+  on master in batches (after ~4-5 merges, every ~2 h, before closing a milestone); if it is red,
+  merges stop until the culprit is fixed. The determinism test stays in the full gate.
 - Never change the Bevy version pinned in the root `Cargo.toml` as a side effect of a
   task. A version bump is its own task.
 - Do not add a dependency to a `cp_*` sim crate without saying so in the review request.

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Gated fast-forward merge into the coordinator checkout's master.
-# Usage (from the worktree where <branch> is checked out): scripts/ff-merge.sh <branch>
+# Usage (from the worktree where <branch> is checked out): scripts/ff-merge.sh <branch> [--full]
+# Default: the quick gate (scripts/quick-gate.sh: fmt + clippy/nextest on the changed crates);
+# --full: the full gate (scripts/gate.sh). The full gate runs on master in batches (TL).
 #
 # Refuses (exit 1) unless ALL of these hold, checked in this order, merging only on PASS:
 #   1. the coordinator checkout ($CITYPLANNER_COORD) is on master with a clean tree
@@ -24,8 +26,10 @@ die() {
   exit 1
 }
 
-[ "$#" -eq 1 ] || die "usage: scripts/ff-merge.sh <branch>"
+[ "$#" -ge 1 ] && [ "$#" -le 2 ] || die "usage: scripts/ff-merge.sh <branch> [--full]"
 branch=$1
+mode=quick
+[ "${2:-}" = "--full" ] && mode=full
 
 git -C "$COORD" rev-parse --git-dir >/dev/null 2>&1 || die "$COORD is not a git checkout (set CITYPLANNER_COORD)"
 [ "$(git -C "$COORD" symbolic-ref --short HEAD 2>/dev/null || true)" = "master" ] \
@@ -44,9 +48,13 @@ master_sha=$(git -C "$COORD" rev-parse HEAD)
 git merge-base --is-ancestor "$master_sha" "$branch" \
   || die "'$branch' does not contain the coordinator's master ($master_sha): rebase first"
 
-echo "ff-merge: running the gate on $branch ($(git rev-parse --short HEAD))"
+echo "ff-merge: running the $mode gate on $branch ($(git rev-parse --short HEAD))"
 gate_rc=0
-scripts/gate.sh || gate_rc=$?
+if [ "$mode" = full ]; then
+  scripts/gate.sh || gate_rc=$?
+else
+  scripts/quick-gate.sh "$master_sha" || gate_rc=$?
+fi
 [ "$gate_rc" -eq 0 ] || die "gate failed (exit $gate_rc); nothing merged"
 
 now_sha=$(git -C "$COORD" rev-parse HEAD)
