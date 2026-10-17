@@ -1,6 +1,6 @@
 //! Generates `fixtures/saves/v48-basic.sav`, the committed version-48 fixture: a grid city on
-//! flatlands with a city-park area holding an attraction and a gate, written by the real v48
-//! writer (before the T-224 bump). Run from the repo root in a checkout of the v48 code:
+//! flatlands with a city-park area holding an attraction, written by the real v48
+//! writer (before the T-225 bump). Run from the repo root in a checkout of the v48 code:
 //! `cargo run -p cp_save --example gen_v48_fixture`. The committed file is **never edited or
 //! regenerated** afterwards (AGENTS.md).
 

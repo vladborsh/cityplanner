@@ -431,6 +431,11 @@ pub struct Balance {
     pub walkers_per_park: u16,
     pub tourist_leisure_share: f32,
     pub park_fee_max: f32,
+    /// Park levels (T-225) // tune later: visitors an area needs for levels 2 to 5; the land
+    /// value a park area adds around its cells per level (level 1..5), and how far.
+    pub park_levels: [u32; 4],
+    pub park_land: [f32; 5],
+    pub park_land_radius_m: f32,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
 }
@@ -587,9 +592,12 @@ impl Balance {
             f32::from(self.walkers_per_park),
             self.tourist_leisure_share,
             self.park_fee_max,
+            self.park_land_radius_m,
             self.industry_storage_per_level,
         ]);
         v.extend(self.industry_levels.map(|l| l as f32));
+        v.extend(self.park_levels.map(|l| l as f32));
+        v.extend(self.park_land);
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
         v
@@ -714,6 +722,9 @@ impl Default for Balance {
             walkers_per_park: 6,
             tourist_leisure_share: 0.3,
             park_fee_max: 20.0,
+            park_levels: [150, 600, 2_000, 5_000],
+            park_land: [2.0, 5.0, 9.0, 14.0, 20.0],
+            park_land_radius_m: 200.0,
             industry_levels: [2_000, 8_000, 25_000, 60_000],
             industry_storage_per_level: 0.1,
             networks: Networks::default(),

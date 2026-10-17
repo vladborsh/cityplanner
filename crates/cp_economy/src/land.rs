@@ -92,6 +92,8 @@ pub struct LandInputs<'a> {
     pub load: &'a SegmentLoad,
     /// Service coverage and problems (T-146); `None` = no services in the land value.
     pub services: Option<(&'a ServiceCoverage, &'a ServiceState)>,
+    /// The park areas and their cells (T-225); `None` = no park land value.
+    pub parks: Option<(&'a cp_district::Areas, &'a cp_district::AreaMap)>,
 }
 
 /// The kinds whose coverage raises land value and housing levels, in `land_service` order.
@@ -290,6 +292,31 @@ impl LandGrids {
             }
         }
 
+        // The cells of a park area lift the land around them by the area's level, falling off
+        // to `park_land_radius_m`; where areas overlap the higher value counts (T-225).
+        let mut park = vec![0.0f32; SIDE * SIDE];
+        if let Some((areas, area_map)) = i.parks
+            && bal.park_land_radius_m > 0.0
+        {
+            let r = bal.park_land_radius_m;
+            for (id, a) in areas.iter() {
+                if !matches!(a.kind, cp_district::AreaKind::Park(_)) {
+                    continue;
+                }
+                let add = bal.park_land[usize::from(a.level.clamp(1, 5)) - 1];
+                if add <= 0.0 {
+                    continue;
+                }
+                for (cx, cz) in area_map.cells_of(id) {
+                    let p = Vec2::new(
+                        (f32::from(cx) + 0.5) * cp_district::CELL_M,
+                        (f32::from(cz) + 0.5) * cp_district::CELL_M,
+                    );
+                    cells_near(p, r, |c, d| park[c] = park[c].max(add * (1.0 - d / r)));
+                }
+            }
+        }
+
         for c in 0..SIDE * SIDE {
             g.pollution[c] = g.pollution[c].min(100.0);
             g.noise[c] = g.noise[c].min(100.0);
@@ -308,6 +335,7 @@ impl LandGrids {
                 - bal.land_noise_weight * g.noise[c]
                 + service[c]
                 + effect[c]
+                + park[c]
                 + spec_land[c];
             g.land_value[c] = v.clamp(0.0, 100.0);
         }

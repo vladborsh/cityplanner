@@ -4632,7 +4632,8 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         // v46 only changed what the zone blocks mean (layout v2), not how they are written.
         45 | 46 => Ok(migrate_v47_to_v48(migrate_v46_to_v47(dec(body)?))),
         47 => Ok(migrate_v47_to_v48(dec(body)?)),
-        48 => dec(body),
+        // v49 only added `SimCommand::Park` (the command log), not a field.
+        48 | 49 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

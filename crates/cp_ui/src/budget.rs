@@ -235,6 +235,10 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
             [None, Some(week.industry_export), None],
         ));
     }
+    // Entrance fees of the park areas (T-225): kept for the week so far only.
+    if week.park_fees != Cost::ZERO {
+        income.push(("Park entry fees".into(), [None, Some(week.park_fees), None]));
+    }
     if week.industry_import != Cost::ZERO {
         expenses.push((
             "Industry import".into(),

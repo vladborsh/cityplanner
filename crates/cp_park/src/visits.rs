@@ -71,6 +71,14 @@ impl ParkLedger {
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
     }
+
+    /// Books the week: the sum becomes `last_fees` and starts over; returns it.
+    pub fn settle_week(&mut self) -> Cost {
+        let booked = self.fees;
+        self.last_fees = booked;
+        self.fees = Cost::ZERO;
+        booked
+    }
 }
 
 /// A uniform `0..1` from `h` (a splitmix step), for the deterministic choices.

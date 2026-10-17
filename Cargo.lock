@@ -2539,6 +2539,7 @@ dependencies = [
  "cp_district",
  "cp_industry",
  "cp_net",
+ "cp_park",
  "cp_service",
  "cp_terrain",
  "cp_traffic",

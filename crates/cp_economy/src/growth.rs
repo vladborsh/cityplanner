@@ -225,6 +225,8 @@ pub fn update_city(
     mut shortage: ResMut<WorkerShortage>,
     coverage: Option<Res<ServiceCoverage>>,
     services: Option<Res<ServiceState>>,
+    areas: Option<Res<cp_district::Areas>>,
+    area_map: Option<Res<cp_district::AreaMap>>,
     policies: cp_district::PolicyParams,
 ) {
     if tick.0 == 0 || !tick.0.is_multiple_of(CITY_PERIOD) {
@@ -240,6 +242,7 @@ pub fn update_city(
         utilities: &utilities,
         load: &agents.load,
         services: coverage.as_deref().zip(services.as_deref()),
+        parks: areas.as_deref().zip(area_map.as_deref()),
     });
 
     let workers = worker_education(&citizens);

@@ -32,6 +32,8 @@ pub enum SimCommand {
     Transit(cp_transit::TransitCommand),
     /// M5 (T-214): warehouse modes.
     Industry(cp_industry::IndustryCommand),
+    /// M6 (T-225): the entrance fee of a park area.
+    Park(cp_park::ParkCommand),
     // M3+: ...
 }
 
@@ -73,6 +75,7 @@ impl SimCommand {
             | SimCommand::Terrain(_)
             | SimCommand::Transit(_)
             | SimCommand::Industry(_)
+            | SimCommand::Park(_)
             | SimCommand::Debug(_) => {}
         }
     }
@@ -159,6 +162,7 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
         SimCommand::Industry(c) => {
             cp_industry::apply(world, c).map_err(|e| rejected("industry", e))
         }
+        SimCommand::Park(c) => cp_park::apply(world, c).map_err(|e| rejected("park", e)),
         SimCommand::Debug(c) => apply_debug(world, c),
     }
 }

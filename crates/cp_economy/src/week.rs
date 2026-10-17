@@ -250,6 +250,7 @@ pub fn settle_week(
     city_policies: Res<CityPolicies>,
     ledger: Option<ResMut<TransitLedger>>,
     industry: Option<ResMut<cp_industry::IndustryLedger>>,
+    parks: Option<ResMut<cp_park::ParkLedger>>,
 ) {
     let hour = game_hour(tick.0);
     if tick.0 == 0 || hour == game_hour(tick.0 - 1) {
@@ -306,6 +307,12 @@ pub fn settle_week(
             treasury.balance += sold - bought;
             booked.industry_export = sold;
             booked.industry_import = bought;
+        }
+        // Entrance fees of the park areas (T-225).
+        if let Some(mut parks) = parks {
+            let fees = parks.settle_week();
+            treasury.balance += fees;
+            booked.park_fees = fees;
         }
         treasury.balance += report.transit_fares + report.tourism + report.exports
             - report.transit_upkeep

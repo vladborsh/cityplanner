@@ -731,6 +731,7 @@ mod city {
             utilities: w.resource::<UtilityGraph>(),
             load,
             services: None,
+            parks: None,
         })
     }
 
@@ -1005,6 +1006,7 @@ mod city {
                 utilities: w.resource::<UtilityGraph>(),
                 load: &load,
                 services: Some((cover, state)),
+                parks: None,
             })
         };
         let bare = grids(&w, &db, &load);

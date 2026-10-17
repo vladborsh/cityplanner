@@ -9,11 +9,12 @@
 //! are derived: [`run_park`] recomputes them when the buildings changed and once a game hour
 //! (a level may have risen without a change the count could see).
 
+pub mod command;
 pub mod visits;
 
 use std::collections::BTreeMap;
 
-use bevy_ecs::change_detection::DetectChanges;
+use bevy_ecs::change_detection::{DetectChanges, DetectChangesMut};
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Local, Res, ResMut};
 use cp_building::{BuildingGrid, BuildingId, BuildingState};
@@ -27,8 +28,17 @@ use cp_core::time::TICKS_PER_WEEK;
 use cp_district::{AreaKind, AreaMap, Areas, area_at};
 use cp_transit::Tourists;
 
+pub use command::{ParkCommand, ParkError, apply};
 use serde::{Deserialize, Serialize};
 pub use visits::{ParkLedger, ParkVisits, Visit, Walker, gate_area, path_access, run_walkers};
+
+/// The level an area with `xp` has reached, given the thresholds for levels 2 to 5.
+pub fn level_for_xp(xp: u32, thresholds: &[u32; 4]) -> u8 {
+    1 + thresholds.iter().filter(|&&t| xp >= t).count() as u8
+}
+
+/// Highest park level.
+pub const MAX_PARK_LEVEL: u8 = 5;
 
 /// Ticks between two forced recounts: a game hour.
 pub const PARK_RECOUNT_TICKS: u64 = TICKS_PER_DAY / 24;
@@ -173,7 +183,7 @@ pub fn run_park(
     content: Option<Res<SimContent>>,
     buildings: Res<BuildingGrid>,
     area_map: Res<AreaMap>,
-    areas: Res<Areas>,
+    mut areas: ResMut<Areas>,
     mut state: ResMut<ParkState>,
     mut book: ResMut<TripBook>,
     mut tourists: ResMut<Tourists>,
@@ -213,10 +223,9 @@ pub fn run_park(
         for a in state.areas.values_mut() {
             a.visitors_week = 0;
         }
-        ledger.last_fees = ledger.fees;
-        ledger.fees = Cost::ZERO;
     }
 
+    let mut levelled = false;
     // Arrivals at a gate: the visit counts, the fee is paid, the visitor is inside.
     for (building, leave_at) in arrivals {
         let Some(b) = buildings.get(building) else {
@@ -239,10 +248,31 @@ pub fn run_park(
         a.visitors_day += 1;
         a.visitors_week += 1;
         ledger.fees += Cost::from_units(a.fee);
+        // The area earns a point per visitor and rises at the thresholds of the balance. The
+        // points are written past the change detection (they happen on most ticks of a busy
+        // park); a new level is a change, and the next count sees it.
+        let thresholds = db.balance().park_levels;
+        let risen = areas.bypass_change_detection().get_mut(area).map(|rec| {
+            rec.xp = rec.xp.saturating_add(1);
+            let level = level_for_xp(rec.xp, &thresholds).min(MAX_PARK_LEVEL);
+            let up = level > rec.level;
+            if up {
+                rec.level = level;
+            }
+            up
+        });
+        if risen == Some(true) {
+            areas.set_changed();
+            levelled = true;
+        }
         visits.inside.push(Visit {
             area: area.0,
             leave_at,
         });
+    }
+    // A new level changes the attractiveness at once.
+    if levelled {
+        recount(&mut state, db, &buildings, &area_map, &areas);
     }
     // Visits end; the areas know who is left.
     visits.inside.retain(|v| v.leave_at > now);
