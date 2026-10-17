@@ -339,6 +339,39 @@ pub fn build_gardens(sim: &mut SimRunner, homes: usize) -> usize {
     sim.world().resource::<BuildingGrid>().len()
 }
 
+/// Street scene (T-233): a straight avenue and a local street with homes between them, to see
+/// the lamps and utility poles. Look at it with `--cam lamps` (add `--hour 22 --day-night` for
+/// the night).
+pub const LAMPS: &str = "lamps";
+
+/// Builds the [`LAMPS`] scene: a medium avenue and, 60 m south of it, a local street.
+pub fn build_lamps(sim: &mut SimRunner) {
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    for (road, z, x0, x1) in [
+        ("medium_4l", c - 40.0, c - 160.0, c + 160.0),
+        ("basic_2l", c + 40.0, c - 160.0, c + 160.0),
+    ] {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: db.road_id(road).expect("road"),
+                path: RoadPath::Straight {
+                    from: Vec2::new(x0, z),
+                    to: Vec2::new(x1, z),
+                },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+}
+
 /// City parks scene (T-221): the four parks in a row. Look at it with `--cam parks`.
 pub const PARKS: &str = "parks";
 

@@ -121,6 +121,8 @@ pub fn road(d: &RoadDef) -> Problems {
     variant(&mut c, "bridge", &d.bridge);
     c.not_empty("mesh", &d.mesh);
     c.not_empty("material", &d.material);
+    c.non_negative("lamp_spacing_m", d.lamp_spacing_m);
+    c.non_negative("pole_spacing_m", d.pole_spacing_m);
     c.0
 }
 

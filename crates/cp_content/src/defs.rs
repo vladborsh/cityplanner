@@ -784,6 +784,13 @@ pub struct RoadDef {
     pub cost_per_m: f32,
     pub upkeep_per_m_week: f32,
     pub allows_zoning: bool,
+    /// Street lamps on both sidewalks every this many metres (T-233, render only); 0 = none.
+    #[serde(default)]
+    pub lamp_spacing_m: f32,
+    /// Decorative wooden utility poles on one side every this many metres (T-233, render
+    /// only); 0 = none.
+    #[serde(default)]
+    pub pole_spacing_m: f32,
     /// Priority rank at junctions: higher wins.
     pub rank: u8,
     #[serde(default)]

@@ -1166,3 +1166,76 @@ fn a_bend_has_one_smooth_outer_sidewalk_without_spikes_or_notches() {
         }
     }
 }
+
+// T-233: street lamps and utility poles.
+
+fn furniture(w: &World) -> (furniture::FurnitureSet, Update) {
+    let view = w.view();
+    let mut set = furniture::FurnitureSet::default();
+    let up = set.update(&view.net, &view.junctions, &w.terrain, &w.content);
+    (set, up)
+}
+
+#[test]
+fn a_street_gets_lamps_on_both_sidewalks_and_poles_on_one_inside_the_end_margins() {
+    let mut w = world();
+    w.line("basic_2l", (4000.0, 4000.0), (4200.0, 4000.0));
+    let (set, up) = furniture(&w);
+    let (lamps, poles) = set.counts();
+    assert!((10..=16).contains(&lamps), "{lamps} lamps");
+    assert!((3..=6).contains(&poles), "{poles} poles");
+    assert_eq!(up.dirty_chunks.len(), set.chunks().count());
+    // Heads hang over the carriageway, well above the sidewalk, away from both ends.
+    let mut heads = 0;
+    for c in set.chunks() {
+        let m = set.chunk_mesh(*c, 1).unwrap();
+        for p in &m.positions {
+            heads += 1;
+            let ground = w.terrain.height(Vec2::new(p[0], p[2]));
+            assert!(
+                p[1] - ground > 4.5 && p[1] - ground < 7.5,
+                "head height {p:?} over {ground}"
+            );
+            assert!(p[0] > 4000.0 + 4.0 && p[0] < 4200.0 - 4.0, "{p:?}");
+            assert!((p[2] - 4000.0).abs() < 6.0, "over the street: {p:?}");
+        }
+        // Pools lie on the road, a few centimetres up, and fade to nothing at the rim.
+        let pools = set.chunk_mesh(*c, 2).unwrap();
+        assert!(pools.positions.iter().all(|p| {
+            let ground = w.terrain.height(Vec2::new(p[0], p[2]));
+            p[1] - ground < 2.5
+        }));
+        assert!(pools.colors.iter().any(|c| c[3] == 0.0));
+        assert!(pools.colors.iter().any(|c| c[3] > 0.3));
+        assert!(set.chunk_mesh(*c, 0).unwrap().triangle_count() > 0);
+    }
+    assert!(
+        heads >= lamps * 24,
+        "{heads} head vertices for {lamps} lamps"
+    );
+    // Nothing changed: nothing rebuilt.
+    let view = w.view();
+    let mut set = set;
+    let again = set.update(&view.net, &view.junctions, &w.terrain, &w.content);
+    assert_eq!((again.rebuilt, again.removed), (0, 0));
+}
+
+#[test]
+fn highways_and_junctions_get_no_lamps_and_a_junction_keeps_them_clear() {
+    let mut w = world();
+    w.line("highway_1w_2l", (4000.0, 4400.0), (4200.0, 4400.0));
+    let (set, _) = furniture(&w);
+    assert_eq!(set.counts(), (0, 0), "a highway has none");
+
+    // A T: no lamp inside the junction area (every lamp is 5 m or more from the crossing).
+    let mut w = world();
+    w.line("basic_2l", (4000.0, 4000.0), (4200.0, 4000.0));
+    w.line("basic_2l", (4100.0, 3900.0), (4100.0, 4000.0));
+    let (set, _) = furniture(&w);
+    for c in set.chunks() {
+        for p in &set.chunk_mesh(*c, 1).unwrap().positions {
+            let (dx, dz) = ((p[0] - 4100.0).abs(), (p[2] - 4000.0).abs());
+            assert!(dx.max(dz) > 6.0, "a lamp head in the junction: {p:?}");
+        }
+    }
+}

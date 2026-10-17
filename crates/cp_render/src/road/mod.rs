@@ -1135,6 +1135,7 @@ impl RoadSet {
 
 pub mod band;
 mod corner;
+pub mod furniture;
 mod ground;
 pub use band::{BAND_LIFT, BAND_STEP, band_data, band_mesh, band_polyline, to_mesh};
 pub use ground::{CLEARANCE, lod_height, max_mesh_height};

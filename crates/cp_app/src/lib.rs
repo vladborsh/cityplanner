@@ -24,9 +24,9 @@ use cp_core::time::TICKS_PER_DAY;
 use cp_core::{SimLimits, Tick};
 use cp_prof::{PhaseClock, PhaseTiming};
 use cp_render::{
-    AgentRenderPlugin, AgentRenderStats, BuildingRenderPlugin, FireFxPlugin, OverlayPlugin,
-    ProblemIconPlugin, RoadRenderPlugin, RtsCamera, RtsCameraPlugin, TerrainRenderPlugin,
-    TickFraction, UndergroundPlugin, UtilityRenderPlugin,
+    AgentRenderPlugin, AgentRenderStats, BuildingRenderPlugin, FireFxPlugin, FurnitureRenderPlugin,
+    OverlayPlugin, ProblemIconPlugin, RoadRenderPlugin, RtsCamera, RtsCameraPlugin,
+    TerrainRenderPlugin, TickFraction, UndergroundPlugin, UtilityRenderPlugin,
 };
 use cp_sim::{SimPhase, SimRunner, SimView};
 use cp_terrain::{MAP_SIZE, Terrain};
@@ -100,6 +100,7 @@ impl Plugin for GamePlugin {
             map::MapPlugin,
             TerrainRenderPlugin,
             RoadRenderPlugin,
+            FurnitureRenderPlugin,
             OverlayPlugin,
             UtilityRenderPlugin,
             UndergroundPlugin,
@@ -222,6 +223,15 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c - 30.0, 14.0, c + 55.0),
             Vec3::new(c - 30.0, 2.0, c),
         ),
+        // The street lamps and poles along two streets (`--scene lamps`).
+        "lamps" => (
+            Vec3::new(c - 30.0, 9.0, c + 78.0),
+            Vec3::new(c - 30.0, 3.0, c + 40.0),
+        ),
+        "lamps-avenue" => (
+            Vec3::new(c - 20.0, 12.0, c + 5.0),
+            Vec3::new(c - 20.0, 3.0, c - 40.0),
+        ),
         "gardens-close" => (
             Vec3::new(c - 30.0, 9.0, c + 34.0),
             Vec3::new(c - 30.0, 3.0, c - 6.0),
@@ -309,6 +319,9 @@ pub fn build_sim(
     } else if scene == Some(scene::CHAINS) {
         let n = scene::build_chains(&mut sim);
         info!("scene chains: {n} buildings");
+    } else if scene == Some(scene::LAMPS) {
+        scene::build_lamps(&mut sim);
+        info!("scene lamps");
     } else if scene == Some(scene::GARDENS) {
         let n = scene::build_gardens(&mut sim, 14);
         info!("scene gardens: {n} buildings");

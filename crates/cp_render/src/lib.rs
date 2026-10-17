@@ -10,13 +10,14 @@ pub mod camera;
 pub mod chunk;
 pub mod fire_fx;
 pub mod fire_render;
+pub mod furniture_render;
 pub mod material;
 pub mod overlay;
 pub mod portal_render;
 pub mod problem;
 pub mod problem_render;
 pub mod road;
-pub mod road_render;
+mod road_render;
 pub mod sun;
 pub mod terrain;
 pub mod train_render;
@@ -30,6 +31,7 @@ pub use building_render::{BuildingRenderPlugin, BuildingStats};
 pub use camera::{CameraSettings, RtsCamera, RtsCameraPlugin};
 pub use chunk::terrain_mesh_height;
 pub use fire_render::{FireFxPlugin, FireFxStats};
+pub use furniture_render::{FurnitureRenderPlugin, FurnitureStats};
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{
     AreasMode, DistrictsMode, LINE_STEP, LineGhost, Overlay, OverlayPlugin, OverlayState,

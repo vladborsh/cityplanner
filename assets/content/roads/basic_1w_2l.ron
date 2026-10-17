@@ -15,6 +15,8 @@ Road((
     cost_per_m: 6.0,
     upkeep_per_m_week: 0.06,
     allows_zoning: true,
+    lamp_spacing_m: 28.0,
+    pole_spacing_m: 40.0,
     rank: 1,
     elevated: Some((cost_per_m: 18.0, upkeep_per_m_week: 0.12, mesh: "road/basic_1w_2l_elevated")),
     bridge: Some((cost_per_m: 36.0, upkeep_per_m_week: 0.18, mesh: "road/basic_1w_2l_bridge")),
