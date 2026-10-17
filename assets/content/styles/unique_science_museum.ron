@@ -1,0 +1,15 @@
+// Silhouette of a unique building or monument (T-202, T-203): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "unique_science_museum",
+    massing: ScienceMuseum,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.72, 0.78, 0.82)],
+        roof: [(0.32, 0.38, 0.44)],
+        trim: [(0.88, 0.92, 0.95)],
+        glass: (0.4, 0.74, 0.88),
+    ),
+    facade: Punched,
+))

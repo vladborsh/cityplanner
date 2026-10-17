@@ -1,0 +1,15 @@
+// Silhouette of a unique building or monument (T-202, T-203): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "unique_grand_library",
+    massing: GrandLibrary,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.9, 0.87, 0.8)],
+        roof: [(0.4, 0.55, 0.5)],
+        trim: [(0.96, 0.94, 0.89)],
+        glass: (0.45, 0.66, 0.78),
+    ),
+    facade: Punched,
+))

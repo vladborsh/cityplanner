@@ -1,0 +1,15 @@
+// Silhouette of a unique building or monument (T-202, T-203): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "unique_golden_arch",
+    massing: GoldenArch,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.96, 0.77, 0.18)],
+        roof: [(0.7, 0.52, 0.1)],
+        trim: [(0.88, 0.84, 0.74)],
+        glass: (0.6, 0.5, 0.2),
+    ),
+    facade: Punched,
+))

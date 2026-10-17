@@ -1,0 +1,15 @@
+// Silhouette of a unique building or monument (T-202, T-203): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "unique_opera_house",
+    massing: OperaHouse,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.82, 0.8, 0.84)],
+        roof: [(0.6, 0.36, 0.4)],
+        trim: [(0.97, 0.97, 0.98)],
+        glass: (0.45, 0.7, 0.86),
+    ),
+    facade: Punched,
+))

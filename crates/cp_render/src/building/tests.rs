@@ -801,6 +801,68 @@ fn the_eleven_m2_service_silhouettes_are_distinct_and_build_at_every_lod() {
     assert!(heights["cemetery"] < 8.0 && heights["clinic"] < 11.0);
 }
 
+/// T-202, T-203: the ten unique buildings and monuments each have a silhouette of their own: a
+/// mesh at every LOD that never grows with distance, no two alike, taller than a house, and
+/// the monuments the tallest things in the city.
+#[test]
+fn the_ten_unique_silhouettes_are_distinct_and_the_monuments_tower() {
+    let e = env();
+    let ground = e.terrain.height(Vec2::new(5120.0, 5120.0));
+    let mut shapes = BTreeSet::new();
+    let mut heights = BTreeMap::new();
+    for name in [
+        "city_plaza",
+        "clock_tower",
+        "grand_library",
+        "opera_house",
+        "science_museum",
+        "stadium",
+        "tv_tower",
+        "cathedral",
+        "golden_arch",
+        "skyline_spire",
+    ] {
+        let (def_id, def) = service_def(&e, name);
+        assert!(def.unique.is_some(), "{name}");
+        let style = e.db.style(e.db.style_id(&def.styles[0]).unwrap());
+        assert!(style.massing as u8 >= 25, "{name} has a massing of its own");
+        let b = building(def_id, &e.db, BuildingState::Active, 0);
+        let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+        let (n, m, f) = (
+            p.near.triangle_count(),
+            p.mid.triangle_count(),
+            p.far.triangle_count(),
+        );
+        assert!(n >= m && m >= f && n > f && f > 0, "{name}: {n} {m} {f}");
+        for mesh in [&p.near, &p.mid, &p.far] {
+            assert!(
+                mesh.positions.iter().flatten().all(|v| v.is_finite()),
+                "{name}"
+            );
+        }
+        shapes.insert((
+            p.near.positions.len(),
+            p.mid.positions.len(),
+            p.far.positions.len(),
+        ));
+        let (lo, hi) = extent(&p.far);
+        assert!(hi.y > lo.y, "{name}");
+        heights.insert(name, hi.y - ground);
+    }
+    assert_eq!(shapes.len(), 10, "{shapes:?}");
+    assert!(heights["city_plaza"] > 4.0 && heights["clock_tower"] > 40.0);
+    for monument in [
+        "stadium",
+        "tv_tower",
+        "cathedral",
+        "golden_arch",
+        "skyline_spire",
+    ] {
+        assert!(heights[monument] > 30.0, "{monument}: {heights:?}");
+    }
+    assert!(heights["tv_tower"] > 80.0 && heights["skyline_spire"] > 100.0);
+}
+
 /// T-114: the turbine's rotor is three blades around the hub, in the plane perpendicular to its
 /// axis, turning only by the angle given (a view effect: the mesh is rebuilt from the angle).
 #[test]

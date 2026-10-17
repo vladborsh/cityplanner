@@ -792,6 +792,17 @@ pub enum Massing {
     BusDepot = 23,
     /// The metro station (T-162).
     MetroStation = 24,
+    /// The unique buildings and monuments (T-202, T-203).
+    PlazaFountain = 25,
+    ClockTower = 26,
+    GrandLibrary = 27,
+    OperaHouse = 28,
+    ScienceMuseum = 29,
+    Stadium = 30,
+    TvTower = 31,
+    Cathedral = 32,
+    GoldenArch = 33,
+    SkylineSpire = 34,
 }
 
 /// Facade pattern family of a style.

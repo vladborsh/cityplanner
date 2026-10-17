@@ -1,4 +1,4 @@
-// Numbers: tune later. Style and icon are stand-ins until T-202 / T-203.
+// Numbers: tune later.
 Building((
     id: "skyline_spire",
     name: "Skyline spire",
@@ -10,9 +10,9 @@ Building((
     tax_base: 0.0,
     cost: 800000.0,
     upkeep_week: 4000.0,
-    styles: ["service_university"],
+    styles: ["unique_skyline_spire"],
     service: Some("landmark"),
-    icon: "university",
+    icon: "skyline_spire",
     unique: Some((monument: true, unlock: [UniquesBuilt(8), Population(20000)], tourists_per_day: 200.0)),
     land_effect: Some((add: 24.0, radius_m: 400.0)),
 ))

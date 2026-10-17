@@ -1,0 +1,15 @@
+// Silhouette of a unique building or monument (T-202, T-203): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "unique_clock_tower",
+    massing: ClockTower,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.62, 0.3, 0.24)],
+        roof: [(0.24, 0.36, 0.34)],
+        trim: [(0.9, 0.86, 0.76)],
+        glass: (0.92, 0.88, 0.62),
+    ),
+    facade: Punched,
+))

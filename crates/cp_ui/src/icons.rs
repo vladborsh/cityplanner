@@ -512,10 +512,7 @@ mod tests {
         )
         .unwrap();
         let mut names: Vec<(String, String)> = Vec::new();
-        for (_, d) in db
-            .buildings()
-            .filter(|(_, d)| d.service.is_some() && d.unique.is_none())
-        {
+        for (_, d) in db.buildings().filter(|(_, d)| d.service.is_some()) {
             names.push((d.id.clone(), d.icon.clone()));
         }
         for (_, d) in db.utilities() {

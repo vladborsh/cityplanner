@@ -43,6 +43,72 @@ pub fn parse_city(spec: &str) -> Option<usize> {
 /// Showcase scene: every building def in rows by zone, then a row of states.
 pub const SHOWCASE: &str = "showcase";
 
+/// Unique buildings scene (T-202, T-203): the ten unique buildings and monuments in a row.
+/// Look at it with `--cam uniques`.
+pub const UNIQUES: &str = "uniques";
+
+/// Builds the [`UNIQUES`] scene; returns how many buildings stand.
+pub fn build_uniques(sim: &mut SimRunner) -> usize {
+    use cp_building::{AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingState, Lot};
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    sim.push_command(
+        SimCommand::Net(NetCommand::BuildRoad {
+            road: basic,
+            path: RoadPath::Straight {
+                from: Vec2::new(c - 400.0, c - 600.0),
+                to: Vec2::new(c - 330.0, c - 600.0),
+            },
+            elevation: ElevationMode::Ground,
+        }),
+        sim.tick(),
+    );
+    sim.tick_once();
+    sim.tick_once();
+    let segment = sim
+        .world()
+        .resource::<cp_net::NetGraph>()
+        .segments()
+        .next()
+        .map(|(id, _)| id)
+        .expect("a segment");
+    let mut defs: Vec<_> = db
+        .buildings()
+        .filter(|(_, d)| d.unique.is_some())
+        .map(|(i, d)| {
+            (
+                d.unique.as_ref().is_some_and(|u| u.monument),
+                d.id.clone(),
+                i,
+            )
+        })
+        .collect();
+    defs.sort();
+    let mut grid = sim.world_mut().resource_mut::<BuildingGrid>();
+    for (col, (_, _, id)) in defs.iter().enumerate() {
+        let d = db.building(*id);
+        grid.insert(Building {
+            def: *id,
+            footprint: cp_building::Footprint::Lot(Lot {
+                block: cp_core::Id::new(0, 0),
+                col: 0,
+                w: d.lot.0,
+                d: d.lot.1,
+            }),
+            level: d.level,
+            state: BuildingState::Active,
+            ready_at: cp_core::Tick(0),
+            pos: Vec2::new(c - 225.0 + col as f32 * 50.0, c - 130.0),
+            rot: 0.0,
+            access: Some(AccessPoint { segment, t: 0.5 }),
+            flags: BuildingFlags::default(),
+            level_progress: 0.0,
+        });
+    }
+    defs.len()
+}
+
 /// Road tunnel scene (T-173): a street dives under the river of `river_valley`. Run it with
 /// `--map river_valley` and look with `--cam tunnel` (add `--overlay underground` to see the
 /// tunnel).

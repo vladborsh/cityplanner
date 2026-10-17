@@ -644,6 +644,16 @@ pub fn is_service(m: Massing) -> bool {
             | Massing::PoliceStation
             | Massing::BusDepot
             | Massing::MetroStation
+            | Massing::PlazaFountain
+            | Massing::ClockTower
+            | Massing::GrandLibrary
+            | Massing::OperaHouse
+            | Massing::ScienceMuseum
+            | Massing::Stadium
+            | Massing::TvTower
+            | Massing::Cathedral
+            | Massing::GoldenArch
+            | Massing::SkylineSpire
     )
 }
 
@@ -2110,6 +2120,737 @@ pub fn service(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                     );
                 }
             }
+        }
+        _ => unique(m, massing, sc),
+    }
+}
+
+/// The unique buildings and monuments (T-202, T-203): ten silhouettes that read from far away.
+/// The front is `-v`. Monuments (stadium to spire) are the biggest things in the city.
+fn unique(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
+    use super::Lod;
+    let (f, b) = (sc.f, sc.base);
+    let (hu, hv, cv) = (sc.hu, sc.hv, sc.cv);
+    let near = sc.lod == Lod::Near;
+    let far = sc.lod == Lod::Far;
+    let n = if near {
+        12
+    } else if far {
+        6
+    } else {
+        8
+    };
+    let fnd = [0.30, 0.30, 0.30, 1.0];
+    let stone = [0.78, 0.76, 0.70, 1.0];
+    let r = hu.min(hv);
+    // The pad every silhouette stands on, reaching down to the lowest ground.
+    let pad = |m: &mut MeshData, (pu, pv): (f32, f32), top: f32, col: [f32; 4]| {
+        block(m, f, (0.0, cv), (pu, pv), sc.lo - 0.3, b + top, fnd, col);
+    };
+    match massing {
+        Massing::PlazaFountain => {
+            // A paved square with a basin and jet in the middle and a colonnade on three sides.
+            pad(m, (hu, hv), 0.3, stone);
+            let y = b + 0.3;
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.34 * r, 0.3 * r),
+                (y, y + 1.1),
+                n,
+                stone,
+                Some(sc.glass),
+            );
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.07 * r, 0.04 * r),
+                (y, y + 3.2),
+                n.min(8),
+                sc.trim,
+                None,
+            );
+            if !far {
+                cone(
+                    m,
+                    f,
+                    (0.0, cv),
+                    0.1 * r,
+                    (y + 3.2, y + 4.6),
+                    n.min(8),
+                    sc.glass,
+                );
+            }
+            let cols = if near { 7 } else { 4 };
+            for k in 0..cols {
+                let t = -0.9 + 1.8 * k as f32 / (cols - 1) as f32;
+                // Back row and both side rows.
+                for (u, v) in [
+                    (t * hu, cv + 0.9 * hv),
+                    (-0.9 * hu, cv + t * hv),
+                    (0.9 * hu, cv + t * hv),
+                ] {
+                    cyl(
+                        m,
+                        f,
+                        (u, v),
+                        (0.45, 0.45),
+                        (y, y + 5.0),
+                        n.min(8),
+                        sc.wall,
+                        None,
+                    );
+                }
+            }
+            block(
+                m,
+                f,
+                (0.0, cv + 0.9 * hv),
+                (0.95 * hu, 0.08 * hv),
+                y + 5.0,
+                y + 5.8,
+                sc.trim,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (-0.9 * hu, cv),
+                (0.08 * hu, 0.95 * hv),
+                y + 5.0,
+                y + 5.8,
+                sc.trim,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.9 * hu, cv),
+                (0.08 * hu, 0.95 * hv),
+                y + 5.0,
+                y + 5.8,
+                sc.trim,
+                sc.roof,
+            );
+        }
+        Massing::ClockTower => {
+            pad(m, (0.8 * hu, 0.8 * hv), 0.3, stone);
+            let y = b + 0.3;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.36 * r, 0.36 * r),
+                y,
+                y + 26.0,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.42 * r, 0.42 * r),
+                y + 26.0,
+                y + 27.6,
+                sc.trim,
+                sc.trim,
+            );
+            // The clock stage: a lighter box with a glass face on every side.
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.4 * r, 0.4 * r),
+                y + 27.6,
+                y + 34.0,
+                sc.wall,
+                sc.roof,
+            );
+            if near {
+                for (du, dv, wu, wv) in [
+                    (0.0, -0.405, 0.26, 0.02),
+                    (0.0, 0.405, 0.26, 0.02),
+                    (-0.405, 0.0, 0.02, 0.26),
+                    (0.405, 0.0, 0.02, 0.26),
+                ] {
+                    block(
+                        m,
+                        f,
+                        (du * r, cv + dv * r),
+                        (wu * r, wv * r),
+                        y + 28.6,
+                        y + 33.0,
+                        sc.glass,
+                        sc.glass,
+                    );
+                }
+            }
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.46 * r, 0.46 * r),
+                y + 34.0,
+                y + 35.2,
+                sc.trim,
+                sc.trim,
+            );
+            cone(
+                m,
+                f,
+                (0.0, cv),
+                0.4 * r,
+                (y + 35.2, y + 50.0),
+                n.min(8),
+                sc.roof,
+            );
+        }
+        Massing::GrandLibrary => {
+            // Two steps, a long hall, a portico of columns, a pediment and a dome.
+            pad(m, (0.96 * hu, 0.96 * hv), 0.3, stone);
+            let y = b + 0.3;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.92 * hu, 0.9 * hv),
+                y,
+                y + 1.0,
+                sc.trim,
+                sc.trim,
+            );
+            let y = y + 1.0;
+            block(
+                m,
+                f,
+                (0.0, cv + 0.15 * hv),
+                (0.82 * hu, 0.62 * hv),
+                y,
+                y + 11.0,
+                sc.wall,
+                sc.roof,
+            );
+            let cols = if near {
+                8
+            } else if far {
+                4
+            } else {
+                6
+            };
+            for k in 0..cols {
+                let u = (-0.74 + 1.48 * k as f32 / (cols - 1) as f32) * hu;
+                cyl(
+                    m,
+                    f,
+                    (u, cv - 0.55 * hv),
+                    (0.75, 0.75),
+                    (y, y + 11.0),
+                    n.min(8),
+                    mul(sc.trim, 1.08),
+                    None,
+                );
+            }
+            block(
+                m,
+                f,
+                (0.0, cv - 0.55 * hv),
+                (0.82 * hu, 0.16 * hv),
+                y + 11.0,
+                y + 12.4,
+                sc.trim,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv - 0.55 * hv),
+                (0.6 * hu, 0.14 * hv),
+                y + 12.4,
+                y + 14.0,
+                sc.trim,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv - 0.55 * hv),
+                (0.3 * hu, 0.12 * hv),
+                y + 14.0,
+                y + 15.2,
+                sc.trim,
+                sc.roof,
+            );
+            // The dome over the hall.
+            cyl(
+                m,
+                f,
+                (0.0, cv + 0.2 * hv),
+                (0.3 * r, 0.3 * r),
+                (y + 11.0, y + 16.0),
+                n,
+                sc.wall,
+                None,
+            );
+            cyl(
+                m,
+                f,
+                (0.0, cv + 0.2 * hv),
+                (0.3 * r, 0.22 * r),
+                (y + 16.0, y + 19.0),
+                n,
+                sc.glass,
+                None,
+            );
+            cyl(
+                m,
+                f,
+                (0.0, cv + 0.2 * hv),
+                (0.22 * r, 0.1 * r),
+                (y + 19.0, y + 23.0),
+                n,
+                sc.roof,
+                None,
+            );
+            cone(
+                m,
+                f,
+                (0.0, cv + 0.2 * hv),
+                0.1 * r,
+                (y + 23.0, y + 27.0),
+                n.min(8),
+                sc.trim,
+            );
+        }
+        Massing::OperaHouse => {
+            // A glass foyer in front and a fan of white shell roofs rising towards the back.
+            pad(m, (0.96 * hu, 0.96 * hv), 0.3, stone);
+            let y = b + 0.3;
+            block(
+                m,
+                f,
+                (0.0, cv - 0.55 * hv),
+                (0.8 * hu, 0.3 * hv),
+                y,
+                y + 5.0,
+                sc.glass,
+                sc.roof,
+            );
+            let shells = if far { 3 } else { 5 };
+            for k in 0..shells {
+                let t = -1.0 + 2.0 * k as f32 / (shells - 1) as f32;
+                let u = t * 0.62 * hu;
+                let v = cv + (0.25 - 0.35 * t * t) * hv;
+                let h = 15.0 - 5.0 * t.abs();
+                let w = 0.36 * r;
+                cyl(
+                    m,
+                    f,
+                    (u, v),
+                    (w, 0.55 * w),
+                    (y, y + 0.6 * h),
+                    n,
+                    sc.trim,
+                    None,
+                );
+                cyl(
+                    m,
+                    f,
+                    (u, v),
+                    (0.55 * w, 0.2 * w),
+                    (y + 0.6 * h, y + h),
+                    n,
+                    sc.trim,
+                    None,
+                );
+                cone(
+                    m,
+                    f,
+                    (u, v),
+                    0.2 * w,
+                    (y + h, y + h + 2.5),
+                    n.min(8),
+                    sc.roof,
+                );
+            }
+            block(
+                m,
+                f,
+                (0.0, cv + 0.55 * hv),
+                (0.7 * hu, 0.25 * hv),
+                y,
+                y + 9.0,
+                sc.wall,
+                sc.roof,
+            );
+        }
+        Massing::ScienceMuseum => {
+            // A low plinth under a big glass dome.
+            pad(m, (0.96 * hu, 0.96 * hv), 0.3, stone);
+            let y = b + 0.3;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.92 * hu, 0.9 * hv),
+                y,
+                y + 4.0,
+                sc.wall,
+                sc.roof,
+            );
+            let y = y + 4.0;
+            let r0 = 0.7 * r;
+            cyl(m, f, (0.0, cv), (r0, r0), (y, y + 1.0), n, sc.trim, None);
+            let rings = if far { 2 } else { 4 };
+            let mut rad = r0;
+            let mut h = y + 1.0;
+            for k in 0..rings {
+                let next = r0 * (1.0 - (k as f32 + 1.0) / rings as f32).powf(0.7).max(0.08);
+                let rise = 11.0 / rings as f32;
+                cyl(
+                    m,
+                    f,
+                    (0.0, cv),
+                    (rad, next),
+                    (h, h + rise),
+                    n,
+                    sc.glass,
+                    if k + 1 == rings { Some(sc.glass) } else { None },
+                );
+                rad = next;
+                h += rise;
+            }
+            if near {
+                // Ribs over the glass.
+                for k in 0..4 {
+                    let a = k as f32 / 4.0 * std::f32::consts::PI;
+                    block(
+                        m,
+                        f,
+                        (0.0, cv),
+                        (
+                            0.04 * r0 + 0.04 * r0 * a.cos().abs(),
+                            0.04 * r0 + 0.04 * r0 * a.sin().abs(),
+                        ),
+                        y + 1.0,
+                        y + 12.4,
+                        sc.trim,
+                        sc.trim,
+                    );
+                }
+            }
+        }
+        Massing::Stadium => {
+            // An oval bowl with a rim and four tall floodlight masts.
+            pad(m, (hu, hv), 0.4, fnd);
+            let y = b + 0.4;
+            let big = 0.9 * r;
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (big, 0.8 * big),
+                (y, y + 13.0),
+                n.max(10),
+                sc.wall,
+                Some([0.30, 0.55, 0.28, 1.0]),
+            );
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.83 * big, 0.83 * big),
+                (y + 12.0, y + 14.2),
+                n.max(10),
+                sc.trim,
+                None,
+            );
+            if !far {
+                // The canopy ring over the stands.
+                cyl(
+                    m,
+                    f,
+                    (0.0, cv),
+                    (0.95 * big, 0.95 * big),
+                    (y + 14.2, y + 15.0),
+                    n.max(10),
+                    sc.roof,
+                    None,
+                );
+            }
+            for (su, sv) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                let (u, v) = (su * 0.88 * hu, cv + sv * 0.88 * hv);
+                cyl(m, f, (u, v), (0.7, 0.5), (y, y + 34.0), 6, sc.trim, None);
+                block(
+                    m,
+                    f,
+                    (u, v),
+                    (2.2, 1.0),
+                    y + 34.0,
+                    y + 36.0,
+                    [0.95, 0.95, 0.8, 1.0],
+                    sc.trim,
+                );
+            }
+        }
+        Massing::TvTower => {
+            // A concrete mast with a sphere restaurant and a long antenna.
+            pad(m, (0.5 * hu, 0.5 * hv), 0.4, stone);
+            let y = b + 0.4;
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.3 * r, 0.1 * r),
+                (y, y + 14.0),
+                n,
+                sc.wall,
+                None,
+            );
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.1 * r, 0.065 * r),
+                (y + 14.0, y + 62.0),
+                n.min(10),
+                sc.wall,
+                None,
+            );
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.065 * r, 0.3 * r),
+                (y + 62.0, y + 66.0),
+                n,
+                sc.trim,
+                None,
+            );
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.3 * r, 0.3 * r),
+                (y + 66.0, y + 70.0),
+                n,
+                sc.glass,
+                Some(sc.trim),
+            );
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.3 * r, 0.06 * r),
+                (y + 70.0, y + 73.0),
+                n,
+                sc.trim,
+                None,
+            );
+            cone(
+                m,
+                f,
+                (0.0, cv),
+                0.035 * r,
+                (y + 73.0, y + 100.0),
+                4,
+                sc.roof,
+            );
+        }
+        Massing::Cathedral => {
+            // A nave and a transept under a steep roof, two west towers with spires.
+            pad(m, (hu, hv), 0.3, stone);
+            let y = b + 0.3;
+            block(
+                m,
+                f,
+                (0.0, cv + 0.1 * hv),
+                (0.42 * hu, 0.8 * hv),
+                y,
+                y + 15.0,
+                sc.wall,
+                sc.wall,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv + 0.1 * hv),
+                (0.34 * hu, 0.8 * hv),
+                y + 15.0,
+                y + 18.0,
+                sc.roof,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv + 0.1 * hv),
+                (0.2 * hu, 0.8 * hv),
+                y + 18.0,
+                y + 20.0,
+                sc.roof,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv + 0.2 * hv),
+                (0.9 * hu, 0.22 * hv),
+                y,
+                y + 12.0,
+                sc.wall,
+                sc.roof,
+            );
+            for s in [-1.0f32, 1.0] {
+                let u = s * 0.3 * hu;
+                block(
+                    m,
+                    f,
+                    (u, cv - 0.7 * hv),
+                    (0.16 * hu, 0.16 * hv),
+                    y,
+                    y + 32.0,
+                    sc.wall,
+                    sc.trim,
+                );
+                block(
+                    m,
+                    f,
+                    (u, cv - 0.7 * hv),
+                    (0.19 * hu, 0.19 * hv),
+                    y + 32.0,
+                    y + 33.2,
+                    sc.trim,
+                    sc.trim,
+                );
+                cone(
+                    m,
+                    f,
+                    (u, cv - 0.7 * hv),
+                    0.2 * r,
+                    (y + 33.2, y + 52.0),
+                    4,
+                    sc.roof,
+                );
+            }
+            // The rose window and the portal between the towers.
+            block(
+                m,
+                f,
+                (0.0, cv - 0.74 * hv),
+                (0.12 * hu, 0.02 * hv),
+                y + 15.0,
+                y + 24.0,
+                sc.glass,
+                sc.glass,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv - 0.76 * hv),
+                (0.1 * hu, 0.02 * hv),
+                y,
+                y + 8.0,
+                mul(sc.trim, 0.6),
+                sc.trim,
+            );
+            if near {
+                cone(
+                    m,
+                    f,
+                    (0.0, cv + 0.2 * hv),
+                    0.1 * r,
+                    (y + 12.0, y + 30.0),
+                    4,
+                    sc.roof,
+                );
+            }
+        }
+        Massing::GoldenArch => {
+            // A tall gold arch on a stepped podium.
+            pad(m, (hu, hv), 0.3, stone);
+            let y = b + 0.3;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.95 * hu, 0.6 * hv),
+                y,
+                y + 1.2,
+                stone,
+                stone,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.8 * hu, 0.45 * hv),
+                y + 1.2,
+                y + 2.4,
+                sc.trim,
+                sc.trim,
+            );
+            let y = y + 2.4;
+            let segs = if near {
+                18
+            } else if far {
+                8
+            } else {
+                12
+            };
+            let (a, h, t) = (0.72 * hu, 44.0, 2.6);
+            for k in 0..segs {
+                let ang = |i: usize| i as f32 / segs as f32 * std::f32::consts::PI;
+                let (a0, a1) = (ang(k), ang(k + 1));
+                let (u0, u1) = (a * a0.cos(), a * a1.cos());
+                let (y0, y1) = (h * a0.sin(), h * a1.sin());
+                let (lo, hi) = (y0.min(y1), y0.max(y1));
+                let thick = t + 0.5 * (u1 - u0).abs();
+                block(
+                    m,
+                    f,
+                    ((u0 + u1) * 0.5, cv),
+                    (thick * 0.5 + 0.6, 0.18 * hv),
+                    y + lo,
+                    y + hi.max(lo + 0.5),
+                    sc.wall,
+                    sc.wall,
+                );
+            }
+        }
+        Massing::SkylineSpire => {
+            // A very tall glass tower tapering in steps to a needle.
+            pad(m, (0.9 * hu, 0.9 * hv), 0.4, stone);
+            let y = b + 0.4;
+            let steps: [(f32, f32); 5] = [
+                (0.62, 34.0),
+                (0.5, 28.0),
+                (0.39, 24.0),
+                (0.29, 20.0),
+                (0.2, 16.0),
+            ];
+            let mut h = y;
+            let take = if far { 4 } else { 5 };
+            for (i, &(w, rise)) in steps.iter().enumerate().take(take) {
+                let col = if i % 2 == 0 { sc.glass } else { sc.wall };
+                block(m, f, (0.0, cv), (w * hu, w * hv), h, h + rise, col, sc.roof);
+                if near {
+                    block(
+                        m,
+                        f,
+                        (0.0, cv),
+                        ((w + 0.03) * hu, (w + 0.03) * hv),
+                        h + rise - 1.0,
+                        h + rise,
+                        sc.trim,
+                        sc.trim,
+                    );
+                }
+                h += rise;
+            }
+            cone(m, f, (0.0, cv), 0.06 * r, (h, h + 38.0), 4, sc.trim);
         }
         _ => {}
     }

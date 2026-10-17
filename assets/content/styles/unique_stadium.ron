@@ -1,0 +1,15 @@
+// Silhouette of a unique building or monument (T-202, T-203): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "unique_stadium",
+    massing: Stadium,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.74, 0.74, 0.76)],
+        roof: [(0.3, 0.34, 0.4)],
+        trim: [(0.9, 0.9, 0.92)],
+        glass: (0.4, 0.6, 0.8),
+    ),
+    facade: Punched,
+))

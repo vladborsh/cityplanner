@@ -1,4 +1,4 @@
-// Numbers: tune later. Style and icon are stand-ins until T-202 / T-203.
+// Numbers: tune later.
 Building((
     id: "grand_library",
     name: "Grand library",
@@ -10,9 +10,9 @@ Building((
     tax_base: 0.0,
     cost: 60000.0,
     upkeep_week: 600.0,
-    styles: ["service_university"],
+    styles: ["unique_grand_library"],
     service: Some("landmark"),
-    icon: "university",
+    icon: "grand_library",
     unique: Some((monument: false, unlock: [ServiceBuildings(kind: Education, n: 3)], tourists_per_day: 15.0)),
     land_effect: Some((add: 10.0, radius_m: 200.0)),
 ))

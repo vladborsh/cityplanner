@@ -1,0 +1,15 @@
+// Silhouette of a unique building or monument (T-202, T-203): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "unique_skyline_spire",
+    massing: SkylineSpire,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.52, 0.66, 0.78)],
+        roof: [(0.2, 0.28, 0.38)],
+        trim: [(0.82, 0.88, 0.94)],
+        glass: (0.3, 0.56, 0.78),
+    ),
+    facade: Punched,
+))

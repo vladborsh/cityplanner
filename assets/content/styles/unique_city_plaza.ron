@@ -1,0 +1,15 @@
+// Silhouette of a unique building or monument (T-202, T-203): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "unique_city_plaza",
+    massing: PlazaFountain,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.86, 0.83, 0.76)],
+        roof: [(0.55, 0.5, 0.46)],
+        trim: [(0.93, 0.91, 0.85)],
+        glass: (0.35, 0.62, 0.82),
+    ),
+    facade: Punched,
+))

@@ -1,4 +1,4 @@
-// Numbers: tune later. Style and icon are stand-ins until T-202 / T-203.
+// Numbers: tune later.
 Building((
     id: "golden_arch",
     name: "Golden arch",
@@ -10,9 +10,9 @@ Building((
     tax_base: 0.0,
     cost: 400000.0,
     upkeep_week: 2500.0,
-    styles: ["service_university"],
+    styles: ["unique_golden_arch"],
     service: Some("landmark"),
-    icon: "university",
+    icon: "golden_arch",
     unique: Some((monument: true, unlock: [UniquesBuilt(4)], tourists_per_day: 120.0)),
     land_effect: Some((add: 18.0, radius_m: 320.0)),
 ))

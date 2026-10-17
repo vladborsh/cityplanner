@@ -1,4 +1,4 @@
-// Numbers: tune later. Style and icon are stand-ins until T-202 / T-203.
+// Numbers: tune later.
 Building((
     id: "opera_house",
     name: "Opera house",
@@ -10,9 +10,9 @@ Building((
     tax_base: 0.0,
     cost: 90000.0,
     upkeep_week: 900.0,
-    styles: ["service_university"],
+    styles: ["unique_opera_house"],
     service: Some("landmark"),
-    icon: "university",
+    icon: "opera_house",
     unique: Some((monument: false, unlock: [TouristsWeek(300)], tourists_per_day: 40.0)),
     land_effect: Some((add: 12.0, radius_m: 220.0)),
 ))
