@@ -4463,6 +4463,7 @@ fn chain(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
 }
 
 /// A head frame: four slanted legs under a wheel house, `h` metres tall, with a pulley wheel.
+#[allow(clippy::too_many_arguments)]
 fn headframe(
     m: &mut MeshData,
     f: &Frame,
