@@ -117,6 +117,8 @@ fn quiet_town(
 /// Puts `count` adults who are at home on a trip each, to destinations spread over the
 /// active buildings. `mode(i)` picks the mode of the i-th trip.
 fn inject(sim: &mut SimRunner, count: usize, mode: impl Fn(usize) -> TripMode) -> usize {
+    // The trips keep the mode they are asked for (T-242 would choose by time).
+    sim.world_mut().resource_mut::<AgentSettings>().mode_by_time = false;
     let buildings: Vec<BuildingId> = sim
         .world()
         .resource::<BuildingGrid>()

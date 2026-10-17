@@ -97,6 +97,8 @@ pub struct TrafficStats {
     pub pedestrians: u32,
     /// Trips under way (not waiting for their departure).
     pub trips_in_transit: u32,
+    /// Trips under way by mode: on foot, by car, by transit (T-242).
+    pub trips_by_mode: [u32; 3],
     /// Mean 2-hour load of all segments, `0..=1`.
     pub avg_load: f32,
     pub max_load: f32,
@@ -397,6 +399,15 @@ fn stage_citizens_traffic_land(
         .iter()
         .filter(|(_, t)| !matches!(t.state, TripState::Scheduled { .. }))
         .count() as u32;
+    for (_, t) in trips.iter() {
+        if !matches!(t.state, TripState::Scheduled { .. }) {
+            s.traffic.trips_by_mode[match t.mode {
+                cp_citizen::TripMode::Walk => 0,
+                cp_citizen::TripMode::Car => 1,
+                cp_citizen::TripMode::Transit => 2,
+            }] += 1;
+        }
+    }
     s.traffic.despawned_stuck = agents.stats.despawned_stuck;
     s.traffic.no_path = agents.stats.no_path;
     s.traffic.abstract_trips = agents.stats.abstract_trips;

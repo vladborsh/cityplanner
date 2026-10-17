@@ -104,6 +104,13 @@ pub fn sections(view: &SimView) -> Vec<Section> {
             row("Vehicles", t.vehicles),
             row("Pedestrians", t.pedestrians),
             row("Trips in transit", t.trips_in_transit),
+            row(
+                "By mode (foot / car / transit)",
+                format!(
+                    "{} / {} / {}",
+                    t.trips_by_mode[0], t.trips_by_mode[1], t.trips_by_mode[2]
+                ),
+            ),
             row("Average load", percent(t.avg_load)),
             row("Maximum load", percent(t.max_load)),
             row("Overloaded segments", t.overloaded),

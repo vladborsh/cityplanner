@@ -23,7 +23,12 @@ fn env() -> (Arc<Terrain>, Arc<ContentDb>) {
 
 fn town() -> SimRunner {
     let (terrain, content) = env();
-    grid_city(400, 3, terrain, content, &GridCityConfig::default()).0
+    let mut sim = grid_city(400, 3, terrain, content, &GridCityConfig::default()).0;
+    // The injected trips keep the mode they were asked for.
+    sim.world_mut()
+        .resource_mut::<cp_traffic::AgentSettings>()
+        .mode_by_time = false;
+    sim
 }
 
 #[test]
@@ -75,6 +80,9 @@ fn a_run_with_injected_traffic_resumes_from_a_save() {
     );
     let bytes = save_runner(&a, content.content_hash(), "flatlands").unwrap();
     let mut b = SimRunner::new(1);
+    b.world_mut()
+        .resource_mut::<cp_traffic::AgentSettings>()
+        .mode_by_time = false;
     b.set_terrain(terrain);
     b.set_content(Arc::clone(&content));
     load_into_runner(&mut b, &bytes, content.content_hash()).unwrap();

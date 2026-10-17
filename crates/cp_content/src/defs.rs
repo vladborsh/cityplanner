@@ -186,6 +186,10 @@ pub struct Balance {
     /// Trips with a straight line shorter than this (metres) are walked (§9.2). On the
     /// movement clock (§2) 1 km on foot is about 2 game hours.
     pub walk_limit_m: f32,
+    /// Seconds a car trip costs before it moves: walking to the car, parking (T-242). A citizen
+    /// with a car drives when the drive plus this is shorter than walking the real route.
+    /// // tune later
+    pub car_start_penalty_s: f32,
     /// A spawn attempt on a zone block proceeds with probability `1 / spawn_one_in` (§8).
     pub spawn_one_in: u32,
     /// Share of the gap a demand value closes per recomputation (every 64 ticks), `0..=1` (§11).
@@ -496,6 +500,7 @@ impl Balance {
         v.extend(self.level_mul);
         v.extend(self.tile_price);
         v.push(self.start_money);
+        v.push(self.car_start_penalty_s);
         v.extend([
             self.garbage_household,
             self.garbage_job,
@@ -574,6 +579,7 @@ impl Default for Balance {
     fn default() -> Self {
         Self {
             walk_limit_m: 400.0,
+            car_start_penalty_s: 90.0,
             spawn_one_in: 4,
             demand_ema: 0.25,
             demand_base: [10.0, 5.0, 5.0, 0.0],

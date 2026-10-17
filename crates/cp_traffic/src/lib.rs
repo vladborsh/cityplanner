@@ -10,6 +10,7 @@ pub mod demo;
 pub mod drive;
 pub mod graph;
 pub mod heavy;
+pub mod mode;
 pub mod pose;
 pub mod runs;
 pub mod service;
@@ -28,6 +29,7 @@ pub use graph::{
     U_TURN_PENALTY,
 };
 pub use heavy::HeavyBan;
+pub use mode::{ALWAYS_WALK_M, mode_by_time};
 pub use pose::{AgentFrame, AgentKey, PedestrianPose, VehiclePose, agent_key};
 pub use runs::{
     RunError, RunId, RunPoint, RunState, SERVICE_GEN, ServiceRun, ServiceRuns, WALK_KIND,

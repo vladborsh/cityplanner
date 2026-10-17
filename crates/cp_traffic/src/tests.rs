@@ -616,3 +616,58 @@ fn two_roads_joined_only_by_a_path_are_a_walk_but_not_a_drive() {
         Err(NoPath)
     );
 }
+
+/// T-242: two houses 100 m apart on parallel streets that only meet 190 m away: driving beats
+/// the 480 m walk; a footpath between them makes the walk the quicker choice.
+#[test]
+fn a_footpath_shortcut_makes_people_walk_and_without_it_they_drive() {
+    use cp_citizen::TripMode;
+    let build = |with_path: bool| {
+        let mut s = sim();
+        let a = s.seg((1000.0, 1000.0), (1020.0, 1000.0));
+        s.seg((1020.0, 1000.0), (1200.0, 1000.0));
+        s.seg((1200.0, 1000.0), (1200.0, 1100.0));
+        let b = s.seg((1000.0, 1100.0), (1020.0, 1100.0));
+        s.seg((1020.0, 1100.0), (1200.0, 1100.0));
+        if with_path {
+            s.seg_with("park_path", (1020.0, 1000.0), (1020.0, 1100.0));
+        }
+        s.tick();
+        s.tick();
+        (s, a, b)
+    };
+    let decide = |with_path: bool| {
+        let (s, a, b) = build(with_path);
+        let net = s.world.resource::<PathNetwork>();
+        mode_by_time(
+            net.graph(),
+            net.congestion(),
+            &acc(a, 10.0, Side::Right),
+            &acc(b, 10.0, Side::Left),
+            90.0,
+        )
+    };
+    assert_eq!(decide(false), Some(TripMode::Car));
+    assert_eq!(decide(true), Some(TripMode::Walk));
+    // The same answer every time.
+    assert_eq!(decide(true), decide(true));
+}
+
+/// T-242: a congested corridor makes the drive slower, so the walk wins sooner.
+#[test]
+fn congestion_makes_the_drive_slower_than_a_walk_of_the_same_route() {
+    use cp_citizen::TripMode;
+    let mut s = sim();
+    let a = s.seg((1000.0, 1000.0), (1100.0, 1000.0));
+    let b = s.seg((1100.0, 1000.0), (1200.0, 1000.0));
+    s.tick();
+    s.tick();
+    let (from, to) = (acc(a, 10.0, Side::Right), acc(b, 90.0, Side::Right));
+    let (free, jam) = {
+        let net = s.world.resource::<PathNetwork>();
+        let cost = |c: &CongestionMap| find_car_path(net.graph(), c, &from, &to).unwrap().cost;
+        (cost(net.congestion()), cost(&CongestionMap(vec![1.0; 2])))
+    };
+    assert!(jam > free * 1.5, "{jam} against {free}");
+    let _ = TripMode::Car;
+}

@@ -215,6 +215,9 @@ pub struct AgentSettings {
     pub parallel: bool,
     /// Ticks a car may stand still before it disappears (§9.4: 60 ticks = 120 s of movement).
     pub stuck_ticks: u32,
+    /// Walk or drive by the real routes' times (T-242); tests that inject trips of a given mode
+    /// switch it off.
+    pub mode_by_time: bool,
 }
 
 impl Default for AgentSettings {
@@ -222,6 +225,7 @@ impl Default for AgentSettings {
         Self {
             parallel: true,
             stuck_ticks: STUCK_TICKS,
+            mode_by_time: true,
         }
     }
 }
@@ -505,6 +509,8 @@ pub(crate) fn travel_ticks(cost_s: f32) -> u64 {
 #[allow(clippy::too_many_arguments)]
 pub fn route_trips(
     tick: Res<Tick>,
+    content: Option<Res<cp_content::SimContent>>,
+    settings: Option<Res<AgentSettings>>,
     net: Res<NetGraph>,
     pnet: Res<PathNetwork>,
     buildings: Res<BuildingGrid>,
@@ -551,7 +557,33 @@ pub fn route_trips(
             cancel_trip(&mut grid, &mut book, tid);
             continue;
         };
-        let mode = match trip.mode {
+        // Trip mode by need (T-242): a citizen with a car takes the quicker of walking the real
+        // route and driving it (congestion and the start penalty included).
+        let mut trip_mode = trip.mode;
+        let by_time = settings.as_deref().is_none_or(|s| s.mode_by_time)
+            && content.as_deref().is_some_and(|c| {
+                grid.citizen(trip.citizen).is_some_and(|c| c.has_car)
+                    && c.0.balance().car_start_penalty_s >= 0.0
+            });
+        if by_time
+            && matches!(trip.mode, TripMode::Walk | TripMode::Car)
+            && let Some(content) = content.as_deref()
+            && let (Some(a), Some(b)) = (buildings.get(trip.from), buildings.get(trip.to))
+            && a.pos.distance(b.pos) >= crate::mode::ALWAYS_WALK_M
+            && let Some(m) = crate::mode::mode_by_time(
+                pnet.graph(),
+                pnet.congestion(),
+                &from,
+                &to,
+                content.0.balance().car_start_penalty_s,
+            )
+        {
+            trip_mode = m;
+            if m != trip.mode {
+                book.set_mode(tid, m);
+            }
+        }
+        let mode = match trip_mode {
             TripMode::Walk => Mode::Pedestrian,
             TripMode::Car => Mode::Car,
             TripMode::Transit => continue,

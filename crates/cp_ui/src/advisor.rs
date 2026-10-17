@@ -340,6 +340,22 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
             action,
         });
     };
+    // T-242: most trips by car and the roads are jammed.
+    let tr = &city.traffic;
+    let moving: u32 = tr.trips_by_mode.iter().sum();
+    if moving >= 40
+        && tr.trips_by_mode[1] * 10 >= moving * 7
+        && (tr.overloaded >= 3 || tr.avg_load > 0.3)
+    {
+        push(
+            "traffic_jam",
+            Severity::Warn,
+            "Traffic jams: add public transport or footpaths".into(),
+            tr.overloaded.max(1),
+            Icon::OverlayTraffic,
+            Some(Action::Overlay(Overlay::Traffic)),
+        );
+    }
     if view.treasury.balance < cp_core::Cost::ZERO {
         push(
             "debt",
