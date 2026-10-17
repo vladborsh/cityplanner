@@ -216,9 +216,9 @@ fn rts_camera(
 
         // --- rotate / tilt ---
         let key = |k: KeyCode| !typing && keys.pressed(k);
-        let tilt_dir = key(KeyCode::KeyR) as i32 - key(KeyCode::KeyF) as i32;
+        let tilt_dir = key(KeyCode::KeyF) as i32 - key(KeyCode::KeyR) as i32;
         rts.target.pitch = math::key_tilt(rts.target.pitch, tilt_dir, settings.key_tilt_speed, dt);
-        let key_dir = key(KeyCode::KeyQ) as i32 - key(KeyCode::KeyE) as i32;
+        let key_dir = key(KeyCode::KeyE) as i32 - key(KeyCode::KeyQ) as i32;
         if right_drag {
             let d = motion.delta;
             rts.target.yaw -= d.x * settings.drag_rotate_sens;
@@ -334,6 +334,37 @@ mod tests {
             target(&mut app).distance < before.distance,
             "no zoom on the map"
         );
+    }
+
+    fn press(app: &mut App, key: KeyCode) {
+        app.world_mut()
+            .write_message(bevy::input::keyboard::KeyboardInput {
+                key_code: key,
+                logical_key: bevy::input::keyboard::Key::Unidentified(
+                    bevy::input::keyboard::NativeKey::Unidentified,
+                ),
+                state: ButtonState::Pressed,
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+        for _ in 0..5 {
+            app.update();
+        }
+    }
+
+    /// BUG-068: E turns the view the way Q used to, F tilts the way R used to (inverted).
+    #[test]
+    fn the_rotate_and_tilt_keys_run_the_other_way() {
+        let moved = |key: KeyCode| {
+            let mut app = app();
+            let before = target(&mut app);
+            press(&mut app, key);
+            let after = target(&mut app);
+            (after.yaw - before.yaw, after.pitch - before.pitch)
+        };
+        assert!(moved(KeyCode::KeyE).0 > 0.0 && moved(KeyCode::KeyQ).0 < 0.0);
+        assert!(moved(KeyCode::KeyF).1 > 0.0 && moved(KeyCode::KeyR).1 < 0.0);
     }
 
     #[test]
