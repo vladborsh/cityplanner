@@ -151,6 +151,15 @@ impl JunctionGeometry {
     }
 }
 
+/// A footpath (T-222): every lane of the segment is a `Pedestrian` one.
+pub fn is_path_segment(graph: &NetGraph, segment: SegmentId) -> bool {
+    let Some(seg) = graph.segment(segment) else {
+        return false;
+    };
+    let mut lanes = seg.lanes.iter().filter_map(|&l| graph.lane(l)).peekable();
+    lanes.peek().is_some() && lanes.all(|l| l.kind == cp_content::LaneKind::Pedestrian)
+}
+
 fn rot_ccw(v: Vec2) -> Vec2 {
     Vec2::new(-v.y, v.x)
 }
@@ -196,6 +205,7 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
         angle: f32,
         width: f32,
         length: f32,
+        path: bool,
     }
     let mut raws: Vec<Raw> = Vec::new();
     for &sid in &n.segments {
@@ -217,6 +227,7 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
                 angle: dir.y.atan2(dir.x),
                 width: segment_width(graph, sid),
                 length: seg.length,
+                path: is_path_segment(graph, sid),
             });
         }
     }
@@ -227,6 +238,14 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
             .then(b.at_start.cmp(&a.at_start))
     });
 
+    // T-222: a footpath that meets a road is no carriageway. It does not shape the junction
+    // polygon or the setbacks of the roads; its own end stops at the road's edge.
+    let (mut footpaths, raws): (Vec<Raw>, Vec<Raw>) = if raws.iter().any(|r| !r.path) {
+        raws.into_iter().partition(|r| r.path)
+    } else {
+        (Vec::new(), raws)
+    };
+    let edge = raws.iter().map(|r| r.width * 0.5).fold(0.0f32, f32::max);
     let k = raws.len();
     let mut arms = Vec::with_capacity(k);
     for (i, r) in raws.iter().enumerate() {
@@ -325,6 +344,32 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
             out
         }
     };
+    // The polygon's arms; the footpaths join `arms` (for their trim and the pedestrian links).
+    footpaths.sort_by(|a, b| a.angle.total_cmp(&b.angle).then(a.segment.cmp(&b.segment)));
+    for r in &footpaths {
+        let h = r.width * 0.5;
+        let s = edge.min(r.length * MAX_SETBACK_FRACTION);
+        let seg = graph.segment(r.segment).expect("exists");
+        let tab = seg.curve.arc_table();
+        let along = if r.at_start { s } else { tab.length() - s };
+        let l = rot_ccw(r.dir);
+        arms.push(Arm {
+            segment: r.segment,
+            at_start: r.at_start,
+            angle: r.angle,
+            width: r.width,
+            setback: s,
+            trim_t: tab.s_to_t(along),
+            right: c + r.dir * s - l * h,
+            left: c + r.dir * s + l * h,
+        });
+    }
+    arms.sort_by(|a, b| {
+        a.angle
+            .total_cmp(&b.angle)
+            .then(a.segment.cmp(&b.segment))
+            .then(b.at_start.cmp(&a.at_start))
+    });
     let links = compute_links(graph, &arms);
     Some(Junction {
         node,

@@ -393,14 +393,24 @@ fn pedestrian_links(graph: &NetGraph, arms: &[Arm]) -> Vec<PedLink> {
     let k = arms.len();
     let peds: Vec<Vec<Ped>> = arms.iter().map(|a| ped_lanes(graph, a)).collect();
     let mut out = Vec::new();
-    // Corners: arm i's most counter-clockwise sidewalk to arm i+1's most clockwise one.
-    for i in 0..k {
-        let j = (i + 1) % k;
+    // Corners: arm i's most counter-clockwise sidewalk to arm i+1's most clockwise one. A
+    // footpath (T-222) beside roads is no arm of the ring: the roads' sidewalks join each other
+    // directly, and the footpath's lanes join the sidewalks on either side of it.
+    let is_path: Vec<bool> = arms
+        .iter()
+        .map(|a| crate::junction::is_path_segment(graph, a.segment))
+        .collect();
+    let ring: Vec<usize> = if is_path.iter().all(|&p| p) {
+        (0..k).collect()
+    } else {
+        (0..k).filter(|&i| !is_path[i]).collect()
+    };
+    let mut corner = |i: usize, j: usize| {
         let (Some(a), Some(b)) = (peds[i].last(), peds[j].first()) else {
-            continue;
+            return;
         };
         if i == j && peds[i].len() < 2 {
-            continue;
+            return;
         }
         out.push(PedLink {
             kind: PedLinkKind::Corner,
@@ -408,6 +418,22 @@ fn pedestrian_links(graph: &NetGraph, arms: &[Arm]) -> Vec<PedLink> {
             b: b.id,
             curve: ped_curve(a, b),
         });
+    };
+    for (n, &i) in ring.iter().enumerate() {
+        corner(i, ring[(n + 1) % ring.len()]);
+    }
+    if ring.len() < k {
+        for i in (0..k).filter(|&i| is_path[i]) {
+            // The nearest road arm clockwise and counter-clockwise of the footpath.
+            let before = (1..k).map(|d| (i + k - d) % k).find(|&j| !is_path[j]);
+            let after = (1..k).map(|d| (i + d) % k).find(|&j| !is_path[j]);
+            if let Some(j) = before {
+                corner(j, i);
+            }
+            if let Some(j) = after {
+                corner(i, j);
+            }
+        }
     }
     // Crossings: across every arm that carries vehicles and has sidewalks on both sides.
     for i in 0..k {

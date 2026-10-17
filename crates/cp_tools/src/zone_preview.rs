@@ -48,6 +48,7 @@ fn zoning(db: &ContentDb) -> impl Fn(cp_content::RoadDefId) -> RoadZoning + '_ {
         RoadZoning {
             allows_zoning: d.allows_zoning,
             half_width: d.width / 2.0,
+            footpath: d.class == cp_content::RoadClass::Path,
         }
     }
 }

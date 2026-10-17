@@ -554,3 +554,37 @@ fn a_reflex_gap_under_210_degrees_with_long_setbacks_keeps_the_node_inside() {
         check_junction(&compute_junction(&g, n, 1).unwrap());
     }
 }
+
+// ---------- footpaths (T-222) ----------
+
+#[test]
+fn a_footpath_beside_a_street_makes_no_junction_polygon_and_stops_at_the_road_edge() {
+    let db = content();
+    let (g0, n0, _) = star(&db, &[(0.0, 80.0, "basic_2l"), (180.0, 80.0, "basic_2l")]);
+    let plain = compute_junction(&g0, n0, 0).unwrap();
+    let (g, n, segs) = star(
+        &db,
+        &[
+            (0.0, 80.0, "basic_2l"),
+            (180.0, 80.0, "basic_2l"),
+            (90.0, 40.0, "park_path"),
+        ],
+    );
+    let j = compute_junction(&g, n, 0).unwrap();
+    // The polygon is the street's alone: no corner points for the path.
+    assert_eq!(rel(&j), rel(&plain));
+    assert_eq!(j.arms.len(), 3);
+    let path = j.arms.iter().find(|a| a.segment == segs[2]).unwrap();
+    let half = db.road(db.road_id("basic_2l").unwrap()).width * 0.5;
+    assert!((path.setback - half).abs() < 1e-3, "{}", path.setback);
+    // The street's arms keep their setbacks.
+    for a in j.arms.iter().filter(|a| a.segment != segs[2]) {
+        let b = plain.arms.iter().find(|b| b.segment == a.segment).unwrap();
+        assert_eq!(a.setback, b.setback);
+    }
+    // Its sidewalks still join (directly, and through the path's lanes).
+    assert!(j.links.pedestrian.len() > plain.links.pedestrian.len());
+    // A footpath on its own keeps the ordinary junction.
+    let (g, n, _) = star(&db, &[(0.0, 40.0, "park_path"), (90.0, 40.0, "park_path")]);
+    assert!(compute_junction(&g, n, 0).unwrap().polygon.len() >= 4);
+}

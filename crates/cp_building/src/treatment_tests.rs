@@ -59,6 +59,7 @@ fn the_plant_is_placed_on_land_beside_the_road_and_told_water_on_a_pond() {
         RoadZoning {
             allows_zoning: d.allows_zoning,
             half_width: d.width / 2.0,
+            footpath: d.class == cp_content::RoadClass::Path,
         }
     });
     let tiles = TileOwnership::m1_around((2, 2));

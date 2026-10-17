@@ -17,6 +17,7 @@ fn zoning(db: &ContentDb) -> impl Fn(RoadDefId) -> RoadZoning + '_ {
         RoadZoning {
             allows_zoning: d.allows_zoning,
             half_width: d.width / 2.0,
+            footpath: d.class == cp_content::RoadClass::Path,
         }
     }
 }
@@ -1596,4 +1597,27 @@ fn a_path_gets_no_zone_blocks() {
     assert!(!w.db.road(w.road("park_path")).allows_zoning);
     assert_eq!(w.grid.blocks_of(p), [None, None]);
     assert_eq!(w.grid.block_count(), 0);
+}
+
+#[test]
+fn a_footpath_meeting_a_street_is_no_cross_street() {
+    let valid = |w: &World| -> usize {
+        w.grid
+            .blocks()
+            .map(|(_, b)| b.valid.iter().filter(|v| **v).count())
+            .sum()
+    };
+    let mut plain = World::new();
+    plain.line("basic_2l", (1000.0, 1000.0), (1100.0, 1000.0));
+    plain.line("basic_2l", (1100.0, 1000.0), (1200.0, 1000.0));
+    plain.sync();
+    let mut w = World::new();
+    w.line("basic_2l", (1000.0, 1000.0), (1100.0, 1000.0));
+    w.line("basic_2l", (1100.0, 1000.0), (1200.0, 1000.0));
+    w.line("park_path", (1100.0, 1000.0), (1100.0, 1060.0));
+    w.sync();
+    // Only the cells the path itself crosses are lost, on its side: one or two columns.
+    let (a, b) = (valid(&plain), valid(&w));
+    assert!(b < a && a - b <= 8, "{a} -> {b}");
+    assert_eq!(w.grid.block_count(), plain.grid.block_count());
 }

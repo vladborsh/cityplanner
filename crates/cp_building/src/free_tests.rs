@@ -297,6 +297,7 @@ fn a_lot_cell_held_by_a_building_blocks_even_without_a_listed_building() {
         RoadZoning {
             allows_zoning: d.allows_zoning,
             half_width: d.width / 2.0,
+            footpath: d.class == cp_content::RoadClass::Path,
         }
     });
     let (block, _) = f.zones.blocks().next().unwrap();

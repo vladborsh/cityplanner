@@ -61,6 +61,7 @@ pub fn road_zoning(
         RoadZoning {
             allows_zoning: d.allows_zoning,
             half_width: d.width / 2.0,
+            footpath: d.class == cp_content::RoadClass::Path,
         }
     }
 }

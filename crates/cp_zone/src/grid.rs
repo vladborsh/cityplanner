@@ -134,6 +134,9 @@ pub struct RoadZoning {
     pub allows_zoning: bool,
     /// Half the profile width, metres.
     pub half_width: f32,
+    /// A pedestrian path (T-222): it is no cross street. A street's frontage runs on past
+    /// it; only the cells the path itself crosses are dropped.
+    pub footpath: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

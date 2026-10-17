@@ -140,7 +140,12 @@ fn vehicle_lanes(graph: &NetGraph, seg: SegmentId) -> usize {
 
 /// The §6.5 auto-install rule for a junction.
 pub fn auto_light_rule(graph: &NetGraph, arms: &[Arm]) -> bool {
-    arms.len() >= 3
+    // A footpath is no carriageway (T-222).
+    let roads = arms
+        .iter()
+        .filter(|a| vehicle_lanes(graph, a.segment) > 0)
+        .count();
+    roads >= 3
         && arms
             .iter()
             .filter(|a| vehicle_lanes(graph, a.segment) >= BIG_ROAD_LANES)
@@ -193,7 +198,12 @@ pub fn plan_control(
 
     let priority = (0..links.connections.len())
         .map(|i| {
-            if arms.len() <= 2 {
+            if arms
+                .iter()
+                .filter(|a| vehicle_lanes(graph, a.segment) > 0)
+                .count()
+                <= 2
+            {
                 return Priority::Main;
             }
             let on_main = from_arm[i].is_some_and(|a| main_arms.contains(&a));

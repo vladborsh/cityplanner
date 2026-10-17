@@ -162,7 +162,7 @@ fn arms_at(
             continue;
         }
         let Some(s) = net.segment(sid) else { continue };
-        if s.elevation != Elevation::Ground {
+        if s.elevation != Elevation::Ground || roads(s.road).footpath {
             continue;
         }
         for at_start in [true, false] {
@@ -417,7 +417,7 @@ fn facing_gap(
     let cos_par = PARALLEL_DEG.to_radians().cos();
     let mut best: Option<f32> = None;
     for (sid, piece) in idx.pieces_in(bounds) {
-        if own.contains(sid) {
+        if own.contains(sid) || piece.footpath {
             continue;
         }
         let e = piece.b - piece.a;
