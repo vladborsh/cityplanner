@@ -287,6 +287,12 @@ pub fn unique_rows(content: &ContentDb, def: &str) -> Vec<(String, String)> {
         return Vec::new();
     };
     let mut out = Vec::new();
+    if let Some(spec) = d.spec.and_then(|k| content.spec(k)) {
+        out.push((
+            "Specialisation".to_string(),
+            format!("{}: {}", spec.name, crate::specs::effect_text(spec)),
+        ));
+    }
     if let Some(e) = d.land_effect {
         out.push((
             "Land value".to_string(),

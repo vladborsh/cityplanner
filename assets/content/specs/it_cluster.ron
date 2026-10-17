@@ -1,8 +1,8 @@
-// Numbers are placeholders // tune later (T-196); the icon is borrowed until T-197.
+// Numbers are placeholders // tune later (T-196).
 Spec((
     kind: ItCluster,
     name: "IT cluster",
-    icon: "zone_office",
+    icon: "spec_it_cluster",
     zones: [Office],
     tax_mul: 1.3,
     tourist_weight: 1.0,

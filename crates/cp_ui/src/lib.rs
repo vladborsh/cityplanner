@@ -32,6 +32,7 @@ pub mod palette;
 pub mod panels;
 pub mod policies;
 pub mod roads;
+pub mod specs;
 pub mod style;
 pub mod tile;
 pub mod tiles;

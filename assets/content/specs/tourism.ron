@@ -1,8 +1,8 @@
-// Numbers are placeholders // tune later (T-196); the icon is borrowed until T-197.
+// Numbers are placeholders // tune later (T-196).
 Spec((
     kind: Tourism,
     name: "Tourism",
-    icon: "overlay_transit",
+    icon: "spec_tourism",
     zones: [ComLow, ComHigh],
     tax_mul: 1.2,
     tourist_weight: 3.0,

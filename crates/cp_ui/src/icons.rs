@@ -63,6 +63,7 @@ icons! {
     DistrictTabPolicies => "district_tab_policies",
     DistrictTabSpecialisation => "district_tab_specialisation",
     DistrictTabStats => "district_tab_stats",
+    SpecNone => "spec_none",
     Pipe => "pipe",
     PowerLine => "power_line",
     Remove => "remove",

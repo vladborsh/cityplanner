@@ -255,7 +255,7 @@ pub fn districts_panel(
                     crate::policies::policy_tiles(ui, view, outbox, Some(id));
                 }
                 DistrictTab::Specialisation => {
-                    ui.weak("Specialisation: coming soon.");
+                    crate::specs::specs_tab(ui, view, outbox, id);
                 }
                 DistrictTab::Stats => stats_tab(ui, view, id),
             }
@@ -395,7 +395,7 @@ fn zone_short(z: ZoneType) -> &'static str {
 }
 
 /// One district name on the map: where, and the icons of the district's policies in force
-/// (T-193; the city's own are not repeated in every district).
+/// and specialisations (T-193, T-197; the city's own policies are not repeated in every district).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Label {
     pub name: String,
@@ -432,11 +432,21 @@ impl Centroids {
                         .content
                         .as_deref()
                         .map(|db| {
-                            cp_content::PolicyKind::ALL
+                            // The specialisations first, then the policies in force.
+                            let mut specs: Vec<cp_content::SpecKind> =
+                                d.spec.iter().flatten().copied().collect();
+                            specs.sort();
+                            specs.dedup();
+                            specs
                                 .into_iter()
-                                .filter(|k| d.policies & k.bit() != 0)
-                                .filter_map(|k| db.policy(k))
-                                .map(|p| p.icon.clone())
+                                .filter_map(|k| db.spec(k).map(|s| s.icon.clone()))
+                                .chain(
+                                    cp_content::PolicyKind::ALL
+                                        .into_iter()
+                                        .filter(|k| d.policies & k.bit() != 0)
+                                        .filter_map(|k| db.policy(k))
+                                        .map(|p| p.icon.clone()),
+                                )
                                 .collect()
                         })
                         .unwrap_or_default();

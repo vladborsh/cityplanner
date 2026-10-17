@@ -1156,7 +1156,11 @@ mod tests {
             "{text}"
         );
         rig.click_label("Special.");
-        assert!(rig.frame(vec![]).contains("Specialisation: coming soon."));
+        let text = rig.frame(vec![]);
+        assert!(
+            text.contains("Commercial") && text.contains("Leisure"),
+            "{text}"
+        );
         rig.click_label("Taxes");
         assert!(rig.frame(vec![]).contains("R low"));
         assert_eq!(rig.tools.district.selected, Some(DistrictId(1)));
