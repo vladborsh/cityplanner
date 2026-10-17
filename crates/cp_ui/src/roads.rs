@@ -402,6 +402,30 @@ mod tests {
         assert!(arrows(road("highway_1w_4l")) > arrows(road("highway_1w_1l")));
     }
 
+    /// T-172: every road type paints its own picture (the lane count shows), in a square tile.
+    #[test]
+    fn every_road_tile_is_square_and_different_from_all_the_others() {
+        let content = content();
+        let size = Sizes::tile_icon();
+        assert_eq!(size.x, size.y);
+        let widest = content.roads().map(|(_, d)| d.width).fold(0.0, f32::max);
+        let mut seen: Vec<(String, String)> = Vec::new();
+        for (_, def) in content.roads() {
+            let ctx = egui::Context::default();
+            let mut out = ctx.run_ui(input(0.0, vec![]), |ui| {
+                let rect = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), size);
+                icons::road_tile_scaled(ui.painter(), def, rect, widest);
+            });
+            out.textures_delta.clear();
+            let picture = format!("{:?}", out.shapes);
+            if let Some((other, _)) = seen.iter().find(|(_, p)| *p == picture) {
+                panic!("{} and {other} have the same tile", def.id);
+            }
+            seen.push((def.id.clone(), picture));
+        }
+        assert!(seen.iter().any(|(id, _)| id == "basic_1w_2l"));
+    }
+
     /// BUG-044: the road types are listed whatever the tool; only the header folds them.
     #[test]
     fn the_type_section_is_open_for_every_tool_and_folds_only_on_its_header() {
