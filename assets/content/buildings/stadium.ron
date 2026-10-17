@@ -9,7 +9,7 @@ Building((
     consumption: {Power: 10.0},
     tax_base: 0.0,
     cost: 150000.0,
-    upkeep_week: 1500.0,
+    upkeep_week: 1828.0,
     styles: ["unique_stadium"],
     service: Some("landmark"),
     icon: "stadium",

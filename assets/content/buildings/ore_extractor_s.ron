@@ -9,7 +9,7 @@ Building((
     consumption: {Power: 15.0},
     tax_base: 0.0,
     cost: 15000.0,
-    upkeep_week: 300.0,
+    upkeep_week: 366.0,
     styles: ["chain_ore_extractor_s"],
     service: Some("industry"),
     icon: "ore_extractor_s",

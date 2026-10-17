@@ -389,6 +389,7 @@ fn stage_citizens_traffic_land(
     let roads_budget = economy.budgets.get(ServiceKind::Roads);
     // By road id, ascending; keyed (not a dense Vec) because the placeholder id is u32::MAX.
     let mut groups: BTreeMap<u32, RoadGroup> = BTreeMap::new();
+    let entry = cp_economy::entry_segments(net, db);
     for (id, seg) in net.segments() {
         let load = agents
             .load
@@ -408,7 +409,9 @@ fn stage_citizens_traffic_land(
         });
         g.segments += 1;
         g.meters += seg.length;
-        g.upkeep_week += segment_upkeep(db.road(seg.road), seg, roads_budget);
+        if !entry.contains(&id) {
+            g.upkeep_week += segment_upkeep(db.road(seg.road), seg, roads_budget);
+        }
     }
     s.traffic.avg_load = if segs > 0 {
         load_sum / segs as f32

@@ -30,8 +30,8 @@ pub use state::{
     TAX_DEFAULT, TAX_MAX, TAX_MIN, TAXED_ZONES, TaxRates, WeekReport,
 };
 pub use week::{
-    HOURS_PER_WEEK, WeekInputs, day_share, game_hour, hour_share, segment_upkeep, settle_week,
-    share, week_detail, week_lines, week_report,
+    HOURS_PER_WEEK, WeekInputs, day_share, entry_segments, game_hour, hour_share, segment_upkeep,
+    settle_week, share, week_detail, week_lines, week_report,
 };
 
 /// Crate name, used by the skeleton smoke test.

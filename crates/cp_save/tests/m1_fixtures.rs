@@ -44,6 +44,11 @@
 //! by one. Checked: with the plant's two files taken out of the content, all four values of the
 //! T-109 header above reproduce exactly (and the bench-10k baseline too).
 
+//! **BUG-052.** Re-recorded again, the two "load + 4096 ticks" values only (state at load
+//! unchanged): the entry highways no longer cost upkeep, streets cost and cost to keep 40 % less,
+//! the water tower and wind turbine cost 40 % less to keep and the other service buildings 22 %
+//! more, so the treasury differs from the first booked day on.
+//!
 //! **T-170 (save v37).** Re-recorded again, all four values: the checksum hashes the week report
 //! and the goods trucks, whose serialized shape changed (export line, `Endpoint`); the behaviour
 //! of these cities is unchanged (they have no `Outside` node with a road to trade through).
@@ -172,7 +177,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     assert_eq!(sim.checksum(), 0x370323d1071302d2, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0xb4454062e6b44a45,
+        0xc085e91a5c5802a7,
         "load + 4096 ticks"
     );
 }
@@ -206,7 +211,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x934d3bb84d002ea1, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x228e764b5f4f95bc, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

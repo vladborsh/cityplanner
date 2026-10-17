@@ -9,7 +9,7 @@ Building((
     consumption: {Power: 10.0},
     tax_base: 0.0,
     cost: 120000.0,
-    upkeep_week: 1000.0,
+    upkeep_week: 1219.0,
     styles: ["unique_tv_tower"],
     service: Some("landmark"),
     icon: "tv_tower",

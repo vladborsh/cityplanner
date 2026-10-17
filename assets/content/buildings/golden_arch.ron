@@ -9,7 +9,7 @@ Building((
     consumption: {Power: 10.0},
     tax_base: 0.0,
     cost: 400000.0,
-    upkeep_week: 2500.0,
+    upkeep_week: 3048.0,
     styles: ["unique_golden_arch"],
     service: Some("landmark"),
     icon: "golden_arch",

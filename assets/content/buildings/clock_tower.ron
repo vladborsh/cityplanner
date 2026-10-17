@@ -9,7 +9,7 @@ Building((
     consumption: {Power: 10.0},
     tax_base: 0.0,
     cost: 40000.0,
-    upkeep_week: 350.0,
+    upkeep_week: 426.0,
     styles: ["unique_clock_tower"],
     service: Some("landmark"),
     icon: "clock_tower",

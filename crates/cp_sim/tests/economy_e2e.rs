@@ -75,13 +75,13 @@ fn road_at(z: f32, len: f32) -> SimCommand {
 #[test]
 fn a_road_without_money_is_an_error_that_changes_nothing() {
     let mut sim = sim();
-    // 100 m of basic street costs 1000.00; 500.00 of headroom is not enough.
+    // 100 m of basic street costs 600.00; 500.00 of headroom is not enough.
     set_balance(&mut sim, Cost(DEBT_FLOOR.0 + 50_000));
     let err = run(&mut sim, road_cmd(100.0)).unwrap_err();
     assert_eq!(
         err,
         CommandError::InsufficientFunds {
-            needed: Cost(100_000),
+            needed: Cost(60_000),
             available: Cost(50_000)
         }
     );
@@ -90,8 +90,8 @@ fn a_road_without_money_is_an_error_that_changes_nothing() {
     assert!(sim.world().resource::<CommandLog<SimCommand>>().is_empty());
 
     // Exactly the headroom is enough: the balance ends on the floor.
-    set_balance(&mut sim, Cost(DEBT_FLOOR.0 + 100_000));
-    assert_eq!(run(&mut sim, road_cmd(100.0)), Ok(Cost(100_000)));
+    set_balance(&mut sim, Cost(DEBT_FLOOR.0 + 60_000));
+    assert_eq!(run(&mut sim, road_cmd(100.0)), Ok(Cost(60_000)));
     assert_eq!(balance(&sim), DEBT_FLOOR);
     assert!(sim.world().resource::<NetGraph>().segments().count() > 0);
     assert_eq!(sim.world().resource::<CommandLog<SimCommand>>().len(), 1);
@@ -120,8 +120,8 @@ fn a_road_is_charged_its_cost_once() {
     let before = balance(&sim);
     assert_eq!(before, Cost(7_000_000));
     let cost = run(&mut sim, road_cmd(100.0)).unwrap();
-    assert_eq!(cost, Cost(100_000));
-    assert_eq!(balance(&sim), Cost(before.0 - 100_000));
+    assert_eq!(cost, Cost(60_000));
+    assert_eq!(balance(&sim), Cost(before.0 - 60_000));
 }
 
 #[test]
@@ -245,9 +245,9 @@ fn the_week_settles_on_the_tick_and_replays_identically() {
     // Tick TICKS_PER_WEEK itself has not run yet (the counter is the next tick).
     a.tick_once();
     b.tick_once();
-    // 160 m × 0.1/m (basic street upkeep) × 150% = 24.00 over the 168 hourly shares.
-    assert_eq!(balance(&a), Cost(start.0 - 2_400));
+    // 160 m × 0.06/m (basic street upkeep) × 150% = 14.40 over the 168 hourly shares.
+    assert_eq!(balance(&a), Cost(start.0 - 1_440));
     let r = a.world().resource::<EconomyState>().last_week;
-    assert_eq!((r.week, r.road_upkeep), (1, Cost(2_400)));
+    assert_eq!((r.week, r.road_upkeep), (1, Cost(1_440)));
     assert_eq!(a.checksum(), b.checksum());
 }

@@ -7,7 +7,7 @@ Building((
     jobs: (4, 0, 0, 0),
     tax_base: 0.0,
     cost: 15000.0,
-    upkeep_week: 400.0,
+    upkeep_week: 488.0,
     styles: ["service_bus_depot"],
     service: Some("bus_depot"),
     icon: "bus_depot",

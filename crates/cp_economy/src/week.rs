@@ -19,12 +19,12 @@
 //! * **Utility links**, per link: `length × upkeep_per_m_week × budget / 100`; a pipe uses the
 //!   water definition and budget, a power line the power ones.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingState};
 use cp_citizen::CitizenGrid;
-use cp_content::{ContentDb, RoadDef, ServiceKind, SimContent, UtilityKind};
+use cp_content::{ContentDb, RoadClass, RoadDef, ServiceKind, SimContent, UtilityKind};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{Cost, Tick, Treasury};
 use cp_district::{CityPolicies, DistrictId, DistrictMap, Districts, district_at, policy_at};
@@ -49,6 +49,36 @@ pub fn segment_upkeep(def: &RoadDef, seg: &Segment, budget_pct: u8) -> Cost {
     }
     .unwrap_or(def.upkeep_per_m_week);
     Cost::scaled(per_m, f64::from(seg.length) * percent(budget_pct))
+}
+
+/// The segments of the entry highway and entry rail (BUG-052): the chain from each `Outside`
+/// node over segments of the same Highway or Rail class through plain bends (`Middle` nodes),
+/// up to the first junction. They are the country's, built free at the start of a game; their
+/// upkeep (about 4 000 a week) put every new city in the red before the first resident came.
+/// Roads the player hangs on them stop the chain at the junction.
+pub fn entry_segments(net: &NetGraph, db: &ContentDb) -> BTreeSet<cp_net::SegmentId> {
+    let mut out = BTreeSet::new();
+    for (start, node) in net.nodes() {
+        if node.kind != cp_net::NodeKind::Outside {
+            continue;
+        }
+        let mut at = start;
+        let mut next = net.node(at).and_then(|n| n.segments.first().copied());
+        while let Some(id) = next.take() {
+            let Some(seg) = net.segment(id) else { break };
+            let class = db.road(seg.road).class;
+            if !matches!(class, RoadClass::Highway | RoadClass::Rail) || !out.insert(id) {
+                break;
+            }
+            let far = if seg.start == at { seg.end } else { seg.start };
+            let Some(n) = net.node(far) else { break };
+            if n.kind == cp_net::NodeKind::Middle {
+                next = n.segments.iter().copied().find(|&s| s != id);
+                at = far;
+            }
+        }
+    }
+    out
 }
 
 /// Everything a settlement reads.
@@ -150,7 +180,8 @@ pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost
     }
 
     let roads = st.budgets.get(ServiceKind::Roads);
-    for (_, seg) in i.net.segments() {
+    let entry = entry_segments(i.net, i.content);
+    for (_, seg) in i.net.segments().filter(|(id, _)| !entry.contains(id)) {
         r.road_upkeep += segment_upkeep(i.content.road(seg.road), seg, roads);
     }
 

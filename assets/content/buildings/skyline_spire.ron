@@ -9,7 +9,7 @@ Building((
     consumption: {Power: 10.0},
     tax_base: 0.0,
     cost: 800000.0,
-    upkeep_week: 4000.0,
+    upkeep_week: 4876.0,
     styles: ["unique_skyline_spire"],
     service: Some("landmark"),
     icon: "skyline_spire",

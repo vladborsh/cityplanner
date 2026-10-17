@@ -9,7 +9,7 @@ Building((
     consumption: {},
     tax_base: 0.0,
     cost: 4000.0,
-    upkeep_week: 60.0,
+    upkeep_week: 73.0,
     styles: ["park_small_park"],
     service: Some("park"),
     icon: "small_park",
