@@ -3833,6 +3833,96 @@ pub struct SaveDataV46 {
     pub warehouses: cp_industry::WarehouseSettings,
 }
 
+/// Version 47: the body as written by format 47 (park state; leisure targets, park visitors and the park ledger are not in it).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV47 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    /// Zone blocks, painted types and cell validity. Added in v5.
+    pub zones: cp_zone::ZoneGrid,
+    /// Buildings (lots, state, access points). Added in v6.
+    /// Includes the ids removed and not yet drained since v13.
+    pub buildings: BuildingGrid,
+    /// Citizens and households. Added in v7.
+    pub citizens: CitizenGrid,
+    /// Pathfinding requests in flight (id, submit tick, request, congestion read, stale
+    /// flag). Added in v8; see `cp_traffic::service` for why this makes load + N ticks equal
+    /// the continuous run.
+    pub paths: SavedPaths,
+    /// Pipe and power-line networks. Added in v9.
+    pub utilities: UtilityGraph,
+    /// Trips in flight and the routine's counters. Added in v10.
+    pub trips: TripBook,
+    /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
+    /// agents carry the segment load since v12; vehicles carry their re-route request id
+    /// since v17.
+    pub agents: cp_traffic::Agents,
+    /// The city's money. Added in v14.
+    pub treasury: Treasury,
+    /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
+    pub economy: EconomyState,
+    /// Smoothed demand and the sums of the cycle in progress. Added in v15.
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    /// Pollution, noise and land value grids. Added in v16.
+    pub land: LandGrids,
+    /// Abandonment timers. Added in v16.
+    pub decay: Decay,
+    /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
+    /// [`DefNames`] and [`SaveData::remap_defs`].
+    pub def_names: crate::DefNames,
+    /// The district grid and the district records. Added in v21.
+    pub district_map: DistrictMap,
+    pub districts: Districts,
+    /// The industry and park areas (T-206). Added in v42.
+    pub area_map: cp_district::AreaMap,
+    pub areas: cp_district::Areas,
+    /// The policies switched on for the whole city (T-190). Added in v38; a district's own are
+    /// in its record.
+    pub city_policies: CityPolicies,
+    /// Per-building service state and facility counters. Added in v22; fires name their
+    /// station since v24.
+    pub service_state: cp_service::ServiceState,
+    /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
+    /// sim reads the values of that boundary until the next one. Added in v22.
+    pub coverage: cp_service::ServiceCoverage,
+    /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
+    pub shortage: cp_economy::WorkerShortage,
+    /// The population milestone reached (v25) and the unique buildings opened (v38).
+    pub progress: cp_sim::Progress,
+    /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
+    /// with keep, since v29.
+    pub service_runs: cp_traffic::ServiceRuns,
+    /// Bus stops and lines (T-153). Added in v28.
+    pub transit: cp_transit::TransitNet,
+    /// Buses out on the lines and the week's transit money (T-156). Added in v30.
+    pub fleet: cp_transit::TransitFleet,
+    pub ledger: cp_transit::TransitLedger,
+    /// Tourists on the way and the visits each building has had (T-168). Added in v33.
+    pub tourists: cp_transit::Tourists,
+    /// Stock of factories and shops and the trucks on the road (T-169). Added in v34.
+    pub goods: cp_transit::Goods,
+    /// The intercity train and what it has brought (T-167). Added in v36.
+    pub intercity: cp_transit::Intercity,
+    /// Ore and oil left per resource cell (T-205). Added in v41; older saves are filled from
+    /// the map by [`load_into_runner`] (empty here: a migration has no map).
+    pub deposits: cp_terrain::ResourceDeposits,
+    /// Stock and problems of the chain buildings (T-209). Added in v43.
+    pub industry: cp_industry::IndustryState,
+    /// The week's cargo trade money (T-210). Added in v44; shop-goods trucks carry a cargo
+    /// since v44.
+    pub industry_ledger: cp_industry::IndustryLedger,
+    /// The modes and cargo of the warehouses that were set (T-214). Added in v45.
+    pub warehouses: cp_industry::WarehouseSettings,
+    /// The park areas: attractiveness, capacity, visitors, fee (T-223). Added in v47.
+    pub parks: cp_park::ParkState,
+}
+
 /// v38 → v39 (T-200): unique buildings. None is open; the milestone stays.
 pub fn migrate_v38_to_v39(v: SaveDataV38) -> SaveDataV39 {
     SaveDataV39 {
@@ -4176,8 +4266,8 @@ pub fn migrate_v44_to_v45(v: SaveDataV44) -> SaveDataV46 {
 
 /// v46 → v47 (T-223): park state. No park area has counted anything yet; the first tick that
 /// has a park area counts its buildings.
-pub fn migrate_v46_to_v47(v: SaveDataV46) -> SaveData {
-    SaveData {
+pub fn migrate_v46_to_v47(v: SaveDataV46) -> SaveDataV47 {
+    SaveDataV47 {
         tick: v.tick,
         rng: v.rng,
         speed: v.speed,
@@ -4223,9 +4313,61 @@ pub fn migrate_v46_to_v47(v: SaveDataV46) -> SaveData {
     }
 }
 
+/// v47 → v48 (T-224): leisure. Nobody is in a park, no walkers, the fee ledger is empty and the
+/// leisure targets are filled at the next game hour.
+pub fn migrate_v47_to_v48(v: SaveDataV47) -> SaveData {
+    SaveData {
+        tick: v.tick,
+        rng: v.rng,
+        speed: v.speed,
+        queue: v.queue,
+        log: v.log,
+        tiles: v.tiles,
+        net: v.net,
+        zones: v.zones,
+        buildings: v.buildings,
+        citizens: v.citizens,
+        paths: v.paths,
+        utilities: v.utilities,
+        trips: v.trips,
+        agents: v.agents,
+        treasury: v.treasury,
+        economy: v.economy,
+        demand: v.demand,
+        demand_acc: v.demand_acc,
+        land: v.land,
+        decay: v.decay,
+        def_names: v.def_names,
+        district_map: v.district_map,
+        districts: v.districts,
+        area_map: v.area_map,
+        areas: v.areas,
+        city_policies: v.city_policies,
+        service_state: v.service_state,
+        coverage: v.coverage,
+        shortage: v.shortage,
+        progress: v.progress,
+        service_runs: v.service_runs,
+        transit: v.transit,
+        fleet: v.fleet,
+        ledger: v.ledger,
+        tourists: v.tourists,
+        goods: v.goods,
+        intercity: v.intercity,
+        deposits: v.deposits,
+        industry: v.industry,
+        industry_ledger: v.industry_ledger,
+        warehouses: v.warehouses,
+        parks: v.parks,
+        leisure: cp_citizen::LeisureTargets::default(),
+        park_visits: cp_park::ParkVisits::default(),
+        park_ledger: cp_park::ParkLedger::default(),
+    }
+}
+
 /// v44 → v47: the two steps in one, for the chain below.
 fn up_from_v44(v: SaveDataV44) -> SaveData {
-    migrate_v46_to_v47(migrate_v44_to_v45(v))
+    migrate_v47_to_v48(migrate_v46_to_v47(migrate_v44_to_v45(v)))
 }
 
 /// v37 → v38 (T-190): policies. No district has one and the city has none; the week report
@@ -4488,8 +4630,9 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         43 => Ok(up_from_v44(migrate_v43_to_v44(dec(body)?))),
         44 => Ok(up_from_v44(dec(body)?)),
         // v46 only changed what the zone blocks mean (layout v2), not how they are written.
-        45 | 46 => Ok(migrate_v46_to_v47(dec(body)?)),
-        47 => dec(body),
+        45 | 46 => Ok(migrate_v47_to_v48(migrate_v46_to_v47(dec(body)?))),
+        47 => Ok(migrate_v47_to_v48(dec(body)?)),
+        48 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

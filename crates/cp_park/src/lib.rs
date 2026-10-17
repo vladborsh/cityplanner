@@ -9,17 +9,26 @@
 //! are derived: [`run_park`] recomputes them when the buildings changed and once a game hour
 //! (a level may have risen without a change the count could see).
 
+pub mod visits;
+
 use std::collections::BTreeMap;
 
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Local, Res, ResMut};
-use cp_building::{BuildingGrid, BuildingState};
+use cp_building::{BuildingGrid, BuildingId, BuildingState};
+use cp_citizen::{LeisureTarget, LeisureTargets, TripBook};
 use cp_content::SimContent;
+use cp_content::{ParkRole, ParkSpec};
+use cp_core::Cost;
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
+use cp_core::time::TICKS_PER_WEEK;
 use cp_district::{AreaKind, AreaMap, Areas, area_at};
+use cp_transit::Tourists;
+
 use serde::{Deserialize, Serialize};
+pub use visits::{ParkLedger, ParkVisits, Visit, Walker, gate_area, path_access, run_walkers};
 
 /// Ticks between two forced recounts: a game hour.
 pub const PARK_RECOUNT_TICKS: u64 = TICKS_PER_DAY / 24;
@@ -108,7 +117,57 @@ pub fn recount(
     }
 }
 
-/// `Agents` phase, after `run_industry`: keeps [`ParkState`] up to date.
+/// The leisure targets (T-224): the gates of the parks that can take visitors, weighted by
+/// the attractiveness of their area and the entrance fee; the city parks; the unique buildings
+/// that draw tourists. Sorted by building.
+fn leisure_targets(
+    db: &cp_content::ContentDb,
+    buildings: &BuildingGrid,
+    area_map: &AreaMap,
+    areas: &Areas,
+    state: &ParkState,
+) -> Vec<LeisureTarget> {
+    let fee_max = db.balance().park_fee_max.max(1.0);
+    let mut list = Vec::new();
+    for (id, b) in buildings.iter() {
+        if b.state != BuildingState::Active || b.access().is_none() {
+            continue;
+        }
+        let def = db.building(b.def);
+        let weight = match &def.park {
+            Some(ParkSpec {
+                role: ParkRole::Gate,
+                park: Some(kind),
+                ..
+            }) => gate_area(areas, area_map, *kind, b.pos)
+                .and_then(|a| state.get(a))
+                .filter(|a| a.capacity > 0 && a.inside < a.capacity)
+                .map_or(0.0, |a| a.attract * (1.0 - a.fee / fee_max * 0.5)),
+            // A city park of the Buildings panel.
+            Some(ParkSpec {
+                role: ParkRole::Attraction,
+                park: None,
+                attract,
+                ..
+            }) => *attract,
+            Some(_) => 0.0,
+            None => def.unique.as_ref().map_or(0.0, |u| u.tourists_per_day),
+        };
+        if weight > 0.0 {
+            list.push(LeisureTarget {
+                building: id,
+                pos: b.pos,
+                weight,
+            });
+        }
+    }
+    list.sort_by_key(|t| t.building);
+    list
+}
+
+/// `Agents` phase, after `run_industry`: keeps [`ParkState`] up to date, counts the arrivals at
+/// the gates (residents and tourists), lets visits end and fills [`LeisureTargets`].
+#[allow(clippy::too_many_arguments)]
 pub fn run_park(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
@@ -116,19 +175,85 @@ pub fn run_park(
     area_map: Res<AreaMap>,
     areas: Res<Areas>,
     mut state: ResMut<ParkState>,
+    mut book: ResMut<TripBook>,
+    mut tourists: ResMut<Tourists>,
+    mut visits: ResMut<ParkVisits>,
+    mut ledger: ResMut<ParkLedger>,
+    mut targets: ResMut<LeisureTargets>,
     mut last_revision: Local<Option<u64>>,
 ) {
+    // The arrivals are drained even without content, so the lists never grow.
+    let arrivals: Vec<(BuildingId, Tick)> = book
+        .leisure_arrivals
+        .drain(..)
+        .map(|a| (a.building, a.leave_at))
+        .chain(tourists.arrivals.drain(..))
+        .collect();
     let Some(content) = content else {
         return;
     };
+    let db = &*content.0;
+    let now = *tick;
     // A new building, a new or repainted area, a level that rose.
     let changed =
         *last_revision != Some(buildings.revision()) || areas.is_changed() || area_map.is_changed();
-    if !changed && !tick.0.is_multiple_of(PARK_RECOUNT_TICKS) {
-        return;
+    let hour = now.0.is_multiple_of(PARK_RECOUNT_TICKS);
+    if changed || hour {
+        *last_revision = Some(buildings.revision());
+        recount(&mut state, db, &buildings, &area_map, &areas);
     }
-    *last_revision = Some(buildings.revision());
-    recount(&mut state, &content.0, &buildings, &area_map, &areas);
+
+    // The day and the week begin.
+    if now.0.is_multiple_of(TICKS_PER_DAY) {
+        for a in state.areas.values_mut() {
+            a.visitors_day = 0;
+        }
+    }
+    if now.0.is_multiple_of(TICKS_PER_WEEK) {
+        for a in state.areas.values_mut() {
+            a.visitors_week = 0;
+        }
+        ledger.last_fees = ledger.fees;
+        ledger.fees = Cost::ZERO;
+    }
+
+    // Arrivals at a gate: the visit counts, the fee is paid, the visitor is inside.
+    for (building, leave_at) in arrivals {
+        let Some(b) = buildings.get(building) else {
+            continue;
+        };
+        let Some(ParkSpec {
+            role: ParkRole::Gate,
+            park: Some(kind),
+            ..
+        }) = db.building(b.def).park
+        else {
+            continue;
+        };
+        let Some(area) = gate_area(&areas, &area_map, kind, b.pos) else {
+            continue;
+        };
+        let Some(a) = state.areas.get_mut(&area.0) else {
+            continue;
+        };
+        a.visitors_day += 1;
+        a.visitors_week += 1;
+        ledger.fees += Cost::from_units(a.fee);
+        visits.inside.push(Visit {
+            area: area.0,
+            leave_at,
+        });
+    }
+    // Visits end; the areas know who is left.
+    visits.inside.retain(|v| v.leave_at > now);
+    visits.inside.retain(|v| state.areas.contains_key(&v.area));
+    for (id, a) in state.areas.iter_mut() {
+        a.inside = visits.inside_of(*id);
+    }
+
+    if hour {
+        targets.list = leisure_targets(db, &buildings, &area_map, &areas, &state);
+    }
 }
 
 #[cfg(test)]

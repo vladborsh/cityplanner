@@ -418,6 +418,19 @@ pub struct Balance {
     /// A park area's attractiveness grows by this share per level above the first (T-223).
     /// // tune later
     pub park_attract_per_level: f32,
+    /// Leisure (T-224) // tune later: the hours of the day a resident may go out, the chance
+    /// per day that one without a shift does, how fast a target's weight falls with distance
+    /// (metres), and how long the visit lasts (game hours).
+    pub leisure_from: f32,
+    pub leisure_to: f32,
+    pub leisure_chance_per_day: f32,
+    pub leisure_dist_m: f32,
+    pub leisure_visit_h: f32,
+    /// Walkers a park shows at most while it has visitors, the share of the new tourists that
+    /// pick a leisure target, and the highest entrance fee (T-224, T-225).
+    pub walkers_per_park: u16,
+    pub tourist_leisure_share: f32,
+    pub park_fee_max: f32,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
 }
@@ -566,6 +579,14 @@ impl Balance {
             self.deposit_per_cell,
             self.min_richness,
             self.park_attract_per_level,
+            self.leisure_from,
+            self.leisure_to,
+            self.leisure_chance_per_day,
+            self.leisure_dist_m,
+            self.leisure_visit_h,
+            f32::from(self.walkers_per_park),
+            self.tourist_leisure_share,
+            self.park_fee_max,
             self.industry_storage_per_level,
         ]);
         v.extend(self.industry_levels.map(|l| l as f32));
@@ -685,6 +706,14 @@ impl Default for Balance {
             deposit_per_cell: 20_000.0,
             min_richness: 0.3,
             park_attract_per_level: 0.1,
+            leisure_from: 10.0,
+            leisure_to: 20.0,
+            leisure_chance_per_day: 0.3,
+            leisure_dist_m: 1500.0,
+            leisure_visit_h: 3.0,
+            walkers_per_park: 6,
+            tourist_leisure_share: 0.3,
+            park_fee_max: 20.0,
             industry_levels: [2_000, 8_000, 25_000, 60_000],
             industry_storage_per_level: 0.1,
             networks: Networks::default(),

@@ -2,6 +2,7 @@
 //! `architecture/system-design.md` §9.1.
 
 pub mod grid;
+pub mod leisure;
 pub mod lifecycle;
 pub mod model;
 pub mod routine;
@@ -9,6 +10,7 @@ pub mod system;
 pub mod trips;
 
 pub use grid::{CitizenGrid, PopFlow};
+pub use leisure::{LEISURE_STREAM, LeisureTarget, LeisureTargets, pick_leisure};
 pub use lifecycle::{LIFECYCLE_STREAM, run_lifecycle, update_lifecycle};
 pub use model::{
     ADULT_AGE_DAYS, Citizen, CitizenId, DAYS_PER_YEAR, HOUSEHOLD_MAX, Household, HouseholdId,
@@ -23,7 +25,7 @@ pub use system::{
     ARRIVAL_SPEED_MPS, BASE_DELAY, FALLBACK_DELAY, JOBLESS_LEAVE_DAYS, MOVE_IN_ONE_IN,
     MOVE_IN_STREAM, update_citizens,
 };
-pub use trips::{Trip, TripBook, TripId, TripMode, TripPurpose, TripState};
+pub use trips::{LeisureArrival, Trip, TripBook, TripId, TripMode, TripPurpose, TripState};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_citizen";

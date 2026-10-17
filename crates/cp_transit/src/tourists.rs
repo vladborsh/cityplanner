@@ -55,6 +55,10 @@ pub struct Tourists {
     pub customers: BTreeMap<BuildingId, u32>,
     /// Visits that arrived since the week began.
     pub visits_week: u32,
+    /// Arrivals at a building and the tick the visit ends, since `cp_park` last looked (T-224);
+    /// transient, drained every tick.
+    #[serde(skip)]
+    pub arrivals: Vec<(BuildingId, Tick)>,
 }
 
 impl Tourists {
@@ -82,6 +86,7 @@ pub fn run_tourists(
     rail: Res<RailReach>,
     transit: Res<TransitNet>,
     buildings: Res<BuildingGrid>,
+    leisure: Option<Res<cp_citizen::LeisureTargets>>,
     mut tourists: ResMut<Tourists>,
     mut ledger: ResMut<TransitLedger>,
     mut runs: ResMut<ServiceRuns>,
@@ -119,6 +124,7 @@ pub fn run_tourists(
                 *tourists.customers.entry(t.goal).or_default() += 1;
                 tourists.visits_week += 1;
                 let stay = (balance.tourism_visit_h * TICKS_PER_HOUR).ceil() as u64;
+                tourists.arrivals.push((t.goal, Tick(now.0 + stay.max(1))));
                 if let Some(v) = tourists.visits.get_mut(&id) {
                     v.phase = TouristPhase::Visiting {
                         until: Tick(now.0 + stay.max(1)),
@@ -223,6 +229,11 @@ pub fn run_tourists(
             break;
         }
         let (entry, from) = entries[r.below(entries.len() as u32) as usize];
+        // A share of the tourists goes to a park or a landmark instead of a shop (T-224).
+        let leisure_goal = leisure
+            .as_deref()
+            .filter(|l| !l.is_empty() && r.next_f32() < balance.tourist_leisure_share)
+            .and_then(|l| cp_citizen::pick_leisure(l, from, balance.tourism_reach_m, r.next_f32()));
         let weight =
             |p: Vec2, w: f32| w / (1.0 + p.distance(from) / balance.tourism_reach_m.max(1.0));
         let total: f32 = shops.iter().map(|&(_, p, w)| weight(p, w)).sum();
@@ -235,6 +246,7 @@ pub fn run_tourists(
                 break;
             }
         }
+        let goal = leisure_goal.unwrap_or(goal);
         let run = runs.start_run(
             VehicleKind::Car,
             RunPoint::Outside(entry),

@@ -40,9 +40,10 @@ use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_DAY};
 use cp_core::{SimLimits, SimRng, Tick};
 
 use crate::grid::CitizenGrid;
+use crate::leisure::{LEISURE_STREAM, LeisureTargets, pick_leisure};
 use crate::model::{CitizenId, Location};
 use crate::system::CITIZEN_BUCKETS;
-use crate::trips::{Trip, TripBook, TripMode, TripPurpose, TripState};
+use crate::trips::{LeisureArrival, Trip, TripBook, TripMode, TripPurpose, TripState};
 
 pub const ROUTINE_STREAM: u64 = 0x2007;
 
@@ -71,6 +72,8 @@ pub const NEED_PCT_PER_DAY: u32 = 25;
 /// Time spent at a shop: `SHOP_DWELL_MIN + rng(SHOP_DWELL_SPAN)` ticks.
 pub const SHOP_DWELL_MIN: u64 = 170;
 pub const SHOP_DWELL_SPAN: u32 = 340;
+/// A leisure visit lasts this many ticks until the routine has read the balance (3 game hours).
+pub const LEISURE_DWELL_FALLBACK: u64 = TICKS_PER_DAY / 8;
 
 /// A working shift: start and end, hours of the day (`0..24`).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -262,6 +265,32 @@ pub fn complete_trip(
                 });
             }
         }
+        TripPurpose::Leisure => {
+            set_location(grid, trip.citizen, Location::Leisure);
+            let dwell = if book.leisure_dwell > 0 {
+                book.leisure_dwell
+            } else {
+                LEISURE_DWELL_FALLBACK
+            };
+            // `cp_park` counts the visit and the time the visitor is inside.
+            book.leisure_arrivals.push(LeisureArrival {
+                citizen: trip.citizen,
+                building: trip.to,
+                leave_at: Tick(now + dwell),
+            });
+            if let Some(home) = grid.citizen(trip.citizen).and_then(|c| c.home) {
+                book.add(Trip {
+                    citizen: trip.citizen,
+                    from: trip.to,
+                    to: home,
+                    purpose: TripPurpose::Home,
+                    mode: trip.mode,
+                    state: TripState::Scheduled {
+                        depart_at: Tick(now + dwell),
+                    },
+                });
+            }
+        }
     }
 }
 
@@ -275,10 +304,13 @@ pub fn update_routine(
     mut grid: ResMut<CitizenGrid>,
     mut book: ResMut<TripBook>,
     settings: Option<Res<RoutineSettings>>,
+    leisure: Option<Res<LeisureTargets>>,
 ) {
     let Some(content) = content else { return };
     let db = &content.0;
     let now = tick.0;
+    book.leisure_dwell =
+        (db.balance().leisure_visit_h * cp_core::time::TICKS_PER_HOUR).ceil() as u64;
     grid.ensure_derived();
     book.ensure_derived();
     let day = (now / TICKS_PER_DAY) as u32;
@@ -341,9 +373,12 @@ pub fn update_routine(
             .collect();
         let mut r = rng.fork(ROUTINE_STREAM, *tick);
         let mut shops: Shops = None;
+        let no_targets = LeisureTargets::default();
+        let targets = leisure.as_deref().unwrap_or(&no_targets);
         for cid in citizens {
             decide(
                 cid, now, day, hour, &buildings, db, &mut grid, &mut book, &mut r, &mut shops,
+                targets,
             );
         }
     }
@@ -367,6 +402,7 @@ fn decide(
     book: &mut TripBook,
     rng: &mut SimRng,
     shops: &mut Shops,
+    targets: &LeisureTargets,
 ) {
     let Some(c) = grid.citizen(cid).cloned() else {
         return;
@@ -446,6 +482,30 @@ fn decide(
                     book.note_shopped(c.household, day);
                 }
             }
+            // Free hours in the leisure window (T-224): a chance per visit, spread over the
+            // visits of the window; the choice is a pure function of citizen and tick.
+            let bal = db.balance();
+            if book.active_of(cid).is_none()
+                && (bal.leisure_from..bal.leisure_to).contains(&hour)
+                && !targets.is_empty()
+            {
+                let visits = ((bal.leisure_to - bal.leisure_from) / 24.0
+                    * (TICKS_PER_DAY / u64::from(CITIZEN_BUCKETS)) as f32)
+                    .max(1.0);
+                let seed = LEISURE_STREAM ^ (u64::from(cid.index) << 32) ^ now;
+                if crate::system::unit(seed) < bal.leisure_chance_per_day / visits
+                    && let Some(target) = pos_of(buildings, home).and_then(|p| {
+                        pick_leisure(
+                            targets,
+                            p,
+                            bal.leisure_dist_m,
+                            crate::system::unit(seed ^ 0xA5A5),
+                        )
+                    })
+                {
+                    go(TripPurpose::Leisure, home, target, grid, book);
+                }
+            }
         }
         Location::Work => {
             if !on_shift_window
@@ -454,8 +514,8 @@ fn decide(
                 go(TripPurpose::Home, from, home, grid, book);
             }
         }
-        Location::Shop => {
-            // Stranded at a shop (its return trip was cancelled): go home from home's spot.
+        Location::Shop | Location::Leisure => {
+            // Stranded at a shop or park (its return trip was cancelled): go home from home's spot.
             go(TripPurpose::Home, home, home, grid, book);
         }
         Location::Moving | Location::Outside => {}

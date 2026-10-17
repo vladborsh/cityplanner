@@ -36,6 +36,9 @@ pub enum TripPurpose {
     /// (§5.1). `from == to == home`; `cp_traffic` starts the car at the Outside node. Appended
     /// in save format 26.
     MoveIn,
+    /// A visit to a park gate, a city park or a unique building (T-224). Appended in save
+    /// format 48.
+    Leisure,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +112,22 @@ pub struct TripBook {
     by_citizen: BTreeMap<CitizenId, TripId>,
     #[serde(skip)]
     ready: bool,
+    /// Leisure trips that arrived since `cp_park` last looked (T-224); transient, drained every
+    /// tick.
+    #[serde(skip)]
+    pub leisure_arrivals: Vec<LeisureArrival>,
+    /// How long a leisure visit lasts, ticks; set by the routine from the balance each tick
+    /// (0 until it has run once).
+    #[serde(skip)]
+    pub leisure_dwell: u64,
+}
+
+/// A citizen who reached the building of a leisure trip (T-224) and stays until `leave_at`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LeisureArrival {
+    pub citizen: CitizenId,
+    pub building: BuildingId,
+    pub leave_at: cp_core::Tick,
 }
 
 impl PartialEq for TripBook {

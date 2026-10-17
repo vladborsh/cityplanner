@@ -44,7 +44,7 @@
 //! | `PathService` (requests in flight) | yes, as `SavedPaths` |
 //! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `Goods`, `Intercity` (stops, lines, riders, line figures, buses, week's money, tourist visits, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
 //! | `ResourceDeposits` (ore and oil left per 64 m cell; a save from before v41 is filled from the map by `load_into_runner`) | yes |
-//! | `AreaMap`, `Areas`, `IndustryState` (stock and problems of the chain buildings), `IndustryLedger`, `WarehouseSettings`, `ParkState` (attractiveness, capacity, visitors and fee per park area) | yes |
+//! | `AreaMap`, `Areas`, `IndustryState` (stock and problems of the chain buildings), `IndustryLedger`, `WarehouseSettings`, `ParkState` (attractiveness, capacity, visitors and fee per park area), `LeisureTargets`, `ParkVisits` (who is inside, the walkers), `ParkLedger` | yes |
 //! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
@@ -81,7 +81,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 47;
+pub const FORMAT_VERSION: u32 = 48;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -248,6 +248,12 @@ pub struct SaveData {
     pub warehouses: cp_industry::WarehouseSettings,
     /// The park areas: attractiveness, capacity, visitors, fee (T-223). Added in v47.
     pub parks: cp_park::ParkState,
+    /// Where residents may go in their free hours (T-224). Added in v48.
+    pub leisure: cp_citizen::LeisureTargets,
+    /// Who is inside the parks and the walkers (T-224). Added in v48.
+    pub park_visits: cp_park::ParkVisits,
+    /// The entrance fees of the week (T-224). Added in v48.
+    pub park_ledger: cp_park::ParkLedger,
 }
 
 impl SaveData {
@@ -328,6 +334,9 @@ impl SaveData {
             industry_ledger: *world.resource::<cp_industry::IndustryLedger>(),
             warehouses: world.resource::<cp_industry::WarehouseSettings>().clone(),
             parks: world.resource::<cp_park::ParkState>().clone(),
+            leisure: world.resource::<cp_citizen::LeisureTargets>().clone(),
+            park_visits: world.resource::<cp_park::ParkVisits>().clone(),
+            park_ledger: *world.resource::<cp_park::ParkLedger>(),
         }
     }
 
@@ -385,6 +394,9 @@ impl SaveData {
         world.insert_resource(self.industry_ledger);
         world.insert_resource(self.warehouses);
         world.insert_resource(self.parks);
+        world.insert_resource(self.leisure);
+        world.insert_resource(self.park_visits);
+        world.insert_resource(self.park_ledger);
         // The routes are derived: the first Network phase after the load attaches the stops
         // and plans every line again.
         world.insert_resource(cp_transit::LinePlans::default());

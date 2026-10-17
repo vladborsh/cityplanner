@@ -158,6 +158,18 @@ pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
     if !parks.is_empty() {
         h.write_serialized(parks);
     }
+    let visits = world.resource::<cp_park::ParkVisits>();
+    if !visits.is_empty() {
+        h.write_serialized(visits);
+    }
+    let park_fees = world.resource::<cp_park::ParkLedger>();
+    if !park_fees.is_empty() {
+        h.write_serialized(park_fees);
+    }
+    let leisure = world.resource::<cp_citizen::LeisureTargets>();
+    if !leisure.is_empty() {
+        h.write_serialized(leisure);
+    }
     let warehouses = world.resource::<cp_industry::WarehouseSettings>();
     if !warehouses.list.is_empty() {
         h.write_serialized(warehouses);

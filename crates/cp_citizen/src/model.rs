@@ -27,6 +27,8 @@ pub enum Location {
     /// Travelling: a household that has "arrived" in the city but not yet at its home.
     Moving,
     Outside,
+    /// At a park, a city park or a unique building (T-224). Appended in save format 48.
+    Leisure,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

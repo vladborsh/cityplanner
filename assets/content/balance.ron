@@ -207,6 +207,15 @@ Balance((
     min_richness: 0.3,
     // Park areas (T-223) // tune later: attractiveness share each level above 1 adds.
     park_attract_per_level: 0.1,
+    // Leisure and visitors (T-224) // tune later.
+    leisure_from: 10.0,
+    leisure_to: 20.0,
+    leisure_chance_per_day: 0.3,
+    leisure_dist_m: 1500.0,
+    leisure_visit_h: 3.0,
+    walkers_per_park: 6,
+    tourist_leisure_share: 0.3,
+    park_fee_max: 20.0,
     // Area levels (T-209) // tune later: xp for levels 2 to 5, storage share per level above 1.
     industry_levels: (2000, 8000, 25000, 60000),
     industry_storage_per_level: 0.1,
