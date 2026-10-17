@@ -107,7 +107,9 @@ fn begin_terrain(
     sea_level: f32,
 ) -> (Entity, TerrainMaterials) {
     let mats = TerrainMaterials {
-        ground: materials.add(VertexColorMaterial::opaque(0.95, 0.08)),
+        ground: materials.add(
+            VertexColorMaterial::opaque(0.95, 0.08).with_detail(crate::material::DETAIL_GROUND),
+        ),
         water: materials.add(VertexColorMaterial::blended(0.12, 0.6)),
     };
     // Sea: one huge quad at sea level (vertex-coloured like everything else).

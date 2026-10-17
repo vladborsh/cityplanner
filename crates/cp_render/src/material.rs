@@ -35,7 +35,7 @@ pub struct VertexColorMaterial {
     /// x = factor on the alpha of every fragment (the Underground view fades the ground, T-164);
     /// y = how far the surface is desaturated and darkened (0 = not, 1 = fully) while a data
     /// overlay is active (T-183b, written by [`sync_overlay_dim`]; overlay layers are never
-    /// dimmed); z, w unused.
+    /// dimmed); z = procedural surface detail, see [`Self::with_detail`]; w unused.
     #[uniform(1)]
     pub fade: Vec4,
     /// Alpha-blend using the vertex alpha (water) instead of drawing opaque.
@@ -73,6 +73,13 @@ impl VertexColorMaterial {
     pub fn set_see_through(&mut self, on: bool, alpha: f32) {
         self.blend = on;
         self.fade.x = if on { alpha } else { 1.0 };
+    }
+
+    /// Procedural surface detail in the shader (T-238): [`DETAIL_ROADS`] (asphalt grain,
+    /// patches and cracks, sidewalk tiles) or [`DETAIL_GROUND`] (grass patches).
+    pub fn with_detail(mut self, kind: f32) -> Self {
+        self.fade.z = kind;
+        self
     }
 
     pub fn with_sort_bias(self, sort_bias: f32) -> Self {
@@ -129,6 +136,11 @@ impl Material for VertexColorMaterial {
         false
     }
 }
+
+/// [`VertexColorMaterial::with_detail`] of the road meshes.
+pub const DETAIL_ROADS: f32 = 1.0;
+/// [`VertexColorMaterial::with_detail`] of the terrain.
+pub const DETAIL_GROUND: f32 = 2.0;
 
 /// Dim amount of the city while a data overlay is active.
 pub const OVERLAY_DIM: f32 = 1.0;

@@ -189,6 +189,7 @@ pub const MATTE_ROUGHNESS: f32 = 0.9;
 pub fn road_material() -> VertexColorMaterial {
     VertexColorMaterial::opaque(MATTE_ROUGHNESS, 0.04)
         .with_dark_gloss(ASPHALT_ROUGHNESS, ASPHALT_REFLECTANCE)
+        .with_detail(crate::material::DETAIL_ROADS)
 }
 
 #[cfg(test)]
@@ -202,5 +203,14 @@ mod material_tests {
         assert_eq!(m.params.z, ASPHALT_ROUGHNESS);
         assert!(m.params.x >= 0.85, "pavements and paint stay matte");
         assert!(m.params.w > m.params.y, "the asphalt reflects more");
+    }
+
+    #[test]
+    fn roads_ask_for_the_road_detail_and_keep_the_fade_and_dim_slots() {
+        let m = road_material();
+        assert_eq!(m.fade.z, crate::material::DETAIL_ROADS);
+        assert_eq!((m.fade.x, m.fade.y), (1.0, 0.0));
+        let plain = VertexColorMaterial::opaque(0.85, 0.05);
+        assert_eq!(plain.fade.z, 0.0, "buildings and the rest get no detail");
     }
 }
