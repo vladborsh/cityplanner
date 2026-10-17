@@ -136,9 +136,10 @@ fn cars_come_from_the_outside_node_visit_a_shop_and_drive_out_again() {
         .find(|id| !w.resource::<Tourists>().visits.contains_key(id))
         .expect("a car that left reached the Outside node and was taken off the road");
     assert!(w.resource::<ServiceRuns>().get(*gone).is_none());
-    // Nothing is lost: a record per run, a run per record.
+    // Nothing is lost: a record per run, a run per record (the shops here have no factory, so
+    // trucks come in from the Outside node too, T-170).
     assert_eq!(
-        w.resource::<Tourists>().visits.len(),
+        w.resource::<Tourists>().visits.len() + w.resource::<cp_transit::Goods>().hauls.len(),
         w.resource::<ServiceRuns>().len()
     );
 }

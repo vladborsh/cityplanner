@@ -277,6 +277,10 @@ pub struct Balance {
     pub goods_truck_load: f32,
     /// Metres within which a factory looks for a shop to supply (T-169). // tune later
     pub freight_radius_m: f32,
+    /// Money one unit of exported goods brings, currency units, and the stock below which a shop
+    /// with no factory in reach gets an import truck (T-170). // tune later
+    pub export_price: f32,
+    pub goods_import_threshold: f32,
     /// Days a shop may stand without stock before `NO_GOODS` (T-169). // tune later
     pub goods_empty_days: f32,
     /// Whether `NO_GOODS` counts towards abandonment (T-169); off by default.
@@ -424,6 +428,8 @@ impl Balance {
             self.goods_stock_cap,
             self.goods_truck_load,
             self.freight_radius_m,
+            self.export_price,
+            self.goods_import_threshold,
             self.goods_empty_days,
             f32::from(u8::from(self.goods_decay)),
             self.zoning_block_fit_m,
@@ -530,6 +536,8 @@ impl Default for Balance {
             goods_stock_cap: 100.0,
             goods_truck_load: 20.0,
             freight_radius_m: 1500.0,
+            export_price: 10.0,
+            goods_import_threshold: 5.0,
             goods_empty_days: 2.0,
             goods_decay: false,
             intercity_interval_h: 6.0,

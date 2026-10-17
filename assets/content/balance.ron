@@ -179,6 +179,10 @@ Balance((
     goods_stock_cap: 100.0,
     goods_truck_load: 20.0,
     freight_radius_m: 1500.0,
+    // Outside trade (T-170) // tune later: money per exported unit; a shop with no factory in
+    // reach imports a truck when its stock is below this.
+    export_price: 10.0,
+    goods_import_threshold: 5.0,
     goods_empty_days: 2.0,
     goods_decay: false,
     // Intercity trains (T-167) // tune later: hours between trains from the outside, hours a

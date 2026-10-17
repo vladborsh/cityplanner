@@ -213,6 +213,12 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
             [Some(day.tourism), Some(week.tourism), Some(last.tourism)],
         ));
     }
+    if day.exports != Cost::ZERO || week.exports != Cost::ZERO || last.exports != Cost::ZERO {
+        income.push((
+            "Exports".into(),
+            [Some(day.exports), Some(week.exports), Some(last.exports)],
+        ));
+    }
     (income, expenses)
 }
 
@@ -435,6 +441,8 @@ pub struct Overview {
     pub transit_upkeep: Cost,
     /// Last week's tourism income (part of `income`), T-168.
     pub tourism: Cost,
+    /// Last week's export income (part of `income`), T-170.
+    pub exports: Cost,
     /// Balance of every hourly history sample (7 game days at most), oldest first.
     pub balance_history: Vec<f32>,
 }
@@ -461,7 +469,7 @@ pub fn overview(view: &SimView) -> Overview {
             .enumerate()
             .map(|(i, z)| (*z, week.income_by_zone[i]))
             .collect(),
-        income: week.income() + week.transit_fares + week.tourism,
+        income: week.income() + week.transit_fares + week.tourism + week.exports,
         upkeep: week.upkeep() + week.loan_payments + week.transit_upkeep,
         net: week.balance(),
         roads_sum: roads.iter().map(|r| r.upkeep_week).sum(),
@@ -473,6 +481,7 @@ pub fn overview(view: &SimView) -> Overview {
         transit_fares: week.transit_fares,
         transit_upkeep: week.transit_upkeep,
         tourism: week.tourism,
+        exports: week.exports,
         balance_history: view
             .city
             .history
@@ -508,7 +517,7 @@ fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
                 (
                     day.income(),
                     week.income(),
-                    last.income() + last.transit_fares + last.tourism,
+                    last.income() + last.transit_fares + last.tourism + last.exports,
                 ),
             ),
             (
@@ -583,6 +592,9 @@ pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
         ui.end_row();
         ui.label("Tourism");
         ui.label(format_money(o.tourism));
+        ui.end_row();
+        ui.label("Exports");
+        ui.label(format_money(o.exports));
         ui.end_row();
     });
     ui.separator();

@@ -67,11 +67,24 @@ struct Town {
 /// A 1 km street with a factory at x = 100 and shops at the given x; `workers` work in the
 /// factory.
 fn town(shops_at: &[f32], workers: usize) -> Town {
+    town_with(shops_at, workers, false, true)
+}
+
+/// [`town`] with an `Outside` node at the west end if `outside`, and the factory only if
+/// `with_factory` (workers or not).
+fn town_with(shops_at: &[f32], workers: usize, outside: bool, with_factory: bool) -> Town {
     let db = content();
     let mut sim = SimRunner::new(3);
     sim.set_content(Arc::clone(&db));
     let road = db.road_id("street").unwrap();
     let def = db.road(road).clone();
+    if outside {
+        sim.world_mut().resource_mut::<NetGraph>().add_node(
+            Vec3::ZERO,
+            cp_net::NodeKind::Outside,
+            Elevation::Ground,
+        );
+    }
     let seg = sim
         .world_mut()
         .resource_mut::<NetGraph>()
@@ -107,6 +120,11 @@ fn town(shops_at: &[f32], workers: usize) -> Town {
             })
     };
     let factory = put(&mut sim, "factory", 100.0);
+    if !with_factory {
+        sim.world_mut()
+            .resource_mut::<BuildingGrid>()
+            .remove(factory);
+    }
     let shops = shops_at.iter().map(|&x| put(&mut sim, "shop", x)).collect();
     sim.tick_once();
     if workers > 0 {
@@ -176,7 +194,7 @@ fn the_shop_with_least_stock_gets_the_truck() {
     for _ in 0..4096 * 3 {
         t.sim.tick_once();
         if let Some(h) = t.sim.world().resource::<Goods>().hauls.values().next() {
-            assert_eq!(h.to, b);
+            assert_eq!(h.to, cp_transit::Endpoint::Building(b));
             return;
         }
     }
@@ -269,4 +287,103 @@ fn goods_trucks_are_cargo_trucks_not_garbage_trucks() {
             .vehicles()
             .any(|(_, v)| v.kind_id() == cp_content::VehicleKind::Cargo as u8)
     );
+}
+
+// T-170: exports and imports through the `Outside` node of the entry highway.
+
+use cp_transit::{Endpoint, TransitLedger};
+
+#[test]
+fn a_factory_with_no_shop_sends_its_trucks_out_and_the_week_report_has_exports() {
+    let mut t = town_with(&[], 2, true, true);
+    let mut seen_export = false;
+    for _ in 0..4096 * 5 {
+        t.sim.tick_once();
+        let w = t.sim.world();
+        seen_export |= w
+            .resource::<Goods>()
+            .hauls
+            .values()
+            .any(|h| matches!(h.to, Endpoint::Outside(_)));
+        if w.resource::<TransitLedger>().exports > cp_core::Cost::ZERO {
+            break;
+        }
+    }
+    assert!(seen_export, "a truck set out for the Outside node");
+    let ledger = *t.sim.world().resource::<TransitLedger>();
+    assert!(ledger.exports > cp_core::Cost::ZERO && ledger.export_loads > 0);
+    // 20 units a load at 10.00 a unit.
+    assert_eq!(ledger.exports.0 % 20_000, 0);
+    assert!(t.sim.world().resource::<ServiceRuns>().len() <= 1);
+    // The week's settlement books it.
+    for _ in 0..cp_core::time::TICKS_PER_WEEK {
+        t.sim.tick_once();
+        if t.sim
+            .world()
+            .resource::<cp_economy::EconomyState>()
+            .last_week
+            .week
+            > 0
+        {
+            break;
+        }
+    }
+    let week = t
+        .sim
+        .world()
+        .resource::<cp_economy::EconomyState>()
+        .last_week;
+    assert!(week.exports > cp_core::Cost::ZERO, "{week:?}");
+}
+
+#[test]
+fn a_shop_with_no_factory_gets_an_import_truck_and_loses_no_goods() {
+    let mut t = town_with(&[600.0], 0, true, false);
+    let mut seen_import = false;
+    for _ in 0..4096 * 4 {
+        t.sim.tick_once();
+        let w = t.sim.world();
+        seen_import |= w
+            .resource::<Goods>()
+            .hauls
+            .values()
+            .any(|h| matches!(h.from, Endpoint::Outside(_)));
+        if w.resource::<TransitLedger>().import_loads > 0 {
+            break;
+        }
+    }
+    assert!(seen_import, "a truck came from the Outside node");
+    assert!(t.sim.world().resource::<TransitLedger>().import_loads > 0);
+    assert!(t.sim.world().resource::<Goods>().stock_of(t.shops[0]) > 0.0);
+    assert!(!flags(&t, t.shops[0]).has(BuildingFlags::NO_GOODS));
+    // Free for the treasury: nothing was exported.
+    assert_eq!(
+        t.sim.world().resource::<TransitLedger>().exports,
+        cp_core::Cost::ZERO
+    );
+}
+
+#[test]
+fn without_an_outside_node_nothing_is_exported_or_imported() {
+    for (shops, workers, factory) in [(vec![], 2, true), (vec![600.0], 0, false)] {
+        let mut t = town_with(&shops, workers, false, factory);
+        for _ in 0..4096 * 4 {
+            t.sim.tick_once();
+        }
+        assert!(t.sim.world().resource::<Goods>().hauls.is_empty());
+        assert!(t.sim.world().resource::<TransitLedger>().is_empty());
+        assert!(t.sim.world().resource::<ServiceRuns>().is_empty());
+    }
+}
+
+#[test]
+fn trade_is_deterministic() {
+    let run = || {
+        let mut t = town_with(&[], 2, true, true);
+        for _ in 0..4096 * 3 {
+            t.sim.tick_once();
+        }
+        t.sim.checksum()
+    };
+    assert_eq!(run(), run());
 }

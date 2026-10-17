@@ -44,6 +44,10 @@
 //! by one. Checked: with the plant's two files taken out of the content, all four values of the
 //! T-109 header above reproduce exactly (and the bench-10k baseline too).
 
+//! **T-170 (save v37).** Re-recorded again, all four values: the checksum hashes the week report
+//! and the goods trucks, whose serialized shape changed (export line, `Endpoint`); the behaviour
+//! of these cities is unchanged (they have no `Outside` node with a road to trade through).
+//!
 //! **T-187.** Re-recorded again, the two "load + 4096 ticks" values only (state at load
 //! unchanged): `tax_household` x2.4 and `tax_job` x1.8 in balance.ron, so the treasury differs
 //! from the first booked day on.
@@ -159,10 +163,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0x82f4e90f2b013bf0, "state at load");
+    assert_eq!(sim.checksum(), 0x8e37ce06a3ec6e2f, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x1d34991835c4f3e5,
+        0x300ded64ea98fb0e,
         "load + 4096 ticks"
     );
 }
@@ -188,7 +192,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0x635322999ced6dd2, "state at load");
+    assert_eq!(sim.checksum(), 0x3f40fc80b3bbbab, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -196,7 +200,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x8ce960e8a4a14232, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x20ec57683cb75ab5, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

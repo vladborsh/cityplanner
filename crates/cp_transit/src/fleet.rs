@@ -64,6 +64,11 @@ pub struct TransitLedger {
     pub fares: Cost,
     /// What the visits of tourists brought this week (T-168). Added in v33.
     pub tourism: Cost,
+    /// What the goods trucks that left the map brought this week, and the loads that went out
+    /// and came in (T-170). Added in v37.
+    pub exports: Cost,
+    pub export_loads: u32,
+    pub import_loads: u32,
 }
 
 impl TransitLedger {

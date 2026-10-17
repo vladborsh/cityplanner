@@ -26,7 +26,7 @@ pub mod view;
 
 pub use command::{MAX_LINE_NAME, StopRef, TransitCommand, TransitError, apply};
 pub use fleet::{Bus, BusId, BusPhase, TransitFleet, TransitLedger};
-pub use goods::{GOODS_BUCKET_TICKS, Goods, Haul, run_goods};
+pub use goods::{Endpoint, GOODS_BUCKET_TICKS, Goods, Haul, run_goods};
 pub use intercity::{Intercity, Train, TrainPhase, run_intercity};
 pub use model::{
     DEFAULT_LINE_VEHICLES, Journey, Line, LineId, LineState, LineStats, MAX_LINE_STOPS,

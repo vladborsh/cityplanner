@@ -250,12 +250,15 @@ pub fn settle_week(
             report.transit_fares = ledger.fares;
             report.transit_upkeep = ledger.upkeep;
             report.tourism = ledger.tourism;
+            report.exports = ledger.exports;
             *ledger = TransitLedger::default();
         }
-        treasury.balance +=
-            report.transit_fares + report.tourism - report.transit_upkeep - report.loan_payments;
+        treasury.balance += report.transit_fares + report.tourism + report.exports
+            - report.transit_upkeep
+            - report.loan_payments;
         booked.fares = report.transit_fares;
         booked.tourism = report.tourism;
+        booked.exports = report.exports;
         booked.transit_upkeep = report.transit_upkeep;
         booked.loans = report.loan_payments;
         for loan in &mut state.loans {

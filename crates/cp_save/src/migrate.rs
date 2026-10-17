@@ -2486,10 +2486,10 @@ pub fn migrate_v32_to_v33(v32: SaveDataV32) -> SaveDataV33 {
         service_runs: v32.service_runs,
         transit: v32.transit,
         fleet: v32.fleet,
-        economy: EconomyState {
+        economy: EconomyStateV36 {
             taxes: v32.economy.taxes,
             budgets: v32.economy.budgets,
-            last_week: WeekReport {
+            last_week: WeekReportV36 {
                 week: w.week,
                 income_by_zone: w.income_by_zone,
                 road_upkeep: w.road_upkeep,
@@ -2502,7 +2502,7 @@ pub fn migrate_v32_to_v33(v32: SaveDataV32) -> SaveDataV33 {
             },
             loans: v32.economy.loans,
         },
-        ledger: cp_transit::TransitLedger {
+        ledger: TransitLedgerV36 {
             upkeep: v32.ledger.upkeep,
             fares: v32.ledger.fares,
             tourism: Cost::ZERO,
@@ -2543,7 +2543,7 @@ pub struct SaveDataV33 {
     /// The city's money. Added in v14.
     pub treasury: Treasury,
     /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
-    pub economy: EconomyState,
+    pub economy: EconomyStateV36,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -2574,7 +2574,7 @@ pub struct SaveDataV33 {
     pub transit: cp_transit::TransitNet,
     /// Buses out on the lines and the week's transit money (T-156). Added in v30.
     pub fleet: cp_transit::TransitFleet,
-    pub ledger: cp_transit::TransitLedger,
+    pub ledger: TransitLedgerV36,
     /// Tourists on the way and the visits each building has had (T-168). Added in v33.
     pub tourists: cp_transit::Tourists,
 }
@@ -2614,7 +2614,7 @@ pub fn migrate_v33_to_v34(v33: SaveDataV33) -> SaveDataV34 {
         fleet: v33.fleet,
         ledger: v33.ledger,
         tourists: v33.tourists,
-        goods: cp_transit::Goods::default(),
+        goods: GoodsV36::default(),
     }
 }
 
@@ -2650,7 +2650,7 @@ pub struct SaveDataV34 {
     /// The city's money. Added in v14.
     pub treasury: Treasury,
     /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
-    pub economy: EconomyState,
+    pub economy: EconomyStateV36,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -2681,11 +2681,11 @@ pub struct SaveDataV34 {
     pub transit: cp_transit::TransitNet,
     /// Buses out on the lines and the week's transit money (T-156). Added in v30.
     pub fleet: cp_transit::TransitFleet,
-    pub ledger: cp_transit::TransitLedger,
+    pub ledger: TransitLedgerV36,
     /// Tourists on the way and the visits each building has had (T-168). Added in v33.
     pub tourists: cp_transit::Tourists,
     /// Stock of factories and shops and the trucks on the road (T-169). Added in v34.
-    pub goods: cp_transit::Goods,
+    pub goods: GoodsV36,
 }
 
 /// v34 → v35 (T-185): zone blocks carry the length and depth of their cells (a block fitted
@@ -2760,7 +2760,7 @@ pub struct SaveDataV35 {
     /// The city's money. Added in v14.
     pub treasury: Treasury,
     /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
-    pub economy: EconomyState,
+    pub economy: EconomyStateV36,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -2791,16 +2791,16 @@ pub struct SaveDataV35 {
     pub transit: cp_transit::TransitNet,
     /// Buses out on the lines and the week's transit money (T-156). Added in v30.
     pub fleet: cp_transit::TransitFleet,
-    pub ledger: cp_transit::TransitLedger,
+    pub ledger: TransitLedgerV36,
     /// Tourists on the way and the visits each building has had (T-168). Added in v33.
     pub tourists: cp_transit::Tourists,
     /// Stock of factories and shops and the trucks on the road (T-169). Added in v34.
-    pub goods: cp_transit::Goods,
+    pub goods: GoodsV36,
 }
 
 /// v35 → v36 (T-167): intercity trains. No train is on the line and no household has come by one.
-pub fn migrate_v35_to_v36(v35: SaveDataV35) -> SaveData {
-    SaveData {
+pub fn migrate_v35_to_v36(v35: SaveDataV35) -> SaveDataV36 {
+    SaveDataV36 {
         tick: v35.tick,
         rng: v35.rng,
         speed: v35.speed,
@@ -2838,6 +2838,210 @@ pub fn migrate_v35_to_v36(v35: SaveDataV35) -> SaveData {
     }
 }
 
+/// The week report as format 36 wrote it: no export line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WeekReportV36 {
+    pub week: u64,
+    pub income_by_zone: [Cost; 6],
+    pub road_upkeep: Cost,
+    pub building_upkeep: Cost,
+    pub utility_upkeep: Cost,
+    pub loan_payments: Cost,
+    pub transit_fares: Cost,
+    pub transit_upkeep: Cost,
+    pub tourism: Cost,
+}
+
+/// The economy state as formats 33 to 36 wrote it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EconomyStateV36 {
+    pub taxes: TaxRates,
+    pub budgets: Budgets,
+    pub last_week: WeekReportV36,
+    pub loans: Vec<cp_economy::Loan>,
+}
+
+/// The transit ledger as formats 33 to 36 wrote it: no exports.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransitLedgerV36 {
+    pub upkeep: Cost,
+    pub fares: Cost,
+    pub tourism: Cost,
+}
+
+/// A truck on the road as formats 34 to 36 wrote it: factory to shop, nothing else.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HaulV36 {
+    pub from: cp_building::BuildingId,
+    pub to: cp_building::BuildingId,
+    pub load: f32,
+}
+
+/// The goods state as formats 34 to 36 wrote it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct GoodsV36 {
+    pub stock: std::collections::BTreeMap<cp_building::BuildingId, f32>,
+    pub empty_since: std::collections::BTreeMap<cp_building::BuildingId, Tick>,
+    pub hauls: std::collections::BTreeMap<cp_traffic::RunId, HaulV36>,
+}
+
+/// Version 36: the body as written by format 36 (intercity trains; goods trade and the export line are not in it).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV36 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    /// Zone blocks, painted types and cell validity. Added in v5.
+    pub zones: cp_zone::ZoneGrid,
+    /// Buildings (lots, state, access points). Added in v6.
+    /// Includes the ids removed and not yet drained since v13.
+    pub buildings: BuildingGrid,
+    /// Citizens and households. Added in v7.
+    pub citizens: CitizenGrid,
+    /// Pathfinding requests in flight (id, submit tick, request, congestion read, stale
+    /// flag). Added in v8; see `cp_traffic::service` for why this makes load + N ticks equal
+    /// the continuous run.
+    pub paths: SavedPaths,
+    /// Pipe and power-line networks. Added in v9.
+    pub utilities: UtilityGraph,
+    /// Trips in flight and the routine's counters. Added in v10.
+    pub trips: TripBook,
+    /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
+    /// agents carry the segment load since v12; vehicles carry their re-route request id
+    /// since v17.
+    pub agents: cp_traffic::Agents,
+    /// The city's money. Added in v14.
+    pub treasury: Treasury,
+    /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
+    pub economy: EconomyStateV36,
+    /// Smoothed demand and the sums of the cycle in progress. Added in v15.
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    /// Pollution, noise and land value grids. Added in v16.
+    pub land: LandGrids,
+    /// Abandonment timers. Added in v16.
+    pub decay: Decay,
+    /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
+    /// [`DefNames`] and [`SaveData::remap_defs`].
+    pub def_names: crate::DefNames,
+    /// The district grid and the district records. Added in v21.
+    pub district_map: DistrictMap,
+    pub districts: Districts,
+    /// Per-building service state and facility counters. Added in v22; fires name their
+    /// station since v24.
+    pub service_state: cp_service::ServiceState,
+    /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
+    /// sim reads the values of that boundary until the next one. Added in v22.
+    pub coverage: cp_service::ServiceCoverage,
+    /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
+    pub shortage: cp_economy::WorkerShortage,
+    /// The population milestone reached. Added in v25.
+    pub progress: cp_sim::Progress,
+    /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
+    /// with keep, since v29.
+    pub service_runs: cp_traffic::ServiceRuns,
+    /// Bus stops and lines (T-153). Added in v28.
+    pub transit: cp_transit::TransitNet,
+    /// Buses out on the lines and the week's transit money (T-156). Added in v30.
+    pub fleet: cp_transit::TransitFleet,
+    pub ledger: TransitLedgerV36,
+    /// Tourists on the way and the visits each building has had (T-168). Added in v33.
+    pub tourists: cp_transit::Tourists,
+    /// Stock of factories and shops and the trucks on the road (T-169). Added in v34.
+    pub goods: GoodsV36,
+    /// The intercity train and what it has brought (T-167). Added in v36.
+    pub intercity: cp_transit::Intercity,
+}
+
+/// v36 → v37 (T-170): goods trade. Trucks are factory-to-shop hauls, nothing has been exported
+/// or imported, and the week report and the ledger get their export lines at zero.
+pub fn migrate_v36_to_v37(v36: SaveDataV36) -> SaveData {
+    let w = v36.economy.last_week;
+    let l = v36.ledger;
+    let goods = cp_transit::Goods {
+        stock: v36.goods.stock,
+        empty_since: v36.goods.empty_since,
+        hauls: v36
+            .goods
+            .hauls
+            .into_iter()
+            .map(|(id, h)| {
+                (
+                    id,
+                    cp_transit::Haul {
+                        from: cp_transit::Endpoint::Building(h.from),
+                        to: cp_transit::Endpoint::Building(h.to),
+                        load: h.load,
+                    },
+                )
+            })
+            .collect(),
+    };
+    SaveData {
+        tick: v36.tick,
+        rng: v36.rng,
+        speed: v36.speed,
+        queue: v36.queue,
+        log: v36.log,
+        tiles: v36.tiles,
+        net: v36.net,
+        zones: v36.zones,
+        buildings: v36.buildings,
+        citizens: v36.citizens,
+        paths: v36.paths,
+        utilities: v36.utilities,
+        trips: v36.trips,
+        agents: v36.agents,
+        treasury: v36.treasury,
+        demand: v36.demand,
+        demand_acc: v36.demand_acc,
+        land: v36.land,
+        decay: v36.decay,
+        def_names: v36.def_names,
+        district_map: v36.district_map,
+        districts: v36.districts,
+        service_state: v36.service_state,
+        coverage: v36.coverage,
+        shortage: v36.shortage,
+        progress: v36.progress,
+        service_runs: v36.service_runs,
+        transit: v36.transit,
+        fleet: v36.fleet,
+        tourists: v36.tourists,
+        economy: EconomyState {
+            taxes: v36.economy.taxes,
+            budgets: v36.economy.budgets,
+            last_week: WeekReport {
+                week: w.week,
+                income_by_zone: w.income_by_zone,
+                road_upkeep: w.road_upkeep,
+                building_upkeep: w.building_upkeep,
+                utility_upkeep: w.utility_upkeep,
+                loan_payments: w.loan_payments,
+                transit_fares: w.transit_fares,
+                transit_upkeep: w.transit_upkeep,
+                tourism: w.tourism,
+                exports: Cost::ZERO,
+            },
+            loans: v36.economy.loans,
+        },
+        ledger: cp_transit::TransitLedger {
+            upkeep: l.upkeep,
+            fares: l.fares,
+            tourism: l.tourism,
+            exports: Cost::ZERO,
+            export_loads: 0,
+            import_loads: 0,
+        },
+        goods,
+        intercity: v36.intercity,
+    }
+}
+
 /// Everything from a v22 body to the current format.
 fn from_v22(v: SaveDataV22) -> SaveData {
     let v = migrate_v24_to_v25(migrate_v23_to_v24(migrate_v22_to_v23(v)));
@@ -2853,8 +3057,10 @@ fn from_v27(v: SaveDataV27) -> SaveData {
 }
 
 fn from_v29(v: SaveDataV29) -> SaveData {
-    migrate_v35_to_v36(migrate_v34_to_v35(migrate_v33_to_v34(migrate_v32_to_v33(
-        migrate_v31_to_v32(migrate_v30_to_v31(migrate_v29_to_v30(v))),
+    migrate_v36_to_v37(migrate_v35_to_v36(migrate_v34_to_v35(migrate_v33_to_v34(
+        migrate_v32_to_v33(migrate_v31_to_v32(migrate_v30_to_v31(migrate_v29_to_v30(
+            v,
+        )))),
     ))))
 }
 
@@ -2966,21 +3172,26 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         27 => Ok(from_v27(dec(body)?)),
         28 => Ok(from_v29(migrate_v28_to_v29(dec(body)?))),
         29 => Ok(from_v29(dec(body)?)),
-        30 => Ok(migrate_v35_to_v36(migrate_v34_to_v35(migrate_v33_to_v34(
-            migrate_v32_to_v33(migrate_v31_to_v32(migrate_v30_to_v31(dec(body)?))),
+        30 => Ok(migrate_v36_to_v37(migrate_v35_to_v36(migrate_v34_to_v35(
+            migrate_v33_to_v34(migrate_v32_to_v33(migrate_v31_to_v32(migrate_v30_to_v31(
+                dec(body)?,
+            )))),
         )))),
-        31 => Ok(migrate_v35_to_v36(migrate_v34_to_v35(migrate_v33_to_v34(
-            migrate_v32_to_v33(migrate_v31_to_v32(dec(body)?)),
+        31 => Ok(migrate_v36_to_v37(migrate_v35_to_v36(migrate_v34_to_v35(
+            migrate_v33_to_v34(migrate_v32_to_v33(migrate_v31_to_v32(dec(body)?))),
         )))),
-        32 => Ok(migrate_v35_to_v36(migrate_v34_to_v35(migrate_v33_to_v34(
-            migrate_v32_to_v33(dec(body)?),
+        32 => Ok(migrate_v36_to_v37(migrate_v35_to_v36(migrate_v34_to_v35(
+            migrate_v33_to_v34(migrate_v32_to_v33(dec(body)?)),
         )))),
-        33 => Ok(migrate_v35_to_v36(migrate_v34_to_v35(migrate_v33_to_v34(
+        33 => Ok(migrate_v36_to_v37(migrate_v35_to_v36(migrate_v34_to_v35(
+            migrate_v33_to_v34(dec(body)?),
+        )))),
+        34 => Ok(migrate_v36_to_v37(migrate_v35_to_v36(migrate_v34_to_v35(
             dec(body)?,
         )))),
-        34 => Ok(migrate_v35_to_v36(migrate_v34_to_v35(dec(body)?))),
-        35 => Ok(migrate_v35_to_v36(dec(body)?)),
-        36 => dec(body),
+        35 => Ok(migrate_v36_to_v37(migrate_v35_to_v36(dec(body)?))),
+        36 => Ok(migrate_v36_to_v37(dec(body)?)),
+        37 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }
