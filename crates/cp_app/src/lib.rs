@@ -260,6 +260,15 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c - 30.0, 9.0, c + 78.0),
             Vec3::new(c - 30.0, 3.0, c + 40.0),
         ),
+        // A lamp, a utility pole, a pylon and the traffic up close (`--scene shadows`).
+        "shadows" => (
+            Vec3::new(c - 48.0, 17.0, c + 66.0),
+            Vec3::new(c - 30.0, 2.0, c + 8.0),
+        ),
+        "shadows-close" => (
+            Vec3::new(c + 14.0, 5.0, c + 18.0),
+            Vec3::new(c + 2.0, 0.5, c + 4.0),
+        ),
         "lamps-avenue" => (
             Vec3::new(c - 20.0, 12.0, c + 5.0),
             Vec3::new(c - 20.0, 3.0, c - 40.0),
@@ -357,6 +366,11 @@ pub fn build_sim(
     } else if scene == Some(scene::CHAINS) {
         let n = scene::build_chains(&mut sim);
         info!("scene chains: {n} buildings");
+    } else if scene == Some(scene::SHADOWS) {
+        for reason in scene::build_shadows(&mut sim) {
+            warn!("scene command rejected: {reason}");
+        }
+        info!("scene shadows");
     } else if scene == Some(scene::LAMPS) {
         scene::build_lamps(&mut sim);
         info!("scene lamps");

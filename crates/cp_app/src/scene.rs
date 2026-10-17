@@ -372,6 +372,41 @@ pub fn build_lamps(sim: &mut SimRunner) {
         .insert_resource(cp_core::time::SimSpeed::Pause);
 }
 
+/// Shadows scene (BUG-063): a 3×3 street grid with lamps and poles, a power line in the
+/// block south of the middle street, and synthetic traffic (cars and pedestrians). Look at
+/// it with `--cam shadows`.
+pub const SHADOWS: &str = "shadows";
+
+/// Builds the [`SHADOWS`] scene; the app keeps its traffic topped up ([`DemoTraffic`]).
+pub fn build_shadows(sim: &mut SimRunner) -> Vec<String> {
+    let mut rejected = build_grid(sim, 3);
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut().resource_mut::<cp_core::Treasury>().balance = cp_core::Cost(1_000_000_000);
+    sim.push_command(
+        SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
+            kind: cp_content::UtilityKind::Power,
+            // A pylon every 40 m.
+            path: (0..5)
+                .map(|i| Vec2::new(c - 80.0 + 40.0 * i as f32, c + 22.0))
+                .collect(),
+        }),
+        sim.tick(),
+    );
+    sim.tick_once();
+    rejected.extend(
+        sim.world_mut()
+            .resource_mut::<Messages<CommandOutcome>>()
+            .drain()
+            .filter_map(|o| o.result.err().map(|e| e.to_string())),
+    );
+    sim.world_mut().insert_resource(DemoTraffic {
+        cars: 240,
+        peds: 900,
+    });
+    top_up_traffic(sim);
+    rejected
+}
+
 /// City parks scene (T-221): the four parks in a row. Look at it with `--cam parks`.
 pub const PARKS: &str = "parks";
 
@@ -1140,6 +1175,23 @@ mod tests {
                 v.net.segment_count()
             );
         }
+    }
+
+    #[test]
+    fn shadows_scene_has_streets_a_power_line_and_traffic() {
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps/flatlands");
+        let mut sim = SimRunner::new(1);
+        sim.set_terrain(Arc::new(Terrain::load(&dir).unwrap()));
+        sim.set_content(road_content());
+        let rejected = build_shadows(&mut sim);
+        assert!(rejected.is_empty(), "{rejected:#?}");
+        for _ in 0..20 {
+            sim.tick_once();
+        }
+        let v = sim.view();
+        assert!(v.utilities.links().count() > 0, "no power line");
+        assert!(!v.agents.cur.pedestrians.is_empty(), "no pedestrians");
     }
 
     #[test]

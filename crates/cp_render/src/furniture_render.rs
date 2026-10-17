@@ -186,7 +186,6 @@ fn sync_furniture(
                 Mesh3d(handles[slot].clone()),
                 Transform::default(),
                 aabb,
-                NotShadowCaster,
                 FurnitureChunk {
                     meshes: handles.clone(),
                     min,
@@ -194,10 +193,11 @@ fn sync_furniture(
                 },
                 Name::new(name),
             ));
+            // Posts, poles and heads cast shadows (BUG-063); the light pools are decals.
             match slot {
                 0 => e.insert(MeshMaterial3d(posts.clone())),
                 1 => e.insert(MeshMaterial3d(heads.clone())),
-                _ => e.insert(MeshMaterial3d(pools.clone())),
+                _ => e.insert((MeshMaterial3d(pools.clone()), NotShadowCaster)),
             };
             e.id()
         };

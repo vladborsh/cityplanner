@@ -669,8 +669,8 @@ fn sync_power(
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(material),
                 Transform::default(),
+                // Pylons and wires cast shadows (BUG-063).
                 Aabb::from_min_max(lo, hi),
-                NotShadowCaster,
                 Name::new("power lines"),
             ))
             .id(),
@@ -705,6 +705,28 @@ mod tests {
         )
         .unwrap();
         g
+    }
+
+    /// BUG-063: pylons and wires are shadow casters.
+    #[test]
+    fn the_power_line_casts_shadows() {
+        let mut view = cp_sim::SimRunner::new(1).view();
+        view.utilities = Arc::new(line_graph());
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<VertexColorMaterial>>()
+            .init_resource::<PowerRender>()
+            .insert_resource(view)
+            .add_systems(Update, sync_power);
+        app.update();
+        let world = app.world_mut();
+        let lines: Vec<bool> = world
+            .query::<(&Name, Has<NotShadowCaster>)>()
+            .iter(world)
+            .filter(|(n, _)| n.as_str() == "power lines")
+            .map(|(_, no_shadow)| no_shadow)
+            .collect();
+        assert_eq!(lines, [false], "one power-line entity, casting shadows");
     }
 
     #[test]
