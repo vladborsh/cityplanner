@@ -49,6 +49,8 @@ pub enum ServiceKind {
     Landmark = 11,
     /// Appended in T-208 (M5): the buildings of the industrial chains.
     Industry = 12,
+    /// Appended in T-221 (M6): the city parks.
+    Park = 13,
 }
 
 /// Where a service building may stand (checked by `cp_building::validate_placement`).

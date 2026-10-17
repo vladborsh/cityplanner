@@ -198,6 +198,8 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         ),
         // The specialisation buildings, kinds in columns and sizes in rows (`--scene specs`).
         "specs" => (Vec3::new(c, 170.0, c + 120.0), Vec3::new(c, 5.0, c - 85.0)),
+        // The four city parks in a row (`--scene parks`).
+        "parks" => (Vec3::new(c, 55.0, c + 20.0), Vec3::new(c, 2.0, c - 120.0)),
         // The M5 chain buildings, a row per resource (`--scene chains`).
         "chains" => (Vec3::new(c, 190.0, c + 150.0), Vec3::new(c, 5.0, c - 55.0)),
         // The whole middle of the map for the resource overlays (`--scene industry`).
@@ -277,6 +279,9 @@ pub fn build_sim(
     } else if scene == Some(scene::CHAINS) {
         let n = scene::build_chains(&mut sim);
         info!("scene chains: {n} buildings");
+    } else if scene == Some(scene::PARKS) {
+        let n = scene::build_parks(&mut sim);
+        info!("scene parks: {n} buildings");
     } else if scene == Some(scene::SPECS) {
         let n = scene::build_specs(&mut sim);
         info!("scene specs: {n} buildings");

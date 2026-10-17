@@ -176,10 +176,12 @@ impl LandGrids {
 
         for (_, b) in i.buildings.iter() {
             let def = i.content.building(b.def);
-            // A unique building is filed under Industrial for want of a better zone; it does not pollute.
+            // A unique building or a park is filed under Industrial for want of a better zone; it does not
+            // pollute.
             if b.state != BuildingState::Active
                 || def.zone != ZoneType::Industrial
                 || def.unique.is_some()
+                || def.land_effect.is_some()
             {
                 continue;
             }

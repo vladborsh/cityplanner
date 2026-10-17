@@ -421,6 +421,7 @@ fn every_zone_and_level_has_four_looks_and_every_zone_five_combinations() {
             && !s.id.starts_with("unique_")
             && !s.id.starts_with("spec_")
             && !s.id.starts_with("chain_")
+            && !s.id.starts_with("park_")
     }) {
         assert!(used.contains(s.id.as_str()), "style {} is unused", s.id);
     }
@@ -429,7 +430,8 @@ fn every_zone_and_level_has_four_looks_and_every_zone_five_combinations() {
             .filter(|(_, s)| !s.id.starts_with("service_")
                 && !s.id.starts_with("unique_")
                 && !s.id.starts_with("spec_")
-                && !s.id.starts_with("chain_"))
+                && !s.id.starts_with("chain_")
+                && !s.id.starts_with("park_"))
             .count()
             >= 30
     );

@@ -1,0 +1,17 @@
+// Numbers: tune later (T-221).
+Building((
+    id: "small_park",
+    name: "Small park",
+    zone: Industrial,
+    level: 1,
+    lot: (2, 2),
+    jobs: (0, 0, 0, 0),
+    consumption: {},
+    tax_base: 0.0,
+    cost: 4000.0,
+    upkeep_week: 60.0,
+    styles: ["park_small_park"],
+    service: Some("park"),
+    icon: "small_park",
+    land_effect: Some((add: 6.0, radius_m: 120.0)),
+))

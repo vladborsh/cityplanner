@@ -895,6 +895,11 @@ pub enum Massing {
     OilProcessorA = 61,
     OilProcessorB = 62,
     OilWarehouse = 63,
+    /// The city parks (T-221).
+    ParkSmall = 64,
+    ParkPlayground = 65,
+    ParkPlaza = 66,
+    ParkSports = 67,
 }
 
 /// Facade pattern family of a style.

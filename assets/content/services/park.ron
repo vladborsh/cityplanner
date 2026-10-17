@@ -1,0 +1,10 @@
+// The city parks (T-221): on a road like the other service buildings, no coverage (radius and capacity are placeholders); their effect is the land value around them. Numbers: tune later.
+Service((
+    id: "park",
+    name: "Park",
+    kind: Park,
+    radius_m: 100.0,
+    capacity: 1,
+    site: Land,
+    vehicles: [],
+))

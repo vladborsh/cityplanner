@@ -683,6 +683,10 @@ pub fn is_service(m: Massing) -> bool {
             | Massing::OilProcessorA
             | Massing::OilProcessorB
             | Massing::OilWarehouse
+            | Massing::ParkSmall
+            | Massing::ParkPlayground
+            | Massing::ParkPlaza
+            | Massing::ParkSports
     )
 }
 
@@ -4443,7 +4447,7 @@ fn chain(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                 cone(m, f, (u, cv + v), 0.23 * r, (y + 5.0, y + 6.4), n, sc.roof);
             }
         }
-        _ => {}
+        _ => park(m, massing, sc),
     }
     // Near only: a lamp post at the front corner of every chain building.
     if near {
@@ -4496,5 +4500,330 @@ fn headframe(
             STEEL,
             Some(col),
         );
+    }
+}
+
+const GRASS: [f32; 4] = [0.36, 0.62, 0.30, 1.0];
+const GRAVEL: [f32; 4] = [0.84, 0.78, 0.62, 1.0];
+const LEAF: [f32; 4] = [0.20, 0.50, 0.24, 1.0];
+const TRUNK: [f32; 4] = [0.42, 0.28, 0.16, 1.0];
+
+/// A tree: a trunk and a cone of leaves (a rounder second cone near).
+fn tree(m: &mut MeshData, f: &Frame, at: (f32, f32), y: f32, h: f32, n: usize, near: bool) {
+    cyl(m, f, at, (0.35, 0.3), (y, y + h * 0.4), 6, TRUNK, None);
+    cone(m, f, at, h * 0.32, (y + h * 0.3, y + h), n, LEAF);
+    if near {
+        cone(
+            m,
+            f,
+            at,
+            h * 0.25,
+            (y + h * 0.55, y + h * 1.15),
+            n,
+            [0.24, 0.56, 0.28, 1.0],
+        );
+    }
+}
+
+/// The city parks (T-221): flat lawns and pads with a few things standing on them.
+fn park(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
+    use super::Lod;
+    let (f, b) = (sc.f, sc.base);
+    let (hu, hv, cv) = (sc.hu, sc.hv, sc.cv);
+    let near = sc.lod == Lod::Near;
+    let far = sc.lod == Lod::Far;
+    let n = if near {
+        10
+    } else if far {
+        5
+    } else {
+        7
+    };
+    let fnd = [0.30, 0.30, 0.30, 1.0];
+    let r = hu.min(hv);
+    let ground = |m: &mut MeshData, top: f32, col: [f32; 4]| {
+        block(
+            m,
+            f,
+            (0.0, cv),
+            (0.96 * hu, 0.96 * hv),
+            sc.lo - 0.3,
+            b + top,
+            fnd,
+            col,
+        );
+    };
+    match massing {
+        Massing::ParkSmall => {
+            // A lawn with a looping gravel path and trees round it.
+            ground(m, 0.12, GRASS);
+            let y = b + 0.12;
+            for (u, v, wu, wv) in [
+                (0.0, -0.55, 0.6, 0.06),
+                (0.0, 0.55, 0.6, 0.06),
+                (-0.6, 0.0, 0.06, 0.55),
+                (0.6, 0.0, 0.06, 0.55),
+            ] {
+                block(
+                    m,
+                    f,
+                    (u * hu, cv + v * hv),
+                    (wu * hu, wv * hv),
+                    y,
+                    y + 0.08,
+                    GRAVEL,
+                    GRAVEL,
+                );
+            }
+            let trees = if far { 3 } else { 6 };
+            for k in 0..trees {
+                let a = k as f32 / trees as f32 * std::f32::consts::TAU + 0.4;
+                tree(
+                    m,
+                    f,
+                    (0.78 * hu * a.cos(), cv + 0.78 * hv * a.sin()),
+                    y,
+                    5.0 + (k % 3) as f32,
+                    n,
+                    near,
+                );
+            }
+            tree(m, f, (0.0, cv), y, 7.0, n, near);
+            if near {
+                block(
+                    m,
+                    f,
+                    (0.0, cv - 0.55 * hv),
+                    (0.12 * hu, 0.04 * hv),
+                    y + 0.08,
+                    y + 0.7,
+                    TRUNK,
+                    TRUNK,
+                );
+            }
+        }
+        Massing::ParkPlayground => {
+            // A sandpit with a slide, a swing frame and a low fence.
+            ground(m, 0.12, GRASS);
+            let y = b + 0.12;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.8 * hu, 0.8 * hv),
+                y,
+                y + 0.3,
+                [0.88, 0.80, 0.55, 1.0],
+                [0.9, 0.83, 0.6, 1.0],
+            );
+            // The slide: a tower and a ramp of three steps.
+            block(
+                m,
+                f,
+                (-0.5 * hu, cv + 0.3 * hv),
+                (0.12 * hu, 0.12 * hv),
+                y,
+                y + 2.4,
+                sc.roof,
+                sc.roof,
+            );
+            for k in 0..3 {
+                block(
+                    m,
+                    f,
+                    ((-0.3 + 0.12 * k as f32) * hu, cv + 0.3 * hv),
+                    (0.08 * hu, 0.08 * hv),
+                    y,
+                    y + 1.8 - 0.55 * k as f32,
+                    sc.trim,
+                    sc.trim,
+                );
+            }
+            // The swings: two posts, a beam, two seats.
+            for s in [-1.0f32, 1.0] {
+                block(
+                    m,
+                    f,
+                    ((0.3 + 0.35 * s) * hu, cv - 0.3 * hv),
+                    (0.2, 0.2),
+                    y,
+                    y + 2.6,
+                    STEEL,
+                    STEEL,
+                );
+            }
+            block(
+                m,
+                f,
+                (0.3 * hu, cv - 0.3 * hv),
+                (0.4 * hu, 0.15),
+                y + 2.6,
+                y + 2.9,
+                STEEL,
+                STEEL,
+            );
+            if !far {
+                for s in [-0.15f32, 0.15] {
+                    block(
+                        m,
+                        f,
+                        ((0.3 + s) * hu, cv - 0.3 * hv),
+                        (0.12 * hu, 0.15),
+                        y + 0.7,
+                        y + 0.9,
+                        sc.roof,
+                        sc.roof,
+                    );
+                }
+            }
+            if near {
+                for k in 0..6 {
+                    let u = (-0.9 + 0.36 * k as f32) * hu;
+                    block(
+                        m,
+                        f,
+                        (u, cv - 0.92 * hv),
+                        (0.1, 0.1),
+                        y,
+                        y + 1.0,
+                        TRUNK,
+                        TRUNK,
+                    );
+                }
+            }
+        }
+        Massing::ParkPlaza => {
+            // A paved square: a round basin with a jet, benches and a few trees.
+            ground(m, 0.2, [0.80, 0.78, 0.72, 1.0]);
+            let y = b + 0.2;
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.34 * r, 0.3 * r),
+                (y, y + 1.0),
+                n.max(8),
+                [0.7, 0.7, 0.68, 1.0],
+                Some(sc.glass),
+            );
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.06 * r, 0.04 * r),
+                (y, y + 3.4),
+                6,
+                TRUNK,
+                None,
+            );
+            if !far {
+                cone(m, f, (0.0, cv), 0.12 * r, (y + 3.4, y + 4.6), 6, sc.glass);
+            }
+            for (u, v) in [(-0.75, -0.75), (0.75, 0.75), (-0.75, 0.75), (0.75, -0.75)] {
+                tree(m, f, (u * hu, cv + v * hv), y, 5.0, n, near);
+            }
+            if near {
+                for s in [-1.0f32, 1.0] {
+                    block(
+                        m,
+                        f,
+                        (0.0, cv + s * 0.55 * hv),
+                        (0.3 * hu, 0.04 * hv),
+                        y,
+                        y + 0.7,
+                        TRUNK,
+                        TRUNK,
+                    );
+                }
+            }
+        }
+        Massing::ParkSports => {
+            // A pitch with white lines, goals and a small stand along one side.
+            ground(m, 0.12, GRASS);
+            let y = b + 0.12;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.7 * hu, 0.8 * hv),
+                y,
+                y + 0.1,
+                [0.30, 0.62, 0.28, 1.0],
+                [0.32, 0.66, 0.3, 1.0],
+            );
+            let white = [0.95, 0.95, 0.92, 1.0];
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.7 * hu, 0.03 * hv),
+                y + 0.1,
+                y + 0.16,
+                white,
+                white,
+            );
+            for s in [-1.0f32, 1.0] {
+                block(
+                    m,
+                    f,
+                    (0.0, cv + s * 0.8 * hv),
+                    (0.7 * hu, 0.03 * hv),
+                    y + 0.1,
+                    y + 0.16,
+                    white,
+                    white,
+                );
+                block(
+                    m,
+                    f,
+                    (s * 0.7 * hu, cv),
+                    (0.03 * hu, 0.8 * hv),
+                    y + 0.1,
+                    y + 0.16,
+                    white,
+                    white,
+                );
+                // The goals.
+                block(
+                    m,
+                    f,
+                    (s * 0.7 * hu, cv),
+                    (0.3, 0.14 * hv),
+                    y,
+                    y + 2.4,
+                    white,
+                    white,
+                );
+            }
+            // The stand: three rising rows.
+            for k in 0..3 {
+                block(
+                    m,
+                    f,
+                    (0.88 * hu, cv),
+                    (0.08 * hu, 0.7 * hv),
+                    y,
+                    y + 1.0 + 0.9 * k as f32,
+                    sc.trim,
+                    sc.roof,
+                );
+                if far {
+                    break;
+                }
+            }
+            if near {
+                block(
+                    m,
+                    f,
+                    (0.88 * hu, cv),
+                    (0.1 * hu, 0.72 * hv),
+                    y + 3.0,
+                    y + 3.3,
+                    sc.roof,
+                    sc.roof,
+                );
+            }
+        }
+        _ => {}
     }
 }

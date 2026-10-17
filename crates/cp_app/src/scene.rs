@@ -102,6 +102,23 @@ pub fn build_chains(sim: &mut SimRunner) -> usize {
     })
 }
 
+/// City parks scene (T-221): the four parks in a row. Look at it with `--cam parks`.
+pub const PARKS: &str = "parks";
+
+/// Builds the [`PARKS`] scene; returns how many buildings stand.
+pub fn build_parks(sim: &mut SimRunner) -> usize {
+    build_showcase_defs(sim, |db| {
+        ["small_park", "playground", "plaza_fountain", "sports_field"]
+            .into_iter()
+            .enumerate()
+            .filter_map(|(col, name)| {
+                db.building_id(name)
+                    .map(|id| (id, -75.0 + col as f32 * 50.0, 0.0))
+            })
+            .collect()
+    })
+}
+
 /// Builds the [`SPECS`] scene; returns how many buildings stand.
 pub fn build_specs(sim: &mut SimRunner) -> usize {
     build_showcase_defs(sim, |db| {

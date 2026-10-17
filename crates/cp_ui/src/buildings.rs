@@ -70,7 +70,10 @@ pub fn groups(content: &ContentDb) -> Vec<Group> {
 }
 
 fn kind_label(kind: ServiceKind) -> String {
-    format!("{kind:?}")
+    match kind {
+        ServiceKind::Park => "Parks".to_string(),
+        _ => format!("{kind:?}"),
+    }
 }
 
 fn kind_icon(kind: ServiceKind) -> Icon {
@@ -88,6 +91,7 @@ fn kind_icon(kind: ServiceKind) -> Icon {
         ServiceKind::Transit => Icon::LineBus,
         ServiceKind::Landmark => Icon::Buildings,
         ServiceKind::Industry => Icon::Buildings,
+        ServiceKind::Park => Icon::Parks,
     }
 }
 

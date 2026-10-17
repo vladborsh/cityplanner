@@ -65,6 +65,7 @@ icons! {
     DistrictTabStats => "district_tab_stats",
     SpecNone => "spec_none",
     Industry => "industry",
+    Parks => "parks",
     ResourceFarming => "resource_farming",
     ResourceForestry => "resource_forestry",
     ResourceOre => "resource_ore",
