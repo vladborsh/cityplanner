@@ -27,7 +27,7 @@ use bevy_ecs::system::{Res, ResMut};
 use bevy_math::Vec2;
 use cp_building::{BuildingFlags, BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::CitizenGrid;
-use cp_content::{CargoKind, SimContent, VehicleKind, ZoneType};
+use cp_content::{CargoKind, IndustryRole, SimContent, VehicleKind, ZoneType};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{Cost, Tick};
 use cp_net::{NetGraph, NodeId, NodeKind, node_is_rail};
@@ -171,7 +171,21 @@ pub fn run_goods(
                     }
                     Endpoint::Building(_) => {}
                     Endpoint::Outside(_) => {
-                        ledger.exports += Cost::scaled(bal.export_price, f64::from(h.load));
+                        // The goods of a unique factory sell for more (T-215).
+                        let mul = match h.from {
+                            Endpoint::Building(f)
+                                if buildings.get(f).is_some_and(|b| {
+                                    db.building(b.def)
+                                        .industry
+                                        .as_ref()
+                                        .is_some_and(|i| i.role == IndustryRole::Factory)
+                                }) =>
+                            {
+                                bal.factory_export_mul
+                            }
+                            _ => 1.0,
+                        };
+                        ledger.exports += Cost::scaled(bal.export_price * mul, f64::from(h.load));
                         ledger.export_loads += 1;
                     }
                 }
@@ -235,14 +249,24 @@ pub fn run_goods(
     for id in mine {
         let b = buildings.get(id).expect("listed");
         let zone = db.building(b.def).zone;
-        // The buildings of the industrial chains make their own cargo (cp_industry, T-209).
-        if db.building(b.def).industry.is_some() {
+        // The buildings of the industrial chains make their own cargo (cp_industry, T-209); only
+        // the unique factories (T-215) sell shop goods.
+        if db
+            .building(b.def)
+            .industry
+            .as_ref()
+            .is_some_and(|i| i.role != IndustryRole::Factory)
+        {
             continue;
         }
         match zone {
             ZoneType::Industrial => {
                 let s = goods.stock.entry(id).or_default();
-                *s = (*s + bal.goods_per_worker * filled(id)).min(bal.goods_stock_cap);
+                // A unique factory (T-215) puts its Goods into the stock itself; the chain
+                // buildings make no shop goods.
+                if db.building(b.def).industry.is_none() {
+                    *s = (*s + bal.goods_per_worker * filled(id)).min(bal.goods_stock_cap);
+                }
                 let stock = *s;
                 let full = stock >= bal.goods_truck_load;
                 // A small factory may send a part load (BUG-058) to a shop that stands empty.
@@ -421,7 +445,11 @@ fn has_stocked_supplier(
         b.state == BuildingState::Active
             && b.access().is_some()
             && db.building(b.def).zone == ZoneType::Industrial
-            && db.building(b.def).industry.is_none()
+            && db
+                .building(b.def)
+                .industry
+                .as_ref()
+                .is_none_or(|i| i.role == IndustryRole::Factory)
             && b.pos.distance(origin) <= bal.freight_radius_m
             && goods.stock_of(id) >= bal.goods_truck_load * PARTIAL_LOAD_SHARE
     })

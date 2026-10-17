@@ -1,0 +1,17 @@
+// Numbers: tune later. Look and icon are borrowed until T-218 (T-215).
+Building((
+    id: "car_factory",
+    name: "Car factory",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 4),
+    jobs: (10, 8, 4, 0),
+    consumption: {Power: 40.0},
+    tax_base: 0.0,
+    cost: 90000.0,
+    upkeep_week: 1500.0,
+    styles: ["industrial_tank_works_b"],
+    service: Some("industry"),
+    icon: "incinerator",
+    industry: Some((resource: None, role: Factory, inputs: [(Metals, 40.0), (Glass, 20.0), (Petroleum, 20.0)], outputs: [(Goods, 60.0)], storage: 400.0, min_level: 4)),
+))

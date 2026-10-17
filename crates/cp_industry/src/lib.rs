@@ -135,6 +135,7 @@ pub fn run_industry(
     mut areas: ResMut<Areas>,
     mut deposits: ResMut<ResourceDeposits>,
     mut state: ResMut<IndustryState>,
+    mut goods: ResMut<cp_transit::Goods>,
 ) {
     let (Some(content), Some(terrain)) = (content, terrain) else {
         return;
@@ -224,7 +225,8 @@ pub fn run_industry(
                     problem
                 }
             }
-            IndustryRole::Processor => {
+            IndustryRole::Processor | IndustryRole::Factory => {
+                let factory = spec.role == IndustryRole::Factory;
                 let in_scale = spec
                     .inputs
                     .iter()
@@ -232,8 +234,16 @@ pub fn run_industry(
                     .fold(1.0f32, f32::min);
                 let out_total: f32 = spec.outputs.iter().map(|&(_, r)| r).sum::<f32>() * f;
                 let in_total: f32 = spec.inputs.iter().map(|&(_, r)| r).sum::<f32>() * f;
-                // Inputs leave the building, so the room is what the outputs add net of them.
-                let net = (out_total - in_total).max(0.0);
+                // Inputs leave the building, so the room is what the outputs add net of them. A
+                // factory's Goods go to the goods stock of M3, which has its own cap.
+                let (net, room) = if factory {
+                    (
+                        out_total,
+                        (bal.goods_stock_cap - goods.stock_of(id)).max(0.0),
+                    )
+                } else {
+                    ((out_total - in_total).max(0.0), room)
+                };
                 let room_scale = if net > 0.0 {
                     (room / net).min(1.0)
                 } else {
@@ -251,7 +261,11 @@ pub fn run_industry(
                         state.add(id, c, -r * f * p);
                     }
                     for &(c, r) in &spec.outputs {
-                        state.add(id, c, r * f * p);
+                        if factory && c == CargoKind::Goods {
+                            *goods.stock.entry(id).or_default() += r * f * p;
+                        } else {
+                            state.add(id, c, r * f * p);
+                        }
                         produced += r * f * p;
                     }
                     IndustryProblem::None

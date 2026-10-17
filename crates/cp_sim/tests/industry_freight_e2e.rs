@@ -440,3 +440,137 @@ fn a_logs_haul_rides_the_log_truck_not_the_goods_truck() {
     assert_eq!(run_kind, VehicleKind::CargoLogs as u8);
     assert_eq!(vehicle_kind, VehicleKind::CargoLogs as u8);
 }
+
+// ---- Unique factories (T-215) ----
+
+impl Town {
+    /// Raises the level of the area.
+    fn area_level(&mut self, level: u8) {
+        self.sim
+            .world_mut()
+            .resource_mut::<Areas>()
+            .get_mut(AreaId(1))
+            .unwrap()
+            .level = level;
+    }
+}
+
+/// A shop def to deliver to: the first plain commercial one.
+fn shop_name(db: &ContentDb) -> String {
+    db.buildings()
+        .find(|(_, d)| {
+            d.zone == cp_content::ZoneType::ComLow
+                && d.service.is_none()
+                && d.industry.is_none()
+                && d.spec.is_none()
+        })
+        .map(|(_, d)| d.id.clone())
+        .unwrap()
+}
+
+fn factory_town(outside: bool) -> (Town, BuildingId) {
+    let mut t = town(outside);
+    t.area_level(2);
+    let f = t.put("food_factory", 300.0);
+    t.staff(f, 10);
+    t.sim
+        .world_mut()
+        .resource_mut::<IndustryState>()
+        .stock
+        .insert(
+            f,
+            vec![
+                (CargoKind::AnimalProducts, 200.0),
+                (CargoKind::Flour, 200.0),
+            ],
+        );
+    (t, f)
+}
+
+#[test]
+fn a_factory_with_both_inputs_makes_goods_and_without_one_says_no_input() {
+    let (mut t, f) = factory_town(false);
+    t.ticks(TICKS_PER_DAY);
+    assert!(
+        t.sim.world().resource::<Goods>().stock_of(f) > 0.0
+            || t.sim
+                .world()
+                .resource::<Goods>()
+                .hauls
+                .values()
+                .any(|h| h.from == Endpoint::Building(f))
+    );
+    assert!(t.stock(f, CargoKind::Flour) < 200.0 && t.stock(f, CargoKind::AnimalProducts) < 200.0);
+    assert_eq!(
+        t.sim.world().resource::<IndustryState>().problem_of(f),
+        cp_industry::IndustryProblem::None
+    );
+    // Flour runs out: nothing is made and it says why.
+    t.sim
+        .world_mut()
+        .resource_mut::<IndustryState>()
+        .stock
+        .insert(f, vec![(CargoKind::AnimalProducts, 200.0)]);
+    t.staff(f, 10);
+    t.ticks(TICKS_PER_DAY);
+    assert_eq!(
+        t.sim.world().resource::<IndustryState>().problem_of(f),
+        cp_industry::IndustryProblem::NoInput
+    );
+}
+
+#[test]
+fn the_goods_of_a_factory_reach_a_shop() {
+    let (mut t, f) = factory_town(false);
+    let name = shop_name(&t.db);
+    let shop = t.put(&name, 800.0);
+    for _ in 0..4 * TICKS_PER_DAY {
+        t.sim.tick_once();
+        t.staff(f, 10);
+        if t.sim.world().resource::<Goods>().stock_of(shop) > 0.0 {
+            break;
+        }
+    }
+    assert!(t.sim.world().resource::<Goods>().stock_of(shop) > 0.0);
+}
+
+#[test]
+fn without_shops_the_factorys_goods_are_exported_at_four_times_the_price() {
+    let (mut t, f) = factory_town(true);
+    for _ in 0..4 * TICKS_PER_DAY {
+        t.sim.tick_once();
+        t.staff(f, 10);
+        if t.sim
+            .world()
+            .resource::<cp_transit::TransitLedger>()
+            .export_loads
+            > 0
+        {
+            break;
+        }
+    }
+    let l = *t.sim.world().resource::<cp_transit::TransitLedger>();
+    assert!(l.export_loads > 0, "{l:?}");
+    let bal = t.db.balance();
+    assert_eq!(
+        l.exports,
+        Cost::scaled(
+            bal.export_price * bal.factory_export_mul,
+            20.0 * f64::from(l.export_loads)
+        )
+    );
+}
+
+#[test]
+fn factories_are_deterministic() {
+    let play = || {
+        let (mut t, f) = factory_town(true);
+        for _ in 0..3 * TICKS_PER_DAY {
+            t.sim.tick_once();
+            t.staff(f, 10);
+        }
+        t.sim
+    };
+    let (mut a, mut b) = (play(), play());
+    assert_eq!(a.checksum(), b.checksum());
+}

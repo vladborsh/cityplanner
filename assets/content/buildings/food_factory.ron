@@ -1,0 +1,17 @@
+// Numbers: tune later. Look and icon are borrowed until T-218 (T-215).
+Building((
+    id: "food_factory",
+    name: "Food factory",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 3),
+    jobs: (10, 8, 4, 0),
+    consumption: {Power: 40.0},
+    tax_base: 0.0,
+    cost: 90000.0,
+    upkeep_week: 1500.0,
+    styles: ["industrial_mill_gabled_b"],
+    service: Some("industry"),
+    icon: "coal_power_plant",
+    industry: Some((resource: None, role: Factory, inputs: [(AnimalProducts, 30.0), (Flour, 30.0)], outputs: [(Goods, 60.0)], storage: 400.0, min_level: 2)),
+))

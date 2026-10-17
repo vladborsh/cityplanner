@@ -413,6 +413,8 @@ pub struct Balance {
     /// above the first adds. // tune later
     pub industry_levels: [u32; 4],
     pub industry_storage_per_level: f32,
+    /// The factor on `export_price` for goods that left a unique factory (T-215). // tune later
+    pub factory_export_mul: f32,
     /// A resource extractor needs this average richness (`0..=1`) under its lot (T-208). // tune later
     pub min_richness: f32,
     /// A park area's attractiveness grows by this share per level above the first (T-223).
@@ -593,6 +595,7 @@ impl Balance {
             self.tourist_leisure_share,
             self.park_fee_max,
             self.park_land_radius_m,
+            self.factory_export_mul,
             self.industry_storage_per_level,
         ]);
         v.extend(self.industry_levels.map(|l| l as f32));
@@ -725,6 +728,7 @@ impl Default for Balance {
             park_levels: [150, 600, 2_000, 5_000],
             park_land: [2.0, 5.0, 9.0, 14.0, 20.0],
             park_land_radius_m: 200.0,
+            factory_export_mul: 4.0,
             industry_levels: [2_000, 8_000, 25_000, 60_000],
             industry_storage_per_level: 0.1,
             networks: Networks::default(),

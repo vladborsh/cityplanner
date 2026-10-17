@@ -195,7 +195,8 @@ fn every_cargo_has_a_definition_and_the_chains_are_complete() {
         assert!(c.cargo(kind).is_some(), "{kind:?}");
     }
     let n = c.buildings().filter(|(_, d)| d.industry.is_some()).count();
-    assert_eq!(n, 24);
+    // 24 chain buildings and the 4 unique factories (T-215).
+    assert_eq!(n, 28);
     for r in ["farm", "forest", "ore", "oil"] {
         for s in [
             "main",
@@ -208,4 +209,26 @@ fn every_cargo_has_a_definition_and_the_chains_are_complete() {
             assert!(c.building_id(&format!("{r}_{s}")).is_some(), "{r}_{s}");
         }
     }
+}
+
+#[test]
+fn a_unique_factory_needs_any_industry_area_at_its_level() {
+    let c = content();
+    let mut sim = world(&c);
+    let a = area(&mut sim, AreaKind::Industry(ResourceKind::Forestry));
+    let main_at = spot(&sim, 1);
+    place(&mut sim, &c, "forest_main", main_at).unwrap();
+    let (at, far) = (spot(&sim, 8), spot(&sim, 15));
+    // Level 1: refused. The factory belongs to no resource, so any industrial area will do.
+    let e = place(&mut sim, &c, "food_factory", at).unwrap_err();
+    assert!(e.contains("needs area level 2 (it is 1)"), "{e}");
+    sim.world_mut()
+        .resource_mut::<cp_district::Areas>()
+        .get_mut(a)
+        .unwrap()
+        .level = 2;
+    place(&mut sim, &c, "food_factory", at).unwrap();
+    // The car factory needs level 4.
+    let e = place(&mut sim, &c, "car_factory", far).unwrap_err();
+    assert!(e.contains("needs area level 4 (it is 2)"), "{e}");
 }

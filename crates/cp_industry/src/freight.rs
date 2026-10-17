@@ -263,7 +263,7 @@ pub fn run_freight(
         }
 
         // Missing input, and nobody near to make it: a truck from the outside.
-        if spec.role == IndustryRole::Processor {
+        if matches!(spec.role, IndustryRole::Processor | IndustryRole::Factory) {
             let slots: u32 = db.building(b.def).jobs.iter().map(|&j| u32::from(j)).sum();
             let filled: u32 = (0..4).map(|l| u32::from(citizens.jobs_filled(id, l))).sum();
             if slots > 0 && filled == 0 {
@@ -283,7 +283,9 @@ pub fn run_freight(
                             && s.pos.distance(b.pos) <= radius
                             && db.building(s.def).industry.as_ref().is_some_and(|ss| {
                                 match ss.role {
-                                    IndustryRole::Extractor | IndustryRole::Processor => {
+                                    IndustryRole::Extractor
+                                    | IndustryRole::Processor
+                                    | IndustryRole::Factory => {
                                         ss.outputs.iter().any(|&(c, _)| c == cargo)
                                     }
                                     IndustryRole::Warehouse => {
