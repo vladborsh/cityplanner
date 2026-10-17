@@ -24,6 +24,7 @@ use crate::chunk::{MeshData, select_lod, terrain_mesh_height};
 use crate::material::VertexColorMaterial;
 
 mod districts;
+mod industry;
 mod land;
 mod service;
 mod tiles;
@@ -32,6 +33,10 @@ mod utility;
 mod zone_chunks;
 pub use districts::{
     DistrictLayer, DistrictLayers, DistrictsMode, contour_edges, contour_mesh, fill_mesh,
+};
+pub use industry::{
+    AreaLayer, AreasMode, IndustryLayers, ResourceLayer, area_contour_edges, area_contour_mesh,
+    area_fill_mesh, resource_cell_color, resource_color, resources_mesh,
 };
 pub use service::{coverage_color, service_overlay_mesh};
 pub use tiles::{border_edges, border_mesh, shade_mesh};
@@ -68,13 +73,17 @@ pub enum Overlay {
     Land,
     /// Lines as coloured ribbons and the stops with the riders waiting (T-157).
     Transit,
+    /// Richness of farming, forest, ore and oil per 64 m cell (T-207).
+    Resources,
+    /// The industry areas, tinted by their resource (T-207).
+    IndustryAreas,
     /// The ground, roads and buildings see-through, with the tunnels, the metro lines and the
     /// trains (T-164). Drawn by [`crate::underground`], not by the overlay layers.
     Underground,
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 17] = [
+    pub const ALL: [Overlay; 19] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
@@ -91,6 +100,8 @@ impl Overlay {
         Overlay::Education,
         Overlay::Land,
         Overlay::Transit,
+        Overlay::Resources,
+        Overlay::IndustryAreas,
         Overlay::Underground,
     ];
 
@@ -145,6 +156,8 @@ impl Overlay {
             Overlay::Education => "Education",
             Overlay::Land => "Land",
             Overlay::Transit => "Transit",
+            Overlay::Resources => "Resources",
+            Overlay::IndustryAreas => "Industry areas",
             Overlay::Underground => "Underground",
         }
     }
@@ -596,6 +609,8 @@ impl Plugin for OverlayPlugin {
             .init_resource::<tiles::TileLayers>()
             .init_resource::<DistrictsMode>()
             .init_resource::<districts::DistrictLayers>()
+            .init_resource::<AreasMode>()
+            .init_resource::<industry::IndustryLayers>()
             .init_resource::<land::LandLayer>()
             .init_resource::<transit::LineGhost>()
             .init_resource::<transit::TransitLayer>()
@@ -606,6 +621,7 @@ impl Plugin for OverlayPlugin {
                     sync_overlay_meshes,
                     tiles::sync_tile_layers,
                     districts::sync_district_layers,
+                    industry::sync_industry_layers,
                     land::sync_land_layer,
                     transit::sync_transit_layer,
                     transit::sync_shelters,

@@ -22,6 +22,7 @@ pub mod files;
 pub mod frame;
 mod glyphs;
 pub mod icons;
+pub mod industry;
 pub mod info;
 pub mod land;
 pub mod lines;

@@ -11,10 +11,11 @@
 //! * [`bulldozer`] — picks the segment under the cursor.
 //! * [`plugin`] — the Bevy glue: cursor ray → terrain point, hotkeys, clicks, ghost drawing.
 
+pub mod area;
 pub mod band;
 pub mod building;
 pub mod bulldozer;
-pub mod district;
+mod district;
 pub mod flip;
 mod outbox;
 pub mod pick;
@@ -27,6 +28,7 @@ pub mod zone;
 pub mod zone_lines;
 pub mod zone_preview;
 
+pub use area::AreaTool;
 pub use building::{
     ALIGN_REACH_M, BuildingTool, ConnectionHint, FREE_ROT_STEP, FreeGhost, PlacementGhost,
     connection_hint, error_text, pick_building,

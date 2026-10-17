@@ -27,16 +27,19 @@ pub enum Category {
     /// Public transport (M3): the line tool and the depot. Last, so the hotkeys of the
     /// others do not move.
     Transit,
+    /// Industry areas and, later, the buildings of the resources (M5, T-207).
+    Industry,
 }
 
 impl Category {
-    pub const ALL: [Category; 6] = [
+    pub const ALL: [Category; 7] = [
         Category::Roads,
         Category::Zones,
         Category::Buildings,
         Category::Bulldozer,
         Category::Districts,
         Category::Transit,
+        Category::Industry,
     ];
 
     pub fn label(self) -> &'static str {
@@ -47,6 +50,7 @@ impl Category {
             Category::Bulldozer => "Bulldozer",
             Category::Districts => "Districts",
             Category::Transit => "Transport",
+            Category::Industry => "Industry",
         }
     }
 
@@ -58,6 +62,7 @@ impl Category {
             Category::Bulldozer => Icon::Bulldozer,
             Category::Districts => Icon::Districts,
             Category::Transit => Icon::Transit,
+            Category::Industry => Icon::Industry,
         }
     }
 
@@ -72,6 +77,7 @@ impl Category {
             }
             Category::Zones | Category::Bulldozer | Category::Districts => true,
             Category::Transit => crate::transit::has_tools(content),
+            Category::Industry => content.is_some(),
         }
     }
 
@@ -191,6 +197,9 @@ pub fn tool_panel(
                 Category::Districts => crate::districts::districts_panel(ui, view, tools, outbox),
                 Category::Transit => {
                     crate::transit::transit_panel(ui, view, tools, overlay, &mut state.lines_open)
+                }
+                Category::Industry => {
+                    crate::industry::industry_panel(ui, view, tools, overlay, outbox)
                 }
             });
         });
@@ -547,6 +556,7 @@ mod tests {
             (Category::Bulldozer, ActiveTool::Bulldozer),
             (Category::Districts, ActiveTool::District),
             (Category::Transit, ActiveTool::Line),
+            (Category::Industry, ActiveTool::Area),
         ] {
             let mut rig = Rig::new();
             rig.click_category(category);
@@ -598,7 +608,8 @@ mod tests {
                 Category::Buildings,
                 Category::Bulldozer,
                 Category::Districts,
-                Category::Transit
+                Category::Transit,
+                Category::Industry
             ]
         );
         // Without content the road and building tools do not exist either.
@@ -776,7 +787,8 @@ mod tests {
                 Category::Buildings,
                 Category::Bulldozer,
                 Category::Districts,
-                Category::Transit
+                Category::Transit,
+                Category::Industry
             ]
         );
         let keys = [
@@ -786,6 +798,7 @@ mod tests {
             egui::Key::Num4,
             egui::Key::Num5,
             egui::Key::Num6,
+            egui::Key::Num7,
         ];
         for (n, k) in keys.into_iter().enumerate() {
             let mut got = None;
@@ -796,7 +809,7 @@ mod tests {
         }
         // Past the last category, and with a modifier held, nothing happens.
         let mut got = Some(Category::Roads);
-        frame(&ctx, input(10.0, vec![key(egui::Key::Num7)]), |ui| {
+        frame(&ctx, input(10.0, vec![key(egui::Key::Num8)]), |ui| {
             got = hotkey(ui.ctx(), &available);
         });
         assert_eq!(got, None);

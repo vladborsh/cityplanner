@@ -21,6 +21,7 @@ cp_transit.workspace = true
 cp_utility.workspace = true
 cp_save.workspace = true
 cp_zone.workspace = true
+cp_district.workspace = true
 cp_content.workspace = true
 serde.workspace = true
 ron.workspace = true

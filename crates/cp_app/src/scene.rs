@@ -152,6 +152,60 @@ fn build_showcase_defs(
     defs.len()
 }
 
+/// Industry scene (T-207): a new game with an industry area of each resource painted over the
+/// richest spot of that resource. Look at it with `--cam industry --overlay resources` (or
+/// `--overlay "industry areas"`).
+pub const INDUSTRY: &str = "industry";
+
+/// Builds the [`INDUSTRY`] scene; returns the centres of the four areas.
+pub fn build_industry(sim: &mut SimRunner) -> Vec<Vec2> {
+    use cp_content::ResourceKind;
+    use cp_district::{AreaKind, DistrictCommand};
+    use cp_terrain::{RES_GRID, ResourceMap};
+    let _ = sim.new_game();
+    let terrain = sim.world().resource::<cp_terrain::SimTerrain>().0.clone();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let mut centres = Vec::new();
+    for (k, kind) in ResourceKind::ALL.into_iter().enumerate() {
+        // The richest cell within 2.5 km of the middle of the map.
+        let best = (0..RES_GRID * RES_GRID)
+            .map(|i| (i % RES_GRID, i / RES_GRID))
+            .filter(|&(x, z)| ResourceMap::cell_centre(x, z).distance(Vec2::splat(c)) < 2500.0)
+            .max_by(|a, b| {
+                let r = |p: &(usize, usize)| terrain.resources().richness(kind, p.0, p.1);
+                r(a).total_cmp(&r(b))
+            });
+        let Some((cx, cz)) = best else { continue };
+        let at = ResourceMap::cell_centre(cx, cz);
+        sim.push_command(
+            SimCommand::District(DistrictCommand::CreateArea {
+                kind: AreaKind::Industry(kind),
+                name: format!("{kind:?} area"),
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+        let (ax, az) = (at.x / cp_district::CELL_M, at.y / cp_district::CELL_M);
+        let cells: Vec<_> = (-6i32..=6)
+            .flat_map(|dz| (-8i32..=8).map(move |dx| (dx, dz)))
+            .filter_map(|(dx, dz)| {
+                let (x, z) = (ax as i32 + dx, az as i32 + dz);
+                (x >= 0 && z >= 0).then_some((x as u16, z as u16))
+            })
+            .collect();
+        sim.push_command(
+            SimCommand::District(DistrictCommand::PaintArea {
+                cells,
+                area: cp_district::AreaId(k as u8 + 1),
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+        centres.push(at);
+    }
+    centres
+}
+
 /// Road tunnel scene (T-173): a street dives under the river of `river_valley`. Run it with
 /// `--map river_valley` and look with `--cam tunnel` (add `--overlay underground` to see the
 /// tunnel).

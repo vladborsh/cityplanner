@@ -661,6 +661,20 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
         (Category::Districts, _) => {
             ui.weak("Pick a brush or create a district; the overlay shows the districts.");
         }
+        (Category::Industry, ActiveTool::Area) if tools.area.selected.is_none() => {
+            ui.weak("Choose an area in the list (or press New area), then paint.");
+        }
+        (Category::Industry, ActiveTool::Area) => {
+            let n = tools.area_preview.len();
+            ui.weak(format!(
+                "hold and drag to paint — {n} cells under the cursor. Esc leaves the brush."
+            ));
+        }
+        (Category::Industry, _) => {
+            ui.weak(
+                "Pick a brush or create an area; the overlays show the resources and the areas.",
+            );
+        }
         (Category::Zones, _) => {
             ui.weak("Pick a zoning tool or a zone type to show the zone grid.");
         }

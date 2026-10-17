@@ -32,11 +32,11 @@ pub use chunk::terrain_mesh_height;
 pub use fire_render::{FireFxPlugin, FireFxStats};
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{
-    BuildingStatus, NetworkStats, UtilityLayer, UtilityReport, network_color, utility_report,
+    AreasMode, DistrictsMode, LINE_STEP, LineGhost, Overlay, OverlayPlugin, OverlayState,
+    ZoningMode, resource_color, ribbon_at,
 };
 pub use overlay::{
-    DistrictsMode, LINE_STEP, LineGhost, Overlay, OverlayPlugin, OverlayState, ZoningMode,
-    ribbon_at,
+    BuildingStatus, NetworkStats, UtilityLayer, UtilityReport, network_color, utility_report,
 };
 pub use portal_render::PortalRenderPlugin;
 pub use problem_render::{ProblemIconPlugin, ProblemIconStats};

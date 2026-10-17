@@ -64,6 +64,13 @@ icons! {
     DistrictTabSpecialisation => "district_tab_specialisation",
     DistrictTabStats => "district_tab_stats",
     SpecNone => "spec_none",
+    Industry => "industry",
+    ResourceFarming => "resource_farming",
+    ResourceForestry => "resource_forestry",
+    ResourceOre => "resource_ore",
+    ResourceOil => "resource_oil",
+    OverlayResources => "overlay_resources",
+    OverlayIndustryAreas => "overlay_industry_areas",
     Pipe => "pipe",
     PowerLine => "power_line",
     Remove => "remove",
@@ -212,6 +219,8 @@ pub fn overlay_icon(overlay: cp_render::Overlay) -> Icon {
         O::Education => Icon::OverlayEducation,
         O::Land => Icon::OverlayLand,
         O::Transit => Icon::OverlayTransit,
+        O::Resources => Icon::OverlayResources,
+        O::IndustryAreas => Icon::OverlayIndustryAreas,
         O::Underground => Icon::OverlayUnderground,
     }
 }

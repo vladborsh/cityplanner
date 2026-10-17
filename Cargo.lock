@@ -2407,6 +2407,7 @@ dependencies = [
  "cp_building",
  "cp_content",
  "cp_core",
+ "cp_district",
  "cp_economy",
  "cp_net",
  "cp_prof",
