@@ -67,6 +67,38 @@ impl<T> Table<T> {
 #[derive(bevy_ecs::resource::Resource, Clone)]
 pub struct SimContent(pub std::sync::Arc<ContentDb>);
 
+/// Which service kinds the city can use yet (BUG-051): a need whose remedy is locked by a
+/// population milestone is not generated at all. Derived from `cp_sim`'s `Progress` (never
+/// saved); the default has everything open, so worlds built in code have nothing locked.
+#[derive(bevy_ecs::resource::Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ServiceUnlocks {
+    /// Bit `ServiceKind as u8` set = open.
+    pub open_mask: u32,
+}
+
+impl Default for ServiceUnlocks {
+    fn default() -> Self {
+        Self {
+            open_mask: u32::MAX,
+        }
+    }
+}
+
+impl ServiceUnlocks {
+    pub fn open(&self, kind: crate::kinds::ServiceKind) -> bool {
+        self.open_mask & (1 << (kind as u8)) != 0
+    }
+
+    pub fn set(&mut self, kind: crate::kinds::ServiceKind, open: bool) {
+        let bit = 1u32 << (kind as u8);
+        if open {
+            self.open_mask |= bit;
+        } else {
+            self.open_mask &= !bit;
+        }
+    }
+}
+
 /// Which definition table a placeholder belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DefKind {

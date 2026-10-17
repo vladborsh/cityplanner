@@ -13,7 +13,7 @@ use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingState};
 use cp_citizen::CitizenGrid;
 use cp_citizen::system::CITIZEN_BUCKETS;
-use cp_content::{ServiceKind, SimContent};
+use cp_content::{ServiceKind, ServiceUnlocks, SimContent};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{SimRng, Tick};
 use cp_net::NetGraph;
@@ -38,11 +38,33 @@ pub fn update_health(
     rng: Res<SimRng>,
     mut grid: ResMut<CitizenGrid>,
     mut state: ResMut<ServiceState>,
+    unlocks: Option<Res<ServiceUnlocks>>,
 ) {
     let Some(content) = content else { return };
+    // Worlds built without the resource have every service open.
+    let unlocks = unlocks.map(|u| *u).unwrap_or_default();
     let db = &content.0;
     let bal = db.balance();
     grid.ensure_derived();
+
+    // No clinic or hospital is open yet: nobody falls ill, and the sick of an older save are
+    // well again (BUG-051).
+    if !unlocks.open(ServiceKind::Health) {
+        let bucket = tick.0 % COVERAGE_PERIOD;
+        for (id, _) in buildings.iter() {
+            if u64::from(id.index) % COVERAGE_PERIOD != bucket {
+                continue;
+            }
+            let sick: Vec<_> = grid.sick_in(id).collect();
+            for cid in sick {
+                grid.set_sick(cid, None);
+            }
+            if state.problems_of(id).has(ServiceProblems::SICK) {
+                state.get_mut(id).problems.set(ServiceProblems::SICK, false);
+            }
+        }
+        return;
+    }
 
     // --- falling ill ---
     let mut rng = rng.fork(HEALTH_STREAM, *tick);

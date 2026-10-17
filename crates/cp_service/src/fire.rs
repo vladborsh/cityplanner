@@ -22,7 +22,7 @@
 
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingId, BuildingState, burn, demolish_building};
-use cp_content::{ContentDb, PolicyKind, ServiceKind, SimContent, VehicleKind};
+use cp_content::{ContentDb, PolicyKind, ServiceKind, ServiceUnlocks, SimContent, VehicleKind};
 use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_DAY, TICKS_PER_HOUR};
 use cp_core::{SimRng, Tick};
 use cp_district::PolicyParams;
@@ -133,8 +133,11 @@ pub fn update_fire(
     mut state: ResMut<ServiceState>,
     mut runs: Option<ResMut<ServiceRuns>>,
     policies: PolicyParams,
+    unlocks: Option<Res<ServiceUnlocks>>,
 ) {
     let Some(content) = content else { return };
+    // Worlds built without the resource have every service open.
+    let unlocks = unlocks.map(|u| *u).unwrap_or_default();
     let db = &content.0;
     let bal = db.balance();
     let policies = policies.get();
@@ -157,6 +160,10 @@ pub fn update_fire(
         let fire = state.get(id).and_then(|s| s.fire);
         match (b.state, fire) {
             (BuildingState::Active, None) => {
+                // No fire service is open yet: nothing catches fire (BUG-051).
+                if !unlocks.open(ServiceKind::Fire) {
+                    continue;
+                }
                 let cover = coverage.coverage_of(ServiceKind::Fire, b).clamp(0.0, 1.0);
                 // SmokeDetectors (T-192) cut the chance.
                 let detectors = policies

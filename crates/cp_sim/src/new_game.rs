@@ -16,6 +16,7 @@ impl SimRunner {
     /// the first tick.
     pub fn new_game(&mut self) -> Result<(), String> {
         self.world_mut().insert_resource(crate::Progress::START);
+        crate::progress::refresh_unlocks(self.world_mut());
         fill_deposits(self.world_mut());
         build_entry_road(self.world_mut())?;
         build_entry_rail(self.world_mut())

@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::prelude::{Res, ResMut, Resource};
 use cp_building::BuildingGrid;
-use cp_content::{BuildingDefId, ContentDb, SimContent, UnlockCond};
+use cp_content::{BuildingDefId, ContentDb, ServiceKind, SimContent, UnlockCond};
 use cp_core::{CommandError, Tick};
 use serde::{Deserialize, Serialize};
 
@@ -179,6 +179,48 @@ pub fn check_unlocked(
     Ok(())
 }
 
+/// The service kinds whose needs the sim generates: a kind is open when any building def of that
+/// kind is not locked by a milestone (BUG-051). With `Progress::ALL` everything is open. Kinds
+/// without a building def stay open.
+pub fn open_services(progress: &Progress, db: &ContentDb) -> cp_content::ServiceUnlocks {
+    let mut unlocks = cp_content::ServiceUnlocks::default();
+    for kind in [
+        ServiceKind::Garbage,
+        ServiceKind::Health,
+        ServiceKind::Deathcare,
+        ServiceKind::Fire,
+        ServiceKind::Police,
+    ] {
+        let mut any = false;
+        let mut open = false;
+        for (id, d) in db.buildings() {
+            let is_kind = d
+                .service
+                .as_deref()
+                .and_then(|s| db.service_id(s))
+                .is_some_and(|s| db.service(s).kind == kind);
+            if is_kind {
+                any = true;
+                open |= progress.locked_by(db, id).is_none();
+            }
+        }
+        unlocks.set(kind, open || !any);
+    }
+    unlocks
+}
+
+/// Recomputes [`cp_content::ServiceUnlocks`] from the progress (a new game, a load, and every
+/// pass).
+pub fn refresh_unlocks(world: &mut bevy_ecs::world::World) {
+    let Some(db) = world.get_resource::<SimContent>().map(|c| c.0.clone()) else {
+        return;
+    };
+    let unlocks = open_services(world.resource::<Progress>(), &db);
+    if *world.resource::<cp_content::ServiceUnlocks>() != unlocks {
+        world.insert_resource(unlocks);
+    }
+}
+
 /// The pass: raises `reached` to the highest milestone the population meets, and opens the
 /// unique buildings whose conditions hold.
 #[allow(clippy::too_many_arguments)]
@@ -190,6 +232,7 @@ pub fn update_progress(
     districts: Res<cp_district::Districts>,
     tourists: Res<cp_transit::Tourists>,
     mut progress: ResMut<Progress>,
+    mut unlocks: ResMut<cp_content::ServiceUnlocks>,
 ) {
     if !tick.0.is_multiple_of(PROGRESS_PERIOD) {
         return;
@@ -207,6 +250,10 @@ pub fn update_progress(
         if r > progress.reached {
             progress.reached = r;
         }
+    }
+    let open = open_services(&progress, &content.0);
+    if *unlocks != open {
+        *unlocks = open;
     }
     if progress.reached == u8::MAX {
         return;

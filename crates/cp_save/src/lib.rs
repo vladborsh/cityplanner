@@ -368,6 +368,8 @@ impl SaveData {
         world.insert_resource(self.service_state);
         world.insert_resource(self.shortage);
         world.insert_resource(self.progress);
+        // The service unlocks are derived from the progress.
+        cp_sim::progress::refresh_unlocks(world);
         world.insert_resource(self.service_runs);
         world.insert_resource(self.transit);
         world.insert_resource(self.fleet);

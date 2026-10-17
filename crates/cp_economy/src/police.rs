@@ -5,7 +5,7 @@
 
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingState};
-use cp_content::{ServiceKind, SimContent, ZoneType};
+use cp_content::{ServiceKind, ServiceUnlocks, SimContent, ZoneType};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_net::NetGraph;
@@ -26,8 +26,11 @@ pub fn update_police(
     coverage: Res<ServiceCoverage>,
     mut state: ResMut<ServiceState>,
     policies: cp_district::PolicyParams,
+    unlocks: Option<Res<ServiceUnlocks>>,
 ) {
     let Some(content) = content else { return };
+    // Worlds built without the resource have every service open.
+    let unlocks = unlocks.map(|u| *u).unwrap_or_default();
     let db = &content.0;
     let bal = db.balance();
     let bucket = tick.0 % COVERAGE_PERIOD;
@@ -47,6 +50,15 @@ pub fn update_police(
             continue;
         }
         let held = state.get(id).map_or(0, |s| s.crime);
+        // No police station is open yet: no crime (BUG-051).
+        if !unlocks.open(ServiceKind::Police) {
+            if held > 0 || state.problems_of(id).has(ServiceProblems::CRIME) {
+                let s = state.get_mut(id);
+                s.crime = 0;
+                s.problems.set(ServiceProblems::CRIME, false);
+            }
+            continue;
+        }
         let cover = coverage.coverage_of(ServiceKind::Police, b).clamp(0.0, 1.0);
         let cheap = (1.0 - land.value_at(b.pos) / 100.0).clamp(0.0, 1.0);
         // NeighborhoodWatch (T-192) cuts the crime that grows.

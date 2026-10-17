@@ -12,12 +12,13 @@
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::BuildingGrid;
 use cp_citizen::CitizenGrid;
-use cp_content::{ServiceKind, SimContent};
+use cp_content::{ServiceKind, ServiceUnlocks, SimContent};
 use cp_core::Tick;
 use cp_net::NetGraph;
 use cp_service::{COVERAGE_PERIOD, FacilityFinder, ServiceCoverage, ServiceProblems, ServiceState};
 
 /// Economy phase, after `update_health`.
+#[allow(clippy::too_many_arguments)]
 pub fn update_deathcare(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
@@ -26,8 +27,11 @@ pub fn update_deathcare(
     coverage: Res<ServiceCoverage>,
     mut grid: ResMut<CitizenGrid>,
     mut state: ResMut<ServiceState>,
+    unlocks: Option<Res<ServiceUnlocks>>,
 ) {
     let Some(content) = content else { return };
+    // Worlds built without the resource have every service open.
+    let unlocks = unlocks.map(|u| *u).unwrap_or_default();
     let db = &content.0;
     let bucket = tick.0 % COVERAGE_PERIOD;
     let homes: Vec<_> = grid
@@ -36,6 +40,16 @@ pub fn update_deathcare(
         .copied()
         .filter(|id| u64::from(id.index) % COVERAGE_PERIOD == bucket)
         .collect();
+    // No cemetery or crematorium is open yet: no bodies wait (BUG-051).
+    if !unlocks.open(ServiceKind::Deathcare) {
+        for id in homes {
+            grid.dead.remove(&id);
+            if state.problems_of(id).has(ServiceProblems::DEAD) {
+                state.get_mut(id).problems.set(ServiceProblems::DEAD, false);
+            }
+        }
+        return;
+    }
     let mut finder = None;
     for id in homes {
         let mut dead = u32::from(grid.dead.get(&id).copied().unwrap_or(0));

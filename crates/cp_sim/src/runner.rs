@@ -149,6 +149,7 @@ impl SimRunner {
         world.init_resource::<cp_economy::Decay>();
         world.init_resource::<cp_economy::WorkerShortage>();
         world.init_resource::<crate::progress::Progress>();
+        world.init_resource::<cp_content::ServiceUnlocks>();
         world.init_resource::<cp_terrain::ResourceDeposits>();
         world.init_resource::<cp_industry::IndustryState>();
         world.init_resource::<cp_industry::IndustryLedger>();

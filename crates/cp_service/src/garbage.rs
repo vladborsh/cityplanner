@@ -10,7 +10,7 @@
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingState};
 use cp_citizen::CitizenGrid;
-use cp_content::{PolicyKind, ServiceKind, SimContent, VehicleKind};
+use cp_content::{PolicyKind, ServiceKind, ServiceUnlocks, SimContent, VehicleKind};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_district::PolicyParams;
@@ -38,15 +38,33 @@ pub fn update_garbage(
     mut state: ResMut<ServiceState>,
     mut runs: Option<ResMut<ServiceRuns>>,
     policies: PolicyParams,
+    unlocks: Option<Res<ServiceUnlocks>>,
 ) {
     let Some(content) = content else { return };
+    // Worlds built without the resource have every service open.
+    let unlocks = unlocks.map(|u| *u).unwrap_or_default();
     let db = &content.0;
     let balance = db.balance();
     let bucket = tick.0 % COVERAGE_PERIOD;
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
     let mut finder = None;
     for (id, b) in buildings.iter() {
-        if u64::from(id.index) % COVERAGE_PERIOD != bucket || b.state != BuildingState::Active {
+        if u64::from(id.index) % COVERAGE_PERIOD != bucket {
+            continue;
+        }
+        // No garbage service is open yet: no garbage piles up (BUG-051).
+        if !unlocks.open(ServiceKind::Garbage) {
+            if state
+                .get(id)
+                .is_some_and(|s| s.garbage > 0 || s.problems.has(ServiceProblems::GARBAGE))
+            {
+                let s = state.get_mut(id);
+                s.garbage = 0;
+                s.problems.set(ServiceProblems::GARBAGE, false);
+            }
+            continue;
+        }
+        if b.state != BuildingState::Active {
             continue;
         }
         let workers: u16 = (0..4).map(|l| citizens.jobs_filled(id, l)).sum();
