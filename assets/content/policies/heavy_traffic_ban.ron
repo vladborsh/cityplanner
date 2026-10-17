@@ -2,8 +2,7 @@ Policy((
     id: "heavy_traffic_ban",
     name: "Heavy traffic ban",
     kind: HeavyTrafficBan,
-    // Placeholder icon until T-193 draws one per policy.
-    icon: "overlay_traffic",
+    icon: "policy_heavy_traffic_ban",
     scope: Both,
     // Per building under the policy per week. // tune later
     cost_per_building_week: 1.0,

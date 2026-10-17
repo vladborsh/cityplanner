@@ -30,6 +30,7 @@ pub mod milestone;
 pub mod net_summary;
 pub mod palette;
 pub mod panels;
+pub mod policies;
 pub mod roads;
 pub mod style;
 pub mod tile;
@@ -249,6 +250,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         windows::demand_window(ctx, &mut st.demand_open, view);
         metrics::metrics_window(ctx, &mut st.metrics_open, view);
         lines::lines_window(ctx, &mut st.lines_open, view, &mut st.lines, outbox);
+        policies::city_policies_window(ctx, &mut st.policies_open, view, outbox);
     }
     if state.debug_open {
         debug::debug_window(
@@ -573,11 +575,12 @@ mod capture_tests {
     fn every_window_and_menu_owns_the_pointer_where_it_is_drawn() {
         let base = Rig::new().owned().len();
         type Open = fn(&mut Rig);
-        let surfaces: [(&str, Open); 8] = [
+        let surfaces: [(&str, Open); 9] = [
             ("budget", |r| r.state.budget_open = true),
             ("demand", |r| r.state.demand_open = true),
             ("metrics", |r| r.state.metrics_open = true),
             ("lines", |r| r.state.lines_open = true),
+            ("policies", |r| r.state.policies_open = true),
             ("debug", |r| r.state.debug_open = true),
             ("saves", |r| r.files.open = true),
             ("view menu", |r| r.state.view_menu_open = true),

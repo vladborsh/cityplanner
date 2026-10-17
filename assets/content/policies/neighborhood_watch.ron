@@ -2,8 +2,7 @@ Policy((
     id: "neighborhood_watch",
     name: "Neighborhood watch",
     kind: NeighborhoodWatch,
-    // Placeholder icon until T-193 draws one per policy.
-    icon: "overlay_police",
+    icon: "policy_neighborhood_watch",
     scope: Both,
     // Per building under the policy per week. // tune later
     cost_per_building_week: 2.0,

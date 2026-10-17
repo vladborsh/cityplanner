@@ -2,8 +2,7 @@ Policy((
     id: "smoke_detectors",
     name: "Smoke detectors",
     kind: SmokeDetectors,
-    // Placeholder icon until T-193 draws one per policy.
-    icon: "overlay_fire",
+    icon: "policy_smoke_detectors",
     scope: Both,
     // Per building under the policy per week. // tune later
     cost_per_building_week: 1.5,

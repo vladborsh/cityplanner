@@ -1150,7 +1150,11 @@ mod tests {
         // Remembered over frames; the stubs say what they are.
         assert!(rig.frame(vec![]).contains("Residents"));
         rig.click_label("Policies");
-        assert!(rig.frame(vec![]).contains("Policies: coming soon."));
+        let text = rig.frame(vec![]);
+        assert!(
+            text.contains("Recycling") && !text.contains("Tourism promotion"),
+            "{text}"
+        );
         rig.click_label("Special.");
         assert!(rig.frame(vec![]).contains("Specialisation: coming soon."));
         rig.click_label("Taxes");

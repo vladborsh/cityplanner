@@ -252,7 +252,7 @@ pub fn districts_panel(
             match tab {
                 DistrictTab::Taxes => tax_block(ui, view, outbox, id, d),
                 DistrictTab::Policies => {
-                    ui.weak("Policies: coming soon.");
+                    crate::policies::policy_tiles(ui, view, outbox, Some(id));
                 }
                 DistrictTab::Specialisation => {
                     ui.weak("Specialisation: coming soon.");
@@ -394,16 +394,25 @@ fn zone_short(z: ZoneType) -> &'static str {
     }
 }
 
+/// One district name on the map: where, and the icons of the district's policies in force
+/// (T-193; the city's own are not repeated in every district).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Label {
+    pub name: String,
+    pub at: bevy::math::Vec2,
+    pub icons: Vec<String>,
+}
+
 /// The name labels of the districts, at the centre of mass of their cells.
 #[derive(Default)]
 pub struct Centroids {
     key: (usize, usize),
-    pub labels: Vec<(String, bevy::math::Vec2)>,
+    pub labels: Vec<Label>,
 }
 
 impl Centroids {
     /// Recomputed only when the map or the records changed (compared by `Arc`).
-    pub fn update(&mut self, view: &SimView) -> &[(String, bevy::math::Vec2)] {
+    pub fn update(&mut self, view: &SimView) -> &[Label] {
         let key = (
             std::sync::Arc::as_ptr(&view.district_map) as usize,
             std::sync::Arc::as_ptr(&view.districts) as usize,
@@ -419,7 +428,23 @@ impl Centroids {
                         sum += cp_district::DistrictMap::cell_center(c);
                         n += 1;
                     }
-                    (n > 0).then(|| (d.name.clone(), sum / n as f32))
+                    let icons = view
+                        .content
+                        .as_deref()
+                        .map(|db| {
+                            cp_content::PolicyKind::ALL
+                                .into_iter()
+                                .filter(|k| d.policies & k.bit() != 0)
+                                .filter_map(|k| db.policy(k))
+                                .map(|p| p.icon.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    (n > 0).then(|| Label {
+                        name: d.name.clone(),
+                        at: sum / n as f32,
+                        icons,
+                    })
                 })
                 .collect();
         }
@@ -448,7 +473,8 @@ pub fn draw_labels(
         egui::Order::Background,
         egui::Id::new("district_labels"),
     ));
-    for (name, at) in centroids.update(&view) {
+    for label in centroids.update(&view) {
+        let (name, at) = (&label.name, &label.at);
         let y = view.terrain.as_deref().map_or(0.0, |t| t.height(*at));
         let Ok(p) = camera.world_to_viewport(transform, bevy::math::Vec3::new(at.x, y, at.y))
         else {
@@ -469,6 +495,26 @@ pub fn draw_labels(
             egui::FontId::proportional(16.0),
             egui::Color32::WHITE,
         );
+        // A row of mini-icons of the policies in force under the name.
+        if !label.icons.is_empty() {
+            let side = 18.0;
+            let width = label.icons.len() as f32 * (side + 2.0) - 2.0;
+            egui::Area::new(egui::Id::new(("district_policy_icons", name)))
+                .order(egui::Order::Background)
+                .interactable(false)
+                .fixed_pos(pos + egui::vec2(-width * 0.5, 12.0))
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        for icon in &label.icons {
+                            ui.add(
+                                egui::Image::new(crate::icons::def_icon(icon))
+                                    .fit_to_exact_size(egui::vec2(side, side)),
+                            );
+                        }
+                    });
+                });
+        }
     }
 }
 

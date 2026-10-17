@@ -52,6 +52,8 @@ pub enum Action {
     Jump(Vec2),
     Panel(Category),
     Budget,
+    /// The City policies window (T-193).
+    Policies,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -303,15 +305,42 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
     let counts = view.service_state.summary().counts;
     for (n, (_, id, text, icon, overlay)) in counts.into_iter().zip(SERVICE_ADVICE) {
         if n > 0 {
-            push(
-                id,
-                sev(n),
-                format!("{} {text}", plural(n, "building", "buildings")),
-                n,
-                icon,
-                Some(Action::Overlay(overlay)),
-            );
+            // A policy of the city that helps, if it is defined and still off (T-193).
+            let help = match id {
+                "garbage" => Some(cp_content::PolicyKind::Recycling),
+                "fire" => Some(cp_content::PolicyKind::SmokeDetectors),
+                "crime" => Some(cp_content::PolicyKind::NeighborhoodWatch),
+                _ => None,
+            }
+            .filter(|k| !view.city_policies.has(*k))
+            .and_then(|k| view.content.as_deref()?.policy(k))
+            .filter(|p| p.scope.allows_city());
+            let mut line = format!("{} {text}", plural(n, "building", "buildings"));
+            let mut action = Action::Overlay(overlay);
+            if let Some(p) = help {
+                line.push_str(&format!(" — try the {} policy", p.name));
+                action = Action::Policies;
+            }
+            push(id, sev(n), line, n, icon, Some(action));
         }
+    }
+    // The policies in force eat more than a fifth of the income while the day ends in the red.
+    if let Some(day) = view.flow.last_day(&view.economy)
+        && day.net().0 < 0
+        && day.policies.0 > 0
+        && day.policies.0 * 5 > day.income().0
+    {
+        push(
+            "policy_cost",
+            Severity::Warn,
+            format!(
+                "Policies cost {} a day — over a fifth of the income",
+                cp_tools::format_money(day.policies)
+            ),
+            u32::try_from(day.policies.0 / 100).unwrap_or(u32::MAX),
+            Icon::Budget,
+            Some(Action::Budget),
+        );
     }
     if city.unemployed >= 20 && city.unemployed * 10 >= city.adults {
         push(
@@ -441,6 +470,7 @@ fn run(action: Action, state: &mut UiState, overlay: &mut cp_render::OverlayStat
         Action::Jump(at) => state.camera_goal = Some(at),
         Action::Panel(c) => state.category = Some(c),
         Action::Budget => state.budget_open = true,
+        Action::Policies => state.policies_open = true,
     }
 }
 
@@ -573,6 +603,57 @@ mod tests {
         v
     }
 
+    /// T-193: garbage with the Recycling policy off adds "try the Recycling policy" and opens the
+    /// City policies window; with it on the plain text and the overlay come back. A day in the
+    /// red with the policies over a fifth of the income gives policy_cost.
+    #[test]
+    fn the_garbage_advice_suggests_the_policy_while_it_is_off_and_policy_cost_fires() {
+        use cp_service::{BuildingServices, ServiceProblems, ServiceState};
+        let mut v = no_water(0);
+        let dirty = BuildingServices {
+            problems: ServiceProblems(ServiceProblems::GARBAGE),
+            ..BuildingServices::default()
+        };
+        v.service_state = std::sync::Arc::new(ServiceState::from_parts(
+            vec![dirty, dirty],
+            Default::default(),
+        ));
+        let all = collect(&v, &mut None);
+        let a = all.iter().find(|a| a.id == "garbage").unwrap();
+        assert!(a.text.ends_with("— try the Recycling policy"), "{}", a.text);
+        assert_eq!(a.action, Some(Action::Policies));
+        v.city_policies.mask = cp_content::PolicyKind::Recycling.bit();
+        let all = collect(&v, &mut None);
+        let a = all.iter().find(|a| a.id == "garbage").unwrap();
+        assert!(!a.text.contains("try the"), "{}", a.text);
+        assert_eq!(a.action, Some(Action::Overlay(Overlay::Garbage)));
+
+        // No policy_cost on a quiet view; then a day with 30 of income against 12 of policies
+        // and 40 of other costs.
+        assert!(collect(&v, &mut None).iter().all(|a| a.id != "policy_cost"));
+        let c = |units: f32| cp_core::Cost::from_units(units);
+        let mut flow = cp_economy::Flow::default();
+        flow.income_by_zone[0] = c(30.0);
+        flow.policies = c(12.0);
+        flow.road_upkeep = c(40.0);
+        v.flow.hours.push_back((0, flow));
+        let all = collect(&v, &mut None);
+        let a = all
+            .iter()
+            .find(|a| a.id == "policy_cost")
+            .expect("policy_cost");
+        assert_eq!(a.severity, Severity::Warn);
+        assert_eq!(a.action, Some(Action::Budget));
+        // Policies under a fifth of the income: no advice even in the red.
+        let mut flow = cp_economy::Flow::default();
+        flow.income_by_zone[0] = c(100.0);
+        flow.policies = c(10.0);
+        flow.road_upkeep = c(120.0);
+        v.flow.hours.clear();
+        v.flow.hours.push_back((0, flow));
+        assert!(collect(&v, &mut None).iter().all(|a| a.id != "policy_cost"));
+    }
+
     fn at_tick(mut v: SimView, tick: u64) -> SimView {
         v.tick = cp_core::time::Tick(tick);
         v
@@ -612,12 +693,10 @@ mod tests {
         let get = |id| all.iter().find(|a| a.id == id).unwrap();
         assert_eq!(get("sick").count, 2);
         assert_eq!(get("sick").action, Some(Action::Overlay(Overlay::Health)));
-        assert_eq!(
-            get("garbage").action,
-            Some(Action::Overlay(Overlay::Garbage))
-        );
+        // The policies that help are off, so these two point at the City policies window.
+        assert_eq!(get("garbage").action, Some(Action::Policies));
         assert_eq!(get("crime").count, 1);
-        assert_eq!(get("crime").action, Some(Action::Overlay(Overlay::Police)));
+        assert_eq!(get("crime").action, Some(Action::Policies));
         assert!(all.iter().all(|a| a.id != "fire" && a.id != "dead"));
     }
 
