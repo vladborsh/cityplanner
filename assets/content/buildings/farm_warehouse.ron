@@ -1,0 +1,17 @@
+// Numbers: tune later. Look and icon are borrowed until T-212/T-213 (T-208).
+Building((
+    id: "farm_warehouse",
+    name: "Farm Warehouse",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 2),
+    jobs: (2, 0, 0, 0),
+    consumption: {Power: 15.0},
+    tax_base: 0.0,
+    cost: 12000.0,
+    upkeep_week: 200.0,
+    styles: ["industrial_warehouse_shed_a"],
+    service: Some("industry"),
+    icon: "bus_depot",
+    industry: Some((resource: Some(Farming), role: Warehouse, inputs: [], outputs: [], storage: 1500.0, min_level: 1)),
+))

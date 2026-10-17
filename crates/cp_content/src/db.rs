@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::defs::*;
 use crate::error::{ContentError, ContentErrors};
-use crate::kinds::{PolicyKind, SpecKind};
+use crate::kinds::{CargoKind, IndustryRole, PolicyKind, SpecKind};
 use crate::validate;
 
 /// Default content root, relative to the working directory.
@@ -196,6 +196,8 @@ pub struct ContentDb {
     policies: Vec<PolicyDef>,
     /// The specialisations, one per kind at most, in kind order (T-196).
     specs: Vec<SpecDef>,
+    /// The cargo definitions, one per kind at most, in kind order (T-208).
+    cargos: Vec<CargoDef>,
     content_hash: u64,
 }
 
@@ -332,6 +334,16 @@ impl ContentDb {
         &self.specs
     }
 
+    /// The cargo definitions in kind order (at most one per kind).
+    pub fn cargos(&self) -> &[CargoDef] {
+        &self.cargos
+    }
+
+    /// The definition of the cargo `kind`, if the content has one.
+    pub fn cargo(&self, kind: CargoKind) -> Option<&CargoDef> {
+        self.cargos.iter().find(|c| c.kind == kind)
+    }
+
     /// The definition of the specialisation `kind`, if the content has one.
     pub fn spec(&self, kind: SpecKind) -> Option<&SpecDef> {
         self.specs.iter().find(|s| s.kind == kind)
@@ -411,6 +423,7 @@ impl ContentDb {
         let mut milestone_files: Vec<(String, MilestonesDef)> = Vec::new();
         let mut policy_files: Vec<(String, PolicyDef)> = Vec::new();
         let mut spec_files: Vec<(String, SpecDef)> = Vec::new();
+        let mut cargo_files: Vec<(String, CargoDef)> = Vec::new();
         for (path, text) in sources {
             match ron::from_str::<ContentFile>(&text) {
                 Ok(ContentFile::Road(d)) => roads.push((path, d)),
@@ -423,6 +436,7 @@ impl ContentDb {
                 Ok(ContentFile::Milestones(d)) => milestone_files.push((path, d)),
                 Ok(ContentFile::Policy(d)) => policy_files.push((path, d)),
                 Ok(ContentFile::Spec(d)) => spec_files.push((path, d)),
+                Ok(ContentFile::Cargo(d)) => cargo_files.push((path, d)),
                 Err(e) => errors.push(ContentError::new(&path, None, format!("parse error: {e}"))),
             }
         }
@@ -598,6 +612,77 @@ impl ContentDb {
             }
             specs.push(d);
             spec_paths.push(path);
+        }
+        cargo_files.sort_by(|a, b| a.1.kind.cmp(&b.1.kind).then_with(|| a.0.cmp(&b.0)));
+        let mut cargos: Vec<CargoDef> = Vec::new();
+        let mut cargo_paths: Vec<String> = Vec::new();
+        for (path, d) in cargo_files {
+            for (field, msg) in validate::cargo(&d) {
+                errors.push(ContentError::new(&path, Some(&field), msg));
+            }
+            if let Some(i) = cargos.iter().position(|p| p.kind == d.kind) {
+                errors.push(ContentError::new(
+                    &path,
+                    Some("kind"),
+                    format!("{:?} is already defined in {}", d.kind, cargo_paths[i]),
+                ));
+                continue;
+            }
+            cargos.push(d);
+            cargo_paths.push(path);
+        }
+        // An industrial building: a service building on a road whose role fits its resource,
+        // with cargo that has a definition; and once there is any cargo or chain building,
+        // every cargo kind has a definition.
+        let mut any_industry = false;
+        for (i, b) in buildings.defs.iter().enumerate() {
+            let Some(ind) = &b.industry else { continue };
+            any_industry = true;
+            let mut bad = |field: &str, msg: String| {
+                errors.push(ContentError::new(&buildings.files[i], Some(field), msg));
+            };
+            let on_road = b
+                .service
+                .as_deref()
+                .and_then(|s| services.defs.iter().find(|d| d.id == s))
+                .is_some_and(|s| s.road_access);
+            if !on_road {
+                bad(
+                    "industry",
+                    "an industrial building is a service building on a road".to_string(),
+                );
+            }
+            if (ind.role == IndustryRole::Factory) != ind.resource.is_none() {
+                bad(
+                    "industry",
+                    "a resource is set for every role but Factory, and only for those".to_string(),
+                );
+            }
+            if !(1..=5).contains(&ind.min_level) {
+                bad("industry", "min_level is 1..=5".to_string());
+            }
+            if !(ind.storage.is_finite() && ind.storage >= 0.0) {
+                bad("industry", "storage is not negative".to_string());
+            }
+            for (kind, amount) in ind.inputs.iter().chain(&ind.outputs) {
+                if !(amount.is_finite() && *amount > 0.0) {
+                    bad("industry", format!("{kind:?} amount is positive"));
+                }
+                if !cargos.iter().any(|c| c.kind == *kind) {
+                    bad("industry", format!("there is no cargo {kind:?}"));
+                }
+            }
+        }
+        if any_industry || !cargos.is_empty() {
+            for kind in CargoKind::ALL {
+                if !cargos.iter().any(|c| c.kind == kind) {
+                    errors.push(ContentError::new(
+                        "cargo.ron",
+                        Some("kind"),
+                        format!("cargo {kind:?} has no definition"),
+                    ));
+                }
+            }
         }
         // A specialised building belongs to a zone its specialisation covers, at level 1.
         for (i, b) in buildings.defs.iter().enumerate() {
@@ -826,6 +911,13 @@ impl ContentDb {
                 &postcard::to_stdvec(&specs).expect("specs are serialisable"),
             );
         }
+        if !cargos.is_empty() {
+            fnv1a(&mut hash, b"cargos");
+            fnv1a(
+                &mut hash,
+                &postcard::to_stdvec(&cargos).expect("cargos are serialisable"),
+            );
+        }
         Ok(Self {
             roads: roads.strip(),
             buildings: buildings.strip(),
@@ -838,6 +930,7 @@ impl ContentDb {
             milestones,
             policies,
             specs,
+            cargos,
             content_hash: hash,
         })
     }

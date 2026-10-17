@@ -87,6 +87,7 @@ fn kind_icon(kind: ServiceKind) -> Icon {
         ServiceKind::Education => Icon::OverlayEducation,
         ServiceKind::Transit => Icon::LineBus,
         ServiceKind::Landmark => Icon::Buildings,
+        ServiceKind::Industry => Icon::Buildings,
     }
 }
 
@@ -146,10 +147,12 @@ impl Section {
 pub fn sections(content: &ContentDb) -> Vec<Section> {
     let mut out: Vec<Section> = Vec::new();
     // Transit buildings live in the Transport category.
-    for g in groups(content)
-        .into_iter()
-        .filter(|g| g.kind != ServiceKind::Transit && g.kind != ServiceKind::Landmark)
-    {
+    for g in groups(content).into_iter().filter(|g| {
+        !matches!(
+            g.kind,
+            ServiceKind::Transit | ServiceKind::Landmark | ServiceKind::Industry
+        )
+    }) {
         // Unique buildings get their own sections (T-201).
         // One pipe network: sewage buildings sit in the Water section (§13.7).
         let kind = if g.kind == ServiceKind::Sewage {

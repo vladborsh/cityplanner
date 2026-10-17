@@ -1,0 +1,9 @@
+// Prices are placeholders // tune later (T-208). Icon: temporary until the cargo icons are drawn.
+Cargo((
+    kind: Metals,
+    name: "Metals",
+    icon: "zone_industrial",
+    color: (160, 170, 185),
+    export_price: 12.0,
+    import_price: 17.0,
+))

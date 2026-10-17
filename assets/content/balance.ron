@@ -198,6 +198,8 @@ Balance((
     tourism_by_train: 8,
     // Resource deposits (T-205) // tune later: ore and oil in one 64 m cell at richness 1.
     deposit_per_cell: 20000.0,
+    // An extractor's lot needs this average richness (T-208) // tune later.
+    min_richness: 0.3,
 
     // --- Networks (T-181): distances of water, sewage and power // tune later ---
     // power_gap_m: largest gap between the footprint edges of two buildings over which one

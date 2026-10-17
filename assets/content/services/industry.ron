@@ -1,0 +1,10 @@
+// The buildings of the industrial chains (T-208): on a road like the other service buildings, no coverage (radius and capacity are placeholders). Numbers: tune later.
+Service((
+    id: "industry",
+    name: "Industry",
+    kind: Industry,
+    radius_m: 100.0,
+    capacity: 1,
+    site: Land,
+    vehicles: [],
+))

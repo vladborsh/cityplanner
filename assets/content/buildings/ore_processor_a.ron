@@ -1,0 +1,17 @@
+// Numbers: tune later. Look and icon are borrowed until T-212/T-213 (T-208).
+Building((
+    id: "ore_processor_a",
+    name: "Ore Processor A",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 3),
+    jobs: (4, 4, 1, 0),
+    consumption: {Power: 15.0},
+    tax_base: 0.0,
+    cost: 30000.0,
+    upkeep_week: 500.0,
+    styles: ["industrial_factory_saw_b"],
+    service: Some("industry"),
+    icon: "incinerator",
+    industry: Some((resource: Some(Ore), role: Processor, inputs: [(Ore, 60.0)], outputs: [(Metals, 40.0)], storage: 300.0, min_level: 1)),
+))

@@ -270,7 +270,26 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
             hover,
             tool.rot(),
             &held,
-        ) {
+        )
+        .and_then(|plan| {
+            // A chain building also needs its industrial area (T-208).
+            if let Some(terrain) = view.terrain.as_deref() {
+                cp_building::validate_industry_site(
+                    &cp_building::IndustryWorld {
+                        db,
+                        areas: &view.areas,
+                        area_map: &view.area_map,
+                        resources: terrain.resources(),
+                        buildings: &view.buildings,
+                        zones: &view.zones,
+                    },
+                    def,
+                    &plan,
+                    tool.moving,
+                )?;
+            }
+            Ok(plan)
+        }) {
             Ok(plan) => PlacementGhost {
                 cells: plan.cells(),
                 valid: true,

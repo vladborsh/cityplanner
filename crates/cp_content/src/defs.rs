@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::kinds::{
-    PolicyKind, PolicyScope, ServiceKind, ServiceSite, SpecKind, UtilityKind, ZoneType,
+    CargoKind, IndustryRole, PolicyKind, PolicyScope, ResourceKind, ServiceKind, ServiceSite,
+    SpecKind, UtilityKind, ZoneType,
 };
 
 macro_rules! def_id {
@@ -67,6 +68,49 @@ pub enum ContentFile {
     Policy(PolicyDef),
     /// Appended in T-196.
     Spec(SpecDef),
+    /// Appended in T-208.
+    Cargo(CargoDef),
+}
+
+/// A cargo of the industrial chains (T-208): how it is shown and what it is worth outside the
+/// city. Prices are placeholders // tune later.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CargoDef {
+    pub kind: CargoKind,
+    pub name: String,
+    /// Icon name (a placeholder until the cargo icons are drawn).
+    pub icon: String,
+    /// Colour of the cargo in overlays and tooltips, sRGB.
+    pub color: [u8; 3],
+    /// Money per unit when the city sells it to the outside.
+    pub export_price: f32,
+    /// Money per unit when the city buys it from the outside.
+    pub import_price: f32,
+}
+
+/// What a building does in an industrial chain (T-208, design §16 M5 B). Amounts are per game
+/// day at full staffing. Numbers: tune later.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IndustrySpec {
+    /// The resource of the area it stands in; `None` for a factory (any industrial area).
+    pub resource: Option<ResourceKind>,
+    pub role: IndustryRole,
+    #[serde(default)]
+    pub inputs: Vec<(CargoKind, f32)>,
+    #[serde(default)]
+    pub outputs: Vec<(CargoKind, f32)>,
+    /// What the building can hold.
+    #[serde(default)]
+    pub storage: f32,
+    /// The area level it needs (1 = any).
+    #[serde(default = "one_level")]
+    pub min_level: u8,
+}
+
+fn one_level() -> u8 {
+    1
 }
 
 /// A district specialisation (T-196): the zone types it applies to and the numbers of its
@@ -349,6 +393,8 @@ pub struct Balance {
     /// Ore and oil in a 64 m resource cell at richness 1 (T-205); the start is
     /// `richness × deposit_per_cell`, rounded. // tune later
     pub deposit_per_cell: f32,
+    /// A resource extractor needs this average richness (`0..=1`) under its lot (T-208). // tune later
+    pub min_richness: f32,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
 }
@@ -493,6 +539,7 @@ impl Balance {
             f32::from(self.move_in_by_train),
             f32::from(self.tourism_by_train),
             self.deposit_per_cell,
+            self.min_richness,
         ]);
         v.extend(self.land_service);
         v.extend(self.death_curve.iter().flat_map(|&(a, c)| [a, c]));
@@ -603,6 +650,7 @@ impl Default for Balance {
             move_in_by_train: 40,
             tourism_by_train: 8,
             deposit_per_cell: 20_000.0,
+            min_richness: 0.3,
             networks: Networks::default(),
         }
     }
@@ -927,6 +975,9 @@ pub struct BuildingDef {
     /// building. A specialised building is level 1 and never rises.
     #[serde(default)]
     pub spec: Option<SpecKind>,
+    /// The role in an industrial chain (T-208); `None` for every other building.
+    #[serde(default)]
+    pub industry: Option<IndustrySpec>,
 }
 
 /// What makes a building unique (T-200, design §16 M4 C). Numbers: tune later.

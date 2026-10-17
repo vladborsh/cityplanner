@@ -96,6 +96,22 @@ pub enum BuildingError {
     Fixed,
     /// A unique building stands in the city already (T-200): one per city.
     UniqueBuilt,
+    /// A chain building is not in an industrial area of its resource (T-208).
+    NotInArea(Option<cp_content::ResourceKind>),
+    /// The area has no main building yet.
+    NoMain,
+    /// The area has its main building.
+    SecondMain,
+    /// The area is below the level the building needs.
+    AreaLevel {
+        need: u8,
+        have: u8,
+    },
+    /// The resource under an extractor is too poor (percent).
+    Poor {
+        pct: u8,
+        need_pct: u8,
+    },
 }
 
 impl BuildingError {
@@ -136,6 +152,18 @@ impl fmt::Display for BuildingError {
             Self::Platform(why) => return write!(f, "no room for the platform: {why}"),
             Self::Fixed => "a station cannot be moved",
             Self::UniqueBuilt => "this unique building already stands in the city",
+            Self::NotInArea(Some(r)) => {
+                return write!(f, "must stand in a {r:?} industry area");
+            }
+            Self::NotInArea(None) => "must stand in an industry area",
+            Self::NoMain => "the area has no main building yet",
+            Self::SecondMain => "the area has its main building already",
+            Self::AreaLevel { need, have } => {
+                return write!(f, "needs area level {need} (it is {have})");
+            }
+            Self::Poor { pct, need_pct } => {
+                return write!(f, "only {pct}% of the resource here, needs {need_pct}%");
+            }
         })
     }
 }
@@ -302,6 +330,42 @@ pub fn validate_placement_except(
     })
 }
 
+/// The chain-building rule (T-208) on a plan that passed the geometry checks; a no-op for every
+/// other def. The sim world needs the areas and the buildings for it.
+fn check_industry(
+    world: &World,
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    def: BuildingDefId,
+    plan: &PlacementPlan,
+    ignore: Option<BuildingId>,
+) -> Result<(), BuildingError> {
+    if db.building(def).industry.is_none() {
+        return Ok(());
+    }
+    let (Some(areas), Some(area_map), Some(buildings), Some(terrain)) = (
+        world.get_resource::<cp_district::Areas>(),
+        world.get_resource::<cp_district::AreaMap>(),
+        world.get_resource::<BuildingGrid>(),
+        world.get_resource::<SimTerrain>(),
+    ) else {
+        return Err(BuildingError::Missing);
+    };
+    crate::industry::validate_industry_site(
+        &crate::industry::IndustryWorld {
+            db,
+            areas,
+            area_map,
+            resources: terrain.0.resources(),
+            buildings,
+            zones,
+        },
+        def,
+        plan,
+        ignore,
+    )
+}
+
 /// What a `Place` made: the building and, for a station, the segment of its platform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placed {
@@ -434,6 +498,7 @@ pub fn apply_placed(
                 } else {
                     validate_placement(&content.0, zones, net, terrain, tiles, *def, *pos, *rot)?
                 };
+                check_industry(world, &content.0, zones, *def, &plan, None)?;
                 (
                     plan,
                     content.0.building(*def).level,
@@ -527,6 +592,7 @@ pub fn apply_placed(
                         &content.0, zones, net, terrain, tiles, def, *pos, *rot, &held,
                     )?
                 };
+                check_industry(world, &content.0, zones, def, &plan, Some(*building))?;
                 let cost = Cost::from_units(content.0.building(def).cost * MOVE_COST_FRACTION);
                 (plan, cost)
             };

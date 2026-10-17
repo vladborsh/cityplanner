@@ -1,0 +1,17 @@
+// Numbers: tune later. Look and icon are borrowed until T-212/T-213 (T-208).
+Building((
+    id: "oil_extractor_s",
+    name: "Oil Extractor S",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 3),
+    jobs: (6, 2, 0, 0),
+    consumption: {Power: 15.0},
+    tax_base: 0.0,
+    cost: 15000.0,
+    upkeep_week: 300.0,
+    styles: ["industrial_mill_gabled_a"],
+    service: Some("industry"),
+    icon: "wind_turbine",
+    industry: Some((resource: Some(Oil), role: Extractor, inputs: [], outputs: [(Oil, 40.0)], storage: 200.0, min_level: 1)),
+))

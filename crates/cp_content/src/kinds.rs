@@ -47,6 +47,8 @@ pub enum ServiceKind {
     Transit = 10,
     /// Appended in T-200 (M4): unique buildings and monuments.
     Landmark = 11,
+    /// Appended in T-208 (M5): the buildings of the industrial chains.
+    Industry = 12,
 }
 
 /// Where a service building may stand (checked by `cp_building::validate_placement`).
@@ -211,4 +213,62 @@ impl ResourceKind {
     pub const fn is_finite(self) -> bool {
         matches!(self, Self::Ore | Self::Oil)
     }
+}
+
+/// A cargo of the industrial chains (T-208, M5). The order is stored in saves (stock per cargo,
+/// trucks): **append-only**. `Goods` is the shop goods of M3.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum CargoKind {
+    Goods = 0,
+    Crops = 1,
+    Logs = 2,
+    Ore = 3,
+    Oil = 4,
+    AnimalProducts = 5,
+    Flour = 6,
+    Planks = 7,
+    Paper = 8,
+    Metals = 9,
+    Glass = 10,
+    Petroleum = 11,
+    Plastics = 12,
+}
+
+impl CargoKind {
+    /// Every cargo in kind order.
+    pub const ALL: [CargoKind; 13] = [
+        CargoKind::Goods,
+        CargoKind::Crops,
+        CargoKind::Logs,
+        CargoKind::Ore,
+        CargoKind::Oil,
+        CargoKind::AnimalProducts,
+        CargoKind::Flour,
+        CargoKind::Planks,
+        CargoKind::Paper,
+        CargoKind::Metals,
+        CargoKind::Glass,
+        CargoKind::Petroleum,
+        CargoKind::Plastics,
+    ];
+
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// What a building of an industrial chain does (T-208). Append-only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum IndustryRole {
+    /// The main building of an area: one per area, opens the others.
+    Main = 0,
+    /// Takes the raw resource from the ground.
+    Extractor = 1,
+    /// Turns raw cargo into products.
+    Processor = 2,
+    Warehouse = 3,
+    /// A unique factory: any industrial area, products from several chains (T-215).
+    Factory = 4,
 }
