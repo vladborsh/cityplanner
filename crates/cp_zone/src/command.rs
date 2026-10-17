@@ -14,8 +14,9 @@ use crate::grid::{ZoneCellRef, ZoneGrid};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ZoneCommand {
     /// Paints `zone` onto `cells` (`ZoneType::None` erases). Cells that are invalid (under a
-    /// road, overlapped by an older block), covered by a building, or unknown are skipped; the
-    /// command fails only if nothing at all changes. Zoning is free in M1.
+    /// road, overlapped by an older block) or unknown are skipped; a cell under a building is
+    /// painted like any other (BUG-053: the building that no longer fits its zone is demolished
+    /// by the sim afterwards). The command fails only if nothing at all changes. Zoning is free.
     PaintZones {
         cells: Vec<ZoneCellRef>,
         zone: ZoneType,
@@ -30,11 +31,7 @@ pub enum ZoneError {
     /// No cells were given.
     NoCells,
     /// Every cell was skipped or already had that type.
-    NothingToPaint {
-        invalid: usize,
-        occupied: usize,
-        unchanged: usize,
-    },
+    NothingToPaint { invalid: usize, unchanged: usize },
 }
 
 impl fmt::Display for ZoneError {
@@ -42,13 +39,9 @@ impl fmt::Display for ZoneError {
         match self {
             Self::Missing => write!(f, "no zone grid in the sim world"),
             Self::NoCells => write!(f, "no cells to paint"),
-            Self::NothingToPaint {
-                invalid,
-                occupied,
-                unchanged,
-            } => write!(
+            Self::NothingToPaint { invalid, unchanged } => write!(
                 f,
-                "nothing to paint ({invalid} invalid, {occupied} built on, {unchanged} already that zone)"
+                "nothing to paint ({invalid} invalid, {unchanged} already that zone)"
             ),
         }
     }
@@ -77,12 +70,10 @@ pub fn paint(
     if cells.is_empty() {
         return Err(ZoneError::NoCells);
     }
-    let (mut invalid, mut occupied, mut unchanged, mut painted) = (0, 0, 0, 0);
+    let (mut invalid, mut unchanged, mut painted) = (0, 0, 0);
     for cell in cells {
-        // A built-on cell is invalid too; report it as built on.
-        if grid.is_occupied(*cell) {
-            occupied += 1;
-        } else if !grid.is_valid(*cell) {
+        // A cell under a building is invalid for growth but can be zoned: the building goes.
+        if !grid.is_valid(*cell) && !grid.is_occupied(*cell) {
             invalid += 1;
         } else if grid.zone_of(*cell) == Some(zone) {
             unchanged += 1;
@@ -92,11 +83,7 @@ pub fn paint(
         }
     }
     if painted == 0 {
-        return Err(ZoneError::NothingToPaint {
-            invalid,
-            occupied,
-            unchanged,
-        });
+        return Err(ZoneError::NothingToPaint { invalid, unchanged });
     }
     Ok(Cost::ZERO)
 }

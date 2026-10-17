@@ -307,6 +307,31 @@ pub fn held_cells(zones: &cp_zone::ZoneGrid, b: &Building) -> Vec<ZoneCellRef> {
     }
 }
 
+/// The zoned buildings (growable ones: no service, no unique, no chain building) that touch one
+/// of `cells` and whose lot no longer carries their zone type on every cell (BUG-053), in id
+/// order. They are to be demolished like a bulldozed building.
+pub fn zone_mismatches(
+    buildings: &BuildingGrid,
+    zones: &cp_zone::ZoneGrid,
+    db: &cp_content::ContentDb,
+    cells: &[ZoneCellRef],
+) -> Vec<BuildingId> {
+    let changed: std::collections::BTreeSet<ZoneCellRef> = cells.iter().copied().collect();
+    buildings
+        .iter()
+        .filter(|(_, b)| {
+            let def = db.building(b.def);
+            if def.service.is_some() || def.unique.is_some() || def.industry.is_some() {
+                return false;
+            }
+            let held = held_cells(zones, b);
+            held.iter().any(|c| changed.contains(c))
+                && held.iter().any(|c| zones.zone_of(*c) != Some(def.zone))
+        })
+        .map(|(id, _)| id)
+        .collect()
+}
+
 /// A fire has burned the building down: it becomes `Burned` (its people leave on the
 /// citizens' next update) until it is demolished. `false` when it is not `Active` or gone.
 pub fn burn(buildings: &mut BuildingGrid, id: BuildingId) -> bool {

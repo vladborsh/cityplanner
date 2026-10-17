@@ -19,7 +19,9 @@ pub use free::{
     ROAD_CLEARANCE_M, is_free_standing, sync_blockers, validate_free_placement,
     validate_free_placement_except,
 };
-pub use grid::{BuildingGrid, burn, cells_under_lot, demolish_building, held_cells};
+pub use grid::{
+    BuildingGrid, burn, cells_under_lot, demolish_building, held_cells, zone_mismatches,
+};
 pub use industry::{
     IndustryWorld, footprint_points, lot_richness, plan_points, validate_industry_site,
 };

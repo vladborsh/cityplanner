@@ -117,7 +117,13 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
             cp_net::apply(world, c)
                 .map_err(|e| rejected_or_funds("net", &e, e.insufficient_funds()))
         }
-        SimCommand::Zone(c) => cp_zone::apply(world, c).map_err(|e| rejected("zone", e)),
+        SimCommand::Zone(c) => {
+            let done = cp_zone::apply(world, c);
+            if done.is_ok() {
+                demolish_unzoned(world, c);
+            }
+            done.map_err(|e| rejected("zone", e))
+        }
         SimCommand::Building(c) => {
             if let (BuildingCommand::Place { def, .. }, Some(content)) =
                 (c, world.get_resource::<cp_content::SimContent>())
@@ -275,6 +281,35 @@ pub(crate) fn unlock_inputs(
             .get_resource::<cp_transit::Tourists>()
             .map_or(0, |t| t.visits_week),
     )
+}
+
+/// BUG-053: after a zone brush, the zoned buildings that no longer stand on their zone are
+/// demolished at once, the way a bulldozed one is (no refund; people leave on their next update).
+fn demolish_unzoned(world: &mut World, cmd: &cp_zone::ZoneCommand) {
+    let cp_zone::ZoneCommand::PaintZones { cells, .. } = cmd;
+    let Some(content) = world
+        .get_resource::<cp_content::SimContent>()
+        .map(|c| c.0.clone())
+    else {
+        return;
+    };
+    let gone = {
+        let (Some(buildings), Some(zones)) = (
+            world.get_resource::<cp_building::BuildingGrid>(),
+            world.get_resource::<cp_zone::ZoneGrid>(),
+        ) else {
+            return;
+        };
+        cp_building::zone_mismatches(buildings, zones, &content, cells)
+    };
+    for id in gone {
+        world.resource_scope(
+            |world, mut buildings: bevy_ecs::prelude::Mut<cp_building::BuildingGrid>| {
+                let mut zones = world.resource_mut::<cp_zone::ZoneGrid>();
+                cp_building::demolish_building(&mut buildings, &mut zones, id);
+            },
+        );
+    }
 }
 
 #[cfg(test)]

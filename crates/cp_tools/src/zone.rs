@@ -136,14 +136,14 @@ impl ZoneTool {
         self.stroke.clear();
     }
 
-    /// Cells in `cells` that painting would change: valid, not built on, not already of the
-    /// target type.
+    /// Cells in `cells` that painting would change: valid (or built on: a building that no
+    /// longer fits its zone is demolished, BUG-053), not already of the target type.
     fn paintable(&self, zones: &ZoneGrid, cells: Vec<ZoneCellRef>) -> Vec<ZoneCellRef> {
         let want = self.paint_type();
         cells
             .into_iter()
             .filter(|c| {
-                zones.is_valid(*c) && !zones.is_occupied(*c) && zones.zone_of(*c) != Some(want)
+                (zones.is_valid(*c) || zones.is_occupied(*c)) && zones.zone_of(*c) != Some(want)
             })
             .collect()
     }

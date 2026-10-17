@@ -561,22 +561,16 @@ fn paint_sets_valid_cells_skips_invalid_and_built_on_ones_and_erases() {
     ));
     assert_eq!(w.grid.revision(), rev);
 
-    // A building on a cell protects it from repainting and from erasing.
+    // A building on a cell does not protect it (BUG-053): repainting and erasing work, and the
+    // sim demolishes the building that no longer fits.
     w.grid.occupy(&[valid[0]]);
     let r = paint(&mut w.grid, &[valid[0]], ZoneType::Industrial);
-    assert!(
-        matches!(r, Err(ZoneError::NothingToPaint { occupied: 1, .. })),
-        "{r:?}"
-    );
-    assert_eq!(w.grid.zone_of(valid[0]), Some(ZoneType::ResLow));
+    assert_eq!(r, Ok(cp_core::Cost::ZERO));
+    assert_eq!(w.grid.zone_of(valid[0]), Some(ZoneType::Industrial));
 
     // Erase the rest.
     assert!(paint(&mut w.grid, &cells, ZoneType::None).is_ok());
-    assert_eq!(
-        painted(&w, ZoneType::ResLow),
-        1,
-        "only the built-on cell keeps its zone"
-    );
+    assert_eq!(painted(&w, ZoneType::ResLow), 0);
     assert_eq!(
         paint(&mut w.grid, &[], ZoneType::ResLow),
         Err(ZoneError::NoCells)
