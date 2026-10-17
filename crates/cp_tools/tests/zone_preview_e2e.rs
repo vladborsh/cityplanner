@@ -230,3 +230,77 @@ fn the_ticks_are_8_real_cells_apart_and_on_cell_boundaries() {
         assert!((w[1] - w[0] - 64.0).abs() < 0.05, "{xs:?}");
     }
 }
+
+fn tool_of(db: &ContentDb, road: &str, from: Vec2) -> RoadTool {
+    RoadTool {
+        mode: RoadMode::Straight,
+        road: Some(db.road_id(road).unwrap()),
+        points: vec![from],
+        ..Default::default()
+    }
+}
+
+/// BUG-067: whatever the road type and length, the ticks of a ghost are 8 cells apart: eight
+/// cells of the row beside the road lie between two neighbouring ticks.
+#[test]
+fn every_zonable_road_type_has_8_cells_between_ticks_at_every_length() {
+    let (sim, db) = sim();
+    let view = sim.view();
+    let a = Vec2::new(4600.0, 4600.0);
+    let mut bad: Vec<String> = Vec::new();
+    for road in [
+        "basic_2l",
+        "basic_1w_2l",
+        "medium_4l",
+        "medium_1w_3l",
+        "large_6l",
+    ] {
+        let hw = db.road(db.road_id(road).unwrap()).width / 2.0;
+        let mut len = 120.0f32;
+        while len <= 330.0 {
+            let ghost = compute_ghost(&view, &tool_of(&db, road, a), a + Vec2::new(len, 0.0));
+            let Some(ghost) = ghost else {
+                len += 0.5;
+                continue;
+            };
+            for side in [-1.0f32, 1.0] {
+                let mut ticks: Vec<f32> = ghost
+                    .zone
+                    .ticks
+                    .iter()
+                    .filter(|t| (t[0].y - a.y) * side > 0.0)
+                    .map(|t| t[0].x)
+                    .collect();
+                ticks.sort_by(f32::total_cmp);
+                // The row beside the road: cells whose centre is within a cell and a half of the edge.
+                let mut xs: Vec<f32> = ghost
+                    .zone
+                    .cells
+                    .iter()
+                    .map(|c| {
+                        let m = (c.corners[0] + c.corners[1] + c.corners[2] + c.corners[3]) / 4.0;
+                        m
+                    })
+                    .filter(|m| (m.y - a.y) * side > hw && (m.y - a.y).abs() < hw + 6.0)
+                    .map(|m| m.x)
+                    .collect();
+                xs.sort_by(f32::total_cmp);
+                for w in ticks.windows(2) {
+                    let n = xs.iter().filter(|x| **x > w[0] && **x < w[1]).count();
+                    if n != 8 {
+                        bad.push(format!(
+                            "{road} len {len} side {side}: {n} cells between ticks {w:?}"
+                        ));
+                    }
+                }
+            }
+            len += 0.5;
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} cases, first: {:?}",
+        bad.len(),
+        &bad[..bad.len().min(6)]
+    );
+}
