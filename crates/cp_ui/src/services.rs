@@ -313,4 +313,44 @@ mod tests {
         assert_eq!(overlay_of(Sector::Sewage), Overlay::Water);
         assert_eq!(overlay_of(Sector::HighSchool), Overlay::Education);
     }
+
+    /// T-241: an active service overlay shows its rows (Water also sewage) in a compact panel;
+    /// no overlay, or one without a service, shows none; a locked row stays out.
+    #[test]
+    fn the_overlay_panel_shows_the_rows_of_the_active_overlay_only() {
+        let mut view = cp_sim::SimRunner::new(1).view();
+        let mut stats = (*view.city).clone();
+        stats.services = vec![
+            row(Sector::Water, 300.0, 28.0, false),
+            row(Sector::Sewage, 10.0, 40.0, false),
+            row(Sector::Power, 50.0, 50.0, false),
+            row(Sector::University, 0.0, 5.0, true),
+        ];
+        view.city = std::sync::Arc::new(stats);
+        let sectors =
+            |o| -> Vec<Sector> { overlay_rows(&view, o).iter().map(|r| r.sector).collect() };
+        assert_eq!(sectors(Overlay::Water), [Sector::Water, Sector::Sewage]);
+        assert_eq!(sectors(Overlay::Power), [Sector::Power]);
+        assert!(sectors(Overlay::Education).is_empty(), "locked");
+        assert!(sectors(Overlay::Off).is_empty());
+
+        let drawn = |o| -> Vec<String> {
+            let ctx = egui::Context::default();
+            let mut out = Vec::new();
+            for t in [0.0, 0.1] {
+                out = frame_texts(&ctx, input(t, vec![]), |ui| {
+                    overlay_services_panel(ui.ctx(), &view, o);
+                })
+                .into_iter()
+                .map(|(s, _)| s)
+                .collect();
+            }
+            out
+        };
+        let on = drawn(Overlay::Water);
+        assert!(on.contains(&"300 / 28 units/day".to_string()), "{on:?}");
+        assert!(on.contains(&"10 / 40 units/day".to_string()));
+        assert!(!on.iter().any(|t| t.starts_with("50 / 50")));
+        assert!(drawn(Overlay::Off).is_empty());
+    }
 }

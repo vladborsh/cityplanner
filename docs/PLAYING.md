@@ -219,7 +219,7 @@ Industrial, Office. Residential (high), Commercial (high) и Office закрыт
 плиток одного размера: сначала сетевой инструмент, затем здания службы, затем «Remove».
 
 * **Water**: «Pipe» (одна труба для воды и канализации), «Water pump» (насос), «Sewage
-  outflow» (сток) и «Remove pipe». Под заголовком сводка сети («Water», «Sewage»).
+  outflow» (сток) и «Remove pipe». Сводки сети в панели нет: при оверлее Water/Power цифры («supply / demand», полоса) показывает компактная панель рядом с легендой оверлея (T-241), так же для оверлеев служб.
 * **Power**: «Power line», «Coal power plant», «Wind turbine» и «Remove line».
 
 Плитка здания выбирает его для установки: наведите курсор на место рядом с дорогой
