@@ -42,9 +42,13 @@ fn tool(db: &ContentDb, from: Vec2) -> RoadTool {
 }
 
 fn build(sim: &mut SimRunner, db: &ContentDb, from: Vec2, to: Vec2) {
+    build_road(sim, db, "basic_2l", from, to);
+}
+
+fn build_road(sim: &mut SimRunner, db: &ContentDb, road: &str, from: Vec2, to: Vec2) {
     let mut outbox = CommandOutbox::default();
     outbox.push(SimCommand::Net(NetCommand::BuildRoad {
-        road: db.road_id("basic_2l").unwrap(),
+        road: db.road_id(road).unwrap(),
         path: RoadPath::Straight { from, to },
         elevation: cp_net::ElevationMode::Ground,
     }));
@@ -361,8 +365,10 @@ fn a_street_across_a_block_from_mark_to_mark_is_perpendicular() {
             .flat_map(|f| f.corners())
             .collect();
         assert!(
-            corners.iter().any(|c| (c.y - from.y).abs() < 0.1),
-            "{from:?} is not a cell boundary of the left street"
+            corners
+                .iter()
+                .any(|c| (c.y - from.y).abs() < 0.1 || ((c.y - from.y).abs() - hw).abs() < 0.1),
+            "{from:?} is not a cell boundary (or an edge on one) of the left street"
         );
         // And on one of the right street.
         let corners: Vec<Vec2> = view
@@ -376,8 +382,94 @@ fn a_street_across_a_block_from_mark_to_mark_is_perpendicular() {
             .flat_map(|f| f.corners())
             .collect();
         assert!(
-            corners.iter().any(|c| (c.y - to.y).abs() < 0.1),
-            "{to:?} is not a cell boundary of the right street"
+            corners
+                .iter()
+                .any(|c| (c.y - to.y).abs() < 0.1 || ((c.y - to.y).abs() - hw).abs() < 0.1),
+            "{to:?} is not a cell boundary (or an edge on one) of the right street"
         );
+    }
+}
+
+/// BUG-067: a cross street joined to a boundary of a street's cells is placed with its near
+/// EDGE on the boundary, so the block between it and the previous corner is exactly 8 cells, for
+/// every road width of the street and of the cross street.
+#[test]
+fn a_cross_street_on_a_tick_leaves_exactly_8_cells_before_it() {
+    use cp_net::{ElevationMode, RoadPathRequest, SnapOptions};
+    for street in ["basic_2l", "medium_4l", "large_6l"] {
+        for cross in ["basic_2l", "medium_4l"] {
+            let (mut sim, db) = sim();
+            let hw_s = db.road(db.road_id(street).unwrap()).width / 2.0;
+            let hw_c = db.road(db.road_id(cross).unwrap()).width / 2.0;
+            let hw_v = db.road(db.road_id("basic_2l").unwrap()).width / 2.0;
+            // A north-south street at x = 4600 and the street east of it, from its edge on.
+            build(
+                &mut sim,
+                &db,
+                Vec2::new(4600.0, 4400.0),
+                Vec2::new(4600.0, 4800.0),
+            );
+            build_road(
+                &mut sim,
+                &db,
+                street,
+                Vec2::new(4600.0, 4600.0),
+                Vec2::new(4900.0, 4600.0),
+            );
+            let view = sim.view();
+            let roads = cp_zone::road_zoning(&db);
+            let mut north: Vec<cp_zone::Mark> = Vec::new();
+            for (id, g) in view.net.segments() {
+                let on_street = (g.curve.p0.z - 4592.0).abs() < 0.1
+                    && (g.curve.p3.z - 4592.0).abs() < 0.1
+                    && g.curve.p3.x.max(g.curve.p0.x) > 4600.5;
+                if on_street {
+                    for side in view.zones.frontage_marks(&view.net, &roads, id) {
+                        north.extend(side.into_iter().filter(|m| m.v.y < 0.0));
+                    }
+                }
+            }
+            north.sort_by(|a, b| a.axis.x.total_cmp(&b.axis.x));
+            north.dedup_by(|a, b| (a.axis.x - b.axis.x).abs() < 0.05);
+            let tick = north[8];
+            assert!(tick.major, "the 8th boundary is a tick");
+            let req = RoadPathRequest {
+                road: db.road_id(cross).unwrap(),
+                path: RoadPath::Straight {
+                    from: Vec2::new(tick.axis.x + 1.5, 4592.0 - hw_s - 2.0),
+                    to: Vec2::new(tick.axis.x + 1.5, 4480.0),
+                },
+                elevation: ElevationMode::Ground,
+                snap: SnapOptions::default(),
+            };
+            let (q, _) = cp_tools::quantized(&view, req, false);
+            let RoadPath::Straight { from, to } = q.path else {
+                panic!("straight");
+            };
+            assert!(
+                (from.x - (tick.axis.x + hw_c)).abs() < 0.05 && (to.x - from.x).abs() < 0.05,
+                "{street}/{cross}: the cross street is at {from:?} -> {to:?}, the tick at {:?} (half width {hw_c})",
+                tick.axis
+            );
+            // Build it and count the cells of the north row between the street's edge and it.
+            build_road(&mut sim, &db, cross, Vec2::new(from.x, 4592.0), to);
+            let view = sim.view();
+            let cells = view
+                .zones
+                .cells_in_rect(
+                    Vec2::new(4600.0 + hw_v, 4592.0 - hw_s - 12.0),
+                    Vec2::new(from.x - hw_c + 0.01, 4592.0 - hw_s),
+                )
+                .into_iter()
+                .filter_map(|c| view.zones.cell_footprint(c).map(|f| (c, f)))
+                .filter(|(c, f)| {
+                    view.zones.is_valid(*c) && (f.c.y - (4592.0 - hw_s - 4.0)).abs() < 3.0
+                })
+                .count();
+            assert_eq!(
+                cells, 8,
+                "{street}/{cross}: {cells} cells between the corner and the cross street"
+            );
+        }
     }
 }

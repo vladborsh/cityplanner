@@ -115,8 +115,8 @@ fn an_end_within_a_cell_of_a_street_joins_it_on_a_tick_as_a_three_way_junction()
         road: Some(road),
         ..Default::default()
     };
-    tool.click(Vec2::new(4651.0, 4700.0));
-    let raw = tool.click(Vec2::new(4651.0, 4600.0 + half + 6.0)).unwrap();
+    tool.click(Vec2::new(4619.0, 4700.0));
+    let raw = tool.click(Vec2::new(4619.0, 4600.0 + half + 6.0)).unwrap();
     let (q, _) = quantized(&sim.view(), raw, false);
     send(
         &mut sim,
@@ -127,10 +127,11 @@ fn an_end_within_a_cell_of_a_street_joins_it_on_a_tick_as_a_three_way_junction()
         }),
     );
     let graph = sim.world().resource::<NetGraph>();
-    // The street's anchor is its start (4600): the tick is 48 m from it.
+    // The street's anchor is its start (4600): the boundary is 16 m from it, and the new street's
+    // near edge stands on it (BUG-067): its axis a half width further on.
     let junction = graph
         .nodes()
-        .find(|(_, n)| (n.pos.x - 4648.0).abs() < 0.6 && (n.pos.z - 4600.0).abs() < 0.6)
+        .find(|(_, n)| (n.pos.x - (4616.0 + half)).abs() < 0.6 && (n.pos.z - 4600.0).abs() < 0.6)
         .expect("a node on the tick");
     assert_eq!(junction.1.segments.len(), 3);
 }

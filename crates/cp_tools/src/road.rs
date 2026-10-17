@@ -240,6 +240,7 @@ pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRe
         content,
         alt,
         marks: &marks,
+        edge_offset: content.road(req.road).width / 2.0,
     };
     let (path, report) = quantize_path(&req, &cx);
     (RoadPathRequest { path, ..req }, report)
@@ -298,13 +299,23 @@ fn zone_marks(
                 continue;
             }
             let Some(first) = marks.first() else { continue };
-            for m in marks {
+            for (i, m) in marks.iter().enumerate() {
+                // Counted from the first boundary on: the way on is towards the next one.
+                let onward = match (
+                    marks.get(i + 1),
+                    i.checked_sub(1).and_then(|k| marks.get(k)),
+                ) {
+                    (Some(n), _) => (n.axis - m.axis).normalize_or_zero(),
+                    (None, Some(p)) => (m.axis - p.axis).normalize_or_zero(),
+                    _ => Vec2::ZERO,
+                };
                 let t = s.curve.tangent(s.curve.arc_table().s_to_t(m.arc));
                 out.push(ControlMark {
                     pos: m.axis,
                     dir: Vec2::new(t.x, t.z).normalize_or_zero(),
                     along: m.arc - first.arc,
                     major: m.major && !m.end,
+                    onward,
                 });
             }
         }

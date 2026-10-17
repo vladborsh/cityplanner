@@ -43,6 +43,9 @@ pub struct StepContext<'a> {
     /// Where the cells of the streets near the path end every 8th column (the zone layout,
     /// BUG-047). Empty: the control points 64 m from the anchor of each stretch stand in.
     pub marks: &'a [ControlMark],
+    /// Half the width of the road being drawn: a street joined to a boundary is placed so that
+    /// its near EDGE stands on it, its axis `edge_offset` further on (BUG-067). 0: the axis.
+    pub edge_offset: f32,
 }
 
 /// A column boundary of the zoning along a street, a candidate for the length step to jump to:
@@ -58,6 +61,9 @@ pub struct ControlMark {
     /// Every 8th column boundary: the length step jumps only to these; a join (rule 1) goes to
     /// the nearest boundary of any kind.
     pub major: bool,
+    /// Unit vector along the street in the direction the cells are counted (away from the cross
+    /// street the front started at).
+    pub onward: Vec2,
 }
 
 /// Where a joined vertex landed, with what the next leg takes as direction references.
@@ -66,6 +72,8 @@ struct Joined {
     node: Option<NodeId>,
     /// For a tick on a segment: the directions along it at that point.
     along: Option<Vec2>,
+    /// How far from the boundary the vertex was placed (the edge offset), zero otherwise.
+    shift: Vec2,
 }
 
 /// Rule 1 for the point `p`.
@@ -96,10 +104,12 @@ fn join(cx: &StepContext, p: Vec2) -> Option<Joined> {
         .filter(|m| m.pos.distance(foot) <= 6.0)
         .min_by(|a, b| a.pos.distance(foot).total_cmp(&b.pos.distance(foot)))
     {
+        let shift = m.onward * cx.edge_offset;
         return Some(Joined {
-            pos: m.pos,
+            pos: m.pos + shift,
             node: None,
             along: Some(m.dir),
+            shift,
         });
     }
     let st = stretch(cx.graph, seg)?;
@@ -128,11 +138,13 @@ fn join(cx: &StepContext, p: Vec2) -> Option<Joined> {
             pos: q,
             node: Some(n),
             along: None,
+            shift: Vec2::ZERO,
         },
         None => Joined {
             pos,
             node: None,
             along: Some(dir_xz(tc.curve.tangent(tt))),
+            shift: Vec2::ZERO,
         },
     })
 }
@@ -307,6 +319,7 @@ pub fn quantize_path(req: &RoadPathRequest, cx: &StepContext) -> (RoadPath, Snap
     let mut refs: Vec<Vec2> = Vec::new();
     let mut report = SnapReport::default();
     let mut stepped_curve = None;
+    let mut last_shift = Vec2::ZERO;
     for (i, &p) in pts.iter().enumerate() {
         report = SnapReport::default();
         let mut joined = if joins { join(cx, p) } else { None };
@@ -327,17 +340,21 @@ pub fn quantize_path(req: &RoadPathRequest, cx: &StepContext) -> (RoadPath, Snap
             let mut best: Option<(f32, Vec2, Vec2)> = None;
             for n in perp {
                 for m in cx.marks.iter().filter(|m| m.pos.distance(j.pos) <= 12.0) {
-                    let off = (m.pos - from).perp_dot(n).abs();
+                    // The same shift as the first vertex got: the street stays perpendicular.
+                    let pos = m.pos + last_shift;
+                    let off = (pos - from).perp_dot(n).abs();
                     if off <= 0.3 && best.is_none_or(|(bo, ..)| off < bo) {
-                        best = Some((off, m.pos, m.dir));
+                        best = Some((off, pos, m.dir));
                     }
                 }
             }
             if let Some((_, pos, dir)) = best {
                 j.pos = pos;
                 j.along = Some(dir);
+                j.shift = last_shift;
             }
         }
+        last_shift = joined.as_ref().map_or(Vec2::ZERO, |j| j.shift);
         let mut next_refs = Vec::new();
         let pos = if let Some(j) = joined {
             report.kind = if j.node.is_some() {
@@ -441,6 +458,7 @@ mod tests {
                 content: db,
                 alt,
                 marks: &[],
+                edge_offset: 0.0,
             },
         )
     }
@@ -585,6 +603,7 @@ mod tests {
             dir: v(1.0, 0.0),
             along: 70.0,
             major: true,
+            onward: v(1.0, 0.0),
         }];
         let path = RoadPath::Straight {
             from: v(0.0, 0.0),
@@ -598,6 +617,7 @@ mod tests {
                 content: &db,
                 alt: false,
                 marks: &marks,
+                edge_offset: 0.0,
             },
         );
         assert!((straight_to(&p).x - 73.0).abs() < 0.05, "{p:?}");

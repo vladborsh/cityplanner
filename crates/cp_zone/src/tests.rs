@@ -1535,6 +1535,33 @@ mod layout_v2 {
         }
     }
 
+    /// BUG-067: at a corner the two sides of the street that leaves it count from the same
+    /// distance, so their columns stand opposite each other.
+    #[test]
+    fn the_two_sides_of_a_street_leaving_a_corner_have_the_same_columns() {
+        let mut w = World::new();
+        w.line("basic_2l", (1000.0, 1000.0), (1000.0, 1100.0));
+        w.line("basic_2l", (1000.0, 1000.0), (1160.0, 1000.0));
+        w.sync();
+        let cells = valid_cells(&w.grid);
+        let row = |sign: f32| {
+            let mut xs: Vec<f32> = cells
+                .iter()
+                .filter(|(_, o)| (o.c.y - 1000.0) * sign > H && (o.c.y - 1000.0) * sign < H + 8.0)
+                .filter(|(_, o)| o.c.x > 1000.0 + H)
+                .map(|(_, o)| o.c.x)
+                .collect();
+            xs.sort_by(f32::total_cmp);
+            xs
+        };
+        let (north, south) = (row(-1.0), row(1.0));
+        assert!(north.len() >= 15, "{} cells", north.len());
+        assert_eq!(north.len(), south.len(), "{north:?} against {south:?}");
+        for (a, b) in north.iter().zip(&south) {
+            assert!((a - b).abs() < 0.05, "{north:?} against {south:?}");
+        }
+    }
+
     #[test]
     fn a_30_degree_street_and_a_curve_leave_no_cell_on_another() {
         let mut w = World::new();

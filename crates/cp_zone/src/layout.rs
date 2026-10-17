@@ -443,6 +443,45 @@ fn facing_gap(
     best
 }
 
+/// How the two ends of `f` count (BUG-067): a street without a cross street along it has one
+/// start for both of its sides. When the other side of the same stretch of street ends at a
+/// cross street (`Edge(d)`) where `f` runs to the node (`Open`, the convex side of a corner),
+/// `f` starts at the same distance `d`, so the columns of the two sides stand opposite each
+/// other and the ticks match.
+fn shared_ends(
+    net: &NetGraph,
+    roads: &dyn Fn(RoadDefId) -> RoadZoning,
+    f: &Frontage,
+) -> (FrontEnd, FrontEnd) {
+    let (mut start, mut end) = (f.start, f.end);
+    if !(matches!(start, FrontEnd::Open) || matches!(end, FrontEnd::Open)) {
+        return (start, end);
+    }
+    let Some(&(first, _)) = f.segs.first() else {
+        return (start, end);
+    };
+    let Some(g) = frontage_of(net, roads, first, f.block_side(0).flip()) else {
+        return (start, end);
+    };
+    let ids = |x: &Frontage| x.segs.iter().map(|(s, _)| *s).collect::<BTreeSet<_>>();
+    if g.segs.len() != f.segs.len() || ids(&g) != ids(f) {
+        return (start, end);
+    }
+    // Same stretch: the other side's ends in this frontage's direction.
+    let (g_start, g_end) = if g.segs.first().map(|s| s.0) == f.segs.first().map(|s| s.0) {
+        (g.start, g.end)
+    } else {
+        (g.end, g.start)
+    };
+    if let (FrontEnd::Open, FrontEnd::Edge(d)) = (start, g_start) {
+        start = FrontEnd::Edge(d);
+    }
+    if let (FrontEnd::Open, FrontEnd::Edge(d)) = (end, g_end) {
+        end = FrontEnd::Edge(d);
+    }
+    (start, end)
+}
+
 /// The blocks of one frontage: where its columns stand and how deep its rows are.
 pub(crate) fn layout_frontage(
     net: &NetGraph,
@@ -472,12 +511,13 @@ pub(crate) fn layout_frontage(
     };
     let inner = roads(first.road).half_width;
     let total = run;
-    let a0 = match f.start {
+    let (f_start, f_end) = shared_ends(net, roads, f);
+    let a0 = match f_start {
         FrontEnd::Edge(d) => d,
         FrontEnd::Open => 0.0,
     };
     let a1 = total
-        - match f.end {
+        - match f_end {
             FrontEnd::Edge(d) => d,
             FrontEnd::Open => 0.0,
         };
@@ -486,7 +526,7 @@ pub(crate) fn layout_frontage(
         return Vec::new();
     }
     let straight = is_straight(&parts);
-    let both_edges = matches!(f.start, FrontEnd::Edge(_)) && matches!(f.end, FrontEnd::Edge(_));
+    let both_edges = matches!(f_start, FrontEnd::Edge(_)) && matches!(f_end, FrontEnd::Edge(_));
     // The row depth of the frontages facing a block is fitted to the gap only within `reach`
     // (see below); a block longer than that keeps the standard 8 m cell on both axes, or the
     // perpendicular frontages would not share one lattice (BUG-056).
@@ -497,7 +537,7 @@ pub(crate) fn layout_frontage(
         (n, pitch, a0)
     } else {
         let n = ((l + 0.01) / CELL_SIZE).floor() as u32;
-        let origin = if matches!(f.start, FrontEnd::Open) && matches!(f.end, FrontEnd::Edge(_)) {
+        let origin = if matches!(f_start, FrontEnd::Open) && matches!(f_end, FrontEnd::Edge(_)) {
             a1 - n as f32 * CELL_SIZE
         } else {
             a0
