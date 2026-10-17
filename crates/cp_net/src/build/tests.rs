@@ -118,6 +118,7 @@ fn kinds(e: &[RoadBuildError]) -> Vec<&'static str> {
             RoadBuildError::TunnelOnly(_) => "TunnelOnly",
             RoadBuildError::RailCrossesRoad { .. } => "RailCrossesRoad",
             RoadBuildError::TunnelClearance { .. } => "TunnelClearance",
+            RoadBuildError::ElevatedClearance { .. } => "ElevatedClearance",
         })
         .collect()
 }
@@ -1214,4 +1215,168 @@ fn track_and_road_do_not_share_a_node() {
     );
     assert!(plan.splits.is_empty());
     let _ = road;
+}
+
+// ----- T-064: crossings of raised roads, ramps, short raised pieces -----
+
+fn raised(w: &W, road: &str, from: Vec2, to: Vec2, h: f32) -> RoadPathRequest {
+    RoadPathRequest {
+        road: w.road(road),
+        path: RoadPath::Straight { from, to },
+        elevation: ElevationMode::Elevated(h),
+        snap: no_snap(),
+    }
+}
+
+/// Raised roads that cross: the same level meets in a node, a gap under the clearance is
+/// refused, a bigger one passes.
+#[test]
+fn raised_roads_cross_in_a_node_at_one_level_and_are_refused_or_pass_at_others() {
+    let mut w = W::new();
+    // An existing deck 5 m above the 100 m ground, along x.
+    w.add_as(
+        "basic_2l",
+        at(-150.0, 0.0),
+        at(150.0, 0.0),
+        105.0,
+        Elevation::Elevated,
+    );
+    // The same level: a node on the old deck.
+    let same = w
+        .run(&raised(
+            &w,
+            "basic_2l",
+            at(0.0, -200.0),
+            at(0.0, 200.0),
+            5.0,
+        ))
+        .unwrap();
+    assert_eq!(same.splits.len(), 1, "the crossing is a node");
+    // 7.5 m: 2.5 m under the old deck is neither one level nor clear of it.
+    let close = w
+        .run(&raised(
+            &w,
+            "basic_2l",
+            at(0.0, -200.0),
+            at(0.0, 200.0),
+            7.5,
+        ))
+        .unwrap_err();
+    assert_eq!(kinds(&close), ["ElevatedClearance"]);
+    // 10 m: 5 m over the old deck, clear.
+    let clear = w
+        .run(&raised(
+            &w,
+            "basic_2l",
+            at(0.0, -200.0),
+            at(0.0, 200.0),
+            10.0,
+        ))
+        .unwrap();
+    assert!(clear.splits.is_empty());
+}
+
+/// Property: random pairs of raised roads never cross closer than the clearance without a node
+/// (the plan splits the old deck where they meet).
+#[test]
+fn random_raised_pairs_never_cross_without_a_node_under_the_clearance() {
+    let mut seed = 0x2545_F491u32;
+    let mut rnd = |lo: f32, hi: f32| {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        lo + (seed >> 8) as f32 / (1u32 << 24) as f32 * (hi - lo)
+    };
+    let mut crossings = 0;
+    for _ in 0..400 {
+        let mut w = W::new();
+        let h1 = [5.0f32, 10.0][(rnd(0.0, 2.0) as usize).min(1)];
+        let (a, b) = (
+            at(rnd(-250.0, -150.0), rnd(-60.0, 60.0)),
+            at(rnd(150.0, 250.0), rnd(-60.0, 60.0)),
+        );
+        let old = w.add_as("basic_2l", a, b, 100.0 + h1, Elevation::Elevated);
+        let h2 = [5.0f32, 7.5, 10.0][(rnd(0.0, 3.0) as usize).min(2)];
+        let (c, d) = (
+            at(rnd(-60.0, 60.0), rnd(-250.0, -150.0)),
+            at(rnd(-60.0, 60.0), rnd(150.0, 250.0)),
+        );
+        let Ok(plan) = w.run(&raised(&w, "basic_2l", c, d, h2)) else {
+            continue;
+        };
+        let old_curve = w.graph.segment(old).unwrap().curve;
+        for s in &plan.segments {
+            for (tc, to) in s.curve.intersect_xz(&old_curve) {
+                if !(0.002..=0.998).contains(&tc) || !(0.002..=0.998).contains(&to) {
+                    continue;
+                }
+                crossings += 1;
+                let gap = (s.curve.point(tc).y - old_curve.point(to).y).abs();
+                if gap < ELEVATED_CLEARANCE {
+                    assert!(
+                        plan.splits
+                            .iter()
+                            .any(|sp| sp.segment == old && (sp.t - to).abs() < 0.02),
+                        "a crossing with a gap of {gap} m and no node"
+                    );
+                }
+            }
+        }
+    }
+    assert!(crossings > 10, "{crossings} crossings tried");
+}
+
+/// A ramp from the ground up to a raised node: 100 m up 6 m is the highway's 6 %, 100 m up 12 m
+/// is too steep.
+#[test]
+fn a_highway_ramp_of_6_percent_builds_and_12_percent_is_refused() {
+    for (h, ok) in [(6.0f32, true), (12.0, false)] {
+        let mut w = W::new();
+        // A raised highway deck standing at `h`, from x = 200 to 400.
+        w.add_as(
+            "highway_1w_2l",
+            at(200.0, 0.0),
+            at(400.0, 0.0),
+            100.0 + h,
+            Elevation::Elevated,
+        );
+        let ramp = RoadPathRequest {
+            road: w.road("highway_1w_2l"),
+            path: RoadPath::Straight {
+                from: at(100.0, 0.0),
+                to: at(200.0, 0.0),
+            },
+            elevation: ElevationMode::Elevated(h),
+            snap: SnapOptions::default(),
+        };
+        let r = w.run(&ramp);
+        assert_eq!(r.is_ok(), ok, "{h} m over 100 m: {r:?}");
+        if !ok {
+            assert!(kinds(&r.unwrap_err()).contains(&"TooSteep"));
+        }
+    }
+}
+
+/// A raised path that ends a few metres past a crossing: the short last piece is cut off and the
+/// path ends on the crossing node instead of being refused (on the ground it is refused).
+#[test]
+fn a_short_raised_tail_past_a_crossing_is_cut_off() {
+    let mut w = W::new();
+    w.add_as(
+        "basic_2l",
+        at(200.0, -150.0),
+        at(200.0, 150.0),
+        105.0,
+        Elevation::Elevated,
+    );
+    let plan = w
+        .run(&raised(&w, "basic_2l", at(-60.0, 0.0), at(205.0, 0.0), 5.0))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(plan.splits.len(), 1, "a node on the old deck");
+    let last = plan.segments.last().unwrap();
+    assert!(
+        (last.curve.p3.x - at(200.0, 0.0).x).abs() < 0.5,
+        "the path ends on the crossing, not 5 m after it: {:?}",
+        last.curve.p3
+    );
 }

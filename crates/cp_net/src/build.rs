@@ -73,6 +73,16 @@ pub const SAME_DEPTH_TOL: f32 = 1.5;
 pub const TUNNEL_CLEARANCE: f32 = 5.0;
 /// Deepest tunnel axis below the terrain, metres.
 pub const MAX_TUNNEL_DEPTH: f32 = 60.0;
+/// Smallest vertical gap (deck to deck, metres) between two raised roads that cross without a
+/// node (T-064); a crossing at the same level (within [`SAME_DEPTH_TOL`]) is a node, one with
+/// a gap between the two is refused.
+pub const ELEVATED_CLEARANCE: f32 = 5.0;
+/// Spacing of the water samples under a raised piece, metres (T-064; was 4).
+const WATER_SAMPLE_STEP: f32 = 2.0;
+/// The share of a road's `max_slope` its ramps use (a hair under, so rounding never makes a ramp
+/// steeper than the road may be), and the slack of the piece check.
+const RAMP_SLOPE_SHARE: f32 = 0.9995;
+const SLOPE_EPS: f32 = 1e-4;
 /// Crossings closer than this (metres) to an auto-cut point replace it.
 const CUT_MERGE: f32 = 0.5;
 
@@ -284,6 +294,12 @@ impl std::fmt::Display for RoadBuildError {
             Self::NoTunnelVariant(_) => write!(f, "this road type cannot go underground"),
             Self::TunnelOnly(_) => write!(f, "this track can only be built in a tunnel"),
             Self::RailCrossesRoad { .. } => write!(f, "track and road cannot cross at one level"),
+            Self::ElevatedClearance { .. } => {
+                write!(
+                    f,
+                    "roads crossing here need {ELEVATED_CLEARANCE:.0} m between the decks (or one level)"
+                )
+            }
             Self::TunnelClearance { .. } => {
                 write!(
                     f,
@@ -347,6 +363,10 @@ pub enum RoadBuildError {
     /// A path at ground level would cross a segment of the other kind (track against road)
     /// without a bridge: they never share a node and never cross in the level.
     RailCrossesRoad {
+        pos: Vec3,
+    },
+    /// Two raised roads cross closer than [`ELEVATED_CLEARANCE`] but not on one level (T-064).
+    ElevatedClearance {
         pos: Vec3,
     },
     /// Two tunnels cross closer than [`TUNNEL_CLEARANCE`] but not on one depth.
@@ -652,7 +672,7 @@ fn lift(piece: CubicBezier3, a: Vec3, b: Vec3) -> CubicBezier3 {
 
 /// Whether any sample along a planar-projected piece is over water.
 fn piece_over_water(terrain: &Terrain, curve: &CubicBezier3, length: f32) -> bool {
-    let steps = ((length / SAMPLE_STEP).ceil() as usize).max(1);
+    let steps = ((length / WATER_SAMPLE_STEP).ceil() as usize).max(1);
     (0..=steps).any(|k| terrain.is_water(to_xz(curve.point(k as f32 / steps as f32))))
 }
 
@@ -855,6 +875,15 @@ fn validate_inner(
 
     // --- cut legs into pieces ---
     let mut segments: Vec<PlannedSegment> = Vec::new();
+    // For the height of a raised road at a crossing: how far along the path it is and the
+    // ramp it climbs (the ends stand on the ground), see below.
+    let path_len: f32 = verts.windows(2).map(|w| w[0].pos.distance(w[1].pos)).sum();
+    let ramp_slope = def.max_slope * RAMP_SLOPE_SHARE;
+    let (ground0, ground1) = (
+        verts.first().map_or(0.0, |v| terrain.height(v.pos)),
+        verts.last().map_or(0.0, |v| terrain.height(v.pos)),
+    );
+    let mut done_len = 0.0f32;
     for (li, w) in verts.windows(2).enumerate() {
         let (v0, v1) = (&w[0], &w[1]);
         if v0.node == v1.node {
@@ -877,6 +906,46 @@ fn validate_inner(
         // so an automatic cut can never land a few metres from a crossing; a span that really
         // is shorter than MIN_SEGMENT_LENGTH_BUILD is reported by the per-piece check below.
         let mut fixed: Vec<(f32, NodeRef)> = Vec::new();
+        if elevated {
+            // Two raised roads that cross: the same level meets in a node, a gap under the
+            // clearance is refused, a bigger one passes (T-064).
+            for (sid, seg) in graph.segments() {
+                if !matches!(seg.elevation, Elevation::Elevated | Elevation::Bridge) {
+                    continue;
+                }
+                for (tc, ts) in leg.intersect_xz(&seg.curve) {
+                    if !(0.002..=0.998).contains(&tc) || !(0.002..=0.998).contains(&ts) {
+                        continue;
+                    }
+                    let at = seg.curve.point(ts);
+                    // The deck there: its height over the ground, less where it still climbs
+                    // its ramp from the ends of the path.
+                    let s_here = done_len + tab.t_to_s(tc);
+                    let mine = b
+                        .ground_y(to_xz(leg.point(tc)))
+                        .min(ground0 + ramp_slope * s_here)
+                        .min(ground1 + ramp_slope * (path_len - s_here).max(0.0));
+                    let mut gap = (mine - at.y).abs();
+                    // A path that stops a few metres past (or starts a few metres before) an old
+                    // deck ends on it: the short piece is cut off, so the deck is where it joins.
+                    if s_here < MIN_SEGMENT_LENGTH_BUILD
+                        || path_len - s_here < MIN_SEGMENT_LENGTH_BUILD
+                    {
+                        gap = 0.0;
+                    }
+                    if gap > SAME_DEPTH_TOL {
+                        if gap < ELEVATED_CLEARANCE {
+                            errors.push(RoadBuildError::ElevatedClearance { pos: at });
+                        }
+                        continue;
+                    }
+                    let r = b.split_at(sid, ts);
+                    if !fixed.iter().any(|(_, nd)| *nd == r) {
+                        fixed.push((tc, r));
+                    }
+                }
+            }
+        }
         if !elevated {
             let level = if tunnel {
                 Elevation::Tunnel
@@ -928,6 +997,38 @@ fn validate_inner(
             bounds.push((t_end.unwrap_or(1.0), Some(node)));
             span_start = s_end;
         }
+        // A raised piece shorter than the minimum is not a reason to refuse the path: the
+        // automatic cut beside it goes, and the neighbour grows to take its place (T-064).
+        if elevated {
+            while let Some(i) = (1..bounds.len().saturating_sub(1)).find(|&i| {
+                bounds[i].1.is_none()
+                    && (tab.t_to_s(bounds[i].0) - tab.t_to_s(bounds[i - 1].0)
+                        < MIN_SEGMENT_LENGTH_BUILD
+                        || tab.t_to_s(bounds[i + 1].0) - tab.t_to_s(bounds[i].0)
+                            < MIN_SEGMENT_LENGTH_BUILD)
+            }) {
+                bounds.remove(i);
+            }
+            // The first or last piece of the whole path that is shorter than the minimum, next to
+            // a crossing, is cut off: the path then starts or ends on the crossing node.
+            let piece = |bs: &[(f32, Option<NodeRef>)], a: usize| {
+                tab.t_to_s(bs[a + 1].0) - tab.t_to_s(bs[a].0)
+            };
+            if li + 2 == verts.len()
+                && bounds.len() >= 3
+                && piece(&bounds, bounds.len() - 2) < MIN_SEGMENT_LENGTH_BUILD
+                && bounds[bounds.len() - 2].1.is_some()
+            {
+                bounds.pop();
+            }
+            if li == 0
+                && bounds.len() >= 3
+                && piece(&bounds, 0) < MIN_SEGMENT_LENGTH_BUILD
+                && bounds[1].1.is_some()
+            {
+                bounds.remove(0);
+            }
+        }
         let mut nodes: Vec<NodeRef> = Vec::with_capacity(bounds.len());
         for (t, nd) in &bounds {
             nodes.push(match nd {
@@ -963,13 +1064,14 @@ fn validate_inner(
                 cost: segment_cost(length, price),
             });
         }
+        done_len += len;
     }
 
     // --- ramps: an elevated path starts and ends at ground level; so does a road tunnel (its
     // portals, T-173), dipping down to its depth instead of rising ---
     let road_tunnel = tunnel && !rail;
     if elevated || road_tunnel {
-        let slope = def.max_slope * 0.98;
+        let slope = ramp_slope;
         let price = |e: Elevation| match e {
             Elevation::Bridge => def.bridge.as_ref().map_or(cost_per_m, |v| v.cost_per_m),
             _ => cost_per_m,
@@ -989,6 +1091,8 @@ fn validate_inner(
                 .enumerate()
                 .map(|(k, &n)| match n {
                     NodeRef::Existing(id) => Some(graph.node(id).expect("exists").pos.y),
+                    // A node made on a crossing road is where that road is.
+                    NodeRef::Split(i) => Some(b.splits[i].pos.y),
                     NodeRef::New(i) if k == 0 || k == last => {
                         Some(terrain.height(to_xz(b.new_nodes[i])))
                     }
@@ -1003,20 +1107,34 @@ fn validate_inner(
                     continue;
                 }
                 let mut y = target[k];
+                let (mut lo, mut hi) = (f32::NEG_INFINITY, f32::INFINITY);
                 for (f, fy) in fixed.iter().enumerate() {
                     if let Some(fy) = fy {
                         let reach = slope * (at_s[k] - at_s[f]).abs();
-                        y = if road_tunnel {
-                            y.max(fy - reach)
+                        if road_tunnel {
+                            y = y.max(fy - reach);
+                            hi = hi.min(fy + reach);
                         } else {
-                            y.min(fy + reach)
-                        };
+                            y = y.min(fy + reach);
+                            lo = lo.max(fy - reach);
+                        }
                     }
                 }
+                // Within what every fixed node allows (a ramp to a raised node that already
+                // stands, T-064); when nothing fits the piece is steeper than the road may be and
+                // the piece check below says so.
+                y = if road_tunnel { y.min(hi) } else { y.max(lo) };
                 ys[k] = y;
                 reached |= (y - target[k]).abs() <= 1e-3;
             }
-            if !reached {
+            // A path that ends on a raised node that already stands is a ramp up to it: the
+            // heights in between follow the nodes, the slope of every piece is checked below.
+            let ramp_to_raised = elevated
+                && nodes.iter().zip(&fixed).any(|(&n, f)| {
+                    matches!(n, NodeRef::Existing(_))
+                        && f.is_some_and(|y| y > terrain.height(to_xz(b.node_pos(n))) + 0.5)
+                });
+            if !reached && !ramp_to_raised {
                 errors.push(RoadBuildError::RampTooShort {
                     pos: b.node_pos(nodes[0]),
                 });
@@ -1044,6 +1162,36 @@ fn validate_inner(
                 sg.curve = lift(sg.curve, pa, pb);
                 sg.length = sg.curve.arc_table().length();
                 sg.cost = segment_cost(sg.length, price(sg.elevation));
+            }
+        }
+    }
+
+    // --- raised crossings, once the ramps have set the heights: whatever crosses an old deck
+    // closer than the clearance without a node is refused (T-064) ---
+    if elevated {
+        for s in &segments {
+            for (sid, old) in graph.segments() {
+                if !matches!(old.elevation, Elevation::Elevated | Elevation::Bridge) {
+                    continue;
+                }
+                for (tc, ts) in s.curve.intersect_xz(&old.curve) {
+                    if !(0.002..=0.998).contains(&tc) || !(0.002..=0.998).contains(&ts) {
+                        continue;
+                    }
+                    let (mine, theirs) = (s.curve.point(tc), old.curve.point(ts));
+                    let noded = b
+                        .splits
+                        .iter()
+                        .any(|sp| sp.segment == sid && (sp.t - ts).abs() < 0.02);
+                    if !noded
+                        && (mine.y - theirs.y).abs() < ELEVATED_CLEARANCE
+                        && !errors
+                            .iter()
+                            .any(|e| matches!(e, RoadBuildError::ElevatedClearance { .. }))
+                    {
+                        errors.push(RoadBuildError::ElevatedClearance { pos: theirs });
+                    }
+                }
             }
         }
     }
@@ -1094,7 +1242,7 @@ fn validate_inner(
             errors.push(RoadBuildError::TileNotOwned { pos });
         }
         if let Some((slope, pos)) = worst
-            && slope > def.max_slope
+            && slope > def.max_slope + SLOPE_EPS
         {
             errors.push(RoadBuildError::TooSteep {
                 pos,
