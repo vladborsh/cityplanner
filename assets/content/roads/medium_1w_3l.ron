@@ -1,0 +1,26 @@
+Road((
+    id: "medium_1w_3l",
+    name: "Collector (3 lanes, one-way)",
+    class: Collector,
+    width: 15.5,
+    lanes: [
+        (kind: Pedestrian, dir: Forward, width: 2.5, offset: 6.5),
+        (kind: Car, dir: Forward, width: 3.5, offset: 3.5),
+        (kind: Car, dir: Forward, width: 3.5, offset: 0.0),
+        (kind: Car, dir: Forward, width: 3.5, offset: -3.5),
+        (kind: Pedestrian, dir: Forward, width: 2.5, offset: -6.5),
+    ],
+    median_width: 0.0,
+    speed_kmh: 50,
+    max_slope: 0.12,
+    cost_per_m: 13.0,
+    upkeep_per_m_week: 0.13,
+    allows_zoning: true,
+    rank: 2,
+    elevated: Some((cost_per_m: 39.0, upkeep_per_m_week: 0.26, mesh: "road/medium_1w_3l_elevated")),
+    bridge: Some((cost_per_m: 78.0, upkeep_per_m_week: 0.39, mesh: "road/medium_1w_3l_bridge")),
+    // Road tunnel (T-173): ramps down from the surface at the road's max_slope. Numbers: tune later.
+    tunnel: Some((cost_per_m: 52.0, upkeep_per_m_week: 0.39, mesh: "road/medium_1w_3l_tunnel", depth: 12.0)),
+    mesh: "road/medium_1w_3l",
+    material: "road/asphalt",
+))

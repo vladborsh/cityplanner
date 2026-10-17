@@ -897,18 +897,20 @@ mod tests {
     #[test]
     fn loads_shipped_content() {
         let db = real();
-        assert_eq!(db.roads().count(), 9);
+        assert_eq!(db.roads().count(), 11);
         // Dense ids follow sorted string ids.
         let names: Vec<_> = db.roads().map(|(_, d)| d.id.as_str()).collect();
         assert_eq!(
             names,
             [
+                "basic_1w_2l",
                 "basic_2l",
                 "highway_1w_1l",
                 "highway_1w_2l",
                 "highway_1w_3l",
                 "highway_1w_4l",
                 "large_6l",
+                "medium_1w_3l",
                 "medium_4l",
                 "metro_track",
                 "rail_2t"

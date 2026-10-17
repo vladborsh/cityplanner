@@ -163,10 +163,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0x8e37ce06a3ec6e2f, "state at load");
+    assert_eq!(sim.checksum(), 0x4b8b7318f7ba1d57, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x300ded64ea98fb0e,
+        0xc1b04f016d3e00f6,
         "load + 4096 ticks"
     );
 }
@@ -192,7 +192,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0x3f40fc80b3bbbab, "state at load");
+    assert_eq!(sim.checksum(), 0xa99a879bab83c271, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -200,7 +200,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x20ec57683cb75ab5, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x227c4505388b7d77, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,
@@ -243,4 +243,28 @@ fn a_save_with_sick_citizens_resumes_like_the_continuous_run() {
             .count()
     };
     assert_eq!(sick(&a), sick(&b));
+}
+
+/// T-172: new roads sort between the old ones, so the dense road indices of the content moved;
+/// an old save names its roads and still gets the same types.
+#[test]
+fn an_old_save_keeps_its_road_types_when_roads_are_added() {
+    let (_, content) = env();
+    let l = load_with_map(&fixture("m1-small.sav"), content.content_hash(), None).unwrap();
+    let saved = &l.data.def_names.roads;
+    assert!(saved.iter().any(|n| n == "basic_2l"));
+    assert!(
+        !saved
+            .iter()
+            .any(|n| n.contains("1w_2l") && n.starts_with("basic"))
+    );
+    let sim = loaded(&fixture("m1-small.sav"));
+    let net = sim.world().resource::<cp_net::NetGraph>();
+    let mut used = 0;
+    for (_, s) in net.segments() {
+        let name = &content.road(s.road).id;
+        assert!(saved.contains(name), "{name} was not in the save");
+        used += 1;
+    }
+    assert!(used > 0);
 }

@@ -270,6 +270,23 @@ fn one_way_roads_cannot_be_driven_backwards() {
     assert_eq!(back, Err(NoPath));
 }
 
+/// T-172: the one-way streets with sidewalks drive like the highways: with the arrows only.
+#[test]
+fn one_way_streets_cannot_be_driven_backwards() {
+    for road in ["basic_1w_2l", "medium_1w_3l"] {
+        let mut s = sim();
+        let a = s.seg_with(road, (1000.0, 1000.0), (1100.0, 1000.0));
+        let b = s.seg_with(road, (1100.0, 1000.0), (1200.0, 1000.0));
+        let fwd = car_path(s.solve(car(acc(a, 10.0, Side::Right), acc(b, 90.0, Side::Right))));
+        assert!(fwd.is_ok(), "{road}");
+        let back = car_path(s.solve(car(acc(b, 90.0, Side::Right), acc(a, 10.0, Side::Right))));
+        assert_eq!(back, Err(NoPath), "{road}");
+        // The sidewalks go both ways.
+        let walk = ped_path(s.solve(ped(acc(b, 90.0, Side::Right), acc(a, 10.0, Side::Right))));
+        assert!(walk.is_ok(), "{road}");
+    }
+}
+
 #[test]
 fn disconnected_networks_have_no_path_for_either_mode() {
     let mut s = sim();

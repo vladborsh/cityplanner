@@ -1,0 +1,25 @@
+Road((
+    id: "basic_1w_2l",
+    name: "Local street (one-way)",
+    class: Local,
+    width: 12.0,
+    lanes: [
+        (kind: Pedestrian, dir: Forward, width: 2.5, offset: 4.75),
+        (kind: Car, dir: Forward, width: 3.5, offset: 1.75),
+        (kind: Car, dir: Forward, width: 3.5, offset: -1.75),
+        (kind: Pedestrian, dir: Forward, width: 2.5, offset: -4.75),
+    ],
+    median_width: 0.0,
+    speed_kmh: 40,
+    max_slope: 0.12,
+    cost_per_m: 10.0,
+    upkeep_per_m_week: 0.1,
+    allows_zoning: true,
+    rank: 1,
+    elevated: Some((cost_per_m: 30.0, upkeep_per_m_week: 0.2, mesh: "road/basic_1w_2l_elevated")),
+    bridge: Some((cost_per_m: 60.0, upkeep_per_m_week: 0.30000000000000004, mesh: "road/basic_1w_2l_bridge")),
+    // Road tunnel (T-173): ramps down from the surface at the road's max_slope. Numbers: tune later.
+    tunnel: Some((cost_per_m: 40.0, upkeep_per_m_week: 0.30, mesh: "road/basic_1w_2l_tunnel", depth: 12.0)),
+    mesh: "road/basic_1w_2l",
+    material: "road/asphalt",
+))

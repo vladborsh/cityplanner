@@ -54,9 +54,9 @@ fn mutate(file: &str, from: &str, to: &str) -> Vec<(String, String)> {
 }
 
 #[test]
-fn committed_content_loads_with_nine_road_types_seven_roads_and_two_tracks() {
+fn committed_content_loads_with_eleven_road_types_nine_roads_and_two_tracks() {
     let db = ContentDb::load_dir(root()).unwrap();
-    assert_eq!(db.roads().count(), 9);
+    assert_eq!(db.roads().count(), 11);
     let want = [
         ("basic_2l", RoadClass::Local, "Local street", false),
         (
@@ -126,17 +126,38 @@ fn committed_content_loads_with_nine_road_types_seven_roads_and_two_tracks() {
     assert_eq!(
         ids,
         [
+            "basic_1w_2l",
             "basic_2l",
             "highway_1w_1l",
             "highway_1w_2l",
             "highway_1w_3l",
             "highway_1w_4l",
             "large_6l",
+            "medium_1w_3l",
             "medium_4l",
             "metro_track",
             "rail_2t"
         ]
     );
+    // T-172: one-way streets with sidewalks and zoning on both sides.
+    for (id, class, cars, speed) in [
+        ("basic_1w_2l", RoadClass::Local, 2, 40.0),
+        ("medium_1w_3l", RoadClass::Collector, 3, 50.0),
+    ] {
+        let r = db.road(db.road_id(id).unwrap());
+        assert_eq!((r.class, r.speed_kmh), (class, speed), "{id}");
+        assert!(r.is_one_way() && r.allows_zoning, "{id}");
+        let count = |k| r.lanes.iter().filter(|l| l.kind == k).count();
+        assert_eq!(
+            (count(LaneKind::Car), count(LaneKind::Pedestrian)),
+            (cars, 2),
+            "{id}"
+        );
+        assert!(
+            r.elevated.is_some() && r.bridge.is_some() && r.tunnel.is_some(),
+            "{id}"
+        );
+    }
     let house = db.building(db.building_id("house_low_1").unwrap());
     assert_eq!(house.zone, ZoneType::ResLow);
 }

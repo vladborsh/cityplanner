@@ -396,6 +396,8 @@ mod tests {
         let content = content();
         let road = |id: &str| content.road(content.road_id(id).unwrap());
         assert_eq!(arrows(road("basic_2l")), 0);
+        // T-172: one-way streets with sidewalks show the arrows of their cars lanes too.
+        assert!(arrows(road("basic_1w_2l")) > 0 && arrows(road("medium_1w_3l")) > 0);
         assert!(arrows(road("highway_1w_1l")) > 0);
         assert!(arrows(road("highway_1w_4l")) > arrows(road("highway_1w_1l")));
     }
