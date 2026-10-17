@@ -83,6 +83,8 @@
 //! have children once per game day, so the state after a day moves. The state at load is
 //! unchanged (no serialized type changed).
 //!
+//! **T-223.** Re-recorded again, all four values: the 26 park buildings and the new service move the dense building ids.
+//!
 //! **T-208.** Re-recorded again, all four values: the 24 chain buildings and the new service move the dense building ids.
 //!
 //! **T-205 (save v41).** Re-recorded again, all four values: a fixture older than v41 gets its
@@ -178,10 +180,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0x55bee8bba2b0dbd4, "state at load");
+    assert_eq!(sim.checksum(), 0xd8da448c95dfec95, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0xa6049cdf0a871c13,
+        0xc7271864d7461cce,
         "load + 4096 ticks"
     );
 }
@@ -207,7 +209,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0x92685f3bce0dad8c, "state at load");
+    assert_eq!(sim.checksum(), 0xe96f67b1ba2b3853, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -215,7 +217,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x4b45ab9423c71d3d, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x5ff213d4eea9ea3, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

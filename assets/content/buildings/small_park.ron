@@ -14,4 +14,5 @@ Building((
     service: Some("park"),
     icon: "small_park",
     land_effect: Some((add: 12.0, radius_m: 100.0, green: 0.35)),
+    park: Some((role: Attraction, attract: 8.0, capacity: 30)),
 ))

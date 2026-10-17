@@ -1,0 +1,11 @@
+// The free-standing buildings of the park areas (T-223): attractions and props stand inside an area, away from roads (like the water tower). No coverage. Numbers: tune later.
+Service((
+    id: "park_free",
+    name: "Park (free-standing)",
+    kind: Park,
+    radius_m: 100.0,
+    capacity: 1,
+    site: Land,
+    road_access: false,
+    vehicles: [],
+))

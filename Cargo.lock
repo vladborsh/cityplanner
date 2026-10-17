@@ -2582,6 +2582,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cp_park"
+version = "0.0.0"
+dependencies = [
+ "bevy_ecs",
+ "cp_building",
+ "cp_content",
+ "cp_core",
+ "cp_district",
+ "serde",
+]
+
+[[package]]
 name = "cp_prof"
 version = "0.0.0"
 dependencies = [
@@ -2627,6 +2639,7 @@ dependencies = [
  "cp_economy",
  "cp_industry",
  "cp_net",
+ "cp_park",
  "cp_service",
  "cp_sim",
  "cp_terrain",
@@ -2671,6 +2684,7 @@ dependencies = [
  "cp_economy",
  "cp_industry",
  "cp_net",
+ "cp_park",
  "cp_service",
  "cp_terrain",
  "cp_traffic",

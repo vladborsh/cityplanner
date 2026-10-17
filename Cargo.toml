@@ -54,6 +54,7 @@ cp_citizen = { path = "crates/cp_citizen" }
 cp_traffic = { path = "crates/cp_traffic" }
 cp_transit = { path = "crates/cp_transit" }
 cp_industry = { path = "crates/cp_industry" }
+cp_park = { path = "crates/cp_park" }
 cp_utility = { path = "crates/cp_utility" }
 cp_district = { path = "crates/cp_district" }
 cp_service = { path = "crates/cp_service" }

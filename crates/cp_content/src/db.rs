@@ -6,7 +6,9 @@ use std::path::Path;
 
 use crate::defs::*;
 use crate::error::{ContentError, ContentErrors};
-use crate::kinds::{CargoKind, IndustryRole, PolicyKind, SpecKind, ZoneType};
+use crate::kinds::{
+    CargoKind, IndustryRole, ParkRole, PolicyKind, ServiceKind, SpecKind, ZoneType,
+};
 use crate::validate;
 
 /// Default content root, relative to the working directory.
@@ -720,6 +722,56 @@ impl ContentDb {
                         format!("cargo {kind:?} has no definition"),
                     ));
                 }
+            }
+        }
+        // A park building (T-223): a Park service; the gate and the city park stand on a road,
+        // an attraction of an area kind and a prop do not; a prop is one cell.
+        for (i, b) in buildings.defs.iter().enumerate() {
+            let Some(pk) = &b.park else { continue };
+            let mut bad = |field: &str, msg: String| {
+                errors.push(ContentError::new(&buildings.files[i], Some(field), msg));
+            };
+            let service = b
+                .service
+                .as_deref()
+                .and_then(|s| services.defs.iter().find(|d| d.id == s));
+            let Some(service) = service.filter(|s| s.kind == ServiceKind::Park) else {
+                bad(
+                    "park",
+                    "a park building is a service of kind Park".to_string(),
+                );
+                continue;
+            };
+            let (needs_kind, on_road) = match (pk.role, pk.park) {
+                (ParkRole::Gate, _) => (true, true),
+                (ParkRole::Attraction, Some(_)) => (true, false),
+                (ParkRole::Attraction, None) => (false, true),
+                (ParkRole::Prop, _) => (false, false),
+            };
+            if needs_kind != pk.park.is_some() {
+                bad(
+                    "park",
+                    "a gate and an area attraction name their park kind, nothing else does"
+                        .to_string(),
+                );
+            }
+            if service.road_access != on_road {
+                bad(
+                    "park",
+                    format!(
+                        "this role {} a road",
+                        if on_road { "needs" } else { "cannot have" }
+                    ),
+                );
+            }
+            if pk.role == ParkRole::Prop && b.lot != (1, 1) {
+                bad("park", "a prop is one cell (lot 1x1)".to_string());
+            }
+            if pk.min_level > 4 {
+                bad("park", "min_level is 0..=4".to_string());
+            }
+            if !(pk.attract.is_finite() && pk.attract >= 0.0) {
+                bad("park", "attract is not negative".to_string());
             }
         }
         // A specialised building belongs to a zone its specialisation covers, at level 1.

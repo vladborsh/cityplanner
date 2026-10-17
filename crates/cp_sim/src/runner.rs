@@ -152,6 +152,7 @@ impl SimRunner {
         world.init_resource::<cp_content::ServiceUnlocks>();
         world.init_resource::<cp_terrain::ResourceDeposits>();
         world.init_resource::<cp_industry::IndustryState>();
+        world.init_resource::<cp_park::ParkState>();
         world.init_resource::<cp_industry::IndustryLedger>();
         world.init_resource::<cp_industry::WarehouseSettings>();
         world.init_resource::<cp_transit::CargoArrivals>();
@@ -345,6 +346,8 @@ impl SimRunner {
                 cp_industry::run_industry,
                 // Their cargo goes out by truck (T-210).
                 cp_industry::run_freight,
+                // The attractiveness and capacity of the park areas (T-223).
+                cp_park::run_park,
                 // Intercity trains and the households and tourists they bring (T-167).
                 cp_transit::run_intercity,
                 cp_traffic::route_trips,

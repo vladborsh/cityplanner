@@ -112,6 +112,10 @@ pub enum BuildingError {
         pct: u8,
         need_pct: u8,
     },
+    /// A park attraction or prop is not in a park area (of its kind) (T-223).
+    NotInPark(Option<cp_content::ParkKind>),
+    /// A park gate does not touch an area of its kind.
+    GateAway(cp_content::ParkKind),
 }
 
 impl BuildingError {
@@ -160,6 +164,13 @@ impl fmt::Display for BuildingError {
             Self::SecondMain => "the area has its main building already",
             Self::AreaLevel { need, have } => {
                 return write!(f, "needs area level {need} (it is {have})");
+            }
+            Self::NotInPark(Some(k)) => {
+                return write!(f, "must stand inside a {k:?} park area");
+            }
+            Self::NotInPark(None) => "must stand inside a park area",
+            Self::GateAway(k) => {
+                return write!(f, "the gate must touch a {k:?} park area");
             }
             Self::Poor { pct, need_pct } => {
                 return write!(f, "only {pct}% of the resource here, needs {need_pct}%");
@@ -366,6 +377,36 @@ fn check_industry(
     )
 }
 
+/// The park-building rule (T-223) on a plan that passed the geometry checks; a no-op for every
+/// other def.
+fn check_park(
+    world: &World,
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    def: BuildingDefId,
+    plan: &PlacementPlan,
+) -> Result<(), BuildingError> {
+    if db.building(def).park.is_none() {
+        return Ok(());
+    }
+    let (Some(areas), Some(area_map)) = (
+        world.get_resource::<cp_district::Areas>(),
+        world.get_resource::<cp_district::AreaMap>(),
+    ) else {
+        return Err(BuildingError::Missing);
+    };
+    crate::park_site::validate_park_site(
+        &crate::park_site::ParkWorld {
+            db,
+            areas,
+            area_map,
+            zones,
+        },
+        def,
+        plan,
+    )
+}
+
 /// What a `Place` made: the building and, for a station, the segment of its platform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placed {
@@ -499,6 +540,7 @@ pub fn apply_placed(
                     validate_placement(&content.0, zones, net, terrain, tiles, *def, *pos, *rot)?
                 };
                 check_industry(world, &content.0, zones, *def, &plan, None)?;
+                check_park(world, &content.0, zones, *def, &plan)?;
                 (
                     plan,
                     content.0.building(*def).level,
@@ -593,6 +635,7 @@ pub fn apply_placed(
                     )?
                 };
                 check_industry(world, &content.0, zones, def, &plan, Some(*building))?;
+                check_park(world, &content.0, zones, def, &plan)?;
                 let cost = Cost::from_units(content.0.building(def).cost * MOVE_COST_FRACTION);
                 (plan, cost)
             };

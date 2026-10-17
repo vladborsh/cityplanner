@@ -44,7 +44,7 @@
 //! | `PathService` (requests in flight) | yes, as `SavedPaths` |
 //! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `Goods`, `Intercity` (stops, lines, riders, line figures, buses, week's money, tourist visits, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
 //! | `ResourceDeposits` (ore and oil left per 64 m cell; a save from before v41 is filled from the map by `load_into_runner`) | yes |
-//! | `AreaMap`, `Areas`, `IndustryState` (stock and problems of the chain buildings), `IndustryLedger`, `WarehouseSettings` | yes |
+//! | `AreaMap`, `Areas`, `IndustryState` (stock and problems of the chain buildings), `IndustryLedger`, `WarehouseSettings`, `ParkState` (attractiveness, capacity, visitors and fee per park area) | yes |
 //! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
@@ -81,7 +81,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 46;
+pub const FORMAT_VERSION: u32 = 47;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -246,6 +246,8 @@ pub struct SaveData {
     pub industry_ledger: cp_industry::IndustryLedger,
     /// The modes and cargo of the warehouses that were set (T-214). Added in v45.
     pub warehouses: cp_industry::WarehouseSettings,
+    /// The park areas: attractiveness, capacity, visitors, fee (T-223). Added in v47.
+    pub parks: cp_park::ParkState,
 }
 
 impl SaveData {
@@ -325,6 +327,7 @@ impl SaveData {
             industry: world.resource::<cp_industry::IndustryState>().clone(),
             industry_ledger: *world.resource::<cp_industry::IndustryLedger>(),
             warehouses: world.resource::<cp_industry::WarehouseSettings>().clone(),
+            parks: world.resource::<cp_park::ParkState>().clone(),
         }
     }
 
@@ -381,6 +384,7 @@ impl SaveData {
         world.insert_resource(self.industry);
         world.insert_resource(self.industry_ledger);
         world.insert_resource(self.warehouses);
+        world.insert_resource(self.parks);
         // The routes are derived: the first Network phase after the load attaches the stops
         // and plans every line again.
         world.insert_resource(cp_transit::LinePlans::default());

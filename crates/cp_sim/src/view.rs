@@ -78,6 +78,8 @@ pub struct SimView {
     pub warehouses: cp_industry::WarehouseSettings,
     /// Cargo exports and imports of this week and the last settled one (T-210).
     pub industry_ledger: cp_industry::IndustryLedger,
+    /// The park areas: attractiveness, capacity, visitors, fee (T-223).
+    pub parks: cp_park::ParkState,
     pub stats: SimStats,
     /// Derived junction geometry (shortened-segment cut points and polygons) for mesh
     /// building. Compare `junctions.version()` with the last built version; junctions with a
@@ -765,6 +767,11 @@ impl SimRunner {
             warehouses: self
                 .world()
                 .get_resource::<cp_industry::WarehouseSettings>()
+                .cloned()
+                .unwrap_or_default(),
+            parks: self
+                .world()
+                .get_resource::<cp_park::ParkState>()
                 .cloned()
                 .unwrap_or_default(),
             industry_ledger: self

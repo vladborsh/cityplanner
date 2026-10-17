@@ -260,6 +260,18 @@ impl CargoKind {
     }
 }
 
+/// What a building of a park area does (T-223). Append-only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ParkRole {
+    /// The entrance: on a road, touching an area of its kind; visitors arrive here.
+    Gate = 0,
+    /// A draw: in the area, no road; opens at its `min_level`.
+    Attraction = 1,
+    /// A small decoration: any park area, one cell.
+    Prop = 2,
+}
+
 /// What a building of an industrial chain does (T-208). Append-only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(u8)]

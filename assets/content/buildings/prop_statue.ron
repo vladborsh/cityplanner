@@ -1,0 +1,16 @@
+// Numbers: tune later (T-223). Temporary look and icon until the park silhouettes (T-227, T-228).
+Building((
+    id: "prop_statue",
+    name: "Statue",
+    zone: Industrial,
+    level: 1,
+    lot: (1, 1),
+    jobs: (0, 0, 0, 0),
+    consumption: {},
+    tax_base: 0.0,
+    cost: 1200.0,
+    upkeep_week: 22.0,
+    styles: ["com_low_kiosk_shed_a"],
+    service: Some("park_free"),
+    park: Some((role: Prop, attract: 1.0, capacity: 0, min_level: 0)),
+))

@@ -8,6 +8,7 @@ pub mod industry;
 pub mod level;
 pub mod model;
 pub mod park;
+pub mod park_site;
 pub mod respec;
 pub mod spawn;
 
@@ -35,6 +36,7 @@ pub use park::{
     GREEN_MOVE_IN_BONUS, GREEN_SICK_CUT, ParkSite, green_at, move_in_passes, park_sites,
     sick_chance,
 };
+pub use park_site::{ParkWorld, validate_park_site};
 pub use respec::{SPEC_STREAM, respec};
 pub use spawn::{
     BLOCK_BUCKETS, DEMAND_PERIOD, Demand, SPAWN_STREAM, pick_def, place, spawnable,

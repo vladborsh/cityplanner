@@ -1,0 +1,16 @@
+// Numbers: tune later (T-223). Temporary look and icon until the park silhouettes (T-227, T-228).
+Building((
+    id: "nature_attr_1",
+    name: "Nature reserve: Viewpoint",
+    zone: Industrial,
+    level: 1,
+    lot: (2, 2),
+    jobs: (0, 0, 0, 0),
+    consumption: {},
+    tax_base: 0.0,
+    cost: 6000.0,
+    upkeep_week: 109.0,
+    styles: ["park_playground"],
+    service: Some("park_free"),
+    park: Some((park: Some(Nature), role: Attraction, attract: 10.0, capacity: 40, min_level: 1)),
+))

@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::kinds::{
-    CargoKind, IndustryRole, PolicyKind, PolicyScope, ResourceKind, ServiceKind, ServiceSite,
-    SpecKind, UtilityKind, ZoneType,
+    CargoKind, IndustryRole, ParkKind, ParkRole, PolicyKind, PolicyScope, ResourceKind,
+    ServiceKind, ServiceSite, SpecKind, UtilityKind, ZoneType,
 };
 
 macro_rules! def_id {
@@ -411,6 +411,9 @@ pub struct Balance {
     pub industry_storage_per_level: f32,
     /// A resource extractor needs this average richness (`0..=1`) under its lot (T-208). // tune later
     pub min_richness: f32,
+    /// A park area's attractiveness grows by this share per level above the first (T-223).
+    /// // tune later
+    pub park_attract_per_level: f32,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
 }
@@ -557,6 +560,7 @@ impl Balance {
             f32::from(self.tourism_by_train),
             self.deposit_per_cell,
             self.min_richness,
+            self.park_attract_per_level,
             self.industry_storage_per_level,
         ]);
         v.extend(self.industry_levels.map(|l| l as f32));
@@ -674,6 +678,7 @@ impl Default for Balance {
             tourism_by_train: 8,
             deposit_per_cell: 20_000.0,
             min_richness: 0.3,
+            park_attract_per_level: 0.1,
             industry_levels: [2_000, 8_000, 25_000, 60_000],
             industry_storage_per_level: 0.1,
             networks: Networks::default(),
@@ -1046,6 +1051,29 @@ pub struct BuildingDef {
     /// The role in an industrial chain (T-208); `None` for every other building.
     #[serde(default)]
     pub industry: Option<IndustrySpec>,
+    /// The role in a park (T-223); `None` for every other building.
+    #[serde(default)]
+    pub park: Option<ParkSpec>,
+}
+
+/// What a building does in a park (T-223, design §16 M6 C). Numbers: tune later.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParkSpec {
+    /// The kind of park area it belongs to; `None` for a city park (stands anywhere) and a prop
+    /// (any park area).
+    #[serde(default)]
+    pub park: Option<ParkKind>,
+    pub role: ParkRole,
+    /// What it adds to the area's attractiveness.
+    #[serde(default)]
+    pub attract: f32,
+    /// Visitors it lets in at once.
+    #[serde(default)]
+    pub capacity: u16,
+    /// The area level it needs (0 = any).
+    #[serde(default)]
+    pub min_level: u8,
 }
 
 /// What makes a building unique (T-200, design §16 M4 C). Numbers: tune later.

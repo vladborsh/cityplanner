@@ -202,6 +202,8 @@ Balance((
     deposit_per_cell: 20000.0,
     // An extractor's lot needs this average richness (T-208) // tune later.
     min_richness: 0.3,
+    // Park areas (T-223) // tune later: attractiveness share each level above 1 adds.
+    park_attract_per_level: 0.1,
     // Area levels (T-209) // tune later: xp for levels 2 to 5, storage share per level above 1.
     industry_levels: (2000, 8000, 25000, 60000),
     industry_storage_per_level: 0.1,

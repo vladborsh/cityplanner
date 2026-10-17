@@ -293,6 +293,17 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
                     tool.moving,
                 )?;
             }
+            // A park building also needs its park area (T-223).
+            cp_building::validate_park_site(
+                &cp_building::ParkWorld {
+                    db,
+                    areas: &view.areas,
+                    area_map: &view.area_map,
+                    zones: &view.zones,
+                },
+                def,
+                &plan,
+            )?;
             Ok(plan)
         }) {
             Ok(plan) => PlacementGhost {
@@ -388,7 +399,21 @@ fn free_preview(
         pos,
         rot,
         tool.moving,
-    ) {
+    )
+    .and_then(|plan| {
+        // A park attraction or prop also needs its park area (T-223).
+        cp_building::validate_park_site(
+            &cp_building::ParkWorld {
+                db,
+                areas: &view.areas,
+                area_map: &view.area_map,
+                zones: &view.zones,
+            },
+            def,
+            &plan,
+        )?;
+        Ok(plan)
+    }) {
         Ok(plan) => PlacementGhost {
             valid: true,
             cost: Some(price(db, def, tool, plan.cost)),

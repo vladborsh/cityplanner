@@ -1,0 +1,16 @@
+// Numbers: tune later (T-223). Temporary look and icon until the park silhouettes (T-227, T-228).
+Building((
+    id: "zoo_gate",
+    name: "Zoo gate",
+    zone: Industrial,
+    level: 1,
+    lot: (2, 2),
+    jobs: (0, 0, 0, 0),
+    consumption: {},
+    tax_base: 0.0,
+    cost: 8000.0,
+    upkeep_week: 145.0,
+    styles: ["park_sports_field"],
+    service: Some("park"),
+    park: Some((park: Some(Zoo), role: Gate, attract: 0.0, capacity: 0, min_level: 0)),
+))

@@ -310,7 +310,7 @@ fn detail_level_switches_with_distance_and_has_hysteresis() {
     assert_eq!(select_level(1700.0, Some(1)), 2);
     // No facade details beyond 1.5 km: the far mesh has no more triangles than the box.
     let e = env();
-    let (def_id, def) = e.db.buildings().next().unwrap();
+    let (def_id, def) = e.db.buildings().find(|(_, d)| d.service.is_none()).unwrap();
     let b = building(def_id, &e.db, BuildingState::Active, 0);
     let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
     assert!(p.far.triangle_count() <= 40);

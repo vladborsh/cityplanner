@@ -164,6 +164,18 @@ pub fn sections(content: &ContentDb) -> Vec<Section> {
             ServiceKind::Transit | ServiceKind::Landmark | ServiceKind::Industry
         )
     }) {
+        let mut g = g;
+        // The buildings of the park areas have their own category (T-226): the Parks section
+        // here keeps the four basic city parks.
+        if g.kind == ServiceKind::Park {
+            g.cards.retain(|c| {
+                content
+                    .building(c.id)
+                    .park
+                    .as_ref()
+                    .is_none_or(|p| p.park.is_none() && p.role == cp_content::ParkRole::Attraction)
+            });
+        }
         // Unique buildings get their own sections (T-201).
         // One pipe network: sewage buildings sit in the Water section (§13.7).
         let kind = if g.kind == ServiceKind::Sewage {
@@ -573,6 +585,28 @@ mod tests {
                 .unwrap(),
         ));
         sim.view()
+    }
+
+    /// T-223: the Parks section of the Buildings panel keeps the four basic city parks; the
+    /// gates, attractions and props of the park areas are not in it.
+    #[test]
+    fn the_buildings_parks_section_holds_only_the_four_city_parks() {
+        let view = view();
+        let content = view.content.as_deref().unwrap();
+        let parks = sections(content)
+            .into_iter()
+            .find(|s| s.kind == ServiceKind::Park)
+            .unwrap();
+        let mut ids: Vec<&str> = parks
+            .cards
+            .iter()
+            .map(|c| content.building(c.id).id.as_str())
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            ["playground", "plaza_fountain", "small_park", "sports_field"]
+        );
     }
 
     #[test]

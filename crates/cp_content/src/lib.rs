@@ -14,6 +14,6 @@ pub use db::{
 pub use defs::*;
 pub use error::{ContentError, ContentErrors};
 pub use kinds::{
-    CargoKind, IndustryRole, ParkKind, PolicyKind, PolicyScope, ResourceKind, ServiceKind,
-    ServiceSite, SpecKind, UtilityKind, ZoneType,
+    CargoKind, IndustryRole, ParkKind, ParkRole, PolicyKind, PolicyScope, ResourceKind,
+    ServiceKind, ServiceSite, SpecKind, UtilityKind, ZoneType,
 };

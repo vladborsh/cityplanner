@@ -153,6 +153,11 @@ pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
     if !industry.is_empty() {
         h.write_serialized(industry);
     }
+    // Absent until a park area exists (T-223).
+    let parks = world.resource::<cp_park::ParkState>();
+    if !parks.is_empty() {
+        h.write_serialized(parks);
+    }
     let warehouses = world.resource::<cp_industry::WarehouseSettings>();
     if !warehouses.list.is_empty() {
         h.write_serialized(warehouses);
