@@ -654,6 +654,11 @@ pub fn is_service(m: Massing) -> bool {
             | Massing::Cathedral
             | Massing::GoldenArch
             | Massing::SkylineSpire
+            | Massing::SpecLeisure
+            | Massing::SpecTourism
+            | Massing::SpecOrganic
+            | Massing::SpecItCluster
+            | Massing::SpecSelfSufficient
     )
 }
 
@@ -2851,6 +2856,403 @@ fn unique(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                 h += rise;
             }
             cone(m, f, (0.0, cv), 0.06 * r, (h, h + 38.0), 4, sc.trim);
+        }
+        _ => spec(m, massing, sc),
+    }
+}
+
+/// The district specialisation buildings (T-198, T-199): low-rise shapes that scale with the lot
+/// (a small, medium or large one of each).
+fn spec(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
+    use super::Lod;
+    let (f, b) = (sc.f, sc.base);
+    let (hu, hv, cv) = (sc.hu, sc.hv, sc.cv);
+    let near = sc.lod == Lod::Near;
+    let far = sc.lod == Lod::Far;
+    let n = if near {
+        12
+    } else if far {
+        6
+    } else {
+        8
+    };
+    let fnd = [0.30, 0.30, 0.30, 1.0];
+    let r = hu.min(hv);
+    let pad = |m: &mut MeshData, top: f32| {
+        block(
+            m,
+            f,
+            (0.0, cv),
+            (0.96 * hu, 0.96 * hv),
+            sc.lo - 0.3,
+            b + top,
+            fnd,
+            [0.55, 0.55, 0.53, 1.0],
+        );
+    };
+    match massing {
+        Massing::SpecLeisure => {
+            // A club: a flat-roofed box with neon bands on the front and a roof terrace.
+            pad(m, 0.2);
+            let y = b + 0.2;
+            let h = 6.5 + 0.12 * r;
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.86 * hu, 0.8 * hv),
+                y,
+                y + h,
+                sc.wall,
+                sc.roof,
+            );
+            for (k, col) in [[1.0, 0.3, 0.85, 1.0], [0.3, 0.9, 1.0, 1.0]]
+                .into_iter()
+                .enumerate()
+            {
+                let y0 = y + 1.6 + 2.2 * k as f32;
+                block(
+                    m,
+                    f,
+                    (0.0, cv - 0.8 * hv),
+                    (0.86 * hu, 0.04 * hv),
+                    y0,
+                    y0 + 0.5,
+                    col,
+                    col,
+                );
+            }
+            // The terrace: a parapet and a few tables with umbrellas.
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.86 * hu, 0.8 * hv),
+                y + h,
+                y + h + 0.8,
+                sc.trim,
+                sc.trim,
+            );
+            if !far {
+                let tables = if near { 4 } else { 2 };
+                for k in 0..tables {
+                    let u = (-0.55 + 1.1 * k as f32 / (tables - 1).max(1) as f32) * hu;
+                    cyl(
+                        m,
+                        f,
+                        (u, cv + 0.1 * hv),
+                        (0.9, 0.9),
+                        (y + h + 0.8, y + h + 1.2),
+                        n,
+                        sc.glass,
+                        Some(sc.glass),
+                    );
+                }
+            }
+            // A sign pylon.
+            block(
+                m,
+                f,
+                (0.7 * hu, cv - 0.6 * hv),
+                (0.05 * hu, 0.05 * hv),
+                y,
+                y + h + 5.0,
+                sc.trim,
+                sc.trim,
+            );
+            if near {
+                block(
+                    m,
+                    f,
+                    (0.7 * hu, cv - 0.6 * hv),
+                    (0.12 * hu, 0.03 * hv),
+                    y + h + 2.0,
+                    y + h + 5.0,
+                    [1.0, 0.3, 0.85, 1.0],
+                    sc.trim,
+                );
+            }
+        }
+        Massing::SpecTourism => {
+            // A hotel behind, souvenir shops with striped awnings in front, a sign tower.
+            pad(m, 0.2);
+            let y = b + 0.2;
+            let tall = 10.0 + 0.2 * r;
+            block(
+                m,
+                f,
+                (0.0, cv + 0.35 * hv),
+                (0.8 * hu, 0.5 * hv),
+                y,
+                y + tall,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv - 0.5 * hv),
+                (0.86 * hu, 0.32 * hv),
+                y,
+                y + 4.0,
+                sc.trim,
+                sc.roof,
+            );
+            let stripes = if far { 3 } else { 6 };
+            for k in 0..stripes {
+                let u = (-0.8 + 1.6 * (k as f32 + 0.5) / stripes as f32) * hu;
+                let col = if k % 2 == 0 {
+                    [0.85, 0.2, 0.18, 1.0]
+                } else {
+                    [0.96, 0.94, 0.9, 1.0]
+                };
+                block(
+                    m,
+                    f,
+                    (u, cv - 0.86 * hv),
+                    (0.8 * hu / stripes as f32, 0.16 * hv),
+                    y + 3.0,
+                    y + 3.7,
+                    col,
+                    col,
+                );
+            }
+            // The sign tower on the roof.
+            block(
+                m,
+                f,
+                (0.5 * hu, cv + 0.35 * hv),
+                (0.06 * hu, 0.06 * hv),
+                y + tall,
+                y + tall + 7.0,
+                sc.trim,
+                sc.trim,
+            );
+            if !far {
+                block(
+                    m,
+                    f,
+                    (0.5 * hu, cv + 0.35 * hv),
+                    (0.2 * hu, 0.04 * hv),
+                    y + tall + 4.0,
+                    y + tall + 7.0,
+                    sc.glass,
+                    sc.trim,
+                );
+            }
+        }
+        Massing::SpecOrganic => {
+            // Wooden shops under a green roof, a canopy on posts in front, planters.
+            pad(m, 0.2);
+            let y = b + 0.2;
+            let h = 4.5 + 0.06 * r;
+            block(
+                m,
+                f,
+                (0.0, cv + 0.15 * hv),
+                (0.84 * hu, 0.6 * hv),
+                y,
+                y + h,
+                sc.wall,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (0.0, cv + 0.15 * hv),
+                (0.9 * hu, 0.66 * hv),
+                y + h,
+                y + h + 0.7,
+                sc.roof,
+                sc.roof,
+            );
+            let posts = if far { 2 } else { 4 };
+            for k in 0..posts {
+                let u = (-0.8 + 1.6 * k as f32 / (posts - 1) as f32) * hu;
+                cyl(
+                    m,
+                    f,
+                    (u, cv - 0.7 * hv),
+                    (0.25, 0.25),
+                    (y, y + 3.0),
+                    6,
+                    sc.trim,
+                    None,
+                );
+            }
+            block(
+                m,
+                f,
+                (0.0, cv - 0.5 * hv),
+                (0.9 * hu, 0.3 * hv),
+                y + 3.0,
+                y + 3.5,
+                sc.roof,
+                sc.roof,
+            );
+            if near {
+                for k in 0..3 {
+                    let u = (-0.6 + 0.6 * k as f32) * hu;
+                    block(
+                        m,
+                        f,
+                        (u, cv - 0.86 * hv),
+                        (0.12 * hu, 0.06 * hv),
+                        y,
+                        y + 0.9,
+                        [0.4, 0.75, 0.3, 1.0],
+                        [0.3, 0.7, 0.25, 1.0],
+                    );
+                }
+            }
+        }
+        Massing::SpecItCluster => {
+            // A glass campus: two round-cornered wings around a taller atrium.
+            pad(m, 0.2);
+            let y = b + 0.2;
+            let h = 9.0 + 0.2 * r;
+            for s in [-1.0f32, 1.0] {
+                cyl(
+                    m,
+                    f,
+                    (s * 0.5 * hu, cv),
+                    (0.46 * r, 0.46 * r),
+                    (y, y + h),
+                    n,
+                    sc.glass,
+                    Some(sc.roof),
+                );
+            }
+            block(
+                m,
+                f,
+                (0.0, cv),
+                (0.5 * hu, 0.2 * hv),
+                y,
+                y + h * 0.8,
+                sc.wall,
+                sc.roof,
+            );
+            cyl(
+                m,
+                f,
+                (0.0, cv),
+                (0.26 * r, 0.22 * r),
+                (y, y + h + 5.0),
+                n,
+                sc.glass,
+                Some(sc.trim),
+            );
+            if near {
+                for s in [-1.0f32, 1.0] {
+                    cyl(
+                        m,
+                        f,
+                        (s * 0.5 * hu, cv),
+                        (0.47 * r, 0.47 * r),
+                        (y + h * 0.5, y + h * 0.5 + 0.4),
+                        n,
+                        sc.trim,
+                        None,
+                    );
+                }
+            }
+        }
+        Massing::SpecSelfSufficient => {
+            // A house with solar panels on the roof slope and a small wind mast on the lot.
+            pad(m, 0.2);
+            let y = b + 0.2;
+            let h = 3.6 + 0.04 * r;
+            block(
+                m,
+                f,
+                (-0.15 * hu, cv),
+                (0.55 * hu, 0.6 * hv),
+                y,
+                y + h,
+                sc.wall,
+                sc.wall,
+            );
+            block(
+                m,
+                f,
+                (-0.15 * hu, cv),
+                (0.6 * hu, 0.66 * hv),
+                y + h,
+                y + h + 1.4,
+                sc.roof,
+                sc.roof,
+            );
+            block(
+                m,
+                f,
+                (-0.15 * hu, cv),
+                (0.4 * hu, 0.6 * hv),
+                y + h + 1.4,
+                y + h + 2.6,
+                sc.roof,
+                sc.roof,
+            );
+            let panel = [0.16, 0.26, 0.55, 1.0];
+            block(
+                m,
+                f,
+                (-0.15 * hu, cv - 0.3 * hv),
+                (0.32 * hu, 0.25 * hv),
+                y + h + 1.4,
+                y + h + 1.9,
+                panel,
+                panel,
+            );
+            // The mast: a thin pole and a hub with three short blades.
+            let top = 10.0 + 0.1 * r;
+            cyl(
+                m,
+                f,
+                (0.72 * hu, cv + 0.6 * hv),
+                (0.22, 0.14),
+                (y, y + top),
+                6,
+                sc.trim,
+                None,
+            );
+            if !far {
+                block(
+                    m,
+                    f,
+                    (0.72 * hu, cv + 0.6 * hv),
+                    (0.3, 0.3),
+                    y + top,
+                    y + top + 0.6,
+                    sc.trim,
+                    sc.trim,
+                );
+                for k in 0..3 {
+                    let a = k as f32 * std::f32::consts::TAU / 3.0 + 0.4;
+                    block(
+                        m,
+                        f,
+                        (0.72 * hu + 1.3 * a.cos(), cv + 0.6 * hv - 0.2),
+                        (0.12, 0.08),
+                        y + top + 0.3 + 1.3 * a.sin(),
+                        y + top + 0.5 + 1.3 * a.sin(),
+                        sc.trim,
+                        sc.trim,
+                    );
+                }
+            }
+            if near {
+                block(
+                    m,
+                    f,
+                    (-0.7 * hu, cv - 0.55 * hv),
+                    (0.1 * hu, 0.06 * hv),
+                    y,
+                    y + 1.0,
+                    [0.4, 0.75, 0.3, 1.0],
+                    [0.3, 0.7, 0.25, 1.0],
+                );
+            }
         }
         _ => {}
     }

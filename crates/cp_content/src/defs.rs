@@ -808,6 +808,12 @@ pub enum Massing {
     Cathedral = 32,
     GoldenArch = 33,
     SkylineSpire = 34,
+    /// The district specialisation buildings (T-198, T-199).
+    SpecLeisure = 35,
+    SpecTourism = 36,
+    SpecOrganic = 37,
+    SpecItCluster = 38,
+    SpecSelfSufficient = 39,
 }
 
 /// Facade pattern family of a style.
