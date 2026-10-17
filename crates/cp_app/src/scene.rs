@@ -43,6 +43,66 @@ pub fn parse_city(spec: &str) -> Option<usize> {
 /// Showcase scene: every building def in rows by zone, then a row of states.
 pub const SHOWCASE: &str = "showcase";
 
+/// Road tunnel scene (T-173): a street dives under the river of `river_valley`. Run it with
+/// `--map river_valley` and look with `--cam tunnel` (add `--overlay underground` to see the
+/// tunnel).
+pub const TUNNEL: &str = "tunnel";
+
+/// Builds the [`TUNNEL`] scene; returns the west and east portal.
+pub fn build_tunnel(sim: &mut SimRunner) -> Option<(Vec2, Vec2)> {
+    let db = embedded_content();
+    let terrain = sim.world().resource::<cp_terrain::SimTerrain>().0.clone();
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    sim.world_mut()
+        .insert_resource(cp_terrain::TileOwnership::m1_around(
+            terrain.meta().start_tile,
+        ));
+    let basic = db.road_id("basic_2l")?;
+    let (lo, hi) = (4300.0f32, 6700.0f32);
+    for k in 0..60 {
+        let z = 4300.0 + k as f32 * 25.0;
+        let wet: Vec<f32> = (0..)
+            .map(|i| lo + i as f32 * 4.0)
+            .take_while(|x| *x <= hi)
+            .filter(|x| terrain.is_water(Vec2::new(*x, z)))
+            .collect();
+        let (Some(&first), Some(&last)) = (wet.first(), wet.last()) else {
+            continue;
+        };
+        let (a, b) = (Vec2::new(first - 160.0, z), Vec2::new(last + 160.0, z));
+        if a.x > lo && b.x < hi && (b.x - a.x) < 700.0 {
+            sim.push_command(
+                SimCommand::Net(NetCommand::BuildRoad {
+                    road: basic,
+                    path: RoadPath::Straight { from: a, to: b },
+                    elevation: ElevationMode::Tunnel(12.0),
+                }),
+                sim.tick(),
+            );
+            sim.tick_once();
+            // The streets that lead to the portals.
+            for (from, to) in [
+                (a - Vec2::new(120.0, 0.0), a),
+                (b, b + Vec2::new(120.0, 0.0)),
+            ] {
+                sim.push_command(
+                    SimCommand::Net(NetCommand::BuildRoad {
+                        road: basic,
+                        path: RoadPath::Straight { from, to },
+                        elevation: ElevationMode::Ground,
+                    }),
+                    sim.tick(),
+                );
+                sim.tick_once();
+            }
+            return Some((a, b));
+        }
+    }
+    None
+}
+
 /// Intercity train scene (T-167): a new game on flatlands with a train station at the dead end of
 /// the entry railway and a street beside it, run until the first train stands at the station.
 /// Look at it with `--cam train`.

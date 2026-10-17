@@ -480,8 +480,11 @@ impl Builder<'_> {
                     Elevation::Tunnel => false,
                 },
                 ElevationMode::Tunnel(_) => {
-                    n.elevation == Elevation::Tunnel
-                        && (n.pos.y - self.ground_y(p)).abs() <= SAME_DEPTH_TOL
+                    // A road tunnel starts and ends on the surface (its portals): its end
+                    // vertices may join a ground node (T-173).
+                    (any_level && !self.rail && n.elevation == Elevation::Ground)
+                        || (n.elevation == Elevation::Tunnel
+                            && (n.pos.y - self.ground_y(p)).abs() <= SAME_DEPTH_TOL)
                 }
             };
             if !level_ok || self.is_rail_node(n) != self.rail {
@@ -962,8 +965,10 @@ fn validate_inner(
         }
     }
 
-    // --- ramps: an elevated path starts and ends at ground level ---
-    if elevated {
+    // --- ramps: an elevated path starts and ends at ground level; so does a road tunnel (its
+    // portals, T-173), dipping down to its depth instead of rising ---
+    let road_tunnel = tunnel && !rail;
+    if elevated || road_tunnel {
         let slope = def.max_slope * 0.98;
         let price = |e: Elevation| match e {
             Elevation::Bridge => def.bridge.as_ref().map_or(cost_per_m, |v| v.cost_per_m),
@@ -1000,11 +1005,16 @@ fn validate_inner(
                 let mut y = target[k];
                 for (f, fy) in fixed.iter().enumerate() {
                     if let Some(fy) = fy {
-                        y = y.min(fy + slope * (at_s[k] - at_s[f]).abs());
+                        let reach = slope * (at_s[k] - at_s[f]).abs();
+                        y = if road_tunnel {
+                            y.max(fy - reach)
+                        } else {
+                            y.min(fy + reach)
+                        };
                     }
                 }
                 ys[k] = y;
-                reached |= y >= target[k] - 1e-3;
+                reached |= (y - target[k]).abs() <= 1e-3;
             }
             if !reached {
                 errors.push(RoadBuildError::RampTooShort {
@@ -1014,7 +1024,13 @@ fn validate_inner(
             for k in 0..nodes.len() {
                 if let NodeRef::New(i) = nodes[k] {
                     let p = to_xz(b.new_nodes[i]);
-                    let on_ramp = fixed[k].is_some() || ys[k] < target[k] - 1e-3;
+                    // A tunnel may run under water at its depth; its portals and the ramp down
+                    // to it must be dry.
+                    let on_ramp = if road_tunnel {
+                        fixed[k].is_some() || ys[k] > target[k] + 1.0
+                    } else {
+                        fixed[k].is_some() || ys[k] < target[k] - 1e-3
+                    };
                     if on_ramp && terrain.water_depth(p) > 0.0 {
                         errors.push(RoadBuildError::RampStartsOverWater {
                             pos: Vec3::new(p.x, ys[k], p.y),

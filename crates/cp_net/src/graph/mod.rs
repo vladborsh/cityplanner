@@ -576,6 +576,19 @@ impl NetGraph {
                     }
                 }
             }
+            // The end of a road tunnel is its portal, on the surface (T-173): a node where only
+            // one tunnel segment of a road (not a track) ends counts as ground.
+            if level == Some(Elevation::Tunnel)
+                && n.segments.len() == 1
+                && self.segments.get(n.segments[0]).is_some_and(|seg| {
+                    seg.lanes
+                        .first()
+                        .and_then(|&l| self.lanes.get(l))
+                        .is_some_and(|l| l.kind != cp_content::LaneKind::Rail)
+                })
+            {
+                level = Some(Elevation::Ground);
+            }
             if let Some(l) = level {
                 n.elevation = l;
             }

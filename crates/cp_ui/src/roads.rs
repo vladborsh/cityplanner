@@ -71,6 +71,15 @@ fn class_label(class: RoadClass) -> &'static str {
     }
 }
 
+/// The height of the road tool as the panel states it: under the ground, on it or raised.
+pub fn road_height_text(tool: &cp_tools::RoadTool) -> String {
+    if tool.underground {
+        format!("Tunnel {:.0} m", cp_tools::ROAD_TUNNEL_DEPTH)
+    } else {
+        elevation_text(tool.level)
+    }
+}
+
 /// The elevation as the panel states it.
 pub fn elevation_text(level: u8) -> String {
     if level == 0 {
@@ -164,15 +173,18 @@ pub fn roads_panel(
         ui.weak("Elevation (PgUp / PgDn)");
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(tools.road.level > 0, egui::Button::new("−"))
+                .add_enabled(
+                    tools.road.level > 0 || !tools.road.underground,
+                    egui::Button::new("−"),
+                )
                 .clicked()
             {
                 tools.road.lower();
             }
-            ui.label(elevation_text(tools.road.level));
+            ui.label(road_height_text(&tools.road));
             if ui
                 .add_enabled(
-                    tools.road.level < MAX_ELEVATION_LEVEL,
+                    tools.road.underground || tools.road.level < MAX_ELEVATION_LEVEL,
                     egui::Button::new("+"),
                 )
                 .clicked()

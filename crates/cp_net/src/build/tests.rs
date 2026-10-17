@@ -1097,9 +1097,9 @@ fn a_metro_tunnel_passes_under_a_river_and_needs_no_bridge() {
     assert_eq!(kinds(&w.run(&ground).unwrap_err()), ["TunnelOnly"]);
     ground.elevation = ElevationMode::Elevated(4.0);
     assert_eq!(kinds(&w.run(&ground).unwrap_err()), ["NoElevatedVariant"]);
-    // A road has no tunnel.
+    // A track that is only built on the ground has no tunnel (roads have one since T-173).
     let road = w.rail(
-        "basic_2l",
+        "rail_2t",
         at(0.0, 0.0),
         at(80.0, 0.0),
         ElevationMode::Tunnel(12.0),

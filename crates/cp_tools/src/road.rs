@@ -26,6 +26,9 @@ pub enum RoadMode {
     Free,
 }
 
+/// Depth of the axis of a road tunnel the tool draws, metres (the content's default depth).
+pub const ROAD_TUNNEL_DEPTH: f32 = 12.0;
+
 /// State of the road tool.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RoadTool {
@@ -36,6 +39,9 @@ pub struct RoadTool {
     /// Depth of the axis below the terrain for a road that is built in a tunnel only (the
     /// metro track, T-164): the tool then draws `Tunnel(depth)` and the height keys do nothing.
     pub tunnel_depth: Option<f32>,
+    /// A road type that has a tunnel is built under the ground (T-173): the height keys go
+    /// below ground level (PgDn from level 0) and the tool draws `Tunnel(ROAD_TUNNEL_DEPTH)`.
+    pub underground: bool,
     /// Points clicked so far in the current drawing.
     pub points: Vec<Vec2>,
 }
@@ -44,6 +50,8 @@ impl RoadTool {
     pub fn elevation(&self) -> ElevationMode {
         if let Some(depth) = self.tunnel_depth {
             ElevationMode::Tunnel(depth)
+        } else if self.underground {
+            ElevationMode::Tunnel(ROAD_TUNNEL_DEPTH)
         } else if self.level == 0 {
             ElevationMode::Ground
         } else {
@@ -55,11 +63,19 @@ impl RoadTool {
         if self.tunnel_depth.is_some() {
             return;
         }
+        if self.underground {
+            self.underground = false;
+            return;
+        }
         self.level = (self.level + 1).min(MAX_ELEVATION_LEVEL);
     }
 
     pub fn lower(&mut self) {
         if self.tunnel_depth.is_some() {
+            return;
+        }
+        if self.level == 0 {
+            self.underground = true;
             return;
         }
         self.level = self.level.saturating_sub(1);
@@ -388,6 +404,21 @@ pub fn sample_curve(c: &CubicBezier3, step: f32) -> Vec<Vec3> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lowering_from_the_ground_goes_into_a_tunnel_and_raising_comes_back() {
+        let mut tool = RoadTool::default();
+        assert_eq!(tool.elevation(), ElevationMode::Ground);
+        tool.lower();
+        assert_eq!(tool.elevation(), ElevationMode::Tunnel(ROAD_TUNNEL_DEPTH));
+        tool.raise();
+        assert_eq!(tool.elevation(), ElevationMode::Ground);
+        tool.raise();
+        assert_eq!(tool.elevation(), ElevationMode::Elevated(ELEVATION_STEP));
+        tool.lower();
+        tool.lower();
+        assert_eq!(tool.elevation(), ElevationMode::Tunnel(ROAD_TUNNEL_DEPTH));
+    }
+
     use super::*;
 
     fn tool(mode: RoadMode) -> RoadTool {
@@ -444,8 +475,12 @@ mod tests {
     fn elevation_levels_step_and_clamp() {
         let mut t = tool(RoadMode::Straight);
         assert_eq!(t.elevation(), ElevationMode::Ground);
+        // Lowering from the ground goes under it (T-173), raising comes back.
         t.lower();
         assert_eq!(t.level, 0);
+        assert_eq!(t.elevation(), ElevationMode::Tunnel(ROAD_TUNNEL_DEPTH));
+        t.raise();
+        assert_eq!(t.elevation(), ElevationMode::Ground);
         t.raise();
         assert_eq!(t.elevation(), ElevationMode::Elevated(ELEVATION_STEP));
         for _ in 0..10 {

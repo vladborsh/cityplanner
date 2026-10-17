@@ -12,6 +12,7 @@ pub mod fire_fx;
 pub mod fire_render;
 pub mod material;
 pub mod overlay;
+pub mod portal_render;
 pub mod problem;
 pub mod problem_render;
 pub mod road;
@@ -37,6 +38,7 @@ pub use overlay::{
     DistrictsMode, LINE_STEP, LineGhost, Overlay, OverlayPlugin, OverlayState, ZoningMode,
     ribbon_at,
 };
+pub use portal_render::PortalRenderPlugin;
 pub use problem_render::{ProblemIconPlugin, ProblemIconStats};
 pub use road_render::{RoadRenderPlugin, RoadStats};
 pub use sun::LightingSettings;

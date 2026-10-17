@@ -18,6 +18,8 @@ Road((
     rank: 1,
     elevated: Some((cost_per_m: 30.0, upkeep_per_m_week: 0.2, mesh: "road/basic_2l_elevated")),
     bridge: Some((cost_per_m: 60.0, upkeep_per_m_week: 0.30000000000000004, mesh: "road/basic_2l_bridge")),
+    // Road tunnel (T-173): ramps down from the surface at the road's max_slope. Numbers: tune later.
+    tunnel: Some((cost_per_m: 40.0, upkeep_per_m_week: 0.30, mesh: "road/basic_2l_tunnel", depth: 12.0)),
     mesh: "road/basic_2l",
     material: "road/asphalt",
 ))

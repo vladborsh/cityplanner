@@ -42,9 +42,9 @@ pub use plugin::{
     compute_utility_ghost, compute_utility_ghost_alt, tool_click, tool_hotkeys,
 };
 pub use road::{
-    CHEVRON_SPACING, ELEVATION_STEP, MAX_ELEVATION_LEVEL, MarkerKind, RoadMarker, RoadMode,
-    RoadTool, TOO_CLOSE, chevron_lines, format_money, preview, preview_report, quantized,
-    road_is_one_way, road_markers, snap_label, too_close,
+    CHEVRON_SPACING, ELEVATION_STEP, MAX_ELEVATION_LEVEL, MarkerKind, ROAD_TUNNEL_DEPTH,
+    RoadMarker, RoadMode, RoadTool, TOO_CLOSE, chevron_lines, format_money, preview,
+    preview_report, quantized, road_is_one_way, road_markers, snap_label, too_close,
 };
 pub use transit::{
     Click, LineGhostInfo, LineTool, ROAD_PICK_RADIUS, STOP_PICK_RADIUS, Target, line_ghost,
