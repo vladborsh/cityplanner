@@ -72,6 +72,9 @@ pub struct UiState {
     pub prefs: Prefs,
     /// The category whose tool panel is open.
     pub category: Option<Category>,
+    /// A tool was active at the end of the last frame: the Esc that cleared it must not also
+    /// reset the view (BUG-059).
+    pub tool_was_active: bool,
     pub debug_open: bool,
     /// The budget window is shown (button in the top bar).
     pub budget_open: bool,

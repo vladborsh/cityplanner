@@ -128,8 +128,9 @@ pub fn toggle(state: &mut UiState, c: Category) {
     };
 }
 
-/// The category a digit key press opens, if any: `1` is the first available category. Keys with
-/// Ctrl, Alt or Cmd held, and keys typed into a text field, do not count.
+/// The category a Shift+digit key press opens, if any: `Shift+1` is the first available
+/// category (bare digits 1-3 are the game speed, BUG-059). Keys with Ctrl, Alt or Cmd held, and
+/// keys typed into a text field, do not count.
 pub fn hotkey(ctx: &egui::Context, available: &[Category]) -> Option<Category> {
     if ctx.egui_wants_keyboard_input() {
         return None;
@@ -152,11 +153,17 @@ pub fn hotkey(ctx: &egui::Context, available: &[Category]) -> Option<Category> {
             .find_map(|e| match e {
                 egui::Event::Key {
                     key,
+                    physical_key,
                     pressed: true,
                     repeat: false,
                     modifiers,
                     ..
-                } if !modifiers.any() => KEYS.iter().position(|k| k == key),
+                } if modifiers.shift && !modifiers.ctrl && !modifiers.alt && !modifiers.command => {
+                    // With Shift the logical key may be the symbol (`!`), so the physical
+                    // key counts too.
+                    KEYS.iter()
+                        .position(|k| k == key || Some(*k) == *physical_key)
+                }
                 _ => None,
             })
             .and_then(|n| available.get(n).copied())
@@ -775,8 +782,18 @@ mod tests {
         assert_eq!(rig.tools.active, ActiveTool::Bulldozer);
     }
 
+    fn shift_key(k: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key: k,
+            physical_key: Some(k),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::SHIFT,
+        }
+    }
+
     #[test]
-    fn digit_keys_open_the_categories_in_palette_order() {
+    fn shift_digit_keys_open_the_categories_in_palette_order() {
         let ctx = egui::Context::default();
         let available = Category::available(Some(&content()));
         assert_eq!(
@@ -802,14 +819,20 @@ mod tests {
         ];
         for (n, k) in keys.into_iter().enumerate() {
             let mut got = None;
-            frame(&ctx, input(n as f64, vec![key(k)]), |ui| {
+            frame(&ctx, input(n as f64, vec![shift_key(k)]), |ui| {
                 got = hotkey(ui.ctx(), &available);
             });
             assert_eq!(got, Some(available[n]));
+            // A bare digit is not a category (1-3 are the game speed).
+            let mut bare = Some(Category::Roads);
+            frame(&ctx, input(n as f64 + 0.5, vec![key(k)]), |ui| {
+                bare = hotkey(ui.ctx(), &available);
+            });
+            assert_eq!(bare, None);
         }
         // Past the last category, and with a modifier held, nothing happens.
         let mut got = Some(Category::Roads);
-        frame(&ctx, input(10.0, vec![key(egui::Key::Num8)]), |ui| {
+        frame(&ctx, input(10.0, vec![shift_key(egui::Key::Num8)]), |ui| {
             got = hotkey(ui.ctx(), &available);
         });
         assert_eq!(got, None);

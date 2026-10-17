@@ -399,6 +399,9 @@ pub fn build_sim(
             Ok(()) => info!("new game: entry highway built"),
             Err(e) => warn!("new game: {e}"),
         }
+        // The player starts the simulation (BUG-059): no money is spent before that.
+        sim.world_mut()
+            .insert_resource(cp_core::time::SimSpeed::Pause);
     }
     sim
 }
@@ -545,6 +548,9 @@ pub fn handle_file_request(
             menu.status = match saves::load_game(sim, data, &name) {
                 Ok((loaded, warnings)) => {
                     *sim = loaded;
+                    // A loaded game starts paused too (BUG-059).
+                    sim.world_mut()
+                        .insert_resource(cp_core::time::SimSpeed::Pause);
                     *view = sim.view();
                     if warnings.is_empty() {
                         format!("Loaded {name}")
@@ -581,5 +587,31 @@ fn inspect_selection(
             picked.0 = None;
             inspected.0 = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod start_tests {
+    use super::*;
+
+    /// BUG-059: a new game starts paused — the sim does not advance until the player starts it —
+    /// and a speed command (the 1/2/3 keys) runs it.
+    #[test]
+    fn a_new_game_starts_paused_until_a_speed_key() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let terrain = Terrain::load(&root.join("assets/maps/flatlands")).unwrap();
+        let mut sim = build_sim(terrain, SimLimits::desktop(), 8.0, false, None);
+        assert_eq!(sim.speed(), cp_core::SimSpeed::Pause);
+        let at = sim.tick();
+        sim.step(std::time::Duration::from_secs(1));
+        assert_eq!(sim.tick(), at, "no tick while paused");
+        let mut outbox = cp_tools::CommandOutbox::default();
+        outbox.push(cp_sim::SimCommand::SetSpeed {
+            speed: cp_core::SimSpeed::X2,
+        });
+        outbox.flush_into(&mut sim);
+        sim.step(std::time::Duration::from_secs(1));
+        assert_eq!(sim.speed(), cp_core::SimSpeed::X2);
+        assert!(sim.tick() > at, "running after the speed key");
     }
 }

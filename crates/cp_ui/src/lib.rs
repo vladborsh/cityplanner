@@ -233,6 +233,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     if let Some(c) = palette::hotkey(ctx, &available) {
         palette::toggle(state, c);
     }
+    keyboard_shortcuts(ctx, state, tools, overlay, outbox);
     if panels::view_hotkey(ctx) {
         state.view_menu_open = !state.view_menu_open;
         state.settings_open = false;
@@ -326,6 +327,51 @@ fn update_ui_capture(mut contexts: EguiContexts, mut capture: ResMut<UiCapture>)
         return;
     };
     (capture.pointer_over_ui, capture.keyboard_captured) = egui_owns_input(ctx);
+}
+
+/// Bare 1 / 2 / 3 set the game speed and start the simulation; Esc, when no tool is active,
+/// steps back to the default view: first the open palette panel, then the overlay (BUG-059).
+/// Nothing happens while a text field has the keyboard. The tool's own Esc (`cp_tools`) runs in
+/// the same frame, so a tool that was active a frame ago counts as active.
+pub(crate) fn keyboard_shortcuts(
+    ctx: &egui::Context,
+    state: &mut panels::UiState,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+    outbox: &mut CommandOutbox,
+) {
+    let had_tool = std::mem::replace(
+        &mut state.tool_was_active,
+        tools.active != cp_tools::ActiveTool::None,
+    );
+    if ctx.egui_wants_keyboard_input() {
+        return;
+    }
+    let pressed = |k: egui::Key| {
+        ctx.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(e, egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. }
+                    if *key == k && !modifiers.any())
+            })
+        })
+    };
+    for (k, speed) in [
+        (egui::Key::Num1, SimSpeed::X1),
+        (egui::Key::Num2, SimSpeed::X2),
+        (egui::Key::Num3, SimSpeed::X3),
+    ] {
+        if pressed(k) {
+            tools.resume_speed = speed;
+            outbox.push(set_speed(speed));
+        }
+    }
+    if pressed(egui::Key::Escape) && !had_tool && tools.active == cp_tools::ActiveTool::None {
+        if state.category.is_some() {
+            state.category = None;
+        } else if overlay.active != cp_render::Overlay::Off {
+            overlay.active = cp_render::Overlay::Off;
+        }
+    }
 }
 
 /// What a speed button sends.
@@ -614,5 +660,135 @@ mod capture_tests {
             1,
             "the strip is thin: the map is free above it"
         );
+    }
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+    use crate::testutil::{frame, input, key};
+
+    struct Rig {
+        ctx: egui::Context,
+        state: panels::UiState,
+        tools: ToolState,
+        overlay: OverlayState,
+        outbox: CommandOutbox,
+        t: f64,
+    }
+
+    impl Rig {
+        fn new() -> Self {
+            Rig {
+                ctx: egui::Context::default(),
+                state: panels::UiState::default(),
+                tools: ToolState::default(),
+                overlay: OverlayState::default(),
+                outbox: CommandOutbox::default(),
+                t: 0.0,
+            }
+        }
+
+        fn press(&mut self, k: egui::Key) {
+            self.t += 0.1;
+            let Rig {
+                ctx,
+                state,
+                tools,
+                overlay,
+                outbox,
+                t,
+            } = self;
+            frame(ctx, input(*t, vec![key(k)]), |ui| {
+                keyboard_shortcuts(ui.ctx(), state, tools, overlay, outbox);
+            });
+            // Let go, or egui reads the next press as a repeat.
+            let up = egui::Event::Key {
+                key: k,
+                physical_key: Some(k),
+                pressed: false,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            };
+            *t += 0.05;
+            frame(ctx, input(*t, vec![up]), |_| {});
+        }
+    }
+
+    fn speeds(rig: &Rig) -> Vec<SimSpeed> {
+        rig.outbox
+            .iter()
+            .filter_map(|c| match c {
+                SimCommand::SetSpeed { speed } => Some(*speed),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn keys_1_2_3_set_the_speed_and_unpause() {
+        let mut rig = Rig::new();
+        rig.press(egui::Key::Num2);
+        rig.press(egui::Key::Num1);
+        rig.press(egui::Key::Num3);
+        rig.press(egui::Key::Num4);
+        assert_eq!(speeds(&rig), [SimSpeed::X2, SimSpeed::X1, SimSpeed::X3]);
+        assert_eq!(rig.tools.resume_speed, SimSpeed::X3);
+    }
+
+    #[test]
+    fn esc_without_a_tool_resets_the_panel_then_the_overlay() {
+        let mut rig = Rig::new();
+        rig.overlay.active = cp_render::Overlay::Water;
+        rig.state.category = Some(palette::Category::Roads);
+        rig.press(egui::Key::Escape);
+        assert_eq!(rig.state.category, None);
+        assert_eq!(rig.overlay.active, cp_render::Overlay::Water);
+        rig.press(egui::Key::Escape);
+        assert_eq!(rig.overlay.active, cp_render::Overlay::Off);
+        rig.press(egui::Key::Escape);
+        assert_eq!(rig.overlay.active, cp_render::Overlay::Off);
+    }
+
+    #[test]
+    fn esc_with_a_tool_leaves_the_overlay_and_the_clearing_esc_does_not_reset_it() {
+        let mut rig = Rig::new();
+        rig.overlay.active = cp_render::Overlay::Power;
+        rig.tools.select(cp_tools::ActiveTool::Road);
+        rig.press(egui::Key::Escape);
+        assert_eq!(rig.overlay.active, cp_render::Overlay::Power, "tool active");
+        // `cp_tools` clears the tool in the same frame as the Esc; the overlay stays.
+        rig.tools.select(cp_tools::ActiveTool::None);
+        rig.press(egui::Key::Escape);
+        assert_eq!(rig.overlay.active, cp_render::Overlay::Power, "same Esc");
+        rig.press(egui::Key::Escape);
+        assert_eq!(rig.overlay.active, cp_render::Overlay::Off);
+    }
+
+    #[test]
+    fn digits_typed_into_a_text_field_do_nothing() {
+        let mut rig = Rig::new();
+        let mut text = String::new();
+        let id = egui::Id::new("rename");
+        for t in [0.0, 0.1] {
+            frame(&rig.ctx, input(t, vec![]), |ui| {
+                let r = ui.add(egui::TextEdit::singleline(&mut text).id(id));
+                r.request_focus();
+            });
+        }
+        rig.t = 1.0;
+        let Rig {
+            ctx,
+            state,
+            tools,
+            overlay,
+            outbox,
+            ..
+        } = &mut rig;
+        frame(ctx, input(1.0, vec![key(egui::Key::Num2)]), |ui| {
+            let _ = ui.add(egui::TextEdit::singleline(&mut text).id(id));
+            keyboard_shortcuts(ui.ctx(), state, tools, overlay, outbox);
+        });
+        assert!(outbox.is_empty());
     }
 }

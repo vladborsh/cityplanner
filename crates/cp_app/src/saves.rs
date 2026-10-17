@@ -338,6 +338,9 @@ mod tests {
         );
         assert_eq!(menu.status, "Loaded one");
         assert_eq!((sim.tick(), view.tick), (saved_at, saved_at));
+        // A loaded game starts paused (BUG-059); the saved moment ran at ×1.
+        assert_eq!(sim.speed(), cp_core::SimSpeed::Pause);
+        sim.world_mut().insert_resource(cp_core::SimSpeed::X1);
         assert_eq!(sim.checksum(), saved_sum);
 
         // A failed load leaves the running game alone and says why.
