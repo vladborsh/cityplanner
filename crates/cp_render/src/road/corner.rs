@@ -230,7 +230,17 @@ pub(super) fn walks(graph: &NetGraph, j: &Junction) -> Vec<Walk> {
                 if hit.is_some_and(|h| !(-1e-3..=len + 1e-3).contains(&(h - q).dot(e))) {
                     return None;
                 }
-                hit
+                // No further along the end line than the arm's sidewalk is wide: on the obtuse
+                // side of a skewed junction of wide roads the offset met it metres into the
+                // carriageway's mouth (BUG-065).
+                hit.map(|h| {
+                    let along = h - base;
+                    if along.length() > w + 1e-3 {
+                        base + along.normalize_or_zero() * w
+                    } else {
+                        h
+                    }
+                })
             }
         };
         Some(

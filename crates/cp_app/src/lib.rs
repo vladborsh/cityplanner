@@ -179,6 +179,14 @@ pub fn real_seconds_per_day(speed: cp_core::SimSpeed) -> Option<f64> {
     Some(cp_core::time::TICKS_PER_DAY as f64 / ticks_per_s)
 }
 
+/// `wide-<feature>[-top]` camera: the feature's index in [`scene::WIDE_FEATURES`] and whether it
+/// looks from straight above.
+fn wide_feature(name: &str) -> Option<(usize, bool)> {
+    let f = name.strip_prefix("wide-")?;
+    let (f, top) = f.strip_suffix("-top").map_or((f, false), |f| (f, true));
+    Some((scene::WIDE_FEATURES.iter().position(|w| *w == f)?, top))
+}
+
 /// Camera start poses for measuring: `(position, look_at)`. `overview` is the highest
 /// allowed view (4000 m).
 pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
@@ -311,6 +319,20 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c, 1500.0, c + 2500.0),
             Vec3::new(c, 0.0, c - 500.0),
         ),
+        // One feature of the wide-road corner scene (`--scene corners-wide`), from the south;
+        // `wide-<f>-top` from straight above.
+        wide if wide_feature(wide).is_some() => {
+            let (i, top) = wide_feature(wide).unwrap_or_default();
+            let o = scene::wide_feature_centre(i);
+            if top {
+                (Vec3::new(o.x, 48.0, o.y + 1.0), Vec3::new(o.x, 0.0, o.y))
+            } else {
+                (
+                    Vec3::new(o.x + 6.0, 42.0, o.y + 46.0),
+                    Vec3::new(o.x, 0.0, o.y + 4.0),
+                )
+            }
+        }
         _ => (Vec3::new(c, 4000.0, c + 4200.0), Vec3::new(c, 0.0, c)),
     }
 }
@@ -353,6 +375,9 @@ pub fn build_sim(
     } else if scene == Some(scene::CORNERS) {
         scene::build_corners(&mut sim);
         info!("scene corners");
+    } else if scene == Some(scene::CORNERS_WIDE) {
+        scene::build_corners_wide(&mut sim);
+        info!("scene corners-wide");
     } else if scene == Some(scene::GROWN) {
         scene::build_grown(&mut sim);
         info!("scene grown");

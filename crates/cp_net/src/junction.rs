@@ -18,11 +18,13 @@
 //! for the right side), the side edges of the two roads meet at distance
 //! `t = (hⱼ + hᵢ·cos θ) / sin θ` along arm `i` (for `θ = 90°` this is the neighbour's
 //! half-width). For gaps of `150°` and more the edges no longer form a corner and `t = hᵢ`.
-//! The setback is `max(hᵢ, t_left, t_right)`, capped at [`MAX_SETBACK`] and at `45 %` of the
-//! segment length — the two ends of a segment are capped independently, so trimmed
-//! segments never overlap each other. Every arm keeps at least `hᵢ`, which also gives
-//! straight joins (two collinear arms) a clean `w × w` patch. A dead end (one arm) uses
-//! `s = h` and a `w × w` rectangle around the node.
+//! The wanted setback is `max(hᵢ, t_left, t_right)`, capped at [`MAX_SETBACK`]. The two ends
+//! of a segment share `2 × 45 %` of its length: when their wants fit, both are kept (every arm
+//! keeps at least `hᵢ`, which also gives straight joins a clean `w × w` patch, and a dead end
+//! (one arm) a `w × w` rectangle around the node); otherwise the end of a real junction keeps
+//! its want and a dead end or straight join gives way (see `shared_setback`), so trimmed
+//! segments never overlap each other. A node's setbacks therefore also depend on the nodes at
+//! the other ends of its segments: recomputing a node recomputes those too.
 //!
 //! **Polygon**: for each arm in counter-clockwise order, its right corner then its left
 //! corner (`node + d·s ∓ l·h`, `l` = `d` rotated 90° counter-clockwise). Where the
@@ -56,6 +58,10 @@ use crate::model::{NodeId, SegmentId};
 pub const MAX_SETBACK: f32 = 60.0;
 /// Fraction of a segment's length one end may consume.
 pub const MAX_SETBACK_FRACTION: f32 = 0.45;
+/// Least setback a soft end (dead end, straight join) keeps when it gives way, metres.
+pub const SOFT_SETBACK: f32 = 0.5;
+/// Corners of two neighbouring arms closer than this are one point, metres.
+const CORNER_SNAP: f32 = 0.01;
 /// Width used for a segment without lanes, metres.
 pub const DEFAULT_WIDTH: f32 = 8.0;
 /// Angular gaps of at least this (degrees) do not form a road corner.
@@ -193,20 +199,24 @@ fn corner_distance(hi: f32, hj: f32, gap: f32) -> f32 {
     ((hj + hi * gap.cos()) / sin).max(hi)
 }
 
-/// Computes the junction of `node` from the graph alone. `None` if the node does not exist.
-pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option<Junction> {
+/// One segment end at a node, before setbacks.
+struct Raw {
+    segment: SegmentId,
+    at_start: bool,
+    dir: Vec2,
+    angle: f32,
+    width: f32,
+    length: f32,
+    path: bool,
+}
+
+/// The node's centre (XZ) and its segment ends sorted counter-clockwise, split into
+/// `(footpaths, roads)`. T-222: a footpath that meets a road is no carriageway. It does not
+/// shape the junction polygon or the setbacks of the roads; its own end stops at the road's
+/// edge.
+fn raw_arms(graph: &NetGraph, node: NodeId) -> Option<(Vec2, Vec<Raw>, Vec<Raw>)> {
     let n = graph.node(node)?;
     let c = to_xz(n.pos);
-
-    struct Raw {
-        segment: SegmentId,
-        at_start: bool,
-        dir: Vec2,
-        angle: f32,
-        width: f32,
-        length: f32,
-        path: bool,
-    }
     let mut raws: Vec<Raw> = Vec::new();
     for &sid in &n.segments {
         let seg = graph.segment(sid).expect("node links existing segments");
@@ -237,32 +247,107 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
             .then(a.segment.cmp(&b.segment))
             .then(b.at_start.cmp(&a.at_start))
     });
-
-    // T-222: a footpath that meets a road is no carriageway. It does not shape the junction
-    // polygon or the setbacks of the roads; its own end stops at the road's edge.
-    let (mut footpaths, raws): (Vec<Raw>, Vec<Raw>) = if raws.iter().any(|r| !r.path) {
+    let (footpaths, raws) = if raws.iter().any(|r| !r.path) {
         raws.into_iter().partition(|r| r.path)
     } else {
         (Vec::new(), raws)
     };
-    let edge = raws.iter().map(|r| r.width * 0.5).fold(0.0f32, f32::max);
+    Some((c, footpaths, raws))
+}
+
+/// Setback each road arm wants (where its edges meet the neighbours', uncapped by the segment
+/// length) and whether it is *hard*: an arm of a real junction (three or more arms, or a
+/// bend) needs it for its corners to meet; a dead end or a straight join only for a tidy
+/// patch, so it gives way on a short segment.
+fn wanted_setbacks(raws: &[Raw]) -> Vec<(f32, bool)> {
     let k = raws.len();
-    let mut arms = Vec::with_capacity(k);
-    for (i, r) in raws.iter().enumerate() {
-        let h = r.width * 0.5;
-        let mut s = h;
-        if k >= 2 {
+    raws.iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let h = r.width * 0.5;
+            if k < 2 {
+                return (h.min(MAX_SETBACK), false);
+            }
             let next = &raws[(i + 1) % k];
             let prev = &raws[(i + k - 1) % k];
             let ccw_gap = (next.angle - r.angle).rem_euclid(std::f32::consts::TAU);
             let cw_gap = (r.angle - prev.angle).rem_euclid(std::f32::consts::TAU);
             // With two arms both gaps are measured to the same neighbour.
             let gap = |g: f32| if g == 0.0 { std::f32::consts::TAU } else { g };
-            s = s
-                .max(corner_distance(h, next.width * 0.5, gap(ccw_gap)))
-                .max(corner_distance(h, prev.width * 0.5, gap(cw_gap)));
-        }
-        s = s.min(MAX_SETBACK).min(r.length * MAX_SETBACK_FRACTION);
+            let (ccw, cw) = (gap(ccw_gap), gap(cw_gap));
+            let s = h
+                .max(corner_distance(h, next.width * 0.5, ccw))
+                .max(corner_distance(h, prev.width * 0.5, cw));
+            let flat = FLAT_GAP_DEG.to_radians();
+            let hard = k >= 3 || ccw < flat || cw < flat;
+            (s.min(MAX_SETBACK), hard)
+        })
+        .collect()
+}
+
+/// The setback of one end of a segment of `length` that wants `me` while its other end wants
+/// `other` (`(setback, hard)` each). The two ends share [`MAX_SETBACK_FRACTION`] of the length
+/// each, `2 ×` it together: when both wants fit they are kept; otherwise a hard end keeps its
+/// want and a soft one gives way down to [`SOFT_SETBACK`] (BUG-065: a junction a few metres
+/// from an auto-cut joint kept only 45 % of the short piece, so its corners did not meet and the
+/// sidewalks tore). Both ends compute the same split, so trimmed segments never overlap.
+fn shared_setback(me: (f32, bool), other: (f32, bool), length: f32) -> f32 {
+    let budget = 2.0 * MAX_SETBACK_FRACTION * length;
+    if me.0 + other.0 <= budget {
+        return me.0;
+    }
+    let floor = |(s, hard): (f32, bool)| if hard { s } else { s.min(SOFT_SETBACK) };
+    let (fm, fo) = (floor(me), floor(other));
+    if fm + fo >= budget {
+        return if fm + fo > 0.0 {
+            budget * fm / (fm + fo)
+        } else {
+            budget * 0.5
+        };
+    }
+    let (em, eo) = (me.0 - fm, other.0 - fo);
+    let extra = budget - fm - fo;
+    if em + eo > 0.0 {
+        fm + extra * em / (em + eo)
+    } else {
+        fm
+    }
+}
+
+/// What the other end of the segment of road arm `r` wants, `(0, soft)` when that
+/// end has no road arm for it.
+fn wanted_at_other_end(graph: &NetGraph, r: &Raw) -> (f32, bool) {
+    let Some(seg) = graph.segment(r.segment) else {
+        return (0.0, false);
+    };
+    let other = if r.at_start { seg.end } else { seg.start };
+    raw_arms(graph, other)
+        .and_then(|(_, _, raws)| {
+            let wants = wanted_setbacks(&raws);
+            raws.iter()
+                .zip(wants)
+                .find(|(o, _)| o.segment == r.segment && o.at_start != r.at_start)
+                .map(|(_, w)| w)
+        })
+        .unwrap_or((0.0, false))
+}
+
+/// Computes the junction of `node` from the graph alone. `None` if the node does not exist.
+pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option<Junction> {
+    let n = graph.node(node)?;
+    let (c, mut footpaths, raws) = raw_arms(graph, node)?;
+    let edge = raws.iter().map(|r| r.width * 0.5).fold(0.0f32, f32::max);
+    let k = raws.len();
+    let wants = wanted_setbacks(&raws);
+    let mut arms = Vec::with_capacity(k);
+    // Corners relative to the node centre: the meeting corners of two neighbouring arms are
+    // snapped together here, before the (large) map position is added, so they are the very
+    // same point instead of a few float steps apart (BUG-065: the near-duplicates stayed apart
+    // in the polygon and the corner pavement was not found).
+    let mut local: Vec<(Vec2, Vec2)> = Vec::with_capacity(k);
+    for (i, r) in raws.iter().enumerate() {
+        let h = r.width * 0.5;
+        let s = shared_setback(wants[i], wanted_at_other_end(graph, r), r.length);
         let seg = graph.segment(r.segment).expect("exists");
         let trim_t = {
             let tab = seg.curve.arc_table();
@@ -270,6 +355,7 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
             tab.s_to_t(along)
         };
         let l = rot_ccw(r.dir);
+        local.push((r.dir * s - l * h, r.dir * s + l * h));
         arms.push(Arm {
             segment: r.segment,
             at_start: r.at_start,
@@ -277,9 +363,21 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
             width: r.width,
             setback: s,
             trim_t,
-            right: c + r.dir * s - l * h,
-            left: c + r.dir * s + l * h,
+            right: Vec2::ZERO,
+            left: Vec2::ZERO,
         });
+    }
+    if k >= 2 {
+        for i in 0..k {
+            let j = (i + 1) % k;
+            if local[i].1.distance(local[j].0) < CORNER_SNAP {
+                local[j].0 = local[i].1;
+            }
+        }
+    }
+    for (a, (right, left)) in arms.iter_mut().zip(&local) {
+        a.right = c + *right;
+        a.left = c + *left;
     }
 
     let polygon = match k {
@@ -382,6 +480,22 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
     })
 }
 
+/// `dirty` plus the nodes at the other ends of their segments (their setbacks share those
+/// segments, see `shared_setback`), in id order.
+fn with_neighbours(graph: &NetGraph, dirty: impl IntoIterator<Item = NodeId>) -> Vec<NodeId> {
+    let mut out = std::collections::BTreeSet::new();
+    for id in dirty {
+        out.insert(id);
+        if let Some(n) = graph.node(id) {
+            for seg in n.segments.iter().filter_map(|&s| graph.segment(s)) {
+                out.insert(seg.start);
+                out.insert(seg.end);
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
 /// Brings the geometry of every dirty or missing node up to date **without** a tick, for the
 /// renderer: while the game is paused commands still change the graph but the `Network` phase
 /// ([`update_junctions`]) does not run, so new roads would be drawn untrimmed and without a
@@ -392,11 +506,13 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
 /// plan is made (a recomputed junction keeps its previous plan), so the next real tick
 /// recomputes the same nodes exactly as if this had never run. Returns whether `geo` changed.
 pub fn refresh_geometry(graph: &NetGraph, geo: &mut JunctionGeometry) -> bool {
-    let stale: Vec<NodeId> = graph
-        .nodes()
-        .map(|(id, _)| id)
-        .filter(|&id| graph.is_dirty(id) || !geo.junctions.contains_key(&id))
-        .collect();
+    let stale = with_neighbours(
+        graph,
+        graph
+            .nodes()
+            .map(|(id, _)| id)
+            .filter(|&id| graph.is_dirty(id) || !geo.junctions.contains_key(&id)),
+    );
     let gone = geo.junctions.keys().any(|&id| graph.node(id).is_none());
     if stale.is_empty() && !gone {
         return false;
@@ -452,6 +568,7 @@ pub fn update_junctions(
         Some(j)
     };
     let dirty = graph.take_dirty();
+    let dirty = with_neighbours(&graph, dirty);
     let version = geo.version + 1;
     let map = Arc::make_mut(&mut geo.junctions);
     for id in dirty {

@@ -444,8 +444,9 @@ fn system_recomputes_dirty_nodes_and_drops_removed_ones() {
     assert_eq!(j.arms.len(), 2);
     assert_eq!(j.revision, 2);
     assert_poly(j, &[(6.0, -6.0), (6.0, 6.0), (-6.0, 6.0), (-6.0, -6.0)]);
-    // Untouched junctions keep their old revision.
-    assert!(geo.iter().any(|(_, x)| x.revision == 1));
+    // The far ends of its remaining segments are recomputed with it: their setbacks share
+    // those segments' length (BUG-065).
+    assert!(geo.iter().all(|(_, x)| x.revision == 2));
     check_junction(j);
 }
 
@@ -587,4 +588,138 @@ fn a_footpath_beside_a_street_makes_no_junction_polygon_and_stops_at_the_road_ed
     // A footpath on its own keeps the ordinary junction.
     let (g, n, _) = star(&db, &[(0.0, 40.0, "park_path"), (90.0, 40.0, "park_path")]);
     assert!(compute_junction(&g, n, 0).unwrap().polygon.len() >= 4);
+}
+
+// ---------- BUG-065 ----------
+
+/// A cross of `road` at `(x, z)`: one straight road through it along x, one along z.
+fn far_cross(db: &ContentDb, road: &str, x: f32, z: f32) -> (NetGraph, NodeId) {
+    let mut g = NetGraph::new();
+    let id = db.road_id(road).unwrap();
+    let def = db.road(id).clone();
+    let o = Vec3::new(x, 30.0, z);
+    for (a, b) in [
+        (o - Vec3::X * 80.0, o),
+        (o, o + Vec3::X * 80.0),
+        (o - Vec3::Z * 70.0, o),
+        (o, o + Vec3::Z * 70.0),
+    ] {
+        g.add_segment(&def, id, CubicBezier3::line(a, b), Elevation::Ground)
+            .unwrap();
+    }
+    let node = g.find_node(o).unwrap();
+    (g, node)
+}
+
+#[test]
+fn neighbouring_corners_are_one_point_far_from_the_origin() {
+    let db = content();
+    for road in ["basic_2l", "medium_4l", "medium_1w_3l", "large_6l"] {
+        for (x, z) in [(5720.0, 5120.0), (8191.37, 3071.9), (10_000.5, 9_999.25)] {
+            let (g, node) = far_cross(&db, road, x, z);
+            let j = compute_junction(&g, node, 1).unwrap();
+            assert_eq!(j.polygon.len(), 4, "{road} at {x},{z}: {:?}", rel(&j));
+            for i in 0..4 {
+                let (a, b) = (&j.arms[i], &j.arms[(i + 1) % 4]);
+                assert_eq!(a.left, b.right, "{road} at {x},{z}: corner {i}");
+            }
+        }
+    }
+}
+
+/// A junction a few metres from a straight joint (an auto-cut of a long road) keeps its full
+/// setback, so its corners meet; the joint gives way and the two cuts do not overlap.
+#[test]
+fn a_junction_next_to_a_straight_joint_keeps_its_setback() {
+    let db = content();
+    for road in ["basic_2l", "medium_4l", "large_6l"] {
+        let id = db.road_id(road).unwrap();
+        let def = db.road(id).clone();
+        let h = def.width * 0.5;
+        let mut g = NetGraph::new();
+        let o = Vec3::new(2000.0, 0.0, 2000.0);
+        // West: a long road, a joint 1.5 widths before the cross, then the short piece.
+        let joint = o - Vec3::X * (def.width * 1.5);
+        for (a, b) in [
+            (o - Vec3::X * 200.0, joint),
+            (joint, o),
+            (o, o + Vec3::X * 100.0),
+            (o - Vec3::Z * 100.0, o),
+            (o, o + Vec3::Z * 100.0),
+        ] {
+            g.add_segment(&def, id, CubicBezier3::line(a, b), Elevation::Ground)
+                .unwrap();
+        }
+        let (cross, joint) = (g.find_node(o).unwrap(), g.find_node(joint).unwrap());
+        let j = compute_junction(&g, cross, 1).unwrap();
+        assert_eq!(j.polygon.len(), 4, "{road}: corners meet: {:?}", rel(&j));
+        assert!(
+            j.arms.iter().all(|a| (a.setback - h).abs() < 1e-3),
+            "{road}"
+        );
+        let jj = compute_junction(&g, joint, 1).unwrap();
+        let short = j.arms.iter().find(|a| a.angle.abs() > 3.0).unwrap();
+        let back = jj.arms.iter().find(|a| a.segment == short.segment).unwrap();
+        let len = def.width * 1.5;
+        assert!(
+            short.setback + back.setback <= 2.0 * MAX_SETBACK_FRACTION * len + 1e-3,
+            "{road}: cuts overlap: {} + {}",
+            short.setback,
+            back.setback
+        );
+        assert!(back.setback >= SOFT_SETBACK - 1e-3, "{road}");
+    }
+}
+
+/// Recomputing a node also recomputes the nodes at the other ends of its segments: adding a
+/// side road next to a joint changes the joint's setback on the shared piece.
+#[test]
+fn a_new_junction_updates_the_joint_beside_it() {
+    let db = content();
+    let id = db.road_id("medium_4l").unwrap();
+    let def = db.road(id).clone();
+    let mut world = World::new();
+    let mut g = NetGraph::new();
+    let o = Vec3::new(2000.0, 0.0, 2000.0);
+    let joint = o - Vec3::X * 25.0;
+    g.add_segment(
+        &def,
+        id,
+        CubicBezier3::line(o - Vec3::X * 200.0, joint),
+        Elevation::Ground,
+    )
+    .unwrap();
+    g.add_segment(
+        &def,
+        id,
+        CubicBezier3::line(joint, o + Vec3::X * 100.0),
+        Elevation::Ground,
+    )
+    .unwrap();
+    world.insert_resource(g);
+    world.init_resource::<JunctionGeometry>();
+    let mut sched = bevy_ecs::schedule::Schedule::default();
+    sched.add_systems(update_junctions);
+    sched.run(&mut world);
+    world
+        .resource_mut::<NetGraph>()
+        .add_segment(
+            &def,
+            id,
+            CubicBezier3::line(o, o + Vec3::Z * 100.0),
+            Elevation::Ground,
+        )
+        .unwrap();
+    sched.run(&mut world);
+    let (g, geo) = (
+        world.resource::<NetGraph>(),
+        world.resource::<JunctionGeometry>(),
+    );
+    let jn = g.find_node(joint).unwrap();
+    let fresh = compute_junction(g, jn, 0).unwrap();
+    let stored = geo.get(jn).unwrap();
+    assert_eq!(
+        stored.arms.iter().map(|a| a.setback).collect::<Vec<_>>(),
+        fresh.arms.iter().map(|a| a.setback).collect::<Vec<_>>()
+    );
 }

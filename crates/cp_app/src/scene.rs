@@ -957,6 +957,61 @@ pub fn build_corners(sim: &mut SimRunner) {
     }
 }
 
+/// Wide-road corner scene (BUG-065): bends of 90, 60, 45, 120 and 135 degrees, a T and an X of
+/// 4-lane collectors in a row along the map's middle, 200 m apart. Look at each with
+/// `--cam wide-90` (`wide-60`, `wide-45`, `wide-120`, `wide-135`, `wide-t`, `wide-x`).
+pub const CORNERS_WIDE: &str = "corners-wide";
+
+/// The features of [`CORNERS_WIDE`], west to east: the camera suffix and, for a bend, the
+/// direction of its second arm in degrees from +x.
+pub const WIDE_FEATURES: [&str; 7] = ["90", "60", "45", "120", "135", "t", "x"];
+
+/// Centre of feature `i` of [`CORNERS_WIDE`].
+pub fn wide_feature_centre(i: usize) -> Vec2 {
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    Vec2::new(c - 600.0 + 200.0 * i as f32, c)
+}
+
+/// Builds the [`CORNERS_WIDE`] scene through the normal commands.
+pub fn build_corners_wide(sim: &mut SimRunner) {
+    let db = embedded_content();
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let road = db.road_id("medium_4l").expect("medium_4l");
+    let dir = |deg: f32| Vec2::from_angle(deg.to_radians());
+    let mut legs = Vec::new();
+    for (i, f) in WIDE_FEATURES.iter().enumerate() {
+        let o = wide_feature_centre(i);
+        match *f {
+            "t" => {
+                legs.push((o - Vec2::X * 80.0, o + Vec2::X * 80.0));
+                legs.push((o + Vec2::Y * 70.0, o));
+            }
+            "x" => {
+                legs.push((o - Vec2::X * 80.0, o + Vec2::X * 80.0));
+                legs.push((o - Vec2::Y * 70.0, o + Vec2::Y * 70.0));
+            }
+            deg => {
+                let deg: f32 = deg.parse().expect("a bend angle");
+                legs.push((o - Vec2::X * 70.0, o));
+                legs.push((o, o + dir(deg) * 70.0));
+            }
+        }
+    }
+    for (from, to) in legs {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road,
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+}
+
 /// Metro scene (T-164): a street, three metro stations beside it, the tunnels between the
 /// platforms and a metro line with two trains. Look at it with `--overlay underground`
 /// and `--cam metro`.

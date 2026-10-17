@@ -828,36 +828,49 @@ fn dir(deg: f32) -> Vec2 {
 }
 
 fn road(w: &mut World, a: Vec2, b: Vec2) {
-    w.line("basic_2l", (a.x, a.y), (b.x, b.y));
+    road_of(w, "basic_2l", a, b);
 }
+
+fn road_of(w: &mut World, def: &str, a: Vec2, b: Vec2) {
+    w.line(def, (a.x, a.y), (b.x, b.y));
+}
+
+/// BUG-065: every road def with sidewalks, narrow to wide.
+const SIDEWALK_ROADS: [&str; 5] = [
+    "basic_2l",
+    "basic_1w_2l",
+    "medium_1w_3l",
+    "medium_4l",
+    "large_6l",
+];
 
 /// A T: a main road through `C` along `main_deg` and a side road at `side_deg` to it that
 /// ends on it (`side_first`: the side road is drawn first/last in the other direction).
-fn t_junction(w: &mut World, main_deg: f32, side_deg: f32, from_main: bool) {
-    road(w, C - dir(main_deg) * 100.0, C + dir(main_deg) * 100.0);
+fn t_junction(w: &mut World, def: &str, main_deg: f32, side_deg: f32, from_main: bool) {
+    road_of(w, def, C - dir(main_deg) * 100.0, C + dir(main_deg) * 100.0);
     let far = C + dir(side_deg) * 90.0;
     if from_main {
-        road(w, C, far);
+        road_of(w, def, C, far);
     } else {
-        road(w, far, C);
+        road_of(w, def, far, C);
     }
 }
 
 /// A cross of two main roads and two side roads through `C`.
-fn crossing(w: &mut World, main_deg: f32, cross_deg: f32) {
-    road(w, C - dir(main_deg) * 100.0, C + dir(main_deg) * 100.0);
-    road(w, C - dir(cross_deg) * 90.0, C + dir(cross_deg) * 90.0);
+fn crossing(w: &mut World, def: &str, main_deg: f32, cross_deg: f32) {
+    road_of(w, def, C - dir(main_deg) * 100.0, C + dir(main_deg) * 100.0);
+    road_of(w, def, C - dir(cross_deg) * 90.0, C + dir(cross_deg) * 90.0);
 }
 
 /// Two roads meeting at `C` with an angle of `deg` between them: a node of degree 2.
-fn corner(w: &mut World, deg: f32, reversed: bool) {
+fn corner(w: &mut World, def: &str, deg: f32, reversed: bool) {
     let a = C - Vec2::X * 90.0;
     let b = C + dir(deg) * 90.0;
-    road(w, a, C);
+    road_of(w, def, a, C);
     if reversed {
-        road(w, b, C);
+        road_of(w, def, b, C);
     } else {
-        road(w, C, b);
+        road_of(w, def, C, b);
     }
 }
 
@@ -969,31 +982,39 @@ fn t_junctions_have_no_sidewalk_over_the_carriageway() {
         (0.0, 45.0, true),
         (0.0, 135.0, false),
     ] {
-        let mut w = world();
-        t_junction(&mut w, main, side, from_main);
-        check_clean(
-            &w,
-            &format!("T main {main} side {side} from_main {from_main}"),
-        );
+        for def in SIDEWALK_ROADS {
+            let mut w = world();
+            t_junction(&mut w, def, main, side, from_main);
+            check_clean(
+                &w,
+                &format!("{def} T main {main} side {side} from_main {from_main}"),
+            );
+        }
     }
 }
 
 #[test]
 fn crossings_have_no_sidewalk_over_the_carriageway() {
     for (a, b) in [(0.0, 90.0), (15.0, 105.0), (0.0, 60.0), (0.0, 45.0)] {
-        let mut w = world();
-        crossing(&mut w, a, b);
-        check_clean(&w, &format!("cross {a}/{b}"));
+        for def in SIDEWALK_ROADS {
+            let mut w = world();
+            crossing(&mut w, def, a, b);
+            check_clean(&w, &format!("{def} cross {a}/{b}"));
+        }
     }
 }
 
 #[test]
 fn corners_are_one_continuous_canvas_at_90_60_45_and_30_degrees_between_the_roads() {
-    for deg in [90.0, 120.0, 135.0, 150.0, 60.0, 45.0] {
-        for reversed in [false, true] {
+    for (def, deg, reversed) in SIDEWALK_ROADS.iter().flat_map(|d| {
+        [90.0, 120.0, 135.0, 150.0, 60.0, 45.0]
+            .into_iter()
+            .flat_map(move |deg| [(*d, deg, false), (*d, deg, true)])
+    }) {
+        {
             let mut w = world();
-            corner(&mut w, deg, reversed);
-            check_clean(&w, &format!("corner {deg} reversed {reversed}"));
+            corner(&mut w, def, deg, reversed);
+            check_clean(&w, &format!("{def} corner {deg} reversed {reversed}"));
             // The canvas covers the gap between the two segment ends.
             let v = w.view();
             let (set, _) = w.set(&v);
@@ -1010,7 +1031,7 @@ fn corners_are_one_continuous_canvas_at_90_60_45_and_30_degrees_between_the_road
                 let p = m0.lerp(m1, i as f32 / 20.0);
                 assert!(
                     canvas.iter().any(|t| in_tri(p, *t)),
-                    "corner {deg}: gap at {p:?} between the segment ends"
+                    "{def} corner {deg}: gap at {p:?} between the segment ends"
                 );
             }
         }
@@ -1023,11 +1044,11 @@ fn corners_are_one_continuous_canvas_at_90_60_45_and_30_degrees_between_the_road
 fn roads_built_while_paused_are_trimmed_and_have_their_junctions() {
     let mut w = world();
     w.paused = true;
-    t_junction(&mut w, 0.0, 90.0, false);
+    t_junction(&mut w, "basic_2l", 0.0, 90.0, false);
     check_clean(&w, "paused T");
     let mut w = world();
     w.paused = true;
-    corner(&mut w, 90.0, false);
+    corner(&mut w, "basic_2l", 90.0, false);
     check_clean(&w, "paused corner");
 }
 
@@ -1062,7 +1083,7 @@ fn a_straight_join_keeps_its_sidewalks_across_the_patch() {
 #[test]
 fn a_cross_has_pavement_in_its_four_corners_and_a_t_along_its_far_side() {
     let mut w = world();
-    crossing(&mut w, 0.0, 90.0);
+    crossing(&mut w, "basic_2l", 0.0, 90.0);
     let v = w.view();
     let (set, _) = w.set(&v);
     let (node, _) = v.junctions.iter().find(|(_, j)| j.arms.len() == 4).unwrap();
@@ -1079,7 +1100,7 @@ fn a_cross_has_pavement_in_its_four_corners_and_a_t_along_its_far_side() {
         );
     }
     let mut w = world();
-    t_junction(&mut w, 0.0, 90.0, false);
+    t_junction(&mut w, "basic_2l", 0.0, 90.0, false);
     let v = w.view();
     let (set, _) = w.set(&v);
     let (node, _) = v.junctions.iter().find(|(_, j)| j.arms.len() == 3).unwrap();
@@ -1098,24 +1119,29 @@ fn a_cross_has_pavement_in_its_four_corners_and_a_t_along_its_far_side() {
 /// wide along the arc as beside it (no notch of asphalt).
 #[test]
 fn a_bend_has_one_smooth_outer_sidewalk_without_spikes_or_notches() {
-    for len in [20.0f32, 30.0, 60.0, 90.0] {
+    let db = world().content;
+    for (def, len) in SIDEWALK_ROADS
+        .iter()
+        .flat_map(|d| [20.0f32, 30.0, 60.0, 90.0].map(|l| (*d, l)))
+    {
         for deg in [90.0f32, 60.0, 45.0, 120.0, 135.0] {
-            // Two 20 m arms at an obtuse angle overlap each other's road (the segments' own
-            // sidewalks, not the junction's): out of this test's reach.
-            if deg > 100.0 && len < 30.0 {
+            // Arms shorter than twice the road's width at an obtuse angle overlap each other's
+            // road (the segments' own sidewalks, not the junction's): out of this test's reach.
+            let width = db.road(db.road_id(def).unwrap()).width;
+            if deg > 100.0 && len < 2.0 * width {
                 continue;
             }
             for reversed in [false, true] {
                 let mut w = world();
                 let a = C - Vec2::X * len;
                 let b = C + dir(deg) * len;
-                road(&mut w, a, C);
+                road_of(&mut w, def, a, C);
                 if reversed {
-                    road(&mut w, b, C)
+                    road_of(&mut w, def, b, C)
                 } else {
-                    road(&mut w, C, b)
+                    road_of(&mut w, def, C, b)
                 }
-                let what = format!("bend {deg} len {len} reversed {reversed}");
+                let what = format!("{def} bend {deg} len {len} reversed {reversed}");
                 check_clean(&w, &what);
                 let v = w.view();
                 let (set, _) = w.set(&v);
@@ -1277,4 +1303,37 @@ fn a_path_is_flat_gravel_without_kerbs_or_sidewalk() {
             .iter()
             .all(|c| ![SIDEWALK, KERB, ASPHALT].contains(c))
     );
+}
+
+/// BUG-065: far from the origin (float steps of ~0.0005 m) the corners of neighbouring arms are
+/// one point, so every corner of an X and a T gets its pavement patch; the main road is long
+/// enough to be auto-cut into joints beside the junction.
+#[test]
+fn junctions_far_out_on_the_map_get_a_patch_in_every_corner() {
+    let d = C + Vec2::new(600.0, 300.0);
+    for def in SIDEWALK_ROADS {
+        for side in [None, Some(90.0f32)] {
+            let mut w = world();
+            road_of(&mut w, def, d - Vec2::X * 160.0, d + Vec2::X * 160.0);
+            match side {
+                None => road_of(&mut w, def, d - Vec2::Y * 120.0, d + Vec2::Y * 120.0),
+                Some(deg) => road_of(&mut w, def, d + dir(deg) * 120.0, d),
+            }
+            let what = format!("{def} {}", if side.is_none() { "X" } else { "T" });
+            check_clean(&w, &what);
+            let v = w.view();
+            let (_, j) = v
+                .junctions
+                .iter()
+                .find(|(_, j)| j.arms.len() >= 3)
+                .unwrap_or_else(|| panic!("{what}: no junction"));
+            // The far side of a T is straight: no corner there.
+            let corners = if side.is_none() { 4 } else { 2 };
+            assert_eq!(
+                super::corner::patches(&v.net, j).len(),
+                corners,
+                "{what}: a corner without its patch"
+            );
+        }
+    }
 }
