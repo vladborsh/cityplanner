@@ -16,6 +16,14 @@ impl SimRunner {
     /// the first tick.
     pub fn new_game(&mut self) -> Result<(), String> {
         self.world_mut().insert_resource(crate::Progress::START);
+        // The treasury of a new game comes from the balance (BUG-061).
+        let start = self
+            .world()
+            .get_resource::<SimContent>()
+            .map(|c| cp_core::Cost::from_units(c.0.balance().start_money));
+        if let Some(start) = start {
+            self.world_mut().resource_mut::<cp_core::Treasury>().balance = start;
+        }
         crate::progress::refresh_unlocks(self.world_mut());
         fill_deposits(self.world_mut());
         build_entry_road(self.world_mut())?;

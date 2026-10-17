@@ -177,7 +177,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     assert_eq!(sim.checksum(), 0x55bee8bba2b0dbd4, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x4a4b235a8188c0c6,
+        0x7382d3ad48188472,
         "load + 4096 ticks"
     );
 }
@@ -211,7 +211,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x42563e8aebed951b, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0xfd6bb2ce73c0d30c, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

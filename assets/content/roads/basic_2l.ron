@@ -12,7 +12,7 @@ Road((
     median_width: 0.0,
     speed_kmh: 40,
     max_slope: 0.12,
-    cost_per_m: 6.0,
+    cost_per_m: 4.0,
     upkeep_per_m_week: 0.06,
     allows_zoning: true,
     lamp_spacing_m: 28.0,

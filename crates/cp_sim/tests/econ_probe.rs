@@ -42,9 +42,7 @@ fn weekly_income_against_upkeep_by_population() {
 /// A new game with the player's starter set: a street from the entry stub, a water tower, a
 /// wind turbine and a sewage plant with their pipe and line, every cell zoned. Prints the
 /// treasury, population and the weekly flows day by day.
-#[test]
-#[ignore = "prints a balance table; run by hand"]
-fn starter_city_cash_flow() {
+fn run_starter(print: bool) -> (f64, f64, Vec<(u64, f64, usize)>) {
     use bevy_math::Vec2;
     use cp_building::BuildingCommand;
     use cp_net::{ElevationMode, NetCommand, RoadPath};
@@ -79,7 +77,7 @@ fn starter_city_cash_flow() {
             .resource_mut::<bevy_ecs::message::Messages<cp_core::CommandOutcome>>()
             .drain()
             .collect();
-        if let Some(Err(e)) = out.last().map(|o| o.result.clone()) {
+        if print && let Some(Err(e)) = out.last().map(|o| o.result.clone()) {
             println!("  rejected: {e}");
         }
     };
@@ -157,18 +155,22 @@ fn starter_city_cash_flow() {
             }),
         );
     }
-    println!(
-        "start {start:.0}; after street {after_road:.0} (street cost {:.0}); after services {after_services:.0} (services {:.0}); zoned {} cells",
-        start - after_road,
-        after_road - after_services,
-        cells.len()
-    );
-    println!("day  balance  pop  wk_income wk_upkeep");
+    if print {
+        println!(
+            "start {start:.0}; after street {after_road:.0} (street cost {:.0}); after services {after_services:.0} (services {:.0}); zoned {} cells",
+            start - after_road,
+            after_road - after_services,
+            cells.len()
+        );
+        println!("day  balance  pop  wk_income wk_upkeep");
+    }
+    let mut series = Vec::new();
     for day in 1..=42u64 {
         for _ in 0..cp_core::time::TICKS_PER_DAY {
             sim.tick_once();
         }
-        if day % 3 == 0 {
+        series.push((day, money(&sim), population(&sim)));
+        if print && day % 3 == 0 {
             let r = sim.world().resource::<EconomyState>().last_week;
             println!(
                 "{day:3} {:9.0} {:4} {:9.0} {:9.0} (roads {:.0} bldg {:.0} util {:.0})",
@@ -182,6 +184,39 @@ fn starter_city_cash_flow() {
             );
         }
     }
+    (start, after_services, series)
+}
+
+#[test]
+#[ignore = "prints a balance table; run by hand"]
+fn starter_city_cash_flow() {
+    run_starter(true);
+}
+
+/// BUG-061: the player's starter set is paid for at once and the treasury then goes up from the
+/// first residents: after a month it stands above what it was right after the purchases, and a
+/// water tower and a turbine with some street are a small part of the start money.
+#[test]
+fn a_starter_city_is_cash_positive_from_the_first_residents() {
+    let (start, after, series) = run_starter(false);
+    assert!(start >= 140_000.0, "start money {start}");
+    assert!(
+        after > 0.5 * start,
+        "the starter set eats {:.0} of {start:.0}",
+        start - after
+    );
+    let last = series.last().unwrap().1;
+    let pop = series.iter().map(|s| s.2).max().unwrap();
+    assert!(pop >= 100, "{pop} residents at most");
+    assert!(
+        last > after,
+        "after a month {last:.0}, right after the purchases {after:.0}"
+    );
+    // No day ends below the start of the build (no sinking into the red).
+    assert!(
+        series.iter().all(|(_, m, _)| *m >= after - 500.0),
+        "{series:?}"
+    );
 }
 
 /// BUG-052: the entry highway and rail are built free and cost no upkeep; a fresh city books

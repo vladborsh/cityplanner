@@ -258,6 +258,8 @@ pub struct Balance {
     /// Price of a tile by its ring: the Chebyshev distance from the start tile, 1..=4 (T-150).
     /// // tune later
     pub tile_price: [f32; 4],
+    /// The treasury of a new game (BUG-061). // tune later
+    pub start_money: f32,
     /// Garbage a household makes per game day (T-136). // tune later
     pub garbage_household: f32,
     /// Garbage a filled job makes per game day. // tune later
@@ -490,6 +492,7 @@ impl Balance {
         v.extend(self.tax_job);
         v.extend(self.level_mul);
         v.extend(self.tile_price);
+        v.push(self.start_money);
         v.extend([
             self.garbage_household,
             self.garbage_job,
@@ -603,6 +606,7 @@ impl Default for Balance {
             level_mul: [1.0, 1.2, 1.45],
             loan_offers: default_loan_offers(),
             tile_price: [5000.0, 10000.0, 20000.0, 40000.0],
+            start_money: 70000.0,
             garbage_household: 4.0,
             garbage_job: 1.0,
             garbage_problem: 40.0,
