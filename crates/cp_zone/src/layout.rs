@@ -103,10 +103,14 @@ impl BlockDraft {
 /// `n` cells filling `x` metres: 8 when `x` is within `fit_m` of a closed block (64 m), else the
 /// count that keeps the cell within a quarter of 8 m; failing that, standard cells and a rest.
 pub fn fit_cells(x: f32, fit_m: f32) -> (u32, f32) {
-    let n = if fit_m > 0.0 && (x - 8.0 * CELL_SIZE).abs() <= fit_m {
+    // The count is decided on `x` to the centimetre: the same distance measured along a street
+    // and across a block differs in the last bits, and on a tie (100 m is 12.5 cells) the two
+    // must not round apart, or the perpendicular frontages of a block get different lattices.
+    let q = (x * 100.0).round() / 100.0;
+    let n = if fit_m > 0.0 && (q - 8.0 * CELL_SIZE).abs() <= fit_m {
         8
     } else {
-        (x / CELL_SIZE).round().max(0.0) as u32
+        (q / CELL_SIZE).round().max(0.0) as u32
     };
     if n >= 1 {
         let pitch = x / n as f32;
@@ -114,8 +118,12 @@ pub fn fit_cells(x: f32, fit_m: f32) -> (u32, f32) {
             return (n, pitch);
         }
     }
-    ((x / CELL_SIZE).floor().max(0.0) as u32, CELL_SIZE)
+    ((q / CELL_SIZE).floor().max(0.0) as u32, CELL_SIZE)
 }
+
+/// How many cells away a facing road still fits the row depth (and the column pitch of the
+/// perpendicular frontages): 24 cells, 192 m.
+pub(crate) const FACING_CELLS: f32 = 24.0;
 
 fn side_vec(heading: Vec2, side: Side) -> Vec2 {
     Vec2::new(heading.y, -heading.x) * side.sign()
@@ -479,7 +487,12 @@ pub(crate) fn layout_frontage(
     }
     let straight = is_straight(&parts);
     let both_edges = matches!(f.start, FrontEnd::Edge(_)) && matches!(f.end, FrontEnd::Edge(_));
-    let (n, pitch, origin) = if straight && both_edges {
+    // The row depth of the frontages facing a block is fitted to the gap only within `reach`
+    // (see below); a block longer than that keeps the standard 8 m cell on both axes, or the
+    // perpendicular frontages would not share one lattice (BUG-056).
+    let reach = FACING_CELLS * CELL_SIZE + fit_m;
+    let fits = l + 2.0 * inner <= reach;
+    let (n, pitch, origin) = if straight && both_edges && fits {
         let (n, pitch) = fit_cells(l, fit_m);
         (n, pitch, a0)
     } else {
@@ -508,7 +521,6 @@ pub(crate) fn layout_frontage(
     let mut row_depth = CELL_SIZE;
     if straight {
         let own: BTreeSet<SegmentId> = f.segs.iter().map(|(s, _)| *s).collect();
-        let reach = 16.0 * CELL_SIZE + fit_m;
         let mut gap: Option<f32> = None;
         for j in 0..n {
             let a = centre(j);

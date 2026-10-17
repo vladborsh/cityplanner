@@ -198,6 +198,10 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 110.0, 40.0, c + 125.0),
             Vec3::new(c + 60.0, 0.0, c + 75.0),
         ),
+        "zones-big" => (
+            Vec3::new(c + 20.0, 560.0, c + 330.0),
+            Vec3::new(c + 20.0, 0.0, c + 20.0),
+        ),
         "zones" => (
             Vec3::new(c - 10.0, 420.0, c + 330.0),
             Vec3::new(c - 10.0, 0.0, c + 150.0),
@@ -307,6 +311,9 @@ pub fn build_sim(
     } else if scene == Some(scene::CORNERS) {
         scene::build_corners(&mut sim);
         info!("scene corners");
+    } else if scene == Some(scene::ZONES_BIG) {
+        scene::build_zones_big(&mut sim);
+        info!("scene zones-big");
     } else if scene == Some(scene::ZONES) {
         scene::build_zones(&mut sim);
         info!("scene zones");

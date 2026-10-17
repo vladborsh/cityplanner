@@ -707,6 +707,67 @@ pub fn build_zones(sim: &mut SimRunner) {
     }
 }
 
+/// Big zone blocks (BUG-056): a grid of 3 x 3 blocks of 96 and 112 m (and 100 m, a tie of the
+/// cell fit) between the road edges, every cell painted residential. Look at it with
+/// `--cam zones-big --overlay zones`.
+pub const ZONES_BIG: &str = "zones-big";
+
+/// Builds the [`ZONES_BIG`] scene through the normal commands.
+pub fn build_zones_big(sim: &mut SimRunner) {
+    use cp_zone::{ZoneCommand, ZoneGrid};
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    let hw = db.road(basic).width / 2.0;
+    let mut pos = vec![0.0f32];
+    for gap in [96.0f32, 112.0, 100.0] {
+        pos.push(pos.last().copied().unwrap_or(0.0) + gap + 2.0 * hw);
+    }
+    let o = Vec2::new(c - 150.0, c - 150.0);
+    let mut legs: Vec<(Vec2, Vec2)> = Vec::new();
+    for &z in &pos {
+        for w in pos.windows(2) {
+            legs.push((o + Vec2::new(w[0], z), o + Vec2::new(w[1], z)));
+        }
+    }
+    for &x in &pos {
+        for w in pos.windows(2) {
+            legs.push((o + Vec2::new(x, w[0]), o + Vec2::new(x, w[1])));
+        }
+    }
+    for (from, to) in legs {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: basic,
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    sim.tick_once();
+    let cells: Vec<_> = {
+        let zones = sim.world().resource::<ZoneGrid>();
+        zones
+            .blocks()
+            .flat_map(|(id, _)| zones.block_cells(id))
+            .filter(|c| zones.is_valid(*c))
+            .collect()
+    };
+    sim.push_command(
+        SimCommand::Zone(ZoneCommand::PaintZones {
+            cells,
+            zone: cp_content::ZoneType::ResLow,
+        }),
+        sim.tick(),
+    );
+    sim.tick_once();
+}
+
 /// Corner scene (T-186): an X crossing, T junctions and 90 degree bends of basic streets, for
 /// the rounded curbs. Look at it with `--cam corners`.
 pub const CORNERS: &str = "corners";

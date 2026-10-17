@@ -30,6 +30,7 @@ use cp_terrain::Terrain;
 use serde::{Deserialize, Serialize};
 
 use crate::geom::{Obb, Quad, quad_aabb, quad_contains, quad_intersection_area};
+use crate::layout::FACING_CELLS;
 use crate::layout::{BlockDraft, frontage_of, layout_frontage};
 use crate::roads::{Bounds, RoadIndex, bucket_range, inflate, union};
 
@@ -507,7 +508,7 @@ impl ZoneGrid {
 impl ZoneGrid {
     /// How far a road reaches into the row depth of the frontages near it (§7.1).
     fn depth_reach(&self) -> f32 {
-        16.0 * CELL_SIZE + self.fit_m
+        FACING_CELLS * CELL_SIZE + self.fit_m
     }
 
     /// Marks every block to be laid again by the next [`ZoneGrid::sync`] (a save of an older

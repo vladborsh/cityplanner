@@ -1486,6 +1486,54 @@ mod layout_v2 {
         let _ = Vec2::ZERO;
     }
 
+    /// BUG-056: in a block of any size every point within three rows of an edge is covered by
+    /// a valid cell, and no two valid cells overlap: the perpendicular frontages share one
+    /// lattice, so the seam between two edges is whole cells of one edge, not a staircase.
+    #[test]
+    fn big_blocks_have_no_holes_along_the_seams() {
+        let mut sizes: Vec<(f32, f32)> = Vec::new();
+        for g in (64..=128).step_by(8) {
+            sizes.push((g as f32, g as f32));
+            sizes.push((g as f32, (g as f32 * 1.5 / 8.0).round() * 8.0));
+        }
+        // Not multiples of a cell: the ties and the fitted pitches.
+        sizes.extend([
+            (90.0, 90.0),
+            (100.0, 100.0),
+            (110.0, 82.0),
+            (90.0, 135.0),
+            (100.0, 150.0),
+        ]);
+        for (gx, gz) in sizes {
+            let pos_x = [0.0, gx + 2.0 * H, 2.0 * (gx + 2.0 * H)];
+            let pos_z = [0.0, gz + 2.0 * H, 2.0 * (gz + 2.0 * H)];
+            let w = city(0, &pos_x, &pos_z);
+            assert_no_overlap_and_off_roads(&w);
+            let cells = valid_cells(&w.grid);
+            let (x0, z0) = (1000.0 + pos_x[1] + H, 1000.0 + pos_z[1] + H);
+            let mut holes = Vec::new();
+            let (mut x, mut z);
+            z = 0.5;
+            while z < gz {
+                x = 0.5;
+                while x < gx {
+                    let edge = x.min(gx - x).min(z).min(gz - z);
+                    let p = Vec2::new(x0 + x, z0 + z);
+                    if edge < 24.0 && !cells.iter().any(|(_, o)| o.distance_to_point(p) <= 1e-3) {
+                        holes.push((x, z));
+                    }
+                    x += 1.0;
+                }
+                z += 1.0;
+            }
+            assert!(
+                holes.is_empty(),
+                "block {gx} x {gz}: holes at {:?}",
+                &holes[..holes.len().min(8)]
+            );
+        }
+    }
+
     #[test]
     fn a_30_degree_street_and_a_curve_leave_no_cell_on_another() {
         let mut w = World::new();
