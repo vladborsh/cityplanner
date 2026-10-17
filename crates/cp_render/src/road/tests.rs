@@ -1441,3 +1441,44 @@ fn zebra_stripes_are_whole_and_centred() {
             .all(|&(a, b)| a >= -3.25 && b <= 3.25 && (b - a - ZEBRA_STRIPE).abs() < 1e-5)
     );
 }
+
+/// BUG-069: an X 8 m and a T 16 m from an automatic cut of the main road (cuts every 64 m,
+/// crossings on the 8 m lattice) get every corner patch and a zebra on every arm: the cut
+/// beside the junction goes.
+#[test]
+fn a_junction_beside_an_automatic_cut_gets_its_corners_and_zebras() {
+    let d = C + Vec2::new(613.37, 311.13);
+    for def in SIDEWALK_ROADS {
+        for (arms, from_cut) in [(4usize, 8.0f32), (3, 16.0)] {
+            let mut w = world();
+            // The main road starts 128 + `from_cut` m before `d`: a cut lies `from_cut` before it.
+            road_of(
+                &mut w,
+                def,
+                d - Vec2::X * (128.0 + from_cut),
+                d + Vec2::X * 180.0,
+            );
+            if arms == 4 {
+                road_of(&mut w, def, d - Vec2::Y * 120.0, d + Vec2::Y * 120.0);
+            } else {
+                road_of(&mut w, def, d + Vec2::Y * 120.0, d);
+            }
+            let what = format!("{def} {arms} arms {from_cut} m from a cut");
+            check_clean(&w, &what);
+            let (per_arm, j) = zebras(&w, arms);
+            let v = w.view();
+            assert_eq!(
+                super::corner::patches(&v.net, &j).len(),
+                if arms == 4 { 4 } else { 2 },
+                "{what}: a corner without its patch"
+            );
+            for (arm, tris) in j.arms.iter().zip(&per_arm) {
+                assert!(
+                    tris.len() >= 6,
+                    "{what}: no zebra on the arm at {}",
+                    arm.angle.to_degrees()
+                );
+            }
+        }
+    }
+}

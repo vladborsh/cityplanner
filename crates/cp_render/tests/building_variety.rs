@@ -43,10 +43,18 @@ fn a_ten_thousand_city_mixes_its_styles() {
             lots.push((l.block, l.col, l.col + u16::from(l.w), style));
         }
     }
+    // A level may have only four styles: ten buildings miss one of them by chance about one
+    // time in six (4 * (3/4)^10, BUG-069 moved the layout onto such a draw), 24 one time in 250.
     for (k, (n, styles)) in &per_level {
-        if *n >= 10 {
-            assert!(styles.len() >= 4, "{k:?}: {n} buildings, styles {styles:?}");
-        }
+        let want = match n {
+            0..10 => 0,
+            10..24 => 3,
+            _ => 4,
+        };
+        assert!(
+            styles.len() >= want,
+            "{k:?}: {n} buildings, styles {styles:?}"
+        );
     }
     lots.sort();
     let (mut pairs, mut same) = (0usize, 0usize);

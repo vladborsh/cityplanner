@@ -420,6 +420,7 @@ pub fn apply_build_plan(
     for s in &plan.segments {
         ids.push(graph.add_segment(def, plan.road, s.curve, s.elevation)?);
     }
+    merge_joints_near_junctions(&mut graph, &content, &ids);
     Ok(ids)
 }
 
@@ -476,10 +477,61 @@ fn apply_plan(
         graph.split_segments(content.road(road), seg, &ts)?;
     }
     let def = content.road(plan.road);
+    let mut ids = Vec::with_capacity(plan.segments.len());
     for s in &plan.segments {
-        graph.add_segment(def, plan.road, s.curve, s.elevation)?;
+        ids.push(graph.add_segment(def, plan.road, s.curve, s.elevation)?);
     }
+    merge_joints_near_junctions(graph, content, &ids);
     Ok(())
+}
+
+/// A piece of a road shorter than this, metres, between a junction and an automatic cut of
+/// the road leaves too little room for the junction's corners and zebra crossing (BUG-069).
+fn joint_reach(def: &cp_content::RoadDef) -> f32 {
+    def.width * 1.5 + 6.0
+}
+
+/// BUG-069: a crossing built a few metres from an automatic cut of the road it crosses (the
+/// cuts lie every 64 m, crossings on the 8 m zone lattice) leaves a piece too short for the
+/// junction's setback: its corners and zebra crossing went missing. The cut goes: the short
+/// piece and the next one become one straight segment (see [`NetGraph::merge_joint`]). Only
+/// junctions the edit touched (the dirty ones) are looked at; segments in `keep` stay.
+fn merge_joints_near_junctions(
+    graph: &mut NetGraph,
+    content: &cp_content::ContentDb,
+    keep: &[SegmentId],
+) {
+    let mut joints: Vec<(NodeId, RoadDefId)> = Vec::new();
+    for node in graph.dirty_nodes() {
+        let Some(n) = graph.node(node) else { continue };
+        if n.segments.len() < 3 {
+            continue;
+        }
+        for &sid in &n.segments {
+            let Some(seg) = graph.segment(sid) else {
+                continue;
+            };
+            let joint = if seg.start == node {
+                seg.end
+            } else {
+                seg.start
+            };
+            let others_kept = graph
+                .node(joint)
+                .is_some_and(|j| j.segments.iter().any(|s| keep.contains(s)));
+            if keep.contains(&sid)
+                || others_kept
+                || seg.length >= joint_reach(content.road(seg.road))
+                || joints.iter().any(|(j, _)| *j == joint)
+            {
+                continue;
+            }
+            joints.push((joint, seg.road));
+        }
+    }
+    for (joint, road) in joints {
+        graph.merge_joint(content.road(road), joint);
+    }
 }
 
 #[cfg(test)]
@@ -542,6 +594,84 @@ mod tests {
 
         apply(&mut w, &NetCommand::RemoveSegment { seg: inside }).unwrap();
         assert!(w.resource::<NetGraph>().segment(inside).is_none());
+    }
+
+    /// BUG-069: a crossing 8 m from the joint of a straight road takes the joint away; a bend
+    /// and a joint far enough away stay.
+    #[test]
+    fn a_crossing_next_to_a_joint_merges_the_joint_away() {
+        let (mut w, road) = world(&[]);
+        let db = w.resource::<SimContent>().0.clone();
+        let def = db.road(road).clone();
+        add(&mut w, road, 0.0, 64.0);
+        add(&mut w, road, 64.0, 128.0);
+        add(&mut w, road, 128.0, 200.0);
+        let mut g = w.resource_mut::<NetGraph>();
+        // A cross street at x = 72: 8 m past the joint at 64, 56 m before the one at 128.
+        let (sid, _) = g.segments().find(|(_, s)| s.curve.p0.x == 64.0).unwrap();
+        g.split_segment(&def, sid, 0.125).unwrap();
+        for z in [900.0, 1100.0] {
+            let line = CubicBezier3::line(Vec3::new(72.0, 0.0, z), Vec3::new(72.0, 0.0, 1000.0));
+            g.add_segment(&def, road, line, Elevation::Ground).unwrap();
+        }
+        merge_joints_near_junctions(&mut g, &db, &[]);
+        let joints: Vec<f32> = g
+            .nodes()
+            .filter(|(_, n)| n.kind == crate::model::NodeKind::Middle)
+            .map(|(_, n)| n.pos.x)
+            .collect();
+        assert_eq!(
+            joints,
+            vec![128.0],
+            "the joint 8 m away goes, the one 56 m away stays"
+        );
+        assert!(
+            g.segments()
+                .any(|(_, s)| s.curve.p0.x == 0.0 && (s.curve.p3.x - 72.0).abs() < 1e-3)
+        );
+    }
+
+    #[test]
+    fn a_bend_or_a_road_change_is_no_joint_to_merge() {
+        let (mut w, road) = world(&[]);
+        let db = w.resource::<SimContent>().0.clone();
+        let def = db.road(road).clone();
+        let other = db.road_id("medium_4l").unwrap();
+        let mut g = w.resource_mut::<NetGraph>();
+        let p = |x: f32, z: f32| Vec3::new(x, 0.0, z);
+        g.add_segment(
+            &def,
+            road,
+            CubicBezier3::line(p(0.0, 0.0), p(50.0, 0.0)),
+            Elevation::Ground,
+        )
+        .unwrap();
+        g.add_segment(
+            &def,
+            road,
+            CubicBezier3::line(p(50.0, 0.0), p(90.0, 30.0)),
+            Elevation::Ground,
+        )
+        .unwrap();
+        g.add_segment(
+            &def,
+            road,
+            CubicBezier3::line(p(0.0, 100.0), p(50.0, 100.0)),
+            Elevation::Ground,
+        )
+        .unwrap();
+        g.add_segment(
+            db.road(other),
+            other,
+            CubicBezier3::line(p(50.0, 100.0), p(100.0, 100.0)),
+            Elevation::Ground,
+        )
+        .unwrap();
+        let bend = g.find_node(p(50.0, 0.0)).unwrap();
+        let change = g.find_node(p(50.0, 100.0)).unwrap();
+        assert!(g.merge_joint(&def, bend).is_none());
+        assert!(g.merge_joint(&def, change).is_none());
+        assert_eq!(g.segment_count(), 4);
     }
 
     fn lengths(w: &World) -> Vec<(f32, f32)> {

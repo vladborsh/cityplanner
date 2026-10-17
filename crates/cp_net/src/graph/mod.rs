@@ -402,6 +402,52 @@ impl NetGraph {
         Ok(SplitResult { nodes, segments })
     }
 
+    /// Removes the joint `node` between two straight segments of one road and level that run
+    /// on through it in one direction (BUG-069): both are replaced by one straight segment, which
+    /// is returned. `None` (nothing changed) for any other node. `def` must be the road's
+    /// definition.
+    pub fn merge_joint(&mut self, def: &RoadDef, node: NodeId) -> Option<SegmentId> {
+        let n = self.nodes.get(node)?;
+        if n.kind != NodeKind::Middle || n.segments.len() != 2 {
+            return None;
+        }
+        let (a, b) = (n.segments[0], n.segments[1]);
+        let (sa, sb) = (self.segments.get(a)?, self.segments.get(b)?);
+        // `first` ends in the joint and `second` starts there.
+        let (first, second) = if sa.end == node && sb.start == node {
+            (sa, sb)
+        } else if sb.end == node && sa.start == node {
+            (sb, sa)
+        } else {
+            return None;
+        };
+        let straight = |c: &CubicBezier3| {
+            let d = (c.p3 - c.p0).normalize_or_zero();
+            [c.p1, c.p2]
+                .iter()
+                .all(|p| (*p - c.p0).cross(d).length() < 0.01)
+        };
+        let (from, to) = (first.curve.p0, second.curve.p3);
+        let dir = (to - from).normalize_or_zero();
+        let on_line = |p: Vec3| (p - from).cross(dir).length() < 0.05;
+        if first.road != second.road
+            || first.elevation != second.elevation
+            || first.start == second.end
+            || !straight(&first.curve)
+            || !straight(&second.curve)
+            || !on_line(first.curve.p3)
+        {
+            return None;
+        }
+        let (start, end, road, elevation) = (first.start, second.end, first.road, first.elevation);
+        self.take_segment(a).ok()?;
+        self.take_segment(b).ok()?;
+        self.prune_node(node);
+        let curve = CubicBezier3::line(from, to);
+        let length = curve.arc_table().length();
+        Some(self.insert_segment(def, road, curve, elevation, start, end, length))
+    }
+
     /// Changes a segment's road type: same nodes and curve, lanes rebuilt from `def`.
     pub fn upgrade_segment(
         &mut self,
