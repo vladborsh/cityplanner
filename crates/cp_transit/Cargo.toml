@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 cp_core.workspace = true
 cp_content.workspace = true
+cp_district.workspace = true
 cp_net.workspace = true
 cp_building.workspace = true
 cp_citizen.workspace = true

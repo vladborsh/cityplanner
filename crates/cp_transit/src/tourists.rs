@@ -14,7 +14,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Res, ResMut};
 use bevy_math::Vec2;
 use cp_building::{BuildingGrid, BuildingId, BuildingState};
-use cp_content::{SimContent, VehicleKind, ZoneType};
+use cp_content::{PolicyKind, SimContent, VehicleKind, ZoneType};
 use cp_core::time::{TICKS_PER_DAY, TICKS_PER_HOUR, TICKS_PER_WEEK};
 use cp_core::{Cost, SimLimits, SimRng, Tick};
 use cp_net::{NetGraph, NodeId, NodeKind, RailReach, node_is_rail};
@@ -82,6 +82,7 @@ pub fn run_tourists(
     mut ledger: ResMut<TransitLedger>,
     mut runs: ResMut<ServiceRuns>,
     mut agents: ResMut<Agents>,
+    policies: cp_district::PolicyParams,
 ) {
     let Some(content) = content else { return };
     let db = &*content.0;
@@ -181,7 +182,19 @@ pub fn run_tourists(
     if tourists.visits.len() >= cap {
         return;
     }
+    // TourismPromotion (T-194, city only) raises the flow by its `value`.
+    let promotion = match db.policy(PolicyKind::TourismPromotion) {
+        Some(p)
+            if policies
+                .get()
+                .is_some_and(|x| x.city.has(PolicyKind::TourismPromotion)) =>
+        {
+            1.0 + p.value
+        }
+        _ => 1.0,
+    };
     let per_tick = (balance.tourism_base + balance.tourism_per_com * shops.len() as f32)
+        * promotion
         / TICKS_PER_DAY as f32;
     let mut r = rng.fork(TOURISM_STREAM, now);
     let mut n = per_tick.floor() as u32;

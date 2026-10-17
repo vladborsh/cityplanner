@@ -41,6 +41,7 @@ fn content() -> Arc<ContentDb> {
                 styles: ["p"], service: None))"#
                     .into(),
             ),
+            cp_content::test_policy_source("TourismPromotion", 0.25),
             (
                 "v/car.ron".into(),
                 r#"Vehicle((id: "car", name: "car", kind: Car, length: 4.5, width: 1.8,
@@ -206,4 +207,29 @@ fn the_view_counts_the_tourists_on_the_map() {
         }
     }
     assert!(seen > 0, "visits arrived and the view counts them");
+}
+
+#[test]
+fn tourism_promotion_brings_a_quarter_more_visits_in_the_same_days() {
+    use cp_content::PolicyKind;
+    use cp_district::CityPolicies;
+    let days = |on: bool| {
+        let mut sim = town(true);
+        if on {
+            sim.world_mut().resource_mut::<CityPolicies>().mask =
+                PolicyKind::TourismPromotion.bit();
+        }
+        for _ in 0..4 * cp_core::time::TICKS_PER_DAY {
+            sim.tick_once();
+        }
+        // Arrivals so far: those who have been served plus those standing at a shop.
+        sim.world().resource::<Tourists>().visits_week
+    };
+    let (plain, promoted) = (days(false), days(true));
+    assert!(plain >= 40, "{plain} visits without the policy");
+    // Expect 1.25 ×; the flow is random but the seed is fixed.
+    assert!(
+        promoted * 100 >= plain * 115 && promoted * 100 <= plain * 140,
+        "{plain} visits, {promoted} promoted"
+    );
 }

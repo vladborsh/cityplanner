@@ -70,6 +70,11 @@ fn plain_content() -> Arc<ContentDb> {
 /// One 576 m street (six 96 m pieces) along z = 3000 from x = 3000. Blocks centred left of x = 3300 are
 /// residential, the others industrial.
 fn street(content: &Arc<ContentDb>) -> SimRunner {
+    street_zoned(content, ZoneType::ResLow)
+}
+
+/// [`street`] with the left-hand blocks painted `residential`.
+fn street_zoned(content: &Arc<ContentDb>, residential: ZoneType) -> SimRunner {
     let road = content.road_id("street").unwrap();
     let def = content.road(road).clone();
     let mut sim = SimRunner::new(3);
@@ -107,7 +112,7 @@ fn street(content: &Arc<ContentDb>) -> SimRunner {
     let mut zones = sim.world_mut().resource_mut::<ZoneGrid>();
     for (id, x, _, cells) in blocks {
         let zone = if x < 3300.0 {
-            ZoneType::ResLow
+            residential
         } else {
             ZoneType::Industrial
         };
@@ -441,4 +446,72 @@ fn the_view_carries_land_value_and_pollution() {
     assert!(land.values[cell(3100.0, 3000.0)] > land.values[cell(100.0, 100.0)]);
     assert_eq!(land.values[cell(100.0, 100.0)], 0.2);
     let _ = Vec2::ZERO;
+}
+
+/// Like [`plain_content`] with tall homes (ResHigh, levels 1-3) and the HighRiseBan policy (2).
+fn high_content() -> Arc<ContentDb> {
+    Arc::new(
+        ContentDb::from_sources(vec![
+            ("r/street.ron".into(), ROAD.into()),
+            ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
+            (
+                "balance.ron".into(),
+                "Balance((res_level_services: (0, 0, 0, 0, 0)))".into(),
+            ),
+            building("high_1", "ResHigh", 1, (2, 2), "households: 4,"),
+            building("high_2", "ResHigh", 2, (2, 2), "households: 6,"),
+            building("high_3", "ResHigh", 3, (3, 2), "households: 8,"),
+            cp_content::test_policy_source("HighRiseBan", 2.0),
+        ])
+        .unwrap_or_else(|e| panic!("{e}")),
+    )
+}
+
+#[test]
+fn a_high_rise_ban_stops_tall_homes_at_level_two_and_leaves_others_growing() {
+    use cp_content::PolicyKind;
+    use cp_district::{DistrictCommand, DistrictId};
+
+    let content = high_content();
+    let mut sim = street_zoned(&content, ZoneType::ResHigh);
+    let inside = block_near(&sim, ZoneType::ResHigh, 3048.0);
+    let outside = block_near(&sim, ZoneType::ResHigh, 3240.0);
+    let a = put(&mut sim, &content, "high_1", inside);
+    let b = put(&mut sim, &content, "high_1", outside);
+    // The district covers x 2880..3104 (cells 90..=96), not the other block at x ~3240.
+    let cells: Vec<_> = (90..=96)
+        .flat_map(|c| (90..=97).map(move |r| (c, r)))
+        .collect();
+    for cmd in [
+        DistrictCommand::Create {
+            name: "Calm".into(),
+        },
+        DistrictCommand::Paint {
+            cells,
+            district: DistrictId(1),
+        },
+        DistrictCommand::SetPolicy {
+            district: Some(DistrictId(1)),
+            policy: PolicyKind::HighRiseBan,
+            on: true,
+        },
+    ] {
+        cp_district::apply(sim.world_mut(), &cmd).unwrap();
+    }
+    run(&mut sim, 12 * 256);
+    // The clean street is worth 50: both would reach level 3.
+    assert_eq!(level(&sim, b), 3, "outside the district it grows to 3");
+    assert_eq!(level(&sim, a), 2, "inside it stops at the ban's level");
+    // The ban is not a demolition: switching it off lets the building go on.
+    cp_district::apply(
+        sim.world_mut(),
+        &DistrictCommand::SetPolicy {
+            district: Some(DistrictId(1)),
+            policy: PolicyKind::HighRiseBan,
+            on: false,
+        },
+    )
+    .unwrap();
+    run(&mut sim, 12 * 256);
+    assert_eq!(level(&sim, a), 3);
 }

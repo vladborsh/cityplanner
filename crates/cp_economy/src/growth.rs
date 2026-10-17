@@ -225,6 +225,7 @@ pub fn update_city(
     mut shortage: ResMut<WorkerShortage>,
     coverage: Option<Res<ServiceCoverage>>,
     services: Option<Res<ServiceState>>,
+    policies: cp_district::PolicyParams,
 ) {
     if tick.0 == 0 || !tick.0.is_multiple_of(CITY_PERIOD) {
         return;
@@ -339,7 +340,19 @@ pub fn update_city(
                     .count() as u8;
                 wanted = service_cap(bal, wanted, covered);
             }
-            let may_rise = !utility_trouble;
+            let mut may_rise = !utility_trouble;
+            // HighRiseBan (T-194): tall zones stop rising at level `value`; a building already
+            // above it stays as it is.
+            if matches!(
+                def.zone,
+                ZoneType::ResHigh | ZoneType::ComHigh | ZoneType::Office
+            ) && let Some(p) = policies.get()
+                && let Some(ban) = db.policy(cp_content::PolicyKind::HighRiseBan)
+                && p.at(pos, cp_content::PolicyKind::HighRiseBan)
+                && f32::from(buildings.get(id).expect("active").level) >= ban.value
+            {
+                may_rise = false;
+            }
             step_level(db, &mut buildings, &mut zones, &net, id, wanted, may_rise);
         }
     }

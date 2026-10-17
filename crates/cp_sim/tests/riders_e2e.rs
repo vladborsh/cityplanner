@@ -11,6 +11,7 @@ use cp_building::{
 };
 use cp_citizen::{CitizenGrid, Location, Trip, TripBook, TripMode, TripPurpose, TripState};
 use cp_content::ContentDb;
+use cp_core::Cost;
 use cp_core::curve::CubicBezier3;
 use cp_core::{Id, Tick};
 use cp_net::{Elevation, NetGraph, SegmentId};
@@ -30,8 +31,8 @@ struct Town {
     side: f32,
 }
 
-/// Copies the content with `bus_basic` holding `capacity` passengers.
-fn content_with_bus_capacity(capacity: u16) -> std::path::PathBuf {
+/// Copies the content with `from` replaced by `to` in `file` (relative to the content root).
+fn content_edited(tag: &str, file: &str, from: &str, to: &str) -> std::path::PathBuf {
     fn copy(from: &Path, to: &Path) {
         std::fs::create_dir_all(to).unwrap();
         for e in std::fs::read_dir(from).unwrap() {
@@ -44,20 +45,24 @@ fn content_with_bus_capacity(capacity: u16) -> std::path::PathBuf {
             }
         }
     }
-    let dir = std::env::temp_dir().join(format!(
-        "cp_riders_content_{capacity}_{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("cp_riders_content_{tag}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     copy(&Path::new(ROOT).join("../../assets/content"), &dir);
-    let f = dir.join("vehicles/bus_basic.ron");
+    let f = dir.join(file);
     let s = std::fs::read_to_string(&f).unwrap();
-    std::fs::write(
-        &f,
-        s.replace("capacity: 60", &format!("capacity: {capacity}")),
-    )
-    .unwrap();
+    assert!(s.contains(from), "{from} in {file}");
+    std::fs::write(&f, s.replace(from, to)).unwrap();
     dir
+}
+
+/// Copies the content with `bus_basic` holding `capacity` passengers.
+fn content_with_bus_capacity(capacity: u16) -> std::path::PathBuf {
+    content_edited(
+        &format!("cap{capacity}"),
+        "vehicles/bus_basic.ron",
+        "capacity: 60",
+        &format!("capacity: {capacity}"),
+    )
 }
 
 fn town(content_dir: &Path, side: f32) -> Town {
@@ -451,4 +456,70 @@ fn the_weekly_settlement_books_fares_and_bus_upkeep_and_the_treasury_follows() {
         t.sim.world().resource::<TransitLedger>().is_empty(),
         "the ledger starts over"
     );
+}
+
+fn free_transit(t: &mut Town) {
+    use cp_content::PolicyKind;
+    t.sim
+        .world_mut()
+        .resource_mut::<cp_district::CityPolicies>()
+        .mask = PolicyKind::FreeTransit.bit();
+}
+
+#[test]
+fn free_transit_takes_no_fares_and_still_carries_the_riders() {
+    let mut t = town(&plain(), 800.0);
+    t.line();
+    free_transit(&mut t);
+    t.household(3, false);
+    t.run(120);
+    assert_eq!(t.send_all(), 3);
+    t.run(1500);
+    assert_eq!(t.arrived(), 3, "all three reached the workplace");
+    let stats: u32 = t
+        .sim
+        .world()
+        .resource::<TransitNet>()
+        .stats
+        .values()
+        .map(|s| s.riders_today)
+        .sum();
+    assert!(stats > 0, "they rode");
+    assert_eq!(t.sim.world().resource::<TransitLedger>().fares, Cost::ZERO);
+}
+
+#[test]
+fn free_transit_wins_car_owners_the_paid_line_does_not() {
+    // Car owners compare the bus with `car_bias ×` the car (here a slow, jammed car estimate): at
+    // some distances the paid line loses and the same line with halved waiting and penalty
+    // wins; never the other way round.
+    let slow = content_edited(
+        "slow",
+        "balance.ron",
+        "car_speed_est: 9.0",
+        "car_speed_est: 4.0",
+    );
+    let (mut flipped, mut worse) = (0, 0);
+    for side in (400..=2000).step_by(100) {
+        let by_bus = |free: bool| {
+            let mut t = town(&slow, side as f32);
+            t.line();
+            if free {
+                free_transit(&mut t);
+            }
+            t.household(2, true);
+            t.run(120);
+            t.send_all();
+            t.run(2);
+            t.modes()
+                .iter()
+                .filter(|&&m| m == TripMode::Transit)
+                .count()
+        };
+        let (paid, free) = (by_bus(false), by_bus(true));
+        flipped += usize::from(free > paid);
+        worse += usize::from(free < paid);
+    }
+    assert!(flipped > 0, "no distance where only the free line wins");
+    assert_eq!(worse, 0);
 }

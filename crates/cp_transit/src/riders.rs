@@ -110,12 +110,14 @@ pub fn choose_transit(
     mut book: ResMut<TripBook>,
     mut transit: ResMut<TransitNet>,
     mut runs: ResMut<ServiceRuns>,
+    policies: cp_district::PolicyParams,
 ) {
     let Some(content) = content else { return };
     if transit.lines.is_empty() {
         return;
     }
     let balance = content.0.balance();
+    let policies = policies.get();
     book.ensure_derived();
     // The lines that run now and fit their plan, in line id order.
     let usable: Vec<LineId> = transit
@@ -151,6 +153,11 @@ pub fn choose_transit(
             continue;
         };
         let (pa, pb) = (a.pos, b.pos);
+        // FreeTransit (T-194) makes the bus look better for trips that start in its area: the
+        // waiting and the transit penalty count `1 - value` as much.
+        let free = policies.map_or(1.0, |p| {
+            p.factor_at(&content.0, pa, cp_content::PolicyKind::FreeTransit)
+        });
         let dist = pa.distance(pb);
         let baseline = match trip.mode {
             TripMode::Walk => dist / WALK_SPEED_MPS,
@@ -203,10 +210,10 @@ pub fn choose_transit(
                 continue;
             };
             let cost = f.walk / WALK_SPEED_MPS
-                + f.wait
+                + f.wait * free
                 + ride
                 + t.walk / WALK_SPEED_MPS
-                + balance.transit_penalty_s;
+                + balance.transit_penalty_s * free;
             offer(
                 cost,
                 vec![Ride {
@@ -246,13 +253,13 @@ pub fn choose_transit(
                             continue;
                         };
                         let cost = f.walk / WALK_SPEED_MPS
-                            + f.wait
+                            + f.wait * free
                             + r1
                             + walk / WALK_SPEED_MPS
-                            + t.wait
+                            + t.wait * free
                             + r2
                             + t.walk / WALK_SPEED_MPS
-                            + balance.transit_penalty_s
+                            + balance.transit_penalty_s * free
                             + balance.transfer_penalty_s;
                         offer(
                             cost,
@@ -323,10 +330,12 @@ pub fn run_riders(
     mut grid: ResMut<CitizenGrid>,
     mut runs: ResMut<ServiceRuns>,
     mut agents: ResMut<Agents>,
+    policies: cp_district::PolicyParams,
 ) {
     let Some(content) = content else { return };
     let db = &*content.0;
     let balance = db.balance();
+    let policies = policies.get();
     let now = *tick;
     if transit.riders.is_empty() && transit.stats.is_empty() && transit.lines.is_empty() {
         return;
@@ -376,7 +385,16 @@ pub fn run_riders(
         } else {
             VehicleKind::Bus
         });
-        let fare = if metro {
+        // FreeTransit (T-194): no ticket for boarding in its area.
+        let free_here = policies.is_some_and(|p| {
+            transit
+                .stops
+                .get(stop)
+                .is_some_and(|s| p.at(s.pos, cp_content::PolicyKind::FreeTransit))
+        }) && db.policy(cp_content::PolicyKind::FreeTransit).is_some();
+        let fare = if free_here {
+            0.0
+        } else if metro {
             balance.metro_fare
         } else {
             balance.transit_fare
