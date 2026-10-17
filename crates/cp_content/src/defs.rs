@@ -760,6 +760,9 @@ pub enum RoadClass {
     Highway,
     /// Track for trains (T-161): Rail lanes only, a sub-network of its own.
     Rail,
+    /// A pedestrian path (T-222): `Pedestrian` lanes only, no zoning, ground only; it may
+    /// share a node with a road but never with a railway. Appended last.
+    Path,
 }
 
 /// Underground version of a road type (T-161): its own price and mesh, and the depth below the

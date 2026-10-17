@@ -1,0 +1,21 @@
+// Pedestrian path (T-222): one Pedestrian lane each way, no cars, no zoning, ground only.
+// Numbers: tune later.
+Road((
+    id: "park_path",
+    name: "Path",
+    class: Path,
+    width: 3.0,
+    lanes: [
+        (kind: Pedestrian, dir: Forward, width: 1.5, offset: 0.75),
+        (kind: Pedestrian, dir: Backward, width: 1.5, offset: -0.75),
+    ],
+    median_width: 0.0,
+    speed_kmh: 5,
+    max_slope: 0.2,
+    cost_per_m: 0.6,
+    upkeep_per_m_week: 0.01,
+    allows_zoning: false,
+    rank: 0,
+    mesh: "road/park_path",
+    material: "road/gravel",
+))

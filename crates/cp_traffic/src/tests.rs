@@ -562,3 +562,57 @@ fn the_route_between_two_points_takes_the_100_kmh_highway_over_the_40_kmh_street
         "{segs:?}"
     );
 }
+
+// T-222: pedestrian paths.
+
+#[test]
+fn pedestrians_walk_over_a_path_joined_to_a_sidewalk_and_cars_do_not() {
+    let mut s = sim();
+    let road = s.seg((1000.0, 1000.0), (1100.0, 1000.0));
+    let path = s.seg_with("park_path", (1100.0, 1000.0), (1100.0, 1100.0));
+    let far = s.seg_with("park_path", (1100.0, 1100.0), (1200.0, 1100.0));
+    let walk = ped_path(s.solve(ped(
+        acc(road, 10.0, Side::Right),
+        acc(far, 90.0, Side::Right),
+    )))
+    .unwrap();
+    assert!(!walk.states.is_empty());
+    let g = s.world.resource::<PathNetwork>().graph().clone();
+    assert!(g.ped_path_valid(&walk));
+    // And back.
+    assert!(
+        ped_path(s.solve(ped(
+            acc(far, 90.0, Side::Left),
+            acc(road, 10.0, Side::Right)
+        )))
+        .is_ok()
+    );
+    // A path has no car lane: a car cannot start or end on it.
+    assert_eq!(
+        car_path(s.solve(car(
+            acc(road, 10.0, Side::Right),
+            acc(path, 50.0, Side::Right)
+        ))),
+        Err(NoPath)
+    );
+    assert_eq!(
+        car_path(s.solve(car(
+            acc(path, 50.0, Side::Right),
+            acc(road, 10.0, Side::Right)
+        ))),
+        Err(NoPath)
+    );
+}
+
+#[test]
+fn two_roads_joined_only_by_a_path_are_a_walk_but_not_a_drive() {
+    let mut s = sim();
+    let a = s.seg((1000.0, 1000.0), (1100.0, 1000.0));
+    s.seg_with("park_path", (1100.0, 1000.0), (1200.0, 1000.0));
+    let b = s.seg((1200.0, 1000.0), (1300.0, 1000.0));
+    assert!(ped_path(s.solve(ped(acc(a, 10.0, Side::Right), acc(b, 90.0, Side::Right)))).is_ok());
+    assert_eq!(
+        car_path(s.solve(car(acc(a, 10.0, Side::Right), acc(b, 90.0, Side::Right)))),
+        Err(NoPath)
+    );
+}

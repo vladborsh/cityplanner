@@ -52,6 +52,9 @@ pub fn cards(content: &ContentDb) -> Vec<Card> {
 
 /// "2 lanes · 50 km/h · one-way".
 pub fn card_summary(c: &Card) -> String {
+    if c.class == RoadClass::Path {
+        return format!("Pedestrian lanes only · {:.0} km/h", c.speed_kmh);
+    }
     format!(
         "{} {} · {:.0} km/h{}",
         c.lanes,
@@ -68,6 +71,7 @@ fn class_label(class: RoadClass) -> &'static str {
         RoadClass::Arterial => "Arterial",
         RoadClass::Highway => "Highway",
         RoadClass::Rail => "Rail",
+        RoadClass::Path => "Paths",
     }
 }
 

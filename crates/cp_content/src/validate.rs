@@ -113,6 +113,22 @@ pub fn road(d: &RoadDef) -> Problems {
             "a Rail lane belongs to a road of class Rail",
         );
     }
+    if d.class == RoadClass::Path {
+        for (i, l) in d.lanes.iter().enumerate() {
+            if l.kind != LaneKind::Pedestrian {
+                c.bad(
+                    format!("lanes[{i}].kind"),
+                    "a Path has Pedestrian lanes only",
+                );
+            }
+        }
+        if d.allows_zoning {
+            c.bad("allows_zoning", "a Path does not allow zoning");
+        }
+        if !d.ground || d.elevated.is_some() || d.bridge.is_some() || d.tunnel.is_some() {
+            c.bad("ground", "a Path lies on the ground only");
+        }
+    }
     if !d.ground && d.tunnel.is_none() {
         c.bad("ground", "a road without a ground version needs a tunnel");
     }

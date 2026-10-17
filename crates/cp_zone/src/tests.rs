@@ -1587,3 +1587,13 @@ mod layout_v2 {
         }
     }
 }
+
+#[test]
+fn a_path_gets_no_zone_blocks() {
+    let mut w = World::new();
+    let p = w.line("park_path", (1000.0, 1000.0), (1100.0, 1000.0));
+    w.sync();
+    assert!(!w.db.road(w.road("park_path")).allows_zoning);
+    assert_eq!(w.grid.blocks_of(p), [None, None]);
+    assert_eq!(w.grid.block_count(), 0);
+}

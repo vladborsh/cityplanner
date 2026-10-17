@@ -1172,7 +1172,7 @@ mod tests {
     #[test]
     fn loads_shipped_content() {
         let db = real();
-        assert_eq!(db.roads().count(), 11);
+        assert_eq!(db.roads().count(), 12);
         // T-190: the eight policies, one per kind, in kind order.
         let kinds: Vec<_> = db.policies().iter().map(|p| p.kind).collect();
         assert_eq!(kinds, PolicyKind::ALL);
@@ -1195,6 +1195,7 @@ mod tests {
                 "medium_1w_3l",
                 "medium_4l",
                 "metro_track",
+                "park_path",
                 "rail_2t"
             ]
         );

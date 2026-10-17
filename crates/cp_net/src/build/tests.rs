@@ -1380,3 +1380,90 @@ fn a_short_raised_tail_past_a_crossing_is_cut_off() {
         last.curve.p3
     );
 }
+
+// ---------- pedestrian paths (T-222) ----------
+
+impl W {
+    fn path(
+        &self,
+        from: Vec2,
+        to: Vec2,
+        elevation: ElevationMode,
+        snap: SnapOptions,
+    ) -> RoadPathRequest {
+        RoadPathRequest {
+            road: self.road("park_path"),
+            path: RoadPath::Straight { from, to },
+            elevation,
+            snap,
+        }
+    }
+}
+
+#[test]
+fn a_path_shares_a_node_with_a_road_and_splits_it() {
+    let mut w = W::new();
+    let s = w.add(at(0.0, 0.0), at(0.0, 80.0));
+    let node = w.graph.segment(s).unwrap().end;
+    let r = w.path(
+        at(60.0, 70.0),
+        at(9.0, 80.0),
+        ElevationMode::Ground,
+        SnapOptions::default(),
+    );
+    let plan = w.run(&r).unwrap();
+    assert_eq!(plan.segments[0].end, NodeRef::Existing(node));
+    // Across the middle of the road: a junction is made in it.
+    let r = w.path(
+        at(-40.0, 40.0),
+        at(40.0, 40.0),
+        ElevationMode::Ground,
+        SnapOptions::default(),
+    );
+    assert_eq!(w.run(&r).unwrap().splits.len(), 1);
+}
+
+#[test]
+fn a_path_never_meets_track_lies_only_on_the_ground() {
+    let mut w = W::new();
+    let t = w.add_as(
+        "rail_2t",
+        at(0.0, -150.0),
+        at(0.0, 150.0),
+        100.0,
+        Elevation::Ground,
+    );
+    let node = w.graph.segment(t).unwrap().end;
+    // Across the track: refused, as for a road.
+    let r = w.path(
+        at(-100.0, 0.0),
+        at(100.0, 0.0),
+        ElevationMode::Ground,
+        SnapOptions::default(),
+    );
+    assert_eq!(kinds(&w.run(&r).unwrap_err()), ["RailCrossesRoad"]);
+    // Ending next to a track node does not snap to it.
+    let r = w.path(
+        at(60.0, 140.0),
+        at(5.0, 150.0),
+        ElevationMode::Ground,
+        SnapOptions::default(),
+    );
+    let plan = w.run(&r).unwrap();
+    assert_ne!(plan.segments[0].end, NodeRef::Existing(node));
+    // No raised or underground version.
+    let r = w.path(
+        at(-100.0, 0.0),
+        at(-50.0, 0.0),
+        ElevationMode::Elevated(4.0),
+        no_snap(),
+    );
+    assert_eq!(kinds(&w.run(&r).unwrap_err()), ["NoElevatedVariant"]);
+    let r = w.path(
+        at(-100.0, 0.0),
+        at(-50.0, 0.0),
+        ElevationMode::Tunnel(12.0),
+        no_snap(),
+    );
+    assert_eq!(kinds(&w.run(&r).unwrap_err()), ["NoTunnelVariant"]);
+}

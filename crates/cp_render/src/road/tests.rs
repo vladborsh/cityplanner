@@ -1239,3 +1239,42 @@ fn highways_and_junctions_get_no_lamps_and_a_junction_keeps_them_clear() {
         }
     }
 }
+
+// T-222: a path is a flat gravel ribbon, no kerbs.
+#[test]
+fn a_path_is_flat_gravel_without_kerbs_or_sidewalk() {
+    let mut w = world();
+    w.line("park_path", (X0, Z0), (X0 + 80.0, Z0));
+    w.line("park_path", (X0 + 80.0, Z0), (X0 + 80.0, Z0 + 60.0));
+    let v = w.view();
+    let (set, _) = w.set(&v);
+    let (id, _) = v.net.segments().next().unwrap();
+    let piece = set.piece(PieceKey::Segment(id)).unwrap();
+    let m = &piece.near;
+    assert!(m.colors.contains(&GRAVEL));
+    assert!(
+        m.colors
+            .iter()
+            .all(|c| ![SIDEWALK, KERB, ASPHALT].contains(c))
+    );
+    // One flat level: no kerb faces and no raised band.
+    let ys: Vec<f32> = positions(m)
+        .zip(&m.colors)
+        .filter(|(_, c)| **c == GRAVEL)
+        .map(|(p, _)| p.y)
+        .collect();
+    let (lo, hi) = ys
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(l, h), &y| (l.min(y), h.max(y)));
+    assert!(hi - lo < 0.7, "{lo}..{hi}"); // follows the slope only
+    // The corner junction of two paths is gravel too.
+    let (n, _) = v.net.nodes().find(|(_, n)| n.segments.len() == 2).unwrap();
+    let j = set.piece(PieceKey::Junction(n)).unwrap();
+    assert!(j.near.colors.contains(&GRAVEL));
+    assert!(
+        j.near
+            .colors
+            .iter()
+            .all(|c| ![SIDEWALK, KERB, ASPHALT].contains(c))
+    );
+}

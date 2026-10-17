@@ -260,6 +260,7 @@ pub fn class_colour(class: RoadClass) -> egui::Color32 {
         RoadClass::Arterial => egui::Color32::from_rgb(235, 175, 60),
         RoadClass::Highway => egui::Color32::from_rgb(215, 80, 70),
         RoadClass::Rail => egui::Color32::from_rgb(110, 110, 120),
+        RoadClass::Path => egui::Color32::from_rgb(190, 170, 120),
     }
 }
 

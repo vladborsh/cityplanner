@@ -56,6 +56,8 @@ const CHEVRON_HALF: f32 = 1.4;
 const CHEVRON_ARM: f32 = 0.15;
 
 const ASPHALT: [f32; 4] = [0.11, 0.11, 0.12, 1.0];
+/// Gravel of a pedestrian path (T-222).
+const GRAVEL: [f32; 4] = [0.62, 0.55, 0.40, 1.0];
 const SIDEWALK: [f32; 4] = [0.55, 0.55, 0.52, 1.0];
 const KERB: [f32; 4] = [0.42, 0.42, 0.40, 1.0];
 const BIKE: [f32; 4] = [0.10, 0.30, 0.16, 1.0];
@@ -167,6 +169,13 @@ struct Band {
     dashed: bool,
 }
 
+/// A pedestrian path (T-222): every lane is a `Pedestrian` one (read from the lanes so the mesh
+/// needs no content). Drawn as a flat gravel ribbon, without kerbs.
+fn is_path(graph: &NetGraph, seg: &Segment) -> bool {
+    let mut lanes = seg.lanes.iter().filter_map(|&l| graph.lane(l)).peekable();
+    lanes.peek().is_some() && lanes.all(|l| l.kind == LaneKind::Pedestrian)
+}
+
 fn lane_color(kind: LaneKind) -> ([f32; 4], f32) {
     match kind {
         LaneKind::Car => (ASPHALT, 0.0),
@@ -208,8 +217,13 @@ fn cross_section(graph: &NetGraph, seg: &Segment, markings: bool) -> Vec<Band> {
         }];
     }
     let mut bands: Vec<Band> = Vec::new();
+    let path = is_path(graph, seg);
     for (i, l) in lanes.iter().enumerate() {
-        let (color, raise) = lane_color(l.kind);
+        let (color, raise) = if path {
+            (GRAVEL, 0.0)
+        } else {
+            lane_color(l.kind)
+        };
         let (lo, hi) = (l.offset - l.width * 0.5, l.offset + l.width * 0.5);
         if let Some(prev) = bands.last().copied() {
             if lo - prev.hi > 1e-3 {
@@ -823,11 +837,21 @@ pub fn build_junction_piece(
     };
     let j = &rounded;
     let mut m = MeshData::default();
+    // Only paths meet here: gravel instead of asphalt.
+    let floor = if !j.arms.is_empty()
+        && j.arms
+            .iter()
+            .all(|a| graph.segment(a.segment).is_some_and(|s| is_path(graph, s)))
+    {
+        GRAVEL
+    } else {
+        ASPHALT
+    };
     let verts: Vec<u32> = j
         .polygon
         .iter()
         .zip(&ys)
-        .map(|(p, &y)| push_vertex(&mut m, Vec3::new(p.x, y, p.y), Vec3::Y, ASPHALT))
+        .map(|(p, &y)| push_vertex(&mut m, Vec3::new(p.x, y, p.y), Vec3::Y, floor))
         .collect();
     for [a, b, c] in triangulate(&j.polygon) {
         tri(&mut m, verts[a], verts[b], verts[c], Vec3::Y);
