@@ -102,6 +102,84 @@ pub fn build_chains(sim: &mut SimRunner) -> usize {
     })
 }
 
+/// Chain trucks scene (T-213b): the four cargo trucks and the goods truck in a row on a straight
+/// street, each parked at its run's end. Look at it with `--cam trucks`.
+pub const TRUCKS: &str = "trucks";
+
+/// Builds the [`TRUCKS`] scene; returns how many trucks stand on the road.
+pub fn build_trucks(sim: &mut SimRunner) -> usize {
+    use cp_building::{AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingState, Lot};
+    use cp_content::{CargoKind, VehicleKind};
+    use cp_traffic::{RunPoint, ServiceRuns};
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    sim.push_command(
+        SimCommand::Net(NetCommand::BuildRoad {
+            road: basic,
+            path: RoadPath::Straight {
+                from: Vec2::new(c - 100.0, c),
+                to: Vec2::new(c + 100.0, c),
+            },
+            elevation: ElevationMode::Ground,
+        }),
+        sim.tick(),
+    );
+    sim.tick_once();
+    sim.tick_once();
+    let segment = sim
+        .world()
+        .resource::<cp_net::NetGraph>()
+        .segments()
+        .next()
+        .map(|(id, _)| id)
+        .expect("a segment");
+    let def = db.building_id("small_park").expect("small_park");
+    let d = db.building(def);
+    let stand = |sim: &mut SimRunner, t: f32| {
+        sim.world_mut()
+            .resource_mut::<BuildingGrid>()
+            .insert(Building {
+                def,
+                footprint: cp_building::Footprint::Lot(Lot {
+                    block: cp_core::Id::new(0, 0),
+                    col: 0,
+                    w: d.lot.0,
+                    d: d.lot.1,
+                }),
+                level: d.level,
+                state: BuildingState::Active,
+                ready_at: cp_core::Tick(0),
+                pos: Vec2::new(c - 100.0 + t * 200.0, c + 30.0),
+                rot: 0.0,
+                access: Some(AccessPoint { segment, t }),
+                flags: BuildingFlags::default(),
+                level_progress: 0.0,
+            })
+    };
+    let end = stand(sim, 0.95);
+    let kinds = [
+        CargoKind::Goods,
+        CargoKind::Crops,
+        CargoKind::Logs,
+        CargoKind::Ore,
+        CargoKind::Oil,
+    ];
+    let starts: Vec<_> = (0..kinds.len())
+        .map(|i| stand(sim, 0.05 + i as f32 * 0.12))
+        .collect();
+    let mut runs = sim.world_mut().resource_mut::<ServiceRuns>();
+    for (cargo, from) in kinds.into_iter().zip(starts) {
+        runs.start_run(
+            VehicleKind::for_cargo(cargo),
+            RunPoint::Building(from),
+            RunPoint::Building(end),
+            true,
+        );
+    }
+    kinds.len()
+}
+
 /// City parks scene (T-221): the four parks in a row. Look at it with `--cam parks`.
 pub const PARKS: &str = "parks";
 

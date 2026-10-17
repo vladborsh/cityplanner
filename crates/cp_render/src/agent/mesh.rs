@@ -70,6 +70,110 @@ fn wheels(m: &mut MeshData, z: &[f32]) {
     }
 }
 
+/// The chain trucks (T-213b), kinds 7..=10: a cab in front (instance colour), a glass front, a
+/// dark chassis and a body of its own: a flatbed with crates and bales, a log trailer, an ore
+/// tipper, a tanker.
+fn chain_truck(m: &mut MeshData, kind: usize) {
+    push_box(m, [-0.5, 0.12, 0.28], [0.5, 0.78, 0.5], TINT);
+    push_box(m, [-0.46, 0.5, 0.46], [0.46, 0.74, 0.505], GLASS);
+    let chassis = [0.2, 0.2, 0.22, 0.0];
+    push_box(m, [-0.45, 0.12, -0.5], [0.45, 0.2, 0.26], chassis);
+    match kind {
+        7 => {
+            // Flatbed with two crates and a hay bale.
+            push_box(
+                m,
+                [-0.52, 0.2, -0.5],
+                [0.52, 0.28, 0.22],
+                [0.5, 0.36, 0.2, 0.0],
+            );
+            push_box(
+                m,
+                [-0.46, 0.28, 0.0],
+                [-0.02, 0.72, 0.2],
+                [0.72, 0.52, 0.25, 0.0],
+            );
+            push_box(
+                m,
+                [0.02, 0.28, 0.0],
+                [0.46, 0.72, 0.2],
+                [0.72, 0.52, 0.25, 0.0],
+            );
+            push_box(
+                m,
+                [-0.46, 0.28, -0.46],
+                [0.46, 0.8, -0.04],
+                [0.85, 0.75, 0.3, 0.0],
+            );
+        }
+        8 => {
+            // Log trailer: stakes at the sides and three stacked logs along the length.
+            let bark = [0.38, 0.25, 0.14, 0.0];
+            push_box(m, [-0.52, 0.2, -0.5], [0.52, 0.26, 0.22], chassis);
+            for x in [-0.5f32, 0.5] {
+                push_box(m, [x - 0.03, 0.26, -0.48], [x + 0.03, 0.9, -0.44], chassis);
+                push_box(m, [x - 0.03, 0.26, 0.16], [x + 0.03, 0.9, 0.2], chassis);
+            }
+            push_box(m, [-0.42, 0.26, -0.5], [-0.04, 0.58, 0.22], bark);
+            push_box(m, [0.04, 0.26, -0.5], [0.42, 0.58, 0.22], bark);
+            push_box(m, [-0.2, 0.58, -0.5], [0.2, 0.88, 0.22], bark);
+        }
+        9 => {
+            // Ore tipper: a dark open skip, tilted up at the back by a stepped floor.
+            push_box(
+                m,
+                [-0.52, 0.2, -0.5],
+                [0.52, 0.34, 0.22],
+                [0.3, 0.3, 0.32, 0.0],
+            );
+            push_box(
+                m,
+                [-0.52, 0.34, -0.5],
+                [0.52, 0.86, -0.4],
+                [0.3, 0.3, 0.32, 0.0],
+            );
+            push_box(
+                m,
+                [-0.52, 0.34, -0.5],
+                [-0.42, 0.78, 0.22],
+                [0.3, 0.3, 0.32, 0.0],
+            );
+            push_box(
+                m,
+                [0.42, 0.34, -0.5],
+                [0.52, 0.78, 0.22],
+                [0.3, 0.3, 0.32, 0.0],
+            );
+            push_box(
+                m,
+                [-0.42, 0.34, -0.4],
+                [0.42, 0.7, 0.2],
+                [0.55, 0.38, 0.28, 0.0],
+            );
+        }
+        _ => {
+            // Tanker: a long cylinder as a stepped box with end caps and a hatch.
+            let tank = [0.82, 0.83, 0.85, 0.0];
+            push_box(m, [-0.4, 0.2, -0.5], [0.4, 0.32, 0.22], chassis);
+            push_box(m, [-0.5, 0.32, -0.5], [0.5, 0.72, 0.22], tank);
+            push_box(m, [-0.38, 0.72, -0.5], [0.38, 0.9, 0.22], tank);
+            push_box(
+                m,
+                [-0.15, 0.9, -0.1],
+                [0.15, 0.96, 0.1],
+                [0.3, 0.3, 0.32, 0.0],
+            );
+            push_box(
+                m,
+                [-0.5, 0.4, -0.5],
+                [0.5, 0.5, -0.46],
+                [0.85, 0.5, 0.1, 0.0],
+            );
+        }
+    }
+    wheels(m, &[0.4, -0.2, -0.4]);
+}
+
 /// Mesh of a vehicle kind (`VehicleKind` as a number) at a detail level (0 full, 1 one box).
 pub fn vehicle_mesh(kind: usize, detail: usize) -> MeshData {
     let mut m = MeshData::default();
@@ -90,6 +194,7 @@ pub fn vehicle_mesh(kind: usize, detail: usize) -> MeshData {
             );
             wheels(&mut m, &[0.35, -0.3, -0.42]);
         }
+        7..=10 => chain_truck(&mut m, kind),
         6 => {
             // Intercity train (T-167): a long body with a window band; the client draws it car
             // by car along the track (`train_render`), this is the one-piece stand-in.

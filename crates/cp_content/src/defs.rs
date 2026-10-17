@@ -1156,13 +1156,21 @@ pub enum VehicleKind {
     Cargo = 5,
     /// An intercity train (T-167): rides the railway from the map edge to a station.
     Train = 6,
+    /// Farm cargo truck (T-213b): crops, animal products, flour.
+    CargoFarm = 7,
+    /// Log trailer: logs, planks, paper.
+    CargoLogs = 8,
+    /// Ore tipper: ore, metals, glass.
+    CargoOre = 9,
+    /// Tanker: oil, petroleum, plastics.
+    CargoTanker = 10,
 }
 
 impl VehicleKind {
     /// Every kind in number order: the tables indexed by `kind as usize` (`cp_traffic`'s specs,
     /// the render's looks) have this many entries. The match in [`Self::number`] has no
     /// wildcard, so a new variant does not compile until it is added here.
-    pub const ALL: [VehicleKind; 7] = [
+    pub const ALL: [VehicleKind; 11] = [
         Self::Car,
         Self::Truck,
         Self::Bus,
@@ -1170,8 +1178,25 @@ impl VehicleKind {
         Self::Metro,
         Self::Cargo,
         Self::Train,
+        Self::CargoFarm,
+        Self::CargoLogs,
+        Self::CargoOre,
+        Self::CargoTanker,
     ];
     pub const COUNT: usize = Self::ALL.len();
+
+    /// The truck that hauls a cargo (T-213b): the shop goods ride the plain `Cargo` truck, each
+    /// chain its own.
+    pub const fn for_cargo(cargo: crate::CargoKind) -> VehicleKind {
+        use crate::CargoKind as C;
+        match cargo {
+            C::Goods => Self::Cargo,
+            C::Crops | C::AnimalProducts | C::Flour => Self::CargoFarm,
+            C::Logs | C::Planks | C::Paper => Self::CargoLogs,
+            C::Ore | C::Metals | C::Glass => Self::CargoOre,
+            C::Oil | C::Petroleum | C::Plastics => Self::CargoTanker,
+        }
+    }
 
     const fn number(self) -> usize {
         match self {
@@ -1182,6 +1207,10 @@ impl VehicleKind {
             Self::Metro => 4,
             Self::Cargo => 5,
             Self::Train => 6,
+            Self::CargoFarm => 7,
+            Self::CargoLogs => 8,
+            Self::CargoOre => 9,
+            Self::CargoTanker => 10,
         }
     }
 }

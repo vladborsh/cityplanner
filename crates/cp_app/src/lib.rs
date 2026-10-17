@@ -203,6 +203,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         ),
         // The specialisation buildings, kinds in columns and sizes in rows (`--scene specs`).
         "specs" => (Vec3::new(c, 170.0, c + 120.0), Vec3::new(c, 5.0, c - 85.0)),
+        // The five cargo trucks queued at the east end of the street (`--scene trucks`).
+        "trucks" => (
+            Vec3::new(c - 60.0, 40.0, c + 50.0),
+            Vec3::new(c - 60.0, 0.0, c),
+        ),
         // The four city parks in a row (`--scene parks`).
         "parks" => (Vec3::new(c, 55.0, c + 20.0), Vec3::new(c, 2.0, c - 120.0)),
         // The M5 chain buildings, a row per resource (`--scene chains`).
@@ -284,6 +289,16 @@ pub fn build_sim(
     } else if scene == Some(scene::CHAINS) {
         let n = scene::build_chains(&mut sim);
         info!("scene chains: {n} buildings");
+    } else if scene == Some(scene::TRUCKS) {
+        let n = scene::build_trucks(&mut sim);
+        for _ in 0..120 {
+            sim.tick_once();
+        }
+        let agents = sim.world().resource::<cp_traffic::Agents>();
+        info!(
+            "scene trucks: {n} runs, {} vehicles",
+            agents.vehicle_count()
+        );
     } else if scene == Some(scene::PARKS) {
         let n = scene::build_parks(&mut sim);
         info!("scene parks: {n} buildings");

@@ -85,7 +85,7 @@ impl Goods {
             Endpoint::Building(b) => RunPoint::Building(b),
             Endpoint::Outside(n) => RunPoint::Outside(n),
         };
-        let run = runs.start_run(VehicleKind::Cargo, point(from), point(to), false);
+        let run = runs.start_run(VehicleKind::for_cargo(cargo), point(from), point(to), false);
         self.hauls.insert(
             run,
             Haul {

@@ -2416,6 +2416,7 @@ dependencies = [
  "cp_sim",
  "cp_terrain",
  "cp_tools",
+ "cp_traffic",
  "cp_transit",
  "cp_ui",
  "cp_utility",

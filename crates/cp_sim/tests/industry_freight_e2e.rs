@@ -404,3 +404,39 @@ fn set_warehouse_checks_the_building_and_the_cargo() {
     set_warehouse(&mut t, store, None, Balanced).unwrap();
     assert!(t.sim.view().warehouses.list.is_empty());
 }
+
+#[test]
+fn a_logs_haul_rides_the_log_truck_not_the_goods_truck() {
+    use cp_content::VehicleKind;
+    use cp_traffic::{Agents, ServiceRuns};
+    let mut t = town(false);
+    let saw = t.put("forest_extractor_s", 100.0);
+    let _mill = t.put("forest_processor_a", 700.0);
+    t.staff(saw, 8);
+    t.seed(saw, CargoKind::Logs, 60.0);
+    // The defs of the four chain trucks carry their kinds.
+    for (id, kind) in [
+        ("truck_farm", VehicleKind::CargoFarm),
+        ("truck_logs", VehicleKind::CargoLogs),
+        ("truck_ore", VehicleKind::CargoOre),
+        ("truck_tanker", VehicleKind::CargoTanker),
+    ] {
+        let (_, d) = t.db.vehicles().find(|(_, d)| d.id == id).expect(id);
+        assert_eq!(d.kind, kind, "{id}");
+        assert!(d.length > 0.0);
+    }
+    let (run_kind, vehicle_kind) = 'found: {
+        for _ in 0..3 * TICKS_PER_DAY {
+            t.sim.tick_once();
+            let w = t.sim.world();
+            if let Some((_, r)) = w.resource::<ServiceRuns>().iter().next()
+                && let Some((_, v)) = w.resource::<Agents>().vehicles().next()
+            {
+                break 'found (r.kind, v.kind_id());
+            }
+        }
+        panic!("no log truck appeared");
+    };
+    assert_eq!(run_kind, VehicleKind::CargoLogs as u8);
+    assert_eq!(vehicle_kind, VehicleKind::CargoLogs as u8);
+}

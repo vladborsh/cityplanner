@@ -91,6 +91,11 @@ impl Default for VehicleLooks {
                 Vec3::new(2.5, 3.4, 12.0),
                 // The intercity train (drawn by `train_render`; the size is for a look-up).
                 Vec3::new(3.0, 3.6, 120.0),
+                // The chain trucks (T-213b): farm, logs, ore, tanker.
+                Vec3::new(2.5, 3.4, 12.0),
+                Vec3::new(2.5, 3.4, 12.0),
+                Vec3::new(2.5, 3.4, 12.0),
+                Vec3::new(2.5, 3.4, 12.0),
             ],
         }
     }
@@ -173,6 +178,10 @@ fn vehicle_color(kind: usize, h: u64) -> [f32; 3] {
     match kind {
         0 => CAR_COLORS[(h % CAR_COLORS.len() as u64) as usize],
         1 => [0.70, 0.45, 0.12],
+        7 => [0.25, 0.55, 0.22],
+        8 => [0.60, 0.30, 0.12],
+        9 => [0.45, 0.42, 0.40],
+        10 => [0.78, 0.62, 0.12],
         2 => [0.12, 0.45, 0.70],
         _ => [0.85, 0.85, 0.88],
     }
