@@ -204,11 +204,10 @@ pub fn run_tourists(
         }
         _ => 1.0,
     };
-    let per_tick = (balance.tourism_base
-        + balance.tourism_per_com * shop_count as f32
-        + unique_per_day)
-        * promotion
-        / TICKS_PER_DAY as f32;
+    let per_tick =
+        (balance.tourism_base + balance.tourism_per_com * shop_count as f32 + unique_per_day)
+            * promotion
+            / TICKS_PER_DAY as f32;
     let mut r = rng.fork(TOURISM_STREAM, now);
     let mut n = per_tick.floor() as u32;
     if r.next_f32() < per_tick.fract() {
