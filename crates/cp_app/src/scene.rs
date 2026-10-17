@@ -407,6 +407,40 @@ pub fn build_shadows(sim: &mut SimRunner) -> Vec<String> {
     rejected
 }
 
+/// Path scene (T-222): a street with gravel footpaths leaving it across the lawn. Look at it
+/// with `--cam paths`.
+pub const PATHS: &str = "paths";
+
+/// Builds the [`PATHS`] scene: a local street, a path from its middle that forks into two.
+pub fn build_paths(sim: &mut SimRunner) {
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let p = |x: f32, z: f32| Vec2::new(c + x, c + z);
+    let builds = [
+        ("basic_2l", p(-120.0, 0.0), p(120.0, 0.0)),
+        ("park_path", p(0.0, 0.0), p(0.0, 30.0)),
+        ("park_path", p(0.0, 30.0), p(-40.0, 62.0)),
+        ("park_path", p(0.0, 30.0), p(45.0, 55.0)),
+        ("park_path", p(45.0, 55.0), p(70.0, 20.0)),
+    ];
+    for (road, from, to) in builds {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: db.road_id(road).expect("road"),
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+}
+
 /// City parks scene (T-221): the four parks in a row. Look at it with `--cam parks`.
 pub const PARKS: &str = "parks";
 

@@ -57,7 +57,7 @@ const CHEVRON_ARM: f32 = 0.15;
 
 const ASPHALT: [f32; 4] = [0.11, 0.11, 0.12, 1.0];
 /// Gravel of a pedestrian path (T-222).
-const GRAVEL: [f32; 4] = [0.62, 0.55, 0.40, 1.0];
+const GRAVEL: [f32; 4] = [0.48, 0.41, 0.29, 1.0];
 const SIDEWALK: [f32; 4] = [0.55, 0.55, 0.52, 1.0];
 const KERB: [f32; 4] = [0.42, 0.42, 0.40, 1.0];
 const BIKE: [f32; 4] = [0.10, 0.30, 0.16, 1.0];

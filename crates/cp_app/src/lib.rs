@@ -273,6 +273,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c - 20.0, 12.0, c + 5.0),
             Vec3::new(c - 20.0, 3.0, c - 40.0),
         ),
+        // Footpaths leaving a street across the lawn (`--scene paths`).
+        "paths" => (
+            Vec3::new(c + 5.0, 14.0, c + 78.0),
+            Vec3::new(c + 5.0, 0.0, c + 30.0),
+        ),
         "gardens-close" => (
             Vec3::new(c - 30.0, 9.0, c + 34.0),
             Vec3::new(c - 30.0, 3.0, c - 6.0),
@@ -374,6 +379,9 @@ pub fn build_sim(
     } else if scene == Some(scene::LAMPS) {
         scene::build_lamps(&mut sim);
         info!("scene lamps");
+    } else if scene == Some(scene::PATHS) {
+        scene::build_paths(&mut sim);
+        info!("scene paths");
     } else if scene == Some(scene::GARDENS) {
         let n = scene::build_gardens(&mut sim, 14);
         info!("scene gardens: {n} buildings");
