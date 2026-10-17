@@ -3,7 +3,7 @@
 use bevy_math::{Vec2, Vec3};
 use cp_content::{RoadDef, RoadDefId};
 use cp_core::Cost;
-use cp_core::curve::CubicBezier3;
+use cp_core::curve::{CubicBezier3, to_xz};
 use cp_net::{
     ControlMark, ElevationMode, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest,
     SnapOptions, SnapReport, SnapReportKind, StepContext, cell_ticks, clearance_report,
@@ -268,20 +268,43 @@ fn zone_marks(
         {
             continue;
         }
-        let sides = view.zones.frontage_marks(&view.net, &roads, id);
-        let mut arcs: Vec<f32> = Vec::new();
-        for marks in &sides {
-            let Some(first) = marks.first() else { continue };
-            for m in marks.iter().filter(|m| m.major && !m.end) {
-                if arcs.iter().any(|a| (a - m.arc).abs() < 0.05) {
-                    continue;
+        // Only the side of the street the new road lies on: the cells of its other side have
+        // a lattice of their own that the new road does not cross.
+        let mut want = [false; 2];
+        for (i, p) in points.iter().enumerate() {
+            let (t, d) = s.curve.nearest_xz(*p);
+            if d > cp_net::build::GUIDE_RADIUS {
+                continue;
+            }
+            let foot = to_xz(s.curve.point(t));
+            let tan = s.curve.tangent(t);
+            let tan = Vec2::new(tan.x, tan.z).normalize_or_zero();
+            // The other vertices decide which side the road runs to.
+            for q in points
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, q)| q)
+            {
+                let side = tan.perp_dot(*q - foot);
+                if side.abs() > 1.0 {
+                    want[usize::from(side > 0.0)] = true;
                 }
-                arcs.push(m.arc);
+            }
+        }
+        let sides = view.zones.frontage_marks(&view.net, &roads, id);
+        for (slot, marks) in sides.iter().enumerate() {
+            if !want[slot] {
+                continue;
+            }
+            let Some(first) = marks.first() else { continue };
+            for m in marks {
                 let t = s.curve.tangent(s.curve.arc_table().s_to_t(m.arc));
                 out.push(ControlMark {
                     pos: m.axis,
                     dir: Vec2::new(t.x, t.z).normalize_or_zero(),
                     along: m.arc - first.arc,
+                    major: m.major && !m.end,
                 });
             }
         }

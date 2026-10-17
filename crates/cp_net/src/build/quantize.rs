@@ -55,6 +55,9 @@ pub struct ControlMark {
     pub dir: Vec2,
     /// Metres from the start of the cells, for the label.
     pub along: f32,
+    /// Every 8th column boundary: the length step jumps only to these; a join (rule 1) goes to
+    /// the nearest boundary of any kind.
+    pub major: bool,
 }
 
 /// Where a joined vertex landed, with what the next leg takes as direction references.
@@ -83,6 +86,22 @@ fn join(cx: &StepContext, p: Vec2) -> Option<Joined> {
     }
     let (_, seg, t) = best?;
     let s = cx.graph.segment(seg)?;
+    // Where the zone cells beside the street have their column boundaries (BUG-067): a street
+    // joined there meets the cells on a boundary, and, with the facing street's boundaries on
+    // the same block lattice, crosses the block at a right angle.
+    let foot = to_xz(s.curve.point(t));
+    if let Some(m) = cx
+        .marks
+        .iter()
+        .filter(|m| m.pos.distance(foot) <= 6.0)
+        .min_by(|a, b| a.pos.distance(foot).total_cmp(&b.pos.distance(foot)))
+    {
+        return Some(Joined {
+            pos: m.pos,
+            node: None,
+            along: Some(m.dir),
+        });
+    }
     let st = stretch(cx.graph, seg)?;
     let along = locate(cx.graph, seg, s.curve.arc_table().t_to_s(t))?;
     let tick = ((along / ZONE_CELL).round() * ZONE_CELL).clamp(0.0, st.length);
@@ -160,7 +179,7 @@ fn control_line(
         }
     };
     if !cx.marks.is_empty() {
-        for m in cx.marks {
+        for m in cx.marks.iter().filter(|m| m.major) {
             consider(m.pos, m.dir, m.along);
         }
     } else {
@@ -290,7 +309,35 @@ pub fn quantize_path(req: &RoadPathRequest, cx: &StepContext) -> (RoadPath, Snap
     let mut stepped_curve = None;
     for (i, &p) in pts.iter().enumerate() {
         report = SnapReport::default();
-        let joined = if joins { join(cx, p) } else { None };
+        let mut joined = if joins { join(cx, p) } else { None };
+        // A street across a block (BUG-067): when the vertex before it stands on a boundary of a
+        // street (its direction known) and a boundary of this street lies on the perpendicular
+        // from there, join that one, so the new street crosses at a right angle instead of at
+        // the boundary nearest to the cursor.
+        if i > 0
+            && let Some(j) = joined.as_mut()
+            && j.node.is_none()
+            && !cx.alt
+        {
+            let from = out[i - 1];
+            let perp = refs
+                .iter()
+                .map(|r| Vec2::new(-r.y, r.x))
+                .filter(|n| n.length() > 0.5);
+            let mut best: Option<(f32, Vec2, Vec2)> = None;
+            for n in perp {
+                for m in cx.marks.iter().filter(|m| m.pos.distance(j.pos) <= 12.0) {
+                    let off = (m.pos - from).perp_dot(n).abs();
+                    if off <= 0.3 && best.is_none_or(|(bo, ..)| off < bo) {
+                        best = Some((off, m.pos, m.dir));
+                    }
+                }
+            }
+            if let Some((_, pos, dir)) = best {
+                j.pos = pos;
+                j.along = Some(dir);
+            }
+        }
         let mut next_refs = Vec::new();
         let pos = if let Some(j) = joined {
             report.kind = if j.node.is_some() {
@@ -537,6 +584,7 @@ mod tests {
             pos: v(73.0, 30.0),
             dir: v(1.0, 0.0),
             along: 70.0,
+            major: true,
         }];
         let path = RoadPath::Straight {
             from: v(0.0, 0.0),

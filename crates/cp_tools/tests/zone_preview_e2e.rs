@@ -277,10 +277,7 @@ fn every_zonable_road_type_has_8_cells_between_ticks_at_every_length() {
                     .zone
                     .cells
                     .iter()
-                    .map(|c| {
-                        let m = (c.corners[0] + c.corners[1] + c.corners[2] + c.corners[3]) / 4.0;
-                        m
-                    })
+                    .map(|c| (c.corners[0] + c.corners[1] + c.corners[2] + c.corners[3]) / 4.0)
                     .filter(|m| (m.y - a.y) * side > hw && (m.y - a.y).abs() < hw + 6.0)
                     .map(|m| m.x)
                     .collect();
@@ -303,4 +300,84 @@ fn every_zonable_road_type_has_8_cells_between_ticks_at_every_length() {
         bad.len(),
         &bad[..bad.len().min(6)]
     );
+}
+
+/// BUG-067 (part 2): a street drawn across a block from a column boundary of one facing street
+/// to the other ends on the matching boundary, at a right angle, whatever the block's size:
+/// the boundaries of both streets sit on the block's lattice, the join takes them.
+#[test]
+fn a_street_across_a_block_from_mark_to_mark_is_perpendicular() {
+    use cp_net::{ElevationMode, RoadPathRequest, SnapOptions};
+    for (gx, gz) in [
+        (128.0f32, 128.0f32),
+        (96.0, 128.0),
+        (128.0, 96.0),
+        (112.0, 112.0),
+    ] {
+        let (mut sim, db) = sim();
+        let hw = db.road(db.road_id("basic_2l").unwrap()).width / 2.0;
+        let o = Vec2::new(4600.0, 4600.0);
+        let (x1, z1) = (gx + 2.0 * hw, gz + 2.0 * hw);
+        for (a, b) in [
+            (o, o + Vec2::new(x1, 0.0)),
+            (o + Vec2::new(0.0, z1), o + Vec2::new(x1, z1)),
+            (o, o + Vec2::new(0.0, z1)),
+            (o + Vec2::new(x1, 0.0), o + Vec2::new(x1, z1)),
+        ] {
+            build(&mut sim, &db, a, b);
+        }
+        let view = sim.view();
+        // From the middle of the left street (the cursor within 3 m of the boundary) to the
+        // right street, the cursor 4 m off the matching boundary.
+        let mid = o.y + hw + (gz / 2.0 / 8.0).round() * 8.0;
+        let req = RoadPathRequest {
+            road: db.road_id("basic_2l").unwrap(),
+            path: RoadPath::Straight {
+                from: Vec2::new(o.x + 1.0, mid + 3.0),
+                to: Vec2::new(o.x + x1 - 1.0, mid - 4.0),
+            },
+            elevation: ElevationMode::Ground,
+            snap: SnapOptions::default(),
+        };
+        let (q, _) = cp_tools::quantized(&view, req, false);
+        let RoadPath::Straight { from, to } = q.path else {
+            panic!("straight");
+        };
+        let dir = to - from;
+        let off_axis = dir.y.atan2(dir.x).to_degrees().abs();
+        assert!(
+            off_axis < 0.5,
+            "block {gx} x {gz}: the street is {off_axis:.2} degrees off the perpendicular: {from:?} -> {to:?}"
+        );
+        // On a column boundary of the cells beside the left street: some cell corner there.
+        let corners: Vec<Vec2> = view
+            .zones
+            .cells_in_rect(
+                Vec2::new(o.x + hw, o.y + hw),
+                Vec2::new(o.x + hw + 8.0, o.y + hw + gz),
+            )
+            .into_iter()
+            .filter_map(|c| view.zones.cell_footprint(c))
+            .flat_map(|f| f.corners())
+            .collect();
+        assert!(
+            corners.iter().any(|c| (c.y - from.y).abs() < 0.1),
+            "{from:?} is not a cell boundary of the left street"
+        );
+        // And on one of the right street.
+        let corners: Vec<Vec2> = view
+            .zones
+            .cells_in_rect(
+                Vec2::new(o.x + x1 - hw - 8.0, o.y + hw),
+                Vec2::new(o.x + x1 - hw, o.y + hw + gz),
+            )
+            .into_iter()
+            .filter_map(|c| view.zones.cell_footprint(c))
+            .flat_map(|f| f.corners())
+            .collect();
+        assert!(
+            corners.iter().any(|c| (c.y - to.y).abs() < 0.1),
+            "{to:?} is not a cell boundary of the right street"
+        );
+    }
 }
