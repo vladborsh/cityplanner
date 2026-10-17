@@ -387,3 +387,38 @@ fn trade_is_deterministic() {
     };
     assert_eq!(run(), run());
 }
+
+// T-171: the view's freight figures and the goods row of the building card.
+
+#[test]
+fn the_view_counts_the_trucks_and_the_card_shows_the_stock() {
+    let mut t = town_with(&[], 2, true, true);
+    let mut exporting = 0;
+    for _ in 0..4096 * 5 {
+        t.sim.tick_once();
+        let f = t.sim.view().freight;
+        assert_eq!(
+            f.trucks as usize,
+            t.sim.world().resource::<Goods>().hauls.len()
+        );
+        exporting = exporting.max(f.trucks_exporting);
+        if exporting > 0 && t.sim.view().transit_ledger.export_loads > 0 {
+            break;
+        }
+    }
+    assert!(exporting > 0, "an export truck showed up in the view");
+    assert!(t.sim.view().transit_ledger.export_loads > 0);
+    let Some(cp_sim::Inspection::Building(b)) =
+        t.sim.inspect(cp_sim::Selection::Building(t.factory))
+    else {
+        panic!("factory");
+    };
+    let g = b.goods.expect("a factory keeps goods");
+    assert_eq!(
+        g.stock,
+        t.sim.world().resource::<Goods>().stock_of(t.factory)
+    );
+    assert!(g.cap > 0.0);
+    let rows = cp_sim::Inspection::Building(b).rows();
+    assert!(rows.iter().any(|(l, _)| l == "Goods"), "{rows:?}");
+}

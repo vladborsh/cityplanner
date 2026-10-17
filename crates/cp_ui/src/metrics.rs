@@ -113,6 +113,8 @@ pub fn sections(view: &SimView) -> Vec<Section> {
         spark: spark(s, |h| h.avg_load),
     });
 
+    out.push(transport_section(view));
+
     let mut utilities = Vec::new();
     for (kind, name) in [
         (UtilityKind::Water, "Water"),
@@ -157,6 +159,45 @@ pub fn sections(view: &SimView) -> Vec<Section> {
         spark: spark(s, |h| h.balance.0 as f32),
     });
     out
+}
+
+/// Passengers by mode, tourists, goods trucks, exports and imports of the week in progress,
+/// and the shops without goods (T-171).
+fn transport_section(view: &SimView) -> Section {
+    use cp_building::BuildingFlags;
+    use cp_transit::TransitMode;
+    let riders = |mode: TransitMode| -> u32 {
+        view.lines
+            .iter()
+            .filter(|l| l.mode == mode)
+            .map(|l| l.riders_week)
+            .sum()
+    };
+    let f = &view.freight;
+    let l = &view.transit_ledger;
+    let no_goods = view
+        .buildings
+        .iter()
+        .filter(|(_, b)| b.flags.has(BuildingFlags::NO_GOODS))
+        .count();
+    Section {
+        title: "Transport and goods",
+        rows: vec![
+            row("Bus riders (week)", riders(TransitMode::Bus)),
+            row("Metro riders (week)", riders(TransitMode::Metro)),
+            row("Train riders (week)", riders(TransitMode::Train)),
+            row("Tourists now", f.tourists_now),
+            row("Tourist visits (week)", f.tourists_week),
+            row("Goods trucks out", f.trucks),
+            row(
+                "Exports (week)",
+                format!("{} loads · {}", l.export_loads, format_money(l.exports)),
+            ),
+            row("Imports (week)", format!("{} loads", l.import_loads)),
+            row("Buildings without goods", no_goods),
+        ],
+        spark: None,
+    }
 }
 
 /// The M2 services (T-137): per kind the share of the buildings with people in them that a
@@ -539,6 +580,66 @@ mod tests {
         // `cargo test -p cp_ui a_grid_city -- --nocapture` prints what the window paints.
         println!("{}", text.join(" | "));
         for (_, value) in secs.iter().flat_map(|sec| sec.rows.iter()) {
+            assert!(text.iter().any(|t| t == value), "{value:?} not painted");
+        }
+    }
+
+    #[test]
+    fn the_transport_section_sums_the_riders_by_mode_and_shows_goods_and_tourists() {
+        use cp_sim::LineView;
+        use cp_transit::{LineState, TransitMode};
+        let line = |mode, riders_week| LineView {
+            id: cp_core::Id::new(0, 0),
+            name: "L".into(),
+            mode,
+            color: 0,
+            stops: 2,
+            vehicles: 1,
+            vehicles_out: 1,
+            state: LineState::Ok,
+            riders_today: 0,
+            riders_week,
+            waiting: 0,
+        };
+        let mut view = SimRunner::new(1).view();
+        let secs = sections(&view);
+        assert_eq!(
+            value(&secs, "Transport and goods", "Bus riders (week)"),
+            "0"
+        );
+        assert_eq!(value(&secs, "Transport and goods", "Goods trucks out"), "0");
+
+        view.lines = vec![
+            line(TransitMode::Bus, 30),
+            line(TransitMode::Bus, 12),
+            line(TransitMode::Metro, 7),
+        ];
+        view.freight = cp_sim::FreightView {
+            trucks: 3,
+            trucks_exporting: 1,
+            trucks_importing: 1,
+            tourists_now: 4,
+            tourists_week: 9,
+        };
+        view.transit_ledger.export_loads = 2;
+        view.transit_ledger.import_loads = 5;
+        let secs = sections(&view);
+        let v = |l: &str| value(&secs, "Transport and goods", l).to_string();
+        assert_eq!(v("Bus riders (week)"), "42");
+        assert_eq!(v("Metro riders (week)"), "7");
+        assert_eq!(v("Train riders (week)"), "0");
+        assert_eq!(v("Tourists now"), "4");
+        assert_eq!(v("Tourist visits (week)"), "9");
+        assert_eq!(v("Goods trucks out"), "3");
+        assert!(v("Exports (week)").starts_with("2 loads"));
+        assert_eq!(v("Imports (week)"), "5 loads");
+        let text = painted(&view);
+        for (_, value) in &secs
+            .iter()
+            .find(|s| s.title == "Transport and goods")
+            .unwrap()
+            .rows
+        {
             assert!(text.iter().any(|t| t == value), "{value:?} not painted");
         }
     }

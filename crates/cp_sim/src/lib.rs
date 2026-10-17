@@ -18,8 +18,8 @@ pub use checksum::{Fnv1a, SimChecksum};
 pub use command::{DebugCommand, SimCommand, dispatch_commands, init_command_resources};
 pub use cp_traffic::{AgentFrame, PedestrianPose, VehiclePose};
 pub use inspect::{
-    BuildingInfo, CitizenInfo, Inspection, SegmentInfo, Selection, ServiceInfo, TripInfo, Trouble,
-    VehicleInfo, flag_names, key_parts,
+    BuildingInfo, CitizenInfo, GoodsInfo, Inspection, SegmentInfo, Selection, ServiceInfo,
+    TripInfo, Trouble, VehicleInfo, flag_names, key_parts,
 };
 pub use overlay::{OverlayData, ScalarGrid, ZoneCellView, ZoneOverlay};
 pub use phase::SimPhase;
@@ -28,7 +28,8 @@ pub use progress::{PROGRESS_PERIOD, Progress};
 pub use runner::{MAX_TICKS_PER_STEP, SimRunner, run_headless, run_headless_with};
 pub use stats::CityStats;
 pub use view::{
-    AgentSnapshot, ArenaFill, ArenaGauges, LineView, LoanOfferView, SimStats, SimTerrain, SimView,
+    AgentSnapshot, ArenaFill, ArenaGauges, FreightView, LineView, LoanOfferView, SimStats,
+    SimTerrain, SimView,
 };
 
 /// Crate name, used by the skeleton smoke test.

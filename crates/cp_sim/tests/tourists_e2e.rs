@@ -188,3 +188,22 @@ fn the_same_city_gets_the_same_tourists() {
     assert!(na > 0);
     assert_eq!((a, na), (b, nb));
 }
+
+#[test]
+fn the_view_counts_the_tourists_on_the_map() {
+    let mut sim = town(true);
+    let mut seen = 0;
+    for _ in 0..16_000 {
+        sim.tick_once();
+        let f = sim.view().freight;
+        assert_eq!(
+            f.tourists_now as usize,
+            sim.world().resource::<Tourists>().visits.len()
+        );
+        seen = seen.max(f.tourists_week);
+        if seen > 0 {
+            break;
+        }
+    }
+    assert!(seen > 0, "visits arrived and the view counts them");
+}

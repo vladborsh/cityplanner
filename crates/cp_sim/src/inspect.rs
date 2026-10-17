@@ -67,6 +67,15 @@ pub struct BuildingInfo {
     pub garbage: u16,
     /// Set when the building is a service facility (T-137).
     pub service: Option<ServiceInfo>,
+    /// Stock and cap of a factory or shop (T-171).
+    pub goods: Option<GoodsInfo>,
+}
+
+/// The goods a factory or shop holds, and the most it can hold.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GoodsInfo {
+    pub stock: f32,
+    pub cap: f32,
 }
 
 /// The day's throughput and stock of a service building.
@@ -266,6 +275,18 @@ impl SimRunner {
                     footprint: cp_building::held_cells(w.resource::<cp_zone::ZoneGrid>(), b),
                     garbage: svc.and_then(|st| st.get(id)).map_or(0, |r| r.garbage),
                     service,
+                    goods: matches!(
+                        def.zone,
+                        cp_content::ZoneType::Industrial
+                            | cp_content::ZoneType::ComLow
+                            | cp_content::ZoneType::ComHigh
+                    )
+                    .then(|| GoodsInfo {
+                        stock: w
+                            .get_resource::<cp_transit::Goods>()
+                            .map_or(0.0, |g| g.stock_of(id)),
+                        cap: bal.goods_stock_cap,
+                    }),
                 }))
             }
             Selection::Citizen(id) => {
@@ -439,6 +460,9 @@ impl Inspection {
                     if sv.storage > 0 {
                         r.push(row("Stored", format!("{} of {}", sv.stored, sv.storage)));
                     }
+                }
+                if let Some(g) = b.goods {
+                    r.push(row("Goods", format!("{:.0} of {:.0}", g.stock, g.cap)));
                 }
                 if b.garbage > 0 {
                     r.push(row("Garbage", b.garbage.to_string()));

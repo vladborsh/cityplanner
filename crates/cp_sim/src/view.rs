@@ -127,6 +127,21 @@ pub struct SimView {
     pub lines: Vec<LineView>,
     /// Fares and bus upkeep of the week in progress.
     pub transit_ledger: cp_transit::TransitLedger,
+    /// Goods trucks and tourists, for the metrics window (T-171).
+    pub freight: FreightView,
+}
+
+/// Goods and tourism figures of the moment (T-171).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FreightView {
+    /// Goods trucks under way (deliveries, exports and imports).
+    pub trucks: u32,
+    /// Of those, trucks carrying a load out of the map / in from it.
+    pub trucks_exporting: u32,
+    pub trucks_importing: u32,
+    /// Tourists on the map now, and the visits that arrived since the week began.
+    pub tourists_now: u32,
+    pub tourists_week: u32,
 }
 
 /// One transit line as the Lines window shows it (T-160).
@@ -614,6 +629,7 @@ impl SimRunner {
             economy: self.world().resource::<cp_economy::EconomyState>().clone(),
             lines: self.line_views(),
             transit_ledger: *self.world().resource::<cp_transit::TransitLedger>(),
+            freight: self.freight_view(),
             utilities: self.utilities_snapshot(),
             transit: self.transit_snapshot(),
             metro_trains: Arc::new(self.metro_trains(tick)),
@@ -623,6 +639,24 @@ impl SimRunner {
             city: self.city_snapshot(),
             junctions,
         }
+    }
+
+    fn freight_view(&self) -> FreightView {
+        use cp_transit::Endpoint;
+        let w = self.world();
+        let mut f = FreightView::default();
+        if let Some(g) = w.get_resource::<cp_transit::Goods>() {
+            f.trucks = g.hauls.len() as u32;
+            for h in g.hauls.values() {
+                f.trucks_exporting += u32::from(matches!(h.to, Endpoint::Outside(_)));
+                f.trucks_importing += u32::from(matches!(h.from, Endpoint::Outside(_)));
+            }
+        }
+        if let Some(t) = w.get_resource::<cp_transit::Tourists>() {
+            f.tourists_now = t.visits.len() as u32;
+            f.tourists_week = t.visits_week;
+        }
+        f
     }
 
     fn line_views(&self) -> Vec<LineView> {
