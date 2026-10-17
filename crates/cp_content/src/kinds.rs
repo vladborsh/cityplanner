@@ -173,6 +173,26 @@ pub enum ResourceKind {
     Oil = 3,
 }
 
+/// A kind of park area (T-206, M6). Stored in saves (`AreaKind::Park`): append only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ParkKind {
+    CityPark = 0,
+    Nature = 1,
+    Zoo = 2,
+    Amusement = 3,
+}
+
+impl ParkKind {
+    /// Every park kind in kind order.
+    pub const ALL: [ParkKind; 4] = [
+        ParkKind::CityPark,
+        ParkKind::Nature,
+        ParkKind::Zoo,
+        ParkKind::Amusement,
+    ];
+}
+
 impl ResourceKind {
     /// Every resource in kind order.
     pub const ALL: [ResourceKind; 4] = [

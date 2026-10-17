@@ -9,6 +9,7 @@ use cp_content::{PolicyDef, PolicyKind, SimContent, SpecDef, SpecKind, ZoneType}
 use cp_core::Cost;
 use serde::{Deserialize, Serialize};
 
+use crate::area::{Area, AreaId, AreaKind, AreaMap, Areas, MAX_AREAS};
 use crate::map::{
     Cell, CityPolicies, District, DistrictId, DistrictMap, Districts, MAX_DISTRICTS, NAME_MAX,
     PALETTE_LEN, SIDE, zone_slot,
@@ -62,6 +63,28 @@ pub enum DistrictCommand {
         zone: ZoneType,
         spec: Option<SpecKind>,
     },
+    /// A new area in the lowest free slot, level 1 (T-206).
+    CreateArea {
+        kind: AreaKind,
+        name: String,
+    },
+    RenameArea {
+        area: AreaId,
+        name: String,
+    },
+    /// Removes the area and clears its cells.
+    DeleteArea {
+        area: AreaId,
+    },
+    /// Gives the cells to `area` (cells of other areas are taken over; districts are untouched).
+    PaintArea {
+        cells: Vec<Cell>,
+        area: AreaId,
+    },
+    /// Clears the cells of the area map.
+    EraseArea {
+        cells: Vec<Cell>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +107,8 @@ pub enum DistrictError {
     NoSuchSpec(SpecKind),
     /// The specialisation does not apply to this zone type.
     SpecZone(SpecKind, ZoneType),
+    NoSuchArea(AreaId),
+    NoFreeArea,
 }
 
 impl fmt::Display for DistrictError {
@@ -110,6 +135,8 @@ impl fmt::Display for DistrictError {
             Self::PolicyScope(p) => write!(f, "{p:?} cannot be set here"),
             Self::NoSuchSpec(s) => write!(f, "there is no {s:?} specialisation"),
             Self::SpecZone(s, z) => write!(f, "{s:?} does not apply to {z:?}"),
+            Self::NoSuchArea(a) => write!(f, "area {} does not exist", a.0),
+            Self::NoFreeArea => write!(f, "all {MAX_AREAS} areas exist"),
         }
     }
 }
@@ -182,6 +209,16 @@ pub fn validate_spec(
 
 /// Validates and applies `cmd`, returning its cost (always zero).
 pub fn apply(world: &mut World, cmd: &DistrictCommand) -> Result<Cost, DistrictError> {
+    if matches!(
+        cmd,
+        DistrictCommand::CreateArea { .. }
+            | DistrictCommand::RenameArea { .. }
+            | DistrictCommand::DeleteArea { .. }
+            | DistrictCommand::PaintArea { .. }
+            | DistrictCommand::EraseArea { .. }
+    ) {
+        return apply_area(world, cmd);
+    }
     world.resource_scope(|world, mut districts: bevy_ecs::prelude::Mut<Districts>| {
         let mut map = world
             .get_resource_mut::<DistrictMap>()
@@ -306,6 +343,76 @@ pub fn apply(world: &mut World, cmd: &DistrictCommand) -> Result<Cost, DistrictE
                     d.spec[slot] = *spec;
                 }
             }
+            DistrictCommand::CreateArea { .. }
+            | DistrictCommand::RenameArea { .. }
+            | DistrictCommand::DeleteArea { .. }
+            | DistrictCommand::PaintArea { .. }
+            | DistrictCommand::EraseArea { .. } => unreachable!("handled by apply_area"),
+        }
+        Ok(Cost::ZERO)
+    })
+}
+
+/// The area commands: validate, then change the area map and records.
+fn apply_area(world: &mut World, cmd: &DistrictCommand) -> Result<Cost, DistrictError> {
+    world.resource_scope(|world, mut areas: bevy_ecs::prelude::Mut<Areas>| {
+        let mut map = world
+            .get_resource_mut::<AreaMap>()
+            .ok_or(DistrictError::Missing)?;
+        let exists =
+            |a: AreaId, areas: &Areas| areas.get(a).map(|_| ()).ok_or(DistrictError::NoSuchArea(a));
+        match cmd {
+            DistrictCommand::CreateArea { kind, name } => {
+                let name = valid_name(name)?;
+                let slot = areas
+                    .list
+                    .iter()
+                    .position(Option::is_none)
+                    .unwrap_or(areas.list.len());
+                if slot >= MAX_AREAS {
+                    return Err(DistrictError::NoFreeArea);
+                }
+                let a = Area {
+                    name,
+                    kind: *kind,
+                    level: 1,
+                    xp: 0,
+                };
+                if slot == areas.list.len() {
+                    areas.list.push(Some(a));
+                } else {
+                    areas.list[slot] = Some(a);
+                }
+            }
+            DistrictCommand::RenameArea { area, name } => {
+                exists(*area, &areas)?;
+                let name = valid_name(name)?;
+                if let Some(a) = areas.get_mut(*area) {
+                    a.name = name;
+                }
+            }
+            DistrictCommand::DeleteArea { area } => {
+                exists(*area, &areas)?;
+                map.clear_area(*area);
+                areas.list[usize::from(area.0) - 1] = None;
+                while areas.list.last().is_some_and(Option::is_none) {
+                    areas.list.pop();
+                }
+            }
+            DistrictCommand::PaintArea { cells, area } => {
+                exists(*area, &areas)?;
+                validate_cells(cells)?;
+                for &c in cells {
+                    map.set(c, Some(*area));
+                }
+            }
+            DistrictCommand::EraseArea { cells } => {
+                validate_cells(cells)?;
+                for &c in cells {
+                    map.set(c, None);
+                }
+            }
+            _ => unreachable!("not an area command"),
         }
         Ok(Cost::ZERO)
     })

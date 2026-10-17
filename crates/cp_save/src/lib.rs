@@ -44,6 +44,7 @@
 //! | `PathService` (requests in flight) | yes, as `SavedPaths` |
 //! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `Goods`, `Intercity` (stops, lines, riders, line figures, buses, week's money, tourist visits, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
 //! | `ResourceDeposits` (ore and oil left per 64 m cell; a save from before v41 is filled from the map by `load_into_runner`) | yes |
+//! | `AreaMap`, `Areas` | yes |
 //! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
@@ -68,7 +69,7 @@ use cp_building::{BuildingGrid, Demand};
 use cp_citizen::{CitizenGrid, TripBook};
 use cp_content::{BuildingDefId, ContentDb, DefKind, RoadDefId};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
-use cp_district::{CityPolicies, DistrictMap, Districts};
+use cp_district::{AreaMap, Areas, CityPolicies, DistrictMap, Districts};
 use cp_economy::{Decay, DemandAcc, EconomyState, LandGrids, WorkerShortage};
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
@@ -80,7 +81,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 41;
+pub const FORMAT_VERSION: u32 = 42;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -205,6 +206,9 @@ pub struct SaveData {
     /// The district grid and the district records. Added in v21.
     pub district_map: DistrictMap,
     pub districts: Districts,
+    /// The industry and park areas (T-206). Added in v42.
+    pub area_map: AreaMap,
+    pub areas: Areas,
     /// The policies switched on for the whole city (T-190). Added in v38; a district's own are
     /// in its record.
     pub city_policies: CityPolicies,
@@ -296,6 +300,8 @@ impl SaveData {
                 .map_or_else(DefNames::default, |c| DefNames::from_content(&c.0)),
             district_map: world.resource::<DistrictMap>().clone(),
             districts: world.resource::<Districts>().clone(),
+            area_map: world.resource::<AreaMap>().clone(),
+            areas: world.resource::<Areas>().clone(),
             city_policies: *world.resource::<CityPolicies>(),
             service_state: world.resource::<cp_service::ServiceState>().clone(),
             coverage: world.resource::<cp_service::ServiceCoverage>().clone(),
@@ -346,6 +352,8 @@ impl SaveData {
         world.insert_resource(self.decay);
         world.insert_resource(self.district_map);
         world.insert_resource(self.districts);
+        world.insert_resource(self.area_map);
+        world.insert_resource(self.areas);
         world.insert_resource(self.city_policies);
         world.insert_resource(self.service_state);
         world.insert_resource(self.shortage);

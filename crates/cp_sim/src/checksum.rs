@@ -142,6 +142,12 @@ pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
     if city.mask != 0 {
         h.write_serialized(city);
     }
+    // Absent while there is no area, so such states keep their checksum (T-206).
+    let areas = world.resource::<cp_district::Areas>();
+    if !areas.list.is_empty() {
+        h.write_serialized(areas);
+        h.write_serialized(world.resource::<cp_district::AreaMap>());
+    }
     // Absent until the deposits are filled from the map (a new game or a load with a map), so
     // a sim without a resource map keeps its checksum.
     let deposits = world.resource::<cp_terrain::ResourceDeposits>();

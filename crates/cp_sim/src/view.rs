@@ -87,6 +87,9 @@ pub struct SimView {
     /// The district grid and records (T-133), shared: re-cloned only when they changed.
     pub district_map: Arc<cp_district::DistrictMap>,
     pub districts: Arc<cp_district::Districts>,
+    /// Industry and park areas (T-206).
+    pub area_map: Arc<cp_district::AreaMap>,
+    pub areas: Arc<cp_district::Areas>,
     /// The policies switched on for the whole city (T-190); the definitions are in `content`.
     pub city_policies: cp_district::CityPolicies,
     /// The content database (road types, building styles, ...), for tools, the build menu and
@@ -185,6 +188,12 @@ pub struct LoanOfferView {
 pub type DistrictCache = (
     Option<Arc<cp_district::DistrictMap>>,
     Option<Arc<cp_district::Districts>>,
+);
+
+/// The cached `SimView` area snapshots.
+pub type AreaCache = (
+    Option<Arc<cp_district::AreaMap>>,
+    Option<Arc<cp_district::Areas>>,
 );
 
 /// One unique building def as the build menu needs it (T-200).
@@ -514,6 +523,34 @@ impl SimRunner {
         snap
     }
 
+    /// `SimView::area_map` and `SimView::areas`, cached like the district snapshots.
+    fn area_snapshots(&self) -> (Arc<cp_district::AreaMap>, Arc<cp_district::Areas>) {
+        let mut cache = self.area_cache.lock().expect("area cache");
+        let map = {
+            let now = self.world().get_resource::<cp_district::AreaMap>();
+            match cache.0.as_ref() {
+                Some(s) if now.is_none_or(|n| **s == *n) => Arc::clone(s),
+                _ => {
+                    let s = Arc::new(now.cloned().unwrap_or_default());
+                    cache.0 = Some(Arc::clone(&s));
+                    s
+                }
+            }
+        };
+        let areas = {
+            let now = self.world().get_resource::<cp_district::Areas>();
+            match cache.1.as_ref() {
+                Some(s) if now.is_none_or(|n| **s == *n) => Arc::clone(s),
+                _ => {
+                    let s = Arc::new(now.cloned().unwrap_or_default());
+                    cache.1 = Some(Arc::clone(&s));
+                    s
+                }
+            }
+        };
+        (map, areas)
+    }
+
     /// `SimView::districts`, cached like [`SimRunner::district_map_snapshot`].
     fn districts_snapshot(&self) -> Arc<cp_district::Districts> {
         let now = self.world().get_resource::<cp_district::Districts>();
@@ -666,6 +703,7 @@ impl SimRunner {
             .get_resource::<JunctionGeometry>()
             .cloned()
             .unwrap_or_default();
+        let (area_map, areas) = self.area_snapshots();
         SimView {
             tick,
             game_time: tick.game_time(),
@@ -685,6 +723,8 @@ impl SimRunner {
             buildings: self.buildings_snapshot(),
             district_map: self.district_map_snapshot(),
             districts: self.districts_snapshot(),
+            area_map,
+            areas,
             city_policies: self
                 .world()
                 .get_resource::<cp_district::CityPolicies>()

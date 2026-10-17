@@ -2,7 +2,7 @@ use bevy_ecs::world::World;
 use bevy_math::Vec2;
 use std::sync::Arc;
 
-use cp_content::{ContentDb, PolicyKind, SimContent, SpecKind, ZoneType};
+use cp_content::{ContentDb, ParkKind, PolicyKind, ResourceKind, SimContent, SpecKind, ZoneType};
 
 use crate::*;
 
@@ -11,6 +11,8 @@ fn world() -> World {
     w.init_resource::<DistrictMap>();
     w.init_resource::<Districts>();
     w.init_resource::<CityPolicies>();
+    w.init_resource::<AreaMap>();
+    w.init_resource::<Areas>();
     w
 }
 
@@ -356,4 +358,234 @@ fn a_specialisation_is_set_for_the_zones_it_covers_and_refused_elsewhere() {
     assert!(set(&mut w, ZoneType::None, None).is_err());
     assert!(set(&mut w, ZoneType::ComLow, None).is_ok());
     assert_eq!(w.resource::<Districts>().get(d).unwrap().spec[2], None);
+}
+
+// ---- Areas (T-206) ----
+
+fn run(w: &mut World, cmd: DistrictCommand) -> Result<cp_core::Cost, DistrictError> {
+    apply(w, &cmd)
+}
+
+fn forestry(w: &mut World, name: &str) -> AreaId {
+    run(
+        w,
+        DistrictCommand::CreateArea {
+            kind: AreaKind::Industry(ResourceKind::Forestry),
+            name: name.into(),
+        },
+    )
+    .unwrap();
+    w.resource::<Areas>()
+        .iter()
+        .find(|(_, a)| a.name == name.trim())
+        .map(|(id, _)| id)
+        .unwrap()
+}
+
+fn area_here(w: &World, x: f32, z: f32) -> Option<AreaId> {
+    area_at(w.resource::<AreaMap>(), Vec2::new(x, z))
+}
+
+#[test]
+fn a_painted_area_is_at_its_cell_and_not_outside() {
+    let mut w = world();
+    let a = forestry(&mut w, "Forest 1");
+    assert_eq!(a, AreaId(1));
+    let area = w.resource::<Areas>().get(a).unwrap().clone();
+    assert_eq!(area.kind, AreaKind::Industry(ResourceKind::Forestry));
+    assert_eq!((area.level, area.xp), (1, 0));
+    run(
+        &mut w,
+        DistrictCommand::PaintArea {
+            cells: vec![(3, 4), (4, 4)],
+            area: a,
+        },
+    )
+    .unwrap();
+    assert_eq!(area_here(&w, 3.0 * 32.0 + 5.0, 4.0 * 32.0 + 5.0), Some(a));
+    assert_eq!(area_here(&w, 4.0 * 32.0 + 5.0, 4.0 * 32.0 + 5.0), Some(a));
+    assert_eq!(area_here(&w, 5.0 * 32.0 + 5.0, 4.0 * 32.0 + 5.0), None);
+    assert_eq!(area_here(&w, -1.0, 5.0), None);
+    assert_eq!(w.resource::<AreaMap>().cell_count(a), 2);
+}
+
+#[test]
+fn painting_a_cell_with_another_area_takes_it_over_and_erase_clears_it() {
+    let mut w = world();
+    let a = forestry(&mut w, "A");
+    run(
+        &mut w,
+        DistrictCommand::CreateArea {
+            kind: AreaKind::Park(ParkKind::Zoo),
+            name: "B".into(),
+        },
+    )
+    .unwrap();
+    let b = AreaId(2);
+    let paint = |area, cells| DistrictCommand::PaintArea { cells, area };
+    run(&mut w, paint(a, vec![(1, 1), (2, 1)])).unwrap();
+    run(&mut w, paint(b, vec![(2, 1)])).unwrap();
+    let m = w.resource::<AreaMap>();
+    assert_eq!((m.get((1, 1)), m.get((2, 1))), (Some(a), Some(b)));
+    run(
+        &mut w,
+        DistrictCommand::EraseArea {
+            cells: vec![(1, 1)],
+        },
+    )
+    .unwrap();
+    assert_eq!(w.resource::<AreaMap>().get((1, 1)), None);
+    assert_eq!(w.resource::<AreaMap>().get((2, 1)), Some(b));
+}
+
+#[test]
+fn delete_clears_the_cells_and_frees_the_slot_and_rename_works() {
+    let mut w = world();
+    let a = forestry(&mut w, "A");
+    let b = {
+        run(
+            &mut w,
+            DistrictCommand::CreateArea {
+                kind: AreaKind::Industry(ResourceKind::Ore),
+                name: "B".into(),
+            },
+        )
+        .unwrap();
+        AreaId(2)
+    };
+    run(
+        &mut w,
+        DistrictCommand::PaintArea {
+            cells: vec![(0, 0)],
+            area: a,
+        },
+    )
+    .unwrap();
+    run(
+        &mut w,
+        DistrictCommand::RenameArea {
+            area: a,
+            name: "  Woods ".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(w.resource::<Areas>().get(a).unwrap().name, "Woods");
+    run(&mut w, DistrictCommand::DeleteArea { area: a }).unwrap();
+    assert_eq!(w.resource::<AreaMap>().get((0, 0)), None);
+    assert!(w.resource::<Areas>().get(a).is_none());
+    assert!(w.resource::<Areas>().get(b).is_some());
+    // The lowest free slot is reused.
+    assert_eq!(forestry(&mut w, "C"), AreaId(1));
+    assert_eq!(w.resource::<Areas>().get(AreaId(1)).unwrap().name, "C");
+}
+
+#[test]
+fn areas_and_districts_overlap_and_painting_one_leaves_the_other() {
+    let mut w = world();
+    run(
+        &mut w,
+        DistrictCommand::Create {
+            name: "Old Town".into(),
+        },
+    )
+    .unwrap();
+    run(
+        &mut w,
+        DistrictCommand::Paint {
+            cells: vec![(5, 5), (6, 5)],
+            district: DistrictId(1),
+        },
+    )
+    .unwrap();
+    let districts_before = w.resource::<DistrictMap>().clone();
+    let a = forestry(&mut w, "A");
+    run(
+        &mut w,
+        DistrictCommand::PaintArea {
+            cells: vec![(5, 5), (7, 5)],
+            area: a,
+        },
+    )
+    .unwrap();
+    assert_eq!(*w.resource::<DistrictMap>(), districts_before);
+    assert_eq!(w.resource::<DistrictMap>().get((5, 5)), Some(DistrictId(1)));
+    assert_eq!(w.resource::<AreaMap>().get((5, 5)), Some(a));
+    run(
+        &mut w,
+        DistrictCommand::Erase {
+            cells: vec![(5, 5)],
+        },
+    )
+    .unwrap();
+    assert_eq!(w.resource::<AreaMap>().get((5, 5)), Some(a));
+}
+
+#[test]
+fn invalid_area_commands_change_nothing() {
+    let mut w = world();
+    let a = forestry(&mut w, "A");
+    let before = (
+        w.resource::<AreaMap>().clone(),
+        w.resource::<Areas>().clone(),
+    );
+    let bad = [
+        DistrictCommand::CreateArea {
+            kind: AreaKind::Park(ParkKind::Nature),
+            name: "  ".into(),
+        },
+        DistrictCommand::RenameArea {
+            area: AreaId(9),
+            name: "x".into(),
+        },
+        DistrictCommand::DeleteArea { area: AreaId(9) },
+        DistrictCommand::PaintArea {
+            cells: vec![(0, 0)],
+            area: AreaId(9),
+        },
+        DistrictCommand::PaintArea {
+            cells: vec![(0, 0), (SIDE as u16, 0)],
+            area: a,
+        },
+        DistrictCommand::EraseArea {
+            cells: vec![(0, SIDE as u16)],
+        },
+    ];
+    for cmd in bad {
+        assert!(run(&mut w, cmd.clone()).is_err(), "{cmd:?}");
+    }
+    assert_eq!(
+        before,
+        (
+            w.resource::<AreaMap>().clone(),
+            w.resource::<Areas>().clone()
+        )
+    );
+}
+
+#[test]
+fn the_same_commands_give_the_same_areas() {
+    let play = || {
+        let mut w = world();
+        let a = forestry(&mut w, "A");
+        run(
+            &mut w,
+            DistrictCommand::PaintArea {
+                cells: (0..50).map(|i| (i, i)).collect(),
+                area: a,
+            },
+        )
+        .unwrap();
+        run(
+            &mut w,
+            DistrictCommand::EraseArea {
+                cells: vec![(3, 3)],
+            },
+        )
+        .unwrap();
+        (
+            w.resource::<AreaMap>().clone(),
+            w.resource::<Areas>().clone(),
+        )
+    };
+    assert_eq!(play(), play());
 }

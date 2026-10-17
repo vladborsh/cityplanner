@@ -8,15 +8,19 @@
 //!
 //! * [`DistrictMap`] — one `u8` per 32 m cell, `0` = no district, `n` = [`DistrictId`]`(n)`;
 //! * [`Districts`] — the district records; district `n` is `list[n - 1]`, `None` = a free slot;
+//! * [`AreaMap`] and [`Areas`] — the same for industry and park areas (T-206, M5/M6); a cell
+//!   belongs to one area, and areas overlap districts freely;
 //! * [`CityPolicies`] — the policies switched on for the whole city (T-190); a district's own
 //!   are in its record, and [`policy_at`] answers city ∨ district for a position.
 //!
 //! Player input is [`DistrictCommand`]; validation is the pure functions in [`command`].
 //! New command variants are only appended (save stability rule).
 
+pub mod area;
 pub mod command;
 pub mod map;
 
+pub use area::{Area, AreaId, AreaKind, AreaMap, Areas, MAX_AREAS, area_at};
 pub use command::{DistrictCommand, DistrictError, TAX_MAX, TAX_MIN, apply};
 pub use map::{
     CELL_M, Cell, CityPolicies, District, DistrictId, DistrictMap, Districts, MAX_DISTRICTS,

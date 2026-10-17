@@ -52,6 +52,8 @@ pub struct SimRunner {
     /// `SimView::buildings` cache, keyed by the grid's revision.
     pub(crate) buildings_cache: std::sync::Mutex<crate::view::BuildingsCache>,
     pub(crate) district_cache: std::sync::Mutex<crate::view::DistrictCache>,
+    /// `SimView::area_map` and `SimView::areas` caches.
+    pub(crate) area_cache: std::sync::Mutex<crate::view::AreaCache>,
     /// `SimView::deposits` cache, kept while the deposits are unchanged.
     pub(crate) deposits_cache:
         std::sync::Mutex<Option<std::sync::Arc<cp_terrain::ResourceDeposits>>>,
@@ -127,6 +129,8 @@ impl SimRunner {
         world.init_resource::<cp_district::DistrictMap>();
         world.init_resource::<cp_district::Districts>();
         world.init_resource::<cp_district::CityPolicies>();
+        world.init_resource::<cp_district::AreaMap>();
+        world.init_resource::<cp_district::Areas>();
         cp_service::ServicePlugin::init(&mut world);
         world.init_resource::<cp_transit::TransitNet>();
         world.init_resource::<cp_transit::LinePlans>();
@@ -367,6 +371,7 @@ impl SimRunner {
             buildings_cache: Default::default(),
             district_cache: Default::default(),
             deposits_cache: Default::default(),
+            area_cache: Default::default(),
             zone_grid_cache: Default::default(),
             utilities_cache: Default::default(),
             transit_cache: Default::default(),
