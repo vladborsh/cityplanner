@@ -356,33 +356,38 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
         );
     }
     let d = &view.demand;
-    for (id, v, text, icon) in [
+    for (id, zone, v, text, icon) in [
         (
             "want_homes",
+            cp_content::ZoneType::ResLow,
             d.r,
             "Residents want homes — zone residential",
             Icon::ZoneResLow,
         ),
         (
             "want_shops",
+            cp_content::ZoneType::ComLow,
             d.c,
             "Shops are wanted — zone commercial",
             Icon::ZoneComLow,
         ),
         (
             "want_industry",
+            cp_content::ZoneType::Industrial,
             d.i,
             "Industry is wanted — zone industrial",
             Icon::ZoneIndustrial,
         ),
         (
             "want_offices",
+            cp_content::ZoneType::Office,
             d.o,
             "Offices are wanted — zone office",
             Icon::ZoneOffice,
         ),
     ] {
-        if v >= HIGH_DEMAND {
+        // A zone type that is still locked is not advised (BUG-060).
+        if v >= HIGH_DEMAND && crate::windows::zone_lock(view, zone).is_none() {
             push(
                 id,
                 Severity::Info,
@@ -590,6 +595,29 @@ mod tests {
                 .any(|a| a.id == "monument_unlocked" && a.text.contains("Golden arch"))
         );
         assert!(a.iter().all(|a| a.id != "unique_unlocked"));
+    }
+
+    /// BUG-060: no "wanted" advice for a zone type that is still locked.
+    #[test]
+    fn no_wanted_advice_for_a_locked_zone_type() {
+        let mut locked = view_with(|s| {
+            s.world_mut().insert_resource(cp_sim::Progress::START);
+        });
+        locked.demand.o = 80.0;
+        locked.demand.i = 80.0;
+        let ids = |v: &SimView| {
+            collect(v, &mut None)
+                .iter()
+                .map(|a| a.id)
+                .collect::<Vec<_>>()
+        };
+        let got = ids(&locked);
+        assert!(!got.contains(&"want_offices"), "{got:?}");
+        assert!(got.contains(&"want_industry"), "industry is open: {got:?}");
+        let open = view_with(|_| {});
+        let mut open = open;
+        open.demand.o = 80.0;
+        assert!(ids(&open).contains(&"want_offices"));
     }
 
     /// A view whose city stats say `n` buildings lack water.

@@ -156,3 +156,24 @@ fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
         }
     }
 }
+
+/// BUG-060: a locked zone type has no demand; once it opens the economy's value shows again.
+#[test]
+fn a_locked_zone_type_has_no_demand() {
+    let c = content();
+    let mut sim = world(&c);
+    sim.world_mut().insert_resource(Progress::at(0));
+    {
+        let mut d = sim.world_mut().resource_mut::<cp_building::Demand>();
+        d.o = 40.0;
+        d.r = 40.0;
+    }
+    sim.tick_once();
+    let d = *sim.world().resource::<cp_building::Demand>();
+    assert_eq!(d.o, 0.0, "offices are locked");
+    assert_eq!(d.r, 40.0, "low-density housing is open");
+    sim.world_mut().insert_resource(Progress::at(u8::MAX - 1));
+    sim.world_mut().resource_mut::<cp_building::Demand>().o = 40.0;
+    sim.tick_once();
+    assert_eq!(sim.world().resource::<cp_building::Demand>().o, 40.0);
+}

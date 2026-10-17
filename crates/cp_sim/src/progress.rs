@@ -186,6 +186,40 @@ pub fn check_unlocked(
     Ok(())
 }
 
+/// `Economy` phase, right after `update_demand` (BUG-060): a zone type that is still locked has
+/// no demand, so nothing downstream (panels, advisor, metrics) sees a need the player cannot
+/// act on. R and C keep their value while their low-density type is open; I and O are zero
+/// while Industrial / Office are locked. Educated unemployed then only count for R/C/I.
+pub fn lock_demand(
+    content: Option<Res<SimContent>>,
+    progress: Res<Progress>,
+    mut demand: ResMut<cp_building::Demand>,
+) {
+    let Some(content) = content else { return };
+    if demand.frozen {
+        return;
+    }
+    let db = &*content.0;
+    let locked = |zones: &[ZoneType]| {
+        zones
+            .iter()
+            .all(|&z| progress.zone_locked_by(db, z).is_some())
+    };
+    if locked(&[ZoneType::ResLow, ZoneType::ResHigh]) {
+        demand.r = 0.0;
+        demand.move_in = 0.0;
+    }
+    if locked(&[ZoneType::ComLow, ZoneType::ComHigh]) {
+        demand.c = 0.0;
+    }
+    if locked(&[ZoneType::Industrial]) {
+        demand.i = 0.0;
+    }
+    if locked(&[ZoneType::Office]) {
+        demand.o = 0.0;
+    }
+}
+
 /// `Err(Locked)` when painting `zone` is still ahead of the city's progress (T-231).
 pub fn check_zone_unlocked(
     progress: &Progress,

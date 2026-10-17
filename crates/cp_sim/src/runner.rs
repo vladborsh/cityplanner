@@ -277,6 +277,11 @@ impl SimRunner {
         );
         schedule.add_systems(cp_economy::settle_week.in_set(SimPhase::Economy));
         schedule.add_systems(cp_economy::update_demand.in_set(SimPhase::Economy));
+        schedule.add_systems(
+            crate::progress::lock_demand
+                .in_set(SimPhase::Economy)
+                .after(cp_economy::update_demand),
+        );
         schedule.add_systems(cp_economy::update_city.in_set(SimPhase::Economy));
         schedule.add_systems(
             cp_economy::update_police
