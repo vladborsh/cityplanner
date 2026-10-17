@@ -193,7 +193,12 @@ pub(super) fn walks(graph: &NetGraph, j: &Junction) -> Vec<Walk> {
                 }
             };
             let len = j.polygon[i].distance(j.polygon[(i + 1) % k]);
-            (w > 1e-3 && len > 1e-3).then_some(w.min(len * 0.5))
+            // The run along a rounded corner (an edge with an end no arm owns) keeps one width
+            // throughout: capping the short arc edges to half their length made the bands
+            // differ, and the mitre of unequal offsets spiked outwards (BUG-054). The arc's
+            // radius is at least `w + 0.3`, so the offset never inverts.
+            let rounded = a.is_none() || b.is_none();
+            (w > 1e-3 && len > 1e-3).then_some(if rounded { w } else { w.min(len * 0.5) })
         })
         .collect();
     let edge = |i: usize| {

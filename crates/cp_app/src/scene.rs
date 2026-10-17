@@ -435,6 +435,8 @@ pub fn build_corners(sim: &mut SimRunner) {
         (p(-40.0, 0.0), p(-40.0, 80.0)),
         (p(-40.0, 80.0), p(60.0, 80.0)),
         (p(60.0, 0.0), p(60.0, 80.0)),
+        // A 45 degree bend (BUG-054) at the end of the east street.
+        (p(120.0, 0.0), p(170.0, 50.0)),
     ] {
         sim.push_command(
             SimCommand::Net(NetCommand::BuildRoad {

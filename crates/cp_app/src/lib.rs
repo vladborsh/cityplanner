@@ -192,6 +192,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c - 20.0, 120.0, c + 120.0),
             Vec3::new(c - 20.0, 0.0, c + 25.0),
         ),
+        // The 90 degree bend at the south-east and the 45 degree one on the east street.
+        "bends" => (
+            Vec3::new(c + 110.0, 40.0, c + 125.0),
+            Vec3::new(c + 60.0, 0.0, c + 75.0),
+        ),
         "zones" => (
             Vec3::new(c - 60.0, 300.0, c + 150.0),
             Vec3::new(c - 60.0, 0.0, c - 10.0),

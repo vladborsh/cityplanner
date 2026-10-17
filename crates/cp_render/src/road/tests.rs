@@ -1092,3 +1092,72 @@ fn a_cross_has_pavement_in_its_four_corners_and_a_t_along_its_far_side() {
     assert!(sw.iter().any(|t| in_tri(C + Vec2::new(0.0, -5.0), *t)));
     assert!(!sw.iter().any(|t| in_tri(C + Vec2::new(0.0, 5.0), *t)));
 }
+
+/// BUG-054: on the outside of a bend the sidewalk is one band of constant width along the
+/// rounded corner: no mesh vertex lies outside the rounded canvas (spikes), and the band is as
+/// wide along the arc as beside it (no notch of asphalt).
+#[test]
+fn a_bend_has_one_smooth_outer_sidewalk_without_spikes_or_notches() {
+    for len in [20.0f32, 30.0, 60.0, 90.0] {
+        for deg in [90.0f32, 60.0, 45.0] {
+            for reversed in [false, true] {
+                let mut w = world();
+                let a = C - Vec2::X * len;
+                let b = C + dir(deg) * len;
+                road(&mut w, a, C);
+                if reversed {
+                    road(&mut w, b, C)
+                } else {
+                    road(&mut w, C, b)
+                }
+                let what = format!("bend {deg} len {len} reversed {reversed}");
+                check_clean(&w, &what);
+                let v = w.view();
+                let (set, _) = w.set(&v);
+                let (node, j) = v
+                    .junctions
+                    .iter()
+                    .find(|(_, j)| j.arms.len() == 2)
+                    .expect("the bend node");
+                let (rp, _) = super::corner::rounded_polygon(j, &v.net);
+                let m = &set.piece(PieceKey::Junction(*node)).unwrap().near;
+                let n = rp.len();
+                for (i, p) in m.positions.iter().enumerate() {
+                    let q = Vec2::new(p[0], p[2]);
+                    let edge = (0..n)
+                        .map(|k| dist_to_edge(q, rp[k], rp[(k + 1) % n]))
+                        .fold(f32::MAX, f32::min);
+                    assert!(
+                        in_polygon(q, &rp) || edge < 0.05,
+                        "{what}: vertex {i} at {q:?} sticks out of the canvas ({edge} m)"
+                    );
+                }
+                // The raised band along the outside is as wide at the middle of the arc as
+                // beside it: a point `w - 0.2` inside the rim, at the arc's middle edge, is
+                // pavement.
+                let sw = colour_tris(m, SIDEWALK);
+                let centre = to_xz(j.pos);
+                let mid = rp
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| {
+                        !j.arms
+                            .iter()
+                            .any(|a| a.right.distance(**p) < 1e-3 || a.left.distance(**p) < 1e-3)
+                    })
+                    .map(|(k, _)| k)
+                    .collect::<Vec<_>>();
+                if let Some(&k) = mid.get(mid.len() / 2) {
+                    let (p0, p1) = (rp[k], rp[(k + 1) % n]);
+                    let at = (p0 + p1) * 0.5;
+                    let inward = (at - centre).normalize_or_zero() * -1.0;
+                    let probe = at + inward * 1.2;
+                    assert!(
+                        sw.iter().any(|t| in_tri(probe, *t)),
+                        "{what}: asphalt notch in the outer sidewalk at {probe:?}"
+                    );
+                }
+            }
+        }
+    }
+}
