@@ -353,6 +353,29 @@ mod tests {
         assert!(t.corner.is_none());
     }
 
+    /// BUG-050: the drag starts and ends anywhere inside its cells, not at their centres; the
+    /// rectangle holds both corner cells, with their whole row and column.
+    #[test]
+    fn rectangle_is_inclusive_of_both_corner_cells_wherever_they_are_hit() {
+        let z = grid();
+        let (_, a) = right_cell(&z, 1, 0);
+        let (_, b) = right_cell(&z, 4, 1);
+        let want: Vec<_> = {
+            let mut v = z.cells_in_rect(a, b);
+            v.sort();
+            v
+        };
+        assert!(want.len() >= 6, "{}", want.len());
+        let toward = (b - a).normalize();
+        for shift in [0.0f32, 2.0, 3.5] {
+            // Start and end hit the half of their cell that faces the rest of the rectangle.
+            let (a2, b2) = (a + toward * shift, b - toward * shift);
+            let mut got = z.cells_in_rect(a2, b2);
+            got.sort();
+            assert_eq!(got, want, "shift {shift}");
+        }
+    }
+
     #[test]
     fn eraser_only_targets_painted_cells_and_paints_none() {
         let mut z = grid();

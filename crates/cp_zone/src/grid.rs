@@ -774,7 +774,16 @@ impl ZoneGrid {
 
     /// Cells whose centre is inside the axis-aligned rectangle, in id order.
     pub fn cells_in_rect(&self, a: Vec2, b: Vec2) -> Vec<ZoneCellRef> {
-        let (lo, hi) = (a.min(b), a.max(b));
+        // Both corners are inclusive (BUG-050): a click in the half of its cell away from the
+        // rest of the rectangle must still take that cell, so the rectangle reaches the centre
+        // of each corner cell, and with it the cell's whole row and column.
+        let reach = |p: Vec2| {
+            self.cell_at(p)
+                .and_then(|c| self.cell_footprint(c))
+                .map_or(p, |o| o.c)
+        };
+        let (ca, cb) = (reach(a), reach(b));
+        let (lo, hi) = (a.min(b).min(ca).min(cb), a.max(b).max(ca).max(cb));
         self.cells_where((lo, hi), |c| {
             c.x >= lo.x && c.x <= hi.x && c.y >= lo.y && c.y <= hi.y
         })
