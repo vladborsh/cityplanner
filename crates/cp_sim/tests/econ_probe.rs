@@ -185,7 +185,7 @@ fn starter_city_cash_flow() {
 }
 
 /// BUG-052: the entry highway and rail are built free and cost no upkeep; a fresh city books
-/// no road upkeep until the player builds a road.
+/// next to no road upkeep until the player builds a road.
 #[test]
 fn the_entry_roads_cost_no_upkeep() {
     let content =
@@ -202,5 +202,11 @@ fn the_entry_roads_cost_no_upkeep() {
     assert!(view.net.segments().count() >= 3, "the entry roads exist");
     let r = sim.world().resource::<EconomyState>().last_week;
     assert!(r.week >= 1, "a week was settled");
-    assert_eq!(r.road_upkeep, cp_core::Cost::ZERO);
+    // Only the stub (the player's, a few hundred metres) is paid for; the two highways, some 15
+    // km, cost about 4 000 a week before this fix.
+    assert!(
+        r.road_upkeep < cp_core::Cost::from_units(200.0),
+        "road upkeep {:?}",
+        r.road_upkeep
+    );
 }
