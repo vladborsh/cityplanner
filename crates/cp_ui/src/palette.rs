@@ -1055,4 +1055,38 @@ mod tests {
             vec![set(None)]
         );
     }
+
+    /// T-191: the tabs. Switching never loses the chosen district or sends a command, the tab
+    /// is remembered, and the four tiles pass the tile checks.
+    #[test]
+    fn the_district_tabs_switch_without_losing_the_district_and_are_tiles() {
+        use cp_district::DistrictId;
+        let mut rig = rig_with_district(None);
+        // Taxes first.
+        assert!(rig.frame(vec![]).contains("R low"));
+        let tab_tiles = tiles(&mut rig);
+        let before = tab_tiles.len();
+        for (tile, icon) in &tab_tiles {
+            assert_eq!(tile.size(), Sizes::tile());
+            assert_eq!(icon.size(), Sizes::tile_icon());
+        }
+        assert!(before >= 4);
+        rig.click_label("Stats");
+        let text = rig.frame(vec![]);
+        assert!(
+            text.contains("Residents") && !text.contains("R low"),
+            "{text}"
+        );
+        assert_eq!(rig.tools.district.selected, Some(DistrictId(1)));
+        // Remembered over frames; the stubs say what they are.
+        assert!(rig.frame(vec![]).contains("Residents"));
+        rig.click_label("Policies");
+        assert!(rig.frame(vec![]).contains("Policies: coming soon."));
+        rig.click_label("Special.");
+        assert!(rig.frame(vec![]).contains("Specialisation: coming soon."));
+        rig.click_label("Taxes");
+        assert!(rig.frame(vec![]).contains("R low"));
+        assert_eq!(rig.tools.district.selected, Some(DistrictId(1)));
+        assert!(rig.outbox.iter().next().is_none(), "tabs send nothing");
+    }
 }

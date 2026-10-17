@@ -42,6 +42,141 @@ fn send(outbox: &mut CommandOutbox, cmd: DistrictCommand) {
     outbox.push(SimCommand::District(cmd));
 }
 
+/// The tabs of the chosen district (T-191).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DistrictTab {
+    #[default]
+    Taxes,
+    Policies,
+    Specialisation,
+    Stats,
+}
+
+impl DistrictTab {
+    pub const ALL: [DistrictTab; 4] = [
+        DistrictTab::Taxes,
+        DistrictTab::Policies,
+        DistrictTab::Specialisation,
+        DistrictTab::Stats,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DistrictTab::Taxes => "Taxes",
+            DistrictTab::Policies => "Policies",
+            DistrictTab::Specialisation => "Special.",
+            DistrictTab::Stats => "Stats",
+        }
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            DistrictTab::Taxes => Icon::DistrictTabTaxes,
+            DistrictTab::Policies => Icon::DistrictTabPolicies,
+            DistrictTab::Specialisation => Icon::DistrictTabSpecialisation,
+            DistrictTab::Stats => Icon::DistrictTabStats,
+        }
+    }
+}
+
+fn tab_key() -> egui::Id {
+    egui::Id::new("district_tab")
+}
+
+/// The tab in use; it is kept across frames and across other districts being chosen.
+pub fn current_tab(ctx: &egui::Context) -> DistrictTab {
+    ctx.data(|d| d.get_temp(tab_key())).unwrap_or_default()
+}
+
+/// What the Stats tab shows for one district, counted from the view alone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DistrictStats {
+    pub residents: u32,
+    pub buildings: u32,
+    /// Households' homes the buildings offer, and the job slots (capacities).
+    pub homes: u32,
+    pub jobs: u32,
+    /// Buildings per zone type, in `cp_sim::stats::ZONES` order.
+    pub by_zone: [u32; 6],
+    /// Average land value of the district's cells, if the view has the grid.
+    pub land_value: Option<f32>,
+    pub no_water: u32,
+    pub no_power: u32,
+}
+
+/// The stats of district `id`: only the buildings and cells inside it count.
+pub fn district_stats(view: &SimView, id: DistrictId) -> DistrictStats {
+    use cp_building::BuildingFlags;
+    let mut out = DistrictStats {
+        residents: view
+            .city
+            .districts
+            .iter()
+            .find(|s| s.id == id)
+            .map_or(0, |s| s.population),
+        ..Default::default()
+    };
+    if let Some(db) = view.content.as_deref() {
+        for (_, b) in view.buildings.iter() {
+            if cp_district::district_at(&view.district_map, b.pos) != Some(id) {
+                continue;
+            }
+            let def = db.building(b.def);
+            out.buildings += 1;
+            out.homes += u32::from(def.households);
+            out.jobs += def.jobs.iter().map(|&j| u32::from(j)).sum::<u32>();
+            if let Some(k) = cp_sim::stats::ZONES.iter().position(|z| *z == def.zone) {
+                out.by_zone[k] += 1;
+            }
+            out.no_water += u32::from(b.flags.has(BuildingFlags::NO_WATER));
+            out.no_power += u32::from(b.flags.has(BuildingFlags::NO_POWER));
+        }
+    }
+    if let Some(grid) = view.overlays.land_value.as_deref() {
+        let (mut sum, mut n) = (0.0, 0u32);
+        for c in view.district_map.cells_of(id) {
+            let p = cp_district::DistrictMap::cell_center(c);
+            let at =
+                |v: f32| ((v / cp_economy::CELL_M).floor().max(0.0) as usize).min(grid.side - 1);
+            sum += grid.values[at(p.y) * grid.side + at(p.x)] * 100.0;
+            n += 1;
+        }
+        out.land_value = (n > 0).then(|| sum / n as f32);
+    }
+    out
+}
+
+fn stats_tab(ui: &mut egui::Ui, view: &SimView, id: DistrictId) {
+    let s = district_stats(view, id);
+    egui::Grid::new(("district_stats", id.0))
+        .num_columns(2)
+        .show(ui, |ui| {
+            let row = |ui: &mut egui::Ui, label: &str, value: String| {
+                ui.weak(label);
+                ui.label(value);
+                ui.end_row();
+            };
+            row(ui, "Residents", s.residents.to_string());
+            row(ui, "Homes (capacity)", s.homes.to_string());
+            row(ui, "Jobs (capacity)", s.jobs.to_string());
+            row(ui, "Buildings", s.buildings.to_string());
+            for (k, z) in cp_sim::stats::ZONES.iter().enumerate() {
+                row(
+                    ui,
+                    &format!("  {}", zone_name(*z)),
+                    s.by_zone[k].to_string(),
+                );
+            }
+            row(
+                ui,
+                "Land value (avg)",
+                s.land_value.map_or("—".into(), |v| format!("{v:.1}")),
+            );
+            row(ui, "Without water", s.no_water.to_string());
+            row(ui, "Without power", s.no_power.to_string());
+        });
+}
+
 /// The Districts panel.
 pub fn districts_panel(
     ui: &mut egui::Ui,
@@ -104,8 +239,26 @@ pub fn districts_panel(
     if let Some(id) = tools.district.selected
         && let Some(d) = view.districts.get(id)
     {
-        section(ui, &format!("Taxes of {}", d.name), |ui| {
-            tax_block(ui, view, outbox, id, d);
+        let tab = current_tab(ui.ctx());
+        section(ui, &d.name, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
+                for t in DistrictTab::ALL {
+                    if tool_tile(ui, TileIcon::Icon(t.icon()), t.label(), tab == t).clicked() {
+                        ui.ctx().data_mut(|m| m.insert_temp(tab_key(), t));
+                    }
+                }
+            });
+            match tab {
+                DistrictTab::Taxes => tax_block(ui, view, outbox, id, d),
+                DistrictTab::Policies => {
+                    ui.weak("Policies: coming soon.");
+                }
+                DistrictTab::Specialisation => {
+                    ui.weak("Specialisation: coming soon.");
+                }
+                DistrictTab::Stats => stats_tab(ui, view, id),
+            }
         });
     }
 }
@@ -316,5 +469,85 @@ pub fn draw_labels(
             egui::FontId::proportional(16.0),
             egui::Color32::WHITE,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cp_building::{AccessPoint, Building, BuildingFlags, BuildingState, Lot};
+    use cp_core::{Id, Tick};
+    use cp_sim::SimRunner;
+    use std::sync::Arc;
+
+    /// T-191: three buildings in the district and two outside; the counters are the district's.
+    #[test]
+    fn the_stats_count_only_the_buildings_inside_the_district() {
+        let db = Arc::new(
+            cp_content::ContentDb::load_dir(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/content"
+            ))
+            .unwrap(),
+        );
+        let mut sim = SimRunner::new(1);
+        sim.set_content(Arc::clone(&db));
+        let cell = cp_district::DistrictMap::cell_of(bevy::math::Vec2::new(500.0, 500.0)).unwrap();
+        for c in [
+            DistrictCommand::Create {
+                name: "Hill".into(),
+            },
+            DistrictCommand::Paint {
+                cells: vec![cell],
+                district: DistrictId(1),
+            },
+        ] {
+            sim.push_command(SimCommand::District(c), sim.tick());
+        }
+        sim.tick_once();
+        let centre = cp_district::DistrictMap::cell_center(cell);
+        let house = db.building_id("house_low_1").unwrap();
+        let put = |sim: &mut SimRunner, at: bevy::math::Vec2, flags: u8| {
+            sim.world_mut()
+                .resource_mut::<cp_building::BuildingGrid>()
+                .insert(Building {
+                    def: house,
+                    footprint: cp_building::Footprint::Lot(Lot {
+                        block: Id::new(0, 0),
+                        col: 0,
+                        w: 1,
+                        d: 1,
+                    }),
+                    level: 1,
+                    state: BuildingState::Active,
+                    ready_at: Tick(0),
+                    pos: at,
+                    rot: 0.0,
+                    access: Some(AccessPoint {
+                        segment: Id::new(0, 0),
+                        t: 0.0,
+                    }),
+                    flags: BuildingFlags(flags),
+                    level_progress: 0.0,
+                });
+        };
+        put(&mut sim, centre, 0);
+        put(&mut sim, centre, BuildingFlags::NO_WATER);
+        put(&mut sim, centre, BuildingFlags::NO_POWER);
+        put(
+            &mut sim,
+            bevy::math::Vec2::new(5000.0, 5000.0),
+            BuildingFlags::NO_WATER,
+        );
+        put(&mut sim, bevy::math::Vec2::new(7000.0, 2000.0), 0);
+        let view = sim.view();
+        let s = district_stats(&view, DistrictId(1));
+        assert_eq!((s.buildings, s.no_water, s.no_power), (3, 1, 1));
+        assert_eq!(s.by_zone.iter().sum::<u32>(), 3);
+        let homes = u32::from(db.building(house).households);
+        assert_eq!(s.homes, 3 * homes);
+        assert_eq!(s.residents, 0);
+        // No district: nothing counts.
+        assert_eq!(district_stats(&view, DistrictId(2)).buildings, 0);
     }
 }
