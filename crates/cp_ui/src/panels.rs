@@ -718,11 +718,7 @@ pub fn services_panel(
 pub fn bulldozer_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
     let on = tools.active == ActiveTool::Bulldozer;
     if tool_button(ui, Icon::Bulldozer, "Bulldozer", on).clicked() {
-        tools.select(if on {
-            ActiveTool::None
-        } else {
-            ActiveTool::Bulldozer
-        });
+        tools.toggle_bulldozer();
     }
 }
 

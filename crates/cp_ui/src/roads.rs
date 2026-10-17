@@ -155,11 +155,7 @@ pub fn roads_panel(
         }
         let on = tools.active == ActiveTool::Bulldozer;
         if crate::panels::tool_button(ui, Icon::Bulldozer, "Bulldozer", on).clicked() {
-            tools.select(if on {
-                ActiveTool::None
-            } else {
-                ActiveTool::Bulldozer
-            });
+            tools.toggle_bulldozer();
         }
     });
     let building = tools.active == ActiveTool::Road;

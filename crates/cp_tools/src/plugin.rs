@@ -89,6 +89,10 @@ pub struct Ghost {
 #[derive(Resource, Default, Debug)]
 pub struct ToolState {
     pub active: ActiveTool,
+    /// The tool that was active when the bulldozer was taken up; B, Esc or its button hand it
+    /// back (BUG-048). Its settings (road type, zone brush, building) live in the tool's own
+    /// fields, which `select` leaves alone.
+    before_bulldozer: ActiveTool,
     pub road: RoadTool,
     pub ghost: Option<Ghost>,
     /// Terrain point under the cursor (XZ).
@@ -169,7 +173,19 @@ struct GhostKey {
 }
 
 impl ToolState {
+    /// Takes the bulldozer up, or puts it down and re-activates the tool it interrupted.
+    pub fn toggle_bulldozer(&mut self) {
+        if self.active == ActiveTool::Bulldozer {
+            self.select(self.before_bulldozer);
+        } else {
+            self.select(ActiveTool::Bulldozer);
+        }
+    }
+
     pub fn select(&mut self, tool: ActiveTool) {
+        if tool == ActiveTool::Bulldozer && self.active != ActiveTool::Bulldozer {
+            self.before_bulldozer = self.active;
+        }
         self.active = tool;
         self.road.cancel();
         self.ghost = None;
@@ -466,8 +482,8 @@ pub fn tool_hotkeys(
         };
         outbox.push(SimCommand::SetSpeed { speed: next });
     }
-    if keys.just_pressed(KeyCode::KeyB) && state.active != ActiveTool::Bulldozer {
-        state.select(ActiveTool::Bulldozer);
+    if keys.just_pressed(KeyCode::KeyB) {
+        state.toggle_bulldozer();
     }
     if state.active == ActiveTool::Road {
         if keys.just_pressed(KeyCode::PageUp) {
@@ -499,7 +515,9 @@ pub fn tool_hotkeys(
         state.building.turn(view.as_deref(), hover, align);
     }
     if keys.just_pressed(KeyCode::Escape) {
-        if state.active == ActiveTool::Zone && state.zone.corner.is_some() {
+        if state.active == ActiveTool::Bulldozer {
+            state.toggle_bulldozer();
+        } else if state.active == ActiveTool::Zone && state.zone.corner.is_some() {
             state.zone.cancel();
         } else if state.active == ActiveTool::Line && !state.line.stops.is_empty() {
             state.line.cancel();
@@ -1454,5 +1472,33 @@ fn draw_selection(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod bulldozer_toggle_tests {
+    use super::*;
+
+    #[test]
+    fn bulldozer_hands_back_the_tool_it_interrupted() {
+        let mut s = ToolState::default();
+        s.select(ActiveTool::Road);
+        s.road.level = 2;
+        s.toggle_bulldozer();
+        assert_eq!(s.active, ActiveTool::Bulldozer);
+        s.toggle_bulldozer();
+        assert_eq!(s.active, ActiveTool::Road);
+        assert_eq!(s.road.level, 2, "the tool keeps its settings");
+        // Zone brush, then the bulldozer picked again from the button path.
+        s.select(ActiveTool::Zone);
+        s.select(ActiveTool::Bulldozer);
+        s.select(ActiveTool::Bulldozer);
+        s.toggle_bulldozer();
+        assert_eq!(s.active, ActiveTool::Zone);
+        // From no tool the bulldozer goes back to no tool.
+        s.select(ActiveTool::None);
+        s.toggle_bulldozer();
+        s.toggle_bulldozer();
+        assert_eq!(s.active, ActiveTool::None);
     }
 }
