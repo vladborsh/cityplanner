@@ -25,6 +25,7 @@ use cp_traffic::ServiceRuns;
 use cp_transit::{CargoArrivals, Endpoint, Goods};
 use serde::{Deserialize, Serialize};
 
+use crate::warehouse::WarehouseSettings;
 use crate::{INDUSTRY_BUCKET_TICKS, IndustryState, storage_cap};
 
 /// The money of the cargo trade: this week's sums and what the last settled week booked.
@@ -74,10 +75,13 @@ pub fn run_freight(
     mut runs: ResMut<ServiceRuns>,
     mut state: ResMut<IndustryState>,
     mut ledger: ResMut<IndustryLedger>,
+    mut settings: ResMut<WarehouseSettings>,
 ) {
     let Some(content) = content else { return };
     let db = &*content.0;
     let bal = db.balance();
+
+    settings.list.retain(|id, _| buildings.get(*id).is_some());
 
     // 1. Arrived: unload (a truck whose building is gone loses its load).
     for a in &arrivals.list {
@@ -186,6 +190,11 @@ pub fn run_freight(
                         IndustryRole::Warehouse
                             if ts.resource == spec.resource
                                 && room - inbound(&goods, tid, cargo) >= load
+                                && settings.get(tid).accepts(
+                                    cargo,
+                                    state.total(tid),
+                                    cap_of(tid, ts.storage),
+                                )
                                 && shelf.is_none_or(|(s, _)| held < s) =>
                         {
                             shelf = Some((held, tid));
@@ -197,6 +206,55 @@ pub fn run_freight(
                     .or(shelf)
                     .map(|(_, t)| Endpoint::Building(t))
                     .or_else(|| nearest_entry(b.pos).map(Endpoint::Outside));
+                if let Some(to) = to {
+                    state.add(id, cargo, -load);
+                    goods.start_cargo_haul(&mut runs, cargo, Endpoint::Building(id), to, load);
+                }
+            }
+        }
+
+        // A warehouse gives what its mode lets it give: to a processor that is short of it,
+        // and in the Empty mode out of the map.
+        if spec.role == IndustryRole::Warehouse {
+            let set = settings.get(id);
+            let cap = cap_of(id, spec.storage);
+            let held_all = state.total(id);
+            let mine: Vec<(CargoKind, f32)> = state.stock.get(&id).cloned().unwrap_or_default();
+            for (cargo, amount) in mine {
+                if amount < load
+                    || !set.gives(cargo, held_all, cap)
+                    || goods
+                        .hauls
+                        .values()
+                        .any(|h| h.from == Endpoint::Building(id) && h.cargo == cargo)
+                {
+                    continue;
+                }
+                let mut best: Option<(f32, BuildingId)> = None;
+                for (tid, t) in buildings.iter() {
+                    if tid == id || t.state != BuildingState::Active || t.access().is_none() {
+                        continue;
+                    }
+                    let Some(ts) = &db.building(t.def).industry else {
+                        continue;
+                    };
+                    if !matches!(ts.role, IndustryRole::Processor | IndustryRole::Factory)
+                        || !ts.inputs.iter().any(|&(c, _)| c == cargo)
+                        || t.pos.distance(b.pos) > radius
+                    {
+                        continue;
+                    }
+                    let held = state.stock_of(tid, cargo) + inbound(&goods, tid, cargo);
+                    let room = cap_of(tid, ts.storage) - state.total(tid);
+                    if held < load && room >= load && best.is_none_or(|(s, _)| held < s) {
+                        best = Some((held, tid));
+                    }
+                }
+                let to = best.map(|(_, t)| Endpoint::Building(t)).or_else(|| {
+                    (set.mode == crate::warehouse::WarehouseMode::Empty)
+                        .then(|| nearest_entry(b.pos).map(Endpoint::Outside))
+                        .flatten()
+                });
                 if let Some(to) = to {
                     state.add(id, cargo, -load);
                     goods.start_cargo_haul(&mut runs, cargo, Endpoint::Building(id), to, load);
@@ -228,7 +286,14 @@ pub fn run_freight(
                                     IndustryRole::Extractor | IndustryRole::Processor => {
                                         ss.outputs.iter().any(|&(c, _)| c == cargo)
                                     }
-                                    IndustryRole::Warehouse => state.stock_of(sid, cargo) > 0.0,
+                                    IndustryRole::Warehouse => {
+                                        state.stock_of(sid, cargo) > 0.0
+                                            && settings.get(sid).gives(
+                                                cargo,
+                                                state.total(sid),
+                                                cap_of(sid, ss.storage),
+                                            )
+                                    }
                                     _ => false,
                                 }
                             })

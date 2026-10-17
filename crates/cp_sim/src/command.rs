@@ -30,6 +30,8 @@ pub enum SimCommand {
     Terrain(cp_terrain::TerrainCommand),
     /// M3 (T-153): lines and stops.
     Transit(cp_transit::TransitCommand),
+    /// M5 (T-214): warehouse modes.
+    Industry(cp_industry::IndustryCommand),
     // M3+: ...
 }
 
@@ -70,6 +72,7 @@ impl SimCommand {
             | SimCommand::District(_)
             | SimCommand::Terrain(_)
             | SimCommand::Transit(_)
+            | SimCommand::Industry(_)
             | SimCommand::Debug(_) => {}
         }
     }
@@ -138,6 +141,9 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
         SimCommand::Terrain(c) => crate::tiles::apply(world, c),
         SimCommand::Transit(c) => cp_transit::apply(world, c)
             .map_err(|e| rejected_or_funds("transit", &e, e.insufficient_funds())),
+        SimCommand::Industry(c) => {
+            cp_industry::apply(world, c).map_err(|e| rejected("industry", e))
+        }
         SimCommand::Debug(c) => apply_debug(world, c),
     }
 }

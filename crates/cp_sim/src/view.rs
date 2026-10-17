@@ -74,6 +74,8 @@ pub struct SimView {
     pub deposits: Arc<cp_terrain::ResourceDeposits>,
     /// Stock and problems of the chain buildings (T-209); the area level and xp are in `areas`.
     pub industry: Arc<cp_industry::IndustryState>,
+    /// The modes and cargo of the warehouses that were set (T-214).
+    pub warehouses: cp_industry::WarehouseSettings,
     pub stats: SimStats,
     /// Derived junction geometry (shortened-segment cut points and polygons) for mesh
     /// building. Compare `junctions.version()` with the last built version; junctions with a
@@ -734,6 +736,11 @@ impl SimRunner {
                 .unwrap_or_default(),
             deposits: self.deposits_snapshot(),
             industry: self.industry_snapshot(),
+            warehouses: self
+                .world()
+                .get_resource::<cp_industry::WarehouseSettings>()
+                .cloned()
+                .unwrap_or_default(),
             stats: self.stats(),
             net: self.net_snapshot(&junctions),
             buildings: self.buildings_snapshot(),

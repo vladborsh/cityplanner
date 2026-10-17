@@ -277,3 +277,130 @@ fn cargo_trade_is_deterministic() {
     let (mut a, mut b) = (play(), play());
     assert_eq!(a.checksum(), b.checksum());
 }
+
+// ---- Warehouses (T-214) ----
+
+fn set_warehouse(
+    t: &mut Town,
+    b: BuildingId,
+    cargo: Option<CargoKind>,
+    mode: cp_industry::WarehouseMode,
+) -> Result<(), String> {
+    use bevy_ecs::message::Messages;
+    use cp_core::{CommandError, CommandOutcome};
+    let cmd = cp_sim::SimCommand::Industry(cp_industry::IndustryCommand::SetWarehouse {
+        building: b,
+        cargo,
+        mode,
+    });
+    t.sim.push_command(cmd, t.sim.tick());
+    t.sim.apply_due_commands();
+    let out: Vec<CommandOutcome> = t
+        .sim
+        .world_mut()
+        .resource_mut::<Messages<CommandOutcome>>()
+        .drain()
+        .collect();
+    match out.last().unwrap().result.clone() {
+        Ok(_) => Ok(()),
+        Err(CommandError::Rejected { reason, .. }) => Err(reason),
+        Err(e) => panic!("{e:?}"),
+    }
+}
+
+use cp_industry::WarehouseMode::{Balanced, Empty, Fill};
+
+#[test]
+fn a_sawmill_without_a_processor_fills_a_balanced_warehouse_instead_of_exporting() {
+    let mut t = town(true);
+    let saw = t.put("forest_extractor_s", 100.0);
+    let store = t.put("forest_warehouse", 600.0);
+    t.staff(saw, 8);
+    t.seed(saw, CargoKind::Logs, 40.0);
+    for _ in 0..4 * TICKS_PER_DAY {
+        t.sim.tick_once();
+        if t.stock(store, CargoKind::Logs) >= 20.0 {
+            break;
+        }
+    }
+    assert!(t.stock(store, CargoKind::Logs) >= 20.0);
+    assert_eq!(t.sim.world().resource::<IndustryLedger>().export_loads, 0);
+}
+
+#[test]
+fn a_processor_takes_from_a_warehouse_instead_of_importing() {
+    let mut t = town(true);
+    let mill = t.put("forest_processor_a", 500.0);
+    let store = t.put("forest_warehouse", 800.0);
+    t.staff(mill, 4);
+    t.seed(store, CargoKind::Logs, 900.0); // over half of 1500
+    for _ in 0..4 * TICKS_PER_DAY {
+        t.sim.tick_once();
+        t.staff(mill, 4);
+        if t.stock(mill, CargoKind::Logs) >= 20.0 || t.stock(mill, CargoKind::Planks) > 0.0 {
+            break;
+        }
+    }
+    let l = *t.sim.world().resource::<IndustryLedger>();
+    assert_eq!(l.import_loads, 0, "{l:?}");
+    assert!(t.stock(mill, CargoKind::Logs) >= 20.0 || t.stock(mill, CargoKind::Planks) > 0.0);
+    assert!(t.stock(store, CargoKind::Logs) < 900.0);
+}
+
+#[test]
+fn a_filling_warehouse_gives_nothing_and_an_emptying_one_exports() {
+    // Fill: the processor has to import.
+    let mut t = town(true);
+    let mill = t.put("forest_processor_a", 500.0);
+    let store = t.put("forest_warehouse", 800.0);
+    t.staff(mill, 4);
+    t.seed(store, CargoKind::Logs, 900.0);
+    set_warehouse(&mut t, store, None, Fill).unwrap();
+    for _ in 0..3 * TICKS_PER_DAY {
+        t.sim.tick_once();
+        t.staff(mill, 4);
+    }
+    assert!(t.sim.world().resource::<IndustryLedger>().import_loads > 0);
+    assert_eq!(t.stock(store, CargoKind::Logs), 900.0);
+
+    // Empty: nobody needs it, so it goes out of the map.
+    let mut t = town(true);
+    let store = t.put("forest_warehouse", 800.0);
+    t.seed(store, CargoKind::Logs, 60.0);
+    set_warehouse(&mut t, store, Some(CargoKind::Logs), Empty).unwrap();
+    for _ in 0..4 * TICKS_PER_DAY {
+        t.sim.tick_once();
+        if t.sim.world().resource::<IndustryLedger>().export_loads > 0 {
+            break;
+        }
+    }
+    assert!(t.sim.world().resource::<IndustryLedger>().export_loads > 0);
+    assert!(t.stock(store, CargoKind::Logs) < 60.0);
+    // And a Balanced warehouse under half never exports.
+    let mut t = town(true);
+    let store = t.put("forest_warehouse", 800.0);
+    t.seed(store, CargoKind::Logs, 60.0);
+    set_warehouse(&mut t, store, None, Balanced).unwrap();
+    t.ticks(3 * TICKS_PER_DAY);
+    assert_eq!(t.sim.world().resource::<IndustryLedger>().export_loads, 0);
+    assert_eq!(t.stock(store, CargoKind::Logs), 60.0);
+}
+
+#[test]
+fn set_warehouse_checks_the_building_and_the_cargo() {
+    let mut t = town(false);
+    let store = t.put("forest_warehouse", 800.0);
+    let saw = t.put("forest_extractor_s", 100.0);
+    let e = set_warehouse(&mut t, store, Some(CargoKind::Ore), Fill).unwrap_err();
+    assert!(e.contains("not a cargo of this warehouse's chain"), "{e}");
+    let e = set_warehouse(&mut t, saw, None, Fill).unwrap_err();
+    assert!(e.contains("not a warehouse"), "{e}");
+    let e = set_warehouse(&mut t, Id::new(999, 0), None, Fill).unwrap_err();
+    assert!(e.contains("no such building"), "{e}");
+    set_warehouse(&mut t, store, Some(CargoKind::Planks), Fill).unwrap();
+    let s = t.sim.view().warehouses.get(store);
+    assert_eq!((s.cargo, s.mode), (Some(CargoKind::Planks), Fill));
+    // Back to the default: the entry goes away.
+    set_warehouse(&mut t, store, None, Balanced).unwrap();
+    assert!(t.sim.view().warehouses.list.is_empty());
+}

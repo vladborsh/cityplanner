@@ -27,3 +27,18 @@ fn stock_is_kept_sorted_without_zeros() {
     s.add(b, CargoKind::Planks, -9.0);
     assert!(s.is_empty());
 }
+
+#[test]
+fn warehouse_modes_take_in_and_give_out_as_designed() {
+    use crate::warehouse::{WarehouseMode::*, WarehouseSetting};
+    let s = |mode, cargo| WarehouseSetting { cargo, mode };
+    let (cap, low, high) = (1000.0, 100.0, 900.0);
+    let any = CargoKind::Logs;
+    assert!(s(Fill, None).accepts(any, high, cap) && !s(Fill, None).gives(any, high, cap));
+    assert!(!s(Empty, None).accepts(any, low, cap) && s(Empty, None).gives(any, low, cap));
+    assert!(s(Balanced, None).accepts(any, low, cap) && !s(Balanced, None).accepts(any, high, cap));
+    assert!(s(Balanced, None).gives(any, high, cap) && !s(Balanced, None).gives(any, low, cap));
+    // A chosen cargo is the only one it handles.
+    let only = s(Fill, Some(CargoKind::Planks));
+    assert!(only.accepts(CargoKind::Planks, 0.0, cap) && !only.accepts(any, 0.0, cap));
+}

@@ -153,6 +153,10 @@ pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
     if !industry.is_empty() {
         h.write_serialized(industry);
     }
+    let warehouses = world.resource::<cp_industry::WarehouseSettings>();
+    if !warehouses.list.is_empty() {
+        h.write_serialized(warehouses);
+    }
     let trade = world.resource::<cp_industry::IndustryLedger>();
     if !trade.is_empty() {
         h.write_serialized(trade);

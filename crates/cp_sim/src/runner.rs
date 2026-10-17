@@ -152,6 +152,7 @@ impl SimRunner {
         world.init_resource::<cp_terrain::ResourceDeposits>();
         world.init_resource::<cp_industry::IndustryState>();
         world.init_resource::<cp_industry::IndustryLedger>();
+        world.init_resource::<cp_industry::WarehouseSettings>();
         world.init_resource::<cp_transit::CargoArrivals>();
         world
             .resource_mut::<SimChecksum>()

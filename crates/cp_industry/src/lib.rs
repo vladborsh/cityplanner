@@ -17,6 +17,7 @@
 //! every building's storage. Cargo leaves in trucks (T-210, [`freight`]).
 
 pub mod freight;
+pub mod warehouse;
 
 use std::collections::BTreeMap;
 
@@ -310,6 +311,10 @@ fn take_from_lot(
 }
 
 pub use freight::{IndustryLedger, run_freight};
+pub use warehouse::{
+    IndustryCommand, IndustryError, WarehouseMode, WarehouseSetting, WarehouseSettings, apply,
+    chain_cargo,
+};
 
 #[cfg(test)]
 mod tests;
