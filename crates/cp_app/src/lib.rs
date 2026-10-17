@@ -205,8 +205,17 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         "specs" => (Vec3::new(c, 170.0, c + 120.0), Vec3::new(c, 5.0, c - 85.0)),
         // The five cargo trucks queued at the east end of the street (`--scene trucks`).
         "trucks" => (
-            Vec3::new(c - 60.0, 40.0, c + 50.0),
-            Vec3::new(c - 60.0, 0.0, c),
+            Vec3::new(c - 10.0, 6.0, c + 92.0),
+            Vec3::new(c - 10.0, 2.0, c),
+        ),
+        // Close side views of the log truck and the tanker of the same scene.
+        "trucks-logs" => (
+            Vec3::new(c - 22.0, 3.5, c + 30.0),
+            Vec3::new(c - 22.0, 1.8, c),
+        ),
+        "trucks-tanker" => (
+            Vec3::new(c + 38.0, 3.5, c + 30.0),
+            Vec3::new(c + 38.0, 1.8, c),
         ),
         // The four city parks in a row (`--scene parks`).
         "parks" => (Vec3::new(c, 55.0, c + 20.0), Vec3::new(c, 2.0, c - 120.0)),
@@ -291,14 +300,18 @@ pub fn build_sim(
         info!("scene chains: {n} buildings");
     } else if scene == Some(scene::TRUCKS) {
         let n = scene::build_trucks(&mut sim);
-        for _ in 0..120 {
+        // Until every truck is on the road.
+        for _ in 0..600 {
             sim.tick_once();
+            let agents = sim.world().resource::<cp_traffic::Agents>();
+            if agents.vehicles().count() == n && agents.vehicles().all(|(_, v)| v.spawned) {
+                break;
+            }
         }
-        let agents = sim.world().resource::<cp_traffic::Agents>();
-        info!(
-            "scene trucks: {n} runs, {} vehicles",
-            agents.vehicle_count()
-        );
+        // Hold the moment: the trucks stand where they set out, clear of each other.
+        sim.world_mut()
+            .insert_resource(cp_core::time::SimSpeed::Pause);
+        info!("scene trucks: {n} trucks");
     } else if scene == Some(scene::PARKS) {
         let n = scene::build_parks(&mut sim);
         info!("scene parks: {n} buildings");

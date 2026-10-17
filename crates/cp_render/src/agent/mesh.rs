@@ -56,6 +56,52 @@ pub(crate) fn push_box(m: &mut MeshData, min: [f32; 3], max: [f32; 3], color: [f
     }
 }
 
+/// A cylinder along z from `z0` to `z1` around `(cx, cy)` with the radii `rx`, `ry` (unit
+/// coordinates: the instance scale turns a round tube into an ellipse, so the radii are given
+/// per axis) and end caps of colour `cap`.
+fn push_cylinder(
+    m: &mut MeshData,
+    (cx, cy): (f32, f32),
+    (rx, ry): (f32, f32),
+    (z0, z1): (f32, f32),
+    color: [f32; 4],
+    cap: [f32; 4],
+) {
+    const SIDES: usize = 12;
+    let at = |k: usize| {
+        let a = k as f32 / SIDES as f32 * std::f32::consts::TAU;
+        (a.cos(), a.sin())
+    };
+    for k in 0..SIDES {
+        let ((c0, s0), (c1, s1)) = (at(k), at(k + 1));
+        let mid = (k as f32 + 0.5) / SIDES as f32 * std::f32::consts::TAU;
+        let n = [mid.cos(), mid.sin(), 0.0];
+        let base = m.positions.len() as u32;
+        for (c, s, z) in [(c0, s0, z0), (c1, s1, z0), (c1, s1, z1), (c0, s0, z1)] {
+            m.positions.push([cx + rx * c, cy + ry * s, z]);
+            m.normals.push(n);
+            m.colors.push(color);
+        }
+        m.indices
+            .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+        for (z, nz) in [(z1, 1.0f32), (z0, -1.0)] {
+            let base = m.positions.len() as u32;
+            m.positions.push([cx, cy, z]);
+            m.positions.push([cx + rx * c0, cy + ry * s0, z]);
+            m.positions.push([cx + rx * c1, cy + ry * s1, z]);
+            for _ in 0..3 {
+                m.normals.push([0.0, 0.0, nz]);
+                m.colors.push(cap);
+            }
+            if nz > 0.0 {
+                m.indices.extend([base, base + 1, base + 2]);
+            } else {
+                m.indices.extend([base, base + 2, base + 1]);
+            }
+        }
+    }
+}
+
 fn wheels(m: &mut MeshData, z: &[f32]) {
     for &zc in z {
         for xs in [-1.0f32, 1.0] {
@@ -107,16 +153,32 @@ fn chain_truck(m: &mut MeshData, kind: usize) {
             );
         }
         8 => {
-            // Log trailer: stakes at the sides and three stacked logs along the length.
-            let bark = [0.38, 0.25, 0.14, 0.0];
+            // Log trailer: an open flatbed with tall stakes and five round brown logs lying
+            // along it (three below, two on top), their cut ends lighter.
+            let bark = [0.38, 0.22, 0.10, 0.0];
+            let cut = [0.72, 0.55, 0.32, 0.0];
             push_box(m, [-0.52, 0.2, -0.5], [0.52, 0.26, 0.22], chassis);
             for x in [-0.5f32, 0.5] {
-                push_box(m, [x - 0.03, 0.26, -0.48], [x + 0.03, 0.9, -0.44], chassis);
-                push_box(m, [x - 0.03, 0.26, 0.16], [x + 0.03, 0.9, 0.2], chassis);
+                for z in [-0.48f32, -0.2, 0.08, 0.2] {
+                    push_box(
+                        m,
+                        [x - 0.03, 0.26, z - 0.02],
+                        [x + 0.03, 1.0, z + 0.02],
+                        chassis,
+                    );
+                }
             }
-            push_box(m, [-0.42, 0.26, -0.5], [-0.04, 0.58, 0.22], bark);
-            push_box(m, [0.04, 0.26, -0.5], [0.42, 0.58, 0.22], bark);
-            push_box(m, [-0.2, 0.58, -0.5], [0.2, 0.88, 0.22], bark);
+            // 1 m logs on a 2.5 x 3.4 m unit box: radius 0.5 m.
+            let r = (0.5 / 2.5, 0.5 / 3.4);
+            for (x, y, z0) in [
+                (-0.3f32, 0.26 + r.1, -0.56f32),
+                (0.0, 0.26 + r.1, -0.5),
+                (0.3, 0.26 + r.1, -0.56),
+                (-0.15, 0.26 + 3.0 * r.1, -0.5),
+                (0.15, 0.26 + 3.0 * r.1, -0.56),
+            ] {
+                push_cylinder(m, (x, y), r, (z0, z0 + 0.8), bark, cut);
+            }
         }
         9 => {
             // Ore tipper: a dark open skip, tilted up at the back by a stepped floor.
@@ -152,22 +214,25 @@ fn chain_truck(m: &mut MeshData, kind: usize) {
             );
         }
         _ => {
-            // Tanker: a long cylinder as a stepped box with end caps and a hatch.
-            let tank = [0.82, 0.83, 0.85, 0.0];
-            push_box(m, [-0.4, 0.2, -0.5], [0.4, 0.32, 0.22], chassis);
-            push_box(m, [-0.5, 0.32, -0.5], [0.5, 0.72, 0.22], tank);
-            push_box(m, [-0.38, 0.72, -0.5], [0.38, 0.9, 0.22], tank);
-            push_box(
+            // Tanker: a silver horizontal round tank on the trailer behind the cab, with a
+            // hatch on top and an orange hazard band.
+            let tank = [0.80, 0.82, 0.86, 0.0];
+            let r = (1.0 / 2.5, 1.0 / 3.4);
+            push_box(m, [-0.4, 0.2, -0.5], [0.4, 0.3, 0.22], chassis);
+            push_cylinder(m, (0.0, 0.3 + r.1), r, (-0.5, 0.2), tank, tank);
+            push_cylinder(
                 m,
-                [-0.15, 0.9, -0.1],
-                [0.15, 0.96, 0.1],
-                [0.3, 0.3, 0.32, 0.0],
+                (0.0, 0.3 + r.1),
+                (r.0 * 1.03, r.1 * 1.03),
+                (-0.12, -0.04),
+                [0.85, 0.5, 0.1, 0.0],
+                [0.85, 0.5, 0.1, 0.0],
             );
             push_box(
                 m,
-                [-0.5, 0.4, -0.5],
-                [0.5, 0.5, -0.46],
-                [0.85, 0.5, 0.1, 0.0],
+                [-0.1, 0.3 + 2.0 * r.1, -0.3],
+                [0.1, 0.3 + 2.0 * r.1 + 0.05, -0.1],
+                [0.3, 0.3, 0.32, 0.0],
             );
         }
     }

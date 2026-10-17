@@ -127,16 +127,31 @@ pub fn build_trucks(sim: &mut SimRunner) -> usize {
     );
     sim.tick_once();
     sim.tick_once();
-    let segment = sim
+    // The street may be cut into several segments: `along` metres from its west end is a
+    // segment and a t on it.
+    let mut segs: Vec<_> = sim
         .world()
         .resource::<cp_net::NetGraph>()
         .segments()
-        .next()
-        .map(|(id, _)| id)
-        .expect("a segment");
+        .map(|(id, s)| (s.curve.point(0.0).x, id, s.length))
+        .collect();
+    segs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let total: f32 = segs.iter().map(|s| s.2).sum();
+    let locate = move |along: f32| {
+        let mut left = along;
+        for &(_, id, len) in &segs {
+            if left <= len {
+                return (id, (left / len).clamp(0.0, 1.0));
+            }
+            left -= len;
+        }
+        let &(_, id, _) = segs.last().expect("a segment");
+        (id, 1.0)
+    };
     let def = db.building_id("small_park").expect("small_park");
     let d = db.building(def);
-    let stand = |sim: &mut SimRunner, t: f32| {
+    let stand = |sim: &mut SimRunner, f: f32| {
+        let (segment, t) = locate(f * total);
         sim.world_mut()
             .resource_mut::<BuildingGrid>()
             .insert(Building {
@@ -150,14 +165,13 @@ pub fn build_trucks(sim: &mut SimRunner) -> usize {
                 level: d.level,
                 state: BuildingState::Active,
                 ready_at: cp_core::Tick(0),
-                pos: Vec2::new(c - 100.0 + t * 200.0, c + 30.0),
+                pos: Vec2::new(c - 100.0 + f * total, c - 30.0),
                 rot: 0.0,
                 access: Some(AccessPoint { segment, t }),
                 flags: BuildingFlags::default(),
                 level_progress: 0.0,
             })
     };
-    let end = stand(sim, 0.95);
     let kinds = [
         CargoKind::Goods,
         CargoKind::Crops,
@@ -165,15 +179,20 @@ pub fn build_trucks(sim: &mut SimRunner) -> usize {
         CargoKind::Ore,
         CargoKind::Oil,
     ];
-    let starts: Vec<_> = (0..kinds.len())
-        .map(|i| stand(sim, 0.05 + i as f32 * 0.12))
+    // Each truck drives 16 m from its own building to the next one; the pairs are 28 m apart
+    // (the trucks are 12 m long), so they stay clear of each other.
+    let pairs: Vec<_> = (0..kinds.len())
+        .map(|i| {
+            let f = 0.1 + i as f32 * 0.14;
+            (stand(sim, f), stand(sim, f + 0.08))
+        })
         .collect();
     let mut runs = sim.world_mut().resource_mut::<ServiceRuns>();
-    for (cargo, from) in kinds.into_iter().zip(starts) {
+    for (cargo, (from, to)) in kinds.into_iter().zip(pairs) {
         runs.start_run(
             VehicleKind::for_cargo(cargo),
             RunPoint::Building(from),
-            RunPoint::Building(end),
+            RunPoint::Building(to),
             true,
         );
     }
