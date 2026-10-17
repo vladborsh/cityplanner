@@ -517,3 +517,51 @@ fn a_source_joins_every_network_of_its_net_within_reach() {
     let missing = compute_supply(&db, &b, &g);
     assert_eq!(bits(&missing, far) & BuildingFlags::NO_POWER, 0);
 }
+
+#[test]
+fn power_saving_lets_the_same_plant_carry_more_houses() {
+    use cp_content::PolicyKind;
+    use cp_district::{CityPolicies, DistrictMap, Districts, Policies};
+
+    // Houses need 10 of power, the plant gives 25: two fit. With 30 % saved they need 7: three fit.
+    let mut sources = vec![
+        (
+            "style/p.ron".to_string(),
+            cp_content::TEST_STYLE_RON.to_string(),
+        ),
+        building_src("house", None, "{Power: 10.0}"),
+        building_src("plant", Some("plant"), "{}"),
+        service_src("plant", "Power", 25),
+    ];
+    sources.push(cp_content::test_policy_source("PowerSaving", 0.3));
+    let db = ContentDb::from_sources(sources).unwrap_or_else(|e| panic!("{e}"));
+    let mut b = BuildingGrid::new();
+    let mut g = UtilityGraph::new();
+    line(&mut g, UtilityNet::Power, 0.0, 200.0);
+    add(&mut b, &db, "plant", 0.0, 10.0);
+    let houses: Vec<_> = (0..4)
+        .map(|i| add(&mut b, &db, "house", 20.0 + 30.0 * i as f32, 15.0))
+        .collect();
+    let powered = |m: &[u8]| {
+        houses
+            .iter()
+            .filter(|h| m[h.index as usize] & BuildingFlags::NO_POWER == 0)
+            .count()
+    };
+    let plain = compute_supply_cached(&db, &b, &g, &mut AttachCache::default());
+    assert_eq!(powered(&plain), 2);
+
+    let (map, districts) = (DistrictMap::default(), Districts::default());
+    let mut city = CityPolicies::default();
+    let with = |city: &CityPolicies| {
+        let p = Policies {
+            map: &map,
+            districts: &districts,
+            city,
+        };
+        compute_supply_with(&db, &b, &g, &mut AttachCache::default(), Some(&p))
+    };
+    assert_eq!(powered(&with(&city)), 2, "policy off");
+    city.mask = PolicyKind::PowerSaving.bit();
+    assert_eq!(powered(&with(&city)), 3, "policy on");
+}

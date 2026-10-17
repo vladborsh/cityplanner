@@ -10,9 +10,10 @@
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingState};
 use cp_citizen::CitizenGrid;
-use cp_content::{ServiceKind, SimContent, VehicleKind};
+use cp_content::{PolicyKind, ServiceKind, SimContent, VehicleKind};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
+use cp_district::PolicyParams;
 use cp_net::NetGraph;
 use cp_traffic::{RunState, ServiceRuns};
 
@@ -36,6 +37,7 @@ pub fn update_garbage(
     coverage: Res<ServiceCoverage>,
     mut state: ResMut<ServiceState>,
     mut runs: Option<ResMut<ServiceRuns>>,
+    policies: PolicyParams,
 ) {
     let Some(content) = content else { return };
     let db = &content.0;
@@ -48,8 +50,13 @@ pub fn update_garbage(
             continue;
         }
         let workers: u16 = (0..4).map(|l| citizens.jobs_filled(id, l)).sum();
-        let per_day = (f32::from(citizens.households_in(id)) * balance.garbage_household
+        // Recycling (T-192) cuts what the building makes.
+        let recycling = policies
+            .get()
+            .map_or(1.0, |p| p.factor_at(db, b.pos, PolicyKind::Recycling));
+        let per_day = ((f32::from(citizens.households_in(id)) * balance.garbage_household
             + f32::from(workers) * balance.garbage_job)
+            * recycling)
             .round() as u64;
         let held = state.get(id).map_or(0, |s| s.garbage);
         if per_day == 0 && held == 0 {

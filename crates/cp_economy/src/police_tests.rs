@@ -52,6 +52,7 @@ fn content(capacity: u32) -> Arc<ContentDb> {
                     capacity: {capacity}, site: Land, vehicles: []))"#
                 ),
             ),
+            cp_content::test_policy_source("NeighborhoodWatch", 0.25),
         ])
         .unwrap_or_else(|e| panic!("{e}")),
     )
@@ -176,4 +177,43 @@ fn a_small_capacity_spills_over_to_the_next_station() {
     assert_eq!(t.used(near), 5, "the nearest station works to its capacity");
     assert!(t.used(far) > 0, "the rest goes to the next one");
     assert!(houses.iter().all(|&h| !t.flagged(h)));
+}
+
+#[test]
+fn neighborhood_watch_cuts_the_crime_of_the_buildings_in_its_district_only() {
+    use cp_content::PolicyKind;
+    use cp_district::{CityPolicies, DistrictCommand, DistrictId, DistrictMap, Districts};
+
+    let mut t = town(200);
+    let inside = t.put("house", 0);
+    let outside = t.put("house", 0);
+    t.world.init_resource::<DistrictMap>();
+    t.world.init_resource::<Districts>();
+    t.world.init_resource::<CityPolicies>();
+    // The houses stand at x = 50 (cell (1, 0)); the second is moved to cell (31, 0).
+    t.world
+        .resource_mut::<BuildingGrid>()
+        .get_mut(outside)
+        .unwrap()
+        .pos = Vec2::new(1000.0, 5.0);
+    for cmd in [
+        DistrictCommand::Create {
+            name: "Calm".into(),
+        },
+        DistrictCommand::Paint {
+            cells: vec![(1, 0)],
+            district: DistrictId(1),
+        },
+        DistrictCommand::SetPolicy {
+            district: Some(DistrictId(1)),
+            policy: PolicyKind::NeighborhoodWatch,
+            on: true,
+        },
+    ] {
+        cp_district::apply(&mut t.world, &cmd).unwrap();
+    }
+    t.run(0, TICKS_PER_DAY);
+    // Cheap land with no station: 36 a day outside, 36 × 0.75 = 27 inside.
+    assert_eq!(t.crime(outside), 36);
+    assert_eq!(t.crime(inside), 27);
 }

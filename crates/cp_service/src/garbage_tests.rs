@@ -45,6 +45,7 @@ fn content(capacity: u32, storage: u32) -> Arc<ContentDb> {
             ("r/street.ron".into(), ROAD.into()),
             ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
             // The numbers these tests are written for, not the tuned game defaults.
+            cp_content::test_policy_source("Recycling", 0.3),
             (
                 "balance.ron".into(),
                 "Balance((garbage_household: 25.0, garbage_job: 4.0, garbage_problem: 100.0))"
@@ -237,4 +238,43 @@ fn an_incinerator_without_power_does_not_work() {
     t.run(TWO_DAYS, 3 * TICKS_PER_DAY);
     assert_eq!(t.garbage(house), 0);
     assert_eq!(t.facility(burn).used_today, 75);
+}
+
+#[test]
+fn recycling_cuts_the_garbage_of_the_buildings_in_its_district_only() {
+    use cp_content::PolicyKind;
+    use cp_district::{CityPolicies, DistrictCommand, DistrictId, DistrictMap, Districts};
+
+    let mut t = town(400, 20000);
+    let inside = t.put("house", 0, 0);
+    let outside = t.put("house", 0, 0);
+    t.world.init_resource::<DistrictMap>();
+    t.world.init_resource::<Districts>();
+    t.world.init_resource::<CityPolicies>();
+    // The first house stands in cell (0, 0); the second is moved to cell (31, 0).
+    t.world
+        .resource_mut::<BuildingGrid>()
+        .get_mut(outside)
+        .unwrap()
+        .pos = Vec2::new(1000.0, 5.0);
+    for cmd in [
+        DistrictCommand::Create {
+            name: "Green".into(),
+        },
+        DistrictCommand::Paint {
+            cells: vec![(0, 0)],
+            district: DistrictId(1),
+        },
+        DistrictCommand::SetPolicy {
+            district: Some(DistrictId(1)),
+            policy: PolicyKind::Recycling,
+            on: true,
+        },
+    ] {
+        cp_district::apply(&mut t.world, &cmd).unwrap();
+    }
+    t.run(0, TWO_DAYS);
+    // One household makes 25 a day; Recycling (0.3) leaves 17.5, rounded to 18.
+    assert_eq!(t.garbage(outside), 50);
+    assert_eq!(t.garbage(inside), 36);
 }

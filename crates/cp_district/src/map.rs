@@ -1,6 +1,7 @@
 //! The district grid and the district records.
 
-use bevy_ecs::prelude::Resource;
+use bevy_ecs::prelude::{Res, Resource};
+use bevy_ecs::system::SystemParam;
 use bevy_math::Vec2;
 use cp_content::{PolicyKind, ZoneType};
 use cp_terrain::MAP_SIZE;
@@ -191,4 +192,47 @@ pub fn policy_at(
         || district_at(map, pos)
             .and_then(|d| districts.get(d))
             .is_some_and(|d| d.policies & kind.bit() != 0)
+}
+
+/// The three resources [`policy_at`] reads, borrowed together so a system can pass them on.
+#[derive(Clone, Copy)]
+pub struct Policies<'a> {
+    pub map: &'a DistrictMap,
+    pub districts: &'a Districts,
+    pub city: &'a CityPolicies,
+}
+
+impl Policies<'_> {
+    /// Whether `kind` is on at `pos` (see [`policy_at`]).
+    pub fn at(&self, pos: Vec2, kind: PolicyKind) -> bool {
+        policy_at(self.map, self.districts, self.city, pos, kind)
+    }
+
+    /// `1 - value` when `kind` is on at `pos` and the content defines it, else `1`: the factor
+    /// of a "less of it" policy (Recycling, SmokeDetectors, NeighborhoodWatch, PowerSaving).
+    pub fn factor_at(&self, db: &cp_content::ContentDb, pos: Vec2, kind: PolicyKind) -> f32 {
+        match db.policy(kind) {
+            Some(p) if self.at(pos, kind) => (1.0 - p.value).clamp(0.0, 1.0),
+            _ => 1.0,
+        }
+    }
+}
+
+/// System parameter for [`Policies`]: the three resources, each optional so a world built
+/// without them (a unit test, a headless sim without districts) simply has no policies.
+#[derive(SystemParam)]
+pub struct PolicyParams<'w> {
+    map: Option<Res<'w, DistrictMap>>,
+    districts: Option<Res<'w, Districts>>,
+    city: Option<Res<'w, CityPolicies>>,
+}
+
+impl PolicyParams<'_> {
+    pub fn get(&self) -> Option<Policies<'_>> {
+        Some(Policies {
+            map: self.map.as_deref()?,
+            districts: self.districts.as_deref()?,
+            city: self.city.as_deref()?,
+        })
+    }
 }

@@ -20,6 +20,18 @@ pub const TEST_STYLE_RON: &str = r#"Style((id: "p", massing: Box, roof: Flat, fl
     palette: (walls: [(0.5, 0.5, 0.5)], roof: [(0.3, 0.3, 0.3)], trim: [(0.4, 0.4, 0.4)],
         glass: (0.2, 0.2, 0.3))))"#;
 
+/// A `(path, RON)` source of a policy of `kind` (a `PolicyKind` variant name) with effect
+/// `value`, switchable for the city and districts, for tests that build content from inline defs.
+pub fn test_policy_source(kind: &str, value: f32) -> (String, String) {
+    (
+        format!("p/{kind}.ron"),
+        format!(
+            r#"Policy((id: "{kind}", name: "{kind}", kind: {kind}, icon: "i", scope: Both,
+            cost_per_building_week: 1.0, value: {value:?}))"#
+        ),
+    )
+}
+
 /// FNV-1a 64-bit: fixed algorithm, stable across runs, platforms and Rust releases.
 fn fnv1a(hash: &mut u64, bytes: &[u8]) {
     for b in bytes {

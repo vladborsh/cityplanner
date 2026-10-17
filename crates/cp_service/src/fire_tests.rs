@@ -29,7 +29,7 @@ const ROAD: &str = r#"Road((id: "street", name: "street", width: 12.0,
     mesh: "m", material: "m"))"#;
 
 /// Fires are lit by hand (`fire_base` 0); `extinguish` hours of work per engine, `spread` per hour.
-fn content(engines: u32, extinguish: f32, spread: f32) -> Arc<ContentDb> {
+fn content_base(engines: u32, extinguish: f32, spread: f32, fire_base: f32) -> Arc<ContentDb> {
     let b = |id: &str, svc: &str| {
         format!(
             r#"Building((id: "{id}", name: "{id}", zone: Industrial, level: 1, lot: (1, 1),
@@ -52,9 +52,10 @@ fn content(engines: u32, extinguish: f32, spread: f32) -> Arc<ContentDb> {
             (
                 "balance.ron".into(),
                 format!(
-                    "Balance((fire_base: 0.0, fire_extinguish_hours: {extinguish}, fire_spread: {spread}))"
+                    "Balance((fire_base: {fire_base:?}, fire_extinguish_hours: {extinguish}, fire_spread: {spread}))"
                 ),
             ),
+            cp_content::test_policy_source("SmokeDetectors", 0.5),
         ])
         .unwrap_or_else(|e| panic!("{e}")),
     )
@@ -67,7 +68,11 @@ struct Town {
 }
 
 fn town(engines: u32, extinguish: f32, spread: f32) -> Town {
-    let db = content(engines, extinguish, spread);
+    town_base(engines, extinguish, spread, 0.0)
+}
+
+fn town_base(engines: u32, extinguish: f32, spread: f32, fire_base: f32) -> Town {
+    let db = content_base(engines, extinguish, spread, fire_base);
     let mut world = World::new();
     world.insert_resource(Tick(0));
     world.insert_resource(SimRng::from_seed([7; 32]));
@@ -230,4 +235,52 @@ fn a_burning_house_ignites_its_neighbour_when_the_spread_chance_is_one() {
     far.light(a);
     far.run(0, 256);
     assert!(!far.burning(c));
+}
+
+#[test]
+fn smoke_detectors_cut_the_fires_in_their_district() {
+    use cp_content::PolicyKind;
+    use cp_district::{CityPolicies, DistrictCommand, DistrictId, DistrictMap, Districts};
+
+    // Fire base 1.0 a day, no station, no spread: count the houses that caught fire in a day.
+    let mut t = town_base(3, 2.0, 0.0, 1.0);
+    let inside: Vec<_> = (0..80).map(|_| t.put("house", 0)).collect();
+    let outside: Vec<_> = (0..80).map(|_| t.put("house", 0)).collect();
+    t.world.init_resource::<DistrictMap>();
+    t.world.init_resource::<Districts>();
+    t.world.init_resource::<CityPolicies>();
+    // The houses stand at x = 50 (cell (1, 0)); the second group is moved to cell (31, 0).
+    for &id in &outside {
+        t.world
+            .resource_mut::<BuildingGrid>()
+            .get_mut(id)
+            .unwrap()
+            .pos = Vec2::new(1000.0, 5.0);
+    }
+    for cmd in [
+        DistrictCommand::Create {
+            name: "Safe".into(),
+        },
+        DistrictCommand::Paint {
+            cells: vec![(1, 0)],
+            district: DistrictId(1),
+        },
+        DistrictCommand::SetPolicy {
+            district: Some(DistrictId(1)),
+            policy: PolicyKind::SmokeDetectors,
+            on: true,
+        },
+    ] {
+        cp_district::apply(&mut t.world, &cmd).unwrap();
+    }
+    t.run(0, TICKS_PER_DAY);
+    let lit = |t: &Town, ids: &[BuildingId]| {
+        ids.iter()
+            .filter(|&&id| t.burning(id) || t.state(id) != Some(BuildingState::Active))
+            .count()
+    };
+    let (a, b) = (lit(&t, &inside), lit(&t, &outside));
+    // A chance per pass: about 1 − e^-1 = 63 % of 80 outside against 1 − e^-0.5 = 39 % inside.
+    assert!(b > 35, "{b} fires outside");
+    assert!(a * 10 < b * 8, "{a} fires inside against {b} outside");
 }

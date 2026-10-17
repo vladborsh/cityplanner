@@ -16,6 +16,7 @@ use crate::land::LandGrids;
 const PASSES_PER_DAY: u64 = TICKS_PER_DAY / COVERAGE_PERIOD;
 
 /// Economy phase, after `update_city` and the service coverage rebuild.
+#[allow(clippy::too_many_arguments)]
 pub fn update_police(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
@@ -24,6 +25,7 @@ pub fn update_police(
     land: Res<LandGrids>,
     coverage: Res<ServiceCoverage>,
     mut state: ResMut<ServiceState>,
+    policies: cp_district::PolicyParams,
 ) {
     let Some(content) = content else { return };
     let db = &content.0;
@@ -47,8 +49,14 @@ pub fn update_police(
         let held = state.get(id).map_or(0, |s| s.crime);
         let cover = coverage.coverage_of(ServiceKind::Police, b).clamp(0.0, 1.0);
         let cheap = (1.0 - land.value_at(b.pos) / 100.0).clamp(0.0, 1.0);
-        let per_day =
-            bal.crime_base * (1.0 - bal.police_cover * cover) * (1.0 + bal.crime_poor * cheap);
+        // NeighborhoodWatch (T-192) cuts the crime that grows.
+        let watch = policies.get().map_or(1.0, |p| {
+            p.factor_at(db, b.pos, cp_content::PolicyKind::NeighborhoodWatch)
+        });
+        let per_day = bal.crime_base
+            * (1.0 - bal.police_cover * cover)
+            * (1.0 + bal.crime_poor * cheap)
+            * watch;
         // The day's total spread over its 64 passes without losing the remainder.
         let upto = |p: u64| (per_day * p as f32 / PASSES_PER_DAY as f32).round() as i64;
         let made = (upto(pass + 1) - upto(pass)).max(0) as u64;

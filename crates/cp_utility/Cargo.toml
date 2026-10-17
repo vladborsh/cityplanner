@@ -12,6 +12,7 @@ workspace = true
 cp_net.workspace = true
 cp_building.workspace = true
 cp_core.workspace = true
+cp_district.workspace = true
 cp_content.workspace = true
 cp_terrain.workspace = true
 cp_zone.workspace = true

@@ -36,9 +36,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use cp_building::{BuildingFlags, BuildingGrid, BuildingId, BuildingState};
-use cp_content::{ContentDb, Networks, ServiceKind, SimContent, UtilityKind};
+use cp_content::{ContentDb, Networks, PolicyKind, ServiceKind, SimContent, UtilityKind};
 use cp_core::Tick;
 use cp_core::curve::to_xz;
+use cp_district::{Policies, PolicyParams};
 
 use crate::graph::{UtilityGraph, UtilityLinkId, UtilityNet};
 
@@ -362,6 +363,18 @@ pub fn compute_supply_cached(
     graph: &UtilityGraph,
     cache: &mut AttachCache,
 ) -> Vec<u8> {
+    compute_supply_with(db, buildings, graph, cache, None)
+}
+
+/// [`compute_supply_cached`] with the policies in force: PowerSaving (T-192) cuts the power
+/// a building needs by its `value` where it is on.
+pub fn compute_supply_with(
+    db: &ContentDb,
+    buildings: &BuildingGrid,
+    graph: &UtilityGraph,
+    cache: &mut AttachCache,
+    policies: Option<&Policies>,
+) -> Vec<u8> {
     let nets = &db.balance().networks;
     let power_gap = nets.power_gap_m;
     // Needs and source of each building def, once.
@@ -386,7 +399,11 @@ pub fn compute_supply_cached(
         .filter(|(_, b)| b.state == BuildingState::Active)
         .map(|(id, b)| {
             // A placeholder (a def the save named and the content lacks) needs and gives nothing.
-            let (needs, source) = defs.get(b.def.index()).copied().unwrap_or(([0.0; 3], None));
+            let (mut needs, source) = defs.get(b.def.index()).copied().unwrap_or(([0.0; 3], None));
+            if let Some(p) = policies {
+                needs[kind_index(UtilityKind::Power)] *=
+                    p.factor_at(db, b.pos, PolicyKind::PowerSaving);
+            }
             let (w, d) = b.size();
             Site {
                 id,
@@ -585,12 +602,20 @@ pub fn update_supply(
     graph: Res<UtilityGraph>,
     mut buildings: ResMut<BuildingGrid>,
     mut cache: Local<AttachCache>,
+    policies: PolicyParams,
 ) {
     if !tick.0.is_multiple_of(SUPPLY_PERIOD) {
         return;
     }
     let Some(content) = content else { return };
-    let missing = compute_supply_cached(&content.0, &buildings, &graph, &mut cache);
+    let policies = policies.get();
+    let missing = compute_supply_with(
+        &content.0,
+        &buildings,
+        &graph,
+        &mut cache,
+        policies.as_ref(),
+    );
     let changes: Vec<(BuildingId, u8)> = buildings
         .iter()
         .filter(|(_, b)| b.state == BuildingState::Active)

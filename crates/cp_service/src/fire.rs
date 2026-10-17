@@ -22,9 +22,10 @@
 
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingId, BuildingState, burn, demolish_building};
-use cp_content::{ContentDb, ServiceKind, SimContent, VehicleKind};
+use cp_content::{ContentDb, PolicyKind, ServiceKind, SimContent, VehicleKind};
 use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_DAY, TICKS_PER_HOUR};
 use cp_core::{SimRng, Tick};
+use cp_district::PolicyParams;
 use cp_net::NetGraph;
 use cp_traffic::{RunState, ServiceRuns};
 use cp_zone::ZoneGrid;
@@ -131,10 +132,12 @@ pub fn update_fire(
     mut zones: ResMut<ZoneGrid>,
     mut state: ResMut<ServiceState>,
     mut runs: Option<ResMut<ServiceRuns>>,
+    policies: PolicyParams,
 ) {
     let Some(content) = content else { return };
     let db = &content.0;
     let bal = db.balance();
+    let policies = policies.get();
     let now = *tick;
     let bucket = now.0 % COVERAGE_PERIOD;
     let mut rng = rng.fork(FIRE_STREAM, now);
@@ -155,7 +158,11 @@ pub fn update_fire(
         match (b.state, fire) {
             (BuildingState::Active, None) => {
                 let cover = coverage.coverage_of(ServiceKind::Fire, b).clamp(0.0, 1.0);
-                let p = bal.fire_base * (1.0 - bal.fire_cover * cover) / PASSES_PER_DAY;
+                // SmokeDetectors (T-192) cut the chance.
+                let detectors = policies
+                    .as_ref()
+                    .map_or(1.0, |p| p.factor_at(db, b.pos, PolicyKind::SmokeDetectors));
+                let p = bal.fire_base * (1.0 - bal.fire_cover * cover) * detectors / PASSES_PER_DAY;
                 if rng.next_f32() < p {
                     ignite(&mut state, id, now);
                     dispatch(

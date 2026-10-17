@@ -9,6 +9,7 @@ mod validate;
 
 pub use db::{
     ContentDb, DEFAULT_CONTENT_ROOT, DefKind, PLACEHOLDER_INDEX, SimContent, TEST_STYLE_RON,
+    test_policy_source,
 };
 pub use defs::*;
 pub use error::{ContentError, ContentErrors};
