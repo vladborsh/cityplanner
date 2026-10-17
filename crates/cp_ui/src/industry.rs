@@ -59,6 +59,47 @@ pub fn new_name(kind: ResourceKind, id: AreaId) -> String {
     format!("{} area {}", resource_name(kind), id.0)
 }
 
+/// Picking a resource gives the brush an area of that kind (BUG-062): the selected one if it is
+/// of that kind, else the first existing one, else a new area is made and chosen. The brush is
+/// switched on.
+fn pick_resource_area(
+    view: &SimView,
+    kind: ResourceKind,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+    outbox: &mut CommandOutbox,
+) {
+    let of_kind = |id: AreaId| {
+        view.areas
+            .get(id)
+            .is_some_and(|a| a.kind == AreaKind::Industry(kind))
+    };
+    let existing = tools
+        .area
+        .selected
+        .filter(|&a| of_kind(a))
+        .or_else(|| view.areas.iter().map(|(id, _)| id).find(|&id| of_kind(id)));
+    let chosen = match existing {
+        Some(id) => Some(id),
+        None => next_id(view).inspect(|&id| {
+            send(
+                outbox,
+                DistrictCommand::CreateArea {
+                    kind: AreaKind::Industry(kind),
+                    name: new_name(kind, id),
+                },
+            );
+        }),
+    };
+    if chosen.is_some() {
+        tools.area.selected = chosen;
+        if tools.active != ActiveTool::Area {
+            tools.select(ActiveTool::Area);
+        }
+        show_overlays(overlay);
+    }
+}
+
 fn send(outbox: &mut CommandOutbox, cmd: DistrictCommand) {
     outbox.push(SimCommand::District(cmd));
 }
@@ -293,6 +334,15 @@ pub fn industry_panel(
                         tools.select(ActiveTool::Area);
                     }
                     tools.area.set_kind(kind);
+                    // A brush with no area under it paints nothing (BUG-062): take the first.
+                    if let Some(view) = view
+                        && tools
+                            .area
+                            .selected
+                            .is_none_or(|a| view.areas.get(a).is_none())
+                    {
+                        tools.area.selected = view.areas.iter().next().map(|(id, _)| id);
+                    }
                     show_overlays(overlay);
                 }
             }
@@ -329,6 +379,7 @@ pub fn industry_panel(
                 .clicked()
                 {
                     tools.area.new_resource = Some(kind);
+                    pick_resource_area(view, kind, tools, overlay, outbox);
                 }
             }
             let next = next_id(view);
@@ -358,6 +409,23 @@ pub fn industry_panel(
             }
         });
     });
+    // An area that was deleted is not the brush's area any more.
+    if tools.active == ActiveTool::Area {
+        // (A just-made area is chosen before the view shows it: no hint for that frame.)
+        match tools.area.selected {
+            Some(id) => {
+                if let Some(a) = view.areas.get(id) {
+                    ui.label(format!("Painting: {}", a.name));
+                }
+            }
+            None => {
+                ui.colored_label(
+                    egui::Color32::YELLOW,
+                    "No area chosen: pick a resource above (it makes an area) or choose one below.",
+                );
+            }
+        }
+    }
     section(ui, "Areas", |ui| {
         if view.areas.iter().next().is_none() {
             ui.weak("No areas yet: pick a resource, press New area, then paint with a brush.");
@@ -484,6 +552,37 @@ mod tests {
         draw(ctx, view, tools, overlay, outbox, up);
     }
 
+    /// BUG-062: a brush chosen before any area exists paints nothing, and the panel says so; with
+    /// an area in the view it takes that area.
+    #[test]
+    fn a_brush_with_no_area_gets_the_first_area_and_the_panel_says_what_to_do() {
+        let ctx = egui::Context::default();
+        let (mut tools, mut overlay, mut outbox) = (
+            ToolState::default(),
+            OverlayState::default(),
+            CommandOutbox::default(),
+        );
+        let empty = view();
+        let tiles = draw(&ctx, &empty, &mut tools, &mut overlay, &mut outbox, vec![]);
+        press(
+            &ctx,
+            &empty,
+            &mut tools,
+            &mut overlay,
+            &mut outbox,
+            tiles[0].center(),
+        );
+        assert_eq!(tools.active, ActiveTool::Area);
+        assert_eq!(tools.area.selected, None);
+        let texts = crate::testutil::frame_texts(&ctx, input(9.0, vec![]), |ui| {
+            industry_panel(ui, Some(&empty), &mut tools, &mut overlay, &mut outbox)
+        });
+        assert!(
+            texts.iter().any(|(t, _)| t.starts_with("No area chosen")),
+            "{texts:?}"
+        );
+    }
+
     /// Tiles: Brush S, Brush L, Erase, Off | four resources, New area.
     #[test]
     fn new_area_with_forestry_sends_create_area_and_selects_it_and_a_brush_tile_picks_the_tool() {
@@ -520,6 +619,16 @@ mod tests {
             tiles[5].center(),
         );
         assert_eq!(tools.area.new_resource, Some(ResourceKind::Forestry));
+        // BUG-062: picking a resource with no area of it makes one and switches the brush on.
+        let create = SimCommand::District(DistrictCommand::CreateArea {
+            kind: AreaKind::Industry(ResourceKind::Forestry),
+            name: "Forestry area 1".into(),
+        });
+        assert_eq!(outbox.iter().cloned().collect::<Vec<_>>(), [create]);
+        assert_eq!(tools.area.selected, Some(AreaId(1)));
+        assert_eq!(tools.active, ActiveTool::Area);
+        // "New area" makes one more.
+        outbox = CommandOutbox::default();
         press(
             &ctx,
             &view,

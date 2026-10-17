@@ -61,3 +61,33 @@ fn area_commands_reach_the_view_and_replay_identically() {
     }
     assert_ne!(a.checksum(), c.checksum());
 }
+
+/// BUG-062: the game starts paused, so area commands must show in the view without a tick.
+#[test]
+fn areas_painted_while_paused_show_in_the_view_at_once() {
+    let mut sim = SimRunner::new(7);
+    sim.world_mut().insert_resource(cp_core::SimSpeed::Pause);
+    let _ = sim.view(); // a first snapshot, as the client takes one every frame
+    let send = |sim: &mut SimRunner, c: DistrictCommand| {
+        sim.push_command(SimCommand::District(c), sim.tick());
+        sim.apply_due_commands();
+    };
+    send(
+        &mut sim,
+        DistrictCommand::CreateArea {
+            kind: AreaKind::Industry(ResourceKind::Forestry),
+            name: "Forestry area 1".into(),
+        },
+    );
+    assert!(sim.view().areas.get(AreaId(1)).is_some(), "area listed");
+    send(
+        &mut sim,
+        DistrictCommand::PaintArea {
+            cells: vec![(4, 4)],
+            area: AreaId(1),
+        },
+    );
+    let v = sim.view();
+    assert_eq!(v.area_map.get((4, 4)), Some(AreaId(1)), "cell painted");
+    assert_eq!(v.area_map.cell_count(AreaId(1)), 1);
+}

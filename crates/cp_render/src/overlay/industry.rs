@@ -19,7 +19,7 @@ use super::{Overlay, OverlayLayers, OverlayState, drape_height, push, ribbon_wit
 use crate::chunk::MeshData;
 
 /// Alpha of the area tint.
-pub const FILL_ALPHA: f32 = 0.25;
+pub const FILL_ALPHA: f32 = 0.38;
 /// Alpha of the area outline.
 pub const LINE_ALPHA: f32 = 0.9;
 /// Height of the tints above the terrain, metres.
