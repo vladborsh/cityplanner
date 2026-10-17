@@ -119,6 +119,9 @@ pub struct SimView {
     pub city: Arc<crate::stats::CityStats>,
     /// The population milestone reached (T-149), for locked tiles and the milestone notice.
     pub progress: crate::Progress,
+    /// Every unique building and monument def: open, built, and how far each condition is
+    /// (T-200), for the build menu's locks and tooltips.
+    pub uniques: Arc<Vec<UniqueStatus>>,
     /// Stops, lines and the routes of the lines (T-157), shared: rebuilt only when they changed.
     pub transit: Arc<cp_transit::TransitView>,
     /// The metro trains and where they are now (T-164), for the Underground view.
@@ -180,6 +183,20 @@ pub type DistrictCache = (
     Option<Arc<cp_district::DistrictMap>>,
     Option<Arc<cp_district::Districts>>,
 );
+
+/// One unique building def as the build menu needs it (T-200).
+#[derive(Clone, Debug, PartialEq)]
+pub struct UniqueStatus {
+    pub def: cp_content::BuildingDefId,
+    pub id: String,
+    pub monument: bool,
+    /// Its conditions have held (permanently), or everything is open.
+    pub unlocked: bool,
+    /// A building of this def stands (any state).
+    pub built: bool,
+    /// Each condition with `(current, needed)`.
+    pub conditions: Vec<(cp_content::UnlockCond, u32, u32)>,
+}
 
 impl SimView {
     /// The bank's offers with their state. Empty for a sim without content.
@@ -432,6 +449,40 @@ impl SimRunner {
         snap
     }
 
+    /// `SimView::uniques`.
+    fn unique_statuses(&self) -> Vec<UniqueStatus> {
+        let Some(db) = self
+            .world()
+            .get_resource::<SimContent>()
+            .map(|c| Arc::clone(&c.0))
+        else {
+            return Vec::new();
+        };
+        let progress = self.world().resource::<crate::Progress>();
+        let inputs = crate::command::unlock_inputs(self.world(), &db);
+        let grid = self.world().get_resource::<cp_building::BuildingGrid>();
+        let mut out = Vec::new();
+        for (def, d) in db.buildings() {
+            let Some(u) = d.unique.as_ref() else { continue };
+            out.push(UniqueStatus {
+                def,
+                id: d.id.clone(),
+                monument: u.monument,
+                unlocked: progress.unique_open(&d.id),
+                built: grid.is_some_and(|g| g.iter().any(|(_, b)| b.def == def)),
+                conditions: u
+                    .unlock
+                    .iter()
+                    .map(|c| {
+                        let (cur, need) = crate::progress::cond_progress(c, &inputs);
+                        (c.clone(), cur, need)
+                    })
+                    .collect(),
+            });
+        }
+        out
+    }
+
     /// `SimView::district_map`: the cached copy while the grid is equal to it (a 100 KB compare
     /// a view, instead of a copy).
     fn district_map_snapshot(&self) -> Arc<cp_district::DistrictMap> {
@@ -633,6 +684,7 @@ impl SimRunner {
             treasury: *self.world().resource::<cp_core::Treasury>(),
             flow: self.world().resource::<cp_economy::MoneyFlow>().clone(),
             progress: self.world().resource::<crate::Progress>().clone(),
+            uniques: Arc::new(self.unique_statuses()),
             economy: self.world().resource::<cp_economy::EconomyState>().clone(),
             lines: self.line_views(),
             transit_ledger: *self.world().resource::<cp_transit::TransitLedger>(),

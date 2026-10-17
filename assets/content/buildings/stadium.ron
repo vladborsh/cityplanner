@@ -4,7 +4,7 @@ Building((
     name: "Stadium",
     zone: Industrial,
     level: 1,
-    lot: (5, 4),
+    lot: (4, 4),
     jobs: (0, 0, 0, 0),
     consumption: {Power: 10.0},
     tax_base: 0.0,

@@ -174,7 +174,11 @@ impl LandGrids {
 
         for (_, b) in i.buildings.iter() {
             let def = i.content.building(b.def);
-            if b.state != BuildingState::Active || def.zone != ZoneType::Industrial {
+            // A unique building is filed under Industrial for want of a better zone; it does not pollute.
+            if b.state != BuildingState::Active
+                || def.zone != ZoneType::Industrial
+                || def.unique.is_some()
+            {
                 continue;
             }
             let strength = bal.pollution_per_level * f32::from(def.level);

@@ -249,6 +249,28 @@ pub fn dispatch_commands(world: &mut World) {
     }
 }
 
+/// What the unlock conditions of the unique buildings read, as of now.
+pub(crate) fn unlock_inputs(
+    world: &World,
+    db: &cp_content::ContentDb,
+) -> crate::progress::UnlockInputs {
+    crate::progress::UnlockInputs::gather(
+        db,
+        world
+            .get_resource::<cp_citizen::CitizenGrid>()
+            .map_or(0, |c| c.citizen_count() as u32),
+        world
+            .get_resource::<cp_building::BuildingGrid>()
+            .map_or(&Default::default(), |b| b),
+        world
+            .get_resource::<cp_district::Districts>()
+            .map_or(0, |d| d.iter().count() as u32),
+        world
+            .get_resource::<cp_transit::Tourists>()
+            .map_or(0, |t| t.visits_week),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,26 +369,4 @@ mod tests {
         let back: CommandLog<SimCommand> = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(&back, log);
     }
-}
-
-/// What the unlock conditions of the unique buildings read, as of now.
-pub(crate) fn unlock_inputs(
-    world: &World,
-    db: &cp_content::ContentDb,
-) -> crate::progress::UnlockInputs {
-    crate::progress::UnlockInputs::gather(
-        db,
-        world
-            .get_resource::<cp_citizen::CitizenGrid>()
-            .map_or(0, |c| c.citizen_count() as u32),
-        world
-            .get_resource::<cp_building::BuildingGrid>()
-            .map_or(&Default::default(), |b| b),
-        world
-            .get_resource::<cp_district::Districts>()
-            .map_or(0, |d| d.iter().count() as u32),
-        world
-            .get_resource::<cp_transit::Tourists>()
-            .map_or(0, |t| t.visits_week),
-    )
 }

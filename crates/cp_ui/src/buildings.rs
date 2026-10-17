@@ -148,8 +148,9 @@ pub fn sections(content: &ContentDb) -> Vec<Section> {
     // Transit buildings live in the Transport category.
     for g in groups(content)
         .into_iter()
-        .filter(|g| g.kind != ServiceKind::Transit)
+        .filter(|g| g.kind != ServiceKind::Transit && g.kind != ServiceKind::Landmark)
     {
+        // Unique buildings get their own sections (T-201).
         // One pipe network: sewage buildings sit in the Water section (§13.7).
         let kind = if g.kind == ServiceKind::Sewage {
             ServiceKind::Water

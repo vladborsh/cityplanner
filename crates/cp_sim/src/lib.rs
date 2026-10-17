@@ -29,7 +29,7 @@ pub use runner::{MAX_TICKS_PER_STEP, SimRunner, run_headless, run_headless_with}
 pub use stats::CityStats;
 pub use view::{
     AgentSnapshot, ArenaFill, ArenaGauges, FreightView, LineView, LoanOfferView, SimStats,
-    SimTerrain, SimView,
+    SimTerrain, SimView, UniqueStatus,
 };
 
 /// Crate name, used by the skeleton smoke test.
