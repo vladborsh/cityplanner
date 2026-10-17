@@ -81,6 +81,17 @@ impl Options {
     }
 }
 
+/// The default plugins, without Bevy's audio when the run is hidden (screenshots, scripts and
+/// tests never open an audio device, T-189).
+pub fn audio_plugins(hidden: bool) -> bevy::app::PluginGroupBuilder {
+    let plugins = DefaultPlugins.build();
+    if crate::capture::audio_wanted(hidden) {
+        plugins
+    } else {
+        plugins.disable::<bevy::audio::AudioPlugin>()
+    }
+}
+
 #[derive(Resource)]
 struct Job {
     /// A screenshot was requested (see `capture`).
@@ -116,7 +127,7 @@ pub fn run(opts: Options) -> AppExit {
 
     let mut app = App::new();
     app.add_plugins(
-        DefaultPlugins
+        audio_plugins(opts.hidden)
             .set(AssetPlugin {
                 file_path: ASSETS_DIR.into(),
                 ..default()

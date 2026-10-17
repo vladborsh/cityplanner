@@ -5,6 +5,7 @@
 //! [`SimView`], and adds terrain rendering, the RTS camera and the UI. The binaries only add
 //! what is platform specific: windowing, CLI, screenshots and benchmarks.
 
+pub mod audio;
 mod map;
 pub mod saves;
 pub mod scene;
@@ -117,11 +118,16 @@ impl Plugin for GamePlugin {
                     camera: settings.camera_settings(),
                     advisor: settings.advisor,
                     advisor_problems_only: settings.advisor_problems_only,
+                    audio: cp_ui::AudioPrefs {
+                        master: settings.audio.master,
+                        effects: settings.audio.effects,
+                        mute: settings.audio.mute,
+                    },
                 },
                 ..default()
             })
             .insert_resource(settings::SettingsSaver::new(settings))
-            .add_plugins((UiPlugin, cp_tools::ToolsPlugin))
+            .add_plugins((UiPlugin, cp_tools::ToolsPlugin, audio::SoundPlugin))
             .add_systems(
                 Update,
                 (file_requests, inspect_selection, settings::save_settings),
@@ -312,6 +318,7 @@ pub fn phase_times(sim: &SimRunner) -> PhaseTimes {
 /// The single entry point for player input: UI and tools only fill the `CommandOutbox`; it
 /// is submitted here, before the frame's ticks, then the sim is stepped. Frame time goes in
 /// as an argument; the sim itself never reads a clock.
+#[allow(clippy::too_many_arguments)]
 fn step_sim(
     time: Res<Time>,
     sim: Option<ResMut<Sim>>,
@@ -320,11 +327,41 @@ fn step_sim(
     mut phases: ResMut<PhaseTimes>,
     mut fraction: ResMut<TickFraction>,
     mut agent_stats: ResMut<AgentRenderStats>,
+    real: Res<Time<Real>>,
+    prefs: Option<Res<cp_ui::UiState>>,
+    mut sounds: Option<ResMut<audio::SoundQueue>>,
+    mut played: Option<ResMut<audio::AudioPrefsRes>>,
 ) {
     let (Some(mut sim), Some(mut view)) = (sim, view) else {
         return;
     };
+    // What the player asked for this frame, to sound out once the sim has said yes or no.
+    let asked: Vec<cp_sim::SimCommand> = if sounds.is_some() {
+        outbox.iter().cloned().collect()
+    } else {
+        Vec::new()
+    };
     let submitted = outbox.flush_into(&mut sim.0) > 0;
+    if let (Some(queue), Some(played), Some(ui)) = (sounds.as_mut(), played.as_mut(), prefs) {
+        let a = ui.prefs.audio;
+        played.0 = audio::AudioSettings {
+            master: a.master,
+            effects: a.effects,
+            mute: a.mute,
+        };
+        if submitted {
+            let outcomes: Vec<bool> = sim
+                .0
+                .world_mut()
+                .resource_mut::<bevy::ecs::message::Messages<cp_core::CommandOutcome>>()
+                .drain()
+                .map(|o| o.result.is_ok())
+                .collect();
+            if outcomes.len() == asked.len() {
+                audio::queue_outcomes(queue, &asked, &outcomes, real.elapsed_secs_f64(), &played.0);
+            }
+        }
+    }
     let ticks = sim.0.step(Duration::from_secs_f64(time.delta_secs_f64()));
     if ticks > 0 {
         scene::top_up_traffic(&mut sim.0);

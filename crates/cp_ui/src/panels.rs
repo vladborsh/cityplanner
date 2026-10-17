@@ -21,6 +21,24 @@ use crate::tile::{TileIcon, tool_tile, tool_tile_enabled};
 
 /// What the settings menu edits besides the lighting switch (T-069). `cp_app` loads these
 /// from `settings.ron` at start and saves them when they change.
+/// Volumes of the sound effects and the mute switch (T-189); `cp_app` plays with them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AudioPrefs {
+    pub master: f32,
+    pub effects: f32,
+    pub mute: bool,
+}
+
+impl Default for AudioPrefs {
+    fn default() -> Self {
+        Self {
+            master: 1.0,
+            effects: 0.6,
+            mute: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prefs {
     /// Scale of the whole UI (egui zoom factor).
@@ -30,6 +48,7 @@ pub struct Prefs {
     /// The city advisor snackbar (T-188) and whether it keeps to problems (no needs).
     pub advisor: bool,
     pub advisor_problems_only: bool,
+    pub audio: AudioPrefs,
 }
 
 impl Default for Prefs {
@@ -39,6 +58,7 @@ impl Default for Prefs {
             camera: cp_render::CameraSettings::default(),
             advisor: true,
             advisor_problems_only: false,
+            audio: AudioPrefs::default(),
         }
     }
 }
@@ -388,6 +408,16 @@ pub fn top_bar(
             rects.always_day = Some(r.rect);
             let prefs = &mut state.prefs;
             ui.add(egui::Slider::new(&mut prefs.ui_scale, UI_SCALE_RANGE).text("Масштаб UI"));
+            // Sound (T-189).
+            ui.checkbox(&mut prefs.audio.mute, "Mute");
+            ui.add_enabled(
+                !prefs.audio.mute,
+                egui::Slider::new(&mut prefs.audio.master, 0.0..=1.0).text("Volume"),
+            );
+            ui.add_enabled(
+                !prefs.audio.mute,
+                egui::Slider::new(&mut prefs.audio.effects, 0.0..=1.0).text("Effects"),
+            );
             let cam = &mut prefs.camera;
             ui.add(egui::Slider::new(&mut cam.pan_speed, 0.2..=3.0).text("Скорость сдвига"));
             ui.add(

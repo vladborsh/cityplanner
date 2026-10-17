@@ -31,6 +31,11 @@ pub const JOB_DEADLINE: Duration = Duration::from_secs(90);
 /// Frames between attempts after a blank capture.
 const RETRY_FRAMES: u32 = 20;
 
+/// Whether the run may open an audio device: not a `--hidden` one (T-189).
+pub fn audio_wanted(hidden: bool) -> bool {
+    !hidden
+}
+
 /// `--hidden`: create the window invisible (agents and scripts must not pop windows up on
 /// the user's screen). Rendering, screenshots and benchmarks work the same.
 pub fn hidden_requested(args: &[String]) -> bool {
@@ -312,6 +317,8 @@ mod tests {
     fn hidden_flag_means_no_window() {
         let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert!(hidden_requested(&args(&["cp", "--hidden", "--bench", "3"])));
+        // A hidden run opens no audio device; a normal one does (T-189).
+        assert!(!audio_wanted(true) && audio_wanted(false));
         assert!(!hidden_requested(&args(&["cp", "--bench", "3"])));
         let w = Window::default();
         assert!(window_plugin(w.clone(), true).primary_window.is_none());

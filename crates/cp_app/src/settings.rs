@@ -50,6 +50,8 @@ pub struct Settings {
     /// The city advisor snackbar (T-188) and whether it only names problems.
     pub advisor: bool,
     pub advisor_problems_only: bool,
+    /// Sound volumes and mute (T-189).
+    pub audio: crate::audio::AudioSettings,
 }
 
 impl Default for Settings {
@@ -62,6 +64,7 @@ impl Default for Settings {
             camera: CameraPrefs::default(),
             advisor: true,
             advisor_problems_only: false,
+            audio: crate::audio::AudioSettings::default(),
         }
     }
 }
@@ -131,6 +134,7 @@ impl Settings {
         fix(&mut c.key_tilt_speed, 0.1, 10.0, d.key_tilt_speed);
         fix(&mut c.drag_rotate_sens, 0.0005, 0.05, d.drag_rotate_sens);
         fix(&mut c.zoom_step, 0.5, 0.98, d.zoom_step);
+        self.audio = self.audio.sanitized();
         self
     }
 
@@ -162,6 +166,11 @@ impl Settings {
             },
             advisor: ui.prefs.advisor,
             advisor_problems_only: ui.prefs.advisor_problems_only,
+            audio: crate::audio::AudioSettings {
+                master: ui.prefs.audio.master,
+                effects: ui.prefs.audio.effects,
+                mute: ui.prefs.audio.mute,
+            },
         }
     }
 }
@@ -226,6 +235,11 @@ mod tests {
             },
             advisor: false,
             advisor_problems_only: false,
+            audio: crate::audio::AudioSettings {
+                master: 0.5,
+                effects: 0.25,
+                mute: true,
+            },
         };
         s.save(&d).unwrap();
         assert_eq!(Settings::load(&d), s);

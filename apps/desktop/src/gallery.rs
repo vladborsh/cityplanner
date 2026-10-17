@@ -84,7 +84,7 @@ pub fn run() -> AppExit {
     let mut app = App::new();
     let hidden = crate::capture::hidden_requested(&args);
     app.add_plugins(
-        DefaultPlugins
+        crate::app::audio_plugins(hidden)
             .set(AssetPlugin {
                 file_path: ASSETS_DIR.into(),
                 ..default()

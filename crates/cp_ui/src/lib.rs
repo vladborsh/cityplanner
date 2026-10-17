@@ -43,7 +43,9 @@ pub use files::{FileMenu, FileRequest, SaveEntry, file_window};
 pub use icons::Icon;
 pub use info::{InfoRects, info_panel};
 pub use palette::{Category, palette, tool_panel};
-pub use panels::{Prefs, TopRects, UI_SCALE_RANGE, UiState, UiWindow, root_ui, top_bar};
+pub use panels::{
+    AudioPrefs, Prefs, TopRects, UI_SCALE_RANGE, UiState, UiWindow, root_ui, top_bar,
+};
 
 pub struct UiPlugin;
 
