@@ -25,7 +25,8 @@ const PEDESTRIAN_REACH: f32 = 1.2;
 const REACH_PER_HEIGHT: f32 = 0.012;
 
 /// The thing under the cursor at `p` (terrain point), seen from `camera_height` metres above
-/// the ground, with the agents drawn `alpha` of the way between their last two poses.
+/// the ground, with the agents drawn `alpha` of the way between their last two poses (the
+/// renderer's [`cp_sim::AgentSnapshot::blend`] of the tick fraction).
 pub fn pick(view: &SimView, alpha: f32, p: Vec2, camera_height: f32) -> Option<Selection> {
     pick_with(view, alpha, p, camera_height, false)
 }
@@ -154,6 +155,7 @@ mod tests {
         let mut v = sim.view();
         v.agents = Arc::new(AgentSnapshot {
             tick: v.tick,
+            prev_tick: v.tick,
             prev: Arc::new(prev),
             cur: Arc::new(AgentFrame {
                 vehicles,

@@ -326,22 +326,36 @@ pub fn build_vehicles(
     );
 }
 
+/// Last heading of every pedestrian `(key, yaw)`, ascending by key: one that stops keeps
+/// facing the way it walked instead of snapping to a random direction (BUG-064).
+#[derive(Clone, Debug, Default)]
+pub struct Headings {
+    list: Vec<(u64, f32)>,
+    next: Vec<(u64, f32)>,
+}
+
 /// Fills `out.pedestrians`. Nothing is drawn above [`PEDESTRIAN_MAX_HEIGHT`]. `ground` gives
 /// the terrain height at (x, z). Heading follows the motion between the snapshots; a
-/// pedestrian that did not move stands (no sway).
+/// pedestrian that did not move stands (no sway) facing its last heading in `headings` (a
+/// random one the first time it is seen).
 pub fn build_pedestrians(
     prev: &[PedestrianPose],
     cur: &[PedestrianPose],
     ground: impl Fn(f32, f32) -> f32,
     cull: &Cull,
+    headings: &mut Headings,
     out: &mut AgentInstances,
 ) {
     let h = cull.height;
     if h > PEDESTRIAN_MAX_HEIGHT {
+        headings.list.clear();
         return;
     }
     let detail = usize::from(h > PEDESTRIAN_DETAIL_HEIGHT);
     let a = cull.alpha.clamp(0.0, 1.0);
+    let Headings { list, next } = headings;
+    next.clear();
+    let mut j = 0;
     zip_by_key(
         prev,
         cur,
@@ -353,17 +367,23 @@ pub fn build_pedestrians(
                 }
                 _ => (c.pos, bevy_math::Vec2::ZERO),
             };
+            let moving = dir.length_squared() > 1e-4;
+            let hash = mix(c.key);
+            while j < list.len() && list[j].0 < c.key {
+                j += 1;
+            }
+            let yaw = if moving {
+                dir.x.atan2(dir.y)
+            } else {
+                list.get(j)
+                    .filter(|(k, _)| *k == c.key)
+                    .map_or(unit(hash, 32) * std::f32::consts::TAU, |(_, y)| *y)
+            };
+            next.push((c.key, yaw));
             let y = ground(pos.x, pos.y);
             if !cull.sees(Vec3::new(pos.x, y + 0.9, pos.y), PEDESTRIAN_RADIUS) {
                 return;
             }
-            let moving = dir.length_squared() > 1e-4;
-            let hash = mix(c.key);
-            let yaw = if moving {
-                dir.x.atan2(dir.y)
-            } else {
-                unit(hash, 32) * std::f32::consts::TAU
-            };
             let col = SHIRT_COLORS[(hash % SHIRT_COLORS.len() as u64) as usize];
             let phase = cull.time * GAIT_HZ * std::f32::consts::TAU
                 + unit(hash, 16) * std::f32::consts::TAU;
@@ -375,4 +395,5 @@ pub fn build_pedestrians(
             });
         },
     );
+    std::mem::swap(list, next);
 }

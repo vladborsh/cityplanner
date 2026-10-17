@@ -44,7 +44,8 @@ fn injected_traffic_is_deterministic_and_logged() {
         b.tick_once();
     }
     let (cars, peds) = a.agent_counts();
-    assert!(cars > 100 && peds > 100, "{cars} cars {peds} pedestrians");
+    // Walks end at the junction setbacks (BUG-064), so many of the 300 have arrived by now.
+    assert!(cars > 100 && peds > 50, "{cars} cars {peds} pedestrians");
     assert_eq!(a.checksum(), b.checksum());
     let log = a.world().resource::<CommandLog<SimCommand>>();
     assert!(log.entries().iter().any(|e| matches!(

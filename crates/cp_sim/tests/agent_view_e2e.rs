@@ -155,3 +155,66 @@ fn demo_traffic_is_deterministic_per_sim_seed() {
     };
     assert_eq!(poses(), poses());
 }
+
+/// BUG-064: drawn the way the app draws them — a view after every frame that ran ticks,
+/// `lerp(prev, cur, blend(tick_fraction))` — pedestrians move smoothly at x3 with uneven frame
+/// times: no frame moves one faster than its walking speed (a jump after frames that stood
+/// still), and none drops out of the frame while it waits or changes legs.
+#[test]
+fn pedestrians_are_drawn_smoothly_over_uneven_frames() {
+    use bevy_math::Vec2;
+    use std::collections::BTreeMap;
+    use std::time::Duration;
+
+    let mut sim = busy_town();
+    let now = sim.tick();
+    sim.push_command(
+        cp_sim::SimCommand::SetSpeed {
+            speed: cp_core::SimSpeed::X3,
+        },
+        now,
+    );
+    let frames_ms = [16u64, 33, 8, 50, 21, 70, 16, 16, 40];
+    let mut view = sim.view();
+    // key -> (frame seen last, drawn time, drawn position)
+    let mut last: BTreeMap<u64, (usize, f32, Vec2)> = BTreeMap::new();
+    let (mut checked, mut vanished, mut moved) = (0, 0, 0);
+    for frame in 0..240 {
+        let dt = Duration::from_millis(frames_ms[frame % frames_ms.len()]);
+        if sim.step(dt) > 0 {
+            view = sim.view();
+        }
+        let a = &view.agents;
+        let f = sim.tick_fraction();
+        let blend = a.blend(f);
+        // The time the frame shows, in ticks: one tick behind the sim.
+        let shown = a.tick.0 as f32 - 1.0 + f;
+        let prev: BTreeMap<u64, Vec2> = a.prev.pedestrians.iter().map(|p| (p.key, p.pos)).collect();
+        for p in &a.cur.pedestrians {
+            let pos = prev.get(&p.key).map_or(p.pos, |q| q.lerp(p.pos, blend));
+            if let Some((seen, t, q)) = last.get(&p.key).copied() {
+                if seen + 1 != frame {
+                    vanished += 1;
+                }
+                let dtime = shown - t;
+                assert!(dtime >= -1e-4, "drawn time runs backwards: {dtime}");
+                let d = pos.distance(q);
+                if d > 1e-3 {
+                    moved += 1;
+                }
+                assert!(
+                    d <= cp_traffic::PED_STEP * dtime.max(0.0) * 1.02 + 1e-3,
+                    "frame {frame}: pedestrian {} jumped {d} m in {dtime} ticks",
+                    p.key
+                );
+                checked += 1;
+            }
+            last.insert(p.key, (frame, shown, pos));
+        }
+    }
+    assert!(
+        checked > 1000 && moved > 500,
+        "{checked} checked, {moved} moved"
+    );
+    assert_eq!(vanished, 0, "pedestrians left the frame and came back");
+}

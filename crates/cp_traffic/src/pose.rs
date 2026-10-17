@@ -111,7 +111,9 @@ impl Agents {
             .collect();
         let pedestrians = self
             .pedestrians()
-            .filter(|(_, p)| p.started)
+            // A pedestrian between legs or waiting at a red crossing stays in the frame (it
+            // stands where it is); only one not yet on its first leg has no position (BUG-064).
+            .filter(|(_, p)| p.started || p.leg > 0)
             .map(|(id, p)| PedestrianPose {
                 key: agent_key(id.index, id.generation),
                 pos: p.pos,

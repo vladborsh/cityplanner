@@ -91,7 +91,14 @@ fn camera_height_gates_each_kind() {
     let count = |y: f32| {
         let mut out = AgentInstances::default();
         build_vehicles(&v, &v, &looks, &cull(y, 0.0), &mut out);
-        build_pedestrians(&p, &p, |_, _| 0.0, &cull(y, 0.0), &mut out);
+        build_pedestrians(
+            &p,
+            &p,
+            |_, _| 0.0,
+            &cull(y, 0.0),
+            &mut Headings::default(),
+            &mut out,
+        );
         (out.vehicle_count(), out.pedestrian_count())
     };
     assert_eq!(count(100.0), (1, 1));
@@ -136,7 +143,14 @@ fn pedestrians_face_their_motion_and_stand_still_without_sway() {
     let prev = [ped(1, 0.0), ped(2, 3.0)];
     let cur = [ped(1, 1.0), ped(2, 3.0)];
     let mut out = AgentInstances::default();
-    build_pedestrians(&prev, &cur, |_, _| 2.0, &cull(50.0, 1.0), &mut out);
+    build_pedestrians(
+        &prev,
+        &cur,
+        |_, _| 2.0,
+        &cull(50.0, 1.0),
+        &mut Headings::default(),
+        &mut out,
+    );
     let i = &out.pedestrians[0];
     assert_eq!(i.len(), 2);
     assert!(
@@ -221,7 +235,14 @@ fn budget_scene_builds_every_instance() {
         out.clear();
         let t = std::time::Instant::now();
         build_vehicles(&cars_prev, &cars, &looks, &c, &mut out);
-        build_pedestrians(&peds_prev, &peds, |_, _| 0.0, &c, &mut out);
+        build_pedestrians(
+            &peds_prev,
+            &peds,
+            |_, _| 0.0,
+            &c,
+            &mut Headings::default(),
+            &mut out,
+        );
         best = best.min(t.elapsed());
     }
     println!("instance build, 16k cars + 20k pedestrians: {best:?}");
@@ -229,4 +250,31 @@ fn budget_scene_builds_every_instance() {
         (out.vehicle_count(), out.pedestrian_count()),
         (16_000, 20_000)
     );
+}
+
+#[test]
+fn a_pedestrian_that_stops_keeps_facing_the_way_it_walked() {
+    let mut headings = Headings::default();
+    let mut yaw = |prev: &[PedestrianPose], cur: &[PedestrianPose]| {
+        let mut out = AgentInstances::default();
+        build_pedestrians(
+            prev,
+            cur,
+            |_, _| 0.0,
+            &cull(50.0, 0.5),
+            &mut headings,
+            &mut out,
+        );
+        out.pedestrians[0]
+            .iter()
+            .map(|i| i.pos_yaw[3])
+            .collect::<Vec<_>>()
+    };
+    // Walks +x, then stands (waiting at a crossing); a second one is seen standing first.
+    let walking = yaw(&[ped(1, 0.0)], &[ped(1, 1.0)]);
+    let standing = yaw(&[ped(1, 1.0)], &[ped(1, 1.0), ped(2, 5.0)]);
+    let still = yaw(&[ped(1, 1.0), ped(2, 5.0)], &[ped(1, 1.0), ped(2, 5.0)]);
+    assert!((walking[0] - std::f32::consts::FRAC_PI_2).abs() < 1e-4);
+    assert_eq!(standing[0], walking[0], "keeps its heading when it stops");
+    assert_eq!(still, standing, "the newcomer's random heading is kept too");
 }

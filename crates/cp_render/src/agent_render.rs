@@ -40,7 +40,7 @@ use cp_sim::SimView;
 
 use crate::agent::mesh::{pedestrian_mesh, vehicle_mesh};
 use crate::agent::{
-    AgentInstances, Cull, InstanceData, VEHICLE_KINDS, VehicleLooks, build_pedestrians,
+    AgentInstances, Cull, Headings, InstanceData, VEHICLE_KINDS, VehicleLooks, build_pedestrians,
     build_vehicles,
 };
 use crate::chunk::MeshData;
@@ -223,6 +223,7 @@ fn build_agent_instances(
     mut batches: Query<(&AgentBatch, &mut InstanceBatch)>,
     mut stats: ResMut<AgentRenderStats>,
     mut looks: Local<Looks>,
+    mut headings: Local<Headings>,
 ) {
     let (Some(view), Some((cam, frustum))) = (view, camera.iter().next()) else {
         return;
@@ -241,7 +242,7 @@ fn build_agent_instances(
                 t.height(Vec2::new(cam.translation().x, cam.translation().z))
             }),
         planes: frustum.half_spaces.map(|h| h.normal_d()),
-        alpha: fraction.0,
+        alpha: snap.blend(fraction.0),
         time: time.elapsed_secs(),
     };
     let out = &mut scratch.0;
@@ -259,6 +260,7 @@ fn build_agent_instances(
             &snap.cur.pedestrians,
             |x, z| terrain.height(Vec2::new(x, z)),
             &cull,
+            &mut headings,
             out,
         );
     }

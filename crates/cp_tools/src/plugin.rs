@@ -1380,7 +1380,7 @@ fn tool_pick(
     };
     let ground = view.terrain.as_deref().map_or(0.0, |t| t.height(p));
     let height = cam.translation().y - ground;
-    let alpha = fraction.map_or(1.0, |f| f.0);
+    let alpha = view.agents.blend(fraction.map_or(1.0, |f| f.0));
     let lines = overlay.active == cp_render::Overlay::Transit;
     picked.0 = crate::pick_with(&view, alpha, p, height, lines);
 }
@@ -1400,7 +1400,7 @@ fn draw_selection(
     else {
         return;
     };
-    let alpha = fraction.map_or(1.0, |f| f.0);
+    let alpha = view.agents.blend(fraction.map_or(1.0, |f| f.0));
     let ground = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p));
     let cyan = Color::srgb(0.2, 0.85, 1.0);
     let ring = |gizmos: &mut Gizmos, p: Vec2, r: f32| {

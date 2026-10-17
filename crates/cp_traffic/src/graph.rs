@@ -101,6 +101,10 @@ pub(crate) struct LaneNode {
     pub s_in: f32,
     /// Lane metres where the lane reaches the stop line of the junction it runs into.
     pub s_out: f32,
+    /// Where [`Self::point_at`] meets the junction setbacks at the travel start / end, the
+    /// ends of the pedestrian links (corners, crossings) that start there.
+    pub at_in: f32,
+    pub at_out: f32,
 }
 
 impl LaneNode {
@@ -128,12 +132,14 @@ impl LaneNode {
         self.curve[k].point(u - k as f32)
     }
 
-    /// Lane metres (in travel direction) of the lane end at `end`: `0` or `len`.
+    /// Lane metres (in travel direction) of the lane end at `end`, at the junction setback
+    /// where the junction's pedestrian links start (`0` / `len` without a junction), so a walk
+    /// along the lane ends where the next link begins (BUG-064).
     pub fn end_s(&self, end: SegEnd) -> f32 {
         if (end == SegEnd::End) == self.forward {
-            self.len
+            self.at_out
         } else {
-            0.0
+            self.at_in
         }
     }
 
@@ -283,9 +289,16 @@ fn node_of(lane: &Lane, id: LaneId, net: &NetGraph, geo: &JunctionGeometry) -> O
     };
     let mut s_in = entry.map_or(0.0, |u| s_at_param(&lane.curve, u));
     let mut s_out = exit.map_or(len, |u| s_at_param(&lane.curve, u));
+    // `point_at` maps lane metres to the curve parameter linearly.
+    let mut at_in = entry.map_or(0.0, |u| u.clamp(0.0, 1.0) * len);
+    let mut at_out = exit.map_or(len, |u| u.clamp(0.0, 1.0) * len);
     if s_out - s_in < 1.0 {
         s_in = 0.0;
         s_out = len;
+    }
+    if at_out - at_in < 1.0 {
+        at_in = 0.0;
+        at_out = len;
     }
     Some(LaneNode {
         id,
@@ -297,6 +310,8 @@ fn node_of(lane: &Lane, id: LaneId, net: &NetGraph, geo: &JunctionGeometry) -> O
         curve: lane.curve,
         s_in,
         s_out,
+        at_in,
+        at_out,
     })
 }
 

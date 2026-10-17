@@ -244,14 +244,31 @@ impl SimView {
     }
 }
 
-/// Agent poses of two consecutive snapshots. `prev` is the frame of the previous published
-/// view (equal to `cur` the first time), so a client draws `lerp(prev, cur, fraction)` where
-/// `fraction` is how far real time is into the tick that follows the snapshot.
+/// Agent poses of two snapshots. `prev` is the frame of the previous published view, taken at
+/// `prev_tick` (equal to `cur` / `tick` the first time); a frame of the app may run several
+/// ticks, so the two can be more than one tick apart. A client draws
+/// `lerp(prev, cur, blend(fraction))`, where `fraction` is how far real time is into the tick
+/// that follows the snapshot.
 #[derive(Debug, Default)]
 pub struct AgentSnapshot {
     pub tick: Tick,
+    pub prev_tick: Tick,
     pub prev: Arc<AgentFrame>,
     pub cur: Arc<AgentFrame>,
+}
+
+impl AgentSnapshot {
+    /// The lerp factor from `prev` to `cur` for `fraction` of the tick after `tick`: the drawn
+    /// time runs one tick behind the sim, `tick - 1 + fraction`, at the same speed whatever
+    /// the number of ticks between the snapshots (BUG-064). `1.0` when they are the same tick.
+    pub fn blend(&self, fraction: f32) -> f32 {
+        let span = self.tick.0.saturating_sub(self.prev_tick.0);
+        if span == 0 {
+            return 1.0;
+        }
+        let span = span as f32;
+        ((span - 1.0 + fraction.clamp(0.0, 1.0)) / span).clamp(0.0, 1.0)
+    }
 }
 
 /// Last `SimView::agents`.
@@ -705,10 +722,16 @@ impl SimRunner {
             }
             _ => Arc::default(),
         };
-        let prev = cache
-            .as_ref()
-            .map_or_else(|| Arc::clone(&cur), |s| Arc::clone(&s.cur));
-        let snap = Arc::new(AgentSnapshot { tick, prev, cur });
+        let (prev_tick, prev) = cache.as_ref().map_or_else(
+            || (tick, Arc::clone(&cur)),
+            |s| (s.tick, Arc::clone(&s.cur)),
+        );
+        let snap = Arc::new(AgentSnapshot {
+            tick,
+            prev_tick,
+            prev,
+            cur,
+        });
         *cache = Some(Arc::clone(&snap));
         snap
     }

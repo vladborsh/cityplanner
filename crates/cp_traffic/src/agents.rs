@@ -944,8 +944,10 @@ impl Ctx<'_> {
                     .map_or(Vec2::ZERO, |l| l.point_at(ls))
             }
             Leg::Cross { curve, .. } => {
+                // By arc length: a corner curve walked by its parameter runs faster in the
+                // middle than at the ends (BUG-064).
                 let t = if len > 1e-3 {
-                    (s / len).clamp(0.0, 1.0)
+                    curve.arc_table().s_to_t(s)
                 } else {
                     1.0
                 };

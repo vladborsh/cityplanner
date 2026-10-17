@@ -398,6 +398,14 @@ fn cars_drive_the_lattice_finish_their_trips_and_light_the_load_overlay() {
         a.load.ema.iter().any(|&x| x > 0.0),
         "the smoothed load follows"
     );
+    // A service vehicle (no trip, e.g. a goods truck) may still be on its way: let it arrive.
+    for _ in 0..TICKS_PER_DAY {
+        if sim.world().resource::<Agents>().vehicle_count() == 0 {
+            break;
+        }
+        sim.tick_once();
+    }
+    assert_eq!(sim.world().resource::<Agents>().vehicle_count(), 0);
     assert!(
         sim.view().overlays.road_load.values().all(|&x| x == 0.0),
         "an empty road shows no load"
