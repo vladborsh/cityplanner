@@ -129,3 +129,31 @@ impl PolicyScope {
         matches!(self, Self::District | Self::Both)
     }
 }
+
+/// A district specialisation (T-196, M4). The order is stored in saves (`District.spec`), so
+/// it is **append-only**.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum SpecKind {
+    /// Commercial: noisier, more tourists.
+    Leisure = 0,
+    /// Commercial: many tourists, higher tax.
+    Tourism = 1,
+    /// Commercial: fewer goods used, dearer land.
+    Organic = 2,
+    /// Office: jobs for the educated, higher tax.
+    ItCluster = 3,
+    /// Low residential: uses less power and water, lower tax.
+    SelfSufficient = 4,
+}
+
+impl SpecKind {
+    /// Every specialisation in kind order.
+    pub const ALL: [SpecKind; 5] = [
+        SpecKind::Leisure,
+        SpecKind::Tourism,
+        SpecKind::Organic,
+        SpecKind::ItCluster,
+        SpecKind::SelfSufficient,
+    ];
+}

@@ -39,6 +39,8 @@ pub const SIDE: usize = (MAP_SIZE / CELL_M) as usize;
 /// Distance between sample points along roads and lines, metres.
 const SAMPLE_M: f32 = 32.0;
 /// A road this close to a cell centre gives the full access bonus; none from `ACCESS_REACH_M`.
+/// Reach of the land value a specialised building adds, metres (T-196).
+const SPEC_LAND_RADIUS_M: f32 = 64.0;
 const ACCESS_FULL_M: f32 = 32.0;
 const ACCESS_REACH_M: f32 = 96.0;
 
@@ -186,6 +188,33 @@ impl LandGrids {
             cells_near(b.pos, r, |c, d| g.pollution[c] += strength * (1.0 - d / r));
         }
 
+        // Specialised buildings (T-196) make noise and add land value around themselves.
+        let mut spec_land = vec![0.0f32; SIDE * SIDE];
+        for (_, b) in i.buildings.iter() {
+            if b.state != BuildingState::Active {
+                continue;
+            }
+            let Some(spec) = i
+                .content
+                .building(b.def)
+                .spec
+                .and_then(|k| i.content.spec(k))
+            else {
+                continue;
+            };
+            if spec.noise_add > 0.0 {
+                let r = bal.noise_radius_m;
+                cells_near(b.pos, r, |c, d| {
+                    g.noise[c] = g.noise[c].max(spec.noise_add * (1.0 - d / r))
+                });
+            }
+            if spec.land_value_add > 0.0 {
+                cells_near(b.pos, SPEC_LAND_RADIUS_M, |c, d| {
+                    spec_land[c] += spec.land_value_add * (1.0 - d / SPEC_LAND_RADIUS_M)
+                });
+            }
+        }
+
         let mut road_dist = vec![f32::INFINITY; SIDE * SIDE];
         let mut near_seg = vec![u32::MAX; SIDE * SIDE];
         let r = bal.noise_radius_m;
@@ -276,7 +305,8 @@ impl LandGrids {
                 - bal.land_pollution_weight * g.pollution[c]
                 - bal.land_noise_weight * g.noise[c]
                 + service[c]
-                + effect[c];
+                + effect[c]
+                + spec_land[c];
             g.land_value[c] = v.clamp(0.0, 100.0);
         }
         g

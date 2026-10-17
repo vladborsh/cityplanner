@@ -170,6 +170,8 @@ Balance((
     tourism_reach_m: 1500.0,
     // Heavy traffic ban (T-195) // tune later: A* cost multiplier of a banned district's lanes for trucks.
     heavy_ban_cost_mul: 8.0,
+    // District specialisations (T-196) // tune later: buildings a district rebuilds a day after its specialisation changes.
+    respec_per_day: 4,
     // Block fit (T-185) // tune later: metres by which a nearly 8 x 8 cell block (or a side that is
     // nearly whole cells long) is fitted to whole cells by stretching or shrinking them.
     zoning_block_fit_m: 6.0,

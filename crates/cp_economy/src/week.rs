@@ -126,6 +126,10 @@ pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost
                 let filled = filled.min(cap);
                 tax += Cost::scaled(def.tax_base, rate_f * f64::from(filled) / f64::from(cap));
             }
+            // A specialised building's tax is scaled by its specialisation (T-196).
+            if let Some(s) = def.spec.and_then(|k| i.content.spec(k)) {
+                tax = Cost((tax.0 as f64 * f64::from(s.tax_mul)).round() as i64);
+            }
             r.income_by_zone[zone_slot] += tax;
             *by_district.entry(district).or_insert(Cost::ZERO) += tax;
         }

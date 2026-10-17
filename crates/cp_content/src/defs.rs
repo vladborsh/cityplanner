@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::kinds::{PolicyKind, PolicyScope, ServiceKind, ServiceSite, UtilityKind, ZoneType};
+use crate::kinds::{
+    PolicyKind, PolicyScope, ServiceKind, ServiceSite, SpecKind, UtilityKind, ZoneType,
+};
 
 macro_rules! def_id {
     ($(#[$m:meta])* $name:ident) => {
@@ -63,6 +65,31 @@ pub enum ContentFile {
     Milestones(MilestonesDef),
     /// Appended in T-190.
     Policy(PolicyDef),
+    /// Appended in T-196.
+    Spec(SpecDef),
+}
+
+/// A district specialisation (T-196): the zone types it applies to and the numbers of its
+/// effects. The buildings that belong to it are the `BuildingDef`s with `spec: Some(kind)`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpecDef {
+    pub kind: SpecKind,
+    pub name: String,
+    /// Icon name (a placeholder until T-197 draws one per specialisation).
+    pub icon: String,
+    /// Zone types the district may specialise (`ZoneType::None` is not one).
+    pub zones: Vec<ZoneType>,
+    /// Multiplier of the tax of its buildings.
+    pub tax_mul: f32,
+    /// Weight of its buildings as a tourist's goal (an ordinary shop is 1).
+    pub tourist_weight: f32,
+    /// Noise its buildings add around them.
+    pub noise_add: f32,
+    /// Land value its buildings add around them.
+    pub land_value_add: f32,
+    /// Multiplier of the goods its buildings use.
+    pub goods_mul: f32,
 }
 
 /// A policy (T-190): which one, where it may be on, what it costs and its one number.
@@ -289,6 +316,8 @@ pub struct Balance {
     /// HeavyTrafficBan (T-195): a truck's A* cost of a lane in a banned district is multiplied by
     /// this unless its start or goal is in that district. // tune later
     pub heavy_ban_cost_mul: f32,
+    /// Most buildings a district rebuilds a day when its specialisation changes (T-196). // tune later
+    pub respec_per_day: u32,
     /// Goods (T-169): units an industrial building makes a day per filled job, units a
     /// commercial building sells a day per filled job, the most a building stores, and the load
     /// of one truck. // tune later
@@ -445,6 +474,7 @@ impl Balance {
             self.tourism_pool_share,
             self.tourism_reach_m,
             self.heavy_ban_cost_mul,
+            self.respec_per_day as f32,
             self.goods_per_worker,
             self.goods_per_job,
             self.goods_stock_cap,
@@ -553,6 +583,7 @@ impl Default for Balance {
             tourism_pool_share: 0.1,
             tourism_reach_m: 1500.0,
             heavy_ban_cost_mul: 8.0,
+            respec_per_day: 4,
             zoning_block_fit_m: 6.0,
             goods_per_worker: 0.5,
             goods_per_job: 0.4,
@@ -870,6 +901,10 @@ pub struct BuildingDef {
     /// Land value this building adds around it (T-200), shared by M4 to M6 buildings.
     #[serde(default)]
     pub land_effect: Option<LandEffect>,
+    /// The district specialisation this building belongs to (T-196); `None` for every ordinary
+    /// building. A specialised building is level 1 and never rises.
+    #[serde(default)]
+    pub spec: Option<SpecKind>,
 }
 
 /// What makes a building unique (T-200, design §16 M4 C). Numbers: tune later.
@@ -916,6 +951,10 @@ pub enum UnlockCond {
 pub struct LandEffect {
     pub add: f32,
     pub radius_m: f32,
+    /// The district specialisation this building belongs to (T-196); `None` for every ordinary
+    /// building. A specialised building is level 1 and never rises.
+    #[serde(default)]
+    pub spec: Option<SpecKind>,
 }
 
 /// The track under a station: `road` along the building's axis, centred on it, in a tunnel

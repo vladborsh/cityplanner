@@ -34,7 +34,7 @@ pub fn rebuild_candidate(
     let area = |w: u8, d: u8| u32::from(w) * u32::from(d);
     let mut best: Option<(u32, BuildingDefId, Lot)> = None;
     for (id, def) in db.buildings() {
-        if def.zone != zone || def.level != target || def.service.is_some() {
+        if def.zone != zone || def.level != target || def.service.is_some() || def.spec.is_some() {
             continue;
         }
         let (w, d) = def.lot;

@@ -323,7 +323,8 @@ pub fn update_city(
             continue;
         }
         let def = db.building(buildings.get(id).expect("active").def);
-        if def.service.is_some() {
+        // Services and specialised buildings (T-196) keep their level.
+        if def.service.is_some() || def.spec.is_some() {
             continue;
         }
         let utility_trouble = flags.0 & BuildingFlags::UTILITY_MASK != 0;

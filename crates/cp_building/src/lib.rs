@@ -6,6 +6,7 @@ pub mod free;
 pub mod grid;
 pub mod level;
 pub mod model;
+pub mod respec;
 pub mod spawn;
 
 pub use command::{
@@ -23,6 +24,7 @@ pub use model::{
     AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, FOOTPRINT_CELL_M, Footprint,
     Lot, build_ticks, footprint_quad,
 };
+pub use respec::{SPEC_STREAM, respec};
 pub use spawn::{BLOCK_BUCKETS, DEMAND_PERIOD, Demand, SPAWN_STREAM, place, update_buildings};
 
 /// Crate name, used by the skeleton smoke test.

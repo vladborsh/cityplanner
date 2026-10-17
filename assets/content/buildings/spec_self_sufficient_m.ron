@@ -1,0 +1,13 @@
+// PLACEHOLDER numbers for balance tuning; temporary look until T-198/T-199 (T-196).
+Building((
+    id: "spec_self_sufficient_m",
+    name: "Self-sufficient M",
+    zone: ResLow,
+    level: 1,
+    lot: (3, 3),
+    households: 4,
+    consumption: {Water: 2.4, Sewage: 2.4, Power: 5.0},
+    tax_base: 28.0,
+    styles: ["res_low_cottage_gabled_a", "res_low_modern_shed_a", "res_low_slate_mansard_a", "res_low_villa_hipped_a"],
+    spec: Some(SelfSufficient),
+))

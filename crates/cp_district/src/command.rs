@@ -5,7 +5,7 @@
 use std::fmt;
 
 use bevy_ecs::world::World;
-use cp_content::{PolicyDef, PolicyKind, SimContent, ZoneType};
+use cp_content::{PolicyDef, PolicyKind, SimContent, SpecDef, SpecKind, ZoneType};
 use cp_core::Cost;
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +56,12 @@ pub enum DistrictCommand {
         policy: PolicyKind,
         on: bool,
     },
+    /// Sets (`Some`) or removes (`None`) the district's specialisation for a zone type (T-196).
+    SetSpec {
+        district: DistrictId,
+        zone: ZoneType,
+        spec: Option<SpecKind>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,6 +80,10 @@ pub enum DistrictError {
     NoSuchPolicy(PolicyKind),
     /// The policy cannot be switched on here (a city policy in a district or the other way).
     PolicyScope(PolicyKind),
+    /// The content has no definition of this specialisation.
+    NoSuchSpec(SpecKind),
+    /// The specialisation does not apply to this zone type.
+    SpecZone(SpecKind, ZoneType),
 }
 
 impl fmt::Display for DistrictError {
@@ -98,6 +108,8 @@ impl fmt::Display for DistrictError {
             }
             Self::NoSuchPolicy(p) => write!(f, "there is no {p:?} policy"),
             Self::PolicyScope(p) => write!(f, "{p:?} cannot be set here"),
+            Self::NoSuchSpec(s) => write!(f, "there is no {s:?} specialisation"),
+            Self::SpecZone(s, z) => write!(f, "{s:?} does not apply to {z:?}"),
         }
     }
 }
@@ -154,6 +166,20 @@ pub fn validate_policy(
     }
 }
 
+/// A specialisation is valid for a zone type when it is defined and covers that zone type.
+pub fn validate_spec(
+    def: Option<&SpecDef>,
+    kind: SpecKind,
+    zone: ZoneType,
+) -> Result<(), DistrictError> {
+    let def = def.ok_or(DistrictError::NoSuchSpec(kind))?;
+    if def.zones.contains(&zone) {
+        Ok(())
+    } else {
+        Err(DistrictError::SpecZone(kind, zone))
+    }
+}
+
 /// Validates and applies `cmd`, returning its cost (always zero).
 pub fn apply(world: &mut World, cmd: &DistrictCommand) -> Result<Cost, DistrictError> {
     world.resource_scope(|world, mut districts: bevy_ecs::prelude::Mut<Districts>| {
@@ -181,6 +207,7 @@ pub fn apply(world: &mut World, cmd: &DistrictCommand) -> Result<Cost, DistrictE
                     color: (slot % usize::from(PALETTE_LEN)) as u8,
                     tax: [None; 6],
                     policies: 0,
+                    spec: [None; 6],
                 };
                 if slot == districts.list.len() {
                     districts.list.push(Some(d));
@@ -260,6 +287,23 @@ pub fn apply(world: &mut World, cmd: &DistrictCommand) -> Result<Cost, DistrictE
                             .ok_or(DistrictError::Missing)?;
                         set(&mut city.mask);
                     }
+                }
+            }
+            DistrictCommand::SetSpec {
+                district,
+                zone,
+                spec,
+            } => {
+                exists(*district, &districts)?;
+                let slot = zone_slot(*zone).ok_or(DistrictError::NoTaxForZone)?;
+                if let Some(kind) = spec {
+                    let def = world
+                        .get_resource::<SimContent>()
+                        .and_then(|c| c.0.spec(*kind));
+                    validate_spec(def, *kind, *zone)?;
+                }
+                if let Some(d) = districts.get_mut(*district) {
+                    d.spec[slot] = *spec;
                 }
             }
         }

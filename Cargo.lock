@@ -2451,6 +2451,7 @@ dependencies = [
  "bevy_math",
  "cp_content",
  "cp_core",
+ "cp_district",
  "cp_net",
  "cp_terrain",
  "cp_zone",

@@ -182,7 +182,12 @@ pub fn run_tourists(
                 Some((id, b.pos, u.tourists_per_day / UNIQUE_WEIGHT_UNIT))
             } else {
                 shop_count += usize::from(is_shop(def.zone));
-                is_shop(def.zone).then_some((id, b.pos, 1.0))
+                // A specialised shop draws more (or fewer) tourists (T-196).
+                let w = def
+                    .spec
+                    .and_then(|k| db.spec(k))
+                    .map_or(1.0, |s| s.tourist_weight);
+                is_shop(def.zone).then_some((id, b.pos, w))
             }
         })
         .collect();
@@ -266,29 +271,37 @@ pub fn bring_by_train(
         return;
     };
     let balance = db.balance();
-    let shops: Vec<(BuildingId, Vec2)> = buildings
+    let shops: Vec<(BuildingId, Vec2, f32)> = buildings
         .iter()
         .filter(|(_, b)| {
             b.state == BuildingState::Active
                 && b.access().is_some()
                 && is_shop(db.building(b.def).zone)
         })
-        .map(|(id, b)| (id, b.pos))
+        .map(|(id, b)| {
+            // A specialised shop draws more (or fewer) tourists (T-196).
+            let w = db
+                .building(b.def)
+                .spec
+                .and_then(|k| db.spec(k))
+                .map_or(1.0, |s| s.tourist_weight);
+            (id, b.pos, w)
+        })
         .collect();
     if shops.is_empty() {
         return;
     }
     let cap = (limits.vehicles as f32 * balance.tourism_pool_share) as usize;
     let weight = |p: Vec2| 1.0 / (1.0 + p.distance(from) / balance.tourism_reach_m.max(1.0));
-    let total: f32 = shops.iter().map(|&(_, p)| weight(p)).sum();
+    let total: f32 = shops.iter().map(|&(_, p, w)| weight(p) * w).sum();
     for _ in 0..n {
         if tourists.visits.len() >= cap {
             break;
         }
         let mut pick = r.next_f32() * total;
         let mut goal = shops[shops.len() - 1].0;
-        for &(id, p) in &shops {
-            pick -= weight(p);
+        for &(id, p, w) in &shops {
+            pick -= weight(p) * w;
             if pick <= 0.0 {
                 goal = id;
                 break;

@@ -2,7 +2,7 @@ use bevy_ecs::world::World;
 use bevy_math::Vec2;
 use std::sync::Arc;
 
-use cp_content::{ContentDb, PolicyKind, SimContent, ZoneType};
+use cp_content::{ContentDb, PolicyKind, SimContent, SpecKind, ZoneType};
 
 use crate::*;
 
@@ -297,4 +297,63 @@ fn world_with(s: &(DistrictMap, Districts)) -> World {
     w.insert_resource(s.0.clone());
     w.insert_resource(s.1.clone());
     w
+}
+
+fn spec_src(kind: &str, zones: &str) -> (String, String) {
+    (
+        format!("sp/{kind}.ron"),
+        format!(
+            r#"Spec((kind: {kind}, name: "{kind}", icon: "i", zones: [{zones}], tax_mul: 1.0,
+            tourist_weight: 1.0, noise_add: 0.0, land_value_add: 0.0, goods_mul: 1.0))"#
+        ),
+    )
+}
+
+#[test]
+fn a_specialisation_is_set_for_the_zones_it_covers_and_refused_elsewhere() {
+    let mut w = world();
+    let db = ContentDb::from_sources(vec![spec_src("Tourism", "ComLow, ComHigh")])
+        .unwrap_or_else(|e| panic!("{e}"));
+    w.insert_resource(SimContent(Arc::new(db)));
+    create(&mut w, "Old town");
+    let d = DistrictId(1);
+    let set = |w: &mut World, zone, spec| {
+        apply(
+            w,
+            &DistrictCommand::SetSpec {
+                district: d,
+                zone,
+                spec,
+            },
+        )
+    };
+    assert!(set(&mut w, ZoneType::ComLow, Some(SpecKind::Tourism)).is_ok());
+    assert!(set(&mut w, ZoneType::ComHigh, Some(SpecKind::Tourism)).is_ok());
+    assert_eq!(
+        w.resource::<Districts>().get(d).unwrap().spec[2..4],
+        [Some(SpecKind::Tourism); 2]
+    );
+    // Not for housing, not an undefined one, not for a missing district or for no zone.
+    assert_eq!(
+        set(&mut w, ZoneType::ResLow, Some(SpecKind::Tourism)),
+        Err(DistrictError::SpecZone(SpecKind::Tourism, ZoneType::ResLow))
+    );
+    assert_eq!(
+        set(&mut w, ZoneType::ComLow, Some(SpecKind::Organic)),
+        Err(DistrictError::NoSuchSpec(SpecKind::Organic))
+    );
+    assert!(
+        apply(
+            &mut w,
+            &DistrictCommand::SetSpec {
+                district: DistrictId(7),
+                zone: ZoneType::ComLow,
+                spec: None
+            }
+        )
+        .is_err()
+    );
+    assert!(set(&mut w, ZoneType::None, None).is_err());
+    assert!(set(&mut w, ZoneType::ComLow, None).is_ok());
+    assert_eq!(w.resource::<Districts>().get(d).unwrap().spec[2], None);
 }

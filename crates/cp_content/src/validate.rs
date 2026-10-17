@@ -2,7 +2,7 @@
 
 use crate::defs::{
     BuildingDef, LaneKind, MilestonesDef, PolicyDef, RoadClass, RoadDef, RoadVariant, ServiceDef,
-    StyleDef, TunnelVariant, UtilityDef, VehicleDef,
+    SpecDef, StyleDef, TunnelVariant, UtilityDef, VehicleDef,
 };
 use crate::error::ContentError;
 use crate::kinds::ZoneType;
@@ -296,5 +296,20 @@ pub fn policy(d: &PolicyDef) -> Problems {
     c.not_empty("icon", &d.icon);
     c.non_negative("cost_per_building_week", d.cost_per_building_week);
     c.non_negative("value", d.value);
+    c.0
+}
+
+pub fn spec(d: &SpecDef) -> Problems {
+    let mut c = Check(Vec::new());
+    c.not_empty("name", &d.name);
+    c.not_empty("icon", &d.icon);
+    if d.zones.is_empty() || d.zones.contains(&ZoneType::None) {
+        c.bad("zones", "needs at least one zone type, none of them None");
+    }
+    c.non_negative("tax_mul", d.tax_mul);
+    c.non_negative("tourist_weight", d.tourist_weight);
+    c.non_negative("noise_add", d.noise_add);
+    c.non_negative("land_value_add", d.land_value_add);
+    c.non_negative("goods_mul", d.goods_mul);
     c.0
 }

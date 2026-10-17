@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::defs::*;
 use crate::error::{ContentError, ContentErrors};
-use crate::kinds::PolicyKind;
+use crate::kinds::{PolicyKind, SpecKind};
 use crate::validate;
 
 /// Default content root, relative to the working directory.
@@ -194,6 +194,8 @@ pub struct ContentDb {
     milestones: Vec<MilestoneDef>,
     /// The policies, one per kind at most, in kind order (T-190).
     policies: Vec<PolicyDef>,
+    /// The specialisations, one per kind at most, in kind order (T-196).
+    specs: Vec<SpecDef>,
     content_hash: u64,
 }
 
@@ -325,6 +327,16 @@ impl ContentDb {
         &self.policies
     }
 
+    /// The specialisations in kind order (at most one per kind).
+    pub fn specs(&self) -> &[SpecDef] {
+        &self.specs
+    }
+
+    /// The definition of the specialisation `kind`, if the content has one.
+    pub fn spec(&self, kind: SpecKind) -> Option<&SpecDef> {
+        self.specs.iter().find(|s| s.kind == kind)
+    }
+
     /// The definition of `kind`, if the content has one.
     pub fn policy(&self, kind: PolicyKind) -> Option<&PolicyDef> {
         self.policies.iter().find(|p| p.kind == kind)
@@ -398,6 +410,7 @@ impl ContentDb {
         let mut balances: Vec<(String, Balance)> = Vec::new();
         let mut milestone_files: Vec<(String, MilestonesDef)> = Vec::new();
         let mut policy_files: Vec<(String, PolicyDef)> = Vec::new();
+        let mut spec_files: Vec<(String, SpecDef)> = Vec::new();
         for (path, text) in sources {
             match ron::from_str::<ContentFile>(&text) {
                 Ok(ContentFile::Road(d)) => roads.push((path, d)),
@@ -409,6 +422,7 @@ impl ContentDb {
                 Ok(ContentFile::Balance(d)) => balances.push((path, *d)),
                 Ok(ContentFile::Milestones(d)) => milestone_files.push((path, d)),
                 Ok(ContentFile::Policy(d)) => policy_files.push((path, d)),
+                Ok(ContentFile::Spec(d)) => spec_files.push((path, d)),
                 Err(e) => errors.push(ContentError::new(&path, None, format!("parse error: {e}"))),
             }
         }
@@ -566,6 +580,51 @@ impl ContentDb {
             }
             policies.push(d);
             policy_paths.push(path);
+        }
+        spec_files.sort_by(|a, b| a.1.kind.cmp(&b.1.kind).then_with(|| a.0.cmp(&b.0)));
+        let mut specs: Vec<SpecDef> = Vec::new();
+        let mut spec_paths: Vec<String> = Vec::new();
+        for (path, d) in spec_files {
+            for (field, msg) in validate::spec(&d) {
+                errors.push(ContentError::new(&path, Some(&field), msg));
+            }
+            if let Some(i) = specs.iter().position(|p| p.kind == d.kind) {
+                errors.push(ContentError::new(
+                    &path,
+                    Some("kind"),
+                    format!("{:?} is already defined in {}", d.kind, spec_paths[i]),
+                ));
+                continue;
+            }
+            specs.push(d);
+            spec_paths.push(path);
+        }
+        // A specialised building belongs to a zone its specialisation covers, at level 1.
+        for (i, b) in buildings.defs.iter().enumerate() {
+            let Some(kind) = b.spec else { continue };
+            match specs.iter().find(|s| s.kind == kind) {
+                None => errors.push(ContentError::new(
+                    &buildings.files[i],
+                    Some("spec"),
+                    format!("there is no {kind:?} specialisation"),
+                )),
+                Some(s) => {
+                    if !s.zones.contains(&b.zone) {
+                        errors.push(ContentError::new(
+                            &buildings.files[i],
+                            Some("spec"),
+                            format!("{kind:?} does not apply to the zone {:?}", b.zone),
+                        ));
+                    }
+                    if b.level != 1 || b.service.is_some() {
+                        errors.push(ContentError::new(
+                            &buildings.files[i],
+                            Some("spec"),
+                            "a specialised building is level 1 and not a service".to_string(),
+                        ));
+                    }
+                }
+            }
         }
         if milestone_files.len() > 1 {
             errors.push(ContentError::new(
@@ -760,6 +819,13 @@ impl ContentDb {
                 &postcard::to_stdvec(&policies).expect("policies are serialisable"),
             );
         }
+        if !specs.is_empty() {
+            fnv1a(&mut hash, b"specs");
+            fnv1a(
+                &mut hash,
+                &postcard::to_stdvec(&specs).expect("specs are serialisable"),
+            );
+        }
         Ok(Self {
             roads: roads.strip(),
             buildings: buildings.strip(),
@@ -771,6 +837,7 @@ impl ContentDb {
             balance: balance.unwrap_or_default(),
             milestones,
             policies,
+            specs,
             content_hash: hash,
         })
     }

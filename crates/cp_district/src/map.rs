@@ -3,7 +3,7 @@
 use bevy_ecs::prelude::{Res, Resource};
 use bevy_ecs::system::SystemParam;
 use bevy_math::Vec2;
-use cp_content::{PolicyKind, ZoneType};
+use cp_content::{PolicyKind, SpecKind, ZoneType};
 use cp_terrain::MAP_SIZE;
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +58,9 @@ pub struct District {
     pub tax: [Option<u8>; 6],
     /// Policies switched on here: bit `PolicyKind as u8` (T-190). Added in v38.
     pub policies: u32,
+    /// The specialisation per zone type (slot as in [`zone_slot`]); `None` = ordinary buildings
+    /// (T-196). Added in v39.
+    pub spec: [Option<SpecKind>; 6],
 }
 
 /// The policies switched on for the whole city: bit `PolicyKind as u8`. Saved and checksummed
@@ -244,4 +247,14 @@ impl PolicyParams<'_> {
             city: self.city.as_deref()?,
         })
     }
+}
+
+/// The specialisation of `zone` in the district at `pos`, if there is one (T-196).
+pub fn spec_at(
+    map: &DistrictMap,
+    districts: &Districts,
+    pos: Vec2,
+    zone: ZoneType,
+) -> Option<SpecKind> {
+    districts.get(district_at(map, pos)?)?.spec[zone_slot(zone)?]
 }

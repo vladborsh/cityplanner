@@ -13,8 +13,9 @@
 
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
-use cp_content::{BuildingDefId, ContentDb, SimContent, ZoneType};
+use cp_content::{BuildingDefId, ContentDb, SimContent, SpecKind, ZoneType};
 use cp_core::{SimLimits, SimRng, Tick};
+use cp_district::{DistrictMap, Districts, spec_at};
 use cp_net::NetGraph;
 use cp_zone::{BLOCK_DEPTH, CELL_SIZE, ZoneBlock, ZoneBlockId, ZoneCellRef, ZoneGrid};
 use serde::{Deserialize, Serialize};
@@ -105,10 +106,22 @@ fn lot_fits(block: &ZoneBlock, col: u16, w: u8, d: u8, zone: ZoneType) -> bool {
     })
 }
 
-/// Level-1 spawnable defs of `zone`, in id order.
-fn spawnable(db: &ContentDb, zone: ZoneType) -> Vec<BuildingDefId> {
+/// Level-1 spawnable defs for a cell painted `zone` in a district whose specialisation of that
+/// zone is `spec` (T-196), in id order: with a specialisation only the defs of that
+/// specialisation (which may stand in any zone type it covers), without one only the ordinary
+/// defs of the zone.
+pub fn spawnable(db: &ContentDb, zone: ZoneType, spec: Option<SpecKind>) -> Vec<BuildingDefId> {
     db.buildings()
-        .filter(|(_, d)| d.zone == zone && d.level == 1 && d.service.is_none())
+        .filter(|(_, d)| {
+            d.level == 1
+                && d.service.is_none()
+                && match spec {
+                    None => d.zone == zone && d.spec.is_none(),
+                    Some(k) => {
+                        d.spec == Some(k) && db.spec(k).is_some_and(|s| s.zones.contains(&zone))
+                    }
+                }
+        })
         .map(|(id, _)| id)
         .collect()
 }
@@ -257,6 +270,8 @@ pub fn update_buildings(
     mut zones: ResMut<ZoneGrid>,
     mut buildings: ResMut<BuildingGrid>,
     mut synced: Local<u64>,
+    district_map: Option<Res<DistrictMap>>,
+    districts: Option<Res<Districts>>,
 ) {
     buildings.finish_construction(tick.0);
     if *synced != buildings.free_epoch() {
@@ -271,6 +286,9 @@ pub fn update_buildings(
     }
     rebind_lots(&mut zones, &mut buildings);
     let db = &content.0;
+    if let (Some(m), Some(d)) = (district_map.as_deref(), districts.as_deref()) {
+        crate::respec::respec(db, tick.0, &rng, &mut zones, &mut buildings, m, d);
+    }
     let bucket = tick.0 % BLOCK_BUCKETS;
     let ids: Vec<ZoneBlockId> = zones
         .blocks()
@@ -302,7 +320,21 @@ pub fn update_buildings(
         if zone == ZoneType::None || !block.valid[i] || demand.get(zone) <= 0.0 {
             continue;
         }
-        let fitting: Vec<BuildingDefId> = spawnable(db, zone)
+        // The district's specialisation of this zone type, at the chosen column (T-196).
+        let spec = district_map
+            .as_deref()
+            .zip(districts.as_deref())
+            .and_then(|(m, d)| {
+                let probe = Lot {
+                    block: id,
+                    col,
+                    w: 1,
+                    d: 1,
+                };
+                let (pos, _, _) = place(&zones, &net, id, &probe)?;
+                spec_at(m, d, pos, zone)
+            });
+        let fitting: Vec<BuildingDefId> = spawnable(db, zone, spec)
             .into_iter()
             .filter(|&d| {
                 let def = db.building(d);

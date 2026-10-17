@@ -1,0 +1,12 @@
+// Numbers are placeholders // tune later (T-196); the icon is borrowed until T-197.
+Spec((
+    kind: Organic,
+    name: "Organic",
+    icon: "overlay_land_value",
+    zones: [ComLow, ComHigh],
+    tax_mul: 1.0,
+    tourist_weight: 1.0,
+    noise_add: 0.0,
+    land_value_add: 5.0,
+    goods_mul: 0.7,
+))

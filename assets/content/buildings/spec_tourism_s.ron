@@ -1,0 +1,13 @@
+// PLACEHOLDER numbers for balance tuning; temporary look until T-198/T-199 (T-196).
+Building((
+    id: "spec_tourism_s",
+    name: "Tourism S",
+    zone: ComLow,
+    level: 1,
+    lot: (2, 2),
+    jobs: (2, 3, 0, 0),
+    consumption: {Water: 3.3, Sewage: 3.3, Power: 6.0},
+    tax_base: 30.0,
+    styles: ["com_low_arcade_l_b", "com_low_corner_shop_b", "com_low_gabled_store_b", "com_low_twin_shops_b"],
+    spec: Some(Tourism),
+))

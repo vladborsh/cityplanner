@@ -1,0 +1,13 @@
+// PLACEHOLDER numbers for balance tuning; temporary look until T-198/T-199 (T-196).
+Building((
+    id: "spec_it_cluster_l",
+    name: "IT cluster L",
+    zone: Office,
+    level: 1,
+    lot: (4, 4),
+    jobs: (0, 10, 28, 14),
+    consumption: {Water: 30.0, Sewage: 30.0, Power: 50.0},
+    tax_base: 400.0,
+    styles: ["office_glass_tower_b", "office_ribbon_block_b", "office_stepped_hq_b", "office_twin_offices_b"],
+    spec: Some(ItCluster),
+))

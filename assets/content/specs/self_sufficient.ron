@@ -1,0 +1,12 @@
+// Numbers are placeholders // tune later (T-196); the icon is borrowed until T-197.
+Spec((
+    kind: SelfSufficient,
+    name: "Self-sufficient",
+    icon: "zone_res_low",
+    zones: [ResLow],
+    tax_mul: 0.8,
+    tourist_weight: 1.0,
+    noise_add: 0.0,
+    land_value_add: 0.0,
+    goods_mul: 1.0,
+))

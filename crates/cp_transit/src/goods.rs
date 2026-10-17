@@ -207,7 +207,13 @@ pub fn run_goods(
             }
             ZoneType::ComLow | ZoneType::ComHigh => {
                 let s = goods.stock.entry(id).or_default();
-                *s = (*s - bal.goods_per_job * filled(id)).max(0.0);
+                // A specialised shop uses goods at its own rate (T-196, Organic).
+                let mul = db
+                    .building(b.def)
+                    .spec
+                    .and_then(|k| db.spec(k))
+                    .map_or(1.0, |s| s.goods_mul);
+                *s = (*s - bal.goods_per_job * filled(id) * mul).max(0.0);
                 let empty = *s <= 0.0;
                 let low = *s < bal.goods_import_threshold;
                 let b = buildings.get(id).expect("listed");
