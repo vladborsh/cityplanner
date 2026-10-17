@@ -102,7 +102,11 @@ fn every_def_builds_valid_meshes_that_fit_their_lot() {
 fn height_follows_floors_and_roof() {
     let e = env();
     let ground = e.terrain.height(Vec2::new(5120.0, 5120.0));
-    for (def_id, def) in e.db.buildings().filter(|(_, d)| d.service.is_none()) {
+    // The specialisation buildings are silhouettes of their own (T-198), not boxes.
+    for (def_id, def) in
+        e.db.buildings()
+            .filter(|(_, d)| d.service.is_none() && d.spec.is_none())
+    {
         let b = building(def_id, &e.db, BuildingState::Active, 0);
         let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
         let st = facade_style(def.zone, def.level);
@@ -861,6 +865,57 @@ fn the_ten_unique_silhouettes_are_distinct_and_the_monuments_tower() {
         assert!(heights[monument] > 30.0, "{monument}: {heights:?}");
     }
     assert!(heights["tv_tower"] > 80.0 && heights["skyline_spire"] > 100.0);
+}
+
+/// T-198, T-199: the five specialisation silhouettes are distinct, build at every LOD (never
+/// growing with distance), stay low-rise and grow with the lot (large taller than small or
+/// at least wider).
+#[test]
+fn the_five_specialisation_silhouettes_are_distinct_and_grow_with_the_lot() {
+    let e = env();
+    let ground = e.terrain.height(Vec2::new(5120.0, 5120.0));
+    let mut shapes = BTreeSet::new();
+    for kind in [
+        "leisure",
+        "tourism",
+        "organic",
+        "it_cluster",
+        "self_sufficient",
+    ] {
+        let mut wide = Vec::new();
+        for size in ["s", "m", "l"] {
+            let name = format!("spec_{kind}_{size}");
+            let (def_id, def) = service_def(&e, &name);
+            let style = e.db.style(e.db.style_id(&def.styles[0]).unwrap());
+            assert!(style.massing as u8 >= 35, "{name} has a massing of its own");
+            let b = building(def_id, &e.db, BuildingState::Active, 0);
+            let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+            let (n, m, f) = (
+                p.near.triangle_count(),
+                p.mid.triangle_count(),
+                p.far.triangle_count(),
+            );
+            assert!(n >= m && m >= f && n > f && f > 0, "{name}: {n} {m} {f}");
+            for mesh in [&p.near, &p.mid, &p.far] {
+                assert!(
+                    mesh.positions.iter().flatten().all(|v| v.is_finite()),
+                    "{name}"
+                );
+            }
+            let (lo, hi) = extent(&p.far);
+            assert!(hi.y - ground > 3.0 && hi.y - ground < 40.0, "{name}");
+            wide.push(hi.x - lo.x);
+            if size == "m" {
+                shapes.insert((
+                    p.near.positions.len(),
+                    p.mid.positions.len(),
+                    p.far.positions.len(),
+                ));
+            }
+        }
+        assert!(wide[0] < wide[2], "{kind}: {wide:?}");
+    }
+    assert_eq!(shapes.len(), 5, "{shapes:?}");
 }
 
 /// T-114: the turbine's rotor is three blades around the hub, in the plane perpendicular to its

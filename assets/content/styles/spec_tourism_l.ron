@@ -1,0 +1,15 @@
+// Silhouette of a district specialisation building (T-198, T-199): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "spec_tourism_l",
+    massing: SpecTourism,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.87, 0.79, 0.62)],
+        roof: [(0.58, 0.28, 0.23)],
+        trim: [(0.97, 0.95, 0.90)],
+        glass: (0.45, 0.70, 0.88),
+    ),
+    facade: Punched,
+))

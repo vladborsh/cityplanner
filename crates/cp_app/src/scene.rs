@@ -47,8 +47,62 @@ pub const SHOWCASE: &str = "showcase";
 /// Look at it with `--cam uniques`.
 pub const UNIQUES: &str = "uniques";
 
+/// Specialisation buildings scene (T-198, T-199): five kinds in columns, small, medium and large
+/// in rows. Look at it with `--cam specs`.
+pub const SPECS: &str = "specs";
+
 /// Builds the [`UNIQUES`] scene; returns how many buildings stand.
 pub fn build_uniques(sim: &mut SimRunner) -> usize {
+    build_showcase_defs(sim, |db| {
+        let mut defs: Vec<_> = db
+            .buildings()
+            .filter(|(_, d)| d.unique.is_some())
+            .map(|(i, d)| {
+                (
+                    d.unique.as_ref().is_some_and(|u| u.monument),
+                    d.id.clone(),
+                    i,
+                )
+            })
+            .collect();
+        defs.sort();
+        defs.iter()
+            .enumerate()
+            .map(|(col, (_, _, id))| (*id, -225.0 + col as f32 * 50.0, 0.0))
+            .collect()
+    })
+}
+
+/// Builds the [`SPECS`] scene; returns how many buildings stand.
+pub fn build_specs(sim: &mut SimRunner) -> usize {
+    build_showcase_defs(sim, |db| {
+        let mut out = Vec::new();
+        for (col, kind) in [
+            "leisure",
+            "tourism",
+            "organic",
+            "it_cluster",
+            "self_sufficient",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for (row, size) in ["s", "m", "l"].into_iter().enumerate() {
+                if let Some(id) = db.building_id(&format!("spec_{kind}_{size}")) {
+                    out.push((id, -100.0 + col as f32 * 50.0, row as f32 * 45.0));
+                }
+            }
+        }
+        out
+    })
+}
+
+/// Free-standing buildings at `(dx, dz)` from the middle of the map, state Active, on a road
+/// segment borrowed for their access point.
+fn build_showcase_defs(
+    sim: &mut SimRunner,
+    layout: impl Fn(&ContentDb) -> Vec<(cp_content::BuildingDefId, f32, f32)>,
+) -> usize {
     use cp_building::{AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingState, Lot};
     let db = embedded_content();
     let c = cp_terrain::MAP_SIZE / 2.0;
@@ -73,20 +127,9 @@ pub fn build_uniques(sim: &mut SimRunner) -> usize {
         .next()
         .map(|(id, _)| id)
         .expect("a segment");
-    let mut defs: Vec<_> = db
-        .buildings()
-        .filter(|(_, d)| d.unique.is_some())
-        .map(|(i, d)| {
-            (
-                d.unique.as_ref().is_some_and(|u| u.monument),
-                d.id.clone(),
-                i,
-            )
-        })
-        .collect();
-    defs.sort();
+    let defs = layout(&db);
     let mut grid = sim.world_mut().resource_mut::<BuildingGrid>();
-    for (col, (_, _, id)) in defs.iter().enumerate() {
+    for (id, dx, dz) in &defs {
         let d = db.building(*id);
         grid.insert(Building {
             def: *id,
@@ -99,7 +142,7 @@ pub fn build_uniques(sim: &mut SimRunner) -> usize {
             level: d.level,
             state: BuildingState::Active,
             ready_at: cp_core::Tick(0),
-            pos: Vec2::new(c - 225.0 + col as f32 * 50.0, c - 130.0),
+            pos: Vec2::new(c + dx, c - 130.0 + dz),
             rot: 0.0,
             access: Some(AccessPoint { segment, t: 0.5 }),
             flags: BuildingFlags::default(),

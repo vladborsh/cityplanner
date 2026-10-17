@@ -416,15 +416,16 @@ fn every_zone_and_level_has_four_looks_and_every_zone_five_combinations() {
     }
     // At least five looks per zone type (the tall zones have one set per height band), none unused.
     let used: BTreeSet<&str> = per_level.values().flatten().copied().collect();
-    for (_, s) in db
-        .styles()
-        .filter(|(_, s)| !s.id.starts_with("service_") && !s.id.starts_with("unique_"))
-    {
+    for (_, s) in db.styles().filter(|(_, s)| {
+        !s.id.starts_with("service_") && !s.id.starts_with("unique_") && !s.id.starts_with("spec_")
+    }) {
         assert!(used.contains(s.id.as_str()), "style {} is unused", s.id);
     }
     assert!(
         db.styles()
-            .filter(|(_, s)| !s.id.starts_with("service_") && !s.id.starts_with("unique_"))
+            .filter(|(_, s)| !s.id.starts_with("service_")
+                && !s.id.starts_with("unique_")
+                && !s.id.starts_with("spec_"))
             .count()
             >= 30
     );

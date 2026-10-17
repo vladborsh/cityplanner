@@ -196,6 +196,8 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c - 60.0, 300.0, c + 150.0),
             Vec3::new(c - 60.0, 0.0, c - 10.0),
         ),
+        // The specialisation buildings, kinds in columns and sizes in rows (`--scene specs`).
+        "specs" => (Vec3::new(c, 170.0, c + 120.0), Vec3::new(c, 5.0, c - 85.0)),
         // The ten unique buildings in a row (`--scene uniques`).
         "uniques" => (
             Vec3::new(c, 150.0, c + 190.0),
@@ -265,6 +267,9 @@ pub fn build_sim(
     } else if scene == Some(scene::METRO) {
         let n = scene::build_metro(&mut sim);
         info!("scene metro: {n} stations");
+    } else if scene == Some(scene::SPECS) {
+        let n = scene::build_specs(&mut sim);
+        info!("scene specs: {n} buildings");
     } else if scene == Some(scene::UNIQUES) {
         let n = scene::build_uniques(&mut sim);
         info!("scene uniques: {n} buildings");

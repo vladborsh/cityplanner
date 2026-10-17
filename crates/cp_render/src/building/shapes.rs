@@ -2998,7 +2998,13 @@ fn spec(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                 sc.trim,
                 sc.roof,
             );
-            let stripes = if far { 3 } else { 6 };
+            let stripes = if far {
+                3
+            } else if near {
+                8
+            } else {
+                6
+            };
             for k in 0..stripes {
                 let u = (-0.8 + 1.6 * (k as f32 + 0.5) / stripes as f32) * hu;
                 let col = if k % 2 == 0 {

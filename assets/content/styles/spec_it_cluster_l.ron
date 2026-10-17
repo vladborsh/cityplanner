@@ -1,0 +1,15 @@
+// Silhouette of a district specialisation building (T-198, T-199): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "spec_it_cluster_l",
+    massing: SpecItCluster,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.68, 0.75, 0.81)],
+        roof: [(0.28, 0.34, 0.41)],
+        trim: [(0.90, 0.94, 0.97)],
+        glass: (0.35, 0.68, 0.85),
+    ),
+    facade: Punched,
+))

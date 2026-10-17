@@ -1,4 +1,4 @@
-// PLACEHOLDER numbers for balance tuning; temporary look until T-198/T-199 (T-196).
+// PLACEHOLDER numbers for balance tuning (T-196).
 Building((
     id: "spec_leisure_l",
     name: "Leisure L",
@@ -8,6 +8,6 @@ Building((
     jobs: (6, 14, 5, 0),
     consumption: {Water: 16.0, Sewage: 16.0, Power: 28.0},
     tax_base: 160.0,
-    styles: ["com_low_arcade_l_b", "com_low_corner_shop_b", "com_low_gabled_store_b", "com_low_twin_shops_b"],
+    styles: ["spec_leisure_l"],
     spec: Some(Leisure),
 ))

@@ -1,4 +1,4 @@
-// PLACEHOLDER numbers for balance tuning; temporary look until T-198/T-199 (T-196).
+// PLACEHOLDER numbers for balance tuning (T-196).
 Building((
     id: "spec_self_sufficient_s",
     name: "Self-sufficient S",
@@ -8,6 +8,6 @@ Building((
     households: 2,
     consumption: {Water: 1.2, Sewage: 1.2, Power: 2.5},
     tax_base: 14.0,
-    styles: ["res_low_cottage_gabled_a", "res_low_modern_shed_a", "res_low_slate_mansard_a", "res_low_villa_hipped_a"],
+    styles: ["spec_self_sufficient_s"],
     spec: Some(SelfSufficient),
 ))
