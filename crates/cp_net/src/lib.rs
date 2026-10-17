@@ -12,16 +12,16 @@ pub mod run;
 pub mod stretches;
 
 pub use build::{
-    AppliedSnap, CONTROL_LINE_TOL, CONTROL_SPACING, ClearanceWarning, DemolishRef, ElevationMode,
-    MAX_TUNNEL_DEPTH, NodeRef, OneWayWarning, PIER_SPACING, PlannedSegment, PlannedSplit,
-    RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SAME_DEPTH_TOL, SnapKind,
-    SnapOptions, SnapReport, SnapReportKind, StepContext, TUNNEL_CLEARANCE, ZONE_CELL,
+    AppliedSnap, CONTROL_LINE_TOL, CONTROL_SPACING, ClearanceWarning, ControlMark, DemolishRef,
+    ElevationMode, MAX_TUNNEL_DEPTH, NodeRef, OneWayWarning, PIER_SPACING, PlannedSegment,
+    PlannedSplit, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SAME_DEPTH_TOL,
+    SnapKind, SnapOptions, SnapReport, SnapReportKind, StepContext, TUNNEL_CLEARANCE, ZONE_CELL,
     clearance_report, one_way_report, pier_positions, quantize_path, segment_cost,
     validate_road_path, validate_road_path_report,
 };
 pub use command::{
     NetCommand, NetError, PART_SNAP, apply, apply_build_plan, build_unowned, curve_outside_owned,
-    plan_build,
+    plan_applied, plan_build,
 };
 pub use connections::{LaneConnection, Links, PedLink, PedLinkKind, Turn};
 pub use control::{ControlPlan, LightPlan, Phase, Priority, Signal};

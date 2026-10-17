@@ -292,17 +292,13 @@ fn on_top_of_a_lot_or_another_free_building_is_blocked() {
 fn a_lot_cell_held_by_a_building_blocks_even_without_a_listed_building() {
     use cp_zone::{RoadZoning, ZoneCellRef};
     let mut f = Fixture::new();
-    f.zones.sync(
-        &f.net,
-        &|id| {
-            let d = f.db.road(id);
-            RoadZoning {
-                allows_zoning: d.allows_zoning,
-                half_width: d.width / 2.0,
-            }
-        },
-        &|_, s| s.curve,
-    );
+    f.zones.sync(&f.net, &|id| {
+        let d = f.db.road(id);
+        RoadZoning {
+            allows_zoning: d.allows_zoning,
+            half_width: d.width / 2.0,
+        }
+    });
     let (block, _) = f.zones.blocks().next().unwrap();
     let cell = ZoneCellRef {
         block,

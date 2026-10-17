@@ -40,6 +40,21 @@ pub struct StepContext<'a> {
     pub content: &'a ContentDb,
     /// `Alt` held: no joining and no length step (the direction snaps stay).
     pub alt: bool,
+    /// Where the cells of the streets near the path end every 8th column (the zone layout,
+    /// BUG-047). Empty: the control points 64 m from the anchor of each stretch stand in.
+    pub marks: &'a [ControlMark],
+}
+
+/// A column boundary of the zoning along a street, a candidate for the length step to jump to:
+/// the perpendicular to `dir` through `pos`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ControlMark {
+    /// On the street axis.
+    pub pos: Vec2,
+    /// Unit direction of the street there.
+    pub dir: Vec2,
+    /// Metres from the start of the cells, for the label.
+    pub along: f32,
 }
 
 /// Where a joined vertex landed, with what the next leg takes as direction references.
@@ -133,33 +148,41 @@ fn control_line(
 ) -> Option<(f32, Vec2, f32, Vec2)> {
     let mut seen: BTreeSet<SegmentId> = BTreeSet::new();
     let mut best: Option<(f32, f32, Vec2, f32, Vec2)> = None;
-    for (id, s) in cx.graph.segments() {
-        if s.elevation != Elevation::Ground || seen.contains(&id) {
-            continue;
+    let mut consider = |c: Vec2, tau: Vec2, along: f32| {
+        let denom = dir.dot(tau);
+        if tau == Vec2::ZERO || denom.abs() < 0.2 {
+            return;
         }
-        if s.curve.bounds_distance_xz(p) > GUIDE_RADIUS + 1e-3
-            || s.curve.nearest_xz(p).1 > GUIDE_RADIUS
-        {
-            continue;
+        let u = (c - prev).dot(tau) / denom;
+        let miss = (u - len).abs();
+        if u >= ZONE_CELL && miss <= CONTROL_LINE_TOL && best.is_none_or(|(bm, ..)| miss < bm) {
+            best = Some((miss, u, c, along, Vec2::new(-tau.y, tau.x)));
         }
-        let Some(st) = stretch(cx.graph, id) else {
-            continue;
-        };
-        seen.extend(st.segments.iter().copied());
-        for cp in control_points(cx.graph, &st) {
-            let Some(seg) = cx.graph.segment(cp.seg) else {
-                continue;
-            };
-            let tau = dir_xz(seg.curve.tangent(seg.curve.arc_table().s_to_t(cp.s)));
-            let c = to_xz(cp.pos);
-            let denom = dir.dot(tau);
-            if tau == Vec2::ZERO || denom.abs() < 0.2 {
+    };
+    if !cx.marks.is_empty() {
+        for m in cx.marks {
+            consider(m.pos, m.dir, m.along);
+        }
+    } else {
+        for (id, s) in cx.graph.segments() {
+            if s.elevation != Elevation::Ground || seen.contains(&id) {
                 continue;
             }
-            let u = (c - prev).dot(tau) / denom;
-            let miss = (u - len).abs();
-            if u >= ZONE_CELL && miss <= CONTROL_LINE_TOL && best.is_none_or(|(bm, ..)| miss < bm) {
-                best = Some((miss, u, c, cp.along, Vec2::new(-tau.y, tau.x)));
+            if s.curve.bounds_distance_xz(p) > GUIDE_RADIUS + 1e-3
+                || s.curve.nearest_xz(p).1 > GUIDE_RADIUS
+            {
+                continue;
+            }
+            let Some(st) = stretch(cx.graph, id) else {
+                continue;
+            };
+            seen.extend(st.segments.iter().copied());
+            for cp in control_points(cx.graph, &st) {
+                let Some(seg) = cx.graph.segment(cp.seg) else {
+                    continue;
+                };
+                let tau = dir_xz(seg.curve.tangent(seg.curve.arc_table().s_to_t(cp.s)));
+                consider(to_xz(cp.pos), tau, cp.along);
             }
         }
     }
@@ -370,6 +393,7 @@ mod tests {
                 graph: g,
                 content: db,
                 alt,
+                marks: &[],
             },
         )
     }
@@ -502,6 +526,34 @@ mod tests {
         );
         assert!(straight_to(&p).distance(v(70.0, 0.0)) < 0.01);
         assert_eq!(r.kind, SnapReportKind::Node);
+    }
+
+    #[test]
+    fn given_marks_stand_in_for_the_control_points() {
+        let (db, mut g) = (db(), NetGraph::new());
+        road(&db, &mut g, v(3.0, 30.0), v(200.0, 30.0));
+        // Cells of 8.75 m: the 8th boundary is at x = 73, not at the control point 67.
+        let marks = [ControlMark {
+            pos: v(73.0, 30.0),
+            dir: v(1.0, 0.0),
+            along: 70.0,
+        }];
+        let path = RoadPath::Straight {
+            from: v(0.0, 0.0),
+            to: v(71.0, 0.0),
+        };
+        let r = req(&db, path);
+        let (p, rep) = quantize_path(
+            &r,
+            &StepContext {
+                graph: &g,
+                content: &db,
+                alt: false,
+                marks: &marks,
+            },
+        );
+        assert!((straight_to(&p).x - 73.0).abs() < 0.05, "{p:?}");
+        assert_eq!(rep.kind, SnapReportKind::ControlLine(70));
     }
 
     #[test]

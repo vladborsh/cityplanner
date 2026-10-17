@@ -54,17 +54,13 @@ fn the_plant_is_placed_on_land_beside_the_road_and_told_water_on_a_pond() {
     let t = terrain();
     let mut zones = ZoneGrid::new();
     zones.set_terrain(Arc::clone(&t));
-    zones.sync(
-        &net,
-        &|id| {
-            let d = db.road(id);
-            RoadZoning {
-                allows_zoning: d.allows_zoning,
-                half_width: d.width / 2.0,
-            }
-        },
-        &|_, s| s.curve,
-    );
+    zones.sync(&net, &|id| {
+        let d = db.road(id);
+        RoadZoning {
+            allows_zoning: d.allows_zoning,
+            half_width: d.width / 2.0,
+        }
+    });
     let tiles = TileOwnership::m1_around((2, 2));
     let (block, _) = zones
         .blocks()

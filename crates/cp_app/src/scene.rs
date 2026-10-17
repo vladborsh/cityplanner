@@ -545,8 +545,9 @@ pub fn build_train(sim: &mut SimRunner) -> bool {
     false
 }
 
-/// Zone cell scene (BUG-043): a street built as four chained segments of different lengths and,
-/// beside it, a block of four streets. Look at it with `--overlay zones --cam zones`.
+/// Zone cell scene (BUG-043, BUG-047): a street built as four chained segments of different
+/// lengths and, south of it, a grid of 3 x 3 blocks with 64, 72 and 80 m between the road edges
+/// and a side street meeting the east edge in a T. Look at it with `--overlay zones --cam zones`.
 pub const ZONES: &str = "zones";
 
 /// Builds the [`ZONES`] scene through the normal commands.
@@ -557,23 +558,34 @@ pub fn build_zones(sim: &mut SimRunner) {
         .resource_mut::<cp_core::treasury::Treasury>()
         .balance = cp_core::Cost(1_000_000_000);
     let basic = db.road_id("basic_2l").expect("basic_2l");
+    let hw = db.road(basic).width / 2.0;
     let mut x = c - 200.0;
     let mut legs: Vec<(Vec2, Vec2)> = Vec::new();
     for len in [90.0f32, 71.0, 85.0, 63.0] {
         legs.push((Vec2::new(x, c), Vec2::new(x + len, c)));
         x += len;
     }
-    let (o, s) = (Vec2::new(c - 120.0, c + 60.0), 80.0);
-    let corners = [
-        o,
-        o + Vec2::new(s, 0.0),
-        o + Vec2::new(s, s),
-        o + Vec2::new(0.0, s),
-        o,
-    ];
-    for k in 0..4 {
-        legs.push((corners[k], corners[k + 1]));
+    // Streets at the axis positions that leave 64, 72 and 80 m between the road edges, cut at
+    // every crossing.
+    let mut pos = vec![0.0f32];
+    for gap in [64.0f32, 72.0, 80.0] {
+        pos.push(pos.last().copied().unwrap_or(0.0) + gap + 2.0 * hw);
     }
+    let o = Vec2::new(c - 130.0, c + 40.0);
+    for &z in &pos {
+        for w in pos.windows(2) {
+            legs.push((o + Vec2::new(w[0], z), o + Vec2::new(w[1], z)));
+        }
+    }
+    for &x in &pos {
+        for w in pos.windows(2) {
+            legs.push((o + Vec2::new(x, w[0]), o + Vec2::new(x, w[1])));
+        }
+    }
+    // A side street ending on the middle of the east edge: a T.
+    let east = pos[3];
+    let mid = (pos[1] + pos[2]) / 2.0;
+    legs.push((o + Vec2::new(east + 90.0, mid), o + Vec2::new(east, mid)));
     for (from, to) in legs {
         sim.push_command(
             SimCommand::Net(NetCommand::BuildRoad {

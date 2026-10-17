@@ -3,18 +3,21 @@
 pub mod command;
 pub mod geom;
 pub mod grid;
+pub mod layout;
 pub mod legacy;
+mod roads;
 
 pub use command::{ZoneCommand, ZoneError, apply, paint};
 pub use grid::{
-    BLOCK_DEPTH, CELL_SIZE, MAX_CELL_SLOPE, PENETRATION_EPS, RoadZoning, Side, ZoneBlock,
-    ZoneBlockId, ZoneCellRef, ZoneGrid, strip_layout,
+    BLOCK_DEPTH, CELL_SIZE, MAX_CELL_SLOPE, PENETRATION_EPS, RoadZoning, Side, StripPreview,
+    ZoneBlock, ZoneBlockId, ZoneCellRef, ZoneGrid,
 };
+pub use layout::{BlockDraft, FrontEnd, Frontage, Mark, fit_cells, frontage_of, frontages};
 
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::system::{Res, ResMut};
 use cp_content::SimContent;
-use cp_net::{JunctionGeometry, NetGraph};
+use cp_net::NetGraph;
 
 /// `Network`-phase system: keeps [`ZoneGrid`] in line with the road network.
 ///
@@ -25,7 +28,6 @@ use cp_net::{JunctionGeometry, NetGraph};
 pub fn update_zones(
     net: Res<NetGraph>,
     content: Option<Res<SimContent>>,
-    junctions: Res<JunctionGeometry>,
     terrain: Option<Res<cp_terrain::SimTerrain>>,
     mut grid: ResMut<ZoneGrid>,
 ) {
@@ -40,56 +42,26 @@ pub fn update_zones(
     if !net.is_changed() && grid.index_ready() && !grid.terrain_dirty() {
         return;
     }
-    sync_grid(&mut grid, &net, &content.0, &junctions);
+    sync_grid(&mut grid, &net, &content.0);
 }
 
 /// Brings `grid` in line with `net` (what [`update_zones`] does once the net changed). Also used
 /// by `cp_sim` on a clone while the sim is paused, so a road built then shows its cells.
-pub fn sync_grid(
-    grid: &mut ZoneGrid,
-    net: &NetGraph,
-    db: &cp_content::ContentDb,
-    junctions: &JunctionGeometry,
-) {
+pub fn sync_grid(grid: &mut ZoneGrid, net: &NetGraph, db: &cp_content::ContentDb) {
     grid.set_block_fit(db.balance().zoning_block_fit_m);
-    grid.sync(
-        net,
-        &|id| {
-            let d = db.road(id);
-            RoadZoning {
-                allows_zoning: d.allows_zoning,
-                half_width: d.width / 2.0,
-            }
-        },
-        &|id, seg| zoned_curve(junctions, id, seg),
-    );
+    grid.sync(net, &road_zoning(db));
 }
 
-/// The stretch of a segment that is zoned: its curve cut at the setback of every end that
-/// meets a real junction (three or more arms). Dead ends and plain bends (degree <= 2) have
-/// no setback, so blocks run to the end of the segment (BUG-016, §7 `floor(len / 8)`).
-fn zoned_curve(
-    junctions: &JunctionGeometry,
-    id: cp_net::SegmentId,
-    seg: &cp_net::Segment,
-) -> cp_core::curve::CubicBezier3 {
-    let t_of = |node, at_start: bool, default: f32| {
-        junctions
-            .get(node)
-            .filter(|j| j.arms.len() >= 3)
-            .and_then(|j| {
-                j.arms
-                    .iter()
-                    .find(|a| a.segment == id && a.at_start == at_start)
-            })
-            .map_or(default, |a| a.trim_t)
-    };
-    let t0 = t_of(seg.start, true, 0.0);
-    let t1 = t_of(seg.end, false, 1.0);
-    if t1 > t0 {
-        seg.curve.sub_curve(t0, t1)
-    } else {
-        seg.curve
+/// What the zoning needs to know about each road type of `db`.
+pub fn road_zoning(
+    db: &cp_content::ContentDb,
+) -> impl Fn(cp_content::RoadDefId) -> RoadZoning + '_ {
+    move |id| {
+        let d = db.road(id);
+        RoadZoning {
+            allows_zoning: d.allows_zoning,
+            half_width: d.width / 2.0,
+        }
     }
 }
 

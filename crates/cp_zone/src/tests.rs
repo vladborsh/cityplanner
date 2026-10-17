@@ -57,7 +57,7 @@ impl World {
 
     fn sync(&mut self) {
         let db = &self.db;
-        self.grid.sync(&self.net, &zoning(db), &|_, s| s.curve);
+        self.grid.sync(&self.net, &zoning(db));
     }
 }
 
@@ -243,7 +243,7 @@ fn junction_has_no_double_cells_and_older_blocks_win() {
 }
 
 #[test]
-fn older_block_wins_an_overlap_deterministically() {
+fn the_nearest_street_wins_an_overlap_and_ties_are_a_lattice_square_each() {
     // Two parallel roads 60 m apart: the facing blocks (rows reach 38 m from each axis)
     // overlap in the middle without touching the other road.
     let mut w = World::new();
@@ -259,20 +259,17 @@ fn older_block_wins_an_overlap_deterministically() {
             .find(|id| w.grid.block(*id).unwrap().side == side)
             .unwrap()
     };
-    // Direction +X: Right side is +Z. A's right block faces B's left block.
-    let older = facing(a, Side::Right);
-    let newer = facing(b, Side::Left);
-    assert!(older < newer);
-    let (o, n) = (w.grid.block(older).unwrap(), w.grid.block(newer).unwrap());
-    assert_eq!(
-        o.cell_count() - o.valid_count(),
-        0,
-        "older block keeps its cells"
+    // Direction +X: Right side is +Z. A's right block faces B's left block; 48 m between the
+    // road edges is 6 rows, so row 3 of each is the square that row 2 of the other owns.
+    let (o, n) = (
+        w.grid.block(facing(a, Side::Right)).unwrap(),
+        w.grid.block(facing(b, Side::Left)).unwrap(),
     );
-    assert!(
-        n.valid_count() < n.cell_count(),
-        "newer block loses the contested cells"
-    );
+    for blk in [o, n] {
+        let lost: Vec<usize> = (0..blk.cell_count()).filter(|i| !blk.valid[*i]).collect();
+        assert_eq!(lost.len(), 10, "row 3 only");
+        assert!(lost.iter().all(|i| i % 4 == 3));
+    }
 }
 
 fn arc(radius: f32, sweep: f32) -> CubicBezier3 {
@@ -368,7 +365,7 @@ fn changes_rebuild_blocks_and_match_a_from_scratch_sync() {
     // same cells to the last one: a new segment continues the row of the straight neighbour it
     // joins, so the layout depends on the order of building, BUG-043.)
     let mut fresh = ZoneGrid::new();
-    fresh.sync(&w.net, &zoning(&w.db), &|_, s| s.curve);
+    fresh.sync(&w.net, &zoning(&w.db));
     let keys =
         |g: &ZoneGrid| -> Vec<_> { summary(g).into_iter().map(|(s, d, _)| (s, d)).collect() };
     assert_eq!(keys(&w.grid), keys(&fresh));
@@ -385,13 +382,13 @@ fn serde_round_trip_keeps_state_and_resyncs_without_changes() {
     let mut loaded: ZoneGrid = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(loaded, w.grid);
     // A sync of an unchanged net after loading rebuilds the index and changes nothing.
-    loaded.sync(&w.net, &zoning(&w.db), &|_, s| s.curve);
+    loaded.sync(&w.net, &zoning(&w.db));
     assert_eq!(loaded, w.grid);
     assert_eq!(postcard::to_stdvec(&loaded).unwrap(), bytes);
     // And it can still react to changes.
     let s = w.net.segments().next().unwrap().0;
     w.net.remove_segment(s).unwrap();
-    loaded.sync(&w.net, &zoning(&w.db), &|_, s| s.curve);
+    loaded.sync(&w.net, &zoning(&w.db));
     w.sync();
     assert_eq!(summary(&loaded), summary(&w.grid));
 }
@@ -421,41 +418,6 @@ fn bridges_do_not_zone_or_block() {
         w.grid.valid_cells(),
         w.grid.blocks().map(|(_, b)| b.cell_count()).sum::<usize>()
     );
-}
-
-#[test]
-fn blocks_cover_only_the_extent_given_and_rebuild_when_it_changes() {
-    let mut w = World::new();
-    let s = w.line("basic_2l", (1000.0, 1000.0), (1096.0, 1000.0)); // 96 m: 12 columns
-    let zoned = |w: &World| {
-        w.grid
-            .blocks_of(s)
-            .into_iter()
-            .flatten()
-            .map(|id| w.grid.block(id).unwrap().cols)
-            .collect::<Vec<_>>()
-    };
-    w.sync();
-    assert_eq!(zoned(&w), [12, 12]);
-    // A junction takes 20 m off each end: 56 m of road is zoned, 7 columns.
-    let db = &w.db;
-    w.grid.sync(&w.net, &zoning(db), &|_, seg| {
-        seg.curve.sub_curve(20.0 / 96.0, 76.0 / 96.0)
-    });
-    assert_eq!(zoned(&w), [7, 7]);
-    let b = w.grid.block(w.grid.blocks_of(s)[0].unwrap()).unwrap();
-    let first = b.footprints()[0].c;
-    assert!(
-        first.x > 1020.0 && first.x < 1030.0,
-        "starts after the setback: {first:?}"
-    );
-    // Same extent again: nothing is rebuilt.
-    let ids = w.grid.blocks_of(s);
-    let db = &w.db;
-    w.grid.sync(&w.net, &zoning(db), &|_, seg| {
-        seg.curve.sub_curve(20.0 / 96.0, 76.0 / 96.0)
-    });
-    assert_eq!(w.grid.blocks_of(s), ids);
 }
 
 #[test]
@@ -1251,5 +1213,329 @@ fn painted_zones_stay_on_the_same_ground_when_a_segment_is_flipped() {
     w.net.flip_segment(seg, &def).unwrap();
     w.sync();
     let after = centres(&w);
-    assert_eq!(before, after);
+    // The lattice starts at the other end now, so the cells moved by the remainder (< 1 cell);
+    // the painting is carried over by position.
+    assert_eq!(before.len(), after.len());
+    for (x, z) in &before {
+        assert!(
+            after
+                .iter()
+                .any(|(a, b)| (a - x).abs() <= 40 && (b - z).abs() <= 40),
+            "{x},{z}"
+        );
+    }
+}
+
+/// Zone layout v2 (§7.1, BUG-047).
+mod layout_v2 {
+    use super::*;
+    use crate::geom::quad_intersection_area;
+    use bevy_math::Vec2;
+
+    /// Corners of every valid cell.
+    fn valid_cells(g: &ZoneGrid) -> Vec<(ZoneCellRef, Obb)> {
+        let mut out = Vec::new();
+        for (bid, b) in g.blocks() {
+            for (i, ok) in b.valid.iter().enumerate() {
+                if *ok {
+                    let r = ZoneCellRef {
+                        block: bid,
+                        cell: i as u16,
+                    };
+                    out.push((r, g.cell_footprint(r).unwrap()));
+                }
+            }
+        }
+        out
+    }
+
+    /// Corner coordinates of every valid cell, the corners of each in a canonical order.
+    fn polygons(g: &ZoneGrid) -> Vec<[f32; 8]> {
+        valid_cells(g)
+            .iter()
+            .map(|(_, o)| {
+                let mut c = o.corners().map(|p| (p.x, p.y));
+                // The same square from either side starts at another corner: order them.
+                c.sort_by(|a, b| {
+                    (a.0 * 10.0)
+                        .round()
+                        .total_cmp(&(b.0 * 10.0).round())
+                        .then((a.1 * 10.0).round().total_cmp(&(b.1 * 10.0).round()))
+                });
+                let mut out = [0f32; 8];
+                for (k, (x, z)) in c.iter().enumerate() {
+                    out[k * 2] = *x;
+                    out[k * 2 + 1] = *z;
+                }
+                out
+            })
+            .collect()
+    }
+
+    /// The polygons of `a` that have no partner within 2 cm in `b`.
+    fn unmatched(a: &[[f32; 8]], b: &[[f32; 8]]) -> Vec<[f32; 8]> {
+        let mut used = vec![false; b.len()];
+        let mut out = Vec::new();
+        for p in a {
+            let hit = (0..b.len())
+                .find(|&j| !used[j] && p.iter().zip(&b[j]).all(|(x, y)| (x - y).abs() <= 0.02));
+            match hit {
+                Some(j) => used[j] = true,
+                None => out.push(*p),
+            }
+        }
+        out
+    }
+
+    fn assert_no_overlap_and_off_roads(w: &World) {
+        let cells = valid_cells(&w.grid);
+        for i in 0..cells.len() {
+            for j in i + 1..cells.len() {
+                let a = quad_intersection_area(&cells[i].1.corners(), &cells[j].1.corners());
+                assert!(
+                    a <= 0.05,
+                    "{:?} {:?} overlap {a} m2",
+                    cells[i].0,
+                    cells[j].0
+                );
+            }
+        }
+        for (r, o) in &cells {
+            for (_, s) in w.net.segments() {
+                let hw = w.db.road(s.road).width / 2.0;
+                let (a, b) = (
+                    cp_core::curve::to_xz(s.curve.p0),
+                    cp_core::curve::to_xz(s.curve.p3),
+                );
+                assert!(
+                    o.distance_to_segment(a, b) >= hw - 0.06,
+                    "{r:?} lies on a road"
+                );
+            }
+        }
+    }
+
+    /// A grid of straight streets at `xs` and `zs` (axis positions), cut at every crossing.
+    fn city(order: u32, xs: &[f32], zs: &[f32]) -> World {
+        let mut w = World::new();
+        w.grid.set_block_fit(6.0);
+        let mut pieces: Vec<((f32, f32), (f32, f32))> = Vec::new();
+        for &z in zs {
+            for p in xs.windows(2) {
+                pieces.push(((p[0], z), (p[1], z)));
+            }
+        }
+        for &x in xs {
+            for p in zs.windows(2) {
+                pieces.push(((x, p[0]), (x, p[1])));
+            }
+        }
+        match order {
+            1 => pieces.reverse(),
+            2 => {
+                let n = pieces.len();
+                pieces = (0..n).map(|i| pieces[(i * 7) % n]).collect();
+            }
+            _ => {}
+        }
+        for (a, b) in pieces {
+            w.line(
+                "basic_2l",
+                (1000.0 + a.0, 1000.0 + a.1),
+                (1000.0 + b.0, 1000.0 + b.1),
+            );
+        }
+        w.sync();
+        w
+    }
+
+    const H: f32 = 6.0;
+
+    #[test]
+    fn a_grid_of_blocks_is_one_lattice_per_block_whatever_their_size() {
+        // Axis positions that leave 64, 70 and 80 m between the road edges.
+        let gaps = [64.0f32, 70.0, 80.0];
+        let mut pos = vec![0.0f32];
+        for g in gaps {
+            pos.push(pos.last().unwrap() + g + 2.0 * H);
+        }
+        let w = city(0, &pos, &pos);
+        assert_no_overlap_and_off_roads(&w);
+        let cells = valid_cells(&w.grid);
+        for (bx, gx) in gaps.iter().enumerate() {
+            for (bz, gz) in gaps.iter().enumerate() {
+                let (x0, z0) = (1000.0 + pos[bx] + H, 1000.0 + pos[bz] + H);
+                let (nx, ny) = (fit_cells(*gx, 6.0), fit_cells(*gz, 6.0));
+                let (cu, cv) = (nx.1, ny.1);
+                assert!((6.0..=10.0).contains(&cu) && (6.0..=10.0).contains(&cv));
+                let mut seen = vec![0u32; (nx.0 * ny.0) as usize];
+                for (_, o) in cells
+                    .iter()
+                    .filter(|(_, o)| o.c.x > x0 && o.c.x < x0 + gx && o.c.y > z0 && o.c.y < z0 + gz)
+                {
+                    let (fi, fj) = ((o.c.x - x0) / cu - 0.5, (o.c.y - z0) / cv - 0.5);
+                    let (i, j) = (fi.round(), fj.round());
+                    assert!(
+                        (fi - i).abs() * cu < 0.05 && (fj - j).abs() * cv < 0.05,
+                        "cell centre {:?} off the lattice",
+                        o.c
+                    );
+                    seen[(i as u32 * ny.0 + j as u32) as usize] += 1;
+                }
+                for i in 0..nx.0 {
+                    for j in 0..ny.0 {
+                        let near = i.min(nx.0 - 1 - i).min(j.min(ny.0 - 1 - j)) < 4;
+                        assert_eq!(
+                            seen[(i * ny.0 + j) as usize],
+                            u32::from(near),
+                            "block {bx},{bz} square {i},{j}"
+                        );
+                    }
+                }
+            }
+        }
+        // 64 m is 8 cells of 8 m; 70 m is 8 cells of 8.75 m.
+        assert_eq!(fit_cells(64.0, 6.0), (8, 8.0));
+        assert_eq!(fit_cells(70.0, 6.0), (8, 8.75));
+    }
+
+    #[test]
+    fn the_layout_does_not_depend_on_the_order_the_streets_were_built_in() {
+        let pos = [0.0f32, 76.0, 158.0, 250.0];
+        let a = polygons(&city(0, &pos, &pos).grid);
+        assert!(!a.is_empty());
+        for order in [1, 2] {
+            let b = polygons(&city(order, &pos, &pos).grid);
+            let only_a: Vec<_> = unmatched(&a, &b);
+            let only_b: Vec<_> = unmatched(&b, &a);
+            assert!(
+                only_a.is_empty() && only_b.is_empty(),
+                "order {order}: {} vs {} cells; only first {only_a:?}; only other {only_b:?}",
+                a.len(),
+                b.len()
+            );
+        }
+    }
+
+    fn row0_on(w: &World, z_sign: f32, z_axis: f32) -> Vec<Obb> {
+        let mut v: Vec<Obb> = valid_cells(&w.grid)
+            .into_iter()
+            .map(|(_, o)| o)
+            .filter(|o| (o.c.y - z_axis) * z_sign > 0.0 && (o.c.y - z_axis).abs() < H + 4.5)
+            .collect();
+        v.sort_by(|a, b| a.c.x.total_cmp(&b.c.x));
+        v
+    }
+
+    #[test]
+    fn a_t_junction_leaves_no_gap_opposite_the_side_street() {
+        let mut w = World::new();
+        w.line("basic_2l", (1000.0, 1000.0), (1080.0, 1000.0));
+        w.line("basic_2l", (1080.0, 1000.0), (1160.0, 1000.0));
+        w.line("basic_2l", (1080.0, 1000.0), (1080.0, 1100.0));
+        w.sync();
+        assert_no_overlap_and_off_roads(&w);
+        // North (-z): no side street, one run of 20 cells straight through the node.
+        let north = row0_on(&w, -1.0, 1000.0);
+        assert_eq!(north.len(), 20);
+        for p in north.windows(2) {
+            assert!((p[1].c.x - p[0].c.x - 8.0).abs() < 0.05);
+        }
+        // South (+z): the cells stop at the edges of the side street.
+        let south = row0_on(&w, 1.0, 1000.0);
+        let gap: Vec<f32> = south
+            .windows(2)
+            .map(|p| (p[1].c.x - p[1].half) - (p[0].c.x + p[0].half))
+            .filter(|g| *g > 0.05)
+            .collect();
+        assert_eq!(gap.len(), 1);
+        assert!((gap[0] - 2.0 * H).abs() < 0.1, "{gap:?}");
+    }
+
+    #[test]
+    fn a_street_cut_into_segments_is_laid_like_one_segment() {
+        let lens = [37.0f32, 96.0, 50.0, 96.0, 41.0];
+        let build = |branch_at: Option<usize>| {
+            let mut w = World::new();
+            let mut x = 1000.0;
+            for (k, l) in lens.iter().enumerate() {
+                w.line("basic_2l", (x, 1000.0), (x + l, 1000.0));
+                x += l;
+                if branch_at == Some(k) {
+                    w.line("basic_2l", (x, 1000.0), (x, 1100.0));
+                }
+            }
+            w.sync();
+            w
+        };
+        let w = build(None);
+        for sign in [-1.0, 1.0] {
+            let row = row0_on(&w, sign, 1000.0);
+            assert_eq!(row.len(), 40, "320 m is 40 cells of 8 m");
+            for p in row.windows(2) {
+                assert!((p[1].c.x - p[0].c.x - 8.0).abs() < 0.05);
+            }
+        }
+        let t = build(Some(1));
+        assert_no_overlap_and_off_roads(&t);
+        let north = row0_on(&t, -1.0, 1000.0);
+        assert_eq!(north.len(), 40);
+        for p in north.windows(2) {
+            assert!((p[1].c.x - p[0].c.x - 8.0).abs() < 0.05);
+        }
+        let _ = Vec2::ZERO;
+    }
+
+    #[test]
+    fn a_30_degree_street_and_a_curve_leave_no_cell_on_another() {
+        let mut w = World::new();
+        w.line("basic_2l", (1000.0, 1000.0), (1100.0, 1000.0));
+        w.line("basic_2l", (1100.0, 1000.0), (1200.0, 1000.0));
+        // A street leaving the node at 30 degrees.
+        let r = 30f32.to_radians();
+        w.line(
+            "basic_2l",
+            (1100.0, 1000.0),
+            (1100.0 + 120.0 * r.cos(), 1000.0 + 120.0 * r.sin()),
+        );
+        // A curved street under the first, and a straight one joining its end.
+        let curve = CubicBezier3 {
+            p0: Vec3::new(1000.0, 0.0, 1150.0),
+            p1: Vec3::new(1060.0, 0.0, 1100.0),
+            p2: Vec3::new(1140.0, 0.0, 1100.0),
+            p3: Vec3::new(1200.0, 0.0, 1150.0),
+        };
+        w.add("basic_2l", curve);
+        w.line("basic_2l", (1200.0, 1150.0), (1200.0, 1260.0));
+        w.sync();
+        assert!(w.grid.valid_cells() > 100);
+        assert_no_double_cells(&w.grid);
+        let cells = valid_cells(&w.grid);
+        for i in 0..cells.len() {
+            for j in i + 1..cells.len() {
+                let a = quad_intersection_area(&cells[i].1.corners(), &cells[j].1.corners());
+                assert!(
+                    a <= 0.05,
+                    "{:?} {:?} overlap {a} m2",
+                    cells[i].0,
+                    cells[j].0
+                );
+            }
+        }
+        // And no cell stands on the straight streets.
+        for (r, o) in &cells {
+            for (a, b) in [
+                ((1000.0, 1000.0), (1200.0, 1000.0)),
+                (
+                    (1100.0, 1000.0),
+                    (1100.0 + 120.0 * 30f32.to_radians().cos(), 1060.0),
+                ),
+            ] {
+                assert!(
+                    o.distance_to_segment(Vec2::new(a.0, a.1), Vec2::new(b.0, b.1)) >= H - 0.06,
+                    "{r:?} lies on a road"
+                );
+            }
+        }
+    }
 }

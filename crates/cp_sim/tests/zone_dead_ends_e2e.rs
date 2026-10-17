@@ -1,5 +1,6 @@
-//! BUG-016: zone blocks run to dead ends and plain bends (degree <= 2 nodes); only real
-//! junctions (three or more arms) keep their setback.
+//! BUG-016: zone blocks run to dead ends and plain bends (degree <= 2 nodes); a real
+//! junction (three or more arms) ends the blocks only on the side of the arm that meets the road
+//! (BUG-047: no setback, the through side runs on).
 
 use std::sync::Arc;
 
@@ -58,13 +59,15 @@ fn a_degree_two_node_loses_no_zoned_length() {
 }
 
 #[test]
-fn a_real_junction_keeps_its_setback() {
+fn a_real_junction_cuts_only_the_side_of_the_arm() {
     let (mut sim, db) = sim();
     let a = road(&mut sim, &db, (5120.0, 5000.0), (5160.0, 5000.0));
     road(&mut sim, &db, (5160.0, 5000.0), (5200.0, 5000.0));
     road(&mut sim, &db, (5160.0, 5000.0), (5160.0, 5040.0));
     sim.tick_once();
-    // The dead end at the far end is whole, the junction end is cut: fewer than 5 columns.
-    let c = cols(&sim, a);
-    assert!(c.iter().all(|&n| (1..5).contains(&n)), "{c:?}");
+    // The dead end at the far end is whole; at the junction the side of the stem is cut at the
+    // stem's road edge and the other side runs on to the node.
+    let mut c = cols(&sim, a);
+    c.sort();
+    assert_eq!(c, vec![4, 5]);
 }

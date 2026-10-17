@@ -198,8 +198,8 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 60.0, 0.0, c + 75.0),
         ),
         "zones" => (
-            Vec3::new(c - 60.0, 300.0, c + 150.0),
-            Vec3::new(c - 60.0, 0.0, c - 10.0),
+            Vec3::new(c - 10.0, 420.0, c + 330.0),
+            Vec3::new(c - 10.0, 0.0, c + 150.0),
         ),
         // The specialisation buildings, kinds in columns and sizes in rows (`--scene specs`).
         "specs" => (Vec3::new(c, 170.0, c + 120.0), Vec3::new(c, 5.0, c - 85.0)),

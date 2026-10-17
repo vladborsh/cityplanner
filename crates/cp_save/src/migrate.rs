@@ -4205,6 +4205,11 @@ fn from_v17(v: SaveDataV17) -> SaveData {
 /// [`crate::FORMAT_VERSION`]. Add one `match` arm per version and one chain step per bump.
 pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveError> {
     let mut data = decode_and_migrate_ids(version, body)?;
+    if version < 46 {
+        // BUG-047: the saved blocks were laid by the old rules; the grid lays them again (v2) on
+        // its first sync, carrying the painted types over by position.
+        data.zones.relay_all();
+    }
     if version < 18 {
         data.def_names = crate::def_tables::def_names_before_v18(version);
     }
@@ -4340,7 +4345,8 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         )))),
         43 => Ok(migrate_v44_to_v45(migrate_v43_to_v44(dec(body)?))),
         44 => Ok(migrate_v44_to_v45(dec(body)?)),
-        45 => dec(body),
+        // v46 only changed what the zone blocks mean (layout v2), not how they are written.
+        45 | 46 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

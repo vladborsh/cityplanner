@@ -146,14 +146,16 @@ fn a_node_near_the_8_cell_guide_snaps_to_it_and_alt_does_not() {
     );
 }
 
-/// Four streets 76 m apart (64 m between the road edges) cross and enclose one 8 x 8 grid of cells.
+/// Four streets 64 m + a road width apart (64 m between the road edges) cross and enclose one 8 x 8
+/// grid of cells: the four blocks' cells tile the square by rank, none doubled, none missing.
 #[test]
 fn a_block_built_on_the_guides_is_one_clean_8_by_8_grid() {
     let (mut sim, db) = sim();
     let o = Vec2::new(4600.0, 4600.0);
-    let s = 76.0;
-    let sx = 64.0 + 2.0 * 10.0;
-    // Two streets each way, crossing: the junctions trim the strips to the 64 m between them.
+    let hw = db.road(db.road_id("basic_2l").unwrap()).width / 2.0;
+    let s = 64.0 + 2.0 * hw;
+    let sx = s;
+    // Two streets each way, crossing: the 64 m between the road edges are four columns of 8.
     let e = 30.0;
     for k in [0.0, s] {
         build(
@@ -163,7 +165,6 @@ fn a_block_built_on_the_guides_is_one_clean_8_by_8_grid() {
             o + Vec2::new(sx + e, k),
         );
     }
-    // The cross streets are 64 m + two junction setbacks (10 m each here) apart.
     for k in [0.0, sx] {
         build(&mut sim, &db, o + Vec2::new(k, -e), o + Vec2::new(k, s + e));
     }
@@ -179,7 +180,7 @@ fn a_block_built_on_the_guides_is_one_clean_8_by_8_grid() {
                 })
                 .unwrap();
             let r = c.c - o;
-            if *ok && r.x > 10.0 && r.x < sx - 10.0 && r.y > 6.0 && r.y < s - 6.0 {
+            if *ok && r.x > hw && r.x < sx - hw && r.y > hw && r.y < s - hw {
                 inside.push(r);
             }
         }
@@ -192,7 +193,7 @@ fn a_block_built_on_the_guides_is_one_clean_8_by_8_grid() {
     assert_eq!(inside.len(), 64, "an 8 x 8 grid: {dbg:?}");
     // Aligned: every centre sits on the 8 m lattice that starts at the road edge.
     for r in &inside {
-        let (fx, fz) = ((r.x - 14.0) / 8.0, (r.y - 10.0) / 8.0);
+        let (fx, fz) = ((r.x - hw - 4.0) / 8.0, (r.y - hw - 4.0) / 8.0);
         assert!(
             (fx - fx.round()).abs() < 0.01 && (fz - fz.round()).abs() < 0.01,
             "{r:?} is off the lattice"
@@ -201,4 +202,31 @@ fn a_block_built_on_the_guides_is_one_clean_8_by_8_grid() {
     inside.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
     inside.dedup_by(|a, b| a.distance(*b) < 0.01);
     assert_eq!(inside.len(), 64, "no two cells on top of each other");
+}
+
+/// BUG-047: every tick of the ghost stands on a column boundary of its cells, 8 cells (64 m) apart.
+#[test]
+fn the_ticks_are_8_real_cells_apart_and_on_cell_boundaries() {
+    let (sim, db) = sim();
+    let (a, b) = (Vec2::new(4600.0, 4600.0), Vec2::new(4800.0, 4600.0));
+    let view = sim.view();
+    let ghost = compute_ghost(&view, &tool(&db, a), b).expect("a ghost");
+    assert!(ghost.valid, "{:?}", ghost.errors);
+    // 200 m open street: 25 columns, boundaries 8, 16 and 24 on each side.
+    assert_eq!(ghost.zone.ticks.len(), 6, "{:?}", ghost.zone.ticks);
+    let corners: Vec<Vec2> = ghost.zone.cells.iter().flat_map(|c| c.corners).collect();
+    let mut xs: Vec<f32> = Vec::new();
+    for t in &ghost.zone.ticks {
+        assert!(
+            corners.iter().any(|c| c.distance(t[0]) <= 0.05),
+            "tick {t:?} is not on a cell corner"
+        );
+        if t[0].y < 4600.0 {
+            xs.push(t[0].x);
+        }
+    }
+    xs.sort_by(f32::total_cmp);
+    for w in xs.windows(2) {
+        assert!((w[1] - w[0] - 64.0).abs() < 0.05, "{xs:?}");
+    }
 }

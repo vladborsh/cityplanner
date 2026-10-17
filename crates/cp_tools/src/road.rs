@@ -5,9 +5,9 @@ use cp_content::{RoadDef, RoadDefId};
 use cp_core::Cost;
 use cp_core::curve::CubicBezier3;
 use cp_net::{
-    ElevationMode, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SnapOptions,
-    SnapReport, SnapReportKind, StepContext, cell_ticks, clearance_report, control_points,
-    quantize_path, stretch, validate_road_path, validate_road_path_report,
+    ControlMark, ElevationMode, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest,
+    SnapOptions, SnapReport, SnapReportKind, StepContext, cell_ticks, clearance_report,
+    control_points, quantize_path, stretch, validate_road_path, validate_road_path_report,
 };
 use cp_sim::SimView;
 
@@ -234,13 +234,59 @@ pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRe
     let Some(content) = view.content.as_deref() else {
         return (req, SnapReport::default());
     };
+    let marks = zone_marks(view, content, &req.path);
     let cx = StepContext {
         graph: &view.net,
         content,
         alt,
+        marks: &marks,
     };
     let (path, report) = quantize_path(&req, &cx);
     (RoadPathRequest { path, ..req }, report)
+}
+
+/// The column boundaries (every 8th, as laid by the zone grid) of the ground streets near the
+/// vertices of `path`: where the length step jumps to, so a street built there ends on a cell
+/// boundary of the cells beside it (BUG-047).
+fn zone_marks(
+    view: &SimView,
+    content: &cp_content::ContentDb,
+    path: &RoadPath,
+) -> Vec<ControlMark> {
+    let points: Vec<Vec2> = match path {
+        RoadPath::Straight { from, to } => vec![*from, *to],
+        RoadPath::Curve { from, control, to } => vec![*from, *control, *to],
+        RoadPath::Free(v) => v.clone(),
+    };
+    let roads = cp_zone::road_zoning(content);
+    let mut out: Vec<ControlMark> = Vec::new();
+    for (id, s) in view.net.segments() {
+        if s.elevation != cp_net::Elevation::Ground
+            || points
+                .iter()
+                .all(|p| s.curve.nearest_xz(*p).1 > cp_net::build::GUIDE_RADIUS)
+        {
+            continue;
+        }
+        let sides = view.zones.frontage_marks(&view.net, &roads, id);
+        let mut arcs: Vec<f32> = Vec::new();
+        for marks in &sides {
+            let Some(first) = marks.first() else { continue };
+            for m in marks.iter().filter(|m| m.major && !m.end) {
+                if arcs.iter().any(|a| (a - m.arc).abs() < 0.05) {
+                    continue;
+                }
+                arcs.push(m.arc);
+                let t = s.curve.tangent(s.curve.arc_table().s_to_t(m.arc));
+                out.push(ControlMark {
+                    pos: m.axis,
+                    dir: Vec2::new(t.x, t.z).normalize_or_zero(),
+                    along: m.arc - first.arc,
+                });
+            }
+        }
+    }
+    out
 }
 
 /// The verdict shown when a new road runs less than one cell from another (§6.7, T-124).

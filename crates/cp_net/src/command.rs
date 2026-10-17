@@ -440,6 +440,18 @@ fn grouped_splits(plan: &RoadBuildPlan) -> Vec<(SegmentId, Vec<f32>)> {
     by_seg
 }
 
+/// The net as it would be after `plan` (a clone with the plan applied, no charge); `None` when
+/// the plan does not apply. What the road tool's zone preview lays its cells on (BUG-047).
+pub fn plan_applied(
+    graph: &NetGraph,
+    content: &cp_content::ContentDb,
+    plan: &RoadBuildPlan,
+) -> Option<NetGraph> {
+    let mut after = graph.clone();
+    apply_plan(&mut after, content, plan).ok()?;
+    Some(after)
+}
+
 /// Dry run of [`apply_plan`]: `Ok` exactly when applying the plan would succeed. Nothing is
 /// changed, so no backup of the graph is needed to undo a half-applied plan.
 pub(crate) fn check_plan(graph: &NetGraph, plan: &RoadBuildPlan) -> Result<(), NetOpError> {

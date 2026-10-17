@@ -130,7 +130,9 @@ pub fn quad_contains(q: &Quad, p: Vec2) -> bool {
 
 /// Area of the intersection of two convex counter-clockwise quads (Sutherland–Hodgman).
 pub fn quad_intersection_area(subject: &Quad, clip: &Quad) -> f32 {
-    let (subject, clip) = (&ccw(subject), &ccw(clip));
+    // In coordinates local to the subject: the area sums products of far-away coordinates.
+    let o = subject[0];
+    let (subject, clip) = (&ccw(&subject.map(|p| p - o)), &ccw(&clip.map(|p| p - o)));
     let mut poly: Vec<Vec2> = subject.to_vec();
     for i in 0..4 {
         let (a, b) = (clip[i], clip[(i + 1) % 4]);

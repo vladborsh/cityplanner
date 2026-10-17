@@ -1459,7 +1459,7 @@ pub fn one_way_report(
 mod clearance;
 pub use clearance::{ClearanceWarning, clearance_report};
 mod quantize;
-pub use quantize::{CONTROL_LINE_TOL, StepContext, quantize_path};
+pub use quantize::{CONTROL_LINE_TOL, ControlMark, StepContext, quantize_path};
 
 #[cfg(test)]
 mod tests;

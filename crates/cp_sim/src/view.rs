@@ -331,12 +331,7 @@ impl SimRunner {
         {
             grid.set_terrain(Arc::clone(&t.0));
         }
-        cp_zone::sync_grid(
-            &mut grid,
-            w.get_resource::<NetGraph>()?,
-            &content.0,
-            w.get_resource::<JunctionGeometry>()?,
-        );
+        cp_zone::sync_grid(&mut grid, w.get_resource::<NetGraph>()?, &content.0);
         let grid = Arc::new(grid);
         *cache = Some((now, Arc::clone(&grid)));
         Some(grid)

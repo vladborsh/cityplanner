@@ -24,13 +24,6 @@ fn a_nineteen_year_old_enrols_in_the_university_and_takes_no_job() {
         Arc::clone(&content),
         &GridCityConfig::default(),
     );
-    let seg = sim
-        .world()
-        .resource::<cp_net::NetGraph>()
-        .segments()
-        .next()
-        .unwrap()
-        .0;
     let (home, mut template) = {
         let grid = sim.world().resource::<BuildingGrid>();
         let (id, b) = grid
@@ -44,6 +37,8 @@ fn a_nineteen_year_old_enrols_in_the_university_and_takes_no_job() {
     };
     template.def = content.building_id("university").unwrap();
     template.state = BuildingState::Active;
+    // On the street of the home it copies, so the way there is short.
+    let seg = template.access().expect("a home has a street").segment;
     template.set_access(Some(AccessPoint {
         segment: seg,
         t: 0.5,
@@ -57,10 +52,18 @@ fn a_nineteen_year_old_enrols_in_the_university_and_takes_no_job() {
         let mut g = sim.world_mut().resource_mut::<CitizenGrid>();
         let h = g.add_household(home, 0, Tick(now), &[(19 * DAYS_PER_YEAR, 1, false)]);
         let id = g.household(h).unwrap().member_ids().next().unwrap();
-        g.set_location(id, Location::Home);
+        // On the move, so that the job search (which skips the moving) does not take him in the
+        // very tick the school would: the school is visited first, then he is home.
+        g.set_location(id, Location::Moving);
         id
     };
-    for _ in 0..1200 {
+    for _ in 0..300 {
+        sim.tick_once();
+    }
+    sim.world_mut()
+        .resource_mut::<CitizenGrid>()
+        .set_location(student, Location::Home);
+    for _ in 0..900 {
         sim.tick_once();
     }
     let c = sim

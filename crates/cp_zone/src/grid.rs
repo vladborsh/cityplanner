@@ -1,23 +1,21 @@
-//! Zone blocks and cells (`architecture/system-design.md` §7).
+//! Zone blocks and cells (`architecture/system-design.md` §7, §7.1).
 //!
-//! Every zoneable ground segment gets one [`ZoneBlock`] per side: columns of 8 m along the
-//! segment (`floor(length / 8)`, centred on it) by [`BLOCK_DEPTH`] rows away from the road,
-//! starting at the road edge. Each column is oriented by the tangent at its own centre, so
-//! on a curve the grid fans out piecewise. A cell is *valid* unless it
+//! The cells are laid out per *frontage* (one side of a street between its cross streets, see
+//! [`crate::layout`]): one lattice of columns of about 8 m along the street by [`BLOCK_DEPTH`]
+//! rows away from it, starting at the road edge. A frontage is cut into one [`ZoneBlock`] per
+//! segment side, the columns belonging to the segment their centre lies on. A cell is *valid*
+//! unless it
 //!
 //! * overlaps a road strip (any ground segment's centre line buffered by half its width),
-//! * overlaps a valid cell of an **older** block (lower [`ZoneBlockId`], i.e. earlier
-//!   creation; arena slots are reused, but ids order by `(index, generation)` — see
-//!   [`ZoneBlockId`]), or
 //! * on a curve, overlaps the previous column of its own block (the later column loses),
+//! * overlaps a cell that is covered by a building, or a valid cell with a smaller rank
+//!   `(row, ZoneBlockId, cell)` — the cell of the nearest street wins (§7.1),
 //! * is covered by a building (see [`ZoneGrid::occupy`]), or
 //! * stands on water (the terrain says so at the cell centre) or on ground steeper than
 //!   [`MAX_CELL_SLOPE`] there (T-062; needs [`ZoneGrid::set_terrain`]).
 //!
-//! Overlap means interpenetration deeper than [`PENETRATION_EPS`]; touching and grazing
-//! cells are fine. Squares on the inside of a curve crowd together (neighbouring columns
-//! overlap by about `8 · depth / radius`), so deep rows on the inside of a bend are
-//! invalid: that is where the road geometry leaves no room for them.
+//! Overlap means interpenetration deeper than [`CROSS_BLOCK_EPS`] between blocks and
+//! [`PENETRATION_EPS`] inside one; touching and grazing cells are fine.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -27,13 +25,13 @@ use bevy_math::Vec2;
 use cp_content::{RoadDefId, ZoneType};
 use cp_core::curve::{ArcTable, CubicBezier3, to_xz};
 use cp_core::{Arena, Id};
-use cp_net::{Elevation, NetGraph, NodeId, Segment, SegmentId};
+use cp_net::{Elevation, NetGraph, Segment, SegmentId};
 use cp_terrain::Terrain;
 use serde::{Deserialize, Serialize};
 
-use crate::geom::{
-    Obb, Quad, point_segment_distance, quad_aabb, quad_contains, quad_intersection_area,
-};
+use crate::geom::{Obb, Quad, quad_aabb, quad_contains, quad_intersection_area};
+use crate::layout::{BlockDraft, frontage_of, layout_frontage};
+use crate::roads::{Bounds, RoadIndex, bucket_range, inflate, union};
 
 /// Steepest ground a cell may stand on: rise over run at the cell centre (25 %).
 pub const MAX_CELL_SLOPE: f32 = 0.25;
@@ -41,24 +39,20 @@ pub const MAX_CELL_SLOPE: f32 = 0.25;
 pub const CELL_SIZE: f32 = 8.0;
 /// Rows of cells away from the road.
 pub const BLOCK_DEPTH: u16 = 4;
-/// Cell/cell interpenetration (m) tolerated before a cell is invalid.
+/// Cell/cell interpenetration (m) tolerated between cells of one block before a cell is invalid.
 pub const PENETRATION_EPS: f32 = 1.0;
 /// A cell may overlap a road strip by at most this (m).
 pub const ROAD_EPS: f32 = 0.05;
 
-const ROAD_BUCKET: f32 = 16.0;
 const BLOCK_BUCKET: f32 = 32.0;
+/// Overlap with a cell of another block that wins (smaller rank, or a building) removes the
+/// cell; only grazing contact is let through.
+pub const CROSS_BLOCK_EPS: f32 = 0.05;
 /// Larger than any cell's reach (half diagonal 5.66 m) plus a margin.
-/// Overlap with a cell of an older block that already removes the newer cell (BUG-043): a
-/// cell is never kept over another one, only grazing contact is let through.
-const CROSS_BLOCK_EPS: f32 = 0.05;
 const REACH: f32 = 12.0;
-/// Cosine of the largest bend at a degree-2 node that still counts as straight on (about 12°).
-const STRAIGHT_COS: f32 = 0.978;
-/// Spacing of road centre-line samples, metres.
-const ROAD_SAMPLE: f32 = 2.0;
-/// How far (m) a rebuilt cell may be from the old cell whose painted type it inherits.
-const CARRY_RADIUS: f32 = 5.0;
+/// How far (m) a rebuilt cell may be from the old cell whose painted type it inherits: three
+/// quarters of a cell.
+const CARRY_RADIUS: f32 = 6.0;
 const CARRY_BUCKET: f32 = 8.0;
 
 pub type ZoneBlockId = Id<ZoneBlock>;
@@ -110,10 +104,25 @@ pub enum Side {
 }
 
 impl Side {
-    fn sign(self) -> f32 {
+    pub(crate) fn sign(self) -> f32 {
         match self {
             Side::Left => 1.0,
             Side::Right => -1.0,
+        }
+    }
+
+    pub(crate) fn flip(self) -> Self {
+        match self {
+            Side::Left => Side::Right,
+            Side::Right => Side::Left,
+        }
+    }
+
+    /// Index in `[Left, Right]`.
+    pub(crate) fn slot(self) -> usize {
+        match self {
+            Side::Left => 0,
+            Side::Right => 1,
         }
     }
 }
@@ -200,22 +209,7 @@ impl ZoneBlock {
     }
 }
 
-/// The layout of the cells along a stretch of `length` metres: the arc offset of the first
-/// column and the number of columns. Without `align` the row is centred (`floor(len / 8)`
-/// cells, the rest split over both ends); with `align` (see [`ZoneGrid::joint_alignment`], the
-/// start offset that continues a straight neighbour's row, BUG-043) the cells start there and
-/// the rest is left at the far end. The road tool's ghost lays its preview with this too.
-pub fn strip_layout(length: f32, align: Option<f32>) -> (f32, u16) {
-    match align {
-        Some(s0) => (s0, ((length - s0) / CELL_SIZE).floor().max(0.0) as u16),
-        None => {
-            let cols = (length / CELL_SIZE).floor() as u16;
-            ((length - f32::from(cols) * CELL_SIZE) / 2.0, cols)
-        }
-    }
-}
-
-/// The cells one side of a road would get (the road tool's ghost, T-185).
+/// The cells one side of a new frontage would get (the road tool's ghost, T-185, §7.1).
 #[derive(Clone, Debug, PartialEq)]
 pub struct StripPreview {
     pub side: Side,
@@ -223,9 +217,13 @@ pub struct StripPreview {
     /// Column-major, `BLOCK_DEPTH` rows per column.
     pub obbs: Vec<Obb>,
     pub valid: Vec<bool>,
+    /// Every 8th column boundary of the frontage from its start (not its two ends), across the
+    /// whole depth.
+    pub marks: Vec<[Vec2; 2]>,
 }
 
-/// What a segment looked like when its blocks were built; a different value means rebuild.
+/// What a segment looked like when its blocks were built; a different value means its
+/// frontages are laid again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Fingerprint {
     curve: [u32; 12],
@@ -236,8 +234,8 @@ pub(crate) struct Fingerprint {
     half_width: u32,
 }
 
-fn fingerprint(seg: &Segment, road: RoadZoning, zone_curve: &CubicBezier3) -> Fingerprint {
-    let c = zone_curve;
+fn fingerprint(seg: &Segment, road: RoadZoning) -> Fingerprint {
+    let c = &seg.curve;
     let mut bits = [0u32; 12];
     for (i, p) in [c.p0, c.p1, c.p2, c.p3].iter().enumerate() {
         bits[i * 3] = p.x.to_bits();
@@ -246,31 +244,12 @@ fn fingerprint(seg: &Segment, road: RoadZoning, zone_curve: &CubicBezier3) -> Fi
     }
     Fingerprint {
         curve: bits,
-        length: ArcTable::build(zone_curve).length().to_bits(),
+        length: ArcTable::build(c).length().to_bits(),
         road: seg.road,
         ground: seg.elevation == Elevation::Ground,
         zoning: road.allows_zoning,
         half_width: road.half_width.to_bits(),
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct RoadPiece {
-    a: Vec2,
-    b: Vec2,
-    half_width: f32,
-}
-
-type Bounds = (Vec2, Vec2);
-
-fn union(a: Bounds, b: Bounds) -> Bounds {
-    (a.0.min(b.0), a.1.max(b.1))
-}
-
-fn bucket_range(b: Bounds, size: f32) -> impl Iterator<Item = (i32, i32)> {
-    let (x0, z0) = ((b.0.x / size).floor() as i32, (b.0.y / size).floor() as i32);
-    let (x1, z1) = ((b.1.x / size).floor() as i32, (b.1.y / size).floor() as i32);
-    (x0..=x1).flat_map(move |x| (z0..=z1).map(move |z| (x, z)))
 }
 
 /// The rectangles in exactly one of `old` and `new` (as multisets, compared bit for bit).
@@ -312,19 +291,14 @@ fn quads_changed(old: &[Quad], new: &[Quad]) -> Vec<Quad> {
     out
 }
 
-fn inflate(b: Bounds, by: f32) -> Bounds {
-    (b.0 - Vec2::splat(by), b.1 + Vec2::splat(by))
-}
-
 /// Derived lookup structures; rebuilt from the blocks and the net, never saved.
 #[derive(Clone, Debug, Default)]
-struct Index {
-    built: bool,
-    obbs: BTreeMap<ZoneBlockId, Vec<Obb>>,
-    block_bounds: BTreeMap<ZoneBlockId, Bounds>,
-    block_buckets: BTreeMap<(i32, i32), BTreeSet<ZoneBlockId>>,
-    road_buckets: BTreeMap<(i32, i32), Vec<(SegmentId, RoadPiece)>>,
-    road_bounds: BTreeMap<SegmentId, Bounds>,
+pub(crate) struct Index {
+    pub(crate) built: bool,
+    pub(crate) obbs: BTreeMap<ZoneBlockId, Vec<Obb>>,
+    pub(crate) block_bounds: BTreeMap<ZoneBlockId, Bounds>,
+    pub(crate) block_buckets: BTreeMap<(i32, i32), BTreeSet<ZoneBlockId>>,
+    pub(crate) roads: RoadIndex,
 }
 
 /// All zone state.
@@ -335,6 +309,9 @@ pub struct ZoneGrid {
     fingerprints: BTreeMap<SegmentId, Fingerprint>,
     #[serde(skip)]
     index: Index,
+    /// The saved layout is of an older format: the next sync lays every frontage again.
+    #[serde(skip)]
+    relay_all: bool,
     /// Cells covered by a building. Derived from the buildings (which own the truth) and
     /// rebuilt after a load with [`ZoneGrid::set_occupied`]; the saved `valid` masks
     /// already account for it.
@@ -524,143 +501,571 @@ impl ZoneGrid {
     pub fn index_ready(&self) -> bool {
         self.index.built
     }
-
     // ----- sync -----
+}
 
-    /// Brings the blocks in line with `net`: segments whose geometry or road changed (and
-    /// new ones) get new blocks, vanished ones lose theirs, and every cell the change can
-    /// affect is revalidated in block-id order. Deterministic: depends only on `net`, the
-    /// road lookup and the current blocks.
-    ///
-    /// `extent` gives the stretch of a segment that is zoned: normally its curve cut at the
-    /// junction setbacks (`JunctionGeometry::trimmed_curve`), so blocks start beside the
-    /// arms instead of inside the junction. Road strips (for cell validity) always use the
-    /// full segment.
-    pub fn sync(
-        &mut self,
-        net: &NetGraph,
-        roads: &dyn Fn(RoadDefId) -> RoadZoning,
-        extent: &dyn Fn(SegmentId, &Segment) -> CubicBezier3,
-    ) {
+impl ZoneGrid {
+    /// How far a road reaches into the row depth of the frontages near it (§7.1).
+    fn depth_reach(&self) -> f32 {
+        16.0 * CELL_SIZE + self.fit_m
+    }
+
+    /// Marks every block to be laid again by the next [`ZoneGrid::sync`] (a save of an older
+    /// layout was loaded): painted types are carried over by position, validity is recomputed.
+    pub fn relay_all(&mut self) {
+        self.relay_all = true;
+    }
+
+    /// Brings the blocks in line with `net` (§7.1): the layout is a pure function of the net,
+    /// so the frontages near a changed segment are laid again and only the blocks whose
+    /// parameters changed are rebuilt (their painted types carried over by position); then every
+    /// cell the change can affect is revalidated in rank order. Deterministic: depends only on
+    /// `net`, the road lookup and the current blocks.
+    pub fn sync(&mut self, net: &NetGraph, roads: &dyn Fn(RoadDefId) -> RoadZoning) {
         if !self.index.built {
             self.rebuild_index(net, roads);
         }
-        let zone_curve: BTreeMap<SegmentId, CubicBezier3> =
-            net.segments().map(|(id, s)| (id, extent(id, s))).collect();
-        let current: Vec<(SegmentId, Fingerprint)> = net
+        let relay = std::mem::take(&mut self.relay_all);
+        let terrain_dirty = std::mem::take(&mut self.terrain_dirty);
+        let current: BTreeMap<SegmentId, Fingerprint> = net
             .segments()
-            .map(|(id, s)| (id, fingerprint(s, roads(s.road), &zone_curve[&id])))
+            .map(|(id, s)| (id, fingerprint(s, roads(s.road))))
             .collect();
-        let present: BTreeSet<SegmentId> = current.iter().map(|(id, _)| *id).collect();
-        let mut dirty: Vec<Bounds> = Vec::new();
-
-        let stale: Vec<SegmentId> = self
-            .fingerprints
+        let changed: Vec<SegmentId> = current
             .iter()
-            .filter(|(id, fp)| {
-                !present.contains(id)
-                    || current.iter().find(|(c, _)| c == *id).map(|(_, f)| f) != Some(*fp)
-            })
+            .filter(|(id, fp)| self.fingerprints.get(id) != Some(*fp))
             .map(|(id, _)| *id)
             .collect();
-        // Painted types of the blocks about to be rebuilt (split, upgrade, retrimmed junction)
-        // are carried over to the new blocks by position.
+        let removed: Vec<SegmentId> = self
+            .fingerprints
+            .keys()
+            .filter(|id| !current.contains_key(id))
+            .copied()
+            .collect();
+        if changed.is_empty() && removed.is_empty() && !relay && !terrain_dirty {
+            return;
+        }
+
+        // The road strips first: the layouts below measure against them.
+        let mut dirty: Vec<Bounds> = Vec::new();
+        for id in changed.iter().chain(&removed) {
+            if let Some(b) = self.index.roads.remove(*id) {
+                dirty.push(b);
+            }
+        }
+        for id in &changed {
+            let seg = net.segment(*id).expect("listed segment");
+            self.index.roads.add(*id, seg, roads(seg.road));
+            if let Some(b) = self.index.roads.bounds.get(id) {
+                dirty.push(*b);
+            }
+        }
+
+        // Painted types of the blocks about to go are carried over to the new blocks by position.
         let mut carried: Vec<Carried> = Vec::new();
-        for id in &stale {
-            self.collect_painted(*id, &mut carried);
+        for id in &removed {
+            for slot in 0..2 {
+                if let Some(b) = self.by_segment.get(id).and_then(|a| a[slot]) {
+                    self.collect_painted_block(b, &mut carried);
+                    self.drop_block(*id, slot, b, &mut dirty);
+                }
+            }
+            self.fingerprints.remove(id);
         }
-        for id in stale {
-            self.remove_segment(id, &mut dirty);
+        for id in &changed {
+            self.fingerprints.insert(*id, current[id]);
         }
+
+        // Frontages to lay again: those with a changed segment, those that end at a node of one,
+        // and those within reach of the change (a parallel street closes a block).
+        let mut seeds: BTreeSet<SegmentId> = BTreeSet::new();
+        if relay {
+            seeds.extend(current.keys().copied());
+        } else {
+            for id in &changed {
+                seeds.insert(*id);
+                let seg = net.segment(*id).expect("listed segment");
+                for n in [seg.start, seg.end] {
+                    if let Some(n) = net.node(n) {
+                        seeds.extend(n.segments.iter().copied());
+                    }
+                }
+            }
+            let reach = self.depth_reach() + 16.0;
+            for b in &dirty {
+                for id in self.index.roads.segments_near(inflate(*b, reach)) {
+                    if current.contains_key(&id) {
+                        seeds.insert(id);
+                    }
+                }
+            }
+        }
+        let (drafts, evaluated) = self.lay_frontages(net, roads, &self.index.roads, &seeds);
 
         let mut created: BTreeSet<ZoneBlockId> = BTreeSet::new();
-        for (id, fp) in current {
-            if self.fingerprints.contains_key(&id) {
+        for key in &evaluated {
+            let (id, side) = *key;
+            let slot = side.slot();
+            let existing = self.by_segment.get(&id).and_then(|a| a[slot]);
+            let draft = drafts.get(key);
+            if let (Some(e), Some(d)) = (existing, draft)
+                && self.blocks.get(e).is_some_and(|b| d.same_as(b))
+            {
                 continue;
             }
-            let seg = net.segment(id).expect("listed segment");
-            self.add_segment(
-                id,
-                seg,
-                roads(seg.road),
-                &zone_curve[&id],
-                self.joint_alignment(
-                    net,
-                    roads,
-                    id,
-                    seg,
-                    ArcTable::build(&zone_curve[&id]).length(),
-                ),
-                // Neither end a plain bend that a later segment may continue: a side of a block.
-                [seg.start, seg.end]
-                    .iter()
-                    .all(|n| net.node(*n).is_none_or(|n| n.segments.len() != 2)),
-                &mut dirty,
-                &mut created,
-            );
-            self.fingerprints.insert(id, fp);
+            if let Some(e) = existing {
+                self.collect_painted_block(e, &mut carried);
+                self.drop_block(id, slot, e, &mut dirty);
+            }
+            if let Some(d) = draft {
+                let bid = self.insert_draft(d);
+                created.insert(bid);
+            }
         }
-
         if !carried.is_empty() {
             self.apply_carried(&carried, &created);
         }
 
-        // Everything near a change is re-examined, oldest first.
-        let mut work: BTreeSet<ZoneBlockId> = created.clone();
-        if std::mem::take(&mut self.terrain_dirty) {
-            work.extend(self.blocks.iter().map(|(id, _)| id));
+        let mut work: BTreeSet<(u16, ZoneBlockId)> = BTreeSet::new();
+        for id in &created {
+            for r in 0..BLOCK_DEPTH {
+                work.insert((r, *id));
+            }
         }
-        for region in &dirty {
-            let region = inflate(*region, REACH);
-            for key in bucket_range(region, BLOCK_BUCKET) {
-                if let Some(set) = self.index.block_buckets.get(&key) {
-                    work.extend(set.iter().copied());
+        if terrain_dirty || relay {
+            for (id, _) in self.blocks.iter() {
+                for r in 0..BLOCK_DEPTH {
+                    work.insert((r, id));
                 }
             }
         }
+        for region in &dirty {
+            self.add_work(inflate(*region, REACH), &mut work);
+        }
+        self.revision = next_revision();
         self.revalidate(work, &created);
     }
 
-    /// Recomputes validity of `work` oldest first; a block whose validity changes (or that
-    /// is new, per `created`) can only affect newer ones, so ids only grow.
-    fn revalidate(&mut self, mut work: BTreeSet<ZoneBlockId>, created: &BTreeSet<ZoneBlockId>) {
-        if !work.is_empty() {
-            self.revision = next_revision();
+    /// The drafts of the frontages of `seeds` (every frontage once) and the segment sides they
+    /// cover, with or without cells.
+    #[allow(clippy::type_complexity)]
+    fn lay_frontages(
+        &self,
+        net: &NetGraph,
+        roads: &dyn Fn(RoadDefId) -> RoadZoning,
+        idx: &RoadIndex,
+        seeds: &BTreeSet<SegmentId>,
+    ) -> (
+        BTreeMap<(SegmentId, Side), BlockDraft>,
+        BTreeSet<(SegmentId, Side)>,
+    ) {
+        let mut drafts = BTreeMap::new();
+        let mut evaluated = BTreeSet::new();
+        for &id in seeds {
+            for side in [Side::Left, Side::Right] {
+                if evaluated.contains(&(id, side)) {
+                    continue;
+                }
+                match frontage_of(net, roads, id, side) {
+                    None => {
+                        evaluated.insert((id, side));
+                    }
+                    Some(f) => {
+                        for d in layout_frontage(net, roads, idx, self.fit_m, &f) {
+                            drafts.insert((d.segment, d.side), d);
+                        }
+                        for i in 0..f.segs.len() {
+                            evaluated.insert((f.segs[i].0, f.block_side(i)));
+                        }
+                    }
+                }
+            }
         }
-        while let Some(id) = work.pop_first() {
-            let Some(new_valid) = self.compute_valid(id) else {
-                continue;
-            };
-            let block = self.blocks.get_mut(id).expect("worked block");
-            let changed = block.valid != new_valid;
-            block.valid = new_valid;
-            if changed || created.contains(&id) {
-                let bounds = inflate(self.index.block_bounds[&id], REACH);
-                for key in bucket_range(bounds, BLOCK_BUCKET) {
-                    if let Some(set) = self.index.block_buckets.get(&key) {
-                        work.extend(set.iter().copied().filter(|n| *n > id));
+        (drafts, evaluated)
+    }
+
+    fn insert_draft(&mut self, d: &BlockDraft) -> ZoneBlockId {
+        let n = usize::from(d.cols) * usize::from(BLOCK_DEPTH);
+        let bid = self.blocks.insert(ZoneBlock {
+            segment: d.segment,
+            side: d.side,
+            curve: d.curve,
+            length: d.length,
+            s0: d.s0,
+            cols: d.cols,
+            inner: d.inner,
+            cell_len: d.cell_len,
+            row_depth: d.row_depth,
+            zones: vec![ZoneType::None; n],
+            valid: vec![true; n],
+        });
+        self.index_block(bid);
+        self.by_segment.entry(d.segment).or_insert([None, None])[d.side.slot()] = Some(bid);
+        bid
+    }
+
+    fn drop_block(&mut self, seg: SegmentId, slot: usize, b: ZoneBlockId, dirty: &mut Vec<Bounds>) {
+        if let Some(bounds) = self.unindex_block(b) {
+            dirty.push(bounds);
+        }
+        self.blocks.remove(b);
+        if let Some(a) = self.by_segment.get_mut(&seg) {
+            a[slot] = None;
+            if a.iter().all(Option::is_none) {
+                self.by_segment.remove(&seg);
+            }
+        }
+    }
+
+    fn add_work(&self, region: Bounds, work: &mut BTreeSet<(u16, ZoneBlockId)>) {
+        for key in bucket_range(region, BLOCK_BUCKET) {
+            if let Some(set) = self.index.block_buckets.get(&key) {
+                for &id in set {
+                    for r in 0..BLOCK_DEPTH {
+                        work.insert((r, id));
                     }
                 }
             }
         }
     }
 
-    /// Painted (non-`None`) cells of `segment`'s blocks, remembered by where they stand along
-    /// the road, not where they were: see [`Carried`].
-    fn collect_painted(&self, segment: SegmentId, out: &mut Vec<Carried>) {
-        for id in self.blocks_of(segment).into_iter().flatten() {
-            let (Some(b), Some(obbs)) = (self.blocks.get(id), self.index.obbs.get(&id)) else {
+    /// Recomputes validity of the rows in `work` in rank order `(row, block)`. A cell depends
+    /// only on cells of smaller rank (and on buildings), so a changed row (or a row of a block in
+    /// `force`) can only affect rows of greater rank: they are queued, and ranks only grow.
+    fn revalidate(
+        &mut self,
+        mut work: BTreeSet<(u16, ZoneBlockId)>,
+        force: &BTreeSet<ZoneBlockId>,
+    ) {
+        if !work.is_empty() {
+            self.revision = next_revision();
+        }
+        let depth = usize::from(BLOCK_DEPTH);
+        while let Some((row, id)) = work.pop_first() {
+            let Some(obbs) = self.index.obbs.get(&id) else {
                 continue;
             };
-            for (i, (z, o)) in b.zones.iter().zip(obbs).enumerate() {
-                if *z != ZoneType::None {
-                    let row = (i as u16) % BLOCK_DEPTH;
-                    out.push(Carried::new(o, b.inner, row, *z));
+            let new = self.row_valid(obbs, id, row);
+            let Some(block) = self.blocks.get_mut(id) else {
+                continue;
+            };
+            let mut changed = false;
+            for (col, v) in new.into_iter().enumerate() {
+                let i = col * depth + usize::from(row);
+                if block.valid[i] != v {
+                    block.valid[i] = v;
+                    changed = true;
+                }
+            }
+            if changed || force.contains(&id) {
+                let bounds = inflate(self.index.block_bounds[&id], REACH);
+                for key in bucket_range(bounds, BLOCK_BUCKET) {
+                    if let Some(set) = self.index.block_buckets.get(&key) {
+                        for &n in set {
+                            for r in row..BLOCK_DEPTH {
+                                if (r, n) > (row, id) {
+                                    work.insert((r, n));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
+    /// Painted (non-`None`) cells of one block, remembered by where they stand along the road.
+    fn collect_painted_block(&self, id: ZoneBlockId, out: &mut Vec<Carried>) {
+        let (Some(b), Some(obbs)) = (self.blocks.get(id), self.index.obbs.get(&id)) else {
+            return;
+        };
+        for (i, (z, o)) in b.zones.iter().zip(obbs).enumerate() {
+            if *z != ZoneType::None {
+                let row = (i as u16) % BLOCK_DEPTH;
+                out.push(Carried::new(o, b.inner, row, *z));
+            }
+        }
+    }
+
+    fn rebuild_index(&mut self, net: &NetGraph, roads: &dyn Fn(RoadDefId) -> RoadZoning) {
+        self.index = Index::default();
+        self.index.roads = RoadIndex::from_net(net, roads);
+        let ids: Vec<ZoneBlockId> = self.blocks.iter().map(|(id, _)| id).collect();
+        for id in ids {
+            self.index_block(id);
+        }
+        self.index.built = true;
+    }
+
+    fn index_block(&mut self, id: ZoneBlockId) {
+        let block = self.blocks.get(id).expect("block");
+        let obbs = block.footprints();
+        let mut bounds: Option<Bounds> = None;
+        for o in &obbs {
+            bounds = Some(bounds.map_or(o.aabb(), |b| union(b, o.aabb())));
+        }
+        let bounds = bounds.expect("a block has cells");
+        for key in bucket_range(bounds, BLOCK_BUCKET) {
+            self.index.block_buckets.entry(key).or_default().insert(id);
+        }
+        self.index.block_bounds.insert(id, bounds);
+        self.index.obbs.insert(id, obbs);
+    }
+
+    fn unindex_block(&mut self, id: ZoneBlockId) -> Option<Bounds> {
+        self.index.obbs.remove(&id);
+        let bounds = self.index.block_bounds.remove(&id)?;
+        for key in bucket_range(bounds, BLOCK_BUCKET) {
+            if let Some(set) = self.index.block_buckets.get_mut(&key) {
+                set.remove(&id);
+                if set.is_empty() {
+                    self.index.block_buckets.remove(&key);
+                }
+            }
+        }
+        Some(bounds)
+    }
+
+    /// Validity of row `row` of block `id` (one entry per column): not on water or steep ground,
+    /// not on a road, not under a building, not on a rectangle of a free-standing building, not
+    /// over the previous column of its own block, and not over a cell that wins: one covered by a
+    /// building, or a valid one of smaller rank `(row, block)`.
+    fn row_valid(&self, obbs: &[Obb], id: ZoneBlockId, row: u16) -> Vec<bool> {
+        let depth = usize::from(BLOCK_DEPTH);
+        let row_i = usize::from(row);
+        let cols = obbs.len() / depth;
+        let mut out = vec![true; cols];
+        for (col, ok) in out.iter_mut().enumerate() {
+            let i = col * depth + row_i;
+            let o = &obbs[i];
+            if self.occupied.contains(&ZoneCellRef {
+                block: id,
+                cell: i as u16,
+            }) || !self.ground_ok(o.c)
+                || self.blocked_by_rect(o)
+            {
+                *ok = false;
+                continue;
+            }
+            let reach = inflate(o.aabb(), REACH);
+            if self.index.roads.pieces_in(reach).any(|(_, piece)| {
+                o.distance_to_segment(piece.a, piece.b) < piece.half_width - ROAD_EPS
+            }) {
+                *ok = false;
+                continue;
+            }
+            // The previous column of the same block (curves): the later column loses.
+            if col > 0 {
+                let prev = (col - 1) * depth;
+                if (row_i.saturating_sub(1)..=(row_i + 1).min(depth - 1))
+                    .any(|r| obbs[prev + r].penetration(o) > PENETRATION_EPS)
+                {
+                    *ok = false;
+                    continue;
+                }
+            }
+            // The cells that win over this one.
+            let mut near: BTreeSet<ZoneBlockId> = BTreeSet::new();
+            for key in bucket_range(reach, BLOCK_BUCKET) {
+                if let Some(set) = self.index.block_buckets.get(&key) {
+                    near.extend(set.iter().copied().filter(|b| *b != id));
+                }
+            }
+            'near: for nid in near {
+                let (Some(nb), Some(no)) = (self.blocks.get(nid), self.index.obbs.get(&nid)) else {
+                    continue;
+                };
+                for (j, other) in no.iter().enumerate() {
+                    if (other.c - o.c).length_squared() > 14.0 * 14.0 {
+                        continue;
+                    }
+                    let blocking = self.occupied.contains(&ZoneCellRef {
+                        block: nid,
+                        cell: j as u16,
+                    }) || (nb.valid[j] && ((j % depth) as u16, nid) < (row, id));
+                    if blocking && other.penetration(o) > CROSS_BLOCK_EPS {
+                        *ok = false;
+                        break 'near;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The column boundaries of both sides of `segment` as laid now (`[Left, Right]`), for the
+    /// road tool's marks on an existing street (§7.1).
+    pub fn frontage_marks(
+        &self,
+        net: &NetGraph,
+        roads: &dyn Fn(RoadDefId) -> RoadZoning,
+        segment: SegmentId,
+    ) -> [Vec<crate::layout::Mark>; 2] {
+        let mut out = [Vec::new(), Vec::new()];
+        for side in [Side::Left, Side::Right] {
+            if let Some(f) = frontage_of(net, roads, segment, side) {
+                for d in layout_frontage(net, roads, &self.index.roads, self.fit_m, &f) {
+                    if d.segment == segment && d.side == side {
+                        out[side.slot()] = d.marks;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The cells the frontages near `region` get in `net_after` (the net with a planned road
+    /// applied) and whose blocks differ from the ones standing now, with their validity against
+    /// buildings, terrain and the remaining blocks: what the road tool's ghost draws. Laid and
+    /// validated by the same code as a real sync, so the preview is the built result (§7.1).
+    pub fn preview_layout(
+        &self,
+        net_after: &NetGraph,
+        roads: &dyn Fn(RoadDefId) -> RoadZoning,
+        region: Bounds,
+    ) -> Vec<StripPreview> {
+        let idx = RoadIndex::from_net(net_after, roads);
+        let seeds: BTreeSet<SegmentId> = idx
+            .segments_near(inflate(region, self.depth_reach() + 16.0))
+            .into_iter()
+            .collect();
+        let (drafts, evaluated) = self.lay_frontages(net_after, roads, &idx, &seeds);
+        let existing =
+            |k: &(SegmentId, Side)| self.by_segment.get(&k.0).and_then(|a| a[k.1.slot()]);
+        let mut replaced: BTreeSet<ZoneBlockId> = BTreeSet::new();
+        let mut fresh: Vec<&BlockDraft> = Vec::new();
+        for k in &evaluated {
+            let same = match (existing(k), drafts.get(k)) {
+                (Some(e), Some(d)) => self.blocks.get(e).is_some_and(|b| d.same_as(b)),
+                (None, None) => true,
+                _ => false,
+            };
+            if same {
+                continue;
+            }
+            replaced.extend(existing(k));
+            fresh.extend(drafts.get(k));
+        }
+        // Blocks of segments that the plan removed (split) near the region go as well.
+        let gone = self
+            .index
+            .roads
+            .segments_near(inflate(region, self.depth_reach()));
+        for id in gone {
+            if net_after.segment(id).is_none() {
+                replaced.extend(self.by_segment.get(&id).into_iter().flatten().flatten());
+            }
+        }
+        if fresh.is_empty() {
+            return Vec::new();
+        }
+        let mut scratch = ZoneGrid::new();
+        scratch.terrain = self.terrain.clone();
+        scratch.fit_m = self.fit_m;
+        scratch.index.roads = idx;
+        scratch.index.built = true;
+        let mut bounds: Option<Bounds> = None;
+        for d in &fresh {
+            let b = ZoneBlock {
+                segment: d.segment,
+                side: d.side,
+                curve: d.curve,
+                length: d.length,
+                s0: d.s0,
+                cols: d.cols,
+                inner: d.inner,
+                cell_len: d.cell_len,
+                row_depth: d.row_depth,
+                zones: Vec::new(),
+                valid: Vec::new(),
+            };
+            for o in b.footprints() {
+                bounds = Some(bounds.map_or(o.aabb(), |x| union(x, o.aabb())));
+            }
+        }
+        let bounds = inflate(bounds.expect("fresh drafts have cells"), REACH);
+        let mut near: BTreeSet<ZoneBlockId> = BTreeSet::new();
+        for key in bucket_range(bounds, BLOCK_BUCKET) {
+            if let Some(set) = self.index.block_buckets.get(&key) {
+                near.extend(set.iter().copied());
+            }
+        }
+        let mut map: BTreeMap<ZoneBlockId, ZoneBlockId> = BTreeMap::new();
+        for id in near.iter().filter(|id| !replaced.contains(id)) {
+            let b = self.blocks.get(*id).expect("indexed block").clone();
+            let sid = scratch.blocks.insert(b);
+            scratch.index_block(sid);
+            map.insert(*id, sid);
+        }
+        scratch.occupied = self
+            .occupied
+            .iter()
+            .filter_map(|c| {
+                map.get(&c.block).map(|b| ZoneCellRef {
+                    block: *b,
+                    cell: c.cell,
+                })
+            })
+            .collect();
+        // Buildings on cells that go stay where they are: their cells block the new ones.
+        let mut blockers = self.blockers.clone();
+        for c in self.occupied.iter().filter(|c| replaced.contains(&c.block)) {
+            if let Some(o) = self.cell_footprint(*c) {
+                blockers.push(o.corners());
+            }
+        }
+        scratch.assign_blockers(blockers);
+        let mut created: BTreeSet<ZoneBlockId> = BTreeSet::new();
+        let mut order: Vec<(ZoneBlockId, &BlockDraft)> = Vec::new();
+        for d in &fresh {
+            let id = scratch.insert_draft(d);
+            created.insert(id);
+            order.push((id, d));
+        }
+        let mut work = BTreeSet::new();
+        for id in &created {
+            for r in 0..BLOCK_DEPTH {
+                work.insert((r, *id));
+            }
+        }
+        scratch.revalidate(work, &created);
+        order
+            .into_iter()
+            .map(|(id, d)| {
+                let b = scratch.blocks.get(id).expect("preview block");
+                StripPreview {
+                    side: d.side,
+                    cols: d.cols,
+                    obbs: scratch.index.obbs[&id].clone(),
+                    valid: b.valid.clone(),
+                    marks: d
+                        .marks
+                        .iter()
+                        .filter(|m| m.major && !m.end)
+                        .map(|m| {
+                            [
+                                m.axis + m.v * d.inner,
+                                m.axis + m.v * (d.inner + f32::from(BLOCK_DEPTH) * d.row_depth),
+                            ]
+                        })
+                        .collect(),
+                }
+            })
+            .collect()
+    }
+
+    fn assign_blockers(&mut self, blockers: Vec<Quad>) {
+        self.blockers = blockers;
+        self.blocker_buckets.clear();
+        for (i, q) in self.blockers.iter().enumerate() {
+            for key in bucket_range(quad_aabb(q), BLOCK_BUCKET) {
+                self.blocker_buckets.entry(key).or_default().push(i as u32);
+            }
+        }
+    }
+}
+
+impl ZoneGrid {
     /// Gives the cells of the `created` blocks the type of the nearest carried cell in the same
     /// row and on the same side of the road, within [`CARRY_RADIUS`] along it, each carried
     /// cell used once. Deterministic: new cells in id order, ties broken by the lower carried
@@ -720,25 +1125,36 @@ impl ZoneGrid {
 
     // ----- queries (tools, overlays) -----
 
-    /// Cells (valid or not) whose footprint contains `p`; lowest block id first.
+    /// The cell whose footprint contains `p`. Where blocks overlap (corners, BUG-047) the cell
+    /// that stands there wins: a valid or an occupied one, lowest block id first; a point only
+    /// covered by cells that lost to others gets the first of those.
     pub fn cell_at(&self, p: Vec2) -> Option<ZoneCellRef> {
         let key = (
             (p.x / BLOCK_BUCKET).floor() as i32,
             (p.y / BLOCK_BUCKET).floor() as i32,
         );
         let blocks = self.index.block_buckets.get(&key)?;
+        let mut loser = None;
         for id in blocks {
             let Some(obbs) = self.index.obbs.get(id) else {
                 continue;
             };
-            if let Some(i) = obbs.iter().position(|o| o.distance_to_point(p) <= 1e-3) {
-                return Some(ZoneCellRef {
+            for (i, o) in obbs.iter().enumerate() {
+                if o.distance_to_point(p) > 1e-3 {
+                    continue;
+                }
+                let cell = ZoneCellRef {
                     block: *id,
                     cell: i as u16,
-                });
+                };
+                if self.blocks.get(*id).is_some_and(|b| b.valid[i]) || self.occupied.contains(&cell)
+                {
+                    return Some(cell);
+                }
+                loser.get_or_insert(cell);
             }
         }
-        None
+        loser
     }
 
     /// Every cell (valid or not) whose centre satisfies `keep`, among blocks near `bounds`.
@@ -882,14 +1298,9 @@ impl ZoneGrid {
         if !self.index.built {
             return;
         }
-        let mut work: BTreeSet<ZoneBlockId> = BTreeSet::new();
+        let mut work: BTreeSet<(u16, ZoneBlockId)> = BTreeSet::new();
         for q in &changed {
-            let region = inflate(quad_aabb(q), REACH);
-            for key in bucket_range(region, BLOCK_BUCKET) {
-                if let Some(set) = self.index.block_buckets.get(&key) {
-                    work.extend(set.iter().copied());
-                }
-            }
+            self.add_work(inflate(quad_aabb(q), REACH), &mut work);
         }
         self.revalidate(work, &BTreeSet::new());
     }
@@ -898,7 +1309,6 @@ impl ZoneGrid {
     pub fn blockers(&self) -> &[Quad] {
         &self.blockers
     }
-
     fn blocked_by_rect(&self, o: &Obb) -> bool {
         if self.blockers.is_empty() {
             return false;
@@ -927,517 +1337,12 @@ impl ZoneGrid {
         if !self.index.built {
             return;
         }
-        let work: BTreeSet<ZoneBlockId> = cells.iter().map(|c| c.block).collect();
+        let mut work: BTreeSet<(u16, ZoneBlockId)> = BTreeSet::new();
+        for c in cells {
+            if let Some(b) = self.index.block_bounds.get(&c.block) {
+                self.add_work(inflate(*b, REACH), &mut work);
+            }
+        }
         self.revalidate(work, &BTreeSet::new());
-    }
-
-    fn rebuild_index(&mut self, net: &NetGraph, roads: &dyn Fn(RoadDefId) -> RoadZoning) {
-        self.index = Index::default();
-        for (id, seg) in net.segments() {
-            self.add_road_pieces(id, seg, roads(seg.road));
-        }
-        let ids: Vec<ZoneBlockId> = self.blocks.iter().map(|(id, _)| id).collect();
-        for id in ids {
-            self.index_block(id);
-        }
-        self.index.built = true;
-    }
-
-    fn add_road_pieces(&mut self, id: SegmentId, seg: &Segment, road: RoadZoning) {
-        if seg.elevation != Elevation::Ground {
-            return;
-        }
-        let n = ((seg.length / ROAD_SAMPLE).ceil() as usize).max(1);
-        let table = ArcTable::build(&seg.curve);
-        let pts: Vec<Vec2> = (0..=n)
-            .map(|i| {
-                let t = table.s_to_t(table.length() * i as f32 / n as f32);
-                to_xz(seg.curve.point(t))
-            })
-            .collect();
-        let mut bounds: Option<Bounds> = None;
-        for w in pts.windows(2) {
-            let piece = RoadPiece {
-                a: w[0],
-                b: w[1],
-                half_width: road.half_width,
-            };
-            let b = inflate((w[0].min(w[1]), w[0].max(w[1])), road.half_width);
-            for key in bucket_range(b, ROAD_BUCKET) {
-                self.index
-                    .road_buckets
-                    .entry(key)
-                    .or_default()
-                    .push((id, piece));
-            }
-            bounds = Some(bounds.map_or(b, |x| union(x, b)));
-        }
-        if let Some(b) = bounds {
-            self.index.road_bounds.insert(id, b);
-        }
-    }
-
-    fn index_block(&mut self, id: ZoneBlockId) {
-        let block = self.blocks.get(id).expect("block");
-        let obbs = block.footprints();
-        let mut bounds: Option<Bounds> = None;
-        for o in &obbs {
-            bounds = Some(bounds.map_or(o.aabb(), |b| union(b, o.aabb())));
-        }
-        let bounds = bounds.expect("a block has cells");
-        for key in bucket_range(bounds, BLOCK_BUCKET) {
-            self.index.block_buckets.entry(key).or_default().insert(id);
-        }
-        self.index.block_bounds.insert(id, bounds);
-        self.index.obbs.insert(id, obbs);
-    }
-
-    fn unindex_block(&mut self, id: ZoneBlockId) -> Option<Bounds> {
-        self.index.obbs.remove(&id);
-        let bounds = self.index.block_bounds.remove(&id)?;
-        for key in bucket_range(bounds, BLOCK_BUCKET) {
-            if let Some(set) = self.index.block_buckets.get_mut(&key) {
-                set.remove(&id);
-                if set.is_empty() {
-                    self.index.block_buckets.remove(&key);
-                }
-            }
-        }
-        Some(bounds)
-    }
-
-    fn remove_segment(&mut self, id: SegmentId, dirty: &mut Vec<Bounds>) {
-        self.fingerprints.remove(&id);
-        if let Some(blocks) = self.by_segment.remove(&id) {
-            for b in blocks.into_iter().flatten() {
-                if let Some(bounds) = self.unindex_block(b) {
-                    dirty.push(bounds);
-                }
-                self.blocks.remove(b);
-            }
-        }
-        if let Some(bounds) = self.index.road_bounds.remove(&id) {
-            dirty.push(bounds);
-            for key in bucket_range(bounds, ROAD_BUCKET) {
-                if let Some(v) = self.index.road_buckets.get_mut(&key) {
-                    v.retain(|(s, _)| *s != id);
-                    if v.is_empty() {
-                        self.index.road_buckets.remove(&key);
-                    }
-                }
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn add_segment(
-        &mut self,
-        id: SegmentId,
-        seg: &Segment,
-        road: RoadZoning,
-        zone_curve: &CubicBezier3,
-        align: Option<f32>,
-        fit_along: bool,
-        dirty: &mut Vec<Bounds>,
-        created: &mut BTreeSet<ZoneBlockId>,
-    ) {
-        self.add_road_pieces(id, seg, road);
-        if let Some(b) = self.index.road_bounds.get(&id) {
-            dirty.push(*b);
-        }
-        if !road.allows_zoning || seg.elevation != Elevation::Ground {
-            return;
-        }
-        let Some(drafts) = self.lay_strips(zone_curve, road, align, fit_along) else {
-            return;
-        };
-        let mut ids = [None, None];
-        for (slot, mut block) in drafts.into_iter().enumerate() {
-            block.segment = id;
-            let bid = self.blocks.insert(block);
-            self.index_block(bid);
-            created.insert(bid);
-            ids[slot] = Some(bid);
-        }
-        self.by_segment.insert(id, ids);
-    }
-
-    /// The cells a stretch `zone_curve` of a road with `road` gets, as two blocks (left, right;
-    /// their `segment` is a placeholder). Used by the sync for a new segment and by the road
-    /// tool's ghost for the preview, so both lay exactly the same cells (T-185).
-    ///
-    /// `align` is the start offset that continues a neighbour's row ([`Self::joint_alignment`]);
-    /// without it, and with `fit_along` (neither end is a plain bend that a later segment
-    /// may continue) and a block fit set ([`Self::set_block_fit`]), the cells are stretched or
-    /// shrunk to fill the stretch exactly. Each side's rows are fitted to the road or older
-    /// strip that faces it when that leaves 4 rows within the fit of the free depth.
-    pub fn lay_strips(
-        &self,
-        zone_curve: &CubicBezier3,
-        road: RoadZoning,
-        align: Option<f32>,
-        fit_along: bool,
-    ) -> Option<[ZoneBlock; 2]> {
-        let length = ArcTable::build(zone_curve).length();
-        let (mut s0, mut cols) = strip_layout(length, align);
-        let mut cell_len = CELL_SIZE;
-        if align.is_none() && fit_along && self.fit_m > 0.0 {
-            // Never more cells than the standard layout has: the cells grow (by at most a
-            // quarter) to fill the stretch, so the growth of a town does not change.
-            let n = (length / CELL_SIZE).floor();
-            if n >= 4.0 && length / n <= CELL_SIZE * 1.25 {
-                (s0, cols, cell_len) = (0.0, n as u16, length / n);
-            }
-        }
-        if cols == 0 {
-            return None;
-        }
-        let n = usize::from(cols) * usize::from(BLOCK_DEPTH);
-        let mut out = [Side::Left, Side::Right].map(|side| ZoneBlock {
-            segment: cp_core::Id::new(u32::MAX, 0),
-            side,
-            curve: *zone_curve,
-            length,
-            s0,
-            cols,
-            inner: road.half_width,
-            cell_len,
-            row_depth: CELL_SIZE,
-            zones: vec![ZoneType::None; n],
-            valid: vec![true; n],
-        });
-        if self.fit_m > 0.0 {
-            for b in &mut out {
-                if let Some(rd) = self.fit_rows(b) {
-                    b.row_depth = rd;
-                }
-            }
-        }
-        Some(out)
-    }
-
-    /// The row depth that makes the 4 rows of `block` fill the free depth up to what faces it
-    /// (a road, or the cells of an older strip), when that depth is within the block fit of 4
-    /// standard rows. The nearest column decides (a cross street at a corner is not a facing
-    /// road, see below). `None`: keep the standard rows.
-    fn fit_rows(&self, block: &ZoneBlock) -> Option<f32> {
-        let table = ArcTable::build(&block.curve);
-        let reach = f32::from(BLOCK_DEPTH) * CELL_SIZE + self.fit_m;
-        let mut gaps: Vec<f32> = Vec::new();
-        for col in 0..block.cols {
-            let s = block.s0 + (f32::from(col) + 0.5) * block.cell_len;
-            let t = table.s_to_t(s.clamp(0.0, block.length));
-            let p = to_xz(block.curve.point(t));
-            let tg = to_xz(block.curve.tangent(t))
-                .try_normalize()
-                .unwrap_or(Vec2::X);
-            let v = Vec2::new(tg.y, -tg.x) * block.side.sign();
-            let mut d = 0.5;
-            while d <= reach {
-                let q = p + v * (block.inner + d);
-                if self.obstacle_at(q) {
-                    // What stands right at the road is a cross street (or its strip), not the
-                    // far side of the block.
-                    if d >= f32::from(BLOCK_DEPTH) * CELL_SIZE / 2.0 {
-                        gaps.push(d);
-                    }
-                    break;
-                }
-                d += 0.5;
-            }
-        }
-        if gaps.is_empty() {
-            return None;
-        }
-        gaps.sort_by(f32::total_cmp);
-        // The nearest column decides, so a facing road a few degrees off parallel never has a
-        // row cut off by the older strip (the far end is left with a wedge, narrower than a row).
-        let free = gaps[0];
-        let standard = f32::from(BLOCK_DEPTH) * CELL_SIZE;
-        let rd = free / f32::from(BLOCK_DEPTH);
-        ((free - standard).abs() <= self.fit_m
-            && (free - standard).abs() > 1e-3
-            && (0.75..=1.25).contains(&(rd / CELL_SIZE)))
-        .then_some(rd)
-    }
-
-    /// Whether `q` is on a road or on a valid cell of an existing block.
-    fn obstacle_at(&self, q: Vec2) -> bool {
-        let probe = (q - Vec2::splat(0.5), q + Vec2::splat(0.5));
-        for key in bucket_range(probe, ROAD_BUCKET) {
-            for (_, piece) in self.index.road_buckets.get(&key).into_iter().flatten() {
-                if point_segment_distance(q, piece.a, piece.b) < piece.half_width - ROAD_EPS {
-                    return true;
-                }
-            }
-        }
-        for key in bucket_range(probe, BLOCK_BUCKET) {
-            for bid in self.index.block_buckets.get(&key).into_iter().flatten() {
-                let (Some(b), Some(obbs)) = (self.blocks.get(*bid), self.index.obbs.get(bid))
-                else {
-                    continue;
-                };
-                for (j, o) in obbs.iter().enumerate() {
-                    if b.valid[j] && o.distance_to_point(q) <= 1e-3 {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    /// Where the first cell of a new segment `id` starts (`s0`) so that its row of cells continues
-    /// the row of a segment it joins at a degree-2 node and runs on straight into (BUG-043):
-    /// the cell edges meet at the joint, no gap. `None` for a segment with no such neighbour
-    /// that already has blocks (the cells are then centred as before).
-    pub fn joint_alignment(
-        &self,
-        net: &NetGraph,
-        roads: &dyn Fn(RoadDefId) -> RoadZoning,
-        id: SegmentId,
-        seg: &Segment,
-        length: f32,
-    ) -> Option<f32> {
-        let leaving = |from_start: bool| {
-            to_xz(if from_start {
-                seg.curve.tangent(0.0)
-            } else {
-                -seg.curve.tangent(1.0)
-            })
-            .try_normalize()
-            .unwrap_or(Vec2::X)
-        };
-        self.alignment_at(
-            net,
-            roads,
-            roads(seg.road),
-            length,
-            [
-                (Some(seg.start), leaving(true)),
-                (Some(seg.end), leaving(false)),
-            ],
-            Some(id),
-        )
-    }
-
-    /// [`Self::joint_alignment`] for a segment that need not be in the net yet (the road tool's
-    /// ghost): `ends` are its nodes with the direction leaving each of them along the segment;
-    /// `skip` is the segment itself when it is already in the net. A node counts when, without
-    /// `skip`, exactly one segment is at it (the segment becomes the second).
-    pub fn alignment_at(
-        &self,
-        net: &NetGraph,
-        roads: &dyn Fn(RoadDefId) -> RoadZoning,
-        ours: RoadZoning,
-        length: f32,
-        ends: [(Option<NodeId>, Vec2); 2],
-        skip: Option<SegmentId>,
-    ) -> Option<f32> {
-        for (k, (node, dir)) in ends.into_iter().enumerate() {
-            let at_start = k == 0;
-            let Some(node) = node else { continue };
-            let Some(n) = net.node(node) else { continue };
-            let others: Vec<SegmentId> = n
-                .segments
-                .iter()
-                .copied()
-                .filter(|s| Some(*s) != skip)
-                .collect();
-            let [other] = others[..] else { continue };
-            let Some(o) = net.segment(other) else {
-                continue;
-            };
-            let theirs = roads(o.road);
-            if o.start == o.end
-                || o.elevation != Elevation::Ground
-                || !theirs.allows_zoning
-                || (theirs.half_width - ours.half_width).abs() > 1e-3
-            {
-                continue;
-            }
-            // Straight on: the directions leaving the joint are (nearly) opposite.
-            let theirs_dir = to_xz(if o.start == node {
-                o.curve.tangent(0.0)
-            } else {
-                -o.curve.tangent(1.0)
-            })
-            .try_normalize()
-            .unwrap_or(Vec2::X);
-            if dir.dot(theirs_dir) > -STRAIGHT_COS {
-                continue;
-            }
-            let Some(b) = self
-                .by_segment
-                .get(&other)
-                .and_then(|ids| ids[0])
-                .and_then(|b| self.blocks.get(b))
-            else {
-                continue;
-            };
-            // How far the neighbour's nearest cell edge is from the joint (negative: its cell
-            // reaches over the joint).
-            let free = if o.start == node {
-                b.s0
-            } else {
-                b.length - (b.s0 + f32::from(b.cols) * b.cell_len)
-            };
-            return Some(if at_start {
-                (-free).clamp(-CELL_SIZE, CELL_SIZE)
-            } else {
-                (length + free).rem_euclid(CELL_SIZE)
-            });
-        }
-        None
-    }
-
-    /// The cells a road of `road` type would get along `curve`, with their validity against
-    /// what stands now: what the road tool's ghost draws (T-185). `nodes` are the existing
-    /// nodes the stretch starts and ends at (`None` for a new one). Laid by the same code as a
-    /// real segment's cells ([`Self::lay_strips`]); junction setbacks are not known before the
-    /// road exists, so a stretch that ends at a junction is laid from its full length.
-    pub fn preview_strips(
-        &self,
-        net: &NetGraph,
-        roads: &dyn Fn(RoadDefId) -> RoadZoning,
-        road: RoadDefId,
-        curve: &CubicBezier3,
-        nodes: [Option<NodeId>; 2],
-    ) -> Vec<StripPreview> {
-        let ours = roads(road);
-        if !ours.allows_zoning {
-            return Vec::new();
-        }
-        let length = ArcTable::build(curve).length();
-        let dir = |from_start: bool| {
-            to_xz(if from_start {
-                curve.tangent(0.0)
-            } else {
-                -curve.tangent(1.0)
-            })
-            .try_normalize()
-            .unwrap_or(Vec2::X)
-        };
-        let align = self.alignment_at(
-            net,
-            roads,
-            ours,
-            length,
-            [(nodes[0], dir(true)), (nodes[1], dir(false))],
-            None,
-        );
-        // Plain bends (an existing end with one segment, which the new one continues) stay
-        // unfitted along the road, as in `sync`.
-        let bend = nodes
-            .iter()
-            .flatten()
-            .any(|n| net.node(*n).is_some_and(|n| n.segments.len() == 1));
-        let Some(blocks) = self.lay_strips(curve, ours, align, !bend) else {
-            return Vec::new();
-        };
-        blocks
-            .into_iter()
-            .map(|b| {
-                let obbs = b.footprints();
-                let valid = self.valid_for(&obbs, None);
-                StripPreview {
-                    side: b.side,
-                    cols: b.cols,
-                    obbs,
-                    valid,
-                }
-            })
-            .collect()
-    }
-
-    /// Validity mask of block `id` against roads and older blocks.
-    fn compute_valid(&self, id: ZoneBlockId) -> Option<Vec<bool>> {
-        self.blocks.get(id)?;
-        let obbs = self.index.obbs.get(&id)?;
-        Some(self.valid_for(obbs, Some(id)))
-    }
-
-    /// Validity of `obbs`, the cells of block `id` (or of a block that does not exist yet:
-    /// every existing block is then older).
-    fn valid_for(&self, obbs: &[Obb], id: Option<ZoneBlockId>) -> Vec<bool> {
-        let depth = usize::from(BLOCK_DEPTH);
-        let mut valid = vec![true; obbs.len()];
-        for (i, o) in obbs.iter().enumerate() {
-            let reach = inflate(o.aabb(), REACH);
-
-            // Water and steep ground.
-            if !self.ground_ok(o.c) {
-                valid[i] = false;
-                continue;
-            }
-
-            // Roads.
-            'road: for key in bucket_range(reach, ROAD_BUCKET) {
-                for (_, piece) in self.index.road_buckets.get(&key).into_iter().flatten() {
-                    if o.distance_to_segment(piece.a, piece.b) < piece.half_width - ROAD_EPS {
-                        valid[i] = false;
-                        break 'road;
-                    }
-                }
-            }
-            if !valid[i] {
-                continue;
-            }
-            // A building stands here.
-            if id.is_some_and(|id| {
-                self.occupied.contains(&ZoneCellRef {
-                    block: id,
-                    cell: i as u16,
-                })
-            }) {
-                valid[i] = false;
-                continue;
-            }
-
-            // A free-standing building stands here (§8.1).
-            if self.blocked_by_rect(o) {
-                valid[i] = false;
-                continue;
-            }
-
-            // The previous column of the same block (curves): the later column loses.
-            let (col, row) = (i / depth, i % depth);
-            if col > 0 {
-                let prev = (col - 1) * depth;
-                for r in row.saturating_sub(1)..=(row + 1).min(depth - 1) {
-                    if obbs[prev + r].penetration(o) > PENETRATION_EPS {
-                        valid[i] = false;
-                    }
-                }
-            }
-            if !valid[i] {
-                continue;
-            }
-
-            // Older blocks win.
-            let mut older: BTreeSet<ZoneBlockId> = BTreeSet::new();
-            for key in bucket_range(reach, BLOCK_BUCKET) {
-                if let Some(set) = self.index.block_buckets.get(&key) {
-                    older.extend(set.iter().copied().filter(|b| id.is_none_or(|id| *b < id)));
-                }
-            }
-            'older: for oid in older {
-                let (Some(ob), Some(oo)) = (self.blocks.get(oid), self.index.obbs.get(&oid)) else {
-                    continue;
-                };
-                for (j, other) in oo.iter().enumerate() {
-                    let blocking = ob.valid[j]
-                        || self.occupied.contains(&ZoneCellRef {
-                            block: oid,
-                            cell: j as u16,
-                        });
-                    if blocking && other.penetration(o) > CROSS_BLOCK_EPS {
-                        valid[i] = false;
-                        break 'older;
-                    }
-                }
-            }
-        }
-        valid
     }
 }

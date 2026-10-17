@@ -9,10 +9,11 @@
 
 use bevy_math::Vec2;
 use cp_content::ContentDb;
-use cp_core::curve::{ArcTable, CubicBezier3, to_xz};
-use cp_net::{Elevation, NodeRef, RoadBuildPlan};
+use cp_core::curve::to_xz;
+use cp_net::{Elevation, RoadBuildPlan, plan_applied};
 use cp_sim::SimView;
-use cp_zone::{BLOCK_DEPTH, CELL_SIZE, RoadZoning};
+use cp_zone::{CELL_SIZE, RoadZoning};
+use std::sync::Arc;
 
 /// Cells between two ticks, and between the roads of a closed block (4 rows from each).
 pub const BLOCK_CELLS: u32 = 8;
@@ -51,63 +52,64 @@ fn zoning(db: &ContentDb) -> impl Fn(cp_content::RoadDefId) -> RoadZoning + '_ {
     }
 }
 
-/// The point and unit tangent at arc length `s` of `curve`.
-fn at_arc(curve: &CubicBezier3, table: &ArcTable, s: f32) -> (Vec2, Vec2) {
-    let t = table.s_to_t(s.clamp(0.0, table.length()));
-    let tg = to_xz(curve.tangent(t)).try_normalize().unwrap_or(Vec2::X);
-    (to_xz(curve.point(t)), tg)
+type StripKey = (usize, usize, u64, RoadBuildPlan);
+
+/// The last strip computed: the ghost is asked for every frame, the layout changes with the plan.
+static CACHE: std::sync::Mutex<Option<(StripKey, ZoneStrip)>> = std::sync::Mutex::new(None);
+
+/// The cells and ticks of the road `plan` would build: the frontages of the net after the plan
+/// laid by `cp_zone` itself (the cells of the built road, BUG-047), with a tick at every 8th
+/// column boundary of each frontage.
+pub fn zone_strip(view: &SimView, plan: &RoadBuildPlan) -> ZoneStrip {
+    let key: StripKey = (
+        Arc::as_ptr(&view.net) as usize,
+        Arc::as_ptr(&view.zones) as usize,
+        view.zones.revision(),
+        plan.clone(),
+    );
+    if let Some((k, strip)) = CACHE.lock().expect("zone strip cache").as_ref()
+        && *k == key
+    {
+        return strip.clone();
+    }
+    let strip = compute_strip(view, plan);
+    *CACHE.lock().expect("zone strip cache") = Some((key, strip.clone()));
+    strip
 }
 
-/// The cells and ticks of the road `plan` would build, laid like the cells of a built road.
-pub fn zone_strip(view: &SimView, plan: &RoadBuildPlan) -> ZoneStrip {
+fn compute_strip(view: &SimView, plan: &RoadBuildPlan) -> ZoneStrip {
     let mut out = ZoneStrip::default();
     let Some(content) = view.content.as_deref() else {
         return out;
     };
     let roads = zoning(content);
-    let def = roads(plan.road);
-    if !def.allows_zoning {
+    if !roads(plan.road).allows_zoning {
         return out;
     }
-    let node = |r: NodeRef| match r {
-        NodeRef::Existing(id) => Some(id),
-        _ => None,
+    let Some(after) = plan_applied(&view.net, content, plan) else {
+        return out;
     };
-    let depth = f32::from(BLOCK_DEPTH) * CELL_SIZE;
-    let mut run = 0.0f32;
-    let mut next_tick = BLOCK_M;
-    for seg in &plan.segments {
-        let table = ArcTable::build(&seg.curve);
-        if seg.elevation == Elevation::Ground {
-            for strip in view.zones.preview_strips(
-                &view.net,
-                &roads,
-                plan.road,
-                &seg.curve,
-                [node(seg.start), node(seg.end)],
-            ) {
-                for (o, valid) in strip.obbs.iter().zip(&strip.valid) {
-                    out.cells.push(ZoneGhostCell {
-                        corners: o.corners(),
-                        valid: *valid,
-                    });
-                }
-            }
+    let mut region: Option<(Vec2, Vec2)> = None;
+    for seg in plan
+        .segments
+        .iter()
+        .filter(|s| s.elevation == Elevation::Ground)
+    {
+        for p in seg.curve.xz() {
+            region = Some(region.map_or((p, p), |(lo, hi)| (lo.min(p), hi.max(p))));
         }
-        // Ticks: every 8 cells of the road from its first node.
-        let len = table.length();
-        while next_tick <= run + len {
-            let (p, tg) = at_arc(&seg.curve, &table, next_tick - run);
-            let n = Vec2::new(tg.y, -tg.x);
-            for side in [-1.0f32, 1.0] {
-                out.ticks.push([
-                    p + n * side * def.half_width,
-                    p + n * side * (def.half_width + depth),
-                ]);
-            }
-            next_tick += BLOCK_M;
+    }
+    let Some(region) = region else {
+        return out;
+    };
+    for strip in view.zones.preview_layout(&after, &roads, region) {
+        for (o, valid) in strip.obbs.iter().zip(&strip.valid) {
+            out.cells.push(ZoneGhostCell {
+                corners: o.corners(),
+                valid: *valid,
+            });
         }
-        run += len;
+        out.ticks.extend(strip.marks);
     }
     out
 }

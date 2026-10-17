@@ -69,7 +69,7 @@ pub fn apply(world: &mut World, cmd: &ZoneCommand) -> Result<Cost, ZoneError> {
 /// sync only touches segments whose fingerprint changed.
 fn sync_before_paint(world: &mut World) {
     use cp_content::SimContent;
-    use cp_net::{JunctionGeometry, NetGraph};
+    use cp_net::NetGraph;
     let Some(content) = world.get_resource::<SimContent>().map(|c| c.0.clone()) else {
         return;
     };
@@ -77,10 +77,7 @@ fn sync_before_paint(world: &mut World) {
         .get_resource::<cp_terrain::SimTerrain>()
         .map(|t| t.0.clone());
     world.resource_scope(|world, mut grid: bevy_ecs::prelude::Mut<ZoneGrid>| {
-        let (Some(net), Some(junctions)) = (
-            world.get_resource::<NetGraph>(),
-            world.get_resource::<JunctionGeometry>(),
-        ) else {
+        let Some(net) = world.get_resource::<NetGraph>() else {
             return;
         };
         if let Some(t) = terrain
@@ -88,7 +85,7 @@ fn sync_before_paint(world: &mut World) {
         {
             grid.set_terrain(t);
         }
-        crate::sync_grid(&mut grid, net, &content, junctions);
+        crate::sync_grid(&mut grid, net, &content);
     });
 }
 

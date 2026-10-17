@@ -33,6 +33,22 @@ fn scene() -> SimRunner {
         .filter(|(_, b)| b.state == BuildingState::Active)
         .map(|(id, _)| id)
         .collect();
+    // The city may reach its population on day 0 with the newcomers still on their way home:
+    // run on into the second day (the tests below need a tick of at least a day) and let them arrive.
+    while sim.tick().0 < 4096 + 1200 {
+        sim.tick_once();
+    }
+    for _ in 0..2000 {
+        let g = sim.world().resource::<cp_citizen::CitizenGrid>();
+        if g.citizens()
+            .filter(|(_, c)| c.is_adult() && c.location == cp_citizen::Location::Home)
+            .count()
+            >= 60
+        {
+            break;
+        }
+        sim.tick_once();
+    }
     let cars = send_citizens(&mut sim, 40, &buildings[..3], |_| TripMode::Car);
     let walkers = send_citizens(&mut sim, 10, &buildings[..3], |_| TripMode::Walk);
     assert!(

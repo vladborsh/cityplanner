@@ -71,7 +71,7 @@ fn the_v18_fixture_and_the_m1_fixtures_run_as_before_the_footprint_change() {
         ("v18-basic.sav", (48, [46, 0, 0, 0, 0, 46, 0, 0], 233, 81)),
         (
             "m1-small.sav",
-            (194, [192, 139, 0, 0, 0, 192, 0, 0], 1899, 630),
+            (198, [192, 139, 0, 0, 0, 192, 0, 0], 1899, 630),
         ),
         (
             "m1-traffic.sav",

@@ -234,17 +234,13 @@ mod tests {
         )
         .unwrap();
         let mut z = ZoneGrid::new();
-        z.sync(
-            &net,
-            &|id| {
-                let d = db.road(id);
-                RoadZoning {
-                    allows_zoning: d.allows_zoning,
-                    half_width: d.width / 2.0,
-                }
-            },
-            &|_, s| s.curve,
-        );
+        z.sync(&net, &|id| {
+            let d = db.road(id);
+            RoadZoning {
+                allows_zoning: d.allows_zoning,
+                half_width: d.width / 2.0,
+            }
+        });
         z
     }
 

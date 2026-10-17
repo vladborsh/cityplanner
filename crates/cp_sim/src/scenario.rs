@@ -157,6 +157,22 @@ fn service_sites(
         }
     };
     let place = |def, pos| SimCommand::Building(BuildingCommand::Place { def, pos, rot: 0.0 });
+    // Where a building of `def` stands in a block: the middle of the block, or the nearest
+    // column to it that takes the lot (the ends of a block lose cells to the cross street's
+    // block, BUG-047).
+    let spot = |def, id: cp_zone::ZoneBlockId, cols: u16| {
+        [0i32, -1, 1, -2, 2, -3, 3, -4, 4]
+            .into_iter()
+            .find_map(|k| {
+                let col = (i32::from(cols / 2) + k).clamp(0, i32::from(cols) - 1) as u16;
+                let o = zones.cell_footprint(ZoneCellRef {
+                    block: id,
+                    cell: col * BLOCK_DEPTH + 1,
+                })?;
+                let pos = o.c;
+                valid(def, pos).then_some(pos)
+            })
+    };
     let mut out = Vec::new();
 
     let centre = Vec2::splat(MAP_SIZE / 2.0);
@@ -258,14 +274,7 @@ fn service_sites(
         ("water_tower", residents * WATER_PER_RESIDENT, water_cap),
         ("wind_turbine", residents * POWER_PER_RESIDENT, 0.0),
     ];
-    let mut sites = blocks.iter().filter_map(|&(_, _, id, cols)| {
-        zones
-            .cell_footprint(ZoneCellRef {
-                block: id,
-                cell: (cols / 2) * BLOCK_DEPTH + 1,
-            })
-            .map(|o| o.c)
-    });
+    let mut sites = blocks.iter().map(|&(_, _, id, cols)| (id, cols));
     for (name, need, have) in sources {
         let Some(def) = content.building_id(name) else {
             continue;
@@ -277,10 +286,13 @@ fn service_sites(
         let count = ((need - have).max(0.0) / capacity).ceil() as usize;
         let mut placed = 0;
         while placed < count {
-            let Some(pos) = sites.next() else {
+            let Some((id, cols)) = sites.next() else {
                 break;
             };
-            if taken.iter().any(|t| t.distance(pos) < 30.0) || !valid(def, pos) {
+            let Some(pos) = spot(def, id, cols) else {
+                continue;
+            };
+            if taken.iter().any(|t| t.distance(pos) < 30.0) {
                 continue;
             }
             taken.push(pos);
@@ -308,17 +320,10 @@ fn service_sites(
     for round in 0..wanted.iter().map(|w| w.1).max().unwrap_or(0) {
         queue.extend(wanted.iter().filter(|w| w.1 > round).map(|w| w.0));
     }
-    let candidates: Vec<Vec2> = blocks
+    let candidates: Vec<(cp_zone::ZoneBlockId, u16)> = blocks
         .iter()
         .rev()
-        .filter_map(|&(_, _, id, cols)| {
-            zones
-                .cell_footprint(ZoneCellRef {
-                    block: id,
-                    cell: (cols / 2) * BLOCK_DEPTH + 1,
-                })
-                .map(|o| o.c)
-        })
+        .map(|&(_, _, id, cols)| (id, cols))
         .collect();
     let stride = (candidates.len() / queue.len().max(1)).max(1);
     let mut next = 0;
@@ -327,9 +332,12 @@ fn service_sites(
             continue;
         };
         while next < candidates.len() {
-            let pos = candidates[next];
+            let (id, cols) = candidates[next];
             next += 1;
-            if taken.iter().any(|t| t.distance(pos) < 30.0) || !valid(def, pos) {
+            let Some(pos) = spot(def, id, cols) else {
+                continue;
+            };
+            if taken.iter().any(|t| t.distance(pos) < 30.0) {
                 continue;
             }
             taken.push(pos);
