@@ -14,7 +14,9 @@
 //!
 //! The area earns `xp` for what its buildings made, and rises one level at each of
 //! `Balance::industry_levels`; each level above the first adds `industry_storage_per_level` to
-//! every building's storage. Nothing is sent anywhere yet (T-210): the stock fills up to `Full`.
+//! every building's storage. Cargo leaves in trucks (T-210, [`freight`]).
+
+pub mod freight;
 
 use std::collections::BTreeMap;
 
@@ -87,7 +89,7 @@ impl IndustryState {
     }
 
     /// Adds `delta` (may be negative) of `cargo`, keeping the list sorted and without zeros.
-    fn add(&mut self, building: BuildingId, cargo: CargoKind, delta: f32) {
+    pub(crate) fn add(&mut self, building: BuildingId, cargo: CargoKind, delta: f32) {
         let list = self.stock.entry(building).or_default();
         match list.iter().position(|(k, _)| *k >= cargo) {
             Some(i) if list[i].0 == cargo => list[i].1 = (list[i].1 + delta).max(0.0),
@@ -306,6 +308,8 @@ fn take_from_lot(
     }
     taken as f32
 }
+
+pub use freight::{IndustryLedger, run_freight};
 
 #[cfg(test)]
 mod tests;

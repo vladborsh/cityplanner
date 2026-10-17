@@ -25,7 +25,7 @@ use bevy_ecs::system::{Res, ResMut};
 use bevy_math::Vec2;
 use cp_building::{BuildingFlags, BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::CitizenGrid;
-use cp_content::{SimContent, VehicleKind, ZoneType};
+use cp_content::{CargoKind, SimContent, VehicleKind, ZoneType};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{Cost, Tick};
 use cp_net::{NetGraph, NodeId, NodeKind, node_is_rail};
@@ -49,6 +49,54 @@ pub struct Haul {
     pub from: Endpoint,
     pub to: Endpoint,
     pub load: f32,
+    /// What the truck carries; `Goods` for the shop goods of M3. Added in v44 (T-210).
+    pub cargo: CargoKind,
+}
+
+/// A truck of an industrial cargo that got there (T-210): `cp_industry` unloads it. Trucks with
+/// `CargoKind::Goods` are handled here. Not saved: `cp_industry` drains the list in the same
+/// tick, right after [`run_goods`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CargoArrival {
+    pub cargo: CargoKind,
+    pub load: f32,
+    pub from: Endpoint,
+    pub to: Endpoint,
+}
+
+/// The cargo trucks that arrived this tick, in run-id order.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct CargoArrivals {
+    pub list: Vec<CargoArrival>,
+}
+
+impl Goods {
+    /// Starts a truck with `load` units of an industrial `cargo` (T-210); the caller has taken
+    /// the load out of its own stock. Returns the run.
+    pub fn start_cargo_haul(
+        &mut self,
+        runs: &mut ServiceRuns,
+        cargo: CargoKind,
+        from: Endpoint,
+        to: Endpoint,
+        load: f32,
+    ) -> RunId {
+        let point = |e: Endpoint| match e {
+            Endpoint::Building(b) => RunPoint::Building(b),
+            Endpoint::Outside(n) => RunPoint::Outside(n),
+        };
+        let run = runs.start_run(VehicleKind::Cargo, point(from), point(to), false);
+        self.hauls.insert(
+            run,
+            Haul {
+                from,
+                to,
+                load,
+                cargo,
+            },
+        );
+        run
+    }
 }
 
 /// Stock of the factories and shops and the trucks under way. Serialized sim state.
@@ -83,7 +131,9 @@ pub fn run_goods(
     mut ledger: ResMut<TransitLedger>,
     mut runs: ResMut<ServiceRuns>,
     mut agents: ResMut<Agents>,
+    mut arrivals: ResMut<CargoArrivals>,
 ) {
+    arrivals.list.clear();
     let Some(content) = content else { return };
     let db = &*content.0;
     let bal = db.balance();
@@ -95,6 +145,17 @@ pub fn run_goods(
         match runs.get(id).map(|r| r.state) {
             Some(RunState::Arrived { .. } | RunState::Parked { .. }) => {
                 let h = goods.hauls.remove(&id).expect("listed");
+                if h.cargo != CargoKind::Goods {
+                    // An industrial cargo: `cp_industry` unloads it.
+                    arrivals.list.push(CargoArrival {
+                        cargo: h.cargo,
+                        load: h.load,
+                        from: h.from,
+                        to: h.to,
+                    });
+                    runs.release(id, &mut agents);
+                    continue;
+                }
                 match h.to {
                     Endpoint::Building(to) if buildings.get(to).is_some() => {
                         let s = goods.stock.entry(to).or_default();
@@ -169,6 +230,10 @@ pub fn run_goods(
     for id in mine {
         let b = buildings.get(id).expect("listed");
         let zone = db.building(b.def).zone;
+        // The buildings of the industrial chains make their own cargo (cp_industry, T-209).
+        if db.building(b.def).industry.is_some() {
+            continue;
+        }
         match zone {
             ZoneType::Industrial => {
                 let s = goods.stock.entry(id).or_default();
@@ -200,6 +265,7 @@ pub fn run_goods(
                                 from: Endpoint::Building(id),
                                 to,
                                 load: bal.goods_truck_load,
+                                cargo: CargoKind::Goods,
                             },
                         );
                     }
@@ -236,6 +302,7 @@ pub fn run_goods(
                             from: Endpoint::Outside(entry),
                             to: Endpoint::Building(id),
                             load: bal.goods_truck_load,
+                            cargo: CargoKind::Goods,
                         },
                     );
                 }
@@ -271,6 +338,7 @@ fn pick_shop(
                 db.building(b.def).zone,
                 ZoneType::ComLow | ZoneType::ComHigh
             )
+            || db.building(b.def).industry.is_some()
             || b.pos.distance(origin) > radius
         {
             continue;
@@ -297,6 +365,7 @@ fn has_supplier(
         b.state == BuildingState::Active
             && b.access().is_some()
             && db.building(b.def).zone == ZoneType::Industrial
+            && db.building(b.def).industry.is_none()
             && b.pos.distance(origin) <= radius
     })
 }

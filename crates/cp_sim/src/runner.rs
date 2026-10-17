@@ -151,6 +151,8 @@ impl SimRunner {
         world.init_resource::<crate::progress::Progress>();
         world.init_resource::<cp_terrain::ResourceDeposits>();
         world.init_resource::<cp_industry::IndustryState>();
+        world.init_resource::<cp_industry::IndustryLedger>();
+        world.init_resource::<cp_transit::CargoArrivals>();
         world
             .resource_mut::<SimChecksum>()
             .register("net", crate::checksum::net_part);
@@ -334,6 +336,8 @@ impl SimRunner {
                 cp_transit::run_goods,
                 // What the chain buildings of the industrial areas make (T-209).
                 cp_industry::run_industry,
+                // Their cargo goes out by truck (T-210).
+                cp_industry::run_freight,
                 // Intercity trains and the households and tourists they bring (T-167).
                 cp_transit::run_intercity,
                 cp_traffic::route_trips,

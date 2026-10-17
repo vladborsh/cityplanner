@@ -153,6 +153,10 @@ pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
     if !industry.is_empty() {
         h.write_serialized(industry);
     }
+    let trade = world.resource::<cp_industry::IndustryLedger>();
+    if !trade.is_empty() {
+        h.write_serialized(trade);
+    }
     // Absent until the deposits are filled from the map (a new game or a load with a map), so
     // a sim without a resource map keeps its checksum.
     let deposits = world.resource::<cp_terrain::ResourceDeposits>();

@@ -39,6 +39,9 @@ pub struct Flow {
     pub tourism: Cost,
     /// Goods sent out of the map (T-170), booked once a week like the fares.
     pub exports: Cost,
+    /// Cargo sold to and bought from the outside (T-210), booked once a week.
+    pub industry_export: Cost,
+    pub industry_import: Cost,
     pub road_upkeep: Cost,
     /// Pipes and power lines.
     pub utility_upkeep: Cost,
@@ -57,7 +60,7 @@ impl Flow {
     }
 
     pub fn income(&self) -> Cost {
-        self.tax() + self.fares + self.tourism + self.exports
+        self.tax() + self.fares + self.tourism + self.exports + self.industry_export
     }
 
     pub fn building_upkeep(&self) -> Cost {
@@ -71,6 +74,7 @@ impl Flow {
             + self.transit_upkeep
             + self.loans
             + self.policies
+            + self.industry_import
     }
 
     pub fn net(&self) -> Cost {
@@ -87,6 +91,8 @@ impl Flow {
         self.fares += o.fares;
         self.tourism += o.tourism;
         self.exports += o.exports;
+        self.industry_export += o.industry_export;
+        self.industry_import += o.industry_import;
         self.road_upkeep += o.road_upkeep;
         self.utility_upkeep += o.utility_upkeep;
         self.transit_upkeep += o.transit_upkeep;
@@ -102,6 +108,8 @@ impl Flow {
             fares: f(self.fares),
             tourism: f(self.tourism),
             exports: f(self.exports),
+            industry_export: f(self.industry_export),
+            industry_import: f(self.industry_import),
             road_upkeep: f(self.road_upkeep),
             utility_upkeep: f(self.utility_upkeep),
             services: self.services.map(f),

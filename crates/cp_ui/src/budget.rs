@@ -227,6 +227,19 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
             [Some(day.exports), Some(week.exports), Some(last.exports)],
         ));
     }
+    // Cargo trade (T-210): kept for the week so far only.
+    if week.industry_export != Cost::ZERO {
+        income.push((
+            "Industry export".into(),
+            [None, Some(week.industry_export), None],
+        ));
+    }
+    if week.industry_import != Cost::ZERO {
+        expenses.push((
+            "Industry import".into(),
+            [None, Some(week.industry_import), None],
+        ));
+    }
     (income, expenses)
 }
 

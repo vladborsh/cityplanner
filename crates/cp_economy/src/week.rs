@@ -218,6 +218,7 @@ pub fn settle_week(
     districts: Res<Districts>,
     city_policies: Res<CityPolicies>,
     ledger: Option<ResMut<TransitLedger>>,
+    industry: Option<ResMut<cp_industry::IndustryLedger>>,
 ) {
     let hour = game_hour(tick.0);
     if tick.0 == 0 || hour == game_hour(tick.0 - 1) {
@@ -267,6 +268,13 @@ pub fn settle_week(
             report.tourism = ledger.tourism;
             report.exports = ledger.exports;
             *ledger = TransitLedger::default();
+        }
+        // Cargo trade with the outside (T-210).
+        if let Some(mut industry) = industry {
+            let (sold, bought) = industry.settle_week();
+            treasury.balance += sold - bought;
+            booked.industry_export = sold;
+            booked.industry_import = bought;
         }
         treasury.balance += report.transit_fares + report.tourism + report.exports
             - report.transit_upkeep
