@@ -1377,7 +1377,7 @@ mod tests {
     #[test]
     fn balance_defaults_without_a_file_and_is_part_of_the_hash() {
         let none = ContentDb::from_sources(src(&[("a.ron", ROAD)])).unwrap();
-        assert_eq!(none.balance().walk_limit_m, 1000.0);
+        assert_eq!(none.balance().walk_limit_m, 400.0);
         let b = r#"Balance((walk_limit_m: 600.0))"#;
         let with = ContentDb::from_sources(src(&[("a.ron", ROAD), ("balance.ron", b)])).unwrap();
         assert_eq!(with.balance().walk_limit_m, 600.0);

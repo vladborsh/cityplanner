@@ -1,0 +1,267 @@
+//! BUG-066: the mode split of a grown town. Prints the table with `--ignored --nocapture`.
+
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::sync::Arc;
+
+use cp_citizen::{TripBook, TripMode, TripState};
+use cp_content::ContentDb;
+use cp_core::time::TICKS_PER_DAY;
+use cp_sim::scenario::{GridCityConfig, grid_city, population};
+use cp_terrain::Terrain;
+
+const ROOT: &str = env!("CARGO_MANIFEST_DIR");
+
+use cp_economy::EconomyState;
+
+fn starter_town(days: u64) -> cp_sim::SimRunner {
+    use bevy_math::Vec2;
+    use cp_building::BuildingCommand;
+    use cp_net::{ElevationMode, NetCommand, RoadPath};
+    use cp_sim::SimCommand;
+    use cp_zone::ZoneCommand;
+    let content =
+        Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
+    let t = Arc::new(Terrain::load(&Path::new(ROOT).join("../../assets/maps/flatlands")).unwrap());
+    let mut sim = cp_sim::SimRunner::new(1);
+    sim.set_terrain(Arc::clone(&t));
+    sim.set_content(Arc::clone(&content));
+    sim.new_game().unwrap();
+    sim.tick_once();
+    let money =
+        |s: &cp_sim::SimRunner| s.world().resource::<cp_core::Treasury>().balance.0 as f64 / 100.0;
+    let start = money(&sim);
+    let stub = t.meta().entry_road.as_ref().unwrap().stub_end();
+    let (tx, tz) = t.meta().start_tile;
+    let centre = Vec2::new(
+        (tx as f32 + 0.5) * cp_terrain::TILE_SIZE,
+        (tz as f32 + 0.5) * cp_terrain::TILE_SIZE,
+    );
+    let dir = (centre - stub).normalize();
+    let street = content.road_id("basic_2l").unwrap();
+    let send = |sim: &mut cp_sim::SimRunner, c: SimCommand| {
+        let tick = sim.tick();
+        sim.push_command(c, tick);
+        sim.tick_once();
+        sim.tick_once();
+        let out: Vec<_> = sim
+            .world_mut()
+            .resource_mut::<bevy_ecs::message::Messages<cp_core::CommandOutcome>>()
+            .drain()
+            .collect();
+        if false && let Some(Err(e)) = out.last().map(|o| o.result.clone()) {
+            println!("  rejected: {e}");
+        }
+    };
+    let n = 6;
+    for k in 0..n {
+        send(
+            &mut sim,
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: street,
+                path: RoadPath::Straight {
+                    from: stub + dir * (160.0 * k as f32),
+                    to: stub + dir * (160.0 * (k + 1) as f32),
+                },
+                elevation: ElevationMode::Ground,
+            }),
+        );
+    }
+    let after_road = money(&sim);
+    let side = dir.perp();
+    let mid = stub + dir * 480.0;
+    for (name, off) in [
+        ("water_tower", 90.0f32),
+        ("wind_turbine", -90.0),
+        ("sewage_treatment_plant", 140.0),
+    ] {
+        let def = content.building_id(name).unwrap();
+        let pos = mid + side * off;
+        send(
+            &mut sim,
+            SimCommand::Building(BuildingCommand::Place { def, pos, rot: 0.0 }),
+        );
+        if name != "sewage_treatment_plant" {
+            let kind = if name == "water_tower" {
+                cp_content::UtilityKind::Water
+            } else {
+                cp_content::UtilityKind::Power
+            };
+            send(
+                &mut sim,
+                SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
+                    kind,
+                    path: vec![pos, mid + side * 12.0],
+                }),
+            );
+        } else {
+            send(
+                &mut sim,
+                SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
+                    kind: cp_content::UtilityKind::Water,
+                    path: vec![pos, mid + side * 12.0],
+                }),
+            );
+        }
+    }
+    let after_services = money(&sim);
+    // Zone every cell: low residential, with a block of shops and industry.
+    let cells: Vec<_> = sim
+        .view()
+        .zones
+        .cells_within(mid, 600.0)
+        .into_iter()
+        .filter(|c| sim.view().zones.is_valid(*c))
+        .collect();
+    for (i, chunk) in cells.chunks(cells.len() / 3 + 1).enumerate() {
+        let zone = [
+            cp_content::ZoneType::ResLow,
+            cp_content::ZoneType::ComLow,
+            cp_content::ZoneType::Industrial,
+        ][i % 3];
+        send(
+            &mut sim,
+            SimCommand::Zone(ZoneCommand::PaintZones {
+                cells: chunk.to_vec(),
+                zone,
+            }),
+        );
+    }
+    if false {
+        println!(
+            "start {start:.0}; after street {after_road:.0} (street cost {:.0}); after services {after_services:.0} (services {:.0}); zoned {} cells",
+            start - after_road,
+            after_road - after_services,
+            cells.len()
+        );
+        println!("day  balance  pop  wk_income wk_upkeep");
+    }
+    let mut series = Vec::new();
+    for day in 1..=days {
+        for _ in 0..cp_core::time::TICKS_PER_DAY {
+            sim.tick_once();
+        }
+        series.push((day, money(&sim), population(&sim)));
+        if false && day % 3 == 0 {
+            let r = sim.world().resource::<EconomyState>().last_week;
+            println!(
+                "{day:3} {:9.0} {:4} {:9.0} {:9.0} (roads {:.0} bldg {:.0} util {:.0})",
+                money(&sim),
+                population(&sim),
+                r.income().0 as f64 / 100.0,
+                (r.upkeep().0) as f64 / 100.0,
+                r.road_upkeep.0 as f64 / 100.0,
+                r.building_upkeep.0 as f64 / 100.0,
+                r.utility_upkeep.0 as f64 / 100.0
+            );
+        }
+    }
+    sim
+}
+
+/// `(walk, car, transit)` trips started during one game day of `sim`.
+fn count_day(sim: &mut cp_sim::SimRunner) -> (usize, usize, usize) {
+    let mut seen = BTreeSet::new();
+    let (mut walk, mut car, mut transit) = (0, 0, 0);
+    for _ in 0..TICKS_PER_DAY {
+        sim.tick_once();
+        for (id, t) in sim.world().resource::<TripBook>().iter() {
+            // A trip is Planned for one tick; count it then, with the mode it was given.
+            if t.state == TripState::Planned && seen.insert((id, sim.tick().0)) {
+                match t.mode {
+                    TripMode::Walk => walk += 1,
+                    TripMode::Car => car += 1,
+                    TripMode::Transit => transit += 1,
+                }
+            }
+        }
+    }
+    (walk, car, transit)
+}
+
+/// The dense lattice city: `(walk, car, transit, residents)`.
+fn split(target: usize) -> (usize, usize, usize, usize) {
+    let content =
+        Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
+    let terrain =
+        Arc::new(Terrain::load(&Path::new(ROOT).join("../../assets/maps/flatlands")).unwrap());
+    let (mut sim, _) = grid_city(target, 1, terrain, content, &GridCityConfig::default());
+    for _ in 0..TICKS_PER_DAY {
+        sim.tick_once();
+    }
+    {
+        let g = sim.world().resource::<cp_citizen::CitizenGrid>();
+        let b = sim.world().resource::<cp_building::BuildingGrid>();
+        let mut ds: Vec<f32> = g
+            .citizens()
+            .filter_map(|(_, c)| Some(b.get(c.home?)?.pos.distance(b.get(c.work?)?.pos)))
+            .collect();
+        ds.sort_by(f32::total_cmp);
+        eprintln!(
+            "DBG home-work: {} citizens, median {:?}, p90 {:?}",
+            ds.len(),
+            ds.get(ds.len() / 2),
+            ds.get(ds.len() * 9 / 10)
+        );
+    }
+    let before = {
+        let a = sim.world().resource::<cp_traffic::Agents>();
+        (
+            a.stats.despawned_stuck,
+            a.stats.no_path,
+            sim.world().resource::<TripBook>().completed,
+        )
+    };
+    let (w, c, t) = count_day(&mut sim);
+    let a = sim.world().resource::<cp_traffic::Agents>();
+    let done = sim.world().resource::<TripBook>().completed - before.2;
+    eprintln!(
+        "DBG flow: stuck {} no_path {} completed {done} of {} started, avg load {:.3}",
+        a.stats.despawned_stuck - before.0,
+        a.stats.no_path - before.1,
+        w + c + t,
+        sim.view().city.traffic.avg_load
+    );
+    (w, c, t, population(&sim))
+}
+
+/// The player's starter town: a street of 960 m with zoning 600 m around its middle.
+fn starter_split() -> (usize, usize, usize, usize) {
+    let mut sim = starter_town(30);
+    let (w, c, t) = count_day(&mut sim);
+    (w, c, t, population(&sim))
+}
+
+#[test]
+#[ignore = "prints the mode split; run by hand"]
+fn mode_split_table() {
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(&str, (usize, usize, usize, usize))> = vec![
+        ("starter town", starter_split()),
+        ("lattice 300", split(300)),
+        ("lattice 3000", split(3000)),
+    ];
+    for (name, (w, c, t, pop)) in rows {
+        let n = (w + c + t).max(1) as f64;
+        println!(
+            "{name:13} pop {pop:5} trips {:5}: walk {:4.0} %  car {:4.0} %  transit {:4.0} %",
+            w + c + t,
+            100.0 * w as f64 / n,
+            100.0 * c as f64 / n,
+            100.0 * t as f64 / n
+        );
+    }
+}
+
+/// BUG-066: in a spread-out town (the starter set) people drive for the longer trips: cars are
+/// about half or more, walking is a good fifth to a half. Before the fix everyone walked
+/// (workers took the job next door, shoppers the nearest shop, the walk limit was 1 km).
+#[test]
+fn in_a_spread_out_town_about_half_of_the_trips_are_by_car() {
+    let (walk, car, transit, pop) = starter_split();
+    let n = (walk + car + transit) as f64;
+    assert!(pop >= 100 && n >= 200.0, "{pop} residents, {n} trips");
+    let (w, c) = (walk as f64 / n, car as f64 / n);
+    assert!((0.40..=0.75).contains(&c), "cars {c:.2}");
+    assert!((0.20..=0.55).contains(&w), "walk {w:.2}");
+}

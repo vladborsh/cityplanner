@@ -143,12 +143,20 @@ fn is_active(b: &BuildingGrid, id: BuildingId) -> bool {
 /// wants one (scanning every building for every shopper was the cost).
 type Shops = Option<Vec<(BuildingId, Vec2)>>;
 
-/// Nearest active shop to `from`, ties to the lower id.
+/// How many nearest shops a shopper chooses from, and how fast their chance falls with the
+/// distance (BUG-066).
+const SHOP_CHOICES: usize = 64;
+const SHOP_DECAY_M: f32 = 800.0;
+
+/// One of the [`SHOP_CHOICES`] nearest active shops to `from`, a shop's chance falling as
+/// `exp(-distance / SHOP_DECAY_M)`; `pick` is the uniform draw (by citizen and day). The same
+/// household does not always walk to the shop next door.
 fn nearest_shop(
     b: &BuildingGrid,
     db: &ContentDb,
     shops: &mut Shops,
     from: Vec2,
+    pick: f32,
 ) -> Option<BuildingId> {
     let shops = shops.get_or_insert_with(|| {
         b.iter()
@@ -162,14 +170,29 @@ fn nearest_shop(
             .map(|(id, bd)| (id, bd.pos))
             .collect()
     });
-    let mut best: Option<(f32, BuildingId)> = None;
-    for &(id, pos) in shops.iter() {
-        let d = pos.distance_squared(from);
-        if best.is_none_or(|(bd, _)| d < bd) {
-            best = Some((d, id));
-        }
+    let mut all: Vec<(f32, BuildingId)> = shops
+        .iter()
+        .map(|&(id, pos)| (pos.distance_squared(from), id))
+        .collect();
+    let order =
+        |a: &(f32, BuildingId), b: &(f32, BuildingId)| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1));
+    if all.len() > SHOP_CHOICES {
+        all.select_nth_unstable_by(SHOP_CHOICES - 1, order);
+        all.truncate(SHOP_CHOICES);
     }
-    best.map(|(_, id)| id)
+    all.sort_by(order);
+    let weights: Vec<f32> = all
+        .iter()
+        .map(|(d2, _)| (-d2.sqrt() / SHOP_DECAY_M).exp())
+        .collect();
+    let mut at = pick * weights.iter().sum::<f32>();
+    for ((_, id), w) in all.iter().zip(&weights) {
+        if at < *w {
+            return Some(*id);
+        }
+        at -= w;
+    }
+    all.last().map(|(_, id)| *id)
 }
 
 fn set_location(grid: &mut CitizenGrid, id: CitizenId, loc: Location) {
@@ -409,8 +432,15 @@ fn decide(
             } else if (SHOP_FROM..SHOP_TO).contains(&hour) {
                 let need = (NEED_PCT_PER_DAY * book.days_since_shop(c.household, day)).min(100);
                 if rng.below(100) < need
-                    && let Some(shop) =
-                        pos_of(buildings, home).and_then(|p| nearest_shop(buildings, db, shops, p))
+                    && let Some(shop) = pos_of(buildings, home).and_then(|p| {
+                        nearest_shop(
+                            buildings,
+                            db,
+                            shops,
+                            p,
+                            crate::system::unit(u64::from(cid.index) << 32 | u64::from(day)),
+                        )
+                    })
                     && go(TripPurpose::Shop, home, shop, grid, book)
                 {
                     book.note_shopped(c.household, day);

@@ -224,8 +224,8 @@ fn every_trip_finishes_and_nobody_is_in_two_places() {
 #[test]
 fn the_mode_rule_and_travel_times_follow_the_spec() {
     let limit = content().balance().walk_limit_m;
-    assert_eq!(limit, 1000.0, "balance.ron");
-    assert_eq!(choose_mode(999.0, true, limit), TripMode::Walk);
+    assert_eq!(limit, 400.0, "balance.ron (BUG-066: was 1000)");
+    assert_eq!(choose_mode(399.0, true, limit), TripMode::Walk);
     assert_eq!(choose_mode(limit, true, limit), TripMode::Car);
     assert_eq!(choose_mode(5000.0, true, limit), TripMode::Car);
     assert_eq!(choose_mode(5000.0, false, limit), TripMode::Walk);

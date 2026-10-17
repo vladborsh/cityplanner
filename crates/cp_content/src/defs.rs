@@ -569,7 +569,7 @@ impl Balance {
 impl Default for Balance {
     fn default() -> Self {
         Self {
-            walk_limit_m: 1000.0,
+            walk_limit_m: 400.0,
             spawn_one_in: 4,
             demand_ema: 0.25,
             demand_base: [10.0, 5.0, 5.0, 0.0],
