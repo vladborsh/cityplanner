@@ -71,6 +71,18 @@ pub fn demand_formula(zone: ZoneType) -> &'static str {
     }
 }
 
+/// "Opens at 5 000 residents (Large town)" while painting `zone` waits for a milestone (T-231).
+pub fn zone_lock(view: &SimView, zone: ZoneType) -> Option<String> {
+    let db = view.content.as_deref()?;
+    let m = view.progress.zone_locked_by(db, zone)?;
+    let ms = db.milestones().get(m)?;
+    Some(format!(
+        "Opens at {} residents ({})",
+        crate::buildings::spaced(ms.population),
+        ms.name
+    ))
+}
+
 /// The hover text of a zone's demand bar or tile: the group's value, the free homes or jobs of
 /// the type and the formula (one text for the window, the panel and the tiles).
 pub fn zone_tooltip(view: &SimView, zone: ZoneType) -> String {
@@ -81,8 +93,11 @@ pub fn zone_tooltip(view: &SimView, zone: ZoneType) -> String {
         .and_then(|i| view.city.zones.get(i))
         .map(|s| row(zone, s).free)
         .unwrap_or_default();
+    let lock = zone_lock(view, zone)
+        .map(|l| format!("Locked: {l}\n"))
+        .unwrap_or_default();
     format!(
-        "{}\n{letter} demand {v:+.0} (−100…+100, the middle is zero)\n{free}\n{}",
+        "{lock}{}\n{letter} demand {v:+.0} (−100…+100, the middle is zero)\n{free}\n{}",
         zone_name(zone),
         demand_formula(zone)
     )

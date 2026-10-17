@@ -768,17 +768,22 @@ pub fn zones_panel(
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             for zone in PALETTE {
-                let tile = tool_tile(
+                let locked = view.is_some_and(|v| crate::windows::zone_lock(v, zone).is_some());
+                let tile = tool_tile_enabled(
                     ui,
                     TileIcon::Icon(crate::icons::zone_icon(zone)),
                     zone_name(zone),
                     tools.zone.zone == zone,
+                    !locked,
                 );
+                if locked {
+                    crate::buildings::badge(ui, tile.rect, crate::buildings::UniqueState::Locked);
+                }
                 let tile = match view {
                     Some(view) => tile.on_hover_text(crate::windows::zone_tooltip(view, zone)),
                     None => tile,
                 };
-                if tile.clicked() {
+                if tile.clicked() && !locked {
                     tools.zone.zone = zone;
                     if tools.active != ActiveTool::Zone {
                         tools.select(ActiveTool::Zone);

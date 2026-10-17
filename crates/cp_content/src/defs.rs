@@ -170,6 +170,9 @@ pub struct MilestoneDef {
     /// Ids of the building defs that become placeable.
     #[serde(default)]
     pub unlocks: Vec<String>,
+    /// Zone types that can be painted from this milestone on (T-231).
+    #[serde(default)]
+    pub zones: Vec<ZoneType>,
     /// Tiles this milestone lets the player buy on top of the start tile.
     #[serde(default)]
     pub tiles: u8,

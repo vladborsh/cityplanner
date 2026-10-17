@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::prelude::{Res, ResMut, Resource};
 use cp_building::BuildingGrid;
-use cp_content::{BuildingDefId, ContentDb, ServiceKind, SimContent, UnlockCond};
+use cp_content::{BuildingDefId, ContentDb, ServiceKind, SimContent, UnlockCond, ZoneType};
 use cp_core::{CommandError, Tick};
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +49,13 @@ impl Progress {
     pub fn locked_by(&self, content: &ContentDb, def: BuildingDefId) -> Option<usize> {
         content
             .unlock_milestone(def)
+            .filter(|&m| m > usize::from(self.reached))
+    }
+
+    /// The milestone painting `zone` waits for, if it is still ahead: its index (T-231).
+    pub fn zone_locked_by(&self, content: &ContentDb, zone: ZoneType) -> Option<usize> {
+        content
+            .zone_unlock_milestone(zone)
             .filter(|&m| m > usize::from(self.reached))
     }
 
@@ -177,6 +184,24 @@ pub fn check_unlocked(
         });
     }
     Ok(())
+}
+
+/// `Err(Locked)` when painting `zone` is still ahead of the city's progress (T-231).
+pub fn check_zone_unlocked(
+    progress: &Progress,
+    content: &ContentDb,
+    zone: ZoneType,
+) -> Result<(), CommandError> {
+    match progress.zone_locked_by(content, zone) {
+        Some(m) => {
+            let ms = &content.milestones()[m];
+            Err(CommandError::Locked {
+                milestone: ms.name.clone(),
+                population: ms.population,
+            })
+        }
+        None => Ok(()),
+    }
 }
 
 /// The service kinds whose needs the sim generates: a kind is open when any building def of that

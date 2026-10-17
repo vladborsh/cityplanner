@@ -257,6 +257,7 @@ pub fn milestones(
         bad("milestones".into(), "at most 255 milestones".into());
     }
     let mut seen: std::collections::BTreeSet<&str> = Default::default();
+    let mut seen_zones: std::collections::BTreeSet<ZoneType> = Default::default();
     for (i, ms) in m.milestones.iter().enumerate() {
         if ms.name.trim().is_empty() {
             bad(format!("milestones[{i}].name"), "must not be empty".into());
@@ -283,6 +284,19 @@ pub fn milestones(
                 bad(
                     format!("milestones[{i}].unlocks"),
                     format!("`{u}` is unlocked by more than one milestone"),
+                );
+            }
+        }
+        for z in &ms.zones {
+            if *z == ZoneType::None {
+                bad(
+                    format!("milestones[{i}].zones"),
+                    "None (erase) cannot be locked".into(),
+                );
+            } else if !seen_zones.insert(*z) {
+                bad(
+                    format!("milestones[{i}].zones"),
+                    format!("{z:?} is unlocked by more than one milestone"),
                 );
             }
         }

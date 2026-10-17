@@ -118,6 +118,15 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
                 .map_err(|e| rejected_or_funds("net", &e, e.insufficient_funds()))
         }
         SimCommand::Zone(c) => {
+            if let (ZoneCommand::PaintZones { zone, .. }, Some(content)) =
+                (c, world.get_resource::<cp_content::SimContent>())
+            {
+                let progress = world
+                    .get_resource::<crate::Progress>()
+                    .cloned()
+                    .unwrap_or_default();
+                crate::progress::check_zone_unlocked(&progress, &content.0, *zone)?;
+            }
             let done = cp_zone::apply(world, c);
             if done.is_ok() {
                 demolish_unzoned(world, c);

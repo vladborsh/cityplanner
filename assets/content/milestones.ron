@@ -5,7 +5,7 @@ Milestones((
         (population: 0, name: "Village", unlocks: [], tiles: 2),
         (population: 500, name: "Small town", unlocks: ["clinic", "elementary_school", "fire_station", "police_station", "landfill"], tiles: 3),
         (population: 2000, name: "Town", unlocks: ["high_school", "cemetery", "crematorium", "incinerator"], tiles: 4),
-        (population: 5000, name: "Large town", unlocks: ["hospital"], tiles: 5),
+        (population: 5000, name: "Large town", unlocks: ["hospital"], zones: [ResHigh, ComHigh, Office], tiles: 5),
         (population: 10000, name: "Small city", unlocks: ["university"], tiles: 6),
     ],
 ))

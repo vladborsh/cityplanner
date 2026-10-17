@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::defs::*;
 use crate::error::{ContentError, ContentErrors};
-use crate::kinds::{CargoKind, IndustryRole, PolicyKind, SpecKind};
+use crate::kinds::{CargoKind, IndustryRole, PolicyKind, SpecKind, ZoneType};
 use crate::validate;
 
 /// Default content root, relative to the working directory.
@@ -399,6 +399,12 @@ impl ContentDb {
         self.milestones
             .iter()
             .position(|m| m.unlocks.iter().any(|u| u == name))
+    }
+
+    /// The milestone (index into [`Self::milestones`]) that opens painting `zone`; `None` for a
+    /// zone type no milestone names, which is always open (T-231).
+    pub fn zone_unlock_milestone(&self, zone: ZoneType) -> Option<usize> {
+        self.milestones.iter().position(|m| m.zones.contains(&zone))
     }
 
     /// The balance knobs (`balance.ron`; defaults when the file is absent).

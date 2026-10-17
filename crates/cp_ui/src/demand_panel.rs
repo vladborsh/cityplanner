@@ -1,13 +1,13 @@
 //! The bottom demand panel (T-099, `architecture/system-design.md` §13.7): a real panel under
-//! the 3D view, right of the palette and the tool panel, with one column per zone type — its
-//! icon and a vertical demand bar from −100 to +100 with zero in the middle. Demand is per
-//! group in M1, so the two residential and the two commercial columns show one value and are
-//! joined by a bracket with the group's letter. It folds into a 28 px strip.
+//! the 3D view, right of the palette and the tool panel, with one column per demand — its
+//! icon and a vertical demand bar from −100 to +100 with zero in the middle. Demand is one
+//! scale each for residential, commercial, industrial and office (T-231), so there are four
+//! columns, R, C, I and O, whatever the density; O is greyed with a padlock while offices are
+//! locked. It folds into a 28 px strip.
 
 use bevy_egui::egui;
 use cp_content::ZoneType;
 use cp_sim::SimView;
-use cp_sim::stats::ZONES;
 use cp_tools::{ActiveTool, ToolState};
 
 use crate::budget::demand_fraction;
@@ -36,6 +36,14 @@ pub fn unconnected_stub(view: &SimView) -> Option<bevy::math::Vec2> {
             .stub_end(),
     )
 }
+
+/// The four columns and the zone type whose tool each one selects.
+pub const COLUMNS: [ZoneType; 4] = [
+    ZoneType::ResLow,
+    ZoneType::ComLow,
+    ZoneType::Industrial,
+    ZoneType::Office,
+];
 
 /// Where one column was drawn.
 #[derive(Clone, Copy, Debug)]
@@ -114,9 +122,9 @@ pub fn demand_panel(
                         state.demand_open = true;
                     }
                 });
-                for zone in ZONES {
+                for zone in COLUMNS {
                     let col = column(ui, view, zone);
-                    if col.1.clicked() {
+                    if col.1.clicked() && crate::windows::zone_lock(view, zone).is_none() {
                         state.category = Some(Category::Zones);
                         if tools.active != ActiveTool::Zone {
                             tools.select(ActiveTool::Zone);
@@ -143,23 +151,6 @@ pub fn demand_panel(
             });
         });
     rects.panel = Some(out.response.rect);
-    // Brackets under the paired groups (R: the two residential, C: the two commercial).
-    if !state.demand_collapsed {
-        bracket(
-            root,
-            &rects.columns,
-            ZoneType::ResLow,
-            ZoneType::ResHigh,
-            "R",
-        );
-        bracket(
-            root,
-            &rects.columns,
-            ZoneType::ComLow,
-            ZoneType::ComHigh,
-            "C",
-        );
-    }
     rects
 }
 
@@ -178,7 +169,15 @@ fn column(ui: &mut egui::Ui, view: &SimView, zone: ZoneType) -> (Column, egui::R
         egui::pos2(rect.center().x, rect.top() + Sizes::DEMAND_ICON * 0.5),
         egui::vec2(Sizes::DEMAND_ICON, Sizes::DEMAND_ICON),
     );
-    egui::Image::new(zone_icon(zone).image()).paint_at(ui, icon);
+    let locked = crate::windows::zone_lock(view, zone).is_some();
+    let mut image = egui::Image::new(zone_icon(zone).image());
+    if locked {
+        image = image.tint(egui::Color32::from_gray(110));
+    }
+    image.paint_at(ui, icon);
+    if locked {
+        crate::buildings::badge(ui, icon, crate::buildings::UniqueState::Locked);
+    }
     let track = egui::Rect::from_center_size(
         egui::pos2(rect.center().x, rect.bottom() - Sizes::DEMAND_BAR_H * 0.5),
         egui::vec2(14.0, Sizes::DEMAND_BAR_H),
@@ -189,7 +188,15 @@ fn column(ui: &mut egui::Ui, view: &SimView, zone: ZoneType) -> (Column, egui::R
     // Fill from the zero line (the middle) to the level.
     let mid = track.center().y;
     let fill = egui::Rect::from_x_y_ranges(track.x_range(), level_y.min(mid)..=level_y.max(mid));
-    painter.rect_filled(fill, 0.0, color(zone));
+    painter.rect_filled(
+        fill,
+        0.0,
+        if locked {
+            egui::Color32::from_gray(110)
+        } else {
+            color(zone)
+        },
+    );
     painter.line_segment(
         [track.left_center(), track.right_center()],
         egui::Stroke::new(1.0, ui.visuals().text_color()),
@@ -210,33 +217,6 @@ fn column(ui: &mut egui::Ui, view: &SimView, zone: ZoneType) -> (Column, egui::R
         },
         response,
     )
-}
-
-/// A bracket with `letter` under the columns of `a` and `b`.
-fn bracket(root: &egui::Ui, cols: &[Column], a: ZoneType, b: ZoneType, letter: &str) {
-    let (Some(a), Some(b)) = (
-        cols.iter().find(|c| c.zone == a),
-        cols.iter().find(|c| c.zone == b),
-    ) else {
-        return;
-    };
-    let y = a.rect.bottom() + 2.0;
-    let (x0, x1) = (a.rect.center().x, b.rect.center().x);
-    let painter = root.ctx().layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
-        egui::Id::new("demand_brackets"),
-    ));
-    let stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(150));
-    painter.line_segment([egui::pos2(x0, y - 3.0), egui::pos2(x0, y)], stroke);
-    painter.line_segment([egui::pos2(x0, y), egui::pos2(x1, y)], stroke);
-    painter.line_segment([egui::pos2(x1, y), egui::pos2(x1, y - 3.0)], stroke);
-    painter.text(
-        egui::pos2((x0 + x1) * 0.5, y + 1.0),
-        egui::Align2::CENTER_TOP,
-        letter,
-        egui::TextStyle::Small.resolve(&root.ctx().global_style()),
-        egui::Color32::from_gray(190),
-    );
 }
 
 #[cfg(test)]
@@ -306,16 +286,15 @@ mod tests {
     }
 
     #[test]
-    fn six_columns_in_zone_order_with_bars_proportional_to_their_groups_demand() {
+    fn four_columns_r_c_i_o_with_bars_proportional_to_their_demand() {
         let rig = Rig::new(view_with(60.0, -30.0, 100.0, -100.0));
         let zones: Vec<_> = rig.rects.columns.iter().map(|c| c.zone).collect();
-        assert_eq!(zones, ZONES.to_vec());
+        assert_eq!(zones, COLUMNS.to_vec());
         for col in &rig.rects.columns {
             let (_, v) = zone_group_demand(col.zone, &rig.view.demand);
             let frac = (col.track.bottom() - col.level_y) / col.track.height();
             assert!((frac - demand_fraction(v)).abs() < 1e-4, "{:?}", col.zone);
         }
-        // The pairs share one value, so one height.
         let level = |z| {
             rig.rects
                 .columns
@@ -324,8 +303,6 @@ mod tests {
                 .unwrap()
                 .level_y
         };
-        assert_eq!(level(ZoneType::ResLow), level(ZoneType::ResHigh));
-        assert_eq!(level(ZoneType::ComLow), level(ZoneType::ComHigh));
         assert_ne!(level(ZoneType::ResLow), level(ZoneType::ComLow));
     }
 
@@ -344,14 +321,59 @@ mod tests {
             .rects
             .columns
             .iter()
-            .find(|c| c.zone == ZoneType::ComHigh)
+            .find(|c| c.zone == ZoneType::ComLow)
             .unwrap()
             .rect
             .center();
         rig.click(at);
         assert_eq!(rig.state.category, Some(Category::Zones));
         assert_eq!(rig.tools.active, ActiveTool::Zone);
-        assert_eq!(rig.tools.zone.zone, ZoneType::ComHigh);
+        assert_eq!(rig.tools.zone.zone, ZoneType::ComLow);
+    }
+
+    fn locked_view() -> SimView {
+        let db = std::sync::Arc::new(
+            cp_content::ContentDb::load_dir(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/content"
+            ))
+            .unwrap(),
+        );
+        let mut sim = SimRunner::new(1);
+        sim.set_content(db);
+        sim.world_mut().insert_resource(cp_sim::Progress::START);
+        sim.view()
+    }
+
+    #[test]
+    fn the_office_bar_is_locked_below_large_town_and_its_click_selects_nothing() {
+        let mut rig = Rig::new(locked_view());
+        assert_eq!(
+            crate::windows::zone_lock(&rig.view, ZoneType::Office).as_deref(),
+            Some("Opens at 5 000 residents (Large town)")
+        );
+        assert!(crate::windows::zone_lock(&rig.view, ZoneType::ResLow).is_none());
+        assert!(zone_tooltip(&rig.view, ZoneType::Office).contains("Opens at 5 000"));
+        let at = |rig: &Rig, z| {
+            rig.rects
+                .columns
+                .iter()
+                .find(|c| c.zone == z)
+                .unwrap()
+                .rect
+                .center()
+        };
+        let o = at(&rig, ZoneType::Office);
+        rig.click(o);
+        assert_eq!(rig.tools.active, ActiveTool::None);
+        let r = at(&rig, ZoneType::ResLow);
+        rig.click(r);
+        assert_eq!(rig.tools.zone.zone, ZoneType::ResLow);
+
+        // Large town reached: open.
+        let mut view = rig.view.clone();
+        view.progress = cp_sim::Progress::at(3);
+        assert!(crate::windows::zone_lock(&view, ZoneType::Office).is_none());
     }
 
     #[test]
@@ -380,7 +402,7 @@ mod tests {
     #[test]
     fn an_empty_city_draws_without_panicking() {
         let rig = Rig::new(SimRunner::new(1).view());
-        assert_eq!(rig.rects.columns.len(), 6);
+        assert_eq!(rig.rects.columns.len(), 4);
         assert!(!zone_tooltip(&rig.view, ZoneType::Industrial).is_empty());
     }
 
