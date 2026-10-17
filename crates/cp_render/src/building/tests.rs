@@ -918,6 +918,66 @@ fn the_five_specialisation_silhouettes_are_distinct_and_grow_with_the_lot() {
     assert_eq!(shapes.len(), 5, "{shapes:?}");
 }
 
+/// T-212, T-213: the 24 chain buildings (farm, forest, ore, oil: main, two extractors, two
+/// processors, warehouse) each have a silhouette of their own, build at every LOD (never growing
+/// with distance), stay inside the lot and rise above the ground.
+#[test]
+fn the_24_chain_silhouettes_are_distinct_and_build_at_every_lod() {
+    let e = env();
+    let ground = e.terrain.height(Vec2::new(5120.0, 5120.0));
+    let mut shapes = BTreeSet::new();
+    let mut masses = BTreeSet::new();
+    for res in ["farm", "forest", "ore", "oil"] {
+        for role in [
+            "main",
+            "extractor_s",
+            "extractor_l",
+            "processor_a",
+            "processor_b",
+            "warehouse",
+        ] {
+            let name = format!("{res}_{role}");
+            let (def_id, def) = service_def(&e, &name);
+            let style = e.db.style(e.db.style_id(&def.styles[0]).unwrap());
+            assert!(style.massing as u8 >= 40, "{name} has a massing of its own");
+            masses.insert(style.massing as u8);
+            let b = building(def_id, &e.db, BuildingState::Active, 0);
+            let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+            let (n, m, f) = (
+                p.near.triangle_count(),
+                p.mid.triangle_count(),
+                p.far.triangle_count(),
+            );
+            assert!(n >= m && m >= f && n > f && f > 0, "{name}: {n} {m} {f}");
+            for mesh in [&p.near, &p.mid, &p.far] {
+                assert!(
+                    mesh.positions.iter().flatten().all(|v| v.is_finite()),
+                    "{name}"
+                );
+            }
+            let (lo, hi) = extent(&p.far);
+            assert!(hi.y - ground > 2.0, "{name}");
+            // Footprint: within the lot of the def (a cell is 8 m) and a little more.
+            let side = f32::from(def.lot.0.max(def.lot.1)) * 8.0;
+            assert!(
+                hi.x - lo.x < side + 2.0 && hi.z - lo.z < side + 2.0,
+                "{name}"
+            );
+            // A fingerprint of the near mesh: its size and where its vertices are.
+            let sum: u64 = p
+                .near
+                .positions
+                .iter()
+                .flatten()
+                .map(|v| u64::from(v.to_bits()))
+                .fold(0u64, |a, v| a.wrapping_mul(31).wrapping_add(v));
+            shapes.insert((p.near.positions.len(), sum));
+        }
+    }
+    assert_eq!(masses.len(), 24);
+    assert_eq!(shapes.len(), 24, "{shapes:?}");
+}
+
 /// T-114: the turbine's rotor is three blades around the hub, in the plane perpendicular to its
 /// axis, turning only by the angle given (a view effect: the mesh is rebuilt from the angle).
 #[test]

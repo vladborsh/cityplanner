@@ -1,4 +1,4 @@
-// Numbers: tune later. Look and icon are borrowed until T-212/T-213 (T-208).
+// Numbers: tune later.
 Building((
     id: "farm_processor_a",
     name: "Farm Processor A",
@@ -10,8 +10,8 @@ Building((
     tax_base: 0.0,
     cost: 30000.0,
     upkeep_week: 500.0,
-    styles: ["industrial_factory_saw_b"],
+    styles: ["chain_farm_processor_a"],
     service: Some("industry"),
-    icon: "incinerator",
+    icon: "farm_processor_a",
     industry: Some((resource: Some(Farming), role: Processor, inputs: [(Crops, 60.0)], outputs: [(AnimalProducts, 40.0)], storage: 300.0, min_level: 1)),
 ))

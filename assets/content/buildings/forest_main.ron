@@ -1,4 +1,4 @@
-// Numbers: tune later. Look and icon are borrowed until T-212/T-213 (T-208).
+// Numbers: tune later.
 Building((
     id: "forest_main",
     name: "Forest Main building",
@@ -10,8 +10,8 @@ Building((
     tax_base: 0.0,
     cost: 40000.0,
     upkeep_week: 800.0,
-    styles: ["industrial_plant_l_b"],
+    styles: ["chain_forest_main"],
     service: Some("industry"),
-    icon: "coal_power_plant",
+    icon: "forest_main",
     industry: Some((resource: Some(Forestry), role: Main, inputs: [], outputs: [], storage: 0.0, min_level: 1)),
 ))

@@ -3768,7 +3768,7 @@ fn chain(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                     (u, cv - 0.75 * hv),
                     (0.3, 0.3),
                     (y, y + 3.5),
-                    6,
+                    n,
                     LOG,
                     None,
                 );
@@ -4444,6 +4444,21 @@ fn chain(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
             }
         }
         _ => {}
+    }
+    // Near only: a lamp post at the front corner of every chain building.
+    if near {
+        let (u, v) = (-0.92 * hu, cv - 0.92 * hv);
+        block(m, f, (u, v), (0.12, 0.12), sc.lo, b + 4.5, STEEL, STEEL);
+        block(
+            m,
+            f,
+            (u, v),
+            (0.45, 0.2),
+            b + 4.5,
+            b + 4.8,
+            DARK,
+            [1.0, 0.95, 0.7, 1.0],
+        );
     }
 }
 

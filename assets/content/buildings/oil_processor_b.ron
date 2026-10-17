@@ -1,4 +1,4 @@
-// Numbers: tune later. Look and icon are borrowed until T-212/T-213 (T-208).
+// Numbers: tune later.
 Building((
     id: "oil_processor_b",
     name: "Oil Processor B",
@@ -10,8 +10,8 @@ Building((
     tax_base: 0.0,
     cost: 30000.0,
     upkeep_week: 500.0,
-    styles: ["industrial_tank_works_a"],
+    styles: ["chain_oil_processor_b"],
     service: Some("industry"),
-    icon: "sewage_treatment_plant",
+    icon: "oil_processor_b",
     industry: Some((resource: Some(Oil), role: Processor, inputs: [(Oil, 60.0)], outputs: [(Plastics, 40.0)], storage: 300.0, min_level: 2)),
 ))
