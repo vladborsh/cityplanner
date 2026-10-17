@@ -203,35 +203,65 @@ pub fn build_trucks(sim: &mut SimRunner) -> usize {
 /// and, last, finished; the sim stands still. Look at it with `--cam construction`.
 pub const CONSTRUCTION: &str = "construction";
 
-/// Builds the [`CONSTRUCTION`] scene; returns how many buildings stand.
+/// Builds the [`CONSTRUCTION`] scene: seven buildings of one def and one floor count (the look
+/// of a building is a hash of its id, so candidates are made and the ones that match kept).
+/// Returns how many buildings stand.
 pub fn build_construction(sim: &mut SimRunner, def_name: &str) -> usize {
-    use cp_building::BuildingState;
+    use cp_building::{BuildingGrid, BuildingState};
+    const SLOTS: usize = 7;
     let now = sim.tick().0;
-    let n = build_showcase_with(
-        sim,
-        |db| {
-            let id = db.building_id(def_name).expect("the construction def");
-            (0..7)
-                .map(|i| (id, -150.0 + i as f32 * 50.0, 0.0))
-                .collect()
-        },
-        |i, d| {
-            let total = cp_building::build_ticks(d);
-            if i == 6 {
-                (BuildingState::Active, cp_core::Tick(0))
-            } else {
-                // `ready_at - tick` is what is left (the sim stands still from here).
-                let done = [0.0f32, 0.2, 0.4, 0.6, 0.8, 0.99][i];
-                (
-                    BuildingState::UnderConstruction,
-                    cp_core::Tick(now + ((1.0 - done) * total as f32).ceil() as u64),
-                )
-            }
-        },
-    );
+    let db = embedded_content();
+    build_showcase_defs(sim, |db| {
+        let id = db.building_id(def_name).expect("the construction def");
+        (0..48).map(|_| (id, 0.0, 0.0)).collect()
+    });
+    let mut grid = sim.world_mut().resource_mut::<BuildingGrid>();
+    let floors_of = |grid: &BuildingGrid| -> Vec<(cp_building::BuildingId, u8)> {
+        grid.iter()
+            .map(|(id, b)| {
+                let f = cp_render::building::variant_for(&db, id, b, db.building(b.def))
+                    .1
+                    .floors;
+                (id, f)
+            })
+            .collect()
+    };
+    let all = floors_of(&grid);
+    // The tallest floor count that at least SLOTS candidates share.
+    let floors = (1..=u8::MAX)
+        .rev()
+        .find(|&f| all.iter().filter(|c| c.1 == f).count() >= SLOTS)
+        .expect("seven candidates of one height");
+    let keep: Vec<_> = all
+        .iter()
+        .filter(|c| c.1 == floors)
+        .take(SLOTS)
+        .map(|c| c.0)
+        .collect();
+    for (id, _) in &all {
+        if !keep.contains(id) {
+            grid.remove(*id);
+        }
+    }
+    for (i, id) in keep.iter().enumerate() {
+        let b = grid.get_mut(*id).expect("a kept building");
+        let total = cp_building::build_ticks(db.building(b.def));
+        b.pos = Vec2::new(
+            cp_terrain::MAP_SIZE / 2.0 - 150.0 + i as f32 * 50.0,
+            cp_terrain::MAP_SIZE / 2.0 - 130.0,
+        );
+        if i == SLOTS - 1 {
+            b.state = BuildingState::Active;
+        } else {
+            // `ready_at - tick` is what is left (the sim stands still from here).
+            let done = [0.0f32, 0.2, 0.4, 0.6, 0.8, 0.99][i];
+            b.state = BuildingState::UnderConstruction;
+            b.ready_at = cp_core::Tick(now + ((1.0 - done) * total as f32).ceil() as u64);
+        }
+    }
     sim.world_mut()
         .insert_resource(cp_core::time::SimSpeed::Pause);
-    n
+    SLOTS
 }
 
 /// City parks scene (T-221): the four parks in a row. Look at it with `--cam parks`.

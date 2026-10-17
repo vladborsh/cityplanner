@@ -66,7 +66,7 @@ pub(crate) struct BuildingState {
     last: Option<Arc<BuildingGrid>>,
     /// Tick bucket at which construction looks were last refreshed.
     last_bucket: u64,
-    chunks: BTreeMap<(i32, i32), Entity>,
+    chunks: BTreeMap<crate::building::ChunkKey, Entity>,
     material: Option<Handle<VertexColorMaterial>>,
     /// Turbine rotors: the entity and the rotor it was built for.
     rotors: BTreeMap<cp_building::BuildingId, (Entity, Rotor)>,

@@ -1021,6 +1021,11 @@ pub fn building_stamp(b: &Building, total: u64, tick: Tick) -> u64 {
     h
 }
 
+/// A batch of buildings: a chunk cell and whether it holds the buildings under construction.
+/// Those have a batch of their own (T-235): their look changes every few dozen ticks, and
+/// rebuilding the few of them is far cheaper than re-merging every finished building around.
+pub type ChunkKey = ((i32, i32), bool);
+
 /// Chunk cell of a point.
 pub fn chunk_of(p: Vec3) -> (i32, i32) {
     (
@@ -1031,7 +1036,7 @@ pub fn chunk_of(p: Vec3) -> (i32, i32) {
 
 struct Entry {
     stamp: u64,
-    chunk: (i32, i32),
+    chunk: ChunkKey,
     piece: BuildingPiece,
     constructing: bool,
 }
@@ -1041,14 +1046,14 @@ struct Entry {
 pub struct Update {
     pub rebuilt: usize,
     pub removed: usize,
-    pub dirty_chunks: BTreeSet<(i32, i32)>,
+    pub dirty_chunks: BTreeSet<ChunkKey>,
 }
 
 /// All building pieces, batched by chunk.
 #[derive(Default)]
 pub struct BuildingSet {
     pieces: BTreeMap<BuildingId, Entry>,
-    by_chunk: BTreeMap<(i32, i32), BTreeSet<BuildingId>>,
+    by_chunk: BTreeMap<ChunkKey, BTreeSet<BuildingId>>,
 }
 
 impl BuildingSet {
@@ -1061,7 +1066,7 @@ impl BuildingSet {
         self.pieces.values().filter(|e| e.constructing).count()
     }
 
-    pub fn chunks(&self) -> impl Iterator<Item = &(i32, i32)> {
+    pub fn chunks(&self) -> impl Iterator<Item = &ChunkKey> {
         self.by_chunk.keys()
     }
 
@@ -1106,7 +1111,10 @@ impl BuildingSet {
             }
             let piece = build_building(id, b, db.building(b.def), net, terrain, db, tick);
             self.remove(id, &mut up);
-            let chunk = chunk_of(piece.center());
+            let chunk = (
+                chunk_of(piece.center()),
+                b.state == BuildingState::UnderConstruction,
+            );
             self.by_chunk.entry(chunk).or_default().insert(id);
             up.dirty_chunks.insert(chunk);
             up.rebuilt += 1;
@@ -1136,7 +1144,7 @@ impl BuildingSet {
     }
 
     /// Merged mesh of a chunk at one detail level (0 near, 1 mid, 2 far).
-    pub fn chunk_mesh(&self, chunk: (i32, i32), level: usize) -> Option<MeshData> {
+    pub fn chunk_mesh(&self, chunk: ChunkKey, level: usize) -> Option<MeshData> {
         let ids = self.by_chunk.get(&chunk)?;
         let mut m = MeshData::default();
         for id in ids {
@@ -1146,7 +1154,7 @@ impl BuildingSet {
         Some(m)
     }
 
-    pub fn chunk_bounds(&self, chunk: (i32, i32)) -> Option<(Vec3, Vec3)> {
+    pub fn chunk_bounds(&self, chunk: ChunkKey) -> Option<(Vec3, Vec3)> {
         let ids = self.by_chunk.get(&chunk)?;
         let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         for id in ids {

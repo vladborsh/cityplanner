@@ -1103,3 +1103,106 @@ fn a_pump_on_water_stands_above_the_surface() {
     assert!(hut_bottoms.count() > 0);
     assert!(lo.y < surface, "the foundation reaches the bed");
 }
+
+/// T-235 probe: what refreshing the construction stages every 32 ticks costs in a big city.
+/// `cargo test -p cp_render --release building::tests::construction_refresh_cost -- --ignored --nocapture`
+#[test]
+#[ignore = "timing probe, prints numbers"]
+fn construction_refresh_cost() {
+    let e = env();
+    let defs: Vec<_> =
+        e.db.buildings()
+            .filter(|(_, d)| {
+                matches!(
+                    d.zone,
+                    cp_content::ZoneType::ResLow
+                        | cp_content::ZoneType::ResHigh
+                        | cp_content::ZoneType::ComLow
+                )
+            })
+            .map(|(i, _)| i)
+            .collect();
+    for sites in [0usize, 200, 600] {
+        let mut grid = BuildingGrid::new();
+        let mut rng = 12345u64;
+        let mut next = || {
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (rng >> 33) as f32 / (1u64 << 31) as f32
+        };
+        for i in 0..10_000usize {
+            let def = defs[i % defs.len()];
+            let total = build_ticks(e.db.building(def));
+            let mut b = if i < sites {
+                // Spread over the whole construction so some stage changes every refresh.
+                let ready = 5000 + (next() * total as f32) as u64;
+                building(def, &e.db, BuildingState::UnderConstruction, ready)
+            } else {
+                building(def, &e.db, BuildingState::Active, 0)
+            };
+            b.pos = Vec2::new(4000.0 + next() * 2200.0, 4000.0 + next() * 2200.0);
+            grid.insert(b);
+        }
+        let mut set = BuildingSet::default();
+        let t = std::time::Instant::now();
+        set.update(&grid, &e.net, &e.db, &e.terrain, Tick(5000));
+        let first = t.elapsed().as_secs_f64() * 1000.0;
+        let (mut worst_ms, mut sum_ms, mut rebuilt, mut chunks) = (0.0f64, 0.0f64, 0usize, 0usize);
+        let mut upd_ms = 0.0f64;
+        let steps = 100u64;
+        for k in 1..=steps {
+            let t = std::time::Instant::now();
+            let up = set.update(&grid, &e.net, &e.db, &e.terrain, Tick(5000 + k * 32));
+            upd_ms += t.elapsed().as_secs_f64() * 1000.0;
+            for c in &up.dirty_chunks {
+                for l in 0..3 {
+                    let _ = set.chunk_mesh(*c, l);
+                }
+                let _ = set.chunk_bounds(*c);
+            }
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            worst_ms = worst_ms.max(ms);
+            sum_ms += ms;
+            rebuilt += up.rebuilt;
+            chunks += up.dirty_chunks.len();
+        }
+        println!(
+            "10k buildings, {sites} sites: first build {first:.0} ms; per 32-tick refresh avg {:.2} ms (of which update() {:.2}), worst {worst_ms:.2} ms, {:.1} pieces and {:.1} chunks rebuilt per refresh",
+            sum_ms / steps as f64,
+            upd_ms / steps as f64,
+            rebuilt as f64 / steps as f64,
+            chunks as f64 / steps as f64,
+        );
+    }
+}
+
+#[test]
+fn buildings_under_construction_have_their_own_batch_so_a_stage_never_remerges_the_finished_ones() {
+    let e = env();
+    let def = e.db.buildings().next().unwrap().0;
+    let total = build_ticks(e.db.building(def));
+    let mut grid = BuildingGrid::new();
+    for _ in 0..5 {
+        grid.insert(building(def, &e.db, BuildingState::Active, 0));
+    }
+    grid.insert(building(
+        def,
+        &e.db,
+        BuildingState::UnderConstruction,
+        total,
+    ));
+    let mut set = BuildingSet::default();
+    set.update(&grid, &e.net, &e.db, &e.terrain, Tick(0));
+    let keys: Vec<_> = set.chunks().copied().collect();
+    assert_eq!(
+        keys.len(),
+        2,
+        "one finished and one construction batch: {keys:?}"
+    );
+    assert!(keys.iter().any(|k| k.1) && keys.iter().any(|k| !k.1));
+    // The next stage dirties the construction batch only.
+    let up = set.update(&grid, &e.net, &e.db, &e.terrain, Tick(total / 16 + 1));
+    assert_eq!(up.rebuilt, 1);
+    assert!(up.dirty_chunks.iter().all(|k| k.1), "{:?}", up.dirty_chunks);
+}
