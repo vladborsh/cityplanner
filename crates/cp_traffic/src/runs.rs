@@ -351,11 +351,13 @@ fn run_request(
             to,
         });
     }
+    // Trucks avoid districts with the heavy traffic ban (T-195).
+    let truck = run.kind == VehicleKind::Truck as u8;
     if from_lane.is_none()
         && let (Some(a), Some(b)) = (plain(run.from), plain(run.to))
     {
         return Some(PathRequest {
-            mode: Mode::Car,
+            mode: if truck { Mode::Truck } else { Mode::Car },
             from: a,
             to: b,
         });
@@ -371,7 +373,11 @@ fn run_request(
         side: Side::Right,
     };
     Some(PathRequest {
-        mode: Mode::CarLanes { from, to },
+        mode: if truck {
+            Mode::TruckLanes { from, to }
+        } else {
+            Mode::CarLanes { from, to }
+        },
         from: at(from_s),
         to: at(to_s),
     })

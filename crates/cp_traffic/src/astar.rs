@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::graph::{
     Access, CONGESTION_K, CarEdge, CongestionMap, LaneNode, PED_SPEED, PathGraph, SegEnd,
 };
+use crate::heavy::HeavyBan;
 
 /// No route exists (or an endpoint is not on a usable lane).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,7 +76,34 @@ pub fn find_car_path(
 ) -> Result<CarPath, NoPath> {
     let (start, s0) = graph.resolve_car(from).ok_or(NoPath)?;
     let (goal, s1) = graph.resolve_car(to).ok_or(NoPath)?;
-    car_route(graph, cong, (start, s0), (goal, s1))
+    car_route(graph, cong, None, (start, s0), (goal, s1))
+}
+
+/// [`find_car_path`] for a truck (T-195): lanes in districts with the heavy traffic ban cost
+/// `heavy_ban_cost_mul` times as much, unless the trip starts or ends in that district.
+pub fn find_truck_path(
+    graph: &PathGraph,
+    cong: &CongestionMap,
+    heavy: &HeavyBan,
+    from: &Access,
+    to: &Access,
+) -> Result<CarPath, NoPath> {
+    let (start, s0) = graph.resolve_car(from).ok_or(NoPath)?;
+    let (goal, s1) = graph.resolve_car(to).ok_or(NoPath)?;
+    car_route(graph, cong, Some(heavy), (start, s0), (goal, s1))
+}
+
+/// [`find_car_path_lanes`] for a truck, see [`find_truck_path`].
+pub fn find_truck_path_lanes(
+    graph: &PathGraph,
+    cong: &CongestionMap,
+    heavy: &HeavyBan,
+    (from, from_s): (LaneId, f32),
+    (to, to_s): (LaneId, f32),
+) -> Result<CarPath, NoPath> {
+    let start = graph.car_slot(from).ok_or(NoPath)?;
+    let goal = graph.car_slot(to).ok_or(NoPath)?;
+    car_route(graph, cong, Some(heavy), (start, from_s), (goal, to_s))
 }
 
 /// Fastest route from lane `from` (at `from_s` lane-metres) to lane `to` (at `to_s`): the
@@ -88,7 +116,7 @@ pub fn find_car_path_lanes(
 ) -> Result<CarPath, NoPath> {
     let start = graph.car_slot(from).ok_or(NoPath)?;
     let goal = graph.car_slot(to).ok_or(NoPath)?;
-    car_route(graph, cong, (start, from_s), (goal, to_s))
+    car_route(graph, cong, None, (start, from_s), (goal, to_s))
 }
 
 /// Fastest route along the track between two access points (T-161). Trains do not slow each
@@ -101,6 +129,7 @@ pub fn find_rail_path(graph: &PathGraph, from: &Access, to: &Access) -> Result<C
         &graph.rail_edges,
         graph.max_rail_speed,
         &CongestionMap::default(),
+        None,
         (start, s0),
         (goal, s1),
     )
@@ -109,6 +138,7 @@ pub fn find_rail_path(graph: &PathGraph, from: &Access, to: &Access) -> Result<C
 fn car_route(
     graph: &PathGraph,
     cong: &CongestionMap,
+    heavy: Option<&HeavyBan>,
     start: (u32, f32),
     goal: (u32, f32),
 ) -> Result<CarPath, NoPath> {
@@ -117,6 +147,7 @@ fn car_route(
         &graph.car_edges,
         graph.max_car_speed,
         cong,
+        heavy,
         start,
         goal,
     )
@@ -128,11 +159,27 @@ fn route(
     edges: &[Vec<CarEdge>],
     max_speed: f32,
     cong: &CongestionMap,
+    heavy: Option<&HeavyBan>,
     (start, s0): (u32, f32),
     (goal, s1): (u32, f32),
 ) -> Result<CarPath, NoPath> {
     let lane = |i: u32| lanes[i as usize].as_ref().expect("lane");
     let c = |i: u32| cong.get(lane(i).segment);
+    // A truck's lanes in a banned district cost more, unless it starts or ends there (T-195).
+    let ends = heavy.map(|h| {
+        (
+            h.district_of(lane(start).segment),
+            h.district_of(lane(goal).segment),
+        )
+    });
+    let time = |i: u32, len: f32| {
+        let l = lane(i);
+        let t = lane_time(len, l.speed, c(i));
+        match (heavy, ends) {
+            (Some(h), Some(e)) => t * h.factor(l.segment, e),
+            _ => t,
+        }
+    };
     let vmax = max_speed.max(0.1);
     let goal_pos = lane(goal).point_at(s1);
     let h = |i: u32| lane(i).last_point().distance(goal_pos) / vmax;
@@ -146,11 +193,10 @@ fn route(
     // (cost, last lane before the goal or NONE for a same-lane run)
     let mut best: Option<(f32, u32)> = None;
     if start == goal && s1 >= s0 {
-        let l = lane(start);
-        best = Some((lane_time(s1 - s0, l.speed, c(start)), NONE));
+        best = Some((time(start, s1 - s0), NONE));
     }
     let l0 = lane(start);
-    g[start as usize] = lane_time((l0.len - s0).max(0.0), l0.speed, c(start));
+    g[start as usize] = time(start, (l0.len - s0).max(0.0));
     heap.push(key(g[start as usize] + h(start), start));
 
     while let Some(Reverse((fbits, u))) = heap.pop() {
@@ -163,12 +209,7 @@ fn route(
         for e in &edges[u as usize] {
             let v = e.to;
             if v == goal {
-                let l = lane(v);
-                let tail = if e.lane_change {
-                    0.0
-                } else {
-                    lane_time(s1, l.speed, c(v))
-                };
+                let tail = if e.lane_change { 0.0 } else { time(v, s1) };
                 let total = g[u as usize] + e.cost + tail;
                 if best.is_none_or(|(b, _)| total < b) {
                     best = Some((total, u));
@@ -180,11 +221,7 @@ fn route(
             }
             let l = lane(v);
             // A lateral hop stays on the same stretch of road: no second lane travel time.
-            let body = if e.lane_change {
-                0.0
-            } else {
-                lane_time(l.len, l.speed, c(v))
-            };
+            let body = if e.lane_change { 0.0 } else { time(v, l.len) };
             let ng = g[u as usize] + e.cost + body;
             if ng < g[v as usize] {
                 g[v as usize] = ng;

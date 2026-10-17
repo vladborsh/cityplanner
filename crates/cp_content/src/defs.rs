@@ -286,6 +286,9 @@ pub struct Balance {
     /// Metres of distance from the entry at which a building is half as likely a goal as one at
     /// the entry (T-168). // tune later
     pub tourism_reach_m: f32,
+    /// HeavyTrafficBan (T-195): a truck's A* cost of a lane in a banned district is multiplied by
+    /// this unless its start or goal is in that district. // tune later
+    pub heavy_ban_cost_mul: f32,
     /// Goods (T-169): units an industrial building makes a day per filled job, units a
     /// commercial building sells a day per filled job, the most a building stores, and the load
     /// of one truck. // tune later
@@ -441,6 +444,7 @@ impl Balance {
             self.tourism_income,
             self.tourism_pool_share,
             self.tourism_reach_m,
+            self.heavy_ban_cost_mul,
             self.goods_per_worker,
             self.goods_per_job,
             self.goods_stock_cap,
@@ -548,6 +552,7 @@ impl Default for Balance {
             tourism_income: 12.0,
             tourism_pool_share: 0.1,
             tourism_reach_m: 1500.0,
+            heavy_ban_cost_mul: 8.0,
             zoning_block_fit_m: 6.0,
             goods_per_worker: 0.5,
             goods_per_job: 0.4,

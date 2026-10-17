@@ -168,6 +168,8 @@ Balance((
     tourism_income: 12.0,
     tourism_pool_share: 0.1,
     tourism_reach_m: 1500.0,
+    // Heavy traffic ban (T-195) // tune later: A* cost multiplier of a banned district's lanes for trucks.
+    heavy_ban_cost_mul: 8.0,
     // Block fit (T-185) // tune later: metres by which a nearly 8 x 8 cell block (or a side that is
     // nearly whole cells long) is fitted to whole cells by stretching or shrinking them.
     zoning_block_fit_m: 6.0,

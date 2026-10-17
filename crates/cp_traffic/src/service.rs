@@ -40,8 +40,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::astar::{
     CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_ped_path, find_rail_path,
+    find_truck_path, find_truck_path_lanes,
 };
 use crate::graph::{Access, CongestionMap, PathGraph};
+use crate::heavy::HeavyBan;
 
 /// Ticks between submitting a request and applying its result.
 pub const PATH_DELAY_TICKS: u64 = 8;
@@ -62,6 +64,14 @@ pub enum Mode {
     },
     /// A train's route over the track graph (T-161). Appended last.
     Rail,
+    /// A truck's route between two access points (T-195): like `Car`, but lanes in districts
+    /// with the heavy traffic ban cost more. Appended; no earlier save holds it.
+    Truck,
+    /// A truck already on the road, like `CarLanes` (T-195). Appended.
+    TruckLanes {
+        from: cp_net::LaneId,
+        to: cp_net::LaneId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -99,6 +109,8 @@ pub struct PathResults(pub Vec<PathOutcome>);
 pub struct PathNetwork {
     graph: Arc<PathGraph>,
     congestion: Arc<CongestionMap>,
+    /// The heavy traffic ban in force (T-195); derived from the districts and policies.
+    heavy: Arc<HeavyBan>,
     /// Bumped on every rebuild; outcomes computed on an older generation are stale.
     generation: u64,
     geo_version: u64,
@@ -113,6 +125,7 @@ impl Default for PathNetwork {
         Self {
             graph: Arc::new(PathGraph::default()),
             congestion: Arc::new(CongestionMap::default()),
+            heavy: Arc::new(HeavyBan::default()),
             generation: 0,
             geo_version: 0,
             built: false,
@@ -144,6 +157,18 @@ impl PathNetwork {
         self.restored = Some(net_fingerprint(net));
     }
 
+    /// The heavy traffic ban trucks' requests submitted from now on read.
+    pub fn heavy(&self) -> &Arc<HeavyBan> {
+        &self.heavy
+    }
+
+    /// Replaces the heavy traffic ban (only when it differs).
+    pub fn set_heavy(&mut self, heavy: HeavyBan) {
+        if *self.heavy != heavy {
+            self.heavy = Arc::new(heavy);
+        }
+    }
+
     pub fn congestion(&self) -> &Arc<CongestionMap> {
         &self.congestion
     }
@@ -157,11 +182,24 @@ impl PathNetwork {
     }
 }
 
-fn compute(graph: &PathGraph, cong: &CongestionMap, req: &PathRequest) -> PathResult {
+fn compute(
+    graph: &PathGraph,
+    cong: &CongestionMap,
+    heavy: &HeavyBan,
+    req: &PathRequest,
+) -> PathResult {
     match req.mode {
         Mode::Car => PathResult::Car(find_car_path(graph, cong, &req.from, &req.to)),
         Mode::Pedestrian => PathResult::Pedestrian(find_ped_path(graph, &req.from, &req.to)),
         Mode::Rail => PathResult::Rail(find_rail_path(graph, &req.from, &req.to)),
+        Mode::Truck => PathResult::Car(find_truck_path(graph, cong, heavy, &req.from, &req.to)),
+        Mode::TruckLanes { from, to } => PathResult::Car(find_truck_path_lanes(
+            graph,
+            cong,
+            heavy,
+            (from, req.from.s),
+            (to, req.to.s),
+        )),
         Mode::CarLanes { from, to } => PathResult::Car(find_car_path_lanes(
             graph,
             cong,
@@ -187,6 +225,7 @@ struct Pending {
     due: Tick,
     request: PathRequest,
     congestion: Arc<CongestionMap>,
+    heavy: Arc<HeavyBan>,
     job: Job,
 }
 
@@ -251,13 +290,15 @@ impl PathService {
         &self,
         graph: &Arc<PathGraph>,
         congestion: &Arc<CongestionMap>,
+        heavy: &Arc<HeavyBan>,
         req: PathRequest,
     ) -> Job {
         if self.is_sync() {
             Job::Deferred(Arc::clone(graph))
         } else {
-            let (graph, congestion) = (Arc::clone(graph), Arc::clone(congestion));
-            let fut = async move { compute(&graph, &congestion, &req) };
+            let (graph, congestion, heavy) =
+                (Arc::clone(graph), Arc::clone(congestion), Arc::clone(heavy));
+            let fut = async move { compute(&graph, &congestion, &heavy, &req) };
             Job::Spawned(match &self.pool {
                 Some(p) => p.spawn(fut),
                 None => ComputeTaskPool::get_or_init(TaskPool::default).spawn(fut),
@@ -269,13 +310,14 @@ impl PathService {
     pub fn submit(&mut self, net: &PathNetwork, now: Tick, req: PathRequest) -> RequestId {
         let id = RequestId(self.next_id);
         self.next_id += 1;
-        let job = self.launch(&net.graph, &net.congestion, req);
+        let job = self.launch(&net.graph, &net.congestion, &net.heavy, req);
         self.pending.push(Pending {
             id,
             submitted: now,
             due: Tick(now.0 + PATH_DELAY_TICKS),
             request: req,
             congestion: Arc::clone(&net.congestion),
+            heavy: Arc::clone(&net.heavy),
             job,
         });
         id
@@ -289,11 +331,12 @@ impl PathService {
     }
 
     /// Launches restored requests on the (new) snapshot.
-    fn start_unstarted(&mut self, graph: &Arc<PathGraph>) {
+    fn start_unstarted(&mut self, graph: &Arc<PathGraph>, heavy: &Arc<HeavyBan>) {
         let mut pending = std::mem::take(&mut self.pending);
         for p in &mut pending {
             if matches!(p.job, Job::Unstarted) {
-                p.job = self.launch(graph, &p.congestion, p.request);
+                p.heavy = Arc::clone(heavy);
+                p.job = self.launch(graph, &p.congestion, heavy, p.request);
             }
         }
         self.pending = pending;
@@ -343,6 +386,8 @@ impl PathService {
                 due: Tick(r.submitted.0 + PATH_DELAY_TICKS),
                 request: r.request,
                 congestion: Arc::clone(&table[r.congestion as usize]),
+                // Replaced by the current ban when the request is launched.
+                heavy: Arc::new(HeavyBan::default()),
                 job: if r.stale { Job::Stale } else { Job::Unstarted },
             })
             .collect();
@@ -359,7 +404,7 @@ impl PathService {
             }
             let result = match p.job {
                 Job::Spawned(task) => block_on(task),
-                Job::Deferred(graph) => compute(&graph, &p.congestion, &p.request),
+                Job::Deferred(graph) => compute(&graph, &p.congestion, &p.heavy, &p.request),
                 Job::Stale => PathResult::Stale,
                 Job::Unstarted => unreachable!("restored request not launched before delivery"),
             };
@@ -407,7 +452,30 @@ pub fn update_path_network(
     geo: Res<JunctionGeometry>,
     mut pn: ResMut<PathNetwork>,
     mut service: ResMut<PathService>,
+    policies: cp_district::PolicyParams,
+    content: Option<Res<cp_content::SimContent>>,
 ) {
+    // The heavy traffic ban follows the districts and policies, not only the network (T-195).
+    if !pn.built || net.is_changed() || policies.changed() {
+        let heavy = match (policies.get(), &content) {
+            (Some(p), Some(c)) => HeavyBan::build(
+                &net,
+                p.map,
+                p.districts,
+                p.city,
+                if c.0
+                    .policy(cp_content::PolicyKind::HeavyTrafficBan)
+                    .is_some()
+                {
+                    c.0.balance().heavy_ban_cost_mul
+                } else {
+                    1.0
+                },
+            ),
+            _ => HeavyBan::default(),
+        };
+        pn.set_heavy(heavy);
+    }
     if !pn.built || net.is_changed() || geo.version() != pn.geo_version {
         let unchanged_since_load = pn
             .restored
@@ -417,7 +485,8 @@ pub fn update_path_network(
         if !unchanged_since_load {
             service.invalidate_pending();
         }
-        service.start_unstarted(&pn.graph);
+        let (graph, heavy) = (Arc::clone(&pn.graph), Arc::clone(&pn.heavy));
+        service.start_unstarted(&graph, &heavy);
     }
 }
 

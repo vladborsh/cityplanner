@@ -228,6 +228,15 @@ pub struct PolicyParams<'w> {
 }
 
 impl PolicyParams<'_> {
+    /// Whether the district map, the district records or the city policies changed since this
+    /// system last ran (or were just added).
+    pub fn changed(&self) -> bool {
+        use bevy_ecs::change_detection::DetectChanges;
+        self.map.as_ref().is_some_and(|r| r.is_changed())
+            || self.districts.as_ref().is_some_and(|r| r.is_changed())
+            || self.city.as_ref().is_some_and(|r| r.is_changed())
+    }
+
     pub fn get(&self) -> Option<Policies<'_>> {
         Some(Policies {
             map: self.map.as_deref()?,

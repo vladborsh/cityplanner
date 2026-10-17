@@ -9,6 +9,7 @@ pub mod astar;
 pub mod demo;
 pub mod drive;
 pub mod graph;
+pub mod heavy;
 pub mod pose;
 pub mod runs;
 pub mod service;
@@ -20,11 +21,13 @@ pub use agents::{
 };
 pub use astar::{
     CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_ped_path, find_rail_path,
+    find_truck_path, find_truck_path_lanes,
 };
 pub use graph::{
     Access, CONGESTION_K, CongestionMap, LEFT_TURN_PENALTY, PED_SPEED, PathGraph, SegEnd, Side,
     U_TURN_PENALTY,
 };
+pub use heavy::HeavyBan;
 pub use pose::{AgentFrame, AgentKey, PedestrianPose, VehiclePose, agent_key};
 pub use runs::{
     RunError, RunId, RunPoint, RunState, SERVICE_GEN, ServiceRun, ServiceRuns, WALK_KIND,
@@ -41,6 +44,8 @@ pub const CRATE: &str = "cp_traffic";
 
 #[cfg(test)]
 mod drive_tests;
+#[cfg(test)]
+mod heavy_tests;
 #[cfg(test)]
 mod rail_tests;
 #[cfg(test)]
