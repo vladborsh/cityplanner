@@ -28,7 +28,6 @@ pub mod land;
 pub mod lines;
 pub mod metrics;
 pub mod milestone;
-pub mod net_summary;
 pub mod palette;
 pub mod panels;
 pub mod policies;
@@ -258,6 +257,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         windows::demand_window(ctx, &mut st.demand_open, view);
         metrics::metrics_window(ctx, &mut st.metrics_open, view);
         services::services_window(ctx, &mut st.services_open, view, overlay);
+        services::overlay_services_panel(ctx, view, overlay.active);
         lines::lines_window(ctx, &mut st.lines_open, view, &mut st.lines, outbox);
         policies::city_policies_window(ctx, &mut st.policies_open, view, outbox);
     }

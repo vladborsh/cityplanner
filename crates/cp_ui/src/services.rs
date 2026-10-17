@@ -178,6 +178,50 @@ pub fn services_contents(ui: &mut egui::Ui, rows: &[SectorBalance]) -> Option<Se
     clicked
 }
 
+/// The rows of the City services window that belong to `overlay` and are open: Water gives
+/// water and sewage, Education the three schools, a service its own row; others none.
+pub fn overlay_rows(view: &SimView, overlay: Overlay) -> Vec<&SectorBalance> {
+    view.city_services()
+        .iter()
+        .filter(|r| !r.locked && overlay_of(r.sector) == overlay)
+        .collect()
+}
+
+/// A compact panel with the rows of the active overlay (T-241), next to the overlay legend:
+/// the same bars as the City services window. Nothing for an overlay without a service.
+pub fn overlay_services_panel(ctx: &egui::Context, view: &SimView, overlay: Overlay) {
+    let rows = overlay_rows(view, overlay);
+    if rows.is_empty() {
+        return;
+    }
+    // Above the legend of the Water and Power overlays when it is on screen.
+    let legend = ctx.memory(|m| m.area_rect(egui::Id::new("utility_legend")));
+    let area = egui::Area::new(egui::Id::new("overlay_services")).pivot(egui::Align2::LEFT_BOTTOM);
+    let area = match legend {
+        Some(r) if matches!(overlay, Overlay::Water | Overlay::Power) => {
+            area.fixed_pos(egui::pos2(r.left(), r.top() - 8.0))
+        }
+        _ => area.anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0)),
+    };
+    area.show(ctx, |ui| {
+        egui::Frame::popup(ui.style()).show(ui, |ui| {
+            egui::Grid::new("overlay_services_rows")
+                .num_columns(5)
+                .spacing([10.0, 6.0])
+                .show(ui, |ui| {
+                    for row in rows {
+                        icon_of(row.sector).show(ui, Sizes::ROW_ICON);
+                        ui.label(row.sector.label());
+                        bar(ui, row.balance());
+                        ui.label(numbers_text(row));
+                        ui.label(percent_text(row.balance()));
+                        ui.end_row();
+                    }
+                });
+        });
+    });
+}
+
 /// The window; a click on a row switches the map overlay on.
 pub fn services_window(
     ctx: &egui::Context,

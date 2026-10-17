@@ -11,7 +11,6 @@ use cp_tools::{ActiveTool, ToolState, UtilityMode, format_money};
 use cp_utility::UtilityNet;
 
 use crate::icons::Icon;
-use crate::net_summary::NetTab;
 use crate::style::Sizes;
 use crate::tile::{TileIcon, tool_tile, tool_tile_enabled};
 
@@ -128,6 +127,14 @@ pub fn select(tools: &mut ToolState, id: BuildingDefId) {
         tools.select(ActiveTool::Place);
     }
     tools.building.def = Some(id);
+}
+
+/// Which network a section of the panel builds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetTab {
+    /// Water and sewage (one pipe network).
+    Water,
+    Power,
 }
 
 /// One section of the panel: the buildings of a service kind (water and sewage share one)
@@ -393,7 +400,7 @@ pub fn site_note(site: ServiceSite) -> String {
     }
 }
 
-/// The panel: a section per service kind with a header, the network summary, one row of tiles
+/// The panel: a section per service kind with a header, one row of tiles
 /// (network tool, the buildings, remove tool) and the site plate of the selected building.
 /// Picking a tile of a network section also switches the map overlay to that network.
 pub fn buildings_panel(
@@ -412,9 +419,6 @@ pub fn buildings_panel(
             ui.strong(section.title());
         });
         let net = section.net.map(net_parts);
-        if let (Some(tab), Some(view)) = (section.net, view) {
-            crate::net_summary::network_summary(ui, view, tab);
-        }
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             if let Some((kind, _, shown)) = net
