@@ -862,7 +862,12 @@ mod tests {
         let expect: usize = sections
             .iter()
             .map(|s| s.cards.len() + if s.net.is_some() { 2 } else { 0 })
-            .sum();
+            .sum::<usize>()
+            // The unique buildings and monuments follow in their own sections (T-201).
+            + crate::buildings::unique_sections(&content)
+                .iter()
+                .map(|(_, c)| c.len())
+                .sum::<usize>();
         assert_eq!(tiles.len(), expect);
         let texts = rig.frame_texts(vec![]);
         let names: Vec<&str> = texts.iter().map(|(t, _)| t.as_str()).collect();
@@ -880,6 +885,70 @@ mod tests {
         ] {
             assert!(names.contains(&want), "{want:?} missing from {names:?}");
         }
+    }
+
+    /// T-201: the unique buildings and the monuments are their own sections after the
+    /// services; a locked or built tile is grey and does not pick the tool, an open one does.
+    #[test]
+    fn unique_tiles_open_lock_and_built_and_the_tooltip_has_the_progress() {
+        use crate::buildings::{UniqueState, spaced, unique_hover, unique_state};
+        let mut rig = Rig::new();
+        rig.screen = egui::vec2(1280.0, 3000.0);
+        rig.click_category(Category::Buildings);
+        let content = rig.view.content.clone().unwrap();
+        let id = |n: &str| content.building_id(n).unwrap();
+        let sections = crate::buildings::unique_sections(&content);
+        assert_eq!(sections.len(), 2);
+        assert!(
+            !sections[0].0 && sections[1].0,
+            "unique buildings, then monuments"
+        );
+        let texts = rig.frame_texts(vec![]);
+        let names: Vec<&str> = texts.iter().map(|(t, _)| t.as_str()).collect();
+        for want in ["Unique buildings", "Monuments", "City plaza", "Golden arch"] {
+            assert!(names.contains(&want), "{want:?} missing from {names:?}");
+        }
+        // Everything open (a world without milestones): a click picks the building.
+        rig.click_label("City plaza");
+        assert_eq!(rig.tools.active, ActiveTool::Place);
+        assert_eq!(rig.tools.building.def, Some(id("city_plaza")));
+        rig.tools.select(ActiveTool::None);
+
+        // Closed with 3 200 of 5 000: no tool, and the tooltip says how far it is.
+        let mut statuses = (*rig.view.uniques).clone();
+        let plaza = statuses.iter_mut().find(|u| u.id == "city_plaza").unwrap();
+        plaza.unlocked = false;
+        plaza.conditions = vec![(cp_content::UnlockCond::Population(5000), 3200, 5000)];
+        rig.view.uniques = std::sync::Arc::new(statuses);
+        assert_eq!(
+            unique_state(&rig.view, id("city_plaza")),
+            UniqueState::Locked
+        );
+        rig.click_label("City plaza");
+        assert_eq!(rig.tools.active, ActiveTool::None);
+        let card = crate::buildings::groups(&content)
+            .into_iter()
+            .flat_map(|g| g.cards)
+            .find(|c| c.id == id("city_plaza"))
+            .unwrap();
+        let hover = unique_hover(&rig.view, &card);
+        assert!(hover.starts_with("Locked"), "{hover}");
+        assert!(hover.contains("Population 3 200 / 5 000"), "{hover}");
+        assert_eq!(spaced(1_234_567), "1 234 567");
+
+        // Built: one per city, no tool either.
+        let mut statuses = (*rig.view.uniques).clone();
+        let plaza = statuses.iter_mut().find(|u| u.id == "city_plaza").unwrap();
+        plaza.unlocked = true;
+        plaza.built = true;
+        rig.view.uniques = std::sync::Arc::new(statuses);
+        assert_eq!(
+            unique_state(&rig.view, id("city_plaza")),
+            UniqueState::Built
+        );
+        rig.click_label("City plaza");
+        assert_eq!(rig.tools.active, ActiveTool::None);
+        assert!(unique_hover(&rig.view, &card).starts_with("Built"));
     }
 
     #[test]

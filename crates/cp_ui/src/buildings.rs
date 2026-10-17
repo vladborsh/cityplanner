@@ -186,6 +186,168 @@ pub fn sections(content: &ContentDb) -> Vec<Section> {
     out
 }
 
+/// Where a unique building or monument stands in the city's progress.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UniqueState {
+    /// Its unlock conditions do not all hold yet.
+    Locked,
+    /// Open to place.
+    Open,
+    /// One already stands: there is one per city.
+    Built,
+}
+
+/// The cards of the unique buildings and of the monuments (`UniqueSpec.monument`), each in
+/// definition order; a list without cards is left out. Unique buildings come first.
+pub fn unique_sections(content: &ContentDb) -> Vec<(bool, Vec<Card>)> {
+    let cards: Vec<Card> = groups(content)
+        .into_iter()
+        .filter(|g| g.kind == ServiceKind::Landmark)
+        .flat_map(|g| g.cards)
+        .collect();
+    [false, true]
+        .into_iter()
+        .map(|monument| {
+            let of_kind = cards
+                .iter()
+                .filter(|c| {
+                    content
+                        .building(c.id)
+                        .unique
+                        .as_ref()
+                        .is_some_and(|u| u.monument == monument)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            (monument, of_kind)
+        })
+        .filter(|(_, c)| !c.is_empty())
+        .collect()
+}
+
+pub fn unique_title(monument: bool) -> &'static str {
+    if monument {
+        "Monuments"
+    } else {
+        "Unique buildings"
+    }
+}
+
+/// `3200` as `3 200`.
+pub fn spaced(n: u32) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(' ');
+        }
+        out.push(c);
+    }
+    out
+}
+
+pub fn unique_state(view: &SimView, id: BuildingDefId) -> UniqueState {
+    match view.uniques.iter().find(|u| u.def == id) {
+        Some(u) if u.built => UniqueState::Built,
+        Some(u) if !u.unlocked => UniqueState::Locked,
+        _ => UniqueState::Open,
+    }
+}
+
+/// The tooltip of a unique tile: the state, each condition with its progress
+/// ("Population 3 200 / 5 000"), then the card text.
+pub fn unique_hover(view: &SimView, card: &Card) -> String {
+    let state = unique_state(view, card.id);
+    let mut out = String::new();
+    match state {
+        UniqueState::Built => out.push_str("Built — one per city\n"),
+        UniqueState::Locked => {
+            out.push_str("Locked\n");
+            if let Some(u) = view.uniques.iter().find(|u| u.def == card.id) {
+                for (cond, cur, need) in &u.conditions {
+                    out.push_str(&format!(
+                        "{} {} {} / {}\n",
+                        if cur >= need { "✓" } else { "•" },
+                        cp_sim::progress::cond_name(cond),
+                        spaced(*cur),
+                        spaced(*need)
+                    ));
+                }
+            }
+        }
+        UniqueState::Open => {}
+    }
+    out.push_str(&card_text(card));
+    out
+}
+
+/// The inspector rows of a unique building: what it does to the land and the tourists.
+pub fn unique_rows(content: &ContentDb, def: &str) -> Vec<(String, String)> {
+    let Some(d) = content.building_id(def).map(|id| content.building(id)) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    if let Some(e) = d.land_effect {
+        out.push((
+            "Land value".to_string(),
+            format!("{:+.0} within {:.0} m", e.add, e.radius_m),
+        ));
+    }
+    if let Some(u) = &d.unique {
+        out.push((
+            "Tourists".to_string(),
+            format!("{:.0} a day", u.tourists_per_day),
+        ));
+    }
+    out
+}
+
+/// A padlock (locked) or a tick (built) in the corner of a tile.
+fn badge(ui: &egui::Ui, tile: egui::Rect, state: UniqueState) {
+    let (colour, size) = match state {
+        UniqueState::Open => return,
+        UniqueState::Locked => (egui::Color32::from_gray(210), 14.0),
+        UniqueState::Built => (egui::Color32::from_rgb(90, 200, 110), 16.0),
+    };
+    let r = egui::Rect::from_min_size(
+        tile.right_top() + egui::vec2(-size - 3.0, 3.0),
+        egui::vec2(size, size),
+    );
+    let p = ui.painter();
+    p.circle_filled(
+        r.center(),
+        size * 0.62,
+        egui::Color32::from_black_alpha(170),
+    );
+    match state {
+        UniqueState::Built => p.add(egui::Shape::line(
+            vec![
+                r.lerp_inside(egui::vec2(0.15, 0.55)),
+                r.lerp_inside(egui::vec2(0.4, 0.8)),
+                r.lerp_inside(egui::vec2(0.85, 0.2)),
+            ],
+            egui::Stroke::new(2.2, colour),
+        )),
+        _ => {
+            // Body and shackle.
+            let body = egui::Rect::from_min_max(
+                r.lerp_inside(egui::vec2(0.2, 0.5)),
+                r.lerp_inside(egui::vec2(0.8, 0.95)),
+            );
+            p.rect_filled(body, 1.5, colour);
+            p.add(egui::Shape::line(
+                vec![
+                    r.lerp_inside(egui::vec2(0.33, 0.5)),
+                    r.lerp_inside(egui::vec2(0.33, 0.25)),
+                    r.lerp_inside(egui::vec2(0.67, 0.25)),
+                    r.lerp_inside(egui::vec2(0.67, 0.5)),
+                ],
+                egui::Stroke::new(1.8, colour),
+            ))
+        }
+    };
+}
+
 /// What a network section builds with.
 fn net_parts(net: NetTab) -> (UtilityKind, UtilityNet, Overlay) {
     match net {
@@ -327,6 +489,44 @@ pub fn buildings_panel(
                 .find(|c| Some(c.id) == tools.building.def)
         {
             ui.colored_label(egui::Color32::from_rgb(150, 190, 240), site_note(card.site));
+        }
+    }
+    if let Some(view) = view {
+        for (monument, cards) in unique_sections(content) {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                Icon::Buildings.show(ui, Sizes::SECTION_ICON);
+                ui.strong(unique_title(monument));
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
+                for card in &cards {
+                    let state = unique_state(view, card.id);
+                    let on =
+                        tools.active == ActiveTool::Place && tools.building.def == Some(card.id);
+                    let r = tool_tile_enabled(
+                        ui,
+                        TileIcon::Def(&card.icon),
+                        &card.name,
+                        on,
+                        state == UniqueState::Open,
+                    )
+                    .on_hover_text(unique_hover(view, card));
+                    badge(ui, r.rect, state);
+                    if r.clicked() {
+                        select(tools, card.id);
+                    }
+                }
+            });
+        }
+        if tools.active == ActiveTool::Place
+            && let Some(def) = tools.building.def
+            && content.building(def).unique.is_some()
+        {
+            ui.colored_label(
+                egui::Color32::from_rgb(150, 190, 240),
+                site_note(ServiceSite::Land),
+            );
         }
     }
 }

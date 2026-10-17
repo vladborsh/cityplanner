@@ -77,6 +77,20 @@ pub fn info_panel(
                         db.building_id(&b.def)
                             .is_some_and(|d| db.building(d).service.is_some())
                     });
+                    if let Some(db) = view.and_then(|v| v.content.as_deref()) {
+                        let rows = crate::buildings::unique_rows(db, &b.def);
+                        if !rows.is_empty() {
+                            egui::Grid::new("unique_rows")
+                                .num_columns(2)
+                                .show(ui, |ui| {
+                                    for (label, value) in rows {
+                                        ui.weak(label);
+                                        ui.label(value);
+                                        ui.end_row();
+                                    }
+                                });
+                        }
+                    }
                     if let (true, Some(view)) = (is_service, view) {
                         ui.separator();
                         building_actions(ui, b.id, view, picked, tools, outbox, &mut rects);

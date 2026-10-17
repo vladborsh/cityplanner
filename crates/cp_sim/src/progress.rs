@@ -123,6 +123,18 @@ pub fn conditions_hold(conds: &[UnlockCond], i: &UnlockInputs) -> bool {
     })
 }
 
+/// What a condition counts, for the UI ("Population", "Tourists a week").
+pub fn cond_name(c: &UnlockCond) -> String {
+    match c {
+        UnlockCond::Population(_) => "Population".to_string(),
+        UnlockCond::ServiceBuildings { kind, .. } => format!("{kind:?} buildings"),
+        UnlockCond::TouristsWeek(_) => "Tourists a week".to_string(),
+        UnlockCond::SpecBuildings { spec, .. } => format!("{spec} buildings"),
+        UnlockCond::UniquesBuilt(_) => "Unique buildings".to_string(),
+        UnlockCond::Districts(_) => "Districts".to_string(),
+    }
+}
+
 /// A readable form of the first condition that does not hold yet (the reason for a lock).
 pub fn unmet_text(conds: &[UnlockCond], i: &UnlockInputs) -> Option<(String, u32)> {
     let c = conds.iter().find(|c| {
@@ -130,14 +142,7 @@ pub fn unmet_text(conds: &[UnlockCond], i: &UnlockInputs) -> Option<(String, u32
         cur < need
     })?;
     let (cur, need) = cond_progress(c, i);
-    let name = match c {
-        UnlockCond::Population(_) => "Population".to_string(),
-        UnlockCond::ServiceBuildings { kind, .. } => format!("{kind:?} buildings"),
-        UnlockCond::TouristsWeek(_) => "Tourists a week".to_string(),
-        UnlockCond::SpecBuildings { spec, .. } => format!("{spec} buildings"),
-        UnlockCond::UniquesBuilt(_) => "Unique buildings".to_string(),
-        UnlockCond::Districts(_) => "Districts".to_string(),
-    };
+    let name = cond_name(c);
     let population = if matches!(c, UnlockCond::Population(_)) {
         need
     } else {

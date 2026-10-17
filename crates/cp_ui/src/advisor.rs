@@ -121,9 +121,62 @@ const SERVICE_ADVICE: [(u16, &str, &str, Icon, Overlay); 5] = [
     ),
 ];
 
-/// All the advice the view gives now, unordered.
-pub fn collect(view: &SimView) -> Vec<Advice> {
+/// The unique buildings that were open at the last look (`None` before the first look, which
+/// only takes the baseline: a loaded city does not announce what it already had).
+pub type UniqueSeen = Option<std::collections::BTreeSet<String>>;
+
+/// "Opened" advice (T-201) for the unique buildings and monuments that went from closed to
+/// open since `seen`, one per kind with the names; `seen` is brought up to date.
+fn unique_advice(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
+    if view.uniques.is_empty() {
+        return Vec::new();
+    }
+    let now: std::collections::BTreeSet<String> = view
+        .uniques
+        .iter()
+        .filter(|u| u.unlocked)
+        .map(|u| u.id.clone())
+        .collect();
+    let Some(before) = seen.replace(now.clone()) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
+    for (monument, id, what, icon) in [
+        (false, "unique_unlocked", "Unique building", Icon::Buildings),
+        (true, "monument_unlocked", "Monument", Icon::Buildings),
+    ] {
+        let of_kind = |u: &&cp_sim::UniqueStatus| u.monument == monument && u.unlocked;
+        let names: Vec<&str> = view
+            .uniques
+            .iter()
+            .filter(of_kind)
+            .filter(|u| !before.contains(&u.id))
+            .map(|u| {
+                view.content
+                    .as_deref()
+                    .map_or(u.id.as_str(), |db| db.building(u.def).name.as_str())
+            })
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
+        // Each opening raises the count by a whole step, which lifts the cooldown.
+        let total = view.uniques.iter().filter(of_kind).count() as u32;
+        out.push(Advice {
+            id,
+            severity: Severity::Info,
+            text: format!("{what} unlocked: {}", names.join(", ")),
+            count: total * 100,
+            icon,
+            action: Some(Action::Panel(Category::Buildings)),
+        });
+    }
+    out
+}
+
+/// All the advice the view gives now, unordered.
+pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
+    let mut out = unique_advice(view, seen);
     let city = &*view.city;
     let st = &city.buildings;
     let sev = |n: u32| {
@@ -328,6 +381,7 @@ pub struct Advisor {
     /// Advice id -> (game day shown, count then).
     last: BTreeMap<&'static str, (u64, u32)>,
     shown: Option<Shown>,
+    unique_seen: UniqueSeen,
     /// Severity of the snackbar that appeared in the last frame (taken by `draw_ui`).
     pub just_shown: Option<Severity>,
 }
@@ -352,7 +406,7 @@ impl Advisor {
         self.last_hour = Some(hour);
         let day = view.tick.0 / TICKS_PER_DAY;
         let on_screen = self.current(now).map(|a| a.severity);
-        let mut all = collect(view);
+        let mut all = collect(view, &mut self.unique_seen);
         all.retain(|a| !(problems_only && a.severity == Severity::Info));
         all.retain(|a| match self.last.get(a.id) {
             None => true,
@@ -464,6 +518,50 @@ mod tests {
         sim.view()
     }
 
+    /// T-201: an opening is announced once, by kind and with the building's name; the first
+    /// look (a loaded city) only takes the baseline.
+    #[test]
+    fn unique_unlocked_comes_once_when_a_building_goes_from_closed_to_open() {
+        let mut v = view_with(|s| {
+            s.world_mut().insert_resource(cp_sim::Progress::START);
+        });
+        assert!(v.uniques.iter().all(|u| !u.unlocked));
+        let ids = |a: &[Advice]| a.iter().map(|a| a.id).collect::<Vec<_>>();
+        let mut seen = None;
+        assert!(
+            ids(&collect(&v, &mut seen))
+                .iter()
+                .all(|i| !i.ends_with("_unlocked"))
+        );
+        let open = |v: &mut SimView, id: &str| {
+            let mut all = (*v.uniques).clone();
+            all.iter_mut().find(|u| u.id == id).unwrap().unlocked = true;
+            v.uniques = std::sync::Arc::new(all);
+        };
+        open(&mut v, "city_plaza");
+        let a = collect(&v, &mut seen);
+        let a = a
+            .iter()
+            .find(|a| a.id == "unique_unlocked")
+            .expect("announced");
+        assert!(a.text.contains("City plaza"), "{}", a.text);
+        assert_eq!(a.action, Some(Action::Panel(Category::Buildings)));
+        assert_eq!(a.severity, Severity::Info);
+        // Again: nothing. A monument is its own advice.
+        assert!(
+            collect(&v, &mut seen)
+                .iter()
+                .all(|a| !a.id.ends_with("_unlocked"))
+        );
+        open(&mut v, "golden_arch");
+        let a = collect(&v, &mut seen);
+        assert!(
+            a.iter()
+                .any(|a| a.id == "monument_unlocked" && a.text.contains("Golden arch"))
+        );
+        assert!(a.iter().all(|a| a.id != "unique_unlocked"));
+    }
+
     /// A view whose city stats say `n` buildings lack water.
     fn no_water(n: u32) -> SimView {
         let mut v = view_with(|_| {});
@@ -482,7 +580,7 @@ mod tests {
 
     #[test]
     fn five_houses_without_water_give_the_water_advice_with_the_overlay_action() {
-        let all = collect(&no_water(5));
+        let all = collect(&no_water(5), &mut None);
         let a = all.iter().find(|a| a.id == "no_water").unwrap();
         assert_eq!(a.count, 5);
         assert_eq!(a.severity, Severity::Warn);
@@ -510,7 +608,7 @@ mod tests {
             vec![sick, sick, crime],
             Default::default(),
         ));
-        let all = collect(&v);
+        let all = collect(&v, &mut None);
         let get = |id| all.iter().find(|a| a.id == id).unwrap();
         assert_eq!(get("sick").count, 2);
         assert_eq!(get("sick").action, Some(Action::Overlay(Overlay::Health)));
