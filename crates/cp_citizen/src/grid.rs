@@ -399,6 +399,28 @@ impl CitizenGrid {
         true
     }
 
+    /// Moves a household and its members to `home` (T-252: evicted from a demolished house), with
+    /// their sickness bookkeeping; jobs, schools and where they are stay as they are.
+    pub fn move_household(&mut self, id: HouseholdId, home: BuildingId) -> bool {
+        let Some(h) = self.households.get_mut(id) else {
+            return false;
+        };
+        let old = std::mem::replace(&mut h.home, home);
+        let members: Vec<CitizenId> = h.member_ids().collect();
+        for cid in members {
+            if let Some(c) = self.citizens.get_mut(cid) {
+                c.home = Some(home);
+                if c.sick_since.is_some() {
+                    self.derived.remove_sick(old, cid);
+                    self.derived.add_sick(home, cid);
+                }
+            }
+        }
+        self.derived.remove_home(old);
+        self.derived.add_home(home);
+        true
+    }
+
     /// Removes one citizen (death): frees their job and their place in the household, and the
     /// household too when nobody is left. Returns the citizen.
     pub fn remove_citizen(&mut self, id: CitizenId) -> Option<Citizen> {

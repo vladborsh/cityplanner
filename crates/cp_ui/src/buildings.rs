@@ -700,6 +700,8 @@ mod tests {
             free: None,
             richness: None,
             access: None,
+            demolish: vec![],
+            evicted: None,
         });
         let ok = drawn(&tools);
         assert!(ok.contains("can place") && ok.contains("12,000"), "{ok}");
@@ -717,6 +719,18 @@ mod tests {
             "{cov}"
         );
         tools.coverage = None;
+        assert!(!ok.contains("Demolishes"), "{ok}");
+        // Over zoned houses (T-252): it says what goes and who has to move.
+        if let Some(g) = tools.place_ghost.as_mut() {
+            g.demolish = vec![cp_core::Id::new(3, 0), cp_core::Id::new(4, 0)];
+            g.evicted = Some((7, 3));
+        }
+        let over = drawn(&tools);
+        assert!(
+            over.contains("can place")
+                && over.contains("Demolishes 2 buildings (7 residents evicted, 3 jobs)"),
+            "{over}"
+        );
         tools.place_ghost = Some(PlacementGhost {
             cells: vec![],
             valid: false,
@@ -725,6 +739,8 @@ mod tests {
             free: None,
             richness: None,
             access: None,
+            demolish: vec![],
+            evicted: None,
         });
         let bad = drawn(&tools);
         assert!(

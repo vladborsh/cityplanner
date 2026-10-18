@@ -62,6 +62,38 @@ pub fn validate_free_placement_except(
     rot: f32,
     ignore: Option<crate::model::BuildingId>,
 ) -> Result<PlacementPlan, BuildingError> {
+    validate_free_placement_ignoring(
+        db,
+        zones,
+        net,
+        buildings,
+        terrain,
+        tiles,
+        def,
+        pos,
+        rot,
+        ignore.as_slice(),
+        &[],
+    )
+}
+
+/// [`validate_free_placement`] where the buildings `ignore` and the cells `free_cells` are no
+/// obstacle: the building being moved (T-177), or the zoned buildings a service is placed over
+/// (T-252).
+#[allow(clippy::too_many_arguments)]
+pub fn validate_free_placement_ignoring(
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+    terrain: Option<&Terrain>,
+    tiles: Option<&TileOwnership>,
+    def: BuildingDefId,
+    pos: Vec2,
+    rot: f32,
+    ignore: &[crate::model::BuildingId],
+    free_cells: &[cp_zone::ZoneCellRef],
+) -> Result<PlacementPlan, BuildingError> {
     if !cp_core::sane_point(pos) || !rot.is_finite() || rot.abs() > 1.0e4 {
         return Err(BuildingError::BadCoordinates);
     }
@@ -151,7 +183,7 @@ pub fn validate_free_placement_except(
     }
 
     for (id, b) in buildings.iter() {
-        if Some(id) == ignore {
+        if ignore.contains(&id) {
             continue;
         }
         let other = b.footprint_polygon();
@@ -167,6 +199,7 @@ pub fn validate_free_placement_except(
     let reach = Vec2::new(w.into(), d.into()).length() * FOOTPRINT_CELL_M * 0.5 + 6.0;
     for cell in zones.cells_within(pos, reach) {
         if zones.is_occupied(cell)
+            && !free_cells.contains(&cell)
             && zones
                 .cell_footprint(cell)
                 .is_some_and(|o| quads_overlap(&quad, &o.corners()))

@@ -1,14 +1,16 @@
 //! The service-building placement tool and the building half of the bulldozer.
 //!
-//! Pure: placement validity comes from `cp_building::validate_placement`, the same function the
-//! `Place` command commits with; the plugin turns clicks into `BuildingCommand`s.
+//! Pure: placement validity comes from `cp_building::validate_placement_over`, the same function
+//! the `Place` command commits with (a service may stand on zoned buildings, which it demolishes,
+//! T-252); the plugin turns clicks into `BuildingCommand`s.
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
 use bevy_math::Vec2;
 use cp_building::{
-    BuildingError, BuildingFlags, BuildingId, BuildingState, MOVE_COST_FRACTION, footprint_quad,
-    is_free_standing, validate_free_placement_except, validate_placement_except,
+    BuildingError, BuildingFlags, BuildingId, BuildingState, MOVE_COST_FRACTION, PlacementPlan,
+    footprint_quad, is_free_standing, validate_free_placement_except, validate_placement_except,
+    validate_placement_over,
 };
 use cp_content::{BuildingDefId, ContentDb, ServiceKind, ServiceSite};
 use cp_core::Cost;
@@ -154,6 +156,28 @@ pub struct PlacementGhost {
     /// Where a valid ghost on a road would join it: the same access point the placement gives
     /// the building (`PlacementPlan::access`); the coverage preview starts there (T-254).
     pub access: Option<cp_building::AccessPoint>,
+    /// The zoned buildings the placement would demolish, in id order (T-252); drawn red.
+    pub demolish: Vec<BuildingId>,
+    /// `(residents, jobs)` in [`Self::demolish`]: the app fills it from the sim (the view has no
+    /// citizens), `None` until then.
+    pub evicted: Option<(u32, u32)>,
+}
+
+impl PlacementGhost {
+    /// "Demolishes N buildings (M residents evicted, K jobs)", or `None` when nothing is in the way.
+    pub fn demolish_text(&self) -> Option<String> {
+        let n = self.demolish.len();
+        if n == 0 {
+            return None;
+        }
+        let what = if n == 1 { "building" } else { "buildings" };
+        Some(match self.evicted {
+            Some((residents, jobs)) => {
+                format!("Demolishes {n} {what} ({residents} residents evicted, {jobs} jobs)")
+            }
+            None => format!("Demolishes {n} {what}"),
+        })
+    }
 }
 
 /// The ghost of a free-standing building: not tied to cells, so it carries its own pose.
@@ -267,19 +291,10 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
         .map(|b| cp_building::held_cells(&view.zones, b))
         .unwrap_or_default();
     let richness = lot_richness_percent(view, db, def, hover, tool.rot(), &held);
+    let mut demolish = Vec::new();
     Some(
-        match validate_placement_except(
-            db,
-            &view.zones,
-            &view.net,
-            view.terrain.as_deref(),
-            Some(&view.tiles),
-            def,
-            hover,
-            tool.rot(),
-            &held,
-        )
-        .and_then(|plan| {
+        match place_over(view, db, tool, def, hover, tool.rot(), &held).and_then(|(plan, over)| {
+            demolish = over;
             // A chain building also needs its industrial area (T-208).
             if let Some(terrain) = view.terrain.as_deref() {
                 cp_building::validate_industry_site(
@@ -315,6 +330,7 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
                 cost: Some(price(db, def, tool, plan.cost)),
                 richness,
                 access: plan.access,
+                demolish,
                 ..Default::default()
             },
             Err(e) => PlacementGhost {
@@ -324,6 +340,8 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
                 free: None,
                 richness,
                 access: None,
+                demolish: Vec::new(),
+                evicted: None,
                 error: Some(error_text(
                     &e,
                     db.building(def)
@@ -335,6 +353,61 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
             },
         },
     )
+}
+
+/// The placement check for a new building ([`validate_placement_over`]: zoned buildings are no
+/// obstacle, they are named) or for a building being moved (its own cells are free, zoned
+/// buildings still block).
+fn place_over(
+    view: &SimView,
+    db: &ContentDb,
+    tool: &BuildingTool,
+    def: BuildingDefId,
+    pos: Vec2,
+    rot: f32,
+    held: &[ZoneCellRef],
+) -> Result<(PlacementPlan, Vec<BuildingId>), BuildingError> {
+    if tool.moving.is_some() {
+        return if is_free_standing(db, def) {
+            validate_free_placement_except(
+                db,
+                &view.zones,
+                &view.net,
+                &view.buildings,
+                view.terrain.as_deref(),
+                Some(&view.tiles),
+                def,
+                pos,
+                rot,
+                tool.moving,
+            )
+        } else {
+            validate_placement_except(
+                db,
+                &view.zones,
+                &view.net,
+                view.terrain.as_deref(),
+                Some(&view.tiles),
+                def,
+                pos,
+                rot,
+                held,
+            )
+        }
+        .map(|plan| (plan, Vec::new()));
+    }
+    validate_placement_over(
+        db,
+        &view.zones,
+        &view.net,
+        &view.buildings,
+        view.terrain.as_deref(),
+        Some(&view.tiles),
+        def,
+        pos,
+        rot,
+    )
+    .map(|c| (c.plan, c.demolish))
 }
 
 /// The lot richness of an extractor under the cursor (T-211): `(percent, needed percent)`, from
@@ -393,19 +466,9 @@ fn free_preview(
         polygon: footprint_quad(pos, rot, w, d),
         hint: connection_hint(view, def, pos),
     };
-    match validate_free_placement_except(
-        db,
-        &view.zones,
-        &view.net,
-        &view.buildings,
-        view.terrain.as_deref(),
-        Some(&view.tiles),
-        def,
-        pos,
-        rot,
-        tool.moving,
-    )
-    .and_then(|plan| {
+    let mut demolish = Vec::new();
+    match place_over(view, db, tool, def, pos, rot, &[]).and_then(|(plan, over)| {
+        demolish = over;
         // A park attraction or prop also needs its park area (T-223).
         cp_building::validate_park_site(
             &cp_building::ParkWorld {
@@ -423,6 +486,7 @@ fn free_preview(
             valid: true,
             cost: Some(price(db, def, tool, plan.cost)),
             free: Some(free),
+            demolish,
             ..Default::default()
         },
         Err(e) => PlacementGhost {

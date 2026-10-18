@@ -23,7 +23,7 @@ pub use routine::{
 };
 pub use system::{
     ARRIVAL_SPEED_MPS, BASE_DELAY, FALLBACK_DELAY, JOBLESS_LEAVE_DAYS, MOVE_IN_ONE_IN,
-    MOVE_IN_STREAM, update_citizens,
+    MOVE_IN_STREAM, rehome_evicted, update_citizens,
 };
 pub use trips::{LeisureArrival, Trip, TripBook, TripId, TripMode, TripPurpose, TripState};
 

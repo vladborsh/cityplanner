@@ -594,6 +594,9 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                         ui.colored_label(egui::Color32::from_rgb(110, 190, 255), coverage_text(c));
                         ui.weak(COVERAGE_LEGEND);
                     }
+                    if let Some(text) = g.demolish_text() {
+                        ui.colored_label(egui::Color32::from_rgb(230, 90, 80), text);
+                    }
                 } else {
                     bad(
                         ui,

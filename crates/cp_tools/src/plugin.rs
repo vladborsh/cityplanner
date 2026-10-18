@@ -248,7 +248,7 @@ pub struct PlaceDemo {
     pub at: Vec2,
 }
 
-fn place_demo(
+pub fn place_demo(
     demo: Option<Res<PlaceDemo>>,
     view: Option<Res<SimView>>,
     mut state: ResMut<ToolState>,
@@ -545,7 +545,10 @@ impl Plugin for ToolsPlugin {
             .add_systems(Update, sync_coverage_count.after(sync_coverage_ghost))
             .add_systems(
                 Update,
-                (ghost_demo, sync_zone_strip).chain().after(tool_hover),
+                (ghost_demo, sync_zone_strip)
+                    .chain()
+                    .after(tool_hover)
+                    .before(draw_ghost),
             )
             .init_resource::<UiCapture>()
             .init_resource::<CommandOutbox>()
@@ -681,7 +684,7 @@ fn cursor_ground(
     Some(Vec2::new(hit.x, hit.z))
 }
 
-fn tool_hover(
+pub fn tool_hover(
     view: Option<Res<SimView>>,
     capture: Res<UiCapture>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -1396,6 +1399,11 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
         draw_cells(view, &g.cells, color, &mut gizmos);
         if let Some(f) = &g.free {
             draw_free(view, f, color, &mut gizmos);
+        }
+        // The zoned buildings it would demolish (T-252).
+        for b in g.demolish.iter().filter_map(|id| view.buildings.get(*id)) {
+            let cells = cp_building::held_cells(&view.zones, b);
+            draw_cells(view, &cells, Color::srgb(0.95, 0.2, 0.2), &mut gizmos);
         }
     }
     if let (Some(view), Some(id)) = (view.as_deref(), state.building_highlight)

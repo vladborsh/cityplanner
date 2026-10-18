@@ -525,6 +525,59 @@ pub fn update_citizens(
     }
 }
 
+/// T-252: the households of the homes in `gone` (demolished at the positions given, under a
+/// service placed over them) move to the nearest vacant home in the city: an active residential
+/// building with a free apartment, nearest first, then the lower id. Households are taken in id
+/// order. Those that find none stay pointed at the demolished home and leave the city with the
+/// purge of removed buildings (the bulldozer's path). Returns `(moved, left)` households.
+pub fn rehome_evicted(
+    grid: &mut CitizenGrid,
+    buildings: &BuildingGrid,
+    db: &ContentDb,
+    gone: &[(BuildingId, Vec2)],
+) -> (u32, u32) {
+    if gone.is_empty() {
+        return (0, 0);
+    }
+    grid.ensure_derived();
+    let evicted: Vec<(HouseholdId, Vec2)> = grid
+        .households()
+        .filter_map(|(id, h)| {
+            gone.iter()
+                .find(|(b, _)| *b == h.home)
+                .map(|(_, at)| (id, *at))
+        })
+        .collect();
+    let homes: Vec<(BuildingId, u16, Vec2)> = buildings
+        .iter()
+        .filter(|(id, b)| b.state == BuildingState::Active && !gone.iter().any(|(g, _)| g == id))
+        .filter_map(|(id, b)| {
+            let def = db.building(b.def);
+            (is_residential(def.zone) && def.households > 0).then_some((id, def.households, b.pos))
+        })
+        .collect();
+    let (mut moved, mut left) = (0, 0);
+    for (hid, at) in evicted {
+        let to = homes
+            .iter()
+            .filter(|(id, apartments, _)| grid.households_in(*id) < *apartments)
+            .min_by(|a, b| {
+                a.2.distance_squared(at)
+                    .total_cmp(&b.2.distance_squared(at))
+                    .then(a.0.cmp(&b.0))
+            })
+            .map(|(id, ..)| *id);
+        match to {
+            Some(home) => {
+                grid.move_household(hid, home);
+                moved += 1;
+            }
+            None => left += 1,
+        }
+    }
+    (moved, left)
+}
+
 #[cfg(test)]
 mod job_index_tests {
     use super::*;

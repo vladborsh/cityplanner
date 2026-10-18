@@ -10,6 +10,11 @@
 //! [`validate_placement`] is the pure check the placement tool previews with and `apply`
 //! commits with. The price is `BuildingDef::cost` ([`Cost::from_units`]); `apply` checks the
 //! treasury before placing and charges it after ([`BuildingError::Funds`]).
+//!
+//! A service may be placed over zoned (growable) buildings (T-252): [`validate_placement_over`]
+//! treats their cells and rectangles as free and names them, and `Place` demolishes them the way
+//! the bulldozer does (no refund) before it places the service. The zone cells keep their type.
+//! Another service, a road, water or a tile not owned still blocks.
 
 use std::f32::consts::FRAC_PI_2;
 use std::fmt;
@@ -26,7 +31,7 @@ use cp_terrain::{SimTerrain, Terrain, TileOwnership};
 use cp_zone::{BLOCK_DEPTH, ZoneCellRef, ZoneGrid};
 use serde::{Deserialize, Serialize};
 
-use crate::free::{is_free_standing, validate_free_placement, validate_free_placement_except};
+use crate::free::{is_free_standing, validate_free_placement_except};
 use crate::grid::BuildingGrid;
 use crate::model::{
     AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Footprint, Lot, build_ticks,
@@ -341,6 +346,87 @@ pub fn validate_placement_except(
     })
 }
 
+/// Whether buildings of `def` grow on their zone by themselves (a house, a shop, an office, a
+/// factory): the player never places them, and a service may be placed over them (T-252).
+pub fn is_growable(def: &BuildingDef) -> bool {
+    def.service.is_none() && def.unique.is_none() && def.industry.is_none() && def.park.is_none()
+}
+
+/// How far from the cursor zoned buildings are looked at for [`validate_placement_over`],
+/// metres: more than half the diagonal of any lot or rectangle plus a lot.
+const OVER_REACH_M: f32 = 96.0;
+
+/// A placement over zoned buildings (T-252): the plan and the zoned buildings it demolishes, in
+/// id order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Clearance {
+    pub plan: PlacementPlan,
+    pub demolish: Vec<BuildingId>,
+}
+
+/// The placement check the tool and `Place` use (T-252): [`validate_placement`] (or
+/// [`validate_free_placement`] for a free-standing def) where the zoned buildings near `pos` are
+/// no obstacle, plus the ones the building would stand on. Everything else (another service,
+/// a road, water, a tile not owned) blocks as before.
+#[allow(clippy::too_many_arguments)]
+pub fn validate_placement_over(
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+    terrain: Option<&Terrain>,
+    tiles: Option<&TileOwnership>,
+    def: BuildingDefId,
+    pos: Vec2,
+    rot: f32,
+) -> Result<Clearance, BuildingError> {
+    let near: Vec<(BuildingId, Vec<ZoneCellRef>)> = buildings
+        .iter()
+        .filter(|(_, b)| {
+            b.pos.distance(pos) <= OVER_REACH_M
+                && db
+                    .buildings()
+                    .find(|(id, _)| *id == b.def)
+                    .is_some_and(|(_, d)| is_growable(d))
+        })
+        .map(|(id, b)| (id, crate::grid::held_cells(zones, b)))
+        .collect();
+    let cells: Vec<ZoneCellRef> = near.iter().flat_map(|(_, c)| c.iter().copied()).collect();
+    let ids: Vec<BuildingId> = near.iter().map(|(id, _)| *id).collect();
+    let plan = if is_free_standing(db, def) {
+        crate::free::validate_free_placement_ignoring(
+            db, zones, net, buildings, terrain, tiles, def, pos, rot, &ids, &cells,
+        )?
+    } else {
+        validate_placement_except(db, zones, net, terrain, tiles, def, pos, rot, &cells)?
+    };
+    let demolish = match plan.footprint {
+        Footprint::Lot(_) => {
+            let mine = plan.cells();
+            near.iter()
+                .filter(|(_, held)| held.iter().any(|c| mine.contains(c)))
+                .map(|(id, _)| *id)
+                .collect()
+        }
+        Footprint::Free { w, d } => {
+            let quad = crate::model::footprint_quad(plan.pos, plan.rot, w, d);
+            near.iter()
+                .filter(|(id, held)| {
+                    buildings.get(*id).is_some_and(|b| {
+                        cp_zone::geom::quads_overlap(&quad, &b.footprint_polygon())
+                    }) || held.iter().any(|c| {
+                        zones
+                            .cell_footprint(*c)
+                            .is_some_and(|o| cp_zone::geom::quads_overlap(&quad, &o.corners()))
+                    })
+                })
+                .map(|(id, _)| *id)
+                .collect()
+        }
+    };
+    Ok(Clearance { plan, demolish })
+}
+
 /// The chain-building rule (T-208) on a plan that passed the geometry checks; a no-op for every
 /// other def. The sim world needs the areas and the buildings for it.
 fn check_industry(
@@ -407,11 +493,13 @@ fn check_park(
     )
 }
 
-/// What a `Place` made: the building and, for a station, the segment of its platform.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What a `Place` made: the building, for a station the segment of its platform, and the zoned
+/// buildings it demolished with where they stood (T-252), in id order.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Placed {
     pub building: BuildingId,
     pub platform: Option<SegmentId>,
+    pub demolished: Vec<(BuildingId, Vec2)>,
 }
 
 /// The platform under a station of `def` standing at `pos` turned by `rot`: a request for one
@@ -511,7 +599,7 @@ pub fn apply_placed(
             let limit = world
                 .get_resource::<SimLimits>()
                 .map_or(u32::MAX, |l| l.buildings);
-            let (plan, level, build, is_service) = {
+            let (plan, demolish, level, build, is_service) = {
                 let (Some(content), Some(zones), Some(net)) = (
                     world.get_resource::<SimContent>(),
                     world.get_resource::<ZoneGrid>(),
@@ -529,20 +617,17 @@ pub fn apply_placed(
                 }
                 let terrain = world.get_resource::<SimTerrain>().map(|t| &*t.0);
                 let tiles = world.get_resource::<TileOwnership>();
-                let plan = if is_free_standing(&content.0, *def) {
-                    let buildings = world
-                        .get_resource::<BuildingGrid>()
-                        .ok_or(BuildingError::Missing)?;
-                    validate_free_placement(
-                        &content.0, zones, net, buildings, terrain, tiles, *def, *pos, *rot,
-                    )?
-                } else {
-                    validate_placement(&content.0, zones, net, terrain, tiles, *def, *pos, *rot)?
-                };
+                let buildings = world
+                    .get_resource::<BuildingGrid>()
+                    .ok_or(BuildingError::Missing)?;
+                let Clearance { plan, demolish } = validate_placement_over(
+                    &content.0, zones, net, buildings, terrain, tiles, *def, *pos, *rot,
+                )?;
                 check_industry(world, &content.0, zones, *def, &plan, None)?;
                 check_park(world, &content.0, zones, *def, &plan)?;
                 (
                     plan,
+                    demolish,
                     content.0.building(*def).level,
                     build_ticks(content.0.building(*def)),
                     content.0.building(*def).service.is_some(),
@@ -561,12 +646,29 @@ pub fn apply_placed(
                 .as_ref()
                 .map_or(plan.cost, |p| Cost(plan.cost.0 + p.cost.0));
             check_funds(world, total).map_err(BuildingError::Funds)?;
-            let mut buildings = world
-                .get_resource_mut::<BuildingGrid>()
-                .ok_or(BuildingError::Missing)?;
-            if buildings.len() >= limit as usize {
+            if world
+                .get_resource::<BuildingGrid>()
+                .ok_or(BuildingError::Missing)?
+                .len()
+                - demolish.len()
+                >= limit as usize
+            {
                 return Err(BuildingError::LimitReached);
             }
+            // The zoned buildings under it go first, as the bulldozer takes them (T-252).
+            let mut demolished = Vec::with_capacity(demolish.len());
+            world.resource_scope(|world, mut buildings: bevy_ecs::world::Mut<BuildingGrid>| {
+                let mut zones = world.resource_mut::<ZoneGrid>();
+                for id in &demolish {
+                    let at = buildings.get(*id).map(|b| b.pos);
+                    if crate::grid::demolish_building(&mut buildings, &mut zones, *id)
+                        && let Some(at) = at
+                    {
+                        demolished.push((*id, at));
+                    }
+                }
+            });
+            let mut buildings = world.resource_mut::<BuildingGrid>();
             let building = buildings.insert(Building {
                 def: *def,
                 footprint: plan.footprint,
@@ -594,7 +696,14 @@ pub fn apply_placed(
                 None => None,
             };
             charge_funds(world, total);
-            Ok((total, Some(Placed { building, platform })))
+            Ok((
+                total,
+                Some(Placed {
+                    building,
+                    platform,
+                    demolished,
+                }),
+            ))
         }
         BuildingCommand::Move { building, pos, rot } => {
             let (plan, cost) = {

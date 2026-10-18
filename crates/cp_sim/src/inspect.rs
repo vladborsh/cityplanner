@@ -245,6 +245,24 @@ pub fn flag_names(flags: BuildingFlags) -> Vec<&'static str> {
 }
 
 impl SimRunner {
+    /// The people a placement over zoned buildings would displace (T-252): `(residents, jobs)`,
+    /// the members of the households living in `ids` and the filled job slots there.
+    pub fn eviction(&self, ids: &[BuildingId]) -> (u32, u32) {
+        let Some(citizens) = self.world().get_resource::<CitizenGrid>() else {
+            return (0, 0);
+        };
+        let residents = citizens
+            .households()
+            .filter(|(_, h)| ids.contains(&h.home))
+            .map(|(_, h)| h.member_ids().count() as u32)
+            .sum();
+        let jobs = citizens
+            .citizens()
+            .filter(|(_, c)| c.work.is_some_and(|w| ids.contains(&w)))
+            .count() as u32;
+        (residents, jobs)
+    }
+
     /// Details of `sel`, or `None` if it no longer exists (a car that arrived, a demolished
     /// building).
     pub fn inspect(&self, sel: Selection) -> Option<Inspection> {

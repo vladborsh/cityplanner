@@ -192,12 +192,11 @@ fn apply_building(
     c: &BuildingCommand,
 ) -> Result<Cost, cp_building::BuildingError> {
     let (cost, placed) = cp_building::apply_placed(world, c)?;
-    if let Some(cp_building::Placed {
-        building,
-        platform: Some(seg),
-    }) = placed
-    {
-        cp_transit::add_station(world, building, seg);
+    if let Some(placed) = placed {
+        if let Some(seg) = placed.platform {
+            cp_transit::add_station(world, placed.building, seg);
+        }
+        rehome_evicted(world, &placed.demolished);
     }
     if let BuildingCommand::Demolish { building } = c
         && let Some(seg) = cp_transit::remove_station(world, *building)
@@ -207,6 +206,28 @@ fn apply_building(
         let _ = net.remove_segment(seg);
     }
     Ok(cost)
+}
+
+/// T-252: the households of the zoned houses a service was placed over move to vacant homes
+/// now; the rest leave with the purge of removed buildings in the `Citizens` phase, which also
+/// takes the jobs of the demolished workplaces.
+fn rehome_evicted(world: &mut World, demolished: &[(cp_building::BuildingId, bevy_math::Vec2)]) {
+    if demolished.is_empty() || !world.contains_resource::<cp_citizen::CitizenGrid>() {
+        return;
+    }
+    let Some(content) = world
+        .get_resource::<cp_content::SimContent>()
+        .map(|c| c.0.clone())
+    else {
+        return;
+    };
+    world.resource_scope(
+        |world, mut grid: bevy_ecs::prelude::Mut<cp_citizen::CitizenGrid>| {
+            if let Some(buildings) = world.get_resource::<cp_building::BuildingGrid>() {
+                cp_citizen::rehome_evicted(&mut grid, buildings, &content, demolished);
+            }
+        },
+    );
 }
 
 fn apply_debug(world: &mut World, cmd: &DebugCommand) -> Result<Cost, CommandError> {

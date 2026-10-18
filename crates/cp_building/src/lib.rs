@@ -13,13 +13,13 @@ pub mod respec;
 pub mod spawn;
 
 pub use command::{
-    BuildingCommand, BuildingError, MOVE_COST_FRACTION, Placed, PlacementPlan, apply, apply_placed,
-    oriented_lot, platform_request, platform_request_behind, platform_shift, validate_placement,
-    validate_placement_except,
+    BuildingCommand, BuildingError, Clearance, MOVE_COST_FRACTION, Placed, PlacementPlan, apply,
+    apply_placed, is_growable, oriented_lot, platform_request, platform_request_behind,
+    platform_shift, validate_placement, validate_placement_except, validate_placement_over,
 };
 pub use free::{
     ROAD_CLEARANCE_M, is_free_standing, sync_blockers, validate_free_placement,
-    validate_free_placement_except,
+    validate_free_placement_except, validate_free_placement_ignoring,
 };
 pub use grid::{
     BuildingGrid, burn, cells_under_lot, demolish_building, held_cells, zone_mismatches,

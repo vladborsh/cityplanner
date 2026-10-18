@@ -142,7 +142,14 @@ impl Plugin for GamePlugin {
             .add_plugins((UiPlugin, cp_tools::ToolsPlugin, audio::SoundPlugin))
             .add_systems(
                 Update,
-                (file_requests, inspect_selection, settings::save_settings),
+                (
+                    file_requests,
+                    inspect_selection,
+                    settings::save_settings,
+                    count_evictions
+                        .after(cp_tools::plugin::tool_hover)
+                        .after(cp_tools::plugin::place_demo),
+                ),
             );
         }
         app.add_systems(Startup, move |mut commands: Commands| {
@@ -269,6 +276,12 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         "grown" => (
             Vec3::new(c + 20.0, 230.0, c + 190.0),
             Vec3::new(c + 20.0, 0.0, c + 40.0),
+        ),
+        // Close over the residential block of `--scene grown`, where `--place-demo
+        // clinic,5140,5078` holds a clinic's ghost over houses (T-252).
+        "place-over" => (
+            Vec3::new(c + 20.0, 48.0, c + 20.0),
+            Vec3::new(c + 20.0, 0.0, c - 40.0),
         ),
         "zones-big" => (
             Vec3::new(c + 20.0, 560.0, c + 330.0),
@@ -809,6 +822,21 @@ pub fn handle_file_request(
                 Err(e) => format!("Load failed: {e}"),
             };
         }
+    }
+}
+
+/// Fills in how many people the placement ghost would displace (T-252): the view has no
+/// citizens, the sim does.
+fn count_evictions(sim: Option<Res<Sim>>, mut tools: ResMut<cp_tools::ToolState>) {
+    let Some(sim) = sim else { return };
+    let Some(g) = tools.place_ghost.as_ref() else {
+        return;
+    };
+    let evicted = (!g.demolish.is_empty()).then(|| sim.0.eviction(&g.demolish));
+    if g.evicted != evicted
+        && let Some(g) = tools.place_ghost.as_mut()
+    {
+        g.evicted = evicted;
     }
 }
 
