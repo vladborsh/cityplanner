@@ -509,6 +509,25 @@ impl Player {
                 };
                 let un: Vec<String> = shown.iter().filter(|k| !now.contains(*k)).map(c).collect();
                 println!("  ghost cells not built: {}", un.join(" "));
+                let real: Vec<Obb> = self.cells();
+                let near: Vec<String> = shown
+                    .iter()
+                    .filter(|k| !now.contains(*k))
+                    .take(3)
+                    .map(|k| {
+                        let q = Vec2::new(
+                            k.iter().map(|p| p.0 as f32).sum::<f32>() / 200.0,
+                            k.iter().map(|p| p.1 as f32).sum::<f32>() / 200.0,
+                        );
+                        let o: Vec<String> = real
+                            .iter()
+                            .filter(|r| r.c.distance(q) < 7.0)
+                            .map(|r| format!("{:?}@{:.1},{:.1}", r.u, self.l(r.c).x, self.l(r.c).y))
+                            .collect();
+                        format!("{} overlapped by real [{}]", c(k), o.join(" "))
+                    })
+                    .collect();
+                println!("  {}", near.join("; "));
             }
             self.fail(
                 "preview",

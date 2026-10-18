@@ -767,7 +767,7 @@ impl ZoneGrid {
                     if let Some(set) = self.index.block_buckets.get(&key) {
                         for &n in set {
                             for r in row..BLOCK_DEPTH {
-                                if (r, n) > (row, id) {
+                                if (r, self.priority(n)) > (row, self.priority(id)) {
                                     work.insert((r, n));
                                 }
                             }
@@ -834,6 +834,15 @@ impl ZoneGrid {
     /// not on a road, not under a building, not on a rectangle of a free-standing building, not
     /// over the previous column of its own block, and not over a cell that wins: one covered by a
     /// building, or a valid one of smaller rank `(row, block)`.
+    /// Which of two overlapping cells of the same row wins: the one of the lower segment, then
+    /// side, then block (BUG-073: not the arena slot alone, which a rebuilt block may reuse, so
+    /// the cells the ghost shows are the cells the road gets).
+    fn priority(&self, id: ZoneBlockId) -> (Option<SegmentId>, u8, ZoneBlockId) {
+        self.blocks
+            .get(id)
+            .map_or((None, 0, id), |b| (Some(b.segment), b.side.slot() as u8, id))
+    }
+
     fn row_valid(&self, obbs: &[Obb], id: ZoneBlockId, row: u16) -> Vec<bool> {
         let depth = usize::from(BLOCK_DEPTH);
         let row_i = usize::from(row);
@@ -886,7 +895,7 @@ impl ZoneGrid {
                     let blocking = self.occupied.contains(&ZoneCellRef {
                         block: nid,
                         cell: j as u16,
-                    }) || (nb.valid[j] && ((j % depth) as u16, nid) < (row, id));
+                    }) || (nb.valid[j] && ((j % depth) as u16, self.priority(nid)) < (row, self.priority(id)));
                     if blocking && other.penetration(o) > CROSS_BLOCK_EPS {
                         *ok = false;
                         break 'near;
