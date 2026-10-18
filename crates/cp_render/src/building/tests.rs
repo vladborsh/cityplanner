@@ -822,6 +822,45 @@ fn the_eleven_m2_service_silhouettes_are_distinct_and_build_at_every_lod() {
     assert!(heights["cemetery"] < 8.0 && heights["clinic"] < 11.0);
 }
 
+/// T-248: the post office and the sorting facility have silhouettes of their own at every LOD
+/// (the sorting shed the larger and taller), and their windows and signs glow at night only
+/// when they have power.
+#[test]
+fn the_post_silhouettes_build_at_every_lod_and_light_up_with_power() {
+    let e = env();
+    let ground = e.terrain.height(Vec2::new(5120.0, 5120.0));
+    let glowing = |m: &MeshData| m.colors.iter().filter(|c| c[3] > 1.5).count();
+    let mut sizes = BTreeMap::new();
+    for name in ["post_office", "post_sorting_facility"] {
+        let (def_id, def) = service_def(&e, name);
+        let (_, style) = e.db.styles().find(|(_, s)| s.id == def.styles[0]).unwrap();
+        assert!(
+            shapes::is_service(style.massing),
+            "{name}: {:?}",
+            style.massing
+        );
+        let mut b = building(def_id, &e.db, BuildingState::Active, 0);
+        let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+        let (n, m, f) = (
+            p.near.triangle_count(),
+            p.mid.triangle_count(),
+            p.far.triangle_count(),
+        );
+        assert!(n >= m && m >= f && n > f && f > 0, "{name}: {n} {m} {f}");
+        assert!(glowing(&p.near) > 0, "{name}: lit windows and sign");
+        let (lo, hi) = extent(&p.far);
+        sizes.insert(name, ((hi - lo).x.max((hi - lo).z), hi.y - ground));
+        b.flags = BuildingFlags(BuildingFlags::NO_POWER);
+        let dark = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+        assert_eq!(glowing(&dark.near), 0, "{name}: dark without power");
+    }
+    let (office, sorting) = (sizes["post_office"], sizes["post_sorting_facility"]);
+    assert!(
+        sorting.0 > 1.5 * office.0 && sorting.1 > office.1,
+        "{sizes:?}"
+    );
+}
+
 /// T-202, T-203: the ten unique buildings and monuments each have a silhouette of their own: a
 /// mesh at every LOD that never grows with distance, no two alike, taller than a house, and
 /// the monuments the tallest things in the city.

@@ -13,6 +13,8 @@ const SKIN: [f32; 4] = [0.60, 0.42, 0.32, 0.0];
 const TINT: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const BUS_CREAM: [f32; 4] = [0.93, 0.90, 0.80, 0.0];
 const BUS_ROOF: [f32; 4] = [0.55, 0.58, 0.62, 0.0];
+const MAIL_RED: [f32; 4] = [0.78, 0.10, 0.08, 0.0];
+const MAIL_ROOF: [f32; 4] = [0.93, 0.93, 0.90, 0.0];
 
 pub(crate) fn push_box(m: &mut MeshData, min: [f32; 3], max: [f32; 3], color: [f32; 4]) {
     let [x0, y0, z0] = min;
@@ -260,6 +262,17 @@ pub fn vehicle_mesh(kind: usize, detail: usize) -> MeshData {
             wheels(&mut m, &[0.35, -0.3, -0.42]);
         }
         7..=10 => chain_truck(&mut m, kind),
+        13 => {
+            // Mail van (T-248): a high-roofed van in the post yellow (the instance colour), the
+            // bonnet lower in front, a red band along the sides and a white roof.
+            push_box(&mut m, [-0.5, 0.12, -0.5], [0.5, 0.96, 0.3], TINT);
+            push_box(&mut m, [-0.5, 0.12, 0.3], [0.5, 0.52, 0.5], TINT);
+            push_box(&mut m, [-0.505, 0.42, -0.5], [0.505, 0.54, 0.3], MAIL_RED);
+            push_box(&mut m, [-0.46, 0.54, 0.29], [0.46, 0.9, 0.31], GLASS);
+            push_box(&mut m, [-0.505, 0.6, 0.12], [0.505, 0.86, 0.26], GLASS);
+            push_box(&mut m, [-0.47, 0.96, -0.47], [0.47, 1.0, 0.27], MAIL_ROOF);
+            wheels(&mut m, &[0.3, -0.32]);
+        }
         6 => {
             // Intercity train (T-167): a long body with a window band; the client draws it car
             // by car along the track (`train_render`), this is the one-piece stand-in.

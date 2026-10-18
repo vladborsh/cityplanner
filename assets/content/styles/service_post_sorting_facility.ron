@@ -1,15 +1,16 @@
-// Placeholder silhouette of the post buildings (T-247); T-248 gives them their own massing.
+// The mail sorting facility (T-248): a big clad shed with loading docks, a brick office and
+// parked mail trucks; trim is the post yellow.
 Style((
     id: "service_post_sorting_facility",
-    massing: Box,
+    massing: PostSortingFacility,
     roof: Flat,
     floors: (1, 1),
     footprint_fill: (1.0, 1.0),
     palette: (
-        walls: [(0.80, 0.66, 0.18), (0.76, 0.62, 0.16)],
-        roof: [(0.40, 0.14, 0.12)],
-        trim: [(0.90, 0.88, 0.80)],
-        glass: (0.34, 0.56, 0.74),
+        walls: [(0.78, 0.78, 0.76), (0.74, 0.75, 0.74)],
+        roof: [(0.46, 0.47, 0.50)],
+        trim: [(0.95, 0.74, 0.12)],
+        glass: (0.34, 0.50, 0.64),
     ),
     facade: Punched,
 ))

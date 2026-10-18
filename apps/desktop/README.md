@@ -31,6 +31,9 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
   obliquely queued frames faster than the GPU drew them and Metal lost the device).
 * `--scene night:N --hour H --cam night-wide|night-street|night-dark` (T-245): the city of
   `city:N`, held at hour `H`, with one district without power (lit windows and an outage).
+* `--scene post --cam post|post-office|post-sorting|post-van` (T-248): the post office and the
+  sorting facility by a street, a mail van on its way between them; held, shown as powered
+  (try `--hour 20` for the lit windows and signs).
 * `--screenshot` never saves a blank frame (BUG-012): blank captures are discarded and
   retried; if no real frame arrives within 20 s it exits with code **3**; a write error exits
   **4**.

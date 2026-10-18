@@ -199,6 +199,86 @@ pub fn build_trucks(sim: &mut SimRunner) -> usize {
     kinds.len()
 }
 
+/// Post scene (T-248): a street with the post office and the sorting facility beside it and a
+/// mail van on its way from one to the other. Look at it with `--cam post`, `post-office`,
+/// `post-sorting` or `post-van`.
+pub const POST: &str = "post";
+
+/// Builds the [`POST`] scene; returns how many mail vans set out.
+pub fn build_post(sim: &mut SimRunner) -> usize {
+    use cp_building::{AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingState, Lot};
+    use cp_content::VehicleKind;
+    use cp_traffic::{RunPoint, ServiceRuns};
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    sim.push_command(
+        SimCommand::Net(NetCommand::BuildRoad {
+            road: basic,
+            path: RoadPath::Straight {
+                from: Vec2::new(c - 100.0, c),
+                to: Vec2::new(c + 100.0, c),
+            },
+            elevation: ElevationMode::Ground,
+        }),
+        sim.tick(),
+    );
+    sim.tick_once();
+    sim.tick_once();
+    // The segment and t at `x` along the street (it may be cut into several segments).
+    let segs: Vec<_> = sim
+        .world()
+        .resource::<cp_net::NetGraph>()
+        .segments()
+        .map(|(id, s)| (s.curve.point(0.0).x, s.curve.point(1.0).x, id))
+        .collect();
+    let locate = |x: f32| {
+        segs.iter()
+            .find(|s| x >= s.0.min(s.1) && x <= s.0.max(s.1))
+            .map(|&(a, b, id)| (id, ((x - a) / (b - a)).clamp(0.0, 1.0)))
+            .expect("a segment under x")
+    };
+    // (def, x of the lot's middle, its depth from the street's middle to the lot's middle)
+    let lots = [
+        ("post_office", -45.0, 15.0),
+        ("post_sorting_facility", 20.0, 23.0),
+    ];
+    let mut ids = Vec::new();
+    for (name, dx, depth) in lots {
+        let def = db.building_id(name).expect("a post building");
+        let d = db.building(def);
+        let (segment, t) = locate(c + dx);
+        let id = sim
+            .world_mut()
+            .resource_mut::<BuildingGrid>()
+            .insert(Building {
+                def,
+                footprint: cp_building::Footprint::Lot(Lot {
+                    block: cp_core::Id::new(0, 0),
+                    col: 0,
+                    w: d.lot.0,
+                    d: d.lot.1,
+                }),
+                level: d.level,
+                state: BuildingState::Active,
+                ready_at: cp_core::Tick(0),
+                pos: Vec2::new(c + dx, c - depth),
+                rot: 0.0,
+                access: Some(AccessPoint { segment, t }),
+                flags: BuildingFlags::default(),
+                level_progress: 0.0,
+            });
+        ids.push(id);
+    }
+    sim.world_mut().resource_mut::<ServiceRuns>().start_run(
+        VehicleKind::Mail,
+        RunPoint::Building(ids[0]),
+        RunPoint::Building(ids[1]),
+        true,
+    );
+    1
+}
+
 /// Construction scene (T-235): the same house at 0, 20, 40, 60, 80 and 99 % of its construction
 /// and, last, finished; the sim stands still. Look at it with `--cam construction`.
 pub const CONSTRUCTION: &str = "construction";

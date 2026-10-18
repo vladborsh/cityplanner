@@ -368,15 +368,21 @@ impl Ctx {
     }
 
     /// `c` on a surface that stands for many windows: at night the shader draws them as a
-    /// grid of cells `floor` metres tall, lit like the building's own windows (T-246, see
+    /// grid of cells `bay` by `floor` metres, lit like the building's own windows (T-246, see
     /// [`lights::Pattern`]). `band`: a floor's glass band, all window in height.
-    fn many_windows(&self, c: [f32; 4], band: bool, floor: f32, win_w: f32) -> [f32; 4] {
+    fn many_windows(
+        &self,
+        c: [f32; 4],
+        band: bool,
+        (bay, floor): (f32, f32),
+        win_w: f32,
+    ) -> [f32; 4] {
         let Some(class) = self.light else { return c };
         let alpha = lights::pattern_alpha(lights::Pattern {
             class,
             share: lights::evening_share(class, self.seed),
             band,
-            bay: self.style.bay,
+            bay,
             floor,
             win_w,
         });
@@ -418,7 +424,7 @@ fn wall(
         } else {
             height / floors as f32
         };
-        let c = cx.many_windows(cx.wall, false, fh, st.win_w);
+        let c = cx.many_windows(cx.wall, false, (st.bay, fh), st.win_w);
         q(m, 0.0, width, y0, y0 + height, c);
         return;
     }
@@ -434,7 +440,7 @@ fn wall(
             let glass = if dead {
                 cx.wall
             } else {
-                cx.many_windows(cx.glass, true, fh, st.win_w)
+                cx.many_windows(cx.glass, true, (st.bay, fh), st.win_w)
             };
             if ground {
                 q(m, 0.0, width, fy, sill, cx.wall);
@@ -833,7 +839,7 @@ pub fn build_building(
         trim: trimc,
         seed: sd,
         state: b.state,
-        light: lights::light_class(b, def.zone),
+        light: lights::light_class(b, def.zone, def.service.is_some()),
     };
 
     // Floors drawn per box: all of them, or 60% of the whole stack once burned.
@@ -880,8 +886,10 @@ pub fn build_building(
         wall: wallc,
         roof: roofc,
         trim: trimc,
-        // Big glazed surfaces of a service building: windows of a 3.5 m floor.
-        glass: cx.many_windows(glassc, false, 3.5, 0.6),
+        // Glazed surfaces of a service building: 2 m panels as tall as the glass (3.5 m rows),
+        // narrow enough that even a short strip shows the building's share lit.
+        glass: cx.many_windows(glassc, true, (2.0, 3.5), 0.75),
+        lit: cx.light.is_some(),
         lod,
     };
     let silhouette =

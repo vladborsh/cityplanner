@@ -15,6 +15,7 @@ use crate::road::{flat_quad, push_vertex, tri};
 
 mod factory;
 mod park_area;
+mod post;
 mod theme_park;
 
 /// Which part `(t0, t1)` of each of the four walls (front, right, back, left; corners
@@ -694,6 +695,7 @@ pub fn is_service(m: Massing) -> bool {
     ) || park_area::is_park_area(m)
         || theme_park::is_theme_park(m)
         || factory::is_factory(m)
+        || post::is_post(m)
 }
 
 /// An upright (optionally tapered) cylinder with `n` sides; `top` closes it with a cap.
@@ -782,6 +784,8 @@ pub struct ServiceCx<'a> {
     pub trim: [f32; 4],
     pub glass: [f32; 4],
     pub lod: super::Lod,
+    /// Its lights are on at night (active and powered): signs may glow.
+    pub lit: bool,
 }
 
 /// A turning part: drawn as its own mesh (it turns with the frame clock, which is a view
@@ -5039,6 +5043,7 @@ fn park(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
         }
         _ if theme_park::is_theme_park(massing) => theme_park::theme_park(m, massing, sc),
         _ if factory::is_factory(massing) => factory::factory(m, massing, sc),
+        _ if post::is_post(massing) => post::post(m, massing, sc),
         _ => park_area::park_area(m, massing, sc),
     }
 }

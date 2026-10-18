@@ -313,6 +313,24 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c - 50.0, 260.0, c + 300.0),
             Vec3::new(c + 250.0, 0.0, c - 150.0),
         ),
+        // The post office (x = c - 45), the sorting facility (x = c + 20) behind the street at
+        // z = c, and the mail van between them (`--scene post`, T-248).
+        "post" => (
+            Vec3::new(c - 15.0, 32.0, c + 48.0),
+            Vec3::new(c - 10.0, 2.0, c - 15.0),
+        ),
+        "post-office" => (
+            Vec3::new(c - 52.0, 9.0, c + 14.0),
+            Vec3::new(c - 45.0, 3.0, c - 14.0),
+        ),
+        "post-sorting" => (
+            Vec3::new(c + 6.0, 16.0, c + 26.0),
+            Vec3::new(c + 20.0, 3.0, c - 20.0),
+        ),
+        "post-van" => (
+            Vec3::new(c + 14.0, 4.5, c + 13.0),
+            Vec3::new(c + 24.0, 1.0, c + 1.0),
+        ),
         // The street lamps and poles along two streets (`--scene lamps`).
         "lamps" => (
             Vec3::new(c - 30.0, 9.0, c + 78.0),
@@ -531,6 +549,31 @@ pub fn build_sim(
         sim.world_mut()
             .insert_resource(cp_core::time::SimSpeed::Pause);
         info!("scene trucks: {n} trucks");
+    } else if scene == Some(scene::POST) {
+        let n = scene::build_post(&mut sim);
+        // Until the van has driven a little way down the street, then hold the moment.
+        let mut moving = 0;
+        for _ in 0..900 {
+            sim.tick_once();
+            let agents = sim.world().resource::<cp_traffic::Agents>();
+            if agents.vehicles().any(|(_, v)| v.spawned) {
+                moving += 1;
+                if moving == 25 {
+                    break;
+                }
+            }
+        }
+        sim.world_mut()
+            .insert_resource(cp_core::time::SimSpeed::Pause);
+        // The scene has no power lines: held, the buildings show as powered (lit at night).
+        let mut grid = sim.world_mut().resource_mut::<cp_building::BuildingGrid>();
+        let ids: Vec<_> = grid.iter().map(|(id, _)| id).collect();
+        for id in ids {
+            if let Some(b) = grid.get_mut(id) {
+                b.flags.0 &= !cp_building::BuildingFlags::UTILITY_MASK;
+            }
+        }
+        info!("scene post: {n} mail vans");
     } else if scene == Some(scene::PARKS) {
         let n = scene::build_parks(&mut sim);
         info!("scene parks: {n} buildings");

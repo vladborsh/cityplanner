@@ -28,10 +28,14 @@ pub enum LightClass {
 }
 
 /// The light class of a building of `zone`, or `None` when it shows no light (not active, or
-/// unpowered).
-pub fn light_class(b: &Building, zone: ZoneType) -> Option<LightClass> {
+/// unpowered). A city service (`service`; zoned industrial in content) lights like an office
+/// (T-248).
+pub fn light_class(b: &Building, zone: ZoneType, service: bool) -> Option<LightClass> {
     if b.state != BuildingState::Active || b.flags.has(BuildingFlags::NO_POWER) {
         return None;
+    }
+    if service {
+        return Some(LightClass::Work);
     }
     Some(match zone {
         ZoneType::ResLow | ZoneType::ResHigh => LightClass::Home,
@@ -347,7 +351,10 @@ mod tests {
             level_progress: 0.0,
         };
         let lit = b(BuildingState::Active, 0);
-        assert_eq!(light_class(&lit, ZoneType::ResLow), Some(LightClass::Home));
+        assert_eq!(
+            light_class(&lit, ZoneType::ResLow, false),
+            Some(LightClass::Home)
+        );
         for dark in [
             b(BuildingState::Active, BuildingFlags::NO_POWER),
             b(
@@ -358,13 +365,21 @@ mod tests {
             b(BuildingState::Abandoned, 0),
             b(BuildingState::Burned, 0),
         ] {
-            let class = light_class(&dark, ZoneType::Office);
+            let class = light_class(&dark, ZoneType::Office, false);
             assert_eq!(class, None, "{:?} {:?}", dark.state, dark.flags);
             assert_eq!(lit_share(class, 9, 400, at(21.0)), 0.0);
         }
+        assert_eq!(
+            light_class(&lit, ZoneType::Industrial, true),
+            Some(LightClass::Work),
+            "a service lights like an office"
+        );
         // No water alone does not put the lights out.
         let dry = b(BuildingState::Active, BuildingFlags::NO_WATER);
-        assert_eq!(light_class(&dry, ZoneType::Office), Some(LightClass::Work));
+        assert_eq!(
+            light_class(&dry, ZoneType::Office, false),
+            Some(LightClass::Work)
+        );
     }
 
     #[test]

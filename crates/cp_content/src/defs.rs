@@ -1091,6 +1091,9 @@ pub enum Massing {
     CargoStation = 98,
     /// The cargo port (T-218).
     CargoPort = 99,
+    /// The post office and the mail sorting facility (T-248).
+    PostOffice = 100,
+    PostSortingFacility = 101,
 }
 
 /// Facade pattern family of a style.
