@@ -230,8 +230,13 @@ fn left_the_lane<'v, 's>(
 where
     'v: 's,
 {
-    st.conns
-        .range((slot, 0)..=(slot, u32::MAX))
+    let none = st.leaving.get(slot as usize).is_none_or(|&n| n == 0);
+    let range = if none {
+        st.conns.range((0, 0)..(0, 0))
+    } else {
+        st.conns.range((slot, 0)..=(slot, u32::MAX))
+    };
+    range
         .flat_map(|(_, l)| l.iter())
         .filter_map(move |&o| veh.get(o))
         .filter(move |o| s_out + o.s - st.specs.of(o).length < s + gap)
@@ -378,6 +383,9 @@ pub(crate) struct DriveState {
     pub conns: BTreeMap<(u32, u32), Vec<VehicleId>>,
     /// Vehicles inside a junction heading for each lane slot.
     pub entering: Vec<u16>,
+    /// Vehicles inside a junction that came from each lane slot (T-256: most lanes have none,
+    /// and then the `conns` range of the slot need not be searched).
+    pub leaving: Vec<u16>,
     /// Vehicles not yet on the road (waiting for room at their start), in id order.
     pub waiting: Vec<VehicleId>,
     pub ready: bool,
@@ -497,6 +505,7 @@ impl DriveState {
         self.hop_lanes = OccBits::with_len(n);
         self.conns.clear();
         self.entering = vec![0; n];
+        self.leaving = vec![0; n];
         self.waiting.clear();
         let mut invalid = Vec::new();
         for (id, v) in vehicles.iter() {
@@ -514,6 +523,7 @@ impl DriveState {
                         let fs = g.car_slot(from).expect("exit implies lane");
                         self.conns.entry((fs, ex.to_slot)).or_default().push(id);
                         self.entering[ex.to_slot as usize] += 1;
+                        self.leaving[fs as usize] += 1;
                     }
                     None => invalid.push(id),
                 }
@@ -548,11 +558,16 @@ impl DriveState {
             if let Some((from, to)) = v.path.steps.get(v.hop as usize).copied() {
                 let key = (from.index, to.index);
                 if let Some(l) = self.conns.get_mut(&key) {
+                    let before = l.len();
                     l.retain(|w| *w != id);
+                    let removed = l.len() < before;
                     if l.is_empty() {
                         self.conns.remove(&key);
                     }
                     if let Some(e) = self.entering.get_mut(to.index as usize) {
+                        *e = e.saturating_sub(1);
+                    }
+                    if removed && let Some(e) = self.leaving.get_mut(from.index as usize) {
                         *e = e.saturating_sub(1);
                     }
                 }
@@ -654,7 +669,9 @@ fn gate_open(
     }
     // A car that left this lane into another connection a moment ago is still on the same spot:
     // wait until its rear has cleared the stop line by the standstill gap.
-    if let Some(from_slot) = g.car_slot(v.lane()) {
+    if let Some(from_slot) = g.car_slot(v.lane())
+        && st.leaving.get(from_slot as usize).is_some_and(|&n| n > 0)
+    {
         let sibling_in_the_way = st
             .conns
             .range((from_slot, 0)..=(from_slot, u32::MAX))
@@ -798,6 +815,9 @@ fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
 /// The rear-most car among those that have left lane `slot` into any connection, as the leader
 /// of the lane's front car `v`.
 fn conn_leader(ctx: &Ctx, v: &Vehicle, slot: u32, node: &LaneNode) -> Option<Leader> {
+    if ctx.st.leaving.get(slot as usize).is_none_or(|&n| n == 0) {
+        return None;
+    }
     ctx.st
         .conns
         .range((slot, 0)..=(slot, u32::MAX))
@@ -933,10 +953,12 @@ pub(crate) fn spawn_waiting(
                 .get(list[at])
                 .is_some_and(|o| o.s + mine.length + st.specs.of(o).min_gap <= s);
         // A car that has just crossed the stop line into a connection still covers it.
-        let clear_of_junction = left_the_lane(vehicles, st, slot, node.s_out, s, mine.min_gap)
-            .next()
-            .is_none();
-        if ahead_ok && behind_ok && clear_of_junction {
+        let clear_of_junction = || {
+            left_the_lane(vehicles, st, slot, node.s_out, s, mine.min_gap)
+                .next()
+                .is_none()
+        };
+        if ahead_ok && behind_ok && clear_of_junction() {
             st.lane_insert(slot, at, id);
             let v = vehicles.get_mut(id).expect("vehicle");
             v.spawned = true;
@@ -1325,6 +1347,7 @@ fn apply(
                 st.lane_remove(fs, u.id);
                 st.conns.entry((fs, ex.to_slot)).or_default().push(u.id);
                 st.entering[ex.to_slot as usize] += 1;
+                st.leaving[fs as usize] += 1;
             }
             Ev::Cross => {
                 let (from, to) = v.path.steps[v.hop as usize];
@@ -1358,6 +1381,7 @@ fn apply(
                     if l.is_empty() {
                         st.conns.remove(&key);
                     }
+                    st.leaving[fs as usize] = st.leaving[fs as usize].saturating_sub(1);
                 }
                 st.entering[ex.to_slot as usize] =
                     st.entering[ex.to_slot as usize].saturating_sub(1);
