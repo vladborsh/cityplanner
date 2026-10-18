@@ -40,7 +40,7 @@ pub struct VertexColorMaterial {
     pub fade: Vec4,
     /// Lit windows (T-245): x = night factor (0 day .. 1 night), y = lateness of the night
     /// (`building::lights::lateness`), z = glow intensity, w = 1 when the vertex alpha holds
-    /// window glow codes (`building::lights::glow_alpha`; the buildings), 0 otherwise.
+    /// window glow codes (`building::lights::glow_alpha`, `pattern_alpha`; the buildings), 0 otherwise.
     #[uniform(2)]
     pub glow: Vec4,
     /// Alpha-blend using the vertex alpha (water) instead of drawing opaque.

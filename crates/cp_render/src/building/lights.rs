@@ -92,12 +92,14 @@ pub fn evening_share(class: LightClass, seed: u32) -> f32 {
     lo + (hi - lo) * unit(mix(seed, 0x51_6874, 0))
 }
 
-/// Share of the lit windows that stay on until dawn.
-fn all_night(class: LightClass) -> f32 {
+/// When the lit windows of `class` go dark: the share that stays on until dawn, and the
+/// [`lateness`] range (start, length) the others switch off in, evenly. `vertex_color.wesl`
+/// holds the same table for the window patterns.
+fn switch_off(class: LightClass) -> (f32, f32, f32) {
     match class {
-        LightClass::Home => 0.22,
-        LightClass::Work => 0.08,
-        LightClass::Industry => 0.70,
+        LightClass::Home => (0.22, 0.15, 0.85),
+        LightClass::Work => (0.08, 0.02, 0.40),
+        LightClass::Industry => (0.70, 0.0, 1.0),
     }
 }
 
@@ -110,17 +112,9 @@ pub fn window_light(class: LightClass, seed: u32, window: u32) -> Option<WindowL
     }
     let g = mix(seed, window, 0x6f_6666);
     let u = unit(g);
-    let off = if u < all_night(class) {
-        None
-    } else {
-        // Spread the rest over the night.
-        let v = (u - all_night(class)) / (1.0 - all_night(class));
-        Some(match class {
-            LightClass::Home => 0.15 + 0.85 * v,
-            LightClass::Work => 0.02 + 0.40 * v,
-            LightClass::Industry => v,
-        })
-    };
+    let (all_night, start, span) = switch_off(class);
+    // The rest spread over the night.
+    let off = (u >= all_night).then(|| start + span * (u - all_night) / (1.0 - all_night));
     let tint = match g & 0xff {
         0..=89 => 0,
         90..=166 => 1,
@@ -130,59 +124,115 @@ pub fn window_light(class: LightClass, seed: u32, window: u32) -> Option<WindowL
     Some(WindowLight { off, tint })
 }
 
-/// The switch-off time a band or wall standing for many windows of `class` carries.
-pub fn typical_off(class: LightClass) -> Option<f32> {
-    match class {
-        LightClass::Home => Some(0.6),
-        LightClass::Work => Some(0.25),
-        LightClass::Industry => None,
-    }
-}
-
-/// Glow codes in the vertex alpha: `2 + code`, `code` = off (6 bits, 63 = all night) | tint
-/// (2 bits) << 6 | strength (5 bits, the square root of the strength in 31sts: fine steps for
-/// the faint glow of distant walls) << 8 | wide (1 bit) << 13. A whole number below 2^24, so
-/// exact in `f32`; the shader rounds it.
+/// Glow codes in the vertex alpha: `2 + code`, a whole number below 2^24, so exact in `f32`;
+/// the shader rounds it. Two kinds:
+///
+/// * a **window** ([`glow_alpha`]): off (6 bits, 63 = all night) | tint (2 bits) << 6 |
+///   strength (5 bits, the square root of the strength in 31sts) << 8;
+/// * a **pattern** ([`pattern_alpha`], T-246) on a surface that stands for many windows (a
+///   floor's glass band, a whole wall far away): share (5 bits, 31sts) | class (2 bits) << 5 |
+///   band (1 bit) << 7 | bay (4 bits, half metres) << 8 | floor height (4 bits, half metres)
+///   << 12 | window width (4 bits, 15ths of the bay) << 16 | 1 << 20. The shader draws a grid
+///   of windows over the surface in world space, lights each cell from a hash of it and
+///   switches it off as [`window_light`] would; where a pixel covers a whole cell it shows
+///   the cells' average ([`glow`] of the code). So a distant city sparkles with single
+///   windows instead of glowing as flat bands.
 const ALL_NIGHT: u32 = 63;
+const PATTERN: u32 = 1 << 20;
 
-/// Vertex alpha of a glowing surface: a window (`strength` 1, `wide` false) or a band or wall
-/// standing for many windows (`strength` its average glow, `wide`: it dims slowly over the
-/// night instead of switching off). The strength's square root rounds to 1/31; a zero
-/// strength is a plain surface (alpha 1).
-pub fn glow_alpha(off: Option<f32>, tint: u8, strength: f32, wide: bool) -> f32 {
+/// Window height of a pattern cell on a wall, as a share of the floor (the band is all
+/// window). The shader's `0.3 .. 0.8`.
+const PATTERN_WIN_H: f32 = 0.5;
+
+/// Vertex alpha of a lit window: `strength` its glow (1 = full), `off` its switch-off time.
+/// The strength's square root rounds to 1/31; a zero strength is a plain surface (alpha 1).
+pub fn glow_alpha(off: Option<f32>, tint: u8, strength: f32) -> f32 {
     let s = (strength.clamp(0.0, 1.0).sqrt() * 31.0).round() as u32;
     if s == 0 {
         return 1.0;
     }
     let q = off.map_or(ALL_NIGHT, |o| (o.clamp(0.0, 1.0) * 62.0).round() as u32);
-    let code = q | (u32::from(tint) & 3) << 6 | s << 8 | u32::from(wide) << 13;
+    let code = q | (u32::from(tint) & 3) << 6 | s << 8;
     2.0 + code as f32
 }
 
-/// Glow of a window's vertex alpha at `night` (0 day .. 1 night) and `late` ([`lateness`]):
-/// the strength times how far it is on, 0 for a plain surface. The shader's formula.
+/// A grid of windows the shader draws on a surface standing for many of them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pattern {
+    pub class: LightClass,
+    /// Share of the cells lit in the evening.
+    pub share: f32,
+    /// A floor's glass band (cells as tall as the surface's floor, the window fills it), or a
+    /// wall (cells of `floor` metres, the window in the middle half).
+    pub band: bool,
+    /// Width of a cell, metres (1 .. 7.5).
+    pub bay: f32,
+    /// Height of a cell, metres (2 .. 7.5).
+    pub floor: f32,
+    /// Window width as a share of the cell.
+    pub win_w: f32,
+}
+
+/// Vertex alpha of a surface carrying `p` (see the codes above); a zero share is a plain
+/// surface (alpha 1).
+pub fn pattern_alpha(p: Pattern) -> f32 {
+    let share = (p.share.clamp(0.0, 1.0) * 31.0).round() as u32;
+    if share == 0 {
+        return 1.0;
+    }
+    let class = match p.class {
+        LightClass::Home => 0,
+        LightClass::Work => 1,
+        LightClass::Industry => 2,
+    };
+    let half = |m: f32, lo: u32| ((m * 2.0).round() as u32).clamp(lo, 15);
+    let ww = ((p.win_w.clamp(0.0, 1.0) * 15.0).round() as u32).max(1);
+    let code = share
+        | class << 5
+        | u32::from(p.band) << 7
+        | half(p.bay, 2) << 8
+        | half(p.floor, 4) << 12
+        | ww << 16
+        | PATTERN;
+    2.0 + code as f32
+}
+
+/// Glow of a vertex alpha at `night` (0 day .. 1 night) and `late` ([`lateness`]), 0 for a
+/// plain surface: a window's strength times how far it is on (the shader's formula), a
+/// pattern's average over its cells (what the shader fades to where cells are below a pixel).
 pub fn glow(alpha: f32, night: f32, late: f32) -> f32 {
     if alpha < 1.5 {
         return 0.0;
     }
     let code = (alpha - 2.0).round() as u32;
+    if code & PATTERN != 0 {
+        let share = (code & 31) as f32 / 31.0;
+        let class = match (code >> 5) & 3 {
+            0 => LightClass::Home,
+            1 => LightClass::Work,
+            _ => LightClass::Industry,
+        };
+        let band = (code >> 7) & 1 == 1;
+        let win_w = ((code >> 16) & 15) as f32 / 15.0;
+        let win_h = if band { 1.0 } else { PATTERN_WIN_H };
+        return share * win_w * win_h * still_on(class, late) * night;
+    }
     let q = code & 63;
     let s = ((code >> 8) & 31) as f32 / 31.0;
-    let s = s * s;
-    let wide = (code >> 13) & 1 == 1;
     let on = if q == ALL_NIGHT {
         1.0
     } else {
-        let off = q as f32 / 62.0;
-        if wide {
-            // Many windows going dark one by one: a slow dim to a fifth.
-            0.2 + 0.8 * (1.0 - smoothstep(off - 0.35, off + 0.35, late))
-        } else {
-            // A quarter of an hour of game time.
-            1.0 - smoothstep(off - 0.03, off, late)
-        }
+        // A quarter of an hour of game time.
+        1.0 - smoothstep(q as f32 / 62.0 - 0.03, q as f32 / 62.0, late)
     };
-    s * on * night
+    s * s * on * night
+}
+
+/// Share of the evening's lit windows of `class` still lit at `late`.
+pub fn still_on(class: LightClass, late: f32) -> f32 {
+    let (all_night, start, span) = switch_off(class);
+    // A window is half off 0.015 before its switch-off time (see `glow`).
+    all_night + (1.0 - all_night) * ((start + span - late - 0.015) / span).clamp(0.0, 1.0)
 }
 
 fn smoothstep(a: f32, b: f32, v: f32) -> f32 {
@@ -197,7 +247,7 @@ pub fn lit_share(class: Option<LightClass>, seed: u32, windows: u32, late: f32) 
     let lit = (0..windows)
         .filter(|&w| {
             window_light(class, seed, w)
-                .is_some_and(|l| glow(glow_alpha(l.off, l.tint, 1.0, false), 1.0, late) > 0.5)
+                .is_some_and(|l| glow(glow_alpha(l.off, l.tint, 1.0), 1.0, late) > 0.5)
         })
         .count();
     lit as f32 / windows.max(1) as f32
@@ -320,8 +370,8 @@ mod tests {
     #[test]
     fn glow_codes_round_trip_and_follow_the_night() {
         assert_eq!(glow(1.0, 1.0, 0.5), 0.0, "a plain surface");
-        assert_eq!(glow_alpha(Some(0.5), 1, 0.0, false), 1.0);
-        let w = glow_alpha(Some(0.5), 3, 1.0, false);
+        assert_eq!(glow_alpha(Some(0.5), 1, 0.0), 1.0);
+        let w = glow_alpha(Some(0.5), 3, 1.0);
         assert_eq!(glow(w, 0.0, 0.0), 0.0, "day");
         assert_eq!(glow(w, 1.0, 0.2), 1.0);
         assert!((glow(w, 0.5, 0.2) - 0.5).abs() < 1e-6, "dusk fades in");
@@ -331,16 +381,44 @@ mod tests {
         assert!(mid > 0.05 && mid < 0.95, "{mid}");
         // Interpolation noise in the attribute does not change the code.
         assert_eq!(glow(w + 0.3, 1.0, 0.2), glow(w, 1.0, 0.2));
-        let all = glow_alpha(None, 0, 1.0, false);
+        let all = glow_alpha(None, 0, 1.0);
         assert_eq!(glow(all, 1.0, 1.0), 1.0, "until dawn");
-        let band = glow_alpha(Some(0.6), 1, 0.3, true);
-        let (early, late) = (glow(band, 1.0, 0.0), glow(band, 1.0, 1.0));
-        assert!((early - 0.3).abs() < 0.02, "{early}");
-        let faint = glow(glow_alpha(None, 1, 0.01, true), 1.0, 0.0);
+        let faint = glow(glow_alpha(None, 1, 0.01), 1.0, 0.0);
         assert!(
             (faint - 0.01).abs() < 0.003,
             "fine steps near zero: {faint}"
         );
-        assert!(late > 0.0 && late < early * 0.5, "{late}");
+    }
+
+    #[test]
+    fn a_window_pattern_averages_what_single_windows_show() {
+        let p = Pattern {
+            class: LightClass::Home,
+            share: 0.5,
+            band: true,
+            bay: 3.0,
+            floor: 3.2,
+            win_w: 0.6,
+        };
+        let a = pattern_alpha(p);
+        assert!(a < (1 << 24) as f32, "exact in f32");
+        assert_eq!(pattern_alpha(Pattern { share: 0.0, ..p }), 1.0);
+        assert_eq!(glow(a, 0.0, 0.0), 0.0, "day");
+        let evening = glow(a, 1.0, 0.0);
+        assert!((evening - 0.5 * 0.6).abs() < 0.02, "{evening}");
+        let wall = glow(pattern_alpha(Pattern { band: false, ..p }), 1.0, 0.0);
+        assert!((wall - 0.5 * 0.6 * PATTERN_WIN_H).abs() < 0.02, "{wall}");
+        // The average dims as single windows go dark.
+        for class in [LightClass::Home, LightClass::Work, LightClass::Industry] {
+            for late in [0.1, 0.4, 0.7, 0.95] {
+                let windows = mean_share(class, late) / mean_share(class, 0.0);
+                let average = still_on(class, late);
+                assert!(
+                    (windows - average).abs() < 0.04,
+                    "{class:?} at {late}: windows {windows}, pattern {average}"
+                );
+            }
+        }
+        assert_eq!(still_on(LightClass::Work, 1.0), 0.08);
     }
 }

@@ -24,28 +24,9 @@ import bevy_pbr::render::{
 // .. 1 at 04:00), z = intensity, w = 1 when the vertex alpha holds window glow codes (buildings)
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var<uniform> glow: vec4<f32>;
 
-// Light of a window from its vertex alpha `2 + code`: code = off (6 bits, 63 = all night) |
-// tint (2 bits) << 6 | square root of the strength (5 bits) << 8 | wide (1 bit) << 13. The same formula as
-// `building::lights::glow` and the same tints as `building::lights::TINTS`.
-fn window_glow(a: f32) -> vec3<f32> {
-    if a < 1.5 || glow.x <= 0.0 {
-        return vec3<f32>(0.0);
-    }
-    let code = u32(round(a - 2.0));
-    let q = code & 63u;
-    let r = f32((code >> 8u) & 31u) / 31.0;
-    let s = r * r;
-    var on = 1.0;
-    if q != 63u {
-        let off = f32(q) / 62.0;
-        if ((code >> 13u) & 1u) == 1u {
-            on = 0.2 + 0.8 * (1.0 - smoothstep(off - 0.35, off + 0.35, glow.y));
-        } else {
-            on = 1.0 - smoothstep(off - 0.03, off, glow.y);
-        }
-    }
-    let t = (code >> 6u) & 3u;
-    let tint = select(
+// Lamp colours, the same as `building::lights::TINTS`.
+fn tint_of(t: u32) -> vec3<f32> {
+    return select(
         select(
             select(vec3<f32>(0.78, 0.85, 1.0), vec3<f32>(1.0, 0.72, 0.42), t == 2u),
             vec3<f32>(1.0, 0.60, 0.28),
@@ -54,7 +35,102 @@ fn window_glow(a: f32) -> vec3<f32> {
         vec3<f32>(1.0, 0.50, 0.18),
         t == 0u,
     );
-    return tint * (s * on * glow.x * glow.z);
+}
+
+// When the windows of a light class go dark (`building::lights::switch_off`): the share on
+// until dawn, the start and the length of the lateness range the others switch off in.
+fn switch_off(kind: u32) -> vec3<f32> {
+    if kind == 0u {
+        return vec3<f32>(0.22, 0.15, 0.85);
+    } else if kind == 1u {
+        return vec3<f32>(0.08, 0.02, 0.40);
+    }
+    return vec3<f32>(0.70, 0.0, 1.0);
+}
+
+fn pcg(v: u32) -> u32 {
+    let s = v * 747796405u + 2891336453u;
+    let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+
+fn unit(h: u32) -> f32 {
+    return f32(h >> 8u) / 16777216.0;
+}
+
+// Where a surface stands, for the window patterns: `uy` = metres along the wall and up,
+// `d` = their change per pixel, `face` = which way the wall faces (16 sectors), `vertical`.
+struct Facade {
+    uy: vec2<f32>,
+    d: vec2<f32>,
+    face: u32,
+    vertical: bool,
+}
+
+// A pattern of windows (T-246, `building::lights::pattern_alpha`): a grid of cells in world
+// space, each lit from a hash of it with the building's share and switched off over the night
+// as single windows are; where a pixel covers a cell, the average of the cells.
+fn pattern_glow(code: u32, fc: Facade) -> vec3<f32> {
+    let share = f32(code & 31u) / 31.0;
+    let kind = (code >> 5u) & 3u;
+    let band = ((code >> 7u) & 1u) == 1u;
+    let cell_size = vec2<f32>(f32((code >> 8u) & 15u), f32((code >> 12u) & 15u)) * 0.5;
+    let ww = f32((code >> 16u) & 15u) / 15.0;
+    let sw = switch_off(kind);
+    let still = sw.x + (1.0 - sw.x) * clamp((sw.y + sw.z - glow.y - 0.015) / sw.z, 0.0, 1.0);
+    let wh = select(0.5, 1.0, band);
+    let average = vec3<f32>(1.0, 0.60, 0.28) * (share * ww * wh * still);
+    if !fc.vertical {
+        return average;
+    }
+    let c = fc.uy / cell_size;
+    let dc = max(fc.d / cell_size, vec2<f32>(1e-4));
+    let cell = floor(c);
+    let f = c - cell;
+    let h = pcg(bitcast<u32>(i32(cell.x)) ^ pcg(bitcast<u32>(i32(cell.y)) ^ (fc.face * 0x9e3779b9u)));
+    var lit = 0.0;
+    if unit(h) < share {
+        let g = pcg(h);
+        let u = unit(g);
+        lit = 1.0;
+        if u >= sw.x {
+            let off = sw.y + sw.z * (u - sw.x) / (1.0 - sw.x);
+            lit = 1.0 - smoothstep(off - 0.03, off, glow.y);
+        }
+        let lo = 0.5 - 0.5 * ww;
+        let hi = 0.5 + 0.5 * ww;
+        lit = lit * (smoothstep(lo - dc.x, lo + dc.x, f.x) - smoothstep(hi - dc.x, hi + dc.x, f.x));
+        if !band {
+            lit = lit * (smoothstep(0.3 - dc.y, 0.3 + dc.y, f.y) - smoothstep(0.8 - dc.y, 0.8 + dc.y, f.y));
+        }
+        let b = g & 255u;
+        let t = select(select(select(3u, 2u, b < 218u), 1u, b < 167u), 0u, b < 90u);
+        let single = tint_of(t) * lit;
+        return mix(single, average, smoothstep(0.5, 1.5, max(dc.x, dc.y)));
+    }
+    return average * smoothstep(0.5, 1.5, max(dc.x, dc.y));
+}
+
+// Light of a surface from its vertex alpha `2 + code`: a window (code below 2^14: off (6 bits,
+// 63 = all night) | tint (2 bits) << 6 | square root of the strength (5 bits) << 8) or a
+// pattern of windows (bit 20). The same as `building::lights::glow`.
+fn window_glow(a: f32, fc: Facade) -> vec3<f32> {
+    if a < 1.5 || glow.x <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let code = u32(round(a - 2.0));
+    if (code & (1u << 20u)) != 0u {
+        return pattern_glow(code, fc) * (glow.x * glow.z);
+    }
+    let q = code & 63u;
+    let r = f32((code >> 8u) & 31u) / 31.0;
+    let s = r * r;
+    var on = 1.0;
+    if q != 63u {
+        let off = f32(q) / 62.0;
+        on = 1.0 - smoothstep(off - 0.03, off, glow.y);
+    }
+    return tint_of((code >> 6u) & 3u) * (s * on * glow.x * glow.z);
 }
 
 // --- Procedural detail (T-238). World-space value noise on the ground plane (x, z).
@@ -164,8 +240,17 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var pbr_input = pbr_input_from_vertex_output(in, is_front, false);
     var emit = vec3<f32>(0.0);
     if glow.w > 0.5 {
-        // The alpha is a glow code, not a coverage: the surface is opaque.
-        emit = window_glow(pbr_input.material.base_color.a);
+        // The alpha is a glow code, not a coverage: the surface is opaque. The derivatives for
+        // the window patterns are taken here, outside the branches on the code.
+        let n = normalize(in.world_normal);
+        let along = normalize(vec2<f32>(-n.z, n.x) + vec2<f32>(1e-6, 0.0));
+        var fc: Facade;
+        fc.uy = vec2<f32>(dot(in.world_position.xz, along), in.world_position.y);
+        fc.d = fwidth(fc.uy);
+        let sector = (atan2(n.z, n.x) + 3.14159265) * (16.0 / 6.2831853);
+        fc.face = u32(clamp(round(sector), 0.0, 16.0)) & 15u;
+        fc.vertical = abs(n.y) < 0.5;
+        emit = window_glow(pbr_input.material.base_color.a, fc);
         pbr_input.material.base_color.a = 1.0;
     }
     pbr_input.material.base_color.a = pbr_input.material.base_color.a * fade.x;

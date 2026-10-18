@@ -59,11 +59,6 @@ pub const FAR_DISTANCE: f32 = 1500.0;
 /// finished height, so the swap to the finished model changes no height.
 pub const STAGES: u8 = 32;
 
-/// Glow of a floor's glass band (`mid`) and of a whole wall (`far`) as a share of the average
-/// of the windows they stand for (see `Ctx::many_windows`).
-const MID_GLOW: f32 = 0.12;
-const FAR_GLOW: f32 = 0.05;
-
 const SIDE_MARGIN: f32 = 1.0;
 const FRONT_SETBACK: f32 = 2.0;
 const BACK_MARGIN: f32 = 1.0;
@@ -372,14 +367,19 @@ impl Ctx {
         self.f.at(self.cu + su * self.hu, self.cv + sv * self.hv, y)
     }
 
-    /// `c` glowing as a surface that stands for many windows, `glass` of it glazed: `k` times
-    /// the average glow of the building's lit windows over that share. `k` is well below 1:
-    /// at night a lit surface the size of a band or wall reads far brighter than the same light
-    /// in single windows.
-    fn many_windows(&self, c: [f32; 4], glass: f32, k: f32) -> [f32; 4] {
+    /// `c` on a surface that stands for many windows: at night the shader draws them as a
+    /// grid of cells `floor` metres tall, lit like the building's own windows (T-246, see
+    /// [`lights::Pattern`]). `band`: a floor's glass band, all window in height.
+    fn many_windows(&self, c: [f32; 4], band: bool, floor: f32, win_w: f32) -> [f32; 4] {
         let Some(class) = self.light else { return c };
-        let strength = k * lights::evening_share(class, self.seed) * glass;
-        let alpha = lights::glow_alpha(lights::typical_off(class), 1, strength, true);
+        let alpha = lights::pattern_alpha(lights::Pattern {
+            class,
+            share: lights::evening_share(class, self.seed),
+            band,
+            bay: self.style.bay,
+            floor,
+            win_w,
+        });
         [c[0], c[1], c[2], alpha]
     }
 }
@@ -412,9 +412,13 @@ fn wall(
     // Beyond 450 m a one- or two-floor wall has no visible bands: one quad, as in the far level.
     let st = cx.style;
     if lod == Lod::Far || floors == 0 || (lod == Lod::Mid && floors <= 2) {
-        // A faint glow of the windows the wall stands for.
-        let k = if lod == Lod::Far { FAR_GLOW } else { MID_GLOW };
-        let c = cx.many_windows(cx.wall, st.win_w * st.win_h, k);
+        // The windows the wall stands for, drawn by the shader.
+        let fh = if floors == 0 {
+            3.2
+        } else {
+            height / floors as f32
+        };
+        let c = cx.many_windows(cx.wall, false, fh, st.win_w);
         q(m, 0.0, width, y0, y0 + height, c);
         return;
     }
@@ -430,7 +434,7 @@ fn wall(
             let glass = if dead {
                 cx.wall
             } else {
-                cx.many_windows(cx.glass, st.win_w, MID_GLOW)
+                cx.many_windows(cx.glass, true, fh, st.win_w)
             };
             if ground {
                 q(m, 0.0, width, fy, sill, cx.wall);
@@ -475,7 +479,7 @@ fn wall(
                 lights::window_light(class, cx.seed, (wall_id * 64 + fl) * 256 + i)
             });
             if let Some(l) = lit {
-                c[3] = lights::glow_alpha(l.off, l.tint, 1.0, false);
+                c[3] = lights::glow_alpha(l.off, l.tint, 1.0);
             }
             c
         };
@@ -876,8 +880,8 @@ pub fn build_building(
         wall: wallc,
         roof: roofc,
         trim: trimc,
-        // Big glazed surfaces of a service building glow as a whole.
-        glass: cx.many_windows(glassc, 0.6, MID_GLOW),
+        // Big glazed surfaces of a service building: windows of a 3.5 m floor.
+        glass: cx.many_windows(glassc, false, 3.5, 0.6),
         lod,
     };
     let silhouette =
