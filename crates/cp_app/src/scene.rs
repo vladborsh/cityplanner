@@ -890,7 +890,7 @@ pub fn build_cargo_train(sim: &mut SimRunner) -> bool {
 
 /// Cargo ship scene (T-218, `--map river_valley`): a cargo port on the north bank of the river
 /// (south of x = 6400, z = 5200) with a ship at its berth, and a second port 200 m east with its
-/// ship sailing in and fading in. The sim stands paused. Look at it with `--cam cargo-ship` or
+/// ship half way along its line up the river. The sim stands paused. Look at it with `--cam cargo-ship` or
 /// `--cam cargo-ship-in`.
 pub const CARGO_SHIP: &str = "cargo-ship";
 
@@ -940,10 +940,10 @@ pub fn build_cargo_ship(sim: &mut SimRunner) -> Vec<Vec2> {
                 until: Tick(now.0 + 1_000_000),
             }
         } else {
-            // Some way into the sail in, still fading in.
+            // Half way along its line up the river.
             ShipVisit {
                 phase: ShipPhase::Arriving,
-                until: Tick(now.0 + sail * 85 / 100),
+                until: Tick(now.0 + sail / 2),
             }
         };
         sim.world_mut().resource_mut::<CargoHubs>().hubs.insert(
@@ -961,12 +961,14 @@ pub fn build_cargo_ship(sim: &mut SimRunner) -> Vec<Vec2> {
         .insert_resource(cp_core::time::SimSpeed::Pause);
     for s in sim.view().ships.iter() {
         bevy::log::info!(
-            "cargo ship {:?} at {} (berth {}, dir {}, t {})",
+            "cargo ship {:?} at {} (berth {}, dir {}, t {}, line {} m: {:?})",
             s.phase,
             s.pos(),
             s.berth,
             s.dir,
-            s.t
+            s.t,
+            s.length(),
+            s.points.iter().step_by(6).collect::<Vec<_>>()
         );
     }
     out

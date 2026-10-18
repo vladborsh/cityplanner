@@ -3,8 +3,9 @@
 //! frame along its leg between two ticks (`TickFraction`) like the intercity train; the cars
 //! together are as long as the `cargo_train` vehicle. A cargo ship (`SimView::ships`) is a hull
 //! with stacked containers and a bridge at the stern; it berths alongside the bank, along the
-//! water at the port, scaled down to fit narrow water (`berth_fit`), and under sail follows the
-//! sim's line between its pose now and a tick later (held on the water), turning to its way; it
+//! water at the port, scaled down to fit narrow water (`berth_fit`), and under sail rides the
+//! sim's line along the river (BUG-071) between its pose now and a tick later, bow first along
+//! the line's tangent, sliding into the berth over its last ship length and a half; it
 //! fades in as it sails in and out as it sails away, casting no shadow while it fades (render
 //! time only).
 
@@ -572,20 +573,28 @@ fn sync_cargo(
     }
     let terrain = view.terrain.as_deref();
     for (n, ship) in view.ships.iter().enumerate() {
-        let p = ship.pos().lerp(ship.next_pos(), frac);
         let t = ship.t + (ship.next_t - ship.t) * frac;
         let alpha = ship_alpha(ship.phase, t);
-        // Alongside the bank at the berth, scaled to the water; under sail it keeps that
-        // offset from the sim's line (held where that leaves the water) and turns to its way.
+        // Alongside the bank at the berth, scaled to the water. Under sail it rides the sim's
+        // line along the river (BUG-071), bow first along its tangent, and slides from the line
+        // into the berth (and turns to lie alongside) over the last ship length and a half.
         let fit = *st.berths.entry(ship.port).or_insert_with(|| {
             terrain.and_then(|tr| berth_fit(|q| tr.is_water(q), ship.berth, ship.dir, size))
         });
         let berth = fit.unwrap_or(Berth {
             centre: ship.berth + ship.dir * (BERTH_OFF + size.1 * 0.5),
-            axis: Vec2::new(-ship.dir.y, ship.dir.x),
+            axis: ship.heading,
             scale: 1.0,
         });
-        let mut c = berth.centre + (p - ship.berth);
+        let line = ship.length();
+        let s = match ship.phase {
+            cp_transit::ShipPhase::Arriving => line * (1.0 - t),
+            cp_transit::ShipPhase::Docked => 0.0,
+            cp_transit::ShipPhase::Leaving => line * t,
+        };
+        let reach = size.0 * berth.scale * 1.5;
+        let near = (1.0 - s / reach.max(1.0)).clamp(0.0, 1.0);
+        let mut c = ship.along(s).lerp(berth.centre, near);
         if let Some(tr) = terrain
             && !tr.is_water(c)
         {
@@ -596,23 +605,26 @@ fn sync_cargo(
                 .unwrap_or(berth.centre);
         }
         let water = terrain.map_or(0.0, |tr| water_level(tr, c, berth.centre));
-        let moving = ship.next_pos() - ship.pos();
-        // Docked the bow points along the axis (its sign fixed); under sail it turns from its
-        // way towards the axis as it nears the berth.
-        let axis = if berth.axis.x + berth.axis.y * 1e-3 >= 0.0 {
-            berth.axis
-        } else {
-            -berth.axis
-        };
+        // Docked the bow points the way the ship came in (towards the berth along the line,
+        // against `heading`); under sail along the line's tangent, bow first.
         let to3 = |v: Vec2| Vec3::new(v.x, 0.0, v.y);
-        let docked = Quat::from_rotation_arc(Vec3::Z, to3(axis));
-        let rot = if moving.length_squared() > 1e-6 && ship.phase != cp_transit::ShipPhase::Docked {
-            let way = Quat::from_rotation_arc(Vec3::Z, to3(moving.normalize()));
-            let near =
-                (1.0 - c.distance(berth.centre) / (size.0 * berth.scale * 1.5)).clamp(0.0, 1.0);
-            way.slerp(docked, near)
+        let axis = if berth.axis.dot(ship.heading) > 0.0 {
+            -berth.axis
         } else {
-            docked
+            berth.axis
+        };
+        let docked = Quat::from_rotation_arc(Vec3::Z, to3(axis));
+        let tangent = (ship.along(s + 6.0) - ship.along((s - 6.0).max(0.0))).try_normalize();
+        let rot = match (ship.phase, tangent) {
+            (cp_transit::ShipPhase::Docked, _) | (_, None) => docked,
+            (phase, Some(out)) => {
+                let bow = if phase == cp_transit::ShipPhase::Arriving {
+                    -out
+                } else {
+                    out
+                };
+                Quat::from_rotation_arc(Vec3::Z, to3(bow)).slerp(docked, near)
+            }
         };
         let tf = Transform::from_translation(Vec3::new(c.x, water, c.y))
             .with_rotation(rot)
