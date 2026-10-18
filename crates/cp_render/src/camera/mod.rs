@@ -216,7 +216,7 @@ fn rts_camera(
 
         // --- rotate / tilt ---
         let key = |k: KeyCode| !typing && keys.pressed(k);
-        let tilt_dir = key(KeyCode::KeyF) as i32 - key(KeyCode::KeyR) as i32;
+        let tilt_dir = key(KeyCode::KeyR) as i32 - key(KeyCode::KeyF) as i32;
         rts.target.pitch = math::key_tilt(rts.target.pitch, tilt_dir, settings.key_tilt_speed, dt);
         let key_dir = key(KeyCode::KeyE) as i32 - key(KeyCode::KeyQ) as i32;
         if right_drag {
@@ -353,7 +353,7 @@ mod tests {
         }
     }
 
-    /// BUG-068: E turns the view the way Q used to, F tilts the way R used to (inverted).
+    /// BUG-068: E turns the view the way Q used to (inverted); BUG-075: R/F tilt back to the original way.
     #[test]
     fn the_rotate_and_tilt_keys_run_the_other_way() {
         let moved = |key: KeyCode| {
@@ -364,7 +364,7 @@ mod tests {
             (after.yaw - before.yaw, after.pitch - before.pitch)
         };
         assert!(moved(KeyCode::KeyE).0 > 0.0 && moved(KeyCode::KeyQ).0 < 0.0);
-        assert!(moved(KeyCode::KeyF).1 > 0.0 && moved(KeyCode::KeyR).1 < 0.0);
+        assert!(moved(KeyCode::KeyR).1 > 0.0 && moved(KeyCode::KeyF).1 < 0.0);
     }
 
     #[test]
