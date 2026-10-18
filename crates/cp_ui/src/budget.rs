@@ -147,6 +147,7 @@ pub fn service_line_name(kind: ServiceKind) -> &'static str {
         ServiceKind::Landmark => "Landmarks",
         ServiceKind::Industry => "Industry",
         ServiceKind::Park => "Parks",
+        ServiceKind::Cargo => "Cargo",
     }
 }
 

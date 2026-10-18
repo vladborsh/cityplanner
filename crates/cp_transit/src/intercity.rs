@@ -124,7 +124,7 @@ pub fn run_intercity(
     let db = &*content.0;
     let balance = db.balance();
     let now = *tick;
-    let station = connected_station(&transit, &rail, &buildings);
+    let station = connected_station(db, &transit, &rail, &buildings);
     book.ensure_derived();
 
     // 1. The train on the line.

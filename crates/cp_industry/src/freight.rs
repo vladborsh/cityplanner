@@ -22,7 +22,7 @@ use cp_core::Tick;
 use cp_district::{AreaMap, Areas, area_at};
 use cp_net::{NetGraph, NodeId, NodeKind, node_is_rail};
 use cp_traffic::ServiceRuns;
-use cp_transit::{CargoArrivals, Endpoint, Goods};
+use cp_transit::{CargoArrivals, CargoHubs, Endpoint, Goods, exit_for, hub_sites, is_hub_def};
 use serde::{Deserialize, Serialize};
 
 use crate::warehouse::WarehouseSettings;
@@ -76,6 +76,9 @@ pub fn run_freight(
     mut state: ResMut<IndustryState>,
     mut ledger: ResMut<IndustryLedger>,
     mut settings: ResMut<WarehouseSettings>,
+    transit: Res<cp_transit::TransitNet>,
+    rail: Res<cp_net::RailReach>,
+    mut hubs: ResMut<CargoHubs>,
 ) {
     let Some(content) = content else { return };
     let db = &*content.0;
@@ -83,9 +86,16 @@ pub fn run_freight(
 
     settings.list.retain(|id, _| buildings.get(*id).is_some());
 
-    // 1. Arrived: unload (a truck whose building is gone loses its load).
+    let train_wait = (bal.cargo_train_interval_h * cp_core::time::TICKS_PER_HOUR)
+        .ceil()
+        .max(1.0) as u64;
+    // 1. Arrived: unload (a truck whose building is gone loses its load). A cargo station keeps
+    // it for the next train (T-216).
     for a in &arrivals.list {
         match a.to {
+            Endpoint::Building(b) if buildings.get(b).is_some_and(|x| is_hub_def(db, x.def)) => {
+                hubs.deposit(b, a.cargo, a.load, *tick, train_wait);
+            }
             Endpoint::Building(b) if buildings.get(b).is_some() => {
                 state.add(b, a.cargo, a.load);
             }
@@ -113,16 +123,9 @@ pub fn run_freight(
         })
         .map(|(id, n)| (id, Vec2::new(n.pos.x, n.pos.z)))
         .collect();
-    let nearest_entry = |p: Vec2| {
-        entries
-            .iter()
-            .min_by(|a, b| {
-                a.1.distance(p)
-                    .total_cmp(&b.1.distance(p))
-                    .then(a.0.cmp(&b.0))
-            })
-            .map(|&(id, _)| id)
-    };
+    // The working cargo stations: exports and imports go through the nearest of them and the
+    // entry highways (T-216).
+    let sites = hub_sites(db, &transit, &rail, &buildings);
 
     // Cargo already on the way to a building, by building and cargo.
     let inbound = |goods: &Goods, to: BuildingId, cargo: CargoKind| -> f32 {
@@ -205,7 +208,7 @@ pub fn run_freight(
                 let to = best
                     .or(shelf)
                     .map(|(_, t)| Endpoint::Building(t))
-                    .or_else(|| nearest_entry(b.pos).map(Endpoint::Outside));
+                    .or_else(|| exit_for(&entries, &sites, b.pos));
                 if let Some(to) = to {
                     state.add(id, cargo, -load);
                     goods.start_cargo_haul(&mut runs, cargo, Endpoint::Building(id), to, load);
@@ -252,7 +255,7 @@ pub fn run_freight(
                 }
                 let to = best.map(|(_, t)| Endpoint::Building(t)).or_else(|| {
                     (set.mode == crate::warehouse::WarehouseMode::Empty)
-                        .then(|| nearest_entry(b.pos).map(Endpoint::Outside))
+                        .then(|| exit_for(&entries, &sites, b.pos))
                         .flatten()
                 });
                 if let Some(to) = to {
@@ -272,6 +275,7 @@ pub fn run_freight(
             for &(cargo, _) in &spec.inputs {
                 if state.stock_of(id, cargo) >= load
                     || inbound(&goods, id, cargo) > 0.0
+                    || hubs.pending(id, cargo)
                     || cap_of(id, spec.storage) - state.total(id) < load
                 {
                     continue;
@@ -303,17 +307,25 @@ pub fn run_freight(
                 if supplied {
                     continue;
                 }
-                if let Some(entry) = nearest_entry(b.pos) {
+                if let Some(via) = exit_for(&entries, &sites, b.pos) {
                     let price = db.cargo(cargo).map_or(0.0, |c| c.import_price);
                     ledger.imports += Cost::scaled(price, f64::from(load));
                     ledger.import_loads += 1;
-                    goods.start_cargo_haul(
-                        &mut runs,
-                        cargo,
-                        Endpoint::Outside(entry),
-                        Endpoint::Building(id),
-                        load,
-                    );
+                    match via {
+                        // By rail: ordered at the station, the train brings it (T-216).
+                        Endpoint::Building(hub) => {
+                            hubs.order(hub, cargo, id, load, *tick, train_wait);
+                        }
+                        Endpoint::Outside(entry) => {
+                            goods.start_cargo_haul(
+                                &mut runs,
+                                cargo,
+                                Endpoint::Outside(entry),
+                                Endpoint::Building(id),
+                                load,
+                            );
+                        }
+                    }
                 }
             }
         }

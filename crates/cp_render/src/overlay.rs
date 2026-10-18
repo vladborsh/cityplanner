@@ -125,7 +125,8 @@ impl Overlay {
             | ServiceKind::Transit
             | ServiceKind::Landmark
             | ServiceKind::Industry
-            | ServiceKind::Park => {
+            | ServiceKind::Park
+            | ServiceKind::Cargo => {
                 return None;
             }
         })

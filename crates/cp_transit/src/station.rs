@@ -37,6 +37,7 @@ pub fn station_reaches_outside(
 /// The station trains stop at (T-167): the first stop in id order whose station is joined by rail
 /// to the map's railway and stands ready.
 pub fn connected_station(
+    db: &cp_content::ContentDb,
     transit: &TransitNet,
     rail: &RailReach,
     buildings: &BuildingGrid,
@@ -44,9 +45,11 @@ pub fn connected_station(
     transit.stops.iter().find_map(|(_, st)| match st.kind {
         StopKind::Station { building, seg, .. }
             if rail.reaches(seg)
-                && buildings
-                    .get(building)
-                    .is_some_and(|b| b.state == cp_building::BuildingState::Active) =>
+                && buildings.get(building).is_some_and(|b| {
+                    // A cargo station (T-216) is no passenger station.
+                    b.state == cp_building::BuildingState::Active
+                        && !crate::hubs::is_hub_def(db, b.def)
+                }) =>
         {
             Some(building)
         }

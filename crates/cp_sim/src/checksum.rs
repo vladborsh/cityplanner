@@ -174,6 +174,10 @@ pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
     if !warehouses.list.is_empty() {
         h.write_serialized(warehouses);
     }
+    let hubs = world.resource::<cp_transit::CargoHubs>();
+    if !hubs.is_empty() {
+        h.write_serialized(hubs);
+    }
     let trade = world.resource::<cp_industry::IndustryLedger>();
     if !trade.is_empty() {
         h.write_serialized(trade);

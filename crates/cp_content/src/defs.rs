@@ -415,6 +415,10 @@ pub struct Balance {
     pub industry_storage_per_level: f32,
     /// The factor on `export_price` for goods that left a unique factory (T-215). // tune later
     pub factory_export_mul: f32,
+    /// Hours between two cargo trains at a cargo station (T-216). // tune later
+    pub cargo_train_interval_h: f32,
+    /// Units a cargo train takes out of a station (the rest waits for the next one). // tune later
+    pub cargo_train_capacity: f32,
     /// A resource extractor needs this average richness (`0..=1`) under its lot (T-208). // tune later
     pub min_richness: f32,
     /// A park area's attractiveness grows by this share per level above the first (T-223).
@@ -596,6 +600,8 @@ impl Balance {
             self.park_fee_max,
             self.park_land_radius_m,
             self.factory_export_mul,
+            self.cargo_train_interval_h,
+            self.cargo_train_capacity,
             self.industry_storage_per_level,
         ]);
         v.extend(self.industry_levels.map(|l| l as f32));
@@ -729,6 +735,8 @@ impl Default for Balance {
             park_land: [2.0, 5.0, 9.0, 14.0, 20.0],
             park_land_radius_m: 200.0,
             factory_export_mul: 4.0,
+            cargo_train_interval_h: 12.0,
+            cargo_train_capacity: 1200.0,
             industry_levels: [2_000, 8_000, 25_000, 60_000],
             industry_storage_per_level: 0.1,
             networks: Networks::default(),

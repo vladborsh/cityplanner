@@ -134,7 +134,7 @@ pub fn run_tourists(
             TouristPhase::Visiting { until } if now >= until => {
                 // A tourist who came by train walks back to the station (T-167).
                 if runs.get(id).is_some_and(|r| r.kind == WALK_KIND) {
-                    let home = connected_station(&transit, &rail, &buildings);
+                    let home = connected_station(db, &transit, &rail, &buildings);
                     runs.release(id, &mut agents);
                     tourists.visits.remove(&id);
                     if let Some(station) = home {

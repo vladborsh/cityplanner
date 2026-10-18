@@ -91,6 +91,7 @@ fn kind_icon(kind: ServiceKind) -> Icon {
         ServiceKind::Landmark => Icon::Buildings,
         ServiceKind::Industry => Icon::Buildings,
         ServiceKind::Park => Icon::Parks,
+        ServiceKind::Cargo => Icon::Buildings,
     }
 }
 
@@ -161,7 +162,10 @@ pub fn sections(content: &ContentDb) -> Vec<Section> {
     for g in groups(content).into_iter().filter(|g| {
         !matches!(
             g.kind,
-            ServiceKind::Transit | ServiceKind::Landmark | ServiceKind::Industry
+            ServiceKind::Transit
+                | ServiceKind::Landmark
+                | ServiceKind::Industry
+                | ServiceKind::Cargo
         )
     }) {
         let mut g = g;

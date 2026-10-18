@@ -222,6 +222,9 @@ Balance((
     park_land_radius_m: 200.0,
     // Goods of a unique factory sell for this many times the usual export price (T-215) // tune later.
     factory_export_mul: 4.0,
+    // Cargo trains (T-216): hours between two trains at a cargo station and the units one takes. // tune later
+    cargo_train_interval_h: 12.0,
+    cargo_train_capacity: 1200.0,
     // Area levels (T-209) // tune later: xp for levels 2 to 5, storage share per level above 1.
     industry_levels: (2000, 8000, 25000, 60000),
     industry_storage_per_level: 0.1,

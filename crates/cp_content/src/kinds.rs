@@ -51,6 +51,8 @@ pub enum ServiceKind {
     Industry = 12,
     /// Appended in T-221 (M6): the city parks.
     Park = 13,
+    /// Appended in T-216 (M5): the cargo station and the cargo port.
+    Cargo = 14,
 }
 
 /// Where a service building may stand (checked by `cp_building::validate_placement`).

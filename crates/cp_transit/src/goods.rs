@@ -22,13 +22,14 @@
 use std::collections::BTreeMap;
 
 use crate::fleet::TransitLedger;
+use crate::hubs::{exit_for, hub_sites, is_hub_def};
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Res, ResMut};
 use bevy_math::Vec2;
 use cp_building::{BuildingFlags, BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::CitizenGrid;
 use cp_content::{CargoKind, IndustryRole, SimContent, VehicleKind, ZoneType};
-use cp_core::time::TICKS_PER_DAY;
+use cp_core::time::{TICKS_PER_DAY, TICKS_PER_HOUR};
 use cp_core::{Cost, Tick};
 use cp_net::{NetGraph, NodeId, NodeKind, node_is_rail};
 use cp_traffic::{Agents, RunId, RunPoint, RunState, ServiceRuns};
@@ -137,6 +138,9 @@ pub fn run_goods(
     mut runs: ResMut<ServiceRuns>,
     mut agents: ResMut<Agents>,
     mut arrivals: ResMut<CargoArrivals>,
+    transit: Res<crate::model::TransitNet>,
+    rail: Res<cp_net::RailReach>,
+    mut hubs: ResMut<crate::hubs::CargoHubs>,
 ) {
     arrivals.list.clear();
     let Some(content) = content else { return };
@@ -150,7 +154,9 @@ pub fn run_goods(
         match runs.get(id).map(|r| r.state) {
             Some(RunState::Arrived { .. } | RunState::Parked { .. }) => {
                 let h = goods.hauls.remove(&id).expect("listed");
-                if h.cargo != CargoKind::Goods {
+                let to_hub = matches!(h.to, Endpoint::Building(t)
+                    if buildings.get(t).is_some_and(|b| is_hub_def(db, b.def)));
+                if h.cargo != CargoKind::Goods || to_hub {
                     // An industrial cargo: `cp_industry` unloads it.
                     arrivals.list.push(CargoArrival {
                         cargo: h.cargo,
@@ -230,15 +236,15 @@ pub fn run_goods(
         })
         .map(|(id, n)| (id, Vec2::new(n.pos.x, n.pos.z)))
         .collect();
-    let nearest_entry = |p: Vec2| {
-        entries
-            .iter()
-            .min_by(|a, b| {
-                a.1.distance(p)
-                    .total_cmp(&b.1.distance(p))
-                    .then(a.0.cmp(&b.0))
-            })
-            .map(|&(id, _)| id)
+    // The working cargo stations (T-216): the exports and imports go through the nearest of them
+    // and the entry highways.
+    let sites = hub_sites(db, &transit, &rail, &buildings);
+    let train_wait = (bal.cargo_train_interval_h * TICKS_PER_HOUR)
+        .ceil()
+        .max(1.0) as u64;
+    let point = |e: Endpoint| match e {
+        Endpoint::Building(b) => RunPoint::Building(b),
+        Endpoint::Outside(n) => RunPoint::Outside(n),
     };
 
     let mine: Vec<BuildingId> = buildings
@@ -288,8 +294,7 @@ pub fn run_goods(
                                 Some((Endpoint::Building(shop), RunPoint::Building(shop)))
                             }
                             // Nobody to sell to nearby: the goods go out of the country.
-                            None => nearest_entry(b.pos)
-                                .map(|e| (Endpoint::Outside(e), RunPoint::Outside(e))),
+                            None => exit_for(&entries, &sites, b.pos).map(|e| (e, point(e))),
                         }
                     };
                     if let Some((to, point)) = to {
@@ -328,24 +333,38 @@ pub fn run_goods(
                 if low
                     && b.access().is_some()
                     && !goods.hauls.values().any(|h| h.to == Endpoint::Building(id))
+                    && !hubs.pending(id, CargoKind::Goods)
                     && !has_stocked_supplier(&buildings, &goods, db, id, bal)
-                    && let Some(entry) = nearest_entry(b.pos)
+                    && let Some(via) = exit_for(&entries, &sites, b.pos)
                 {
-                    let run = runs.start_run(
-                        VehicleKind::Cargo,
-                        RunPoint::Outside(entry),
-                        RunPoint::Building(id),
-                        false,
-                    );
-                    goods.hauls.insert(
-                        run,
-                        Haul {
-                            from: Endpoint::Outside(entry),
-                            to: Endpoint::Building(id),
-                            load: bal.goods_truck_load,
-                            cargo: CargoKind::Goods,
-                        },
-                    );
+                    match via {
+                        // By rail: the train brings it, a truck takes it on from the station.
+                        Endpoint::Building(hub) => hubs.order(
+                            hub,
+                            CargoKind::Goods,
+                            id,
+                            bal.goods_truck_load,
+                            now,
+                            train_wait,
+                        ),
+                        Endpoint::Outside(entry) => {
+                            let run = runs.start_run(
+                                VehicleKind::Cargo,
+                                RunPoint::Outside(entry),
+                                RunPoint::Building(id),
+                                false,
+                            );
+                            goods.hauls.insert(
+                                run,
+                                Haul {
+                                    from: Endpoint::Outside(entry),
+                                    to: Endpoint::Building(id),
+                                    load: bal.goods_truck_load,
+                                    cargo: CargoKind::Goods,
+                                },
+                            );
+                        }
+                    }
                 }
                 if empty {
                     let since = goods.empty_since.entry(id).or_insert(now).0;

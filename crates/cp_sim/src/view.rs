@@ -78,6 +78,8 @@ pub struct SimView {
     pub warehouses: cp_industry::WarehouseSettings,
     /// Cargo exports and imports of this week and the last settled one (T-210).
     pub industry_ledger: cp_industry::IndustryLedger,
+    /// What waits at the cargo stations for the next train (T-216).
+    pub cargo_hubs: cp_transit::CargoHubs,
     /// The park areas: attractiveness, capacity, visitors, fee (T-223).
     pub parks: cp_park::ParkState,
     pub stats: SimStats,
@@ -778,6 +780,11 @@ impl SimRunner {
                 .world()
                 .get_resource::<cp_industry::IndustryLedger>()
                 .copied()
+                .unwrap_or_default(),
+            cargo_hubs: self
+                .world()
+                .get_resource::<cp_transit::CargoHubs>()
+                .cloned()
                 .unwrap_or_default(),
             stats: self.stats(),
             net: self.net_snapshot(&junctions),

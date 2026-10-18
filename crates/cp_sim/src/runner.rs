@@ -126,6 +126,7 @@ impl SimRunner {
         world.init_resource::<cp_citizen::RoutineSettings>();
         world.init_resource::<cp_traffic::Agents>();
         world.init_resource::<cp_traffic::TripTimes>();
+        world.init_resource::<cp_transit::CargoHubs>();
         world.init_resource::<cp_traffic::ServiceRuns>();
         world.init_resource::<cp_traffic::AgentSettings>();
         world.init_resource::<cp_core::Treasury>();
@@ -350,6 +351,8 @@ impl SimRunner {
                 cp_industry::run_industry,
                 // Their cargo goes out by truck (T-210).
                 cp_industry::run_freight,
+                // The cargo trains of the cargo stations (T-216).
+                cp_industry::run_cargo_trains,
                 // The attractiveness and capacity of the park areas (T-223).
                 cp_park::run_park,
                 // People walking about in the parks (T-224).
