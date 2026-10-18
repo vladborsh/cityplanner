@@ -5,98 +5,98 @@
   "ticks": 200,
   "warmup_ticks": 50,
   "runs": 5,
-  "git_sha": "2ee7db3",
+  "git_sha": "df126a45",
   "pool_threads": 12,
   "map": {
     "path": "assets/maps/flatlands",
-    "load_ms": 4.1061250000000005
+    "load_ms": 4.947
   },
   "save": {
     "path": "fixtures/saves/bench-100k.sav",
-    "format_version": 19,
-    "tick": 29866,
+    "format_version": 53,
+    "tick": 33962,
     "map_id": "flatlands",
-    "load_ms": 202.802417,
+    "load_ms": 317.598542,
     "warnings": []
   },
-  "checksum": "0ff560efc374df2e",
+  "checksum": "63f856c9116fe8a8",
   "arenas": [],
   "phases": [
     {
       "name": "Commands",
-      "median_ms": 0.000292,
-      "p95_ms": 0.000583,
-      "mean_ms": 0.0003220750000000002,
-      "max_ms": 0.001
+      "median_ms": 0.001125,
+      "p95_ms": 0.0015,
+      "mean_ms": 0.001267269999999997,
+      "max_ms": 0.028041
     },
     {
       "name": "Network",
-      "median_ms": 0.0005,
-      "p95_ms": 0.000958,
-      "mean_ms": 0.0005439650000000004,
-      "max_ms": 0.004708
+      "median_ms": 0.0035,
+      "p95_ms": 0.00475,
+      "mean_ms": 0.003993569999999995,
+      "max_ms": 0.033916
     },
     {
       "name": "Agents",
-      "median_ms": 1.316479,
-      "p95_ms": 1.820167,
-      "mean_ms": 1.382172455,
-      "max_ms": 2.82775
+      "median_ms": 184.07525,
+      "p95_ms": 414.558459,
+      "mean_ms": 204.3264064600001,
+      "max_ms": 749.589416
     },
     {
       "name": "Paths",
-      "median_ms": 0.033646,
-      "p95_ms": 0.063292,
-      "mean_ms": 0.035466674999999996,
-      "max_ms": 0.147
+      "median_ms": 0.325959,
+      "p95_ms": 1.764166,
+      "mean_ms": 0.6846097750000003,
+      "max_ms": 26.142417
     },
     {
       "name": "Citizens",
-      "median_ms": 0.2514165,
-      "p95_ms": 0.517917,
-      "mean_ms": 0.28522232,
-      "max_ms": 0.874417
+      "median_ms": 0.4243125,
+      "p95_ms": 1.735416,
+      "mean_ms": 1.153814395,
+      "max_ms": 47.620167
     },
     {
       "name": "Buildings",
-      "median_ms": 0.1865835,
-      "p95_ms": 0.26325,
-      "mean_ms": 0.19294874,
-      "max_ms": 0.556042
+      "median_ms": 0.722313,
+      "p95_ms": 5.701583,
+      "mean_ms": 2.125480614999998,
+      "max_ms": 49.449458
     },
     {
       "name": "Utilities",
-      "median_ms": 0.00025,
-      "p95_ms": 0.000541,
-      "mean_ms": 0.04879855499999997,
-      "max_ms": 3.297042
+      "median_ms": 0.001,
+      "p95_ms": 0.003375,
+      "mean_ms": 2.7589237050000004,
+      "max_ms": 266.876542
     },
     {
       "name": "Economy",
-      "median_ms": 0.026396,
-      "p95_ms": 0.034625,
-      "mean_ms": 0.05319125499999999,
-      "max_ms": 5.383042
+      "median_ms": 1.0567085,
+      "p95_ms": 6.212916,
+      "mean_ms": 2.6698028849999997,
+      "max_ms": 73.337708
     },
     {
       "name": "Services",
-      "median_ms": 0.000042,
-      "p95_ms": 0.000125,
-      "mean_ms": 0.00004855500000000004,
-      "max_ms": 0.00025
+      "median_ms": 9.764271,
+      "p95_ms": 90.616291,
+      "mean_ms": 26.085977110000012,
+      "max_ms": 248.950417
     },
     {
       "name": "Stats",
-      "median_ms": 0.036312,
-      "p95_ms": 0.38175,
-      "mean_ms": 0.06808982499999998,
-      "max_ms": 0.795834
+      "median_ms": 0.2183955,
+      "p95_ms": 1.569333,
+      "mean_ms": 0.977022685,
+      "max_ms": 48.008958
     }
   ],
   "total": {
-    "median_ms": 1.912354,
-    "p95_ms": 2.748875,
-    "mean_ms": 2.055602270000002,
-    "max_ms": 10.635666
+    "median_ms": 219.586167,
+    "p95_ms": 484.121416,
+    "mean_ms": 241.78884626000007,
+    "max_ms": 815.693708
   }
 }
