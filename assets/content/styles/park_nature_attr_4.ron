@@ -1,0 +1,15 @@
+// Silhouette of a park area building (T-227): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "park_nature_attr_4",
+    massing: Lodge,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.50, 0.33, 0.18)],
+        roof: [(0.34, 0.22, 0.16)],
+        trim: [(0.86, 0.74, 0.52)],
+        glass: (0.40, 0.65, 0.85),
+    ),
+    facade: Punched,
+))

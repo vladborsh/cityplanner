@@ -985,6 +985,23 @@ pub enum Massing {
     ParkPlayground = 65,
     ParkPlaza = 66,
     ParkSports = 67,
+    /// The city park and nature reserve areas (T-227): gates, attractions and the props.
+    CityParkGate = 68,
+    FlowerGarden = 69,
+    ParkPond = 70,
+    ParkPavilion = 71,
+    Amphitheatre = 72,
+    NatureGate = 73,
+    Viewpoint = 74,
+    BirdHide = 75,
+    Waterfall = 76,
+    Lodge = 77,
+    PropBench = 78,
+    PropTreeCluster = 79,
+    PropLamp = 80,
+    PropFlowerBed = 81,
+    PropKiosk = 82,
+    PropStatue = 83,
 }
 
 /// Facade pattern family of a style.

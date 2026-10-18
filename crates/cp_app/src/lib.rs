@@ -294,6 +294,12 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         "construction" => (Vec3::new(c, 45.0, c + 120.0), Vec3::new(c, 12.0, c - 130.0)),
         // The four city parks in a row (`--scene parks`).
         "parks" => (Vec3::new(c, 55.0, c + 20.0), Vec3::new(c, 2.0, c - 120.0)),
+        // The park areas (`--scene park-areas`): the rows from the props side, and the props.
+        // (The showcase rows stand at z = c - 130, c - 175 and c - 220.)
+        "park-areas" => (Vec3::new(c, 75.0, c - 40.0), Vec3::new(c, 0.0, c - 180.0)),
+        "park-props" => (Vec3::new(c, 26.0, c - 82.0), Vec3::new(c, 0.0, c - 132.0)),
+        "park-city" => (Vec3::new(c, 34.0, c - 120.0), Vec3::new(c, 0.0, c - 178.0)),
+        "park-nature" => (Vec3::new(c, 36.0, c - 165.0), Vec3::new(c, 2.0, c - 223.0)),
         // The M5 chain buildings, a row per resource (`--scene chains`).
         "chains" => (Vec3::new(c, 190.0, c + 150.0), Vec3::new(c, 5.0, c - 55.0)),
         // The whole middle of the map for the resource overlays (`--scene industry`).
@@ -430,6 +436,9 @@ pub fn build_sim(
     } else if scene == Some(scene::PARKS) {
         let n = scene::build_parks(&mut sim);
         info!("scene parks: {n} buildings");
+    } else if scene == Some(scene::PARK_AREAS) {
+        let n = scene::build_park_areas(&mut sim);
+        info!("scene park-areas: {n} buildings");
     } else if scene == Some(scene::SPECS) {
         let n = scene::build_specs(&mut sim);
         info!("scene specs: {n} buildings");

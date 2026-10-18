@@ -510,3 +510,34 @@ fn the_eleven_m2_service_buildings_have_eleven_different_silhouettes() {
         assert!(!massings.contains(m1), "{m1}");
     }
 }
+
+/// T-227: every city park and nature reserve building (gate, attractions) and every park prop
+/// has a style of its own (`park_<id>`, drawn by its own massing) and a square icon file.
+#[test]
+fn park_area_defs_name_their_own_styles_and_icons() {
+    let db = ContentDb::load_dir(root()).unwrap();
+    let icons = root().join("../ui/icons");
+    let mut n = 0;
+    for (_, d) in db.buildings() {
+        let Some(park) = &d.park else { continue };
+        let ours = matches!(
+            park.park,
+            Some(cp_content::ParkKind::CityPark) | Some(cp_content::ParkKind::Nature)
+        ) || d.id.starts_with("prop_");
+        if !ours {
+            continue;
+        }
+        n += 1;
+        assert_eq!(d.styles, vec![format!("park_{}", d.id)], "{}", d.id);
+        let style = db.style(db.style_id(&d.styles[0]).expect("style exists"));
+        assert!(style.massing as u8 >= 68, "{}: a massing of its own", d.id);
+        let png = icons.join(format!("{}.png", d.icon));
+        assert!(png.exists(), "{}: no icon {png:?}", d.id);
+        assert!(
+            icons.join(format!("src/{}.svg", d.icon)).exists(),
+            "{}",
+            d.id
+        );
+    }
+    assert_eq!(n, 16, "two gates, eight attractions, six props");
+}

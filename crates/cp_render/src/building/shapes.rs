@@ -13,6 +13,8 @@ use super::{Ctx, Frame, mul};
 use crate::chunk::MeshData;
 use crate::road::{flat_quad, push_vertex, tri};
 
+mod park_area;
+
 /// Which part `(t0, t1)` of each of the four walls (front, right, back, left; corners
 /// counter-clockwise from above) is not hidden by a neighbouring volume.
 pub type Vis = [Option<(f32, f32)>; 4];
@@ -687,7 +689,7 @@ pub fn is_service(m: Massing) -> bool {
             | Massing::ParkPlayground
             | Massing::ParkPlaza
             | Massing::ParkSports
-    )
+    ) || park_area::is_park_area(m)
 }
 
 /// An upright (optionally tapered) cylinder with `n` sides; `top` closes it with a cap.
@@ -4449,8 +4451,9 @@ fn chain(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
         }
         _ => park(m, massing, sc),
     }
-    // Near only: a lamp post at the front corner of every chain building.
-    if near {
+    // Near only: a lamp post at the front corner of every chain building (not of the park
+    // areas, T-227: their lots are open ground and the props bring their own lamps).
+    if near && !park_area::is_park_area(massing) {
         let (u, v) = (-0.92 * hu, cv - 0.92 * hv);
         block(m, f, (u, v), (0.12, 0.12), sc.lo, b + 4.5, STEEL, STEEL);
         block(
@@ -4999,6 +5002,6 @@ fn park(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                 );
             }
         }
-        _ => {}
+        _ => park_area::park_area(m, massing, sc),
     }
 }

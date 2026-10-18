@@ -1,4 +1,4 @@
-// Numbers: tune later (T-223). Temporary look and icon until the park silhouettes (T-227, T-228).
+// Numbers: tune later (T-223).
 Building((
     id: "city_park_attr_2",
     name: "City park: Pond",
@@ -10,7 +10,7 @@ Building((
     tax_base: 0.0,
     cost: 12000.0,
     upkeep_week: 218.0,
-    styles: ["park_small_park"],
+    styles: ["park_city_park_attr_2"],
     service: Some("park_free"),
     park: Some((park: Some(CityPark), role: Attraction, attract: 20.0, capacity: 80, min_level: 2)),
 ))

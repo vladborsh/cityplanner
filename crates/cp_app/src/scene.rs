@@ -458,6 +458,50 @@ pub fn build_parks(sim: &mut SimRunner) -> usize {
     })
 }
 
+pub const PARK_AREAS: &str = "park-areas";
+
+/// Builds the [`PARK_AREAS`] scene (T-227): the city park gate and its four attractions, the
+/// nature reserve's, and the six props, a row each; returns how many buildings stand.
+pub fn build_park_areas(sim: &mut SimRunner) -> usize {
+    build_showcase_defs(sim, |db| {
+        let rows: [&[&str]; 3] = [
+            &[
+                "prop_bench",
+                "prop_tree_cluster",
+                "prop_lamp",
+                "prop_flowerbed",
+                "prop_kiosk",
+                "prop_statue",
+            ],
+            &[
+                "city_park_gate",
+                "city_park_attr_1",
+                "city_park_attr_2",
+                "city_park_attr_3",
+                "city_park_attr_4",
+            ],
+            &[
+                "nature_gate",
+                "nature_attr_1",
+                "nature_attr_2",
+                "nature_attr_3",
+                "nature_attr_4",
+            ],
+        ];
+        let mut out = Vec::new();
+        for (row, names) in rows.iter().enumerate() {
+            let step = if row == 0 { 16.0 } else { 40.0 };
+            let x0 = -step * (names.len() - 1) as f32 * 0.5;
+            for (col, name) in names.iter().enumerate() {
+                if let Some(id) = db.building_id(name) {
+                    out.push((id, x0 + col as f32 * step, -45.0 * row as f32));
+                }
+            }
+        }
+        out
+    })
+}
+
 /// Builds the [`SPECS`] scene; returns how many buildings stand.
 pub fn build_specs(sim: &mut SimRunner) -> usize {
     build_showcase_defs(sim, |db| {

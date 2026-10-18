@@ -1,0 +1,15 @@
+// Silhouette of a park area building (T-227): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "park_city_park_attr_3",
+    massing: ParkPavilion,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.92, 0.90, 0.85)],
+        roof: [(0.30, 0.46, 0.40)],
+        trim: [(0.95, 0.94, 0.90)],
+        glass: (0.40, 0.65, 0.85),
+    ),
+    facade: Punched,
+))

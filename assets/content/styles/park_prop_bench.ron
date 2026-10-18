@@ -1,0 +1,15 @@
+// Silhouette of a park area building (T-227): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "park_prop_bench",
+    massing: PropBench,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.86, 0.74, 0.52)],
+        roof: [(0.35, 0.55, 0.28)],
+        trim: [(0.92, 0.90, 0.85)],
+        glass: (0.40, 0.65, 0.85),
+    ),
+    facade: Punched,
+))

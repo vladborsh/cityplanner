@@ -1,4 +1,4 @@
-// Numbers: tune later (T-223). Temporary look and icon until the park silhouettes (T-227, T-228).
+// Numbers: tune later (T-223).
 Building((
     id: "prop_flowerbed",
     name: "Flower bed",
@@ -10,7 +10,7 @@ Building((
     tax_base: 0.0,
     cost: 250.0,
     upkeep_week: 5.0,
-    styles: ["com_low_kiosk_shed_a"],
+    styles: ["park_prop_flowerbed"],
     service: Some("park_free"),
     park: Some((role: Prop, attract: 1.0, capacity: 0, min_level: 0)),
 ))

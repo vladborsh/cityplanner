@@ -1,4 +1,4 @@
-// Numbers: tune later (T-223). Temporary look and icon until the park silhouettes (T-227, T-228).
+// Numbers: tune later (T-223).
 Building((
     id: "nature_attr_4",
     name: "Nature reserve: Lodge",
@@ -10,7 +10,7 @@ Building((
     tax_base: 0.0,
     cost: 24000.0,
     upkeep_week: 436.0,
-    styles: ["park_playground"],
+    styles: ["park_nature_attr_4"],
     service: Some("park_free"),
     park: Some((park: Some(Nature), role: Attraction, attract: 60.0, capacity: 200, min_level: 4)),
 ))

@@ -1294,3 +1294,70 @@ fn a_garden_is_valid_geometry_and_richer_near_than_mid() {
     }
     assert!(n.triangle_count() > m.triangle_count());
 }
+
+/// T-227: the city park and nature reserve areas have silhouettes of their own: two gates,
+/// eight attractions and six props, each with a massing of its own, built at every LOD (never
+/// growing with distance), sound, inside the lot and above the ground.
+#[test]
+fn the_park_area_silhouettes_are_distinct_and_fit_their_lots() {
+    let e = env();
+    let ground = e.terrain.height(Vec2::new(5120.0, 5120.0));
+    let mut shapes = BTreeSet::new();
+    let mut masses = BTreeSet::new();
+    let names = [
+        "city_park_gate",
+        "city_park_attr_1",
+        "city_park_attr_2",
+        "city_park_attr_3",
+        "city_park_attr_4",
+        "nature_gate",
+        "nature_attr_1",
+        "nature_attr_2",
+        "nature_attr_3",
+        "nature_attr_4",
+        "prop_bench",
+        "prop_tree_cluster",
+        "prop_lamp",
+        "prop_flowerbed",
+        "prop_kiosk",
+        "prop_statue",
+    ];
+    for name in names {
+        let (def_id, def) = service_def(&e, name);
+        assert_eq!(def.styles, vec![format!("park_{name}")], "{name}");
+        let style = e.db.style(e.db.style_id(&def.styles[0]).unwrap());
+        assert!(style.massing as u8 >= 68, "{name} has a massing of its own");
+        masses.insert(style.massing as u8);
+        let b = building(def_id, &e.db, BuildingState::Active, 0);
+        let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+        let (n, m, f) = (
+            p.near.triangle_count(),
+            p.mid.triangle_count(),
+            p.far.triangle_count(),
+        );
+        assert!(n > m && m >= f && f > 0, "{name}: {n} {m} {f}");
+        for mesh in [&p.near, &p.mid, &p.far] {
+            assert!(
+                mesh.positions.iter().flatten().all(|v| v.is_finite()),
+                "{name}"
+            );
+            let (lo, hi) = extent(mesh);
+            let (hw, hd) = (f32::from(def.lot.0) * 4.0, f32::from(def.lot.1) * 4.0);
+            assert!(
+                lo.x >= b.pos.x - hw - 1e-3
+                    && hi.x <= b.pos.x + hw + 1e-3
+                    && lo.z >= b.pos.y - hd - 1e-3
+                    && hi.z <= b.pos.y + hd + 1e-3,
+                "{name}: outside its lot"
+            );
+            assert!(hi.y - ground > 0.5 && hi.y - ground < 16.0, "{name}");
+        }
+        shapes.insert((
+            p.near.positions.len(),
+            p.mid.positions.len(),
+            p.far.positions.len(),
+        ));
+    }
+    assert_eq!(masses.len(), names.len());
+    assert_eq!(shapes.len(), names.len(), "{shapes:?}");
+}

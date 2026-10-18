@@ -1,0 +1,15 @@
+// Silhouette of a park area building (T-227): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "park_nature_gate",
+    massing: NatureGate,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.50, 0.33, 0.18)],
+        roof: [(0.32, 0.26, 0.20)],
+        trim: [(0.86, 0.74, 0.52)],
+        glass: (0.40, 0.65, 0.85),
+    ),
+    facade: Punched,
+))
