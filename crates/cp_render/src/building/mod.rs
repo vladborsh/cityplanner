@@ -26,7 +26,7 @@
 
 mod shapes;
 
-pub use shapes::{Rotor, rotor_mesh, rotor_world};
+pub use shapes::{Rotor, RotorKind, rotor_mesh, rotor_world};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -268,7 +268,8 @@ pub fn construction_stage(b: &Building, total: u64, tick: Tick) -> u8 {
 /// The three detail levels of one building plus its bounds.
 #[derive(Clone, Debug, Default)]
 pub struct BuildingPiece {
-    /// The turning rotor of a wind turbine; its blades are not in the meshes below.
+    /// The turning part (a wind turbine's rotor, a ferris wheel, a carousel); not in the meshes
+    /// below.
     pub rotor: Option<Rotor>,
     pub near: MeshData,
     pub mid: MeshData,
@@ -1081,7 +1082,7 @@ impl BuildingSet {
         self.by_chunk.keys()
     }
 
-    /// The rotors of the wind turbines, in building-id order.
+    /// The turning parts (turbine rotors, ferris wheels, carousels), in building-id order.
     pub fn rotors(&self) -> impl Iterator<Item = (BuildingId, &Rotor)> {
         self.pieces
             .iter()

@@ -511,8 +511,9 @@ fn the_eleven_m2_service_buildings_have_eleven_different_silhouettes() {
     }
 }
 
-/// T-227: every city park and nature reserve building (gate, attractions) and every park prop
-/// has a style of its own (`park_<id>`, drawn by its own massing) and a square icon file.
+/// T-227, T-228: every city park, nature reserve, zoo and amusement park building (gate,
+/// attractions) and every park prop has a style of its own (`park_<id>`, drawn by its own
+/// massing) and a square icon file.
 #[test]
 fn park_area_defs_name_their_own_styles_and_icons() {
     let db = ContentDb::load_dir(root()).unwrap();
@@ -522,7 +523,12 @@ fn park_area_defs_name_their_own_styles_and_icons() {
         let Some(park) = &d.park else { continue };
         let ours = matches!(
             park.park,
-            Some(cp_content::ParkKind::CityPark) | Some(cp_content::ParkKind::Nature)
+            Some(
+                cp_content::ParkKind::CityPark
+                    | cp_content::ParkKind::Nature
+                    | cp_content::ParkKind::Zoo
+                    | cp_content::ParkKind::Amusement
+            )
         ) || d.id.starts_with("prop_");
         if !ours {
             continue;
@@ -539,5 +545,5 @@ fn park_area_defs_name_their_own_styles_and_icons() {
             d.id
         );
     }
-    assert_eq!(n, 16, "two gates, eight attractions, six props");
+    assert_eq!(n, 26, "four gates, sixteen attractions, six props");
 }

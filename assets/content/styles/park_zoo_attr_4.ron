@@ -1,0 +1,15 @@
+// Silhouette of a park area building (T-228): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "park_zoo_attr_4",
+    massing: ElephantHouse,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.85, 0.78, 0.65)],
+        roof: [(0.45, 0.58, 0.52)],
+        trim: [(0.95, 0.92, 0.85)],
+        glass: (0.40, 0.65, 0.85),
+    ),
+    facade: Punched,
+))

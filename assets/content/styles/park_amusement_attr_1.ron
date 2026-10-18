@@ -1,0 +1,15 @@
+// Silhouette of a park area building (T-228): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "park_amusement_attr_1",
+    massing: Carousel,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.95, 0.90, 0.80)],
+        roof: [(0.88, 0.22, 0.30)],
+        trim: [(0.98, 0.82, 0.30)],
+        glass: (0.40, 0.65, 0.85),
+    ),
+    facade: Punched,
+))

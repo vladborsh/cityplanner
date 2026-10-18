@@ -295,11 +295,26 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         // The four city parks in a row (`--scene parks`).
         "parks" => (Vec3::new(c, 55.0, c + 20.0), Vec3::new(c, 2.0, c - 120.0)),
         // The park areas (`--scene park-areas`): the rows from the props side, and the props.
-        // (The showcase rows stand at z = c - 130, c - 175 and c - 220.)
+        // (The showcase rows stand at z = c - 130, c - 175, c - 220, c - 265 and c - 310.)
         "park-areas" => (Vec3::new(c, 75.0, c - 40.0), Vec3::new(c, 0.0, c - 180.0)),
         "park-props" => (Vec3::new(c, 26.0, c - 82.0), Vec3::new(c, 0.0, c - 132.0)),
         "park-city" => (Vec3::new(c, 34.0, c - 120.0), Vec3::new(c, 0.0, c - 178.0)),
         "park-nature" => (Vec3::new(c, 36.0, c - 165.0), Vec3::new(c, 2.0, c - 223.0)),
+        "park-zoo" => (Vec3::new(c, 70.0, c - 182.0), Vec3::new(c, 0.0, c - 268.0)),
+        "park-amusement" => (Vec3::new(c, 88.0, c - 208.0), Vec3::new(c, 4.0, c - 313.0)),
+        // Up close: the zoo gate, the elephant house, the ferris wheel and the roller coaster.
+        "park-zoo-gate" => (
+            Vec3::new(c - 62.0, 16.0, c - 238.0),
+            Vec3::new(c - 80.0, 4.0, c - 266.0),
+        ),
+        "park-elephant" => (
+            Vec3::new(c + 58.0, 24.0, c - 228.0),
+            Vec3::new(c + 80.0, 4.0, c - 266.0),
+        ),
+        "park-ferris" => (
+            Vec3::new(c + 30.0, 22.0, c - 262.0),
+            Vec3::new(c + 62.0, 9.0, c - 310.0),
+        ),
         // The M5 chain buildings, a row per resource (`--scene chains`).
         "chains" => (Vec3::new(c, 190.0, c + 150.0), Vec3::new(c, 5.0, c - 55.0)),
         // The whole middle of the map for the resource overlays (`--scene industry`).

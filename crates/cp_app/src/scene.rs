@@ -460,11 +460,12 @@ pub fn build_parks(sim: &mut SimRunner) -> usize {
 
 pub const PARK_AREAS: &str = "park-areas";
 
-/// Builds the [`PARK_AREAS`] scene (T-227): the city park gate and its four attractions, the
-/// nature reserve's, and the six props, a row each; returns how many buildings stand.
+/// Builds the [`PARK_AREAS`] scene (T-227, T-228): the city park gate and its four
+/// attractions, the nature reserve's, the zoo's, the amusement park's, and the six props, a row
+/// each; returns how many buildings stand.
 pub fn build_park_areas(sim: &mut SimRunner) -> usize {
     build_showcase_defs(sim, |db| {
-        let rows: [&[&str]; 3] = [
+        let rows: [&[&str]; 5] = [
             &[
                 "prop_bench",
                 "prop_tree_cluster",
@@ -486,6 +487,20 @@ pub fn build_park_areas(sim: &mut SimRunner) -> usize {
                 "nature_attr_2",
                 "nature_attr_3",
                 "nature_attr_4",
+            ],
+            &[
+                "zoo_gate",
+                "zoo_attr_1",
+                "zoo_attr_2",
+                "zoo_attr_3",
+                "zoo_attr_4",
+            ],
+            &[
+                "amusement_gate",
+                "amusement_attr_1",
+                "amusement_attr_2",
+                "amusement_attr_3",
+                "amusement_attr_4",
             ],
         ];
         let mut out = Vec::new();

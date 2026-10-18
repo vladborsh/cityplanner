@@ -14,7 +14,7 @@ use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_sim::SimView;
 
-use crate::building::{BuildingSet, Rotor, rotor_mesh, select_level};
+use crate::building::{BuildingSet, Rotor, RotorKind, rotor_mesh, select_level};
 use crate::chunk::MeshData;
 use crate::material::VertexColorMaterial;
 
@@ -68,7 +68,8 @@ pub(crate) struct BuildingState {
     last_bucket: u64,
     chunks: BTreeMap<crate::building::ChunkKey, Entity>,
     material: Option<Handle<VertexColorMaterial>>,
-    /// Turbine rotors: the entity and the rotor it was built for.
+    /// Turning parts (turbine rotors, ferris wheels, carousels): the entity and the rotor it
+    /// was built for.
     rotors: BTreeMap<cp_building::BuildingId, (Entity, Rotor)>,
 }
 
@@ -82,10 +83,9 @@ struct RotorSpin {
     phase: f32,
     /// Rotation that takes +Z to the rotor axis.
     facing: Quat,
+    /// Radians per second.
+    speed: f32,
 }
-
-/// Radians per second of a rotor.
-const ROTOR_SPEED: f32 = 1.1;
 
 fn to_bevy_mesh(m: MeshData) -> Mesh {
     Mesh::new(
@@ -157,8 +157,13 @@ fn sync_buildings(
                     RotorSpin {
                         phase: id.index as f32 * 0.7,
                         facing,
+                        speed: r.speed(),
                     },
-                    Name::new("wind rotor"),
+                    Name::new(match r.kind {
+                        RotorKind::Turbine => "wind rotor",
+                        RotorKind::FerrisWheel => "ferris wheel",
+                        RotorKind::Carousel => "carousel",
+                    }),
                 ))
                 .id();
             state.rotors.insert(id, (e, r));
@@ -260,6 +265,6 @@ fn update_building_lods(
 fn spin_rotors(time: Res<Time>, mut rotors: Query<(&RotorSpin, &mut Transform)>) {
     let t = time.elapsed_secs();
     for (spin, mut tf) in &mut rotors {
-        tf.rotation = spin.facing * Quat::from_rotation_z(spin.phase + t * ROTOR_SPEED);
+        tf.rotation = spin.facing * Quat::from_rotation_z(spin.phase + t * spin.speed);
     }
 }

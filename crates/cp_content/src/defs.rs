@@ -1010,6 +1010,17 @@ pub enum Massing {
     PropFlowerBed = 81,
     PropKiosk = 82,
     PropStatue = 83,
+    /// The zoo and amusement park areas (T-228): gates and attractions.
+    ZooGate = 84,
+    PettingZoo = 85,
+    Aviary = 86,
+    BigCats = 87,
+    ElephantHouse = 88,
+    AmusementGate = 89,
+    Carousel = 90,
+    BumperCars = 91,
+    RollerCoaster = 92,
+    FerrisWheel = 93,
 }
 
 /// Facade pattern family of a style.

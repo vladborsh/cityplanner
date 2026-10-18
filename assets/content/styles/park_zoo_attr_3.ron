@@ -1,0 +1,15 @@
+// Silhouette of a park area building (T-228): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "park_zoo_attr_3",
+    massing: BigCats,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.62, 0.55, 0.45)],
+        roof: [(0.45, 0.40, 0.35)],
+        trim: [(0.80, 0.60, 0.30)],
+        glass: (0.40, 0.65, 0.85),
+    ),
+    facade: Punched,
+))

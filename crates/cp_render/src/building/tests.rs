@@ -1361,3 +1361,91 @@ fn the_park_area_silhouettes_are_distinct_and_fit_their_lots() {
     assert_eq!(masses.len(), names.len());
     assert_eq!(shapes.len(), names.len(), "{shapes:?}");
 }
+
+/// T-228: the zoo and the amusement park have silhouettes of their own: two gates and eight
+/// attractions, each with a massing of its own, built at every LOD (never growing with
+/// distance), sound, inside the lot and above the ground. Only the ferris wheel and the
+/// carousel have a turning part; it stays inside the lot and turns with the angle only.
+#[test]
+fn the_zoo_and_amusement_silhouettes_are_distinct_and_fit_their_lots() {
+    let e = env();
+    let ground = e.terrain.height(Vec2::new(5120.0, 5120.0));
+    let mut shapes = BTreeSet::new();
+    let mut masses = BTreeSet::new();
+    let names = [
+        "zoo_gate",
+        "zoo_attr_1",
+        "zoo_attr_2",
+        "zoo_attr_3",
+        "zoo_attr_4",
+        "amusement_gate",
+        "amusement_attr_1",
+        "amusement_attr_2",
+        "amusement_attr_3",
+        "amusement_attr_4",
+    ];
+    for name in names {
+        let (def_id, def) = service_def(&e, name);
+        assert_eq!(def.styles, vec![format!("park_{name}")], "{name}");
+        let style = e.db.style(e.db.style_id(&def.styles[0]).unwrap());
+        assert!(style.massing as u8 >= 84, "{name} has a massing of its own");
+        masses.insert(style.massing as u8);
+        let b = building(def_id, &e.db, BuildingState::Active, 0);
+        let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+        let (n, m, f) = (
+            p.near.triangle_count(),
+            p.mid.triangle_count(),
+            p.far.triangle_count(),
+        );
+        assert!(n > m && m >= f && f > 0, "{name}: {n} {m} {f}");
+        let (hw, hd) = (f32::from(def.lot.0) * 4.0, f32::from(def.lot.1) * 4.0);
+        let inside = |mesh: &MeshData| {
+            let (lo, hi) = extent(mesh);
+            lo.x >= b.pos.x - hw - 1e-3
+                && hi.x <= b.pos.x + hw + 1e-3
+                && lo.z >= b.pos.y - hd - 1e-3
+                && hi.z <= b.pos.y + hd + 1e-3
+        };
+        for mesh in [&p.near, &p.mid, &p.far] {
+            assert!(
+                mesh.positions.iter().flatten().all(|v| v.is_finite()),
+                "{name}"
+            );
+            assert!(inside(mesh), "{name}: outside its lot");
+            let hi = extent(mesh).1;
+            assert!(hi.y - ground > 0.5 && hi.y - ground < 18.0, "{name}");
+        }
+        let turns = matches!(name, "amusement_attr_1" | "amusement_attr_4");
+        assert_eq!(p.rotor.is_some(), turns, "{name}");
+        if let Some(r) = p.rotor {
+            let (a, c) = (rotor_world(&r, 0.0), rotor_world(&r, 0.7));
+            assert_eq!(a.positions.len(), c.positions.len());
+            assert_ne!(a.positions, c.positions, "{name} turns");
+            for mesh in [&a, &c] {
+                assert!(mesh.positions.iter().flatten().all(|v| v.is_finite()));
+                assert!(inside(mesh), "{name}: the rotor leaves its lot");
+                let (lo, hi) = extent(mesh);
+                assert!(lo.y > ground && hi.y - ground < 26.0, "{name}");
+            }
+            // The turn keeps its size: the same extent along the axis.
+            let along = |m: &MeshData| {
+                m.positions
+                    .iter()
+                    .map(|p| (Vec3::from_array(*p) - r.hub).dot(r.axis))
+                    .fold((f32::MAX, f32::MIN), |(l, h), d| (l.min(d), h.max(d)))
+            };
+            let (x, y) = (along(&a), along(&c));
+            assert!(
+                (x.0 - y.0).abs() < 1e-2 && (x.1 - y.1).abs() < 1e-2,
+                "{name}"
+            );
+        }
+        shapes.insert((
+            p.near.positions.len(),
+            p.mid.positions.len(),
+            p.far.positions.len(),
+        ));
+    }
+    assert_eq!(masses.len(), names.len());
+    assert_eq!(shapes.len(), names.len(), "{shapes:?}");
+}

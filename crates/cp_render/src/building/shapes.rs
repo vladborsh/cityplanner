@@ -14,6 +14,7 @@ use crate::chunk::MeshData;
 use crate::road::{flat_quad, push_vertex, tri};
 
 mod park_area;
+mod theme_park;
 
 /// Which part `(t0, t1)` of each of the four walls (front, right, back, left; corners
 /// counter-clockwise from above) is not hidden by a neighbouring volume.
@@ -690,6 +691,7 @@ pub fn is_service(m: Massing) -> bool {
             | Massing::ParkPlaza
             | Massing::ParkSports
     ) || park_area::is_park_area(m)
+        || theme_park::is_theme_park(m)
 }
 
 /// An upright (optionally tapered) cylinder with `n` sides; `top` closes it with a cap.
@@ -780,14 +782,36 @@ pub struct ServiceCx<'a> {
     pub lod: super::Lod,
 }
 
-/// The rotor of a wind turbine: drawn as its own mesh (it turns with the frame clock, which is
-/// a view effect only), hub at `hub`, blades in the plane perpendicular to `axis`.
+/// A turning part: drawn as its own mesh (it turns with the frame clock, which is a view
+/// effect only), hub at `hub`, turning round `axis`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rotor {
     pub hub: Vec3,
     pub axis: Vec3,
     pub radius: f32,
     pub color: [f32; 4],
+    /// Second colour (the ferris wheel's hub and gondolas, the carousel's platform and poles).
+    pub accent: [f32; 4],
+    pub kind: RotorKind,
+}
+
+/// What turns: a wind turbine's blades, a ferris wheel or a carousel (T-228).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RotorKind {
+    Turbine,
+    FerrisWheel,
+    Carousel,
+}
+
+impl Rotor {
+    /// Radians per second.
+    pub fn speed(&self) -> f32 {
+        match self.kind {
+            RotorKind::Turbine => 1.1,
+            RotorKind::FerrisWheel => 0.12,
+            RotorKind::Carousel => 0.6,
+        }
+    }
 }
 
 /// Blade length of the turbine, metres.
@@ -795,8 +819,11 @@ const BLADE: f32 = 17.0;
 /// Hub height above the plinth, metres.
 const HUB_H: f32 = 38.0;
 
-/// The rotor of a turbine standing on `sc`, if `massing` is a wind turbine.
+/// The rotor of a building standing on `sc`, if `massing` has a turning part.
 pub fn rotor(massing: Massing, sc: &ServiceCx) -> Option<Rotor> {
+    if theme_park::is_theme_park(massing) {
+        return theme_park::rotor(massing, sc);
+    }
     (massing == Massing::WindTurbine).then(|| {
         let axis = sc.f.dir(0.0, -1.0).normalize_or_zero();
         let p = sc.f.at(0.0, sc.cv - 1.6, sc.base + HUB_H + 0.9);
@@ -805,12 +832,18 @@ pub fn rotor(massing: Massing, sc: &ServiceCx) -> Option<Rotor> {
             axis,
             radius: BLADE,
             color: sc.wall,
+            accent: sc.wall,
+            kind: RotorKind::Turbine,
         }
     })
 }
 
-/// The rotor mesh around the origin, blades in the XY plane facing +Z, turned by `angle`.
+/// The rotor mesh around the origin, turning round +Z, turned by `angle` (a turbine's blades
+/// in the XY plane).
 pub fn rotor_mesh(r: &Rotor, angle: f32) -> MeshData {
+    if r.kind != RotorKind::Turbine {
+        return theme_park::rotor_mesh(r, angle);
+    }
     let mut m = MeshData::default();
     let n = Vec3::Z;
     for k in 0..3 {
@@ -4453,7 +4486,7 @@ fn chain(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
     }
     // Near only: a lamp post at the front corner of every chain building (not of the park
     // areas, T-227: their lots are open ground and the props bring their own lamps).
-    if near && !park_area::is_park_area(massing) {
+    if near && !park_area::is_park_area(massing) && !theme_park::is_theme_park(massing) {
         let (u, v) = (-0.92 * hu, cv - 0.92 * hv);
         block(m, f, (u, v), (0.12, 0.12), sc.lo, b + 4.5, STEEL, STEEL);
         block(
@@ -5002,6 +5035,7 @@ fn park(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                 );
             }
         }
+        _ if theme_park::is_theme_park(massing) => theme_park::theme_park(m, massing, sc),
         _ => park_area::park_area(m, massing, sc),
     }
 }

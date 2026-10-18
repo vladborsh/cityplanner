@@ -1,0 +1,15 @@
+// Silhouette of a park area building (T-228): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "park_zoo_attr_2",
+    massing: Aviary,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.25, 0.30, 0.28)],
+        roof: [(0.30, 0.55, 0.35)],
+        trim: [(0.92, 0.40, 0.25)],
+        glass: (0.40, 0.65, 0.85),
+    ),
+    facade: Punched,
+))

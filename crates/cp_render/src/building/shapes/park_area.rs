@@ -10,16 +10,16 @@ use crate::building::{Frame, Lod};
 use crate::chunk::MeshData;
 use crate::road::{flat_quad, push_vertex, tri};
 
-const STONE: [f32; 4] = [0.72, 0.70, 0.66, 1.0];
-const IRON: [f32; 4] = [0.14, 0.15, 0.16, 1.0];
-const WATER: [f32; 4] = [0.22, 0.45, 0.62, 1.0];
-const WATER_TOP: [f32; 4] = [0.30, 0.55, 0.72, 1.0];
+pub(super) const STONE: [f32; 4] = [0.72, 0.70, 0.66, 1.0];
+pub(super) const IRON: [f32; 4] = [0.14, 0.15, 0.16, 1.0];
+pub(super) const WATER: [f32; 4] = [0.22, 0.45, 0.62, 1.0];
+pub(super) const WATER_TOP: [f32; 4] = [0.30, 0.55, 0.72, 1.0];
 const FOREST: [f32; 4] = [0.26, 0.48, 0.24, 1.0];
 const PINE: [f32; 4] = [0.13, 0.36, 0.20, 1.0];
-const ROCK: [f32; 4] = [0.36, 0.35, 0.33, 1.0];
+pub(super) const ROCK: [f32; 4] = [0.36, 0.35, 0.33, 1.0];
 const REED: [f32; 4] = [0.55, 0.58, 0.30, 1.0];
-const PAVING: [f32; 4] = [0.80, 0.78, 0.72, 1.0];
-const BLOOMS: [[f32; 4]; 4] = [
+pub(super) const PAVING: [f32; 4] = [0.80, 0.78, 0.72, 1.0];
+pub(super) const BLOOMS: [[f32; 4]; 4] = [
     [0.86, 0.20, 0.22, 1.0],
     [0.95, 0.80, 0.20, 1.0],
     [0.62, 0.30, 0.75, 1.0],
@@ -32,7 +32,7 @@ pub fn is_park_area(m: Massing) -> bool {
 }
 
 /// A gable roof over `(cu, cv) ± (hu, hv)` from eaves at `y0` to a ridge along `u` at `y1`.
-fn gable(
+pub(super) fn gable(
     m: &mut MeshData,
     f: &Frame,
     (cu, cv): (f32, f32),
@@ -67,7 +67,7 @@ fn gable(
 /// An annular sector round `c` from radius `r0` to `r1` and angle `a0` to `a1` (radians in the
 /// lot frame, 0 = `+u`) up to `y1`: its top, outer wall and inner riser.
 #[allow(clippy::too_many_arguments)]
-fn arc_band(
+pub(super) fn arc_band(
     m: &mut MeshData,
     f: &Frame,
     c: (f32, f32),
@@ -94,7 +94,15 @@ fn arc_band(
 }
 
 /// A pine: a trunk and two stacked cones.
-fn pine(m: &mut MeshData, f: &Frame, at: (f32, f32), y: f32, h: f32, n: usize, near: bool) {
+pub(super) fn pine(
+    m: &mut MeshData,
+    f: &Frame,
+    at: (f32, f32),
+    y: f32,
+    h: f32,
+    n: usize,
+    near: bool,
+) {
     cyl(m, f, at, (0.3, 0.25), (y, y + h * 0.3), 5, TRUNK, None);
     cone(m, f, at, h * 0.22, (y + h * 0.2, y + h * 0.75), n, PINE);
     if near {
@@ -103,7 +111,7 @@ fn pine(m: &mut MeshData, f: &Frame, at: (f32, f32), y: f32, h: f32, n: usize, n
 }
 
 /// A bench of `len` metres along `u` at `(u, v)`, its back towards `+v` (`back` = -1 turns it).
-fn bench(m: &mut MeshData, f: &Frame, (u, v): (f32, f32), y: f32, len: f32, back: f32) {
+pub(super) fn bench(m: &mut MeshData, f: &Frame, (u, v): (f32, f32), y: f32, len: f32, back: f32) {
     block(
         m,
         f,
@@ -139,7 +147,7 @@ fn bench(m: &mut MeshData, f: &Frame, (u, v): (f32, f32), y: f32, len: f32, back
 }
 
 /// A park lamp: a dark post and a pale head.
-fn lamp(m: &mut MeshData, f: &Frame, at: (f32, f32), y: f32, h: f32) {
+pub(super) fn lamp(m: &mut MeshData, f: &Frame, at: (f32, f32), y: f32, h: f32) {
     cyl(m, f, at, (0.09, 0.07), (y, y + h), 6, IRON, None);
     cyl(
         m,

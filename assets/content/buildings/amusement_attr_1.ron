@@ -1,4 +1,4 @@
-// Numbers: tune later (T-223). Temporary look and icon until the park silhouettes (T-227, T-228).
+// Numbers: tune later (T-223).
 Building((
     id: "amusement_attr_1",
     name: "Amusement park: Carousel",
@@ -10,7 +10,7 @@ Building((
     tax_base: 0.0,
     cost: 6000.0,
     upkeep_week: 109.0,
-    styles: ["park_plaza_fountain"],
+    styles: ["park_amusement_attr_1"],
     service: Some("park_free"),
     park: Some((park: Some(Amusement), role: Attraction, attract: 10.0, capacity: 40, min_level: 1)),
 ))
