@@ -71,6 +71,8 @@ pub const PRIORITY_ZONE: f32 = 30.0;
 pub const STUCK_TICKS: u32 = 60;
 /// Hard cap on a standstill for any reason, in multiples of the stuck threshold (§9.4 v1.1).
 pub const HARD_CAP_FACTOR: u32 = 10;
+/// A car waiting to enter the road gives up after this many times the hard cap (BUG-072b).
+const WAITING_CAP_FACTOR: u32 = 6;
 /// How many full lanes ahead the suspicion of a blocked car is followed.
 const LEADER_CHAIN: u32 = 8;
 /// Metres a keep vehicle stops short of its goal point (the front bumper), and the slack within
@@ -1009,9 +1011,9 @@ fn suspicious_flags(
     st: &DriveState,
     g: &PathGraph,
     signal: u64,
-) -> Vec<(VehicleId, bool)> {
+) -> Vec<(VehicleId, bool, bool)> {
     let mut out = Vec::with_capacity(veh.len());
-    let mut walk = |list: &[VehicleId], front: Option<bool>| {
+    let mut walk = |list: &[VehicleId], front: Option<bool>, root: bool| {
         let mut lead: Option<bool> = None;
         for (i, &id) in list.iter().enumerate() {
             let Some(v) = veh.get(id) else { continue };
@@ -1021,7 +1023,8 @@ fn suspicious_flags(
                 (_, Some(l)) => standing && l,
                 (_, None) => false,
             };
-            out.push((id, sus));
+            // Only the car at the head of the line is the cause; the ones behind it wait for it.
+            out.push((id, sus, i == 0 || root));
             lead = standing.then_some(sus);
         }
     };
@@ -1034,15 +1037,15 @@ fn suspicious_flags(
             }
             _ => Some(false),
         };
-        walk(list, front);
+        walk(list, front, false);
     }
     for list in st.conns.values() {
         // A car standing inside a junction waits for room beyond it.
-        walk(list, Some(true));
+        walk(list, Some(true), true);
     }
     for &id in &st.waiting {
         if veh.contains(id) {
-            out.push((id, false));
+            out.push((id, false, true));
         }
     }
     out
@@ -1068,7 +1071,7 @@ pub(crate) fn drive_tick(
     // Stuck timers (§9.4 v1.1): only a standstill for a suspicious reason counts.
     let flags = suspicious_flags(vehicles, st, g, signal_tick(tick, MOVE_SUBSTEPS - 1));
     let mut stuck = Vec::new();
-    for (id, suspicious) in flags {
+    for (id, suspicious, root) in flags {
         let v = vehicles.get_mut(id).expect("flagged vehicle");
         if v.speed >= 0.1 || v.is_parked() {
             v.stuck_timer = 0;
@@ -1078,7 +1081,16 @@ pub(crate) fn drive_tick(
         let still = (still + 1).min(0xFFFF);
         let sus = if suspicious { (sus + 1).min(0xFFFF) } else { 0 };
         v.stuck_timer = still << 16 | sus;
-        if sus > stuck_ticks || still > stuck_ticks.saturating_mul(HARD_CAP_FACTOR) {
+        let cap = stuck_ticks.saturating_mul(HARD_CAP_FACTOR);
+        // A car that has not left its parking spot yet only waits for a gap; it takes much
+        // longer to give up than one that blocks the road (BUG-072b).
+        let cap = if still > cap && st.waiting.contains(&id) {
+            cap.saturating_mul(WAITING_CAP_FACTOR)
+        } else {
+            cap
+        };
+        // A queue behind a stuck car clears when that car is removed: only its head goes.
+        if (root && sus > stuck_ticks) || still > cap {
             stuck.push(id);
         }
     }

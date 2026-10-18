@@ -350,14 +350,16 @@ fn a_dense_lattice_does_not_gridlock() {
 
 /// BUG-072: a 17 000-resident lattice (16 000 and more) removes few cars as stuck. Before the
 /// fix a car with priority that could not enter (no room beyond) held every car it crosses, which
-/// built rings of waiting cars: 489 cars a day, 6.2 % of the car trips; now about 1.6 %.
+/// built rings of waiting cars: 489 cars a day, 6.2 % of the car trips; then (BUG-072b) a queue
+/// behind a stuck car is no longer removed with it and a car that waits to leave its parking spot
+/// gives up much later: 23 a day, 0.35 %.
 #[test]
-fn a_17k_lattice_keeps_its_stuck_cars_below_three_percent() {
+fn a_17k_lattice_keeps_its_stuck_cars_below_one_percent() {
     let (_, car, _, pop) = split(4250);
     assert!(pop > 15_000, "{pop} residents");
     let stuck = STUCK_LAST_DAY.with(|s| s.get());
     assert!(
-        stuck * 100 < car as u64 * 3,
+        stuck * 100 < car as u64,
         "{stuck} cars removed as stuck of {car} car trips"
     );
 }
