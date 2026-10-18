@@ -127,7 +127,17 @@ pub fn pick_with(
     if lines && let Some(line) = pick_line(view, p) {
         return Some(Selection::Line(line));
     }
-    pick_segment(&view.net, p, PICK_RADIUS).map(Selection::Segment)
+    if let Some(seg) = pick_segment(&view.net, p, PICK_RADIUS) {
+        return Some(Selection::Segment(seg));
+    }
+    // A park area's ground (T-229); its gate is a building and picked above.
+    cp_district::area_at(&view.area_map, p)
+        .filter(|&id| {
+            view.areas
+                .get(id)
+                .is_some_and(|a| matches!(a.kind, cp_district::AreaKind::Park(_)))
+        })
+        .map(Selection::Area)
 }
 
 /// What is selected (set by a click with no tool active; the app reads it every frame).
@@ -253,5 +263,42 @@ mod tests {
             pick(&v, 1.0, Vec2::new(99.0, 100.0), 10.0),
             Some(Selection::Vehicle(1))
         );
+    }
+
+    /// T-229: the ground of a park area is picked as the area (not an industry area's), and the
+    /// sim inspects it; a road or a building over it wins.
+    #[test]
+    fn the_ground_of_a_park_area_is_picked_as_the_area() {
+        use cp_district::{AreaId, AreaKind, DistrictCommand};
+        let mut sim = cp_sim::SimRunner::new(1);
+        let at = Vec2::new(1000.0, 1000.0);
+        let cell = cp_district::DistrictMap::cell_of(at).unwrap();
+        let far = Vec2::new(3000.0, 3000.0);
+        let far_cell = cp_district::DistrictMap::cell_of(far).unwrap();
+        for (kind, cell, n) in [
+            (AreaKind::Park(cp_content::ParkKind::Zoo), cell, 1),
+            (
+                AreaKind::Industry(cp_content::ResourceKind::Forestry),
+                far_cell,
+                2,
+            ),
+        ] {
+            for c in [
+                DistrictCommand::CreateArea {
+                    kind,
+                    name: format!("A{n}"),
+                },
+                DistrictCommand::PaintArea {
+                    cells: vec![cell],
+                    area: AreaId(n),
+                },
+            ] {
+                sim.push_command(cp_sim::SimCommand::District(c), sim.tick());
+            }
+        }
+        sim.tick_once();
+        let v = sim.view();
+        assert_eq!(pick(&v, 1.0, at, 50.0), Some(Selection::Area(AreaId(1))));
+        assert_eq!(pick(&v, 1.0, far, 50.0), None);
     }
 }

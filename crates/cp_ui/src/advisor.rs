@@ -184,25 +184,28 @@ pub type LevelSeen = Option<BTreeMap<u8, u8>>;
 /// brought up to date. Each rise comes once (the count carries the level, which lifts the
 /// cooldown).
 pub fn level_advice(view: &SimView, seen: &mut LevelSeen) -> Vec<Advice> {
-    let now: BTreeMap<u8, u8> = view
-        .areas
-        .iter()
-        .filter(|(_, a)| matches!(a.kind, cp_district::AreaKind::Industry(_)))
-        .map(|(id, a)| (id.0, a.level))
-        .collect();
+    let now: BTreeMap<u8, u8> = view.areas.iter().map(|(id, a)| (id.0, a.level)).collect();
     let Some(before) = seen.replace(now.clone()) else {
         return Vec::new();
     };
     let mut out = Vec::new();
     for (id, a) in view.areas.iter() {
         if before.get(&id.0).is_some_and(|&l| a.level > l) {
+            let (adv_id, icon, panel) = match a.kind {
+                cp_district::AreaKind::Industry(_) => {
+                    ("industry_level_up", Icon::Industry, Category::Industry)
+                }
+                cp_district::AreaKind::Park(_) => {
+                    ("park_level_up", Icon::CategoryParks, Category::Parks)
+                }
+            };
             out.push(Advice {
-                id: "industry_level_up",
+                id: adv_id,
                 severity: Severity::Info,
                 text: format!("{} reached level {}", a.name, a.level),
                 count: u32::from(a.level) * 100,
-                icon: Icon::Industry,
-                action: Some(Action::Panel(Category::Industry)),
+                icon,
+                action: Some(Action::Panel(panel)),
             });
         }
     }
@@ -317,10 +320,78 @@ fn industry_advice(view: &SimView, out: &mut Vec<Advice>) {
     );
 }
 
+/// Park advice (T-229): an area without a gate, a full park, a town with no leisure at all.
+fn park_advice(view: &SimView, out: &mut Vec<Advice>) {
+    use cp_district::AreaKind;
+    let Some(db) = view.content.as_deref() else {
+        return;
+    };
+    let (mut no_gate, mut full) = (Vec::new(), 0u32);
+    let mut full_at = None;
+    for (id, a) in view.areas.iter() {
+        if !matches!(a.kind, AreaKind::Park(_)) || view.area_map.cell_count(id) == 0 {
+            continue;
+        }
+        let Some(s) = crate::parks::park_summary(view, id) else {
+            continue;
+        };
+        if s.gates == 0 {
+            no_gate.push(a.name.as_str());
+        } else if s.capacity > 0 && s.inside * 100 >= s.capacity * 95 {
+            full += 1;
+            full_at = full_at.or(s.gate_at);
+        }
+    }
+    if !no_gate.is_empty() {
+        let n = no_gate.len() as u32;
+        let text = if let [name] = no_gate[..] {
+            format!("{name} has no gate — nobody can visit it")
+        } else {
+            format!("{n} park areas have no gate — nobody can visit them")
+        };
+        out.push(Advice {
+            id: "park_no_gate",
+            severity: Severity::Warn,
+            text,
+            count: n,
+            icon: Icon::CategoryParks,
+            action: Some(Action::Panel(Category::Parks)),
+        });
+    }
+    if full > 0 {
+        out.push(Advice {
+            id: "park_full",
+            severity: Severity::Info,
+            text: format!(
+                "{} full — add attractions, or raise the fee",
+                plural(full, "park", "parks")
+            ),
+            count: full,
+            icon: Icon::CategoryParks,
+            action: full_at.map(Action::Jump),
+        });
+    }
+    let has_leisure = view
+        .buildings
+        .iter()
+        .any(|(_, b)| db.building(b.def).park.is_some());
+    if view.city.population >= 2_000 && !has_leisure {
+        out.push(Advice {
+            id: "leisure_none",
+            severity: Severity::Info,
+            text: "The town has no park — people want somewhere to go".into(),
+            count: 1,
+            icon: Icon::CategoryParks,
+            action: Some(Action::Panel(Category::Buildings)),
+        });
+    }
+}
+
 /// All the advice the view gives now, unordered.
 pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
     let mut out = unique_advice(view, seen);
     industry_advice(view, &mut out);
+    park_advice(view, &mut out);
     let city = &*view.city;
     let st = &city.buildings;
     let sev = |n: u32| {

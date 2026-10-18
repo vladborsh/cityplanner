@@ -29,6 +29,8 @@ pub enum Selection {
     Segment(SegmentId),
     /// A transit line (a click on its ribbon or one of its stops, T-160b).
     Line(cp_transit::LineId),
+    /// A park area (a click on its ground or its gate, T-229).
+    Area(cp_district::AreaId),
 }
 
 /// Splits an `AgentKey` into arena `(index, generation)`.
@@ -164,6 +166,11 @@ pub enum Inspection {
     Vehicle(VehicleInfo),
     Segment(SegmentInfo),
     Line(crate::view::LineView),
+    /// A park area; the panel reads the rest from the view.
+    Area {
+        id: cp_district::AreaId,
+        name: String,
+    },
 }
 
 /// Name of the factory nearest to the shop `shop` within `radius`, if there is one.
@@ -407,6 +414,13 @@ impl SimRunner {
                 }))
             }
             Selection::Line(id) => self.line_view(id).map(Inspection::Line),
+            Selection::Area(id) => {
+                let area = w.get_resource::<cp_district::Areas>()?.get(id)?;
+                matches!(area.kind, cp_district::AreaKind::Park(_)).then(|| Inspection::Area {
+                    id,
+                    name: area.name.clone(),
+                })
+            }
             Selection::Segment(id) => {
                 let net = w.resource::<NetGraph>();
                 let s = net.segment(id)?;
@@ -450,6 +464,7 @@ impl Inspection {
             Inspection::Vehicle(v) => format!("Vehicle {}", key_parts(v.key).0),
             Inspection::Segment(s) => format!("{} segment {}", s.name, s.id.index),
             Inspection::Line(l) => format!("Line {}", l.name),
+            Inspection::Area { name, .. } => name.clone(),
         }
     }
 
@@ -545,6 +560,7 @@ impl Inspection {
                 r.push(row("Noise", format!("{:.0}", b.noise)));
                 r
             }
+            Inspection::Area { .. } => Vec::new(),
             Inspection::Line(l) => vec![
                 row("Mode", format!("{:?}", l.mode)),
                 row("Stops", l.stops.to_string()),

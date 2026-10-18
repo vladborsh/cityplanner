@@ -126,6 +126,7 @@ pub fn sections(view: &SimView) -> Vec<Section> {
 
     out.push(transport_section(view));
     out.push(industry_section(view));
+    out.push(parks_section(view));
 
     let mut utilities = Vec::new();
     for (kind, name) in [
@@ -214,6 +215,51 @@ fn transport_section(view: &SimView) -> Section {
 
 /// The industrial areas (T-219): areas and their levels, chain buildings and jobs, what they
 /// hold, the buildings with a problem, and the cargo trade of the week (`IndustryLedger`).
+/// The Parks section (T-229): the areas, the visitors and the entrance fees.
+fn parks_section(view: &SimView) -> Section {
+    use cp_district::AreaKind;
+    let ids: Vec<_> = view
+        .areas
+        .iter()
+        .filter(|(_, a)| matches!(a.kind, AreaKind::Park(_)))
+        .map(|(id, _)| id)
+        .collect();
+    let (mut inside, mut capacity, mut day, mut week) = (0u32, 0u32, 0u32, 0u32);
+    let mut levels = Vec::new();
+    let mut no_gate = 0u32;
+    for &id in &ids {
+        if let Some(s) = crate::parks::park_summary(view, id) {
+            inside += s.inside;
+            capacity += s.capacity;
+            day += s.visitors_day;
+            week += s.visitors_week;
+            levels.push(s.level.to_string());
+            no_gate += u32::from(s.gates == 0);
+        }
+    }
+    let l = &view.park_ledger;
+    Section {
+        title: "Parks",
+        rows: vec![
+            row("Areas", ids.len()),
+            row(
+                "Area levels",
+                if levels.is_empty() {
+                    "—".to_string()
+                } else {
+                    levels.join(" · ")
+                },
+            ),
+            row("Areas without a gate", no_gate),
+            row("Visitors inside", format!("{inside} / {capacity}")),
+            row("Visitors", format!("{day} today · {week} this week")),
+            row("Entrance fees (week)", format_money(l.fees)),
+            row("Last week: entrance fees", format_money(l.last_fees)),
+        ],
+        spark: None,
+    }
+}
+
 fn industry_section(view: &SimView) -> Section {
     use cp_district::AreaKind;
     let areas: Vec<_> = view

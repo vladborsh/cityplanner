@@ -5,10 +5,11 @@
 
 use bevy_egui::egui;
 use cp_content::{BuildingDefId, ContentDb, ParkKind, ParkRole, ServiceKind};
+use cp_core::Cost;
 use cp_district::{AreaId, AreaKind, DistrictCommand, NAME_MAX};
 use cp_render::{Overlay, OverlayState, park_color};
 use cp_sim::{SimCommand, SimView};
-use cp_tools::{ActiveTool, CommandOutbox, DistrictToolKind, ToolState};
+use cp_tools::{ActiveTool, CommandOutbox, DistrictToolKind, ToolState, format_money};
 
 use crate::buildings::{Card, UniqueState, badge, card_text, groups, select};
 use crate::icons::Icon;
@@ -447,6 +448,173 @@ pub fn parks_panel(
     });
 }
 
+/// The numbers of the park panel (T-229), read from the view.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParkSummary {
+    pub name: String,
+    pub kind: ParkKind,
+    pub level: u8,
+    pub xp: u32,
+    /// The xp of the next level, `None` at the top.
+    pub next_xp: Option<u32>,
+    pub inside: u32,
+    pub capacity: u32,
+    pub visitors_day: u32,
+    pub visitors_week: u32,
+    pub attract: f32,
+    pub fee: f32,
+    pub fee_max: f32,
+    /// Gates and other park buildings of the area.
+    pub gates: u32,
+    /// Where the first gate stands, for "Jump".
+    pub gate_at: Option<bevy::math::Vec2>,
+    pub buildings: u32,
+    /// Fees the visits of the week come to so far (visitors x fee).
+    pub income_week: Cost,
+    /// The weekly upkeep of the area's buildings at the budget now.
+    pub upkeep_week: Cost,
+}
+
+/// The summary of park area `id`; `None` for another kind of area or without content.
+pub fn park_summary(view: &SimView, id: AreaId) -> Option<ParkSummary> {
+    let db = view.content.as_deref()?;
+    let area = view.areas.get(id)?;
+    let AreaKind::Park(kind) = area.kind else {
+        return None;
+    };
+    let st = view.parks.get(id).copied().unwrap_or_default();
+    let mut out = ParkSummary {
+        name: area.name.clone(),
+        kind,
+        level: area.level,
+        xp: area.xp,
+        next_xp: db
+            .balance()
+            .park_levels
+            .get(usize::from(area.level.saturating_sub(1)))
+            .copied(),
+        inside: st.inside,
+        capacity: st.capacity,
+        visitors_day: st.visitors_day,
+        visitors_week: st.visitors_week,
+        attract: st.attract,
+        fee: st.fee,
+        fee_max: db.balance().park_fee_max,
+        gates: 0,
+        gate_at: None,
+        buildings: 0,
+        income_week: Cost((f64::from(st.visitors_week) * f64::from(st.fee) * 100.0).round() as i64),
+        upkeep_week: Cost::ZERO,
+    };
+    for (_, b) in view.buildings.iter() {
+        let def = db.building(b.def);
+        let Some(spec) = &def.park else { continue };
+        let in_area = match spec.role {
+            ParkRole::Gate => {
+                cp_park::gate_area(&view.areas, &view.area_map, kind, b.pos) == Some(id)
+            }
+            _ => cp_district::area_at(&view.area_map, b.pos) == Some(id),
+        };
+        if !in_area {
+            continue;
+        }
+        if spec.role == ParkRole::Gate {
+            out.gates += 1;
+            out.gate_at.get_or_insert(b.pos);
+        }
+        out.buildings += 1;
+        if let Some(service) = def.service.as_deref().and_then(|s| db.service_id(s)) {
+            let pct = view.economy.budgets.get(db.service(service).kind);
+            out.upkeep_week += Cost::scaled(def.upkeep_week, f64::from(pct) / 100.0);
+        }
+    }
+    Some(out)
+}
+
+/// The area a clicked park building belongs to: a gate's area, or the area its cell is in.
+pub fn area_of_building(view: &SimView, id: cp_building::BuildingId) -> Option<AreaId> {
+    let db = view.content.as_deref()?;
+    let b = view.buildings.get(id)?;
+    let spec = db.building(b.def).park.as_ref()?;
+    match spec.role {
+        ParkRole::Gate => cp_park::gate_area(&view.areas, &view.area_map, spec.park?, b.pos),
+        _ => cp_district::area_at(&view.area_map, b.pos).filter(|&a| {
+            view.areas
+                .get(a)
+                .is_some_and(|a| matches!(a.kind, AreaKind::Park(_)))
+        }),
+    }
+}
+
+/// The park panel (T-229): kind, level and its xp bar, the visitors, the draw, the fee slider
+/// and the money of the week. `rects` gets the slider's rectangle for tests.
+pub fn park_panel(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    id: AreaId,
+    outbox: &mut CommandOutbox,
+    slider: &mut Option<egui::Rect>,
+) {
+    let Some(s) = park_summary(view, id) else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        kind_icon(s.kind).show(ui, Sizes::SECTION_ICON);
+        ui.strong(kind_name(s.kind));
+    });
+    ui.label(format!("Level {}", s.level));
+    let (frac, text) = match s.next_xp {
+        Some(next) => (
+            (s.xp as f32 / next.max(1) as f32).min(1.0),
+            format!("{} / {} xp", s.xp, next),
+        ),
+        None => (1.0, format!("{} xp (top level)", s.xp)),
+    };
+    ui.add(egui::ProgressBar::new(frac).text(text));
+    egui::Grid::new("park_rows").num_columns(2).show(ui, |ui| {
+        let mut row = |l: &str, v: String| {
+            ui.weak(l);
+            ui.label(v);
+            ui.end_row();
+        };
+        row("Inside now", format!("{} / {}", s.inside, s.capacity));
+        row(
+            "Visitors",
+            format!("{} today · {} this week", s.visitors_day, s.visitors_week),
+        );
+        row("Attraction", format!("{:.0}", s.attract));
+        row("Gates", s.gates.to_string());
+        row("Fees this week", format_money(s.income_week));
+        row("Upkeep (week)", format_money(s.upkeep_week));
+        row(
+            "Fees last week (all parks)",
+            format_money(view.park_ledger.last_fees),
+        );
+    });
+    if s.gates == 0 {
+        ui.colored_label(
+            egui::Color32::from_rgb(230, 160, 40),
+            "No gate: nobody can come in. Put a gate on a road next to the area.",
+        );
+    }
+    ui.horizontal(|ui| {
+        ui.label("Entrance fee");
+        let mut fee = s.fee;
+        let r = ui.add(
+            egui::Slider::new(&mut fee, 0.0..=s.fee_max)
+                .step_by(0.5)
+                .prefix("$"),
+        );
+        *slider = Some(r.rect);
+        if r.changed() && (fee - s.fee).abs() > f32::EPSILON {
+            outbox.push(SimCommand::Park(cp_park::ParkCommand::SetFee {
+                area: id,
+                fee,
+            }));
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,5 +826,166 @@ mod tests {
             );
         }
         assert_eq!(section_cards(db, None).len(), 6);
+    }
+
+    fn park_frame(
+        ctx: &egui::Context,
+        view: &SimView,
+        outbox: &mut CommandOutbox,
+        events: Vec<egui::Event>,
+    ) -> Option<egui::Rect> {
+        let mut slider = None;
+        let mut raw = input(0.0, events);
+        raw.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1280.0, 3000.0),
+        ));
+        frame(ctx, raw, |ui| {
+            park_panel(ui, view, AreaId(1), outbox, &mut slider)
+        });
+        slider
+    }
+
+    /// T-229: the fee slider sends `SetFee` for its area, inside `0..=park_fee_max`, and sends
+    /// nothing while it is left alone.
+    #[test]
+    fn the_fee_slider_sends_set_fee_for_the_area() {
+        let (sim, _) = zoo_world(1);
+        let view = sim.view();
+        let ctx = egui::Context::default();
+        let mut outbox = CommandOutbox::default();
+        let rect = park_frame(&ctx, &view, &mut outbox, vec![]).expect("the slider is drawn");
+        park_frame(&ctx, &view, &mut outbox, vec![]);
+        assert_eq!(outbox.iter().count(), 0);
+        // The slider rail is the left part of the widget; press a third of the way along it.
+        let at = egui::pos2(rect.left() + rect.width() * 0.25, rect.center().y);
+        let [down, up] = click(at);
+        park_frame(&ctx, &view, &mut outbox, down);
+        park_frame(&ctx, &view, &mut outbox, up);
+        let sent: Vec<_> = outbox.iter().cloned().collect();
+        let max = view.content.as_deref().unwrap().balance().park_fee_max;
+        assert!(!sent.is_empty(), "no command");
+        for c in sent {
+            let SimCommand::Park(cp_park::ParkCommand::SetFee { area, fee }) = c else {
+                panic!("{c:?}");
+            };
+            assert_eq!(area, AreaId(1));
+            assert!(fee > 0.0 && fee <= max, "{fee}");
+        }
+    }
+
+    /// T-229: the summary adds up the area's own gate, and a gate or a prop click maps to the
+    /// area; a city park (no area) maps to none.
+    #[test]
+    fn the_summary_counts_the_gate_and_a_gate_maps_to_its_area() {
+        use crate::industry::tests::put;
+        let (mut sim, db) = zoo_world(2);
+        let at = bevy::math::Vec2::new(1000.0, 1000.0);
+        let s = park_summary(&sim.view(), AreaId(1)).unwrap();
+        assert_eq!((s.gates, s.buildings, s.level), (0, 0, 2));
+        assert_eq!(s.next_xp, Some(db.balance().park_levels[1]));
+        let gate = put(&mut sim, &db, "zoo_gate", at);
+        let s = park_summary(&sim.view(), AreaId(1)).unwrap();
+        assert_eq!((s.gates, s.buildings), (1, 1));
+        assert_eq!(s.gate_at, Some(at));
+        assert_eq!(area_of_building(&sim.view(), gate), Some(AreaId(1)));
+        let city = put(
+            &mut sim,
+            &db,
+            "small_park",
+            bevy::math::Vec2::new(3000.0, 3000.0),
+        );
+        assert_eq!(area_of_building(&sim.view(), city), None);
+    }
+
+    /// T-229: the advice for the parks. A gateless area warns and a gate takes it away; a rise
+    /// of the level comes once; a town of 2000 with no park hears about it, and one small park
+    /// is enough.
+    #[test]
+    fn park_advice_warns_of_a_gateless_area_and_a_leisureless_town() {
+        use crate::advisor::{collect, level_advice};
+        use crate::industry::tests::put;
+        let (mut sim, db) = zoo_world(1);
+        let ids = |sim: &SimRunner| -> Vec<&'static str> {
+            let mut v = sim.view();
+            std::sync::Arc::make_mut(&mut v.city).population = 2_500;
+            collect(&v, &mut None).iter().map(|a| a.id).collect()
+        };
+        let got = ids(&sim);
+        assert!(got.contains(&"park_no_gate"), "{got:?}");
+        assert!(got.contains(&"leisure_none"), "{got:?}");
+        let at = bevy::math::Vec2::new(1000.0, 1000.0);
+        put(&mut sim, &db, "zoo_gate", at);
+        let got = ids(&sim);
+        assert!(!got.contains(&"park_no_gate"), "{got:?}");
+        assert!(!got.contains(&"leisure_none"), "{got:?}");
+        // A small town does not hear it; one small park is enough for a big one.
+        let (mut sim2, db2) = zoo_world(1);
+        let mut v = sim2.view();
+        std::sync::Arc::make_mut(&mut v.city).population = 1_999;
+        assert!(
+            !collect(&v, &mut None)
+                .iter()
+                .any(|a| a.id == "leisure_none")
+        );
+        put(
+            &mut sim2,
+            &db2,
+            "small_park",
+            bevy::math::Vec2::new(3000.0, 3000.0),
+        );
+        assert!(!ids(&sim2).contains(&"leisure_none"));
+
+        let mut seen = None;
+        assert!(level_advice(&sim.view(), &mut seen).is_empty());
+        sim.world_mut()
+            .resource_mut::<cp_district::Areas>()
+            .get_mut(AreaId(1))
+            .unwrap()
+            .level = 2;
+        let got = level_advice(&sim.view(), &mut seen);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, "park_level_up");
+        assert!(level_advice(&sim.view(), &mut seen).is_empty());
+    }
+
+    /// T-229: a full park gives `park_full` that jumps to its gate.
+    #[test]
+    fn a_full_park_gives_advice_that_jumps_to_the_gate() {
+        use crate::advisor::{Action, collect};
+        use crate::industry::tests::put;
+        let (mut sim, db) = zoo_world(1);
+        let at = bevy::math::Vec2::new(1000.0, 1000.0);
+        put(&mut sim, &db, "zoo_gate", at);
+        sim.world_mut()
+            .resource_mut::<cp_park::ParkState>()
+            .areas
+            .insert(
+                1,
+                cp_park::ParkAreaState {
+                    capacity: 40,
+                    inside: 40,
+                    ..Default::default()
+                },
+            );
+        let got = collect(&sim.view(), &mut None);
+        let full = got.iter().find(|a| a.id == "park_full").expect("park_full");
+        assert!(
+            matches!(full.action, Some(Action::Jump(p)) if p == at),
+            "{:?}",
+            full.action
+        );
+    }
+
+    /// T-229: the Parks metrics section counts the areas, the gateless ones and the visitors.
+    #[test]
+    fn the_parks_metrics_section_counts_areas_and_visitors() {
+        let (sim, _) = zoo_world(3);
+        let secs = crate::metrics::sections(&sim.view());
+        let sec = secs.iter().find(|s| s.title == "Parks").expect("Parks");
+        let v = |l: &str| sec.rows.iter().find(|(k, _)| k == l).unwrap().1.clone();
+        assert_eq!(v("Areas"), "1");
+        assert_eq!(v("Area levels"), "3");
+        assert_eq!(v("Areas without a gate"), "1");
     }
 }

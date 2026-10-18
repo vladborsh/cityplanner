@@ -16,6 +16,8 @@ pub struct InfoRects {
     pub goto: Vec<(String, egui::Rect, Selection)>,
     /// `(label, rectangle)` of the Move / Demolish buttons of a service building (T-177).
     pub actions: Vec<(String, egui::Rect)>,
+    /// The entrance fee slider of a park panel (T-229).
+    pub fee_slider: Option<egui::Rect>,
 }
 
 /// Shows the panel for `inspected` (nothing when empty). Close and the go-to buttons write
@@ -39,6 +41,12 @@ pub fn info_panel(
     }
     let mut open = true;
     let title = info.title();
+    // A click on a park's gate or ground shows the park (T-229).
+    let park = view.and_then(|v| match info {
+        Inspection::Area { id, .. } => Some(*id),
+        Inspection::Building(b) => crate::parks::area_of_building(v, b.id),
+        _ => None,
+    });
     crate::frame::window("info_panel", Icon::Info, &title, &mut open)
         .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -8.0))
         .show(ctx, |ui| {
@@ -73,6 +81,11 @@ pub fn info_panel(
                     });
                 }
                 Inspection::Building(b) => {
+                    if let (Some(id), Some(view)) = (park, view) {
+                        ui.separator();
+                        crate::parks::park_panel(ui, view, id, outbox, &mut rects.fee_slider);
+                        ui.separator();
+                    }
                     let is_service = view.and_then(|v| v.content.as_deref()).is_some_and(|db| {
                         db.building_id(&b.def)
                             .is_some_and(|d| db.building(d).service.is_some())
@@ -106,6 +119,11 @@ pub fn info_panel(
                     if let (true, Some(view)) = (is_service, view) {
                         ui.separator();
                         building_actions(ui, b.id, view, picked, tools, outbox, &mut rects);
+                    }
+                }
+                Inspection::Area { id, .. } => {
+                    if let Some(view) = view {
+                        crate::parks::park_panel(ui, view, *id, outbox, &mut rects.fee_slider);
                     }
                 }
                 _ => {}

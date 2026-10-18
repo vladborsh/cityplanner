@@ -1479,6 +1479,8 @@ fn draw_selection(
                 Color::srgb(1.0, 0.85, 0.2),
             );
         }
+        // The Parks overlay shows the area; the panel shows its numbers.
+        Inspection::Area { .. } => {}
         Inspection::Line(l) => {
             if let Some(route) = view.transit.routes.get(&l.id) {
                 gizmos.linestrip(
