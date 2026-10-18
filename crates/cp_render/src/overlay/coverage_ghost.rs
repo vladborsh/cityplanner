@@ -180,10 +180,12 @@ pub(super) struct CoverageGhostLayer {
 #[derive(Component)]
 pub struct CoverageGhostRibbons;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn sync_coverage_ghost(
     view: Option<Res<SimView>>,
     overlay: Res<OverlayLayers>,
     ghost: Res<CoverageGhost>,
+    live: Res<super::LiveCoverage>,
     mut layer: ResMut<CoverageGhostLayer>,
     mut summary: ResMut<CoverageGhostSummary>,
     mut commands: Commands,
@@ -197,7 +199,8 @@ pub(super) fn sync_coverage_ghost(
         ghost.clone(),
         net_key,
         std::sync::Arc::as_ptr(&view.service) as usize,
-        std::sync::Arc::as_ptr(&view.buildings) as usize,
+        std::sync::Arc::as_ptr(&view.buildings) as usize
+            ^ (live.generation as usize).rotate_left(23),
     );
     if layer.key.as_ref() == Some(&key) {
         return;
@@ -218,7 +221,8 @@ pub(super) fn sync_coverage_ghost(
     };
     let kind = site.kind;
     let values = site_coverage(graph, site.access, site.radius_m);
-    let existing = |i: u32| existing_value(&view.service, kind, i);
+    // Compared with the live coverage of the kind (T-254 step 2), else the sim's.
+    let existing = |i: u32| live.value_or(kind, i, || existing_value(&view.service, kind, i));
     summary.set_if_neq(CoverageGhostSummary(Some(coverage_count(
         &values,
         existing,

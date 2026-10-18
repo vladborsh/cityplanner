@@ -360,6 +360,35 @@ pub fn build_services(sim: &mut SimRunner) -> Vec<String> {
     rejected
 }
 
+/// The [`SERVICES`] scene with one more police station placed in the east half **after** the
+/// clock was paused (T-254 step 2): the sim's coverage has not been recomputed, the overlay shows
+/// its coverage anyway (the client's live coverage). `--cam services --overlay police`.
+pub const SERVICES_PAUSED: &str = "services-paused";
+
+/// Builds the [`SERVICES_PAUSED`] scene; returns the rejected commands.
+pub fn build_services_paused(sim: &mut SimRunner) -> Vec<String> {
+    let mut rejected = build_services(sim);
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let def = db.building_id("police_station").expect("police_station");
+    sim.push_command(
+        SimCommand::Building(cp_building::BuildingCommand::Place {
+            def,
+            pos: Vec2::new(c + 350.0, c - 188.0),
+            rot: 0.0,
+        }),
+        sim.tick(),
+    );
+    sim.apply_due_commands();
+    rejected.extend(
+        sim.world_mut()
+            .resource_mut::<Messages<CommandOutcome>>()
+            .drain()
+            .filter_map(|o| o.result.err().map(|e| e.to_string())),
+    );
+    rejected
+}
+
 /// Construction scene (T-235): the same house at 0, 20, 40, 60, 80 and 99 % of its construction
 /// and, last, finished; the sim stands still. Look at it with `--cam construction`.
 pub const CONSTRUCTION: &str = "construction";

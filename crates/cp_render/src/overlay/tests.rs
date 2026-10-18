@@ -1293,3 +1293,41 @@ fn a_street_built_at_runtime_gets_visible_zone_layers() {
         "no visible zone fill mesh in zoning mode: {zoning:?}"
     );
 }
+
+/// T-254: the zone cells' outlines step aside while a service ghost previews its coverage on the
+/// roads and come back after; a service overlay alone keeps them (BUG-026).
+#[test]
+fn zone_outlines_hide_under_a_service_ghosts_preview() {
+    use bevy::prelude::*;
+    let mut app = App::new();
+    app.init_resource::<OverlayState>()
+        .init_resource::<CoverageGhost>()
+        .add_systems(Update, apply_overlay_visibility);
+    let e = app
+        .world_mut()
+        .spawn((
+            OverlayLayer(Overlay::Zones),
+            ZoneOutlines,
+            Visibility::Hidden,
+        ))
+        .id();
+    let vis = |app: &App| *app.world().get::<Visibility>(e).unwrap();
+    app.world_mut().resource_mut::<OverlayState>().active = Overlay::Police;
+    app.update();
+    assert_eq!(vis(&app), Visibility::Visible);
+    app.world_mut().resource_mut::<CoverageGhost>().site = Some(CoverageSite {
+        kind: cp_content::ServiceKind::Police,
+        access: cp_building::AccessPoint {
+            segment: cp_core::Id::new(0, 0),
+            t: 0.0,
+        },
+        radius_m: 500.0,
+        capacity: 1,
+        lot: Vec::new(),
+    });
+    app.update();
+    assert_eq!(vis(&app), Visibility::Hidden);
+    app.world_mut().resource_mut::<CoverageGhost>().site = None;
+    app.update();
+    assert_eq!(vis(&app), Visibility::Visible);
+}

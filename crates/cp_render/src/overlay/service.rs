@@ -2,19 +2,43 @@
 //! roads its buildings reach, coloured by the coverage `0..1`, and the buildings of the kind
 //! marked. A pure function of the sim snapshot, like the other layers.
 
-use cp_building::{BuildingGrid, BuildingState};
+use bevy::math::Vec2;
+use cp_building::{Building, BuildingGrid, BuildingState};
 use cp_content::{ContentDb, ServiceKind};
-use cp_net::NetGraph;
-use cp_service::{MailState, ServiceCoverage};
+use cp_net::{NetGraph, SegmentId};
+use cp_service::MailState;
 use cp_terrain::Terrain;
 use cp_zone::ZoneGrid;
 
 use super::utility::lot_quads;
-use super::{ramp, road_ribbons};
+use super::{flat, ramp, road_ribbons};
 use crate::chunk::MeshData;
 
 /// Colour of a service building of the overlay's kind.
 pub const SERVICE_MARK: [f32; 4] = [0.25, 0.60, 1.0, 0.9];
+/// The bright frame round a building of the overlay's kind (T-254: they must stand out).
+pub const SERVICE_FRAME: [f32; 4] = [0.75, 0.92, 1.0, 1.0];
+/// Fill and frame of one still under construction (it covers nothing yet).
+pub const SERVICE_BUILDING: [f32; 4] = [0.25, 0.60, 1.0, 0.35];
+pub const SERVICE_BUILDING_FRAME: [f32; 4] = [0.75, 0.92, 1.0, 0.45];
+/// Width of the frame, metres outside the footprint.
+const FRAME: f32 = 3.0;
+
+/// A frame `FRAME` m wide round the footprint of `b`, `lift` m above the terrain.
+fn frame_quads(m: &mut MeshData, b: &Building, terrain: &Terrain, lift: f32, c: [f32; 4]) {
+    let k = b.footprint_polygon();
+    let centre = (k[0] + k[1] + k[2] + k[3]) / 4.0;
+    let out = |p: Vec2| {
+        let d = (p - centre).normalize_or_zero();
+        // Corners pushed out along the diagonal so the frame is about FRAME wide at the sides.
+        p + d * FRAME * std::f32::consts::SQRT_2
+    };
+    let at = |p: Vec2| [p.x, terrain.height(p) + lift, p.y];
+    for i in 0..4 {
+        let (a, b2) = (k[i], k[(i + 1) % 4]);
+        flat(m, [at(a), at(b2), at(out(b2)), at(out(a))], c);
+    }
+}
 
 /// Colour of a building with mail piling up (the Mail overlay): red at the MAIL problem, orange
 /// from the point a van is sent.
@@ -33,35 +57,40 @@ pub fn coverage_color(v: f32) -> [f32; 4] {
     )
 }
 
-/// The layer of `kind`: a ribbon on every road with coverage above 0 (the others are left
-/// bare), and the lot of every Active building of the kind. For the post, `mail` also marks
+/// The layer of `kind`: a ribbon on every road with `coverage` above 0 (the others are left
+/// bare), and the lot of every building of the kind, filled and framed (dimmer while it is still
+/// being built). `coverage` is the client's live coverage (T-254) or the sim's. For the post, `mail` also marks
 /// the buildings holding mail: orange from `mail_van_min`, red from `mail_problem` (T-249).
 #[allow(clippy::too_many_arguments)]
 pub fn service_overlay_mesh(
     kind: ServiceKind,
     mail: &MailState,
     net: &NetGraph,
-    coverage: &ServiceCoverage,
+    coverage: impl Fn(SegmentId) -> f32,
     buildings: &BuildingGrid,
     zones: &ZoneGrid,
     db: &ContentDb,
     terrain: &Terrain,
 ) -> MeshData {
     let mut m = road_ribbons(net, |id| {
-        let c = coverage.on_segment(kind, id);
+        let c = coverage(id);
         (c > 0.0).then(|| coverage_color(c))
     });
     for (_, b) in buildings.iter() {
-        let is_kind = b.state == BuildingState::Active
-            && db
-                .building(b.def)
-                .service
-                .as_deref()
-                .and_then(|s| db.service_id(s))
-                .is_some_and(|s| db.service(s).kind == kind);
-        if is_kind {
-            lot_quads(&mut m, b, zones, terrain, SERVICE_MARK);
-        }
+        let is_kind = db
+            .building(b.def)
+            .service
+            .as_deref()
+            .and_then(|s| db.service_id(s))
+            .is_some_and(|s| db.service(s).kind == kind);
+        let (fill, frame) = match b.state {
+            _ if !is_kind => continue,
+            BuildingState::Active => (SERVICE_MARK, SERVICE_FRAME),
+            BuildingState::UnderConstruction => (SERVICE_BUILDING, SERVICE_BUILDING_FRAME),
+            _ => continue,
+        };
+        lot_quads(&mut m, b, zones, terrain, fill);
+        frame_quads(&mut m, b, terrain, super::LIFT + 0.2, frame);
     }
     if kind == ServiceKind::Post {
         let bal = db.balance();
@@ -154,7 +183,11 @@ mod tests {
             kind,
             &MailState::default(),
             world.resource::<NetGraph>(),
-            world.resource::<cp_service::ServiceCoverage>(),
+            |id| {
+                world
+                    .resource::<cp_service::ServiceCoverage>()
+                    .on_segment(kind, id)
+            },
             world.resource::<BuildingGrid>(),
             &ZoneGrid::default(),
             db,
@@ -173,6 +206,8 @@ mod tests {
         assert_eq!(far, 0, "the street beyond its reach is left bare");
         // Full coverage at the access point: green.
         assert!(m.colors.iter().any(|c| c[1] > c[0]));
+        // The landfill is framed (its fill needs the zone grid's cells, empty here).
+        assert!(m.colors.contains(&SERVICE_FRAME));
         // A kind nothing provides paints nothing.
         assert!(mesh(&world, &db, ServiceKind::Fire).indices.is_empty());
     }
@@ -198,7 +233,11 @@ mod tests {
                 ServiceKind::Post,
                 &mail,
                 world.resource::<NetGraph>(),
-                world.resource::<cp_service::ServiceCoverage>(),
+                |id| {
+                    world
+                        .resource::<cp_service::ServiceCoverage>()
+                        .on_segment(ServiceKind::Post, id)
+                },
                 world.resource::<BuildingGrid>(),
                 &ZoneGrid::default(),
                 &db,

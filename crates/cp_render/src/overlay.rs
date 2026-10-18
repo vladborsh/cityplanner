@@ -27,6 +27,7 @@ mod coverage_ghost;
 mod districts;
 mod industry;
 mod land;
+mod live_coverage;
 mod service;
 mod tiles;
 pub mod transit;
@@ -44,6 +45,7 @@ pub use industry::{
     area_contour_mesh, area_fill_mesh, park_color, resource_cell_color, resource_color,
     resources_mesh,
 };
+pub use live_coverage::{LIVE_PERIOD_S, LiveCoverage, needs_update, shown_kind};
 pub use service::{coverage_color, service_overlay_mesh};
 pub use tiles::{border_edges, border_mesh, shade_mesh};
 pub use transit::{LineGhost, line_color};
@@ -644,6 +646,7 @@ impl Plugin for OverlayPlugin {
             .init_resource::<land::LandLayer>()
             .init_resource::<transit::LineGhost>()
             .init_resource::<CoverageGhost>()
+            .init_resource::<LiveCoverage>()
             .init_resource::<CoverageGhostSummary>()
             .init_resource::<coverage_ghost::CoverageGhostLayer>()
             .init_resource::<transit::TransitLayer>()
@@ -651,6 +654,7 @@ impl Plugin for OverlayPlugin {
             .add_systems(
                 Update,
                 (
+                    live_coverage::update_live_coverage,
                     sync_overlay_meshes,
                     tiles::sync_tile_layers,
                     districts::sync_district_layers,
@@ -787,6 +791,7 @@ fn spawn_layer(
 #[allow(clippy::too_many_arguments)]
 fn sync_overlay_meshes(
     view: Option<Res<SimView>>,
+    live: Option<Res<LiveCoverage>>,
     zoning: Res<ZoningMode>,
     camera: Query<&Transform, With<Camera3d>>,
     mut layers: ResMut<OverlayLayers>,
@@ -929,6 +934,9 @@ fn sync_overlay_meshes(
             } else {
                 key
             };
+            // The live coverage of the kind on screen (T-254), else the sim's.
+            let live = live.as_deref().filter(|l| l.of(kind).is_some());
+            let key = live.map_or(key, |l| key ^ (l.generation as usize).rotate_left(41));
             upsert(
                 src,
                 key,
@@ -938,7 +946,10 @@ fn sync_overlay_meshes(
                         kind,
                         &view.mail,
                         &view.net,
-                        &view.service,
+                        |id| match live {
+                            Some(l) => l.value_or(kind, id.index, || 0.0),
+                            None => view.service.on_segment(kind, id),
+                        },
                         &view.buildings,
                         &view.zones,
                         db,
@@ -973,7 +984,8 @@ fn apply_overlay_visibility(
     ghost: Option<Res<CoverageGhost>>,
     mut layers: Query<(&OverlayLayer, Option<&ZoneOutlines>, &mut Visibility)>,
 ) {
-    // A service ghost's coverage ribbons (T-254) must not sit under the zone cells' outlines.
+    // A service ghost's coverage preview (T-254) must not sit under the zone cells' outlines; with
+    // a plain overlay the grid stays (BUG-026: always shown).
     let ghost_on = ghost.is_some_and(|g| g.site.is_some());
     for (layer, outlines, mut vis) in &mut layers {
         let on = if outlines.is_some() {

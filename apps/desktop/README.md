@@ -38,6 +38,8 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
   a 12 × 12 block grid with a police and a fire station, paused after a coverage recompute, and
   the placement ghost held at (x, z) with its road coverage preview (blue: new, white: already
   covered). `--place-demo <building>,x,z` works with any scene.
+* `--scene services-paused --cam services --overlay police` (T-254 step 2): the same grid with a
+  third police station placed after the pause; the overlay shows its coverage at once (live).
 * `--screenshot` never saves a blank frame (BUG-012): blank captures are discarded and
   retried; if no real frame arrives within 20 s it exits with code **3**; a write error exits
   **4**.

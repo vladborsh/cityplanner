@@ -582,6 +582,11 @@ pub fn build_sim(
         }
         scene::add_mail_houses(&mut sim);
         info!("scene post: {n} mail vans");
+    } else if scene == Some(scene::SERVICES_PAUSED) {
+        for reason in scene::build_services_paused(&mut sim) {
+            warn!("scene command rejected: {reason}");
+        }
+        info!("scene services-paused");
     } else if scene == Some(scene::SERVICES) {
         for reason in scene::build_services(&mut sim) {
             warn!("scene command rejected: {reason}");

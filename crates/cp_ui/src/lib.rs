@@ -33,6 +33,7 @@ pub mod panels;
 pub mod parks;
 pub mod policies;
 pub mod roads;
+pub mod service_marks;
 pub mod services;
 pub mod specs;
 pub mod style;
@@ -91,6 +92,7 @@ impl Plugin for UiPlugin {
                     transit::transit_labels,
                     utility_legend::utility_legend,
                     parks::draw_labels,
+                    service_marks::draw_service_marks,
                 )
                     .chain(),
             );
