@@ -608,11 +608,14 @@ pub struct UtilityRenderPlugin;
 
 impl Plugin for UtilityRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(crate::zone_ghost::ZoneGhostPlugin)
-            .init_resource::<PowerRender>()
-            .init_resource::<PipeLayers>()
-            .init_resource::<PipeRender>()
-            .add_systems(Update, (sync_power, sync_pipes));
+        app.add_plugins((
+            crate::zone_ghost::ZoneGhostPlugin,
+            crate::demolish_ghost::DemolishGhostPlugin,
+        ))
+        .init_resource::<PowerRender>()
+        .init_resource::<PipeLayers>()
+        .init_resource::<PipeRender>()
+        .add_systems(Update, (sync_power, sync_pipes));
     }
 }
 

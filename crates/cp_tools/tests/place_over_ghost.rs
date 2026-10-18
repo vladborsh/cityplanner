@@ -1,6 +1,6 @@
 //! T-252: the placement ghost of a service over zoned buildings is valid (green) and names the
 //! buildings it would demolish; the app counts the residents and jobs in them from the sim. Over
-//! another service building it stays red.
+//! another service building it stays red. The renderer's red shell covers the whole building.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -61,6 +61,47 @@ fn the_ghost_over_a_house_is_green_and_names_what_it_demolishes() {
         text.starts_with(&format!("Demolishes {} building", g.demolish.len()))
             && text.contains(&format!("{residents} residents evicted")),
         "{text}"
+    );
+
+    // The renderer tints each doomed building whole (T-252b): its own near mesh, pushed just
+    // outside its surfaces, all in the demolish tint.
+    let shell = cp_render::demolish_ghost::demolish_mesh(&view, &g.demolish);
+    let own: usize = g
+        .demolish
+        .iter()
+        .map(|id| {
+            let b = buildings.get(*id).unwrap();
+            let terrain = view.terrain.as_deref().unwrap();
+            cp_render::building::build_building(
+                *id,
+                b,
+                db.building(b.def),
+                &view.net,
+                terrain,
+                &db,
+                cp_core::Tick(view.tick.0),
+            )
+            .near
+            .positions
+            .len()
+        })
+        .sum();
+    assert!(own > 0 && shell.positions.len() == own);
+    assert!(
+        shell
+            .colors
+            .iter()
+            .all(|c| *c == cp_render::demolish_ghost::DEMOLISH_TINT)
+    );
+    let roof = shell
+        .positions
+        .iter()
+        .map(|p| p[1])
+        .fold(f32::MIN, f32::max);
+    let ground = view.terrain.as_deref().unwrap().height(b.pos);
+    assert!(
+        roof > ground + 3.0,
+        "the shell reaches the roof: {roof} vs {ground}"
     );
 
     // Over a service building: red, nothing to demolish.

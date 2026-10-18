@@ -41,8 +41,8 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
 * `--scene services-paused --cam services --overlay police` (T-254 step 2): the same grid with a
   third police station placed after the pause; the overlay shows its coverage at once (live).
 * `--scene grown --cam place-over --place-demo clinic,5140,5078` (T-252): the placement ghost of a
-  clinic held over grown houses: the lot in green, the zoned buildings it would demolish outlined
-  in red (`--place-demo def,x,z` works with any scene).
+  clinic held over grown houses: the lot in green drawn over the roofs, the zoned buildings it would
+  demolish tinted red whole (T-252b) (`--place-demo def,x,z` works with any scene).
 * `--screenshot` never saves a blank frame (BUG-012): blank captures are discarded and
   retried; if no real frame arrives within 20 s it exits with code **3**; a write error exits
   **4**.

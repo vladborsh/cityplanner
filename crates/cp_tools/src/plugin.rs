@@ -296,6 +296,22 @@ fn ghost_demo(
     state.ghost = compute_ghost_alt(&view, &road_tool, to, false);
 }
 
+/// Gizmos drawn over the scene, never hidden by a building: the placement ghost's lot (T-252b).
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct GhostOnTop;
+
+/// Hands the buildings a valid placement ghost would demolish to the renderer, which tints them
+/// red (T-252b).
+fn sync_demolish_layer(state: Res<ToolState>, mut out: ResMut<cp_render::DemolishLayer>) {
+    let want = match (&state.place_ghost, state.active) {
+        (Some(g), ActiveTool::Place) if g.valid => g.demolish.clone(),
+        _ => Vec::new(),
+    };
+    if out.ids != want {
+        out.ids = want;
+    }
+}
+
 /// Hands the zone strip of the road ghost to the renderer (T-185).
 fn sync_zone_strip(state: Res<ToolState>, mut out: ResMut<cp_render::ZoneStripLayer>) {
     let want: Vec<[Vec2; 4]> = match (&state.ghost, state.active) {
@@ -543,6 +559,18 @@ impl Plugin for ToolsPlugin {
                 (place_demo, sync_coverage_ghost).chain().after(tool_hover),
             )
             .add_systems(Update, sync_coverage_count.after(sync_coverage_ghost))
+            .init_resource::<cp_render::DemolishLayer>()
+            .add_systems(
+                Update,
+                sync_demolish_layer.after(tool_hover).after(place_demo),
+            )
+            .insert_gizmo_config(
+                GhostOnTop,
+                GizmoConfig {
+                    depth_bias: -1.0,
+                    ..default()
+                },
+            )
             .add_systems(
                 Update,
                 (ghost_demo, sync_zone_strip)
@@ -1202,7 +1230,12 @@ pub fn tool_click(
     }
 }
 
-fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Gizmos) {
+fn draw_ghost(
+    state: Res<ToolState>,
+    view: Option<Res<SimView>>,
+    mut gizmos: Gizmos,
+    mut on_top: Gizmos<GhostOnTop>,
+) {
     if let (Some(view), Some(stop)) = (view.as_deref(), state.stop_highlight)
         && let Some(st) = view.transit.net.stops.get(stop)
     {
@@ -1396,11 +1429,12 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
         } else {
             Color::srgb(0.95, 0.2, 0.2)
         };
-        draw_cells(view, &g.cells, color, &mut gizmos);
+        // On top of everything (T-252b): the lot stays readable over the roofs it would replace.
+        draw_cells(view, &g.cells, color, &mut on_top);
         if let Some(f) = &g.free {
-            draw_free(view, f, color, &mut gizmos);
+            draw_free(view, f, color, &mut on_top);
         }
-        // The zoned buildings it would demolish (T-252).
+        // The zoned buildings it would demolish (T-252); cp_render tints them whole.
         for b in g.demolish.iter().filter_map(|id| view.buildings.get(*id)) {
             let cells = cp_building::held_cells(&view.zones, b);
             draw_cells(view, &cells, Color::srgb(0.95, 0.2, 0.2), &mut gizmos);
@@ -1416,7 +1450,12 @@ fn draw_ghost(state: Res<ToolState>, view: Option<Res<SimView>>, mut gizmos: Giz
 
 /// The rectangle of a free-standing ghost, the connection circle (the network's reach) around it and a line
 /// to the network it would connect to.
-fn draw_free(view: &SimView, f: &crate::FreeGhost, color: Color, gizmos: &mut Gizmos) {
+fn draw_free<G: GizmoConfigGroup>(
+    view: &SimView,
+    f: &crate::FreeGhost,
+    color: Color,
+    gizmos: &mut Gizmos<G>,
+) {
     let height = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.6;
     let k = f.polygon.map(|q| Vec3::new(q.x, height(q), q.y));
     gizmos.linestrip([k[0], k[1], k[2], k[3], k[0]], color);
@@ -1457,7 +1496,12 @@ fn draw_free(view: &SimView, f: &crate::FreeGhost, color: Color, gizmos: &mut Gi
 }
 
 /// Outlines (crossed) the footprints of `cells`.
-fn draw_cells(view: &SimView, cells: &[ZoneCellRef], color: Color, gizmos: &mut Gizmos) {
+fn draw_cells<G: GizmoConfigGroup>(
+    view: &SimView,
+    cells: &[ZoneCellRef],
+    color: Color,
+    gizmos: &mut Gizmos<G>,
+) {
     let height = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.6;
     for c in cells {
         let Some(o) = view.zones.cell_footprint(*c) else {
