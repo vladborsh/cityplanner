@@ -219,6 +219,11 @@ fn count_day(sim: &mut cp_sim::SimRunner) -> (usize, usize, usize) {
     (walk, car, transit)
 }
 
+thread_local! {
+    /// Cars removed as stuck during the day [`split`] counted.
+    static STUCK_LAST_DAY: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// The dense lattice city: `(walk, car, transit, residents)`.
 fn split(target: usize) -> (usize, usize, usize, usize) {
     let content =
@@ -262,6 +267,7 @@ fn split(target: usize) -> (usize, usize, usize, usize) {
         w + c + t,
         sim.view().city.traffic.avg_load
     );
+    STUCK_LAST_DAY.with(|s| s.set(a.stats.despawned_stuck - before.0));
     (w, c, t, population(&sim))
 }
 
@@ -340,4 +346,18 @@ fn a_dense_lattice_does_not_gridlock() {
     // Driving is no longer the slow way: a car trip takes about as long as a walk, not three times.
     let minutes = sim.world().resource::<cp_traffic::TripTimes>().avg_minutes;
     assert!(minutes[1] < 8.0, "a car trip takes {:.1} min", minutes[1]);
+}
+
+/// BUG-072: a 17 000-resident lattice (16 000 and more) removes few cars as stuck. Before the
+/// fix a car with priority that could not enter (no room beyond) held every car it crosses, which
+/// built rings of waiting cars: 489 cars a day, 6.2 % of the car trips; now about 1.6 %.
+#[test]
+fn a_17k_lattice_keeps_its_stuck_cars_below_three_percent() {
+    let (_, car, _, pop) = split(4250);
+    assert!(pop > 15_000, "{pop} residents");
+    let stuck = STUCK_LAST_DAY.with(|s| s.get());
+    assert!(
+        stuck * 100 < car as u64 * 3,
+        "{stuck} cars removed as stuck of {car} car trips"
+    );
 }

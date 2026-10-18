@@ -585,6 +585,21 @@ fn has_room(
 }
 
 /// May the front vehicle `v` of its lane (`s_out` = its stop line) enter connection `ex`?
+/// Whether the front car `o` of a lane could enter its junction now as far as room beyond it
+/// goes. A car with priority that has no room to go on holds nobody (BUG-072): letting the cars
+/// it crosses wait for it only builds a ring of waiting cars when the lane ahead of it is full.
+fn could_enter(
+    g: &PathGraph,
+    veh: &Arena<Vehicle>,
+    st: &DriveState,
+    o: &Vehicle,
+    node: &LaneNode,
+    to: LaneId,
+) -> bool {
+    o.speed >= 0.1
+        || find_exit(g, node.id, to).is_none_or(|e| has_room(g, veh, st, o, e.to_slot, 0))
+}
+
 fn gate_open(
     g: &PathGraph,
     veh: &Arena<Vehicle>,
@@ -643,6 +658,7 @@ fn gate_open(
                     .steps
                     .get(o.hop as usize)
                     .is_some_and(|st| st.1 == c.to)
+                && could_enter(g, veh, st, o, node, c.to)
             {
                 return false;
             }
@@ -955,6 +971,7 @@ fn front_suspicious(
                 .steps
                 .get(o.hop as usize)
                 .is_some_and(|x| x.1 == c.to)
+            && could_enter(g, veh, st, o, n, c.to)
         {
             legit |= o.speed >= 0.1;
             stuck_behind |= o.speed < 0.1;
