@@ -356,7 +356,10 @@ fn a_dense_lattice_does_not_gridlock() {
 #[test]
 fn a_17k_lattice_keeps_its_stuck_cars_below_one_percent() {
     let (_, car, _, pop) = split(4250);
-    assert!(pop > 15_000, "{pop} residents");
+    // 14 500: since the neighbourhood service radii were cut to a few blocks (T-254 balance)
+    // fewer homes reach the levels that need services; the same lattice holds ~14 800 residents
+    // instead of ~15 900.
+    assert!(pop > 14_500, "{pop} residents");
     let stuck = STUCK_LAST_DAY.with(|s| s.get());
     assert!(
         stuck * 100 < car as u64,

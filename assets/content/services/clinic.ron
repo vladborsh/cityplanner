@@ -3,7 +3,7 @@ Service((
     id: "clinic",
     name: "Clinic",
     kind: Health,
-    radius_m: 600.0,
+    radius_m: 700.0,
     capacity: 60,
     vehicles: [],
 ))

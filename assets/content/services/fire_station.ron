@@ -4,7 +4,7 @@ Service((
     id: "fire_station",
     name: "Fire Station",
     kind: Fire,
-    radius_m: 1500.0,
+    radius_m: 600.0,
     capacity: 3,
     vehicles: [],
 ))

@@ -3,7 +3,7 @@ Service((
     id: "elementary_school",
     name: "Elementary school",
     kind: Education,
-    radius_m: 800.0,
+    radius_m: 600.0,
     capacity: 300,
     tier: 1,
     vehicles: [],

@@ -4,7 +4,7 @@ Service((
     id: "police_station",
     name: "Police Station",
     kind: Police,
-    radius_m: 1200.0,
+    radius_m: 500.0,
     capacity: 1000,
     vehicles: [],
 ))
