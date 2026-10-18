@@ -47,7 +47,7 @@ pub fn nearest_facility_with(
 /// and the list of working facilities are built once; the room of each is read per search.
 pub struct FacilityFinder<'a> {
     buildings: &'a BuildingGrid,
-    graph: RoadGraph<'a>,
+    graph: RoadGraph,
     /// Active, powered buildings of the kind in ascending id order.
     cands: Vec<(BuildingId, AccessPoint, &'a ServiceDef)>,
     scratch: Scratch,

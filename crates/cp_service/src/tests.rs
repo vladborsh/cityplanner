@@ -162,6 +162,93 @@ fn put(world: &mut World, def: &str, seg: SegmentId, t: f32) -> BuildingId {
     })
 }
 
+/// The sim's coverage of `kind` per segment index (0 where nothing reaches).
+fn sim_values(world: &World, kind: ServiceKind, slots: usize) -> Vec<f32> {
+    let cov = world.resource::<ServiceCoverage>();
+    (0..slots as u32)
+        .map(|i| cov.on_segment_index(kind, i))
+        .collect()
+}
+
+/// `kind_coverage` of the world as it is now (what the client draws, §13.5 v6.2).
+fn live_values(world: &World, kind: ServiceKind) -> Vec<f32> {
+    let g = RoadGraph::new(world.resource::<NetGraph>());
+    kind_coverage(
+        &g,
+        world.resource::<BuildingGrid>(),
+        &world.resource::<SimContent>().0,
+        kind,
+    )
+}
+
+#[test]
+fn the_site_coverage_of_one_building_is_what_the_sim_computes_for_it() {
+    let (mut world, mut schedule, clinic, segs) = town();
+    run_at(&mut world, &mut schedule, 64);
+    let g = RoadGraph::new(world.resource::<NetGraph>());
+    let access = world
+        .resource::<BuildingGrid>()
+        .get(clinic)
+        .unwrap()
+        .access()
+        .unwrap();
+    let site = site_coverage(&g, access, 300.0);
+    // Three segments reached (the fourth starts at the radius), by ascending index.
+    assert_eq!(
+        site.iter().map(|&(i, _)| i).collect::<Vec<_>>(),
+        segs[..3].iter().map(|s| s.index).collect::<Vec<_>>()
+    );
+    let sim = sim_values(&world, ServiceKind::Health, g.seg_slots());
+    for &(i, c) in &site {
+        assert_eq!(c, sim[i as usize]);
+    }
+    assert!(site_coverage(&g, access, 0.0).is_empty());
+}
+
+#[test]
+fn a_building_placed_while_paused_shows_in_kind_coverage_and_the_sim_follows_at_the_boundary() {
+    let (mut world, mut schedule, _, segs) = town();
+    run_at(&mut world, &mut schedule, 64);
+    let slots = RoadGraph::new(world.resource::<NetGraph>()).seg_slots();
+    assert_eq!(
+        live_values(&world, ServiceKind::Health),
+        sim_values(&world, ServiceKind::Health, slots)
+    );
+    // A second clinic at the far end; the clock does not reach the next boundary.
+    put(&mut world, "clinic", segs[3], 1.0);
+    run_at(&mut world, &mut schedule, 65);
+    let live = live_values(&world, ServiceKind::Health);
+    let sim = sim_values(&world, ServiceKind::Health, slots);
+    assert_eq!(sim[segs[3].index as usize], 0.0);
+    assert_eq!(live[segs[3].index as usize], 1.0);
+    run_at(&mut world, &mut schedule, 128);
+    assert_eq!(sim_values(&world, ServiceKind::Health, slots), live);
+    // Other kinds: nothing.
+    assert!(
+        live_values(&world, ServiceKind::Fire)
+            .iter()
+            .all(|&c| c == 0.0)
+    );
+}
+
+#[test]
+fn a_removed_segment_gives_no_site_coverage_and_a_rebuilt_graph_is_equal() {
+    let (mut world, _, _, segs) = town();
+    let g = RoadGraph::new(world.resource::<NetGraph>());
+    assert_eq!(g, RoadGraph::new(world.resource::<NetGraph>()));
+    world
+        .resource_mut::<NetGraph>()
+        .remove_segment(segs[1])
+        .unwrap();
+    let g2 = RoadGraph::new(world.resource::<NetGraph>());
+    let gone = AccessPoint {
+        segment: segs[1],
+        t: 0.5,
+    };
+    assert!(site_coverage(&g2, gone, 300.0).is_empty());
+    assert_ne!(g, g2);
+}
+
 #[test]
 fn the_nearest_facility_with_room_wins_and_a_full_one_is_skipped() {
     let (mut world, _, near, segs) = town();

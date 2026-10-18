@@ -18,7 +18,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Res, ResMut};
 use bevy_ecs::world::World;
 use cp_building::{AccessPoint, Building, BuildingGrid, BuildingState};
-use cp_content::{ServiceKind, SimContent};
+use cp_content::{ContentDb, ServiceKind, SimContent};
 use cp_core::Tick;
 use cp_net::{NetGraph, SegmentId};
 use serde::{Deserialize, Serialize};
@@ -81,16 +81,19 @@ impl ServiceCoverage {
 }
 
 /// The road network as a graph of nodes joined by segments, for distances along the roads.
-pub struct RoadGraph<'a> {
-    net: &'a NetGraph,
+/// Owns its data (no borrow of the [`NetGraph`]), so a client can keep one per net revision.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoadGraph {
     adj: Vec<Vec<(usize, f32)>>,
     /// Segments in id order with their end node indices.
     segs: Vec<(SegmentId, usize, usize)>,
+    /// Per segment index: the live id, its end node indices and its length.
+    ends: Vec<Option<(SegmentId, usize, usize, f32)>>,
     seg_slots: usize,
 }
 
-impl<'a> RoadGraph<'a> {
-    pub fn new(net: &'a NetGraph) -> Self {
+impl RoadGraph {
+    pub fn new(net: &NetGraph) -> Self {
         let mut nodes = 0usize;
         let mut seg_slots = 0usize;
         for (id, s) in net.segments() {
@@ -101,24 +104,39 @@ impl<'a> RoadGraph<'a> {
         }
         let mut adj: Vec<Vec<(usize, f32)>> = vec![Vec::new(); nodes];
         let mut segs = Vec::new();
+        let mut ends = vec![None; seg_slots];
         for (id, s) in net.segments() {
             let (a, b) = (s.start.index as usize, s.end.index as usize);
             adj[a].push((b, s.length));
             adj[b].push((a, s.length));
             segs.push((id, a, b));
+            ends[id.index as usize] = Some((id, a, b, s.length));
         }
         Self {
-            net,
             adj,
             segs,
+            ends,
             seg_slots,
+        }
+    }
+
+    /// Segment slots (`max index + 1`): the length of a per-segment coverage vector.
+    pub fn seg_slots(&self) -> usize {
+        self.seg_slots
+    }
+
+    /// End node indices and length of a live segment.
+    fn seg(&self, id: SegmentId) -> Option<(usize, usize, f32)> {
+        match self.ends.get(id.index as usize) {
+            Some(&Some((live, a, b, len))) if live == id => Some((a, b, len)),
+            _ => None,
         }
     }
 
     /// Metres along segment `seg` at curve parameter `t`.
     fn offset(&self, seg: SegmentId, t: f32) -> Option<f32> {
-        let s = self.net.segment(seg)?;
-        Some((t * s.length).clamp(0.0, s.length))
+        let (_, _, len) = self.seg(seg)?;
+        Some((t * len).clamp(0.0, len))
     }
 
     /// Road distance from the access point to every node; unreached nodes and nodes beyond
@@ -150,15 +168,13 @@ impl<'a> RoadGraph<'a> {
         mut settled: impl FnMut(usize, f32) -> f32,
     ) {
         sc.reset();
-        let (Some(start), Some(s)) = (
-            self.net.segment(from.segment),
-            self.offset(from.segment, from.t),
-        ) else {
+        let (Some((a, b, len)), Some(s)) =
+            (self.seg(from.segment), self.offset(from.segment, from.t))
+        else {
             return;
         };
-        let (a, b) = (start.start.index as usize, start.end.index as usize);
         sc.set(a, sc.dist[a].min(s));
-        sc.set(b, sc.dist[b].min(start.length - s));
+        sc.set(b, sc.dist[b].min(len - s));
         // Non-negative f32 order as u32 bits.
         let mut heap = BinaryHeap::new();
         for n in [a, b] {
@@ -189,14 +205,11 @@ impl<'a> RoadGraph<'a> {
 
     /// Lowers `tail[n]` for the ends of the segment of `to` to the metres from `to` to them.
     pub(crate) fn add_tail(&self, tail: &mut [f32], touched: &mut Vec<usize>, to: AccessPoint) {
-        let (Some(seg), Some(s2)) = (self.net.segment(to.segment), self.offset(to.segment, to.t))
+        let (Some((a, b, len)), Some(s2)) = (self.seg(to.segment), self.offset(to.segment, to.t))
         else {
             return;
         };
-        for (n, m) in [
-            (seg.start.index as usize, s2),
-            (seg.end.index as usize, seg.length - s2),
-        ] {
+        for (n, m) in [(a, s2), (b, len - s2)] {
             if tail[n].is_infinite() {
                 touched.push(n);
             }
@@ -215,12 +228,11 @@ impl<'a> RoadGraph<'a> {
     /// Road distance from `from` (whose [`Self::node_distances`] are `dist`) to the access
     /// point `to`; infinite when unreachable.
     pub fn distance_to(&self, dist: &[f32], from: AccessPoint, to: AccessPoint) -> f32 {
-        let (Some(seg), Some(s2)) = (self.net.segment(to.segment), self.offset(to.segment, to.t))
+        let (Some((a, b, len)), Some(s2)) = (self.seg(to.segment), self.offset(to.segment, to.t))
         else {
             return f32::INFINITY;
         };
-        let via = dist[seg.start.index as usize] + s2;
-        let via = via.min(dist[seg.end.index as usize] + (seg.length - s2));
+        let via = (dist[a] + s2).min(dist[b] + (len - s2));
         if from.segment == to.segment
             && let Some(s1) = self.offset(from.segment, from.t)
         {
@@ -230,20 +242,70 @@ impl<'a> RoadGraph<'a> {
     }
 }
 
-/// Folds the coverage of one building (`radius` along the roads from `access`) into `out` by max.
-fn add_building(g: &RoadGraph, access: AccessPoint, radius: f32, out: &mut [f32]) {
-    let dist = g.node_distances(access, radius);
+/// The coverage one building of radius `radius_m` with its access point at `access` gives:
+/// `(segment index, 1 − d / radius_m)` for every segment it reaches (value > 0), by ascending
+/// index. 0 on the access segment itself is `d`; otherwise the nearer end of the segment. The
+/// sim folds these by max ([`kind_coverage`]); the client draws them for a ghost (§13.5).
+pub fn site_coverage(g: &RoadGraph, access: AccessPoint, radius_m: f32) -> Vec<(u32, f32)> {
+    let mut out = Vec::new();
+    if radius_m <= 0.0 || g.seg(access.segment).is_none() {
+        return out;
+    }
+    let dist = g.node_distances(access, radius_m);
     for &(id, na, nb) in &g.segs {
         let d = if id == access.segment {
             0.0
         } else {
             dist[na].min(dist[nb])
         };
-        let c = 1.0 - d / radius;
+        let c = 1.0 - d / radius_m;
         if c > 0.0 {
-            let slot = &mut out[id.index as usize];
-            *slot = slot.max(c);
+            out.push((id.index, c));
         }
+    }
+    out.sort_by_key(|&(i, _)| i);
+    out
+}
+
+/// The service of `b` when it is an Active building with an access point and a radius.
+fn served_site(db: &ContentDb, b: &Building) -> Option<(ServiceKind, AccessPoint, f32)> {
+    if b.state != BuildingState::Active {
+        return None;
+    }
+    let access = b.access()?;
+    let service = db
+        .building(b.def)
+        .service
+        .as_deref()
+        .and_then(|s| db.service_id(s))?;
+    let def = db.service(service);
+    (def.radius_m > 0.0).then_some((def.kind, access, def.radius_m))
+}
+
+/// The coverage of `kind` per segment index that the next recomputation gives for this
+/// network and these buildings: Active buildings of the kind in id order, max of their
+/// [`site_coverage`]. The same function backs the sim and the client's live overlay.
+pub fn kind_coverage(
+    g: &RoadGraph,
+    buildings: &BuildingGrid,
+    db: &ContentDb,
+    kind: ServiceKind,
+) -> Vec<f32> {
+    let mut out = vec![0.0; g.seg_slots];
+    for (_, b) in buildings.iter() {
+        if let Some((k, access, radius)) = served_site(db, b)
+            && k == kind
+        {
+            fold_max(&mut out, &site_coverage(g, access, radius));
+        }
+    }
+    out
+}
+
+fn fold_max(out: &mut [f32], site: &[(u32, f32)]) {
+    for &(i, c) in site {
+        let slot = &mut out[i as usize];
+        *slot = slot.max(c);
     }
 }
 
@@ -255,29 +317,13 @@ fn compute(
 ) -> BTreeMap<ServiceKind, Vec<f32>> {
     let g = RoadGraph::new(net);
     let mut out: BTreeMap<ServiceKind, Vec<f32>> = BTreeMap::new();
-    let db = &content.0;
     // Buildings in id order: the max is order-free, but the iteration is deterministic anyway.
     for (_, b) in buildings.iter() {
-        if b.state != BuildingState::Active {
-            continue;
-        }
-        let Some(access) = b.access() else { continue };
-        let Some(service) = db
-            .building(b.def)
-            .service
-            .as_deref()
-            .and_then(|s| db.service_id(s))
-        else {
+        let Some((kind, access, radius)) = served_site(&content.0, b) else {
             continue;
         };
-        let def = db.service(service);
-        if def.radius_m <= 0.0 {
-            continue;
-        }
-        let v = out
-            .entry(def.kind)
-            .or_insert_with(|| vec![0.0; g.seg_slots]);
-        add_building(&g, access, def.radius_m, v);
+        let v = out.entry(kind).or_insert_with(|| vec![0.0; g.seg_slots]);
+        fold_max(v, &site_coverage(&g, access, radius));
     }
     out
 }
