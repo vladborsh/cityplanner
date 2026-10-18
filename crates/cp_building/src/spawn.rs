@@ -106,6 +106,31 @@ fn lot_fits(block: &ZoneBlock, col: u16, w: u8, d: u8, zone: ZoneType) -> bool {
     })
 }
 
+/// Free cells of `block` painted `zone` that no ordinary level-1 def of the type can ever cover
+/// (BUG-076b): too narrow or too shallow for the smallest lot. District specialisations are
+/// ignored. The demand for the type cannot be answered there.
+pub fn unfit_cells(db: &ContentDb, zone: ZoneType, block: &ZoneBlock) -> u32 {
+    let lots: Vec<(u8, u8)> = spawnable(db, zone, None)
+        .into_iter()
+        .map(|d| db.building(d).lot)
+        .collect();
+    let mut fits = vec![false; block.valid.len()];
+    for col in 0..block.cols {
+        for &(w, d) in &lots {
+            if lot_fits(block, col, w, d, zone) {
+                for c in col..col + u16::from(w) {
+                    for r in 0..u16::from(d) {
+                        fits[usize::from(c * BLOCK_DEPTH + r)] = true;
+                    }
+                }
+            }
+        }
+    }
+    (0..block.valid.len())
+        .filter(|&i| block.valid[i] && block.zones[i] == zone && !fits[i])
+        .count() as u32
+}
+
 /// Level-1 spawnable defs for a cell painted `zone` in a district whose specialisation of that
 /// zone is `spec` (T-196), in id order: with a specialisation only the defs of that
 /// specialisation (which may stand in any zone type it covers), without one only the ordinary

@@ -672,10 +672,12 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
     ] {
         // A zone type that is still locked is not advised (BUG-060).
         if v >= HIGH_DEMAND && crate::windows::zone_lock(view, zone).is_none() {
+            // BUG-076b: wanted, but no free cell can take a building: say so instead.
+            let text = crate::windows::land_shortage(view, zone).unwrap_or_else(|| text.into());
             push(
                 id,
                 Severity::Info,
-                text.into(),
+                text,
                 v as u32,
                 icon,
                 Some(Action::Panel(Category::Zones)),

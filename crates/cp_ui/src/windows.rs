@@ -83,11 +83,51 @@ pub fn zone_lock(view: &SimView, zone: ZoneType) -> Option<String> {
     ))
 }
 
+/// The zone group of `zone` has demand (20+) but no free painted cell a building could cover
+/// (BUG-076b): the land is used up, or what is left is too narrow for the smallest lot.
+/// "Industrial land left is too narrow for any building — zone more".
+pub fn land_shortage(view: &SimView, zone: ZoneType) -> Option<String> {
+    if zone_lock(view, zone).is_some() {
+        return None;
+    }
+    let group = |z: ZoneType| zone_group_demand(z, &view.demand).0;
+    let (letter, v) = zone_group_demand(zone, &view.demand);
+    if v < 20.0 {
+        return None;
+    }
+    let (mut valid, mut unfit, mut painted) = (0, 0, 0);
+    for (z, s) in ZONES.iter().zip(view.city.zones.iter()) {
+        if group(*z) == letter {
+            valid += s.valid;
+            unfit += s.unfit;
+            painted += s.painted;
+        }
+    }
+    if valid > unfit {
+        return None;
+    }
+    let name = match letter {
+        "R" => "Residential",
+        "C" => "Commercial",
+        "I" => "Industrial",
+        _ => "Office",
+    };
+    Some(if painted == 0 || valid == 0 {
+        format!("No free {name} land — zone more")
+    } else {
+        format!("{name} land left is too narrow for any building — zone more")
+    })
+}
+
 /// "R demand 37/100" and, when it is low, why (one line each, ending in a newline).
 pub fn demand_line(view: &SimView, zone: ZoneType) -> String {
     let (letter, v) = zone_group_demand(zone, &view.demand);
     let shown = v.clamp(0.0, 100.0).round();
     let mut text = format!("{letter} demand {shown:.0}/100\n");
+    if let Some(short) = land_shortage(view, zone) {
+        text.push_str(&short);
+        text.push('\n');
+    }
     if v < 20.0
         && let Some(why) = low_demand_reason(view, zone)
     {
@@ -217,6 +257,41 @@ pub fn demand_window(ctx: &egui::Context, open: &mut bool, view: &SimView) {
 
 #[cfg(test)]
 mod tests {
+    /// BUG-076b: demand with no free cell a building could cover says so.
+    #[test]
+    fn land_shortage_names_a_too_narrow_or_used_up_zone() {
+        let mut view = cp_sim::SimRunner::new(1).view();
+        view.demand.i = 80.0;
+        let mut stats = (*view.city).clone();
+        let ind = ZONES
+            .iter()
+            .position(|&z| z == ZoneType::Industrial)
+            .unwrap();
+        stats.zones[ind].painted = 800;
+        stats.zones[ind].valid = 114;
+        stats.zones[ind].unfit = 114;
+        view.city = std::sync::Arc::new(stats.clone());
+        let t = zone_tooltip(&view, ZoneType::Industrial);
+        assert!(
+            t.contains("Industrial land left is too narrow for any building — zone more"),
+            "{t}"
+        );
+        stats.zones[ind].valid = 0;
+        stats.zones[ind].unfit = 0;
+        view.city = std::sync::Arc::new(stats.clone());
+        assert!(
+            land_shortage(&view, ZoneType::Industrial)
+                .unwrap()
+                .contains("No free Industrial")
+        );
+        // Some cell fits: no complaint. Low demand: none either.
+        stats.zones[ind].valid = 10;
+        view.city = std::sync::Arc::new(stats);
+        assert!(land_shortage(&view, ZoneType::Industrial).is_none());
+        view.demand.i = 5.0;
+        assert!(land_shortage(&view, ZoneType::Industrial).is_none());
+    }
+
     use super::*;
     use crate::testutil::{frame_texts, input};
     use cp_content::ContentDb;

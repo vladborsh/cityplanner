@@ -63,6 +63,8 @@ pub struct ZoneStats {
     pub painted: u32,
     /// Painted cells that are valid (free to build on).
     pub valid: u32,
+    /// Valid cells no building of the type can cover (too narrow for the smallest lot).
+    pub unfit: u32,
     /// Painted cells covered by a building's lot.
     pub occupied: u32,
     /// Active and abandoned buildings of this zone by level 1..=5.
@@ -303,7 +305,7 @@ pub fn update_city_stats(
     };
     match stage {
         1 => {
-            stage_zone_cells(&mut next, &zones, &demands);
+            stage_zone_cells(&mut next, &zones, &demands, db);
             stage_districts(
                 &mut next,
                 &buildings,
@@ -519,8 +521,18 @@ fn stage_districts(
     s.districts = rows.into_values().collect();
 }
 
-fn stage_zone_cells(s: &mut CityStats, zones: &ZoneGrid, demands: &[f32; 4]) {
+fn stage_zone_cells(
+    s: &mut CityStats,
+    zones: &ZoneGrid,
+    demands: &[f32; 4],
+    db: &cp_content::ContentDb,
+) {
     for (_, block) in zones.blocks() {
+        for (k, &z) in ZONES.iter().enumerate() {
+            if block.zones.contains(&z) {
+                s.zones[k].unfit += cp_building::unfit_cells(db, z, block);
+            }
+        }
         for (i, &z) in block.zones.iter().enumerate() {
             if let Some(k) = zone_index(z) {
                 s.zones[k].painted += 1;

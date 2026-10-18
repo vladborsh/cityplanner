@@ -39,7 +39,7 @@ pub use park::{
 pub use park_site::{ParkWorld, validate_park_site};
 pub use respec::{SPEC_STREAM, respec};
 pub use spawn::{
-    BLOCK_BUCKETS, DEMAND_PERIOD, Demand, SPAWN_STREAM, pick_def, place, spawnable,
+    BLOCK_BUCKETS, DEMAND_PERIOD, Demand, SPAWN_STREAM, pick_def, place, spawnable, unfit_cells,
     update_buildings,
 };
 

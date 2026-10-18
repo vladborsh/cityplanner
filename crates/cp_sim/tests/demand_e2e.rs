@@ -134,6 +134,24 @@ fn the_jobless_make_commercial_or_industrial_demand_when_residential_is_empty() 
     }
 }
 
+/// BUG-076b: a district whose industrial leftovers are one column wide has demand for industry
+/// (I > 0) but no cell a building can cover; the stat says so.
+#[test]
+fn leftover_slivers_count_as_unfit_land_while_industry_is_wanted() {
+    let mut sim = lattice(6, &[ResLow, ResLow, ResHigh, ComLow, Industrial, ResLow]);
+    for _ in 0..10 * TICKS_PER_DAY {
+        sim.tick_once();
+    }
+    let view = sim.view();
+    let ind = cp_sim::stats::ZONES
+        .iter()
+        .position(|&z| z == Industrial)
+        .unwrap();
+    let z = view.city.zones[ind];
+    assert!(z.valid > 50 && z.unfit == z.valid, "{z:?}");
+    assert!(view.demand.i > 0.0, "{:?}", view.demand);
+}
+
 /// The same, to the 10 000 residents of the milestone. Minutes in a debug build, so it only
 /// runs on request: `cargo test -p cp_sim --test demand_e2e -- --ignored`.
 #[test]
