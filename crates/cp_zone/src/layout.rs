@@ -651,15 +651,31 @@ pub(crate) fn layout_frontage(
     out
 }
 
-/// The street a segment belongs to, oriented, with where its ticks are counted from.
+/// A stretch of a street between two junctions (or its ends), where its ticks are counted.
+#[derive(Clone, Copy, Debug)]
+struct Interval {
+    /// Chain arc positions of its two ends (the nodes).
+    lo: f32,
+    hi: f32,
+    /// Distance from the end node to the cross street's edge, where there is one.
+    d_lo: Option<f32>,
+    d_hi: Option<f32>,
+}
+
+impl Interval {
+    /// The ticks are counted from the far end only when that is the one at a cross street.
+    fn from_end(&self) -> bool {
+        self.d_lo.is_none() && self.d_hi.is_some()
+    }
+}
+
+/// The street a segment belongs to, oriented, cut into the stretches between its junctions.
 struct Street {
     chain: Vec<(SegmentId, bool)>,
-    /// The ticks are counted from the END of the chain.
-    from_end: bool,
-    /// The corner (distance of the cross street's edge from the node) at the counting end.
-    d_near: f32,
-    /// ... and at the other end.
-    d_far: f32,
+    /// The arc position of the start of each chain element, and the total length.
+    starts: Vec<f32>,
+    total: f32,
+    intervals: Vec<Interval>,
 }
 
 fn street_of(
@@ -698,14 +714,14 @@ fn street_of(
     {
         chain = chain.iter().rev().map(|&(s, f)| (s, !f)).collect();
     }
-    // The corner at an end of the street: the edge of the cross street there, on either side.
-    let corner = |at_start: bool| -> Option<f32> {
-        let (sid, fwd) = if at_start {
-            let (s, f) = chain[0];
-            (s, !f)
-        } else {
-            *chain.last()?
-        };
+    let mut starts = Vec::new();
+    let mut total = 0.0;
+    for &(sid, _) in &chain {
+        starts.push(total);
+        total += ArcTable::build(&net.segment(sid)?.curve).length();
+    }
+    // The edge of the cross streets at the exit node of a walk: on either side.
+    let corner = |sid: SegmentId, fwd: bool| -> Option<f32> {
         [Side::Left, Side::Right]
             .into_iter()
             .filter_map(|side| match end_of(net, roads, sid, fwd, side) {
@@ -714,18 +730,32 @@ fn street_of(
             })
             .min_by(f32::total_cmp)
     };
-    let (d_start, d_end) = (corner(true), corner(false));
-    let from_end = d_start.is_none() && d_end.is_some();
-    let (near, far) = if from_end {
-        (d_end, d_start)
-    } else {
-        (d_start, d_end)
-    };
+    let mut cuts: Vec<(f32, Option<f32>, Option<f32>)> = Vec::new();
+    // (arc position of the node, offset before it, offset after it)
+    cuts.push((0.0, None, corner(chain[0].0, !chain[0].1)));
+    for i in 0..chain.len() - 1 {
+        let before = corner(chain[i].0, chain[i].1);
+        let after = corner(chain[i + 1].0, !chain[i + 1].1);
+        if before.is_some() || after.is_some() {
+            cuts.push((starts[i + 1], before, after));
+        }
+    }
+    let last = *chain.last()?;
+    cuts.push((total, corner(last.0, last.1), None));
+    let intervals = cuts
+        .windows(2)
+        .map(|w| Interval {
+            lo: w[0].0,
+            hi: w[1].0,
+            d_lo: w[0].2,
+            d_hi: w[1].1,
+        })
+        .collect();
     Some(Street {
         chain,
-        from_end,
-        d_near: near.unwrap_or(0.0),
-        d_far: far.unwrap_or(0.0),
+        starts,
+        total,
+        intervals,
     })
 }
 
@@ -738,10 +768,16 @@ pub fn ticks_count_forward(
     let Some(st) = street_of(net, roads, id) else {
         return true;
     };
-    st.chain
+    let Some(i) = st.chain.iter().position(|(s, _)| *s == id) else {
+        return true;
+    };
+    let mid = st.starts[i] + 0.01;
+    let from_end = st
+        .intervals
         .iter()
-        .find(|(s, _)| *s == id)
-        .is_none_or(|&(_, fwd)| fwd != st.from_end)
+        .find(|iv| iv.lo <= mid && mid <= iv.hi)
+        .is_some_and(Interval::from_end);
+    st.chain[i].1 != from_end
 }
 
 /// A tick of a street (BUG-073): the centreline of the next cross street, one series per street
@@ -772,60 +808,48 @@ pub fn street_ticks(
     id: SegmentId,
     width: f32,
 ) -> Vec<StreetTick> {
-    let Some(Street {
-        chain,
-        from_end,
-        d_near,
-        d_far,
-    }) = street_of(net, roads, id)
-    else {
+    let Some(st) = street_of(net, roads, id) else {
         return Vec::new();
     };
-    let parts: Vec<(&Segment, ArcTable, bool, f32)> = {
-        let mut run = 0.0;
-        let mut v = Vec::new();
-        for &(sid, fwd) in &chain {
-            let Some(seg) = net.segment(sid) else {
-                return Vec::new();
-            };
-            let table = ArcTable::build(&seg.curve);
-            let l = table.length();
-            v.push((seg, table, fwd, run));
-            run += l;
-        }
-        v
-    };
-    let Some(&(_, _, _, last_a)) = parts.last() else {
-        return Vec::new();
-    };
-    let total = last_a + parts.last().map_or(0.0, |p| p.1.length());
-    let reach = total - d_far;
-    let mut out = Vec::new();
-    for k in 1..=4096u32 {
-        let station = d_near + k as f32 * 64.0 + (k - 1) as f32 * width + width / 2.0;
-        if station + width / 2.0 > reach + 0.01 {
-            break;
-        }
-        let a = if from_end { total - station } else { station };
-        let Some(i) = parts.iter().rposition(|p| p.3 <= a + 1e-4) else {
-            continue;
+    let mut tables: Vec<(&Segment, ArcTable)> = Vec::new();
+    for &(sid, _) in &st.chain {
+        let Some(seg) = net.segment(sid) else {
+            return Vec::new();
         };
-        let (seg, table, fwd, base) = &parts[i];
-        let s = (a - base).clamp(0.0, table.length());
-        let local = if *fwd { s } else { table.length() - s };
-        let t = table.s_to_t(local);
-        let tangent = to_xz(seg.curve.tangent(t))
-            .try_normalize()
-            .unwrap_or(Vec2::X);
-        let along = if *fwd { tangent } else { -tangent };
-        out.push(StreetTick {
-            seg: chain[i].0,
-            arc: local,
-            axis: to_xz(seg.curve.point(t)),
-            dir: tangent,
-            onward: if from_end { -along } else { along },
-            k,
-        });
+        tables.push((seg, ArcTable::build(&seg.curve)));
     }
+    let mut out = Vec::new();
+    for iv in &st.intervals {
+        let (a_lo, a_hi) = (iv.lo + iv.d_lo.unwrap_or(0.0), iv.hi - iv.d_hi.unwrap_or(0.0));
+        let from_end = iv.from_end();
+        for k in 1..=4096u32 {
+            let station = k as f32 * 64.0 + (k - 1) as f32 * width + width / 2.0;
+            if station + width / 2.0 > a_hi - a_lo + 0.01 {
+                break;
+            }
+            let a = if from_end { a_hi - station } else { a_lo + station };
+            let Some(i) = st.starts.iter().rposition(|&b| b <= a + 1e-4) else {
+                continue;
+            };
+            let (seg, table) = &tables[i];
+            let fwd = st.chain[i].1;
+            let s = (a - st.starts[i]).clamp(0.0, table.length());
+            let local = if fwd { s } else { table.length() - s };
+            let t = table.s_to_t(local);
+            let tangent = to_xz(seg.curve.tangent(t))
+                .try_normalize()
+                .unwrap_or(Vec2::X);
+            let along = if fwd { tangent } else { -tangent };
+            out.push(StreetTick {
+                seg: st.chain[i].0,
+                arc: local,
+                axis: to_xz(seg.curve.point(t)),
+                dir: tangent,
+                onward: if from_end { -along } else { along },
+                k,
+            });
+        }
+    }
+    let _ = st.total;
     out
 }

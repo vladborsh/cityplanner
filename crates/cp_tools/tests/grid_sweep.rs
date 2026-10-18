@@ -57,7 +57,7 @@ use cp_zone::geom::Obb;
 const ROOT: &str = env!("CARGO_MANIFEST_DIR");
 const CELL: f32 = 8.0;
 const BLOCK: f32 = 8.0 * CELL;
-const ANGLES: [f32; 4] = [0.0, 17.0, 45.0, 90.0];
+const ANGLES: [f32; 4] = [0.0, 15.0, 45.0, 90.0];
 const ROADS: [&str; 2] = ["basic_2l", "medium_4l"];
 const SEEDS: [u64; 3] = [0, 7, 42];
 /// Radius of the rounded bends (the curve's corner control point is this far from its ends).
@@ -489,6 +489,18 @@ impl Player {
         let unshown = added.iter().filter(|k| !shown.contains(**k)).count();
         let unbuilt = shown.iter().filter(|k| !now.contains(*k)).count();
         if unshown + unbuilt > 0 {
+            if std::env::var_os("GRID_SWEEP_TRACE").is_some() {
+                let c = |k: &[(i32, i32); 4]| {
+                    let q = Vec2::new(
+                        k.iter().map(|p| p.0 as f32).sum::<f32>() / 200.0,
+                        k.iter().map(|p| p.1 as f32).sum::<f32>() / 200.0,
+                    );
+                    let l = self.l(q);
+                    format!("({:.1},{:.1})", l.x, l.y)
+                };
+                let un: Vec<String> = shown.iter().filter(|k| !now.contains(*k)).map(c).collect();
+                println!("  ghost cells not built: {}", un.join(" "));
+            }
             self.fail(
                 "preview",
                 format!(

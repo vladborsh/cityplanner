@@ -74,6 +74,8 @@ struct Joined {
     along: Option<Vec2>,
     /// How far from the boundary the vertex was placed (the edge offset), zero otherwise.
     shift: Vec2,
+    /// Half width of the street the vertex stands on (zero off a street).
+    hw: f32,
 }
 
 /// Rule 1 for the point `p`.
@@ -105,7 +107,7 @@ fn join(cx: &StepContext, p: Vec2) -> Option<Joined> {
         })
     };
     // A tick is aimed at where the cross street's centreline will stand (what the ghost shows);
-    // a plain cell boundary, at the boundary. The ticks win over a boundary at the same place.
+    // a plain cell boundary, at the boundary. A tick within reach always wins over a plain boundary.
     let aim = |m: &ControlMark| {
         if m.major {
             m.pos + m.onward * cx.edge_offset
@@ -114,7 +116,7 @@ fn join(cx: &StepContext, p: Vec2) -> Option<Joined> {
         }
         .distance(foot)
     };
-    let rank = |m: &ControlMark| aim(m) - if m.major { 0.5 } else { 0.0 };
+    let rank = |m: &ControlMark| aim(m) + if m.major { 0.0 } else { 100.0 };
     if let Some(m) = cx
         .marks
         .iter()
@@ -127,6 +129,7 @@ fn join(cx: &StepContext, p: Vec2) -> Option<Joined> {
             node: None,
             along: Some(m.dir),
             shift,
+            hw: cx.content.road(s.road).width * 0.5,
         });
     }
     let st = stretch(cx.graph, seg)?;
@@ -156,12 +159,14 @@ fn join(cx: &StepContext, p: Vec2) -> Option<Joined> {
             node: Some(n),
             along: None,
             shift: Vec2::ZERO,
+            hw: 0.0,
         },
         None => Joined {
             pos,
             node: None,
             along: Some(dir_xz(tc.curve.tangent(tt))),
             shift: Vec2::ZERO,
+            hw: 0.0,
         },
     })
 }
@@ -280,6 +285,7 @@ fn leg(
     prev: Vec2,
     refs: &[Vec2],
     p: Vec2,
+    from_street: Option<(f32, Vec2)>,
 ) -> (Vec2, SnapReport) {
     let mut report = SnapReport::default();
     let mut end = p;
@@ -311,7 +317,16 @@ fn leg(
             },
         );
     }
-    let stepped = ((len / ZONE_CELL).round() * ZONE_CELL).max(ZONE_CELL);
+    // A street across from a street: its end stands where the cells beside it end on the
+    // lattice of the street it started at (the edge of that street, whole cells, the edge of
+    // the street that will close the block, BUG-073).
+    let lattice = from_street
+        .filter(|(_, t)| dir.dot(*t).abs() < 0.26)
+        .map(|(hw, _)| hw + cx.edge_offset);
+    let stepped = match lattice {
+        Some(off) => (((len - off) / ZONE_CELL).round() * ZONE_CELL).max(ZONE_CELL) + off,
+        None => ((len / ZONE_CELL).round() * ZONE_CELL).max(ZONE_CELL),
+    };
     (
         prev + dir * stepped,
         SnapReport {
@@ -338,8 +353,11 @@ pub fn quantize_path(req: &RoadPathRequest, cx: &StepContext) -> (RoadPath, Snap
     let mut report = SnapReport::default();
     let mut stepped_curve = None;
     let mut last_shift = Vec2::ZERO;
+    // Half width and direction of the street the last vertex was joined on (BUG-073).
+    let mut from_street: Option<(f32, Vec2)> = None;
     for (i, &p) in pts.iter().enumerate() {
         report = SnapReport::default();
+        let prev_street = from_street;
         let mut joined = if joins { join(cx, p) } else { None };
         // A street across a block (BUG-067): when the vertex before it stands on a boundary of a
         // street (its direction known) and a boundary of this street lies on the perpendicular
@@ -373,6 +391,9 @@ pub fn quantize_path(req: &RoadPathRequest, cx: &StepContext) -> (RoadPath, Snap
             }
         }
         last_shift = joined.as_ref().map_or(Vec2::ZERO, |j| j.shift);
+        from_street = joined
+            .as_ref()
+            .and_then(|j| j.along.filter(|_| j.hw > 0.0).map(|t| (j.hw, t)));
         let mut next_refs = Vec::new();
         let pos = if let Some(j) = joined {
             report.kind = if j.node.is_some() {
@@ -399,7 +420,7 @@ pub fn quantize_path(req: &RoadPathRequest, cx: &StepContext) -> (RoadPath, Snap
                 to
             }
         } else {
-            let (q, r) = leg(cx, angle, out[i - 1], &refs, p);
+            let (q, r) = leg(cx, angle, out[i - 1], &refs, p, prev_street);
             report = r;
             q
         };
