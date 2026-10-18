@@ -6,7 +6,7 @@
 use bevy_math::Vec3;
 use cp_core::Tick;
 use cp_core::time::MOVE_SECONDS_PER_TICK;
-use cp_traffic::{PathGraph, RunPoint, RunState, ServiceRuns, find_rail_path};
+use cp_traffic::{PathGraph, RunId, RunPoint, RunState, ServiceRuns, find_rail_path};
 
 use crate::fleet::{BusPhase, TransitFleet};
 use crate::intercity::Intercity;
@@ -167,8 +167,17 @@ pub fn intercity_pose(
     graph: &PathGraph,
     now: Tick,
 ) -> Option<IntercityPose> {
-    let train = intercity.train?;
-    let run = runs.get(train.run)?;
+    run_pose(intercity.train?.run, runs, graph, now)
+}
+
+/// Where the train of run `id` is on the leg of its run (T-216b: the cargo trains use it too).
+pub fn run_pose(
+    id: RunId,
+    runs: &ServiceRuns,
+    graph: &PathGraph,
+    now: Tick,
+) -> Option<IntercityPose> {
+    let run = runs.get(id)?;
     let (RunPoint::Access(from), RunPoint::Access(to)) = (run.from, run.to) else {
         return None;
     };

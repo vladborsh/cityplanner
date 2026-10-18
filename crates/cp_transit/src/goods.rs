@@ -68,6 +68,8 @@ pub struct CargoArrival {
     pub load: f32,
     pub from: Endpoint,
     pub to: Endpoint,
+    /// The price factor of the goods (1, or `factory_export_mul` from a unique factory).
+    pub mul: f32,
 }
 
 /// The cargo trucks that arrived this tick, in run-id order.
@@ -158,11 +160,26 @@ pub fn run_goods(
                     if buildings.get(t).is_some_and(|b| is_hub_def(db, b.def)));
                 if h.cargo != CargoKind::Goods || to_hub {
                     // An industrial cargo: `cp_industry` unloads it.
+                    let mul = match h.from {
+                        Endpoint::Building(f)
+                            if h.cargo == CargoKind::Goods
+                                && buildings.get(f).is_some_and(|b| {
+                                    db.building(b.def)
+                                        .industry
+                                        .as_ref()
+                                        .is_some_and(|i| i.role == IndustryRole::Factory)
+                                }) =>
+                        {
+                            bal.factory_export_mul
+                        }
+                        _ => 1.0,
+                    };
                     arrivals.list.push(CargoArrival {
                         cargo: h.cargo,
                         load: h.load,
                         from: h.from,
                         to: h.to,
+                        mul,
                     });
                     runs.release(id, &mut agents);
                     continue;

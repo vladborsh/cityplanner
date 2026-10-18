@@ -59,6 +59,14 @@ pub struct SimStats {
     pub commands_applied: usize,
 }
 
+/// A cargo train out on the railway (T-216b): its station, its phase and the leg it is on.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CargoTrainPose {
+    pub station: cp_building::BuildingId,
+    pub phase: cp_transit::TrainPhase,
+    pub pose: cp_transit::IntercityPose,
+}
+
 /// Read-only snapshot of the sim after a tick.
 #[derive(Resource, Clone)]
 pub struct SimView {
@@ -146,6 +154,10 @@ pub struct SimView {
     pub metro_trains: Arc<Vec<cp_transit::MetroTrain>>,
     /// The intercity train on the railway, if one is out (T-167).
     pub intercity_train: Option<Arc<cp_transit::IntercityPose>>,
+    /// The cargo trains on the railway and where they are (T-216b), in station order.
+    pub cargo_trains: Arc<Vec<CargoTrainPose>>,
+    /// The ships at the cargo ports and where they are (T-217), in port order.
+    pub ships: Arc<Vec<cp_transit::ShipPose>>,
     /// The transit lines with their figures (T-160), in line id order.
     pub lines: Vec<LineView>,
     /// Fares and bus upkeep of the week in progress.
@@ -708,6 +720,56 @@ impl SimRunner {
         )
     }
 
+    /// The cargo trains for `SimView::cargo_trains`.
+    fn cargo_trains(&self, tick: Tick) -> Vec<CargoTrainPose> {
+        let world = self.world();
+        let (Some(hubs), Some(runs), Some(pnet)) = (
+            world.get_resource::<cp_transit::CargoHubs>(),
+            world.get_resource::<cp_traffic::ServiceRuns>(),
+            world.get_resource::<cp_traffic::PathNetwork>(),
+        ) else {
+            return Vec::new();
+        };
+        hubs.hubs
+            .iter()
+            .filter_map(|(&station, h)| {
+                let t = h.train?;
+                let pose = cp_transit::run_pose(t.run, runs, pnet.graph(), tick)?;
+                Some(CargoTrainPose {
+                    station,
+                    phase: t.phase,
+                    pose,
+                })
+            })
+            .collect()
+    }
+
+    /// The ships for `SimView::ships`.
+    fn ships(&self, tick: Tick) -> Vec<cp_transit::ShipPose> {
+        let world = self.world();
+        let (Some(hubs), Some(buildings), Some(content)) = (
+            world.get_resource::<cp_transit::CargoHubs>(),
+            world.get_resource::<BuildingGrid>(),
+            world.get_resource::<SimContent>(),
+        ) else {
+            return Vec::new();
+        };
+        if hubs.hubs.values().all(|h| h.ship.is_none()) {
+            return Vec::new();
+        }
+        let bal = content.0.balance();
+        let ticks = |h: f32| (h * cp_core::time::TICKS_PER_HOUR).ceil().max(1.0) as u64;
+        let terrain = world.get_resource::<cp_terrain::SimTerrain>();
+        cp_transit::ship_poses(
+            hubs,
+            buildings,
+            tick,
+            ticks(bal.ship_sail_h),
+            ticks(bal.ship_dwell_h),
+            |p| terrain.is_some_and(|t| t.0.is_water(p)),
+        )
+    }
+
     /// The agent poses for `SimView::agents`, rebuilt only when the tick advanced.
     fn agent_snapshot(&self, tick: Tick) -> Arc<AgentSnapshot> {
         let mut cache = self.agents_cache.lock().expect("agents cache");
@@ -825,6 +887,8 @@ impl SimRunner {
             transit: self.transit_snapshot(),
             metro_trains: Arc::new(self.metro_trains(tick)),
             intercity_train: self.intercity_train(tick).map(Arc::new),
+            cargo_trains: Arc::new(self.cargo_trains(tick)),
+            ships: Arc::new(self.ships(tick)),
             service: self.service_snapshot(),
             service_state: self.service_state_snapshot(),
             city: self.city_snapshot(),

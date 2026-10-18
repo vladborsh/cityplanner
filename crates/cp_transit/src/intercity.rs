@@ -76,7 +76,7 @@ fn ticks_of_hours(h: f32) -> u64 {
 
 /// The two access points of the railway's edge end: where a train enters (on the lane that runs
 /// away from the `Outside` node) and where it leaves (the other lane). `None` without a railway.
-fn edge_access(net: &NetGraph) -> Option<(Access, Access, cp_net::NodeId)> {
+pub fn edge_access(net: &NetGraph) -> Option<(Access, Access, cp_net::NodeId)> {
     let (node, n) = net
         .nodes()
         .find(|(_, n)| n.kind == NodeKind::Outside && node_is_rail(net, n))?;
@@ -98,6 +98,23 @@ fn edge_access(net: &NetGraph) -> Option<(Access, Access, cp_net::NodeId)> {
         side,
     };
     Some((access(inbound), access(other), node))
+}
+
+/// The side of `station`'s platform that the track reaches from the edge access `inbound`.
+pub fn platform_goal(
+    transit: &TransitNet,
+    pnet: &PathNetwork,
+    station: cp_building::BuildingId,
+    inbound: &Access,
+) -> Option<Access> {
+    let (segment, s) = transit.stops.iter().find_map(|(_, st)| match st.kind {
+        StopKind::Station { building, seg, s } if building == station => Some((seg, s)),
+        _ => None,
+    })?;
+    [Side::Right, Side::Left]
+        .into_iter()
+        .map(|side| Access { segment, s, side })
+        .find(|to| find_rail_path(pnet.graph(), inbound, to).is_ok())
 }
 
 /// `Agents` phase, after `run_tourists`: sends the trains, lets the households step off and
@@ -199,17 +216,7 @@ pub fn run_intercity(
         && let Some(station) = station
         && let Some((inbound, _, _)) = edge_access(&net)
     {
-        let platform = transit.stops.iter().find_map(|(_, st)| match st.kind {
-            StopKind::Station { building, seg, s } if building == station => Some((seg, s)),
-            _ => None,
-        });
-        // The side of the platform the track reaches from the edge.
-        let goal = platform.and_then(|(segment, s)| {
-            [Side::Right, Side::Left]
-                .into_iter()
-                .map(|side| Access { segment, s, side })
-                .find(|to| find_rail_path(pnet.graph(), &inbound, to).is_ok())
-        });
+        let goal = platform_goal(&transit, &pnet, station, &inbound);
         intercity.next_at = Tick(now.0 + ticks_of_hours(balance.intercity_interval_h));
         if let Some(goal) = goal {
             let run = runs.start_run(

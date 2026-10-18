@@ -306,29 +306,54 @@ fn exports_go_through_a_port_and_a_ship_arrives_stands_and_leaves_by_timer() {
         0,
         "nothing sold before the ship leaves"
     );
-    // The ship comes (ship_interval_h 24), stands ship_dwell_h (6) and leaves.
-    let (mut arrived, mut left) = (None, None);
+    // The ship sails in (ship_interval_h 24, ship_sail_h 1), stands ship_dwell_h (6) at the
+    // berth and sails out; the exports are paid when it leaves the berth.
+    let (mut docked, mut leaving, mut gone) = (None, None, None);
+    let mut saw_arriving = false;
     for n in 0..3 * TICKS_PER_DAY {
         t.sim.tick_once();
         let h = t.hub(port).unwrap();
-        if let (None, Some(until)) = (arrived, h.ship) {
-            arrived = Some((n, until));
-            assert_eq!(t.ledger().export_loads, 0, "the berthed ship has not paid");
-        }
-        if arrived.is_some() && h.ship.is_none() {
-            left = Some(n);
-            break;
+        match h.ship.map(|s| s.phase) {
+            Some(cp_transit::ShipPhase::Arriving) => {
+                if !saw_arriving {
+                    let ships = t.sim.view().ships;
+                    assert_eq!(ships.len(), 1);
+                    assert!(
+                        ships[0].pos().distance(ships[0].berth) > 1.0,
+                        "still at sea"
+                    );
+                }
+                saw_arriving = true;
+            }
+            Some(cp_transit::ShipPhase::Docked) => {
+                docked.get_or_insert(n);
+                assert_eq!(t.ledger().export_loads, 0, "the berthed ship has not paid");
+                let ships = t.sim.view().ships;
+                assert_eq!(ships[0].pos(), ships[0].berth);
+            }
+            Some(cp_transit::ShipPhase::Leaving) => {
+                leaving.get_or_insert(n);
+                assert!(t.ledger().export_loads > 0, "paid when it leaves the berth");
+            }
+            None if leaving.is_some() => {
+                gone = Some(n);
+                break;
+            }
+            None => {}
         }
     }
-    let (n0, until) = arrived.expect("a ship came");
-    let n1 = left.expect("and left");
+    assert!(saw_arriving, "a ship sailed in");
+    let (n0, n1) = (
+        docked.expect("it docked"),
+        leaving.expect("and left the berth"),
+    );
+    gone.expect("and sailed out");
     let dwell = (t.db.balance().ship_dwell_h * cp_core::time::TICKS_PER_HOUR) as u64;
     assert!(
         n1 - n0 >= dwell - 1 && n1 - n0 <= dwell + 2,
         "stood {} ticks",
         n1 - n0
     );
-    assert!(until.0 > 0);
     let l = t.ledger();
     assert!(l.export_loads > 0 && l.exports > Cost::ZERO, "{l:?}");
     let h = t.hub(port).unwrap();

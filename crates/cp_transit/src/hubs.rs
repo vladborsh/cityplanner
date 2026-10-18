@@ -33,8 +33,38 @@ pub struct Hub {
     pub next_at: Tick,
     /// Trains (or ships) that have been.
     pub trains: u32,
-    /// A cargo port: the berthed ship leaves at this tick (T-217).
-    pub ship: Option<Tick>,
+    /// A cargo port: the ship that is sailing in, standing or sailing out (T-217).
+    pub ship: Option<ShipVisit>,
+    /// A cargo station: the train out on the railway (T-216b).
+    pub train: Option<HubTrain>,
+    /// Extra pay for the exported goods waiting here, in units of load at the export price: the
+    /// unique factories' goods sell for more (T-215), and that follows them through the hub.
+    pub premium: f32,
+}
+
+/// Where a ship is. Append-only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShipPhase {
+    /// Sailing in to the berth.
+    Arriving,
+    /// At the berth: the imports step off, the exports go on board.
+    Docked,
+    /// Sailing out; the record goes when it is gone.
+    Leaving,
+}
+
+/// One visit of a ship to a cargo port: the phase it is in and when that phase ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShipVisit {
+    pub phase: ShipPhase,
+    pub until: Tick,
+}
+
+/// A cargo train of a station: the run on the railway and where it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HubTrain {
+    pub run: cp_traffic::RunId,
+    pub phase: crate::intercity::TrainPhase,
 }
 
 impl Hub {
@@ -56,11 +86,20 @@ impl CargoHubs {
     }
 
     /// A truck unloaded `load` of `cargo` at hub `b`.
-    pub fn deposit(&mut self, b: BuildingId, cargo: CargoKind, load: f32, now: Tick, wait: u64) {
+    pub fn deposit(
+        &mut self,
+        b: BuildingId,
+        cargo: CargoKind,
+        load: f32,
+        premium: f32,
+        now: Tick,
+        wait: u64,
+    ) {
         let hub = self.hubs.entry(b).or_insert_with(|| Hub {
             next_at: Tick(now.0 + wait),
             ..Hub::default()
         });
+        hub.premium += premium;
         match hub.out.iter_mut().find(|(c, _)| *c == cargo) {
             Some((_, a)) => *a += load,
             None => {
@@ -169,4 +208,91 @@ pub fn exit_for(
         (None, Some((_, h))) => Some(Endpoint::Building(h)),
         (None, None) => None,
     }
+}
+
+/// How far out a ship sails from its berth, metres (the client draws it that far off).
+pub const SAIL_M: f32 = 300.0;
+
+/// A ship at a cargo port, as the client draws it (T-217): between sea and berth along `dir`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShipPose {
+    pub port: BuildingId,
+    /// The berth: the port building's position.
+    pub berth: Vec2,
+    /// Unit vector from the berth out over the water.
+    pub dir: Vec2,
+    pub phase: ShipPhase,
+    /// How far through the phase it is now and a tick later (`0..=1`).
+    pub t: f32,
+    pub next_t: f32,
+}
+
+impl ShipPose {
+    fn at(&self, t: f32) -> Vec2 {
+        match self.phase {
+            ShipPhase::Arriving => self.berth + self.dir * SAIL_M * (1.0 - t),
+            ShipPhase::Docked => self.berth,
+            ShipPhase::Leaving => self.berth + self.dir * SAIL_M * t,
+        }
+    }
+
+    /// Where the ship is now, and one tick later (the client draws between the two).
+    pub fn pos(&self) -> Vec2 {
+        self.at(self.t)
+    }
+
+    pub fn next_pos(&self) -> Vec2 {
+        self.at(self.next_t)
+    }
+}
+
+/// The direction from `berth` along which the water goes on the longest (`wet` tells water).
+pub fn water_dir(berth: Vec2, rot: f32, wet: impl Fn(Vec2) -> bool) -> Vec2 {
+    let step = cp_content::ServiceSite::SHORE_REACH_M;
+    let mut best = (0, Vec2::from_angle(rot));
+    for k in 0..16 {
+        let d = Vec2::from_angle(k as f32 * std::f32::consts::TAU / 16.0);
+        let run = (1..=(SAIL_M / step) as u32)
+            .take_while(|&i| wet(berth + d * step * i as f32))
+            .count();
+        if run > best.0 {
+            best = (run, d);
+        }
+    }
+    best.1
+}
+
+/// The ships at the ports now, in building order. `sail` and `dwell` are the phases' lengths in
+/// ticks.
+pub fn ship_poses(
+    hubs: &CargoHubs,
+    buildings: &BuildingGrid,
+    now: Tick,
+    sail: u64,
+    dwell: u64,
+    wet: impl Fn(Vec2) -> bool,
+) -> Vec<ShipPose> {
+    hubs.hubs
+        .iter()
+        .filter_map(|(&id, h)| {
+            let v = h.ship?;
+            let b = buildings.get(id)?;
+            let len = if v.phase == ShipPhase::Docked {
+                dwell
+            } else {
+                sail
+            }
+            .max(1) as f32;
+            let left = v.until.0.saturating_sub(now.0) as f32;
+            let t = |left: f32| 1.0 - (left / len).clamp(0.0, 1.0);
+            Some(ShipPose {
+                port: id,
+                berth: b.pos,
+                dir: water_dir(b.pos, b.rot, &wet),
+                phase: v.phase,
+                t: t(left),
+                next_t: t((left - 1.0).max(0.0)),
+            })
+        })
+        .collect()
 }

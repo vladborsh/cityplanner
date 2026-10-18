@@ -94,7 +94,14 @@ pub fn run_freight(
     for a in &arrivals.list {
         match a.to {
             Endpoint::Building(b) if buildings.get(b).is_some_and(|x| is_hub_def(db, x.def)) => {
-                hubs.deposit(b, a.cargo, a.load, *tick, train_wait);
+                hubs.deposit(
+                    b,
+                    a.cargo,
+                    a.load,
+                    a.load * (a.mul - 1.0),
+                    *tick,
+                    train_wait,
+                );
             }
             Endpoint::Building(b) if buildings.get(b).is_some() => {
                 state.add(b, a.cargo, a.load);

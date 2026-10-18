@@ -1,0 +1,15 @@
+// Cargo train (T-216b): rides the railway from the map edge to a cargo station, stands, rides
+// out. A timed run like the intercity train. Numbers: tune later.
+Vehicle((
+    id: "cargo_train",
+    name: "Cargo train",
+    kind: CargoTrain,
+    length: 140.0,
+    width: 3.0,
+    max_speed_kmh: 80.0,
+    accel: 0.5,
+    decel: 0.8,
+    min_gap: 5.0,
+    capacity: 1200, // tune later
+    mesh: "vehicle/intercity",
+))

@@ -43,7 +43,9 @@ pub const WALK_KIND: u8 = u8::MAX;
 
 /// Whether runs of this `ServiceRun::kind` ride the track (metro and intercity trains).
 pub fn is_rail_kind(kind: u8) -> bool {
-    kind == VehicleKind::Metro as u8 || kind == VehicleKind::Train as u8
+    kind == VehicleKind::Metro as u8
+        || kind == VehicleKind::Train as u8
+        || kind == VehicleKind::CargoTrain as u8
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

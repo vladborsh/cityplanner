@@ -291,6 +291,8 @@ fn imports_come_by_train_and_a_truck_takes_them_on_from_the_station() {
         t.sim.world().resource::<CargoHubs>()
     );
     assert!(t.ledger().import_loads > 0);
+    // The train rides out again and the visit is counted.
+    t.ticks(TICKS_PER_DAY / 2);
     assert!(t.sim.world().resource::<CargoHubs>().hubs[&station].trains > 0);
 }
 
@@ -328,4 +330,64 @@ fn cargo_hubs_are_deterministic() {
         t.sim.checksum()
     };
     assert_eq!(run(), run());
+}
+
+#[test]
+fn the_cargo_train_is_a_vehicle_with_a_pose_that_rides_in_stands_and_rides_out() {
+    let mut t = town(true);
+    let saw = t.put("forest_extractor_s", 100.0);
+    t.staff(saw, 8);
+    t.seed(saw, CargoKind::Logs, 40.0);
+    let station = t.station(130.0, true);
+    let (mut inbound, mut dwell, mut outbound) = (false, false, false);
+    let mut paid_at_dwell = false;
+    let mut moved = false;
+    let mut last_s = None;
+    for _ in 0..3 * TICKS_PER_DAY {
+        t.sim.tick_once();
+        let view = t.sim.view();
+        let Some(train) = view.cargo_trains.first() else {
+            if outbound {
+                break;
+            }
+            continue;
+        };
+        assert_eq!(train.station, station);
+        match train.phase {
+            cp_transit::TrainPhase::Inbound => {
+                inbound = true;
+                if let Some(s) = last_s {
+                    moved |= train.pose.s > s;
+                }
+                last_s = Some(train.pose.s);
+            }
+            cp_transit::TrainPhase::Dwell { .. } => {
+                dwell = true;
+                paid_at_dwell |= t.ledger().export_loads > 0;
+                assert!(
+                    (train.pose.s - train.pose.length()).abs() < 1.0,
+                    "at the platform"
+                );
+            }
+            cp_transit::TrainPhase::Outbound => outbound = true,
+        }
+    }
+    assert!(inbound && dwell && outbound, "{inbound} {dwell} {outbound}");
+    assert!(moved, "it moved along the track while inbound");
+    assert!(!paid_at_dwell, "paid when it leaves, not when it stands");
+    assert!(t.ledger().export_loads > 0);
+    assert!(t.sim.view().cargo_trains.is_empty());
+}
+
+#[test]
+fn the_unique_factory_premium_follows_its_goods_through_a_hub() {
+    use cp_content::CargoKind::Goods;
+    let mul = content().balance().factory_export_mul;
+    let mut hubs = CargoHubs::default();
+    let st = BuildingId::new(1, 0);
+    hubs.deposit(st, Goods, 100.0, 100.0 * (mul - 1.0), Tick(0), 10);
+    hubs.deposit(st, Goods, 100.0, 0.0, Tick(0), 10);
+    let h = &hubs.hubs[&st];
+    assert_eq!(h.out_total(), 200.0);
+    assert!((h.premium - 100.0 * (mul - 1.0)).abs() < 1e-3);
 }

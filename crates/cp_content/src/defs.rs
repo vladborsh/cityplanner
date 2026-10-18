@@ -424,6 +424,10 @@ pub struct Balance {
     pub ship_interval_h: f32,
     pub ship_dwell_h: f32,
     pub ship_capacity: f32,
+    /// Hours a cargo train stands at the station (T-216b) and a ship takes to sail in or out
+    /// (T-217). // tune later
+    pub cargo_train_dwell_h: f32,
+    pub ship_sail_h: f32,
     /// A resource extractor needs this average richness (`0..=1`) under its lot (T-208). // tune later
     pub min_richness: f32,
     /// A park area's attractiveness grows by this share per level above the first (T-223).
@@ -610,6 +614,8 @@ impl Balance {
             self.ship_interval_h,
             self.ship_dwell_h,
             self.ship_capacity,
+            self.cargo_train_dwell_h,
+            self.ship_sail_h,
             self.industry_storage_per_level,
         ]);
         v.extend(self.industry_levels.map(|l| l as f32));
@@ -748,6 +754,8 @@ impl Default for Balance {
             ship_interval_h: 24.0,
             ship_dwell_h: 6.0,
             ship_capacity: 4000.0,
+            cargo_train_dwell_h: 1.0,
+            ship_sail_h: 1.0,
             industry_levels: [2_000, 8_000, 25_000, 60_000],
             industry_storage_per_level: 0.1,
             networks: Networks::default(),
@@ -1328,13 +1336,15 @@ pub enum VehicleKind {
     CargoTanker = 10,
     /// A cargo ship at the berth of a cargo port (T-217): a timed visit, not an agent.
     Ship = 11,
+    /// A cargo train on the railway between the map edge and a cargo station (T-216b).
+    CargoTrain = 12,
 }
 
 impl VehicleKind {
     /// Every kind in number order: the tables indexed by `kind as usize` (`cp_traffic`'s specs,
     /// the render's looks) have this many entries. The match in [`Self::number`] has no
     /// wildcard, so a new variant does not compile until it is added here.
-    pub const ALL: [VehicleKind; 12] = [
+    pub const ALL: [VehicleKind; 13] = [
         Self::Car,
         Self::Truck,
         Self::Bus,
@@ -1347,6 +1357,7 @@ impl VehicleKind {
         Self::CargoOre,
         Self::CargoTanker,
         Self::Ship,
+        Self::CargoTrain,
     ];
     pub const COUNT: usize = Self::ALL.len();
 
@@ -1377,6 +1388,7 @@ impl VehicleKind {
             Self::CargoOre => 9,
             Self::CargoTanker => 10,
             Self::Ship => 11,
+            Self::CargoTrain => 12,
         }
     }
 }

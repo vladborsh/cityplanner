@@ -229,6 +229,9 @@ Balance((
     ship_interval_h: 24.0,
     ship_dwell_h: 6.0,
     ship_capacity: 4000.0,
+    // Hours a cargo train stands at its station; hours a ship sails in and out (T-216b, T-217). // tune later
+    cargo_train_dwell_h: 1.0,
+    ship_sail_h: 1.0,
     // Area levels (T-209) // tune later: xp for levels 2 to 5, storage share per level above 1.
     industry_levels: (2000, 8000, 25000, 60000),
     industry_storage_per_level: 0.1,

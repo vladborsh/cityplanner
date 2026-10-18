@@ -22,15 +22,22 @@ fn the_v50_fixture_loads_with_its_hub_and_no_ship_and_a_ship_round_trips() {
     let id = *id;
     assert!(hub.out_total() > 0.0 && !hub.orders.is_empty());
     assert_eq!(hub.ship, None);
+    assert!(hub.train.is_none());
 
-    l.data.hubs.hubs.get_mut(&id).unwrap().ship = Some(Tick(777));
+    l.data.hubs.hubs.get_mut(&id).unwrap().ship = Some(cp_transit::ShipVisit {
+        phase: cp_transit::ShipPhase::Docked,
+        until: Tick(777),
+    });
     let again = save_with_map(&l.data, h.content_hash, &h.map_id, h.map_hash).unwrap();
     assert_eq!(
         read_header(&again).unwrap().0.format_version,
         FORMAT_VERSION
     );
-    assert_eq!(FORMAT_VERSION, 51);
+    assert_eq!(FORMAT_VERSION, 52);
     let l2 = load_with_map(&again, content.content_hash(), h.map_hash).unwrap();
     assert_eq!(l.data, l2.data);
-    assert_eq!(l2.data.hubs.hubs[&id].ship, Some(Tick(777)));
+    assert_eq!(
+        l2.data.hubs.hubs[&id].ship.map(|s| s.until),
+        Some(Tick(777))
+    );
 }

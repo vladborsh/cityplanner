@@ -30,8 +30,11 @@ pub use fleet::{Bus, BusId, BusPhase, TransitFleet, TransitLedger};
 pub use goods::{
     CargoArrival, CargoArrivals, Endpoint, GOODS_BUCKET_TICKS, Goods, Haul, run_goods,
 };
-pub use hubs::{CargoHubs, Hub, exit_for, hub_sites, is_hub_def, is_port_def};
-pub use intercity::{Intercity, Train, TrainPhase, run_intercity};
+pub use hubs::{
+    CargoHubs, Hub, HubTrain, SAIL_M, ShipPhase, ShipPose, ShipVisit, exit_for, hub_sites,
+    is_hub_def, is_port_def, ship_poses, water_dir,
+};
+pub use intercity::{Intercity, Train, TrainPhase, edge_access, platform_goal, run_intercity};
 pub use model::{
     DEFAULT_LINE_VEHICLES, Journey, Line, LineId, LineState, LineStats, MAX_LINE_STOPS,
     MAX_LINE_VEHICLES, PALETTE_LEN, Ride, Stage, Stop, StopId, StopKind, TransitMode, TransitNet,
@@ -46,7 +49,7 @@ pub use station::{
 };
 pub use sync::{rebind_stops, update_transit};
 pub use tourists::{TOURISM_STREAM, Tourist, TouristPhase, Tourists, bring_by_train, run_tourists};
-pub use trains::{IntercityPose, MetroTrain, intercity_pose, metro_trains};
+pub use trains::{IntercityPose, MetroTrain, intercity_pose, metro_trains, run_pose};
 pub use view::{LINE_PALETTE_RGB, LineRoute, ROUTE_STEP, TransitView, next_line_color};
 
 /// Crate name, used by the skeleton smoke test.

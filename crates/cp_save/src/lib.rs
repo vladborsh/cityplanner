@@ -81,7 +81,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 51;
+pub const FORMAT_VERSION: u32 = 52;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -254,7 +254,8 @@ pub struct SaveData {
     pub park_visits: cp_park::ParkVisits,
     /// The entrance fees of the week (T-224). Added in v48.
     pub park_ledger: cp_park::ParkLedger,
-    /// The cargo stations' stock and orders (T-216). Added in v50.
+    /// The cargo stations' stock and orders (T-216). Added in v50; the ships
+    /// in v51 (T-217), the trains and the goods premium in v52 (T-216b).
     pub hubs: cp_transit::CargoHubs,
 }
 

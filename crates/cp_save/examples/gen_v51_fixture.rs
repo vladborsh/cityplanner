@@ -63,8 +63,11 @@ fn main() {
     {
         let st = cp_building::BuildingId::new(3, 0);
         let mut hubs = sim.world_mut().resource_mut::<cp_transit::CargoHubs>();
-        hubs.deposit(st, cp_content::CargoKind::Logs, 20.0, Tick(10), 2048);
-        hubs.hubs.get_mut(&st).unwrap().ship = Some(Tick(5000));
+        hubs.deposit(st, cp_content::CargoKind::Logs, 20.0, 0.0, Tick(10), 2048);
+        hubs.hubs.get_mut(&st).unwrap().ship = Some(cp_transit::ShipVisit {
+            phase: cp_transit::ShipPhase::Docked,
+            until: Tick(5000),
+        });
         hubs.order(
             st,
             cp_content::CargoKind::Planks,
