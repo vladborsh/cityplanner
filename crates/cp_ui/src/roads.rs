@@ -123,6 +123,25 @@ fn road_tile_widget(
     tool_tile(ui, TileIcon::Draw(&draw), &c.name, selected).on_hover_text(tile_tooltip(c))
 }
 
+/// The footpath tile for the Parks category (T-226): the same tool and tile as the Paths row of
+/// the Roads panel. Does nothing without a path road type.
+pub fn path_tile(ui: &mut egui::Ui, content: &ContentDb, tools: &mut ToolState) {
+    let Some(c) = cards(content)
+        .into_iter()
+        .find(|c| c.class == RoadClass::Path)
+    else {
+        return;
+    };
+    let widest = content.roads().map(|(_, d)| d.width).fold(0.0, f32::max);
+    let on = tools.active == ActiveTool::Road && tools.road.road == Some(c.id);
+    if road_tile_widget(ui, content, widest, &c, on).clicked() {
+        if tools.active != ActiveTool::Road {
+            tools.select(ActiveTool::Road);
+        }
+        tools.road.road = Some(c.id);
+    }
+}
+
 /// The Roads category panel.
 pub fn roads_panel(
     ui: &mut egui::Ui,

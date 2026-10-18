@@ -325,8 +325,26 @@ fn sync_districts_mode(state: Res<ToolState>, mut mode: ResMut<cp_render::Distri
 }
 
 /// Tells the renderer whether the area brush is active (the area overlay shows then).
-fn sync_areas_mode(state: Res<ToolState>, mut mode: ResMut<cp_render::AreasMode>) {
-    let on = state.active == ActiveTool::Area;
+fn sync_areas_mode(
+    state: Res<ToolState>,
+    view: Option<Res<cp_sim::SimView>>,
+    mut mode: ResMut<cp_render::AreasMode>,
+) {
+    use cp_render::AreaFamily;
+    // The brush shows the areas of the family of the area it paints (industry by default).
+    let on = (state.active == ActiveTool::Area).then(|| {
+        let park = state
+            .area
+            .selected
+            .zip(view.as_deref())
+            .and_then(|(id, v)| v.areas.get(id))
+            .is_some_and(|a| matches!(a.kind, cp_district::AreaKind::Park(_)));
+        if park {
+            AreaFamily::Park
+        } else {
+            AreaFamily::Industry
+        }
+    });
     if mode.0 != on {
         mode.0 = on;
     }

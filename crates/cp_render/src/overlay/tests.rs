@@ -103,7 +103,7 @@ fn overlay_state_defaults_to_off_and_lists_every_overlay_once() {
     let mut all = Overlay::ALL.to_vec();
     all.sort_by_key(|o| o.label());
     all.dedup();
-    assert_eq!(all.len(), 19);
+    assert_eq!(all.len(), 20);
 }
 
 #[test]
@@ -321,6 +321,7 @@ fn switching_overlays_shows_that_layer_and_the_zone_grid_stays_on() {
                 | Overlay::Transit
                 | Overlay::Resources
                 | Overlay::IndustryAreas
+                | Overlay::Parks
                 | Overlay::Underground
         ) {
             vec![]

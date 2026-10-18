@@ -34,8 +34,8 @@ pub use fire_render::{FireFxPlugin, FireFxStats};
 pub use furniture_render::{FurnitureRenderPlugin, FurnitureStats};
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{
-    AreasMode, DistrictsMode, LINE_STEP, LineGhost, Overlay, OverlayPlugin, OverlayState,
-    ZoningMode, resource_color, ribbon_at,
+    AreaFamily, AreasMode, DistrictsMode, LINE_STEP, LineGhost, Overlay, OverlayPlugin,
+    OverlayState, ZoningMode, park_color, resource_color, ribbon_at,
 };
 pub use overlay::{
     BuildingStatus, NetworkStats, UtilityLayer, UtilityReport, network_color, utility_report,

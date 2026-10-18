@@ -30,6 +30,7 @@ pub mod metrics;
 pub mod milestone;
 pub mod palette;
 pub mod panels;
+pub mod parks;
 pub mod policies;
 pub mod roads;
 pub mod services;
@@ -89,6 +90,7 @@ impl Plugin for UiPlugin {
                     land::land_overlay,
                     transit::transit_labels,
                     utility_legend::utility_legend,
+                    parks::draw_labels,
                 )
                     .chain(),
             );

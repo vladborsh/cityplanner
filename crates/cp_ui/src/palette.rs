@@ -29,10 +29,12 @@ pub enum Category {
     Transit,
     /// Industry areas and, later, the buildings of the resources (M5, T-207).
     Industry,
+    /// Park areas, their buildings and the footpath (M6, T-226).
+    Parks,
 }
 
 impl Category {
-    pub const ALL: [Category; 7] = [
+    pub const ALL: [Category; 8] = [
         Category::Roads,
         Category::Zones,
         Category::Buildings,
@@ -40,6 +42,7 @@ impl Category {
         Category::Districts,
         Category::Transit,
         Category::Industry,
+        Category::Parks,
     ];
 
     pub fn label(self) -> &'static str {
@@ -51,6 +54,7 @@ impl Category {
             Category::Districts => "Districts",
             Category::Transit => "Transport",
             Category::Industry => "Industry",
+            Category::Parks => "Parks",
         }
     }
 
@@ -63,6 +67,7 @@ impl Category {
             Category::Districts => Icon::Districts,
             Category::Transit => Icon::Transit,
             Category::Industry => Icon::Industry,
+            Category::Parks => Icon::CategoryParks,
         }
     }
 
@@ -77,7 +82,7 @@ impl Category {
             }
             Category::Zones | Category::Bulldozer | Category::Districts => true,
             Category::Transit => crate::transit::has_tools(content),
-            Category::Industry => content.is_some(),
+            Category::Industry | Category::Parks => content.is_some(),
         }
     }
 
@@ -208,6 +213,7 @@ pub fn tool_panel(
                 Category::Industry => {
                     crate::industry::industry_panel(ui, view, tools, overlay, outbox)
                 }
+                Category::Parks => crate::parks::parks_panel(ui, view, tools, overlay, outbox),
             });
         });
     Some(out.response.rect)
@@ -564,6 +570,7 @@ mod tests {
             (Category::Districts, ActiveTool::District),
             (Category::Transit, ActiveTool::Line),
             (Category::Industry, ActiveTool::Area),
+            (Category::Parks, ActiveTool::Area),
         ] {
             let mut rig = Rig::new();
             rig.click_category(category);
@@ -616,7 +623,8 @@ mod tests {
                 Category::Bulldozer,
                 Category::Districts,
                 Category::Transit,
-                Category::Industry
+                Category::Industry,
+                Category::Parks
             ]
         );
         // Without content the road and building tools do not exist either.
@@ -805,7 +813,8 @@ mod tests {
                 Category::Bulldozer,
                 Category::Districts,
                 Category::Transit,
-                Category::Industry
+                Category::Industry,
+                Category::Parks
             ]
         );
         let keys = [
@@ -816,6 +825,7 @@ mod tests {
             egui::Key::Num5,
             egui::Key::Num6,
             egui::Key::Num7,
+            egui::Key::Num8,
         ];
         for (n, k) in keys.into_iter().enumerate() {
             let mut got = None;

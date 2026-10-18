@@ -66,6 +66,12 @@ icons! {
     SpecNone => "spec_none",
     Industry => "industry",
     Parks => "parks",
+    CategoryParks => "category_parks",
+    ParkCityPark => "park_city_park",
+    ParkNature => "park_nature",
+    ParkZoo => "park_zoo",
+    ParkAmusement => "park_amusement",
+    OverlayParks => "overlay_parks",
     ResourceFarming => "resource_farming",
     ResourceForestry => "resource_forestry",
     ResourceOre => "resource_ore",
@@ -224,6 +230,7 @@ pub fn overlay_icon(overlay: cp_render::Overlay) -> Icon {
         O::Transit => Icon::OverlayTransit,
         O::Resources => Icon::OverlayResources,
         O::IndustryAreas => Icon::OverlayIndustryAreas,
+        O::Parks => Icon::OverlayParks,
         O::Underground => Icon::OverlayUnderground,
     }
 }

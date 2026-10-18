@@ -9,7 +9,7 @@ use bevy::camera::primitives::Aabb;
 use bevy::light::NotShadowCaster;
 use bevy::math::Vec2;
 use bevy::prelude::*;
-use cp_content::ResourceKind;
+use cp_content::{ParkKind, ResourceKind};
 use cp_district::{AreaId, AreaKind, AreaMap, Areas, CELL_M, SIDE};
 use cp_sim::SimView;
 use cp_terrain::{RES_CELL, RES_GRID, ResourceDeposits, ResourceMap, Terrain};
@@ -33,9 +33,36 @@ pub const MIN_RICHNESS: f32 = 0.08;
 /// Colour of spent ore and oil.
 pub const SPENT: [f32; 3] = [0.5, 0.5, 0.5];
 
-/// Whether the area brush is active (written by `cp_tools`): the area overlay shows then too.
+/// Which areas an overlay draws (T-226): the industry ones or the parks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AreaFamily {
+    Industry,
+    Park,
+}
+
+impl AreaFamily {
+    /// Whether an area of `kind` belongs to the family.
+    pub fn has(self, kind: AreaKind) -> bool {
+        matches!(
+            (self, kind),
+            (AreaFamily::Industry, AreaKind::Industry(_)) | (AreaFamily::Park, AreaKind::Park(_))
+        )
+    }
+}
+
+/// The areas the active area brush paints (written by `cp_tools`): their overlay shows then too.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct AreasMode(pub bool);
+pub struct AreasMode(pub Option<AreaFamily>);
+
+/// The colour of a park kind: lawn green, deep forest, zoo orange, fairground violet.
+pub fn park_color(kind: ParkKind) -> [f32; 3] {
+    match kind {
+        ParkKind::CityPark => [0.36, 0.72, 0.36],
+        ParkKind::Nature => [0.10, 0.45, 0.38],
+        ParkKind::Zoo => [0.86, 0.55, 0.20],
+        ParkKind::Amusement => [0.66, 0.36, 0.82],
+    }
+}
 
 /// The colour of a resource: gold fields, green forest, steel-blue ore, violet oil.
 pub fn resource_color(kind: ResourceKind) -> [f32; 3] {
@@ -56,8 +83,16 @@ fn area_resource(areas: &Areas, id: AreaId) -> Option<ResourceKind> {
 }
 
 fn area_color(areas: &Areas, id: AreaId, alpha: f32) -> [f32; 4] {
-    let [r, g, b] = area_resource(areas, id).map_or([0.8, 0.8, 0.8], resource_color);
+    let [r, g, b] = match areas.get(id).map(|a| a.kind) {
+        Some(AreaKind::Park(k)) => park_color(k),
+        _ => area_resource(areas, id).map_or([0.8, 0.8, 0.8], resource_color),
+    };
     [r, g, b, alpha]
+}
+
+/// Whether area `id` is of the family.
+fn in_family(areas: &Areas, id: AreaId, family: AreaFamily) -> bool {
+    areas.get(id).is_some_and(|a| family.has(a.kind))
 }
 
 /// The colour of resource cell `(cx, cz)` of the Resources overlay, if it has a resource: the
@@ -116,11 +151,14 @@ pub fn area_fill_mesh(
     areas: &Areas,
     terrain: &Terrain,
     cam: Option<Vec3>,
+    family: AreaFamily,
 ) -> MeshData {
     let mut m = MeshData::default();
     for r in 0..SIDE as u16 {
         for c in 0..SIDE as u16 {
-            let Some(id) = map.get((c, r)) else { continue };
+            let Some(id) = map.get((c, r)).filter(|&id| in_family(areas, id, family)) else {
+                continue;
+            };
             let color = area_color(areas, id, FILL_ALPHA);
             let (x0, z0) = (f32::from(c) * CELL_M, f32::from(r) * CELL_M);
             let ids = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)].map(|(i, j)| {
@@ -134,6 +172,36 @@ pub fn area_fill_mesh(
             m.indices
                 .extend_from_slice(&[ids[0], ids[2], ids[1], ids[0], ids[3], ids[2]]);
         }
+    }
+    m
+}
+
+/// A square marker on every gate of a park (T-226), in the colour of its kind.
+pub fn gate_markers_mesh(view: &SimView, terrain: &Terrain, cam: Option<Vec3>) -> MeshData {
+    let mut m = MeshData::default();
+    let Some(db) = view.content.as_deref() else {
+        return m;
+    };
+    const HALF: f32 = 7.0;
+    for (_, b) in view.buildings.iter() {
+        let Some(spec) = db.building(b.def).park.as_ref() else {
+            continue;
+        };
+        let (cp_content::ParkRole::Gate, Some(kind)) = (spec.role, spec.park) else {
+            continue;
+        };
+        let [r, g, bl] = park_color(kind);
+        let color = [(r + 1.0) * 0.5, (g + 1.0) * 0.5, (bl + 1.0) * 0.5, 1.0];
+        let ids = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].map(|(i, j)| {
+            let p = b.pos + Vec2::new(i * HALF, j * HALF);
+            push(
+                &mut m,
+                [p.x, drape_height(terrain, cam, p) + LINE_LIFT + 0.2, p.y],
+                color,
+            )
+        });
+        m.indices
+            .extend_from_slice(&[ids[0], ids[2], ids[1], ids[0], ids[3], ids[2]]);
     }
     m
 }
@@ -174,10 +242,14 @@ pub fn area_contour_mesh(
     terrain: &Terrain,
     cam: Option<Vec3>,
     w: f32,
+    family: AreaFamily,
 ) -> MeshData {
     let mut m = MeshData::default();
     let height = |q: Vec2| drape_height(terrain, cam, q) + LINE_LIFT;
     for (id, a, b) in area_contour_edges(map) {
+        if !in_family(areas, id, family) {
+            continue;
+        }
         let d = (b - a).normalize_or_zero();
         ribbon_with(
             &mut m,
@@ -201,7 +273,14 @@ pub struct ResourceLayer;
 pub struct AreaLayer;
 
 type ResKey = (bool, usize, usize, (i32, i32, i32), usize);
-type AreaKey = (bool, usize, usize, (i32, i32, i32), i32, usize);
+type AreaKey = (
+    Option<AreaFamily>,
+    usize,
+    usize,
+    (i32, i32, i32),
+    i32,
+    usize,
+);
 
 #[derive(Resource, Default)]
 pub struct IndustryLayers {
@@ -303,16 +382,21 @@ pub(super) fn sync_industry_layers(
         }
     }
 
-    // Areas.
-    let visible = state.active == Overlay::IndustryAreas || mode.0;
+    // Areas: the family of the overlay on, else of the brush.
+    let shown = match state.active {
+        Overlay::IndustryAreas => Some(AreaFamily::Industry),
+        Overlay::Parks => Some(AreaFamily::Park),
+        _ => mode.0,
+    };
     let step = cam.map_or(0, |c| border_width_step(c.y));
+    // The gates of the parks move the markers: the buildings are part of the key.
     let key = (
-        visible,
+        shown,
         std::sync::Arc::as_ptr(&view.area_map) as usize,
         std::sync::Arc::as_ptr(&view.areas) as usize,
         bucket(cam),
         step,
-        terrain_ptr,
+        terrain_ptr ^ std::sync::Arc::as_ptr(&view.buildings) as usize,
     );
     if layers.areas_key.as_ref() == Some(&key) {
         return;
@@ -321,27 +405,31 @@ pub(super) fn sync_industry_layers(
     for e in layers.areas.drain(..) {
         commands.entity(e).despawn();
     }
-    if !visible {
+    let Some(family) = shown else {
         return;
-    }
+    };
     let w = (step as f32 * 0.5).exp2();
     let (map, areas) = (&view.area_map, &view.areas);
-    layers.areas = [
-        area_fill_mesh(map, areas, terrain, cam),
-        area_contour_mesh(map, areas, terrain, cam, w),
-    ]
-    .into_iter()
-    .filter_map(|d| {
-        spawn(
-            &mut commands,
-            &mut meshes,
-            material,
-            d,
-            "industry_areas",
-            false,
-        )
-    })
-    .collect();
+    let mut meshes_data = vec![
+        area_fill_mesh(map, areas, terrain, cam, family),
+        area_contour_mesh(map, areas, terrain, cam, w, family),
+    ];
+    if family == AreaFamily::Park {
+        meshes_data.push(gate_markers_mesh(&view, terrain, cam));
+    }
+    layers.areas = meshes_data
+        .into_iter()
+        .filter_map(|d| {
+            spawn(
+                &mut commands,
+                &mut meshes,
+                material,
+                d,
+                "industry_areas",
+                false,
+            )
+        })
+        .collect();
 }
 
 #[cfg(test)]
@@ -408,10 +496,43 @@ mod tests {
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps/flatlands"),
         )
         .unwrap();
-        let m = area_fill_mesh(&map, &areas, &t, None);
+        let m = area_fill_mesh(&map, &areas, &t, None, AreaFamily::Industry);
         assert_eq!(m.indices.len(), 2 * 6);
         let [r, g, b, a] = m.colors[0];
         assert_eq!([r, g, b], resource_color(R::Forestry));
         assert_eq!(a, FILL_ALPHA);
+    }
+
+    /// T-226: the four park kinds have their own colours, and each family draws only its areas.
+    #[test]
+    fn park_kinds_have_colours_and_a_family_draws_only_its_own_areas() {
+        let mut seen: Vec<[f32; 3]> = ParkKind::ALL.iter().map(|k| park_color(*k)).collect();
+        seen.dedup();
+        assert_eq!(seen.len(), 4);
+        let mut areas = Areas::default();
+        for kind in [AreaKind::Park(ParkKind::Zoo), AreaKind::Industry(R::Ore)] {
+            areas.list.push(Some(cp_district::Area {
+                name: "A".into(),
+                kind,
+                level: 1,
+                xp: 0,
+            }));
+        }
+        let mut map = AreaMap::default();
+        map.set((4, 4), Some(AreaId(1)));
+        map.set((8, 4), Some(AreaId(2)));
+        let t = Terrain::load(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps/flatlands"),
+        )
+        .unwrap();
+        let parks = area_fill_mesh(&map, &areas, &t, None, AreaFamily::Park);
+        assert_eq!(parks.indices.len(), 6, "one quad: the zoo cell");
+        assert_eq!(parks.colors[0][..3], park_color(ParkKind::Zoo));
+        let industry = area_fill_mesh(&map, &areas, &t, None, AreaFamily::Industry);
+        assert_eq!(industry.colors[0][..3], resource_color(R::Ore));
+        let outline = area_contour_mesh(&map, &areas, &t, None, 1.0, AreaFamily::Park);
+        let all = area_contour_mesh(&map, &areas, &t, None, 1.0, AreaFamily::Industry);
+        assert!(!outline.indices.is_empty() && !all.indices.is_empty());
+        assert_ne!(outline.indices.len(), 0);
     }
 }

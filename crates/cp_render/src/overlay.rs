@@ -35,8 +35,9 @@ pub use districts::{
     DistrictLayer, DistrictLayers, DistrictsMode, contour_edges, contour_mesh, fill_mesh,
 };
 pub use industry::{
-    AreaLayer, AreasMode, IndustryLayers, ResourceLayer, area_contour_edges, area_contour_mesh,
-    area_fill_mesh, resource_cell_color, resource_color, resources_mesh,
+    AreaFamily, AreaLayer, AreasMode, IndustryLayers, ResourceLayer, area_contour_edges,
+    area_contour_mesh, area_fill_mesh, park_color, resource_cell_color, resource_color,
+    resources_mesh,
 };
 pub use service::{coverage_color, service_overlay_mesh};
 pub use tiles::{border_edges, border_mesh, shade_mesh};
@@ -77,13 +78,15 @@ pub enum Overlay {
     Resources,
     /// The industry areas, tinted by their resource (T-207).
     IndustryAreas,
+    /// The park areas, tinted by their kind, with their gates (T-226).
+    Parks,
     /// The ground, roads and buildings see-through, with the tunnels, the metro lines and the
     /// trains (T-164). Drawn by [`crate::underground`], not by the overlay layers.
     Underground,
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 19] = [
+    pub const ALL: [Overlay; 20] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
@@ -102,6 +105,7 @@ impl Overlay {
         Overlay::Transit,
         Overlay::Resources,
         Overlay::IndustryAreas,
+        Overlay::Parks,
         Overlay::Underground,
     ];
 
@@ -160,6 +164,7 @@ impl Overlay {
             Overlay::Transit => "Transit",
             Overlay::Resources => "Resources",
             Overlay::IndustryAreas => "Industry areas",
+            Overlay::Parks => "Parks",
             Overlay::Underground => "Underground",
         }
     }

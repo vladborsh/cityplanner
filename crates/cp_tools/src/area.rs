@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use bevy_math::Vec2;
-use cp_content::ResourceKind;
+use cp_content::{ParkKind, ResourceKind};
 use cp_district::{AreaId, AreaMap, Cell, DistrictCommand};
 
 use crate::district::{BRUSH_LARGE_RADIUS, DistrictToolKind, cells_within};
@@ -17,6 +17,8 @@ pub struct AreaTool {
     pub selected: Option<AreaId>,
     /// The resource "New area" makes an area of.
     pub new_resource: Option<ResourceKind>,
+    /// The park kind "New area" of the Parks category makes an area of (T-226).
+    pub new_park: Option<ParkKind>,
     /// Cells already visited in the current stroke.
     pub stroke: BTreeSet<Cell>,
 }
