@@ -7,6 +7,12 @@
 //! by the traffic domain); the jam's 850 trips are sent by `scenario::send_citizens` so the
 //! jam does not depend on the time of day.
 //!
+//! **T-257.** The m1-traffic `load + 4096 ticks` pin moved once (`0x8299_1c3d_bb77_67fd` ->
+//! `0x4502_0c19_788d_88bb`; m1-small and the state at load did not): the order of the systems of
+//! the Economy and Services phases that touch the same grids and runs is now pinned (settle_week,
+//! demand, city; the mail after fire and education), where it used to follow the schedule graph.
+//! It no longer moves when an unrelated system is added (checked with one more Network system).
+//!
 //! **BUG-073.** The two `load + 4096 ticks` pins moved (`0x956e_23a9_9ee9_53d2` -> `0x06bf_0b6c_4922_9dd3`
 //! for m1-small, `0xdc03_de27_080f_aa24` -> `0x484a_4788_2ea1_88d4` for m1-traffic; the state at load
 //! did not): which of two overlapping cells of a seam wins is now decided by (row, segment, side)
@@ -235,7 +241,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x82991c3dbb7767fd, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x45020c19788d88bb, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

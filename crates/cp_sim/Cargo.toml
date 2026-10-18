@@ -32,5 +32,6 @@ bevy_tasks.workspace = true
 
 [dev-dependencies]
 bevy_math.workspace = true
-# Real worker threads for the par_iter determinism test (feature only, no new crate).
-bevy_ecs = { workspace = true, features = ["multi_threaded"] }
+# Real worker threads for the par_iter determinism test; `debug` names the systems in the
+# schedule ambiguity test (T-257). Features only, no new crate of ours.
+bevy_ecs = { workspace = true, features = ["multi_threaded", "debug"] }

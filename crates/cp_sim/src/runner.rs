@@ -269,11 +269,14 @@ impl SimRunner {
                 .after(cp_service::update_coverage)
                 .after(cp_service::reset_daily_capacity),
         );
+        // The mail goes last of the services: it shares the service state, the runs and the
+        // building grid with the fire and education systems (T-257).
         schedule.add_systems(
             cp_service::update_mail_sorting
                 .in_set(SimPhase::Services)
                 .after(cp_service::update_coverage)
-                .after(cp_service::reset_daily_capacity),
+                .after(cp_service::reset_daily_capacity)
+                .after(cp_service::update_education),
         );
         schedule.add_systems(
             cp_service::update_mail
@@ -293,14 +296,24 @@ impl SimRunner {
                 .in_set(SimPhase::Services)
                 .after(cp_service::update_fire),
         );
+        // The week is settled on what the last tick left, before this tick's demand and city
+        // statistics are derived; all of them touch the citizen and building grids (T-257).
         schedule.add_systems(cp_economy::settle_week.in_set(SimPhase::Economy));
-        schedule.add_systems(cp_economy::update_demand.in_set(SimPhase::Economy));
+        schedule.add_systems(
+            cp_economy::update_demand
+                .in_set(SimPhase::Economy)
+                .after(cp_economy::settle_week),
+        );
         schedule.add_systems(
             crate::progress::lock_demand
                 .in_set(SimPhase::Economy)
                 .after(cp_economy::update_demand),
         );
-        schedule.add_systems(cp_economy::update_city.in_set(SimPhase::Economy));
+        schedule.add_systems(
+            cp_economy::update_city
+                .in_set(SimPhase::Economy)
+                .after(cp_economy::update_demand),
+        );
         schedule.add_systems(
             cp_economy::update_police
                 .in_set(SimPhase::Economy)
@@ -499,6 +512,45 @@ impl SimRunner {
             now,
         );
         self.apply_due_commands();
+    }
+
+    /// The pairs of systems of the sim schedule whose order is not pinned although they touch the
+    /// same data (Bevy's ambiguity detection, T-257): `(system a, system b, what they conflict
+    /// on)`. The order of such a pair follows the schedule graph, so an unrelated new system can
+    /// flip it; `tests/schedule_ambiguity.rs` keeps this list at the pairs it knows about.
+    /// Builds the schedule (it would be built by the first tick anyway).
+    pub fn schedule_ambiguities(&mut self) -> Vec<(String, String, Vec<String>)> {
+        use bevy_ecs::schedule::{
+            AmbiguousSystemConflictsWarning, LogLevel, ScheduleBuildError, ScheduleBuildSettings,
+            ScheduleBuildWarning,
+        };
+        self.schedule.set_build_settings(ScheduleBuildSettings {
+            ambiguity_detection: LogLevel::Error,
+            ..Default::default()
+        });
+        // With the detection an error the build stops before the systems move out of the graph,
+        // so their names can still be told.
+        let conflicts = match self.schedule.initialize(&mut self.world) {
+            Ok(_) => return Vec::new(),
+            Err(ScheduleBuildError::Elevated(ScheduleBuildWarning::Ambiguity(
+                AmbiguousSystemConflictsWarning(c),
+            ))) => c,
+            Err(e) => panic!(
+                "the sim schedule does not build: {}",
+                e.to_string(self.schedule.graph(), &self.world)
+            ),
+        };
+        let mut out: Vec<(String, String, Vec<String>)> = conflicts
+            .to_string(self.schedule.graph(), self.world.components())
+            .map(|(a, b, on)| {
+                let (a, b) = if a <= b { (a, b) } else { (b, a) };
+                let mut on: Vec<String> = on.iter().map(|n| n.to_string()).collect();
+                on.sort();
+                (a, b, on)
+            })
+            .collect();
+        out.sort();
+        out
     }
 
     /// Runs exactly one tick, ignoring speed and the accumulator.
