@@ -205,7 +205,7 @@ mod tests {
                 &terrain,
             )
         };
-        let has = |m: &MeshData, c: [f32; 4]| m.colors.iter().any(|x| *x == c);
+        let has = |m: &MeshData, c: [f32; 4]| m.colors.contains(&c);
         assert!(!has(&paint(5), MAIL_PILE) && !has(&paint(5), MAIL_WAITING));
         assert!(has(&paint(40), MAIL_WAITING) && !has(&paint(40), MAIL_PILE));
         assert!(has(&paint(200), MAIL_PILE));
