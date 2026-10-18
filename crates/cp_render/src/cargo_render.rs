@@ -5,7 +5,8 @@
 //! with stacked containers and a bridge at the stern; it berths alongside the bank, along the
 //! water at the port, scaled down to fit narrow water (`berth_fit`), and under sail follows the
 //! sim's line between its pose now and a tick later (held on the water), turning to its way; it
-//! fades in as it sails in and out as it sails away (render time only).
+//! fades in as it sails in and out as it sails away, casting no shadow while it fades (render
+//! time only).
 
 use bevy::prelude::*;
 use cp_sim::SimView;
@@ -443,8 +444,9 @@ struct CargoShip;
 struct CargoRender {
     /// The cars of each train shown, in `SimView::cargo_trains` order.
     trains: Vec<Vec<Entity>>,
-    /// The ships shown, in `SimView::ships` order, each with its own material (it fades).
-    ships: Vec<(Entity, Handle<VertexColorMaterial>)>,
+    /// The ships shown, in `SimView::ships` order, each with its own material (it fades) and
+    /// whether it casts its shadow (not while it fades).
+    ships: Vec<(Entity, Handle<VertexColorMaterial>, bool)>,
     /// The berth of each port's ship, measured once.
     berths: std::collections::BTreeMap<cp_building::BuildingId, Option<Berth>>,
     /// The train length the car meshes were made for, and the ship size.
@@ -557,14 +559,14 @@ fn sync_cargo(
         })
         .unwrap_or(DEFAULT_SHIP);
     if st.ship_size != size {
-        for (e, _) in st.ships.drain(..) {
+        for (e, _, _) in st.ships.drain(..) {
             commands.entity(e).despawn();
         }
         st.ship_size = size;
         st.ship = Some(meshes.add(to_bevy_mesh(ship_mesh(size.0, size.1))));
     }
     while st.ships.len() > view.ships.len() {
-        if let Some((e, _)) = st.ships.pop() {
+        if let Some((e, _, _)) = st.ships.pop() {
             commands.entity(e).despawn();
         }
     }
@@ -620,15 +622,25 @@ fn sync_cargo(
         } else {
             Visibility::Hidden
         };
-        if let Some((e, mat)) = st.ships.get(n)
+        // A fading ship casts no shadow: a solid shadow under a ghost reads wrong.
+        let shadow = alpha >= 0.999;
+        if let Some((e, mat, casts)) = st.ships.get_mut(n)
             && let Ok((mut tr, mut v)) = ships.get_mut(*e)
         {
+            if *casts != shadow {
+                if shadow {
+                    commands.entity(*e).remove::<bevy::light::NotShadowCaster>();
+                } else {
+                    commands.entity(*e).insert(bevy::light::NotShadowCaster);
+                }
+                *casts = shadow;
+            }
             *tr = tf;
             *v = visible;
             // Touch the material only while the ship fades (a change re-uploads it).
             let want = if alpha < 0.999 { alpha } else { 1.0 };
-            if materials.get(mat).is_some_and(|mm| mm.fade.x != want)
-                && let Some(mut mm) = materials.get_mut(mat)
+            if materials.get(&*mat).is_some_and(|mm| mm.fade.x != want)
+                && let Some(mut mm) = materials.get_mut(&*mat)
             {
                 mm.set_see_through(alpha < 0.999, alpha);
             }
@@ -636,18 +648,20 @@ fn sync_cargo(
             let mut mm = VertexColorMaterial::opaque(0.6, 0.1);
             mm.set_see_through(alpha < 0.999, alpha);
             let mat = materials.add(mm);
-            let e = commands
-                .spawn((
-                    Mesh3d(st.ship.clone().expect("ship mesh made")),
-                    MeshMaterial3d(mat.clone()),
-                    tf,
-                    visible,
-                    CargoShip,
-                    bevy::camera::visibility::NoFrustumCulling,
-                    Name::new("cargo ship"),
-                ))
-                .id();
-            st.ships.push((e, mat));
+            let mut ec = commands.spawn((
+                Mesh3d(st.ship.clone().expect("ship mesh made")),
+                MeshMaterial3d(mat.clone()),
+                tf,
+                visible,
+                CargoShip,
+                bevy::camera::visibility::NoFrustumCulling,
+                Name::new("cargo ship"),
+            ));
+            if !shadow {
+                ec.insert(bevy::light::NotShadowCaster);
+            }
+            let e = ec.id();
+            st.ships.push((e, mat, shadow));
         }
     }
 }
