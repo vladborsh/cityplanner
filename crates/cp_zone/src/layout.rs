@@ -651,6 +651,57 @@ pub(crate) fn layout_frontage(
     out
 }
 
+/// A segment that turns the street: its end tangents differ by more than this (degrees).
+const BEND_DEG: f32 = 10.0;
+
+fn is_bend(net: &NetGraph, id: SegmentId) -> bool {
+    net.segment(id).is_some_and(|s| {
+        let a = to_xz(s.curve.tangent(0.0)).try_normalize();
+        let b = to_xz(s.curve.tangent(1.0)).try_normalize();
+        matches!((a, b), (Some(a), Some(b)) if a.dot(b) < BEND_DEG.to_radians().cos())
+    })
+}
+
+/// A street that runs into a rounded bend and out of it into another street: where the two
+/// straight pieces would meet is a corner (BUG-073), the cross street's edge `d` from it. The
+/// result is the distance from the exit node of `(sid, fwd)` to that edge along the street
+/// (negative: the edge lies on the bend, beyond the node).
+fn bend_corner(
+    net: &NetGraph,
+    roads: &dyn Fn(RoadDefId) -> RoadZoning,
+    sid: SegmentId,
+    fwd: bool,
+) -> Option<f32> {
+    let (seg, ours) = zoned(net, roads, sid)?;
+    let (u1, node) = exit_of(seg, fwd);
+    let (bend, bend_fwd) = through_arm(net, roads, sid, fwd)?;
+    if !is_bend(net, bend) {
+        return None;
+    }
+    let (b_seg, _) = zoned(net, roads, bend)?;
+    let (_, far) = exit_of(b_seg, bend_fwd);
+    let (next, next_at_start) = through_arm(net, roads, bend, bend_fwd)?;
+    if is_bend(net, next) {
+        return None;
+    }
+    let u2 = leave_dir(net.segment(next)?, next_at_start);
+    let p1 = to_xz(net.node(node)?.pos);
+    let p2 = to_xz(net.node(far)?.pos);
+    let c = u1.perp_dot(u2);
+    if c.abs() < 1e-3 {
+        return None;
+    }
+    let dd = p2 - p1;
+    let s = dd.perp_dot(u2) / c;
+    let r = -dd.perp_dot(u1) / c;
+    if s <= 0.0 || r <= 0.0 {
+        return None;
+    }
+    let (cos_t, sin_t) = ((-u1).dot(u2), c.abs());
+    let d = (ours.half_width * (1.0 + cos_t)) / sin_t;
+    Some(d - s)
+}
+
 /// A stretch of a street between two junctions (or its ends), where its ticks are counted.
 #[derive(Clone, Copy, Debug)]
 struct Interval {
@@ -689,7 +740,9 @@ fn street_of(
         let mut out = vec![first];
         let mut cur = first;
         while let Some(next) = through_arm(net, roads, cur.0, cur.1) {
-            if !seen.insert(next.0) {
+            // A bend ends the street: the straight pieces on either side are streets of their
+            // own that meet at the corner the bend rounds off (BUG-073).
+            if is_bend(net, next.0) || is_bend(net, cur.0) || !seen.insert(next.0) {
                 break;
             }
             out.push(next);
@@ -729,6 +782,7 @@ fn street_of(
                 FrontEnd::Open => None,
             })
             .min_by(f32::total_cmp)
+            .or_else(|| bend_corner(net, roads, sid, fwd))
     };
     let mut cuts: Vec<(f32, Option<f32>, Option<f32>)> = Vec::new();
     // (arc position of the node, offset before it, offset after it)

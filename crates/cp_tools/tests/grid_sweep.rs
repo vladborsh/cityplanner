@@ -108,6 +108,15 @@ impl Piece {
     fn y(&self) -> f32 {
         (self.a.y + self.b.y) / 2.0
     }
+    /// Unit direction a -> b.
+    fn dir(&self) -> Vec2 {
+        (self.b - self.a).normalize_or_zero()
+    }
+    /// Unit direction across the piece.
+    fn across(&self) -> Vec2 {
+        let d = self.dir();
+        Vec2::new(-d.y, d.x)
+    }
 }
 
 /// What a click that built something left behind.
@@ -774,7 +783,7 @@ fn l_close(p: &mut Player, bend: Bend) -> Option<()> {
     );
     let up = p.l(m.axis).x;
     let right = p.street_from_tick("right street", m, Vec2::new(up, 2.0 * hw + BLOCK), 1.5)?;
-    p.check_perp("right street", right.piece, Y);
+    p.check_perp("right street", right.piece, bottom.across());
     // The cross street from the left street's 8-cell tick to the right street's end.
     let m = p.tick(
         "cross street on the left tick",
@@ -782,7 +791,7 @@ fn l_close(p: &mut Player, bend: Bend) -> Option<()> {
         X,
     );
     let cross = p.street_from_tick("cross street", m, right.piece.b, 1.5)?;
-    p.check_perp("cross street", cross.piece, X);
+    p.check_perp("cross street", cross.piece, left.across());
     p.check_lands("cross street", &cross);
     let nx = ((right.piece.x() - left.x() - 2.0 * hw) / CELL).round() as u32;
     p.check_block(
@@ -855,7 +864,7 @@ fn extend_bend(p: &mut Player, bend: Bend) -> Option<()> {
         p.fail("refused", "extension: not built".into());
         return None;
     };
-    p.check_perp("extension", ext.piece, X);
+    p.check_perp("extension", ext.piece, bottom.dir());
     p.check_opposite_ghost("extension", &ext);
     let a = Vec2::new(bottom.a.x, bottom.y());
     p.check_opposite_built("bottom street + extension", a, ext.piece.b);
