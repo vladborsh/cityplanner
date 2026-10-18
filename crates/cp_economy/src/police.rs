@@ -8,7 +8,6 @@ use cp_building::{BuildingGrid, BuildingState};
 use cp_content::{ServiceKind, ServiceUnlocks, SimContent, ZoneType};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
-use cp_net::NetGraph;
 use cp_service::{COVERAGE_PERIOD, FacilityFinder, ServiceCoverage, ServiceProblems, ServiceState};
 
 use crate::land::LandGrids;
@@ -20,7 +19,7 @@ const PASSES_PER_DAY: u64 = TICKS_PER_DAY / COVERAGE_PERIOD;
 pub fn update_police(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
-    net: Res<NetGraph>,
+    net: cp_service::ServiceNet,
     buildings: Res<BuildingGrid>,
     land: Res<LandGrids>,
     coverage: Res<ServiceCoverage>,
@@ -35,6 +34,7 @@ pub fn update_police(
     let bal = db.balance();
     let bucket = tick.0 % COVERAGE_PERIOD;
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
+    let roads = net.graph();
     let mut finder = None;
     for (id, b) in buildings.iter() {
         if u64::from(id.index) % COVERAGE_PERIOD != bucket || b.state != BuildingState::Active {
@@ -77,7 +77,7 @@ pub fn update_police(
             && cover > 0.0
             && let Some(station) = finder
                 .get_or_insert_with(|| {
-                    FacilityFinder::new(&net, &buildings, db, ServiceKind::Police)
+                    FacilityFinder::new(&roads, &buildings, db, ServiceKind::Police)
                 })
                 .nearest(&state, id)
         {

@@ -23,6 +23,42 @@ use cp_core::Tick;
 use cp_net::{NetGraph, SegmentId};
 use serde::{Deserialize, Serialize};
 
+/// The road graph of the current network for the service searches (T-256: every service system
+/// built its own from the whole network on every run). Filled lazily by the first search after
+/// the network changed (keyed by the network's change tick), so no system of its own is needed.
+/// Derived from the network: not saved, not hashed.
+#[derive(Resource, Default)]
+pub struct ServiceRoads {
+    cache: std::sync::Mutex<Option<(bevy_ecs::change_detection::Tick, std::sync::Arc<RoadGraph>)>>,
+}
+
+/// The network and its cached road graph, for the systems that search along the roads.
+#[derive(bevy_ecs::system::SystemParam)]
+pub struct ServiceNet<'w> {
+    pub net: Res<'w, NetGraph>,
+    roads: Option<Res<'w, ServiceRoads>>,
+}
+
+impl ServiceNet<'_> {
+    /// The road graph of the network as it is now: the cached one while the network has not
+    /// changed since it was built, else built (and cached when the world has [`ServiceRoads`]).
+    pub fn graph(&self) -> std::sync::Arc<RoadGraph> {
+        let changed = bevy_ecs::change_detection::DetectChanges::last_changed(&self.net);
+        let Some(roads) = self.roads.as_deref() else {
+            return std::sync::Arc::new(RoadGraph::new(&self.net));
+        };
+        let mut cache = roads.cache.lock().unwrap_or_else(|e| e.into_inner());
+        match cache.as_ref() {
+            Some((at, g)) if *at == changed => std::sync::Arc::clone(g),
+            _ => {
+                let g = std::sync::Arc::new(RoadGraph::new(&self.net));
+                *cache = Some((changed, std::sync::Arc::clone(&g)));
+                g
+            }
+        }
+    }
+}
+
 /// Ticks between coverage recomputations.
 pub const COVERAGE_PERIOD: u64 = 64;
 
@@ -315,7 +351,15 @@ fn compute(
     buildings: &BuildingGrid,
     content: &SimContent,
 ) -> BTreeMap<ServiceKind, Vec<f32>> {
-    let g = RoadGraph::new(net);
+    compute_on(&RoadGraph::new(net), buildings, content)
+}
+
+/// [`compute`] on a road graph already built.
+fn compute_on(
+    g: &RoadGraph,
+    buildings: &BuildingGrid,
+    content: &SimContent,
+) -> BTreeMap<ServiceKind, Vec<f32>> {
     let mut out: BTreeMap<ServiceKind, Vec<f32>> = BTreeMap::new();
     // Buildings in id order: the max is order-free, but the iteration is deterministic anyway.
     for (_, b) in buildings.iter() {
@@ -323,7 +367,7 @@ fn compute(
             continue;
         };
         let v = out.entry(kind).or_insert_with(|| vec![0.0; g.seg_slots]);
-        fold_max(v, &site_coverage(&g, access, radius));
+        fold_max(v, &site_coverage(g, access, radius));
     }
     out
 }
@@ -332,7 +376,7 @@ fn compute(
 pub fn update_coverage(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
-    net: Res<NetGraph>,
+    net: ServiceNet,
     buildings: Res<BuildingGrid>,
     mut coverage: ResMut<ServiceCoverage>,
 ) {
@@ -340,7 +384,7 @@ pub fn update_coverage(
         return;
     }
     let Some(content) = content else { return };
-    coverage.by_kind = compute(&net, &buildings, &content);
+    coverage.by_kind = compute_on(&net.graph(), &buildings, &content);
     coverage.generation += 1;
 }
 
@@ -368,6 +412,7 @@ impl ServicePlugin {
     /// Inserts the resources.
     pub fn init(world: &mut World) {
         world.init_resource::<ServiceCoverage>();
+        world.init_resource::<ServiceRoads>();
         world.init_resource::<crate::ServiceState>();
         world.init_resource::<crate::MailState>();
     }

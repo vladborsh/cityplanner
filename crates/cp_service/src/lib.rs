@@ -15,8 +15,8 @@ pub mod mail;
 pub mod state;
 
 pub use coverage::{
-    COVERAGE_PERIOD, RoadGraph, ServiceCoverage, ServicePlugin, kind_coverage, rebuild_coverage,
-    site_coverage, update_coverage,
+    COVERAGE_PERIOD, RoadGraph, ServiceCoverage, ServiceNet, ServicePlugin, ServiceRoads,
+    kind_coverage, rebuild_coverage, site_coverage, update_coverage,
 };
 pub use education::update_education;
 pub use facility::{

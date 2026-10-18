@@ -21,9 +21,7 @@ use cp_citizen::system::CITIZEN_BUCKETS;
 use cp_citizen::{CitizenGrid, DAYS_PER_YEAR};
 use cp_content::{ServiceKind, SimContent};
 use cp_core::Tick;
-use cp_net::NetGraph;
 
-use crate::facility::nearest_facility_with;
 use crate::state::ServiceState;
 
 /// The tier a citizen of `age_days` studies at, `None` outside school age.
@@ -49,7 +47,7 @@ fn graduation_years(tier: u8) -> u32 {
 pub fn update_education(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
-    net: Res<NetGraph>,
+    net: crate::ServiceNet,
     buildings: Res<BuildingGrid>,
     mut grid: ResMut<CitizenGrid>,
     mut state: ResMut<ServiceState>,
@@ -95,6 +93,9 @@ pub fn update_education(
         .citizens_bucket(CITIZEN_BUCKETS, bucket)
         .map(|(id, c)| (id, c.clone()))
         .collect();
+    // One finder for the whole bucket (T-256: one per citizen rebuilt the road graph each time).
+    let roads = net.graph();
+    let mut finder = crate::FacilityFinder::new(&roads, &buildings, db, ServiceKind::Education);
     for (id, c) in visited {
         if let Some(school) = c.school {
             let tier = tier_of(school);
@@ -120,15 +121,9 @@ pub fn update_education(
             continue;
         }
         let Some(home) = c.home else { continue };
-        let Some((school, metres)) = nearest_facility_with(
-            &net,
-            &buildings,
-            db,
-            &state,
-            ServiceKind::Education,
-            home,
-            |used, svc| svc.tier == tier && used.stored < svc.capacity,
-        ) else {
+        let Some((school, metres)) = finder.nearest_with(&state, home, |used, svc| {
+            svc.tier == tier && used.stored < svc.capacity
+        }) else {
             continue;
         };
         let radius = buildings

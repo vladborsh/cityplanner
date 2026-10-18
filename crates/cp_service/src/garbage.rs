@@ -14,7 +14,6 @@ use cp_content::{PolicyKind, ServiceKind, ServiceUnlocks, SimContent, VehicleKin
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_district::PolicyParams;
-use cp_net::NetGraph;
 use cp_traffic::{RunState, ServiceRuns};
 
 use crate::coverage::{COVERAGE_PERIOD, ServiceCoverage};
@@ -31,7 +30,7 @@ const PASSES_PER_DAY: u64 = TICKS_PER_DAY / COVERAGE_PERIOD;
 pub fn update_garbage(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
-    net: Res<NetGraph>,
+    net: crate::ServiceNet,
     buildings: Res<BuildingGrid>,
     citizens: Res<CitizenGrid>,
     coverage: Res<ServiceCoverage>,
@@ -47,6 +46,7 @@ pub fn update_garbage(
     let balance = db.balance();
     let bucket = tick.0 % COVERAGE_PERIOD;
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
+    let roads = net.graph();
     let mut finder = None;
     for (id, b) in buildings.iter() {
         if u64::from(id.index) % COVERAGE_PERIOD != bucket {
@@ -100,7 +100,7 @@ pub fn update_garbage(
                     && coverage.coverage_of(ServiceKind::Garbage, b) > 0.0
                     && let Some(facility) = finder
                         .get_or_insert_with(|| {
-                            FacilityFinder::new(&net, &buildings, db, ServiceKind::Garbage)
+                            FacilityFinder::new(&roads, &buildings, db, ServiceKind::Garbage)
                         })
                         .nearest(&state, id)
                 {
@@ -114,7 +114,7 @@ pub fn update_garbage(
             && coverage.coverage_of(ServiceKind::Garbage, b) > 0.0
             && let Some(facility) = finder
                 .get_or_insert_with(|| {
-                    FacilityFinder::new(&net, &buildings, db, ServiceKind::Garbage)
+                    FacilityFinder::new(&roads, &buildings, db, ServiceKind::Garbage)
                 })
                 .nearest(&state, id)
         {

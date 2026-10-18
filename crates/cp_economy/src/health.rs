@@ -16,7 +16,6 @@ use cp_citizen::system::CITIZEN_BUCKETS;
 use cp_content::{ServiceKind, ServiceUnlocks, SimContent};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{SimRng, Tick};
-use cp_net::NetGraph;
 use cp_service::{COVERAGE_PERIOD, FacilityFinder, ServiceCoverage, ServiceProblems, ServiceState};
 
 use crate::land::LandGrids;
@@ -31,7 +30,7 @@ const VISITS_PER_DAY: f32 = (TICKS_PER_DAY / CITIZEN_BUCKETS as u64) as f32;
 pub fn update_health(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
-    net: Res<NetGraph>,
+    net: cp_service::ServiceNet,
     buildings: Res<BuildingGrid>,
     land: Res<LandGrids>,
     coverage: Res<ServiceCoverage>,
@@ -90,6 +89,7 @@ pub fn update_health(
     }
 
     // --- treatment ---
+    let roads = net.graph();
     let mut finder = None;
     let bucket = tick.0 % COVERAGE_PERIOD;
     for (id, b) in buildings.iter() {
@@ -104,7 +104,7 @@ pub fn update_health(
                 if station.is_none() {
                     station = finder
                         .get_or_insert_with(|| {
-                            FacilityFinder::new(&net, &buildings, db, ServiceKind::Health)
+                            FacilityFinder::new(&roads, &buildings, db, ServiceKind::Health)
                         })
                         .nearest(&state, id);
                 }

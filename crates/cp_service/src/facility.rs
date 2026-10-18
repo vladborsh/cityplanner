@@ -40,14 +40,15 @@ pub fn nearest_facility_with(
     from: BuildingId,
     has_room: impl Fn(&Facility, &ServiceDef) -> bool,
 ) -> Option<(BuildingId, f32)> {
-    FacilityFinder::new(net, buildings, db, kind).nearest_with(state, from, has_room)
+    FacilityFinder::new(&RoadGraph::new(net), buildings, db, kind)
+        .nearest_with(state, from, has_room)
 }
 
 /// Searches for the nearest facility of one kind many times in one system run: the road graph
 /// and the list of working facilities are built once; the room of each is read per search.
 pub struct FacilityFinder<'a> {
     buildings: &'a BuildingGrid,
-    graph: RoadGraph,
+    graph: &'a RoadGraph,
     /// Active, powered buildings of the kind in ascending id order.
     cands: Vec<(BuildingId, AccessPoint, &'a ServiceDef)>,
     scratch: Scratch,
@@ -55,7 +56,7 @@ pub struct FacilityFinder<'a> {
 
 impl<'a> FacilityFinder<'a> {
     pub fn new(
-        net: &'a NetGraph,
+        graph: &'a RoadGraph,
         buildings: &'a BuildingGrid,
         db: &'a ContentDb,
         kind: ServiceKind,
@@ -79,8 +80,7 @@ impl<'a> FacilityFinder<'a> {
                 cands.push((id, to, svc));
             }
         }
-        let graph = RoadGraph::new(net);
-        let scratch = Scratch::new(&graph);
+        let scratch = Scratch::new(graph);
         Self {
             buildings,
             graph,
@@ -105,7 +105,7 @@ impl<'a> FacilityFinder<'a> {
         has_room: impl Fn(&Facility, &ServiceDef) -> bool,
     ) -> Option<(BuildingId, f32)> {
         let origin = self.buildings.get(from)?.access()?;
-        let g = &self.graph;
+        let g = self.graph;
         let open: Vec<(BuildingId, AccessPoint)> = self
             .cands
             .iter()

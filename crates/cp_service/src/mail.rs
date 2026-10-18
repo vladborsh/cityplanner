@@ -23,7 +23,6 @@ use cp_citizen::CitizenGrid;
 use cp_content::{ServiceKind, ServiceUnlocks, SimContent, VehicleKind, ZoneType};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
-use cp_net::NetGraph;
 use cp_traffic::{RunPoint, RunState, ServiceRuns};
 use serde::{Deserialize, Serialize};
 
@@ -249,7 +248,7 @@ fn store(
 pub fn update_mail(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
-    net: Res<NetGraph>,
+    net: crate::ServiceNet,
     buildings: Res<BuildingGrid>,
     citizens: Res<CitizenGrid>,
     coverage: Res<ServiceCoverage>,
@@ -265,6 +264,7 @@ pub fn update_mail(
     let balance = db.balance();
     let bucket = tick.0 % COVERAGE_PERIOD;
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
+    let roads = net.graph();
     let mut finder = None;
     // Vans that arrived (or failed) are met on the tick they do, so a van is free again at
     // once: the mail is taken from the building they went to, if its office still works.
@@ -353,7 +353,7 @@ pub fn update_mail(
                     && open
                     && let Some((office, _)) = finder
                         .get_or_insert_with(|| {
-                            FacilityFinder::new(&net, &buildings, db, ServiceKind::Post)
+                            FacilityFinder::new(&roads, &buildings, db, ServiceKind::Post)
                         })
                         .nearest_with(&state, id, |used, svc| {
                             svc.tier == POST_OFFICE_TIER && used.used_today < svc.capacity
@@ -371,7 +371,7 @@ pub fn update_mail(
                     && open
                     && let Some((office, _)) = finder
                         .get_or_insert_with(|| {
-                            FacilityFinder::new(&net, &buildings, db, ServiceKind::Post)
+                            FacilityFinder::new(&roads, &buildings, db, ServiceKind::Post)
                         })
                         .nearest_with(&state, id, has_room)
                 {
