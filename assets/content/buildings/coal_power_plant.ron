@@ -8,7 +8,7 @@ Building((
     consumption: {},
     tax_base: 0.0,
     cost: 30000.0,
-    upkeep_week: 1097.0,
+    upkeep_week: 1536.0,
     styles: ["service_coal_plant"],
     service: Some("coal_plant"),
     icon: "coal_power_plant",

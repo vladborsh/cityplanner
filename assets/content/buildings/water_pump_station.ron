@@ -8,7 +8,7 @@ Building((
     consumption: {Power: 20.0},
     tax_base: 0.0,
     cost: 12000.0,
-    upkeep_week: 366.0,
+    upkeep_week: 512.0,
     styles: ["service_pump_house"],
     service: Some("water_pump"),
     icon: "water_pump_station",

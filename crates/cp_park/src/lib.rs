@@ -86,6 +86,10 @@ pub fn recount(
     areas: &Areas,
 ) {
     let per_level = db.balance().park_attract_per_level;
+    let fee_default = db
+        .balance()
+        .park_fee_default
+        .clamp(0.0, db.balance().park_fee_max);
     let mut sums: BTreeMap<u8, (f32, u32)> = BTreeMap::new();
     for (id, a) in areas.iter() {
         if matches!(a.kind, AreaKind::Park(_)) {
@@ -121,7 +125,11 @@ pub fn recount(
         let level = areas
             .get(cp_district::AreaId(id))
             .map_or(1.0, |a| f32::from(a.level));
-        let e = state.areas.entry(id).or_default();
+        // A new area starts with the default entrance fee (T-244).
+        let e = state.areas.entry(id).or_insert_with(|| ParkAreaState {
+            fee: fee_default,
+            ..ParkAreaState::default()
+        });
         e.attract = attract * (1.0 + per_level * level);
         e.capacity = capacity;
     }

@@ -638,7 +638,7 @@ mod tests {
             .find(|c| c.name == "Water pump")
             .unwrap();
         assert_eq!(pump.cost, Cost::from_units(12000.0));
-        assert_eq!(pump.upkeep_week, Cost::from_units(366.0));
+        assert_eq!(pump.upkeep_week, Cost::from_units(512.0));
         assert_eq!(pump.capacity, 1000);
         assert_eq!(pump.lot, (2, 2));
     }

@@ -8,7 +8,7 @@ Building((
     consumption: {},
     tax_base: 0.0,
     cost: 2500.0,
-    upkeep_week: 48.0,
+    upkeep_week: 67.0,
     styles: ["service_wind_turbine"],
     service: Some("wind_turbine"),
     icon: "wind_turbine",

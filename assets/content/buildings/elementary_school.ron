@@ -8,7 +8,7 @@ Building((
     consumption: {},
     tax_base: 0.0,
     cost: 15000.0,
-    upkeep_week: 488.0,
+    upkeep_week: 683.0,
     styles: ["service_school"],
     service: Some("elementary_school"),
     icon: "elementary_school",

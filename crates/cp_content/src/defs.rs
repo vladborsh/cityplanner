@@ -446,6 +446,8 @@ pub struct Balance {
     pub walkers_per_park: u16,
     pub tourist_leisure_share: f32,
     pub park_fee_max: f32,
+    /// The entrance fee a park area starts with (T-244), `0..=park_fee_max`.
+    pub park_fee_default: f32,
     /// Park levels (T-225) // tune later: visitors an area needs for levels 2 to 5; the land
     /// value a park area adds around its cells per level (level 1..5), and how far.
     pub park_levels: [u32; 4],
@@ -607,6 +609,7 @@ impl Balance {
             f32::from(self.walkers_per_park),
             self.tourist_leisure_share,
             self.park_fee_max,
+            self.park_fee_default,
             self.park_land_radius_m,
             self.factory_export_mul,
             self.cargo_train_interval_h,
@@ -745,6 +748,7 @@ impl Default for Balance {
             walkers_per_park: 6,
             tourist_leisure_share: 0.3,
             park_fee_max: 20.0,
+            park_fee_default: 3.0,
             park_levels: [150, 600, 2_000, 5_000],
             park_land: [2.0, 5.0, 9.0, 14.0, 20.0],
             park_land_radius_m: 200.0,

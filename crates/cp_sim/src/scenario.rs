@@ -44,6 +44,9 @@ pub struct GridCityConfig {
     /// After the target is met the clock runs on to this hour of the day (at most one more
     /// day), so a bench or a save starts in the morning rush, not in the dead of night.
     pub settle_to_hour: f32,
+    /// Zones every n-th block that lies more than 150 m from the middle Industrial (T-244);
+    /// `0` keeps the standard mix, which has no industry within 1.2 km of the middle.
+    pub industrial_every: u32,
 }
 
 impl Default for GridCityConfig {
@@ -53,6 +56,7 @@ impl Default for GridCityConfig {
             max_ticks: 200_000,
             people_per_crossing: 40,
             settle_to_hour: 7.0,
+            industrial_every: 0,
         }
     }
 }
@@ -442,7 +446,15 @@ pub fn grid_city(
                     .filter(|&c| zones.is_valid(c) && !zones.is_occupied(c))
                     .collect();
                 let p = b.curve.point(0.5);
-                let zone = zone_for(id.index, seed, Vec2::new(p.x, p.z).distance(centre));
+                let dist = Vec2::new(p.x, p.z).distance(centre);
+                let zone = if cfg.industrial_every > 0
+                    && dist > 150.0
+                    && id.index % cfg.industrial_every == 0
+                {
+                    ZoneType::Industrial
+                } else {
+                    zone_for(id.index, seed, dist)
+                };
                 (!cells.is_empty())
                     .then_some(SimCommand::Zone(ZoneCommand::PaintZones { cells, zone }))
             })
