@@ -39,7 +39,7 @@ use bevy_math::Vec2;
 use bevy_tasks::{ComputeTaskPool, TaskPool};
 use cp_building::{Building, BuildingFlags, BuildingGrid};
 use cp_citizen::{
-    CitizenGrid, CitizenId, TripBook, TripId, TripMode, TripPurpose, TripState, cancel_trip,
+    CitizenGrid, CitizenId, Trip, TripBook, TripId, TripMode, TripPurpose, TripState, cancel_trip,
     complete_trip,
 };
 use cp_core::curve::{CubicBezier3, to_xz};
@@ -566,32 +566,26 @@ pub fn route_trips(
             continue;
         };
         // Trip mode by need (T-242): a citizen with a car takes the quicker of walking the real
-        // route and driving it (congestion and the start penalty included).
-        let mut trip_mode = trip.mode;
+        // route and driving it (congestion and the start penalty included). Both routes are
+        // searched by the path service on its workers (T-256); the mode is set on delivery.
         let by_time = settings.as_deref().is_none_or(|s| s.mode_by_time)
             && content.as_deref().is_some_and(|c| {
                 grid.citizen(trip.citizen).is_some_and(|c| c.has_car)
                     && c.0.balance().car_start_penalty_s >= 0.0
             });
-        if by_time
-            && matches!(trip.mode, TripMode::Walk | TripMode::Car)
-            && let Some(content) = content.as_deref()
-            && let (Some(a), Some(b)) = (buildings.get(trip.from), buildings.get(trip.to))
-            && a.pos.distance(b.pos) >= crate::mode::ALWAYS_WALK_M
-            && let Some(m) = crate::mode::mode_by_time(
-                pnet.graph(),
-                pnet.congestion(),
-                &from,
-                &to,
-                content.0.balance().car_start_penalty_s,
-            )
-        {
-            trip_mode = m;
-            if m != trip.mode {
-                book.set_mode(tid, m);
+        let mode = match trip.mode {
+            TripMode::Walk | TripMode::Car
+                if by_time
+                    && let Some(content) = content.as_deref()
+                    && let (Some(a), Some(b)) =
+                        (buildings.get(trip.from), buildings.get(trip.to))
+                    && a.pos.distance(b.pos) >= crate::mode::ALWAYS_WALK_M =>
+            {
+                Mode::ByTime {
+                    car_start_penalty_bits: content.0.balance().car_start_penalty_s.to_bits(),
+                    fallback_car: trip.mode == TripMode::Car,
+                }
             }
-        }
-        let mode = match trip_mode {
             TripMode::Walk => Mode::Pedestrian,
             TripMode::Car => Mode::Car,
             TripMode::Transit => continue,
@@ -793,6 +787,25 @@ pub fn receive_paths(
                 buildings.set_flag(b, BuildingFlags::NO_PATH, false);
             }
         }
+        // A walk-or-drive request (T-242, decided on the worker since T-256) answers with the
+        // quicker mode's route: the trip takes that mode now.
+        let trip = match (&outcome.result, trip.mode) {
+            (PathResult::Pedestrian(Ok(_)), TripMode::Car) => {
+                book.set_mode(tid, TripMode::Walk);
+                Trip {
+                    mode: TripMode::Walk,
+                    ..trip
+                }
+            }
+            (PathResult::Car(Ok(_)), TripMode::Walk) => {
+                book.set_mode(tid, TripMode::Car);
+                Trip {
+                    mode: TripMode::Car,
+                    ..trip
+                }
+            }
+            _ => trip,
+        };
         match &outcome.result {
             PathResult::Stale => book.set_state(tid, TripState::Planned),
             PathResult::Pedestrian(Err(NoPath)) | PathResult::Car(Err(NoPath)) => {

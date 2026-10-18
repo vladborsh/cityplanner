@@ -72,6 +72,15 @@ pub enum Mode {
         from: cp_net::LaneId,
         to: cp_net::LaneId,
     },
+    /// A citizen with a car takes the quicker of walking and driving (T-242), decided on the
+    /// worker (T-256: it ran two searches on the main thread): the result is the cheaper of the
+    /// walking route and the driving route plus the start penalty (`f32` bits; walking wins a
+    /// tie), a `Pedestrian` or `Car` result. Neither route: the error of `fallback_car`'s mode.
+    /// Appended; no earlier save holds it.
+    ByTime {
+        car_start_penalty_bits: u32,
+        fallback_car: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -200,6 +209,21 @@ fn compute(
             (from, req.from.s),
             (to, req.to.s),
         )),
+        Mode::ByTime {
+            car_start_penalty_bits,
+            fallback_car,
+        } => {
+            let walk = find_ped_path(graph, &req.from, &req.to).ok();
+            let drive = find_car_path(graph, cong, &req.from, &req.to).ok();
+            let penalty = f32::from_bits(car_start_penalty_bits);
+            match (walk, drive) {
+                (Some(w), Some(d)) if w.cost <= d.cost + penalty => PathResult::Pedestrian(Ok(w)),
+                (_, Some(d)) => PathResult::Car(Ok(d)),
+                (Some(w), None) => PathResult::Pedestrian(Ok(w)),
+                (None, None) if fallback_car => PathResult::Car(Err(NoPath)),
+                (None, None) => PathResult::Pedestrian(Err(NoPath)),
+            }
+        }
         Mode::CarLanes { from, to } => PathResult::Car(find_car_path_lanes(
             graph,
             cong,
