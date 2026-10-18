@@ -36,8 +36,8 @@ pub fn update_police(
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
     let roads = net.graph();
     let mut finder = None;
-    for (id, b) in buildings.iter() {
-        if u64::from(id.index) % COVERAGE_PERIOD != bucket || b.state != BuildingState::Active {
+    for (id, b) in buildings.iter_bucket(COVERAGE_PERIOD as u32, bucket as u32) {
+        if b.state != BuildingState::Active {
             continue;
         }
         let def = db.building(b.def);

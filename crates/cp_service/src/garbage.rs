@@ -48,10 +48,8 @@ pub fn update_garbage(
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
     let roads = net.graph();
     let mut finder = None;
-    for (id, b) in buildings.iter() {
-        if u64::from(id.index) % COVERAGE_PERIOD != bucket {
-            continue;
-        }
+    // Only this pass's bucket, in id order (T-256: the whole grid was walked to find it).
+    for (id, b) in buildings.iter_bucket(COVERAGE_PERIOD as u32, bucket as u32) {
         // No garbage service is open yet: no garbage piles up (BUG-051).
         if !unlocks.open(ServiceKind::Garbage) {
             if state

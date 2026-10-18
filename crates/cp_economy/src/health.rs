@@ -50,10 +50,7 @@ pub fn update_health(
     // well again (BUG-051).
     if !unlocks.open(ServiceKind::Health) {
         let bucket = tick.0 % COVERAGE_PERIOD;
-        for (id, _) in buildings.iter() {
-            if u64::from(id.index) % COVERAGE_PERIOD != bucket {
-                continue;
-            }
+        for (id, _) in buildings.iter_bucket(COVERAGE_PERIOD as u32, bucket as u32) {
             let sick: Vec<_> = grid.sick_in(id).collect();
             for cid in sick {
                 grid.set_sick(cid, None);
@@ -92,8 +89,8 @@ pub fn update_health(
     let roads = net.graph();
     let mut finder = None;
     let bucket = tick.0 % COVERAGE_PERIOD;
-    for (id, b) in buildings.iter() {
-        if u64::from(id.index) % COVERAGE_PERIOD != bucket || b.state != BuildingState::Active {
+    for (id, b) in buildings.iter_bucket(COVERAGE_PERIOD as u32, bucket as u32) {
+        if b.state != BuildingState::Active {
             continue;
         }
         let sick: Vec<_> = grid.sick_in(id).collect();

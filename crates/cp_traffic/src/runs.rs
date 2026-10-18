@@ -18,7 +18,7 @@
 //!
 //! Save stability: serialised with postcard; enums are append-only.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_ecs::prelude::*;
 use cp_building::{BuildingGrid, BuildingId};
@@ -118,16 +118,69 @@ pub enum RunError {
     NotAtGoal,
 }
 
-#[derive(Resource, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Resource, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ServiceRuns {
     next: RunId,
     runs: BTreeMap<RunId, ServiceRun>,
+    /// The runs going to each building, by kind (T-256: [`Self::find`] walked every run for
+    /// each building a service looked at). Derived: not saved; built by the first change after
+    /// a load, and until then `find` walks the runs as before.
+    #[serde(skip)]
+    by_to: Option<BTreeMap<(u8, BuildingId), BTreeSet<RunId>>>,
+}
+
+impl PartialEq for ServiceRuns {
+    fn eq(&self, other: &Self) -> bool {
+        self.next == other.next && self.runs == other.runs
+    }
 }
 
 impl ServiceRuns {
     /// Rebuilds the runs from saved parts (the migrations of `cp_save`).
     pub fn from_parts(next: RunId, runs: BTreeMap<RunId, ServiceRun>) -> Self {
-        Self { next, runs }
+        Self {
+            next,
+            runs,
+            by_to: None,
+        }
+    }
+
+    /// The index of runs by goal building, built when missing.
+    fn index(&mut self) -> &mut BTreeMap<(u8, BuildingId), BTreeSet<RunId>> {
+        let runs = &self.runs;
+        self.by_to.get_or_insert_with(|| {
+            let mut m: BTreeMap<(u8, BuildingId), BTreeSet<RunId>> = BTreeMap::new();
+            for (&id, r) in runs {
+                if let RunPoint::Building(b) = r.to {
+                    m.entry((r.kind, b)).or_default().insert(id);
+                }
+            }
+            m
+        })
+    }
+
+    fn index_add(&mut self, id: RunId) {
+        let Some(r) = self.runs.get(&id).copied() else {
+            return;
+        };
+        if let RunPoint::Building(b) = r.to {
+            self.index().entry((r.kind, b)).or_default().insert(id);
+        }
+    }
+
+    fn index_drop(&mut self, id: RunId) {
+        let Some(r) = self.runs.get(&id).copied() else {
+            return;
+        };
+        if let RunPoint::Building(b) = r.to {
+            let m = self.index();
+            if let Some(set) = m.get_mut(&(r.kind, b)) {
+                set.remove(&id);
+                if set.is_empty() {
+                    m.remove(&(r.kind, b));
+                }
+            }
+        }
     }
 
     /// The next run id and the runs (frozen save writers read them).
@@ -165,6 +218,7 @@ impl ServiceRuns {
                 state: RunState::Planned,
             },
         );
+        self.index_add(id);
         id
     }
 
@@ -186,6 +240,7 @@ impl ServiceRuns {
                 state: RunState::Planned,
             },
         );
+        self.index_add(id);
         id
     }
 
@@ -193,6 +248,28 @@ impl ServiceRuns {
     /// asks for a route from its lane; a keep run that arrived abstractly (the pool was full)
     /// starts over from its old goal.
     pub fn continue_run(&mut self, id: RunId, to: RunPoint) -> Result<(), RunError> {
+        let at_goal = matches!(
+            self.runs.get(&id).ok_or(RunError::NoSuchRun)?,
+            ServiceRun {
+                state: RunState::Parked { .. },
+                ..
+            } | ServiceRun {
+                state: RunState::Arrived { .. },
+                keep: true,
+                ..
+            }
+        );
+        if at_goal {
+            self.index_drop(id);
+        }
+        let result = self.continue_run_inner(id, to);
+        if at_goal {
+            self.index_add(id);
+        }
+        result
+    }
+
+    fn continue_run_inner(&mut self, id: RunId, to: RunPoint) -> Result<(), RunError> {
         let run = self.runs.get_mut(&id).ok_or(RunError::NoSuchRun)?;
         match run.state {
             RunState::Parked { vehicle, .. } => {
@@ -235,6 +312,7 @@ impl ServiceRuns {
     /// Works in every state; returns whether the run existed.
     pub fn release(&mut self, id: RunId, agents: &mut Agents) -> bool {
         agents.remove_run_vehicle(id);
+        self.index_drop(id);
         self.runs.remove(&id).is_some()
     }
 
@@ -256,12 +334,20 @@ impl ServiceRuns {
 
     /// The run of `kind` going to `to`, if any (lowest id).
     pub fn find(&self, kind: VehicleKind, to: BuildingId) -> Option<(RunId, &ServiceRun)> {
-        self.iter()
-            .find(|(_, r)| r.kind == kind as u8 && r.to == RunPoint::Building(to))
+        match &self.by_to {
+            Some(m) => {
+                let id = *m.get(&(kind as u8, to))?.first()?;
+                self.runs.get(&id).map(|r| (id, r))
+            }
+            None => self
+                .iter()
+                .find(|(_, r)| r.kind == kind as u8 && r.to == RunPoint::Building(to)),
+        }
     }
 
     /// Forgets a run (consumed or cancelled); its vehicle, if still driving, arrives unnoticed.
     pub fn remove(&mut self, id: RunId) -> Option<ServiceRun> {
+        self.index_drop(id);
         self.runs.remove(&id)
     }
 
@@ -585,5 +671,56 @@ pub(crate) fn fail_walks_to(runs: &mut ServiceRuns, agents: &mut Agents, removed
     for id in hit {
         agents.remove_run_vehicle(id);
         runs.set_state(id, RunState::Failed);
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+
+    /// T-256: `find` through the index answers like walking every run, as runs start, arrive,
+    /// go on to another building and end.
+    #[test]
+    fn find_by_index_matches_the_walk_over_all_runs() {
+        let b = |i: u32| BuildingId::new(i, 0);
+        let mut runs = ServiceRuns::default();
+        let mut ids = Vec::new();
+        for i in 0..30u32 {
+            let kind = [VehicleKind::Truck, VehicleKind::Mail][(i % 2) as usize];
+            ids.push(runs.start(kind, b(100), b(i % 7)));
+        }
+        runs.set_state(ids[3], RunState::Failed);
+        runs.remove(ids[4]);
+        runs.remove(ids[11]);
+        let walk = |runs: &ServiceRuns, kind: VehicleKind, to: BuildingId| {
+            runs.iter()
+                .find(|(_, r)| r.kind == kind as u8 && r.to == RunPoint::Building(to))
+                .map(|(id, _)| id)
+        };
+        for kind in [
+            VehicleKind::Truck,
+            VehicleKind::Mail,
+            VehicleKind::Emergency,
+        ] {
+            for i in 0..8 {
+                assert_eq!(
+                    runs.find(kind, b(i)).map(|(id, _)| id),
+                    walk(&runs, kind, b(i))
+                );
+            }
+        }
+        // Rebuilt from saved parts: the walk until the first change, then the index again.
+        let (next, parts) = runs.parts();
+        let mut loaded = ServiceRuns::from_parts(next, parts.clone());
+        assert_eq!(
+            loaded.find(VehicleKind::Mail, b(1)).map(|(id, _)| id),
+            walk(&runs, VehicleKind::Mail, b(1))
+        );
+        loaded.start(VehicleKind::Mail, b(100), b(1));
+        assert_eq!(
+            loaded.find(VehicleKind::Mail, b(1)).map(|(id, _)| id),
+            walk(&loaded, VehicleKind::Mail, b(1))
+        );
+        assert_eq!(loaded.find(VehicleKind::Truck, b(9)), None);
     }
 }

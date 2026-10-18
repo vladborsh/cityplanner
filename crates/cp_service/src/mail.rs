@@ -293,10 +293,8 @@ pub fn update_mail(
             }
         }
     }
-    for (id, b) in buildings.iter() {
-        if u64::from(id.index) % COVERAGE_PERIOD != bucket {
-            continue;
-        }
+    // Only this pass's bucket, in id order (T-256: the whole grid was walked to find it).
+    for (id, b) in buildings.iter_bucket(COVERAGE_PERIOD as u32, bucket as u32) {
         // No post office is open yet: no mail piles up and nobody minds.
         if !unlocks.open(ServiceKind::Post) {
             if mail.pile(id) > 0 || state.problems_of(id).has(ServiceProblems::MAIL) {
