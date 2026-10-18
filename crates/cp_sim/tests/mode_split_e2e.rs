@@ -249,6 +249,7 @@ fn split(target: usize) -> (usize, usize, usize, usize) {
             ds.get(ds.len() * 9 / 10)
         );
     }
+    let why_before = sim.world().resource::<cp_traffic::Agents>().stuck_reasons();
     let before = {
         let a = sim.world().resource::<cp_traffic::Agents>();
         (
@@ -267,6 +268,11 @@ fn split(target: usize) -> (usize, usize, usize, usize) {
         w + c + t,
         sim.view().city.traffic.avg_load
     );
+    let why = a.stuck_reasons();
+    eprintln!(
+        "DBG stuck why (waiting, in junction, lane change, conflict stands, full beyond, front other, hard cap, hard cap head): {:?}",
+        std::array::from_fn::<u64, 8, _>(|i| why[i] - why_before[i])
+    );
     STUCK_LAST_DAY.with(|s| s.set(a.stats.despawned_stuck - before.0));
     (w, c, t, population(&sim))
 }
@@ -276,6 +282,21 @@ fn starter_split() -> (usize, usize, usize, usize) {
     let mut sim = starter_town(30);
     let (w, c, t) = count_day(&mut sim);
     (w, c, t, population(&sim))
+}
+
+/// BUG-078: the 12-street lattice (~18 000 residents) keeps its stuck cars below 1 % too. Its
+/// queues behind red lights run longer than the 8 lanes the stuck check used to follow, and the
+/// front car of each was removed as if in a gridlock ring: 86 of 8 128 car trips a day (1.06 %),
+/// 57 of them "no room beyond"; following 16 lanes leaves 21 (0.25 %).
+#[test]
+fn a_12_street_lattice_keeps_its_stuck_cars_below_one_percent() {
+    let (_, car, _, pop) = split(4850);
+    assert!(pop > 17_000, "{pop} residents");
+    let stuck = STUCK_LAST_DAY.with(|s| s.get());
+    assert!(
+        stuck * 100 < car as u64,
+        "{stuck} cars removed as stuck of {car} car trips"
+    );
 }
 
 #[test]

@@ -73,8 +73,11 @@ pub const STUCK_TICKS: u32 = 60;
 pub const HARD_CAP_FACTOR: u32 = 10;
 /// A car waiting to enter the road gives up after this many times the hard cap (BUG-072b).
 const WAITING_CAP_FACTOR: u32 = 6;
-/// How many full lanes ahead the suspicion of a blocked car is followed.
-const LEADER_CHAIN: u32 = 8;
+/// How many full lanes ahead the suspicion of a blocked car is followed. 16 (BUG-078, was 8): in
+/// a 12-street lattice (18 000 residents) queues behind a red light run longer than 8 lanes, and
+/// the front car of each was taken for a gridlock ring and removed (57 of 86 a day); 16 and 32
+/// remove the same 21, so no ring is that long.
+const LEADER_CHAIN: u32 = 16;
 /// Metres a keep vehicle stops short of its goal point (the front bumper), and the slack within
 /// which it counts as there.
 const KEEP_STOP_GAP: f32 = 0.3;
@@ -381,6 +384,32 @@ pub(crate) struct DriveState {
     pub generation: u64,
     /// Vehicle dimensions and dynamics of the current tick (set by [`drive_tick`]).
     pub specs: VehicleSpecs,
+    /// Why the stuck cars were removed, by [`StuckWhy`] (diagnostics; not saved).
+    pub stuck_why: [u64; STUCK_WHY_N],
+}
+
+/// Number of [`StuckWhy`] reasons.
+pub const STUCK_WHY_N: usize = 8;
+
+/// Why a stuck car was removed (BUG-078 diagnostics).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StuckWhy {
+    /// Never got on the road (waited for a gap at its start).
+    Waiting = 0,
+    /// Standing inside a junction (no room beyond).
+    InJunction = 1,
+    /// Front of its lane, held by a lane change that finds no gap.
+    LaneChange = 2,
+    /// Front of its lane, a conflicting car that itself stands is in the way.
+    ConflictStands = 3,
+    /// Front of its lane, no room in the lane beyond the junction.
+    FullBeyond = 4,
+    /// Front of its lane, something else (red/yield chain).
+    FrontOther = 5,
+    /// Hard cap on any standstill, not the head of a line.
+    HardCap = 6,
+    /// Hard cap at the head of a line.
+    HardCapHead = 7,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1094,6 +1123,17 @@ pub(crate) fn drive_tick(
             stuck.push(id);
         }
     }
+    for &id in &stuck {
+        let why = stuck_why(
+            vehicles,
+            st,
+            g,
+            signal_tick(tick, MOVE_SUBSTEPS - 1),
+            id,
+            stuck_ticks,
+        );
+        st.stuck_why[why as usize] += 1;
+    }
     for id in stuck {
         if let Some(v) = vehicles.remove(id) {
             st.remove(&v, id);
@@ -1101,6 +1141,57 @@ pub(crate) fn drive_tick(
         }
     }
     finished
+}
+
+/// Why `id` is being removed as stuck (diagnostics only).
+fn stuck_why(
+    veh: &Arena<Vehicle>,
+    st: &DriveState,
+    g: &PathGraph,
+    signal: u64,
+    id: VehicleId,
+    stuck_ticks: u32,
+) -> StuckWhy {
+    let Some(v) = veh.get(id) else {
+        return StuckWhy::HardCap;
+    };
+    if !v.spawned {
+        return StuckWhy::Waiting;
+    }
+    if v.in_conn {
+        return StuckWhy::InJunction;
+    }
+    let sus = v.stuck_timer & 0xFFFF;
+    let slot = v.lane().index as usize;
+    let head = st.lanes.get(slot).and_then(|l| l.first()) == Some(&id);
+    if !head {
+        return StuckWhy::HardCap;
+    }
+    if sus <= stuck_ticks {
+        return StuckWhy::HardCapHead;
+    }
+    let (Some(node), Some((_, to))) = (
+        g.car.get(slot).and_then(|n| n.as_ref()),
+        v.path.steps.get(v.hop as usize).copied(),
+    ) else {
+        return StuckWhy::FrontOther;
+    };
+    let Some(ex) = find_exit(g, node.id, to) else {
+        return StuckWhy::LaneChange;
+    };
+    let conflict_stands = ex.conflicts.iter().any(|c| {
+        st.conns
+            .get(&(c.from_slot, c.to.index))
+            .is_some_and(|l| l.iter().any(|&o| veh.get(o).is_some_and(|o| o.speed < 0.1)))
+    });
+    if conflict_stands {
+        return StuckWhy::ConflictStands;
+    }
+    if !has_room(g, veh, st, v, ex.to_slot, 0) {
+        return StuckWhy::FullBeyond;
+    }
+    let _ = signal;
+    StuckWhy::FrontOther
 }
 
 /// One substep at plan time `signal`.

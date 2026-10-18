@@ -250,6 +250,14 @@ pub struct Agents {
     ready: bool,
 }
 
+impl Agents {
+    /// Stuck cars removed by reason since the start or the load ([`crate::drive::StuckWhy`]
+    /// order; diagnostics, not saved).
+    pub fn stuck_reasons(&self) -> [u64; crate::drive::STUCK_WHY_N] {
+        self.drive.stuck_why
+    }
+}
+
 impl PartialEq for Agents {
     fn eq(&self, other: &Self) -> bool {
         self.pedestrians == other.pedestrians

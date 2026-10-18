@@ -58,6 +58,10 @@
 //! unchanged): a pedestrian's walk along a sidewalk ends at the junction setback instead of the
 //! node centre, and corners are walked by arc length, so walks are shorter from the first tick.
 
+//! **BUG-078.** Re-recorded again, the m1_traffic "load + 4096 ticks" value only (state at load
+//! unchanged): the stuck check follows 16 full lanes ahead instead of 8, so long queues behind a
+//! red light no longer lose their front car.
+
 //! **BUG-052.** Re-recorded again, the two "load + 4096 ticks" values only (state at load
 //! unchanged): the entry highways no longer cost upkeep, streets cost and cost to keep 40 % less,
 //! the water tower and wind turbine cost 40 % less to keep and the other service buildings 22 %
@@ -227,7 +231,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x484a47882ea188d4, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0xb8cc04367a2a370f, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,
