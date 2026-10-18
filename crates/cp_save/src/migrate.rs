@@ -4813,7 +4813,7 @@ pub fn migrate_v50_to_v51(v: SaveDataV50) -> SaveDataV51 {
 
 /// v51 → v52 (T-216b): a ship is a phase and the tick it ends; a berthed one stands on. Cargo
 /// stations have no train out and the goods waiting carry no premium.
-pub fn migrate_v51_to_v52(v: SaveDataV51) -> SaveData {
+pub fn migrate_v51_to_v52(v: SaveDataV51) -> SaveDataV52 {
     let hubs = v
         .hubs
         .hubs
@@ -4836,7 +4836,7 @@ pub fn migrate_v51_to_v52(v: SaveDataV51) -> SaveData {
             )
         })
         .collect();
-    SaveData {
+    SaveDataV52 {
         tick: v.tick,
         rng: v.rng,
         speed: v.speed,
@@ -4886,10 +4886,162 @@ pub fn migrate_v51_to_v52(v: SaveDataV51) -> SaveData {
     }
 }
 
+/// The body of version 52 (frozen when v53 added the mail, T-247): the v52 shape.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveDataV52 {
+    pub tick: Tick,
+    pub rng: SimRng,
+    pub speed: SimSpeed,
+    pub queue: CommandQueue<SimCommand>,
+    pub log: CommandLog<SimCommand>,
+    pub tiles: TileOwnership,
+    pub net: NetGraph,
+    /// Zone blocks, painted types and cell validity. Added in v5.
+    pub zones: cp_zone::ZoneGrid,
+    /// Buildings (lots, state, access points). Added in v6.
+    /// Includes the ids removed and not yet drained since v13.
+    pub buildings: BuildingGrid,
+    /// Citizens and households. Added in v7.
+    pub citizens: CitizenGrid,
+    /// Pathfinding requests in flight (id, submit tick, request, congestion read, stale
+    /// flag). Added in v8; see `cp_traffic::service` for why this makes load + N ticks equal
+    /// the continuous run.
+    pub paths: SavedPaths,
+    /// Pipe and power-line networks. Added in v9.
+    pub utilities: UtilityGraph,
+    /// Trips in flight and the routine's counters. Added in v10.
+    pub trips: TripBook,
+    /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
+    /// agents carry the segment load since v12; vehicles carry their re-route request id
+    /// since v17.
+    pub agents: cp_traffic::Agents,
+    /// The city's money. Added in v14.
+    pub treasury: Treasury,
+    /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
+    pub economy: EconomyState,
+    /// Smoothed demand and the sums of the cycle in progress. Added in v15.
+    pub demand: Demand,
+    pub demand_acc: DemandAcc,
+    /// Pollution, noise and land value grids. Added in v16.
+    pub land: LandGrids,
+    /// Abandonment timers. Added in v16.
+    pub decay: Decay,
+    /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
+    /// [`DefNames`] and [`SaveData::remap_defs`].
+    pub def_names: crate::DefNames,
+    /// The district grid and the district records. Added in v21.
+    pub district_map: DistrictMap,
+    pub districts: Districts,
+    /// The industry and park areas (T-206). Added in v42.
+    pub area_map: cp_district::AreaMap,
+    pub areas: cp_district::Areas,
+    /// The policies switched on for the whole city (T-190). Added in v38; a district's own are
+    /// in its record.
+    pub city_policies: CityPolicies,
+    /// Per-building service state and facility counters. Added in v22; fires name their
+    /// station since v24.
+    pub service_state: cp_service::ServiceState,
+    /// Service coverage along the roads as of the last 64-tick boundary. Saved because the
+    /// sim reads the values of that boundary until the next one. Added in v22.
+    pub coverage: cp_service::ServiceCoverage,
+    /// Since when each workplace lacks workers (`NO_WORKERS`). Added in v23.
+    pub shortage: cp_economy::WorkerShortage,
+    /// The population milestone reached (v25) and the unique buildings opened (v38).
+    pub progress: cp_sim::Progress,
+    /// Runs of service vehicles, buses and the like (T-151). Added in v27; between points,
+    /// with keep, since v29.
+    pub service_runs: cp_traffic::ServiceRuns,
+    /// Bus stops and lines (T-153). Added in v28.
+    pub transit: cp_transit::TransitNet,
+    /// Buses out on the lines and the week's transit money (T-156). Added in v30.
+    pub fleet: cp_transit::TransitFleet,
+    pub ledger: cp_transit::TransitLedger,
+    /// Tourists on the way and the visits each building has had (T-168). Added in v33.
+    pub tourists: cp_transit::Tourists,
+    /// Stock of factories and shops and the trucks on the road (T-169). Added in v34.
+    pub goods: cp_transit::Goods,
+    /// The intercity train and what it has brought (T-167). Added in v36.
+    pub intercity: cp_transit::Intercity,
+    /// Ore and oil left per resource cell (T-205). Added in v41; older saves are filled from
+    /// the map by [`load_into_runner`] (empty here: a migration has no map).
+    pub deposits: cp_terrain::ResourceDeposits,
+    /// Stock and problems of the chain buildings (T-209). Added in v43.
+    pub industry: cp_industry::IndustryState,
+    /// The week's cargo trade money (T-210). Added in v44; shop-goods trucks carry a cargo
+    /// since v44.
+    pub industry_ledger: cp_industry::IndustryLedger,
+    /// The modes and cargo of the warehouses that were set (T-214). Added in v45.
+    pub warehouses: cp_industry::WarehouseSettings,
+    /// The park areas: attractiveness, capacity, visitors, fee (T-223). Added in v47.
+    pub parks: cp_park::ParkState,
+    /// Where residents may go in their free hours (T-224). Added in v48.
+    pub leisure: cp_citizen::LeisureTargets,
+    /// Who is inside the parks and the walkers (T-224). Added in v48.
+    pub park_visits: cp_park::ParkVisits,
+    /// The entrance fees of the week (T-224). Added in v48.
+    pub park_ledger: cp_park::ParkLedger,
+    /// The cargo stations' stock and orders (T-216). Added in v50; the ships
+    /// in v51 (T-217), the trains and the goods premium in v52 (T-216b).
+    pub hubs: cp_transit::CargoHubs,
+}
+
+/// v52 → v53 (T-247): mail. No building holds any and nothing waits for sorting.
+pub fn migrate_v52_to_v53(v: SaveDataV52) -> SaveData {
+    SaveData {
+        tick: v.tick,
+        rng: v.rng,
+        speed: v.speed,
+        queue: v.queue,
+        log: v.log,
+        tiles: v.tiles,
+        net: v.net,
+        zones: v.zones,
+        buildings: v.buildings,
+        citizens: v.citizens,
+        paths: v.paths,
+        utilities: v.utilities,
+        trips: v.trips,
+        agents: v.agents,
+        treasury: v.treasury,
+        economy: v.economy,
+        demand: v.demand,
+        demand_acc: v.demand_acc,
+        land: v.land,
+        decay: v.decay,
+        def_names: v.def_names,
+        district_map: v.district_map,
+        districts: v.districts,
+        area_map: v.area_map,
+        areas: v.areas,
+        city_policies: v.city_policies,
+        service_state: v.service_state,
+        coverage: v.coverage,
+        shortage: v.shortage,
+        progress: v.progress,
+        service_runs: v.service_runs,
+        transit: v.transit,
+        fleet: v.fleet,
+        ledger: v.ledger,
+        tourists: v.tourists,
+        goods: v.goods,
+        intercity: v.intercity,
+        deposits: v.deposits,
+        industry: v.industry,
+        industry_ledger: v.industry_ledger,
+        warehouses: v.warehouses,
+        parks: v.parks,
+        leisure: v.leisure,
+        park_visits: v.park_visits,
+        park_ledger: v.park_ledger,
+        hubs: v.hubs,
+        mail: cp_service::MailState::default(),
+    }
+}
+
 /// v44 → v47: the two steps in one, for the chain below.
 fn up_from_v44(v: SaveDataV44) -> SaveData {
-    migrate_v51_to_v52(migrate_v50_to_v51(migrate_v49_to_v50(migrate_v47_to_v48(
-        migrate_v46_to_v47(migrate_v44_to_v45(v)),
+    migrate_v52_to_v53(migrate_v51_to_v52(migrate_v50_to_v51(migrate_v49_to_v50(
+        migrate_v47_to_v48(migrate_v46_to_v47(migrate_v44_to_v45(v))),
     ))))
 }
 
@@ -5153,19 +5305,22 @@ fn decode_and_migrate_ids(version: u32, body: &[u8]) -> Result<SaveData, SaveErr
         43 => Ok(up_from_v44(migrate_v43_to_v44(dec(body)?))),
         44 => Ok(up_from_v44(dec(body)?)),
         // v46 only changed what the zone blocks mean (layout v2), not how they are written.
-        45 | 46 => Ok(migrate_v51_to_v52(migrate_v50_to_v51(migrate_v49_to_v50(
-            migrate_v47_to_v48(migrate_v46_to_v47(dec(body)?)),
+        45 | 46 => Ok(migrate_v52_to_v53(migrate_v51_to_v52(migrate_v50_to_v51(
+            migrate_v49_to_v50(migrate_v47_to_v48(migrate_v46_to_v47(dec(body)?))),
         )))),
-        47 => Ok(migrate_v51_to_v52(migrate_v50_to_v51(migrate_v49_to_v50(
-            migrate_v47_to_v48(dec(body)?),
+        47 => Ok(migrate_v52_to_v53(migrate_v51_to_v52(migrate_v50_to_v51(
+            migrate_v49_to_v50(migrate_v47_to_v48(dec(body)?)),
         )))),
         // v49 only added `SimCommand::Park` (the command log), not a field.
-        48 | 49 => Ok(migrate_v51_to_v52(migrate_v50_to_v51(migrate_v49_to_v50(
+        48 | 49 => Ok(migrate_v52_to_v53(migrate_v51_to_v52(migrate_v50_to_v51(
+            migrate_v49_to_v50(dec(body)?),
+        )))),
+        50 => Ok(migrate_v52_to_v53(migrate_v51_to_v52(migrate_v50_to_v51(
             dec(body)?,
         )))),
-        50 => Ok(migrate_v51_to_v52(migrate_v50_to_v51(dec(body)?))),
-        51 => Ok(migrate_v51_to_v52(dec(body)?)),
-        52 => dec(body),
+        51 => Ok(migrate_v52_to_v53(migrate_v51_to_v52(dec(body)?))),
+        52 => Ok(migrate_v52_to_v53(dec(body)?)),
+        53 => dec(body),
         v => Err(SaveError::UnsupportedVersion(v)),
     }
 }

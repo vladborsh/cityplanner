@@ -11,6 +11,7 @@ pub mod education;
 pub mod facility;
 pub mod fire;
 pub mod garbage;
+pub mod mail;
 pub mod state;
 
 pub use coverage::{
@@ -23,6 +24,7 @@ pub use facility::{
 };
 pub use fire::update_fire;
 pub use garbage::update_garbage;
+pub use mail::{MailDay, MailState, update_mail, update_mail_sorting};
 pub use state::{BuildingServices, Facility, Fire, ServiceProblems, ServiceState, ServiceSummary};
 
 /// Crate name, used by the skeleton smoke test.
@@ -34,5 +36,7 @@ mod education_tests;
 mod fire_tests;
 #[cfg(test)]
 mod garbage_tests;
+#[cfg(test)]
+mod mail_tests;
 #[cfg(test)]
 mod tests;

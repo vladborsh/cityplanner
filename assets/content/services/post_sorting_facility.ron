@@ -1,0 +1,11 @@
+// T-247. Numbers: tune later. `capacity` is the mail it sorts per game day for the whole city;
+// no coverage of its own (radius 0), `tier` 2 = sorting facility. Without power it does not work.
+Service((
+    id: "post_sorting_facility",
+    name: "Sorting Facility",
+    kind: Post,
+    radius_m: 0.0,
+    capacity: 12000,
+    tier: 2,
+    vehicles: [],
+))

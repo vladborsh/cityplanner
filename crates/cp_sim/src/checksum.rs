@@ -195,6 +195,11 @@ pub(crate) fn district_part(world: &World, h: &mut Fnv1a) {
 pub(crate) fn service_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_service::ServiceCoverage>());
     h.write_serialized(world.resource::<cp_service::ServiceState>());
+    // Absent until there is any mail (v53), so older states keep their checksum.
+    let mail = world.resource::<cp_service::MailState>();
+    if !mail.is_empty() {
+        h.write_serialized(mail);
+    }
     // Absent while there are no stops or lines, so such states keep the checksum they had
     // before v28.
     let transit = world.resource::<cp_transit::TransitNet>();

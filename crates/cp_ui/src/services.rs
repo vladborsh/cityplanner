@@ -63,6 +63,8 @@ pub fn overlay_of(sector: Sector) -> Overlay {
         Sector::Police => Overlay::Police,
         Sector::Fire => Overlay::Fire,
         Sector::Elementary | Sector::HighSchool | Sector::University => Overlay::Education,
+        // T-249 gives the post an overlay.
+        Sector::Mail | Sector::Sorting => Overlay::Off,
     }
 }
 
@@ -77,6 +79,8 @@ fn icon_of(sector: Sector) -> Icon {
         Sector::Police => Icon::OverlayPolice,
         Sector::Fire => Icon::OverlayFire,
         Sector::Elementary | Sector::HighSchool | Sector::University => Icon::OverlayEducation,
+        // T-249 gives the post its own icon.
+        Sector::Mail | Sector::Sorting => Icon::Buildings,
     }
 }
 

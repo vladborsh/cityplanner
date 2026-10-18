@@ -274,6 +274,16 @@ impl LandGrids {
                 if p.has(ServiceProblems::CRIME) {
                     service[cell] -= bal.land_crime;
                 }
+                if p.has(ServiceProblems::MAIL) {
+                    service[cell] -= bal.land_mail;
+                    // Shops and offices feel it most (T-247).
+                    if matches!(
+                        i.content.building(b.def).zone,
+                        ZoneType::ComLow | ZoneType::ComHigh | ZoneType::Office
+                    ) {
+                        service[cell] -= bal.land_mail_work;
+                    }
+                }
             }
         }
 

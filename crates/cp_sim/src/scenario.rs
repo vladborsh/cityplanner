@@ -309,7 +309,7 @@ fn service_sites(
     // blocks spread over the lattice (the nearest to the centre first, every few blocks), so a
     // scripted city lives instead of drowning in garbage and crime.
     let per = |people: f32| (residents / people).ceil().max(1.0) as usize;
-    let wanted: [(&str, usize); 9] = [
+    let wanted: [(&str, usize); 11] = [
         ("landfill", per(2000.0)),
         ("cemetery", per(10_000.0)),
         ("clinic", per(2500.0)),
@@ -319,6 +319,10 @@ fn service_sites(
         ("elementary_school", per(1500.0)),
         ("high_school", per(5000.0)),
         ("university", per(10_000.0)),
+        // Mail (T-247): an office per 1 000 residents (four vans, ~0.9 mail per resident a day), a
+        // sorting facility per 15 000.
+        ("post_office", per(1000.0)),
+        ("post_sorting_facility", per(15_000.0)),
     ];
     let mut queue: Vec<&str> = Vec::new();
     for round in 0..wanted.iter().map(|w| w.1).max().unwrap_or(0) {

@@ -217,7 +217,13 @@ pub fn style(d: &StyleDef) -> Problems {
 pub fn service(d: &ServiceDef) -> Problems {
     let mut c = Check(Vec::new());
     c.not_empty("id", &d.id);
-    c.positive("radius_m", d.radius_m);
+    // A sorting facility (T-247) covers nothing.
+    let sorting = d.kind == crate::kinds::ServiceKind::Post && d.tier == 2;
+    if sorting {
+        c.non_negative("radius_m", d.radius_m);
+    } else {
+        c.positive("radius_m", d.radius_m);
+    }
     if d.capacity == 0 {
         c.bad("capacity", "must be > 0");
     }

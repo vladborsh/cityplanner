@@ -92,6 +92,8 @@ fn kind_icon(kind: ServiceKind) -> Icon {
         ServiceKind::Industry => Icon::Buildings,
         ServiceKind::Park => Icon::Parks,
         ServiceKind::Cargo => Icon::Buildings,
+        // T-249 gives the post its own icon.
+        ServiceKind::Post => Icon::Buildings,
     }
 }
 

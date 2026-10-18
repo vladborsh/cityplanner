@@ -428,6 +428,25 @@ pub struct Balance {
     /// (T-217). // tune later
     pub cargo_train_dwell_h: f32,
     pub ship_sail_h: f32,
+    /// Mail a household makes per game day (T-247). // tune later
+    pub mail_household: f32,
+    /// Mail a filled job makes per game day; shops and offices make it times the factors below.
+    pub mail_job: f32,
+    pub mail_commercial_mul: f32,
+    pub mail_office_mul: f32,
+    /// Mail a building holds before a mail van is sent for it.
+    pub mail_van_min: f32,
+    /// Mail piled up in a building from which it has the MAIL problem.
+    pub mail_problem: f32,
+    /// Mail a post office sorts itself per game day; the rest needs a sorting facility.
+    pub mail_post_sort: f32,
+    /// Days of the city's sorting capacity the unsorted mail may reach before the post offices
+    /// stop collecting.
+    pub mail_backlog_days: f32,
+    /// Land value a building with the MAIL problem takes from its cell; shops and offices
+    /// lose `land_mail_work` more.
+    pub land_mail: f32,
+    pub land_mail_work: f32,
     /// A resource extractor needs this average richness (`0..=1`) under its lot (T-208). // tune later
     pub min_richness: f32,
     /// A park area's attractiveness grows by this share per level above the first (T-223).
@@ -619,6 +638,16 @@ impl Balance {
             self.ship_capacity,
             self.cargo_train_dwell_h,
             self.ship_sail_h,
+            self.mail_household,
+            self.mail_job,
+            self.mail_commercial_mul,
+            self.mail_office_mul,
+            self.mail_van_min,
+            self.mail_problem,
+            self.mail_post_sort,
+            self.mail_backlog_days,
+            self.land_mail,
+            self.land_mail_work,
             self.industry_storage_per_level,
         ]);
         v.extend(self.industry_levels.map(|l| l as f32));
@@ -760,6 +789,16 @@ impl Default for Balance {
             ship_capacity: 4000.0,
             cargo_train_dwell_h: 1.0,
             ship_sail_h: 1.0,
+            mail_household: 1.0,
+            mail_job: 0.3,
+            mail_commercial_mul: 2.0,
+            mail_office_mul: 4.0,
+            mail_van_min: 30.0,
+            mail_problem: 80.0,
+            mail_post_sort: 300.0,
+            mail_backlog_days: 2.0,
+            land_mail: 3.0,
+            land_mail_work: 4.0,
             industry_levels: [2_000, 8_000, 25_000, 60_000],
             industry_storage_per_level: 0.1,
             networks: Networks::default(),
@@ -1314,7 +1353,8 @@ pub struct ServiceDef {
     /// What the building can hold (garbage, bodies); 0 = not a store (T-134). // tune later
     #[serde(default)]
     pub storage: u32,
-    /// Education tier 1..=3 (elementary, high school, university); 0 for every other kind.
+    /// Education tier 1..=3 (elementary, high school, university); post tier 1 = post office,
+    /// 2 = sorting facility (T-247); 0 for every other kind.
     #[serde(default)]
     pub tier: u8,
 }
@@ -1344,13 +1384,15 @@ pub enum VehicleKind {
     Ship = 11,
     /// A cargo train on the railway between the map edge and a cargo station (T-216b).
     CargoTrain = 12,
+    /// A mail van of a post office (T-247).
+    Mail = 13,
 }
 
 impl VehicleKind {
     /// Every kind in number order: the tables indexed by `kind as usize` (`cp_traffic`'s specs,
     /// the render's looks) have this many entries. The match in [`Self::number`] has no
     /// wildcard, so a new variant does not compile until it is added here.
-    pub const ALL: [VehicleKind; 13] = [
+    pub const ALL: [VehicleKind; 14] = [
         Self::Car,
         Self::Truck,
         Self::Bus,
@@ -1364,6 +1406,7 @@ impl VehicleKind {
         Self::CargoTanker,
         Self::Ship,
         Self::CargoTrain,
+        Self::Mail,
     ];
     pub const COUNT: usize = Self::ALL.len();
 
@@ -1395,6 +1438,7 @@ impl VehicleKind {
             Self::CargoTanker => 10,
             Self::Ship => 11,
             Self::CargoTrain => 12,
+            Self::Mail => 13,
         }
     }
 }

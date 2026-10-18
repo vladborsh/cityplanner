@@ -249,6 +249,7 @@ pub fn open_services(progress: &Progress, db: &ContentDb) -> cp_content::Service
         ServiceKind::Deathcare,
         ServiceKind::Fire,
         ServiceKind::Police,
+        ServiceKind::Post,
     ] {
         let mut any = false;
         let mut open = false;

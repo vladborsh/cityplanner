@@ -884,6 +884,7 @@ mod tests {
                 ServiceKind::Police,
                 ServiceKind::Education,
                 ServiceKind::Park,
+                ServiceKind::Post,
             ],
             "the depot is in the Transport category"
         );

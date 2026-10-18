@@ -234,6 +234,22 @@ Balance((
     // Hours a cargo train stands at its station; hours a ship sails in and out (T-216b, T-217). // tune later
     cargo_train_dwell_h: 1.0,
     ship_sail_h: 1.0,
+    // --- Mail (T-247): per game day, collected by post offices and sorted by them and the sorting facility ---
+    // Per household and per filled job (shops and offices make it times the factors); a building holding
+    // mail_van_min gets a van, from mail_problem up it has the MAIL problem. // tune later
+    mail_household: 1.0,
+    mail_job: 0.3,
+    mail_commercial_mul: 2.0,
+    mail_office_mul: 4.0,
+    mail_van_min: 30.0,
+    mail_problem: 80.0,
+    // A post office sorts this much a day itself; collecting stops when the unsorted mail is over
+    // mail_backlog_days days of the city's sorting capacity.
+    mail_post_sort: 300.0,
+    mail_backlog_days: 2.0,
+    // Land value a MAIL building takes from its cell, shops and offices land_mail_work more.
+    land_mail: 3.0,
+    land_mail_work: 4.0,
     // Area levels (T-209) // tune later: xp for levels 2 to 5, storage share per level above 1.
     industry_levels: (2000, 8000, 25000, 60000),
     industry_storage_per_level: 0.1,

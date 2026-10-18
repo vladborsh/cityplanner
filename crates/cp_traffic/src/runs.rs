@@ -265,7 +265,8 @@ impl ServiceRuns {
         self.runs.remove(&id)
     }
 
-    pub(crate) fn set_state(&mut self, id: RunId, state: RunState) {
+    /// Sets the state of a run (the drivers; owners' tests use it to let a vehicle arrive).
+    pub fn set_state(&mut self, id: RunId, state: RunState) {
         if let Some(r) = self.runs.get_mut(&id) {
             r.state = state;
         }

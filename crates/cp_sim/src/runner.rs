@@ -270,6 +270,18 @@ impl SimRunner {
                 .after(cp_service::reset_daily_capacity),
         );
         schedule.add_systems(
+            cp_service::update_mail_sorting
+                .in_set(SimPhase::Services)
+                .after(cp_service::update_coverage)
+                .after(cp_service::reset_daily_capacity),
+        );
+        schedule.add_systems(
+            cp_service::update_mail
+                .in_set(SimPhase::Services)
+                .after(cp_service::update_mail_sorting)
+                .after(cp_service::update_garbage),
+        );
+        schedule.add_systems(
             cp_service::update_fire
                 .in_set(SimPhase::Services)
                 .after(cp_service::update_garbage)

@@ -1,0 +1,12 @@
+// T-247. Numbers: tune later. `capacity` is the mail it collects per game day (and delivers: the
+// same trips), `storage` the vans it has, `tier` 1 = post office. Without power it does not work.
+Service((
+    id: "post_office",
+    name: "Post Office",
+    kind: Post,
+    radius_m: 1200.0,
+    capacity: 2400,
+    storage: 5,
+    tier: 1,
+    vehicles: ["mail_van"],
+))

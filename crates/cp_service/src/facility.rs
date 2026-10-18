@@ -152,8 +152,13 @@ pub fn reset_daily_capacity(tick: Res<Tick>, mut state: ResMut<ServiceState>) {
 
 /// Drops the service state of demolished buildings. Runs before the system that drains the
 /// grid's removed list (`cp_traffic::purge_removed_buildings`).
-pub fn purge_removed_services(buildings: Res<BuildingGrid>, mut state: ResMut<ServiceState>) {
+pub fn purge_removed_services(
+    buildings: Res<BuildingGrid>,
+    mut state: ResMut<ServiceState>,
+    mut mail: ResMut<crate::MailState>,
+) {
     for &id in buildings.removed() {
         state.remove(id);
+        mail.remove(id);
     }
 }

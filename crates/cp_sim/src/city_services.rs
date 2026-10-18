@@ -23,10 +23,14 @@ pub enum Sector {
     Elementary,
     HighSchool,
     University,
+    /// Mail made against the post offices' collecting (T-247).
+    Mail,
+    /// Mail to sort against the sorting capacity of the post offices and sorting facilities.
+    Sorting,
 }
 
 impl Sector {
-    pub const ALL: [Sector; 11] = [
+    pub const ALL: [Sector; 13] = [
         Sector::Water,
         Sector::Sewage,
         Sector::Power,
@@ -38,6 +42,8 @@ impl Sector {
         Sector::Elementary,
         Sector::HighSchool,
         Sector::University,
+        Sector::Mail,
+        Sector::Sorting,
     ];
 
     pub fn label(self) -> &'static str {
@@ -53,6 +59,8 @@ impl Sector {
             Sector::Elementary => "Elementary school",
             Sector::HighSchool => "High school",
             Sector::University => "University",
+            Sector::Mail => "Mail",
+            Sector::Sorting => "Mail sorting",
         }
     }
 
@@ -68,6 +76,7 @@ impl Sector {
             Sector::Police => ServiceKind::Police,
             Sector::Fire => ServiceKind::Fire,
             Sector::Elementary | Sector::HighSchool | Sector::University => ServiceKind::Education,
+            Sector::Mail | Sector::Sorting => ServiceKind::Post,
         }
     }
 
@@ -80,6 +89,7 @@ impl Sector {
             Sector::Police => "crimes/day",
             Sector::Fire => "buildings",
             Sector::Elementary | Sector::HighSchool | Sector::University => "seats",
+            Sector::Mail | Sector::Sorting => "mail/day",
         }
     }
 
@@ -127,8 +137,8 @@ pub struct BalanceInputs<'a> {
 /// The balance of every sector, in [`Sector::ALL`] order.
 pub fn city_services(i: &BalanceInputs) -> Vec<SectorBalance> {
     let bal = i.db.balance();
-    let mut supply = [0.0f32; 11];
-    let mut demand = [0.0f32; 11];
+    let mut supply = [0.0f32; Sector::ALL.len()];
+    let mut demand = [0.0f32; Sector::ALL.len()];
     for (n, (cap, use_)) in i.utilities.iter().enumerate() {
         supply[n] = *cap;
         demand[n] = *use_;
@@ -152,6 +162,16 @@ pub fn city_services(i: &BalanceInputs) -> Vec<SectorBalance> {
                     ServiceKind::Health => Some(Sector::Health),
                     ServiceKind::Deathcare => Some(Sector::Deathcare),
                     ServiceKind::Police => Some(Sector::Police),
+                    ServiceKind::Post => {
+                        // A post office collects and sorts a little; a facility only sorts.
+                        if svc.tier == cp_service::mail::POST_OFFICE_TIER {
+                            supply[idx(Sector::Mail)] += svc.capacity as f32;
+                            supply[idx(Sector::Sorting)] += bal.mail_post_sort;
+                        } else {
+                            supply[idx(Sector::Sorting)] += svc.capacity as f32;
+                        }
+                        None
+                    }
                     ServiceKind::Education => match svc.tier {
                         1 => Some(Sector::Elementary),
                         2 => Some(Sector::HighSchool),
@@ -171,6 +191,16 @@ pub fn city_services(i: &BalanceInputs) -> Vec<SectorBalance> {
         demand[idx(Sector::Garbage)] += f32::from(i.citizens.households_in(id))
             * bal.garbage_household
             + f32::from(workers) * bal.garbage_job;
+        let job_mul = match def.zone {
+            ZoneType::ComLow | ZoneType::ComHigh => bal.mail_commercial_mul,
+            ZoneType::Office => bal.mail_office_mul,
+            _ => 1.0,
+        };
+        let mail = (f32::from(i.citizens.households_in(id)) * bal.mail_household
+            + f32::from(workers) * bal.mail_job * job_mul)
+            .round();
+        demand[idx(Sector::Mail)] += mail;
+        demand[idx(Sector::Sorting)] += mail;
         if matches!(
             def.zone,
             ZoneType::ResLow | ZoneType::ResHigh | ZoneType::ComLow | ZoneType::ComHigh

@@ -323,6 +323,7 @@ impl ServicePlugin {
     pub fn init(world: &mut World) {
         world.init_resource::<ServiceCoverage>();
         world.init_resource::<crate::ServiceState>();
+        world.init_resource::<crate::MailState>();
     }
 }
 

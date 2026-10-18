@@ -100,6 +100,8 @@ impl Default for VehicleLooks {
                 Vec3::new(20.0, 14.0, 120.0),
                 // The cargo train (T-216b; drawn like the intercity train).
                 Vec3::new(3.0, 3.6, 140.0),
+                // The mail van (T-247).
+                Vec3::new(2.0, 2.3, 5.5),
             ],
         }
     }

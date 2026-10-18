@@ -81,7 +81,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 52;
+pub const FORMAT_VERSION: u32 = 53;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -257,6 +257,8 @@ pub struct SaveData {
     /// The cargo stations' stock and orders (T-216). Added in v50; the ships
     /// in v51 (T-217), the trains and the goods premium in v52 (T-216b).
     pub hubs: cp_transit::CargoHubs,
+    /// The mail waiting in the buildings and the sorting backlog (T-247). Added in v53.
+    pub mail: cp_service::MailState,
 }
 
 impl SaveData {
@@ -341,6 +343,7 @@ impl SaveData {
             park_visits: world.resource::<cp_park::ParkVisits>().clone(),
             park_ledger: *world.resource::<cp_park::ParkLedger>(),
             hubs: world.resource::<cp_transit::CargoHubs>().clone(),
+            mail: world.resource::<cp_service::MailState>().clone(),
         }
     }
 
@@ -402,6 +405,7 @@ impl SaveData {
         world.insert_resource(self.park_visits);
         world.insert_resource(self.park_ledger);
         world.insert_resource(self.hubs);
+        world.insert_resource(self.mail);
         // The routes are derived: the first Network phase after the load attaches the stops
         // and plans every line again.
         world.insert_resource(cp_transit::LinePlans::default());

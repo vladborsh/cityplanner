@@ -1,0 +1,15 @@
+Building((
+    id: "post_sorting_facility",
+    name: "Sorting Facility",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 4),
+    jobs: (12, 6, 0, 0),
+    consumption: {Power: 60.0},
+    tax_base: 0.0,
+    cost: 40000.0,
+    upkeep_week: 1800.0,
+    styles: ["service_post_sorting_facility"],
+    service: Some("post_sorting_facility"),
+    icon: "post_sorting_facility",
+))
