@@ -5,7 +5,8 @@
 # Usage: scripts/quick-gate.sh <base-sha>   (ff-merge passes the coordinator's master)
 #
 # Steps, each checked: untracked files, fmt, then clippy -D warnings and nextest on the CHANGED
-# crates only (crates whose directory has files changed in <base>...HEAD). Changes under
+# crates (crates whose directory has files changed in <base>...HEAD) and their direct workspace
+# dependents. Changes under
 # assets/content or fixtures add cp_content, cp_sim and cp_save (content hash, pins, saves).
 # A change to the root Cargo.toml / Cargo.lock / clippy.toml / rust-toolchain falls back to
 # the full gate. Docs/tasks-only changes run fmt only. A Cargo.toml change also runs the
@@ -65,10 +66,24 @@ for dir in $(echo "$changed" | awk -F/ '($1=="crates"||$1=="apps"||$1=="tools") 
   name=$(awk -F'"' '/^name *=/ {print $2; exit}' "$dir/Cargo.toml")
   [ -n "$name" ] && crates="$crates $name"
 done
-if echo "$changed" | grep -qE '^(assets/content/|fixtures/)'; then
-  crates="$crates cp_content cp_sim cp_save"
-fi
 crates=$(echo "$crates" | tr ' ' '\n' | awk 'NF' | sort -u | tr '\n' ' ')
+
+# Direct reverse dependencies inside the workspace too (a cp_net change once broke a cp_render
+# test that no quick gate ran: BUG-073). Only one level: deeper dependents wait for the batch gate.
+if [ -n "$crates" ]; then
+  rdeps=$(cargo metadata --no-deps --format-version 1 2>/dev/null | python3 -c '
+import json, sys
+changed = set(sys.argv[1:])
+meta = json.load(sys.stdin)
+for p in meta["packages"]:
+    if any(d["name"] in changed and d.get("path") for d in p["dependencies"]):
+        print(p["name"])' $crates)
+  crates=$(printf '%s\n%s\n' "$crates" "$rdeps" | tr ' ' '\n' | awk 'NF' | sort -u | tr '\n' ' ')
+fi
+# Content/fixture changes add the crates that read them (not their dependents: content is data).
+if echo "$changed" | grep -qE '^(assets/content/|fixtures/)'; then
+  crates=$(printf '%s\ncp_content\ncp_sim\ncp_save\n' "$crates" | tr ' ' '\n' | awk 'NF' | sort -u | tr '\n' ' ')
+fi
 
 if [ -z "$crates" ]; then
   echo "PASS: 0 tests (quick: no crate changed)"
