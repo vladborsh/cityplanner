@@ -423,6 +423,7 @@ fn every_zone_and_level_has_four_looks_and_every_zone_five_combinations() {
             && !s.id.starts_with("spec_")
             && !s.id.starts_with("chain_")
             && !s.id.starts_with("park_")
+            && !s.id.starts_with("industry_")
     }) {
         assert!(used.contains(s.id.as_str()), "style {} is unused", s.id);
     }
@@ -432,7 +433,8 @@ fn every_zone_and_level_has_four_looks_and_every_zone_five_combinations() {
                 && !s.id.starts_with("unique_")
                 && !s.id.starts_with("spec_")
                 && !s.id.starts_with("chain_")
-                && !s.id.starts_with("park_"))
+                && !s.id.starts_with("park_")
+                && !s.id.starts_with("industry_"))
             .count()
             >= 30
     );
@@ -546,4 +548,30 @@ fn park_area_defs_name_their_own_styles_and_icons() {
         );
     }
     assert_eq!(n, 26, "four gates, sixteen attractions, six props");
+}
+
+/// T-218: the four unique factories and the cargo station have a style of their own
+/// (`industry_<id>`, drawn by its own massing) and a square icon file of their own.
+#[test]
+fn unique_m5_defs_name_their_own_styles_and_icons() {
+    let db = ContentDb::load_dir(root()).unwrap();
+    let icons = root().join("../ui/icons");
+    let mut massings = std::collections::BTreeSet::new();
+    for id in [
+        "food_factory",
+        "furniture_factory",
+        "electronics_factory",
+        "car_factory",
+        "cargo_station",
+    ] {
+        let (_, d) = db.buildings().find(|(_, d)| d.id == id).expect(id);
+        assert_eq!(d.styles, vec![format!("industry_{id}")], "{id}");
+        assert_eq!(d.icon, id, "{id}: an icon of its own");
+        let style = db.style(db.style_id(&d.styles[0]).expect("style exists"));
+        assert!(style.massing as u8 >= 94, "{id}: a massing of its own");
+        massings.insert(style.massing as u8);
+        assert!(icons.join(format!("{id}.png")).exists(), "{id}");
+        assert!(icons.join(format!("src/{id}.svg")).exists(), "{id}");
+    }
+    assert_eq!(massings.len(), 5);
 }

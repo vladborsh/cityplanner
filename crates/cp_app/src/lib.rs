@@ -315,6 +315,26 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 30.0, 22.0, c - 262.0),
             Vec3::new(c + 62.0, 9.0, c - 310.0),
         ),
+        // The unique factories and the cargo station from their street side (`--scene
+        // factories`, the row at z = c - 130, x = c - 96 .. c + 96, fronts towards +z), and up
+        // close.
+        "factories" => (Vec3::new(c, 62.0, c - 45.0), Vec3::new(c, 0.0, c - 135.0)),
+        "factory-food" => (
+            Vec3::new(c - 112.0, 24.0, c - 88.0),
+            Vec3::new(c - 96.0, 5.0, c - 132.0),
+        ),
+        "factory-mid" => (
+            Vec3::new(c - 24.0, 34.0, c - 80.0),
+            Vec3::new(c - 24.0, 3.0, c - 132.0),
+        ),
+        "factory-cars" => (
+            Vec3::new(c + 34.0, 30.0, c - 84.0),
+            Vec3::new(c + 48.0, 3.0, c - 132.0),
+        ),
+        "factory-cargo" => (
+            Vec3::new(c + 76.0, 22.0, c - 96.0),
+            Vec3::new(c + 96.0, 4.0, c - 130.0),
+        ),
         // The M5 chain buildings, a row per resource (`--scene chains`).
         "chains" => (Vec3::new(c, 190.0, c + 150.0), Vec3::new(c, 5.0, c - 55.0)),
         // The whole middle of the map for the resource overlays (`--scene industry`).
@@ -454,6 +474,9 @@ pub fn build_sim(
     } else if scene == Some(scene::PARK_AREAS) {
         let n = scene::build_park_areas(&mut sim);
         info!("scene park-areas: {n} buildings");
+    } else if scene == Some(scene::FACTORIES) {
+        let n = scene::build_factories(&mut sim);
+        info!("scene factories: {n} buildings");
     } else if scene == Some(scene::SPECS) {
         let n = scene::build_specs(&mut sim);
         info!("scene specs: {n} buildings");

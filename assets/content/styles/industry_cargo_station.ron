@@ -1,0 +1,15 @@
+// Silhouette of a unique M5 building (T-218): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "industry_cargo_station",
+    massing: CargoStation,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.80, 0.80, 0.76)],
+        roof: [(0.40, 0.42, 0.46)],
+        trim: [(0.96, 0.74, 0.12)],
+        glass: (0.40, 0.58, 0.74),
+    ),
+    facade: Punched,
+))

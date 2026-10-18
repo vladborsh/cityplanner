@@ -517,6 +517,29 @@ pub fn build_park_areas(sim: &mut SimRunner) -> usize {
     })
 }
 
+pub const FACTORIES: &str = "factories";
+
+/// Builds the [`FACTORIES`] scene (T-218): the four unique factories and the cargo station in a
+/// row; returns how many buildings stand.
+pub fn build_factories(sim: &mut SimRunner) -> usize {
+    build_showcase_defs(sim, |db| {
+        [
+            "food_factory",
+            "furniture_factory",
+            "electronics_factory",
+            "car_factory",
+            "cargo_station",
+        ]
+        .into_iter()
+        .enumerate()
+        .filter_map(|(col, name)| {
+            db.building_id(name)
+                .map(|id| (id, -96.0 + col as f32 * 48.0, 0.0))
+        })
+        .collect()
+    })
+}
+
 /// Builds the [`SPECS`] scene; returns how many buildings stand.
 pub fn build_specs(sim: &mut SimRunner) -> usize {
     build_showcase_defs(sim, |db| {

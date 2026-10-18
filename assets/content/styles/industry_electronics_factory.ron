@@ -1,0 +1,15 @@
+// Silhouette of a unique M5 building (T-218): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "industry_electronics_factory",
+    massing: ElectronicsFactory,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.94, 0.95, 0.96)],
+        roof: [(0.74, 0.76, 0.79)],
+        trim: [(0.16, 0.62, 0.86)],
+        glass: (0.22, 0.36, 0.52),
+    ),
+    facade: Punched,
+))

@@ -1,0 +1,15 @@
+// Silhouette of a unique M5 building (T-218): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "industry_car_factory",
+    massing: CarFactory,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.68, 0.72, 0.78)],
+        roof: [(0.50, 0.53, 0.57)],
+        trim: [(0.86, 0.34, 0.12)],
+        glass: (0.40, 0.58, 0.74),
+    ),
+    facade: Punched,
+))

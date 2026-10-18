@@ -1032,6 +1032,12 @@ pub enum Massing {
     BumperCars = 91,
     RollerCoaster = 92,
     FerrisWheel = 93,
+    /// The four unique M5 factories and the cargo station (T-218).
+    FoodFactory = 94,
+    FurnitureFactory = 95,
+    ElectronicsFactory = 96,
+    CarFactory = 97,
+    CargoStation = 98,
 }
 
 /// Facade pattern family of a style.

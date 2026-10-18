@@ -34,7 +34,7 @@ pub fn is_theme_park(m: Massing) -> bool {
 }
 
 /// A square rod of width `w` from `a` to `b` (world or rotor space): its four sides.
-fn rod(m: &mut MeshData, a: Vec3, b: Vec3, w: f32, col: [f32; 4]) {
+pub(super) fn rod(m: &mut MeshData, a: Vec3, b: Vec3, w: f32, col: [f32; 4]) {
     let d = (b - a).normalize_or_zero();
     let side = if d.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
     let p = d.cross(side).normalize_or_zero() * (w * 0.5);
@@ -189,7 +189,7 @@ fn elephant(m: &mut MeshData, f: &Frame, at: (f32, f32), y: f32, s: f32, dir: f3
     }
 }
 
-fn mul(c: [f32; 4], k: f32) -> [f32; 4] {
+pub(super) fn mul(c: [f32; 4], k: f32) -> [f32; 4] {
     [c[0] * k, c[1] * k, c[2] * k, c[3]]
 }
 

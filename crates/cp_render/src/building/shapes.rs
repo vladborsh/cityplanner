@@ -13,6 +13,7 @@ use super::{Ctx, Frame, mul};
 use crate::chunk::MeshData;
 use crate::road::{flat_quad, push_vertex, tri};
 
+mod factory;
 mod park_area;
 mod theme_park;
 
@@ -692,6 +693,7 @@ pub fn is_service(m: Massing) -> bool {
             | Massing::ParkSports
     ) || park_area::is_park_area(m)
         || theme_park::is_theme_park(m)
+        || factory::is_factory(m)
 }
 
 /// An upright (optionally tapered) cylinder with `n` sides; `top` closes it with a cap.
@@ -5036,6 +5038,7 @@ fn park(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
             }
         }
         _ if theme_park::is_theme_park(massing) => theme_park::theme_park(m, massing, sc),
+        _ if factory::is_factory(massing) => factory::factory(m, massing, sc),
         _ => park_area::park_area(m, massing, sc),
     }
 }

@@ -1449,3 +1449,60 @@ fn the_zoo_and_amusement_silhouettes_are_distinct_and_fit_their_lots() {
     assert_eq!(masses.len(), names.len());
     assert_eq!(shapes.len(), names.len(), "{shapes:?}");
 }
+
+/// T-218: the four unique factories and the cargo station have silhouettes of their own, each
+/// with a massing of its own, built at every LOD (never growing with distance), sound, inside
+/// the lot and above the ground; none of them turns.
+#[test]
+fn the_factory_and_cargo_station_silhouettes_are_distinct_and_fit_their_lots() {
+    let e = env();
+    let ground = e.terrain.height(Vec2::new(5120.0, 5120.0));
+    let mut shapes = BTreeSet::new();
+    let mut masses = BTreeSet::new();
+    let names = [
+        "food_factory",
+        "furniture_factory",
+        "electronics_factory",
+        "car_factory",
+        "cargo_station",
+    ];
+    for name in names {
+        let (def_id, def) = service_def(&e, name);
+        assert_eq!(def.styles, vec![format!("industry_{name}")], "{name}");
+        let style = e.db.style(e.db.style_id(&def.styles[0]).unwrap());
+        assert!(style.massing as u8 >= 94, "{name} has a massing of its own");
+        masses.insert(style.massing as u8);
+        let b = building(def_id, &e.db, BuildingState::Active, 0);
+        let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+        let (n, m, f) = (
+            p.near.triangle_count(),
+            p.mid.triangle_count(),
+            p.far.triangle_count(),
+        );
+        assert!(n > m && m >= f && f > 0, "{name}: {n} {m} {f}");
+        assert!(p.rotor.is_none(), "{name}");
+        let (hw, hd) = (f32::from(def.lot.0) * 4.0, f32::from(def.lot.1) * 4.0);
+        for mesh in [&p.near, &p.mid, &p.far] {
+            assert!(
+                mesh.positions.iter().flatten().all(|v| v.is_finite()),
+                "{name}"
+            );
+            let (lo, hi) = extent(mesh);
+            assert!(
+                lo.x >= b.pos.x - hw - 1e-3
+                    && hi.x <= b.pos.x + hw + 1e-3
+                    && lo.z >= b.pos.y - hd - 1e-3
+                    && hi.z <= b.pos.y + hd + 1e-3,
+                "{name}: outside its lot"
+            );
+            assert!(hi.y - ground > 3.0 && hi.y - ground < 24.0, "{name}");
+        }
+        shapes.insert((
+            p.near.positions.len(),
+            p.mid.positions.len(),
+            p.far.positions.len(),
+        ));
+    }
+    assert_eq!(masses.len(), names.len());
+    assert_eq!(shapes.len(), names.len(), "{shapes:?}");
+}

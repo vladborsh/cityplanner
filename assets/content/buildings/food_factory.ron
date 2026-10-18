@@ -1,4 +1,4 @@
-// Numbers: tune later. Look and icon are borrowed until T-218 (T-215).
+// Numbers: tune later (T-215). Look and icon: T-218.
 Building((
     id: "food_factory",
     name: "Food factory",
@@ -10,8 +10,7 @@ Building((
     tax_base: 0.0,
     cost: 90000.0,
     upkeep_week: 1500.0,
-    styles: ["industrial_mill_gabled_b"],
+    styles: ["industry_food_factory"],
     service: Some("industry"),
-    icon: "coal_power_plant",
     industry: Some((resource: None, role: Factory, inputs: [(AnimalProducts, 30.0), (Flour, 30.0)], outputs: [(Goods, 60.0)], storage: 400.0, min_level: 2)),
 ))
