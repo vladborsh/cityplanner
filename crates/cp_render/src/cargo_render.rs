@@ -2,9 +2,10 @@
 //! freight locomotive and flat wagons with containers or tanks, one entity per car, placed every
 //! frame along its leg between two ticks (`TickFraction`) like the intercity train; the cars
 //! together are as long as the `cargo_train` vehicle. A cargo ship (`SimView::ships`) is a hull
-//! with stacked containers and a bridge at the stern, its bow towards the berth, drawn between
-//! its pose now and a tick later on the water off the port (held where the water along its line
-//! ends); it fades in as it sails in and out as it sails away (render time only).
+//! with stacked containers and a bridge at the stern; it berths alongside the bank, along the
+//! water at the port, scaled down to fit narrow water (`berth_fit`), and under sail follows the
+//! sim's line between its pose now and a tick later (held on the water), turning to its way; it
+//! fades in as it sails in and out as it sails away (render time only).
 
 use bevy::prelude::*;
 use cp_sim::SimView;
@@ -26,7 +27,8 @@ const GAP: f32 = 0.8;
 const HALF_W: f32 = 1.5;
 /// The track surface is this much above the polyline.
 const RAIL_LIFT: f32 = 0.6;
-/// The ship stands this far off the port's centre (half a 4x4 lot and some water), metres.
+/// Without a map the ship lies this far off the port's centre (half a 4x4 lot and some
+/// water), metres.
 const BERTH_OFF: f32 = 20.0;
 /// Fraction of the sail in and out over which the ship fades.
 const FADE: f32 = 0.3;
@@ -331,29 +333,104 @@ pub fn ship_alpha(phase: cp_transit::ShipPhase, t: f32) -> f32 {
     }
 }
 
-/// The water surface under a ship at `c`; where the sail line has left the water (a river
-/// bends), the surface off its berth, found along `dir`.
-fn water_level(tr: &cp_terrain::Terrain, c: Vec2, berth: Vec2, dir: Vec2) -> f32 {
+/// The water surface at `c`, or at `near` when `c` is dry, or the sea level.
+fn water_level(tr: &cp_terrain::Terrain, c: Vec2, near: Vec2) -> f32 {
     let surface = |p: Vec2| {
         let depth = tr.water_depth(p);
         (depth > 0.0).then(|| tr.height(p) + depth)
     };
     surface(c)
-        .or_else(|| (0..64).find_map(|i| surface(berth + dir * (4.0 * i as f32))))
+        .or_else(|| surface(near))
         .unwrap_or_else(|| tr.sea_level())
 }
 
-/// How far out from `berth` along `dir` the water goes on unbroken, metres (from the first wet
-/// point off the quay; at most a sail and a ship length).
-fn water_reach(tr: &cp_terrain::Terrain, berth: Vec2, dir: Vec2) -> f32 {
-    let step = 4.0;
-    let max = ((cp_transit::SAIL_M + 200.0) / step) as usize;
-    let wet = |i: usize| tr.is_water(berth + dir * (step * i as f32));
-    let Some(first) = (0..max).find(|&i| wet(i)) else {
-        return f32::MAX;
+/// Where and how big a port's ship lies at its berth: alongside the bank, along the water.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Berth {
+    /// Centre of the hull.
+    pub centre: Vec2,
+    /// Unit vector along the water at the berth (the hull's length).
+    pub axis: Vec2,
+    /// Uniform scale of the ship mesh (`<= 1`): a smaller freighter on narrow water.
+    pub scale: f32,
+}
+
+/// Smallest scale a ship is drawn at.
+const MIN_SCALE: f32 = 0.2;
+/// Share of the width of the water a berthed ship may take.
+const BEAM_SHARE: f32 = 0.6;
+
+/// How far from `p` along `d` the water goes on unbroken, in `step` metre steps up to `max`.
+fn wet_run(wet: &impl Fn(Vec2) -> bool, p: Vec2, d: Vec2, step: f32, max: f32) -> f32 {
+    let n = (max / step) as usize;
+    (1..=n)
+        .take_while(|&i| wet(p + d * (step * i as f32)))
+        .count() as f32
+        * step
+}
+
+/// The berth of a ship `len` x `beam` at a port at `berth` whose water lies along `dir`: the
+/// bank is the first wet point along `dir`; the water runs square to the mean way from there to
+/// the wet points of a ring round it; the hull lies alongside the bank (a little off it on a
+/// bend), scaled down (uniformly) until it takes at most [`BEAM_SHARE`] of the width and fits
+/// the wet run along the water at both sides of the hull. `None` when there is no water within 120 m.
+pub fn berth_fit(
+    wet: impl Fn(Vec2) -> bool,
+    berth: Vec2,
+    dir: Vec2,
+    (len, beam): (f32, f32),
+) -> Option<Berth> {
+    let bank = (0..=60)
+        .map(|i| berth + dir * (2.0 * i as f32))
+        .find(|&p| wet(p))?;
+    // Out over the water, square to the bank: the mean way to the wet points of a ring round
+    // the bank; the water runs across that.
+    let ring = (0..48)
+        .map(|k| Vec2::from_angle(k as f32 / 48.0 * std::f32::consts::TAU))
+        .filter(|&d| wet(bank + d * 16.0))
+        .fold(Vec2::ZERO, |acc, d| acc + d);
+    let n = ring.try_normalize().unwrap_or(dir);
+    let axis = Vec2::new(n.y, -n.x);
+    let bank = (0..=60)
+        .map(|i| berth + n * (2.0 * i as f32))
+        .find(|&p| wet(p))
+        .unwrap_or(bank);
+    let width = wet_run(&wet, bank, n, 1.0, 400.0);
+    let widest = (BEAM_SHARE * width / beam).min(1.0);
+    // The scale that fits with the hull's near side `gap` metres off the bank: both sides and
+    // the middle of the hull stay on water along its whole length.
+    let fit = |gap: f32| {
+        let mut scale = widest;
+        for _ in 0..3 {
+            let centre = bank + n * (gap + beam * scale * 0.5);
+            let half = (-1..=1)
+                .map(|k| {
+                    let side = centre + n * (k as f32 * beam * scale * 0.5);
+                    wet_run(&wet, side, axis, 2.0, len).min(wet_run(&wet, side, -axis, 2.0, len))
+                })
+                .fold(f32::MAX, f32::min);
+            scale = scale.min((half - 2.0).max(0.0) * 2.0 / len);
+        }
+        scale.clamp(MIN_SCALE, 1.0)
     };
-    let last = (first..max).take_while(|&i| wet(i)).last().unwrap_or(first);
-    step * last as f32
+    // On a bend a straight hull fits better a little off the bank: the nearest standoff that
+    // gets within 10 % of the best.
+    let gaps = [2.0f32, 5.0, 9.0, 14.0, 20.0, 28.0, 38.0, 50.0];
+    let gaps: Vec<(f32, f32)> = gaps
+        .into_iter()
+        .filter(|&g| g < (width - beam * MIN_SCALE).max(2.0))
+        .map(|g| (g, fit(g)))
+        .collect();
+    let best = gaps.iter().map(|g| g.1).fold(MIN_SCALE, f32::max);
+    let (gap, scale) = gaps
+        .into_iter()
+        .find(|g| g.1 >= 0.9 * best)
+        .unwrap_or((2.0, MIN_SCALE));
+    Some(Berth {
+        centre: bank + n * (gap + beam * scale * 0.5),
+        axis,
+        scale,
+    })
 }
 
 #[derive(Component)]
@@ -368,6 +445,8 @@ struct CargoRender {
     trains: Vec<Vec<Entity>>,
     /// The ships shown, in `SimView::ships` order, each with its own material (it fades).
     ships: Vec<(Entity, Handle<VertexColorMaterial>)>,
+    /// The berth of each port's ship, measured once.
+    berths: std::collections::BTreeMap<cp_building::BuildingId, Option<Berth>>,
     /// The train length the car meshes were made for, and the ship size.
     length: f32,
     ship_size: (f32, f32),
@@ -494,17 +573,48 @@ fn sync_cargo(
         let p = ship.pos().lerp(ship.next_pos(), frac);
         let t = ship.t + (ship.next_t - ship.t) * frac;
         let alpha = ship_alpha(ship.phase, t);
-        // Bow towards the berth, standing off it by half a lot and half the ship, and never
-        // further out than the water reaches along its line (a river bends away).
-        let out = (p - ship.berth).length() + BERTH_OFF + size.0 * 0.5;
-        let reach = terrain.map_or(f32::MAX, |tr| water_reach(tr, ship.berth, ship.dir));
-        let c = ship.berth + ship.dir * out.min(reach - size.0 * 0.5).max(BERTH_OFF + size.0 * 0.5);
-        let water = terrain.map_or(0.0, |tr| water_level(tr, c, ship.berth, ship.dir));
-        let rot = Quat::from_rotation_arc(
-            Vec3::Z,
-            Vec3::new(-ship.dir.x, 0.0, -ship.dir.y).normalize_or(Vec3::Z),
-        );
-        let tf = Transform::from_translation(Vec3::new(c.x, water, c.y)).with_rotation(rot);
+        // Alongside the bank at the berth, scaled to the water; under sail it keeps that
+        // offset from the sim's line (held where that leaves the water) and turns to its way.
+        let fit = *st.berths.entry(ship.port).or_insert_with(|| {
+            terrain.and_then(|tr| berth_fit(|q| tr.is_water(q), ship.berth, ship.dir, size))
+        });
+        let berth = fit.unwrap_or(Berth {
+            centre: ship.berth + ship.dir * (BERTH_OFF + size.1 * 0.5),
+            axis: Vec2::new(-ship.dir.y, ship.dir.x),
+            scale: 1.0,
+        });
+        let mut c = berth.centre + (p - ship.berth);
+        if let Some(tr) = terrain
+            && !tr.is_water(c)
+        {
+            let from = c;
+            c = (1..=16)
+                .map(|k| from.lerp(berth.centre, k as f32 / 16.0))
+                .find(|&q| tr.is_water(q))
+                .unwrap_or(berth.centre);
+        }
+        let water = terrain.map_or(0.0, |tr| water_level(tr, c, berth.centre));
+        let moving = ship.next_pos() - ship.pos();
+        // Docked the bow points along the axis (its sign fixed); under sail it turns from its
+        // way towards the axis as it nears the berth.
+        let axis = if berth.axis.x + berth.axis.y * 1e-3 >= 0.0 {
+            berth.axis
+        } else {
+            -berth.axis
+        };
+        let to3 = |v: Vec2| Vec3::new(v.x, 0.0, v.y);
+        let docked = Quat::from_rotation_arc(Vec3::Z, to3(axis));
+        let rot = if moving.length_squared() > 1e-6 && ship.phase != cp_transit::ShipPhase::Docked {
+            let way = Quat::from_rotation_arc(Vec3::Z, to3(moving.normalize()));
+            let near =
+                (1.0 - c.distance(berth.centre) / (size.0 * berth.scale * 1.5)).clamp(0.0, 1.0);
+            way.slerp(docked, near)
+        } else {
+            docked
+        };
+        let tf = Transform::from_translation(Vec3::new(c.x, water, c.y))
+            .with_rotation(rot)
+            .with_scale(Vec3::splat(berth.scale));
         let visible = if alpha > 0.01 {
             Visibility::Inherited
         } else {
@@ -646,5 +756,43 @@ mod tests {
         assert_eq!(ship_alpha(Leaving, 0.5), 1.0);
         assert_eq!(ship_alpha(Leaving, 1.0), 0.0);
         assert!(ship_alpha(Arriving, 0.15) > 0.0 && ship_alpha(Arriving, 0.15) < 1.0);
+    }
+
+    /// T-218: a ship berths alongside the bank, along the water, and is scaled down until its
+    /// hull (corners and middle) stays on the water: full size on a wide river, a small
+    /// freighter on a narrow one or in a short basin.
+    #[test]
+    fn a_berthed_ship_lies_alongside_and_fits_the_water() {
+        let (len, beam) = DEFAULT_SHIP;
+        // A port at the origin, the bank 20 m south (-y), the river running along x.
+        let river =
+            |w: f32, l: f32| move |p: Vec2| p.y <= -20.0 && p.y >= -20.0 - w && p.x.abs() <= l;
+        let hull_on_water = |b: &Berth, wet: &dyn Fn(Vec2) -> bool| {
+            let n = Vec2::new(-b.axis.y, b.axis.x);
+            [-1.0f32, 0.0, 1.0].iter().all(|&a| {
+                [-1.0f32, 0.0, 1.0].iter().all(|&c| {
+                    wet(b.centre
+                        + b.axis * (a * len * b.scale * 0.5 * 0.98)
+                        + n * (c * beam * b.scale * 0.5 * 0.98))
+                })
+            })
+        };
+        for (w, l, full) in [
+            (200.0, 2000.0, true),
+            (24.0, 2000.0, false),
+            (200.0, 40.0, false),
+        ] {
+            let wet = river(w, l);
+            let b = berth_fit(wet, Vec2::ZERO, Vec2::new(0.0, -1.0), (len, beam)).expect("water");
+            assert!(b.axis.x.abs() > 0.99, "{w} {l}: alongside the bank, {b:?}");
+            assert!(b.scale <= 1.0 && b.scale >= MIN_SCALE);
+            assert_eq!(b.scale == 1.0, full, "{w} {l}: {b:?}");
+            assert!(hull_on_water(&b, &wet), "{w} {l}: {b:?}");
+            assert!(
+                b.centre.y < -20.0 && b.centre.y > -20.0 - w,
+                "{w} {l}: {b:?}"
+            );
+        }
+        assert!(berth_fit(|_| false, Vec2::ZERO, Vec2::X, (len, beam)).is_none());
     }
 }
