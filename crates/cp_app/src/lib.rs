@@ -105,6 +105,7 @@ impl Plugin for GamePlugin {
             UtilityRenderPlugin,
             UndergroundPlugin,
             cp_render::TrainRenderPlugin,
+            cp_render::CargoRenderPlugin,
             cp_render::PortalRenderPlugin,
             BuildingRenderPlugin,
             ProblemIconPlugin,
@@ -219,6 +220,22 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         "train" => (
             Vec3::new(5880.0, 55.0, 5640.0),
             Vec3::new(5900.0, 28.0, 5500.0),
+        ),
+        // The cargo station at the dead end of the flatlands railway with its train
+        // (`--scene cargo-train`).
+        "cargo-train" => (
+            Vec3::new(5845.0, 46.0, 5572.0),
+            Vec3::new(5875.0, 28.0, 5490.0),
+        ),
+        // The ports on the river of `river_valley` (`--scene cargo-ship --map river_valley`):
+        // the berthed ship, and the one sailing in.
+        "cargo-ship" => (
+            Vec3::new(6330.0, 70.0, 5060.0),
+            Vec3::new(6420.0, 0.0, 4900.0),
+        ),
+        "cargo-ship-in" => (
+            Vec3::new(6600.0, 150.0, 4860.0),
+            Vec3::new(6450.0, 0.0, 4560.0),
         ),
         // Over the junctions of the corner scene (`--scene corners`).
         "corners" => (
@@ -417,6 +434,12 @@ pub fn build_sim(
     } else if scene == Some(scene::TRAIN) {
         let ok = scene::build_train(&mut sim);
         info!("scene train: a train at the station: {ok}");
+    } else if scene == Some(scene::CARGO_TRAIN) {
+        let ok = scene::build_cargo_train(&mut sim);
+        info!("scene cargo-train: a cargo train at the station: {ok}");
+    } else if scene == Some(scene::CARGO_SHIP) {
+        let at = scene::build_cargo_ship(&mut sim);
+        info!("scene cargo-ship: ports at {at:?}");
     } else if scene == Some(scene::CORNERS) {
         scene::build_corners(&mut sim);
         info!("scene corners");

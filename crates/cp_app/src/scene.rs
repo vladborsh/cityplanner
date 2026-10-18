@@ -805,6 +805,173 @@ pub fn build_train(sim: &mut SimRunner) -> bool {
     false
 }
 
+/// Cargo train scene (T-218): a new game on flatlands with a cargo station at the dead end of the
+/// entry railway, exports waiting on its platform, run until its cargo train stands there. Look
+/// at it with `--cam cargo-train`.
+pub const CARGO_TRAIN: &str = "cargo-train";
+
+/// Builds the [`CARGO_TRAIN`] scene; returns whether the cargo train stands at the station.
+pub fn build_cargo_train(sim: &mut SimRunner) -> bool {
+    use cp_building::{BuildingCommand, BuildingGrid};
+    let db = embedded_content();
+    let terrain = sim.world().resource::<cp_terrain::SimTerrain>().0.clone();
+    if sim.new_game().is_err() {
+        return false;
+    }
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let Some(rail) = terrain.meta().entry_rail.as_ref() else {
+        return false;
+    };
+    let end = rail.dead_end();
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    let send = |sim: &mut SimRunner, cmd: SimCommand| {
+        sim.push_command(cmd, sim.tick());
+        sim.tick_once();
+    };
+    send(
+        sim,
+        SimCommand::Net(NetCommand::BuildRoad {
+            road: basic,
+            path: RoadPath::Straight {
+                from: Vec2::new(end.x - 190.0, end.y + 28.5),
+                to: Vec2::new(end.x - 30.0, end.y + 28.5),
+            },
+            elevation: ElevationMode::Ground,
+        }),
+    );
+    let def = db.building_id("cargo_station").expect("cargo_station");
+    send(
+        sim,
+        SimCommand::Building(BuildingCommand::Place {
+            def,
+            pos: Vec2::new(end.x - 80.0, end.y),
+            rot: 0.0,
+        }),
+    );
+    let Some(station) = sim
+        .world()
+        .resource::<BuildingGrid>()
+        .iter()
+        .find(|(_, b)| b.def == def)
+        .map(|(id, _)| id)
+    else {
+        return false;
+    };
+    // Exports waiting on the platform: the next train comes for them.
+    let now = sim.tick();
+    sim.world_mut()
+        .resource_mut::<cp_transit::CargoHubs>()
+        .hubs
+        .insert(
+            station,
+            cp_transit::Hub {
+                out: vec![(cp_content::CargoKind::Logs, 500.0)],
+                next_at: now,
+                ..Default::default()
+            },
+        );
+    for _ in 0..6000 {
+        sim.tick_once();
+        let standing = sim
+            .world()
+            .resource::<cp_transit::CargoHubs>()
+            .hubs
+            .get(&station)
+            .and_then(|h| h.train)
+            .is_some_and(|t| matches!(t.phase, cp_transit::TrainPhase::Dwell { .. }));
+        if standing {
+            return true;
+        }
+    }
+    false
+}
+
+/// Cargo ship scene (T-218, `--map river_valley`): a cargo port on the north bank of the river
+/// (south of x = 6400, z = 5200) with a ship at its berth, and a second port 200 m east with its
+/// ship sailing in and fading in. The sim stands paused. Look at it with `--cam cargo-ship` or
+/// `--cam cargo-ship-in`.
+pub const CARGO_SHIP: &str = "cargo-ship";
+
+/// Builds the [`CARGO_SHIP`] scene; returns where the ports stand.
+pub fn build_cargo_ship(sim: &mut SimRunner) -> Vec<Vec2> {
+    use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingState, Lot};
+    use cp_transit::{CargoHubs, Hub, ShipPhase, ShipVisit};
+    let db = embedded_content();
+    let terrain = sim.world().resource::<cp_terrain::SimTerrain>().0.clone();
+    let def = db.building_id("cargo_port").expect("cargo_port");
+    let sail = (db.balance().ship_sail_h * cp_core::time::TICKS_PER_HOUR).ceil() as u64;
+    let mut out = Vec::new();
+    for (k, x) in [6400.0f32, 6600.0].into_iter().enumerate() {
+        // Walk south from z = 5200 to the water; the port stands 20 m short of it.
+        let Some(z) = (0..400)
+            .map(|i| 5200.0 - i as f32 * 2.0)
+            .find(|&z| terrain.is_water(Vec2::new(x, z)))
+        else {
+            continue;
+        };
+        let pos = Vec2::new(x, z + 20.0);
+        let d = db.building(def);
+        let id = sim
+            .world_mut()
+            .resource_mut::<BuildingGrid>()
+            .insert(Building {
+                def,
+                footprint: cp_building::Footprint::Lot(Lot {
+                    block: cp_core::Id::new(0, 0),
+                    col: 0,
+                    w: d.lot.0,
+                    d: d.lot.1,
+                }),
+                level: d.level,
+                state: BuildingState::Active,
+                ready_at: Tick(0),
+                pos,
+                rot: 0.0,
+                access: None,
+                flags: BuildingFlags::default(),
+                level_progress: 0.0,
+            });
+        let now = sim.tick();
+        let ship = if k == 0 {
+            ShipVisit {
+                phase: ShipPhase::Docked,
+                until: Tick(now.0 + 1_000_000),
+            }
+        } else {
+            // Some way into the sail in, still fading in.
+            ShipVisit {
+                phase: ShipPhase::Arriving,
+                until: Tick(now.0 + sail * 85 / 100),
+            }
+        };
+        sim.world_mut().resource_mut::<CargoHubs>().hubs.insert(
+            id,
+            Hub {
+                ship: Some(ship),
+                next_at: Tick(now.0 + 1_000_000),
+                ..Default::default()
+            },
+        );
+        out.push(pos);
+    }
+    sim.tick_once();
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+    for s in sim.view().ships.iter() {
+        bevy::log::info!(
+            "cargo ship {:?} at {} (berth {}, dir {}, t {})",
+            s.phase,
+            s.pos(),
+            s.berth,
+            s.dir,
+            s.t
+        );
+    }
+    out
+}
+
 /// Zone cell scene (BUG-043, BUG-047): a street built as four chained segments of different
 /// lengths and, south of it, a grid of 3 x 3 blocks with 64, 72 and 80 m between the road edges
 /// and a side street meeting the east edge in a T. Look at it with `--overlay zones --cam zones`.
