@@ -240,6 +240,9 @@ fn continuation(
     side: Side,
 ) -> Option<(SegmentId, bool)> {
     let (seg, ours) = zoned(net, roads, id)?;
+    if tight_corner_edge(net, roads, id, fwd, side).is_some() {
+        return None;
+    }
     let (heading, node) = exit_of(seg, fwd);
     let arms = arms_at(net, roads, node, id);
     let cos = CORNER_DEG.to_radians().cos();
@@ -270,6 +273,9 @@ fn end_of(
     let Some((seg, ours)) = zoned(net, roads, id) else {
         return FrontEnd::Open;
     };
+    if let Some(d) = tight_corner_edge(net, roads, id, fwd, side) {
+        return FrontEnd::Edge(d);
+    }
     let (heading, node) = exit_of(seg, fwd);
     let back = -heading;
     let v = side_vec(heading, side);
@@ -323,6 +329,9 @@ pub fn frontage_of(
     side: Side,
 ) -> Option<Frontage> {
     zoned(net, roads, id)?;
+    if tight_inner(net, roads, id, side) {
+        return None;
+    }
     let mut seen = BTreeSet::from([id]);
     let (fwd_list, end) = extend(net, roads, id, true, side, &mut seen);
     let (back_list, start) = extend(net, roads, id, false, side.flip(), &mut seen);
@@ -385,16 +394,18 @@ impl Part<'_> {
 
     /// Point and heading (along the front) at front position `a`.
     fn at(&self, a: f32) -> (Vec2, Vec2) {
-        let s = (a - self.a).clamp(0.0, self.len());
+        let raw = a - self.a;
+        let s = raw.clamp(0.0, self.len());
         let s = if self.fwd { s } else { self.len() - s };
         let t = self.table.s_to_t(s);
         let tg = to_xz(self.seg.curve.tangent(t))
             .try_normalize()
             .unwrap_or(Vec2::X);
-        (
-            to_xz(self.seg.curve.point(t)),
-            if self.fwd { tg } else { -tg },
-        )
+        let heading = if self.fwd { tg } else { -tg };
+        // Past either end the front goes on along the straight line (the cells that reach over
+        // a rounded corner's bend, BUG-073b; a straddling cell, BUG-043).
+        let beyond = raw - raw.clamp(0.0, self.len());
+        (to_xz(self.seg.curve.point(t)) + heading * beyond, heading)
     }
 }
 
@@ -425,6 +436,8 @@ fn is_straight(parts: &[Part]) -> bool {
 
 /// How far from our axis, along `v` from `p`, the nearest near-parallel road edge is, or `None`.
 fn facing_gap(
+    net: &NetGraph,
+    roads: &dyn Fn(RoadDefId) -> RoadZoning,
     idx: &RoadIndex,
     own: &BTreeSet<SegmentId>,
     p: Vec2,
@@ -438,7 +451,9 @@ fn facing_gap(
     let cos_par = PARALLEL_DEG.to_radians().cos();
     let mut best: Option<f32> = None;
     for (sid, piece) in idx.pieces_in(bounds) {
-        if own.contains(sid) || piece.footpath {
+        // The bend of a rounded corner is no road facing a street (BUG-073b): its cells are
+        // the legs' lattice, a bite out of it where the arc passes.
+        if own.contains(sid) || piece.footpath || tight_bend(net, roads, *sid) {
             continue;
         }
         let e = piece.b - piece.a;
@@ -587,7 +602,7 @@ pub(crate) fn layout_frontage(
             let a = centre(j);
             let (p, u) = parts[locate(a)].at(a);
             let v = side_vec(u, f.side);
-            if let Some(g) = facing_gap(idx, &own, p, u, v, inner, reach) {
+            if let Some(g) = facing_gap(net, roads, idx, &own, p, u, v, inner, reach) {
                 gap = Some(gap.map_or(g, |b| b.min(g)));
             }
         }
@@ -671,6 +686,7 @@ fn bend_corner(
     roads: &dyn Fn(RoadDefId) -> RoadZoning,
     sid: SegmentId,
     fwd: bool,
+    tight: bool,
 ) -> Option<f32> {
     let (seg, ours) = zoned(net, roads, sid)?;
     let (u1, node) = exit_of(seg, fwd);
@@ -697,9 +713,81 @@ fn bend_corner(
     if s <= 0.0 || r <= 0.0 {
         return None;
     }
+    // A rounded corner of a block (BUG-073b): a real turn, tight and short; a long gentle
+    // curve is a bend of the street, its cells follow it.
+    if tight
+        && (u1.dot(u2) > TIGHT_TURN_DEG.to_radians().cos()
+            || s > TIGHT_REACH_M
+            || r > TIGHT_REACH_M
+            || b_seg.length > TIGHT_LENGTH_M)
+    {
+        return None;
+    }
     let (cos_t, sin_t) = ((-u1).dot(u2), c.abs());
     let d = (ours.half_width * (1.0 + cos_t)) / sin_t;
     Some(d - s)
+}
+
+/// A bend counts as a rounded corner of a block when it turns by at least this (degrees)...
+const TIGHT_TURN_DEG: f32 = 30.0;
+/// ...its virtual corner is no farther than this from either end (metres)...
+const TIGHT_REACH_M: f32 = 40.0;
+/// ...and the bend itself is no longer than this.
+const TIGHT_LENGTH_M: f32 = 80.0;
+
+/// The inner side of a rounded corner (BUG-073b): the cells of the straight street into it are
+/// the same lattice up to the virtual corner, whose edge stands `d` from the node (negative:
+/// beyond it, over the bend); the cells the bend's road covers are dropped as invalid. The
+/// distance from the exit node of `(sid, fwd)` when `side` is the side the street turns to.
+fn tight_corner_edge(
+    net: &NetGraph,
+    roads: &dyn Fn(RoadDefId) -> RoadZoning,
+    sid: SegmentId,
+    fwd: bool,
+    side: Side,
+) -> Option<f32> {
+    if is_bend(net, sid) {
+        return None;
+    }
+    let (seg, _) = zoned(net, roads, sid)?;
+    let (heading, _) = exit_of(seg, fwd);
+    let (bend, bend_fwd) = through_arm(net, roads, sid, fwd)?;
+    if !is_bend(net, bend) {
+        return None;
+    }
+    let d = bend_corner(net, roads, sid, fwd, true)?;
+    let (out, _) = exit_of(net.segment(bend)?, bend_fwd);
+    (out.dot(side_vec(heading, side)) > 0.0).then_some(d)
+}
+
+/// Whether the bend `id` is the rounded corner of a block between two straight legs.
+fn tight_bend(net: &NetGraph, roads: &dyn Fn(RoadDefId) -> RoadZoning, id: SegmentId) -> bool {
+    is_bend(net, id)
+        && through_arm(net, roads, id, false)
+            .is_some_and(|a| bend_corner(net, roads, a.0, !a.1, true).is_some())
+}
+
+/// Whether `side` of the bend `id` (in its own direction) is the inner side of a rounded corner
+/// whose two legs lay the cells instead.
+fn tight_inner(
+    net: &NetGraph,
+    roads: &dyn Fn(RoadDefId) -> RoadZoning,
+    id: SegmentId,
+    side: Side,
+) -> bool {
+    if !is_bend(net, id) {
+        return false;
+    }
+    let (Some(a), Some(b)) = (
+        through_arm(net, roads, id, false),
+        through_arm(net, roads, id, true),
+    ) else {
+        return false;
+    };
+    // The leg at the start walks into the bend along it; the one at the end walks into it
+    // against it, and sees the same side the other way round.
+    tight_corner_edge(net, roads, a.0, !a.1, side).is_some()
+        && tight_corner_edge(net, roads, b.0, !b.1, side.flip()).is_some()
 }
 
 /// A stretch of a street between two junctions (or its ends), where its ticks are counted.
@@ -782,7 +870,7 @@ fn street_of(
                 FrontEnd::Open => None,
             })
             .min_by(f32::total_cmp)
-            .or_else(|| bend_corner(net, roads, sid, fwd))
+            .or_else(|| bend_corner(net, roads, sid, fwd, false))
     };
     let mut cuts: Vec<(f32, Option<f32>, Option<f32>)> = Vec::new();
     // (arc position of the node, offset before it, offset after it)

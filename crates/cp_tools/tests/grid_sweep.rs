@@ -60,18 +60,14 @@ const BLOCK: f32 = 8.0 * CELL;
 const ANGLES: [f32; 4] = [0.0, 15.0, 45.0, 90.0];
 const ROADS: [&str; 2] = ["basic_2l", "medium_4l"];
 const SEEDS: [u64; 3] = [0, 7, 42];
-/// Radius of the rounded bends (the curve's corner control point is this far from its ends).
-const BEND_R: f32 = 24.0;
+/// Radius of the rounded bends (the curve's corner control point is this far from its ends): the
+/// quadratic is exactly 40 m long, so the length step leaves it whole and its end tangent exact.
+const BEND_R: f32 = 24.642_298;
 
 /// Cases that fail today (T-250 report, BUG-073), as prefixes of `scenario/road/variant/angle/seed`:
 /// every case under one of them is expected red. Narrow a prefix (or list single cases) as fixes
 /// land; `known_red_cases_still_fail` names the cases that pass.
-const KNOWN_RED: &[&str] = &[
-    // The cells beside a rounded bend follow its arc, the corner of the block is not a lattice
-    // (BUG-073b: the Architect's ruling 2, the lattice from the virtual corner).
-    "l_close/basic_2l/rounded/",
-    "l_close/medium_4l/rounded/",
-];
+const KNOWN_RED: &[&str] = &[];
 
 fn known_red(case: &str) -> bool {
     KNOWN_RED.iter().any(|k| case.starts_with(k))
@@ -138,6 +134,9 @@ struct Player {
     rot: Vec2,
     rng: u64,
     jitter: bool,
+    /// Radius round the corner of the axes within which a block may lack cells: the bite the
+    /// arc of a rounded corner takes out of the lattice (BUG-073b).
+    bite: Option<f32>,
     tool: RoadTool,
     fails: Vec<(String, String)>,
 }
@@ -163,6 +162,7 @@ impl Player {
                 .wrapping_mul(6364136223846793005)
                 .wrapping_add(1442695040888963407),
             jitter: seed != 0,
+            bite: None,
             tool: RoadTool::default(),
             fails: Vec::new(),
         }
@@ -625,15 +625,24 @@ impl Player {
             }
         }
         let doubled = slots.values().filter(|n| **n > 1).count();
-        let missing = (0..nx as i32)
+        let gaps: Vec<(i32, i32)> = (0..nx as i32)
             .flat_map(|i| (0..ny as i32).map(move |j| (i, j)))
             .filter(|s| !slots.contains_key(s))
-            .count();
+            .collect();
+        // Missing cells are only allowed in the bite of a rounded corner (the axes cross at the
+        // local origin), never elsewhere.
+        let bitten = |&(i, j): &(i32, i32)| {
+            self.bite.is_some_and(|r| {
+                Vec2::new(x0 + 4.0 + i as f32 * CELL, y0 + 4.0 + j as f32 * CELL).length() <= r
+            })
+        };
+        let allowed = gaps.iter().filter(|s| bitten(s)).count();
+        let missing = gaps.len() - allowed;
         let stray = slots
             .keys()
             .filter(|(i, j)| *i < 0 || *j < 0 || *i >= nx as i32 || *j >= ny as i32)
             .count();
-        if off + odd + doubled + missing + stray > 0 || inside != (nx * ny) as usize {
+        if off + odd + doubled + missing + stray > 0 || inside + allowed != (nx * ny) as usize {
             self.fail(
                 "lattice",
                 format!(
@@ -723,7 +732,20 @@ impl Player {
     /// An L from `top` (local, on the y axis) down to the corner at the origin and on to `right`
     /// (local, on the x axis), sharp or rounded. Returns the left and the bottom straight pieces.
     fn draw_l(&mut self, bend: Bend, top: f32, right: f32) -> Option<(Piece, Piece)> {
+        // A rounded corner starts its bend where the length step of the first street puts it.
+        let top = if matches!(bend, Bend::Rounded) {
+            top - 24.0 + BEND_R
+        } else {
+            top
+        };
         let j = self.jv(2.0);
+        // A rounded corner needs the first street to end exactly where the bend starts: only the
+        // sideways jitter stays.
+        let j = if matches!(bend, Bend::Rounded) {
+            Vec2::new(j.x, 0.0)
+        } else {
+            j
+        };
         let (start, end) = (
             Vec2::new(0.0, top) + j,
             Vec2::new(right, 0.0) + self.jv(3.0),
@@ -739,8 +761,10 @@ impl Player {
             Bend::Rounded => {
                 let left = self.piece("L left", self.w(Vec2::new(0.0, BEND_R)))?;
                 self.mode(RoadMode::Curve);
-                self.click("L bend control", self.w(Vec2::ZERO));
-                self.piece("L bend", self.w(Vec2::new(BEND_R, 0.0)))?;
+                // The bend's corner is on the street the player drew (its cursor jitter moved it).
+                let x = left.x();
+                self.click("L bend control", self.w(Vec2::new(x, 0.0)));
+                self.piece("L bend", self.w(Vec2::new(x + BEND_R, 0.0)))?;
                 self.mode(RoadMode::Straight);
                 let bottom = self.piece("L bottom", self.w(end))?;
                 Some((left, bottom))
@@ -784,6 +808,9 @@ const Y: Vec2 = Vec2::Y;
 fn l_close(p: &mut Player, bend: Bend) -> Option<()> {
     let hw = p.hw;
     let (left, bottom) = p.draw_l(bend, 200.0, 216.0)?;
+    if matches!(bend, Bend::Rounded) {
+        p.bite = Some(BEND_R + 2.0 * hw + CELL);
+    }
     // The right street: up from the bottom street's 16-cell tick (counted from the left street's
     // edge) to its own 8-cell tick.
     let m = p.tick(
