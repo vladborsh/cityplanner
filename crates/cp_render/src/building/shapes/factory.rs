@@ -1,7 +1,8 @@
 //! The silhouettes of the four unique M5 factories and the cargo station (T-218): the food
 //! factory's canning towers, the furniture factory's sawtooth hall and plank stacks, the white
 //! electronics block with its antennas, the car factory's long assembly hall over a lot of new
-//! cars, and the cargo station's gantry crane over its container yard.
+//! cars, the cargo station's gantry crane over its container yard, and the cargo port's quay
+//! with its ship-to-shore crane.
 
 use bevy_math::Vec3;
 use cp_content::Massing;
@@ -19,6 +20,7 @@ const LINE: [f32; 4] = [0.92, 0.92, 0.88, 1.0];
 const DOOR: [f32; 4] = [0.32, 0.34, 0.37, 1.0];
 const CAR_GLASS: [f32; 4] = [0.16, 0.20, 0.26, 1.0];
 const SOLAR: [f32; 4] = [0.16, 0.22, 0.42, 1.0];
+const QUAY: [f32; 4] = [0.66, 0.65, 0.62, 1.0];
 const BRICK: [f32; 4] = [0.56, 0.30, 0.24, 1.0];
 /// Paints of the parked cars and of the containers, cycled.
 const PAINTS: [[f32; 4]; 6] = [
@@ -30,9 +32,9 @@ const PAINTS: [[f32; 4]; 6] = [
     [0.30, 0.56, 0.36, 1.0],
 ];
 
-/// Whether `m` is one of the factory or cargo station silhouettes of this module.
+/// Whether `m` is one of the factory, cargo station or cargo port silhouettes of this module.
 pub fn is_factory(m: Massing) -> bool {
-    (m as u8) >= Massing::FoodFactory as u8 && (m as u8) <= Massing::CargoStation as u8
+    (m as u8) >= Massing::FoodFactory as u8 && (m as u8) <= Massing::CargoPort as u8
 }
 
 /// A thin shell round the hull `(cu, cv) ± (hu, hv)` from `y0` to `y1`: a window band or a
@@ -821,6 +823,262 @@ pub fn factory(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                     y + 2.4,
                     sc.glass,
                     sc.glass,
+                );
+            }
+        }
+        Massing::CargoPort => {
+            // A quay along the back edge (the side away from the street, towards the water), a
+            // ship-to-shore crane on rails with its A-frame and boom over the quay edge, the
+            // apron with container stacks, a gabled shed and a light mast.
+            ground(m, 0.12, PAD);
+            let qv = 0.92 * hv;
+            block(
+                m,
+                f,
+                (0.0, cv + qv),
+                (0.96 * hu, 0.04 * hv),
+                y,
+                y + 0.3,
+                QUAY,
+                QUAY,
+            );
+            let (vf, vb) = (0.3 * hv, 0.78 * hv);
+            for v in [vf, vb] {
+                block(
+                    m,
+                    f,
+                    (0.0, cv + v),
+                    (0.95 * hu, 0.12),
+                    y,
+                    y + 0.1,
+                    DARK,
+                    STEEL,
+                );
+            }
+            // The crane: four legs, two girders along `v` from the backreach to the boom tip
+            // over the quay edge, the machinery house, the A-frame and its stays.
+            let (u0, du) = (-0.25 * hu, 3.4f32);
+            let (g0, g1) = (-0.12 * hv, 0.98 * hv);
+            let gtop = y + 14.5;
+            let apex = (cv + 0.54 * hv, y + 20.5);
+            for s in [-1.0f32, 1.0] {
+                let u = u0 + s * du;
+                for v in [vf, vb] {
+                    block(
+                        m,
+                        f,
+                        (u, cv + v),
+                        (0.4, 0.4),
+                        y + 0.8,
+                        gtop - 1.0,
+                        sc.trim,
+                        sc.trim,
+                    );
+                }
+                block(
+                    m,
+                    f,
+                    (u, cv + (g0 + g1) * 0.5),
+                    (0.4, (g1 - g0) * 0.5),
+                    gtop - 1.0,
+                    gtop,
+                    sc.trim,
+                    mul(sc.trim, 0.9),
+                );
+                if !far {
+                    for v in [vf, vb] {
+                        rod(
+                            m,
+                            f.at(u, cv + v, gtop),
+                            f.at(u, apex.0, apex.1),
+                            0.35,
+                            sc.trim,
+                        );
+                    }
+                    rod(
+                        m,
+                        f.at(u, apex.0, apex.1),
+                        f.at(u, cv + g1, gtop),
+                        0.12,
+                        DARK,
+                    );
+                    rod(
+                        m,
+                        f.at(u, apex.0, apex.1),
+                        f.at(u, cv + g0, gtop),
+                        0.12,
+                        DARK,
+                    );
+                }
+            }
+            for v in [vf, vb] {
+                block(
+                    m,
+                    f,
+                    (u0, cv + v),
+                    (du + 0.7, 0.25),
+                    y + 0.1,
+                    y + 0.8,
+                    DARK,
+                    DARK,
+                );
+            }
+            block(
+                m,
+                f,
+                (u0, cv + vf),
+                (du, 0.3),
+                gtop - 0.9,
+                gtop - 0.2,
+                sc.trim,
+                sc.trim,
+            );
+            block(
+                m,
+                f,
+                (u0, cv + 0.02 * hv),
+                (du + 0.5, 1.6),
+                gtop,
+                gtop + 2.2,
+                sc.wall,
+                sc.roof,
+            );
+            if !far {
+                block(
+                    m,
+                    f,
+                    (u0, apex.0),
+                    (du + 0.4, 0.3),
+                    apex.1 - 0.4,
+                    apex.1,
+                    sc.trim,
+                    sc.trim,
+                );
+                // The trolley near the tip, the hoist and the container it lifts off the quay.
+                let tv = cv + 0.86 * hv;
+                block(
+                    m,
+                    f,
+                    (u0, tv),
+                    (1.6, 1.0),
+                    gtop - 1.6,
+                    gtop - 1.0,
+                    sc.wall,
+                    sc.wall,
+                );
+                for (a, c) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                    rod(
+                        m,
+                        f.at(u0 + a * 1.2, tv + c * 0.7, gtop - 1.6),
+                        f.at(u0 + a * 1.2, tv + c * 0.7, y + 6.4),
+                        0.06,
+                        DARK,
+                    );
+                }
+                block(m, f, (u0, tv), (3.1, 1.25), y + 6.0, y + 6.4, DARK, sc.trim);
+                container(m, f, (u0, tv), y + 3.4, true, PAINTS[0]);
+            }
+            // The shed and the stacks on the apron.
+            let shed = at(-0.55, -0.6);
+            let (su, sv) = (0.36 * hu, 0.28 * hv);
+            block(m, f, shed, (su, sv), y, y + 6.0, sc.wall, sc.wall);
+            gable(
+                m,
+                f,
+                shed,
+                (su + 0.3, sv + 0.3),
+                (y + 6.0, y + 8.0),
+                sc.roof,
+            );
+            for (r, v) in [-0.78f32, -0.52, -0.26].into_iter().enumerate() {
+                for (k, u) in [5.0f32, 11.6].into_iter().enumerate() {
+                    let high = [[2, 1], [3, 2], [1, 2]][r][k];
+                    let high = if far { high.min(2) } else { high };
+                    for l in 0..high {
+                        container(
+                            m,
+                            f,
+                            (u, cv + v * hv),
+                            y + l as f32 * 2.6,
+                            true,
+                            PAINTS[(r + k * 2 + l) % PAINTS.len()],
+                        );
+                    }
+                }
+            }
+            if !far {
+                // Containers waiting on the apron under the crane.
+                for (k, u) in [6.0f32, 12.6].into_iter().enumerate() {
+                    container(m, f, (u, cv + 0.55 * hv), y, true, PAINTS[k + 3]);
+                }
+            }
+            if near {
+                // Fenders on the quay face and bollards along its edge.
+                for k in 0..8 {
+                    let u = -0.84 * hu + k as f32 * 0.24 * hu;
+                    block(
+                        m,
+                        f,
+                        (u, cv + qv + 0.04 * hv),
+                        (0.5, 0.15),
+                        y - 0.6,
+                        y + 0.2,
+                        DARK,
+                        DARK,
+                    );
+                    cyl(
+                        m,
+                        f,
+                        (u + 0.12 * hu, cv + qv),
+                        (0.22, 0.18),
+                        (y + 0.3, y + 0.8),
+                        6,
+                        DARK,
+                        Some(DARK),
+                    );
+                }
+                // The crane cab, the shed doors, the light mast, a truck at the stacks.
+                block(
+                    m,
+                    f,
+                    (u0 + du - 0.5, cv + 0.7 * hv),
+                    (0.8, 0.8),
+                    gtop - 2.8,
+                    gtop - 1.0,
+                    sc.wall,
+                    sc.wall,
+                );
+                for s in [-1.0f32, 1.0] {
+                    block(
+                        m,
+                        f,
+                        (shed.0 + s * 0.45 * su, shed.1 - sv),
+                        (1.6, 0.05),
+                        y,
+                        y + 3.6,
+                        DOOR,
+                        DOOR,
+                    );
+                }
+                let mast = at(-0.9, 0.12);
+                block(m, f, mast, (0.15, 0.15), y, y + 13.0, STEEL, STEEL);
+                block(
+                    m,
+                    f,
+                    mast,
+                    (0.8, 0.3),
+                    y + 13.0,
+                    y + 13.5,
+                    DARK,
+                    [1.0, 0.95, 0.7, 1.0],
+                );
+                truck(
+                    m,
+                    f,
+                    (at(0.1, -0.05).0, cv - 0.05 * hv),
+                    y,
+                    sc.trim,
+                    Some(PAINTS[5]),
                 );
             }
         }

@@ -519,8 +519,8 @@ pub fn build_park_areas(sim: &mut SimRunner) -> usize {
 
 pub const FACTORIES: &str = "factories";
 
-/// Builds the [`FACTORIES`] scene (T-218): the four unique factories and the cargo station in a
-/// row; returns how many buildings stand.
+/// Builds the [`FACTORIES`] scene (T-218): the four unique factories, the cargo station and the
+/// cargo port in a row; returns how many buildings stand.
 pub fn build_factories(sim: &mut SimRunner) -> usize {
     build_showcase_defs(sim, |db| {
         [
@@ -529,6 +529,7 @@ pub fn build_factories(sim: &mut SimRunner) -> usize {
             "electronics_factory",
             "car_factory",
             "cargo_station",
+            "cargo_port",
         ]
         .into_iter()
         .enumerate()

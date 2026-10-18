@@ -1450,7 +1450,7 @@ fn the_zoo_and_amusement_silhouettes_are_distinct_and_fit_their_lots() {
     assert_eq!(shapes.len(), names.len(), "{shapes:?}");
 }
 
-/// T-218: the four unique factories and the cargo station have silhouettes of their own, each
+/// T-218: the four unique factories, the cargo station and the cargo port have silhouettes of their own, each
 /// with a massing of its own, built at every LOD (never growing with distance), sound, inside
 /// the lot and above the ground; none of them turns.
 #[test]
@@ -1465,6 +1465,7 @@ fn the_factory_and_cargo_station_silhouettes_are_distinct_and_fit_their_lots() {
         "electronics_factory",
         "car_factory",
         "cargo_station",
+        "cargo_port",
     ];
     for name in names {
         let (def_id, def) = service_def(&e, name);

@@ -550,7 +550,7 @@ fn park_area_defs_name_their_own_styles_and_icons() {
     assert_eq!(n, 26, "four gates, sixteen attractions, six props");
 }
 
-/// T-218: the four unique factories and the cargo station have a style of their own
+/// T-218: the four unique factories, the cargo station and the cargo port have a style of their own
 /// (`industry_<id>`, drawn by its own massing) and a square icon file of their own.
 #[test]
 fn unique_m5_defs_name_their_own_styles_and_icons() {
@@ -563,6 +563,7 @@ fn unique_m5_defs_name_their_own_styles_and_icons() {
         "electronics_factory",
         "car_factory",
         "cargo_station",
+        "cargo_port",
     ] {
         let (_, d) = db.buildings().find(|(_, d)| d.id == id).expect(id);
         assert_eq!(d.styles, vec![format!("industry_{id}")], "{id}");
@@ -573,5 +574,5 @@ fn unique_m5_defs_name_their_own_styles_and_icons() {
         assert!(icons.join(format!("{id}.png")).exists(), "{id}");
         assert!(icons.join(format!("src/{id}.svg")).exists(), "{id}");
     }
-    assert_eq!(massings.len(), 5);
+    assert_eq!(massings.len(), 6);
 }

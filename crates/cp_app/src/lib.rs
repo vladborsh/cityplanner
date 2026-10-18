@@ -315,9 +315,9 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 30.0, 22.0, c - 262.0),
             Vec3::new(c + 62.0, 9.0, c - 310.0),
         ),
-        // The unique factories and the cargo station from their street side (`--scene
-        // factories`, the row at z = c - 130, x = c - 96 .. c + 96, fronts towards +z), and up
-        // close.
+        // The unique factories, the cargo station and the cargo port from their street side
+        // (`--scene factories`, the row at z = c - 130, x = c - 96 .. c + 144, fronts towards
+        // +z), and up close.
         "factories" => (Vec3::new(c, 62.0, c - 45.0), Vec3::new(c, 0.0, c - 135.0)),
         "factory-food" => (
             Vec3::new(c - 112.0, 24.0, c - 88.0),
@@ -330,6 +330,10 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         "factory-cars" => (
             Vec3::new(c + 34.0, 30.0, c - 84.0),
             Vec3::new(c + 48.0, 3.0, c - 132.0),
+        ),
+        "factory-port" => (
+            Vec3::new(c + 118.0, 30.0, c - 84.0),
+            Vec3::new(c + 144.0, 7.0, c - 130.0),
         ),
         "factory-cargo" => (
             Vec3::new(c + 76.0, 22.0, c - 96.0),

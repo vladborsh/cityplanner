@@ -1046,6 +1046,8 @@ pub enum Massing {
     ElectronicsFactory = 96,
     CarFactory = 97,
     CargoStation = 98,
+    /// The cargo port (T-218).
+    CargoPort = 99,
 }
 
 /// Facade pattern family of a style.
