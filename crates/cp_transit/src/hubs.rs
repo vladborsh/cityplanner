@@ -31,8 +31,10 @@ pub struct Hub {
     pub orders: Vec<(CargoKind, BuildingId, f32)>,
     /// The next train comes at this tick or later.
     pub next_at: Tick,
-    /// Trains that have been.
+    /// Trains (or ships) that have been.
     pub trains: u32,
+    /// A cargo port: the berthed ship leaves at this tick (T-217).
+    pub ship: Option<Tick>,
 }
 
 impl Hub {
@@ -102,8 +104,20 @@ pub fn is_hub_def(db: &ContentDb, def: cp_content::BuildingDefId) -> bool {
         .is_some_and(|s| db.service(s).kind == ServiceKind::Cargo)
 }
 
+/// Whether `def` is a cargo port: a cargo hub on the shore, reached by ship instead of rail.
+pub fn is_port_def(db: &ContentDb, def: cp_content::BuildingDefId) -> bool {
+    db.building(def)
+        .service
+        .as_deref()
+        .and_then(|s| db.service_id(s))
+        .is_some_and(|s| {
+            let s = db.service(s);
+            s.kind == ServiceKind::Cargo && s.site == cp_content::ServiceSite::Shore
+        })
+}
+
 /// The cargo stations that work: ready, with a road access, and (stations) joined by rail to the
-/// map's railway. `(building, position)`, in building order.
+/// map's railway; a port needs no rail. `(building, position)`, in building order.
 pub fn hub_sites(
     db: &ContentDb,
     transit: &TransitNet,
@@ -116,7 +130,7 @@ pub fn hub_sites(
             b.state == BuildingState::Active
                 && b.access().is_some()
                 && is_hub_def(db, b.def)
-                && station_reaches_outside(transit, rail, *id)
+                && (is_port_def(db, b.def) || station_reaches_outside(transit, rail, *id))
         })
         .map(|(id, b)| (id, b.pos))
         .collect()

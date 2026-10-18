@@ -96,6 +96,8 @@ impl Default for VehicleLooks {
                 Vec3::new(2.5, 3.4, 12.0),
                 Vec3::new(2.5, 3.4, 12.0),
                 Vec3::new(2.5, 3.4, 12.0),
+                // The cargo ship (T-217; not an agent, drawn at the port's berth).
+                Vec3::new(20.0, 14.0, 120.0),
             ],
         }
     }

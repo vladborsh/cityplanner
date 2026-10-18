@@ -30,7 +30,7 @@ pub use fleet::{Bus, BusId, BusPhase, TransitFleet, TransitLedger};
 pub use goods::{
     CargoArrival, CargoArrivals, Endpoint, GOODS_BUCKET_TICKS, Goods, Haul, run_goods,
 };
-pub use hubs::{CargoHubs, Hub, exit_for, hub_sites, is_hub_def};
+pub use hubs::{CargoHubs, Hub, exit_for, hub_sites, is_hub_def, is_port_def};
 pub use intercity::{Intercity, Train, TrainPhase, run_intercity};
 pub use model::{
     DEFAULT_LINE_VEHICLES, Journey, Line, LineId, LineState, LineStats, MAX_LINE_STOPS,

@@ -1,0 +1,15 @@
+// Cargo ship (T-217): comes to the berth of a cargo port, stands, leaves. A timed visit, not an
+// agent on a path (the sea is not in the road network). Numbers: tune later.
+Vehicle((
+    id: "cargo_ship",
+    name: "Cargo ship",
+    kind: Ship,
+    length: 120.0,
+    width: 20.0,
+    max_speed_kmh: 30.0,
+    accel: 0.2,
+    decel: 0.3,
+    min_gap: 10.0,
+    capacity: 4000, // tune later
+    mesh: "vehicle/intercity",
+))

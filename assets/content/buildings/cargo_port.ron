@@ -1,0 +1,17 @@
+// Cargo port (T-217): trucks bring the exports to its quay and take the imports; a cargo ship
+// comes every balance.ship_interval_h, stands at the berth for balance.ship_dwell_h and leaves
+// with the exports (paid when it leaves). Stands on the shore. Look borrowed until T-218.
+// Numbers: tune later.
+Building((
+    id: "cargo_port",
+    name: "Cargo Port",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 4),
+    jobs: (10, 4, 0, 0),
+    tax_base: 0.0,
+    cost: 120000.0,
+    upkeep_week: 1800.0,
+    styles: ["industrial_warehouse_shed_a"],
+    service: Some("cargo_port"),
+))

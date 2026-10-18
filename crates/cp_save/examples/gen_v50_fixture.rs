@@ -63,7 +63,14 @@ fn main() {
         let st = cp_building::BuildingId::new(3, 0);
         let mut hubs = sim.world_mut().resource_mut::<cp_transit::CargoHubs>();
         hubs.deposit(st, cp_content::CargoKind::Logs, 20.0, Tick(10), 2048);
-        hubs.order(st, cp_content::CargoKind::Planks, cp_building::BuildingId::new(5, 0), 20.0, Tick(10), 2048);
+        hubs.order(
+            st,
+            cp_content::CargoKind::Planks,
+            cp_building::BuildingId::new(5, 0),
+            20.0,
+            Tick(10),
+            2048,
+        );
     }
     for _ in 0..300 {
         sim.tick_once();

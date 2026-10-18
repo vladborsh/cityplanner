@@ -1,0 +1,11 @@
+// The cargo port (T-217): on dry land with water within 16 m; a cargo ship comes to its berth every
+// balance.ship_interval_h. No coverage. Numbers: tune later.
+Service((
+    id: "cargo_port",
+    name: "Cargo port",
+    kind: Cargo,
+    radius_m: 100.0,
+    capacity: 1,
+    site: Shore,
+    vehicles: [],
+))

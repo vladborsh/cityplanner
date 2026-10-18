@@ -225,6 +225,10 @@ Balance((
     // Cargo trains (T-216): hours between two trains at a cargo station and the units one takes. // tune later
     cargo_train_interval_h: 12.0,
     cargo_train_capacity: 1200.0,
+    // Cargo ships (T-217): hours between two ships, hours at the berth, units one takes. // tune later
+    ship_interval_h: 24.0,
+    ship_dwell_h: 6.0,
+    ship_capacity: 4000.0,
     // Area levels (T-209) // tune later: xp for levels 2 to 5, storage share per level above 1.
     industry_levels: (2000, 8000, 25000, 60000),
     industry_storage_per_level: 0.1,

@@ -11,7 +11,7 @@ use cp_content::SimContent;
 use cp_core::time::TICKS_PER_HOUR;
 use cp_core::{Cost, Tick};
 use cp_traffic::ServiceRuns;
-use cp_transit::{CargoHubs, Endpoint, Goods, hub_sites};
+use cp_transit::{CargoHubs, Endpoint, Goods, hub_sites, is_port_def};
 
 use crate::freight::IndustryLedger;
 
@@ -48,16 +48,44 @@ pub fn run_cargo_trains(
     let ids: Vec<_> = hubs.hubs.keys().copied().collect();
     for id in ids {
         let hub = hubs.hubs.get_mut(&id).expect("listed");
-        if now < hub.next_at || !working.contains(&id) {
+        let port = buildings.get(id).is_some_and(|b| is_port_def(db, b.def));
+        if !working.contains(&id) {
             continue;
         }
-        hub.next_at = Tick(now.0 + interval);
-        if hub.out.is_empty() && hub.orders.is_empty() {
-            continue;
+        // A port: the ship stands at the berth for `ship_dwell_h`, then leaves with the exports.
+        let capacity = if port {
+            bal.ship_capacity
+        } else {
+            bal.cargo_train_capacity
+        };
+        if port {
+            if let Some(until) = hub.ship {
+                if now < until {
+                    continue;
+                }
+                hub.ship = None;
+                hub.next_at = Tick(now.0 + interval);
+            } else if now < hub.next_at || (hub.out.is_empty() && hub.orders.is_empty()) {
+                continue;
+            } else {
+                hub.trains += 1;
+                let dwell = (bal.ship_dwell_h * TICKS_PER_HOUR).ceil().max(1.0) as u64;
+                hub.ship = Some(Tick(now.0 + dwell));
+                unload(&buildings, &mut goods, &mut runs, hub, id);
+                continue;
+            }
+        } else {
+            if now < hub.next_at {
+                continue;
+            }
+            hub.next_at = Tick(now.0 + interval);
+            if hub.out.is_empty() && hub.orders.is_empty() {
+                continue;
+            }
+            hub.trains += 1;
         }
-        hub.trains += 1;
-        // Out: the exports, as many as the train takes.
-        let mut room = bal.cargo_train_capacity;
+        // Out: the exports, as many as the train or ship takes.
+        let mut room = capacity;
         let mut left = Vec::new();
         for (cargo, amount) in std::mem::take(&mut hub.out) {
             let take = amount.min(room.max(0.0));
@@ -72,17 +100,29 @@ pub fn run_cargo_trains(
             }
         }
         hub.out = left;
-        // In: the ordered imports step off and a truck takes each to its building.
-        for (cargo, to, load) in std::mem::take(&mut hub.orders) {
-            if buildings.get(to).is_some() {
-                goods.start_cargo_haul(
-                    &mut runs,
-                    cargo,
-                    Endpoint::Building(id),
-                    Endpoint::Building(to),
-                    load,
-                );
-            }
+        if !port {
+            unload(&buildings, &mut goods, &mut runs, hub, id);
+        }
+    }
+}
+
+/// The ordered imports step off and a truck takes each to its building.
+fn unload(
+    buildings: &BuildingGrid,
+    goods: &mut Goods,
+    runs: &mut ServiceRuns,
+    hub: &mut cp_transit::Hub,
+    id: cp_building::BuildingId,
+) {
+    for (cargo, to, load) in std::mem::take(&mut hub.orders) {
+        if buildings.get(to).is_some() {
+            goods.start_cargo_haul(
+                runs,
+                cargo,
+                Endpoint::Building(id),
+                Endpoint::Building(to),
+                load,
+            );
         }
     }
 }
