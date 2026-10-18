@@ -12,7 +12,7 @@ use cp_citizen::{
 use cp_content::{SimContent, VehicleKind};
 use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_DAY, TICKS_PER_WEEK};
 use cp_core::{Cost, SimRng, Tick};
-use cp_traffic::{Agents, RunPoint, RunState, ServiceRuns};
+use cp_traffic::{AgentSettings, Agents, PathNetwork, RunPoint, RunState, ServiceRuns, way_times};
 
 use crate::fleet::{BusPhase, TransitFleet, TransitLedger};
 use crate::model::{Journey, LineId, LineState, Ride, Stage, StopId, TransitMode, TransitNet};
@@ -93,9 +93,19 @@ struct Near {
     wait: f32,
 }
 
+fn a_b(
+    buildings: &BuildingGrid,
+    from: cp_building::BuildingId,
+    to: cp_building::BuildingId,
+) -> Option<(&cp_building::Building, &cp_building::Building)> {
+    buildings.get(from).zip(buildings.get(to))
+}
+
 /// `Citizens` phase, after `update_routine`: a freshly planned trip whose ends have a stop of
-/// one line within `transit_walk_m` takes the bus when the estimate beats walking (no car) or
-/// `car_bias ×` the car's estimate (car owner). With two lines it may change from one to the
+/// one line within `transit_walk_m` takes the bus when the estimate beats the real walking route
+/// (no car) or the quicker of that and `car_bias ×` the real drive with its congestion (car
+/// owner), the times `route_trips` weighs (T-243); the straight-line estimate stands where the
+/// routes cannot be had or `AgentSettings::mode_by_time` is off. With two lines it may change from one to the
 /// other (T-165): at a stop they share, or on foot between two stops within `transfer_walk_m`.
 /// No RNG: the order of line ids decides ties (the smaller wins).
 ///
@@ -111,6 +121,10 @@ pub fn choose_transit(
     mut transit: ResMut<TransitNet>,
     mut runs: ResMut<ServiceRuns>,
     policies: cp_district::PolicyParams,
+    net: Res<cp_net::NetGraph>,
+    pnet: Res<PathNetwork>,
+    grid: Res<CitizenGrid>,
+    settings: Option<Res<AgentSettings>>,
 ) {
     let Some(content) = content else { return };
     if transit.lines.is_empty() {
@@ -159,7 +173,7 @@ pub fn choose_transit(
             p.factor_at(&content.0, pa, cp_content::PolicyKind::FreeTransit)
         });
         let dist = pa.distance(pb);
-        let baseline = match trip.mode {
+        let crude = match trip.mode {
             TripMode::Walk => dist / WALK_SPEED_MPS,
             TripMode::Car => balance.car_bias * dist * 1.3 / balance.car_speed_est.max(0.1),
             TripMode::Transit => continue,
@@ -190,7 +204,7 @@ pub fn choose_transit(
         let (from, to) = (near(pa), near(pb));
         let mut best: Option<(f32, Vec<Ride>)> = None;
         let mut offer = |cost: f32, rides: Vec<Ride>| {
-            if cost < baseline && best.as_ref().is_none_or(|(c, _)| cost < *c) {
+            if best.as_ref().is_none_or(|(c, _)| cost < *c) {
                 best = Some((cost, rides));
             }
         };
@@ -280,7 +294,39 @@ pub fn choose_transit(
                 }
             }
         }
-        let Some((_, legs)) = best else { continue };
+        let Some((cost, legs)) = best else { continue };
+        // The bus has to beat what the citizen would do otherwise (T-243): the quicker of
+        // walking and driving the real routes, congestion and the start of the car included,
+        // as `route_trips` chooses (T-242); the car's time counts `car_bias` times. Where the
+        // routes cannot be had, the straight-line estimate stands. Only asked for trips that
+        // have an offer, so most trips cost no search.
+        let has_car = grid.citizen(trip.citizen).is_some_and(|c| c.has_car);
+        let by_time = settings.as_deref().is_none_or(|s| s.mode_by_time)
+            && dist >= cp_traffic::ALWAYS_WALK_M
+            && balance.car_start_penalty_s >= 0.0;
+        let baseline = match (by_time, a_b(&buildings, trip.from, trip.to)) {
+            (true, Some((x, y))) => {
+                let (walk, drive) = way_times(
+                    &net,
+                    pnet.graph(),
+                    pnet.congestion(),
+                    x,
+                    y,
+                    balance.car_start_penalty_s,
+                );
+                let drive = drive.filter(|_| has_car).map(|d| d * balance.car_bias);
+                match (walk, drive) {
+                    (Some(w), Some(d)) => w.min(d),
+                    (Some(w), None) => w,
+                    (None, Some(d)) => d,
+                    (None, None) => crude,
+                }
+            }
+            _ => crude,
+        };
+        if cost >= baseline {
+            continue;
+        }
         let Some(at) = transit.walk_point(legs[0].board) else {
             continue;
         };

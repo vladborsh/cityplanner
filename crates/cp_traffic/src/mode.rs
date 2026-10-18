@@ -37,6 +37,31 @@ pub fn mode_by_time(
     }
 }
 
+/// Seconds the two ways between two buildings take, `(walk, drive)`: the real routes on the
+/// pedestrian and car networks, congestion and `car_start_penalty_s` included for the drive
+/// (T-243). A way that does not exist is `None`; both are `None` for a building with no access.
+pub fn way_times(
+    net: &cp_net::NetGraph,
+    graph: &PathGraph,
+    cong: &CongestionMap,
+    from: &cp_building::Building,
+    to: &cp_building::Building,
+    car_start_penalty_s: f32,
+) -> (Option<f32>, Option<f32>) {
+    let (Some(a), Some(b)) = (
+        crate::agents::access_of(net, from),
+        crate::agents::access_of(net, to),
+    ) else {
+        return (None, None);
+    };
+    (
+        find_ped_path(graph, &a, &b).ok().map(|p| p.cost),
+        find_car_path(graph, cong, &a, &b)
+            .ok()
+            .map(|p| p.cost + car_start_penalty_s),
+    )
+}
+
 /// How long trips take, for the Traffic metrics (BUG-070): a running average of the time from
 /// asking for the route to arriving, in game minutes of the movement clock, on foot and by car.
 /// Derived while the game runs, never saved (it starts again after a load).

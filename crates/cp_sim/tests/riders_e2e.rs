@@ -523,3 +523,38 @@ fn free_transit_wins_car_owners_the_paid_line_does_not() {
     assert!(flipped > 0, "no distance where only the free line wins");
     assert_eq!(worse, 0);
 }
+
+/// T-243: the bus is weighed against the real routes, not the crow's flight. Across the square
+/// the footpath runs round two sides, twice the straight line: at some distance the carless
+/// take the bus now, where the straight estimate said walk; never the other way round (a real
+/// route is never shorter than the straight line).
+#[test]
+fn a_long_walking_route_sends_the_carless_to_the_bus_though_the_goal_is_near() {
+    let (mut flipped, mut worse) = (0, 0);
+    for side in (200..=1400).step_by(50) {
+        let by_bus = |by_time: bool| {
+            let mut t = town(&plain(), side as f32);
+            t.sim
+                .world_mut()
+                .resource_mut::<cp_traffic::AgentSettings>()
+                .mode_by_time = by_time;
+            t.line();
+            t.household(2, false);
+            t.run(120);
+            t.send_all();
+            t.run(2);
+            t.modes()
+                .iter()
+                .filter(|&&m| m == TripMode::Transit)
+                .count()
+        };
+        let (real, crude) = (by_bus(true), by_bus(false));
+        flipped += usize::from(real > crude);
+        worse += usize::from(real < crude);
+    }
+    assert!(
+        flipped > 0,
+        "no distance where only the real route sends them to the bus"
+    );
+    assert_eq!(worse, 0);
+}
