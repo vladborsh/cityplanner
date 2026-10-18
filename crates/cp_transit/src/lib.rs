@@ -32,7 +32,7 @@ pub use goods::{
 };
 pub use hubs::{
     CargoHubs, Hub, HubTrain, SAIL_M, ShipPhase, ShipPose, ShipVisit, exit_for, hub_sites,
-    is_hub_def, is_port_def, ship_poses, water_dir,
+    is_hub_def, is_port_def, ship_poses, ship_route,
 };
 pub use intercity::{Intercity, Train, TrainPhase, edge_access, platform_goal, run_intercity};
 pub use model::{

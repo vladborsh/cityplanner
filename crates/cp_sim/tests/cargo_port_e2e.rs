@@ -220,6 +220,7 @@ fn a_port_can_be_placed_on_the_shore_of_a_real_map() {
     let road = content.road_id("basic_2l").unwrap();
     // Search the shore for a road stretch along which some 4x4 lot fits.
     let mut found = false;
+    let mut berths: Vec<(Vec2, f32)> = Vec::new();
     'outer: for zi in 0..40 {
         for xi in 0..40 {
             let (x, z) = (300.0 + xi as f32 * 240.0, 300.0 + zi as f32 * 240.0);
@@ -255,7 +256,7 @@ fn a_port_can_be_placed_on_the_shore_of_a_real_map() {
                     let Some(f) = zones.cell_footprint(r) else {
                         continue;
                     };
-                    if validate_placement(
+                    if let Ok(plan) = validate_placement(
                         &content,
                         zones,
                         &view.net,
@@ -264,17 +265,35 @@ fn a_port_can_be_placed_on_the_shore_of_a_real_map() {
                         port,
                         f.c,
                         0.0,
-                    )
-                    .is_ok()
-                    {
+                    ) {
                         found = true;
-                        break 'outer;
+                        berths.push((plan.pos, plan.rot));
+                        if berths.len() >= 6 {
+                            break 'outer;
+                        }
                     }
                 }
             }
         }
     }
     assert!(found, "no spot for the port on the shore of river_valley");
+    // BUG-071: the ship's line from each of those berths keeps to the water.
+    for &(pos, rot) in &berths {
+        let (_, _, points) = cp_transit::ship_route(pos, rot, |p| terrain.is_water(p));
+        assert!(
+            points.len() > 3,
+            "{pos:?}: a line of {} points",
+            points.len()
+        );
+        assert!(
+            points.iter().skip(1).all(|&p| terrain.is_water(p)),
+            "{pos:?}: {points:?}"
+        );
+        assert_eq!(
+            cp_transit::ship_route(pos, rot, |p| terrain.is_water(p)).2,
+            points
+        );
+    }
 }
 
 /// The saw at 100, a port (no railway) at 130 and a highway entry at 0.
@@ -316,12 +335,10 @@ fn exports_go_through_a_port_and_a_ship_arrives_stands_and_leaves_by_timer() {
         match h.ship.map(|s| s.phase) {
             Some(cp_transit::ShipPhase::Arriving) => {
                 if !saw_arriving {
+                    // (No water on this map: the line is the berth alone.)
                     let ships = t.sim.view().ships;
                     assert_eq!(ships.len(), 1);
-                    assert!(
-                        ships[0].pos().distance(ships[0].berth) > 1.0,
-                        "still at sea"
-                    );
+                    assert_eq!(ships[0].points.len(), 1);
                 }
                 saw_arriving = true;
             }
