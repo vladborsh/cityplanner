@@ -436,8 +436,6 @@ fn is_straight(parts: &[Part]) -> bool {
 
 /// How far from our axis, along `v` from `p`, the nearest near-parallel road edge is, or `None`.
 fn facing_gap(
-    net: &NetGraph,
-    roads: &dyn Fn(RoadDefId) -> RoadZoning,
     idx: &RoadIndex,
     own: &BTreeSet<SegmentId>,
     p: Vec2,
@@ -451,9 +449,7 @@ fn facing_gap(
     let cos_par = PARALLEL_DEG.to_radians().cos();
     let mut best: Option<f32> = None;
     for (sid, piece) in idx.pieces_in(bounds) {
-        // The bend of a rounded corner is no road facing a street (BUG-073b): its cells are
-        // the legs' lattice, a bite out of it where the arc passes.
-        if own.contains(sid) || piece.footpath || tight_bend(net, roads, *sid) {
+        if own.contains(sid) || piece.footpath {
             continue;
         }
         let e = piece.b - piece.a;
@@ -596,13 +592,27 @@ pub(crate) fn layout_frontage(
     // Row depth: straight fronts fit it to the road facing them.
     let mut row_depth = CELL_SIZE;
     if straight {
-        let own: BTreeSet<SegmentId> = f.segs.iter().map(|(s, _)| *s).collect();
+        // Not facing roads: the street itself and the bends of rounded corners (BUG-073b: their
+        // cells are the legs' lattice, a bite out of it where the arc passes).
+        let mut own: BTreeSet<SegmentId> = f.segs.iter().map(|(s, _)| *s).collect();
+        let (lo, hi) = parts.iter().fold(
+            (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
+            |(lo, hi), p| {
+                let (a, b) = (to_xz(p.seg.curve.p0), to_xz(p.seg.curve.p3));
+                (lo.min(a.min(b)), hi.max(a.max(b)))
+            },
+        );
+        own.extend(
+            idx.segments_near(inflate((lo, hi), reach + 16.0))
+                .into_iter()
+                .filter(|id| tight_bend(net, roads, *id)),
+        );
         let mut gap: Option<f32> = None;
         for j in 0..n {
             let a = centre(j);
             let (p, u) = parts[locate(a)].at(a);
             let v = side_vec(u, f.side);
-            if let Some(g) = facing_gap(net, roads, idx, &own, p, u, v, inner, reach) {
+            if let Some(g) = facing_gap(idx, &own, p, u, v, inner, reach) {
                 gap = Some(gap.map_or(g, |b| b.min(g)));
             }
         }
