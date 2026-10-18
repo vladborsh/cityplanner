@@ -101,6 +101,31 @@ struct Job {
     bench_secs: Option<f32>,
     frame: u32,
     frame_ms: Vec<f32>,
+    /// A `--scene` was asked for: its roads and buildings come from sim ticks, so a screenshot
+    /// waits for them (BUG-017).
+    scene: bool,
+    /// Consecutive frames for which the scene has been built and has not changed.
+    built_frames: u32,
+    /// Road pieces, buildings and drawn building triangles of the last frame.
+    last_counts: (usize, usize, usize),
+    /// Real time of the first frame of the screenshot wait.
+    scene_since: Option<f32>,
+}
+
+/// Frames a built scene must stand before the screenshot, so the chunk meshes are uploaded.
+const SETTLE_FRAMES: u32 = 30;
+/// Extra wall-clock time the screenshot job of a scene may take.
+const SCENE_EXTRA: std::time::Duration = std::time::Duration::from_secs(120);
+/// Seconds after which a screenshot is taken even if the scene never settles.
+const SCENE_GIVE_UP_S: f32 = 100.0;
+/// Frames after which a screenshot is taken even if the scene never settles.
+const SCENE_GIVE_UP: u32 = 3000;
+
+/// Whether a scene has appeared: roads or buildings stand (bare terrain is not a scene). The
+/// sites under construction never finish in a paused scene, so a screenshot waits for the
+/// counts to stop changing instead.
+fn scene_built(road_pieces: usize, buildings: usize) -> bool {
+    road_pieces > 0 || buildings > 0
 }
 
 pub fn run(opts: Options) -> AppExit {
@@ -175,7 +200,7 @@ pub fn run(opts: Options) -> AppExit {
             ui: !opts.hidden,
             always_day: opts.always_day,
             day_night: opts.day_night,
-            scene: opts.scene,
+            scene: opts.scene.clone(),
             target: target.clone(),
         },
         FrameTimeDiagnosticsPlugin::default(),
@@ -188,12 +213,22 @@ pub fn run(opts: Options) -> AppExit {
         bench_secs: opts.bench,
         frame: 0,
         frame_ms: Vec::new(),
+        scene: opts.scene.is_some(),
+        built_frames: 0,
+        last_counts: (0, 0, 0),
+        scene_since: None,
     })
     .add_systems(Update, (job, exit_on_load_failure));
     if let Some(path) = opts.screenshot {
         let mut capture = Capture::new(
             path,
-            std::time::Duration::from_secs_f32(opts.bench.unwrap_or(0.0)),
+            // A scene is built and its meshes streamed in before the shot (BUG-017).
+            std::time::Duration::from_secs_f32(opts.bench.unwrap_or(0.0))
+                + if opts.scene.is_some() {
+                    SCENE_EXTRA
+                } else {
+                    std::time::Duration::ZERO
+                },
         );
         if let Some(t) = target {
             capture = capture.with_target(t);
@@ -256,9 +291,25 @@ fn job(
     let frame = job.frame;
     const WARMUP: u32 = 120;
     if job.screenshot && job.bench_secs.is_none() {
-        if frame == WARMUP
+        let counts = (roads.pieces, buildings.buildings, 0);
+        if scene_built(counts.0, counts.1) && counts == job.last_counts {
+            job.built_frames += 1;
+        } else {
+            job.built_frames = 0;
+        }
+        job.last_counts = counts;
+        // On a busy machine the frames are slow: give up by the clock as well as by frames.
+        let since = *job.scene_since.get_or_insert(time.elapsed_secs());
+        let waited = time.elapsed_secs() - since > SCENE_GIVE_UP_S;
+        let ready =
+            !job.scene || job.built_frames >= SETTLE_FRAMES || frame >= SCENE_GIVE_UP || waited;
+        if frame >= WARMUP
+            && ready
             && let Some(mut capture) = capture
         {
+            if job.scene && job.built_frames < SETTLE_FRAMES {
+                eprintln!("screenshot: the scene did not settle in {frame} frames");
+            }
             // `capture` retries blank frames and ends the app itself.
             capture.arm();
             job.done = true;
@@ -364,6 +415,13 @@ mod tests {
                 cp_sim::SimPhase::ORDER.len()
             );
         }
+    }
+
+    #[test]
+    fn a_scene_has_appeared_when_roads_or_buildings_stand() {
+        assert!(!scene_built(0, 0), "bare terrain");
+        assert!(scene_built(40, 0), "roads alone count");
+        assert!(scene_built(40, 900));
     }
 
     #[test]
