@@ -234,7 +234,7 @@ pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRe
     let Some(content) = view.content.as_deref() else {
         return (req, SnapReport::default());
     };
-    let marks = zone_marks(view, content, &req.path);
+    let marks = zone_marks(view, content, &req.path, content.road(req.road).width);
     let cx = StepContext {
         graph: &view.net,
         content,
@@ -253,6 +253,7 @@ fn zone_marks(
     view: &SimView,
     content: &cp_content::ContentDb,
     path: &RoadPath,
+    width: f32,
 ) -> Vec<ControlMark> {
     let points: Vec<Vec2> = match path {
         RoadPath::Straight { from, to } => vec![*from, *to],
@@ -314,8 +315,24 @@ fn zone_marks(
                     pos: m.axis,
                     dir: Vec2::new(t.x, t.z).normalize_or_zero(),
                     along: m.arc - first.arc,
-                    major: m.major && !m.end,
+                    major: false,
                     onward,
+                });
+            }
+        }
+        // The ticks (BUG-073): one series per street, the centreline stations of its cross
+        // streets, the same on both sides. The mark stands on the near EDGE of that street.
+        if want[0] || want[1] {
+            for t in cp_zone::street_ticks(&view.net, &roads, id, width)
+                .into_iter()
+                .filter(|t| t.seg == id)
+            {
+                out.push(ControlMark {
+                    pos: t.axis - t.onward * (width / 2.0),
+                    dir: t.dir,
+                    along: t.k as f32 * 64.0,
+                    major: true,
+                    onward: t.onward,
                 });
             }
         }

@@ -110,9 +110,40 @@ fn compute_strip(view: &SimView, plan: &RoadBuildPlan) -> ZoneStrip {
                 valid: *valid,
             });
         }
-        out.ticks.extend(strip.marks);
+        let _ = strip.marks;
+    }
+    // Ticks (BUG-073): one series per street, drawn on both sides at the same station.
+    let width = content.road(plan.road).width;
+    let reach = inflate_bounds(region, 150.0);
+    let mut done: std::collections::BTreeSet<cp_net::SegmentId> = std::collections::BTreeSet::new();
+    for (id, seg) in after.segments() {
+        if done.contains(&id)
+            || seg.elevation != Elevation::Ground
+            || seg.curve.bounds_distance_xz((region.0 + region.1) / 2.0)
+                > (region.1 - region.0).length() / 2.0 + 1.0
+        {
+            continue;
+        }
+        let hw = content.road(seg.road).width / 2.0;
+        for t in cp_zone::street_ticks(&after, &roads, id, width) {
+            done.insert(t.seg);
+            if t.axis.cmple(reach.0).any() || t.axis.cmpge(reach.1).any() {
+                continue;
+            }
+            let normal = Vec2::new(t.dir.y, -t.dir.x);
+            for side in [-1.0f32, 1.0] {
+                out.ticks.push([
+                    t.axis + normal * side * hw,
+                    t.axis + normal * side * (hw + 8.0 * CELL_SIZE),
+                ]);
+            }
+        }
     }
     out
+}
+
+fn inflate_bounds(b: (Vec2, Vec2), by: f32) -> (Vec2, Vec2) {
+    (b.0 - Vec2::splat(by), b.1 + Vec2::splat(by))
 }
 
 /// A guide that closes a block: the dashed line and what it says.

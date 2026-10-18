@@ -12,7 +12,9 @@ pub use grid::{
     BLOCK_DEPTH, CELL_SIZE, MAX_CELL_SLOPE, PENETRATION_EPS, RoadZoning, Side, StripPreview,
     ZoneBlock, ZoneBlockId, ZoneCellRef, ZoneGrid,
 };
-pub use layout::{BlockDraft, FrontEnd, Frontage, Mark, fit_cells, frontage_of, frontages};
+pub use layout::{
+    BlockDraft, FrontEnd, Frontage, Mark, StreetTick, fit_cells, frontage_of, frontages, street_ticks,
+};
 
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::system::{Res, ResMut};

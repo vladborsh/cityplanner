@@ -192,7 +192,8 @@ fn control_line(
     };
     if !cx.marks.is_empty() {
         for m in cx.marks.iter().filter(|m| m.major) {
-            consider(m.pos, m.dir, m.along);
+            // The perpendicular through the tick's station: the centreline of the street.
+            consider(m.pos + m.onward * cx.edge_offset, m.dir, m.along);
         }
     } else {
         for (id, s) in cx.graph.segments() {
