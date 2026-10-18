@@ -7,6 +7,12 @@
 //! by the traffic domain); the jam's 850 trips are sent by `scenario::send_citizens` so the
 //! jam does not depend on the time of day.
 //!
+//! **BUG-073.** The two `load + 4096 ticks` pins moved (`0x956e_23a9_9ee9_53d2` -> `0x06bf_0b6c_4922_9dd3`
+//! for m1-small, `0xdc03_de27_080f_aa24` -> `0x484a_4788_2ea1_88d4` for m1-traffic; the state at load
+//! did not): which of two overlapping cells of a seam wins is now decided by (row, segment, side)
+//! and no longer by the arena slot a rebuilt block happened to get, so the cells the road tool's
+//! ghost shows are the cells the road gets.
+//!
 //! **T-066 (save v17).** The pinned checksums were re-recorded when the agents gained the
 //! re-route fields: the checksum hashes the serialized agents, so every value moves with the
 //! encoding. The behaviour did not change: hashed with the agents in the v16 layout, the
@@ -187,7 +193,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     assert_eq!(sim.checksum(), 0x7bb1e8796aa48295, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x956e23a99ee953d2,
+        0x06bf0b6c49229dd3,
         "load + 4096 ticks"
     );
 }
@@ -221,7 +227,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0xdc03de27080faa24, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x484a47882ea188d4, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

@@ -208,30 +208,32 @@ fn a_block_built_on_the_guides_is_one_clean_8_by_8_grid() {
     assert_eq!(inside.len(), 64, "no two cells on top of each other");
 }
 
-/// BUG-047: every tick of the ghost stands on a column boundary of its cells, 8 cells (64 m) apart.
+/// BUG-073: the ticks of a ghost are one series along the street, the centrelines of its cross
+/// streets, drawn at the same station on both sides: `k*64 + (k-1)*W + W/2` from the start.
 #[test]
-fn the_ticks_are_8_real_cells_apart_and_on_cell_boundaries() {
+fn the_ticks_are_one_series_at_the_stations_of_the_cross_streets() {
     let (sim, db) = sim();
     let (a, b) = (Vec2::new(4600.0, 4600.0), Vec2::new(4800.0, 4600.0));
     let view = sim.view();
     let ghost = compute_ghost(&view, &tool(&db, a), b).expect("a ghost");
     assert!(ghost.valid, "{:?}", ghost.errors);
-    // 200 m open street: 25 columns, boundaries 8, 16 and 24 on each side.
-    assert_eq!(ghost.zone.ticks.len(), 6, "{:?}", ghost.zone.ticks);
-    let corners: Vec<Vec2> = ghost.zone.cells.iter().flat_map(|c| c.corners).collect();
-    let mut xs: Vec<f32> = Vec::new();
-    for t in &ghost.zone.ticks {
-        assert!(
-            corners.iter().any(|c| c.distance(t[0]) <= 0.05),
-            "tick {t:?} is not on a cell corner"
-        );
-        if t[0].y < 4600.0 {
-            xs.push(t[0].x);
+    let w = db.road(db.road_id("basic_2l").unwrap()).width;
+    // 200 m open street: the 1st and 2nd cross street fit (222 m for the 3rd does not).
+    assert_eq!(ghost.zone.ticks.len(), 4, "{:?}", ghost.zone.ticks);
+    for side in [-1.0f32, 1.0] {
+        let mut xs: Vec<f32> = ghost
+            .zone
+            .ticks
+            .iter()
+            .filter(|t| (t[0].y - a.y) * side > 0.0)
+            .map(|t| t[0].x - a.x)
+            .collect();
+        xs.sort_by(f32::total_cmp);
+        let want = [64.0 + w / 2.0, 128.0 + w + w / 2.0];
+        assert_eq!(xs.len(), 2, "{xs:?}");
+        for (x, e) in xs.iter().zip(want) {
+            assert!((x - e).abs() < 0.05, "side {side}: {xs:?}, want {want:?}");
         }
-    }
-    xs.sort_by(f32::total_cmp);
-    for w in xs.windows(2) {
-        assert!((w[1] - w[0] - 64.0).abs() < 0.05, "{xs:?}");
     }
 }
 
@@ -244,10 +246,11 @@ fn tool_of(db: &ContentDb, road: &str, from: Vec2) -> RoadTool {
     }
 }
 
-/// BUG-067: whatever the road type and length, the ticks of a ghost are 8 cells apart: eight
-/// cells of the row beside the road lie between two neighbouring ticks.
+/// BUG-073: whatever the road type and length, the edges of two neighbouring cross streets at the
+/// ticks of a ghost leave a 64 m block between them (the tool's road width is the cross street's
+/// width), and both sides show the same stations.
 #[test]
-fn every_zonable_road_type_has_8_cells_between_ticks_at_every_length() {
+fn every_zonable_road_type_has_8_cells_between_cross_streets_at_every_length() {
     let (sim, db) = sim();
     let view = sim.view();
     let a = Vec2::new(4600.0, 4600.0);
@@ -259,7 +262,7 @@ fn every_zonable_road_type_has_8_cells_between_ticks_at_every_length() {
         "medium_1w_3l",
         "large_6l",
     ] {
-        let hw = db.road(db.road_id(road).unwrap()).width / 2.0;
+        let w = db.road(db.road_id(road).unwrap()).width;
         let mut len = 120.0f32;
         while len <= 330.0 {
             let ghost = compute_ghost(&view, &tool_of(&db, road, a), a + Vec2::new(len, 0.0));
@@ -267,6 +270,7 @@ fn every_zonable_road_type_has_8_cells_between_ticks_at_every_length() {
                 len += 0.5;
                 continue;
             };
+            let mut sides: Vec<Vec<f32>> = Vec::new();
             for side in [-1.0f32, 1.0] {
                 let mut ticks: Vec<f32> = ghost
                     .zone
@@ -276,24 +280,24 @@ fn every_zonable_road_type_has_8_cells_between_ticks_at_every_length() {
                     .map(|t| t[0].x)
                     .collect();
                 ticks.sort_by(f32::total_cmp);
-                // The row beside the road: cells whose centre is within a cell and a half of the edge.
-                let mut xs: Vec<f32> = ghost
-                    .zone
-                    .cells
-                    .iter()
-                    .map(|c| (c.corners[0] + c.corners[1] + c.corners[2] + c.corners[3]) / 4.0)
-                    .filter(|m| (m.y - a.y) * side > hw && (m.y - a.y).abs() < hw + 6.0)
-                    .map(|m| m.x)
-                    .collect();
-                xs.sort_by(f32::total_cmp);
-                for w in ticks.windows(2) {
-                    let n = xs.iter().filter(|x| **x > w[0] && **x < w[1]).count();
-                    if n != 8 {
+                for t in ticks.windows(2) {
+                    // A block of 8 cells (64 m) between the far edge of one cross street and the
+                    // near edge of the next.
+                    if (t[1] - t[0] - (64.0 + w)).abs() > 0.05 {
                         bad.push(format!(
-                            "{road} len {len} side {side}: {n} cells between ticks {w:?}"
+                            "{road} len {len} side {side}: ticks {t:?} are not 64 m + {w} apart"
                         ));
                     }
                 }
+                sides.push(ticks);
+            }
+            if sides[0].len() != sides[1].len()
+                || sides[0]
+                    .iter()
+                    .zip(&sides[1])
+                    .any(|(l, r)| (l - r).abs() > 0.05)
+            {
+                bad.push(format!("{road} len {len}: sides differ {sides:?}"));
             }
             len += 0.5;
         }
@@ -418,25 +422,32 @@ fn a_cross_street_on_a_tick_leaves_exactly_8_cells_before_it() {
             );
             let view = sim.view();
             let roads = cp_zone::road_zoning(&db);
-            let mut north: Vec<cp_zone::Mark> = Vec::new();
+            // The 1st tick of the east street (BUG-073): the centreline of its 1st cross street.
+            let mut ticks: Vec<cp_zone::StreetTick> = Vec::new();
             for (id, g) in view.net.segments() {
-                let on_street = (g.curve.p0.z - 4592.0).abs() < 0.1
-                    && (g.curve.p3.z - 4592.0).abs() < 0.1
+                let on_street = (g.curve.p0.z - 4600.0).abs() < 0.1
+                    && (g.curve.p3.z - 4600.0).abs() < 0.1
                     && g.curve.p3.x.max(g.curve.p0.x) > 4600.5;
                 if on_street {
-                    for side in view.zones.frontage_marks(&view.net, &roads, id) {
-                        north.extend(side.into_iter().filter(|m| m.v.y < 0.0));
-                    }
+                    ticks.extend(
+                        cp_zone::street_ticks(&view.net, &roads, id, 2.0 * hw_c)
+                            .into_iter()
+                            .filter(|t| t.seg == id),
+                    );
                 }
             }
-            north.sort_by(|a, b| a.axis.x.total_cmp(&b.axis.x));
-            north.dedup_by(|a, b| (a.axis.x - b.axis.x).abs() < 0.05);
-            let tick = north[8];
-            assert!(tick.major, "the 8th boundary is a tick");
+            ticks.sort_by(|a, b| a.axis.x.total_cmp(&b.axis.x));
+            ticks.dedup_by(|a, b| (a.axis.x - b.axis.x).abs() < 0.05);
+            let tick = ticks[0];
+            assert!(
+                (tick.axis.x - (4600.0 + hw_v + 64.0 + hw_c)).abs() < 0.05,
+                "{street}/{cross}: the 1st tick at {:?}",
+                tick.axis
+            );
             let req = RoadPathRequest {
                 road: db.road_id(cross).unwrap(),
                 path: RoadPath::Straight {
-                    from: Vec2::new(tick.axis.x + 1.5, 4592.0 - hw_s - 2.0),
+                    from: Vec2::new(tick.axis.x + 1.5, 4600.0 - hw_s - 2.0),
                     to: Vec2::new(tick.axis.x + 1.5, 4480.0),
                 },
                 elevation: ElevationMode::Ground,
@@ -447,23 +458,23 @@ fn a_cross_street_on_a_tick_leaves_exactly_8_cells_before_it() {
                 panic!("straight");
             };
             assert!(
-                (from.x - (tick.axis.x + hw_c)).abs() < 0.05 && (to.x - from.x).abs() < 0.05,
-                "{street}/{cross}: the cross street is at {from:?} -> {to:?}, the tick at {:?} (half width {hw_c})",
+                (from.x - tick.axis.x).abs() < 0.05 && (to.x - from.x).abs() < 0.05,
+                "{street}/{cross}: the cross street is at {from:?} -> {to:?}, the tick at {:?}",
                 tick.axis
             );
             // Build it and count the cells of the north row between the street's edge and it.
-            build_road(&mut sim, &db, cross, Vec2::new(from.x, 4592.0), to);
+            build_road(&mut sim, &db, cross, Vec2::new(from.x, 4600.0), to);
             let view = sim.view();
             let cells = view
                 .zones
                 .cells_in_rect(
-                    Vec2::new(4600.0 + hw_v, 4592.0 - hw_s - 12.0),
-                    Vec2::new(from.x - hw_c + 0.01, 4592.0 - hw_s),
+                    Vec2::new(4600.0 + hw_v, 4600.0 - hw_s - 12.0),
+                    Vec2::new(from.x - hw_c + 0.01, 4600.0 - hw_s),
                 )
                 .into_iter()
                 .filter_map(|c| view.zones.cell_footprint(c).map(|f| (c, f)))
                 .filter(|(c, f)| {
-                    view.zones.is_valid(*c) && (f.c.y - (4592.0 - hw_s - 4.0)).abs() < 3.0
+                    view.zones.is_valid(*c) && (f.c.y - (4600.0 - hw_s - 4.0)).abs() < 3.0
                 })
                 .count();
             assert_eq!(
@@ -485,7 +496,13 @@ fn ticks_of_a_street_into_a_corner_count_from_the_cross_streets_edge() {
             let o = Vec2::new(4600.0, 4600.0);
             build_road(&mut sim, &db, road, o + Vec2::new(0.0, -len), o);
             build_road(&mut sim, &db, road, o, o + Vec2::new(200.0, 0.0));
-            build_road(&mut sim, &db, road, o + Vec2::new(200.0, 0.0), o + Vec2::new(200.0, -150.0));
+            build_road(
+                &mut sim,
+                &db,
+                road,
+                o + Vec2::new(200.0, 0.0),
+                o + Vec2::new(200.0, -150.0),
+            );
             let view = sim.view();
             let roads = cp_zone::road_zoning(&db);
             // Distances of the major marks from the bottom street's near edge, per vertical street.
@@ -508,9 +525,93 @@ fn ticks_of_a_street_into_a_corner_count_from_the_cross_streets_edge() {
                 ticks.push(d);
             }
             assert!(
-                ticks[0].len() >= 2 && (ticks[0][0] - 64.0).abs() < 0.05 && (ticks[1][0] - 64.0).abs() < 0.05,
+                ticks[0].len() >= 2
+                    && (ticks[0][0] - 64.0).abs() < 0.05
+                    && (ticks[1][0] - 64.0).abs() < 0.05,
                 "{road} len {len}: ticks from the corner edge {ticks:?}"
             );
+        }
+    }
+}
+
+/// BUG-073 (shot 2): a ghost that leaves a bend, a T or a crossing shows its ticks at the same
+/// stations on both sides (square across the road), whatever the width of the street and of the
+/// tool's road, and at an angle.
+#[test]
+fn a_ghost_from_a_bend_a_t_or_a_crossing_has_the_same_ticks_on_both_sides() {
+    let n = Vec2::new(4600.0, 4600.0);
+    for street in ["basic_2l", "medium_4l"] {
+        for tool_road in ["basic_2l", "medium_4l"] {
+            // (streets built before, ghost direction)
+            let layouts: [(&str, Vec<(Vec2, Vec2)>); 3] = [
+                (
+                    "bend",
+                    vec![
+                        (n + Vec2::new(-200.0, 0.0), n),
+                        (n, n + Vec2::new(0.0, -200.0)),
+                    ],
+                ),
+                (
+                    "T",
+                    vec![(n + Vec2::new(0.0, -200.0), n + Vec2::new(0.0, 200.0))],
+                ),
+                (
+                    "X",
+                    vec![
+                        (n + Vec2::new(-200.0, 0.0), n),
+                        (n + Vec2::new(0.0, -200.0), n + Vec2::new(0.0, 200.0)),
+                    ],
+                ),
+            ];
+            for (name, builds) in layouts {
+                for to in [Vec2::new(250.0, 0.0), Vec2::new(0.0, 250.0)] {
+                    if to.y > 0.0 && name != "bend" {
+                        continue;
+                    }
+                    let (mut sim, db) = sim();
+                    for (a, b) in &builds {
+                        build_road(&mut sim, &db, street, *a, *b);
+                    }
+                    let view = sim.view();
+                    let Some(ghost) = compute_ghost(&view, &tool_of(&db, tool_road, n), n + to)
+                    else {
+                        continue;
+                    };
+                    if !ghost.valid {
+                        continue;
+                    }
+                    let dir = to.normalize();
+                    let mut sides: [Vec<f32>; 2] = [Vec::new(), Vec::new()];
+                    for t in &ghost.zone.ticks {
+                        let r = t[0] - n;
+                        // Only the ticks of the ghost's own street: across it.
+                        if (t[1] - t[0]).normalize().dot(dir).abs() > 0.1 || r.dot(dir) < 1.0 {
+                            continue;
+                        }
+                        sides[usize::from(dir.perp_dot(t[1] - t[0]) > 0.0)].push(r.dot(dir));
+                    }
+                    for s in &mut sides {
+                        s.sort_by(f32::total_cmp);
+                    }
+                    assert!(
+                        !sides[0].is_empty(),
+                        "{street}/{tool_road} {name} {to:?}: no ticks in {:?} (valid {})",
+                        ghost.zone.ticks,
+                        ghost.valid
+                    );
+                    assert_eq!(
+                        sides[0].len(),
+                        sides[1].len(),
+                        "{street}/{tool_road} {name} {to:?}: {sides:?}"
+                    );
+                    for (l, r) in sides[0].iter().zip(&sides[1]) {
+                        assert!(
+                            (l - r).abs() < 0.1,
+                            "{street}/{tool_road} {name} {to:?}: ticks differ across the road: {sides:?}"
+                        );
+                    }
+                }
+            }
         }
     }
 }

@@ -67,9 +67,12 @@ const BEND_R: f32 = 24.0;
 /// every case under one of them is expected red. Narrow a prefix (or list single cases) as fixes
 /// land; `known_red_cases_still_fail` names the cases that pass.
 const KNOWN_RED: &[&str] = &[
-    "l_close/",
-    "parallel_cross/",
-    "extend_bend/",
+    // The cells beside a rounded bend follow its arc: the corner of the block is not a lattice.
+    "l_close/basic_2l/rounded/",
+    "l_close/medium_4l/rounded/",
+    // These two build a 16-cell block from a "16-cell tick"; the ticks of the ruling (BUG-073,
+    // Architect option b) are one 8-cell block per cross street, so there is no such tick (the
+    // street at the 2nd tick leaves 17.5 cells when the 1st is not built). Scenarios to rewrite.
     "t_mid_block/",
     "lattice_2x2/",
 ];
@@ -256,15 +259,7 @@ impl Player {
             let hw = self.db.road(s.road).width / 2.0;
             for side in view.zones.frontage_marks(&view.net, &roads, id) {
                 // The layout's own tick flag is not the tool's tick (BUG-073): plain boundaries.
-                out.extend(side.into_iter().map(|m| {
-                    (
-                        Mark {
-                            major: false,
-                            ..m
-                        },
-                        hw,
-                    )
-                }));
+                out.extend(side.into_iter().map(|m| (Mark { major: false, ..m }, hw)));
             }
             // The ticks: one series per street, the centreline stations, both sides.
             for t in cp_zone::street_ticks(&view.net, &roads, id, self.hw * 2.0)

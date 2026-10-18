@@ -838,9 +838,9 @@ impl ZoneGrid {
     /// side, then block (BUG-073: not the arena slot alone, which a rebuilt block may reuse, so
     /// the cells the ghost shows are the cells the road gets).
     fn priority(&self, id: ZoneBlockId) -> (Option<SegmentId>, u8, ZoneBlockId) {
-        self.blocks
-            .get(id)
-            .map_or((None, 0, id), |b| (Some(b.segment), b.side.slot() as u8, id))
+        self.blocks.get(id).map_or((None, 0, id), |b| {
+            (Some(b.segment), b.side.slot() as u8, id)
+        })
     }
 
     fn row_valid(&self, obbs: &[Obb], id: ZoneBlockId, row: u16) -> Vec<bool> {
@@ -895,7 +895,8 @@ impl ZoneGrid {
                     let blocking = self.occupied.contains(&ZoneCellRef {
                         block: nid,
                         cell: j as u16,
-                    }) || (nb.valid[j] && ((j % depth) as u16, self.priority(nid)) < (row, self.priority(id)));
+                    }) || (nb.valid[j]
+                        && ((j % depth) as u16, self.priority(nid)) < (row, self.priority(id)));
                     if blocking && other.penetration(o) > CROSS_BLOCK_EPS {
                         *ok = false;
                         break 'near;

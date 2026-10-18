@@ -874,14 +874,21 @@ pub fn street_ticks(
     }
     let mut out = Vec::new();
     for iv in &st.intervals {
-        let (a_lo, a_hi) = (iv.lo + iv.d_lo.unwrap_or(0.0), iv.hi - iv.d_hi.unwrap_or(0.0));
+        let (a_lo, a_hi) = (
+            iv.lo + iv.d_lo.unwrap_or(0.0),
+            iv.hi - iv.d_hi.unwrap_or(0.0),
+        );
         let from_end = iv.from_end();
         for k in 1..=4096u32 {
             let station = k as f32 * 64.0 + (k - 1) as f32 * width + width / 2.0;
             if station + width / 2.0 > a_hi - a_lo + 0.01 {
                 break;
             }
-            let a = if from_end { a_hi - station } else { a_lo + station };
+            let a = if from_end {
+                a_hi - station
+            } else {
+                a_lo + station
+            };
             let Some(i) = st.starts.iter().rposition(|&b| b <= a + 1e-4) else {
                 continue;
             };

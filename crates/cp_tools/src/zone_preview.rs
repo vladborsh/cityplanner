@@ -132,10 +132,13 @@ fn compute_strip(view: &SimView, plan: &RoadBuildPlan) -> ZoneStrip {
             }
             let normal = Vec2::new(t.dir.y, -t.dir.x);
             for side in [-1.0f32, 1.0] {
-                out.ticks.push([
+                let line = [
                     t.axis + normal * side * hw,
                     t.axis + normal * side * (hw + 8.0 * CELL_SIZE),
-                ]);
+                ];
+                if !out.ticks.iter().any(|o| o[0].distance(line[0]) < 0.05) {
+                    out.ticks.push(line);
+                }
             }
         }
     }

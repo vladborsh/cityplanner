@@ -102,9 +102,9 @@ fn join(cx: &StepContext, p: Vec2) -> Option<Joined> {
     let foot = to_xz(s.curve.point(t));
     // The open end of a street within a cell is the node, not a boundary beside it.
     let at_node = |_q: Vec2| {
-        cx.graph.nodes().any(|(_, n)| {
-            n.segments.len() == 1 && to_xz(n.pos).distance(foot) < ZONE_CELL
-        })
+        cx.graph
+            .nodes()
+            .any(|(_, n)| n.segments.len() == 1 && to_xz(n.pos).distance(foot) < ZONE_CELL)
     };
     // A tick is aimed at where the cross street's centreline will stand (what the ghost shows);
     // a plain cell boundary, at the boundary. A tick within reach always wins over a plain boundary.
