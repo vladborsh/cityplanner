@@ -373,10 +373,11 @@ pub(crate) fn keyboard_shortcuts(
         }
     }
     if pressed(egui::Key::Escape) && !had_tool && tools.active == cp_tools::ActiveTool::None {
-        if state.category.is_some() {
-            state.category = None;
-        } else if overlay.active != cp_render::Overlay::Off {
+        // BUG-077: the layout closes before the build menu (tool -> layout -> menu).
+        if overlay.active != cp_render::Overlay::Off {
             overlay.active = cp_render::Overlay::Off;
+        } else if state.category.is_some() {
+            state.category = None;
         }
     }
 }
@@ -747,17 +748,17 @@ mod shortcut_tests {
     }
 
     #[test]
-    fn esc_without_a_tool_resets_the_panel_then_the_overlay() {
+    fn esc_without_a_tool_resets_the_overlay_then_the_panel() {
         let mut rig = Rig::new();
         rig.overlay.active = cp_render::Overlay::Water;
         rig.state.category = Some(palette::Category::Roads);
         rig.press(egui::Key::Escape);
+        assert_eq!(rig.overlay.active, cp_render::Overlay::Off);
+        assert_eq!(rig.state.category, Some(palette::Category::Roads));
+        rig.press(egui::Key::Escape);
         assert_eq!(rig.state.category, None);
-        assert_eq!(rig.overlay.active, cp_render::Overlay::Water);
         rig.press(egui::Key::Escape);
-        assert_eq!(rig.overlay.active, cp_render::Overlay::Off);
-        rig.press(egui::Key::Escape);
-        assert_eq!(rig.overlay.active, cp_render::Overlay::Off);
+        assert_eq!(rig.state.category, None);
     }
 
     #[test]
