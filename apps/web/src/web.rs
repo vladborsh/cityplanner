@@ -42,6 +42,7 @@ pub fn run() {
                 phase_timing: false,
                 ui: true,
                 always_day: true,
+                net_debug: false,
                 day_night: false,
                 scene,
                 target: None,

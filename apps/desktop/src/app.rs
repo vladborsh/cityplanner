@@ -31,6 +31,7 @@ pub struct Options {
     pub scene: Option<String>,
     pub hidden: bool,
     pub always_day: bool,
+    pub net_debug: bool,
     /// `--day-night` (or an explicit `--hour`): run the day and night cycle (T-178: the
     /// default is the always-day sun).
     pub day_night: bool,
@@ -74,6 +75,7 @@ impl Options {
                 })
             }),
             always_day: args.iter().any(|a| a == "--always-day"),
+            net_debug: args.iter().any(|a| a == "--net-debug"),
             day_night: args.iter().any(|a| a == "--day-night") || value("--hour").is_some(),
             hidden: crate::capture::hidden_requested(args),
             vsync: !args.iter().any(|a| a == "--no-vsync") && bench.is_none(),
@@ -199,6 +201,7 @@ pub fn run(opts: Options) -> AppExit {
             phase_timing: true,
             ui: !opts.hidden,
             always_day: opts.always_day,
+            net_debug: opts.net_debug,
             day_night: opts.day_night,
             scene: opts.scene.clone(),
             target: target.clone(),

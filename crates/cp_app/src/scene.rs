@@ -1209,6 +1209,46 @@ pub fn build_corners(sim: &mut SimRunner) {
     }
 }
 
+/// Net overlay scene (T-025): a T and an X of basic streets and an X of 6-lane roads, 250 m
+/// apart along the map's middle, 160 m legs. Look at each with `--cam net-t` (`net-x`,
+/// `net-x6`) and `--net-debug`.
+pub const NET_DEBUG: &str = "net-debug";
+
+/// Builds the [`NET_DEBUG`] scene through the normal commands.
+pub fn build_net_debug(sim: &mut SimRunner) {
+    let db = embedded_content();
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    let large = db.road_id("large_6l").expect("large_6l");
+    let mut legs = Vec::new();
+    for (i, (road, four)) in [(basic, false), (basic, true), (large, true)]
+        .into_iter()
+        .enumerate()
+    {
+        let o = Vec2::new(c - 250.0 + 250.0 * i as f32, c);
+        legs.push((road, o - Vec2::X * 80.0, o + Vec2::X * 80.0));
+        if four {
+            legs.push((road, o - Vec2::Y * 80.0, o + Vec2::Y * 80.0));
+        } else {
+            legs.push((road, o + Vec2::Y * 80.0, o));
+        }
+    }
+    for (road, from, to) in legs {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road,
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+}
+
 /// Wide-road corner scene (BUG-065): bends of 90, 60, 45, 120 and 135 degrees, a T and an X of
 /// 4-lane collectors in a row along the map's middle, 200 m apart. Look at each with
 /// `--cam wide-90` (`wide-60`, `wide-45`, `wide-120`, `wide-135`, `wide-t`, `wide-x`).

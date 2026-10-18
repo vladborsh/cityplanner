@@ -39,13 +39,19 @@ pub struct PhaseTimes {
     pub phases: Vec<(SimPhase, f64)>,
 }
 
+/// The switches of the net overlay (T-025) are drawn in the debug window.
 pub struct DebugData<'a> {
     pub view: &'a SimView,
     pub ticks_per_sec: f32,
     pub phases: Option<&'a PhaseTimes>,
 }
 
-pub fn debug_window(ctx: &egui::Context, d: &DebugData, open: &mut bool) {
+pub fn debug_window(
+    ctx: &egui::Context,
+    d: &DebugData,
+    net: &mut cp_tools::NetDebug,
+    open: &mut bool,
+) {
     crate::frame::window("debug", crate::icons::Icon::Debug, "Debug (F3)", open).show(ctx, |ui| {
         ui.label(format!(
             "tick {}   {:.1} ticks/s",
@@ -71,6 +77,12 @@ pub fn debug_window(ctx: &egui::Context, d: &DebugData, open: &mut bool) {
                 ui.weak("phase timing not installed");
             }
         }
+        ui.separator();
+        ui.strong("Net overlay");
+        ui.checkbox(&mut net.lanes, "Lanes and directions");
+        ui.checkbox(&mut net.connections, "Lane connections");
+        ui.checkbox(&mut net.conflicts, "Conflicts (junction under the cursor)");
+        ui.checkbox(&mut net.signals, "Traffic light phase");
         ui.separator();
         ui.strong("Arenas");
         if d.view.stats.arenas.is_empty() {
@@ -103,6 +115,7 @@ mod tests {
         let view = cp_sim::SimRunner::new(1).view();
         let ctx = egui::Context::default();
         let mut open = true;
+        let mut net = cp_tools::NetDebug::default();
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -121,6 +134,7 @@ mod tests {
                     ticks_per_sec: 20.0,
                     phases: Some(&phases),
                 },
+                &mut net,
                 &mut open,
             );
         });

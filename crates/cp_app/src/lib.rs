@@ -58,6 +58,8 @@ pub struct GamePlugin {
     pub always_day: bool,
     /// Run the day and night cycle whatever the settings say (`--day-night`, or `--hour`).
     pub day_night: bool,
+    /// Start with the net overlay on (`--net-debug`, T-025): lanes, connections and signals.
+    pub net_debug: bool,
     /// Optional test scene, e.g. `grid:10` (see [`scene`]).
     pub scene: Option<String>,
     /// Render into this image instead of a window (`--hidden`: no window exists).
@@ -93,6 +95,13 @@ impl Plugin for GamePlugin {
         .insert_resource(cp_render::LightingSettings {
             always_day: !self.day_night && (self.always_day || settings.always_day),
         })
+        .insert_resource(cp_tools::NetDebug {
+            lanes: self.net_debug,
+            connections: self.net_debug,
+            conflicts: self.net_debug,
+            signals: self.net_debug,
+        })
+        .add_systems(Update, cp_tools::net_debug::draw_net_debug)
         .insert_resource(settings.camera_settings())
         .init_resource::<PhaseTimes>()
         .init_resource::<CommandOutbox>()
@@ -237,6 +246,16 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(6600.0, 150.0, 4860.0),
             Vec3::new(6450.0, 0.0, 4560.0),
         ),
+        // The junctions of `--scene net-debug`, from above: a T, an X and a 6-lane X.
+        "net-t" | "net-x" | "net-x6" => {
+            let i = match name {
+                "net-t" => 0.0,
+                "net-x" => 1.0,
+                _ => 2.0,
+            };
+            let x = c - 250.0 + 250.0 * i;
+            (Vec3::new(x, 150.0, c + 40.0), Vec3::new(x, 0.0, c))
+        }
         // Over the junctions of the corner scene (`--scene corners`).
         "corners" => (
             Vec3::new(c - 20.0, 120.0, c + 120.0),
@@ -443,6 +462,9 @@ pub fn build_sim(
     } else if scene == Some(scene::CORNERS) {
         scene::build_corners(&mut sim);
         info!("scene corners");
+    } else if scene == Some(scene::NET_DEBUG) {
+        scene::build_net_debug(&mut sim);
+        info!("scene net-debug");
     } else if scene == Some(scene::CORNERS_WIDE) {
         scene::build_corners_wide(&mut sim);
         info!("scene corners-wide");
