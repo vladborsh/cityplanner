@@ -511,11 +511,41 @@ impl Builder<'_> {
                 continue;
             }
             let d = to_xz(n.pos).distance(p);
+            // A point exactly on a street (a tick of the road tool) stays there: a through
+            // node of that street (a split of a long road) does not pull it (BUG-073).
+            if d > 0.05 && n.segments.len() == 2 && self.on_street_through(p, n) {
+                continue;
+            }
             if d <= NODE_SNAP_RADIUS && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, id));
             }
         }
         best.map(|(_, id)| id)
+    }
+
+    /// `p` lies on the axis of one of the two segments of `n`, which run on through it.
+    fn on_street_through(&self, p: Vec2, n: &crate::model::Node) -> bool {
+        let dirs: Vec<Vec2> = n
+            .segments
+            .iter()
+            .filter_map(|&sid| self.graph.segment(sid).map(|s| (sid, s)))
+            .map(|(_, s)| {
+                if to_xz(n.pos).distance(to_xz(s.curve.p0)) < 0.05 {
+                    to_xz(s.curve.tangent(0.0))
+                } else {
+                    -to_xz(s.curve.tangent(1.0))
+                }
+                .normalize_or_zero()
+            })
+            .collect();
+        if dirs.len() != 2 || dirs[0].dot(dirs[1]) > -0.9996 {
+            return false;
+        }
+        n.segments.iter().any(|&sid| {
+            self.graph
+                .segment(sid)
+                .is_some_and(|s| s.curve.nearest_xz(p).1 < 0.05)
+        })
     }
 
     fn nearest_segment(&self, p: Vec2) -> Option<(SegmentId, f32)> {

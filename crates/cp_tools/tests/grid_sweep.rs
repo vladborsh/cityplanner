@@ -246,7 +246,35 @@ impl Player {
         for (id, s) in view.net.segments() {
             let hw = self.db.road(s.road).width / 2.0;
             for side in view.zones.frontage_marks(&view.net, &roads, id) {
-                out.extend(side.into_iter().map(|m| (m, hw)));
+                // The layout's own tick flag is not the tool's tick (BUG-073): plain boundaries.
+                out.extend(side.into_iter().map(|m| {
+                    (
+                        Mark {
+                            major: false,
+                            ..m
+                        },
+                        hw,
+                    )
+                }));
+            }
+            // The ticks: one series per street, the centreline stations, both sides.
+            for t in cp_zone::street_ticks(&view.net, &roads, id, self.hw * 2.0)
+                .into_iter()
+                .filter(|t| t.seg == id)
+            {
+                let n = Vec2::new(t.dir.y, -t.dir.x);
+                for v in [n, -n] {
+                    out.push((
+                        Mark {
+                            axis: t.axis,
+                            v,
+                            major: true,
+                            end: false,
+                            arc: t.arc,
+                        },
+                        hw,
+                    ));
+                }
             }
         }
         out
@@ -272,7 +300,7 @@ impl Player {
             if nearest_any.is_none_or(|(bd, _)| d < bd) {
                 nearest_any = Some((d, m));
             }
-            if m.major && !m.end && d <= 6.0 && best.is_none_or(|(bd, _)| d < bd) {
+            if m.major && !m.end && d <= self.hw + 3.0 && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, m));
             }
         }
@@ -333,8 +361,8 @@ impl Player {
         for (m, _) in self.marks() {
             if m.major && !m.end {
                 let t = Vec2::new(-m.v.y, m.v.x);
-                out.push(m.axis + t * self.hw);
-                out.push(m.axis - t * self.hw);
+                let _ = t;
+                out.push(m.axis);
             }
         }
         let view = self.sim.view();
@@ -729,11 +757,11 @@ fn l_close(p: &mut Player, bend: Bend) -> Option<()> {
     // edge) to its own 8-cell tick.
     let m = p.tick(
         "right street on the bottom tick",
-        Vec2::new(hw + 2.0 * BLOCK, bottom.y()),
+        Vec2::new(hw + BLOCK, bottom.y()),
         Y,
     );
-    let up = p.l(m.axis).x + hw;
-    let right = p.street_from_tick("right street", m, Vec2::new(up, hw + BLOCK), 1.5)?;
+    let up = p.l(m.axis).x;
+    let right = p.street_from_tick("right street", m, Vec2::new(up, 2.0 * hw + BLOCK), 1.5)?;
     p.check_perp("right street", right.piece, Y);
     // The cross street from the left street's 8-cell tick to the right street's end.
     let m = p.tick(
@@ -831,14 +859,14 @@ fn t_mid_block(p: &mut Player) -> Option<()> {
         Vec2::new(BLOCK, b0.y()),
         Y,
     );
-    let up = p.l(m.axis).x + hw;
+    let up = p.l(m.axis).x;
     let left = p.street_from_tick("left street", m, Vec2::new(up, 120.0), 3.0)?;
     let m = p.tick(
         "right street on the bottom tick",
         Vec2::new(left.piece.x() + hw + 2.0 * BLOCK, b0.y()),
         Y,
     );
-    let up = p.l(m.axis).x + hw;
+    let up = p.l(m.axis).x;
     let right = p.street_from_tick("right street", m, Vec2::new(up, 120.0), 3.0)?;
     p.check_perp("right street", right.piece, Y);
     let m = p.tick(
@@ -846,7 +874,7 @@ fn t_mid_block(p: &mut Player) -> Option<()> {
         Vec2::new(left.piece.x(), hw + BLOCK),
         X,
     );
-    let y = p.l(m.axis).y + hw;
+    let y = p.l(m.axis).y;
     let top = p.street_from_tick("top street", m, Vec2::new(right.piece.x(), y), 1.5)?;
     p.check_perp("top street", top.piece, X);
     p.check_lands("top street", &top);
@@ -858,7 +886,7 @@ fn t_mid_block(p: &mut Player) -> Option<()> {
         Vec2::new(left.piece.x() + hw + BLOCK, b0.y()),
         Y,
     );
-    let x = p.l(m.axis).x + hw;
+    let x = p.l(m.axis).x;
     let mid = p.street_from_tick("middle street", m, Vec2::new(x, top.piece.y()), 1.5)?;
     p.check_perp("middle street", mid.piece, Y);
     p.check_lands("middle street", &mid);
@@ -917,7 +945,7 @@ fn lattice_2x2(p: &mut Player, order: Order) -> Option<()> {
                     along(at, rows[0]),
                     b,
                 );
-                let s = (p.l(m.axis) - along(0.0, rows[0])).dot(a) + hw;
+                let s = (p.l(m.axis) - along(0.0, rows[0])).dot(a);
                 let c =
                     p.street_from_tick(&format!("cross {k}"), m, along(s, rows[2] + 24.0), 3.0)?;
                 p.check_perp(&format!("cross {k}"), c.piece, b);
@@ -940,7 +968,7 @@ fn lattice_2x2(p: &mut Player, order: Order) -> Option<()> {
                 Vec2::new(BLOCK, b0.y()),
                 Y,
             );
-            let up = p.l(m.axis).x + hw;
+            let up = p.l(m.axis).x;
             let left =
                 p.street_from_tick("left street", m, Vec2::new(up, 2.0 * pitch + 24.0), 3.0)?;
             let m = p.tick(
@@ -948,7 +976,7 @@ fn lattice_2x2(p: &mut Player, order: Order) -> Option<()> {
                 Vec2::new(left.piece.x() + hw + 2.0 * BLOCK, b0.y()),
                 Y,
             );
-            let up = p.l(m.axis).x + hw;
+            let up = p.l(m.axis).x;
             let right =
                 p.street_from_tick("right street", m, Vec2::new(up, 2.0 * pitch + 24.0), 3.0)?;
             let m = p.tick(
@@ -956,7 +984,7 @@ fn lattice_2x2(p: &mut Player, order: Order) -> Option<()> {
                 Vec2::new(left.piece.x(), hw + 2.0 * BLOCK),
                 X,
             );
-            let y = p.l(m.axis).y + hw;
+            let y = p.l(m.axis).y;
             let top = p.street_from_tick("top street", m, Vec2::new(right.piece.x(), y), 1.5)?;
             p.check_perp("top street", top.piece, X);
             p.check_lands("top street", &top);
@@ -965,7 +993,7 @@ fn lattice_2x2(p: &mut Player, order: Order) -> Option<()> {
                 Vec2::new(left.piece.x() + hw + BLOCK, b0.y()),
                 Y,
             );
-            let x = p.l(m.axis).x + hw;
+            let x = p.l(m.axis).x;
             let mc = p.street_from_tick("middle column", m, Vec2::new(x, top.piece.y()), 1.5)?;
             p.check_perp("middle column", mc.piece, Y);
             p.check_lands("middle column", &mc);
@@ -974,7 +1002,7 @@ fn lattice_2x2(p: &mut Player, order: Order) -> Option<()> {
                 Vec2::new(left.piece.x(), hw + BLOCK),
                 X,
             );
-            let y = p.l(m.axis).y + hw;
+            let y = p.l(m.axis).y;
             let mr = p.street_from_tick("middle row", m, Vec2::new(mc.piece.x(), y), 1.5)?;
             p.check_perp("middle row", mr.piece, X);
             p.check_lands("middle row", &mr);

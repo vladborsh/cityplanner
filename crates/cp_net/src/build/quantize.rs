@@ -98,11 +98,28 @@ fn join(cx: &StepContext, p: Vec2) -> Option<Joined> {
     // joined there meets the cells on a boundary, and, with the facing street's boundaries on
     // the same block lattice, crosses the block at a right angle.
     let foot = to_xz(s.curve.point(t));
+    // The open end of a street within a cell is the node, not a boundary beside it.
+    let at_node = |_q: Vec2| {
+        cx.graph.nodes().any(|(_, n)| {
+            n.segments.len() == 1 && to_xz(n.pos).distance(foot) < ZONE_CELL
+        })
+    };
+    // A tick is aimed at where the cross street's centreline will stand (what the ghost shows);
+    // a plain cell boundary, at the boundary. The ticks win over a boundary at the same place.
+    let aim = |m: &ControlMark| {
+        if m.major {
+            m.pos + m.onward * cx.edge_offset
+        } else {
+            m.pos
+        }
+        .distance(foot)
+    };
+    let rank = |m: &ControlMark| aim(m) - if m.major { 0.5 } else { 0.0 };
     if let Some(m) = cx
         .marks
         .iter()
-        .filter(|m| m.pos.distance(foot) <= 6.0)
-        .min_by(|a, b| a.pos.distance(foot).total_cmp(&b.pos.distance(foot)))
+        .filter(|m| aim(m) <= 6.0 && !at_node(m.pos))
+        .min_by(|a, b| rank(a).total_cmp(&rank(b)))
     {
         let shift = m.onward * cx.edge_offset;
         return Some(Joined {

@@ -651,37 +651,23 @@ pub(crate) fn layout_frontage(
     out
 }
 
-/// A tick of a street (BUG-073): the centreline of the next cross street, one series per street
-/// shown on both of its sides at the same station.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StreetTick {
-    /// The segment the tick stands on and its arc position along that segment's own direction.
-    pub seg: SegmentId,
-    pub arc: f32,
-    /// On the street axis (where a cross street's centreline would cross it).
-    pub axis: Vec2,
-    /// Unit direction of the street there, along the segment's own direction.
-    pub dir: Vec2,
-    /// Unit direction along the street away from its origin (the way the ticks are counted).
-    pub onward: Vec2,
-    /// 1, 2, ...: the cross street this tick is the centreline of.
-    pub k: u32,
+/// The street a segment belongs to, oriented, with where its ticks are counted from.
+struct Street {
+    chain: Vec<(SegmentId, bool)>,
+    /// The ticks are counted from the END of the chain.
+    from_end: bool,
+    /// The corner (distance of the cross street's edge from the node) at the counting end.
+    d_near: f32,
+    /// ... and at the other end.
+    d_far: f32,
 }
 
-/// The ticks of the street `id` belongs to (the segments that run on through its junctions),
-/// for a cross street of width `width`. Station of the k-th tick from the origin (the street's
-/// start corner, i.e. the near edge of its cross street; the street's start node when it has none):
-/// `k*64 + (k-1)*width + width/2`, so a street drawn from it leaves exactly 8 cells between its
-/// edge and the previous street's edge and lands on the opposite street's tick.
-pub fn street_ticks(
+fn street_of(
     net: &NetGraph,
     roads: &dyn Fn(RoadDefId) -> RoadZoning,
     id: SegmentId,
-    width: f32,
-) -> Vec<StreetTick> {
-    if zoned(net, roads, id).is_none() {
-        return Vec::new();
-    }
+) -> Option<Street> {
+    zoned(net, roads, id)?;
     let mut seen = BTreeSet::from([id]);
     let mut walk = |first: (SegmentId, bool)| {
         let mut out = vec![first];
@@ -712,24 +698,6 @@ pub fn street_ticks(
     {
         chain = chain.iter().rev().map(|&(s, f)| (s, !f)).collect();
     }
-    let parts: Vec<(&Segment, ArcTable, bool, f32)> = {
-        let mut run = 0.0;
-        let mut v = Vec::new();
-        for &(sid, fwd) in &chain {
-            let Some(seg) = net.segment(sid) else {
-                return Vec::new();
-            };
-            let table = ArcTable::build(&seg.curve);
-            let l = table.length();
-            v.push((seg, table, fwd, run));
-            run += l;
-        }
-        v
-    };
-    let Some(&(_, _, _, last_a)) = parts.last() else {
-        return Vec::new();
-    };
-    let total = last_a + parts.last().map_or(0.0, |p| p.1.length());
     // The corner at an end of the street: the edge of the cross street there, on either side.
     let corner = |at_start: bool| -> Option<f32> {
         let (sid, fwd) = if at_start {
@@ -748,8 +716,89 @@ pub fn street_ticks(
     };
     let (d_start, d_end) = (corner(true), corner(false));
     let from_end = d_start.is_none() && d_end.is_some();
-    let d_near = if from_end { d_end } else { d_start }.unwrap_or(0.0);
-    let d_far = if from_end { d_start } else { d_end }.unwrap_or(0.0);
+    let (near, far) = if from_end {
+        (d_end, d_start)
+    } else {
+        (d_start, d_end)
+    };
+    Some(Street {
+        chain,
+        from_end,
+        d_near: near.unwrap_or(0.0),
+        d_far: far.unwrap_or(0.0),
+    })
+}
+
+/// Whether the ticks of the street of `id` are counted along that segment's own direction.
+pub fn ticks_count_forward(
+    net: &NetGraph,
+    roads: &dyn Fn(RoadDefId) -> RoadZoning,
+    id: SegmentId,
+) -> bool {
+    let Some(st) = street_of(net, roads, id) else {
+        return true;
+    };
+    st.chain
+        .iter()
+        .find(|(s, _)| *s == id)
+        .is_none_or(|&(_, fwd)| fwd != st.from_end)
+}
+
+/// A tick of a street (BUG-073): the centreline of the next cross street, one series per street
+/// shown on both of its sides at the same station.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StreetTick {
+    /// The segment the tick stands on and its arc position along that segment's own direction.
+    pub seg: SegmentId,
+    pub arc: f32,
+    /// On the street axis (where a cross street's centreline would cross it).
+    pub axis: Vec2,
+    /// Unit direction of the street there, along the segment's own direction.
+    pub dir: Vec2,
+    /// Unit direction along the street away from its origin (the way the ticks are counted).
+    pub onward: Vec2,
+    /// 1, 2, ...: the cross street this tick is the centreline of.
+    pub k: u32,
+}
+
+/// The ticks of the street `id` belongs to (the segments that run on through its junctions),
+/// for a cross street of width `width`. Station of the k-th tick from the origin (the street's
+/// start corner, i.e. the near edge of its cross street; the street's start node when it has none):
+/// `k*64 + (k-1)*width + width/2`, so a street drawn from it leaves exactly 8 cells between its
+/// edge and the previous street's edge and lands on the opposite street's tick.
+pub fn street_ticks(
+    net: &NetGraph,
+    roads: &dyn Fn(RoadDefId) -> RoadZoning,
+    id: SegmentId,
+    width: f32,
+) -> Vec<StreetTick> {
+    let Some(Street {
+        chain,
+        from_end,
+        d_near,
+        d_far,
+    }) = street_of(net, roads, id)
+    else {
+        return Vec::new();
+    };
+    let parts: Vec<(&Segment, ArcTable, bool, f32)> = {
+        let mut run = 0.0;
+        let mut v = Vec::new();
+        for &(sid, fwd) in &chain {
+            let Some(seg) = net.segment(sid) else {
+                return Vec::new();
+            };
+            let table = ArcTable::build(&seg.curve);
+            let l = table.length();
+            v.push((seg, table, fwd, run));
+            run += l;
+        }
+        v
+    };
+    let Some(&(_, _, _, last_a)) = parts.last() else {
+        return Vec::new();
+    };
+    let total = last_a + parts.last().map_or(0.0, |p| p.1.length());
     let reach = total - d_far;
     let mut out = Vec::new();
     for k in 1..=4096u32 {

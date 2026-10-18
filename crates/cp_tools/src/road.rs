@@ -246,6 +246,9 @@ pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRe
     (RoadPathRequest { path, ..req }, report)
 }
 
+/// How far from the path the ticks of a street still count: a block (24 cells) and more.
+const TICK_REACH: f32 = 220.0;
+
 /// The column boundaries (every 8th, as laid by the zone grid) of the ground streets near the
 /// vertices of `path`: where the length step jumps to, so a street built there ends on a cell
 /// boundary of the cells beside it (BUG-047).
@@ -263,13 +266,19 @@ fn zone_marks(
     let roads = cp_zone::road_zoning(content);
     let mut out: Vec<ControlMark> = Vec::new();
     for (id, s) in view.net.segments() {
-        if s.elevation != cp_net::Elevation::Ground
-            || points
-                .iter()
-                .all(|p| s.curve.nearest_xz(*p).1 > cp_net::build::GUIDE_RADIUS)
-        {
+        if s.elevation != cp_net::Elevation::Ground {
             continue;
         }
+        let dist = points
+            .iter()
+            .map(|p| s.curve.nearest_xz(*p).1)
+            .fold(f32::INFINITY, f32::min);
+        // The ticks of a street across a block count too (the street lands on the opposite
+        // tick): up to a long block away. Its cell boundaries only where the guides reach.
+        if dist > TICK_REACH {
+            continue;
+        }
+        let near = dist <= cp_net::build::GUIDE_RADIUS;
         // Only the side of the street the new road lies on: the cells of its other side have
         // a lattice of their own that the new road does not cross.
         let mut want = [false; 2];
@@ -294,35 +303,34 @@ fn zone_marks(
                 }
             }
         }
-        let sides = view.zones.frontage_marks(&view.net, &roads, id);
+        let sides = if near {
+            view.zones.frontage_marks(&view.net, &roads, id)
+        } else {
+            Default::default()
+        };
+        let counts_forward = cp_zone::ticks_count_forward(&view.net, &roads, id);
         for (slot, marks) in sides.iter().enumerate() {
             if !want[slot] {
                 continue;
             }
             let Some(first) = marks.first() else { continue };
-            for (i, m) in marks.iter().enumerate() {
-                // Counted from the first boundary on: the way on is towards the next one.
-                let onward = match (
-                    marks.get(i + 1),
-                    i.checked_sub(1).and_then(|k| marks.get(k)),
-                ) {
-                    (Some(n), _) => (n.axis - m.axis).normalize_or_zero(),
-                    (None, Some(p)) => (m.axis - p.axis).normalize_or_zero(),
-                    _ => Vec2::ZERO,
-                };
+            let sign = if counts_forward { 1.0 } else { -1.0 };
+            for m in marks.iter() {
                 let t = s.curve.tangent(s.curve.arc_table().s_to_t(m.arc));
+                let dir = Vec2::new(t.x, t.z).normalize_or_zero();
                 out.push(ControlMark {
                     pos: m.axis,
-                    dir: Vec2::new(t.x, t.z).normalize_or_zero(),
+                    dir,
                     along: m.arc - first.arc,
                     major: false,
-                    onward,
+                    // Away from the street's origin, like the ticks (BUG-073).
+                    onward: dir * sign,
                 });
             }
         }
         // The ticks (BUG-073): one series per street, the centreline stations of its cross
         // streets, the same on both sides. The mark stands on the near EDGE of that street.
-        if want[0] || want[1] {
+        if want[0] || want[1] || !near {
             for t in cp_zone::street_ticks(&view.net, &roads, id, width)
                 .into_iter()
                 .filter(|t| t.seg == id)

@@ -14,6 +14,7 @@ pub use grid::{
 };
 pub use layout::{
     BlockDraft, FrontEnd, Frontage, Mark, StreetTick, fit_cells, frontage_of, frontages, street_ticks,
+    ticks_count_forward,
 };
 
 use bevy_ecs::change_detection::DetectChanges;
