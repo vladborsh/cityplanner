@@ -279,6 +279,42 @@ pub fn build_post(sim: &mut SimRunner) -> usize {
     1
 }
 
+/// Houses across the street of the [`POST`] scene with mail piled up (a few, a van's worth,
+/// the MAIL problem, a lot), so the Mail overlay (`--overlay mail`) shows its orange and red.
+/// Set after the scene has run: a city with the post still locked clears the piles.
+pub fn add_mail_houses(sim: &mut SimRunner) {
+    use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingState};
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let def = db.building_id("house_low_1").expect("house_low_1");
+    for (dx, pile) in [
+        (-60.0, 10u16),
+        (-30.0, 45),
+        (0.0, 95),
+        (30.0, 150),
+        (60.0, 220),
+    ] {
+        let id = sim
+            .world_mut()
+            .resource_mut::<BuildingGrid>()
+            .insert(Building {
+                def,
+                footprint: cp_building::Footprint::Free { w: 3, d: 3 },
+                level: db.building(def).level,
+                state: BuildingState::Active,
+                ready_at: cp_core::Tick(0),
+                pos: Vec2::new(c + dx, c + 18.0),
+                rot: 0.0,
+                access: None,
+                flags: BuildingFlags::default(),
+                level_progress: 0.0,
+            });
+        sim.world_mut()
+            .resource_mut::<cp_service::MailState>()
+            .set_pile(id, pile);
+    }
+}
+
 /// Construction scene (T-235): the same house at 0, 20, 40, 60, 80 and 99 % of its construction
 /// and, last, finished; the sim stands still. Look at it with `--cam construction`.
 pub const CONSTRUCTION: &str = "construction";

@@ -2413,6 +2413,7 @@ dependencies = [
  "cp_prof",
  "cp_render",
  "cp_save",
+ "cp_service",
  "cp_sim",
  "cp_terrain",
  "cp_tools",

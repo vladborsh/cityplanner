@@ -24,6 +24,7 @@ cp_save.workspace = true
 cp_zone.workspace = true
 cp_district.workspace = true
 cp_content.workspace = true
+cp_service.workspace = true
 serde.workspace = true
 ron.workspace = true
 bevy_math.workspace = true
