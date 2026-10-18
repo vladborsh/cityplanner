@@ -1,0 +1,13 @@
+// A narrow workshop (BUG-076b): fills the one-column slivers the bigger industrial lots leave,
+// so industry demand can always be answered while free industrial cells stand. PLACEHOLDER numbers.
+Building((
+    id: "ind_1c",
+    name: "Ind L1c",
+    zone: Industrial,
+    level: 1,
+    lot: (1, 2),
+    jobs: (2, 1, 0, 0),
+    consumption: {Water: 1.9, Sewage: 1.9, Power: 3.4},
+    tax_base: 13.5,
+    styles: ["industrial_warehouse_shed_a", "industrial_mill_gabled_a"],
+))
