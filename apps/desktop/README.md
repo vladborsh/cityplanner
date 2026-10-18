@@ -34,6 +34,10 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
 * `--scene post --cam post|post-office|post-sorting|post-van` (T-248): the post office and the
   sorting facility by a street, a mail van on its way between them; held, shown as powered
   (try `--hour 20` for the lit windows and signs).
+* `--scene services --cam services --overlay police --place-demo police_station,5470,5132` (T-254):
+  a 12 × 12 block grid with a police and a fire station, paused after a coverage recompute, and
+  the placement ghost held at (x, z) with its road coverage preview (blue: new, white: already
+  covered). `--place-demo <building>,x,z` works with any scene.
 * `--screenshot` never saves a blank frame (BUG-012): blank captures are discarded and
   retried; if no real frame arrives within 20 s it exits with code **3**; a write error exits
   **4**.

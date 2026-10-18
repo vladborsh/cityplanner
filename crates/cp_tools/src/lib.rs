@@ -44,8 +44,8 @@ pub use net_debug::{DebugLine, NetDebug, net_debug_lines};
 pub use outbox::CommandOutbox;
 pub use pick::{Inspected, Picked, pick, pick_line, pick_with};
 pub use plugin::{
-    ActiveTool, Ghost, GhostDemo, ToolState, ToolsPlugin, compute_ghost, compute_ghost_alt,
-    compute_utility_ghost, compute_utility_ghost_alt, tool_click, tool_hotkeys,
+    ActiveTool, Ghost, GhostDemo, PlaceDemo, ToolState, ToolsPlugin, compute_ghost,
+    compute_ghost_alt, compute_utility_ghost, compute_utility_ghost_alt, tool_click, tool_hotkeys,
 };
 pub use road::{
     CHEVRON_SPACING, ELEVATION_STEP, MAX_ELEVATION_LEVEL, MarkerKind, ROAD_TUNNEL_DEPTH,

@@ -151,6 +151,9 @@ pub struct PlacementGhost {
     /// the rules ask for, in percent. The rule itself is `cp_building::validate_industry_site`;
     /// both use `cp_building::lot_richness`.
     pub richness: Option<(u8, u8)>,
+    /// Where a valid ghost on a road would join it: the same access point the placement gives
+    /// the building (`PlacementPlan::access`); the coverage preview starts there (T-254).
+    pub access: Option<cp_building::AccessPoint>,
 }
 
 /// The ghost of a free-standing building: not tied to cells, so it carries its own pose.
@@ -311,6 +314,7 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
                 valid: true,
                 cost: Some(price(db, def, tool, plan.cost)),
                 richness,
+                access: plan.access,
                 ..Default::default()
             },
             Err(e) => PlacementGhost {
@@ -319,6 +323,7 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
                 cost: None,
                 free: None,
                 richness,
+                access: None,
                 error: Some(error_text(
                     &e,
                     db.building(def)
@@ -536,6 +541,40 @@ mod tests {
         assert!(pick_building(&view, Vec2::new(3100.0, 3300.0)).is_none());
         // The same spot is now taken.
         assert!(!preview(&view, &tool, at).unwrap().valid);
+    }
+
+    #[test]
+    fn a_fire_station_ghost_carries_the_access_point_its_building_gets() {
+        let (mut sim, c) = sim();
+        let tool = BuildingTool {
+            def: c.building_id("fire_station"),
+            quarters: 0,
+            free_rot: 0.0,
+            moving: None,
+        };
+        let at = Vec2::new(3100.0, 3012.0);
+        let g = preview(&sim.view(), &tool, at).unwrap();
+        assert!(g.valid, "{g:?}");
+        let access = g.access.expect("a ghost on a road has an access point");
+        sim.push_command(
+            cp_sim::SimCommand::Building(cp_building::BuildingCommand::Place {
+                def: tool.def.unwrap(),
+                pos: at,
+                rot: tool.rot(),
+            }),
+            sim.tick(),
+        );
+        sim.apply_due_commands();
+        let view = sim.view();
+        let (_, b) = view.buildings.iter().next().unwrap();
+        assert_eq!(b.access(), Some(access));
+        // Off the road: no access point, so no coverage preview.
+        assert!(
+            preview(&view, &tool, Vec2::new(3100.0, 3300.0))
+                .unwrap()
+                .access
+                .is_none()
+        );
     }
 
     // ---------- free-standing placement tool (T-108) ----------

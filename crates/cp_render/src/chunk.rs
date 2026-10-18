@@ -44,6 +44,16 @@ impl MeshData {
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
     }
+
+    /// Appends `other`'s triangles.
+    pub fn append(&mut self, other: MeshData) {
+        let base = self.positions.len() as u32;
+        self.positions.extend(other.positions);
+        self.normals.extend(other.normals);
+        self.colors.extend(other.colors);
+        self.indices
+            .extend(other.indices.into_iter().map(|i| i + base));
+    }
 }
 
 /// Colour bands for height/slope texturing, in metres above sea level.

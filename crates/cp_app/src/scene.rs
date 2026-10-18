@@ -315,6 +315,51 @@ pub fn add_mail_houses(sim: &mut SimRunner) {
     }
 }
 
+/// Services scene (T-254): a 12 × 12 block street grid with a police station and a fire station
+/// in its west half, the clock run past a coverage recompute and then paused. Hold a ghost on the
+/// east side with `--place-demo police_station,X,Z` (see [`SERVICES_GHOST`]) and look with
+/// `--cam services --overlay police` to see the preview of its road coverage.
+pub const SERVICES: &str = "services";
+
+/// Where the scene's ghost goes: beside the middle east-west street, east of the centre.
+pub const SERVICES_GHOST: (f32, f32) = (350.0, 12.0);
+
+/// Builds the [`SERVICES`] scene; returns the rejected commands.
+pub fn build_services(sim: &mut SimRunner) -> Vec<String> {
+    let mut rejected = build_grid_with(sim, 13, 0);
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut().resource_mut::<cp_core::Treasury>().balance = cp_core::Cost(1_000_000_000);
+    for (name, dx, dz) in [
+        ("police_station", -350.0, 12.0),
+        ("fire_station", -250.0, -188.0),
+    ] {
+        let def = db.building_id(name).expect("a service building");
+        sim.push_command(
+            SimCommand::Building(cp_building::BuildingCommand::Place {
+                def,
+                pos: Vec2::new(c + dx, c + dz),
+                rot: 0.0,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    // Past the next coverage recompute (every 64 ticks), then hold the clock.
+    for _ in 0..cp_service::COVERAGE_PERIOD {
+        sim.tick_once();
+    }
+    rejected.extend(
+        sim.world_mut()
+            .resource_mut::<Messages<CommandOutcome>>()
+            .drain()
+            .filter_map(|o| o.result.err().map(|e| e.to_string())),
+    );
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+    rejected
+}
+
 /// Construction scene (T-235): the same house at 0, 20, 40, 60, 80 and 99 % of its construction
 /// and, last, finished; the sim stands still. Look at it with `--cam construction`.
 pub const CONSTRUCTION: &str = "construction";

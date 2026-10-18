@@ -699,10 +699,24 @@ mod tests {
             error: None,
             free: None,
             richness: None,
+            access: None,
         });
         let ok = drawn(&tools);
         assert!(ok.contains("can place") && ok.contains("12,000"), "{ok}");
         assert!(ok.contains("T rotates"), "{ok}");
+        // A service ghost's road coverage (T-254) under the verdict.
+        tools.coverage = Some(cp_render::CoverageCount {
+            reached: 3,
+            newly: 2,
+            capacity: 1000,
+        });
+        let cov = drawn(&tools);
+        assert!(
+            cov.contains("Covers 3 buildings, 2 newly · capacity 1000")
+                && cov.contains("Blue: newly covered"),
+            "{cov}"
+        );
+        tools.coverage = None;
         tools.place_ghost = Some(PlacementGhost {
             cells: vec![],
             valid: false,
@@ -710,6 +724,7 @@ mod tests {
             error: Some("not on water".into()),
             free: None,
             richness: None,
+            access: None,
         });
         let bad = drawn(&tools);
         assert!(

@@ -131,6 +131,8 @@ pub struct ToolState {
     pub link_highlight: Option<UtilityLinkId>,
     /// What the placement tool would put under the cursor.
     pub place_ghost: Option<PlacementGhost>,
+    /// The road coverage of a service ghost, as the renderer counted it (T-254).
+    pub coverage: Option<cp_render::CoverageCount>,
     /// Building the bulldozer would remove (preferred over a segment).
     pub building_highlight: Option<BuildingId>,
     /// Cells the zoning tool would paint at the cursor (the highlight).
@@ -238,6 +240,40 @@ pub struct GhostDemo {
     pub to: Vec2,
 }
 
+/// A placement ghost held in place without a cursor (`--place-demo` of the desktop client, for
+/// screenshots of the coverage preview, T-254): the placement tool with `def` at `at`.
+#[derive(Resource, Clone, Debug)]
+pub struct PlaceDemo {
+    pub def: String,
+    pub at: Vec2,
+}
+
+fn place_demo(
+    demo: Option<Res<PlaceDemo>>,
+    view: Option<Res<SimView>>,
+    mut state: ResMut<ToolState>,
+) {
+    let (Some(demo), Some(view)) = (demo, view) else {
+        return;
+    };
+    let Some(def) = view
+        .content
+        .as_deref()
+        .and_then(|c| c.building_id(&demo.def))
+    else {
+        return;
+    };
+    if state.active != ActiveTool::Place {
+        state.select(ActiveTool::Place);
+    }
+    state.building.def = Some(def);
+    state.hover = Some(demo.at);
+    let ghost = place_preview(&view, &state.building, demo.at);
+    if state.place_ghost != ghost {
+        state.place_ghost = ghost;
+    }
+}
+
 fn ghost_demo(
     demo: Option<Res<GhostDemo>>,
     view: Option<Res<SimView>>,
@@ -274,6 +310,59 @@ fn sync_zone_strip(state: Res<ToolState>, mut out: ResMut<cp_render::ZoneStripLa
     };
     if out.cells != want {
         out.cells = want;
+    }
+}
+
+/// The road coverage the placement ghost would give (§13.5 v6.2, T-254): a valid ghost of a
+/// service building with a road radius (the kinds with a coverage overlay), at the access point the placement gives it.
+pub fn coverage_site(view: &SimView, state: &ToolState) -> Option<cp_render::CoverageSite> {
+    if state.active != ActiveTool::Place {
+        return None;
+    }
+    let ghost = state.place_ghost.as_ref().filter(|g| g.valid)?;
+    let access = ghost.access?;
+    let db = view.content.as_deref()?;
+    let service = db
+        .building(state.building.def?)
+        .service
+        .as_deref()
+        .and_then(|s| db.service_id(s))?;
+    let def = db.service(service);
+    // Only the kinds whose coverage runs along the roads (they have a coverage overlay): water,
+    // sewage and power reach along their own networks.
+    let on_roads = cp_render::Overlay::for_service(def.kind).is_some();
+    (on_roads && def.radius_m > 0.0).then_some(cp_render::CoverageSite {
+        kind: def.kind,
+        access,
+        radius_m: def.radius_m,
+        capacity: def.capacity,
+        lot: ghost
+            .cells
+            .iter()
+            .filter_map(|&c| view.zones.cell_footprint(c).map(|o| o.corners()))
+            .collect(),
+    })
+}
+
+/// Hands the coverage of the placement ghost to the renderer.
+fn sync_coverage_ghost(
+    view: Option<Res<SimView>>,
+    state: Res<ToolState>,
+    mut out: ResMut<cp_render::CoverageGhost>,
+) {
+    let site = view.and_then(|v| coverage_site(&v, &state));
+    out.set_if_neq(cp_render::CoverageGhost { site });
+}
+
+/// Copies the renderer's count of the ghost's coverage into the tool state for the verdict.
+fn sync_coverage_count(
+    summary: Res<cp_render::CoverageGhostSummary>,
+    out: Res<cp_render::CoverageGhost>,
+    mut state: ResMut<ToolState>,
+) {
+    let want = out.site.as_ref().and(summary.0);
+    if state.coverage != want {
+        state.coverage = want;
     }
 }
 
@@ -448,6 +537,12 @@ impl Plugin for ToolsPlugin {
             .add_systems(Update, sync_pipe_layers.after(tool_hover))
             .init_resource::<cp_render::LineGhost>()
             .add_systems(Update, sync_line_ghost.after(tool_hover))
+            .init_resource::<cp_render::CoverageGhost>()
+            .add_systems(
+                Update,
+                (place_demo, sync_coverage_ghost).chain().after(tool_hover),
+            )
+            .add_systems(Update, sync_coverage_count.after(sync_coverage_ghost))
             .add_systems(
                 Update,
                 (ghost_demo, sync_zone_strip).chain().after(tool_hover),
@@ -1520,5 +1615,72 @@ mod bulldozer_toggle_tests {
         s.toggle_bulldozer();
         s.toggle_bulldozer();
         assert_eq!(s.active, ActiveTool::None);
+    }
+}
+
+#[cfg(test)]
+mod coverage_site_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use bevy_math::Vec3;
+    use cp_content::ContentDb;
+    use cp_core::curve::CubicBezier3;
+    use cp_net::{Elevation, NetGraph};
+    use cp_sim::SimRunner;
+    use cp_terrain::TileOwnership;
+
+    #[test]
+    fn only_a_valid_service_ghost_with_a_road_radius_has_a_coverage_site() {
+        let c = Arc::new(
+            ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content"))
+                .unwrap(),
+        );
+        let road = c.road_id("basic_2l").unwrap();
+        let mut sim = SimRunner::new(1);
+        sim.set_content(Arc::clone(&c));
+        sim.world_mut().insert_resource(TileOwnership::only((1, 1)));
+        sim.world_mut()
+            .resource_mut::<NetGraph>()
+            .add_segment(
+                &c.road(road).clone(),
+                road,
+                CubicBezier3::line(
+                    Vec3::new(3000.0, 0.0, 3000.0),
+                    Vec3::new(3200.0, 0.0, 3000.0),
+                ),
+                Elevation::Ground,
+            )
+            .unwrap();
+        sim.tick_once();
+        let view = sim.view();
+        let at = Vec2::new(3100.0, 3012.0);
+        let mut state = ToolState::default();
+        let ghost_of = |state: &mut ToolState, def: &str| {
+            state.select(ActiveTool::Place);
+            state.building = crate::building::BuildingTool {
+                def: c.building_id(def),
+                ..Default::default()
+            };
+            state.place_ghost = place_preview(&view, &state.building, at);
+            coverage_site(&view, state)
+        };
+        let fire = ghost_of(&mut state, "fire_station").expect("fire station ghost");
+        let def = c.service(c.service_id("fire_station").unwrap());
+        assert_eq!(fire.kind, cp_content::ServiceKind::Fire);
+        assert_eq!((fire.radius_m, fire.capacity), (def.radius_m, def.capacity));
+        assert_eq!(
+            Some(fire.access),
+            state.place_ghost.as_ref().unwrap().access
+        );
+        // Power reaches along its lines, not the roads.
+        assert!(ghost_of(&mut state, "coal_power_plant").is_none());
+        // An invalid ghost, or another tool, shows nothing.
+        state.building.def = c.building_id("fire_station");
+        state.place_ghost = place_preview(&view, &state.building, Vec2::new(3100.0, 3300.0));
+        assert!(coverage_site(&view, &state).is_none());
+        state.place_ghost = place_preview(&view, &state.building, at);
+        state.select(ActiveTool::None);
+        assert!(coverage_site(&view, &state).is_none());
     }
 }

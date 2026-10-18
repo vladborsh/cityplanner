@@ -23,6 +23,7 @@ use cp_terrain::{MAP_SIZE, Terrain};
 use crate::chunk::{MeshData, select_lod, terrain_mesh_height};
 use crate::material::VertexColorMaterial;
 
+mod coverage_ghost;
 mod districts;
 mod industry;
 mod land;
@@ -31,6 +32,10 @@ mod tiles;
 pub mod transit;
 mod utility;
 mod zone_chunks;
+pub use coverage_ghost::{
+    ALREADY_COVERED, CoverageCount, CoverageGhost, CoverageGhostRibbons, CoverageGhostSummary,
+    CoverageSite, coverage_count, coverage_ghost_mesh, gain_color,
+};
 pub use districts::{
     DistrictLayer, DistrictLayers, DistrictsMode, contour_edges, contour_mesh, fill_mesh,
 };
@@ -277,7 +282,7 @@ fn quad(m: &mut MeshData, v: [u32; 4]) {
 }
 
 /// A quad that faces up whatever the corner order of `corners` (convex, in XZ).
-fn flat(m: &mut MeshData, corners: [[f32; 3]; 4], c: [f32; 4]) {
+pub(super) fn flat(m: &mut MeshData, corners: [[f32; 3]; 4], c: [f32; 4]) {
     let area: f32 = (0..4)
         .map(|i| {
             let (a, b) = (corners[i], corners[(i + 1) % 4]);
@@ -524,6 +529,16 @@ pub(crate) fn road_ribbons(
     net: &NetGraph,
     color: impl Fn(cp_net::SegmentId) -> Option<[f32; 4]>,
 ) -> MeshData {
+    road_ribbons_with(net, LIFT, 1.0, color)
+}
+
+/// [`road_ribbons`] `lift` metres above the road and `width` times its width.
+pub(crate) fn road_ribbons_with(
+    net: &NetGraph,
+    lift: f32,
+    width: f32,
+    color: impl Fn(cp_net::SegmentId) -> Option<[f32; 4]>,
+) -> MeshData {
     let mut m = MeshData::default();
     for (id, seg) in net.segments() {
         let Some(color) = color(id) else { continue };
@@ -533,7 +548,8 @@ pub(crate) fn road_ribbons(
             .filter_map(|&l| net.lane(l))
             .map(|l| l.offset.abs() + l.width * 0.5)
             .fold(0.0f32, f32::max)
-            .max(2.0);
+            .max(2.0)
+            * width;
         let steps = ((seg.length / 8.0).ceil() as usize).clamp(2, 256);
         let mut prev: Option<[u32; 2]> = None;
         for i in 0..=steps {
@@ -544,7 +560,7 @@ pub(crate) fn road_ribbons(
                 .try_normalize()
                 .unwrap_or(bevy::math::Vec2::X)
                 * half;
-            let y = p.y + LIFT;
+            let y = p.y + lift;
             let l = push(&mut m, [p.x + side.x, y, p.z + side.y], color);
             let r = push(&mut m, [p.x - side.x, y, p.z - side.y], color);
             if let Some([pl, pr]) = prev {
@@ -627,6 +643,9 @@ impl Plugin for OverlayPlugin {
             .init_resource::<industry::IndustryLayers>()
             .init_resource::<land::LandLayer>()
             .init_resource::<transit::LineGhost>()
+            .init_resource::<CoverageGhost>()
+            .init_resource::<CoverageGhostSummary>()
+            .init_resource::<coverage_ghost::CoverageGhostLayer>()
             .init_resource::<transit::TransitLayer>()
             .init_resource::<transit::ShelterLayer>()
             .add_systems(
@@ -639,6 +658,7 @@ impl Plugin for OverlayPlugin {
                     land::sync_land_layer,
                     transit::sync_transit_layer,
                     transit::sync_shelters,
+                    coverage_ghost::sync_coverage_ghost,
                     apply_overlay_visibility,
                 )
                     .chain(),
@@ -950,11 +970,14 @@ const SERVICE_OVERLAYS: [Overlay; 7] = [
 /// entities), so a switch and a rebuild in the same frame never show a stale layer.
 fn apply_overlay_visibility(
     state: Res<OverlayState>,
+    ghost: Option<Res<CoverageGhost>>,
     mut layers: Query<(&OverlayLayer, Option<&ZoneOutlines>, &mut Visibility)>,
 ) {
+    // A service ghost's coverage ribbons (T-254) must not sit under the zone cells' outlines.
+    let ghost_on = ghost.is_some_and(|g| g.site.is_some());
     for (layer, outlines, mut vis) in &mut layers {
         let on = if outlines.is_some() {
-            true
+            !ghost_on
         } else if layer.0 == Overlay::Zones {
             zone_fill_visible(state.active)
         } else {

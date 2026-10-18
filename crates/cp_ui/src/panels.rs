@@ -487,6 +487,18 @@ pub fn plan_length(g: &cp_tools::Ghost) -> f32 {
         .fold(0.0, |acc, w| acc + w[0].distance(w[1]))
 }
 
+/// The legend under a service ghost's coverage line (T-254).
+pub const COVERAGE_LEGEND: &str =
+    "Blue: newly covered · white: already covered · green to yellow: coverage now";
+
+/// The line under a service ghost's verdict (T-254): what its road coverage would reach.
+pub fn coverage_text(c: cp_render::CoverageCount) -> String {
+    format!(
+        "Covers {} buildings, {} newly · capacity {}",
+        c.reached, c.newly, c.capacity
+    )
+}
+
 /// The pinned "cost · verdict" block: a ghost that can be built or placed shows its cost, one
 /// that cannot shows why; with no ghost, a hint for the open category.
 pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
@@ -578,6 +590,10 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 }
                 if g.valid {
                     ok(ui, "can place", g.cost, String::new());
+                    if let Some(c) = tools.coverage {
+                        ui.colored_label(egui::Color32::from_rgb(110, 190, 255), coverage_text(c));
+                        ui.weak(COVERAGE_LEGEND);
+                    }
                 } else {
                     bad(
                         ui,

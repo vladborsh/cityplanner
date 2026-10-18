@@ -282,7 +282,7 @@ pub struct TransitLayer {
     ghost_key: Option<(bool, LineGhost, usize)>,
 }
 
-fn spawn(
+pub(super) fn spawn(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     material: &Handle<crate::material::VertexColorMaterial>,

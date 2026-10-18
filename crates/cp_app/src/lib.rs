@@ -319,6 +319,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c - 15.0, 32.0, c + 48.0),
             Vec3::new(c - 10.0, 2.0, c - 15.0),
         ),
+        // The services grid from the south-east, high enough for the whole 1200 m (T-254).
+        "services" => (
+            Vec3::new(c + 150.0, 900.0, c + 820.0),
+            Vec3::new(c + 50.0, 0.0, c - 20.0),
+        ),
         // Across the street, the houses with mail piled up (`--overlay mail`).
         "post-mail" => (Vec3::new(c, 110.0, c + 120.0), Vec3::new(c, 0.0, c + 5.0)),
         "post-office" => (
@@ -577,6 +582,11 @@ pub fn build_sim(
         }
         scene::add_mail_houses(&mut sim);
         info!("scene post: {n} mail vans");
+    } else if scene == Some(scene::SERVICES) {
+        for reason in scene::build_services(&mut sim) {
+            warn!("scene command rejected: {reason}");
+        }
+        info!("scene services");
     } else if scene == Some(scene::PARKS) {
         let n = scene::build_parks(&mut sim);
         info!("scene parks: {n} buildings");
