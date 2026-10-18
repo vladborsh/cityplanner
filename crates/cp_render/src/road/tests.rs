@@ -458,7 +458,11 @@ fn road_perf() -> f64 {
         edit.dirty_chunks.len(),
     );
     assert!(full.rebuilt >= n * n + 2 * n * (n - 1));
-    assert!(edit.rebuilt <= 12, "{edit:?}");
+    // 13: the new street starts exactly on a street of the lattice, within a node's snap radius
+    // (BUG-073: a point on a street stays where it is, it is no longer pulled to a through node),
+    // so the street it starts on is split there: the two halves, the new street and the junction
+    // around the split are the 13 rebuilt pieces (3 old ones removed).
+    assert!(edit.rebuilt <= 13, "{edit:?}");
     edit_ms + merge_ms
 }
 
