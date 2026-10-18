@@ -177,8 +177,11 @@ pub fn run(opts: Options) -> AppExit {
     let target = opts.hidden.then(|| {
         crate::capture::offscreen_target(&mut app.world_mut().resource_mut::<Assets<Image>>())
     });
-    if opts.hidden {
-        // With no window the loop counts as unfocused and would idle at 60 Hz.
+    if opts.hidden && opts.bench.is_some() {
+        // With no window the loop counts as unfocused and would idle at 60 Hz: a bench runs
+        // uncapped. A screenshot keeps the 60 Hz pace (T-245): uncapped, a paused city seen
+        // obliquely queued frames faster than the GPU drew them into the off-screen image
+        // until Metal lost the device.
         app.insert_resource(bevy::winit::WinitSettings::continuous());
     }
     if let Some(active) = opts.overlay {

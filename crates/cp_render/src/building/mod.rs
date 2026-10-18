@@ -20,10 +20,14 @@
 //! concrete core inside a scaffolding frame), derived from `ready_at` and the tick;
 //! `Abandoned` is dulled with boarded windows; `Burned` is charred, lower and roofless.
 //!
+//! **Night** (T-245): lit windows carry a glow code in their vertex alpha (see [`lights`]); the
+//! material turns it into light with the night factor, so the meshes do not change at dusk.
+//!
 //! The building's *front* (the wall facing the road) is derived from the access point: the
 //! direction from the road point to the lot centre. Without a usable access point the lot's
 //! +v side is assumed to point away from the road.
 
+pub mod lights;
 mod shapes;
 
 pub use shapes::{Rotor, RotorKind, rotor_mesh, rotor_world};
@@ -31,7 +35,7 @@ pub use shapes::{Rotor, RotorKind, rotor_mesh, rotor_world};
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_math::{Vec2, Vec3};
-use cp_building::{Building, BuildingGrid, BuildingId, BuildingState, build_ticks};
+use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingId, BuildingState, build_ticks};
 use cp_content::{
     BuildingDef, ContentDb, PLACEHOLDER_INDEX, Rgb, RoofKind, StyleDef, StyleDefId, ZoneType,
 };
@@ -40,6 +44,7 @@ use cp_net::NetGraph;
 use cp_terrain::Terrain;
 use cp_zone::CELL_SIZE;
 
+use self::lights::LightClass;
 use crate::chunk::MeshData;
 use crate::road::{append, bounds, flat_quad, push_vertex, tri};
 
@@ -53,6 +58,11 @@ pub const FAR_DISTANCE: f32 = 1500.0;
 /// centimetres: it reads as a continuous climb at any game speed (T-235); the last stage is the
 /// finished height, so the swap to the finished model changes no height.
 pub const STAGES: u8 = 32;
+
+/// Glow of a floor's glass band (`mid`) and of a whole wall (`far`) as a share of the average
+/// of the windows they stand for (see `Ctx::many_windows`).
+const MID_GLOW: f32 = 0.12;
+const FAR_GLOW: f32 = 0.05;
 
 const SIDE_MARGIN: f32 = 1.0;
 const FRONT_SETBACK: f32 = 2.0;
@@ -353,11 +363,24 @@ struct Ctx {
     trim: [f32; 4],
     seed: u32,
     state: BuildingState,
+    /// How the windows light up at night; `None`: they stay dark.
+    light: Option<LightClass>,
 }
 
 impl Ctx {
     fn corner(&self, su: f32, sv: f32, y: f32) -> Vec3 {
         self.f.at(self.cu + su * self.hu, self.cv + sv * self.hv, y)
+    }
+
+    /// `c` glowing as a surface that stands for many windows, `glass` of it glazed: `k` times
+    /// the average glow of the building's lit windows over that share. `k` is well below 1:
+    /// at night a lit surface the size of a band or wall reads far brighter than the same light
+    /// in single windows.
+    fn many_windows(&self, c: [f32; 4], glass: f32, k: f32) -> [f32; 4] {
+        let Some(class) = self.light else { return c };
+        let strength = k * lights::evening_share(class, self.seed) * glass;
+        let alpha = lights::glow_alpha(lights::typical_off(class), 1, strength, true);
+        [c[0], c[1], c[2], alpha]
     }
 }
 
@@ -387,11 +410,14 @@ fn wall(
     };
     let dead = matches!(cx.state, BuildingState::Burned);
     // Beyond 450 m a one- or two-floor wall has no visible bands: one quad, as in the far level.
+    let st = cx.style;
     if lod == Lod::Far || floors == 0 || (lod == Lod::Mid && floors <= 2) {
-        q(m, 0.0, width, y0, y0 + height, cx.wall);
+        // A faint glow of the windows the wall stands for.
+        let k = if lod == Lod::Far { FAR_GLOW } else { MID_GLOW };
+        let c = cx.many_windows(cx.wall, st.win_w * st.win_h, k);
+        q(m, 0.0, width, y0, y0 + height, c);
         return;
     }
-    let st = cx.style;
     let fh = height / floors as f32;
     for fl in 0..floors {
         let fy = y0 + fh * fl as f32;
@@ -401,7 +427,11 @@ fn wall(
             // window and the wall below the next are one quad.
             let sill = fy + fh * st.sill;
             let top = sill + fh * st.win_h;
-            let glass = if dead { cx.wall } else { cx.glass };
+            let glass = if dead {
+                cx.wall
+            } else {
+                cx.many_windows(cx.glass, st.win_w, MID_GLOW)
+            };
             if ground {
                 q(m, 0.0, width, fy, sill, cx.wall);
             }
@@ -438,10 +468,16 @@ fn wall(
         };
         let glass_at = |i: u32| {
             if boarded(i) {
-                [0.30, 0.22, 0.15, 1.0]
-            } else {
-                mul(cx.glass, shade(i))
+                return [0.30, 0.22, 0.15, 1.0];
             }
+            let mut c = mul(cx.glass, shade(i));
+            let lit = cx.light.and_then(|class| {
+                lights::window_light(class, cx.seed, (wall_id * 64 + fl) * 256 + i)
+            });
+            if let Some(l) = lit {
+                c[3] = lights::glow_alpha(l.off, l.tint, 1.0, false);
+            }
+            c
         };
         if st.ribbon {
             let pier = (0.6f32).min(width * 0.2);
@@ -793,6 +829,7 @@ pub fn build_building(
         trim: trimc,
         seed: sd,
         state: b.state,
+        light: lights::light_class(b, def.zone),
     };
 
     // Floors drawn per box: all of them, or 60% of the whole stack once burned.
@@ -839,7 +876,8 @@ pub fn build_building(
         wall: wallc,
         roof: roofc,
         trim: trimc,
-        glass: glassc,
+        // Big glazed surfaces of a service building glow as a whole.
+        glass: cx.many_windows(glassc, 0.6, MID_GLOW),
         lod,
     };
     let silhouette =
@@ -1027,6 +1065,8 @@ pub fn building_stamp(b: &Building, total: u64, tick: Tick) -> u64 {
     mix(&mut h, b.rot.to_bits());
     mix(&mut h, u32::from(b.size().0) | u32::from(b.size().1) << 8);
     mix(&mut h, b.access().map_or(0, |a| a.t.to_bits()));
+    // The lights go out without power (T-245).
+    mix(&mut h, u32::from(b.flags.has(BuildingFlags::NO_POWER)));
     if b.state == BuildingState::UnderConstruction {
         mix(&mut h, u32::from(construction_stage(b, total, tick)));
     }

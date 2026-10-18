@@ -1,6 +1,7 @@
 //! Bevy side of building rendering: one mesh entity per 256 m chunk, three detail levels per
 //! chunk (windows / floor bands / plain box), rebuilt only for chunks whose buildings
-//! changed (see [`crate::building`]). Reads only `SimView`.
+//! changed (see [`crate::building`]). Reads only `SimView`. By night the lit windows glow
+//! (T-245): the night factor and the lateness of the night go to the one building material.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -14,9 +15,12 @@ use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_sim::SimView;
 
+use crate::building::lights::lateness;
 use crate::building::{BuildingSet, Rotor, RotorKind, rotor_mesh, select_level};
 use crate::chunk::MeshData;
+use crate::furniture_render::night_factor;
 use crate::material::VertexColorMaterial;
+use crate::sun::{LightingSettings, lit_state};
 
 pub struct BuildingRenderPlugin;
 
@@ -26,7 +30,12 @@ impl Plugin for BuildingRenderPlugin {
             .init_resource::<BuildingState>()
             .add_systems(
                 Update,
-                (sync_buildings, update_building_lods, spin_rotors)
+                (
+                    sync_buildings,
+                    building_night,
+                    update_building_lods,
+                    spin_rotors,
+                )
                     .chain()
                     .in_set(BuildingSync),
             );
@@ -72,6 +81,9 @@ pub(crate) struct BuildingState {
     /// was built for.
     rotors: BTreeMap<cp_building::BuildingId, (Entity, Rotor)>,
 }
+
+/// Light of a fully lit window at night, on top of the lit surface (an unlit lamp head is 1).
+pub const WINDOW_GLOW: f32 = 0.9;
 
 /// A construction stage lasts a few dozen ticks (T-235): re-check about as often.
 const REFRESH_TICKS: u64 = TICKS_PER_DAY / 128;
@@ -128,7 +140,9 @@ fn sync_buildings(
     state.last_bucket = bucket;
     let material = state
         .material
-        .get_or_insert_with(|| materials.add(VertexColorMaterial::opaque(0.85, 0.05)))
+        .get_or_insert_with(|| {
+            materials.add(VertexColorMaterial::opaque(0.85, 0.05).with_window_glow(WINDOW_GLOW))
+        })
         .clone();
 
     if up.rebuilt > 0 || up.removed > 0 || state.rotors.is_empty() {
@@ -236,6 +250,37 @@ fn sync_buildings(
         last_rebuilt: up.rebuilt,
         last_update_ms: start.elapsed().as_secs_f32() * 1000.0,
     };
+}
+
+/// The windows glow with the night (the street lamps' night factor) and go dark one by one as
+/// it gets late.
+fn building_night(
+    view: Option<Res<SimView>>,
+    lighting: Option<Res<LightingSettings>>,
+    state: Res<BuildingState>,
+    mut materials: ResMut<Assets<VertexColorMaterial>>,
+) {
+    let Some(view) = view else { return };
+    let Some(handle) = state.material.as_ref() else {
+        return;
+    };
+    let settings = lighting.map(|l| *l).unwrap_or_default();
+    let night = night_factor(lit_state(view.game_time, settings).illuminance);
+    let late = lateness(view.game_time);
+    let Some(m) = materials.get(handle) else {
+        return;
+    };
+    // Small steps are skipped, but the ends (full day, full night) are always reached.
+    let close = |old: f32, new: f32, step: f32| {
+        old == new || ((old - new).abs() < step && new > 0.0 && new < 1.0)
+    };
+    if close(m.glow.x, night, 0.005) && close(m.glow.y, late, 0.004) {
+        return;
+    }
+    if let Some(mut m) = materials.get_mut(handle) {
+        m.glow.x = night;
+        m.glow.y = late;
+    }
 }
 
 fn update_building_lods(

@@ -20,6 +20,43 @@ import bevy_pbr::render::{
 //     more than the detail's size, so nothing shimmers in the distance
 @group(constants::MATERIAL_BIND_GROUP) @binding(1) var<uniform> fade: vec4<f32>;
 
+// Lit windows (T-245): x = night factor (0 day .. 1 night), y = lateness of the night (0 at 19:00
+// .. 1 at 04:00), z = intensity, w = 1 when the vertex alpha holds window glow codes (buildings)
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var<uniform> glow: vec4<f32>;
+
+// Light of a window from its vertex alpha `2 + code`: code = off (6 bits, 63 = all night) |
+// tint (2 bits) << 6 | square root of the strength (5 bits) << 8 | wide (1 bit) << 13. The same formula as
+// `building::lights::glow` and the same tints as `building::lights::TINTS`.
+fn window_glow(a: f32) -> vec3<f32> {
+    if a < 1.5 || glow.x <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let code = u32(round(a - 2.0));
+    let q = code & 63u;
+    let r = f32((code >> 8u) & 31u) / 31.0;
+    let s = r * r;
+    var on = 1.0;
+    if q != 63u {
+        let off = f32(q) / 62.0;
+        if ((code >> 13u) & 1u) == 1u {
+            on = 0.2 + 0.8 * (1.0 - smoothstep(off - 0.35, off + 0.35, glow.y));
+        } else {
+            on = 1.0 - smoothstep(off - 0.03, off, glow.y);
+        }
+    }
+    let t = (code >> 6u) & 3u;
+    let tint = select(
+        select(
+            select(vec3<f32>(0.78, 0.85, 1.0), vec3<f32>(1.0, 0.72, 0.42), t == 2u),
+            vec3<f32>(1.0, 0.60, 0.28),
+            t == 1u,
+        ),
+        vec3<f32>(1.0, 0.50, 0.18),
+        t == 0u,
+    );
+    return tint * (s * on * glow.x * glow.z);
+}
+
 // --- Procedural detail (T-238). World-space value noise on the ground plane (x, z).
 
 fn hash2(p: vec2<f32>) -> f32 {
@@ -125,6 +162,12 @@ fn grass(p: vec2<f32>, fp: f32) -> Detail {
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_vertex_output(in, is_front, false);
+    var emit = vec3<f32>(0.0);
+    if glow.w > 0.5 {
+        // The alpha is a glow code, not a coverage: the surface is opaque.
+        emit = window_glow(pbr_input.material.base_color.a);
+        pbr_input.material.base_color.a = 1.0;
+    }
     pbr_input.material.base_color.a = pbr_input.material.base_color.a * fade.x;
     pbr_input.material.perceptual_roughness = params.x;
     pbr_input.material.reflectance = vec3<f32>(params.y);
@@ -169,6 +212,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
+    out.color = vec4<f32>(out.color.rgb + emit, out.color.a);
     if fade.y > 0.0 {
         let l = dot(out.color.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
         let grey = mix(out.color.rgb, vec3<f32>(l), 0.75 * fade.y);

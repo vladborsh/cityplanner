@@ -299,6 +299,20 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c - 30.0, 14.0, c + 55.0),
             Vec3::new(c - 30.0, 2.0, c),
         ),
+        // The night city (`--scene night:N`, T-245): high over the south-west corner looking
+        // across the centre, down a street of the centre, and at the district without power.
+        "night-wide" => (
+            Vec3::new(c - 650.0, 420.0, c + 750.0),
+            Vec3::new(c + 120.0, 0.0, c - 120.0),
+        ),
+        "night-street" => (
+            Vec3::new(c - 120.0, 28.0, c + 52.0),
+            Vec3::new(c + 40.0, 6.0, c + 2.0),
+        ),
+        "night-dark" => (
+            Vec3::new(c - 50.0, 260.0, c + 300.0),
+            Vec3::new(c + 250.0, 0.0, c - 150.0),
+        ),
         // The street lamps and poles along two streets (`--scene lamps`).
         "lamps" => (
             Vec3::new(c - 30.0, 9.0, c + 78.0),
@@ -535,6 +549,9 @@ pub fn build_sim(
     } else if scene == Some(scene::SHOWCASE) {
         let n = scene::build_showcase(&mut sim);
         info!("scene showcase: {n} buildings");
+    } else if let Some(n) = scene.and_then(scene::parse_night) {
+        let (built, dark) = scene::build_night(&mut sim, n, hour);
+        info!("scene night:{n}: {built} buildings, {dark} without power");
     } else if let Some(n) = scene.and_then(scene::parse_city) {
         let built = scene::build_city(&mut sim, n, 5200, 6000);
         info!("scene city:{n}: {built} buildings");

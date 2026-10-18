@@ -38,6 +38,11 @@ pub struct VertexColorMaterial {
     /// dimmed); z = procedural surface detail, see [`Self::with_detail`]; w unused.
     #[uniform(1)]
     pub fade: Vec4,
+    /// Lit windows (T-245): x = night factor (0 day .. 1 night), y = lateness of the night
+    /// (`building::lights::lateness`), z = glow intensity, w = 1 when the vertex alpha holds
+    /// window glow codes (`building::lights::glow_alpha`; the buildings), 0 otherwise.
+    #[uniform(2)]
+    pub glow: Vec4,
     /// Alpha-blend using the vertex alpha (water) instead of drawing opaque.
     pub blend: bool,
     /// Pull the surface towards the camera in the depth test so a layer lying a few
@@ -53,6 +58,7 @@ impl VertexColorMaterial {
         Self {
             params: Vec4::new(roughness, reflectance, 0.0, 0.0),
             fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
+            glow: Vec4::ZERO,
             blend: false,
             depth_bias: false,
             sort_bias: 0.0,
@@ -79,6 +85,12 @@ impl VertexColorMaterial {
     /// patches and cracks, sidewalk tiles) or [`DETAIL_GROUND`] (grass patches).
     pub fn with_detail(mut self, kind: f32) -> Self {
         self.fade.z = kind;
+        self
+    }
+
+    /// The vertex alpha holds window glow codes, lit with `intensity` (see [`Self::glow`]).
+    pub fn with_window_glow(mut self, intensity: f32) -> Self {
+        self.glow = Vec4::new(0.0, 0.0, intensity, 1.0);
         self
     }
 

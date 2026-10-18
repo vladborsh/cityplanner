@@ -1645,6 +1645,55 @@ pub fn build_city(sim: &mut SimRunner, n: usize, target: usize, max_ticks: u64) 
     sim.world().resource::<BuildingGrid>().len()
 }
 
+/// Night scene (T-245): `night:N` is [`build_city`] held (paused) at the asked hour of the next
+/// day, with every building supplied with water and power except the ones in [`DARK_DISTRICT`], to see the lit
+/// windows and an outage. Look at it with `--cam night-wide`, `night-street` or `night-dark`.
+pub fn parse_night(spec: &str) -> Option<usize> {
+    spec.strip_prefix("night:")?
+        .parse()
+        .ok()
+        .filter(|n| (2..=60).contains(n))
+}
+
+/// The district of the night scene without power: centre (offset from the map centre) and
+/// radius, metres.
+pub const DARK_DISTRICT: (Vec2, f32) = (Vec2::new(250.0, -150.0), 180.0);
+
+/// Builds the `night:N` scene (see [`parse_night`]); returns the buildings and how many of them
+/// have no power.
+pub fn build_night(sim: &mut SimRunner, n: usize, hour: f32) -> (usize, usize) {
+    use cp_building::{BuildingFlags, BuildingGrid, BuildingState};
+    use cp_core::time::TICKS_PER_DAY;
+    // The same city at every hour: it grows from midnight, then the clock jumps.
+    sim.world_mut().insert_resource(Tick(0));
+    let built = build_city(sim, n, 5200, 6000);
+    let now = sim.tick().0;
+    let at = (now / TICKS_PER_DAY + 1) * TICKS_PER_DAY
+        + (hour.rem_euclid(24.0) / 24.0 * TICKS_PER_DAY as f32) as u64;
+    sim.world_mut().insert_resource(Tick(at));
+    let dark_at = Vec2::splat(cp_terrain::MAP_SIZE / 2.0) + DARK_DISTRICT.0;
+    let mut dark = 0;
+    let mut grid = sim.world_mut().resource_mut::<BuildingGrid>();
+    let ids: Vec<_> = grid.iter().map(|(id, _)| id).collect();
+    for id in ids {
+        let Some(b) = grid.get_mut(id) else { continue };
+        if b.state == BuildingState::UnderConstruction {
+            // Still part way up after the jump in time.
+            b.ready_at = Tick(b.ready_at.0 + (at - now));
+        }
+        // Water and sewage too: their icons would hide the windows.
+        b.flags.0 &= !BuildingFlags::UTILITY_MASK;
+        if b.pos.distance(dark_at) < DARK_DISTRICT.1 {
+            b.flags.0 |= BuildingFlags::NO_POWER;
+            dark += 1;
+        }
+    }
+    // Held: the utility pass would put the power back as the sim finds it.
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+    (built, dark)
+}
+
 /// Showcase dressing (see [`build_city`]), deterministic from the building ids.
 fn dress_city(sim: &mut SimRunner) {
     use cp_building::{BuildingGrid, BuildingState};
@@ -1714,6 +1763,8 @@ mod city_tests {
         assert!(states.len() >= 3, "{states:?}");
         assert_eq!(parse_city("city:12"), Some(12));
         assert_eq!(parse_city("city:1"), None);
+        assert_eq!(parse_night("night:12"), Some(12));
+        assert_eq!(parse_night("city:12"), None);
     }
 }
 

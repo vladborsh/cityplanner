@@ -26,7 +26,11 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
   `visible: false`, or an unfocused borderless one placed off-screen, renders nothing there
   (every capture was blank), so those were ruled out by measurement.
 * Hidden runs have **no egui UI** (it needs a window), so screenshots show the 3D scene only.
-  The event loop runs continuously, so `--bench` numbers are uncapped, like `--no-vsync`.
+  With `--bench` the event loop runs continuously, so the numbers are uncapped, like
+  `--no-vsync`; a screenshot run is paced at 60 Hz (T-245: uncapped, a paused city seen
+  obliquely queued frames faster than the GPU drew them and Metal lost the device).
+* `--scene night:N --hour H --cam night-wide|night-street|night-dark` (T-245): the city of
+  `city:N`, held at hour `H`, with one district without power (lit windows and an outage).
 * `--screenshot` never saves a blank frame (BUG-012): blank captures are discarded and
   retried; if no real frame arrives within 20 s it exits with code **3**; a write error exits
   **4**.
