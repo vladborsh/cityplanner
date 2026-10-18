@@ -67,14 +67,10 @@ const BEND_R: f32 = 24.0;
 /// every case under one of them is expected red. Narrow a prefix (or list single cases) as fixes
 /// land; `known_red_cases_still_fail` names the cases that pass.
 const KNOWN_RED: &[&str] = &[
-    // The cells beside a rounded bend follow its arc: the corner of the block is not a lattice.
+    // The cells beside a rounded bend follow its arc, the corner of the block is not a lattice
+    // (BUG-073b: the Architect's ruling 2, the lattice from the virtual corner).
     "l_close/basic_2l/rounded/",
     "l_close/medium_4l/rounded/",
-    // These two build a 16-cell block from a "16-cell tick"; the ticks of the ruling (BUG-073,
-    // Architect option b) are one 8-cell block per cross street, so there is no such tick (the
-    // street at the 2nd tick leaves 17.5 cells when the 1st is not built). Scenarios to rewrite.
-    "t_mid_block/",
-    "lattice_2x2/",
 ];
 
 fn known_red(case: &str) -> bool {
@@ -888,7 +884,10 @@ fn extend_bend(p: &mut Player, bend: Bend) -> Option<()> {
 /// A 16 x 8 block closed from ticks, then a T from its middle tick across it.
 fn t_mid_block(p: &mut Player) -> Option<()> {
     let hw = p.hw;
-    let b0 = p.free("bottom street", Vec2::ZERO, Vec2::new(240.0, 0.0))?;
+    let b0 = p.free("bottom street", Vec2::ZERO, Vec2::new(280.0, 0.0))?;
+    // Three streets up from the bottom street, each on the next tick: the 2nd 8 cells (64 m
+    // between the edges) from the 1st, the 3rd from the 2nd (BUG-073: a tick is the centreline
+    // of the next cross street, not a boundary 16 cells away).
     let m = p.tick(
         "left street on the bottom tick",
         Vec2::new(BLOCK, b0.y()),
@@ -896,43 +895,49 @@ fn t_mid_block(p: &mut Player) -> Option<()> {
     );
     let up = p.l(m.axis).x;
     let left = p.street_from_tick("left street", m, Vec2::new(up, 120.0), 3.0)?;
-    let m = p.tick(
-        "right street on the bottom tick",
-        Vec2::new(left.piece.x() + hw + 2.0 * BLOCK, b0.y()),
-        Y,
-    );
-    let up = p.l(m.axis).x;
-    let right = p.street_from_tick("right street", m, Vec2::new(up, 120.0), 3.0)?;
-    p.check_perp("right street", right.piece, Y);
-    let m = p.tick(
-        "top street on the left tick",
-        Vec2::new(left.piece.x(), hw + BLOCK),
-        X,
-    );
-    let y = p.l(m.axis).y;
-    let top = p.street_from_tick("top street", m, Vec2::new(right.piece.x(), y), 1.5)?;
-    p.check_perp("top street", top.piece, X);
-    p.check_lands("top street", &top);
-    let axes = [b0.y(), top.piece.y(), left.piece.x(), right.piece.x()];
-    p.check_block("the 16 x 8 block", axes, 16, 8);
-    // The T: from the bottom street's middle tick up to the top street.
+    let top_y = 2.0 * hw + BLOCK;
     let m = p.tick(
         "middle street on the bottom tick",
         Vec2::new(left.piece.x() + hw + BLOCK, b0.y()),
         Y,
     );
     let x = p.l(m.axis).x;
-    let mid = p.street_from_tick("middle street", m, Vec2::new(x, top.piece.y()), 1.5)?;
+    let mid = p.street_from_tick("middle street", m, Vec2::new(x, top_y), 1.5)?;
     p.check_perp("middle street", mid.piece, Y);
-    p.check_lands("middle street", &mid);
+    let m = p.tick(
+        "right street on the bottom tick",
+        Vec2::new(mid.piece.x() + hw + BLOCK, b0.y()),
+        Y,
+    );
+    let x = p.l(m.axis).x;
+    let right = p.street_from_tick("right street", m, Vec2::new(x, top_y), 1.5)?;
+    p.check_perp("right street", right.piece, Y);
+    // The top street from the left street's tick, on through the middle street's end (a T) to
+    // the right street's end, in one chain.
+    let m = p.tick(
+        "top street on the left tick",
+        Vec2::new(left.piece.x(), hw + BLOCK),
+        X,
+    );
+    let top = p.street_from_tick("top street", m, mid.piece.b, 1.5)?;
+    p.check_perp("top street", top.piece, X);
+    p.check_lands("top street", &top);
+    let to = right.piece.b + p.jv(1.5);
+    let on = p.click("top street on", p.w(to));
+    let Some(on) = on else {
+        p.fail("refused", "top street on: not built".into());
+        return None;
+    };
+    p.check_perp("top street on", on.piece, X);
+    p.check_lands("top street on", &on);
     p.check_block(
-        "the left half",
+        "the left block",
         [b0.y(), top.piece.y(), left.piece.x(), mid.piece.x()],
         8,
         8,
     );
     p.check_block(
-        "the right half",
+        "the right block",
         [b0.y(), top.piece.y(), mid.piece.x(), right.piece.x()],
         8,
         8,
@@ -967,7 +972,7 @@ fn lattice_2x2(p: &mut Player, order: Order) -> Option<()> {
                 let r = p.free(
                     &format!("parallel {k}"),
                     along(-24.0, k as f32 * pitch),
-                    along(2.0 * pitch + 48.0, k as f32 * pitch),
+                    along(2.0 * pitch + 72.0, k as f32 * pitch),
                 )?;
                 rows.push((r.a + r.b).dot(b) / 2.0);
             }
@@ -995,65 +1000,57 @@ fn lattice_2x2(p: &mut Player, order: Order) -> Option<()> {
                 (cols, rows.iter().map(|r| -r).collect())
             }
         }
-        // The outer ring from ticks, then the inner cross from ticks.
+        // Three streets up from the bottom one, each on the next tick, then two rows across
+        // them from the first one's ticks (BUG-073: ticks restart after every street).
         Order::RingThenCross => {
-            let b0 = p.free("bottom street", Vec2::ZERO, Vec2::new(240.0, 0.0))?;
-            let m = p.tick(
-                "left street on the bottom tick",
-                Vec2::new(BLOCK, b0.y()),
-                Y,
-            );
-            let up = p.l(m.axis).x;
-            let left =
-                p.street_from_tick("left street", m, Vec2::new(up, 2.0 * pitch + 24.0), 3.0)?;
-            let m = p.tick(
-                "right street on the bottom tick",
-                Vec2::new(left.piece.x() + hw + 2.0 * BLOCK, b0.y()),
-                Y,
-            );
-            let up = p.l(m.axis).x;
-            let right =
-                p.street_from_tick("right street", m, Vec2::new(up, 2.0 * pitch + 24.0), 3.0)?;
-            let m = p.tick(
-                "top street on the left tick",
-                Vec2::new(left.piece.x(), hw + 2.0 * BLOCK),
-                X,
-            );
-            let y = p.l(m.axis).y;
-            let top = p.street_from_tick("top street", m, Vec2::new(right.piece.x(), y), 1.5)?;
-            p.check_perp("top street", top.piece, X);
-            p.check_lands("top street", &top);
-            let m = p.tick(
-                "middle column on the bottom tick",
-                Vec2::new(left.piece.x() + hw + BLOCK, b0.y()),
-                Y,
-            );
-            let x = p.l(m.axis).x;
-            let mc = p.street_from_tick("middle column", m, Vec2::new(x, top.piece.y()), 1.5)?;
-            p.check_perp("middle column", mc.piece, Y);
-            p.check_lands("middle column", &mc);
-            let m = p.tick(
-                "middle row on the left tick",
-                Vec2::new(left.piece.x(), hw + BLOCK),
-                X,
-            );
-            let y = p.l(m.axis).y;
-            let mr = p.street_from_tick("middle row", m, Vec2::new(mc.piece.x(), y), 1.5)?;
-            p.check_perp("middle row", mr.piece, X);
-            p.check_lands("middle row", &mr);
-            // On through the middle column to the right street, in the same chain.
-            let to = Vec2::new(right.piece.x(), mr.piece.b.y) + p.jv(1.5);
-            let on = p.click("middle row on", p.w(to));
-            if let Some(on) = &on {
-                p.check_perp("middle row on", on.piece, X);
-                p.check_lands("middle row on", on);
-            } else {
-                p.fail("refused", "middle row on: not built".into());
+            let b0 = p.free("bottom street", Vec2::ZERO, Vec2::new(280.0, 0.0))?;
+            let mut cols: Vec<Built> = Vec::new();
+            let mut at = BLOCK;
+            for k in 0..3 {
+                let m = p.tick(
+                    &format!("column {k} on the bottom tick"),
+                    Vec2::new(at, b0.y()),
+                    Y,
+                );
+                let up = p.l(m.axis).x;
+                let c = p.street_from_tick(
+                    &format!("column {k}"),
+                    m,
+                    Vec2::new(up, 2.0 * pitch + 24.0),
+                    3.0,
+                )?;
+                p.check_perp(&format!("column {k}"), c.piece, Y);
+                at = c.piece.x() + hw + BLOCK;
+                cols.push(c);
             }
-            (
-                vec![b0.y(), mr.piece.y(), top.piece.y()],
-                vec![left.piece.x(), mc.piece.x(), right.piece.x()],
-            )
+            let mut rows = vec![b0.y()];
+            for k in 0..2 {
+                let nominal = rows[k] + hw + BLOCK;
+                let m = p.tick(
+                    &format!("row {k} on the left tick"),
+                    Vec2::new(cols[0].piece.x(), nominal),
+                    X,
+                );
+                let y = p.l(m.axis).y;
+                let first = p.street_from_tick(
+                    &format!("row {k}"),
+                    m,
+                    Vec2::new(cols[1].piece.x(), y),
+                    1.5,
+                )?;
+                p.check_perp(&format!("row {k}"), first.piece, X);
+                p.check_lands(&format!("row {k}"), &first);
+                let to = Vec2::new(cols[2].piece.x(), first.piece.b.y) + p.jv(1.5);
+                let on = p.click(&format!("row {k} on"), p.w(to));
+                let Some(on) = on else {
+                    p.fail("refused", format!("row {k} on: not built"));
+                    return None;
+                };
+                p.check_perp(&format!("row {k} on"), on.piece, X);
+                p.check_lands(&format!("row {k} on"), &on);
+                rows.push(first.piece.y());
+            }
+            (rows, cols.iter().map(|c| c.piece.x()).collect())
         }
     };
     let (mut rows, mut cols) = (rows, cols);

@@ -80,6 +80,21 @@ struct Joined {
 
 /// Rule 1 for the point `p`.
 fn join(cx: &StepContext, p: Vec2) -> Option<Joined> {
+    // A point on a node (a chain goes on from the end it just built) stays on it (BUG-073).
+    if let Some((id, n)) = cx
+        .graph
+        .nodes()
+        .filter(|(_, n)| n.elevation == Elevation::Ground)
+        .find(|(_, n)| to_xz(n.pos).distance(p) < 0.5)
+    {
+        return Some(Joined {
+            pos: to_xz(n.pos),
+            node: Some(id),
+            along: None,
+            shift: Vec2::ZERO,
+            hw: 0.0,
+        });
+    }
     let mut best: Option<(f32, SegmentId, f32)> = None;
     for (id, s) in cx.graph.segments() {
         if s.elevation != Elevation::Ground {

@@ -715,7 +715,7 @@ struct Interval {
 
 impl Interval {
     /// The ticks are counted from the far end only when that is the one at a cross street.
-    fn from_end(&self) -> bool {
+    fn counts_from_end(&self) -> bool {
         self.d_lo.is_none() && self.d_hi.is_some()
     }
 }
@@ -830,7 +830,7 @@ pub fn ticks_count_forward(
         .intervals
         .iter()
         .find(|iv| iv.lo <= mid && mid <= iv.hi)
-        .is_some_and(Interval::from_end);
+        .is_some_and(Interval::counts_from_end);
     st.chain[i].1 != from_end
 }
 
@@ -878,7 +878,7 @@ pub fn street_ticks(
             iv.lo + iv.d_lo.unwrap_or(0.0),
             iv.hi - iv.d_hi.unwrap_or(0.0),
         );
-        let from_end = iv.from_end();
+        let from_end = iv.counts_from_end();
         for k in 1..=4096u32 {
             let station = k as f32 * 64.0 + (k - 1) as f32 * width + width / 2.0;
             if station + width / 2.0 > a_hi - a_lo + 0.01 {
