@@ -70,6 +70,8 @@ pub enum Overlay {
     Fire,
     Police,
     Education,
+    /// Coverage of the post offices and the buildings with mail piling up (T-249).
+    Mail,
     /// Owned, buyable and locked tiles, with the prices (T-152).
     Land,
     /// Lines as coloured ribbons and the stops with the riders waiting (T-157).
@@ -86,7 +88,7 @@ pub enum Overlay {
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 20] = [
+    pub const ALL: [Overlay; 21] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
@@ -101,6 +103,7 @@ impl Overlay {
         Overlay::Fire,
         Overlay::Police,
         Overlay::Education,
+        Overlay::Mail,
         Overlay::Land,
         Overlay::Transit,
         Overlay::Resources,
@@ -118,6 +121,7 @@ impl Overlay {
             ServiceKind::Fire => Overlay::Fire,
             ServiceKind::Police => Overlay::Police,
             ServiceKind::Education => Overlay::Education,
+            ServiceKind::Post => Overlay::Mail,
             ServiceKind::Water
             | ServiceKind::Power
             | ServiceKind::Roads
@@ -126,8 +130,7 @@ impl Overlay {
             | ServiceKind::Landmark
             | ServiceKind::Industry
             | ServiceKind::Park
-            | ServiceKind::Cargo
-            | ServiceKind::Post => {
+            | ServiceKind::Cargo => {
                 return None;
             }
         })
@@ -142,6 +145,7 @@ impl Overlay {
             Overlay::Fire => ServiceKind::Fire,
             Overlay::Police => ServiceKind::Police,
             Overlay::Education => ServiceKind::Education,
+            Overlay::Mail => ServiceKind::Post,
             _ => return None,
         })
     }
@@ -162,6 +166,7 @@ impl Overlay {
             Overlay::Fire => "Fire",
             Overlay::Police => "Police",
             Overlay::Education => "Education",
+            Overlay::Mail => "Mail",
             Overlay::Land => "Land",
             Overlay::Transit => "Transit",
             Overlay::Resources => "Resources",
@@ -679,7 +684,7 @@ struct OverlayLayers {
     water: LayerSource,
     power: LayerSource,
     /// One layer per M2 service kind, in [`SERVICE_OVERLAYS`] order.
-    service: [LayerSource; 6],
+    service: [LayerSource; 7],
     material: Option<Handle<VertexColorMaterial>>,
     terrain_key: usize,
 }
@@ -888,9 +893,21 @@ fn sync_overlay_meshes(
             ^ ptr(&view.net).rotate_left(7)
             ^ ptr(&view.buildings).rotate_left(13)
             ^ ptr(&view.zones).rotate_left(29);
+        // The mail layer also follows the buildings that hold mail.
+        let bal = db.balance();
+        let mail_key = view.mail.piles().fold(key, |k, (id, m)| {
+            let class = usize::from(f32::from(m) >= bal.mail_van_min)
+                + usize::from(f32::from(m) >= bal.mail_problem);
+            k.rotate_left(5) ^ (id.index as usize).wrapping_mul(31).wrapping_add(class)
+        });
         for (src, which) in l.service.iter_mut().zip(SERVICE_OVERLAYS) {
             let Some(kind) = which.service_kind() else {
                 continue;
+            };
+            let key = if which == Overlay::Mail {
+                mail_key
+            } else {
+                key
             };
             upsert(
                 src,
@@ -899,6 +916,7 @@ fn sync_overlay_meshes(
                 || {
                     service_overlay_mesh(
                         kind,
+                        &view.mail,
                         &view.net,
                         &view.service,
                         &view.buildings,
@@ -918,13 +936,14 @@ fn sync_overlay_meshes(
 }
 
 /// The overlays of the M2 service kinds.
-const SERVICE_OVERLAYS: [Overlay; 6] = [
+const SERVICE_OVERLAYS: [Overlay; 7] = [
     Overlay::Garbage,
     Overlay::Health,
     Overlay::Deathcare,
     Overlay::Fire,
     Overlay::Police,
     Overlay::Education,
+    Overlay::Mail,
 ];
 
 /// Shows the active layer, and the zone grid (see [`zone_fill_visible`]). Runs every frame after the sync (cheap: a handful of

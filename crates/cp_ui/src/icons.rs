@@ -229,6 +229,7 @@ pub fn overlay_icon(overlay: cp_render::Overlay) -> Icon {
         O::Fire => Icon::OverlayFire,
         O::Police => Icon::OverlayPolice,
         O::Education => Icon::OverlayEducation,
+        O::Mail => Icon::OverlayMail,
         O::Land => Icon::OverlayLand,
         O::Transit => Icon::OverlayTransit,
         O::Resources => Icon::OverlayResources,

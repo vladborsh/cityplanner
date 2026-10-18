@@ -92,6 +92,8 @@ pub struct SimView {
     pub parks: cp_park::ParkState,
     /// The entrance fees of this week and the last settled one (T-229).
     pub park_ledger: cp_park::ParkLedger,
+    /// The mail waiting in the buildings, the backlog and the day's counts (T-249).
+    pub mail: Arc<cp_service::MailState>,
     pub stats: SimStats,
     /// Derived junction geometry (shortened-segment cut points and polygons) for mesh
     /// building. Compare `junctions.version()` with the last built version; junctions with a
@@ -845,6 +847,12 @@ impl SimRunner {
                 .get_resource::<cp_park::ParkLedger>()
                 .copied()
                 .unwrap_or_default(),
+            mail: Arc::new(
+                self.world()
+                    .get_resource::<cp_service::MailState>()
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
             industry_ledger: self
                 .world()
                 .get_resource::<cp_industry::IndustryLedger>()

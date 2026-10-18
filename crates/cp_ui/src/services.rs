@@ -63,8 +63,7 @@ pub fn overlay_of(sector: Sector) -> Overlay {
         Sector::Police => Overlay::Police,
         Sector::Fire => Overlay::Fire,
         Sector::Elementary | Sector::HighSchool | Sector::University => Overlay::Education,
-        // T-249 gives the post an overlay.
-        Sector::Mail | Sector::Sorting => Overlay::Off,
+        Sector::Mail | Sector::Sorting => Overlay::Mail,
     }
 }
 
@@ -79,8 +78,8 @@ fn icon_of(sector: Sector) -> Icon {
         Sector::Police => Icon::OverlayPolice,
         Sector::Fire => Icon::OverlayFire,
         Sector::Elementary | Sector::HighSchool | Sector::University => Icon::OverlayEducation,
-        // T-249 gives the post its own icon.
-        Sector::Mail | Sector::Sorting => Icon::Buildings,
+        Sector::Mail => Icon::OverlayMail,
+        Sector::Sorting => Icon::CategoryPost,
     }
 }
 
@@ -316,6 +315,8 @@ mod tests {
         assert!(!texts.iter().any(|t| t.starts_with("0 / 5")), "{texts:?}");
         assert_eq!(overlay_of(Sector::Sewage), Overlay::Water);
         assert_eq!(overlay_of(Sector::HighSchool), Overlay::Education);
+        assert_eq!(overlay_of(Sector::Mail), Overlay::Mail);
+        assert_eq!(overlay_of(Sector::Sorting), Overlay::Mail);
     }
 
     /// T-241: an active service overlay shows its rows (Water also sewage) in a compact panel;

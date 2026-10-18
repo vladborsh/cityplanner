@@ -387,11 +387,60 @@ fn park_advice(view: &SimView, out: &mut Vec<Advice>) {
     }
 }
 
+/// Mail advice (T-249), only once the post office is open: mail piling up in buildings, and the
+/// post offices' collecting stopped because the unsorted backlog is over the sorting capacity.
+fn mail_advice(view: &SimView, out: &mut Vec<Advice>) {
+    let Some(db) = view.content.as_deref() else {
+        return;
+    };
+    let open = |id: &str| {
+        db.building_id(id)
+            .is_some_and(|def| view.progress.locked_by(db, def).is_none())
+    };
+    if !open("post_office") {
+        return;
+    }
+    let n = view.service_state.summary().counts[5];
+    if n > 0 {
+        out.push(Advice {
+            id: "mail",
+            severity: if n >= 10 {
+                Severity::Warn
+            } else {
+                Severity::Info
+            },
+            text: format!(
+                "Mail is piling up in {} — build a post office",
+                plural(n, "building", "buildings")
+            ),
+            count: n,
+            icon: Icon::ProblemMail,
+            action: Some(Action::Overlay(Overlay::Mail)),
+        });
+    }
+    if view.mail.unsorted > 0 && view.mail.backlog_full(db.balance().mail_backlog_days) {
+        let hint = if open("post_sorting_facility") {
+            "Post offices are full — build a sorting facility"
+        } else {
+            "Post offices are full — the sorting facility is not open yet"
+        };
+        out.push(Advice {
+            id: "mail_sorting",
+            severity: Severity::Warn,
+            text: hint.into(),
+            count: view.mail.unsorted,
+            icon: Icon::OverlayMail,
+            action: Some(Action::Panel(Category::Buildings)),
+        });
+    }
+}
+
 /// All the advice the view gives now, unordered.
 pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
     let mut out = unique_advice(view, seen);
     industry_advice(view, &mut out);
     park_advice(view, &mut out);
+    mail_advice(view, &mut out);
     let city = &*view.city;
     let st = &city.buildings;
     let sev = |n: u32| {
@@ -1053,6 +1102,52 @@ mod tests {
         assert!(got.contains(&"industry_no_input"), "{got:?}");
         assert!(got.contains(&"warehouse_full"), "{got:?}");
         assert!(!got.contains(&"industry_depleted"));
+    }
+
+    /// T-249: mail advice waits for the post office to open, then names the piling mail and the
+    /// full post offices.
+    #[test]
+    fn mail_advice_comes_only_after_the_post_office_opens() {
+        use crate::industry::tests::world_with_areas;
+        let (mut sim, db, at) = world_with_areas(1);
+        let ids = |sim: &cp_sim::SimRunner| -> Vec<&'static str> {
+            collect(&sim.view(), &mut None)
+                .iter()
+                .map(|a| a.id)
+                .collect()
+        };
+        let house = crate::industry::tests::put(&mut sim, &db, "forest_extractor_s", at[0]);
+        sim.world_mut()
+            .resource_mut::<cp_service::ServiceState>()
+            .get_mut(house)
+            .problems
+            .set(ServiceProblems::MAIL, true);
+        {
+            let mut mail = sim.world_mut().resource_mut::<cp_service::MailState>();
+            mail.unsorted = 90_000;
+            mail.sort_capacity = 1_000;
+        }
+        sim.world_mut().insert_resource(cp_sim::Progress::at(1));
+        let got = ids(&sim);
+        assert!(
+            !got.contains(&"mail") && !got.contains(&"mail_sorting"),
+            "{got:?}"
+        );
+        sim.world_mut().insert_resource(cp_sim::Progress::at(3));
+        let advice = collect(&sim.view(), &mut None);
+        let mail = advice.iter().find(|a| a.id == "mail").expect("mail");
+        assert!(mail.text.contains("build a post office"), "{}", mail.text);
+        assert_eq!(mail.icon, Icon::ProblemMail);
+        assert!(matches!(mail.action, Some(Action::Overlay(Overlay::Mail))));
+        let full = advice
+            .iter()
+            .find(|a| a.id == "mail_sorting")
+            .expect("sorting");
+        assert!(
+            full.text.contains("build a sorting facility"),
+            "{}",
+            full.text
+        );
     }
 
     /// T-219: a rise of an area's level comes once; the first look is only the baseline.

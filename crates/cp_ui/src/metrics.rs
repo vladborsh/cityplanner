@@ -336,6 +336,7 @@ fn services_section(view: &SimView) -> Section {
         (ServiceKind::Fire, "Fire coverage"),
         (ServiceKind::Police, "Police coverage"),
         (ServiceKind::Education, "Education coverage"),
+        (ServiceKind::Post, "Mail coverage"),
     ];
     let mut rows = Vec::new();
     let db = view.content.as_deref();
@@ -390,6 +391,7 @@ fn services_section(view: &SimView) -> Section {
     rows.push(row("Dead", count(counts[2])));
     rows.push(row("Fires", count(counts[3])));
     rows.push(row("Crime", count(counts[4])));
+    rows.push(row("Mail piled up", count(counts[5])));
     // Students (kept in the schools' `stored`) and places (their capacity).
     let (mut students, mut places) = (0u32, 0u32);
     if let Some(db) = db {

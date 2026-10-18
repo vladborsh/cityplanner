@@ -5,7 +5,7 @@
 use cp_building::{BuildingGrid, BuildingState};
 use cp_content::{ContentDb, ServiceKind};
 use cp_net::NetGraph;
-use cp_service::ServiceCoverage;
+use cp_service::{MailState, ServiceCoverage};
 use cp_terrain::Terrain;
 use cp_zone::ZoneGrid;
 
@@ -15,6 +15,11 @@ use crate::chunk::MeshData;
 
 /// Colour of a service building of the overlay's kind.
 pub const SERVICE_MARK: [f32; 4] = [0.25, 0.60, 1.0, 0.9];
+
+/// Colour of a building with mail piling up (the Mail overlay): red at the MAIL problem, orange
+/// from the point a van is sent.
+pub const MAIL_PILE: [f32; 4] = [0.95, 0.22, 0.18, 0.9];
+pub const MAIL_WAITING: [f32; 4] = [0.95, 0.60, 0.15, 0.85];
 
 /// Poor (orange) → fair (yellow) → full (green) coverage `0..=1`.
 pub fn coverage_color(v: f32) -> [f32; 4] {
@@ -29,9 +34,12 @@ pub fn coverage_color(v: f32) -> [f32; 4] {
 }
 
 /// The layer of `kind`: a ribbon on every road with coverage above 0 (the others are left
-/// bare), and the lot of every Active building of the kind.
+/// bare), and the lot of every Active building of the kind. For the post, `mail` also marks
+/// the buildings holding mail: orange from `mail_van_min`, red from `mail_problem` (T-249).
+#[allow(clippy::too_many_arguments)]
 pub fn service_overlay_mesh(
     kind: ServiceKind,
+    mail: &MailState,
     net: &NetGraph,
     coverage: &ServiceCoverage,
     buildings: &BuildingGrid,
@@ -53,6 +61,22 @@ pub fn service_overlay_mesh(
                 .is_some_and(|s| db.service(s).kind == kind);
         if is_kind {
             lot_quads(&mut m, b, zones, terrain, SERVICE_MARK);
+        }
+    }
+    if kind == ServiceKind::Post {
+        let bal = db.balance();
+        for (id, pile) in mail.piles() {
+            let pile = f32::from(pile);
+            let color = if pile >= bal.mail_problem {
+                MAIL_PILE
+            } else if pile >= bal.mail_van_min {
+                MAIL_WAITING
+            } else {
+                continue;
+            };
+            if let Some(b) = buildings.get(id) {
+                lot_quads(&mut m, b, zones, terrain, color);
+            }
         }
     }
     m
@@ -128,6 +152,7 @@ mod tests {
         let terrain = Terrain::load(&Path::new(ROOT).join("../../assets/maps/flatlands")).unwrap();
         service_overlay_mesh(
             kind,
+            &MailState::default(),
             world.resource::<NetGraph>(),
             world.resource::<cp_service::ServiceCoverage>(),
             world.resource::<BuildingGrid>(),
@@ -150,5 +175,39 @@ mod tests {
         assert!(m.colors.iter().any(|c| c[1] > c[0]));
         // A kind nothing provides paints nothing.
         assert!(mesh(&world, &db, ServiceKind::Fire).indices.is_empty());
+    }
+
+    #[test]
+    fn the_mail_overlay_marks_buildings_with_mail_piling_up() {
+        let (mut world, db) = world();
+        let terrain = Terrain::load(&Path::new(ROOT).join("../../assets/maps/flatlands")).unwrap();
+        // A free-standing house (it has a footprint without the zone grid).
+        let mut house = world
+            .resource::<BuildingGrid>()
+            .iter()
+            .next()
+            .unwrap()
+            .1
+            .clone();
+        house.footprint = Footprint::Free { w: 2, d: 2 };
+        let id = world.resource_mut::<BuildingGrid>().insert(house);
+        let paint = |pile: u16| {
+            let mut mail = MailState::default();
+            mail.set_pile(id, pile);
+            service_overlay_mesh(
+                ServiceKind::Post,
+                &mail,
+                world.resource::<NetGraph>(),
+                world.resource::<cp_service::ServiceCoverage>(),
+                world.resource::<BuildingGrid>(),
+                &ZoneGrid::default(),
+                &db,
+                &terrain,
+            )
+        };
+        let has = |m: &MeshData, c: [f32; 4]| m.colors.iter().any(|x| *x == c);
+        assert!(!has(&paint(5), MAIL_PILE) && !has(&paint(5), MAIL_WAITING));
+        assert!(has(&paint(40), MAIL_WAITING) && !has(&paint(40), MAIL_PILE));
+        assert!(has(&paint(200), MAIL_PILE));
     }
 }

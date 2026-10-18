@@ -71,6 +71,35 @@ pub struct BuildingInfo {
     pub service: Option<ServiceInfo>,
     /// Stock and cap of a factory or shop (T-171).
     pub goods: Option<GoodsInfo>,
+    /// Mail held by a building, or the work of a post building (T-249); `None` while the post
+    /// is closed to the city, and for buildings that make no mail.
+    pub mail: Option<MailInfo>,
+}
+
+/// The mail of a building: what waits in it, and for a post office or sorting facility its day.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MailInfo {
+    /// Mail waiting to be collected (0 for a post building).
+    pub pile: u16,
+    /// A mail van is on its way to the building.
+    pub van_coming: bool,
+    pub post: Option<PostInfo>,
+}
+
+/// A post office (`tier` 1) or sorting facility (`tier` 2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PostInfo {
+    pub tier: u8,
+    /// Vans on the road from this office, and the vans it has.
+    pub vans_out: u32,
+    pub vans: u32,
+    /// Mail the office collected today, and what it may collect a day (sorting facilities: the
+    /// mail they sort a day).
+    pub collected_today: u32,
+    pub capacity: u32,
+    /// The city's collected mail not yet sorted, and what can be sorted a day.
+    pub unsorted: u32,
+    pub sort_capacity: u32,
 }
 
 /// The goods a factory or shop holds, and the most it can hold.
@@ -289,6 +318,10 @@ impl SimRunner {
                 {
                     problems.push("garbage");
                 }
+                if svc.is_some_and(|st| st.problems_of(id).has(cp_service::ServiceProblems::MAIL)) {
+                    problems.push("mail");
+                }
+                let mail = mail_info(w, db, id, def);
                 Some(Inspection::Building(BuildingInfo {
                     id,
                     def: def.id.clone(),
@@ -312,6 +345,7 @@ impl SimRunner {
                     footprint: cp_building::held_cells(w.resource::<cp_zone::ZoneGrid>(), b),
                     garbage: svc.and_then(|st| st.get(id)).map_or(0, |r| r.garbage),
                     service,
+                    mail,
                     goods: matches!(
                         def.zone,
                         cp_content::ZoneType::Industrial
@@ -538,6 +572,34 @@ impl Inspection {
                 if b.garbage > 0 {
                     r.push(row("Garbage", b.garbage.to_string()));
                 }
+                if let Some(m) = b.mail {
+                    match m.post {
+                        Some(p) if p.tier == cp_service::mail::SORTING_TIER => {
+                            r.push(row(
+                                "Sorts",
+                                format!("{} mail a day (city: {} waiting)", p.capacity, p.unsorted),
+                            ));
+                        }
+                        Some(p) => {
+                            r.push(row("Vans", format!("{} out of {}", p.vans_out, p.vans)));
+                            r.push(row(
+                                "Collected today",
+                                format!("{} of {}", p.collected_today, p.capacity),
+                            ));
+                            r.push(row(
+                                "Backlog to sort",
+                                format!("{} of {} a day", p.unsorted, p.sort_capacity),
+                            ));
+                        }
+                        None => {
+                            r.push(row("Mail held", m.pile.to_string()));
+                            r.push(row(
+                                "Mail van",
+                                if m.van_coming { "on its way" } else { "none" }.to_string(),
+                            ));
+                        }
+                    }
+                }
                 r.push(row(
                     "Problems",
                     if b.problems.is_empty() {
@@ -630,5 +692,63 @@ fn trip_state(s: &TripState) -> String {
         TripState::AwaitingPath { .. } => "finding a route".to_string(),
         TripState::Agent => "under way".to_string(),
         TripState::Transit => "on public transport".to_string(),
+    }
+}
+
+/// The mail of the building `id` (T-249); see [`BuildingInfo::mail`].
+fn mail_info(
+    w: &bevy_ecs::world::World,
+    db: &cp_content::ContentDb,
+    id: BuildingId,
+    def: &cp_content::BuildingDef,
+) -> Option<MailInfo> {
+    let unlocks = w
+        .get_resource::<cp_content::ServiceUnlocks>()
+        .copied()
+        .unwrap_or_default();
+    if !unlocks.open(cp_content::ServiceKind::Post) {
+        return None;
+    }
+    let mail = w.get_resource::<cp_service::MailState>()?;
+    let svc = def
+        .service
+        .as_deref()
+        .and_then(|s| db.service_id(s))
+        .map(|s| db.service(s));
+    let runs = w.get_resource::<cp_traffic::ServiceRuns>();
+    match svc {
+        Some(s) if s.kind == cp_content::ServiceKind::Post => {
+            let used = w
+                .get_resource::<cp_service::ServiceState>()
+                .and_then(|st| st.facility(id))
+                .map_or(0, |f| f.used_today);
+            let vans_out = runs.map_or(0, |r| {
+                r.iter()
+                    .filter(|(_, run)| {
+                        run.kind == cp_content::VehicleKind::Mail as u8
+                            && run.from == cp_traffic::RunPoint::Building(id)
+                    })
+                    .count() as u32
+            });
+            Some(MailInfo {
+                pile: 0,
+                van_coming: false,
+                post: Some(PostInfo {
+                    tier: s.tier,
+                    vans_out,
+                    vans: s.storage,
+                    collected_today: used,
+                    capacity: s.capacity,
+                    unsorted: mail.unsorted,
+                    sort_capacity: mail.sort_capacity,
+                }),
+            })
+        }
+        Some(_) => None,
+        None => (def.households > 0 || def.jobs.iter().any(|&j| j > 0)).then(|| MailInfo {
+            pile: mail.pile(id),
+            van_coming: runs.is_some_and(|r| r.find(cp_content::VehicleKind::Mail, id).is_some()),
+            post: None,
+        }),
     }
 }

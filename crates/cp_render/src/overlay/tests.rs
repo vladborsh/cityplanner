@@ -103,7 +103,7 @@ fn overlay_state_defaults_to_off_and_lists_every_overlay_once() {
     let mut all = Overlay::ALL.to_vec();
     all.sort_by_key(|o| o.label());
     all.dedup();
-    assert_eq!(all.len(), 20);
+    assert_eq!(all.len(), 21);
 }
 
 #[test]
@@ -277,6 +277,7 @@ fn layer_app() -> (App, Vec<(Overlay, Entity)>, Entity) {
         Overlay::Fire,
         Overlay::Police,
         Overlay::Education,
+        Overlay::Mail,
     ]
     .map(|o| {
         (
