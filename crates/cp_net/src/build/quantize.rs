@@ -269,10 +269,29 @@ fn quad_len(a: Vec2, c: Vec2, b: Vec2) -> f32 {
     flat_curve(a, b, Some(c)).arc_table().length()
 }
 
-/// The closest 8 m multiple of the length of the curve (never below 8), as a cut curve.
+/// The closest 8 m multiple of the length of the curve (never below 8). The curve keeps its
+/// corner `c` and the line `c → b` its end is on: the end slides along that line (BUG-073b), so
+/// the street that goes on from it leaves in exactly the direction the player aimed, and a
+/// rounded corner is square when its legs are. When the curve is already longer than that, it
+/// is cut as a quadratic (the old way).
 fn step_curve(a: Vec2, c: Vec2, b: Vec2) -> (Vec2, Vec2) {
     let len = quad_len(a, c, b);
     let want = ((len / ZONE_CELL).round() * ZONE_CELL).max(ZONE_CELL);
+    if let Some(dir) = (b - c).try_normalize() {
+        let at = |k: f32| c + dir * k;
+        if quad_len(a, c, at(0.05)) < want {
+            let (mut lo, mut hi) = (0.05_f32, 4.0 * len.max(want));
+            for _ in 0..50 {
+                let mid = 0.5 * (lo + hi);
+                if quad_len(a, c, at(mid)) < want {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (c, at(0.5 * (lo + hi)));
+        }
+    }
     let len_at = |t: f32| {
         let (ctrl, to) = cut_quad(a, c, b, t);
         quad_len(a, ctrl, to)
@@ -588,6 +607,32 @@ mod tests {
                 "{len}"
             );
             assert!(len >= 8.0);
+        }
+    }
+
+    /// BUG-073b: the end of a curve slides along the line the player aimed it at, so the street
+    /// that goes on from it leaves in exactly that direction (a square rounded corner).
+    #[test]
+    fn a_curve_keeps_its_corner_and_the_direction_of_its_end() {
+        let (db, g) = (db(), NetGraph::new());
+        for (from, control, to) in [
+            (v(1000.0, 1024.0), v(1000.0, 1000.0), v(1024.0, 1000.0)),
+            (v(1000.0, 1030.0), v(1000.0, 1000.0), v(1045.0, 1000.0)),
+            (v(1000.0, 1000.0), v(1060.0, 1000.0), v(1090.0, 1050.0)),
+        ] {
+            let (p, _) = run(&db, &g, false, RoadPath::Curve { from, control, to });
+            let RoadPath::Curve {
+                from: f,
+                control: c,
+                to: t,
+            } = p
+            else {
+                panic!()
+            };
+            assert_eq!((f, c), (from, control), "the corner stays");
+            let aimed = (to - control).normalize();
+            let got = (t - c).normalize();
+            assert!(aimed.dot(got) > 0.99999, "{aimed:?} vs {got:?}");
         }
     }
 
