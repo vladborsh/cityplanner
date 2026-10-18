@@ -190,39 +190,40 @@ pub fn overlay_rows(view: &SimView, overlay: Overlay) -> Vec<&SectorBalance> {
         .collect()
 }
 
-/// A compact panel with the rows of the active overlay (T-241), next to the overlay legend:
+/// Offset of the overlay panel from the top-right screen corner: right margin, and just
+/// under the top bar.
+fn overlay_panel_offset() -> egui::Vec2 {
+    egui::vec2(-12.0, Sizes::TOP_BAR_H + 8.0)
+}
+
+/// A compact panel with the rows of the active overlay (T-241), top-right under the top bar:
 /// the same bars as the City services window. Nothing for an overlay without a service.
 pub fn overlay_services_panel(ctx: &egui::Context, view: &SimView, overlay: Overlay) {
     let rows = overlay_rows(view, overlay);
     if rows.is_empty() {
         return;
     }
-    // Above the legend of the Water and Power overlays when it is on screen.
-    let legend = ctx.memory(|m| m.area_rect(egui::Id::new("utility_legend")));
-    let area = egui::Area::new(egui::Id::new("overlay_services")).pivot(egui::Align2::LEFT_BOTTOM);
-    let area = match legend {
-        Some(r) if matches!(overlay, Overlay::Water | Overlay::Power) => {
-            area.fixed_pos(egui::pos2(r.left(), r.top() - 8.0))
-        }
-        _ => area.anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0)),
-    };
-    area.show(ctx, |ui| {
-        egui::Frame::popup(ui.style()).show(ui, |ui| {
-            egui::Grid::new("overlay_services_rows")
-                .num_columns(5)
-                .spacing([10.0, 6.0])
-                .show(ui, |ui| {
-                    for row in rows {
-                        icon_of(row.sector).show(ui, Sizes::ROW_ICON);
-                        ui.label(row.sector.label());
-                        bar(ui, row.balance());
-                        ui.label(numbers_text(row));
-                        ui.label(percent_text(row.balance()));
-                        ui.end_row();
-                    }
-                });
+    // BUG-074: top-right of the map, just under the top bar, so it never covers the build
+    // menu (left) or the palette / demand panel.
+    egui::Area::new(egui::Id::new("overlay_services"))
+        .anchor(egui::Align2::RIGHT_TOP, overlay_panel_offset())
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                egui::Grid::new("overlay_services_rows")
+                    .num_columns(5)
+                    .spacing([10.0, 6.0])
+                    .show(ui, |ui| {
+                        for row in rows {
+                            icon_of(row.sector).show(ui, Sizes::ROW_ICON);
+                            ui.label(row.sector.label());
+                            bar(ui, row.balance());
+                            ui.label(numbers_text(row));
+                            ui.label(percent_text(row.balance()));
+                            ui.end_row();
+                        }
+                    });
+            });
         });
-    });
 }
 
 /// The window; a click on a row switches the map overlay on.
@@ -357,5 +358,41 @@ mod tests {
         assert!(on.contains(&"10 / 40 units/day".to_string()));
         assert!(!on.iter().any(|t| t.starts_with("50 / 50")));
         assert!(drawn(Overlay::Off).is_empty());
+    }
+
+    /// BUG-074: the overlay panel sits top-right under the top bar, clear of the palette and
+    /// the tool panel (the build menu) at every window size.
+    #[test]
+    fn the_overlay_panel_is_top_right_clear_of_the_build_menu() {
+        let mut view = cp_sim::SimRunner::new(1).view();
+        let mut stats = (*view.city).clone();
+        stats.services = vec![
+            row(Sector::Water, 300.0, 28.0, false),
+            row(Sector::Sewage, 10.0, 40.0, false),
+        ];
+        view.city = std::sync::Arc::new(stats);
+        for (w, h) in [(1280.0, 720.0), (1920.0, 1080.0), (2560.0, 1440.0)] {
+            let ctx = egui::Context::default();
+            for t in [0.0, 0.1, 0.2, 0.3] {
+                let mut raw = input(t, vec![]);
+                raw.screen_rect = Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(w, h),
+                ));
+                frame_texts(&ctx, raw, |ui| {
+                    overlay_services_panel(ui.ctx(), &view, Overlay::Water);
+                });
+            }
+            let r = ctx
+                .memory(|m| m.area_rect(egui::Id::new("overlay_services")))
+                .expect("panel drawn");
+            assert!(r.top() >= Sizes::TOP_BAR_H, "{w}: {r:?}");
+            assert!(r.right() <= w, "{w}: {r:?}");
+            assert!(
+                r.left() >= Sizes::PALETTE_W + Sizes::TOOL_PANEL_W,
+                "{w}: {r:?}"
+            );
+            assert!(r.bottom() <= h - Sizes::DEMAND_H, "{w}: {r:?}");
+        }
     }
 }
