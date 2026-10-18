@@ -16,9 +16,10 @@
 //!   `demand_unemployed_industry_weight` in I.
 //! * `R = Σ weight(level) × free job slots − counted unemployed adults − vacant homes × adults per
 //!   home + base_R`
-//! * `C = citizens × shop jobs per citizen − commercial job slots + base_C`
+//! * `C = citizens × shop jobs per citizen − commercial job slots + counted unemployed × job
+//!   weight + base_C` (BUG-076)
 //! * `I = commercial job slots × industry per shop job − industrial job slots + unemployed
-//!   adults of education ≤ 1 + base_I`
+//!   adults of education ≤ 1 + counted unemployed beyond the manual ones × job weight + base_I`
 //! * move-in `= Σ weight(level) × free job slots − unemployed adults + base_R`: `R` without the
 //!   vacant homes, the gate of households moving into existing homes
 //! * `O = unemployed adults of education ≥ 2 − free office job slots + base_O`
@@ -68,6 +69,12 @@ impl DemandAcc {
         let adults = f(self.citizens) * ADULT_SHARE;
         let allowance = b.demand_commuter_min.max(b.demand_commuter_share * adults);
         let counted = (f(self.unemployed) - allowance).max(0.0);
+        // BUG-076: the jobless ask for jobs. Shops and industry jobs per citizen alone cover
+        // ~0.3 jobs against ~0.7 adults, so without this R (negative: unemployed) and C / I
+        // (their ratios met) all stood empty and the city stalled. The educated share beyond
+        // the manual workers has no I term of its own, so it counts here too.
+        let jobs_wanted = counted * b.demand_unemployed_job_weight;
+        let educated_counted = (counted - f(self.unemployed_manual)).max(0.0);
         [
             clamp(
                 self.free_jobs_weighted - counted - f(self.vacant_homes) * b.demand_adults_per_home
@@ -75,12 +82,14 @@ impl DemandAcc {
             ),
             clamp(
                 f(self.citizens) * b.demand_shop_jobs_per_citizen - f(self.commercial_jobs)
+                    + jobs_wanted
                     + b.demand_base[1],
             ),
             clamp(
                 f(self.commercial_jobs) * b.demand_industry_jobs_per_shop_job
                     - f(self.industrial_jobs)
                     + f(self.unemployed_manual) * b.demand_unemployed_industry_weight
+                    + educated_counted * b.demand_unemployed_job_weight
                     + b.demand_base[2],
             ),
             clamp(f(self.unemployed_educated) - f(self.free_office_jobs) + b.demand_base[3]),
@@ -177,5 +186,43 @@ pub fn update_demand(
         demand.i = smooth(demand.i, raw[2], bal.demand_ema);
         demand.o = smooth(demand.o, raw[3], bal.demand_ema);
         demand.move_in = smooth(demand.move_in, raw[4], bal.demand_ema);
+    }
+}
+
+#[cfg(test)]
+mod raw_tests {
+    use super::*;
+
+    /// BUG-076: 454 residents (~318 adults), shops and industry at their ratios, no free job:
+    /// R is empty because of the unemployed, so C and I must ask for the jobs.
+    #[test]
+    fn unemployed_adults_above_the_allowance_ask_for_shop_and_industry_jobs() {
+        let b = Balance::default();
+        let stalled = DemandAcc {
+            seen: 64,
+            citizens: 454,
+            commercial_jobs: 91,
+            industrial_jobs: 45,
+            unemployed: 182,
+            unemployed_educated: 182,
+            ..DemandAcc::default()
+        };
+        let [r, c, i, _, move_in] = stalled.raw(&b);
+        assert!(
+            r < 0.0 && move_in < 0.0,
+            "no homes are wanted while jobless"
+        );
+        assert!(c > 20.0, "C {c}");
+        assert!(i > 20.0, "I {i}");
+        // Below the commuter allowance nobody asks (a small town's commuters).
+        let small = DemandAcc {
+            citizens: 40,
+            commercial_jobs: 8,
+            industrial_jobs: 4,
+            unemployed: 15,
+            ..DemandAcc::default()
+        };
+        let [_, c, i, _, _] = small.raw(&b);
+        assert!((c - b.demand_base[1]).abs() < 1e-3 && (i - b.demand_base[2]).abs() < 1e-3);
     }
 }

@@ -212,6 +212,9 @@ pub struct Balance {
     pub demand_commuter_min: f32,
     /// Weight of an unemployed manual worker in industrial demand.
     pub demand_unemployed_industry_weight: f32,
+    /// Weight of a counted unemployed adult (above the commuter allowance) in commercial and
+    /// in industrial demand: the jobless ask for jobs (BUG-076).
+    pub demand_unemployed_job_weight: f32,
     /// Pollution an active industrial building makes per level, at its own cell (`0..=100`
     /// scale), fading linearly to nothing at `pollution_radius_m` (§11).
     pub pollution_per_level: f32,
@@ -674,6 +677,7 @@ impl Default for Balance {
             demand_commuter_share: 0.25,
             demand_commuter_min: 20.0,
             demand_unemployed_industry_weight: 2.0,
+            demand_unemployed_job_weight: 0.5,
             pollution_per_level: 40.0,
             pollution_radius_m: 150.0,
             noise_per_load: 60.0,

@@ -877,6 +877,11 @@ impl ContentDb {
                     &[b.demand_unemployed_industry_weight][..],
                     true,
                 ),
+                (
+                    "demand_unemployed_job_weight",
+                    &[b.demand_unemployed_job_weight][..],
+                    true,
+                ),
             ];
             for (name, values, non_negative) in knobs {
                 if !finite(values) || (non_negative && values.iter().any(|&v| v < 0.0)) {
@@ -964,12 +969,14 @@ impl ContentDb {
             if b.demand_commuter_share != d0.demand_commuter_share
                 || b.demand_commuter_min != d0.demand_commuter_min
                 || b.demand_unemployed_industry_weight != d0.demand_unemployed_industry_weight
+                || b.demand_unemployed_job_weight != d0.demand_unemployed_job_weight
             {
                 fnv1a(&mut hash, b"commuters");
                 for v in [
                     b.demand_commuter_share,
                     b.demand_commuter_min,
                     b.demand_unemployed_industry_weight,
+                    b.demand_unemployed_job_weight,
                 ] {
                     fnv1a(&mut hash, &v.to_bits().to_le_bytes());
                 }

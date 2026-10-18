@@ -112,6 +112,28 @@ fn a_zoned_district_grows_to_a_thousand_residents_unaided() {
     );
 }
 
+/// BUG-076: where the shop / industry ratios are met but ~290 adults stay jobless (R negative),
+/// C or I must still ask for jobs. Before the fix a 1 550-resident district sat at R -20,
+/// C -8, I -80 for weeks (growth stalled); now I stays positive while the jobless are counted.
+#[test]
+fn the_jobless_make_commercial_or_industrial_demand_when_residential_is_empty() {
+    let mut sim = lattice(6, &[ResLow, ResLow, ResHigh, ComLow, Industrial, ResLow]);
+    for day in 1..=12u64 {
+        for _ in 0..TICKS_PER_DAY {
+            sim.tick_once();
+        }
+        let c = sim.world().resource::<CitizenGrid>();
+        let jobless = c.adults() - c.employed();
+        let d = *sim.world().resource::<Demand>();
+        if day >= 4 && d.r <= 0.0 && jobless > 150 {
+            assert!(
+                d.c > 0.0 || d.i > 0.0,
+                "day {day}: {jobless} jobless but demand {d:?}"
+            );
+        }
+    }
+}
+
 /// The same, to the 10 000 residents of the milestone. Minutes in a debug build, so it only
 /// runs on request: `cargo test -p cp_sim --test demand_e2e -- --ignored`.
 #[test]

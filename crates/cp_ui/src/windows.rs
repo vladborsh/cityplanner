@@ -114,6 +114,10 @@ fn low_demand_reason(view: &SimView, zone: ZoneType) -> Option<String> {
         ZoneType::ComLow | ZoneType::ComHigh => {
             "Enough shops for the residents — more residents need more shops".to_string()
         }
+        ZoneType::Industrial if city.unemployed > 0 => format!(
+            "Enough industry for the shops; {} unemployed mostly fit commerce and offices",
+            city.unemployed
+        ),
         ZoneType::Industrial => {
             "Enough industry for the shops and no manual workers without a job".to_string()
         }
