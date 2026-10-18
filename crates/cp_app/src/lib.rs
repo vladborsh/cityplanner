@@ -6,6 +6,7 @@
 //! what is platform specific: windowing, CLI, screenshots and benchmarks.
 
 pub mod audio;
+pub mod grid_shots;
 mod map;
 pub mod saves;
 pub mod scene;
@@ -152,6 +153,16 @@ impl Plugin for GamePlugin {
                 ),
             );
         }
+        if let Some(n) = grid_shots::shot_of_cam(&self.cam) {
+            app.add_systems(
+                Update,
+                move |sim: Option<Res<Sim>>,
+                      mut commands: Commands,
+                      held: Option<Res<cp_tools::GhostDemo>>| {
+                    hold_grid_shot_ghost(n, sim, &mut commands, held.is_some());
+                },
+            );
+        }
         app.add_systems(Startup, move |mut commands: Commands| {
             let mut camera = commands.spawn((
                 Camera3d::default(),
@@ -208,6 +219,11 @@ fn wide_feature(name: &str) -> Option<(usize, bool)> {
 /// allowed view (4000 m).
 pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
     let c = MAP_SIZE / 2.0;
+    // The layouts of `--scene grid-shots` (T-255), obliquely from the south as in the shots.
+    if let Some(n) = grid_shots::shot_of_cam(name) {
+        let f = grid_shots::focus(n);
+        return (Vec3::new(f.x, 230.0, f.y + 150.0), Vec3::new(f.x, 0.0, f.y));
+    }
     match name {
         "ground" => (
             Vec3::new(5120.0, 90.0, 5600.0),
@@ -470,6 +486,20 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
     }
 }
 
+/// `--cam grid-shotN` over `--scene grid-shots` (T-255): once the scene stands, the road tool
+/// holds the ghost of layout N's last street (`cp_tools::GhostDemo`).
+fn hold_grid_shot_ghost(n: usize, sim: Option<Res<Sim>>, commands: &mut Commands, held: bool) {
+    let Some(sim) = sim.filter(|_| !held) else {
+        return;
+    };
+    let Some(cursors) = sim.0.world().get_resource::<grid_shots::GridShotCursors>() else {
+        return;
+    };
+    if let Some(demo) = grid_shots::ghost(&sim.0.view(), cursors, n) {
+        commands.insert_resource(demo);
+    }
+}
+
 /// A sim for `terrain` at the given hour of day. Both the native and the asset-server
 /// loading paths end here.
 pub fn build_sim(
@@ -595,6 +625,11 @@ pub fn build_sim(
         }
         scene::add_mail_houses(&mut sim);
         info!("scene post: {n} mail vans");
+    } else if scene == Some(grid_shots::GRID_SHOTS) {
+        for reason in grid_shots::build_grid_shots(&mut sim) {
+            warn!("scene command rejected: {reason}");
+        }
+        info!("scene grid-shots");
     } else if scene == Some(scene::SERVICES_PAUSED) {
         for reason in scene::build_services_paused(&mut sim) {
             warn!("scene command rejected: {reason}");

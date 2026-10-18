@@ -206,6 +206,13 @@ pub fn run(opts: Options) -> AppExit {
         }
         app.insert_resource(demo);
     }
+    // The held ghost of `--scene grid-shots --cam grid-shotN` (T-255) needs the tools too.
+    if opts.hidden
+        && cp_app::grid_shots::shot_of_cam(&opts.cam).is_some()
+        && !app.is_plugin_added::<cp_tools::ToolsPlugin>()
+    {
+        app.add_plugins(cp_tools::ToolsPlugin);
+    }
     if let Some(demo) = opts.place_demo {
         if opts.hidden && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
             app.add_plugins(cp_tools::ToolsPlugin);

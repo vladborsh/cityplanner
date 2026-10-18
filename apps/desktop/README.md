@@ -43,6 +43,13 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
 * `--scene grown --cam place-over --place-demo clinic,5140,5078` (T-252): the placement ghost of a
   clinic held over grown houses: the lot in green drawn over the roofs, the zoned buildings it would
   demolish tinted red whole (T-252b) (`--place-demo def,x,z` works with any scene).
+* `--scene grid-shots --cam grid-shot1|grid-shot2|grid-shot3|grid-shot4` (T-255): the four grid
+  layouts of the user's BUG-073 shots, each built through the road tool's own snap and tick code
+  (`cp_app::grid_shots`), held paused with the ghost of its last street (the zone strip, the ticks
+  and guides): 1 the L closed from the left street's tick, 2 a street extended from a rounded bend,
+  3 two parallels closed on the right, 4 a block closed from the top street's tick. Screenshots
+  `docs/screenshots/t255-grid-shotN-before.png` (e7fa39c6, before the BUG-073 fix) and
+  `t255-grid-shotN-after.png` (after it; the ticks are the streets' centreline stations).
 * `--screenshot` never saves a blank frame (BUG-012): blank captures are discarded and
   retried; if no real frame arrives within 20 s it exits with code **3**; a write error exits
   **4**.
