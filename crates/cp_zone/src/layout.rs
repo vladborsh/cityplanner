@@ -603,6 +603,10 @@ pub(crate) fn layout_frontage(
             marks: Vec::new(),
         });
     }
+    // Ticks count from the street EDGE of the block: from the far end only when that is the one
+    // that stands at a cross street (BUG-073: the far open end of a street leaving a corner
+    // must not set the phase).
+    let from_end = matches!(f_start, FrontEnd::Open) && matches!(f_end, FrontEnd::Edge(_));
     for j in 0..=n {
         let a = origin + j as f32 * pitch;
         let k = locate(a);
@@ -612,7 +616,7 @@ pub(crate) fn layout_frontage(
         let mark = Mark {
             axis: p,
             v: side_vec(u, f.side),
-            major: j % 8 == 0,
+            major: (if from_end { n - j } else { j }) % 8 == 0,
             end: j == 0 || j == n,
             arc,
         };

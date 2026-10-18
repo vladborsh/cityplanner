@@ -473,3 +473,44 @@ fn a_cross_street_on_a_tick_leaves_exactly_8_cells_before_it() {
         }
     }
 }
+
+/// BUG-073: in an L the ticks of the vertical street into the corner count from the bottom
+/// street's EDGE, like the ticks of a street that leaves it: 64 m from the edge, on both.
+#[test]
+fn ticks_of_a_street_into_a_corner_count_from_the_cross_streets_edge() {
+    for road in ["basic_2l", "medium_4l"] {
+        for len in [300.0f32, 311.0, 337.5] {
+            let (mut sim, db) = sim();
+            let hw = db.road(db.road_id(road).unwrap()).width / 2.0;
+            let o = Vec2::new(4600.0, 4600.0);
+            build_road(&mut sim, &db, road, o + Vec2::new(0.0, -len), o);
+            build_road(&mut sim, &db, road, o, o + Vec2::new(200.0, 0.0));
+            build_road(&mut sim, &db, road, o + Vec2::new(200.0, 0.0), o + Vec2::new(200.0, -150.0));
+            let view = sim.view();
+            let roads = cp_zone::road_zoning(&db);
+            // Distances of the major marks from the bottom street's near edge, per vertical street.
+            let mut ticks: Vec<Vec<f32>> = Vec::new();
+            for x in [4600.0f32, 4800.0] {
+                let mut d: Vec<f32> = Vec::new();
+                for (id, g) in view.net.segments() {
+                    if (g.curve.p0.x - x).abs() < 0.1 && (g.curve.p3.x - x).abs() < 0.1 {
+                        for side in view.zones.frontage_marks(&view.net, &roads, id) {
+                            d.extend(
+                                side.iter()
+                                    .filter(|m| m.major && !m.end)
+                                    .map(|m| (4600.0 - hw) - m.axis.y),
+                            );
+                        }
+                    }
+                }
+                d.sort_by(f32::total_cmp);
+                d.dedup_by(|a, b| (*a - *b).abs() < 0.05);
+                ticks.push(d);
+            }
+            assert!(
+                ticks[0].len() >= 2 && (ticks[0][0] - 64.0).abs() < 0.05 && (ticks[1][0] - 64.0).abs() < 0.05,
+                "{road} len {len}: ticks from the corner edge {ticks:?}"
+            );
+        }
+    }
+}
