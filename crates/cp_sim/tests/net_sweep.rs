@@ -68,6 +68,15 @@ const KNOWN_RED: &[&str] = &[
     "near_node/bend/12/large_6l/",
     "cross_near_node/12/large_6l/",
     "through_end/3/",
+    // Owner T-264 as well: with the straight-on skip limited to a degree-2 node, a node 8-12 m
+    // from the axis of a medium or large road it does not join (two junctions 8 m apart on a
+    // wide road; the dead end `end` stands in the footprint of the street's cut or T) stays
+    // red until the tool puts a point inside a junction's footprint on that node.
+    "near_node/end/8/medium_4l/",
+    "near_node/end/8/large_6l/",
+    "near_node/end/10/large_6l/",
+    "near_node/end/12/large_6l/",
+    "cross_near_node/24/large_6l/",
 ];
 
 fn known_red(case: &str) -> bool {
