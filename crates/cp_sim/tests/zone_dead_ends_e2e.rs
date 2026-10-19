@@ -1,7 +1,6 @@
-//! BUG-016: zone blocks run through plain bends (degree 2 nodes); a real junction (three or more
-//! arms) ends the blocks only on the side of the arm that meets the road (BUG-047: no setback, the
-//! through side runs on). Since T-275 a dead end keeps a half width free for the cross street that
-//! will close it (§6.8.3 item 4 (д)): the cells start and end a half width (6 m) off it.
+//! BUG-016: zone blocks run to dead ends and plain bends (degree <= 2 nodes); a real
+//! junction (three or more arms) ends the blocks only on the side of the arm that meets the road
+//! (BUG-047: no setback, the through side runs on).
 
 use std::sync::Arc;
 
@@ -42,12 +41,11 @@ fn cols(sim: &SimRunner, seg: SegmentId) -> Vec<u16> {
 }
 
 #[test]
-fn a_lone_80_m_road_gets_eight_columns_per_side() {
+fn a_lone_80_m_road_gets_ten_columns_per_side() {
     let (mut sim, db) = sim();
     let seg = road(&mut sim, &db, (5120.0, 5000.0), (5200.0, 5000.0));
     sim.tick_once();
-    // 80 m less a half width at each dead end: 68 m, 8 whole cells.
-    assert_eq!(cols(&sim, seg), vec![8, 8]);
+    assert_eq!(cols(&sim, seg), vec![10, 10]);
 }
 
 #[test]
@@ -56,9 +54,8 @@ fn a_degree_two_node_loses_no_zoned_length() {
     let a = road(&mut sim, &db, (5120.0, 5000.0), (5160.0, 5000.0));
     let b = road(&mut sim, &db, (5160.0, 5000.0), (5200.0, 5000.0));
     sim.tick_once();
-    // One lattice through the cut: 8 columns from 6 m to 70 m, 4 on each piece.
-    assert_eq!(cols(&sim, a), vec![4, 4]);
-    assert_eq!(cols(&sim, b), vec![4, 4]);
+    assert_eq!(cols(&sim, a), vec![5, 5]);
+    assert_eq!(cols(&sim, b), vec![5, 5]);
 }
 
 #[test]
@@ -68,9 +65,9 @@ fn a_real_junction_cuts_only_the_side_of_the_arm() {
     road(&mut sim, &db, (5160.0, 5000.0), (5200.0, 5000.0));
     road(&mut sim, &db, (5160.0, 5000.0), (5160.0, 5040.0));
     sim.tick_once();
-    // From a half width off the dead end; at the junction the side of the stem is cut at the
-    // stem's road edge (3 columns, from 6 m to 30 m), the other side runs on through the node.
+    // The dead end at the far end is whole; at the junction the side of the stem is cut at the
+    // stem's road edge and the other side runs on to the node.
     let mut c = cols(&sim, a);
     c.sort();
-    assert_eq!(c, vec![3, 4]);
+    assert_eq!(c, vec![4, 5]);
 }

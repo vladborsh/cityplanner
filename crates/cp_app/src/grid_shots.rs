@@ -21,10 +21,10 @@
 //!   top street off it, the bottom street off the left street's 8-cell tick under the top street
 //!   into a rounded corner and up across the top street; ghost: a street down from the bottom
 //!   street's 8-cell tick, the cursor near it, so the shot shows the bottom street's diamonds.
-//! * shot 7 (T-275): a city of 3 x 3 blocks of 8 x 16 cells, long streets first (the top street,
-//!   the left street, the long streets off its ticks), then the cross streets off the top
-//!   street's ticks down across them; ghost: the last cross street, from the top street's end
-//!   down to the bottom street's, with its label.
+//! * shot 7 (T-275 spec v2): a city of 3 x 3 blocks, streets 2 sections (20 cells) apart one way
+//!   and 1 section (10 cells) the other, long streets first (the top street, the left street, the
+//!   long streets off its section marks), then the cross streets down across them; ghost: the last
+//!   cross street, from the top street's end down to the bottom street's.
 
 use bevy::prelude::*;
 use bevy_ecs::message::Messages;
@@ -60,7 +60,7 @@ pub fn origin(n: usize) -> (Vec2, f32) {
         4 => (150.0, -350.0, 0.0),
         5 => (-450.0, -850.0, 0.0),
         6 => (150.0, -850.0, 0.0),
-        _ => (-450.0, -1300.0, 0.0),
+        _ => (-450.0, -1800.0, 0.0),
     };
     (Vec2::new(c + dx, c + dz), deg)
 }
@@ -75,7 +75,7 @@ pub fn focus(n: usize) -> Vec2 {
         4 => Vec2::new(110.0, 60.0),
         5 => Vec2::new(76.0, 120.0),
         6 => Vec2::new(90.0, 60.0),
-        _ => Vec2::new(220.0, -125.0),
+        _ => Vec2::new(240.0, -120.0),
     })
 }
 
@@ -374,9 +374,10 @@ fn shot6(h: &mut Hand) -> Option<(Vec2, Vec2)> {
 }
 
 fn shot7(h: &mut Hand) -> Option<(Vec2, Vec2)> {
-    let w = 2.0 * h.hw;
-    let x = |i: f32| i * (2.0 * BLOCK + w);
-    let y = |j: f32| -j * (BLOCK + w);
+    // Streets 2 sections (20 cells) apart along x, 1 section along y (T-275 spec v2).
+    let section = 10.0 * cp_net::build::ZONE_CELL;
+    let x = |i: f32| i * 2.0 * section;
+    let y = |j: f32| -j * section;
     h.street(Vec2::new(x(0.0), y(0.0)), Vec2::new(x(3.0), y(0.0)))?;
     h.street(Vec2::new(x(0.0), y(0.0)), Vec2::new(x(0.0), y(3.0)))?;
     for j in 1..=3 {

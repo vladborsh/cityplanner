@@ -1,16 +1,21 @@
-//! T-275: roads by whole cells (`architecture/system-design.md` §6.8.3, the top rule). A player
-//! builds a city of blocks with the real road tool ([`resolve_cursor`], [`RoadTool::click`],
+//! T-275 (spec v2, `architecture/system-design.md` §6.8): roads by whole cells. A player builds
+//! a city of blocks with the real road tool ([`resolve_cursor`], [`RoadTool::click`],
 //! [`chain_commit`], the ghost [`compute_ghost_alt`]) and a sloppy hand: every click lands up to
-//! 3 m off the point meant and every stroke wobbles up to 2 degrees. The tool must still give:
+//! 3 m off the point meant and every stroke wobbles up to 2 degrees. Roads are whole cells wide
+//! and a street ends a whole number of sections (10 cells between road centres) from where it
+//! starts, so the tool must give:
 //!
 //! * every street square to the map (0.05 degrees);
-//! * every block's cells exactly 8 x 16 whole cells on one lattice, nothing over, nothing missing;
-//! * the label before each click == the whole cells the street gets after it, and the click ==
-//!   the ghost.
+//! * every block exactly its whole cells on one lattice, nothing over, nothing missing;
+//! * after every stroke, every cell of the city on the one lattice of the first junction: a cell
+//!   may vanish under a new street, never shift;
+//! * the click == the ghost.
 //!
-//! The city: a 3 x 3 grid of 8 x 16 blocks, long streets first (the top street, the left street,
-//! the other long streets off the left street's ticks), then the cross streets off the top
-//! street's ticks down across the long streets (X junctions inside, T junctions on the edge).
+//! The city: 3 x 3 blocks, streets 2 sections apart along `x` and 1 section apart along `y`
+//! (2-cell roads: blocks of 18 x 8 cells; 4-cell roads: 16 x 6), long streets first (the top
+//! street, the left street, the other long streets off the left street's marks), then the cross
+//! streets off the top street's marks down across the long streets (X junctions inside, T
+//! junctions on the edge).
 //!
 //! Run: `cargo nextest run -p cp_tools --test city_sweep --no-capture` prints every stroke.
 
@@ -51,6 +56,9 @@ struct Player {
     /// The city's top-left corner as built (the first click lands where it lands): the player
     /// aims every later stroke from what stands.
     origin: Vec2,
+    /// A corner of the city's cell lattice (the first junction: road centres and road edges are
+    /// whole cells from it).
+    lattice: Vec2,
     /// What went wrong, per stroke.
     fails: Vec<String>,
 }
@@ -70,6 +78,7 @@ impl Player {
             hw,
             seed,
             origin: C,
+            lattice: C,
             fails: Vec::new(),
         }
     }
@@ -117,11 +126,6 @@ impl Player {
                 .push(format!("{name}: red ghost {:?}", ghost.errors));
             return None;
         }
-        let label: Option<u32> = ghost
-            .label
-            .as_deref()
-            .and_then(|l| l.split(' ').next())
-            .and_then(|n| n.parse().ok());
         let before_ids: BTreeSet<SegmentId> = view.net.segments().map(|(id, _)| id).collect();
         let q = resolve_cursor(&view, &t, end, false).map_or(end, |c| c.cursor);
         let before = t.clone();
@@ -186,52 +190,23 @@ impl Player {
                 ));
             }
         }
-        let seen = self.cells_along(&ids);
-        println!(
-            "{} {name}: label {:?}, cells along {seen:?}, from {:?} to {:?}",
-            self.road,
-            ghost.label,
-            pa - o,
-            pb - o
-        );
-        if label != Some(seen[0].max(seen[1])) {
-            self.fails.push(format!(
-                "{name}: the label says {:?}, the street got {seen:?} cells",
-                ghost.label
-            ));
-        }
-        Some((pa - o, pb - o))
-    }
-
-    /// The valid cells in the first row along the street `ids` on each side (left, right of
-    /// the street's own direction), whoever's cells they are: what the player sees along it.
-    fn cells_along(&self, ids: &[SegmentId]) -> [u32; 2] {
-        let view = self.sim.view();
-        let cells = valid_centres(&view.zones);
-        let mut out = [0u32; 2];
-        for &id in ids {
-            let s = view.net.segment(id).unwrap();
-            let (p0, p3) = (
-                cp_core::curve::to_xz(s.curve.p0),
-                cp_core::curve::to_xz(s.curve.p3),
-            );
-            let len = p0.distance(p3);
-            let u = (p3 - p0) / len;
-            let n = Vec2::new(-u.y, u.x);
-            for c in &cells {
-                let rel = *c - p0;
-                let (along, off) = (rel.dot(u), rel.dot(n));
-                if !(0.0..len).contains(&along) {
-                    continue;
-                }
-                if (self.hw..self.hw + CELL).contains(&off) {
-                    out[0] += 1;
-                } else if (-self.hw - CELL..-self.hw).contains(&off) {
-                    out[1] += 1;
-                }
+        println!("{} {name}: from {:?} to {:?}", self.road, pa - o, pb - o);
+        // No cell shifts: every cell of the city stands on the lattice of the first junction.
+        if name != "top street" || self.origin != C {
+            let off = valid_centres(&view.zones)
+                .into_iter()
+                .filter(|c| {
+                    let g = (*c - self.lattice) / CELL - Vec2::splat(0.5);
+                    (g - g.round()).abs().max_element() * CELL > 0.01
+                })
+                .count();
+            if off > 0 {
+                self.fails.push(format!(
+                    "{name}: {off} cells off the city's lattice after it"
+                ));
             }
         }
-        out
+        Some((pa - o, pb - o))
     }
 }
 
@@ -302,35 +277,35 @@ fn check_block(
     out
 }
 
-/// The 3 x 3 city of 8 x 16 blocks (16 cells along the long streets, 8 across), long streets
-/// first. Returns what went wrong.
-fn city_8x16(road: &'static str, seed: u64) -> Vec<String> {
+/// The 3 x 3 city: streets `sx` sections apart along `x`, `sy` along `y`, long streets first.
+/// Returns what went wrong.
+fn city(road: &'static str, seed: u64, sx: f32, sy: f32) -> Vec<String> {
     let mut pl = Player::new(road, seed);
     let w = 2.0 * pl.hw;
-    // The axes of the streets: vertical at x = i * (128 + w), horizontal at y = j * (64 + w).
-    let xs: Vec<f32> = (0..4).map(|i| i as f32 * (128.0 + w)).collect();
-    let ys: Vec<f32> = (0..4).map(|j| j as f32 * (64.0 + w)).collect();
-    let v = |x: f32, y: f32| Vec2::new(x, y);
-    // The top street, the left street down from its start, the long streets off the left
-    // street's ticks.
+    let section = 10.0 * CELL;
+    let xs: Vec<f32> = (0..4).map(|i| i as f32 * sx * section).collect();
+    let ys: Vec<f32> = (0..4).map(|j| j as f32 * sy * section).collect();
+    let v = Vec2::new;
     if let Some((a, _)) = pl.stroke("top street", v(xs[0], ys[0]), v(xs[3], ys[0])) {
         pl.origin += a;
+        pl.lattice = pl.origin;
     }
     pl.stroke("left street", v(xs[0], ys[0]), v(xs[0], ys[3]));
     for (j, &y) in ys.iter().enumerate().skip(1) {
         pl.stroke(&format!("long street {j}"), v(xs[0], y), v(xs[3], y));
     }
-    // The cross streets off the top street's 16-cell ticks, down across the long streets.
     for (i, &x) in xs.iter().enumerate().skip(1) {
         pl.stroke(&format!("cross street {i}"), v(x, ys[0]), v(x, ys[3]));
     }
     let mut fails = std::mem::take(&mut pl.fails);
     let zones = &pl.sim.view().zones;
+    let cols = ((sx * section - w) / CELL).round() as u32;
+    let rows = ((sy * section - w) / CELL).round() as u32;
     for i in 0..3 {
         for j in 0..3 {
             let lo = v(xs[i] + pl.hw, ys[j] + pl.hw);
             let hi = v(xs[i + 1] - pl.hw, ys[j + 1] - pl.hw);
-            for e in check_block(zones, pl.origin, lo, hi, 16, 8) {
+            for e in check_block(zones, pl.origin, lo, hi, cols, rows) {
                 fails.push(format!("block ({i}, {j}): {e}"));
             }
         }
@@ -342,11 +317,11 @@ fn city_8x16(road: &'static str, seed: u64) -> Vec<String> {
 }
 
 #[test]
-fn a_city_of_8x16_blocks_is_whole_cells_with_a_sloppy_hand() {
+fn a_3x3_city_of_long_blocks_is_whole_cells_with_a_sloppy_hand() {
     let mut fails = Vec::new();
     for road in ["basic_2l", "medium_4l"] {
         for seed in [1, 2, 3] {
-            fails.extend(city_8x16(road, seed));
+            fails.extend(city(road, seed, 2.0, 1.0));
         }
     }
     assert!(

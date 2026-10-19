@@ -11,7 +11,7 @@ use cp_net::{
 };
 use cp_sim::SimView;
 
-use crate::snap::{self, Hit, SnapArm, SnapCtx, SnapEdge, SnapNode, resolve};
+use crate::snap::{self, Hit, SnapCtx, SnapEdge, SnapNode, resolve};
 
 /// Metres of road height per PgUp/PgDn step.
 pub const ELEVATION_STEP: f32 = 5.0;
@@ -363,28 +363,12 @@ fn direct_hit(
         .nodes()
         .filter(|(id, n)| level_ok(n.elevation) && !dissolvable_cut(net, *id))
     {
-        let arms = n
-            .segments
-            .iter()
-            .filter_map(|&s| net.segment(s))
-            .filter_map(|s| {
-                let dir = if s.start == id {
-                    s.curve.tangent(0.0)
-                } else {
-                    -s.curve.tangent(1.0)
-                };
-                Vec2::new(dir.x, dir.z).try_normalize().map(|dir| SnapArm {
-                    dir,
-                    half_width: content.road(s.road).width / 2.0,
-                })
-            })
-            .collect();
         ids.push(id);
-        nodes.push(SnapNode {
-            pos: to_xz(n.pos),
-            reach: cp_net::junction_reach(net, content, id),
-            arms,
-        });
+        // The junction pull (T-275 spec v2, item 8): a disc round the centre.
+        nodes.push(SnapNode::radial(
+            to_xz(n.pos),
+            crate::lattice::node_pull(net, content, id),
+        ));
     }
     let mut sids = Vec::new();
     let mut edges = Vec::new();
@@ -589,17 +573,6 @@ fn with_request_vertices(req: &RoadPathRequest, at: &[Vec2]) -> RoadPathRequest 
     }
 }
 
-/// Whether the cursor `hover` of `tool` is a direct hit on a road (a node, or a street within
-/// its reach): the block guide may not move such a cursor off the road (BUG-085).
-fn hover_hits_road(view: &SimView, tool: &RoadTool, hover: Vec2) -> bool {
-    tool.road.is_some_and(|road| {
-        !matches!(
-            direct_hit(view, road, tool.elevation(), hover, true).0,
-            Anchor::Free(_)
-        )
-    })
-}
-
 /// The cursor of the road tool after the one resolver (§6.8.3 items 1, 5 and 7): where the ghost
 /// ends, where a click puts the point, and the plan the click sends.
 #[derive(Clone, Debug, PartialEq)]
@@ -627,13 +600,8 @@ pub fn resolve_cursor(view: &SimView, tool: &RoadTool, hover: Vec2, free: bool) 
     let (hover, block) = if free {
         (hover, None)
     } else {
-        // The block guide never moves a cursor on or beside a road off it (BUG-085).
-        let (guided, block) = crate::lattice::block_hover(view, tool, hover, false);
-        if hover_hits_road(view, tool, hover) && !hover_hits_road(view, tool, guided) {
-            (hover, None)
-        } else {
-            (guided, block)
-        }
+        // No 8-cell block guide (T-275 spec v2: the sections place a street).
+        (hover, None)
     };
     // The path with the cursor; with nothing clicked yet, a probe leg east of the first point:
     // the rules for a vertex do not depend on the leg.

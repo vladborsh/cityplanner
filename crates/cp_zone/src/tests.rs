@@ -92,9 +92,7 @@ fn assert_no_double_cells(grid: &ZoneGrid) {
 
 #[test]
 fn straight_segment_gets_floor_len_over_8_times_4_cells_per_side() {
-    // A lone road: each dead end keeps a half width (6 m) for its cross street (§6.8.3 item 4
-    // (д), T-275), so `floor((len - 12) / 8)` columns.
-    for (len, cols) in [(96.0f32, 10usize), (83.0, 8), (28.0, 2), (20.5, 1)] {
+    for (len, cols) in [(96.0f32, 12usize), (83.0, 10), (24.0, 3), (8.5, 1)] {
         let mut w = World::new();
         let s = w.line("basic_2l", (1000.0, 1000.0), (1000.0 + len, 1000.0));
         w.sync();
@@ -270,7 +268,7 @@ fn the_nearest_street_wins_an_overlap_and_ties_are_a_lattice_square_each() {
     );
     for blk in [o, n] {
         let lost: Vec<usize> = (0..blk.cell_count()).filter(|i| !blk.valid[*i]).collect();
-        assert_eq!(lost.len(), blk.cell_count() / 4, "row 3 only");
+        assert_eq!(lost.len(), 10, "row 3 only");
         assert!(lost.iter().all(|i| i % 4 == 3));
     }
 }
@@ -343,8 +341,7 @@ fn changes_rebuild_blocks_and_match_a_from_scratch_sync() {
         .flatten()
         .map(|id| w.grid.block(id).unwrap().valid_count())
         .sum();
-    // 90 m less a half width at each dead end (T-275): 9 whole columns per side.
-    assert_eq!(a_blocks, 2 * ((90 - 12) / 8) * 4);
+    assert_eq!(a_blocks, 2 * (90 / 8) * 4);
 
     // Split A: both halves get fresh blocks, the old ones are gone.
     let def = w.db.road(w.road("basic_2l")).clone();
@@ -563,8 +560,7 @@ fn queries_find_cells_by_point_radius_rectangle_and_block() {
         .grid
         .cells_in_rect(c0.c - Vec2::new(1.0, 1.0), c0.c + Vec2::new(1.0, 30.0));
     assert!(rect.contains(&right[0]));
-    // 96 m less a half width at each dead end (T-275): 10 columns.
-    assert_eq!(w.grid.block_cells(right[0].block).len(), 10 * 4);
+    assert_eq!(w.grid.block_cells(right[0].block).len(), 12 * 4);
     assert_eq!(w.grid.zone_of(right[0]), Some(ZoneType::None));
 }
 
@@ -665,10 +661,7 @@ fn an_upgrade_or_downgrade_keeps_the_painting_of_the_cells_that_stay_valid() {
         let (valid, kept) = repaint_after_road_change(from, to);
         assert!(valid > 40, "{from}->{to}: {valid} valid cells");
         assert!(
-            // A dead end's reserve is the road's own half width (T-275): a narrower road frees a
-            // column at each end (large -> basic: 2 ends x 4 rows x 2 sides = 16 new cells of
-            // 72), never painted; every cell that was there keeps its paint.
-            kept * 100 >= valid * 75,
+            kept * 100 >= valid * 90,
             "{from}->{to}: only {kept} of {valid} valid cells stay painted"
         );
     }
@@ -1189,9 +1182,7 @@ fn a_slightly_skewed_block_still_has_no_overlap() {
 fn painted_zones_stay_on_the_same_ground_when_a_segment_is_flipped() {
     use cp_content::ZoneType;
     let mut w = World::new();
-    // Whole cells between the dead ends' reserves (12 + 80 m, as the road tool draws it, T-275):
-    // the lattice is the same from either end.
-    let seg = w.line("basic_2l", (1000.0, 1000.0), (1092.0, 1000.0));
+    let seg = w.line("basic_2l", (1000.0, 1000.0), (1090.0, 1000.0));
     w.sync();
     // Paint the left block's row 0 and the right block's row 1.
     for (slot, row) in [(0usize, 0u16), (1, 1)] {
@@ -1461,10 +1452,9 @@ mod layout_v2 {
         w.line("basic_2l", (1080.0, 1000.0), (1080.0, 1100.0));
         w.sync();
         assert_no_overlap_and_off_roads(&w);
-        // North (-z): no side street, one run straight through the node: 160 m less a half
-        // width at each dead end (T-275), 18 cells.
+        // North (-z): no side street, one run of 20 cells straight through the node.
         let north = row0_on(&w, -1.0, 1000.0);
-        assert_eq!(north.len(), 18);
+        assert_eq!(north.len(), 20);
         for p in north.windows(2) {
             assert!((p[1].c.x - p[0].c.x - 8.0).abs() < 0.05);
         }
@@ -1498,8 +1488,7 @@ mod layout_v2 {
         let w = build(None);
         for sign in [-1.0, 1.0] {
             let row = row0_on(&w, sign, 1000.0);
-            // 320 m less a half width at each dead end (T-275): 38 cells of 8 m.
-            assert_eq!(row.len(), 38, "308 m is 38 cells of 8 m");
+            assert_eq!(row.len(), 40, "320 m is 40 cells of 8 m");
             for p in row.windows(2) {
                 assert!((p[1].c.x - p[0].c.x - 8.0).abs() < 0.05);
             }
@@ -1507,7 +1496,7 @@ mod layout_v2 {
         let t = build(Some(1));
         assert_no_overlap_and_off_roads(&t);
         let north = row0_on(&t, -1.0, 1000.0);
-        assert_eq!(north.len(), 38);
+        assert_eq!(north.len(), 40);
         for p in north.windows(2) {
             assert!((p[1].c.x - p[0].c.x - 8.0).abs() < 0.05);
         }

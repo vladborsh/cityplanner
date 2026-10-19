@@ -137,35 +137,3 @@ fn compute_strip(view: &SimView, plan: &RoadBuildPlan) -> ZoneStrip {
 fn inflate_bounds(b: (Vec2, Vec2), by: f32) -> (Vec2, Vec2) {
     (b.0 - Vec2::splat(by), b.1 + Vec2::splat(by))
 }
-
-/// The cells the road of `plan` gets along it, on the side that gets more: what the road
-/// tool's label shows (§6.8.3, the top rule, T-275). The frontages of the net after the plan,
-/// laid by `cp_zone` itself, so the label is the cells visible after the click. `None` for a
-/// road without zoning.
-pub fn street_cells(view: &SimView, plan: &RoadBuildPlan) -> Option<u32> {
-    let content = view.content.as_deref()?;
-    let roads = zoning(content);
-    if !roads(plan.road).allows_zoning {
-        return None;
-    }
-    let after = plan_applied(&view.net, content, plan)?;
-    // The pieces of the new road: segments that were not there before and lie on its curves.
-    let ids: Vec<cp_net::SegmentId> = after
-        .segments()
-        .filter(|(id, s)| {
-            view.net.segment(*id).is_none_or(|old| old.curve != s.curve)
-                && plan.segments.iter().any(|p| {
-                    p.curve
-                        .nearest_xz(cp_core::curve::to_xz(s.curve.point(0.5)))
-                        .1
-                        < 0.05
-                })
-        })
-        .map(|(id, _)| id)
-        .collect();
-    let mut sides = [0u32; 2];
-    for (_, side, cols) in cp_zone::columns(&after, &roads, &ids) {
-        sides[usize::from(side == cp_zone::Side::Right)] += u32::from(cols);
-    }
-    Some(sides[0].max(sides[1]))
-}

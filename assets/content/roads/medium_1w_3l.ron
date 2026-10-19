@@ -2,13 +2,14 @@ Road((
     id: "medium_1w_3l",
     name: "Collector (3 lanes, one-way)",
     class: Collector,
-    width: 15.5,
+    // T-275: whole cells wide (4 cells of 8 m); the sidewalks take the rest.
+    width: 32.0,
     lanes: [
-        (kind: Pedestrian, dir: Forward, width: 2.5, offset: 6.5),
+        (kind: Pedestrian, dir: Forward, width: 10.75, offset: 10.625),
         (kind: Car, dir: Forward, width: 3.5, offset: 3.5),
         (kind: Car, dir: Forward, width: 3.5, offset: 0.0),
         (kind: Car, dir: Forward, width: 3.5, offset: -3.5),
-        (kind: Pedestrian, dir: Forward, width: 2.5, offset: -6.5),
+        (kind: Pedestrian, dir: Forward, width: 10.75, offset: -10.625),
     ],
     median_width: 0.0,
     speed_kmh: 50,

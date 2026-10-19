@@ -9,8 +9,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use cp_core::Cost;
 use cp_net::{
-    Anchor, NetCommand, RoadBuildError, RoadPath, SegmentId, SnapReport, SnapReportKind,
-    one_way_report,
+    NetCommand, RoadBuildError, RoadPath, SegmentId, SnapReport, SnapReportKind, one_way_report,
 };
 use cp_render::camera::math::ray_terrain_hit;
 use cp_render::{RtsCamera, UiCapture};
@@ -929,7 +928,8 @@ pub fn compute_ghost_alt(
         block: cursor.block.clone(),
         hover: Some(hover),
         resolved: Some(cursor.point),
-        label: cursor_label(view, tool, &path, &plan, None),
+        // No label at the cursor (T-275 spec v2: the player reads the cells, not a number).
+        label: None,
         ..Default::default()
     };
     match result {
@@ -966,10 +966,6 @@ pub fn compute_ghost_alt(
                     .collect();
             }
             ghost.zone = crate::zone_preview::zone_strip(view, &built);
-            // The label counts the cells the street gets, as laid after the click.
-            if let Some(cells) = crate::zone_preview::street_cells(view, &built) {
-                ghost.label = cursor_label(view, tool, &path, &plan, Some(cells));
-            }
             ghost.plan = Some(plan);
         }
         Err(errors) => {
@@ -979,74 +975,6 @@ pub fn compute_ghost_alt(
         }
     }
     Some(ghost)
-}
-
-/// "5 cells · 90°": the whole cells the street gets (`cells`, as laid after the click; without
-/// it the whole cells of the last leg's length) and the angle between the leg and the road it
-/// leaves (the leg before it, or the street or the arms at its start), at the cursor (§6.8.3
-/// item 9 and the top rule: always a whole number, never metres).
-fn cursor_label(
-    view: &SimView,
-    tool: &RoadTool,
-    path: &RoadPath,
-    plan: &cp_net::BuildPlan,
-    cells: Option<u32>,
-) -> Option<String> {
-    let piece = plan.pieces.last()?;
-    let (a, b) = match path {
-        RoadPath::Straight { from, to } | RoadPath::Curve { from, to, .. } => (*from, *to),
-        RoadPath::Free(v) => (*v.get(v.len().checked_sub(2)?)?, *v.last()?),
-    };
-    let leg = b - a;
-    let len = leg.length();
-    if len < 1.0 {
-        return None;
-    }
-    let cells = cells.unwrap_or_else(|| (len / cp_net::ZONE_CELL + 0.05).floor() as u32);
-    let mut text = format!("{cells} cells");
-    // The directions the leg is measured against: the road behind it, or the roads at its start.
-    let mut refs: Vec<Vec2> = Vec::new();
-    if let RoadPath::Free(v) = path
-        && v.len() >= 3
-        && let Some(d) = (v[v.len() - 3] - a).try_normalize()
-    {
-        refs.push(d);
-    }
-    let _ = tool;
-    match piece.from {
-        Anchor::Node(id) => {
-            if let Some(n) = view.net.node(id) {
-                for &sid in &n.segments {
-                    if let Some(s) = view.net.segment(sid) {
-                        let t = if s.start == id {
-                            s.curve.tangent(0.0)
-                        } else {
-                            -s.curve.tangent(1.0)
-                        };
-                        refs.extend(Vec2::new(t.x, t.z).try_normalize());
-                    }
-                }
-            }
-        }
-        Anchor::OnSegment(sid, t) => {
-            if let Some(s) = view.net.segment(sid) {
-                let t = s.curve.tangent(t);
-                if let Some(d) = Vec2::new(t.x, t.z).try_normalize() {
-                    refs.extend([d, -d]);
-                }
-            }
-        }
-        Anchor::Free(_) => {}
-    }
-    let dir = leg / len;
-    let best = refs
-        .iter()
-        .map(|r| r.dot(dir).clamp(-1.0, 1.0).acos().to_degrees())
-        .min_by(f32::total_cmp);
-    if let Some(deg) = best {
-        text.push_str(&format!(" · {}°", deg.round() as i32));
-    }
-    Some(text)
 }
 
 /// The ghost for the pipe / power-line tool with the cursor at `hover`: green pieces of the

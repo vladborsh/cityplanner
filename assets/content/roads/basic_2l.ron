@@ -2,12 +2,13 @@ Road((
     id: "basic_2l",
     name: "Local street",
     class: Local,
-    width: 12.0,
+    // T-275: whole cells wide (2 cells of 8 m); the sidewalks take the rest.
+    width: 16.0,
     lanes: [
-        (kind: Pedestrian, dir: Forward, width: 2.5, offset: 4.75),
+        (kind: Pedestrian, dir: Forward, width: 4.5, offset: 5.75),
         (kind: Car, dir: Backward, width: 3.5, offset: 1.75),
         (kind: Car, dir: Forward, width: 3.5, offset: -1.75),
-        (kind: Pedestrian, dir: Forward, width: 2.5, offset: -4.75),
+        (kind: Pedestrian, dir: Forward, width: 4.5, offset: -5.75),
     ],
     median_width: 0.0,
     speed_kmh: 40,
