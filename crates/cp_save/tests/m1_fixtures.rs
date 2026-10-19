@@ -7,6 +7,19 @@
 //! by the traffic domain); the jam's 850 trips are sent by `scenario::send_citizens` so the
 //! jam does not depend on the time of day.
 //!
+//! **T-263.** The two `load + 4096 ticks` pins moved (state at load unchanged; m1-small
+//! `0x3c26_0063_288f_0a41` -> `0x0e5f_0c90_d522_0684`, m1-traffic `0x42c0_63ee_1822_fa0c` ->
+//! `0xf86d_2152_0778_e8a6`): node geometry v2 feeds the lane connections, which start and end
+//! at the arms' cuts (`trim_t`). The causes: a middle node (two pieces of one road turning at
+//! most 10 degrees, e.g. every automatic cut) cuts at the node, setback 0 instead of half the
+//! road's width, so lanes run on through it on a zero-length connection (`connection_curve`
+//! makes no 2 m loop for touching lanes; `cp_traffic` guards the length, `pose.rs`); a bend
+//! cuts where its inner edges meet (`h·tan(turn/2)`; was `h` under 30 degrees of turn); a
+//! transition's wider road keeps at least 8 m for its taper; bends and transitions are hard
+//! ends, so they share a short segment's length with the other end differently; and curved arms
+//! take their setbacks from the real offset curves instead of the tangent lines. Junctions of
+//! straight arms keep their setbacks exactly.
+//!
 //! **T-262 (save v55).** All four pins moved with the encoding: the checksum hashes the road
 //! network, and every segment now carries its build order (a migrated v54 save gets them by
 //! ascending segment id) and the graph its counter. The behaviour did not change.
@@ -67,11 +80,6 @@
 //! **BUG-064.** Re-recorded again, the two "load + 4096 ticks" values only (state at load
 //! unchanged): a pedestrian's walk along a sidewalk ends at the junction setback instead of the
 //! node centre, and corners are walked by arc length, so walks are shorter from the first tick.
-
-//! **T-263.** Re-recorded again, the two "load + 4096 ticks" values only (state at load
-//! unchanged): node geometry v2 cuts a middle node's segments at the node (setback 0, was half
-//! the road's width) and a shallow bend's where the inner edges meet, so the lane connections
-//! there (which start and end at the cuts) are shorter.
 
 //! **T-256.** Re-recorded again, the two "load + 4096 ticks" values only (state at load
 //! unchanged): the walk-or-drive choice (T-242) is made by the path service on its workers and
@@ -216,7 +224,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     assert_eq!(sim.checksum(), 0x68b91d63fd51a77a, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x3c260063288f0a41,
+        0x0e5f0c90d5220684,
         "load + 4096 ticks"
     );
 }
@@ -250,7 +258,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x42c063ee1822fa0c, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0xf86d21520778e8a6, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

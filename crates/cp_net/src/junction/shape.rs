@@ -133,19 +133,27 @@ pub(super) fn edge_meet(pa: &ArmPath, ha: f32, pb: &ArmPath, hb: f32) -> Option<
     }
     let (mut u, mut v) = best?;
     let h = 1e-3;
+    let residual = |u: f32, v: f32| (pa.edge_t(u, ha) - pb.edge_t(v, -hb)).length();
+    let mut r = residual(u, v);
     for _ in 0..8 {
-        let f = pa.edge_t(u, ha) - pb.edge_t(v, -hb);
-        if f.length() < 1e-6 {
+        if r < 1e-6 {
             break;
         }
+        let f = pa.edge_t(u, ha) - pb.edge_t(v, -hb);
         let du = (pa.edge_t(u + h, ha) - pa.edge_t(u - h, ha)) / (2.0 * h);
         let dv = -(pb.edge_t(v + h, -hb) - pb.edge_t(v - h, -hb)) / (2.0 * h);
         let det = du.perp_dot(dv);
         if det.abs() < 1e-9 {
             break;
         }
-        u = (u + (-f).perp_dot(dv) / det).clamp(0.0, 1.0);
-        v = (v + du.perp_dot(-f) / det).clamp(0.0, 1.0);
+        let nu = (u + (-f).perp_dot(dv) / det).clamp(0.0, 1.0);
+        let nv = (v + du.perp_dot(-f) / det).clamp(0.0, 1.0);
+        // Only a step that brings the edges closer: never wander off to another crossing.
+        let nr = residual(nu, nv);
+        if nr >= r {
+            break;
+        }
+        (u, v, r) = (nu, nv, nr);
     }
     Some((pa.table.t_to_s(u), pb.table.t_to_s(v)))
 }

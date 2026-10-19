@@ -250,7 +250,7 @@ fn four_way_junction_is_one_flat_polygon_facing_up() {
         .abs()
         / 2.0;
     assert!(
-        (up_area - poly_area).abs() < 0.02 * poly_area,
+        (up_area - poly_area).abs() < 0.01 * poly_area,
         "{up_area} vs {poly_area}"
     );
 }
@@ -901,8 +901,9 @@ fn check_clean(w: &World, what: &str) {
     }
 }
 
-/// The piece of node `j` covers its outline (`Junction::polygon`) without holes, and a
-/// junction has no sidewalk at its centre; a middle node has no piece (T-263).
+/// The piece of node `j` covers its outline (`Junction::polygon`) without holes, a sidewalk
+/// lies only along its rim (never further from it than the widest sidewalk), and a junction has
+/// no sidewalk at its centre; a middle node has no piece (T-263).
 fn check_rim(set: &RoadSet, _graph: &NetGraph, j: &Junction, node: &NodeId, what: &str) {
     let piece = set.piece(PieceKey::Junction(*node));
     if j.class == NodeClass::Middle {
@@ -925,6 +926,23 @@ fn check_rim(set: &RoadSet, _graph: &NetGraph, j: &Junction, node: &NodeId, what
     let sw = colour_tris(m, SIDEWALK);
     let poly = &j.polygon;
     let n = poly.len();
+    // The rim: outline edges that are not an arm's end line, and the corners where two arms'
+    // end lines meet (inside corners whose outer curve shrank to the meeting point).
+    // An arm's end line: one arm owns both ends (a shared inside corner belongs to two arms).
+    let end_line = |i: usize| {
+        let on = |a: &cp_net::Arm, p: Vec2| a.right.distance(p) < 1e-3 || a.left.distance(p) < 1e-3;
+        j.arms
+            .iter()
+            .any(|a| on(a, poly[i]) && on(a, poly[(i + 1) % n]))
+    };
+    let outer: Vec<(Vec2, Vec2)> = (0..n)
+        .filter(|&i| !end_line(i))
+        .map(|i| (poly[i], poly[(i + 1) % n]))
+        .collect();
+    let corners: Vec<Vec2> = (0..n)
+        .filter(|&i| end_line((i + n - 1) % n) && end_line(i))
+        .map(|i| poly[i])
+        .collect();
     let (lo, hi) = poly.iter().fold(
         (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
         |(l, h), p| (l.min(*p), h.max(*p)),
@@ -936,8 +954,9 @@ fn check_rim(set: &RoadSet, _graph: &NetGraph, j: &Junction, node: &NodeId, what
         while y <= hi.y {
             let p = Vec2::new(x, y);
             y += 0.7;
+            // Points right on an edge can fall between triangles: stay off the boundary.
             if !in_polygon(p, poly)
-                || (0..n).any(|i| dist_to_edge(p, poly[i], poly[(i + 1) % n]) < 0.1)
+                || (0..n).any(|i| dist_to_edge(p, poly[i], poly[(i + 1) % n]) < 0.05)
             {
                 continue;
             }
@@ -949,6 +968,15 @@ fn check_rim(set: &RoadSet, _graph: &NetGraph, j: &Junction, node: &NodeId, what
             assert!(
                 !walked || p.distance(centre) > 3.0 || j.arms.len() < 3,
                 "{what}: sidewalk on the carriageway at the node centre {p:?}"
+            );
+            let rim = outer
+                .iter()
+                .map(|&(a, b)| dist_to_edge(p, a, b))
+                .chain(corners.iter().map(|c| p.distance(*c) * 0.2))
+                .fold(f32::MAX, f32::min);
+            assert!(
+                !walked || rim < 3.0,
+                "{what}: sidewalk {rim} m from the rim at {p:?}"
             );
         }
         x += 0.7;
