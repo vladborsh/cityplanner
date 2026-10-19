@@ -7,6 +7,7 @@ pub mod control;
 pub mod graph;
 pub mod junction;
 pub mod model;
+pub mod plan;
 pub mod reach;
 pub mod run;
 pub mod stretches;
@@ -30,6 +31,7 @@ pub use junction::{
     Arm, Junction, JunctionGeometry, compute_junction, refresh_geometry, update_junctions,
 };
 pub use model::*;
+pub use plan::{Anchor, BuildPlan, PlanPiece};
 pub use reach::{
     EntryReach, RailReach, is_rail_segment, node_is_rail, update_entry_reach, update_rail_reach,
 };

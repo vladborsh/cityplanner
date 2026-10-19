@@ -76,6 +76,7 @@ pub fn sound_for_command(command: &SimCommand) -> Option<Sound> {
     match command {
         SimCommand::Net(
             NetCommand::BuildRoad { .. }
+            | NetCommand::BuildPlan { .. }
             | NetCommand::UpgradeSegment { .. }
             | NetCommand::FlipSegment { .. },
         ) => Some(Sound::RoadBuilt),

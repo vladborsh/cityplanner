@@ -30,6 +30,7 @@ use crate::build::{
 };
 use crate::graph::{NetGraph, NetOpError};
 use crate::model::{Elevation, NodeId, SegmentId};
+use crate::plan::{Anchor, BuildPlan};
 
 /// Commands handled by this crate.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -57,6 +58,9 @@ pub enum NetCommand {
     /// Turns a one-way road round (T-091): the segment keeps its place and its type, but now
     /// runs the other way. Fails with `NotOneWay` on a two-way road. Free.
     FlipSegment { seg: SegmentId },
+    /// Builds a road from a resolved plan (§6.8.3, T-262): the tool has made every snap, the
+    /// command applies what it is given. Appended last: older logs replay as before.
+    BuildPlan { plan: BuildPlan },
 }
 
 /// A `RemovePart` end closer than this (metres) to an end of the segment moves onto that end.
@@ -70,6 +74,10 @@ pub enum NetError {
     /// `BuildRoad` failed validation; every problem found.
     Build(Vec<RoadBuildError>),
     UnknownSegment(SegmentId),
+    /// A `BuildPlan` anchor names a node the graph does not have.
+    UnknownNode(NodeId),
+    /// A `BuildPlan` without pieces, or with a point that is not finite.
+    BadPlan,
     /// `RemovePart` with `s0 >= s1` or a non-finite length.
     BadPartRange,
     UnknownRoad(RoadDefId),
@@ -121,6 +129,8 @@ impl fmt::Display for NetError {
                 Ok(())
             }
             Self::UnknownSegment(s) => write!(f, "unknown segment {s:?}"),
+            Self::UnknownNode(n) => write!(f, "unknown node {n:?}"),
+            Self::BadPlan => write!(f, "the build plan is empty or has a bad point"),
             Self::BadPartRange => write!(f, "part to remove is empty or not a range"),
             Self::UnknownRoad(r) => write!(f, "unknown road type {r:?}"),
             Self::SameRoad => write!(f, "segment already has this road type"),
@@ -192,47 +202,38 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
             road,
             path,
             elevation,
-        } => {
-            let content = content()?;
-            let terrain = world
-                .get_resource::<SimTerrain>()
-                .map(|t| t.0.clone())
-                .ok_or(NetError::Missing("terrain"))?;
-            let tiles = world
-                .get_resource::<TileOwnership>()
-                .copied()
-                .ok_or(NetError::Missing("tile ownership"))?;
-            let cost = world.resource_scope(
-                |world, mut graph: bevy_ecs::change_detection::Mut<NetGraph>| {
-                    let req = RoadPathRequest {
-                        road: *road,
-                        path: path.clone(),
-                        elevation: *elevation,
-                        snap: SnapOptions::default(),
-                    };
-                    let plan = validate_road_path(&graph, &terrain, &tiles, &content, &req)
-                        .map_err(NetError::Build)?;
-                    check_funds(world, plan.cost).map_err(NetError::Funds)?;
-                    // Everything is decided before the first change; a copy of the graph exists
-                    // only in debug builds, to prove the check and the application agree.
-                    check_plan(&graph, &plan).map_err(NetError::from)?;
-                    #[cfg(debug_assertions)]
-                    let backup = graph.clone();
-                    match apply_plan(&mut graph, &content, &plan) {
-                        Ok(()) => Ok(plan.cost),
-                        Err(e) => {
-                            #[cfg(debug_assertions)]
-                            {
-                                *graph = backup;
-                                debug_assert!(false, "a checked plan failed to apply: {e}");
-                            }
-                            Err(NetError::from(e))
-                        }
-                    }
-                },
-            )?;
-            charge_funds(world, cost);
-            Ok(cost)
+        } => build_paths(world, *road, *elevation, std::slice::from_ref(path)),
+        NetCommand::BuildPlan { plan } => {
+            let graph = world.resource::<NetGraph>();
+            let at = |a: &Anchor| -> Result<Vec2, NetError> {
+                match a {
+                    Anchor::Free(p) if p.is_finite() => Ok(*p),
+                    Anchor::Free(_) => Err(NetError::BadPlan),
+                    Anchor::Node(n) => graph
+                        .node(*n)
+                        .map(|n| Vec2::new(n.pos.x, n.pos.z))
+                        .ok_or(NetError::UnknownNode(*n)),
+                    Anchor::OnSegment(s, t) if t.is_finite() => graph
+                        .segment(*s)
+                        .map(|s| {
+                            let p = s.curve.point(t.clamp(0.0, 1.0));
+                            Vec2::new(p.x, p.z)
+                        })
+                        .ok_or(NetError::UnknownSegment(*s)),
+                    Anchor::OnSegment(..) => Err(NetError::BadPlan),
+                }
+            };
+            if plan.pieces.is_empty() {
+                return Err(NetError::BadPlan);
+            }
+            let mut paths = Vec::with_capacity(plan.pieces.len());
+            for piece in &plan.pieces {
+                if !(piece.c1.is_finite() && piece.c2.is_finite()) {
+                    return Err(NetError::BadPlan);
+                }
+                paths.push(piece.road_path(at(&piece.from)?, at(&piece.to)?));
+            }
+            build_paths(world, plan.road, plan.elevation, &paths)
         }
         NetCommand::UpgradeSegment { seg, road } => {
             let content = content()?;
@@ -332,6 +333,61 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
             Ok(Cost::ZERO)
         }
     }
+}
+
+/// Builds `paths` one after another with the existing validator (`BuildRoad` semantics): all
+/// or nothing, charged once.
+fn build_paths(
+    world: &mut World,
+    road: RoadDefId,
+    elevation: ElevationMode,
+    paths: &[RoadPath],
+) -> Result<Cost, NetError> {
+    let content = world
+        .get_resource::<SimContent>()
+        .map(|c| c.0.clone())
+        .ok_or(NetError::Missing("content"))?;
+    let terrain = world
+        .get_resource::<SimTerrain>()
+        .map(|t| t.0.clone())
+        .ok_or(NetError::Missing("terrain"))?;
+    let tiles = world
+        .get_resource::<TileOwnership>()
+        .copied()
+        .ok_or(NetError::Missing("tile ownership"))?;
+    let cost = world.resource_scope(
+        |world, mut graph: bevy_ecs::change_detection::Mut<NetGraph>| {
+            let backup = graph.clone();
+            let mut total = Cost::ZERO;
+            for path in paths {
+                let req = RoadPathRequest {
+                    road,
+                    path: path.clone(),
+                    elevation,
+                    snap: SnapOptions::default(),
+                };
+                let step = (|| {
+                    let plan = validate_road_path(&graph, &terrain, &tiles, &content, &req)
+                        .map_err(NetError::Build)?;
+                    check_funds(world, Cost(total.0 + plan.cost.0)).map_err(NetError::Funds)?;
+                    // Everything is decided before the first change of this piece.
+                    check_plan(&graph, &plan).map_err(NetError::from)?;
+                    apply_plan(&mut graph, &content, &plan).map_err(NetError::from)?;
+                    Ok::<_, NetError>(plan.cost)
+                })();
+                match step {
+                    Ok(c) => total = Cost(total.0 + c.0),
+                    Err(e) => {
+                        *graph = backup;
+                        return Err(e);
+                    }
+                }
+            }
+            Ok(total)
+        },
+    )?;
+    charge_funds(world, cost);
+    Ok(cost)
 }
 
 /// Builds a road along `path` for the game itself, not for the player: tile ownership is not

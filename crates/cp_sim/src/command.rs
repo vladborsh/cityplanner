@@ -60,6 +60,7 @@ impl SimCommand {
         match self {
             SimCommand::Net(NetCommand::BuildRoad { road: r, .. })
             | SimCommand::Net(NetCommand::UpgradeSegment { road: r, .. }) => *r = road(*r),
+            SimCommand::Net(NetCommand::BuildPlan { plan }) => plan.road = road(plan.road),
             SimCommand::Building(BuildingCommand::Place { def, .. }) => *def = building(*def),
             SimCommand::SetSpeed { .. }
             | SimCommand::Net(NetCommand::RemoveSegment { .. })
@@ -174,7 +175,9 @@ fn platform_target(c: &NetCommand) -> Option<cp_net::SegmentId> {
         | NetCommand::RemovePart { seg, .. }
         | NetCommand::UpgradeSegment { seg, .. }
         | NetCommand::FlipSegment { seg } => Some(*seg),
-        NetCommand::BuildRoad { .. } | NetCommand::ToggleTrafficLight { .. } => None,
+        NetCommand::BuildRoad { .. }
+        | NetCommand::BuildPlan { .. }
+        | NetCommand::ToggleTrafficLight { .. } => None,
     }
 }
 
