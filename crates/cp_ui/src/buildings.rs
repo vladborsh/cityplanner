@@ -702,6 +702,7 @@ mod tests {
             access: None,
             demolish: vec![],
             evicted: None,
+            error_at: None,
         });
         let ok = drawn(&tools);
         assert!(ok.contains("can place") && ok.contains("12,000"), "{ok}");
@@ -741,6 +742,7 @@ mod tests {
             access: None,
             demolish: vec![],
             evicted: None,
+            error_at: None,
         });
         let bad = drawn(&tools);
         assert!(
