@@ -463,6 +463,62 @@ pub fn validate_placement_for(
     }
 }
 
+/// The zoned buildings within reach of `pos` with the cells they hold: no obstacle to a service
+/// placed over them (T-252).
+fn zoned_near(
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    buildings: &BuildingGrid,
+    pos: Vec2,
+) -> Vec<(BuildingId, Vec<ZoneCellRef>)> {
+    buildings
+        .iter()
+        .filter(|(_, b)| {
+            b.pos.distance(pos) <= OVER_REACH_M
+                && db
+                    .buildings()
+                    .find(|(id, _)| *id == b.def)
+                    .is_some_and(|(_, d)| is_growable(d))
+        })
+        .map(|(id, b)| (id, crate::grid::held_cells(zones, b)))
+        .collect()
+}
+
+/// Why a building at the road edge cannot stand near `pos`, for the ghost: the rectangle of the
+/// candidate nearest the cursor and where the blocker is ([`crate::EdgeBlocked`]). `moving` is the
+/// building being moved, which does not count against itself. `None` when the def does not stand
+/// at the road edge or the placement works.
+#[allow(clippy::too_many_arguments)]
+pub fn edge_blocker(
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+    terrain: Option<&Terrain>,
+    tiles: Option<&TileOwnership>,
+    def: BuildingDefId,
+    pos: Vec2,
+    rot: f32,
+    moving: Option<BuildingId>,
+) -> Option<crate::edge::EdgeBlocked> {
+    if !crate::edge::is_edge_placed(db, def) {
+        return None;
+    }
+    let near = zoned_near(db, zones, buildings, pos);
+    let mut cells: Vec<ZoneCellRef> = near.iter().flat_map(|(_, c)| c.iter().copied()).collect();
+    let mut ids: Vec<BuildingId> = near.iter().map(|(id, _)| *id).collect();
+    if let Some(m) = moving {
+        ids.push(m);
+        if let Some(b) = buildings.get(m) {
+            cells.extend(crate::grid::held_cells(zones, b));
+        }
+    }
+    crate::edge::edge_search(
+        db, zones, net, buildings, terrain, tiles, def, pos, rot, &ids, &cells,
+    )
+    .err()
+}
+
 /// The placement check the tool and `Place` use (T-252): [`validate_placement`] (or
 /// [`validate_free_placement`] for a free-standing def) where the zoned buildings near `pos` are
 /// no obstacle, plus the ones the building would stand on. Everything else (another service,
@@ -479,17 +535,7 @@ pub fn validate_placement_over(
     pos: Vec2,
     rot: f32,
 ) -> Result<Clearance, BuildingError> {
-    let near: Vec<(BuildingId, Vec<ZoneCellRef>)> = buildings
-        .iter()
-        .filter(|(_, b)| {
-            b.pos.distance(pos) <= OVER_REACH_M
-                && db
-                    .buildings()
-                    .find(|(id, _)| *id == b.def)
-                    .is_some_and(|(_, d)| is_growable(d))
-        })
-        .map(|(id, b)| (id, crate::grid::held_cells(zones, b)))
-        .collect();
+    let near = zoned_near(db, zones, buildings, pos);
     let cells: Vec<ZoneCellRef> = near.iter().flat_map(|(_, c)| c.iter().copied()).collect();
     let ids: Vec<BuildingId> = near.iter().map(|(id, _)| *id).collect();
     let plan = validate_placement_for(

@@ -25,6 +25,10 @@ use crate::model::{FOOTPRINT_CELL_M, Footprint, footprint_quad};
 const SAMPLE_M: f32 = 4.0;
 /// Clear distance between the rectangle and the edge of any road, metres.
 pub const ROAD_CLEARANCE_M: f32 = 1.0;
+// T-267: a free-standing building no longer keeps this clear of a road: it stands flush against the
+// edge like the zone cells and a service at the road edge (the user could not put a 1x1 prop on the
+// corner cell of a block between two streets: 8 m cell, 1 m clear on both sides). The constant is
+// only the margin of the search bounds now.
 /// Spacing of the road centre-line samples, metres.
 const ROAD_SAMPLE_M: f32 = 4.0;
 
@@ -119,7 +123,8 @@ pub fn validate_free_placement_ignoring(
     RectCtx::new(
         db, zones, net, buildings, terrain, tiles, pos, reach, ignore,
     )
-    .check(pos, rot, w, d, ROAD_CLEARANCE_M, free_cells)?;
+    .check(pos, rot, w, d, -cp_zone::ROAD_EPS, free_cells)
+    .map_err(|b| b.err)?;
 
     Ok(PlacementPlan {
         footprint: Footprint::Free { w, d },
@@ -209,9 +214,10 @@ impl<'a> RectCtx<'a> {
         d: u8,
         margin: f32,
         free_cells: &[cp_zone::ZoneCellRef],
-    ) -> Result<(), BuildingError> {
+    ) -> Result<(), Block> {
         let (zones, terrain, tiles) = (self.zones, self.terrain, self.tiles);
         let quad = footprint_quad(pos, rot, w, d);
+        let fail = |err: BuildingError, at: Vec2| Err(Block { err, at });
 
         // Sample lattice in the rectangle's own frame, `SAMPLE_M` apart, corners included.
         let (nu, nv) = (
@@ -228,13 +234,13 @@ impl<'a> RectCtx<'a> {
             .collect();
 
         if let Some(tiles) = tiles
-            && !samples.iter().all(|&p| tiles.contains_point(p))
+            && let Some(&p) = samples.iter().find(|&&p| !tiles.contains_point(p))
         {
-            return Err(BuildingError::NotOwned);
+            return fail(BuildingError::NotOwned, p);
         }
         if let Some(terrain) = terrain {
-            if samples.iter().any(|&p| terrain.is_water(p)) {
-                return Err(BuildingError::Water);
+            if let Some(&p) = samples.iter().find(|&&p| terrain.is_water(p)) {
+                return fail(BuildingError::Water, p);
             }
             let h: Vec<f32> = samples.iter().map(|&p| terrain.height(p)).collect();
             let steep = |a: usize, b: usize, dist: f32| (h[a] - h[b]).abs() > MAX_CELL_SLOPE * dist;
@@ -242,10 +248,10 @@ impl<'a> RectCtx<'a> {
                 for i in 0..nu {
                     let k = j * nu + i;
                     if i + 1 < nu && steep(k, k + 1, ax.length() / (nu - 1) as f32) {
-                        return Err(BuildingError::TooSteep);
+                        return fail(BuildingError::TooSteep, samples[k]);
                     }
                     if j + 1 < nv && steep(k, k + nu, ay.length() / (nv - 1) as f32) {
-                        return Err(BuildingError::TooSteep);
+                        return fail(BuildingError::TooSteep, samples[k]);
                     }
                 }
             }
@@ -254,11 +260,17 @@ impl<'a> RectCtx<'a> {
         let (lo, hi) = quad_aabb(&quad);
         for (pts, half) in &self.roads {
             let reach = half + margin;
-            if pts
+            if let Some(p) = pts
                 .windows(2)
-                .any(|p| quad_segment_distance(&quad, p[0], p[1]) < reach)
+                .find(|p| quad_segment_distance(&quad, p[0], p[1]) < reach)
             {
-                return Err(BuildingError::Road);
+                // The point of the offending piece of road nearest the rectangle's centre.
+                let near = if p[0].distance(pos) <= p[1].distance(pos) {
+                    p[0]
+                } else {
+                    p[1]
+                };
+                return fail(BuildingError::Road, near);
             }
         }
 
@@ -268,7 +280,7 @@ impl<'a> RectCtx<'a> {
                 continue;
             }
             if quads_overlap(&quad, other) {
-                return Err(BuildingError::Blocked);
+                return fail(BuildingError::Blocked, (other[0] + other[2]) * 0.5);
             }
         }
         // A cell of a lot that is held by a building no longer in the list (rebinding lots).
@@ -276,15 +288,21 @@ impl<'a> RectCtx<'a> {
         for cell in zones.cells_within(pos, reach) {
             if zones.is_occupied(cell)
                 && !free_cells.contains(&cell)
-                && zones
-                    .cell_footprint(cell)
-                    .is_some_and(|o| quads_overlap(&quad, &o.corners()))
+                && let Some(o) = zones.cell_footprint(cell)
+                && quads_overlap(&quad, &o.corners())
             {
-                return Err(BuildingError::Blocked);
+                return fail(BuildingError::Blocked, o.c);
             }
         }
         Ok(())
     }
+}
+
+/// Why a rectangle cannot stand, and where on the map: the tool draws a mark there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Block {
+    pub err: BuildingError,
+    pub at: Vec2,
 }
 
 /// Hands the rectangles of the free-standing buildings to the zone grid as obstacles. Does

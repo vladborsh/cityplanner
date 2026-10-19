@@ -15,11 +15,13 @@ pub mod spawn;
 
 pub use command::{
     BuildingCommand, BuildingError, Clearance, MOVE_COST_FRACTION, Placed, PlacementPlan, apply,
-    apply_placed, is_growable, oriented_lot, platform_request, platform_request_behind,
-    platform_shift, validate_placement, validate_placement_except, validate_placement_for,
-    validate_placement_over,
+    apply_placed, edge_blocker, is_growable, oriented_lot, platform_request,
+    platform_request_behind, platform_shift, validate_placement, validate_placement_except,
+    validate_placement_for, validate_placement_over,
 };
-pub use edge::{EDGE_REACH_M, SLIDE_M, is_edge_placed, validate_edge_placement};
+pub use edge::{
+    EDGE_REACH_M, EdgeBlocked, SLIDE_M, edge_search, is_edge_placed, validate_edge_placement,
+};
 pub use free::{
     ROAD_CLEARANCE_M, is_free_standing, sync_blockers, validate_free_placement,
     validate_free_placement_except, validate_free_placement_ignoring,

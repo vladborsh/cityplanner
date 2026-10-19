@@ -132,7 +132,7 @@ pub fn error_text(e: &BuildingError, site: ServiceSite) -> String {
             ServiceSite::SHORE_REACH_M
         ),
         (BuildingError::Water, _) => "water here: this building goes on land only".to_string(),
-        (BuildingError::Road, _) => "too close to a road: keep 1 m clear of its edge".to_string(),
+        (BuildingError::Road, _) => "a road is in the way".to_string(),
         (BuildingError::TooSteep, _) => "ground too steep: 25 % at most".to_string(),
         _ => e.to_string(),
     }
@@ -157,6 +157,9 @@ pub struct PlacementGhost {
     pub access: Option<cp_building::AccessPoint>,
     /// The zoned buildings the placement would demolish, in id order (T-252); drawn red.
     pub demolish: Vec<BuildingId>,
+    /// Where the blocker is when the placement is refused (T-267): the tool draws a red cross
+    /// there.
+    pub error_at: Option<Vec2>,
     /// `(residents, jobs)` in [`Self::demolish`]: the app fills it from the sim (the view has no
     /// citizens), `None` until then.
     pub evicted: Option<(u32, u32)>,
@@ -347,6 +350,7 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
                 access: None,
                 demolish: Vec::new(),
                 evicted: None,
+                error_at: None,
                 error: Some(error_text(
                     &e,
                     db.building(def)
@@ -527,14 +531,42 @@ fn edge_preview(
                 ..Default::default()
             }
         }
-        Err(e) => PlacementGhost {
-            error: Some(match e {
-                BuildingError::Road => "a road is in the way".to_string(),
-                BuildingError::Blocked => "another building is in the way".to_string(),
-                e => error_text(&e, ServiceSite::Land),
-            }),
-            ..Default::default()
-        },
+        Err(e) => {
+            // Never one cell: the whole rectangle where it would stand, in red, and a cross
+            // where it is blocked.
+            let blocked = cp_building::edge_blocker(
+                db,
+                &view.zones,
+                &view.net,
+                &view.buildings,
+                view.terrain.as_deref(),
+                Some(&view.tiles),
+                def,
+                hover,
+                tool.rot(),
+                tool.moving,
+            );
+            let free = blocked
+                .as_ref()
+                .and_then(|b| b.rect)
+                .map(|polygon| FreeGhost {
+                    pos: (polygon[0] + polygon[2]) * 0.5,
+                    rot: 0.0,
+                    polygon,
+                    hint: None,
+                    edge: true,
+                });
+            PlacementGhost {
+                error: Some(match e {
+                    BuildingError::Road => "a road is in the way".to_string(),
+                    BuildingError::Blocked => "another building is in the way".to_string(),
+                    e => error_text(&e, ServiceSite::Land),
+                }),
+                free,
+                error_at: blocked.and_then(|b| b.at),
+                ..Default::default()
+            }
+        }
     }
 }
 
@@ -613,6 +645,28 @@ mod tests {
         assert_eq!(far.error.as_deref(), Some("must be next to a road"));
         assert!(preview(&view, &BuildingTool::default(), near).is_none());
         let _ = &mut sim;
+    }
+
+    /// T-267: a refusal is never one cell: the whole 3 x 3 footprint in red where the plant would
+    /// stand, and a cross where it is blocked.
+    #[test]
+    fn a_refused_service_ghost_shows_the_whole_footprint_and_the_blocker() {
+        let (mut sim, c) = sim();
+        sim.world_mut().insert_resource(TileOwnership::none());
+        let tool = BuildingTool {
+            def: c.building_id("coal_power_plant"),
+            quarters: 0,
+            free_rot: 0.0,
+            moving: None,
+        };
+        let view = sim.view();
+        let g = preview(&view, &tool, Vec2::new(3100.0, 3012.0)).unwrap();
+        assert!(!g.valid);
+        assert_eq!(g.error.as_deref(), Some("tile not owned"));
+        let f = g.free.expect("the footprint");
+        let (lo, hi) = cp_zone::geom::quad_aabb(&f.polygon);
+        assert!((hi.x - lo.x - 24.0).abs() < 0.1 && (hi.y - lo.y - 24.0).abs() < 0.1);
+        assert!(g.error_at.is_some() && g.cells.is_empty());
     }
 
     #[test]
@@ -875,7 +929,7 @@ mod tests {
             g.error.unwrap()
         };
         // On the road.
-        assert!(err(&mut sim, Vec2::new(5100.0, 5003.0)).contains("too close to a road"));
+        assert!(err(&mut sim, Vec2::new(5100.0, 5003.0)).contains("road"));
         // On a tile that is not owned.
         sim.world_mut().insert_resource(TileOwnership::only((0, 0)));
         assert_eq!(err(&mut sim, Vec2::new(5100.0, 5100.0)), "tile not owned");

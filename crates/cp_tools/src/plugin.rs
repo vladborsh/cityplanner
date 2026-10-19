@@ -1454,6 +1454,13 @@ fn draw_ghost(
         if let Some(f) = &g.free {
             draw_free(view, f, color, &mut on_top);
         }
+        // Where the placement is blocked (T-267): a red cross on the map.
+        if let Some(m) = g.error_at {
+            let y = view.terrain.as_deref().map_or(0.0, |t| t.height(m)) + 0.8;
+            let at = |dx: f32, dz: f32| Vec3::new(m.x + dx, y, m.y + dz);
+            on_top.line(at(-3.0, -3.0), at(3.0, 3.0), color);
+            on_top.line(at(-3.0, 3.0), at(3.0, -3.0), color);
+        }
         // The zoned buildings it would demolish (T-252); cp_render tints them whole.
         for b in g.demolish.iter().filter_map(|id| view.buildings.get(*id)) {
             let cells = cp_building::held_cells(&view.zones, b);

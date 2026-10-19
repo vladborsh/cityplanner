@@ -33,7 +33,7 @@ use cp_zone::{ROAD_EPS, ZoneCellRef, ZoneGrid};
 use crate::command::{BuildingError, PlacementPlan, oriented_lot};
 use crate::free::RectCtx;
 use crate::grid::BuildingGrid;
-use crate::model::{AccessPoint, BuildingId, FOOTPRINT_CELL_M, Footprint};
+use crate::model::{AccessPoint, BuildingId, FOOTPRINT_CELL_M, Footprint, footprint_quad};
 
 /// How far from the cursor a road's edge may be for the building to stand there, metres (C:S
 /// snaps to the nearest edge within 52 m).
@@ -118,16 +118,52 @@ pub fn validate_edge_placement(
     ignore: &[BuildingId],
     free_cells: &[ZoneCellRef],
 ) -> Result<PlacementPlan, BuildingError> {
+    edge_search(
+        db, zones, net, buildings, terrain, tiles, def, cursor, rot, ignore, free_cells,
+    )
+    .map_err(|b| b.err)
+}
+
+/// A placement that found no place: the error, the rectangle of the candidate nearest the cursor
+/// (where the building would stand if it could, for the tool to draw in red) and where the
+/// blocker is. Both are `None` when no road edge is within reach.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EdgeBlocked {
+    pub err: BuildingError,
+    pub rect: Option<[Vec2; 4]>,
+    pub at: Option<Vec2>,
+}
+
+/// [`validate_edge_placement`], with what a refusal looks like on the map.
+#[allow(clippy::too_many_arguments)]
+pub fn edge_search(
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+    terrain: Option<&Terrain>,
+    tiles: Option<&TileOwnership>,
+    def: BuildingDefId,
+    cursor: Vec2,
+    rot: f32,
+    ignore: &[BuildingId],
+    free_cells: &[ZoneCellRef],
+) -> Result<PlacementPlan, EdgeBlocked> {
+    let bare = |err| EdgeBlocked {
+        err,
+        rect: None,
+        at: None,
+    };
     if !cp_core::sane_point(cursor) || !rot.is_finite() || rot.abs() > 1.0e4 {
-        return Err(BuildingError::BadCoordinates);
+        return Err(bare(BuildingError::BadCoordinates));
     }
     let def_ref = db.building(def);
     if !is_edge_placed(db, def) {
-        return Err(BuildingError::NotPlaceable);
+        return Err(bare(BuildingError::NotPlaceable));
     }
     let (w, d) = oriented_lot(def_ref, rot);
     if w == 0 || d == 0 {
-        return Err(BuildingError::DoesNotFit);
+        return Err(bare(BuildingError::DoesNotFit));
     }
     let (along_m, depth_m) = (
         f32::from(w) * FOOTPRINT_CELL_M,
@@ -154,7 +190,7 @@ pub fn validate_edge_placement(
         roads.push((id, seg.order));
     }
     if roads.is_empty() {
-        return Err(BuildingError::NoRoad);
+        return Err(bare(BuildingError::NoRoad));
     }
 
     let mm = |v: f32| (v * 1000.0).round() as i64;
@@ -226,7 +262,7 @@ pub fn validate_edge_placement(
         }
     }
 
-    let mut first: Option<BuildingError> = None;
+    let mut first: Option<EdgeBlocked> = None;
     for list in [&mut flush, &mut pushed] {
         list.sort_by_key(|c| c.key);
         for c in list.iter() {
@@ -243,11 +279,15 @@ pub fn validate_edge_placement(
                         cost: Cost::from_units(def_ref.cost),
                     });
                 }
-                Err(e) => {
-                    first.get_or_insert(e);
+                Err(b) => {
+                    first.get_or_insert(EdgeBlocked {
+                        err: b.err,
+                        rect: Some(footprint_quad(c.centre, c.rot, w, d)),
+                        at: Some(b.at),
+                    });
                 }
             }
         }
     }
-    Err(first.unwrap_or(BuildingError::NoRoad))
+    Err(first.unwrap_or_else(|| bare(BuildingError::NoRoad)))
 }

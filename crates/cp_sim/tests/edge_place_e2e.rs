@@ -230,3 +230,89 @@ fn an_old_service_on_cells_that_is_moved_becomes_a_rectangle_and_frees_its_cells
         "the old cells are free"
     );
 }
+
+/// A T: a street along x at z = 3000 and one going north from its middle (3100, 3000..3200).
+fn t_junction() -> SimRunner {
+    let mut sim = town(&[3000.0]);
+    let db = content();
+    let road = db.road_id("basic_2l").unwrap();
+    sim.world_mut()
+        .resource_mut::<NetGraph>()
+        .add_segment(
+            db.road(road),
+            road,
+            CubicBezier3::line(
+                Vec3::new(3100.0, 0.0, 3000.0),
+                Vec3::new(3100.0, 0.0, 3200.0),
+            ),
+            Elevation::Ground,
+        )
+        .unwrap();
+    sim.tick_once();
+    sim
+}
+
+/// The user's case: the very corner cell of a block at a T. A 1 x 1 free-standing prop and a
+/// free-standing water tower stand there flush against both streets (they used to keep 1 m
+/// clear, and an 8 m cell between two edges has no room for that), and so does a service at the
+/// road edge.
+#[test]
+fn the_corner_cell_of_a_block_takes_free_standing_buildings_and_a_service() {
+    let mut sim = t_junction();
+    let db = content();
+    // The corner cell north-east of the junction: edges at x = 3106 and z = 3006, 8 m cells.
+    let corner = Vec2::new(3110.0, 3010.0);
+    let w = sim.world();
+    let (zones, net, buildings) = (
+        w.resource::<ZoneGrid>(),
+        w.resource::<NetGraph>(),
+        w.resource::<BuildingGrid>(),
+    );
+    for name in ["prop_bench", "prop_statue"] {
+        let def = db.building_id(name).unwrap();
+        let plan = cp_building::validate_placement_for(
+            &db,
+            zones,
+            net,
+            buildings,
+            None,
+            None,
+            def,
+            corner,
+            0.0,
+            &[],
+            &[],
+        )
+        .unwrap_or_else(|e| panic!("{name} in the corner: {e:?}"));
+        assert!(matches!(plan.footprint, Footprint::Free { .. }), "{name}");
+        // Where the user put it: the cell at the corner, not pushed away.
+        assert!(plan.pos.distance(corner) < 4.5, "{name} at {:?}", plan.pos);
+    }
+    // The services at the road edge: the fire station (3 x 2) in the same corner.
+    place(&mut sim, "fire_station", corner).expect("a service in the corner");
+}
+
+/// The user's scene: the coal power plant (3 x 3, a service at the road edge) with the cursor on
+/// the very corner cell of a block at a T. It stands in the corner, its two sides flush against
+/// the edges of both streets (it slides there from the cursor), not 1 m away and not refused.
+#[test]
+fn the_coal_plant_goes_flush_into_the_corner_of_a_block_at_a_t() {
+    let mut sim = t_junction();
+    let corner = Vec2::new(3110.0, 3010.0);
+    place(&mut sim, "coal_power_plant", corner).expect("the plant in the corner");
+    let g = sim.world().resource::<BuildingGrid>();
+    let (_, b) = g.iter().next().unwrap();
+    assert!(matches!(b.footprint, Footprint::Free { w: 3, d: 3 }));
+    // Edges of the streets: x = 3100 + 6 and z = 3000 + 6; the plant is 24 m square in that corner.
+    let q = b.footprint_polygon();
+    let (lo, hi) = cp_zone::geom::quad_aabb(&q);
+    assert!(
+        (lo.x - 3106.0).abs() < 0.06 && (lo.y - 3006.0).abs() < 0.06,
+        "{lo:?}"
+    );
+    assert!(
+        (hi.x - 3130.0).abs() < 0.06 && (hi.y - 3030.0).abs() < 0.06,
+        "{hi:?}"
+    );
+    assert!(b.access().is_some());
+}
