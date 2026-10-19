@@ -113,7 +113,9 @@ fn compute_strip(view: &SimView, plan: &RoadBuildPlan) -> ZoneStrip {
         let _ = strip.marks;
     }
     // Ticks: the 8-cell lines of the frontages near the plan (T-265, the layout's own cell
-    // lines), each across its band of cells.
+    // lines), each across its band of cells at the centreline of a cross street of the tool's
+    // road whose near edge stands on the line.
+    let width = content.road(plan.road).width;
     let reach = inflate_bounds(region, 150.0);
     let near: Vec<cp_net::SegmentId> = after
         .segments()
@@ -133,7 +135,8 @@ fn compute_strip(view: &SimView, plan: &RoadBuildPlan) -> ZoneStrip {
             continue;
         };
         let hw = content.road(seg.road).width / 2.0;
-        let tick = [m.axis + m.v * hw, m.axis + m.v * (hw + 8.0 * CELL_SIZE)];
+        let at = m.axis + m.onward * (width / 2.0);
+        let tick = [at + m.v * hw, at + m.v * (hw + 8.0 * CELL_SIZE)];
         if !out.ticks.iter().any(|o| o[0].distance(tick[0]) < 0.05) {
             out.ticks.push(tick);
         }

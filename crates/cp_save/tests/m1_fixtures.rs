@@ -7,6 +7,12 @@
 //! by the traffic domain); the jam's 850 trips are sent by `scenario::send_citizens` so the
 //! jam does not depend on the time of day.
 //!
+//! **T-265 (save v56).** The two `load + 4096 ticks` pins moved (state at load unchanged; m1-small
+//! `0x6c42_58e8_6c3a_1c82` -> `0x1d1d_738b_b593_f82b`, m1-traffic `0xaa4e_e438_e778_9fd5` -> `0xbde9_5954_3245_1935`): both fixtures
+//! are older than format 56, so their zone blocks are laid again on load by layout v3 (8 m cells,
+//! never stretched; a rest under 8 m at a block end has no cell), which changes the free lots the
+//! city grows on.
+//!
 //! **T-263.** The two `load + 4096 ticks` pins moved (state at load unchanged; m1-small
 //! `0x3c26_0063_288f_0a41` -> `0x6c42_58e8_6c3a_1c82`, m1-traffic `0x42c0_63ee_1822_fa0c` ->
 //! `0xaa4e_e438_e778_9fd5`): node geometry v2 feeds the lane connections, which start and end
@@ -227,7 +233,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     assert_eq!(sim.checksum(), 0x68b91d63fd51a77a, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x6c4258e86c3a1c82,
+        0x1d1d738bb593f82b,
         "load + 4096 ticks"
     );
 }
@@ -261,7 +267,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0xaa4ee438e7789fd5, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0xbde9595432451935, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

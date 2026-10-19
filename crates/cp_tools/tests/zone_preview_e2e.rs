@@ -208,8 +208,9 @@ fn a_block_built_on_the_guides_is_one_clean_8_by_8_grid() {
     assert_eq!(inside.len(), 64, "no two cells on top of each other");
 }
 
-/// BUG-073: the ticks of a ghost are one series along the street, the centrelines of its cross
-/// streets, drawn at the same station on both sides: `k*64 + (k-1)*W + W/2` from the start.
+/// BUG-073, T-265: the ticks of a ghost stand at the centrelines of cross streets whose near
+/// edge is an 8-cell line of the street's cells, at the same station on both sides: `k*64 + W/2`
+/// from the start (a cross street once built starts the next 8 cells at its far edge).
 #[test]
 fn the_ticks_are_one_series_at_the_stations_of_the_cross_streets() {
     let (sim, db) = sim();
@@ -218,8 +219,9 @@ fn the_ticks_are_one_series_at_the_stations_of_the_cross_streets() {
     let ghost = compute_ghost(&view, &tool(&db, a), b).expect("a ghost");
     assert!(ghost.valid, "{:?}", ghost.errors);
     let w = db.road(db.road_id("basic_2l").unwrap()).width;
-    // 200 m open street: the 1st and 2nd cross street fit (222 m for the 3rd does not).
-    assert_eq!(ghost.zone.ticks.len(), 4, "{:?}", ghost.zone.ticks);
+    // 200 m open street, 25 cells: an 8-cell line after 8, 16 and 24 cells on each side, where a
+    // cross street's near edge leaves 8 cells (T-265: the street's cell lines as laid now).
+    assert_eq!(ghost.zone.ticks.len(), 6, "{:?}", ghost.zone.ticks);
     for side in [-1.0f32, 1.0] {
         let mut xs: Vec<f32> = ghost
             .zone
@@ -229,8 +231,8 @@ fn the_ticks_are_one_series_at_the_stations_of_the_cross_streets() {
             .map(|t| t[0].x - a.x)
             .collect();
         xs.sort_by(f32::total_cmp);
-        let want = [64.0 + w / 2.0, 128.0 + w + w / 2.0];
-        assert_eq!(xs.len(), 2, "{xs:?}");
+        let want = [64.0 + w / 2.0, 128.0 + w / 2.0, 192.0 + w / 2.0];
+        assert_eq!(xs.len(), 3, "{xs:?}");
         for (x, e) in xs.iter().zip(want) {
             assert!((x - e).abs() < 0.05, "side {side}: {xs:?}, want {want:?}");
         }
@@ -262,7 +264,6 @@ fn every_zonable_road_type_has_8_cells_between_cross_streets_at_every_length() {
         "medium_1w_3l",
         "large_6l",
     ] {
-        let w = db.road(db.road_id(road).unwrap()).width;
         let mut len = 120.0f32;
         while len <= 330.0 {
             let ghost = compute_ghost(&view, &tool_of(&db, road, a), a + Vec2::new(len, 0.0));
@@ -281,11 +282,11 @@ fn every_zonable_road_type_has_8_cells_between_cross_streets_at_every_length() {
                     .collect();
                 ticks.sort_by(f32::total_cmp);
                 for t in ticks.windows(2) {
-                    // A block of 8 cells (64 m) between the far edge of one cross street and the
-                    // near edge of the next.
-                    if (t[1] - t[0] - (64.0 + w)).abs() > 0.05 {
+                    // The 8-cell lines of the street as laid now, 64 m apart (T-265: once a cross
+                    // street is built, the cells beyond it count from its far edge again).
+                    if (t[1] - t[0] - 64.0).abs() > 0.05 {
                         bad.push(format!(
-                            "{road} len {len} side {side}: ticks {t:?} are not 64 m + {w} apart"
+                            "{road} len {len} side {side}: ticks {t:?} are not 64 m apart"
                         ));
                     }
                 }
@@ -549,15 +550,10 @@ fn a_ghost_from_a_bend_a_t_or_a_crossing_has_the_same_ticks_on_both_sides() {
     let n = Vec2::new(4600.0, 4600.0);
     for street in ["basic_2l", "medium_4l"] {
         for tool_road in ["basic_2l", "medium_4l"] {
-            // (streets built before, ghost direction)
-            let layouts: [(&str, Vec<(Vec2, Vec2)>); 3] = [
-                (
-                    "bend",
-                    vec![
-                        (n + Vec2::new(-200.0, 0.0), n),
-                        (n, n + Vec2::new(0.0, -200.0)),
-                    ],
-                ),
+            // (streets built before, ghost direction). Not a bend: a ghost leaving a bend makes
+            // it a T whose through side runs on from the street before (T-265), so that side's
+            // ticks count from that street's start, not opposite the other side's.
+            let layouts: [(&str, Vec<(Vec2, Vec2)>); 2] = [
                 (
                     "T",
                     vec![(n + Vec2::new(0.0, -200.0), n + Vec2::new(0.0, 200.0))],
@@ -572,7 +568,7 @@ fn a_ghost_from_a_bend_a_t_or_a_crossing_has_the_same_ticks_on_both_sides() {
             ];
             for (name, builds) in layouts {
                 for to in [Vec2::new(250.0, 0.0), Vec2::new(0.0, 250.0)] {
-                    if to.y > 0.0 && name != "bend" {
+                    if to.y > 0.0 {
                         continue;
                     }
                     let (mut sim, db) = sim();

@@ -100,9 +100,12 @@ fn the_v45_fixture_is_laid_out_again_and_keeps_its_paint_and_buildings() {
             _ => {}
         }
     }
+    // Since T-265 (layout v3, laid again on load) the rest of a block side under 8 m has no cell
+    // (16 of 652 painted points; v2 stretched the cells over it).
     assert!(
-        no_cell <= 5 && stray * 50 <= painted.len(),
-        "{no_cell} no cell, {stray} stray"
+        no_cell * 25 <= painted.len() && stray * 50 <= painted.len(),
+        "{no_cell} no cell, {stray} stray of {}",
+        painted.len()
     );
     assert!(
         kept * 3 >= painted.len() * 2,

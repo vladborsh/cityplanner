@@ -67,11 +67,13 @@ fn summary(sim: &mut SimRunner) -> (usize, [u32; 8], usize, usize) {
 fn the_v18_fixture_and_the_m1_fixtures_run_as_before_the_footprint_change() {
     // BUG-042: one building of m1-small gained a source in reach (140 -> 139). Recorded with the code of the commit before the change (v18 reader). BUG-036: v18-basic
     // lost power in 35 buildings then; power now passes edge to edge, so none lacks it.
+    // T-265: m1-small's blocks are laid again in 8 m cells on load (format 56); every building
+    // stays, two fewer grow in the 256 ticks (200 -> 198).
     for (name, expect) in [
         ("v18-basic.sav", (48, [46, 0, 0, 0, 0, 46, 0, 0], 233, 81)),
         (
             "m1-small.sav",
-            (200, [192, 139, 0, 0, 0, 192, 0, 0], 1899, 630),
+            (198, [192, 139, 0, 0, 0, 192, 0, 0], 1899, 630),
         ),
         (
             "m1-traffic.sav",
