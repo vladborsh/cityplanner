@@ -31,7 +31,8 @@ pub use graph::{
     Violation,
 };
 pub use junction::{
-    Arm, Junction, JunctionGeometry, compute_junction, refresh_geometry, update_junctions,
+    Arm, ArmPath, FLAT_GAP_DEG, Junction, JunctionGeometry, MIDDLE_DEG, NodeClass, SideLine,
+    TRANSITION_LEN, compute_junction, refresh_geometry, side_line, update_junctions,
 };
 pub use model::*;
 pub use plan::{Anchor, BuildPlan, PlanPiece};

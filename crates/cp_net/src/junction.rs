@@ -53,6 +53,7 @@ use crate::connections::{Links, compute_links};
 use crate::control::{ControlPlan, auto_control, plan_control};
 use crate::graph::NetGraph;
 use crate::model::{NodeId, SegmentId};
+pub use shape::{ArmPath, MIDDLE_DEG, NodeClass, SideLine, TRANSITION_LEN, side_line};
 
 /// Longest setback, metres.
 pub const MAX_SETBACK: f32 = 60.0;
@@ -65,9 +66,7 @@ const CORNER_SNAP: f32 = 0.01;
 /// Width used for a segment without lanes, metres.
 pub const DEFAULT_WIDTH: f32 = 8.0;
 /// Angular gaps of at least this (degrees) do not form a road corner.
-const FLAT_GAP_DEG: f32 = 150.0;
-/// Gaps wider than this get an extra outer corner point in the polygon.
-const OUTER_GAP_DEG: f32 = 210.0;
+pub const FLAT_GAP_DEG: f32 = 150.0;
 
 /// One segment end at a junction.
 #[derive(Clone, Debug, PartialEq)]
@@ -93,6 +92,8 @@ pub struct Arm {
 pub struct Junction {
     pub node: NodeId,
     pub pos: Vec3,
+    /// What the node is to the renderer (T-263).
+    pub class: NodeClass,
     /// Arms sorted counter-clockwise by angle.
     pub arms: Vec<Arm>,
     /// Counter-clockwise polygon (XZ); empty for a node without segments.
@@ -255,36 +256,6 @@ fn raw_arms(graph: &NetGraph, node: NodeId) -> Option<(Vec2, Vec<Raw>, Vec<Raw>)
     Some((c, footpaths, raws))
 }
 
-/// Setback each road arm wants (where its edges meet the neighbours', uncapped by the segment
-/// length) and whether it is *hard*: an arm of a real junction (three or more arms, or a
-/// bend) needs it for its corners to meet; a dead end or a straight join only for a tidy
-/// patch, so it gives way on a short segment.
-fn wanted_setbacks(raws: &[Raw]) -> Vec<(f32, bool)> {
-    let k = raws.len();
-    raws.iter()
-        .enumerate()
-        .map(|(i, r)| {
-            let h = r.width * 0.5;
-            if k < 2 {
-                return (h.min(MAX_SETBACK), false);
-            }
-            let next = &raws[(i + 1) % k];
-            let prev = &raws[(i + k - 1) % k];
-            let ccw_gap = (next.angle - r.angle).rem_euclid(std::f32::consts::TAU);
-            let cw_gap = (r.angle - prev.angle).rem_euclid(std::f32::consts::TAU);
-            // With two arms both gaps are measured to the same neighbour.
-            let gap = |g: f32| if g == 0.0 { std::f32::consts::TAU } else { g };
-            let (ccw, cw) = (gap(ccw_gap), gap(cw_gap));
-            let s = h
-                .max(corner_distance(h, next.width * 0.5, ccw))
-                .max(corner_distance(h, prev.width * 0.5, cw));
-            let flat = FLAT_GAP_DEG.to_radians();
-            let hard = k >= 3 || ccw < flat || cw < flat;
-            (s.min(MAX_SETBACK), hard)
-        })
-        .collect()
-}
-
 /// The setback of one end of a segment of `length` that wants `me` while its other end wants
 /// `other` (`(setback, hard)` each). The two ends share [`MAX_SETBACK_FRACTION`] of the length
 /// each, `2 ×` it together: when both wants fit they are kept; otherwise a hard end keeps its
@@ -321,9 +292,12 @@ fn wanted_at_other_end(graph: &NetGraph, r: &Raw) -> (f32, bool) {
         return (0.0, false);
     };
     let other = if r.at_start { seg.end } else { seg.start };
+    let Some(pos) = graph.node(other).map(|n| n.pos) else {
+        return (0.0, false);
+    };
     raw_arms(graph, other)
         .and_then(|(_, _, raws)| {
-            let wants = wanted_setbacks(&raws);
+            let (_, wants) = shape::class_and_wants(graph, pos, &raws);
             raws.iter()
                 .zip(wants)
                 .find(|(o, _)| o.segment == r.segment && o.at_start != r.at_start)
@@ -338,7 +312,7 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
     let (c, mut footpaths, raws) = raw_arms(graph, node)?;
     let edge = raws.iter().map(|r| r.width * 0.5).fold(0.0f32, f32::max);
     let k = raws.len();
-    let wants = wanted_setbacks(&raws);
+    let (class, wants) = shape::class_and_wants(graph, n.pos, &raws);
     let mut arms = Vec::with_capacity(k);
     // Corners relative to the node centre: the meeting corners of two neighbouring arms are
     // snapped together here, before the (large) map position is added, so they are the very
@@ -354,8 +328,14 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
             let along = if r.at_start { s } else { tab.length() - s };
             tab.s_to_t(along)
         };
-        let l = rot_ccw(r.dir);
-        local.push((r.dir * s - l * h, r.dir * s + l * h));
+        // The corners lie on the real curve at the cut, square to it (T-263).
+        let at = to_xz(seg.curve.point(trim_t)) - c;
+        let t = to_xz(seg.curve.tangent(trim_t));
+        let out = if r.at_start { t } else { -t }
+            .try_normalize()
+            .unwrap_or(r.dir);
+        let l = rot_ccw(out);
+        local.push((at - l * h, at + l * h));
         arms.push(Arm {
             segment: r.segment,
             at_start: r.at_start,
@@ -366,6 +346,14 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
             right: Vec2::ZERO,
             left: Vec2::ZERO,
         });
+    }
+    if class == NodeClass::Middle {
+        // One end line through the node, on the bisector, mitred to keep the road's width.
+        let (na, nb) = (rot_ccw(raws[0].dir), rot_ccw(raws[1].dir));
+        let m = (na - nb).try_normalize().unwrap_or(na);
+        let reach = raws[0].width * 0.5 / m.dot(na).max(0.5);
+        local[0] = (-m * reach, m * reach);
+        local[1] = (m * reach, -m * reach);
     }
     if k >= 2 {
         for i in 0..k {
@@ -380,54 +368,35 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
         a.left = c + *left;
     }
 
-    let polygon = match k {
-        0 => Vec::new(),
-        1 => {
-            let a = &arms[0];
+    let mut j = Junction {
+        node,
+        pos: n.pos,
+        class,
+        arms,
+        polygon: Vec::new(),
+        links: Links::default(),
+        control: ControlPlan::default(),
+        revision,
+    };
+    j.polygon = match (class, k) {
+        (_, 0) | (NodeClass::Middle, _) => Vec::new(),
+        (_, 1) => {
+            let a = &j.arms[0];
             let (d, h) = (raws[0].dir, a.width * 0.5);
             let (s, l) = (a.setback, rot_ccw(d));
-            vec![
-                c + d * s - l * h,
-                c + d * s + l * h,
-                c - d * s + l * h,
-                c - d * s - l * h,
-            ]
+            vec![a.right, a.left, c - d * s + l * h, c - d * s - l * h]
         }
         _ => {
+            let round = class == NodeClass::Junction;
             let mut pts: Vec<Vec2> = Vec::new();
             for i in 0..k {
-                let (a, b) = (&arms[i], &arms[(i + 1) % k]);
+                let (a, b) = (&j.arms[i], &j.arms[(i + 1) % k]);
                 pts.push(a.right);
                 pts.push(a.left);
-                let gap = (b.angle - a.angle).rem_euclid(std::f32::consts::TAU);
-                let gap = if gap == 0.0 {
-                    std::f32::consts::TAU
-                } else {
-                    gap
-                };
-                if gap > OUTER_GAP_DEG.to_radians() {
-                    // Meet of a's left edge line and b's right edge line.
-                    let (da, db) = (raws[i].dir, raws[(i + 1) % k].dir);
-                    let cross = da.x * db.y - da.y * db.x;
-                    if cross.abs() > 1e-3 {
-                        let diff = b.right - a.left;
-                        let t = (diff.x * db.y - diff.y * db.x) / cross;
-                        pts.push(a.left + da * t);
-                    }
-                } else if gap > std::f32::consts::PI {
-                    // A reflex gap that is not wide enough for the edge lines to meet at a
-                    // sensible point: a straight chord from `a.left` to `b.right` cuts the node
-                    // out of the polygon when the setbacks are long (BUG-029). Then pass at the
-                    // road edge instead, on the bisector of the gap. A chord that keeps the
-                    // node inside (the straight join) is left alone.
-                    let chord = b.right - a.left;
-                    let inside = (chord.x * (c.y - a.left.y) - chord.y * (c.x - a.left.x))
-                        / chord.length().max(1e-3);
-                    if inside < 0.5 {
-                        let mid = a.angle + gap * 0.5;
-                        let reach = (a.width.max(b.width)) * 0.5;
-                        pts.push(c + Vec2::new(mid.cos(), mid.sin()) * reach);
-                    }
+                let line =
+                    shape::side_line(graph, &j, a, b, a.width * 0.5, b.width * 0.5, round).points();
+                if line.len() > 2 {
+                    pts.extend_from_slice(&line[1..line.len() - 1]);
                 }
             }
             let mut out: Vec<Vec2> = Vec::with_capacity(pts.len());
@@ -439,9 +408,24 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
             while out.len() > 1 && out[0].distance(out[out.len() - 1]) <= 1e-3 {
                 out.pop();
             }
-            out
+            // Points on a straight run between their neighbours, also across the closing point.
+            let mut s = shape::simplify(out);
+            let between = |a: Vec2, b: Vec2, c: Vec2| {
+                (b - a).perp_dot((c - a).normalize_or_zero()).abs() < 1e-4
+                    && (b - a).dot(c - b) > 0.0
+            };
+            while s.len() > 3 && between(s[s.len() - 2], s[s.len() - 1], s[0]) {
+                s.pop();
+            }
+            while s.len() > 3 && between(s[s.len() - 1], s[0], s[1]) {
+                s.remove(0);
+            }
+            s
         }
     };
+    let Junction {
+        mut arms, polygon, ..
+    } = j;
     // The polygon's arms; the footpaths join `arms` (for their trim and the pedestrian links).
     footpaths.sort_by(|a, b| a.angle.total_cmp(&b.angle).then(a.segment.cmp(&b.segment)));
     for r in &footpaths {
@@ -472,6 +456,7 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
     Some(Junction {
         node,
         pos: n.pos,
+        class,
         arms,
         polygon,
         links,
@@ -593,6 +578,8 @@ pub fn update_junctions(
     map.retain(|id, _| graph.node(*id).is_some());
     geo.version = version;
 }
+
+mod shape;
 
 #[cfg(test)]
 mod tests;

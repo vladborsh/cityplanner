@@ -203,6 +203,9 @@ fn connection_curve(from: &VLane, to: &VLane, uturn: bool) -> CubicBezier3 {
     let dist = from.end.distance(to.end);
     let h = if uturn {
         dist * 0.7 + 3.0
+    } else if dist < 0.5 {
+        // Lanes that run on through a `Middle` node (T-263) touch: no loop out and back.
+        dist / 3.0
     } else {
         (dist / 3.0).max(2.0)
     };

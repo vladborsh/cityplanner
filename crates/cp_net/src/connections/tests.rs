@@ -67,7 +67,8 @@ fn check(g: &NetGraph, j: &Junction) {
         );
         assert!(c.curve.tangent(0.0).dot(t0) > 0.999, "start tangent {i}");
         assert!(c.curve.tangent(1.0).dot(t1) > 0.999, "end tangent {i}");
-        assert!(c.length > 0.0);
+        // Lanes running on through a `Middle` node touch (T-263): the connection is a point.
+        assert!(c.length > 0.0 || j.class == crate::NodeClass::Middle);
     }
     // Conflicts: sorted, a < b, symmetric through in_conflict, never within one source lane.
     assert!(l.conflicts.windows(2).all(|w| w[0] < w[1]));

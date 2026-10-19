@@ -140,6 +140,13 @@ fn arm_rect(j: &Junction, a: &Arm) -> [Vec2; 4] {
 }
 
 fn check_junction(j: &Junction) {
+    if j.class == NodeClass::Middle {
+        // No node piece: the two ends share one end line (T-263).
+        assert!(j.polygon.is_empty());
+        let (a, b) = (&j.arms[0], &j.arms[1]);
+        assert_eq!((a.left, a.right), (b.right, b.left));
+        return;
+    }
     assert!(is_simple(&j.polygon), "self-intersecting: {:?}", rel(j));
     assert!(
         contains(&j.polygon, to_xz(j.pos)),
@@ -236,9 +243,14 @@ fn y_junction_keeps_arms_at_least_half_width_back() {
         ],
     );
     let j = compute_junction(&g, n, 1).unwrap();
+    assert_eq!(j.class, NodeClass::Junction);
     // t = (6 + 6 cos 120) / sin 120 = 3.46 < 6, so the half-width floor applies.
     assert!(j.arms.iter().all(|a| (a.setback - 6.0).abs() < 1e-3));
-    assert_eq!(j.polygon.len(), 6);
+    // Between two arms the outline is a curve from one arm's corner to the next (T-263): it
+    // stays inside the corners' distance from the node.
+    for p in rel(&j) {
+        assert!(p.length() <= 72f32.sqrt() + 1e-3, "{p:?}");
+    }
     check_junction(&j);
     // Arms come out sorted by angle: -150, -30, 90 degrees.
     let angles: Vec<i32> = j
@@ -284,17 +296,55 @@ fn bend_covers_the_outer_corner() {
     let (g, n, _) = star(&db, &[(0.0, 80.0, "basic_2l"), (90.0, 80.0, "basic_2l")]);
     assert_eq!(g.node(n).unwrap().kind, crate::model::NodeKind::Middle);
     let j = compute_junction(&g, n, 1).unwrap();
-    assert_poly(&j, &[(6.0, -6.0), (6.0, 6.0), (-6.0, 6.0), (-6.0, -6.0)]);
+    assert_eq!(j.class, NodeClass::Bend);
+    // The arms are cut where their inner edges meet: both ends share that corner.
+    assert!(j.arms.iter().all(|a| (a.setback - 6.0).abs() < 1e-3));
+    assert_eq!(j.arms[0].left, j.arms[1].right);
+    // The outside is a round join around the node: radius 6 from (0, -6) to (-6, 0).
+    let p = rel(&j);
+    assert!(p[0].distance(Vec2::new(6.0, -6.0)) < 1e-3, "{p:?}");
+    assert!(p[2].distance(Vec2::new(-6.0, 6.0)) < 1e-3, "{p:?}");
+    for q in &p[3..] {
+        let on_arc = q.x <= 1e-3 && q.y <= 1e-3 && (q.length() - 6.0).abs() < 1e-3;
+        let on_edge = (q.x + 6.0).abs() < 1e-3 || (q.y + 6.0).abs() < 1e-3;
+        assert!(on_arc || on_edge, "{q:?} in {p:?}");
+    }
     check_junction(&j);
 }
 
 #[test]
-fn straight_join_is_a_clean_patch() {
+fn straight_join_is_a_middle_node_with_one_end_line() {
     let db = content();
     let (g, n, _) = star(&db, &[(0.0, 80.0, "medium_4l"), (180.0, 80.0, "medium_4l")]);
     let j = compute_junction(&g, n, 1).unwrap();
-    // medium_4l is 19 m wide.
-    assert_poly(&j, &[(9.5, -9.5), (9.5, 9.5), (-9.5, 9.5), (-9.5, -9.5)]);
+    assert_eq!(j.class, NodeClass::Middle);
+    assert!(j.arms.iter().all(|a| a.setback == 0.0));
+    // medium_4l is 19 m wide; the end line runs across the node.
+    let c = to_xz(j.pos);
+    let ends = [j.arms[0].left - c, j.arms[0].right - c];
+    assert!(
+        ends.iter()
+            .all(|e| e.x.abs() < 1e-3 && (e.y.abs() - 9.5).abs() < 1e-3)
+    );
+    check_junction(&j);
+    // A slight kink is still a middle node: the end line is mitred to keep the width.
+    let (g, n, _) = star(&db, &[(0.0, 80.0, "medium_4l"), (172.0, 80.0, "medium_4l")]);
+    let j = compute_junction(&g, n, 1).unwrap();
+    assert_eq!(j.class, NodeClass::Middle);
+    let d = j.arms[0].left.distance(j.arms[0].right);
+    assert!((d - 19.0 / 4f32.to_radians().cos()).abs() < 1e-3, "{d}");
+    check_junction(&j);
+    // Two different roads are a transition, whatever the angle.
+    let (g, n, _) = star(&db, &[(0.0, 80.0, "medium_4l"), (180.0, 80.0, "basic_2l")]);
+    let j = compute_junction(&g, n, 1).unwrap();
+    assert_eq!(j.class, NodeClass::Transition);
+    let wide = j.arms.iter().find(|a| a.width > 15.0).unwrap();
+    let narrow = j.arms.iter().find(|a| a.width < 15.0).unwrap();
+    assert!(
+        (wide.setback - TRANSITION_LEN).abs() < 1e-3 && narrow.setback < 1e-3,
+        "{:?}",
+        j.arms
+    );
     check_junction(&j);
 }
 
@@ -430,8 +480,8 @@ fn system_recomputes_dirty_nodes_and_drops_removed_ones() {
     world.run_system_cached(update_junctions).unwrap();
     assert_eq!(world.resource::<JunctionGeometry>().version(), 1);
 
-    // Removing a segment dirties both its nodes: the junction shrinks to a bend and the
-    // far end node disappears.
+    // Removing a segment dirties both its nodes: the junction shrinks to a straight join and
+    // the far end node disappears.
     world
         .resource_mut::<NetGraph>()
         .remove_segment(segs[1])
@@ -443,7 +493,7 @@ fn system_recomputes_dirty_nodes_and_drops_removed_ones() {
     let j = geo.get(n).unwrap();
     assert_eq!(j.arms.len(), 2);
     assert_eq!(j.revision, 2);
-    assert_poly(j, &[(6.0, -6.0), (6.0, 6.0), (-6.0, 6.0), (-6.0, -6.0)]);
+    assert_eq!(j.class, NodeClass::Middle);
     // The far ends of its remaining segments are recomputed with it: their setbacks share
     // those segments' length (BUG-065).
     assert!(geo.iter().all(|(_, x)| x.revision == 2));
@@ -501,11 +551,17 @@ proptest! {
         let (g, n, _) = star(&db, &spec);
         let j = compute_junction(&g, n, 1).unwrap();
         prop_assert_eq!(j.arms.len(), arms.len());
+        if j.class == NodeClass::Middle {
+            return Ok(());
+        }
         prop_assert!(is_simple(&j.polygon), "self-intersecting: {:?}", rel(&j));
         prop_assert!(contains(&j.polygon, to_xz(j.pos)), "node outside {:?}", rel(&j));
         prop_assert!(area(&j.polygon) > 0.0);
         for (i, a) in j.arms.iter().enumerate() {
-            prop_assert!(a.setback >= a.width * 0.5 - 1e-3 && a.setback <= MAX_SETBACK + 1e-3);
+            // Junction arms keep at least half their width; a bend's are cut where the inner
+            // edges meet, a middle node's at the node (T-263).
+            let floor = if j.class == NodeClass::Junction { a.width * 0.5 - 1e-3 } else { 0.0 };
+            prop_assert!(a.setback >= floor && a.setback <= MAX_SETBACK + 1e-3);
             for b in &j.arms[i + 1..] {
                 let depth = penetration(&arm_rect(&j, a), &arm_rect(&j, b));
                 prop_assert!(depth < 0.1, "arms overlap by {}: {:?} {:?}", depth, a, b);
@@ -667,7 +723,9 @@ fn a_junction_next_to_a_straight_joint_keeps_its_setback() {
             short.setback,
             back.setback
         );
-        assert!(back.setback >= SOFT_SETBACK - 1e-3, "{road}");
+        // The joint is a middle node: its ends meet on the node (T-263).
+        assert_eq!(jj.class, NodeClass::Middle, "{road}");
+        assert_eq!(back.setback, 0.0, "{road}");
     }
 }
 

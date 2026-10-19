@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 08ede7d19a7f9985232ad4faa0522581c2138f655a0fca30bdeee3c40a00bd98 # shrinks to arms = [(0.0, 140.0, 0), (30.5, 140.0, 0)]
+cc bb6dc7f02160895d93634c3f55743b26d0025576e3b0833e41732afe0c465501 # shrinks to arms = [(0.0, 140.0, 0), (232.98718, 140.0, 0)]
