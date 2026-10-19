@@ -303,6 +303,7 @@ mod tests {
                 let mut root = crate::panels::root_ui(ui.ctx());
                 *pal = palette(&mut root, state, view.content.as_deref());
                 *panel = tool_panel(&mut root, state, Some(view), tools, overlay, outbox);
+                crate::panels::release_auto_overlay(state, tools, overlay);
             })
         }
 
@@ -1037,6 +1038,69 @@ mod tests {
         rig.click_label("Coal power plant");
         assert_eq!(rig.tools.active, ActiveTool::Place);
         assert_eq!(rig.overlay.active, Overlay::Power);
+    }
+
+    /// BUG-083: the layout a tool opened by itself goes when the player moves on to another
+    /// category or tool; the one the player picked stays; a service tool hands its coverage to
+    /// the next service tool.
+    #[test]
+    fn an_overlay_a_tool_opened_goes_with_the_tool() {
+        use cp_render::Overlay;
+        let mut rig = Rig::new();
+        rig.screen = egui::vec2(1280.0, 3000.0);
+        rig.click_category(Category::Buildings);
+        rig.click_label("Pipe");
+        assert_eq!(rig.tools.active, ActiveTool::Utility);
+        assert_eq!(rig.overlay.active, Overlay::Water);
+        assert!(rig.overlay.auto);
+        // To the Roads menu: the water layout goes.
+        rig.click_category(Category::Roads);
+        assert_eq!(rig.overlay.active, Overlay::Off);
+        // And with the Build tool of the roads, nothing comes back.
+        rig.click_label("Build");
+        assert_eq!(rig.tools.active, ActiveTool::Road);
+        assert_eq!(rig.overlay.active, Overlay::Off);
+    }
+
+    #[test]
+    fn an_overlay_the_player_opened_survives_a_tool_switch() {
+        use cp_render::Overlay;
+        let mut rig = Rig::new();
+        rig.screen = egui::vec2(1280.0, 3000.0);
+        rig.overlay.open(Overlay::Power);
+        rig.click_category(Category::Roads);
+        rig.click_label("Build");
+        assert_eq!(rig.tools.active, ActiveTool::Road);
+        assert_eq!(
+            rig.overlay.active,
+            Overlay::Power,
+            "the player's layout stays"
+        );
+        rig.click_category(Category::Buildings);
+        rig.click_label("Pipe");
+        // The pipe tool shows the water layout (its own); the player closes what is left.
+        assert_eq!(rig.overlay.active, Overlay::Water);
+        rig.click_category(Category::Roads);
+        assert_eq!(
+            rig.overlay.active,
+            Overlay::Off,
+            "now it is the tool's, and goes"
+        );
+    }
+
+    #[test]
+    fn a_service_tool_hands_its_coverage_to_the_next_service_tool() {
+        use cp_render::Overlay;
+        let mut rig = Rig::new();
+        rig.screen = egui::vec2(1280.0, 3000.0);
+        rig.click_category(Category::Buildings);
+        rig.click_label("Fire Station");
+        assert_eq!(rig.overlay.active, Overlay::Fire);
+        rig.click_label("Police Station");
+        assert_eq!(rig.overlay.active, Overlay::Police);
+        // Staying with the same tool changes nothing.
+        rig.frame(vec![]);
+        assert_eq!(rig.overlay.active, Overlay::Police);
     }
 
     #[test]

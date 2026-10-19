@@ -99,6 +99,69 @@ pub struct UiState {
     pub settings_open: bool,
     /// Slider drafts of the budget window.
     pub budget: crate::budget::BudgetDraft,
+    /// What an automatically opened overlay belongs to (BUG-083).
+    pub auto_overlay: AutoOverlay,
+}
+
+/// The category and tool an overlay that a tool opened by itself is tied to.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AutoOverlay {
+    /// The `OverlayState::auto_opens` this binding was made for.
+    seen: u32,
+    to: Option<(Option<Category>, ToolKey)>,
+}
+
+/// Which tool, and which of its things, is picked: switching between two service buildings or
+/// two networks is a switch of tool for the overlay.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct ToolKey {
+    active: ActiveTool,
+    building: Option<cp_content::BuildingDefId>,
+    utility: Option<cp_content::UtilityKind>,
+    remove: Option<cp_utility::UtilityNet>,
+}
+
+impl ToolKey {
+    fn of(tools: &ToolState) -> Self {
+        Self {
+            active: tools.active,
+            building: tools.building.def,
+            utility: Some(tools.utility.kind),
+            remove: tools.remove_net,
+        }
+    }
+}
+
+/// BUG-083: an overlay a tool or a category opened by itself belongs to that tool. When the
+/// player goes on to another category, or picks another tool or another thing of the tool, it is
+/// closed — unless the new tool opened its own layout in the same frame, which is a fresh
+/// automatic open and is tied to the new tool. Leaving the tool for none keeps it (the Esc chain:
+/// tool, layout, menu). An overlay the player picked (View menu, services panel, advisor) is
+/// never touched. Called once per frame, after the panels.
+pub(crate) fn release_auto_overlay(
+    state: &mut UiState,
+    tools: &ToolState,
+    overlay: &mut OverlayState,
+) {
+    let auto = &mut state.auto_overlay;
+    if !overlay.auto || overlay.active == Overlay::Off {
+        auto.to = None;
+        auto.seen = overlay.auto_opens;
+        return;
+    }
+    let now = (state.category, ToolKey::of(tools));
+    let fresh = overlay.auto_opens != auto.seen;
+    let Some(bound) = auto.to.as_ref().filter(|_| !fresh) else {
+        auto.seen = overlay.auto_opens;
+        auto.to = Some(now);
+        return;
+    };
+    let category_moved = now.0.is_some() && now.0 != bound.0;
+    let tool_moved = now.1 != bound.1 && now.1.active != ActiveTool::None;
+    if category_moved || tool_moved {
+        overlay.close();
+        auto.to = None;
+    }
 }
 
 /// The windows the top bar switches.

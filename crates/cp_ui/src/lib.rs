@@ -296,6 +296,8 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         overlay.open_auto(cp_render::Overlay::Transit);
         picked.0 = None;
     }
+    // An overlay a tool opened by itself goes with that tool (BUG-083).
+    panels::release_auto_overlay(state, tools, overlay);
 }
 
 /// What egui owns, given the pointer position of the frame that just began and the layout of
@@ -778,6 +780,41 @@ mod shortcut_tests {
         assert_eq!(rig.overlay.active, cp_render::Overlay::Power, "same Esc");
         rig.press(egui::Key::Escape);
         assert_eq!(rig.overlay.active, cp_render::Overlay::Off);
+    }
+
+    /// BUG-077 with BUG-083: an automatic layout is closed by Esc in the same order as a manual
+    /// one — tool, layout, menu — and leaving the tool for none does not close it.
+    #[test]
+    fn esc_closes_an_automatic_layout_after_the_tool_and_before_the_menu() {
+        let mut rig = Rig::new();
+        rig.state.category = Some(palette::Category::Buildings);
+        rig.tools.select(cp_tools::ActiveTool::Utility);
+        rig.overlay.open_auto(cp_render::Overlay::Water);
+        let frame = |rig: &mut Rig| {
+            panels::release_auto_overlay(&mut rig.state, &rig.tools, &mut rig.overlay)
+        };
+        frame(&mut rig);
+        rig.press(egui::Key::Escape);
+        assert_eq!(rig.overlay.active, cp_render::Overlay::Water, "tool active");
+        // `cp_tools` clears the tool in the same frame as the Esc.
+        rig.tools.select(cp_tools::ActiveTool::None);
+        frame(&mut rig);
+        assert_eq!(
+            rig.overlay.active,
+            cp_render::Overlay::Water,
+            "tool left for none"
+        );
+        rig.press(egui::Key::Escape);
+        assert_eq!(
+            rig.overlay.active,
+            cp_render::Overlay::Water,
+            "the clearing Esc"
+        );
+        rig.press(egui::Key::Escape);
+        assert_eq!(rig.overlay.active, cp_render::Overlay::Off);
+        assert_eq!(rig.state.category, Some(palette::Category::Buildings));
+        rig.press(egui::Key::Escape);
+        assert_eq!(rig.state.category, None);
     }
 
     #[test]
