@@ -1184,8 +1184,9 @@ pub fn tool_click(
             {
                 // A free-standing ghost carries its own pose (the cursor rounded to 1 m).
                 let (pos, rot) = match &g.free {
-                    Some(f) => (f.pos, f.rot),
-                    None => (p, state.building.rot()),
+                    Some(f) if !f.edge => (f.pos, f.rot),
+                    // A service at the road edge works its place out from the cursor (T-267).
+                    _ => (p, state.building.rot()),
                 };
                 if let Some(building) = state.building.moving {
                     outbox.push(SimCommand::Building(BuildingCommand::Move {

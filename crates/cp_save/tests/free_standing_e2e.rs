@@ -246,10 +246,26 @@ fn baseline_with_turbine(
     blocked: &[ZoneCellRef],
 ) -> Vec<ZoneCellRef> {
     let z = sim.world().resource::<ZoneGrid>();
+    // The cells under the buildings that stand free (a service at the road edge, T-267) stay
+    // invalid too.
+    let free: Vec<_> = sim
+        .world()
+        .resource::<cp_building::BuildingGrid>()
+        .iter()
+        .filter(|(_, b)| matches!(b.footprint, cp_building::Footprint::Free { .. }))
+        .map(|(_, b)| b.footprint_polygon())
+        .collect();
     let mut out: Vec<_> = blocked
         .iter()
         .copied()
-        .filter(|c| baseline.contains(c) || z.is_occupied(*c))
+        .filter(|c| {
+            baseline.contains(c)
+                || z.is_occupied(*c)
+                || z.cell_footprint(*c).is_some_and(|o| {
+                    free.iter()
+                        .any(|q| cp_zone::geom::quads_overlap(q, &o.corners()))
+                })
+        })
         .collect();
     out.sort();
     out

@@ -9,8 +9,7 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use bevy_math::Vec2;
 use cp_building::{
     BuildingError, BuildingFlags, BuildingId, BuildingState, MOVE_COST_FRACTION, PlacementPlan,
-    footprint_quad, is_free_standing, validate_free_placement_except, validate_placement_except,
-    validate_placement_over,
+    footprint_quad, is_free_standing, validate_placement_except, validate_placement_over,
 };
 use cp_content::{BuildingDefId, ContentDb, ServiceKind, ServiceSite};
 use cp_core::Cost;
@@ -190,6 +189,9 @@ pub struct FreeGhost {
     pub polygon: [Vec2; 4],
     /// Whether the network the type needs is in reach.
     pub hint: Option<ConnectionHint>,
+    /// A service at the road edge (T-267): `Place` is sent the cursor and the quarter turns, not
+    /// `pos` and `rot` (they are where the placement put the rectangle, which it works out again).
+    pub edge: bool,
 }
 
 /// Where a free-standing building would connect (§8.1, §10).
@@ -285,6 +287,9 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
     if is_free_standing(db, def) {
         return Some(free_preview(view, db, tool, def, hover));
     }
+    if cp_building::is_edge_placed(db, def) {
+        return Some(edge_preview(view, db, tool, def, hover));
+    }
     let held = tool
         .moving
         .and_then(|id| view.buildings.get(id))
@@ -368,32 +373,20 @@ fn place_over(
     held: &[ZoneCellRef],
 ) -> Result<(PlacementPlan, Vec<BuildingId>), BuildingError> {
     if tool.moving.is_some() {
-        return if is_free_standing(db, def) {
-            validate_free_placement_except(
-                db,
-                &view.zones,
-                &view.net,
-                &view.buildings,
-                view.terrain.as_deref(),
-                Some(&view.tiles),
-                def,
-                pos,
-                rot,
-                tool.moving,
-            )
-        } else {
-            validate_placement_except(
-                db,
-                &view.zones,
-                &view.net,
-                view.terrain.as_deref(),
-                Some(&view.tiles),
-                def,
-                pos,
-                rot,
-                held,
-            )
-        }
+        let ignore: Vec<BuildingId> = tool.moving.into_iter().collect();
+        return cp_building::validate_placement_for(
+            db,
+            &view.zones,
+            &view.net,
+            &view.buildings,
+            view.terrain.as_deref(),
+            Some(&view.tiles),
+            def,
+            pos,
+            rot,
+            &ignore,
+            held,
+        )
         .map(|plan| (plan, Vec::new()));
     }
     validate_placement_over(
@@ -465,6 +458,7 @@ fn free_preview(
         rot,
         polygon: footprint_quad(pos, rot, w, d),
         hint: connection_hint(view, def, pos),
+        edge: false,
     };
     let mut demolish = Vec::new();
     match place_over(view, db, tool, def, pos, rot, &[]).and_then(|(plan, over)| {
@@ -492,6 +486,53 @@ fn free_preview(
         Err(e) => PlacementGhost {
             error: Some(error_text(&e, ServiceSite::Land)),
             free: Some(free),
+            ..Default::default()
+        },
+    }
+}
+
+/// The ghost of a service at the road edge (T-267): the rectangle where the placement puts it, its
+/// access point on the road it faces, the zoned buildings it goes over. A refusal says what is in
+/// the way.
+fn edge_preview(
+    view: &SimView,
+    db: &ContentDb,
+    tool: &BuildingTool,
+    def: BuildingDefId,
+    hover: Vec2,
+) -> PlacementGhost {
+    let held = tool
+        .moving
+        .and_then(|id| view.buildings.get(id))
+        .map(|b| cp_building::held_cells(&view.zones, b))
+        .unwrap_or_default();
+    match place_over(view, db, tool, def, hover, tool.rot(), &held) {
+        Ok((plan, demolish)) => {
+            let (w, d) = match plan.footprint {
+                cp_building::Footprint::Free { w, d } => (w, d),
+                cp_building::Footprint::Lot(l) => (l.w, l.d),
+            };
+            PlacementGhost {
+                valid: true,
+                cost: Some(price(db, def, tool, plan.cost)),
+                free: Some(FreeGhost {
+                    pos: plan.pos,
+                    rot: plan.rot,
+                    polygon: footprint_quad(plan.pos, plan.rot, w, d),
+                    hint: None,
+                    edge: true,
+                }),
+                access: plan.access,
+                demolish,
+                ..Default::default()
+            }
+        }
+        Err(e) => PlacementGhost {
+            error: Some(match e {
+                BuildingError::Road => "a road is in the way".to_string(),
+                BuildingError::Blocked => "another building is in the way".to_string(),
+                e => error_text(&e, ServiceSite::Land),
+            }),
             ..Default::default()
         },
     }
@@ -564,7 +605,7 @@ mod tests {
         let near = Vec2::new(3100.0, 3012.0);
         let g = preview(&view, &tool, near).unwrap();
         assert!(
-            g.valid && g.cells.len() == 9 && g.cost == Some(Cost::from_units(30000.0)),
+            g.valid && g.access.is_some() && g.cost == Some(Cost::from_units(30000.0)),
             "{g:?}"
         );
         let far = preview(&view, &tool, Vec2::new(3100.0, 3300.0)).unwrap();
@@ -603,8 +644,8 @@ mod tests {
         let id = pick_building(&view, at).expect("the new building is under the cursor");
         assert_eq!(view.buildings.iter().next().unwrap().0, id);
         assert!(pick_building(&view, Vec2::new(3100.0, 3300.0)).is_none());
-        // The same spot is now taken.
-        assert!(!preview(&view, &tool, at).unwrap().valid);
+        // The same cursor again: a second plant stands beside the first (T-267).
+        assert!(preview(&view, &tool, at).unwrap().valid);
     }
 
     #[test]

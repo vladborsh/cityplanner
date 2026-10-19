@@ -18,7 +18,7 @@ use std::sync::{Arc, OnceLock};
 
 use bevy_math::Vec2;
 use cp_building::validate_placement_over;
-use cp_content::{BuildingDefId, ContentDb, ServiceSite};
+use cp_content::{BuildingDefId, ContentDb};
 use cp_net::RoadPath;
 use cp_sim::SimRunner;
 use cp_sim::road_cases::{build_roads, place_sites};
@@ -30,86 +30,10 @@ const TURNS: [f32; 2] = [0.0, 30.0];
 /// The lot stands this far off the road edge and off a corner's cross street, metres.
 const GAP: f32 = 0.5;
 
-/// Cases that fail today (T-275, roads 2 and 4 cells wide: 184 of 546, all `Cut`: lots of 3 cells
-/// and more in the corners of a crossing and of a T, the larger lots inside a rounded corner and
-/// every lot inside a curve; mid-street and across a cut all fit), as prefixes of
-/// `site/road/spot/WxD/turn` (a prefix ending in `/` covers every case under it). T-267 empties it.
-const KNOWN_RED: &[&str] = &[
-    "x/basic_2l/ne/3x3/",
-    "x/basic_2l/ne/3x4/",
-    "x/basic_2l/ne/4x4/",
-    "x/basic_2l/nw/3x3/",
-    "x/basic_2l/nw/3x4/",
-    "x/basic_2l/nw/4x4/",
-    "x/basic_2l/sw/3x3/",
-    "x/basic_2l/sw/3x4/",
-    "x/basic_2l/sw/4x4/",
-    "x/basic_2l/se/3x3/",
-    "x/basic_2l/se/3x4/",
-    "x/basic_2l/se/4x4/",
-    "t/basic_2l/corner_e/3x3/",
-    "t/basic_2l/corner_e/3x4/",
-    "t/basic_2l/corner_e/4x4/",
-    "t/basic_2l/corner_w/3x3/",
-    "t/basic_2l/corner_w/3x4/",
-    "t/basic_2l/corner_w/4x4/",
-    "rounded/basic_2l/inside/2x2/",
-    "rounded/basic_2l/inside/3x2/",
-    "rounded/basic_2l/inside/3x3/",
-    "rounded/basic_2l/inside/3x4/",
-    "rounded/basic_2l/inside/4x4/",
-    "curve/basic_2l/inside/",
-    "x/medium_4l/ne/3x3/",
-    "x/medium_4l/ne/3x4/",
-    "x/medium_4l/ne/4x4/",
-    "x/medium_4l/nw/3x3/",
-    "x/medium_4l/nw/3x4/",
-    "x/medium_4l/nw/4x3/",
-    "x/medium_4l/nw/4x4/",
-    "x/medium_4l/sw/3x3/",
-    "x/medium_4l/sw/3x4/",
-    "x/medium_4l/sw/4x3/",
-    "x/medium_4l/sw/4x4/",
-    "x/medium_4l/se/3x3/",
-    "x/medium_4l/se/3x4/",
-    "x/medium_4l/se/4x4/",
-    "t/medium_4l/corner_e/3x3/",
-    "t/medium_4l/corner_e/3x4/",
-    "t/medium_4l/corner_e/4x4/",
-    "t/medium_4l/corner_w/3x3/",
-    "t/medium_4l/corner_w/3x4/",
-    "t/medium_4l/corner_w/4x3/",
-    "t/medium_4l/corner_w/4x4/",
-    "rounded/medium_4l/inside/3x3/",
-    "rounded/medium_4l/inside/3x4/",
-    "rounded/medium_4l/inside/4x4/",
-    "curve/medium_4l/inside/",
-    "x/large_6l/ne/3x3/",
-    "x/large_6l/ne/3x4/",
-    "x/large_6l/ne/4x4/",
-    "x/large_6l/nw/3x3/",
-    "x/large_6l/nw/3x4/",
-    "x/large_6l/nw/4x3/",
-    "x/large_6l/nw/4x4/",
-    "x/large_6l/sw/3x3/",
-    "x/large_6l/sw/3x4/",
-    "x/large_6l/sw/4x3/",
-    "x/large_6l/sw/4x4/",
-    "x/large_6l/se/3x3/",
-    "x/large_6l/se/3x4/",
-    "x/large_6l/se/4x4/",
-    "t/large_6l/corner_e/3x3/",
-    "t/large_6l/corner_e/3x4/",
-    "t/large_6l/corner_e/4x4/",
-    "t/large_6l/corner_w/3x3/",
-    "t/large_6l/corner_w/3x4/",
-    "t/large_6l/corner_w/4x3/",
-    "t/large_6l/corner_w/4x4/",
-    "rounded/large_6l/inside/3x3/",
-    "rounded/large_6l/inside/3x4/",
-    "rounded/large_6l/inside/4x4/",
-    "curve/large_6l/inside/",
-];
+/// Cases that fail today: none (T-267: a service stands at the road edge, not on cells). Prefixes
+/// of `site/road/spot/WxD/turn` (a prefix ending in `/` covers every case under it);
+/// `known_red_cases_still_fail` says when one passes.
+const KNOWN_RED: &[&str] = &[];
 
 fn known_red(case: &str) -> bool {
     KNOWN_RED.iter().any(|k| case.starts_with(k))
@@ -129,11 +53,7 @@ fn assets() -> (Arc<ContentDb>, Arc<Terrain>) {
 fn services(db: &ContentDb) -> BTreeMap<(u8, u8), (BuildingDefId, String)> {
     let mut out = BTreeMap::new();
     for (id, d) in db.buildings() {
-        let Some(svc) = d.service.as_deref().and_then(|s| db.service_id(s)) else {
-            continue;
-        };
-        let svc = db.service(svc);
-        if !svc.road_access || svc.site != ServiceSite::Land || d.lot.0 > 4 || d.lot.1 > 4 {
+        if !cp_building::is_edge_placed(db, id) || d.lot.0 > 4 || d.lot.1 > 4 {
             continue;
         }
         out.entry(d.lot).or_insert((id, d.id.clone()));

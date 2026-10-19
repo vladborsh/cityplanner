@@ -99,27 +99,59 @@ fn place_then_demolish_round_trip() {
         let (id, b) = g.iter().next().unwrap();
         // T-175: a service stands ready at once.
         assert_eq!(b.state, BuildingState::Active);
-        (id, b.lot().expect("a lot").cells().collect::<Vec<_>>())
+        // T-267: a service stands at the road edge, a rectangle with an access point.
+        assert!(b.lot().is_none() && b.access().is_some());
+        assert_eq!(b.size(), (3, 3));
+        (id, b.footprint_polygon())
     };
-    assert_eq!(cells.len(), 9);
+    // The next tick lays the blockers: the cells under the rectangle are invalid.
+    sim.tick_once();
+    let under = |sim: &SimRunner| {
+        let z = sim.world().resource::<ZoneGrid>();
+        z.cells_within(cells.iter().sum::<Vec2>() / 4.0, 20.0)
+            .into_iter()
+            .filter(|&c| {
+                z.cell_footprint(c)
+                    .is_some_and(|o| cp_zone::geom::quads_overlap(&cells, &o.corners()))
+            })
+            .collect::<Vec<_>>()
+    };
     {
         let z = sim.world().resource::<ZoneGrid>();
         assert_ne!(z.revision(), zrev);
-        assert!(cells.iter().all(|&x| z.is_occupied(x) && !z.is_valid(x)));
+        let cells_under = under(&sim);
+        assert!(!cells_under.is_empty());
+        assert!(
+            cells_under.iter().any(|&x| !z.is_valid(x)),
+            "the cells it covers go invalid"
+        );
     }
     assert_eq!(sim.world().resource::<CommandLog<SimCommand>>().len(), 1);
 
-    // Second building on the same spot: blocked, nothing changes.
-    let err = run(
+    // A second building at the same cursor stands beside the first, not on it.
+    run(
         &mut sim,
         BuildingCommand::Place {
             def: pump(&c),
             pos: at,
             rot: 0.0,
         },
-    );
-    assert!(err.unwrap_err().contains("blocked"));
-    assert_eq!(sim.world().resource::<BuildingGrid>().len(), 1);
+    )
+    .unwrap();
+    {
+        let g = sim.world().resource::<BuildingGrid>();
+        assert_eq!(g.len(), 2);
+        let quads: Vec<_> = g.iter().map(|(_, b)| b.footprint_polygon()).collect();
+        assert!(!cp_zone::geom::quads_overlap(&quads[0], &quads[1]));
+    }
+    let second = sim
+        .world()
+        .resource::<BuildingGrid>()
+        .iter()
+        .map(|(i, _)| i)
+        .find(|&i| i != id)
+        .unwrap();
+    run(&mut sim, BuildingCommand::Demolish { building: second }).unwrap();
 
     sim.tick_once();
     let g = sim.world().resource::<BuildingGrid>();
@@ -130,9 +162,10 @@ fn place_then_demolish_round_trip() {
     run(&mut sim, BuildingCommand::Demolish { building: id }).unwrap();
     let g = sim.world().resource::<BuildingGrid>();
     assert!(g.is_empty() && g.revision() != rev);
+    sim.tick_once();
     let z = sim.world().resource::<ZoneGrid>();
     assert_ne!(z.revision(), zrev);
-    assert!(cells.iter().all(|&x| !z.is_occupied(x) && z.is_valid(x)));
+    assert!(under(&sim).iter().all(|&x| z.is_valid(x)));
     // Gone: demolishing again fails; the freed spot takes a building again.
     assert!(run(&mut sim, BuildingCommand::Demolish { building: id }).is_err());
     run(
@@ -220,7 +253,8 @@ fn overlapping_buildings_are_rejected_but_neighbours_fit() {
         },
     )
     .unwrap();
-    let e = run(
+    // Over the first one: it slides along the road to the free place beside it.
+    run(
         &mut sim,
         BuildingCommand::Place {
             def: pump(&c),
@@ -228,8 +262,7 @@ fn overlapping_buildings_are_rejected_but_neighbours_fit() {
             rot: 0.0,
         },
     )
-    .unwrap_err();
-    assert!(e.contains("blocked"), "{e}");
+    .unwrap();
     run(
         &mut sim,
         BuildingCommand::Place {
@@ -239,7 +272,14 @@ fn overlapping_buildings_are_rejected_but_neighbours_fit() {
         },
     )
     .unwrap();
-    assert_eq!(sim.world().resource::<BuildingGrid>().len(), 2);
+    let g = sim.world().resource::<BuildingGrid>();
+    assert_eq!(g.len(), 3);
+    let quads: Vec<_> = g.iter().map(|(_, b)| b.footprint_polygon()).collect();
+    for i in 0..quads.len() {
+        for j in i + 1..quads.len() {
+            assert!(!cp_zone::geom::quads_overlap(&quads[i], &quads[j]));
+        }
+    }
 }
 
 /// Flat dry land at 10 m with a lake (ground at 0 m, sea level 5 m) around x 3080..3140.
@@ -284,8 +324,8 @@ fn a_pump_needs_water_and_other_buildings_cannot_stand_in_it() {
     let place = |pos, def| BuildingCommand::Place { def, pos, rot: 0.0 };
     let e = run(&mut sim, place(dry, pump)).unwrap_err();
     assert!(e.contains("on or beside water"), "{e}");
-    let e = run(&mut sim, place(wet, turbine)).unwrap_err();
-    assert!(e.contains("on water"), "{e}");
+    // A plant asked for in the water stands on the dry land beside the road (T-267).
+    run(&mut sim, place(wet, turbine)).unwrap();
     run(&mut sim, place(wet, pump)).unwrap();
     run(&mut sim, place(dry, turbine)).unwrap();
 }

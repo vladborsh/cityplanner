@@ -115,98 +115,11 @@ pub fn validate_free_placement_ignoring(
     if w == 0 || d == 0 {
         return Err(BuildingError::DoesNotFit);
     }
-    let quad = footprint_quad(pos, rot, w, d);
-
-    // Sample lattice in the rectangle's own frame, `SAMPLE_M` apart, corners included.
-    let (nu, nv) = (
-        (f32::from(w) * FOOTPRINT_CELL_M / SAMPLE_M).round() as usize + 1,
-        (f32::from(d) * FOOTPRINT_CELL_M / SAMPLE_M).round() as usize + 1,
-    );
-    let (ax, ay) = (quad[1] - quad[0], quad[3] - quad[0]);
-    let at = |i: usize, j: usize| {
-        quad[0] + ax * (i as f32 / (nu - 1) as f32) + ay * (j as f32 / (nv - 1) as f32)
-    };
-    let samples: Vec<Vec2> = (0..nv)
-        .flat_map(|j| (0..nu).map(move |i| (i, j)))
-        .map(|(i, j)| at(i, j))
-        .collect();
-
-    if let Some(tiles) = tiles
-        && !samples.iter().all(|&p| tiles.contains_point(p))
-    {
-        return Err(BuildingError::NotOwned);
-    }
-    if let Some(terrain) = terrain {
-        if samples.iter().any(|&p| terrain.is_water(p)) {
-            return Err(BuildingError::Water);
-        }
-        let h: Vec<f32> = samples.iter().map(|&p| terrain.height(p)).collect();
-        let steep = |a: usize, b: usize, dist: f32| (h[a] - h[b]).abs() > MAX_CELL_SLOPE * dist;
-        for j in 0..nv {
-            for i in 0..nu {
-                let k = j * nu + i;
-                if i + 1 < nu && steep(k, k + 1, ax.length() / (nu - 1) as f32) {
-                    return Err(BuildingError::TooSteep);
-                }
-                if j + 1 < nv && steep(k, k + nu, ay.length() / (nv - 1) as f32) {
-                    return Err(BuildingError::TooSteep);
-                }
-            }
-        }
-    }
-
-    let (lo, hi) = quad_aabb(&quad);
-    for (_, seg) in net.segments() {
-        if seg.elevation != Elevation::Ground {
-            continue;
-        }
-        let reach = db.road(seg.road).width / 2.0 + ROAD_CLEARANCE_M;
-        let c = &seg.curve;
-        let ctrl = [c.p0, c.p1, c.p2, c.p3].map(to_xz);
-        let (clo, chi) = (
-            ctrl[0].min(ctrl[1]).min(ctrl[2]).min(ctrl[3]) - Vec2::splat(reach),
-            ctrl[0].max(ctrl[1]).max(ctrl[2]).max(ctrl[3]) + Vec2::splat(reach),
-        );
-        if chi.x < lo.x || clo.x > hi.x || chi.y < lo.y || clo.y > hi.y {
-            continue;
-        }
-        let n = ((seg.length / ROAD_SAMPLE_M).ceil() as usize).max(1);
-        let pts: Vec<Vec2> = (0..=n)
-            .map(|i| to_xz(c.point(i as f32 / n as f32)))
-            .collect();
-        if pts
-            .windows(2)
-            .any(|p| quad_segment_distance(&quad, p[0], p[1]) < reach)
-        {
-            return Err(BuildingError::Road);
-        }
-    }
-
-    for (id, b) in buildings.iter() {
-        if ignore.contains(&id) {
-            continue;
-        }
-        let other = b.footprint_polygon();
-        let (olo, ohi) = quad_aabb(&other);
-        if ohi.x < lo.x || olo.x > hi.x || ohi.y < lo.y || olo.y > hi.y {
-            continue;
-        }
-        if quads_overlap(&quad, &other) {
-            return Err(BuildingError::Blocked);
-        }
-    }
-    // A cell of a lot that is held by a building no longer in the list (rebinding lots).
     let reach = Vec2::new(w.into(), d.into()).length() * FOOTPRINT_CELL_M * 0.5 + 6.0;
-    for cell in zones.cells_within(pos, reach) {
-        if zones.is_occupied(cell)
-            && !free_cells.contains(&cell)
-            && zones
-                .cell_footprint(cell)
-                .is_some_and(|o| quads_overlap(&quad, &o.corners()))
-        {
-            return Err(BuildingError::Blocked);
-        }
-    }
+    RectCtx::new(
+        db, zones, net, buildings, terrain, tiles, pos, reach, ignore,
+    )
+    .check(pos, rot, w, d, ROAD_CLEARANCE_M, free_cells)?;
 
     Ok(PlacementPlan {
         footprint: Footprint::Free { w, d },
@@ -215,6 +128,163 @@ pub fn validate_free_placement_ignoring(
         access: None,
         cost: Cost::from_units(def_ref.cost),
     })
+}
+
+/// What a rectangle placement is checked against, gathered once around a point: the roads (their
+/// sample points and half widths), the rectangles of the buildings near (the ones in `ignore`
+/// left out) and the ground. A search that tries many rectangles builds it once (T-267).
+pub(crate) struct RectCtx<'a> {
+    zones: &'a ZoneGrid,
+    terrain: Option<&'a Terrain>,
+    tiles: Option<&'a TileOwnership>,
+    /// Ground roads near: the sampled centre line and the half width.
+    roads: Vec<(Vec<Vec2>, f32)>,
+    /// Rectangles of the other buildings near.
+    others: Vec<Quad>,
+}
+
+impl<'a> RectCtx<'a> {
+    /// The context for rectangles within `radius` of `around`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        db: &ContentDb,
+        zones: &'a ZoneGrid,
+        net: &NetGraph,
+        buildings: &BuildingGrid,
+        terrain: Option<&'a Terrain>,
+        tiles: Option<&'a TileOwnership>,
+        around: Vec2,
+        radius: f32,
+        ignore: &[crate::model::BuildingId],
+    ) -> Self {
+        let mut roads = Vec::new();
+        for (_, seg) in net.segments() {
+            if seg.elevation != Elevation::Ground {
+                continue;
+            }
+            let half = db.road(seg.road).width / 2.0;
+            if seg.curve.bounds_distance_xz(around) > radius + half + ROAD_CLEARANCE_M + 1.0 {
+                continue;
+            }
+            let c = &seg.curve;
+            let n = ((seg.length / ROAD_SAMPLE_M).ceil() as usize).max(1);
+            let pts: Vec<Vec2> = (0..=n)
+                .map(|i| to_xz(c.point(i as f32 / n as f32)))
+                .collect();
+            roads.push((pts, half));
+        }
+        let others = buildings
+            .iter()
+            .filter(|(id, _)| !ignore.contains(id))
+            .filter(|(_, b)| b.pos.distance(around) <= radius + 120.0)
+            .map(|(_, b)| b.footprint_polygon())
+            .collect();
+        Self {
+            zones,
+            terrain,
+            tiles,
+            roads,
+            others,
+        }
+    }
+
+    /// Whether the rectangle is `margin` metres clear of the edge of every road near.
+    pub(crate) fn roads_clear(&self, pos: Vec2, rot: f32, w: u8, d: u8, margin: f32) -> bool {
+        let quad = footprint_quad(pos, rot, w, d);
+        self.roads.iter().all(|(pts, half)| {
+            pts.windows(2)
+                .all(|p| quad_segment_distance(&quad, p[0], p[1]) >= half + margin)
+        })
+    }
+
+    /// Whether the rectangle of `w` x `d` cells centred on `pos` and turned by `rot` can stand:
+    /// owned, dry, not too steep, `margin` metres clear of the edge of every road (a negative
+    /// margin lets it reach into the asphalt by that much: flush), clear of the other buildings
+    /// and of cells held by buildings that stay (the `free_cells` are the ones that go).
+    pub(crate) fn check(
+        &self,
+        pos: Vec2,
+        rot: f32,
+        w: u8,
+        d: u8,
+        margin: f32,
+        free_cells: &[cp_zone::ZoneCellRef],
+    ) -> Result<(), BuildingError> {
+        let (zones, terrain, tiles) = (self.zones, self.terrain, self.tiles);
+        let quad = footprint_quad(pos, rot, w, d);
+
+        // Sample lattice in the rectangle's own frame, `SAMPLE_M` apart, corners included.
+        let (nu, nv) = (
+            (f32::from(w) * FOOTPRINT_CELL_M / SAMPLE_M).round() as usize + 1,
+            (f32::from(d) * FOOTPRINT_CELL_M / SAMPLE_M).round() as usize + 1,
+        );
+        let (ax, ay) = (quad[1] - quad[0], quad[3] - quad[0]);
+        let at = |i: usize, j: usize| {
+            quad[0] + ax * (i as f32 / (nu - 1) as f32) + ay * (j as f32 / (nv - 1) as f32)
+        };
+        let samples: Vec<Vec2> = (0..nv)
+            .flat_map(|j| (0..nu).map(move |i| (i, j)))
+            .map(|(i, j)| at(i, j))
+            .collect();
+
+        if let Some(tiles) = tiles
+            && !samples.iter().all(|&p| tiles.contains_point(p))
+        {
+            return Err(BuildingError::NotOwned);
+        }
+        if let Some(terrain) = terrain {
+            if samples.iter().any(|&p| terrain.is_water(p)) {
+                return Err(BuildingError::Water);
+            }
+            let h: Vec<f32> = samples.iter().map(|&p| terrain.height(p)).collect();
+            let steep = |a: usize, b: usize, dist: f32| (h[a] - h[b]).abs() > MAX_CELL_SLOPE * dist;
+            for j in 0..nv {
+                for i in 0..nu {
+                    let k = j * nu + i;
+                    if i + 1 < nu && steep(k, k + 1, ax.length() / (nu - 1) as f32) {
+                        return Err(BuildingError::TooSteep);
+                    }
+                    if j + 1 < nv && steep(k, k + nu, ay.length() / (nv - 1) as f32) {
+                        return Err(BuildingError::TooSteep);
+                    }
+                }
+            }
+        }
+
+        let (lo, hi) = quad_aabb(&quad);
+        for (pts, half) in &self.roads {
+            let reach = half + margin;
+            if pts
+                .windows(2)
+                .any(|p| quad_segment_distance(&quad, p[0], p[1]) < reach)
+            {
+                return Err(BuildingError::Road);
+            }
+        }
+
+        for other in &self.others {
+            let (olo, ohi) = quad_aabb(other);
+            if ohi.x < lo.x || olo.x > hi.x || ohi.y < lo.y || olo.y > hi.y {
+                continue;
+            }
+            if quads_overlap(&quad, other) {
+                return Err(BuildingError::Blocked);
+            }
+        }
+        // A cell of a lot that is held by a building no longer in the list (rebinding lots).
+        let reach = Vec2::new(w.into(), d.into()).length() * FOOTPRINT_CELL_M * 0.5 + 6.0;
+        for cell in zones.cells_within(pos, reach) {
+            if zones.is_occupied(cell)
+                && !free_cells.contains(&cell)
+                && zones
+                    .cell_footprint(cell)
+                    .is_some_and(|o| quads_overlap(&quad, &o.corners()))
+            {
+                return Err(BuildingError::Blocked);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Hands the rectangles of the free-standing buildings to the zone grid as obstacles. Does

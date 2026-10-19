@@ -197,8 +197,10 @@ fn a_clinic_over_two_zoned_buildings_demolishes_them_and_rehouses_the_residents(
             .find(|(_, b)| b.def == clinic)
             .expect("the clinic stands");
         assert_eq!(c.state, BuildingState::Active);
-        let lot = c.lot().unwrap();
-        assert_eq!((lot.col, lot.w), (1, 2), "on columns 1-2");
+        // T-267: the clinic stands at the road edge, a rectangle with an access point, over the
+        // columns of the cursor.
+        assert!(c.lot().is_none() && c.access().is_some());
+        assert_eq!(c.size(), (2, 2));
         // The household moved into the vacant house at once.
         let g = w.resource::<CitizenGrid>();
         let h = g
@@ -211,7 +213,7 @@ fn a_clinic_over_two_zoned_buildings_demolishes_them_and_rehouses_the_residents(
         }
         // The cells of the house that the clinic does not cover are free again, still zoned.
         let zones = w.resource::<ZoneGrid>();
-        let block = lot.block;
+        let block = zones.blocks().next().unwrap().0;
         let freed = ZoneCellRef { block, cell: 0 };
         assert!(!zones.is_occupied(freed));
     }
@@ -240,22 +242,29 @@ fn without_a_vacant_home_the_evicted_household_leaves_the_city() {
 }
 
 #[test]
-fn another_service_building_or_a_road_still_blocks() {
+fn another_service_building_does_not_get_demolished_and_a_road_is_no_place() {
     let (mut sim, block) = town();
     let pos = at(&sim, block, 4).lerp(at(&sim, block, 5), 0.5);
     place(&mut sim, "clinic", pos).expect("the first clinic");
     let count = |sim: &SimRunner| sim.world().resource::<BuildingGrid>().len();
     let before = count(&sim);
-    let err = place(&mut sim, "police_station", pos).unwrap_err();
-    assert!(
-        matches!(&err, CommandError::Rejected { reason, .. } if reason == &BuildingError::Blocked.to_string()),
-        "{err:?}"
-    );
-    assert_eq!(count(&sim), before, "nothing demolished, nothing placed");
-    // On the road: no lot there.
+    // A second service at the same cursor does not take the first one down: it stands beside it.
+    place(&mut sim, "police_station", pos).expect("beside the clinic");
+    assert_eq!(count(&sim), before + 1, "nothing demolished");
+    let quads: Vec<_> = sim
+        .world()
+        .resource::<BuildingGrid>()
+        .iter()
+        .map(|(_, b)| b.footprint_polygon())
+        .collect();
+    assert!(!cp_zone::geom::quads_overlap(&quads[0], &quads[1]));
+    // On the road: the clinic stands beside it, never on it; far from every road: refused.
+    let before = count(&sim);
     let road = Vec2::new(3100.0, 3000.0);
-    assert!(place(&mut sim, "clinic", road).is_err());
-    assert_eq!(count(&sim), before);
+    place(&mut sim, "clinic", road).expect("beside the road");
+    assert_eq!(count(&sim), before + 1);
+    assert!(place(&mut sim, "clinic", Vec2::new(3100.0, 3400.0)).is_err());
+    assert_eq!(count(&sim), before + 1);
 }
 
 #[test]

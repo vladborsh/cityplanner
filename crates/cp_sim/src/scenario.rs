@@ -151,28 +151,34 @@ fn service_sites(
     let terrain = world.get_resource::<crate::SimTerrain>().map(|t| &*t.0);
     let tiles = world.get_resource::<cp_terrain::TileOwnership>();
     let buildings = world.resource::<cp_building::BuildingGrid>();
-    // Where a building of `def` placed at `pos` stands: the quads of the cells its lot takes (a lot
-    // may slide along the street to the nearest free one, BUG-082) or its own rectangle when it
-    // stands free; `None` when it cannot stand there.
+    // Where a building of `def` placed at `pos` stands: its own rectangle (a service at the road
+    // edge, T-267, or a free-standing building) or the quads of the cells of its lot; `None` when
+    // it cannot stand there.
     let footprint = |def, pos| -> Option<Vec<cp_zone::geom::Quad>> {
-        if cp_building::is_free_standing(content, def) {
-            let (w, d) = content.building(def).lot;
-            cp_building::validate_free_placement(
-                content, zones, net, buildings, terrain, tiles, def, pos, 0.0,
-            )
-            .ok()?;
-            Some(vec![cp_building::footprint_quad(pos, 0.0, w, d)])
-        } else {
-            let plan =
-                cp_building::validate_placement(content, zones, net, terrain, tiles, def, pos, 0.0)
-                    .ok()?;
-            Some(
-                plan.cells()
-                    .into_iter()
-                    .filter_map(|c| zones.cell_footprint(c).map(|o| o.corners()))
-                    .collect(),
-            )
-        }
+        let plan = cp_building::validate_placement_for(
+            content,
+            zones,
+            net,
+            buildings,
+            terrain,
+            tiles,
+            def,
+            pos,
+            0.0,
+            &[],
+            &[],
+        )
+        .ok()?;
+        Some(match plan.footprint {
+            cp_building::Footprint::Free { w, d } => {
+                vec![cp_building::footprint_quad(plan.pos, plan.rot, w, d)]
+            }
+            cp_building::Footprint::Lot(_) => plan
+                .cells()
+                .into_iter()
+                .filter_map(|c| zones.cell_footprint(c).map(|o| o.corners()))
+                .collect(),
+        })
     };
     let valid = |def, pos| footprint(def, pos).is_some();
     // What the sites chosen so far take: every placement is validated against the grid as it

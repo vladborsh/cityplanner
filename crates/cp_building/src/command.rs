@@ -31,7 +31,7 @@ use cp_terrain::{SimTerrain, Terrain, TileOwnership};
 use cp_zone::{BLOCK_DEPTH, ZoneCellRef, ZoneGrid};
 use serde::{Deserialize, Serialize};
 
-use crate::free::{is_free_standing, validate_free_placement_except};
+use crate::free::is_free_standing;
 use crate::grid::BuildingGrid;
 use crate::model::{
     AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, Footprint, Lot, build_ticks,
@@ -420,8 +420,9 @@ pub fn is_growable(def: &BuildingDef) -> bool {
 }
 
 /// How far from the cursor zoned buildings are looked at for [`validate_placement_over`],
-/// metres: more than half the diagonal of any lot or rectangle plus a lot.
-const OVER_REACH_M: f32 = 96.0;
+/// metres: more than half the diagonal of any lot or rectangle plus a lot, plus the reach and the
+/// slide of a building at the road edge (T-267), which may stand that far from the cursor.
+const OVER_REACH_M: f32 = 96.0 + crate::edge::EDGE_REACH_M + crate::edge::SLIDE_M;
 
 /// A placement over zoned buildings (T-252): the plan and the zoned buildings it demolishes, in
 /// id order.
@@ -429,6 +430,37 @@ const OVER_REACH_M: f32 = 96.0;
 pub struct Clearance {
     pub plan: PlacementPlan,
     pub demolish: Vec<BuildingId>,
+}
+
+/// The placement check for any def, whatever it stands on: a free-standing rectangle
+/// ([`crate::free`]), a service at the road edge ([`crate::edge`], T-267) or a lot of cells.
+/// `ignore` are buildings that do not count (the one being moved, the zoned ones a placement goes
+/// over) and `free_cells` cells held by buildings that go.
+#[allow(clippy::too_many_arguments)]
+pub fn validate_placement_for(
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+    terrain: Option<&Terrain>,
+    tiles: Option<&TileOwnership>,
+    def: BuildingDefId,
+    pos: Vec2,
+    rot: f32,
+    ignore: &[BuildingId],
+    free_cells: &[ZoneCellRef],
+) -> Result<PlacementPlan, BuildingError> {
+    if is_free_standing(db, def) {
+        crate::free::validate_free_placement_ignoring(
+            db, zones, net, buildings, terrain, tiles, def, pos, rot, ignore, free_cells,
+        )
+    } else if crate::edge::is_edge_placed(db, def) {
+        crate::edge::validate_edge_placement(
+            db, zones, net, buildings, terrain, tiles, def, pos, rot, ignore, free_cells,
+        )
+    } else {
+        validate_placement_except(db, zones, net, terrain, tiles, def, pos, rot, free_cells)
+    }
 }
 
 /// The placement check the tool and `Place` use (T-252): [`validate_placement`] (or
@@ -460,13 +492,9 @@ pub fn validate_placement_over(
         .collect();
     let cells: Vec<ZoneCellRef> = near.iter().flat_map(|(_, c)| c.iter().copied()).collect();
     let ids: Vec<BuildingId> = near.iter().map(|(id, _)| *id).collect();
-    let plan = if is_free_standing(db, def) {
-        crate::free::validate_free_placement_ignoring(
-            db, zones, net, buildings, terrain, tiles, def, pos, rot, &ids, &cells,
-        )?
-    } else {
-        validate_placement_except(db, zones, net, terrain, tiles, def, pos, rot, &cells)?
-    };
+    let plan = validate_placement_for(
+        db, zones, net, buildings, terrain, tiles, def, pos, rot, &ids, &cells,
+    )?;
     let demolish = match plan.footprint {
         Footprint::Lot(_) => {
             let mine = plan.cells();
@@ -791,25 +819,20 @@ pub fn apply_placed(
                 }
                 let terrain = world.get_resource::<SimTerrain>().map(|t| &*t.0);
                 let tiles = world.get_resource::<TileOwnership>();
-                let plan = if is_free_standing(&content.0, def) {
-                    validate_free_placement_except(
-                        &content.0,
-                        zones,
-                        net,
-                        buildings,
-                        terrain,
-                        tiles,
-                        def,
-                        *pos,
-                        *rot,
-                        Some(*building),
-                    )?
-                } else {
-                    let held = crate::grid::held_cells(zones, b);
-                    validate_placement_except(
-                        &content.0, zones, net, terrain, tiles, def, *pos, *rot, &held,
-                    )?
-                };
+                let held = crate::grid::held_cells(zones, b);
+                let plan = validate_placement_for(
+                    &content.0,
+                    zones,
+                    net,
+                    buildings,
+                    terrain,
+                    tiles,
+                    def,
+                    *pos,
+                    *rot,
+                    &[*building],
+                    &held,
+                )?;
                 check_industry(world, &content.0, zones, def, &plan, Some(*building))?;
                 check_park(world, &content.0, zones, def, &plan)?;
                 let cost = Cost::from_units(content.0.building(def).cost * MOVE_COST_FRACTION);

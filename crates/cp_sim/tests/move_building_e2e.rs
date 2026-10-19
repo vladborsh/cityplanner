@@ -172,17 +172,22 @@ fn a_move_to_a_bad_spot_is_refused_and_changes_nothing() {
         .get(id)
         .unwrap()
         .clone();
-    // On the road itself.
+    // Far from every road (T-267: a service stands at a road's edge within 52 m): refused.
     let err = run(
         &mut sim,
         BuildingCommand::Move {
             building: id,
-            pos: Vec2::new(3100.0, 3300.0),
+            pos: Vec2::new(3100.0, 3700.0),
             rot: 0.0,
         },
     );
     assert!(err.is_err());
-    // Onto another building.
+    assert_eq!(
+        sim.world().resource::<BuildingGrid>().get(id).unwrap(),
+        &before
+    );
+    // Onto another building: it slides along the road to the free place beside it, and the two
+    // do not overlap.
     let c = content();
     let fire = c.building_id("fire_station").unwrap();
     let b = spot(&sim, 3300.0, 10);
@@ -195,21 +200,19 @@ fn a_move_to_a_bad_spot_is_refused_and_changes_nothing() {
         },
     )
     .unwrap();
-    assert!(
-        run(
-            &mut sim,
-            BuildingCommand::Move {
-                building: id,
-                pos: b,
-                rot: 0.0,
-            },
-        )
-        .is_err()
-    );
-    assert_eq!(
-        sim.world().resource::<BuildingGrid>().get(id).unwrap(),
-        &before
-    );
+    run(
+        &mut sim,
+        BuildingCommand::Move {
+            building: id,
+            pos: b,
+            rot: 0.0,
+        },
+    )
+    .unwrap();
+    let g = sim.world().resource::<BuildingGrid>();
+    let quads: Vec<_> = g.iter().map(|(_, b)| b.footprint_polygon()).collect();
+    assert_eq!(quads.len(), 2);
+    assert!(!cp_zone::geom::quads_overlap(&quads[0], &quads[1]));
     // A building that is gone cannot be moved.
     run(&mut sim, BuildingCommand::Demolish { building: id }).unwrap();
     assert!(

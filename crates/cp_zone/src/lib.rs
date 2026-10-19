@@ -9,8 +9,8 @@ mod roads;
 
 pub use command::{ZoneCommand, ZoneError, apply, paint};
 pub use grid::{
-    BLOCK_DEPTH, CELL_SIZE, MAX_CELL_SLOPE, PENETRATION_EPS, RoadZoning, Side, StripPreview,
-    ZoneBlock, ZoneBlockId, ZoneCellRef, ZoneGrid,
+    BLOCK_DEPTH, CELL_SIZE, MAX_CELL_SLOPE, PENETRATION_EPS, ROAD_EPS, RoadZoning, Side,
+    StripPreview, ZoneBlock, ZoneBlockId, ZoneCellRef, ZoneGrid,
 };
 pub use layout::{
     BlockDraft, CellLine, FrontEnd, Frontage, Mark, ROUNDED_CORNER_DEG, ROUNDED_CORNER_MAX_M,
