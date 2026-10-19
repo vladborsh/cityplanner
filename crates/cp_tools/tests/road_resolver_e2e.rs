@@ -275,3 +275,117 @@ fn what_the_tool_builds_is_what_the_resolver_aimed_at_and_the_graph_stays_clean(
     }
     assert_eq!(cases, 18);
 }
+
+/// Where the last point of the ghost's plan stands: a node, a point of a street, or free.
+fn last_anchor(sim: &SimRunner, t: &RoadTool, at: Vec2, free: bool) -> Option<Anchor> {
+    resolve_cursor(&sim.view(), t, at, free)
+        .and_then(|c| c.plan)
+        .and_then(|plan| plan.pieces.last().map(|p| p.to))
+}
+
+/// A rounded L (BUG-085 shot 1): a street up, a bend of radius `r`, a street to the west.
+fn rounded_l(road: &str, r: f32) -> SimRunner {
+    let (mut sim, db) = world();
+    let mut t = tool(&db, road);
+    click(&mut sim, &mut t, p(0.0, 150.0), true);
+    click(&mut sim, &mut t, p(0.0, r), true);
+    t.cancel();
+    t.mode = RoadMode::Curve;
+    click(&mut sim, &mut t, p(0.0, r), true);
+    click(&mut sim, &mut t, p(0.0, 0.0), true);
+    click(&mut sim, &mut t, p(-r, 0.0), true);
+    t.cancel();
+    t.mode = RoadMode::Straight;
+    click(&mut sim, &mut t, p(-r, 0.0), true);
+    click(&mut sim, &mut t, p(-150.0, 0.0), true);
+    t.cancel();
+    sim
+}
+
+/// BUG-085: a street dragged to the outside of a rounded corner from the side ends ON the
+/// corner (the bend's end node, or a point of the bend or the street), never at the kerb on a
+/// guide or a length step where it is refused; also beside a straight street and a T, on a 2-lane
+/// and a 6-lane road, with snaps on and off.
+#[test]
+fn a_street_dragged_to_a_road_ends_on_it() {
+    for road in ["basic_2l", "large_6l"] {
+        let db = world().1;
+        let hw = db.road(db.road_id(road).unwrap()).width / 2.0;
+        // The user's corner on a 2-lane street; a wide road gets a bend it can take.
+        let r = if hw > 6.0 { 48.0 } else { 24.0 };
+        let k = std::f32::consts::FRAC_1_SQRT_2;
+        let targets = [
+            ("beside the bend node", p(hw + 2.0, r)),
+            // 2 m off the outer kerb of the bend at t = 0.3 (the bend is the quadratic
+            // (0, r) -> (0, 0) -> (-r, 0): at t its point is (-r t^2, r (1 - t)^2), its
+            // outward normal (1 - t, -t)).
+            ("beside the bend", {
+                let n = Vec2::new(0.7, -0.3).normalize();
+                p(-r * 0.09, r * 0.49) + n * (hw + 2.0)
+            }),
+            (
+                "on the bend's outer sidewalk",
+                p(-r / 4.0 + k * (hw - 0.5), r / 4.0 - k * (hw - 0.5)),
+            ),
+            ("beside the street", p(hw + 3.0, 60.0)),
+        ];
+        for (name, to) in targets {
+            for free in [true, false] {
+                let mut sim = rounded_l(road, r);
+                let mut t = tool(&db, road);
+                click(&mut sim, &mut t, p(120.0, to.y - C), free);
+                let case = format!("{road} {name} free={free}");
+                let g = compute_ghost_alt(&sim.view(), &t, to, free).unwrap();
+                assert!(g.valid, "{case}: red ghost {:?}", g.errors);
+                let end = last_anchor(&sim, &t, to, free);
+                assert!(
+                    matches!(end, Some(Anchor::Node(_) | Anchor::OnSegment(..))),
+                    "{case}: the end is not on the road: {end:?}"
+                );
+                let (sent, ghost) = click(&mut sim, &mut t, to, free);
+                assert_eq!(sent, ghost, "{case}");
+                assert!(sent.is_some(), "{case}: refused");
+                assert_eq!(
+                    graph(&sim).check_invariants(),
+                    Vec::<cp_net::Violation>::new(),
+                    "{case}"
+                );
+            }
+        }
+        // A sharp T: a side street to just off the kerb of a street, and to just off the kerb
+        // 3 m from the T (the junction takes it).
+        for (name, x) in [("off the kerb", 40.0), ("off the kerb by the T", 3.0)] {
+            for free in [true, false] {
+                let (mut sim, db) = world();
+                let mut t = tool(&db, road);
+                click(&mut sim, &mut t, p(-120.0, 0.0), true);
+                click(&mut sim, &mut t, p(120.0, 0.0), true);
+                t.cancel();
+                click(&mut sim, &mut t, p(0.0, -100.0), true);
+                click(&mut sim, &mut t, p(0.0, 0.0), true);
+                t.cancel();
+                click(&mut sim, &mut t, p(x, 90.0), free);
+                let to = p(x, hw + 2.0);
+                let case = format!("{road} T {name} free={free}");
+                let g = compute_ghost_alt(&sim.view(), &t, to, free).unwrap();
+                assert!(g.valid, "{case}: red ghost {:?}", g.errors);
+                let end = last_anchor(&sim, &t, to, free);
+                if x < 8.0 {
+                    assert!(matches!(end, Some(Anchor::Node(_))), "{case}: {end:?}");
+                } else {
+                    assert!(
+                        matches!(end, Some(Anchor::OnSegment(..))),
+                        "{case}: {end:?}"
+                    );
+                }
+                let (sent, _) = click(&mut sim, &mut t, to, free);
+                assert!(sent.is_some(), "{case}: refused");
+                assert_eq!(
+                    graph(&sim).check_invariants(),
+                    Vec::<cp_net::Violation>::new(),
+                    "{case}"
+                );
+            }
+        }
+    }
+}

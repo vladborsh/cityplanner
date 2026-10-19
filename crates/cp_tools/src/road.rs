@@ -11,7 +11,7 @@ use cp_net::{
 };
 use cp_sim::SimView;
 
-use crate::snap::{Hit, SnapArm, SnapCtx, SnapEdge, SnapNode, resolve};
+use crate::snap::{self, Hit, SnapArm, SnapCtx, SnapEdge, SnapNode, resolve};
 
 /// Metres of road height per PgUp/PgDn step.
 pub const ELEVATION_STEP: f32 = 5.0;
@@ -304,12 +304,42 @@ fn plan_from_anchors(req: &RoadPathRequest, anchors: &[(Anchor, Vec2)]) -> Build
     }
 }
 
+/// How far beyond a road's edge (its half width, sidewalks included) a point is still on the road
+/// (BUG-085): a cursor just off the kerb joins the street, like in C:S.
+pub const DIRECT_PULL_M: f32 = 4.0;
+
+/// Whether both pieces at the plain cut `id` are straight: then a plan that meets the street there
+/// dissolves the cut (`cp_net`), and the tool does not snap to it. A cut beside a curve (the end of
+/// a rounded corner's bend) stays a node to snap to: it cannot be dissolved (BUG-085).
+fn dissolvable_cut(net: &cp_net::NetGraph, id: cp_net::NodeId) -> bool {
+    let straight = |c: &CubicBezier3| {
+        let (a, b) = (to_xz(c.p0), to_xz(c.p3));
+        let d = (b - a).normalize_or_zero();
+        [c.p1, c.p2]
+            .iter()
+            .all(|p| (to_xz(*p) - a).perp_dot(d).abs() < 0.01)
+    };
+    cp_net::is_plain_cut(net, id)
+        && net.node(id).is_some_and(|n| {
+            n.segments
+                .iter()
+                .all(|&s| net.segment(s).is_some_and(|s| straight(&s.curve)))
+        })
+}
+
 /// What the road tool puts under the point `p` (§6.8.3 items 1 and 5): through the one
-/// resolver's direct hit — a node (inside its junction), else a street within its half width —
-/// and nothing else, because the quantizing has already placed the point. `is_end`: an end of the
+/// resolver's direct hit — a node (inside its junction), else a street within its half width and
+/// [`DIRECT_PULL_M`] (its point inside a node's junction is that node) — and nothing else, because
+/// the quantizing has already placed the point. `is_end`: an end of the
 /// path. A raised road meets only raised nodes (at its ends also ground ones) and no streets; a
 /// tunnel its own nodes (at its ends the ground ones, the portals).
-fn direct_hit(view: &SimView, elevation: ElevationMode, p: Vec2, is_end: bool) -> (Anchor, Vec2) {
+fn direct_hit(
+    view: &SimView,
+    road: RoadDefId,
+    elevation: ElevationMode,
+    p: Vec2,
+    is_end: bool,
+) -> (Anchor, Vec2) {
     let (Some(content), net) = (view.content.as_deref(), &*view.net) else {
         return (Anchor::Free(p), p);
     };
@@ -330,7 +360,7 @@ fn direct_hit(view: &SimView, elevation: ElevationMode, p: Vec2, is_end: bool) -
     let mut nodes = Vec::new();
     for (id, n) in net
         .nodes()
-        .filter(|(id, n)| level_ok(n.elevation) && !cp_net::is_plain_cut(net, *id))
+        .filter(|(id, n)| level_ok(n.elevation) && !dissolvable_cut(net, *id))
     {
         let arms = n
             .segments
@@ -365,7 +395,7 @@ fn direct_hit(view: &SimView, elevation: ElevationMode, p: Vec2, is_end: bool) -
             sids.push(id);
             edges.push(SnapEdge {
                 curve: s.curve,
-                reach: content.road(s.road).width / 2.0,
+                reach: content.road(s.road).width / 2.0 + DIRECT_PULL_M,
             });
         }
     }
@@ -384,15 +414,31 @@ fn direct_hit(view: &SimView, elevation: ElevationMode, p: Vec2, is_end: bool) -
     );
     match snap.hit {
         Hit::Node(i) => (Anchor::Node(ids[i]), snap.pos),
+        // A point of a street inside a junction is the junction, and so is one closer to a
+        // non-dead end of its street than the new road's half width (that node would lie under
+        // the new asphalt): a cut there would be refused (BUG-085). Near a dead end the point
+        // moves out of its footprint instead (T-266).
         Hit::Edge(i, t) => {
-            let moved = cp_net::out_of_end_footprint(net, content, sids[i], t);
-            if moved == t {
-                (Anchor::OnSegment(sids[i], t), snap.pos)
-            } else {
-                (
-                    Anchor::OnSegment(sids[i], moved),
-                    to_xz(edges[i].curve.point(moved)),
-                )
+            let reach = (content.road(road).width / 2.0).max(snap::MIN_FOOTPRINT_M);
+            let ends = net
+                .segment(sids[i])
+                .map_or(Vec::new(), |s| vec![s.start, s.end]);
+            let dead = |id: &cp_net::NodeId| net.node(*id).is_some_and(|n| n.segments.len() == 1);
+            let near_end = ids.iter().enumerate().find(|&(k, id)| {
+                ends.contains(id) && !dead(id) && nodes[k].pos.distance(snap.pos) < reach
+            });
+            match nodes.iter().position(|n| n.contains(snap.pos)) {
+                Some(k) => (Anchor::Node(ids[k]), nodes[k].pos),
+                None => match near_end {
+                    Some((k, id)) => (Anchor::Node(*id), nodes[k].pos),
+                    None => {
+                        let moved = cp_net::out_of_end_footprint(net, content, sids[i], t);
+                        (
+                            Anchor::OnSegment(sids[i], moved),
+                            to_xz(edges[i].curve.point(moved)),
+                        )
+                    }
+                },
             }
         }
         Hit::Free => (Anchor::Free(p), p),
@@ -408,7 +454,7 @@ pub fn plan_for(view: &SimView, req: &RoadPathRequest) -> Option<(BuildPlan, Vec
     let anchors: Vec<(Anchor, Vec2)> = vertices
         .iter()
         .enumerate()
-        .map(|(i, &p)| direct_hit(view, req.elevation, p, i == 0 || i == last))
+        .map(|(i, &p)| direct_hit(view, req.road, req.elevation, p, i == 0 || i == last))
         .collect();
     let at = anchors.iter().map(|a| a.1).collect();
     Some((plan_from_anchors(req, &anchors), at))
@@ -457,8 +503,63 @@ pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRe
         marks: &marks,
         edge_offset: content.road(req.road).width / 2.0,
     };
+    // A vertex on or beside a road is that road (BUG-085): the lattice never moves it off.
+    let (vertices, _) = path_vertices(&req.path);
+    let pinned: Vec<Option<Vec2>> = vertices
+        .iter()
+        .map(|&p| {
+            let hit = direct_hit(view, req.road, req.elevation, p, true);
+            (!matches!(hit.0, Anchor::Free(_))).then_some(hit.1)
+        })
+        .collect();
     let (path, report) = crate::lattice::quantize_path(&req, &cx);
+    let (mut at, _) = path_vertices(&path);
+    if pinned.iter().all(Option::is_none) || at.len() != pinned.len() {
+        return (RoadPathRequest { path, ..req }, report);
+    }
+    // A vertex the lattice keeps on a road (a tick of the street, say) stays where the lattice
+    // put it, unless that makes the plan refused where the vertex as aimed is not; one it moved
+    // off the road goes back onto the road.
+    let mut kept = false;
+    let mut aimed = at.clone();
+    for ((a, b), p) in at.iter_mut().zip(aimed.iter_mut()).zip(&pinned) {
+        if let Some(p) = p {
+            *b = *p;
+            if matches!(
+                direct_hit(view, req.road, req.elevation, *a, true).0,
+                Anchor::Free(_)
+            ) {
+                *a = *p;
+            } else {
+                kept |= a.distance(*p) > 1e-3;
+            }
+        }
+    }
+    if kept {
+        let refused = |at: &[Vec2]| {
+            let r = RoadPathRequest {
+                path: with_vertices(&path, at),
+                ..req.clone()
+            };
+            matches!(preview(view, &r), Some(Err(_)))
+        };
+        if refused(&at) && !refused(&aimed) {
+            at = aimed;
+        }
+    }
+    let path = with_vertices(&path, &at);
     (RoadPathRequest { path, ..req }, report)
+}
+
+/// Whether the cursor `hover` of `tool` is a direct hit on a road (a node, or a street within
+/// its reach): the block guide may not move such a cursor off the road (BUG-085).
+fn hover_hits_road(view: &SimView, tool: &RoadTool, hover: Vec2) -> bool {
+    tool.road.is_some_and(|road| {
+        !matches!(
+            direct_hit(view, road, tool.elevation(), hover, true).0,
+            Anchor::Free(_)
+        )
+    })
 }
 
 /// The cursor of the road tool after the one resolver (§6.8.3 items 1, 5 and 7): where the ghost
@@ -488,7 +589,13 @@ pub fn resolve_cursor(view: &SimView, tool: &RoadTool, hover: Vec2, free: bool) 
     let (hover, block) = if free {
         (hover, None)
     } else {
-        crate::lattice::block_hover(view, tool, hover, false)
+        // The block guide never moves a cursor on or beside a road off it (BUG-085).
+        let (guided, block) = crate::lattice::block_hover(view, tool, hover, false);
+        if hover_hits_road(view, tool, hover) && !hover_hits_road(view, tool, guided) {
+            (hover, None)
+        } else {
+            (guided, block)
+        }
     };
     // The path with the cursor; with nothing clicked yet, a probe leg east of the first point:
     // the rules for a vertex do not depend on the leg.
