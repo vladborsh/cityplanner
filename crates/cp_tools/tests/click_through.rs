@@ -435,7 +435,8 @@ mod moving {
     #[test]
     fn a_click_on_a_bad_spot_sends_nothing() {
         let (sim, id) = world();
-        let mut app = picked_up(&sim, id, Vec2::new(5100.0, 5300.0)); // on the road
+        // Far from every road (T-267: on the road it would stand beside it): nowhere to stand.
+        let mut app = picked_up(&sim, id, Vec2::new(5100.0, 5700.0));
         let ghost = app
             .world()
             .resource::<ToolState>()
