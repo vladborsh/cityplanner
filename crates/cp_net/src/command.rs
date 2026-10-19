@@ -508,7 +508,7 @@ pub fn apply_build_plan(
     let mut graph = world
         .get_resource_mut::<NetGraph>()
         .ok_or(NetError::Missing("net graph"))?;
-    dissolve(&mut graph, &content, plan);
+    let _ = dissolve(&mut graph, &content, plan);
     for (seg, ts) in grouped_splits(plan) {
         let road = graph
             .segment(seg)
@@ -567,13 +567,18 @@ pub(crate) fn check_plan(
     }
     // The cuts the plan dissolves are merged first; the rest is decided on that graph.
     let mut work = graph.clone();
-    dissolve(&mut work, content, plan);
+    let _ = dissolve(&mut work, content, plan);
     work.check_build(&grouped_splits(plan), &curves)
 }
 
 /// Merges the cuts of `plan.dissolve` away, in order (the road of a cut is the road of its
 /// pieces).
-fn dissolve(graph: &mut NetGraph, content: &cp_content::ContentDb, plan: &RoadBuildPlan) {
+fn dissolve(
+    graph: &mut NetGraph,
+    content: &cp_content::ContentDb,
+    plan: &RoadBuildPlan,
+) -> Vec<SegmentId> {
+    let mut made = Vec::new();
     for &node in &plan.dissolve {
         let Some(road) = graph
             .node(node)
@@ -583,8 +588,9 @@ fn dissolve(graph: &mut NetGraph, content: &cp_content::ContentDb, plan: &RoadBu
         else {
             continue;
         };
-        graph.merge_joint_planar(content.road(road), node);
+        made.extend(graph.merge_joint_planar(content.road(road), node));
     }
+    made
 }
 
 /// Applies a validated plan: splits first (per segment, ascending `t`), then the new
@@ -606,7 +612,13 @@ fn apply_plan_with(
     plan: &RoadBuildPlan,
     merge: bool,
 ) -> Result<(), NetOpError> {
-    dissolve(graph, content, plan);
+    // The plan's splits name the streets the cuts were merged into in the validator's copy of the
+    // graph: the arena hands out the same slots here, which this checks.
+    let made = dissolve(graph, content, plan);
+    debug_assert_eq!(
+        made, plan.merged,
+        "the merged streets differ from the validated ones"
+    );
     let by_seg = grouped_splits(plan);
     for (seg, ts) in by_seg {
         let road = graph

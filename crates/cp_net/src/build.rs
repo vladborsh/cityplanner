@@ -349,6 +349,9 @@ pub struct RoadBuildPlan {
     /// junction or an end within 8 m of such a cut takes its place on the street's lattice, and
     /// the street is cut again where it needs it (T-264, what BUG-069 did after the fact).
     pub dissolve: Vec<NodeId>,
+    /// The streets those merges make, in order: what the apply must find again (checked in
+    /// debug builds; the ids come from a clone of the graph).
+    pub merged: Vec<SegmentId>,
 }
 
 impl RoadBuildError {
@@ -1038,6 +1041,7 @@ pub fn validate_build_plan(
     )?;
     if let Some(c) = &cuts {
         built.dissolve = c.dissolved.clone();
+        built.merged = c.merged.clone();
     }
     cut_long_remnants(&mut built, g, cuts.as_ref().map_or(&[][..], |c| &c.merged));
     Ok(built)
@@ -1096,8 +1100,10 @@ fn dissolve_cuts(
         };
         let at = seg.curve.arc_table().t_to_s(t);
         for (node, along) in [(seg.start, at), (seg.end, seg.length - at)] {
-            let plain = graph.node(node).is_some_and(|n| n.kind == NodeKind::Middle);
-            if plain && along < MIN_SEGMENT_LENGTH_BUILD - REMNANT_EPS && !cuts.contains(&node) {
+            if is_plain_cut(graph, node)
+                && along < MIN_SEGMENT_LENGTH_BUILD - REMNANT_EPS
+                && !cuts.contains(&node)
+            {
                 cuts.push(node);
             }
         }
@@ -1107,36 +1113,56 @@ fn dissolve_cuts(
     }
     let mut work = graph.clone();
     let (mut dissolved, mut merged) = (Vec::new(), Vec::new());
+    // (the piece consumed, the street it became, how far along it its start now is)
+    let mut moves: Vec<(SegmentId, SegmentId, f32)> = Vec::new();
     for node in cuts {
-        let Some(road) = graph
-            .node(node)
-            .and_then(|n| n.segments.first())
-            .and_then(|&s| graph.segment(s))
-            .map(|s| s.road)
-        else {
+        let Some(pieces) = joint_pieces(&work, node) else {
             continue;
         };
-        if let Some(m) = work.merge_joint_planar(content.road(road), node) {
-            dissolved.push(node);
-            merged.push(m);
+        let (first, second) = pieces;
+        let (f, g) = (work.segment(first)?.clone(), work.segment(second)?.clone());
+        // A cut that sits off the straight line between its ends (a crest or a dip: the pieces
+        // followed the ground) is not dissolved: the merged street would be the chord in 3D and
+        // the re-cuts would stand off the ground.
+        let (from, to, joint) = (f.curve.p0, g.curve.p3, f.curve.p3);
+        let run = Vec2::new(to.x - from.x, to.z - from.z);
+        let along = if run.length_squared() > 1e-6 {
+            (Vec2::new(joint.x - from.x, joint.z - from.z).dot(run) / run.length_squared())
+                .clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        if (from.y + (to.y - from.y) * along - joint.y).abs() > DISSOLVE_HEIGHT_TOL {
+            continue;
         }
+        let Some(m) = work.merge_joint_planar(content.road(f.road), node) else {
+            continue;
+        };
+        dissolved.push(node);
+        merged.push(m);
+        moves.push((first, m, 0.0));
+        moves.push((second, m, f.length));
     }
     if dissolved.is_empty() {
         return None;
     }
-    // An anchor on a street that was merged away is the same point of the merged street.
+    // An anchor on a street that was merged away is the same place on the merged street: its
+    // distance along the piece, plus the length of what came before it in the merge.
     let moved = |a: Anchor| match a {
         Anchor::OnSegment(sid, t) if work.segment(sid).is_none() => {
-            let p = to_xz(graph.segment(sid).map_or(Vec3::ZERO, |s| s.curve.point(t)));
-            work.segments()
-                .filter(|(_, s)| s.elevation == Elevation::Ground)
-                .map(|(id, s)| {
-                    let (t, d) = s.curve.nearest_xz(p);
-                    (d, id, t)
-                })
-                .min_by(|a, b| a.0.total_cmp(&b.0))
-                .filter(|(d, ..)| *d < 0.5)
-                .map_or(a, |(_, id, t)| Anchor::OnSegment(id, t))
+            let Some(old) = graph.segment(sid) else {
+                return a;
+            };
+            let (mut id, mut s) = (sid, old.curve.arc_table().t_to_s(t));
+            while work.segment(id).is_none() {
+                let Some(&(_, into, offset)) = moves.iter().find(|(from, ..)| *from == id) else {
+                    return a;
+                };
+                (id, s) = (into, s + offset);
+            }
+            let curve = &work.segment(id).expect("checked").curve;
+            let table = curve.arc_table();
+            Anchor::OnSegment(id, table.s_to_t(s.min(table.length())))
         }
         other => other,
     };
@@ -1152,6 +1178,27 @@ fn dissolve_cuts(
         merged,
     })
 }
+
+/// The two pieces that meet in the plain cut `node`: the one that ends in it and the one that
+/// starts in it.
+fn joint_pieces(graph: &NetGraph, node: NodeId) -> Option<(SegmentId, SegmentId)> {
+    let n = graph.node(node)?;
+    let [a, b] = n.segments.as_slice() else {
+        return None;
+    };
+    let (sa, sb) = (graph.segment(*a)?, graph.segment(*b)?);
+    if sa.end == node && sb.start == node {
+        Some((*a, *b))
+    } else if sb.end == node && sa.start == node {
+        Some((*b, *a))
+    } else {
+        None
+    }
+}
+
+/// How far (metres, vertically) a cut may stand off the straight line between the ends of the
+/// street it is a cut of for the plan to dissolve it.
+const DISSOLVE_HEIGHT_TOL: f32 = 0.25;
 
 /// The pieces an old street is left in after the plan cut it (or after cuts were merged into
 /// it) are at most [`MAX_SEGMENT_LENGTH`] long: a longer span gets equal cuts, like a new road.
@@ -1920,6 +1967,7 @@ fn validate_inner(
         cost,
         literal: literal.is_some(),
         dissolve: Vec::new(),
+        merged: Vec::new(),
     })
 }
 

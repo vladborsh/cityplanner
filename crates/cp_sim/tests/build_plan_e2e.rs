@@ -449,3 +449,61 @@ fn a_crossing_within_8_m_of_a_plain_cut_dissolves_the_cut_and_stays_where_aimed(
     assert!(lengths(&sim)[0] >= 8.0);
     assert_invariants(&sim);
 }
+
+/// A map with a crest along x: 40 m of height over the middle of the street, sagitta of a
+/// 150 m chord about 1.7 m.
+fn crest_world() -> (SimRunner, cp_content::RoadDefId) {
+    use cp_terrain::{GRID, MAX_HEIGHT, MapMeta, SPACING, Terrain};
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
+    let db = Arc::new(cp_content::ContentDb::load_dir(format!("{dir}/content")).unwrap());
+    let enc = |m: f32| (m / MAX_HEIGHT * 65535.0).round() as u16;
+    let mut hs = vec![0u16; GRID * GRID];
+    for iz in 0..GRID {
+        for ix in 0..GRID {
+            let dx = ix as f32 * SPACING - C;
+            hs[iz * GRID + ix] = enc(60.0 - 0.0003 * dx * dx);
+        }
+    }
+    let meta = MapMeta {
+        name: "crest".into(),
+        sea_level: 0.0,
+        start_tile: (2, 2),
+        external_connections: vec![],
+        entry_road: None,
+        entry_rail: None,
+    };
+    let terrain = Arc::new(Terrain::from_samples(meta, &hs, &vec![0; GRID * GRID]).unwrap());
+    let mut sim = SimRunner::new(1);
+    sim.set_terrain(terrain);
+    sim.set_content(Arc::clone(&db));
+    sim.world_mut()
+        .insert_resource(cp_terrain::TileOwnership::only((2, 2)));
+    sim.world_mut().resource_mut::<Treasury>().balance = Cost::from_units(1_000_000_000.0);
+    (sim, db.road_id("basic_2l").unwrap())
+}
+
+#[test]
+fn over_a_crest_a_crossing_near_a_cut_keeps_every_node_on_the_ground_or_is_refused() {
+    let (mut sim, road) = crest_world();
+    build(&mut sim, road, &[p(-150.0, 0.0), p(150.0, 0.0)]).unwrap();
+    // 5 m past the cut at -75: on flat ground the cut would be dissolved; here the pieces follow
+    // the crest, the cut stands 1.7 m above the chord, so it stays.
+    let result = build(&mut sim, road, &[p(-70.0, -80.0), p(-70.0, 80.0)]);
+    let terrain = sim.world().resource::<cp_terrain::SimTerrain>().0.clone();
+    if result.is_ok() {
+        for (_, n) in graph(&sim).nodes() {
+            let ground = terrain.height(Vec2::new(n.pos.x, n.pos.z));
+            assert!(
+                (n.pos.y - ground).abs() <= 0.25,
+                "node at ({}, {}) is {} m off the ground",
+                n.pos.x,
+                n.pos.z,
+                n.pos.y - ground
+            );
+        }
+        assert_invariants(&sim);
+        // The cut was not dissolved: the street still has its node at -75, and the crossing
+        // goes through it.
+        assert!(node_at(&sim, p(-75.0, 0.0)).is_some());
+    }
+}

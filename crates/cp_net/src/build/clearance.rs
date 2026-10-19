@@ -189,6 +189,7 @@ mod tests {
             cost: Cost::ZERO,
             literal: false,
             dissolve: Vec::new(),
+            merged: Vec::new(),
         }
     }
 

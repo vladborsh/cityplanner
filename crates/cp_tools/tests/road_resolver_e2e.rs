@@ -4,6 +4,10 @@
 //! errors carry their place on the map; the length shows in cells with the angle. And the sweep
 //! "built = aimed" through the tool: every street the tool builds has its vertices where the
 //! resolver put them and leaves the graph clean (`NetGraph::check_invariants`).
+//!
+//! §6.8.5: this file is the "through the tool" half of `net_sweep` (`cp_sim` cannot depend on
+//! `cp_tools`); the other half, the cases of the audit built as plans, is
+//! `crates/cp_sim/tests/net_sweep.rs`.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -124,6 +128,32 @@ fn a_click_sends_the_plan_the_ghost_showed() {
     assert!(
         (end - p(0.0, 0.0)).length() % 8.0 < 0.05 || (end - p(0.0, 0.0)).length() % 8.0 > 7.95,
         "{end:?}"
+    );
+}
+
+#[test]
+fn a_curve_click_sends_the_plan_the_ghost_showed() {
+    let (mut sim, db) = world();
+    let mut t = tool(&db, "basic_2l");
+    t.mode = RoadMode::Curve;
+    click(&mut sim, &mut t, p(0.0, 0.0), true);
+    // The control point, then the end: the ghost already draws the curve from the control.
+    let (sent, _) = click(&mut sim, &mut t, p(50.0, 40.0), true);
+    assert!(sent.is_none(), "the control point completes nothing");
+    let (sent, ghost) = click(&mut sim, &mut t, p(100.0, 0.0), true);
+    assert_eq!(sent, ghost, "the click sends the ghost's plan");
+    let plan = sent.expect("a curve");
+    assert_eq!(plan.pieces.len(), 1);
+    let piece = plan.pieces[0];
+    // Bent: the control points are off the chord.
+    let chord = p(100.0, 0.0) - p(0.0, 0.0);
+    assert!(
+        chord.perp_dot(piece.c1 - p(0.0, 0.0)).abs() > 1.0,
+        "{piece:?}"
+    );
+    assert!(
+        chord.perp_dot(piece.c2 - p(0.0, 0.0)).abs() > 1.0,
+        "{piece:?}"
     );
 }
 
