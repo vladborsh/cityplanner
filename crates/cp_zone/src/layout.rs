@@ -353,6 +353,68 @@ fn end_of(
     }
 }
 
+/// The cross street a front ends at, at the exit node of `id` (the one [`end_of`] takes its
+/// edge from; at a rounded corner the leg beyond the bend). `None` at a dead end or the open
+/// side of a bend.
+fn cross_seg(
+    net: &NetGraph,
+    roads: &dyn Fn(RoadDefId) -> RoadZoning,
+    id: SegmentId,
+    fwd: bool,
+    side: Side,
+) -> Option<SegmentId> {
+    let (seg, _) = zoned(net, roads, id)?;
+    if let Some((bend, bend_fwd)) = straight_on_id(net, id, fwd)
+        && rounded_corner(net, bend)
+    {
+        return match rounded_corner_end(net, roads, id, fwd)? {
+            FrontEnd::Edge(_) => straight_on_id(net, bend, bend_fwd).map(|(s, _)| s),
+            FrontEnd::Open => None,
+        };
+    }
+    let (heading, node) = exit_of(seg, fwd);
+    let (back, v) = (-heading, side_vec(heading, side));
+    let mut best: Option<(f32, SegmentId)> = None;
+    for a in arms_at(net, roads, node, id) {
+        let theta = a.dir.dot(v).atan2(a.dir.dot(back));
+        if theta > 1e-3 && theta <= EDGE_MAX_DEG.to_radians() && best.is_none_or(|(t, _)| theta < t)
+        {
+            best = Some((theta, a.seg));
+        }
+    }
+    best.map(|(_, s)| s)
+}
+
+/// The key that orders the two ends of a block's frontages (§6.8.3 item 4 (г), BUG-089): the
+/// build order of the cross street there, then the corner node's position in millimetres. The
+/// two frontages facing each other across a block end at the same two cross streets, so both
+/// pick the same end to count from.
+fn end_key(
+    net: &NetGraph,
+    roads: &dyn Fn(RoadDefId) -> RoadZoning,
+    id: SegmentId,
+    fwd: bool,
+    sides: [Side; 2],
+) -> Option<(u32, i64, i64)> {
+    let cross = sides
+        .into_iter()
+        .find_map(|side| cross_seg(net, roads, id, fwd, side))?;
+    let (_, node) = exit_of(net.segment(id)?, fwd);
+    let p = to_xz(net.node(node)?.pos);
+    Some((
+        net.segment(cross)?.order,
+        (p.x * 1000.0).round() as i64,
+        (p.y * 1000.0).round() as i64,
+    ))
+}
+
+/// Whether the front of `id` ends at a dead end at its exit node (a node of one segment).
+fn dead_end(net: &NetGraph, id: SegmentId, fwd: bool) -> bool {
+    net.segment(id)
+        .and_then(|s| net.node(exit_of(s, fwd).1))
+        .is_some_and(|n| n.segments.len() == 1)
+}
+
 /// Walks on from `id`: the segments passed (starting with `id`) and how the front ends.
 fn extend(
     net: &NetGraph,
@@ -531,7 +593,19 @@ pub(crate) fn layout_frontage(
         return Vec::new();
     };
     let inner = roads(first.road).half_width;
-    let (start, end) = shared_ends(net, roads, f);
+    let (mut start, mut end) = shared_ends(net, roads, f);
+    let (Some(&(s_id, s_fwd)), Some(&(e_id, e_fwd))) = (f.segs.first(), f.segs.last()) else {
+        return Vec::new();
+    };
+    // (д) An open end at a dead end keeps the room of a cross street of its own road: no cell in
+    // its last half width, so a street of that road built there later moves nothing (BUG-089).
+    let own = |id: SegmentId| net.segment(id).map_or(0.0, |s| roads(s.road).half_width);
+    if start == FrontEnd::Open && dead_end(net, s_id, !s_fwd) {
+        start = FrontEnd::Edge(own(s_id));
+    }
+    if end == FrontEnd::Open && dead_end(net, e_id, e_fwd) {
+        end = FrontEnd::Edge(own(e_id));
+    }
     let edge = |e: FrontEnd| match e {
         FrontEnd::Edge(d) => d,
         FrontEnd::Open => 0.0,
@@ -544,9 +618,17 @@ pub(crate) fn layout_frontage(
     }
     let n = n.min(u32::from(u16::MAX));
     // The cells count from the edge of a cross street (the corner of the block), else from the
-    // start node: from the end when only the end stands at a cross street, the rest under 8 m
-    // then falls at the open start.
-    let from_end = matches!(start, FrontEnd::Open) && matches!(end, FrontEnd::Edge(_));
+    // start: from the end when only the end stands at a cross street, the rest under 8 m then
+    // falls at the start. Between two cross streets (г): from the older one's (by build order,
+    // then the corner's position), so the frontages facing each other across a block share one
+    // lattice and the rest falls at the same end of both (BUG-089).
+    let ks = end_key(net, roads, s_id, !s_fwd, [f.side.flip(), f.side]);
+    let ke = end_key(net, roads, e_id, e_fwd, [f.side, f.side.flip()]);
+    let from_end = match (ks, ke) {
+        (Some(a), Some(b)) => b < a,
+        (None, Some(_)) => matches!(end, FrontEnd::Edge(_)),
+        _ => false,
+    };
     let origin = if from_end {
         a1 - n as f32 * CELL_SIZE
     } else {
