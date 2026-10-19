@@ -36,8 +36,10 @@ const GAP: f32 = 0.5;
 /// prefix ending in `/` covers every case under it). T-267 empties it.
 ///
 /// T-265 (layout v3, 176 of 546): a rounded corner is a frontage of its own, so its inside has
-/// cells again and the lots of up to 3 x 2 (4 x 3 on `basic_2l`) fit there now; 4 x 3 inside one
-/// on the wider roads does not (its curve cells overlap and drop, `Cut`).
+/// cells again. T-266 (ruling (B), 190 of 546): the legs of a rounded corner count from its
+/// virtual corner and their cells reach over the bend, so the lots inside one are cut again
+/// (2 x 2 to 4 x 3 on `basic_2l`, 2 x 2 and 3 x 2 on the wider roads); 4 x 3 inside one on the
+/// wider roads fits now. Owner T-267 (edge placement).
 const KNOWN_RED: &[&str] = &[
     "x/basic_2l/ne/3x3/",
     "x/basic_2l/ne/3x4/",
@@ -57,8 +59,7 @@ const KNOWN_RED: &[&str] = &[
     "t/basic_2l/corner_w/3x3/",
     "t/basic_2l/corner_w/3x4/",
     "t/basic_2l/corner_w/4x4/",
-    "rounded/basic_2l/inside/3x4/",
-    "rounded/basic_2l/inside/4x4/",
+    "rounded/basic_2l/",
     "curve/basic_2l/inside/",
     "x/medium_4l/ne/3x3/",
     "x/medium_4l/ne/3x4/",
@@ -78,9 +79,10 @@ const KNOWN_RED: &[&str] = &[
     "t/medium_4l/corner_w/3x3/",
     "t/medium_4l/corner_w/3x4/",
     "t/medium_4l/corner_w/4x4/",
+    "rounded/medium_4l/inside/2x2/",
+    "rounded/medium_4l/inside/3x2/",
     "rounded/medium_4l/inside/3x3/",
     "rounded/medium_4l/inside/3x4/",
-    "rounded/medium_4l/inside/4x3/",
     "rounded/medium_4l/inside/4x4/",
     "curve/medium_4l/inside/",
     "x/large_6l/ne/3x3/",
@@ -104,9 +106,10 @@ const KNOWN_RED: &[&str] = &[
     "t/large_6l/corner_w/3x4/",
     "t/large_6l/corner_w/4x3/",
     "t/large_6l/corner_w/4x4/",
+    "rounded/large_6l/inside/2x2/",
+    "rounded/large_6l/inside/3x2/",
     "rounded/large_6l/inside/3x3/",
     "rounded/large_6l/inside/3x4/",
-    "rounded/large_6l/inside/4x3/",
     "rounded/large_6l/inside/4x4/",
     "curve/large_6l/inside/",
 ];
