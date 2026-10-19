@@ -1,4 +1,4 @@
-//! The four grid layouts of the user's BUG-073 shots (T-255), built the way the player built
+//! The grid layouts of the user's BUG-073 shots (T-255) and the U of BUG-081 (T-265), built the way the player built
 //! them: every street through the road tool's own code ([`block_hover`], [`RoadTool::click`],
 //! [`chain_commit`]: the quantizing, the joins, the snaps), a cross street started on the tick
 //! the tool offers (the street's tick series, [`cp_zone::street_ticks`]). The last street of each layout
@@ -14,6 +14,9 @@
 //!   street's 8-cell tick, longer than the block; ghost: closing from the top street's 16-cell
 //!   tick down to the bottom street. Square to the map: the tool snaps a street's direction to
 //!   the map axes, a turned frame would bend the streets.
+//! * shot 5 (T-265): the U of BUG-081, drawn in one chain: up the left street, across the top for
+//!   two blocks, down the right street; ghost: the street closing the block 8 rows under the top
+//!   street's edge.
 
 use bevy::prelude::*;
 use bevy_ecs::message::Messages;
@@ -36,14 +39,15 @@ const BLOCK: f32 = 64.0;
 /// Radius of the rounded corners.
 const BEND_R: f32 = 24.0;
 
-/// Where layout `n` (1..=4) stands, and the turn of its frame in degrees.
+/// Where layout `n` (1..=5) stands, and the turn of its frame in degrees.
 pub fn origin(n: usize) -> (Vec2, f32) {
     let c = cp_terrain::MAP_SIZE / 2.0;
     let (dx, dz, deg) = match n {
         1 => (-450.0, 150.0, 0.0),
         2 => (150.0, 150.0, 40.0),
         3 => (-450.0, -350.0, 0.0),
-        _ => (150.0, -350.0, 0.0),
+        4 => (150.0, -350.0, 0.0),
+        _ => (-450.0, -850.0, 0.0),
     };
     (Vec2::new(c + dx, c + dz), deg)
 }
@@ -55,7 +59,8 @@ pub fn focus(n: usize) -> Vec2 {
         1 => Vec2::new(110.0, 70.0),
         2 => Vec2::new(190.0, 10.0),
         3 => Vec2::new(110.0, 40.0),
-        _ => Vec2::new(110.0, 60.0),
+        4 => Vec2::new(110.0, 60.0),
+        _ => Vec2::new(76.0, 120.0),
     })
 }
 
@@ -322,7 +327,19 @@ fn shot4(h: &mut Hand) -> Option<(Vec2, Vec2)> {
     Some((at, Vec2::new(s.x, bottom.y())))
 }
 
-/// Builds the four layouts and keeps the cursors of their last streets; the clock is held.
+fn shot5(h: &mut Hand) -> Option<(Vec2, Vec2)> {
+    let hw = h.hw;
+    let (right_x, top_y) = (2.0 * (BLOCK + 2.0 * hw), 3.0 * BLOCK);
+    h.start(RoadMode::Straight);
+    h.click(Vec2::ZERO);
+    let left = h.click(Vec2::new(0.0, top_y))?;
+    let top = h.click(Vec2::new(right_x, top_y))?;
+    let right = h.click(Vec2::new(right_x, top_y - 2.0 * BLOCK))?;
+    let y = top.y() - hw - BLOCK - hw;
+    Some((Vec2::new(left.x(), y), Vec2::new(right.x(), y)))
+}
+
+/// Builds the five layouts and keeps the cursors of their last streets; the clock is held.
 /// Returns the rejected commands.
 pub fn build_grid_shots(sim: &mut SimRunner) -> Vec<String> {
     sim.world_mut()
@@ -332,7 +349,7 @@ pub fn build_grid_shots(sim: &mut SimRunner) -> Vec<String> {
     let road = db.road_id(ROAD).expect("basic_2l");
     let mut rejected = Vec::new();
     let mut cursors = Vec::new();
-    for n in 1..=4 {
+    for n in 1..=5 {
         let mut h = Hand {
             sim: &mut *sim,
             f: Frame::new(n),
@@ -345,7 +362,8 @@ pub fn build_grid_shots(sim: &mut SimRunner) -> Vec<String> {
             1 => shot1(&mut h),
             2 => shot2(&mut h),
             3 => shot3(&mut h),
-            _ => shot4(&mut h),
+            4 => shot4(&mut h),
+            _ => shot5(&mut h),
         };
         let f = h.f;
         rejected.append(&mut h.rejected);
@@ -383,17 +401,17 @@ pub fn shot_of_cam(cam: &str) -> Option<usize> {
     cam.strip_prefix("grid-shot")?
         .parse()
         .ok()
-        .filter(|n| (1..=4).contains(n))
+        .filter(|n| (1..=5).contains(n))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The four layouts build through the tool without a rejected command, and each camera
+    /// The five layouts build through the tool without a rejected command, and each camera
     /// gets a ghost of its last street: started on the street it leaves from, a street long.
     #[test]
-    fn the_four_layouts_build_and_hold_a_ghost_each() {
+    fn the_five_layouts_build_and_hold_a_ghost_each() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let terrain = cp_terrain::Terrain::load(&root.join("assets/maps/flatlands")).unwrap();
         let sim = crate::build_sim(
@@ -404,10 +422,10 @@ mod tests {
             Some(GRID_SHOTS),
         );
         let streets = sim.view().net.segments().count();
-        assert!(streets >= 4 * 3, "{streets} streets");
+        assert!(streets >= 5 * 3, "{streets} streets");
         let cursors = sim.world().resource::<GridShotCursors>().clone();
         let view = sim.view();
-        for n in 1..=4 {
+        for n in 1..=5 {
             let g = ghost(&view, &cursors, n).expect("a ghost");
             let on_net = view.net.segments().any(|(_, s)| {
                 let c = &s.curve;
