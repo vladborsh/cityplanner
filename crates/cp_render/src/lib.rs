@@ -13,6 +13,7 @@ pub mod demolish_ghost;
 pub mod fire_fx;
 pub mod fire_render;
 pub mod furniture_render;
+pub mod grading;
 pub mod material;
 pub mod overlay;
 pub mod portal_render;
@@ -36,6 +37,7 @@ pub use chunk::terrain_mesh_height;
 pub use demolish_ghost::{DemolishGhostPlugin, DemolishLayer};
 pub use fire_render::{FireFxPlugin, FireFxStats};
 pub use furniture_render::{FurnitureRenderPlugin, FurnitureStats};
+pub use grading::{GradingPlugin, GradingSettings};
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{
     AreaFamily, AreasMode, CoverageCount, CoverageGhost, CoverageGhostSummary, CoverageSite,

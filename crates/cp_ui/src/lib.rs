@@ -22,6 +22,7 @@ pub mod districts;
 pub mod files;
 pub mod frame;
 mod glyphs;
+pub mod grading;
 pub mod icons;
 pub mod industry;
 pub mod info;
@@ -62,6 +63,7 @@ impl Plugin for UiPlugin {
             .add_message::<advisor::AdvisorShown>()
             .init_resource::<OverlayState>()
             .init_resource::<LightingSettings>()
+            .init_resource::<cp_render::GradingSettings>()
             .init_resource::<TickRate>()
             .init_resource::<CommandOutbox>()
             .init_resource::<ToolState>()
@@ -88,6 +90,7 @@ impl Plugin for UiPlugin {
                 EguiPrimaryContextPass,
                 (
                     draw_ui,
+                    grading::grading_ui,
                     districts::draw_labels,
                     land::land_overlay,
                     transit::transit_labels,
@@ -131,6 +134,10 @@ fn toggle_debug(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<UiState>) {
     // City services (T-232).
     if keys.just_pressed(KeyCode::F4) {
         state.services_open = !state.services_open;
+    }
+    // The colour grading panel (T-273).
+    if keys.just_pressed(KeyCode::F8) {
+        state.grading_open = !state.grading_open;
     }
 }
 

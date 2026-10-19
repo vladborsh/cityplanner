@@ -66,6 +66,10 @@ pub struct GamePlugin {
     pub scene: Option<String>,
     /// Render into this image instead of a window (`--hidden`: no window exists).
     pub target: Option<Handle<Image>>,
+    /// Colour grading for this run (`--grading name=value,...`, T-273); else the player's.
+    pub grading: Option<cp_render::GradingSettings>,
+    /// Open the colour grading panel at start (`--grading-panel`, for screenshots).
+    pub grading_panel: bool,
 }
 
 #[derive(Resource, Clone)]
@@ -81,8 +85,10 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         let (pos, look) = camera_pose(&self.cam);
         let target = self.target.clone();
-        // The player's settings file (T-069); only the UI client has a settings menu.
-        let settings = if self.ui {
+        // The player's settings file (T-069); only the UI client has a settings menu. A hidden
+        // run (screenshots) neither reads nor writes it: its picture is the defaults' and flags'.
+        let hidden = self.target.is_some();
+        let settings = if self.ui && !hidden {
             settings::Settings::load(&saves::data_dir())
         } else {
             settings::Settings::default()
@@ -97,6 +103,7 @@ impl Plugin for GamePlugin {
         .insert_resource(cp_render::LightingSettings {
             always_day: !self.day_night && (self.always_day || settings.always_day),
         })
+        .insert_resource(self.grading.unwrap_or(settings.grading.settings()))
         .insert_resource(cp_tools::NetDebug {
             lanes: self.net_debug,
             connections: self.net_debug,
@@ -124,6 +131,7 @@ impl Plugin for GamePlugin {
             AgentRenderPlugin,
             RtsCameraPlugin,
         ))
+        .add_plugins(cp_render::GradingPlugin)
         .add_systems(PreUpdate, step_sim);
         if self.ui {
             app.insert_resource(cp_ui::UiState {
@@ -138,11 +146,16 @@ impl Plugin for GamePlugin {
                         mute: settings.audio.mute,
                     },
                 },
+                grading_open: self.grading_panel,
                 ..default()
             })
-            .insert_resource(settings::SettingsSaver::new(settings))
-            .add_plugins((UiPlugin, cp_tools::ToolsPlugin, audio::SoundPlugin))
-            .add_systems(
+            .insert_resource(settings::SettingsSaver::new(settings, hidden))
+            .add_plugins((UiPlugin, cp_tools::ToolsPlugin));
+            // A hidden run with the UI (`--ui`, screenshots of the panels) has no audio device.
+            if app.is_plugin_added::<bevy::audio::AudioPlugin>() {
+                app.add_plugins(audio::SoundPlugin);
+            }
+            app.add_systems(
                 Update,
                 (
                     file_requests,

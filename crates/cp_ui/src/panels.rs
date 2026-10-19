@@ -76,6 +76,8 @@ pub struct UiState {
     /// reset the view (BUG-059).
     pub tool_was_active: bool,
     pub debug_open: bool,
+    /// The F8 colour grading panel (T-273; not saved).
+    pub grading_open: bool,
     /// The budget window is shown (button in the top bar).
     pub budget_open: bool,
     pub demand_open: bool,

@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
-use cp_render::{CameraSettings, LightingSettings};
+use cp_render::{CameraSettings, GradingSettings, LightingSettings};
 use cp_ui::UiState;
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +41,66 @@ impl Default for CameraPrefs {
     }
 }
 
+/// The colour grading the player tuned (T-273); the defaults change nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GradingPrefs {
+    pub exposure: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub temperature: f32,
+    pub tint: f32,
+    pub shadows_lift: f32,
+    pub highlights_gain: f32,
+    pub vignette: f32,
+}
+
+impl Default for GradingPrefs {
+    fn default() -> Self {
+        Self::from(GradingSettings::NEUTRAL)
+    }
+}
+
+impl From<GradingSettings> for GradingPrefs {
+    fn from(g: GradingSettings) -> Self {
+        Self {
+            exposure: g.exposure,
+            contrast: g.contrast,
+            saturation: g.saturation,
+            temperature: g.temperature,
+            tint: g.tint,
+            shadows_lift: g.shadows_lift,
+            highlights_gain: g.highlights_gain,
+            vignette: g.vignette,
+        }
+    }
+}
+
+impl GradingPrefs {
+    /// The grading resource, every value clamped to its slider's range (a hand-edited file).
+    pub fn settings(&self) -> GradingSettings {
+        let mut g = GradingSettings {
+            exposure: self.exposure,
+            contrast: self.contrast,
+            saturation: self.saturation,
+            temperature: self.temperature,
+            tint: self.tint,
+            shadows_lift: self.shadows_lift,
+            highlights_gain: self.highlights_gain,
+            vignette: self.vignette,
+        };
+        let mut neutral = GradingSettings::NEUTRAL;
+        for ((_, v, range), (_, d, _)) in g.fields().into_iter().zip(neutral.fields()) {
+            *v = if v.is_finite() {
+                v.clamp(*range.start(), *range.end())
+            } else {
+                *d
+            };
+        }
+        g
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -52,6 +112,8 @@ pub struct Settings {
     pub advisor_problems_only: bool,
     /// Sound volumes and mute (T-189).
     pub audio: crate::audio::AudioSettings,
+    /// Colour grading (T-273).
+    pub grading: GradingPrefs,
 }
 
 impl Default for Settings {
@@ -65,6 +127,7 @@ impl Default for Settings {
             advisor: true,
             advisor_problems_only: false,
             audio: crate::audio::AudioSettings::default(),
+            grading: GradingPrefs::default(),
         }
     }
 }
@@ -152,7 +215,12 @@ impl Settings {
         }
     }
 
-    fn current(lighting: &LightingSettings, camera: &CameraSettings, ui: &UiState) -> Self {
+    fn current(
+        lighting: &LightingSettings,
+        camera: &CameraSettings,
+        ui: &UiState,
+        grading: &GradingSettings,
+    ) -> Self {
         Self {
             always_day: lighting.always_day,
             ui_scale: ui.prefs.ui_scale,
@@ -171,6 +239,7 @@ impl Settings {
                 effects: ui.prefs.audio.effects,
                 mute: ui.prefs.audio.mute,
             },
+            grading: GradingPrefs::from(*grading),
         }
     }
 }
@@ -180,13 +249,16 @@ impl Settings {
 pub struct SettingsSaver {
     saved: Settings,
     last_write: f64,
+    /// A hidden run (screenshots) never writes the player's file.
+    read_only: bool,
 }
 
 impl SettingsSaver {
-    pub fn new(loaded: Settings) -> Self {
+    pub fn new(loaded: Settings, read_only: bool) -> Self {
         Self {
             saved: loaded,
             last_write: f64::MIN,
+            read_only,
         }
     }
 }
@@ -197,9 +269,13 @@ pub fn save_settings(
     lighting: Res<LightingSettings>,
     camera: Res<CameraSettings>,
     ui: Res<UiState>,
+    grading: Res<GradingSettings>,
     mut saver: ResMut<SettingsSaver>,
 ) {
-    let now = Settings::current(&lighting, &camera, &ui);
+    if saver.read_only {
+        return;
+    }
+    let now = Settings::current(&lighting, &camera, &ui, &grading);
     let t = time.elapsed_secs_f64();
     if now == saver.saved || t - saver.last_write < WRITE_EVERY {
         return;
@@ -239,6 +315,11 @@ mod tests {
                 master: 0.5,
                 effects: 0.25,
                 mute: true,
+            },
+            grading: GradingPrefs {
+                contrast: 1.2,
+                temperature: -0.1,
+                ..GradingPrefs::default()
             },
         };
         s.save(&d).unwrap();

@@ -43,6 +43,12 @@ pub struct Options {
     /// `--place-demo fire_station,x,z`: hold the placement tool's ghost of that building at
     /// (x, z) without a cursor (screenshots of the coverage preview, T-254).
     pub place_demo: Option<cp_tools::PlaceDemo>,
+    /// `--grading exposure=0.1,contrast=1.1,...`: this run's colour grading (T-273).
+    pub grading: Option<cp_render::GradingSettings>,
+    /// `--grading-panel`: open the F8 colour grading panel at start.
+    pub grading_panel: bool,
+    /// `--ui`: keep the egui UI in a `--hidden` run, so screenshots show the panels.
+    pub hidden_ui: bool,
 }
 
 impl Options {
@@ -86,6 +92,15 @@ impl Options {
                     at: bevy::math::Vec2::new(n[0], n[1]),
                 })
             }),
+            grading: value("--grading").and_then(|v| match cp_render::GradingSettings::parse(&v) {
+                Ok(g) => Some(g),
+                Err(e) => {
+                    eprintln!("--grading: {e}");
+                    None
+                }
+            }),
+            grading_panel: args.iter().any(|a| a == "--grading-panel"),
+            hidden_ui: args.iter().any(|a| a == "--ui"),
             always_day: args.iter().any(|a| a == "--always-day"),
             net_debug: args.iter().any(|a| a == "--net-debug"),
             day_night: args.iter().any(|a| a == "--day-night") || value("--hour").is_some(),
@@ -230,12 +245,14 @@ pub fn run(opts: Options) -> AppExit {
             cam: opts.cam,
             // Wall-clock phase timing for the F3 window.
             phase_timing: true,
-            ui: !opts.hidden,
+            ui: !opts.hidden || opts.hidden_ui,
             always_day: opts.always_day,
             net_debug: opts.net_debug,
             day_night: opts.day_night,
             scene: opts.scene.clone(),
             target: target.clone(),
+            grading: opts.grading,
+            grading_panel: opts.grading_panel,
         },
         FrameTimeDiagnosticsPlugin::default(),
         RenderDiagnosticsPlugin,
