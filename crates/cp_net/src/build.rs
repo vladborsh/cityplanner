@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::graph::NetGraph;
 use crate::model::{Elevation, MAX_SEGMENTS_PER_NODE, NodeId, NodeKind, Segment, SegmentId};
+use crate::plan::Anchor;
 
 /// Longest allowed segment, metres. Longer legs are cut into equal pieces.
 pub const MAX_SEGMENT_LENGTH: f32 = 96.0;
@@ -445,6 +446,61 @@ impl Builder<'_> {
         NodeRef::Split(self.splits.len() - 1)
     }
 
+    /// The vertex a plan anchor stands for (§6.8.3 item 2): a cut that would leave a remnant
+    /// under [`MIN_SEGMENT_LENGTH_BUILD`] is the near end node instead.
+    fn anchor_node(&mut self, anchor: Anchor, free: Vec2) -> (Vec2, NodeRef) {
+        match anchor {
+            Anchor::Free(_) => match self.node_under(free) {
+                // A free point on an existing node is that node: its roads count for the
+                // junction checks (`add_segment` would join them by position anyway).
+                Some(id) => (free, NodeRef::Existing(id)),
+                None => (free, self.new_node(free)),
+            },
+            Anchor::Node(id) => (
+                to_xz(self.graph.node(id).expect("resolved").pos),
+                NodeRef::Existing(id),
+            ),
+            Anchor::OnSegment(sid, t) => {
+                let r = self.cross_node(sid, t.clamp(0.0, 1.0), true);
+                (to_xz(self.node_pos(r)), r)
+            }
+        }
+    }
+
+    /// An existing node of the plan's level within [`crate::NODE_REUSE_EPS`] of `p` in the plane.
+    fn node_under(&self, p: Vec2) -> Option<NodeId> {
+        let want = match self.elev {
+            ElevationMode::Ground => |e: Elevation| e == Elevation::Ground,
+            ElevationMode::Elevated(_) => {
+                |e: Elevation| matches!(e, Elevation::Elevated | Elevation::Bridge)
+            }
+            ElevationMode::Tunnel(_) => |e: Elevation| e == Elevation::Tunnel,
+        };
+        self.graph
+            .nodes()
+            .filter(|(_, n)| want(n.elevation) && to_xz(n.pos).distance(p) < crate::NODE_REUSE_EPS)
+            .min_by(|a, b| {
+                let da = to_xz(a.1.pos).distance(p);
+                da.total_cmp(&to_xz(b.1.pos).distance(p))
+            })
+            .map(|(id, _)| id)
+    }
+
+    /// The node a road crossing `segment` at `t` makes. Legacy: a split at `t`. Literal: when
+    /// the cut would leave a piece under [`MIN_SEGMENT_LENGTH_BUILD`], the near end of the
+    /// segment (the crossing passes through that node).
+    fn cross_node(&mut self, segment: SegmentId, t: f32, literal: bool) -> NodeRef {
+        if literal {
+            let s = self.graph.segment(segment).expect("segment exists");
+            let at = s.curve.arc_table().t_to_s(t);
+            if at < MIN_SEGMENT_LENGTH_BUILD || s.length - at < MIN_SEGMENT_LENGTH_BUILD {
+                let near = if at <= s.length - at { s.start } else { s.end };
+                return NodeRef::Existing(near);
+            }
+        }
+        self.split_at(segment, t)
+    }
+
     /// Directions leaving the node, for the angle reference.
     fn node_dirs(&self, n: NodeRef) -> Vec<Vec2> {
         match n {
@@ -724,6 +780,36 @@ pub fn pier_positions(segment: &Segment) -> Vec<Vec3> {
     out
 }
 
+/// The XZ positions of a plan's anchors, `pieces + 1` of them; the end of a piece must be the
+/// start of the next. `BadCoordinates` for an empty plan, a node or segment that is not in the
+/// graph, or pieces that do not join.
+fn plan_points(
+    graph: &NetGraph,
+    plan: &crate::plan::BuildPlan,
+) -> Result<Vec<Vec2>, Vec<RoadBuildError>> {
+    let bad = || vec![RoadBuildError::BadCoordinates];
+    let at = |a: &Anchor| -> Result<Vec2, Vec<RoadBuildError>> {
+        match a {
+            Anchor::Free(p) => Ok(*p),
+            Anchor::Node(n) => graph.node(*n).map(|n| to_xz(n.pos)).ok_or_else(bad),
+            Anchor::OnSegment(s, t) if t.is_finite() => graph
+                .segment(*s)
+                .map(|s| to_xz(s.curve.point(t.clamp(0.0, 1.0))))
+                .ok_or_else(bad),
+            Anchor::OnSegment(..) => Err(bad()),
+        }
+    };
+    let first = plan.pieces.first().ok_or_else(bad)?;
+    let mut pts = vec![at(&first.from)?];
+    for (k, pc) in plan.pieces.iter().enumerate() {
+        if k > 0 && at(&pc.from)?.distance(pts[k]) > 1e-3 {
+            return Err(bad());
+        }
+        pts.push(at(&pc.to)?);
+    }
+    Ok(pts)
+}
+
 /// Validates `req` against the world and returns the build plan, or every error found.
 ///
 /// Pure: reads `graph`, `terrain`, `tiles` and `content`, mutates nothing.
@@ -747,8 +833,50 @@ pub fn validate_road_path_report(
     req: &RoadPathRequest,
 ) -> (Result<RoadBuildPlan, Vec<RoadBuildError>>, SnapReport) {
     let mut report = SnapReport::default();
-    let result = validate_inner(graph, terrain, tiles, content, req, &mut report);
+    let result = validate_inner(graph, terrain, tiles, content, req, None, &mut report);
     (result, report)
+}
+
+/// Validates a resolved [`BuildPlan`] (T-262): the anchors are used as given, nothing is snapped.
+/// Only real errors refuse it (water, slope, ownership, a track meeting a road, too many roads or
+/// an angle under 30° at a node, a piece shorter than [`MIN_SEGMENT_LENGTH_BUILD`]). The plan
+/// then gets the graph invariants of §6.8.3 item 2: a cut that would leave a remnant under 8 m
+/// is a node at the near end, a crossing within 8 m of a node goes through that node, a road
+/// across a dead end joins it, and every span is sliced into `floor(L/96)+1` equal pieces.
+pub fn validate_build_plan(
+    graph: &NetGraph,
+    terrain: &Terrain,
+    tiles: &TileOwnership,
+    content: &ContentDb,
+    plan: &crate::plan::BuildPlan,
+) -> Result<RoadBuildPlan, Vec<RoadBuildError>> {
+    let req = RoadPathRequest {
+        road: plan.road,
+        path: RoadPath::Free(Vec::new()),
+        elevation: plan.elevation,
+        snap: SnapOptions {
+            node: false,
+            segment: false,
+            angle: false,
+            zone_grid: false,
+        },
+    };
+    validate_inner(
+        graph,
+        terrain,
+        tiles,
+        content,
+        &req,
+        Some(plan),
+        &mut SnapReport::default(),
+    )
+}
+
+/// Equal pieces of a span (§6.8.3 item 2): `floor(span/96)+1` of them, so none is longer than
+/// [`MAX_SEGMENT_LENGTH`]; the cuts, ascending, from the span start.
+pub fn even_cuts(span: f32) -> Vec<f32> {
+    let n = (span / MAX_SEGMENT_LENGTH).floor() as usize + 1;
+    (1..n).map(|k| span * k as f32 / n as f32).collect()
 }
 
 fn validate_inner(
@@ -757,17 +885,30 @@ fn validate_inner(
     tiles: &TileOwnership,
     content: &ContentDb,
     req: &RoadPathRequest,
+    literal: Option<&crate::plan::BuildPlan>,
     report: &mut SnapReport,
 ) -> Result<RoadBuildPlan, Vec<RoadBuildError>> {
     if req.road.index() >= content.roads().count() {
         return Err(vec![RoadBuildError::UnknownRoad(req.road)]);
     }
-    let points_ok = match &req.path {
-        RoadPath::Straight { from, to } => cp_core::sane_point(*from) && cp_core::sane_point(*to),
-        RoadPath::Curve { from, control, to } => {
-            [from, control, to].iter().all(|p| cp_core::sane_point(**p))
+    let points_ok = if let Some(plan) = literal {
+        plan.pieces.iter().all(|pc| {
+            cp_core::sane_point(pc.c1)
+                && cp_core::sane_point(pc.c2)
+                && [pc.from, pc.to]
+                    .iter()
+                    .all(|a| !matches!(a, Anchor::Free(p) if !cp_core::sane_point(*p)))
+        })
+    } else {
+        match &req.path {
+            RoadPath::Straight { from, to } => {
+                cp_core::sane_point(*from) && cp_core::sane_point(*to)
+            }
+            RoadPath::Curve { from, control, to } => {
+                [from, control, to].iter().all(|p| cp_core::sane_point(**p))
+            }
+            RoadPath::Free(pts) => pts.iter().all(|p| cp_core::sane_point(*p)),
         }
-        RoadPath::Free(pts) => pts.iter().all(|p| cp_core::sane_point(*p)),
     };
     let height_ok = match req.elevation {
         ElevationMode::Ground => true,
@@ -809,14 +950,22 @@ fn validate_inner(
     let rail = def.class == RoadClass::Rail;
 
     // Raw vertices and the control point of a curve leg.
-    let (raw, control): (Vec<Vec2>, Option<Vec2>) = match &req.path {
-        RoadPath::Straight { from, to } => (vec![*from, *to], None),
-        RoadPath::Curve { from, control, to } => (vec![*from, *to], Some(*control)),
-        RoadPath::Free(pts) => (pts.clone(), None),
+    let (raw, control): (Vec<Vec2>, Option<Vec2>) = if let Some(plan) = literal {
+        (plan_points(graph, plan)?, None)
+    } else {
+        match &req.path {
+            RoadPath::Straight { from, to } => (vec![*from, *to], None),
+            RoadPath::Curve { from, control, to } => (vec![*from, *to], Some(*control)),
+            RoadPath::Free(pts) => (pts.clone(), None),
+        }
     };
     let mut distinct = raw.clone();
-    distinct.dedup_by(|a, b| a.distance(*b) < 1e-3);
-    if distinct.len() < 2 {
+    if literal.is_none() {
+        distinct.dedup_by(|a, b| a.distance(*b) < 1e-3);
+    }
+    if distinct.len() < 2
+        || (literal.is_some() && distinct.windows(2).any(|w| w[0].distance(w[1]) < 1e-3))
+    {
         return Err(vec![RoadBuildError::PathTooShort]);
     }
 
@@ -835,6 +984,20 @@ fn validate_inner(
     let mut snaps = Vec::new();
     let mut verts: Vec<Vertex> = Vec::new();
     for (i, &p) in distinct.iter().enumerate() {
+        if let Some(plan) = literal {
+            let anchor = if i == 0 {
+                plan.pieces[0].from
+            } else {
+                plan.pieces[i - 1].to
+            };
+            let (pos, node) = b.anchor_node(anchor, p);
+            verts.push(Vertex {
+                pos,
+                node,
+                refs: Vec::new(),
+            });
+            continue;
+        }
         let mut pos = p;
         let mut node = None;
         *report = SnapReport::default();
@@ -920,7 +1083,14 @@ fn validate_inner(
             errors.push(RoadBuildError::DegenerateLeg { pos: v0.pos });
             continue;
         }
-        let leg = flat_curve(v0.pos, v1.pos, control.filter(|_| li == 0));
+        let leg = match literal {
+            Some(plan) => {
+                let pc = &plan.pieces[li];
+                let v3 = |p: Vec2| Vec3::new(p.x, 0.0, p.y);
+                CubicBezier3::new(v3(v0.pos), v3(pc.c1), v3(pc.c2), v3(v1.pos))
+            }
+            None => flat_curve(v0.pos, v1.pos, control.filter(|_| li == 0)),
+        };
         let tab = leg.arc_table();
         let len = tab.length();
         if len < MIN_SEGMENT_LENGTH_BUILD {
@@ -944,7 +1114,10 @@ fn validate_inner(
                     continue;
                 }
                 for (tc, ts) in leg.intersect_xz(&seg.curve) {
-                    if !(0.002..=0.998).contains(&tc) || !(0.002..=0.998).contains(&ts) {
+                    // A literal plan also meets the ends of a segment (a road across a dead end
+                    // joins it, §6.8.3 item 2).
+                    let ts_ok = literal.is_some() || (0.002..=0.998).contains(&ts);
+                    if !(0.002..=0.998).contains(&tc) || !ts_ok {
                         continue;
                     }
                     let at = seg.curve.point(ts);
@@ -969,8 +1142,8 @@ fn validate_inner(
                         }
                         continue;
                     }
-                    let r = b.split_at(sid, ts);
-                    if !fixed.iter().any(|(_, nd)| *nd == r) {
+                    let r = b.cross_node(sid, ts, literal.is_some());
+                    if r != v0.node && r != v1.node && !fixed.iter().any(|(_, nd)| *nd == r) {
                         fixed.push((tc, r));
                     }
                 }
@@ -987,7 +1160,10 @@ fn validate_inner(
                     continue;
                 }
                 for (tc, ts) in leg.intersect_xz(&seg.curve) {
-                    if !(0.002..=0.998).contains(&tc) || !(0.002..=0.998).contains(&ts) {
+                    // A literal plan also meets the ends of a segment (a road across a dead end
+                    // joins it, §6.8.3 item 2).
+                    let ts_ok = literal.is_some() || (0.002..=0.998).contains(&ts);
+                    if !(0.002..=0.998).contains(&tc) || !ts_ok {
                         continue;
                     }
                     let at = seg.curve.point(ts);
@@ -1005,8 +1181,8 @@ fn validate_inner(
                         errors.push(RoadBuildError::RailCrossesRoad { pos: at });
                         continue;
                     }
-                    let r = b.split_at(sid, ts);
-                    if !fixed.iter().any(|(_, nd)| *nd == r) {
+                    let r = b.cross_node(sid, ts, literal.is_some());
+                    if r != v0.node && r != v1.node && !fixed.iter().any(|(_, nd)| *nd == r) {
                         fixed.push((tc, r));
                     }
                 }
@@ -1021,7 +1197,12 @@ fn validate_inner(
             .chain(std::iter::once((len, None, v1.node)));
         for (s_end, t_end, node) in ends {
             let span = s_end - span_start;
-            for cut in auto_cuts(span) {
+            let cuts = if literal.is_some() {
+                even_cuts(span)
+            } else {
+                auto_cuts(span)
+            };
+            for cut in cuts {
                 bounds.push((tab.s_to_t(span_start + cut), None));
             }
             bounds.push((t_end.unwrap_or(1.0), Some(node)));
@@ -1029,7 +1210,7 @@ fn validate_inner(
         }
         // A raised piece shorter than the minimum is not a reason to refuse the path: the
         // automatic cut beside it goes, and the neighbour grows to take its place (T-064).
-        if elevated {
+        if elevated && literal.is_none() {
             while let Some(i) = (1..bounds.len().saturating_sub(1)).find(|&i| {
                 bounds[i].1.is_none()
                     && (tab.t_to_s(bounds[i].0) - tab.t_to_s(bounds[i - 1].0)
@@ -1069,7 +1250,14 @@ fn validate_inner(
         for (k, pair) in bounds.windows(2).enumerate() {
             let (na, nb) = (nodes[k], nodes[k + 1]);
             let (pa, pb) = (b.node_pos(na), b.node_pos(nb));
-            let planar = leg.sub_curve(pair[0].0, pair[1].0);
+            let mut planar = leg.sub_curve(pair[0].0, pair[1].0);
+            if literal.is_some() {
+                // An end moved onto an existing node (a crossing within 8 m of it): its control
+                // point goes along, so the piece keeps the direction it had there.
+                let d = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z);
+                planar.p1 += d(pa, planar.p0);
+                planar.p2 += d(pb, planar.p3);
+            }
             let curve = lift(planar, pa, pb);
             let length = curve.arc_table().length();
             let mut elevation = seg_elevation;

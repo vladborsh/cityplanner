@@ -26,7 +26,10 @@ pub use command::{
 };
 pub use connections::{LaneConnection, Links, PedLink, PedLinkKind, Turn};
 pub use control::{ControlPlan, LightPlan, Phase, Priority, Signal};
-pub use graph::{MIN_SEGMENT_LENGTH, NODE_REUSE_EPS, NetGraph, NetOpError, SplitResult};
+pub use graph::{
+    MAX_LEN, MIN_LEN, MIN_SEGMENT_LENGTH, NODE_REUSE_EPS, NetGraph, NetOpError, SplitResult,
+    Violation,
+};
 pub use junction::{
     Arm, Junction, JunctionGeometry, compute_junction, refresh_geometry, update_junctions,
 };

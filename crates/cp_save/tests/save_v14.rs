@@ -12,7 +12,7 @@ use cp_core::time::TICKS_PER_WEEK;
 use cp_core::{Cost, Treasury};
 use cp_economy::{EconomyCommand, EconomyState};
 use cp_net::{Elevation, NetGraph};
-use cp_save::migrate::{AgentsV16, SaveDataV13, encode_v13};
+use cp_save::migrate::{AgentsV16, NetGraphV54, SaveDataV13, encode_v13};
 use cp_save::*;
 use cp_sim::{SimCommand, SimRunner};
 
@@ -51,7 +51,7 @@ fn v13_fixture_migrates_with_the_default_economy_and_round_trips() {
         queue: l.data.queue.clone(),
         log: l.data.log.clone(),
         tiles: l.data.tiles,
-        net: l.data.net.clone(),
+        net: NetGraphV54::from(&l.data.net),
         zones: l.data.zones.clone().to_v34(),
         buildings: cp_save::migrate::BuildingGridV18::from(&l.data.buildings),
         citizens: (&l.data.citizens).into(),

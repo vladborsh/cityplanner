@@ -12,7 +12,7 @@ use cp_content::{ContentDb, ZoneType};
 use cp_core::curve::CubicBezier3;
 use cp_core::time::TICKS_PER_DAY;
 use cp_net::{Elevation, NetGraph};
-use cp_save::migrate::{AgentsV16, BuildingGridV12, SaveDataV12, encode_v12};
+use cp_save::migrate::{AgentsV16, BuildingGridV12, NetGraphV54, SaveDataV12, encode_v12};
 use cp_save::*;
 use cp_sim::{SimCommand, SimRunner};
 use cp_zone::{ZoneCellRef, ZoneGrid};
@@ -50,7 +50,7 @@ fn v12_fixture_migrates_with_an_empty_removed_list_and_round_trips() {
         queue: l.data.queue.clone(),
         log: l.data.log.clone(),
         tiles: l.data.tiles,
-        net: l.data.net.clone(),
+        net: NetGraphV54::from(&l.data.net),
         zones: l.data.zones.clone().to_v34(),
         buildings: BuildingGridV12::from(&l.data.buildings),
         citizens: (&l.data.citizens).into(),

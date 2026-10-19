@@ -88,6 +88,10 @@ pub struct Segment {
     pub lanes: Vec<LaneId>,
     /// Arc length of `curve`, metres.
     pub length: f32,
+    /// Build order (T-262, save v55): a monotonic counter ([`crate::NetGraph::next_order`]), the
+    /// tie-break of the zone layout instead of the arena slot (which is reused). A piece cut from
+    /// a segment keeps its order; a segment made of two takes the older one.
+    pub order: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

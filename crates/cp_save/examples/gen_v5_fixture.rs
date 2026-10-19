@@ -48,7 +48,7 @@ fn main() {
         queue: d.queue,
         log: d.log,
         tiles: d.tiles,
-        net: d.net,
+        net: cp_save::migrate::NetGraphV54::from(&d.net),
         zones: d.zones.to_v34(),
     };
     let bytes = encode_v5(

@@ -61,7 +61,7 @@ fn fixture_data() -> SaveDataV4 {
         queue,
         log,
         tiles: TileOwnership::m1_around((2, 2)),
-        net,
+        net: cp_save::migrate::NetGraphV54::from(&net),
     }
 }
 

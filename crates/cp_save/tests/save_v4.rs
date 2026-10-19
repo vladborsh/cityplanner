@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use cp_core::{SimSpeed, Tick};
-use cp_save::migrate::{SaveDataV3, encode_v3};
+use cp_save::migrate::{NetGraphV54, SaveDataV3, encode_v3};
 use cp_save::*;
 use cp_sim::{SimCommand, SimRunner};
 use cp_terrain::{GRID, MapMeta, Terrain};
@@ -212,7 +212,7 @@ fn v3_fixture_loads_and_the_frozen_writer_reproduces_it() {
         queue: l.data.queue.clone(),
         log: l.data.log.clone(),
         tiles: l.data.tiles,
-        net: l.data.net.clone(),
+        net: NetGraphV54::from(&l.data.net),
     };
     assert_eq!(encode_v3(&v3, h.content_hash, &h.map_id).unwrap(), bytes);
 

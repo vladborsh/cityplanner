@@ -10,7 +10,7 @@ use cp_content::ContentDb;
 use cp_core::SimRng;
 use cp_core::curve::CubicBezier3;
 use cp_net::{Elevation, NetGraph};
-use cp_save::migrate::{AgentsV16, SaveDataV16, encode_v16};
+use cp_save::migrate::{AgentsV16, NetGraphV54, SaveDataV16, encode_v16};
 use cp_save::*;
 use cp_sim::SimRunner;
 use cp_traffic::{Agents, PathNetwork, demo};
@@ -53,7 +53,7 @@ fn v16_fixture_migrates_with_no_reroutes_and_round_trips() {
         queue: l.data.queue.clone(),
         log: l.data.log.clone(),
         tiles: l.data.tiles,
-        net: l.data.net.clone(),
+        net: NetGraphV54::from(&l.data.net),
         zones: l.data.zones.clone().to_v34(),
         buildings: cp_save::migrate::BuildingGridV18::from(&l.data.buildings),
         citizens: (&l.data.citizens).into(),

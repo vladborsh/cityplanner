@@ -70,11 +70,56 @@ pub struct NetGraph {
     segments: Arena<Segment>,
     lanes: Arena<Lane>,
     dirty: BTreeSet<NodeId>,
+    /// The `order` the next new segment gets (T-262, save v55).
+    next_order: u32,
 }
 
 impl NetGraph {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A graph from its saved parts (the save migration to v55 builds one this way).
+    pub fn from_parts(
+        nodes: Arena<Node>,
+        segments: Arena<Segment>,
+        lanes: Arena<Lane>,
+        dirty: BTreeSet<NodeId>,
+        next_order: u32,
+    ) -> Self {
+        Self {
+            nodes,
+            segments,
+            lanes,
+            dirty,
+            next_order,
+        }
+    }
+
+    /// The saved parts of the graph (copies), the inverse of [`Self::from_parts`]: nodes,
+    /// segments, lanes, the dirty set and the next order.
+    #[allow(clippy::type_complexity)]
+    pub fn to_parts(
+        &self,
+    ) -> (
+        Arena<Node>,
+        Arena<Segment>,
+        Arena<Lane>,
+        BTreeSet<NodeId>,
+        u32,
+    ) {
+        (
+            self.nodes.clone(),
+            self.segments.clone(),
+            self.lanes.clone(),
+            self.dirty.clone(),
+            self.next_order,
+        )
+    }
+
+    /// The `order` the next new segment gets.
+    pub fn next_order(&self) -> u32 {
+        self.next_order
     }
 
     pub fn node(&self, id: NodeId) -> Option<&Node> {
@@ -188,7 +233,9 @@ impl NetGraph {
         }
         let start = a.unwrap_or_else(|| self.add_node(curve.p0, NodeKind::End, elevation));
         let end = b.unwrap_or_else(|| self.add_node(curve.p3, NodeKind::End, elevation));
-        Ok(self.insert_segment(def, road, curve, elevation, start, end, length))
+        let order = self.next_order;
+        self.next_order += 1;
+        Ok(self.insert_segment(def, road, curve, elevation, start, end, length, order))
     }
 
     /// Dry run of [`Self::split_segments`] for every `(segment, ts)` of `splits` followed by
@@ -395,6 +442,7 @@ impl NetGraph {
                 chain[i],
                 chain[i + 1],
                 length,
+                seg.order,
             ));
         }
         self.dirty.insert(seg.start);
@@ -440,12 +488,14 @@ impl NetGraph {
             return None;
         }
         let (start, end, road, elevation) = (first.start, second.end, first.road, first.elevation);
+        let (order_a, order_b) = (first.order, second.order);
         self.take_segment(a).ok()?;
         self.take_segment(b).ok()?;
         self.prune_node(node);
         let curve = CubicBezier3::line(from, to);
         let length = curve.arc_table().length();
-        Some(self.insert_segment(def, road, curve, elevation, start, end, length))
+        let order = order_a.min(order_b);
+        Some(self.insert_segment(def, road, curve, elevation, start, end, length, order))
     }
 
     /// Changes a segment's road type: same nodes and curve, lanes rebuilt from `def`.
@@ -546,6 +596,7 @@ impl NetGraph {
         start: NodeId,
         end: NodeId,
         length: f32,
+        order: u32,
     ) -> SegmentId {
         let id = self.segments.insert(Segment {
             start,
@@ -555,6 +606,7 @@ impl NetGraph {
             elevation,
             lanes: Vec::new(),
             length,
+            order,
         });
         let lanes = self.build_lanes(id, def, &curve);
         self.segments.get_mut(id).expect("just inserted").lanes = lanes;
@@ -673,6 +725,9 @@ impl NetGraph {
         }
     }
 }
+
+mod invariants;
+pub use invariants::{MAX_LEN, MIN_LEN, Violation};
 
 #[cfg(test)]
 mod tests;

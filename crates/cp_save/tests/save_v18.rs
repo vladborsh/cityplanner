@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use cp_content::{ContentDb, DefKind, PLACEHOLDER_INDEX};
 use cp_net::NetGraph;
-use cp_save::migrate::{SaveDataV17, encode_v17};
+use cp_save::migrate::{NetGraphV54, SaveDataV17, encode_v17};
 use cp_save::*;
 use cp_sim::SimRunner;
 use cp_terrain::Terrain;
@@ -119,7 +119,7 @@ fn v17_fixture_migrates_without_names_and_round_trips() {
         queue: l.data.queue.clone(),
         log: l.data.log.clone(),
         tiles: l.data.tiles,
-        net: l.data.net.clone(),
+        net: NetGraphV54::from(&l.data.net),
         zones: l.data.zones.clone().to_v34(),
         buildings: cp_save::migrate::BuildingGridV18::from(&l.data.buildings),
         citizens: (&l.data.citizens).into(),

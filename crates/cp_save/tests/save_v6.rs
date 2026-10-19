@@ -10,7 +10,7 @@ use cp_content::{ContentDb, ZoneType};
 use cp_core::curve::CubicBezier3;
 use cp_core::time::TICKS_PER_DAY;
 use cp_net::{Elevation, NetGraph};
-use cp_save::migrate::{SaveDataV5, encode_v5};
+use cp_save::migrate::{NetGraphV54, SaveDataV5, encode_v5};
 use cp_save::*;
 use cp_sim::SimRunner;
 use cp_zone::{ZoneCellRef, ZoneGrid};
@@ -58,7 +58,7 @@ fn v5_fixture_migrates_to_no_buildings_and_keeps_its_zones() {
         queue: l.data.queue.clone(),
         log: l.data.log.clone(),
         tiles: l.data.tiles,
-        net: l.data.net.clone(),
+        net: NetGraphV54::from(&l.data.net),
         zones: l.data.zones.clone().to_v34(),
     };
     assert_eq!(

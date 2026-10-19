@@ -40,7 +40,7 @@ fn the_v49_fixture_loads_with_no_cargo_hubs_and_a_hub_round_trips() {
         read_header(&again).unwrap().0.format_version,
         FORMAT_VERSION
     );
-    assert_eq!(FORMAT_VERSION, 54);
+    assert_eq!(FORMAT_VERSION, 55);
     let l2 = load_with_map(&again, content.content_hash(), h.map_hash).unwrap();
     assert_eq!(l.data, l2.data);
     assert_eq!(l2.data.hubs, hubs);

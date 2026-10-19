@@ -8,7 +8,7 @@ use bevy_math::Vec3;
 use cp_content::ContentDb;
 use cp_core::curve::CubicBezier3;
 use cp_net::{Elevation, NetGraph};
-use cp_save::migrate::{SaveDataV4, encode_v4};
+use cp_save::migrate::{NetGraphV54, SaveDataV4, encode_v4};
 use cp_save::*;
 use cp_sim::SimRunner;
 use cp_zone::ZoneGrid;
@@ -52,7 +52,7 @@ fn v4_fixture_migrates_to_empty_zones_and_the_network_phase_builds_them() {
         queue: l.data.queue.clone(),
         log: l.data.log.clone(),
         tiles: l.data.tiles,
-        net: l.data.net.clone(),
+        net: NetGraphV54::from(&l.data.net),
     };
     assert_eq!(
         encode_v4(&v4, h.content_hash, &h.map_id, h.map_hash).unwrap(),

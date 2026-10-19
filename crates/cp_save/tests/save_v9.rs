@@ -11,7 +11,7 @@ use cp_content::{ContentDb, UtilityKind, ZoneType};
 use cp_core::curve::CubicBezier3;
 use cp_core::{CommandError, CommandOutcome, Tick};
 use cp_net::{Elevation, NetGraph};
-use cp_save::migrate::{SaveDataV8, encode_v8};
+use cp_save::migrate::{NetGraphV54, SaveDataV8, encode_v8};
 use cp_save::*;
 use cp_sim::{SimCommand, SimRunner};
 use cp_terrain::TileOwnership;
@@ -93,7 +93,7 @@ fn v8_fixture_migrates_to_no_utilities_and_the_frozen_writer_reproduces_it() {
         queue: d.queue.clone(),
         log: d.log.clone(),
         tiles: d.tiles,
-        net: d.net.clone(),
+        net: NetGraphV54::from(&d.net),
         zones: d.zones.clone().to_v34(),
         buildings: cp_save::migrate::BuildingGridV12::from(&d.buildings),
         citizens: (&d.citizens).into(),

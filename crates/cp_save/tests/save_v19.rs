@@ -11,7 +11,7 @@ use cp_building::{BuildingGrid, Footprint};
 use cp_citizen::CitizenGrid;
 use cp_content::ContentDb;
 use cp_core::SimLimits;
-use cp_save::migrate::{BuildingV18, SaveDataV18, encode_v18};
+use cp_save::migrate::{BuildingV18, NetGraphV54, SaveDataV18, encode_v18};
 use cp_save::*;
 use cp_sim::SimRunner;
 use cp_terrain::Terrain;
@@ -100,7 +100,7 @@ fn the_v18_fixture_migrates_every_building_onto_its_lot_with_its_access_point() 
             queue: l.data.queue.clone(),
             log: l.data.log.clone(),
             tiles: l.data.tiles,
-            net: l.data.net.clone(),
+            net: NetGraphV54::from(&l.data.net),
             zones: l.data.zones.clone().to_v34(),
             buildings: cp_save::migrate::BuildingGridV18::from(&l.data.buildings),
             citizens: (&l.data.citizens).into(),

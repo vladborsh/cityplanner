@@ -12,7 +12,7 @@ use cp_core::curve::CubicBezier3;
 use cp_core::time::TICKS_PER_DAY;
 use cp_economy::DemandAcc;
 use cp_net::{Elevation, NetGraph};
-use cp_save::migrate::{AgentsV16, SaveDataV14, encode_v14};
+use cp_save::migrate::{AgentsV16, NetGraphV54, SaveDataV14, encode_v14};
 use cp_save::*;
 use cp_sim::SimRunner;
 use cp_zone::{ZoneCellRef, ZoneGrid};
@@ -57,7 +57,7 @@ fn v14_fixture_migrates_with_the_demand_of_a_new_city_and_round_trips() {
         queue: l.data.queue.clone(),
         log: l.data.log.clone(),
         tiles: l.data.tiles,
-        net: l.data.net.clone(),
+        net: NetGraphV54::from(&l.data.net),
         zones: l.data.zones.clone().to_v34(),
         buildings: cp_save::migrate::BuildingGridV18::from(&l.data.buildings),
         citizens: (&l.data.citizens).into(),

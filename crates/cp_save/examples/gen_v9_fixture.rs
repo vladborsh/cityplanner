@@ -25,7 +25,7 @@ fn main() {
         queue: d.queue,
         log: d.log,
         tiles: d.tiles,
-        net: d.net,
+        net: cp_save::migrate::NetGraphV54::from(&d.net),
         zones: d.zones.to_v34(),
         buildings: cp_save::migrate::BuildingGridV12::from(&d.buildings),
         citizens: (&d.citizens).into(),

@@ -7,6 +7,10 @@
 //! by the traffic domain); the jam's 850 trips are sent by `scenario::send_citizens` so the
 //! jam does not depend on the time of day.
 //!
+//! **T-262 (save v55).** All four pins moved with the encoding: the checksum hashes the road
+//! network, and every segment now carries its build order (a migrated v54 save gets them by
+//! ascending segment id) and the graph its counter. The behaviour did not change.
+//!
 //! **T-257.** The m1-traffic `load + 4096 ticks` pin moved once (`0x8299_1c3d_bb77_67fd` ->
 //! `0x4502_0c19_788d_88bb`; m1-small and the state at load did not): the order of the systems of
 //! the Economy and Services phases that touch the same grids and runs is now pinned (settle_week,
@@ -204,10 +208,10 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((1800..=2100).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0x7bb1e8796aa48295, "state at load");
+    assert_eq!(sim.checksum(), 0x68b91d63fd51a77a, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x2c1ad9b5dc4c9610,
+        0x3c260063288f0a41,
         "load + 4096 ticks"
     );
 }
@@ -233,7 +237,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
     assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0xaeb94b2974e7d77f, "state at load");
+    assert_eq!(sim.checksum(), 0x3652c759cf77a79e, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -241,7 +245,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x45020c19788d88bb, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x42c063ee1822fa0c, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

@@ -10,7 +10,7 @@ use cp_content::ContentDb;
 use cp_core::Tick;
 use cp_core::curve::CubicBezier3;
 use cp_net::{Elevation, NetGraph, SegmentId};
-use cp_save::migrate::{SaveDataV7, encode_v7};
+use cp_save::migrate::{NetGraphV54, SaveDataV7, encode_v7};
 use cp_save::*;
 use cp_sim::SimRunner;
 use cp_traffic::{
@@ -240,7 +240,7 @@ fn v7_fixture_migrates_with_no_requests_and_the_frozen_writer_reproduces_it() {
         queue: d.queue.clone(),
         log: d.log.clone(),
         tiles: d.tiles,
-        net: d.net.clone(),
+        net: NetGraphV54::from(&d.net),
         zones: d.zones.clone().to_v34(),
         buildings: cp_save::migrate::BuildingGridV12::from(&d.buildings),
         citizens: (&d.citizens).into(),

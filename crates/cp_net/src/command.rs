@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::build::{
     ElevationMode, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SnapOptions,
-    segment_cost, validate_road_path,
+    segment_cost, validate_build_plan, validate_road_path,
 };
 use crate::graph::{NetGraph, NetOpError};
 use crate::model::{Elevation, NodeId, SegmentId};
@@ -203,38 +203,7 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
             path,
             elevation,
         } => build_paths(world, *road, *elevation, std::slice::from_ref(path)),
-        NetCommand::BuildPlan { plan } => {
-            let graph = world.resource::<NetGraph>();
-            let at = |a: &Anchor| -> Result<Vec2, NetError> {
-                match a {
-                    Anchor::Free(p) if p.is_finite() => Ok(*p),
-                    Anchor::Free(_) => Err(NetError::BadPlan),
-                    Anchor::Node(n) => graph
-                        .node(*n)
-                        .map(|n| Vec2::new(n.pos.x, n.pos.z))
-                        .ok_or(NetError::UnknownNode(*n)),
-                    Anchor::OnSegment(s, t) if t.is_finite() => graph
-                        .segment(*s)
-                        .map(|s| {
-                            let p = s.curve.point(t.clamp(0.0, 1.0));
-                            Vec2::new(p.x, p.z)
-                        })
-                        .ok_or(NetError::UnknownSegment(*s)),
-                    Anchor::OnSegment(..) => Err(NetError::BadPlan),
-                }
-            };
-            if plan.pieces.is_empty() {
-                return Err(NetError::BadPlan);
-            }
-            let mut paths = Vec::with_capacity(plan.pieces.len());
-            for piece in &plan.pieces {
-                if !(piece.c1.is_finite() && piece.c2.is_finite()) {
-                    return Err(NetError::BadPlan);
-                }
-                paths.push(piece.road_path(at(&piece.from)?, at(&piece.to)?));
-            }
-            build_paths(world, plan.road, plan.elevation, &paths)
-        }
+        NetCommand::BuildPlan { plan } => build_literal(world, plan),
         NetCommand::UpgradeSegment { seg, road } => {
             let content = content()?;
             if road.index() >= content.roads().count() {
@@ -333,6 +302,81 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
             Ok(Cost::ZERO)
         }
     }
+}
+
+/// Applies a [`BuildPlan`] literally (T-262): the anchors are the truth, the sim snaps nothing.
+/// Everything is decided (`validate_build_plan`, funds, the dry run) before the first change; the
+/// graph keeps its invariants (§6.8.3 item 2) and no joint is merged away afterwards.
+fn build_literal(world: &mut World, plan: &BuildPlan) -> Result<Cost, NetError> {
+    let content = world
+        .get_resource::<SimContent>()
+        .map(|c| c.0.clone())
+        .ok_or(NetError::Missing("content"))?;
+    let terrain = world
+        .get_resource::<SimTerrain>()
+        .map(|t| t.0.clone())
+        .ok_or(NetError::Missing("terrain"))?;
+    let tiles = world
+        .get_resource::<TileOwnership>()
+        .copied()
+        .ok_or(NetError::Missing("tile ownership"))?;
+    if plan.pieces.is_empty() {
+        return Err(NetError::BadPlan);
+    }
+    {
+        let graph = world.resource::<NetGraph>();
+        let known = |a: &Anchor| match a {
+            Anchor::Free(p) if p.is_finite() => Ok(()),
+            Anchor::Free(_) => Err(NetError::BadPlan),
+            Anchor::Node(n) => graph.node(*n).map(|_| ()).ok_or(NetError::UnknownNode(*n)),
+            Anchor::OnSegment(s, t) if t.is_finite() => graph
+                .segment(*s)
+                .map(|_| ())
+                .ok_or(NetError::UnknownSegment(*s)),
+            Anchor::OnSegment(..) => Err(NetError::BadPlan),
+        };
+        for piece in &plan.pieces {
+            if !(piece.c1.is_finite() && piece.c2.is_finite()) {
+                return Err(NetError::BadPlan);
+            }
+            known(&piece.from)?;
+            known(&piece.to)?;
+        }
+    }
+    let cost = world.resource_scope(
+        |world, mut graph: bevy_ecs::change_detection::Mut<NetGraph>| {
+            let built = validate_build_plan(&graph, &terrain, &tiles, &content, plan)
+                .map_err(NetError::Build)?;
+            check_funds(world, built.cost).map_err(NetError::Funds)?;
+            check_plan(&graph, &built).map_err(NetError::from)?;
+            #[cfg(debug_assertions)]
+            let (backup, before) = (graph.clone(), graph.check_basic_invariants().len());
+            match apply_plan_with(&mut graph, &content, &built, false) {
+                Ok(()) => {
+                    #[cfg(debug_assertions)]
+                    {
+                        let after = graph.check_basic_invariants();
+                        debug_assert!(
+                            after.len() <= before,
+                            "a build plan broke a graph invariant: {after:?}"
+                        );
+                        let _ = backup;
+                    }
+                    Ok(built.cost)
+                }
+                Err(e) => {
+                    #[cfg(debug_assertions)]
+                    {
+                        *graph = backup;
+                        debug_assert!(false, "a checked plan failed to apply: {e}");
+                    }
+                    Err(NetError::from(e))
+                }
+            }
+        },
+    )?;
+    charge_funds(world, cost);
+    Ok(cost)
 }
 
 /// Builds `paths` one after another with the existing validator (`BuildRoad` semantics): all
@@ -524,6 +568,17 @@ fn apply_plan(
     content: &cp_content::ContentDb,
     plan: &RoadBuildPlan,
 ) -> Result<(), NetOpError> {
+    apply_plan_with(graph, content, plan, true)
+}
+
+/// [`apply_plan`]; `merge` is the BUG-069 pass over the joints of the junctions the plan touched
+/// (the older `BuildRoad`; a literal `BuildPlan` has no such pass, its cuts are made right).
+fn apply_plan_with(
+    graph: &mut NetGraph,
+    content: &cp_content::ContentDb,
+    plan: &RoadBuildPlan,
+    merge: bool,
+) -> Result<(), NetOpError> {
     let by_seg = grouped_splits(plan);
     for (seg, ts) in by_seg {
         let road = graph
@@ -537,7 +592,9 @@ fn apply_plan(
     for s in &plan.segments {
         ids.push(graph.add_segment(def, plan.road, s.curve, s.elevation)?);
     }
-    merge_joints_near_junctions(graph, content, &ids);
+    if merge {
+        merge_joints_near_junctions(graph, content, &ids);
+    }
     Ok(())
 }
 

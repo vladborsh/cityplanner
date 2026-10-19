@@ -1,14 +1,21 @@
-//! T-262 step 1: `NetCommand::BuildPlan` — the contract types and their application through the
-//! existing path. A plan of straight pieces builds what `BuildRoad` builds; anchors name nodes and
-//! segments of the graph; a bad anchor is refused and changes nothing.
+//! T-262: `NetCommand::BuildPlan` is applied literally — the anchors are the truth, nothing is
+//! snapped again — and the graph keeps its invariants (§6.8.3): no segment under 8 m or over
+//! 100 m, a cut that would leave under 8 m is a node at the near end, a crossing within 8 m of a
+//! node goes through it, a road across a dead end joins it, spans are cut into `floor(L/96)+1`
+//! equal pieces, no joint is merged away afterwards. The cases are the probes of the net audit.
 
 use std::sync::Arc;
 
 use bevy_ecs::message::Messages;
 use bevy_math::Vec2;
 use cp_core::{CommandOutcome, Cost, Treasury};
-use cp_net::{Anchor, BuildPlan, ElevationMode, NetCommand, NetGraph, PlanPiece, RoadPath};
+use cp_net::{
+    Anchor, BuildPlan, ElevationMode, NetCommand, NetGraph, NodeId, PlanPiece, RoadPath, SegmentId,
+    Violation,
+};
 use cp_sim::{SimCommand, SimRunner};
+
+const C: f32 = 5100.0;
 
 fn world() -> (SimRunner, cp_content::RoadDefId) {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
@@ -21,7 +28,7 @@ fn world() -> (SimRunner, cp_content::RoadDefId) {
     sim.set_content(Arc::clone(&db));
     sim.world_mut()
         .insert_resource(cp_terrain::TileOwnership::only((2, 2)));
-    sim.world_mut().resource_mut::<Treasury>().balance = Cost::from_units(1_000_000.0);
+    sim.world_mut().resource_mut::<Treasury>().balance = Cost::from_units(1_000_000_000.0);
     (sim, db.road_id("basic_2l").unwrap())
 }
 
@@ -41,188 +48,252 @@ fn run(sim: &mut SimRunner, c: NetCommand) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-fn shape(sim: &SimRunner) -> Vec<(Vec<f32>, f32)> {
-    let g = sim.world().resource::<NetGraph>();
-    g.segments()
-        .map(|(_, s)| {
-            (
-                vec![s.curve.p0.x, s.curve.p0.z, s.curve.p3.x, s.curve.p3.z],
-                s.length,
-            )
-        })
-        .collect()
+fn p(x: f32, z: f32) -> Vec2 {
+    Vec2::new(C + x, C + z)
 }
 
-fn pieces(points: &[Vec2]) -> Vec<PlanPiece> {
+fn free(points: &[Vec2]) -> Vec<PlanPiece> {
     points
         .windows(2)
         .map(|w| PlanPiece::straight(Anchor::Free(w[0]), Anchor::Free(w[1]), w[0], w[1]))
         .collect()
 }
 
-#[test]
-fn a_plan_of_straight_pieces_builds_what_build_road_builds() {
-    let (mut a, road) = world();
-    let (mut b, _) = world();
-    let (p, q, r) = (
-        Vec2::new(5100.0, 5100.0),
-        Vec2::new(5200.0, 5100.0),
-        Vec2::new(5200.0, 5200.0),
-    );
-    for (from, to) in [(p, q), (q, r)] {
-        run(
-            &mut a,
-            NetCommand::BuildRoad {
-                road,
-                path: RoadPath::Straight { from, to },
-                elevation: ElevationMode::Ground,
-            },
-        )
-        .unwrap();
-    }
-    run(
-        &mut b,
-        NetCommand::BuildPlan {
-            plan: BuildPlan {
-                road,
-                elevation: ElevationMode::Ground,
-                pieces: pieces(&[p, q, r]),
-            },
-        },
-    )
-    .unwrap();
-    assert_eq!(shape(&a), shape(&b));
-    assert_eq!(
-        a.world().resource::<Treasury>().balance,
-        b.world().resource::<Treasury>().balance
-    );
-}
-
-#[test]
-fn anchors_name_nodes_and_segments_of_the_graph() {
-    let (mut sim, road) = world();
-    let (p, q) = (Vec2::new(5100.0, 5100.0), Vec2::new(5300.0, 5100.0));
-    run(
-        &mut sim,
-        NetCommand::BuildRoad {
-            road,
-            path: RoadPath::Straight { from: p, to: q },
-            elevation: ElevationMode::Ground,
-        },
-    )
-    .unwrap();
-    let (seg, start, mid) = {
-        let g = sim.world().resource::<NetGraph>();
-        let (id, s) = g.segments().next().unwrap();
-        let m = s.curve.point(0.5);
-        (id, s.end, Vec2::new(m.x, m.z))
-    };
-    // From the middle of the first piece to the north; and from its last node to the south.
-    let before = sim.world().resource::<NetGraph>().segment_count();
-    let up = mid + Vec2::new(0.0, 96.0);
-    run(
-        &mut sim,
-        NetCommand::BuildPlan {
-            plan: BuildPlan {
-                road,
-                elevation: ElevationMode::Ground,
-                pieces: vec![PlanPiece::straight(
-                    Anchor::OnSegment(seg, 0.5),
-                    Anchor::Free(up),
-                    mid,
-                    up,
-                )],
-            },
-        },
-    )
-    .unwrap();
-    assert!(sim.world().resource::<NetGraph>().segment_count() >= before + 2);
-    let q = {
-        let n = sim.world().resource::<NetGraph>().node(start).unwrap().pos;
-        Vec2::new(n.x, n.z)
-    };
-    let down = q + Vec2::new(0.0, -96.0);
-    run(
-        &mut sim,
-        NetCommand::BuildPlan {
-            plan: BuildPlan {
-                road,
-                elevation: ElevationMode::Ground,
-                pieces: vec![PlanPiece::straight(
-                    Anchor::Node(start),
-                    Anchor::Free(down),
-                    q,
-                    down,
-                )],
-            },
-        },
-    )
-    .unwrap();
-    let g = sim.world().resource::<NetGraph>();
-    assert_eq!(g.node(start).unwrap().segments.len(), 3);
-    assert!(
-        g.segments()
-            .any(|(_, s)| s.curve.p3.z < q.y - 50.0 || s.curve.p0.z < q.y - 50.0)
-    );
-}
-
-#[test]
-fn a_bad_plan_is_refused_and_changes_nothing() {
-    let (mut sim, road) = world();
-    let plan = |pieces| NetCommand::BuildPlan {
+fn plan(road: cp_content::RoadDefId, pieces: Vec<PlanPiece>) -> NetCommand {
+    NetCommand::BuildPlan {
         plan: BuildPlan {
             road,
             elevation: ElevationMode::Ground,
             pieces,
         },
-    };
+    }
+}
+
+fn build(sim: &mut SimRunner, road: cp_content::RoadDefId, points: &[Vec2]) -> Result<(), String> {
+    run(sim, plan(road, free(points)))
+}
+
+fn graph(sim: &SimRunner) -> &NetGraph {
+    sim.world().resource::<NetGraph>()
+}
+
+fn lengths(sim: &SimRunner) -> Vec<f32> {
+    let mut v: Vec<f32> = graph(sim).segments().map(|(_, s)| s.length).collect();
+    v.sort_by(f32::total_cmp);
+    v
+}
+
+fn node_at(sim: &SimRunner, at: Vec2) -> Option<NodeId> {
+    graph(sim)
+        .nodes()
+        .find(|(_, n)| Vec2::new(n.pos.x, n.pos.z).distance(at) < 0.05)
+        .map(|(id, _)| id)
+}
+
+fn degree(sim: &SimRunner, at: Vec2) -> usize {
+    node_at(sim, at).map_or(0, |n| graph(sim).node(n).unwrap().segments.len())
+}
+
+fn assert_invariants(sim: &SimRunner) {
+    assert_eq!(graph(sim).check_invariants(), Vec::<Violation>::new());
+}
+
+#[test]
+fn the_vertices_of_the_plan_are_the_vertices_of_the_graph() {
+    let (mut sim, road) = world();
+    // A street, and a road that starts 10 m from its end node: not pulled onto the node (the
+    // old 12 m snap), not turned to a 15 degree step, not cut on a 64 m lattice.
+    build(&mut sim, road, &[p(0.0, 0.0), p(200.0, 0.0)]).unwrap();
+    let (start, odd) = (p(200.0, 10.0), p(263.0, 87.0));
+    build(&mut sim, road, &[start, odd]).unwrap();
+    assert!(node_at(&sim, start).is_some() && node_at(&sim, odd).is_some());
+    assert_eq!(degree(&sim, p(200.0, 0.0)), 1);
+    // 99 m: two pieces of half the length.
+    assert_eq!(lengths(&sim).len(), 3 + 2);
+    assert_invariants(&sim);
+}
+
+#[test]
+fn a_plan_across_a_junction_arm_goes_through_the_node() {
+    let (mut sim, road) = world();
+    // A cross: the arms meet in (0, 0).
+    build(&mut sim, road, &[p(-100.0, 0.0), p(100.0, 0.0)]).unwrap();
+    build(&mut sim, road, &[p(0.0, -100.0), p(0.0, 100.0)]).unwrap();
+    let junction = node_at(&sim, p(0.0, 0.0)).unwrap();
+    // A street at 45 degrees that crosses the east arm 3 m from the centre (and the south arm
+    // 3 m from it): through the junction node, no 3 m segment between two junctions.
+    build(&mut sim, road, &[p(-37.0, -40.0), p(43.0, 40.0)]).unwrap();
+    assert_eq!(node_at(&sim, p(0.0, 0.0)), Some(junction));
+    assert!(lengths(&sim)[0] >= 8.0, "{:?}", lengths(&sim));
+    assert_invariants(&sim);
+}
+
+#[test]
+fn a_crossing_far_from_nodes_cuts_the_street_in_two_pieces_of_8_m_or_more() {
+    let (mut sim, road) = world();
+    build(&mut sim, road, &[p(-60.0, 0.0), p(60.0, 0.0)]).unwrap();
+    build(&mut sim, road, &[p(20.0, -80.0), p(20.0, 80.0)]).unwrap();
+    assert!(node_at(&sim, p(20.0, 0.0)).is_some());
+    assert_eq!(degree(&sim, p(20.0, 0.0)), 4);
+    assert!(lengths(&sim)[0] >= 8.0);
+    assert_invariants(&sim);
+}
+
+#[test]
+fn a_road_across_a_dead_end_joins_it() {
+    let (mut sim, road) = world();
+    // A stub ending exactly on the line of the road drawn over it.
+    build(&mut sim, road, &[p(0.0, -80.0), p(0.0, 0.0)]).unwrap();
+    assert_eq!(degree(&sim, p(0.0, 0.0)), 1);
+    build(&mut sim, road, &[p(-80.0, 0.0), p(80.0, 0.0)]).unwrap();
+    assert_eq!(degree(&sim, p(0.0, 0.0)), 3);
+    assert_invariants(&sim);
+}
+
+#[test]
+fn a_cut_leaving_under_8_m_is_a_node_at_the_near_end() {
+    let (mut sim, road) = world();
+    build(&mut sim, road, &[p(0.0, 0.0), p(60.0, 0.0)]).unwrap();
+    let seg: SegmentId = graph(&sim).segments().next().unwrap().0;
+    // A road starting 5 m from the end of the street, on it.
+    let t = 55.0 / 60.0;
+    let to = p(55.0, 70.0);
+    run(
+        &mut sim,
+        plan(
+            road,
+            vec![PlanPiece::straight(
+                Anchor::OnSegment(seg, t),
+                Anchor::Free(to),
+                p(55.0, 0.0),
+                to,
+            )],
+        ),
+    )
+    .unwrap();
+    assert_eq!(degree(&sim, p(60.0, 0.0)), 2);
+    assert!(node_at(&sim, p(55.0, 0.0)).is_none());
+    assert!(lengths(&sim)[0] >= 8.0);
+    assert_invariants(&sim);
+}
+
+#[test]
+fn long_spans_are_cut_into_equal_pieces_and_stay_cut() {
+    let (mut sim, road) = world();
+    // 300 m: floor(300 / 96) + 1 = 4 pieces of 75 m; 96 m: two of 48; 95 m: one.
+    build(&mut sim, road, &[p(-150.0, 0.0), p(150.0, 0.0)]).unwrap();
+    assert_eq!(graph(&sim).segment_count(), 4);
+    for l in lengths(&sim) {
+        assert!((l - 75.0).abs() < 0.1, "{l}");
+    }
+    build(&mut sim, road, &[p(-150.0, 100.0), p(-54.0, 100.0)]).unwrap();
+    build(&mut sim, road, &[p(-150.0, 200.0), p(-55.0, 200.0)]).unwrap();
+    assert_eq!(graph(&sim).segment_count(), 4 + 2 + 1);
+    // A cross street at 38 m beyond a cut: the pieces around it stay, nothing is merged into
+    // a 100 m+ segment, the cut at 75 m stays a node.
+    build(
+        &mut sim,
+        road,
+        &[p(-75.0 + 38.0, -80.0), p(-75.0 + 38.0, 80.0)],
+    )
+    .unwrap();
+    assert_eq!(degree(&sim, p(-75.0, 0.0)), 2);
+    assert_invariants(&sim);
+}
+
+#[test]
+fn only_real_errors_refuse_a_plan() {
+    let (mut sim, road) = world();
+    build(&mut sim, road, &[p(-60.0, 0.0), p(60.0, 0.0)]).unwrap();
+    // Too short.
+    let e = build(&mut sim, road, &[p(0.0, 40.0), p(5.0, 40.0)]).unwrap_err();
+    assert!(e.contains("SegmentTooShort"), "{e}");
+    // Crossing two roads 5 m apart leaves a piece under 8 m between the crossings.
+    build(&mut sim, road, &[p(-30.0, 60.0), p(-30.0, 120.0)]).unwrap();
+    build(&mut sim, road, &[p(-25.0, 60.0), p(-25.0, 120.0)]).unwrap();
+    let e = build(&mut sim, road, &[p(-60.0, 90.0), p(0.0, 90.0)]).unwrap_err();
+    assert!(e.contains("SegmentTooShort"), "{e}");
+    // A sharp angle at an existing node.
+    let e = build(&mut sim, road, &[p(60.0, 0.0), p(0.0, 10.0)]).unwrap_err();
+    assert!(e.contains("SharpAngle"), "{e}");
+    assert_invariants(&sim);
+}
+
+#[test]
+fn segments_get_a_build_order_and_a_cut_keeps_it() {
+    let (mut sim, road) = world();
+    build(&mut sim, road, &[p(-100.0, 0.0), p(100.0, 0.0)]).unwrap();
+    let first: Vec<u32> = graph(&sim).segments().map(|(_, s)| s.order).collect();
+    assert_eq!(first, vec![0, 1, 2]);
+    let after = graph(&sim).next_order();
+    assert_eq!(after, 3);
+    build(&mut sim, road, &[p(0.0, -90.0), p(0.0, 90.0)]).unwrap();
+    // The middle piece of the street was cut at 0: both halves keep its order 1; the new road
+    // takes the next orders.
+    let mut orders: Vec<u32> = graph(&sim).segments().map(|(_, s)| s.order).collect();
+    orders.sort_unstable();
+    assert_eq!(orders, vec![0, 1, 1, 2, 3, 4]);
+    assert_eq!(graph(&sim).next_order(), 5);
+}
+
+#[test]
+fn a_bad_plan_is_refused_and_changes_nothing() {
+    let (mut sim, road) = world();
     let balance = sim.world().resource::<Treasury>().balance;
-    // Empty, not finite, a node that does not exist.
-    assert!(run(&mut sim, plan(vec![])).is_err());
+    assert!(run(&mut sim, plan(road, vec![])).is_err());
     let nan = Vec2::new(f32::NAN, 5100.0);
-    let p = Vec2::new(5100.0, 5100.0);
-    assert!(run(&mut sim, plan(pieces(&[p, nan]))).is_err());
+    assert!(build(&mut sim, road, &[p(0.0, 0.0), nan]).is_err());
+    // A node that does not exist, taken from another world.
     let ghost = {
         let (mut other, r2) = world();
-        run(
-            &mut other,
-            NetCommand::BuildRoad {
-                road: r2,
-                path: RoadPath::Straight {
-                    from: p,
-                    to: Vec2::new(5200.0, 5100.0),
-                },
-                elevation: ElevationMode::Ground,
-            },
-        )
-        .unwrap();
-        other
-            .world()
-            .resource::<NetGraph>()
-            .segments()
-            .next()
-            .unwrap()
-            .1
-            .start
+        build(&mut other, r2, &[p(0.0, 0.0), p(60.0, 0.0)]).unwrap();
+        graph(&other).segments().next().unwrap().1.start
     };
-    let q = Vec2::new(5200.0, 5100.0);
+    let q = p(60.0, 0.0);
     assert!(
         run(
             &mut sim,
-            plan(vec![PlanPiece::straight(
-                Anchor::Node(ghost),
-                Anchor::Free(q),
-                p,
-                q
-            )])
+            plan(
+                road,
+                vec![PlanPiece::straight(
+                    Anchor::Node(ghost),
+                    Anchor::Free(q),
+                    p(0.0, 0.0),
+                    q
+                )]
+            )
         )
         .is_err()
     );
-    // The second piece is bad (too short): the first is not kept.
-    let tiny = Vec2::new(5205.0, 5100.0);
-    let mut two = pieces(&[p, q]);
-    two.extend(pieces(&[q, tiny]));
-    assert!(run(&mut sim, plan(two)).is_err());
-    assert_eq!(sim.world().resource::<NetGraph>().segment_count(), 0);
+    // The second piece is bad (under 8 m): the first is not kept.
+    let mut two = free(&[p(0.0, 0.0), p(60.0, 0.0)]);
+    two.extend(free(&[p(60.0, 0.0), p(64.0, 0.0)]));
+    assert!(run(&mut sim, plan(road, two)).is_err());
+    assert_eq!(graph(&sim).segment_count(), 0);
     assert_eq!(sim.world().resource::<Treasury>().balance, balance);
+}
+
+#[test]
+fn build_road_still_builds_what_it_always_built() {
+    // The older command keeps its snaps and its 64 m cuts for old logs.
+    let (mut sim, road) = world();
+    run(
+        &mut sim,
+        NetCommand::BuildRoad {
+            road,
+            path: RoadPath::Straight {
+                from: p(0.0, 0.0),
+                to: p(200.0, 0.0),
+            },
+            elevation: ElevationMode::Ground,
+        },
+    )
+    .unwrap();
+    let mut l = lengths(&sim);
+    l.sort_by(f32::total_cmp);
+    assert_eq!(l.len(), 3);
+    assert!(
+        (l[0] - 64.0).abs() < 0.1 || (l[0] - 72.0).abs() < 0.1,
+        "{l:?}"
+    );
 }

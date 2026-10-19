@@ -11,7 +11,7 @@ use cp_content::{ContentDb, ZoneType};
 use cp_core::curve::CubicBezier3;
 use cp_core::time::TICKS_PER_DAY;
 use cp_net::{Elevation, NetGraph};
-use cp_save::migrate::{SaveDataV6, encode_v6};
+use cp_save::migrate::{NetGraphV54, SaveDataV6, encode_v6};
 use cp_save::*;
 use cp_sim::SimRunner;
 use cp_zone::{ZoneCellRef, ZoneGrid};
@@ -55,7 +55,7 @@ fn v6_fixture_migrates_to_no_citizens_and_keeps_its_buildings() {
         queue: l.data.queue.clone(),
         log: l.data.log.clone(),
         tiles: l.data.tiles,
-        net: l.data.net.clone(),
+        net: NetGraphV54::from(&l.data.net),
         zones: l.data.zones.clone().to_v34(),
         buildings: cp_save::migrate::BuildingGridV12::from(&l.data.buildings),
     };
