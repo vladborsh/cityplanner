@@ -85,17 +85,42 @@ const WATER_SAMPLE_STEP: f32 = 2.0;
 const RAMP_SLOPE_SHARE: f32 = 0.9995;
 const SLOPE_EPS: f32 = 1e-4;
 /// The reach of a node's junction, metres (§6.8.3 items 1 and 2, T-264): a point of a plan this
-/// close (along a segment) to the node is the node. The widest road at the node counts by its
-/// half width, never under [`MIN_SEGMENT_LENGTH_BUILD`]: the corners and crossings of a wide
-/// junction take that much room.
+/// close (along a segment) to the node is the node. A dead end and an invisible cut of a straight
+/// street (degree 2, same road and level, a corner of at most [`crate::CORNER_DEG`]) have no
+/// junction: [`MIN_SEGMENT_LENGTH_BUILD`], the smallest piece. A junction (degree 3 and more), a
+/// bend or a change of road at degree 2 takes the room of its corners: the half width of the
+/// widest road there, until the junction geometry of T-263 gives the real setback.
 pub fn junction_reach(graph: &NetGraph, content: &ContentDb, node: NodeId) -> f32 {
-    graph.node(node).map_or(MIN_SEGMENT_LENGTH_BUILD, |n| {
-        n.segments
-            .iter()
-            .filter_map(|&s| graph.segment(s))
-            .map(|s| content.road(s.road).width / 2.0)
-            .fold(MIN_SEGMENT_LENGTH_BUILD, f32::max)
-    })
+    let Some(n) = graph.node(node) else {
+        return MIN_SEGMENT_LENGTH_BUILD;
+    };
+    let segs: Vec<&Segment> = n
+        .segments
+        .iter()
+        .filter_map(|&s| graph.segment(s))
+        .collect();
+    let plain_cut = match segs.as_slice() {
+        [] | [_] => true,
+        [a, b] => {
+            let away = |s: &Segment| {
+                if s.start == node {
+                    dir_xz(s.curve.tangent(0.0))
+                } else {
+                    -dir_xz(s.curve.tangent(1.0))
+                }
+            };
+            a.road == b.road
+                && a.elevation == b.elevation
+                && away(a).dot(away(b)) <= -crate::CORNER_DEG.to_radians().cos()
+        }
+        _ => false,
+    };
+    if plain_cut {
+        return MIN_SEGMENT_LENGTH_BUILD;
+    }
+    segs.iter()
+        .map(|s| content.road(s.road).width / 2.0)
+        .fold(MIN_SEGMENT_LENGTH_BUILD, f32::max)
 }
 
 /// A remnant this much under 8 m still counts as 8 m (the arc length of a cut is a float: a
@@ -1560,8 +1585,23 @@ fn validate_inner(
                 NodeRef::Split(i) => Some(b.splits[i].segment),
                 _ => None,
             };
+            // The street the cut is made in runs on through its plain cuts: the next pieces are
+            // the same road, not another one.
+            let runs_on = |seg: &Segment| {
+                own.and_then(|o| graph.segment(o)).is_some_and(|o| {
+                    [o.start, o.end].iter().any(|&m| {
+                        (seg.start == m || seg.end == m)
+                            && junction_reach(graph, content, m) <= MIN_SEGMENT_LENGTH_BUILD
+                            && graph.node(m).is_some_and(|n| n.segments.len() == 2)
+                    })
+                })
+            };
             for (sid, seg) in graph.segments() {
-                if !ground(seg.elevation) || Some(sid) == own || b.is_rail_road(seg.road) != rail {
+                if !ground(seg.elevation)
+                    || Some(sid) == own
+                    || b.is_rail_road(seg.road) != rail
+                    || runs_on(seg)
+                {
                     continue;
                 }
                 let hw = half(seg.road);

@@ -354,3 +354,26 @@ fn a_crossing_inside_the_junction_of_a_wide_road_goes_through_its_node() {
     assert_eq!(degree(&sim, p(0.0, 0.0)), before + 2);
     assert_invariants(&sim);
 }
+
+#[test]
+fn a_dead_end_or_a_plain_cut_pulls_only_within_8_m_a_junction_within_its_footprint() {
+    let (mut sim, _) = world();
+    let wide = sim
+        .world()
+        .resource::<cp_content::SimContent>()
+        .0
+        .road_id("large_6l")
+        .unwrap();
+    let narrow = sim
+        .world()
+        .resource::<cp_content::SimContent>()
+        .0
+        .road_id("basic_2l")
+        .unwrap();
+    // A 6-lane street ending at the origin (half width 14): a street across 12 m before its
+    // end stays where it was aimed, the dead end does not pull it (8 m is its whole reach).
+    build(&mut sim, wide, &[p(-100.0, 0.0), p(0.0, 0.0)]).unwrap();
+    build(&mut sim, narrow, &[p(-12.0, -60.0), p(-12.0, 60.0)]).unwrap();
+    assert!(node_at(&sim, p(-12.0, 0.0)).is_some());
+    assert_invariants(&sim);
+}
