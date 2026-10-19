@@ -208,11 +208,10 @@ fn only_real_errors_refuse_a_plan() {
     // Too short.
     let e = build(&mut sim, road, &[p(0.0, 40.0), p(5.0, 40.0)]).unwrap_err();
     assert!(e.contains("SegmentTooShort"), "{e}");
-    // Crossing two roads 5 m apart leaves a piece under 8 m between the crossings.
+    // A road 5 m beside another one lies on its asphalt: refused, whatever it crosses.
     build(&mut sim, road, &[p(-30.0, 60.0), p(-30.0, 120.0)]).unwrap();
-    build(&mut sim, road, &[p(-25.0, 60.0), p(-25.0, 120.0)]).unwrap();
-    let e = build(&mut sim, road, &[p(-60.0, 90.0), p(0.0, 90.0)]).unwrap_err();
-    assert!(e.contains("SegmentTooShort"), "{e}");
+    let e = build(&mut sim, road, &[p(-25.0, 60.0), p(-25.0, 120.0)]).unwrap_err();
+    assert!(e.contains("NodeOnRoad"), "{e}");
     // A sharp angle at an existing node.
     let e = build(&mut sim, road, &[p(60.0, 0.0), p(0.0, 10.0)]).unwrap_err();
     assert!(e.contains("SharpAngle"), "{e}");
@@ -296,4 +295,62 @@ fn build_road_still_builds_what_it_always_built() {
         (l[0] - 64.0).abs() < 0.1 || (l[0] - 72.0).abs() < 0.1,
         "{l:?}"
     );
+}
+
+#[test]
+fn a_plan_whose_node_stands_on_a_road_it_does_not_join_is_refused() {
+    let (mut sim, road) = world();
+    build(&mut sim, road, &[p(-60.0, 0.0), p(60.0, 0.0)]).unwrap();
+    let before = graph(&sim).segment_count();
+    // An end 3 m off the axis of the street (on its asphalt), not joined: refused.
+    let e = build(&mut sim, road, &[p(0.0, 80.0), p(10.0, 3.0)]).unwrap_err();
+    assert!(e.contains("NodeOnRoad"), "{e}");
+    // The same end on the axis, as an anchor of the street, is a T.
+    let (seg, mid) = {
+        let (id, s) = graph(&sim).segments().next().unwrap();
+        let m = s.curve.point(0.5);
+        (id, Vec2::new(m.x, m.z))
+    };
+    run(
+        &mut sim,
+        plan(
+            road,
+            vec![PlanPiece::straight(
+                Anchor::Free(mid + Vec2::new(0.0, 80.0)),
+                Anchor::OnSegment(seg, 0.5),
+                mid + Vec2::new(0.0, 80.0),
+                mid,
+            )],
+        ),
+    )
+    .unwrap();
+    assert!(graph(&sim).segment_count() > before);
+    // A road laid over an old dead end that it does not join: refused (the node lies under it).
+    build(&mut sim, road, &[p(200.0, -80.0), p(200.0, 0.0)]).unwrap();
+    let e = build(&mut sim, road, &[p(203.0, -60.0), p(203.0, 60.0)]).unwrap_err();
+    assert!(e.contains("NodeOnRoad"), "{e}");
+    assert_invariants(&sim);
+}
+
+#[test]
+fn a_crossing_inside_the_junction_of_a_wide_road_goes_through_its_node() {
+    let (mut sim, _) = world();
+    let wide = sim
+        .world()
+        .resource::<cp_content::SimContent>()
+        .0
+        .road_id("large_6l")
+        .unwrap();
+    // A cross of 6-lane streets (half width 14); a street across the east arm 12 m from the
+    // centre, inside the junction, goes through the node, where one of 2 lanes (8 m) would not.
+    build(&mut sim, wide, &[p(-100.0, 0.0), p(100.0, 0.0)]).unwrap();
+    build(&mut sim, wide, &[p(0.0, -100.0), p(0.0, 100.0)]).unwrap();
+    let node = node_at(&sim, p(0.0, 0.0)).unwrap();
+    let before = degree(&sim, p(0.0, 0.0));
+    build(&mut sim, wide, &[p(12.0, -90.0), p(12.0, 90.0)]).unwrap_err();
+    let c45 = [p(-40.0, -52.0), p(64.0, 52.0)];
+    build(&mut sim, wide, &c45).unwrap();
+    assert_eq!(node_at(&sim, p(0.0, 0.0)), Some(node));
+    assert_eq!(degree(&sim, p(0.0, 0.0)), before + 2);
+    assert_invariants(&sim);
 }

@@ -46,38 +46,13 @@ const ROADS: [&str; 3] = ["basic_2l", "medium_4l", "large_6l"];
 const MIN_LEN: f32 = 8.0;
 const MAX_LEN: f32 = 100.0;
 
-/// Cases that still fail after T-262 (`BuildPlan`): all `dangling`, and all a job of the road
-/// tool (T-264), not of the sim. A side street, or the street across, 8-12 m from a T or a
-/// bend of a 4- or 6-lane street stands on the asphalt of the arm it does not join (the arm is
-/// 19 or 28 m wide): the sim applies the points it is given, the tool must resolve a point
-/// within the width of a node onto the node (§6.8.3 item 5). `through_end/3`: a street passing
-/// 3 m beside a dead end lies over its end; the tool resolves that too. Fixed by T-262 (crossed
-/// out): the sim pulling a start into a T, a dead end or a bend (R1), a crossing within 8 m of a
-/// node leaving a short piece (R2), a road across a dead end not joining it, an end on a wide
-/// street's asphalt unjoined, BUG-069 merging a cut into a piece over 100 m. Prefixes of
-/// `scenario/.../road/angle` (a prefix ending in `/` covers every case under it);
+/// Cases that fail today: none (T-264). T-262 took the sim's snaps away (R1, R2); T-264 gave the
+/// resolver of the road tool the v7 rule (§6.8.3 items 1 and 5: a point inside a junction's reach
+/// is the node, a point within the half width of a street is a point of its axis) and made the
+/// sim refuse a plan whose node stands on the asphalt of a road it does not join (`through_end/3`).
+/// Prefixes of `scenario/.../road/angle` (a prefix ending in `/` covers every case under it);
 /// `known_red_cases_still_fail` names the cases that pass.
-const KNOWN_RED: &[&str] = &[
-    "near_node/t/8/medium_4l/",
-    "near_node/t/8/large_6l/",
-    "near_node/t/10/large_6l/",
-    "near_node/t/12/large_6l/",
-    "near_node/bend/8/medium_4l/",
-    "near_node/bend/8/large_6l/",
-    "near_node/bend/10/large_6l/",
-    "near_node/bend/12/large_6l/",
-    "cross_near_node/12/large_6l/",
-    "through_end/3/",
-    // Owner T-264 as well: with the straight-on skip limited to a degree-2 node, a node 8-12 m
-    // from the axis of a medium or large road it does not join (two junctions 8 m apart on a
-    // wide road; the dead end `end` stands in the footprint of the street's cut or T) stays
-    // red until the tool puts a point inside a junction's footprint on that node.
-    "near_node/end/8/medium_4l/",
-    "near_node/end/8/large_6l/",
-    "near_node/end/10/large_6l/",
-    "near_node/end/12/large_6l/",
-    "cross_near_node/24/large_6l/",
-];
+const KNOWN_RED: &[&str] = &[];
 
 fn known_red(case: &str) -> bool {
     KNOWN_RED.iter().any(|k| case.starts_with(k))
@@ -169,6 +144,21 @@ impl Case {
 
     fn line(&self, a: Vec2, b: Vec2) -> CaseRoad {
         (self.road, RoadPath::Straight { from: a, to: b })
+    }
+
+    /// Where a point aimed at (local frame) ends up: a point inside the junction of a node (within
+    /// `cp_net::junction_reach` of it: 8 m, or the half width of the widest road there) is that
+    /// node (§6.8.3 items 1 and 5), anything else stays.
+    fn through(&self, p: Vec2) -> Vec2 {
+        let view = self.sim.view();
+        let w = self.w(p);
+        view.net
+            .nodes()
+            .filter(|(_, n)| n.elevation == cp_net::Elevation::Ground)
+            .map(|(id, n)| (to_xz(n.pos), id))
+            .filter(|(q, id)| q.distance(w) <= cp_net::junction_reach(&view.net, &self.db, *id))
+            .min_by(|a, b| a.0.distance(w).total_cmp(&b.0.distance(w)))
+            .map_or(p, |(q, _)| self.l(q))
     }
 
     /// `moved`: a node stands at each local point.
@@ -366,13 +356,15 @@ fn base(c: &mut Case, kind: &str) {
 fn near_node(c: &mut Case, kind: &str, d: f32) {
     base(c, kind);
     let (a, b) = (Vec2::new(-d, 0.0), Vec2::new(-d, -80.0));
+    let start = c.through(a);
     c.build(
         "the side street",
         vec![("basic_2l", RoadPath::Straight { from: a, to: b })],
         d >= MIN_LEN,
     );
     if d >= MIN_LEN {
-        c.nodes_at("the side street", &[a, b]);
+        // A start inside the junction of the T, the dead end or the bend is on its node.
+        c.nodes_at("the side street", &[start, b]);
     }
     c.invariants();
 }
@@ -409,6 +401,7 @@ fn cross_near_node(c: &mut Case, d: f32) {
     let v = Vec2::from_angle(60f32.to_radians()) * 80.0;
     let (a, b) = (m - v, m + v);
     let must = d >= 12.0;
+    let crossing = c.through(m);
     c.build(
         "the street across",
         vec![("basic_2l", RoadPath::Straight { from: a, to: b })],
@@ -416,7 +409,7 @@ fn cross_near_node(c: &mut Case, d: f32) {
     );
     c.nodes_at("the street across", &[a, b]);
     if must {
-        c.nodes_at("the crossing", &[Vec2::new(d, 0.0)]);
+        c.nodes_at("the crossing", &[crossing]);
     }
     c.invariants();
 }
@@ -447,18 +440,15 @@ fn cut_cross(c: &mut Case, d: f32) {
     };
     let x = cut + d;
     let (a, b) = (Vec2::new(x, -80.0), Vec2::new(x, 80.0));
+    let crossing_at = c.through(Vec2::new(x, 0.0));
     c.build(
         "the street across",
         vec![("basic_2l", RoadPath::Straight { from: a, to: b })],
         true,
     );
-    // A crossing within 8 m of the cut goes through the cut (§6.8.3 item 2): the node stays and
-    // the street across bends onto it; further out the crossing is where it was aimed.
-    let crossing = if d < MIN_LEN {
-        Vec2::new(cut, 0.0)
-    } else {
-        Vec2::new(x, 0.0)
-    };
+    // A crossing within the reach of the cut goes through the cut (§6.8.3 item 2): the node stays
+    // and the street across bends onto it; further out the crossing is where it was aimed.
+    let crossing = crossing_at;
     c.nodes_at("the street across", &[a, b, crossing]);
     c.invariants();
 }

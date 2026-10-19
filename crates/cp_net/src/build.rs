@@ -84,6 +84,20 @@ const WATER_SAMPLE_STEP: f32 = 2.0;
 /// steeper than the road may be), and the slack of the piece check.
 const RAMP_SLOPE_SHARE: f32 = 0.9995;
 const SLOPE_EPS: f32 = 1e-4;
+/// The reach of a node's junction, metres (§6.8.3 items 1 and 2, T-264): a point of a plan this
+/// close (along a segment) to the node is the node. The widest road at the node counts by its
+/// half width, never under [`MIN_SEGMENT_LENGTH_BUILD`]: the corners and crossings of a wide
+/// junction take that much room.
+pub fn junction_reach(graph: &NetGraph, content: &ContentDb, node: NodeId) -> f32 {
+    graph.node(node).map_or(MIN_SEGMENT_LENGTH_BUILD, |n| {
+        n.segments
+            .iter()
+            .filter_map(|&s| graph.segment(s))
+            .map(|s| content.road(s.road).width / 2.0)
+            .fold(MIN_SEGMENT_LENGTH_BUILD, f32::max)
+    })
+}
+
 /// A remnant this much under 8 m still counts as 8 m (the arc length of a cut is a float: a
 /// point aimed at 8.000 m from a node must stay a cut).
 const REMNANT_EPS: f32 = 0.02;
@@ -295,6 +309,9 @@ impl std::fmt::Display for RoadBuildError {
             Self::WaterWithoutBridge { .. } => write!(f, "water: raise the road to bridge it"),
             Self::TooManySegments { .. } => write!(f, "too many roads meet here"),
             Self::TileNotOwned { .. } => write!(f, "tile not owned"),
+            Self::NodeOnRoad { .. } => {
+                write!(f, "a junction would stand on a road it does not join")
+            }
             Self::NoTunnelVariant(_) => write!(f, "this road type cannot go underground"),
             Self::TunnelOnly(_) => write!(f, "this track can only be built in a tunnel"),
             Self::RailCrossesRoad { .. } => write!(f, "track and road cannot cross at one level"),
@@ -358,6 +375,11 @@ pub enum RoadBuildError {
         pos: Vec3,
     },
     TileNotOwned {
+        pos: Vec3,
+    },
+    /// A literal plan (T-262, T-264): a node of the plan lies on the asphalt of a ground road it
+    /// does not join, or an old node lies under a new road that does not join it: a collision.
+    NodeOnRoad {
         pos: Vec3,
     },
     /// `Tunnel` requested but the road type has no tunnel variant (T-161).
@@ -496,10 +518,18 @@ impl Builder<'_> {
         if literal {
             let s = self.graph.segment(segment).expect("segment exists");
             let at = s.curve.arc_table().t_to_s(t);
-            if at < MIN_SEGMENT_LENGTH_BUILD - REMNANT_EPS
-                || s.length - at < MIN_SEGMENT_LENGTH_BUILD - REMNANT_EPS
-            {
-                let near = if at <= s.length - at { s.start } else { s.end };
+            let (r0, r1) = (
+                junction_reach(self.graph, self.content, s.start),
+                junction_reach(self.graph, self.content, s.end),
+            );
+            let (near0, near1) = (at < r0 - REMNANT_EPS, s.length - at < r1 - REMNANT_EPS);
+            if near0 || near1 {
+                let near = match (near0, near1) {
+                    (true, false) => s.start,
+                    (false, true) => s.end,
+                    _ if at <= s.length - at => s.start,
+                    _ => s.end,
+                };
                 return NodeRef::Existing(near);
             }
         }
@@ -1510,6 +1540,62 @@ fn validate_inner(
             && deg < MIN_JUNCTION_ANGLE_DEG - 1e-3
         {
             errors.push(RoadBuildError::SharpAngle { pos, degrees: deg });
+        }
+    }
+
+    // --- a literal plan on the asphalt of a road it does not join (§6.8.3 item 1) ---
+    if literal.is_some() && matches!(req.elevation, ElevationMode::Ground) {
+        const TOL: f32 = 0.3;
+        let ground = |e: Elevation| e == Elevation::Ground;
+        let half = |road: RoadDefId| content.road(road).width / 2.0;
+        // A node the plan makes (a new end, a cut of a road) on another road's asphalt.
+        let mut checked: Vec<NodeRef> = Vec::new();
+        for n in segments.iter().flat_map(|s| [s.start, s.end]) {
+            if checked.contains(&n) || matches!(n, NodeRef::Existing(_)) {
+                continue;
+            }
+            checked.push(n);
+            let p = to_xz(b.node_pos(n));
+            let own = match n {
+                NodeRef::Split(i) => Some(b.splits[i].segment),
+                _ => None,
+            };
+            for (sid, seg) in graph.segments() {
+                if !ground(seg.elevation) || Some(sid) == own || b.is_rail_road(seg.road) != rail {
+                    continue;
+                }
+                let hw = half(seg.road);
+                if seg.curve.bounds_distance_xz(p) > hw + 1e-3 {
+                    continue;
+                }
+                if seg.curve.nearest_xz(p).1 < hw - TOL {
+                    errors.push(RoadBuildError::NodeOnRoad { pos: b.node_pos(n) });
+                    break;
+                }
+            }
+        }
+        // An old node under the asphalt of a new piece that does not end in it.
+        let joined: Vec<NodeId> = segments
+            .iter()
+            .flat_map(|s| [s.start, s.end])
+            .filter_map(|n| match n {
+                NodeRef::Existing(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        let hw_new = half(req.road);
+        for (nid, node) in graph.nodes() {
+            if !ground(node.elevation) || joined.contains(&nid) || b.is_rail_node(node) != rail {
+                continue;
+            }
+            let p = to_xz(node.pos);
+            if segments.iter().any(|s| {
+                s.elevation == Elevation::Ground
+                    && s.curve.bounds_distance_xz(p) <= hw_new
+                    && s.curve.nearest_xz(p).1 < hw_new - TOL
+            }) {
+                errors.push(RoadBuildError::NodeOnRoad { pos: node.pos });
+            }
         }
     }
 

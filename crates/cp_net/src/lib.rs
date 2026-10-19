@@ -17,8 +17,8 @@ pub use build::{
     ElevationMode, MAX_TUNNEL_DEPTH, NodeRef, OneWayWarning, PIER_SPACING, PlannedSegment,
     PlannedSplit, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SAME_DEPTH_TOL,
     SnapKind, SnapOptions, SnapReport, SnapReportKind, StepContext, TUNNEL_CLEARANCE, ZONE_CELL,
-    clearance_report, one_way_report, pier_positions, quantize_path, segment_cost,
-    validate_road_path, validate_road_path_report,
+    clearance_report, junction_reach, one_way_report, pier_positions, quantize_path, segment_cost,
+    validate_build_plan, validate_road_path, validate_road_path_report,
 };
 pub use command::{
     NetCommand, NetError, PART_SNAP, apply, apply_build_plan, build_unowned, curve_outside_owned,
