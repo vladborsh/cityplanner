@@ -115,6 +115,7 @@ fn kinds(e: &[RoadBuildError]) -> Vec<&'static str> {
             RoadBuildError::TooManySegments { .. } => "TooManySegments",
             RoadBuildError::TileNotOwned { .. } => "TileNotOwned",
             RoadBuildError::NodeOnRoad { .. } => "NodeOnRoad",
+            RoadBuildError::RoadsOverlap { .. } => "RoadsOverlap",
             RoadBuildError::NoTunnelVariant(_) => "NoTunnelVariant",
             RoadBuildError::TunnelOnly(_) => "TunnelOnly",
             RoadBuildError::RailCrossesRoad { .. } => "RailCrossesRoad",

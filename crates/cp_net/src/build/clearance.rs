@@ -5,10 +5,10 @@
 //! checksum is unchanged.
 
 use bevy_math::Vec2;
-use cp_content::ContentDb;
+use cp_content::{ContentDb, RoadDefId};
 use cp_core::curve::to_xz;
 
-use super::{RoadBuildPlan, ZONE_CELL, dir_xz};
+use super::{PlannedSegment, RoadBuildPlan, ZONE_CELL, dir_xz};
 use crate::graph::NetGraph;
 use crate::model::{Elevation, SegmentId};
 
@@ -39,10 +39,33 @@ pub fn clearance_report(
     content: &ContentDb,
     plan: &RoadBuildPlan,
 ) -> Vec<ClearanceWarning> {
-    let hw_a = content.road(plan.road).width * 0.5;
+    side_by_side(graph, content, plan.road, &plan.segments, ZONE_CELL - 1e-3)
+}
+
+/// Every stretch of a ground piece longer than 8 m whose asphalt overlaps that of an existing
+/// ground segment it runs side by side with (within 25° of parallel, away from the joints): a real
+/// collision, which the sim refuses for a literal plan (T-264). The same walk as
+/// [`clearance_report`] with the gap at zero.
+pub fn overlap_report(
+    graph: &NetGraph,
+    content: &ContentDb,
+    road: RoadDefId,
+    segments: &[PlannedSegment],
+) -> Vec<ClearanceWarning> {
+    side_by_side(graph, content, road, segments, -0.05)
+}
+
+fn side_by_side(
+    graph: &NetGraph,
+    content: &ContentDb,
+    road: RoadDefId,
+    segments: &[PlannedSegment],
+    gap: f32,
+) -> Vec<ClearanceWarning> {
+    let hw_a = content.road(road).width * 0.5;
     let cos_parallel = PARALLEL_DEG.to_radians().cos();
     let mut out = Vec::new();
-    for piece in &plan.segments {
+    for piece in segments {
         if piece.elevation != Elevation::Ground {
             continue;
         }
@@ -102,7 +125,10 @@ pub fn clearance_report(
             };
             for &(p, dir) in &samples {
                 let (t, d) = other.curve.nearest_xz(p);
-                let close = d - hw_a - hw_b < ZONE_CELL - 1e-3
+                // Past the end of the other road its asphalt is a junction's, not a lane beside.
+                let beside = gap >= 0.0 || (0.01..0.99).contains(&t);
+                let close = beside
+                    && d - hw_a - hw_b < gap
                     && dir.dot(dir_xz(other.curve.tangent(t))).abs() > cos_parallel
                     && joints.iter().all(|j| j.distance(p) > reach);
                 if close {

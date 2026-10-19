@@ -158,47 +158,51 @@ impl Case {
     }
 
     /// Where a point aimed at (local frame) ends up (§6.8.3 items 1 and 5), the rule stated here
-    /// on its own, not read from `cp_net::junction_reach`: a point within 8 m of a node is that
-    /// node; inside the junction of a junction (three roads or more) or a bend (two roads that
-    /// turn more than 10 degrees, or of two types), within the half width of the widest road
-    /// there as well. Anything else stays.
+    /// on its own, not read from `cp_net`: a point within 8 m of a node is that node. A node of
+    /// three roads or more, or of a bend (two roads that turn more than 10 degrees, or of two
+    /// types), also takes a point on the asphalt of one of its arms, no farther along the arm
+    /// than the widest half width there. A dead end and a plain cut (two roads of one type on a
+    /// line) have the 8 m only. Anything else stays.
     fn through(&self, p: Vec2) -> Vec2 {
         let view = self.sim.view();
         let net = &view.net;
         let w = self.w(p);
-        let reach = |n: &cp_net::Node, id: cp_net::NodeId| {
-            let _ = id;
+        let inside = |n: &cp_net::Node| {
+            let c = to_xz(n.pos);
+            if c.distance(w) <= 8.0 {
+                return true;
+            }
             let segs: Vec<&cp_net::Segment> =
                 n.segments.iter().filter_map(|&s| net.segment(s)).collect();
-            let straight = match segs.as_slice() {
-                [a, b] => {
-                    let away = |s: &cp_net::Segment| {
-                        if to_xz(n.pos).distance(to_xz(s.curve.p0)) < 0.05 {
-                            to_xz(s.curve.tangent(0.0)).normalize()
-                        } else {
-                            -to_xz(s.curve.tangent(1.0)).normalize()
-                        }
-                    };
-                    a.road == b.road && away(a).dot(away(b)) < -0.985
+            let away = |s: &cp_net::Segment| {
+                if c.distance(to_xz(s.curve.p0)) < 0.05 {
+                    to_xz(s.curve.tangent(0.0)).normalize()
+                } else {
+                    -to_xz(s.curve.tangent(1.0)).normalize()
                 }
+            };
+            let plain = match segs.as_slice() {
+                [a, b] => a.road == b.road && away(a).dot(away(b)) < -0.985,
                 _ => segs.len() <= 1,
             };
-            if straight {
-                8.0
-            } else {
-                let hw = segs
-                    .iter()
-                    .map(|s| self.db.road(s.road).width / 2.0)
-                    .fold(0.0, f32::max);
-                hw.max(8.0)
+            if plain {
+                return false;
             }
+            let reach = segs
+                .iter()
+                .map(|s| self.db.road(s.road).width / 2.0)
+                .fold(8.0, f32::max);
+            segs.iter().any(|s| {
+                let (dir, rel) = (away(s), w - c);
+                let (along, off) = (rel.dot(dir), rel.perp_dot(dir).abs());
+                (0.0..=reach).contains(&along) && off < self.db.road(s.road).width / 2.0
+            })
         };
         net.nodes()
-            .filter(|(_, n)| n.elevation == cp_net::Elevation::Ground)
-            .map(|(id, n)| (to_xz(n.pos), n, id))
-            .filter(|(q, n, id)| q.distance(w) <= reach(n, *id))
-            .min_by(|a, b| a.0.distance(w).total_cmp(&b.0.distance(w)))
-            .map_or(p, |(q, ..)| self.l(q))
+            .filter(|(_, n)| n.elevation == cp_net::Elevation::Ground && inside(n))
+            .map(|(_, n)| to_xz(n.pos))
+            .min_by(|a, b| a.distance(w).total_cmp(&b.distance(w)))
+            .map_or(p, |q| self.l(q))
     }
 
     /// `moved`: a node stands at each local point.

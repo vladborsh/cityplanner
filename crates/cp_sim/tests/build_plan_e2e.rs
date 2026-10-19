@@ -377,3 +377,60 @@ fn a_dead_end_or_a_plain_cut_pulls_only_within_8_m_a_junction_within_its_footpri
     assert!(node_at(&sim, p(-12.0, 0.0)).is_some());
     assert_invariants(&sim);
 }
+
+#[test]
+fn at_an_acute_junction_a_point_on_the_other_arms_asphalt_is_the_node() {
+    let (mut sim, _) = world();
+    let wide = sim
+        .world()
+        .resource::<cp_content::SimContent>()
+        .0
+        .road_id("large_6l")
+        .unwrap();
+    let narrow = sim
+        .world()
+        .resource::<cp_content::SimContent>()
+        .0
+        .road_id("basic_2l")
+        .unwrap();
+    // Two 6-lane arms from the origin at 30 degrees (half width 14). A street across the first
+    // arm 13 m out lies on the second arm's asphalt (6.5 m from its axis): the node takes it, a
+    // radius of 8 m would leave a junction standing on a road it does not join.
+    let dir = Vec2::from_angle(30f32.to_radians());
+    build(&mut sim, wide, &[p(0.0, 0.0), p(-90.0, 0.0)]).unwrap();
+    build(
+        &mut sim,
+        wide,
+        &[p(0.0, 0.0), p(dir.x * 90.0, dir.y * 90.0)],
+    )
+    .unwrap();
+    let node = node_at(&sim, p(0.0, 0.0)).unwrap();
+    let before = degree(&sim, p(0.0, 0.0));
+    let on_arm = dir * 13.0;
+    let across = Vec2::new(-dir.y, dir.x) * 60.0;
+    build(
+        &mut sim,
+        narrow,
+        &[
+            p(on_arm.x - across.x, on_arm.y - across.y),
+            p(on_arm.x + across.x, on_arm.y + across.y),
+        ],
+    )
+    .unwrap();
+    assert_eq!(node_at(&sim, p(0.0, 0.0)), Some(node));
+    assert!(degree(&sim, p(0.0, 0.0)) > before);
+    assert_invariants(&sim);
+}
+
+#[test]
+fn a_road_whose_asphalt_lies_on_a_road_beside_it_is_refused() {
+    let (mut sim, road) = world();
+    build(&mut sim, road, &[p(-100.0, 0.0), p(100.0, 0.0)]).unwrap();
+    // Parallel 8 m away: the half widths are 6 and 6, the asphalts overlap by 4 m, though no node
+    // of either lies on the other.
+    let e = build(&mut sim, road, &[p(-60.0, 8.0), p(60.0, 8.0)]).unwrap_err();
+    assert!(e.contains("RoadsOverlap"), "{e}");
+    // 13 m away the asphalts clear each other: built.
+    build(&mut sim, road, &[p(-60.0, 13.0), p(60.0, 13.0)]).unwrap();
+    assert_invariants(&sim);
+}

@@ -374,7 +374,8 @@ pub fn build_roads(sim: &mut SimRunner, at: Vec2, roads: &[CaseRoad]) -> Vec<(us
 }
 
 /// A point as the road tool resolves it (§6.8.3 items 1 and 5, T-264): a point inside the
-/// junction of a node (within [`cp_net::junction_reach`] of it) is that node; else a point
+/// junction of a node ([`cp_net::in_junction`]: within 8 m, or on the asphalt of one of its arms
+/// within its reach) is that node; else a point
 /// within the half width of a ground street is a point of its axis (`OnSegment`); anything else
 /// is free. Returns the anchor and where it stands.
 pub fn resolve_anchor(graph: &NetGraph, db: &cp_content::ContentDb, p: Vec2) -> (Anchor, Vec2) {
@@ -383,7 +384,7 @@ pub fn resolve_anchor(graph: &NetGraph, db: &cp_content::ContentDb, p: Vec2) -> 
         .nodes()
         .filter(|(_, n)| n.elevation == cp_net::Elevation::Ground)
         .map(|(id, n)| (to_xz(n.pos).distance(p), id, to_xz(n.pos)))
-        .filter(|(d, id, _)| *d <= cp_net::junction_reach(graph, db, *id))
+        .filter(|(_, id, _)| cp_net::in_junction(graph, db, *id, p))
         .min_by(|a, b| a.0.total_cmp(&b.0));
     if let Some((_, id, pos)) = node {
         return (Anchor::Node(id), pos);

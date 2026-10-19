@@ -123,6 +123,36 @@ pub fn junction_reach(graph: &NetGraph, content: &ContentDb, node: NodeId) -> f3
         .fold(MIN_SEGMENT_LENGTH_BUILD, f32::max)
 }
 
+/// Whether `p` lies inside the junction of `node` (§6.8.3 items 1 and 5, T-264): within
+/// [`MIN_SEGMENT_LENGTH_BUILD`] of it, or on the asphalt of one of its arms, no farther along that
+/// arm than [`junction_reach`]. At an acute junction a point 14 m out on one arm lies on the other
+/// arm's asphalt, which a radius does not see.
+pub fn in_junction(graph: &NetGraph, content: &ContentDb, node: NodeId, p: Vec2) -> bool {
+    let Some(n) = graph.node(node) else {
+        return false;
+    };
+    let c = to_xz(n.pos);
+    if c.distance(p) <= MIN_SEGMENT_LENGTH_BUILD {
+        return true;
+    }
+    let reach = junction_reach(graph, content, node);
+    n.segments
+        .iter()
+        .filter_map(|&s| graph.segment(s))
+        .any(|s| {
+            let away = if s.start == node {
+                dir_xz(s.curve.tangent(0.0))
+            } else {
+                -dir_xz(s.curve.tangent(1.0))
+            };
+            let rel = p - c;
+            let (along, off) = (rel.dot(away), rel.perp_dot(away).abs());
+            away != Vec2::ZERO
+                && (0.0..=reach).contains(&along)
+                && off < content.road(s.road).width / 2.0
+        })
+}
+
 /// A remnant this much under 8 m still counts as 8 m (the arc length of a cut is a float: a
 /// point aimed at 8.000 m from a node must stay a cut).
 const REMNANT_EPS: f32 = 0.02;
@@ -334,6 +364,7 @@ impl std::fmt::Display for RoadBuildError {
             Self::WaterWithoutBridge { .. } => write!(f, "water: raise the road to bridge it"),
             Self::TooManySegments { .. } => write!(f, "too many roads meet here"),
             Self::TileNotOwned { .. } => write!(f, "tile not owned"),
+            Self::RoadsOverlap { .. } => write!(f, "this road would lie on another road"),
             Self::NodeOnRoad { .. } => {
                 write!(f, "a junction would stand on a road it does not join")
             }
@@ -405,6 +436,11 @@ pub enum RoadBuildError {
     /// A literal plan (T-262, T-264): a node of the plan lies on the asphalt of a ground road it
     /// does not join, or an old node lies under a new road that does not join it: a collision.
     NodeOnRoad {
+        pos: Vec3,
+    },
+    /// A literal plan (T-264): a new piece runs side by side with an old road and their asphalt
+    /// overlaps along more than 8 m.
+    RoadsOverlap {
         pos: Vec3,
     },
     /// `Tunnel` requested but the road type has no tunnel variant (T-161).
@@ -543,11 +579,14 @@ impl Builder<'_> {
         if literal {
             let s = self.graph.segment(segment).expect("segment exists");
             let at = s.curve.arc_table().t_to_s(t);
-            let (r0, r1) = (
-                junction_reach(self.graph, self.content, s.start),
-                junction_reach(self.graph, self.content, s.end),
+            let at_point = s.curve.point(t);
+            let at_xz = to_xz(at_point);
+            let (near0, near1) = (
+                at < MIN_SEGMENT_LENGTH_BUILD - REMNANT_EPS
+                    || in_junction(self.graph, self.content, s.start, at_xz),
+                s.length - at < MIN_SEGMENT_LENGTH_BUILD - REMNANT_EPS
+                    || in_junction(self.graph, self.content, s.end, at_xz),
             );
-            let (near0, near1) = (at < r0 - REMNANT_EPS, s.length - at < r1 - REMNANT_EPS);
             if near0 || near1 {
                 let near = match (near0, near1) {
                     (true, false) => s.start,
@@ -715,10 +754,11 @@ fn snap_angle(d: Vec2, refs: &[Vec2]) -> Option<(Vec2, i32)> {
 }
 
 /// Result of the angle snaps of one vertex.
-struct AngleSnap {
-    pos: Vec2,
-    kind: SnapKind,
-    guide: Option<(Vec2, Vec2)>,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AngleSnap {
+    pub pos: Vec2,
+    pub kind: SnapKind,
+    pub guide: Option<(Vec2, Vec2)>,
 }
 
 /// Signed angle in degrees from `a` to `b`, in `(-180, 180]`.
@@ -734,6 +774,22 @@ fn signed_deg(a: Vec2, b: Vec2) -> f32 {
 /// [`ANGLE_STEP_DEG`] step. Segments are visited in id order, so the result is deterministic.
 /// Key angles keep the leg's length; a guide uses the projection of the cursor on its line.
 fn angle_snap(graph: &NetGraph, p: Vec2, prev: Vec2, refs: &[Vec2]) -> Option<AngleSnap> {
+    let curves: Vec<&CubicBezier3> = graph
+        .segments()
+        .filter(|(_, s)| s.elevation == Elevation::Ground)
+        .map(|(_, s)| &s.curve)
+        .collect();
+    angle_snap_guides(curves, p, prev, refs)
+}
+
+/// [`angle_snap`] against the guide `curves` given (the ground roads of the graph, or the pipes
+/// and roads of the utility tool, T-264), visited in the order given.
+pub fn angle_snap_guides<'a>(
+    guides: impl IntoIterator<Item = &'a CubicBezier3>,
+    p: Vec2,
+    prev: Vec2,
+    refs: &[Vec2],
+) -> Option<AngleSnap> {
     let d = p - prev;
     if d.length() < 1e-3 {
         return None;
@@ -751,18 +807,15 @@ fn angle_snap(graph: &NetGraph, p: Vec2, prev: Vec2, refs: &[Vec2]) -> Option<An
             }
         }
     }
-    for (_, s) in graph.segments() {
-        if s.elevation != Elevation::Ground {
+    for curve in guides {
+        if curve.bounds_distance_xz(p) > GUIDE_RADIUS + 1e-3 {
             continue;
         }
-        if s.curve.bounds_distance_xz(p) > GUIDE_RADIUS + 1e-3 {
-            continue;
-        }
-        let (t, dist) = s.curve.nearest_xz(p);
+        let (t, dist) = curve.nearest_xz(p);
         if dist > GUIDE_RADIUS {
             continue;
         }
-        let tan = dir_xz(s.curve.tangent(t));
+        let tan = dir_xz(curve.tangent(t));
         if tan == Vec2::ZERO {
             continue;
         }
@@ -1636,6 +1689,15 @@ fn validate_inner(
             }) {
                 errors.push(RoadBuildError::NodeOnRoad { pos: node.pos });
             }
+        }
+    }
+
+    if literal.is_some() && matches!(req.elevation, ElevationMode::Ground) && !rail {
+        for w in clearance::overlap_report(graph, content, req.road, &segments) {
+            let y = terrain.height(w.pos);
+            errors.push(RoadBuildError::RoadsOverlap {
+                pos: Vec3::new(w.pos.x, y, w.pos.y),
+            });
         }
     }
 

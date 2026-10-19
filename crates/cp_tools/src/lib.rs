@@ -22,6 +22,7 @@ mod outbox;
 pub mod pick;
 pub mod plugin;
 pub mod road;
+pub mod snap;
 pub mod transit;
 pub mod upgrade;
 pub mod utility;

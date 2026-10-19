@@ -108,7 +108,7 @@ fn power_lines_snap_the_same_way_and_a_node_pulls_the_cursor() {
     let g = compute_utility_ghost_alt(&view, &tool, p, false).unwrap();
     assert_eq!(g.snap.kind, SnapReportKind::KeyAngle(90));
     // Near the other end of the line: the cursor jumps to that node.
-    let p = Vec2::new(C + 5.0, C + 5.0);
+    let p = Vec2::new(C + 4.0, C + 4.0);
     let g = compute_utility_ghost_alt(&view, &tool, p, false).unwrap();
     assert_eq!(g.snap.kind, SnapReportKind::Node);
     let end = g.polylines[0].last().unwrap();
