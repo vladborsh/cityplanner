@@ -389,3 +389,130 @@ fn a_street_dragged_to_a_road_ends_on_it() {
         }
     }
 }
+
+/// BUG-086: on an axis-aligned grid a street drawn east from beside a junction runs along the
+/// axis: its guide and its built street are square to the cross street (label 90°), wherever near
+/// the junction the first click lands.
+#[test]
+fn a_street_from_a_junction_on_a_square_grid_is_square() {
+    for road in ["basic_2l", "medium_4l"] {
+        for start in [
+            (0.0, 0.0),
+            (3.0, 2.0),
+            (6.0, -3.0),
+            (9.0, 1.0),
+            (12.0, 4.0),
+            (-4.0, 5.0),
+        ] {
+            for cursor in [(100.0, 4.0), (93.0, -6.0), (150.0, 9.0)] {
+                let (mut sim, db) = world();
+                let mut t = tool(&db, road);
+                // A T at the origin: a street along z, and one along x ending on it from the
+                // west; the new street goes on east across it.
+                click(&mut sim, &mut t, p(-200.0, 0.0), true);
+                click(&mut sim, &mut t, p(0.0, 0.0), true);
+                t.cancel();
+                click(&mut sim, &mut t, p(0.0, -200.0), true);
+                click(&mut sim, &mut t, p(0.0, 200.0), true);
+                t.cancel();
+                let case = format!("{road} start {start:?} cursor {cursor:?}");
+                click(&mut sim, &mut t, p(start.0, start.1), false);
+                let to = p(cursor.0, cursor.1);
+                let g = compute_ghost_alt(&sim.view(), &t, to, false).unwrap();
+                let plan = resolve_cursor(&sim.view(), &t, to, false)
+                    .and_then(|c| c.plan)
+                    .unwrap_or_else(|| panic!("{case}: no plan"));
+                assert!(g.valid, "{case}: red {:?} {:?}", g.errors, plan.pieces);
+                let view = sim.view();
+                let a = cp_tools::anchor_pos(&view, &plan.pieces[0].from).unwrap();
+                let b = cp_tools::anchor_pos(&view, &plan.pieces.last().unwrap().to).unwrap();
+                let d = b - a;
+                let off = d.y.atan2(d.x).to_degrees();
+                assert!(
+                    off.abs() < 0.1,
+                    "{case}: the street runs {off:.2} deg off the axis ({a:?} -> {b:?}), label {:?}, guide {:?}",
+                    g.label,
+                    g.snap.guide
+                );
+                if let Some((g0, g1)) = g.snap.guide {
+                    let gd = g1 - g0;
+                    let ga = gd.y.atan2(gd.x).to_degrees().rem_euclid(90.0);
+                    assert!(
+                        ga.min(90.0 - ga) < 0.1,
+                        "{case}: the guide is {ga:.2} deg off the grid"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A layout of BUG-088: its name, two streets, the start, the square end, and the direction of
+/// the cursor's error.
+type Layout = (
+    &'static str,
+    [[(f32, f32); 2]; 2],
+    (f32, f32),
+    (f32, f32),
+    (f32, f32),
+);
+
+/// BUG-088: a street that closes a block from a dead end to a side street, aimed a few degrees
+/// off square, ends where its square direction meets the side street, not at the cursor's foot:
+/// on the extension of the dead-end street (shot 2: the side street runs on lower than the start)
+/// and square to it (shot 1: down from a street's end to the street below). Click == ghost, the
+/// built street is square.
+#[test]
+fn a_street_closing_a_block_along_the_guides_is_square() {
+    for road in ["basic_2l", "medium_4l"] {
+        // (name, the streets, the start, the square end, the direction of the cursor's error)
+        let layouts: [Layout; 2] = [
+            (
+                "extension",
+                [[(-150.0, 0.0), (0.0, 0.0)], [(72.0, 60.0), (72.0, -120.0)]],
+                (0.0, 0.0),
+                (72.0, 0.0),
+                (0.0, -1.0),
+            ),
+            (
+                "down from an end",
+                [[(-150.0, 72.0), (0.0, 72.0)], [(-150.0, 0.0), (150.0, 0.0)]],
+                (0.0, 72.0),
+                (0.0, 0.0),
+                (1.0, 0.0),
+            ),
+        ];
+        for (name, streets, start, end, err) in layouts {
+            for off in [2.0_f32, 3.0, -3.0, 5.0] {
+                let (mut sim, db) = world();
+                let mut t = tool(&db, road);
+                for [a, b] in streets {
+                    click(&mut sim, &mut t, p(a.0, a.1), true);
+                    click(&mut sim, &mut t, p(b.0, b.1), true);
+                    t.cancel();
+                }
+                let case = format!("{road} {name} {off} m off");
+                let start = p(start.0, start.1);
+                let end = p(end.0, end.1);
+                let to = end + Vec2::new(err.0, err.1) * off;
+                click(&mut sim, &mut t, start, false);
+                let g = compute_ghost_alt(&sim.view(), &t, to, false).unwrap();
+                assert!(g.valid, "{case}: red {:?}", g.errors);
+                let ((sent, ghost), ends) = click_ends(&mut sim, &mut t, to, false);
+                assert_eq!(sent, ghost, "{case}: the click is the ghost");
+                let (a, b) = ends.unwrap_or_else(|| panic!("{case}: refused"));
+                assert!(a.distance(start) < 0.05, "{case}: starts at {a:?}");
+                assert!(
+                    b.distance(end) < 0.05,
+                    "{case}: ends at {b:?}, not square at {end:?} (label {:?})",
+                    g.label
+                );
+                assert_eq!(
+                    graph(&sim).check_invariants(),
+                    Vec::<cp_net::Violation>::new(),
+                    "{case}"
+                );
+            }
+        }
+    }
+}

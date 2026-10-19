@@ -512,7 +512,36 @@ pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRe
             (!matches!(hit.0, Anchor::Free(_))).then_some(hit.1)
         })
         .collect();
-    let (path, report) = crate::lattice::quantize_path(&req, &cx);
+    // A vertex that is a node goes into the lattice as the node, and so does one the lattice puts
+    // where the plan makes it a node (inside a junction): the lattice then aims the legs from
+    // where they will start, not from a point beside the node (BUG-086).
+    let node_at = |p: Vec2| match direct_hit(view, req.road, req.elevation, p, true) {
+        (Anchor::Node(_), at) => Some(at),
+        _ => None,
+    };
+    let mut input: Vec<Vec2> = vertices.iter().map(|&p| node_at(p).unwrap_or(p)).collect();
+    let (mut path, mut report) =
+        crate::lattice::quantize_path(&with_request_vertices(&req, &input), &cx);
+    for _ in 0..2 {
+        let (out, _) = path_vertices(&path);
+        if out.len() != input.len() {
+            break;
+        }
+        let mut moved = false;
+        for (i, &q) in out.iter().enumerate() {
+            if let Some(n) = node_at(q)
+                && n.distance(q) > 1e-3
+                && n.distance(input[i]) > 1e-3
+            {
+                input[i] = n;
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
+        (path, report) = crate::lattice::quantize_path(&with_request_vertices(&req, &input), &cx);
+    }
     let (mut at, _) = path_vertices(&path);
     if pinned.iter().all(Option::is_none) || at.len() != pinned.len() {
         return (RoadPathRequest { path, ..req }, report);
@@ -549,6 +578,14 @@ pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRe
     }
     let path = with_vertices(&path, &at);
     (RoadPathRequest { path, ..req }, report)
+}
+
+/// `req` with the vertices of its path moved to `at`.
+fn with_request_vertices(req: &RoadPathRequest, at: &[Vec2]) -> RoadPathRequest {
+    RoadPathRequest {
+        path: with_vertices(&req.path, at),
+        ..req.clone()
+    }
 }
 
 /// Whether the cursor `hover` of `tool` is a direct hit on a road (a node, or a street within

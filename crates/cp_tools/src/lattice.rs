@@ -164,6 +164,8 @@ struct Joined {
     shift: Vec2,
     /// Half width of the street the vertex stands on (zero off a street).
     hw: f32,
+    /// The street the vertex stands on (a point of a street).
+    seg: Option<SegmentId>,
 }
 
 fn dir_xz(v: Vec3) -> Vec2 {
@@ -185,6 +187,7 @@ fn join(cx: &LatticeCtx, p: Vec2) -> Option<Joined> {
             along: None,
             shift: Vec2::ZERO,
             hw: 0.0,
+            seg: None,
         });
     }
     let mut best: Option<(f32, SegmentId, f32)> = None;
@@ -205,19 +208,23 @@ fn join(cx: &LatticeCtx, p: Vec2) -> Option<Joined> {
     let s = cx.graph.segment(seg)?;
     let foot = to_xz(s.curve.point(t));
     let hw = cx.content.road(s.road).width * 0.5;
-    // The open end of a street within a cell is the node, not a line beside it.
-    let dead_end = [s.start, s.end].into_iter().find(|&n| {
-        cx.graph.node(n).is_some_and(|node| {
-            node.segments.len() == 1 && to_xz(node.pos).distance(foot) < ZONE_CELL
-        })
+    // The open end of a street, or a junction, within a cell is the node, not a line beside it
+    // (BUG-086: a street from beside a junction starts at the junction).
+    let end = [s.start, s.end].into_iter().find(|&n| {
+        !cp_net::is_plain_cut(cx.graph, n)
+            && cx
+                .graph
+                .node(n)
+                .is_some_and(|node| to_xz(node.pos).distance(foot) < ZONE_CELL)
     });
-    if let Some(n) = dead_end {
+    if let Some(n) = end {
         return Some(Joined {
             pos: to_xz(cx.graph.node(n)?.pos),
             node: Some(n),
             along: None,
             shift: Vec2::ZERO,
             hw: 0.0,
+            seg: None,
         });
     }
     // A tick is aimed at where the cross street's centreline will stand (what the ghost shows);
@@ -244,6 +251,7 @@ fn join(cx: &LatticeCtx, p: Vec2) -> Option<Joined> {
             along: Some(m.dir),
             shift,
             hw,
+            seg: Some(seg),
         });
     }
     // No line near: the point of the street (the cells there do not care).
@@ -253,8 +261,48 @@ fn join(cx: &LatticeCtx, p: Vec2) -> Option<Joined> {
         along: Some(dir_xz(s.curve.tangent(t))),
         shift: Vec2::ZERO,
         hw,
+        seg: Some(seg),
     })
 }
+
+/// Rule 1 with rule 2 for the end of a leg from `from` that joins a street (BUG-088): the point
+/// where a snapped direction from `from` (a key angle or the 15° step from the references) meets
+/// the street, nearest the cursor `p` within the street's reach, key angles first. `None` when no
+/// such direction meets the street there.
+fn square_on_street(
+    cx: &LatticeCtx,
+    seg: SegmentId,
+    from: Vec2,
+    refs: &[Vec2],
+    p: Vec2,
+) -> Option<(Vec2, Vec2)> {
+    let s = cx.graph.segment(seg)?;
+    let reach = cx.content.road(s.road).width * 0.5 + ZONE_CELL;
+    let v3 = |q: Vec2| Vec3::new(q.x, 0.0, q.y);
+    let mut best: Option<(bool, f32, Vec2, f32)> = None;
+    for r in refs {
+        for k in 0..24 {
+            let (sin, cos) = (k as f32 * 15.0).to_radians().sin_cos();
+            let dir = Vec2::new(r.x * cos - r.y * sin, r.x * sin + r.y * cos);
+            let ray = CubicBezier3::line(v3(from), v3(from + dir * RAY_M));
+            for (_, ts) in ray.intersect_xz(&s.curve) {
+                let q = to_xz(s.curve.point(ts));
+                let d = q.distance(p);
+                if q.distance(from) < ZONE_CELL || d > reach {
+                    continue;
+                }
+                let rank = (k % 3 != 0, d);
+                if best.is_none_or(|(bk, bd, ..)| rank < (bk, bd)) {
+                    best = Some((rank.0, d, q, ts));
+                }
+            }
+        }
+    }
+    best.map(|(_, _, q, t)| (q, dir_xz(s.curve.tangent(t))))
+}
+
+/// How far a snapped direction is followed to meet a street (metres).
+const RAY_M: f32 = 2000.0;
 
 /// Directions leaving the node, as the angle snap takes them.
 fn node_dirs(graph: &NetGraph, n: NodeId) -> Vec<Vec2> {
@@ -433,6 +481,8 @@ pub fn quantize_path(req: &RoadPathRequest, cx: &LatticeCtx) -> (RoadPath, SnapR
     let angle = req.snap.angle && control.is_none();
     let mut out: Vec<Vec2> = Vec::with_capacity(pts.len());
     let mut refs: Vec<Vec2> = Vec::new();
+    // Whether `refs` come from a road or a leg (not the fallback for a start in the open).
+    let mut real_refs = false;
     let mut report = SnapReport::default();
     let mut stepped_curve = None;
     let mut last_shift = Vec2::ZERO;
@@ -442,6 +492,22 @@ pub fn quantize_path(req: &RoadPathRequest, cx: &LatticeCtx) -> (RoadPath, SnapR
         report = SnapReport::default();
         let prev_street = from_street;
         let mut joined = if joins { join(cx, p) } else { None };
+        // The end of a leg on a street stands where the leg's snapped direction meets it, not
+        // at the cursor's foot (BUG-088: a block closed along the guides is square). Only from
+        // a start with real directions (a road, or the leg before); a start in the open has none.
+        if i > 0
+            && real_refs
+            && angle
+            && !cx.alt
+            && let Some(j) = joined.as_mut()
+            && j.node.is_none()
+            && let Some(seg) = j.seg
+            && let Some((q, along)) = square_on_street(cx, seg, out[i - 1], &refs, p)
+        {
+            j.pos = q;
+            j.along = Some(along);
+            j.shift = Vec2::ZERO;
+        }
         // A street across a block (BUG-067): when the vertex before it stands on a line of a
         // street and a line of this street lies on the perpendicular from there, join that one,
         // so the new street crosses at a right angle instead of at the line nearest the cursor.
@@ -512,6 +578,7 @@ pub fn quantize_path(req: &RoadPathRequest, cx: &LatticeCtx) -> (RoadPath, SnapR
                 next_refs.push(-back.normalize());
             }
         }
+        real_refs = !next_refs.is_empty();
         if next_refs.is_empty() {
             next_refs.push(Vec2::X);
         }
