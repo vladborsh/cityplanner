@@ -8,6 +8,7 @@
 pub mod audio;
 pub mod grid_shots;
 mod map;
+pub mod road_scenes;
 pub mod saves;
 pub mod scene;
 pub mod settings;
@@ -223,6 +224,10 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
     if let Some(n) = grid_shots::shot_of_cam(name) {
         let f = grid_shots::focus(n);
         return (Vec3::new(f.x, 230.0, f.y + 150.0), Vec3::new(f.x, 0.0, f.y));
+    }
+    // The scenes of the T-261 sweeps.
+    if let Some(pose) = road_scenes::camera(name) {
+        return pose;
     }
     match name {
         "ground" => (
@@ -625,6 +630,16 @@ pub fn build_sim(
         }
         scene::add_mail_houses(&mut sim);
         info!("scene post: {n} mail vans");
+    } else if scene == Some(road_scenes::JOINS) {
+        for reason in road_scenes::build_joins(&mut sim) {
+            warn!("scene command rejected: {reason}");
+        }
+        info!("scene joins");
+    } else if scene == Some(road_scenes::PLACE) {
+        for reason in road_scenes::build_place(&mut sim) {
+            warn!("scene command rejected: {reason}");
+        }
+        info!("scene place");
     } else if scene == Some(grid_shots::GRID_SHOTS) {
         for reason in grid_shots::build_grid_shots(&mut sim) {
             warn!("scene command rejected: {reason}");

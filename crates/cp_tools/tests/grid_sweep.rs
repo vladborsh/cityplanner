@@ -30,6 +30,15 @@
 //! `moved` the road is built where the tool sent it (the validator snapped no end elsewhere),
 //! `refused` the tool built what was clicked.
 //!
+//! T-261 (§6.8.5) adds the U of BUG-081 (`u_shape`, 1-3 sections, sharp or rounded corners,
+//! through the tool) and blocks the player draws off the guides, built by command (seed 0 only):
+//! `on_tick` (8 x 8, the control), `off_tick` (70 x 86 m), `skewed` (10 degrees), `trapezoid`,
+//! `long` (240 m), `mixed` (`medium_4l` top and bottom), `one_way`, `upgrade` (the bottom street
+//! upgraded to `large_6l`), `rebuild` (a side demolished and drawn again). Their checks:
+//! `stretch` a cell in the block is not an 8 m square, `overlap` two cells overlap, `fill` less
+//! than 75 % of the block within 4 rows of a street is cells, `history` the rebuilt block's cells
+//! differ from the first build's.
+//!
 //! Run: `cargo nextest run -p cp_tools --test grid_sweep`. `GRID_SWEEP_REPORT=1` prints every
 //! failing case with its numbers (`--no-capture`), `GRID_SWEEP_TRACE=1` every click and what it
 //! built, `GRID_SWEEP_ONLY=<case prefix>` runs only those cases (debugging; the tests then fail). Cases that fail today are listed in
@@ -67,7 +76,23 @@ const BEND_R: f32 = 24.642_298;
 /// Cases that fail today (T-250 report, BUG-073), as prefixes of `scenario/road/variant/angle/seed`:
 /// every case under one of them is expected red. Narrow a prefix (or list single cases) as fixes
 /// land; `known_red_cases_still_fail` names the cases that pass.
-const KNOWN_RED: &[&str] = &[];
+///
+/// T-261 (2026-10-19, 100 of 432 red, §6.8.1 R4): the U of BUG-081 one and two sections wide and
+/// with rounded corners two wide (cells stretched to 8.2-8.5 m deep), every block off the ticks
+/// (70 x 86 m, skewed, trapezoid: cells stretched to fit, and overlapping) and a block whose
+/// street was upgraded to a wider road (cells squeezed and overlapping). T-265 empties these.
+const KNOWN_RED: &[&str] = &[
+    "u_shape/basic_2l/sharp1/",
+    "u_shape/medium_4l/sharp1/",
+    "u_shape/basic_2l/sharp2/",
+    "u_shape/medium_4l/sharp2/",
+    "u_shape/basic_2l/rounded2/",
+    "u_shape/medium_4l/rounded2/",
+    "off_tick/",
+    "skewed/",
+    "trapezoid/",
+    "upgrade/medium_4l/",
+];
 
 fn known_red(case: &str) -> bool {
     KNOWN_RED.iter().any(|k| case.starts_with(k))
@@ -793,6 +818,151 @@ impl Player {
         let to = to + self.jv(3.0);
         self.piece(what, self.w(to))
     }
+
+    // ---------- T-261: blocks drawn off the guides (built by command, not through the tool) ----------
+
+    /// Builds a straight street `a` -> `b` (local) of type `road` with `BuildRoad`, as sent: the
+    /// player drew it off the guides.
+    fn line(&mut self, what: &str, road: &str, a: Vec2, b: Vec2) -> bool {
+        let id = self.db.road_id(road).unwrap();
+        let mut outbox = CommandOutbox::default();
+        outbox.push(SimCommand::Net(NetCommand::BuildRoad {
+            road: id,
+            path: RoadPath::Straight {
+                from: self.w(a),
+                to: self.w(b),
+            },
+            elevation: cp_net::ElevationMode::Ground,
+        }));
+        self.send(what, outbox)
+    }
+
+    fn send(&mut self, what: &str, outbox: CommandOutbox) -> bool {
+        let mut outbox = outbox;
+        outbox.flush_into(&mut self.sim);
+        self.sim.tick_once();
+        let out: Vec<CommandOutcome> = self
+            .sim
+            .world_mut()
+            .resource_mut::<Messages<CommandOutcome>>()
+            .drain()
+            .collect();
+        self.sim.tick_once();
+        if let Some(Err(e)) = out.last().map(|o| &o.result) {
+            self.fail("refused", format!("{what}: {e:?}"));
+            return false;
+        }
+        true
+    }
+
+    /// The segments whose middle lies on the local street `a` -> `b` (within 0.5 m).
+    fn segments_on(&self, a: Vec2, b: Vec2) -> Vec<cp_net::SegmentId> {
+        let view = self.sim.view();
+        view.net
+            .segments()
+            .filter(|(_, s)| {
+                let m = self.l(to_xz(s.curve.point(0.5)));
+                let ab = b - a;
+                let t = (m - a).dot(ab) / ab.length_squared();
+                (0.0..=1.0).contains(&t) && (a + ab * t).distance(m) < 0.5
+            })
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// The closed block of streets through the local axis points `axes` (counter-clockwise),
+    /// each side `i` (from `axes[i]` to `axes[i + 1]`) of half width `hw[i]` and a street when
+    /// `street[i]`: `stretch` every cell inside is an 8 m square (no cell is stretched to fit,
+    /// §6.8.3 item 4), `overlap` no two cells overlap, `fill` at least 75 % of the block within
+    /// 4 rows (32 m) of a street edge is covered by cells.
+    fn check_strips(&mut self, what: &str, axes: &[Vec2], hw: &[f32], street: &[bool]) {
+        let poly = inset(axes, hw);
+        let inside = |p: Vec2| in_convex(p, &poly);
+        let cells: Vec<Obb> = self
+            .cells()
+            .into_iter()
+            .filter(|o| inside(self.l(o.c)))
+            .collect();
+        let stretched = cells
+            .iter()
+            .filter(|o| (o.half - CELL / 2.0).abs() > 0.05 || (o.half_v - CELL / 2.0).abs() > 0.05)
+            .count();
+        if stretched > 0 {
+            let o = cells
+                .iter()
+                .find(|o| {
+                    (o.half - CELL / 2.0).abs() > 0.05 || (o.half_v - CELL / 2.0).abs() > 0.05
+                })
+                .unwrap();
+            self.fail(
+                "stretch",
+                format!(
+                    "{what}: {stretched} of {} cells are not 8 m squares, e.g. {:.2} x {:.2} m",
+                    cells.len(),
+                    o.half * 2.0,
+                    o.half_v * 2.0
+                ),
+            );
+        }
+        let mut overlaps = 0;
+        for i in 0..cells.len() {
+            for j in i + 1..cells.len() {
+                if cells[i].c.distance(cells[j].c) < CELL - 0.1 {
+                    overlaps += 1;
+                }
+            }
+        }
+        if overlaps > 0 {
+            self.fail(
+                "overlap",
+                format!("{what}: {overlaps} pairs of cells overlap"),
+            );
+        }
+        let n = poly.len();
+        let lo = poly
+            .iter()
+            .fold(Vec2::splat(f32::INFINITY), |a, p| a.min(*p));
+        let hi = poly
+            .iter()
+            .fold(Vec2::splat(f32::NEG_INFINITY), |a, p| a.max(*p));
+        let (mut want, mut have) = (0u32, 0u32);
+        let world_cells: Vec<Obb> = cells.clone();
+        let mut y = lo.y + 0.5;
+        while y < hi.y {
+            let mut x = lo.x + 0.5;
+            while x < hi.x {
+                let p = Vec2::new(x, y);
+                let near_street = (0..n)
+                    .any(|i| street[i] && dist_seg(p, poly[i], poly[(i + 1) % n]) <= 4.0 * CELL);
+                if inside(p) && near_street {
+                    want += 1;
+                    let w = self.w(p);
+                    if world_cells.iter().any(|o| o.distance_to_point(w) <= 0.0) {
+                        have += 1;
+                    }
+                }
+                x += 1.0;
+            }
+            y += 1.0;
+        }
+        if want > 0 && (have as f32) < 0.75 * want as f32 {
+            self.fail(
+                "fill",
+                format!(
+                    "{what}: cells cover {:.0} % of the block within 4 rows of a street (want 75 %)",
+                    100.0 * have as f32 / want as f32
+                ),
+            );
+        }
+    }
+
+    /// The id of the frame's road.
+    fn road_name(&self) -> &'static str {
+        ROADS
+            .into_iter()
+            .find(|r| self.db.road_id(r) == Some(self.road))
+            .unwrap()
+    }
 }
 
 fn key(c: [Vec2; 4]) -> [(i32, i32); 4] {
@@ -1096,6 +1266,248 @@ fn lattice_2x2(p: &mut Player, order: Order) -> Option<()> {
     Some(())
 }
 
+/// The polygon of a block between the street edges: each side of the axis polygon `axes`
+/// (counter-clockwise) moved inwards by its half width.
+fn inset(axes: &[Vec2], hw: &[f32]) -> Vec<Vec2> {
+    let n = axes.len();
+    let line = |i: usize| {
+        let (a, b) = (axes[i], axes[(i + 1) % n]);
+        let d = (b - a).normalize();
+        let inn = Vec2::new(-d.y, d.x);
+        (a + inn * hw[i], d)
+    };
+    (0..n)
+        .map(|i| {
+            let (p, d) = line((i + n - 1) % n);
+            let (q, e) = line(i);
+            let t = (q - p).perp_dot(e) / d.perp_dot(e);
+            p + d * t
+        })
+        .collect()
+}
+
+fn in_convex(p: Vec2, poly: &[Vec2]) -> bool {
+    let n = poly.len();
+    (0..n).all(|i| (poly[(i + 1) % n] - poly[i]).perp_dot(p - poly[i]) >= 0.0)
+}
+
+fn dist_seg(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let ab = b - a;
+    let t = ((p - a).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
+    p.distance(a + ab * t)
+}
+
+/// A closed block of four streets through the local axis corners `c` (counter-clockwise), each
+/// of its own road type, built side by side off the guides; then [`Player::check_strips`].
+fn block_of(p: &mut Player, what: &str, c: [Vec2; 4], roads: [&str; 4]) -> Option<()> {
+    for i in 0..4 {
+        if !p.line(&format!("{what} side {i}"), roads[i], c[i], c[(i + 1) % 4]) {
+            return None;
+        }
+    }
+    let hw = roads.map(|r| p.db.road(p.db.road_id(r).unwrap()).width / 2.0);
+    p.check_strips(what, &c, &hw, &[true; 4]);
+    Some(())
+}
+
+/// A rectangle whose interior between the edges is `w x h` metres, of the frame's road.
+fn rect(p: &Player, w: f32, h: f32) -> [Vec2; 4] {
+    let s = 2.0 * p.hw;
+    [
+        Vec2::ZERO,
+        Vec2::new(w + s, 0.0),
+        Vec2::new(w + s, h + s),
+        Vec2::new(0.0, h + s),
+    ]
+}
+
+/// T-261 `off_tick`: a block 70 x 86 m between the edges, not a whole number of cells.
+fn off_tick(p: &mut Player) -> Option<()> {
+    let r = p.road_name();
+    block_of(p, "off-tick block", rect(p, 70.0, 86.0), [r; 4])
+}
+
+/// T-261 `on_tick`: a block 64 x 64 m between the edges built off the tool: the control case.
+fn on_tick(p: &mut Player) -> Option<()> {
+    let r = p.road_name();
+    block_of(p, "8 x 8 block", rect(p, 64.0, 64.0), [r; 4])
+}
+
+/// T-261 `skewed`: a parallelogram, the cross streets 10 degrees off square.
+fn skewed(p: &mut Player) -> Option<()> {
+    let r = p.road_name();
+    let s = 80.0 * 10f32.to_radians().tan();
+    let c = [
+        Vec2::ZERO,
+        Vec2::new(96.0, 0.0),
+        Vec2::new(96.0 + s, 80.0),
+        Vec2::new(s, 80.0),
+    ];
+    block_of(p, "skewed block", c, [r; 4])
+}
+
+/// T-261 `trapezoid`: the top street shorter than the bottom one.
+fn trapezoid(p: &mut Player) -> Option<()> {
+    let r = p.road_name();
+    let c = [
+        Vec2::ZERO,
+        Vec2::new(128.0, 0.0),
+        Vec2::new(104.0, 88.0),
+        Vec2::new(24.0, 88.0),
+    ];
+    block_of(p, "trapezoid block", c, [r; 4])
+}
+
+/// T-261 `long`: a block 64 x 240 m, longer than the layout's 198 m reach.
+fn long_block(p: &mut Player) -> Option<()> {
+    let r = p.road_name();
+    block_of(p, "long block", rect(p, 240.0, 64.0), [r; 4])
+}
+
+/// T-261 `mixed`: an 8 x 8 block with `medium_4l` along the bottom and top and the frame's road
+/// on the sides.
+fn mixed(p: &mut Player) -> Option<()> {
+    let r = p.road_name();
+    let (hm, hr) = (
+        p.db.road(p.db.road_id("medium_4l").unwrap()).width / 2.0,
+        p.hw,
+    );
+    let c = [
+        Vec2::ZERO,
+        Vec2::new(64.0 + 2.0 * hr, 0.0),
+        Vec2::new(64.0 + 2.0 * hr, 64.0 + 2.0 * hm),
+        Vec2::new(0.0, 64.0 + 2.0 * hm),
+    ];
+    block_of(p, "mixed block", c, ["medium_4l", r, "medium_4l", r])
+}
+
+/// T-261 `one_way`: an 8 x 8 block of one-way streets round it.
+fn one_way(p: &mut Player) -> Option<()> {
+    let hw = p.db.road(p.db.road_id("basic_1w_2l").unwrap()).width / 2.0;
+    let s = 2.0 * hw;
+    let c = [
+        Vec2::ZERO,
+        Vec2::new(64.0 + s, 0.0),
+        Vec2::new(64.0 + s, 64.0 + s),
+        Vec2::new(0.0, 64.0 + s),
+    ];
+    block_of(p, "one-way block", c, ["basic_1w_2l"; 4])
+}
+
+/// T-261 `upgrade`: an 8 x 16 block, then its bottom street upgraded to `large_6l`.
+fn upgrade(p: &mut Player) -> Option<()> {
+    let r = p.road_name();
+    let c = rect(p, 128.0, 64.0);
+    for i in 0..4 {
+        if !p.line(&format!("side {i}"), r, c[i], c[(i + 1) % 4]) {
+            return None;
+        }
+    }
+    let large = p.db.road_id("large_6l").unwrap();
+    for seg in p.segments_on(c[0], c[1]) {
+        let mut outbox = CommandOutbox::default();
+        outbox.push(SimCommand::Net(NetCommand::UpgradeSegment {
+            seg,
+            road: large,
+        }));
+        if !p.send("the upgrade", outbox) {
+            return None;
+        }
+    }
+    let hl = p.db.road(large).width / 2.0;
+    p.check_strips("upgraded block", &c, &[hl, p.hw, p.hw, p.hw], &[true; 4]);
+    Some(())
+}
+
+/// T-261 `rebuild`: an 8 x 8 block; its left street demolished and drawn again: the cells are
+/// those of the first build (`history`: the layout is a function of the network, not of the
+/// order it was built in).
+fn rebuild(p: &mut Player) -> Option<()> {
+    let r = p.road_name();
+    let c = rect(p, 64.0, 64.0);
+    for i in 0..4 {
+        if !p.line(&format!("side {i}"), r, c[i], c[(i + 1) % 4]) {
+            return None;
+        }
+    }
+    let before = p.cell_keys();
+    for seg in p.segments_on(c[3], c[0]) {
+        let mut outbox = CommandOutbox::default();
+        outbox.push(SimCommand::Net(NetCommand::RemoveSegment { seg }));
+        if !p.send("the demolition", outbox) {
+            return None;
+        }
+    }
+    if !p.line("the left street again", r, c[3], c[0]) {
+        return None;
+    }
+    let after = p.cell_keys();
+    let (lost, new) = (
+        before.difference(&after).count(),
+        after.difference(&before).count(),
+    );
+    if lost + new > 0 {
+        p.fail(
+            "history",
+            format!("rebuilt block: {lost} cells of the first build gone, {new} new ones"),
+        );
+    }
+    p.check_strips("rebuilt block", &c, &[p.hw; 4], &[true; 4]);
+    Some(())
+}
+
+/// BUG-081 (from dev-1's WIP): a U drawn in one chain along the ticks: up the left street,
+/// across the top for `sections` tick sections, down the right street (open at the bottom); the
+/// 8 rows under the top street, between the side streets, are checked as strips.
+fn u_shape(p: &mut Player, bend: Bend, sections: u32) -> Option<()> {
+    let hw = p.hw;
+    let r = if matches!(bend, Bend::Rounded) {
+        BEND_R
+    } else {
+        0.0
+    };
+    let k = sections as f32;
+    let right_x = k * (BLOCK + 2.0 * hw);
+    let top_y = 3.0 * BLOCK;
+    p.start(RoadMode::Straight);
+    p.click("U start", p.w(Vec2::new(0.0, 0.0)));
+    let left = p.piece("U left", p.w(Vec2::new(0.0, top_y - r)))?;
+    if matches!(bend, Bend::Rounded) {
+        p.mode(RoadMode::Curve);
+        p.click("U corner 1 control", p.w(Vec2::new(left.x(), top_y)));
+        p.piece("U corner 1", p.w(Vec2::new(left.x() + r, top_y)))?;
+        p.mode(RoadMode::Straight);
+    }
+    let top = p.piece("U top", p.w(Vec2::new(right_x - r, top_y)))?;
+    if matches!(bend, Bend::Rounded) {
+        p.mode(RoadMode::Curve);
+        p.click("U corner 2 control", p.w(Vec2::new(right_x, top.y())));
+        p.piece("U corner 2", p.w(Vec2::new(right_x, top_y - r)))?;
+        p.mode(RoadMode::Straight);
+    }
+    let right = p.piece("U right", p.w(Vec2::new(right_x, top_y - 2.0 * BLOCK)))?;
+    // The axes of the U, closed by a line 8 rows under the top street's edge (not a street).
+    let bottom = top.y() - hw - BLOCK - hw;
+    let axes = [
+        Vec2::new(left.x(), bottom),
+        Vec2::new(right.x(), bottom),
+        Vec2::new(right.x(), top.y()),
+        Vec2::new(left.x(), top.y()),
+    ];
+    if matches!(bend, Bend::Sharp) {
+        p.check_strips(
+            "the block inside the U",
+            &axes,
+            &[hw; 4],
+            &[false, true, true, true],
+        );
+    } else {
+        // The bites of the rounded corners are allowed: only stretch and overlap count.
+        p.check_strips("the block inside the U", &axes, &[hw; 4], &[false; 4]);
+    }
+    Some(())
+}
+
 // ---------- the sweep ----------
 
 /// A case's name and its failures, `(check, message)`.
@@ -1133,6 +1545,27 @@ fn sweep(
     out
 }
 
+/// [`sweep`] for the blocks built by command (T-261): no jitter, so seed 0 only.
+fn sweep_direct(scenario: &str, run: fn(&mut Player) -> Option<()>) -> Vec<Case> {
+    let mut out = Vec::new();
+    for road in ROADS {
+        for angle in ANGLES {
+            let case = format!("{scenario}/{road}/-/{angle}/0");
+            if let Ok(only) = std::env::var("GRID_SWEEP_ONLY")
+                && !case.starts_with(&only)
+            {
+                continue;
+            }
+            let mut p = Player::new(road, angle, 0);
+            if run(&mut p).is_none() && p.fails.is_empty() {
+                p.fail("refused", "the scenario stopped".into());
+            }
+            out.push((case, p.fails));
+        }
+    }
+    out
+}
+
 fn all_cases() -> Vec<Case> {
     let mut out = Vec::new();
     out.extend(sweep("l_close", &["sharp", "rounded"], |p, v| {
@@ -1145,6 +1578,28 @@ fn all_cases() -> Vec<Case> {
             },
         )
     }));
+    for sections in [1u32, 2, 3] {
+        for (bend, name) in [(Bend::Sharp, "sharp"), (Bend::Rounded, "rounded")] {
+            out.extend(sweep("u_shape", &[&format!("{name}{sections}")], |p, _| {
+                u_shape(p, bend, sections)
+            }));
+        }
+    }
+    type Direct = fn(&mut Player) -> Option<()>;
+    let direct: [(&str, Direct); 9] = [
+        ("on_tick", on_tick),
+        ("off_tick", off_tick),
+        ("skewed", skewed),
+        ("trapezoid", trapezoid),
+        ("long", long_block),
+        ("mixed", mixed),
+        ("one_way", one_way),
+        ("upgrade", upgrade),
+        ("rebuild", rebuild),
+    ];
+    for (name, run) in direct {
+        out.extend(sweep_direct(name, run));
+    }
     out.extend(sweep("parallel_cross", &["-"], |p, _| parallel_cross(p)));
     out.extend(sweep("extend_bend", &["sharp", "rounded"], |p, v| {
         extend_bend(
@@ -1195,6 +1650,9 @@ fn results() -> &'static [Case] {
         let r = all_cases();
         if std::env::var_os("GRID_SWEEP_REPORT").is_some() {
             println!("{}", report(&r));
+            for (c, f) in &r {
+                println!("CASE {} {c}", if f.is_empty() { "green" } else { "red" });
+            }
         }
         r
     })

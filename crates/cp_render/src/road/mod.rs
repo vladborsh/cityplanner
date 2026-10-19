@@ -1318,4 +1318,6 @@ pub use band::{BAND_LIFT, BAND_STEP, band_data, band_mesh, band_polyline, to_mes
 pub use ground::{CLEARANCE, lod_height, max_mesh_height};
 
 #[cfg(test)]
+mod junction_sweep;
+#[cfg(test)]
 mod tests;

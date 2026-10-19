@@ -50,6 +50,12 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
   3 two parallels closed on the right, 4 a block closed from the top street's tick. Screenshots
   `docs/screenshots/t255-grid-shotN-before.png` (e7fa39c6, before the BUG-073 fix) and
   `t255-grid-shotN-after.png` (after it; the ticks are the streets' centreline stations).
+* `--scene joins --cam joins|joins-N` (T-261): the junction gallery of the `junction_sweep` test
+  (`cp_sim::road_cases::join_cases`: bends of 5-135 degrees for every road, curved arms, T, X and Y
+  junctions, width changes, a street into a highway, automatic cuts), one case per 260 m cell;
+  `joins-N` looks closely at case `N`. `--scene place --cam place|place-N`: the service sites of
+  `place_sweep` with `basic_2l` and the largest service lot placed at every spot (refusals are
+  logged). Before/after proof for the road redesign (§6.8, T-262…T-268).
 * `--screenshot` never saves a blank frame (BUG-012): blank captures are discarded and
   retried; if no real frame arrives within 20 s it exits with code **3**; a write error exits
   **4**.

@@ -9,6 +9,7 @@ pub mod overlay;
 pub mod phase;
 pub mod plugin;
 pub mod progress;
+pub mod road_cases;
 pub mod runner;
 pub mod scenario;
 pub mod stats;
