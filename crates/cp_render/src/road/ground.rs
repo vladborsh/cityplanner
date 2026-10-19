@@ -4,8 +4,9 @@
 //! the terrain mesh bumps above it between the rings (10 m grid, three LODs, each a
 //! piecewise-linear surface). Every ground ring is therefore lifted to the highest point of
 //! *any* LOD's mesh over the strips next to it, so the deck is above the mesh wherever the
-//! camera LOD puts it. Junction polygons use one shared level, which their arms' end rings
-//! also take, so pieces still meet.
+//! camera LOD puts it. An end ring is above the terrain under its first strip; node pieces take
+//! their heights from the end rings of their arms, so pieces still meet (T-263: no common level
+//! lifted to the highest point around the node). The two ends on a middle node share the higher.
 //!
 //! The highest point of a piecewise-linear surface over a polygon is a mesh node inside it
 //! or a crossing of its boundary with a mesh edge (grid lines and the cell diagonals), so
@@ -124,7 +125,11 @@ fn end_strip(length: f32) -> f32 {
     GROUND_STEP.min(length * 0.5)
 }
 
-fn frame_of<'a>(graph: &NetGraph, geo: &'a JunctionGeometry, id: SegmentId) -> Option<Frame<'a>> {
+pub(super) fn frame_of<'a>(
+    graph: &NetGraph,
+    geo: &'a JunctionGeometry,
+    id: SegmentId,
+) -> Option<Frame<'a>> {
     let seg = graph.segment(id)?;
     let curve = geo.trimmed_curve(graph, id)?;
     let table = curve.arc_table();
@@ -144,51 +149,50 @@ fn strip(a: &Ring, b: &Ring) -> [Vec2; 4] {
     [a.xz(-a.half), a.xz(a.half), b.xz(b.half), b.xz(-b.half)]
 }
 
-/// Level of a ground junction: its polygon, the arms' end heights and the first strip of
-/// every ground arm, all above the terrain. `None` for raised or tunnel nodes.
-pub(super) fn junction_level(
+/// Height of the end ring of segment `id` at its start or end, on its own: the curve plus
+/// [`LIFT`], and on ground above the terrain under the first strip.
+fn own_end_level(
     graph: &NetGraph,
     geo: &JunctionGeometry,
     terrain: &Terrain,
-    j: &Junction,
-) -> Option<f32> {
-    if graph.node(j.node)?.elevation != Elevation::Ground {
-        return None;
+    id: SegmentId,
+    at_start: bool,
+) -> f32 {
+    let (Some(seg), Some(f)) = (graph.segment(id), frame_of(graph, geo, id)) else {
+        return 0.0;
+    };
+    let r0 = f.ring(if at_start { 0.0 } else { f.length });
+    if seg.elevation != Elevation::Ground || f.length < 0.05 {
+        return r0.center.y;
     }
-    let mut level = j.pos.y + LIFT;
-    let mut env = max_mesh_height(terrain, &j.polygon);
-    for a in &j.arms {
-        level = level.max(arm_y(graph, a));
-        let ground = graph
-            .segment(a.segment)
-            .is_some_and(|s| s.elevation == Elevation::Ground);
-        let Some(f) = frame_of(graph, geo, a.segment).filter(|_| ground) else {
-            continue;
-        };
-        if f.length < 0.05 {
-            continue;
-        }
-        let e = end_strip(f.length);
-        let (s0, s1) = if a.at_start {
-            (0.0, e)
-        } else {
-            (f.length, f.length - e)
-        };
-        env = env.max(max_mesh_height(terrain, &strip(&f.ring(s0), &f.ring(s1))));
-    }
-    Some(level.max(env + CLEARANCE))
+    let e = end_strip(f.length);
+    let r1 = f.ring(if at_start { e } else { f.length - e });
+    r0.center
+        .y
+        .max(max_mesh_height(terrain, &strip(&r0, &r1)) + CLEARANCE)
 }
 
-/// Polygon vertex heights of a junction: its arm end heights, or the shared level on ground.
-pub(super) fn heights(
+/// Height of the end ring of segment `id` at its start or end: its own level, the higher of the
+/// two at a middle node (both ends are one line there).
+pub(super) fn end_level(
     graph: &NetGraph,
     geo: &JunctionGeometry,
     terrain: &Terrain,
-    j: &Junction,
-) -> Vec<f32> {
-    match junction_level(graph, geo, terrain, j) {
-        Some(level) => vec![level; j.polygon.len()],
-        None => polygon_heights(graph, j),
+    id: SegmentId,
+    at_start: bool,
+) -> f32 {
+    let own = own_end_level(graph, geo, terrain, id, at_start);
+    let node = graph
+        .segment(id)
+        .map(|s| if at_start { s.start } else { s.end });
+    match node.and_then(|n| geo.get(n)) {
+        Some(j) if j.class == cp_net::NodeClass::Middle => j
+            .arms
+            .iter()
+            .filter(|a| graph.segment(a.segment).is_some_and(|s| !is_path(graph, s)))
+            .map(|a| own_end_level(graph, geo, terrain, a.segment, a.at_start))
+            .fold(own, f32::max),
+        _ => own,
     }
 }
 
@@ -199,12 +203,20 @@ pub(super) fn rings(
     graph: &NetGraph,
     geo: &JunctionGeometry,
     terrain: &Terrain,
+    seg_id: SegmentId,
     seg: &Segment,
     base: Vec<f32>,
 ) -> (Vec<f32>, Vec<Ring>) {
     let straight = is_straight(&frame.curve);
     if seg.elevation != Elevation::Ground {
-        let rings = base.iter().map(|&s| frame.ring(s)).collect();
+        let mut rings: Vec<Ring> = base.iter().map(|&s| frame.ring(s)).collect();
+        // The ends as the node pieces have them (the higher of two at a middle node).
+        if let Some(r) = rings.first_mut() {
+            r.center.y = end_level(graph, geo, terrain, seg_id, true);
+        }
+        if let Some(r) = rings.last_mut() {
+            r.center.y = end_level(graph, geo, terrain, seg_id, false);
+        }
         return (base, rings);
     }
     let len = frame.length;
@@ -232,11 +244,7 @@ pub(super) fn rings(
     }
 
     let all: Vec<Ring> = merged.iter().map(|&(s, _)| frame.ring(s)).collect();
-    let level_at = |at_start: bool| {
-        let node = if at_start { seg.start } else { seg.end };
-        geo.get(node)
-            .and_then(|j| junction_level(graph, geo, terrain, j))
-    };
+    let level_at = |at_start: bool| Some(end_level(graph, geo, terrain, seg_id, at_start));
     let ends = (level_at(true), level_at(false));
     let required = |rs: &[Ring], i: usize| -> f32 {
         let (a, b) = (&rs[i.saturating_sub(1)], &rs[(i + 1).min(rs.len() - 1)]);

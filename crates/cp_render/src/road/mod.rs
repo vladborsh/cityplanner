@@ -6,8 +6,10 @@
 //!   bands (and on/off dash quads) of vertex colour, so no two surfaces overlap and nothing
 //!   z-fights. Sidewalks are raised bands with kerb faces. Ground segments get skirts down
 //!   to the terrain; elevated and bridge segments get an underside, fascias and piers.
-//! * A **junction piece** is the junction polygon, triangulated. Its arm corners are *the
-//!   same points* the neighbouring segments use for their end rings, so there are no gaps.
+//! * A **node piece** depends on the node's class (`node`, T-263): none at a middle node, a
+//!   cap at a dead end, a joint at a bend or transition, carriageway, curb curves and corner
+//!   sidewalks at a junction. Its ends are *the same points* (and heights) the neighbouring
+//!   segments use for their end rings, so there are no gaps.
 //! * One-way segments (every car lane runs forward) get direction **chevrons** on the
 //!   carriageway axis every [`CHEVRON_SPACING`] metres, baked in as vertex-coloured
 //!   triangles that replace the asphalt under them (no overlay). Near mesh only.
@@ -15,6 +17,8 @@
 //!   def asks for `crosswalks` (T-240): from [`ZEBRA_GAP`] behind the mouth, stripes parallel
 //!   to the road across everything at road level, [`ZEBRA_DEPTH`] long; the lane lines stop
 //!   [`ZEBRA_LINE_GAP`] before it. Baked into the surface like the dashes. Near mesh only.
+//! * Lane dashes have a period stretched to fit each run ([`dash_period`]), so they run on
+//!   evenly through middle nodes and bends.
 //! * Every piece has a `near` mesh (markings, kerbs, chevrons) and a `far` mesh (none).
 //! * [`RoadSet`] keeps the pieces and, given a new snapshot, rebuilds only pieces whose
 //!   inputs changed (segment fingerprint / junction revision).
@@ -28,8 +32,7 @@ use bevy_math::{Vec2, Vec3};
 use cp_content::{ContentDb, LaneDir, LaneKind};
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_net::{
-    Arm, Elevation, Junction, JunctionGeometry, NetGraph, NodeId, Segment, SegmentId,
-    pier_positions,
+    Arm, Elevation, JunctionGeometry, NetGraph, NodeId, Segment, SegmentId, pier_positions,
 };
 use cp_terrain::Terrain;
 
@@ -444,13 +447,15 @@ fn ring_positions(length: f32, straight: bool, dashes: bool, chevrons: &[(f32, f
         s.extend((1..n).map(|i| length * i as f32 / n as f32));
     }
     if dashes {
-        let mut d = DASH_PERIOD * 0.5;
+        let period = dash_period(length);
+        let on = DASH_ON * period / DASH_PERIOD;
+        let mut d = period * 0.5;
         while d < length - 0.5 {
             s.push(d);
-            if d + DASH_ON < length - 0.5 {
-                s.push(d + DASH_ON);
+            if d + on < length - 0.5 {
+                s.push(d + on);
             }
-            d += DASH_PERIOD;
+            d += period;
         }
     }
     s.sort_by(f32::total_cmp);
@@ -471,10 +476,17 @@ fn ring_positions(length: f32, straight: bool, dashes: bool, chevrons: &[(f32, f
     s
 }
 
-/// Whether the dash band is painted between `s0` and `s1`.
-fn dash_on(s0: f32, s1: f32) -> bool {
+/// Dash period of a run `length` metres long: [`DASH_PERIOD`] stretched so a whole number of
+/// periods fits. Every run then starts and ends in the middle of a gap, so the dashes run on
+/// evenly through middle nodes and bends (T-263).
+fn dash_period(length: f32) -> f32 {
+    length / (length / DASH_PERIOD).round().max(1.0)
+}
+
+/// Whether the dash band is painted between `s0` and `s1`, with dash period `period`.
+fn dash_on(s0: f32, s1: f32, period: f32) -> bool {
     let mid = (s0 + s1) * 0.5;
-    ((mid - DASH_PERIOD * 0.5) % DASH_PERIOD + DASH_PERIOD) % DASH_PERIOD < DASH_ON
+    (mid - period * 0.5).rem_euclid(period) < DASH_ON * period / DASH_PERIOD
 }
 
 /// What a stretch of a segment end holds instead of its lanes (T-240).
@@ -599,7 +611,7 @@ fn extrude(
         base.sort_by(f32::total_cmp);
         base.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
     }
-    let (s_list, rings) = ground::rings(&frame, graph, geo, terrain, seg, base);
+    let (s_list, rings) = ground::rings(&frame, graph, geo, terrain, id, seg, base);
     // Ring pairs `k - 1, k` that hold a chevron.
     let chevron_row = |k: usize| {
         k > 0
@@ -629,7 +641,7 @@ fn extrude(
                 if k == 0 || skip {
                     continue;
                 }
-                let on = dash_on(s_list[k - 1], s_list[k]);
+                let on = dash_on(s_list[k - 1], s_list[k], dash_period(length));
                 let color = if on { b.color } else { ASPHALT };
                 let q = &rings[k - 1];
                 flat_quad(
@@ -884,14 +896,6 @@ pub fn build_segment_piece(
 // ---------------------------------------------------------------------------------------
 // Junctions
 
-/// `y` of the end of `arm`'s segment (curve height at the cut).
-fn arm_y(graph: &NetGraph, arm: &Arm) -> f32 {
-    graph
-        .segment(arm.segment)
-        .map_or(0.0, |s| s.curve.point(arm.trim_t).y)
-        + LIFT
-}
-
 /// Ear-clipping triangulation of a simple polygon; returns index triples.
 fn triangulate(poly: &[Vec2]) -> Vec<[usize; 3]> {
     let n = poly.len();
@@ -949,21 +953,8 @@ fn triangulate(poly: &[Vec2]) -> Vec<[usize; 3]> {
     out
 }
 
-/// Height of each polygon vertex: the end height of the arm whose corner it is, else the
-/// node's.
-fn polygon_heights(graph: &NetGraph, j: &Junction) -> Vec<f32> {
-    j.polygon
-        .iter()
-        .map(|p| {
-            j.arms
-                .iter()
-                .find(|a| a.right.distance(*p) < 1e-4 || a.left.distance(*p) < 1e-4)
-                .map_or(j.pos.y + LIFT, |a| arm_y(graph, a))
-        })
-        .collect()
-}
-
-/// Builds the mesh of one junction. `None` for nodes without a polygon.
+/// Builds the mesh of one node (`node::build`: by its class). `None` for a middle node (its
+/// segments meet on their own) and for nodes without road arms.
 pub fn build_junction_piece(
     graph: &NetGraph,
     geo: &JunctionGeometry,
@@ -971,115 +962,9 @@ pub fn build_junction_piece(
     node: NodeId,
 ) -> Option<Piece> {
     let j = geo.get(node)?;
-    if j.polygon.len() < 3 {
-        return None;
-    }
-    let n = graph.node(node)?;
-    let raised = n.elevation != Elevation::Ground;
-    if n.elevation == Elevation::Tunnel {
-        return None;
-    }
-    let ys = ground::heights(graph, geo, terrain, j);
-    // T-186: the outside of a bend is rounded; the arc points take the corner's height.
-    let (polygon, src) = corner::rounded_polygon(j, graph);
-    let ys: Vec<f32> = src.iter().map(|&i| ys[i]).collect();
-    let rounded = Junction {
-        polygon,
-        ..j.clone()
-    };
-    let j = &rounded;
-    let mut m = MeshData::default();
-    // Only paths meet here: gravel instead of asphalt.
-    let floor = if !j.arms.is_empty()
-        && j.arms
-            .iter()
-            .all(|a| graph.segment(a.segment).is_some_and(|s| is_path(graph, s)))
-    {
-        GRAVEL
-    } else {
-        ASPHALT
-    };
-    let verts: Vec<u32> = j
-        .polygon
-        .iter()
-        .zip(&ys)
-        .map(|(p, &y)| push_vertex(&mut m, Vec3::new(p.x, y, p.y), Vec3::Y, floor))
-        .collect();
-    for [a, b, c] in triangulate(&j.polygon) {
-        tri(&mut m, verts[a], verts[b], verts[c], Vec3::Y);
-    }
-    // The pavement around the outside of the junction joins the arms' sidewalks.
-    let walks = corner::walks(graph, j);
-    let mut kerb = MeshData::default();
-    corner::build(j, &walks, &ys, &mut m, &mut kerb);
-    corner::build_patches(&corner::patches(graph, j), &ys, &mut m, &mut kerb);
-
-    // Edges between corners of *different* arms are the outside of the junction: skirt them.
-    let k = j.polygon.len();
-    let corner_of = |p: Vec2| {
-        j.arms
-            .iter()
-            .position(|a| a.right.distance(p) < 1e-4 || a.left.distance(p) < 1e-4)
-    };
-    for i in 0..k {
-        let (pa, pb) = (j.polygon[i], j.polygon[(i + 1) % k]);
-        if let (Some(a), Some(b)) = (corner_of(pa), corner_of(pb))
-            && a == b
-        {
-            continue; // the end line of an arm: the segment's ring is attached here
-        }
-        let (ya, yb) = (ys[i], ys[(i + 1) % k]);
-        // Under a sidewalk the wall starts at its top.
-        let lift = if walks.iter().any(|w| w.from == i) {
-            CURB
-        } else {
-            0.0
-        };
-        let (a, b) = (
-            Vec3::new(pa.x, ya + lift, pa.y),
-            Vec3::new(pb.x, yb + lift, pb.y),
-        );
-        let out = (pb - pa).perp().try_normalize().unwrap_or(Vec2::Y);
-        // Polygon is counter-clockwise in (x, z): the right-hand perpendicular points out.
-        let outward = Vec3::new(-out.x, 0.0, -out.y);
-        let (da, db) = if raised {
-            (DECK + lift, DECK + lift)
-        } else {
-            (
-                skirt_depth(terrain, pa, ya) + lift,
-                skirt_depth(terrain, pb, yb) + lift,
-            )
-        };
-        let v = [a, b, b - Vec3::Y * db, a - Vec3::Y * da].map(|p| {
-            push_vertex(
-                &mut m,
-                p,
-                outward,
-                if raised { CONCRETE } else { EMBANKMENT },
-            )
-        });
-        quad(&mut m, v, outward);
-    }
-    if raised {
-        // Underside and a pier below the node.
-        let bottom: Vec<u32> = j
-            .polygon
-            .iter()
-            .zip(&ys)
-            .map(|(p, &y)| push_vertex(&mut m, Vec3::new(p.x, y - DECK, p.y), -Vec3::Y, CONCRETE))
-            .collect();
-        for [a, b, c] in triangulate(&j.polygon) {
-            tri(&mut m, bottom[a], bottom[b], bottom[c], -Vec3::Y);
-        }
-        let ground = terrain.height(to_xz(n.pos));
-        let top = n.pos.y + LIFT - DECK;
-        if top - ground > 0.5 {
-            pier(&mut m, Vec3::new(n.pos.x, ground, n.pos.z), top);
-        }
-    }
-    let far = m.clone();
-    append(&mut m, &kerb);
-    Some(finish(m, far))
+    let near = node::build(graph, geo, terrain, j, true)?;
+    let far = node::build(graph, geo, terrain, j, false)?;
+    Some(finish(near, far))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1311,9 +1196,9 @@ impl RoadSet {
 }
 
 pub mod band;
-mod corner;
 pub mod furniture;
 mod ground;
+mod node;
 pub use band::{BAND_LIFT, BAND_STEP, band_data, band_mesh, band_polyline, to_mesh};
 pub use ground::{CLEARANCE, lod_height, max_mesh_height};
 

@@ -47,47 +47,13 @@ const REACH: f32 = 12.0;
 /// from there on, metres.
 const TAPER: f32 = 8.0;
 
-/// Cases that fail today (T-261 report 2026-10-19, 95 of 152: the chord notch on the outside of
-/// bends under 30 degrees and of curved arms, `gap`; the centre line broken at every node of
-/// degree 2, bends and automatic cuts, `marking`; sidewalk over the carriageway at shallow bends,
-/// width changes, curved arms and a street into a highway, `sidewalk`; spikes on wide bends,
-/// `spill`), as prefixes of `case/turn` (a prefix ending in `/` covers every case under it).
-/// Narrow them as fixes land (T-263).
-const KNOWN_RED: &[&str] = &[
-    "bend/basic_2l/5/",
-    "bend/basic_2l/10/",
-    "bend/basic_2l/20/",
-    "bend/basic_2l/30/",
-    "bend/basic_2l/45/",
-    "bend/basic_2l/90/",
-    "bend_curved/basic_2l/",
-    "bend/medium_4l/",
-    "bend_curved/medium_4l/",
-    "bend/large_6l/5/",
-    "bend/large_6l/10/",
-    "bend/large_6l/20/",
-    "bend/large_6l/30/30",
-    "bend/large_6l/90/",
-    "bend/large_6l/135/",
-    "bend_curved/large_6l/",
-    "bend/basic_1w_2l/5/",
-    "bend/basic_1w_2l/10/",
-    "bend/basic_1w_2l/20/",
-    "bend/basic_1w_2l/30/30",
-    "bend/highway_1w_2l/10/",
-    "bend/highway_1w_2l/20/",
-    "bend/highway_1w_2l/30/30",
-    "t/basic_2l/",
-    "x/basic_2l/",
-    "curved_t/basic_2l/",
-    "t/medium_4l/",
-    "x/medium_4l/",
-    "curved_t/medium_4l/",
-    "curved_t/large_6l/",
-    "width/",
-    "highway_t/45/",
-    "cut/",
-];
+/// Cases that fail today, as prefixes of `case/turn` (a prefix ending in `/` covers every case
+/// under it). T-261 recorded 95 of 152 (chord notches on the outside of shallow bends, centre
+/// lines broken at every node of degree 2, sidewalks in the mouths of highways, spikes on wide
+/// bends); node render v2 (T-263) leaves 2: a 12 m street at 45 degrees into a 7.5 m highway,
+/// whose band at the node reaches past the highway's far edge, where the highway's flat side
+/// runs straight (`gap`).
+const KNOWN_RED: &[&str] = &["highway_t/45/"];
 
 fn known_red(case: &str) -> bool {
     KNOWN_RED.iter().any(|k| case.starts_with(k))
@@ -396,7 +362,7 @@ fn run_case(case: &JoinCase, turn: f32) -> Run {
         }
         // spill
         if let Some(jf) = junction_faces.get(&nid) {
-            let allow = arms.iter().map(|a| a.hw).fold(0.0, f32::max) + corner::CURB_RADIUS + 0.5;
+            let allow = arms.iter().map(|a| a.hw).fold(0.0, f32::max) + node::CURB_RADIUS + 0.5;
             let worst = jf
                 .tris
                 .iter()

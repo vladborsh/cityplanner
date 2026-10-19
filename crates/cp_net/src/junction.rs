@@ -13,27 +13,33 @@
 //! (`2 · max(|offset| + width/2)`), so geometry is a pure function of the [`NetGraph`] —
 //! no content lookup, nothing extra to save.
 //!
-//! **Setback formula.** For arm `i` with half-width `hᵢ` and a neighbour `j` whose
-//! direction is `θ` away (the counter-clockwise gap for the left side, the clockwise gap
-//! for the right side), the side edges of the two roads meet at distance
-//! `t = (hⱼ + hᵢ·cos θ) / sin θ` along arm `i` (for `θ = 90°` this is the neighbour's
-//! half-width). For gaps of `150°` and more the edges no longer form a corner and `t = hᵢ`.
-//! The wanted setback is `max(hᵢ, t_left, t_right)`, capped at [`MAX_SETBACK`]. The two ends
-//! of a segment share `2 × 45 %` of its length: when their wants fit, both are kept (every arm
-//! keeps at least `hᵢ`, which also gives straight joins a clean `w × w` patch, and a dead end
-//! (one arm) a `w × w` rectangle around the node); otherwise the end of a real junction keeps
-//! its want and a dead end or straight join gives way (see `shared_setback`), so trimmed
-//! segments never overlap each other. A node's setbacks therefore also depend on the nodes at
-//! the other ends of its segments: recomputing a node recomputes those too.
+//! **Class** (T-263, §6.8.3 item 6): one arm is an `End`; two arms of one road running on in
+//! the same direction (or of a road that reads the same both ways) are a `Middle` node when
+//! they turn at most [`MIDDLE_DEG`], else a `Bend`; two arms of different roads are a
+//! `Transition`; three or more a `Junction` (see [`NodeClass`]).
 //!
-//! **Polygon**: for each arm in counter-clockwise order, its right corner then its left
-//! corner (`node + d·s ∓ l·h`, `l` = `d` rotated 90° counter-clockwise). Where the
-//! counter-clockwise gap to the next arm exceeds `210°` (a bend, or the outer side of a
-//! Y/T with a wide empty side) the polygon is closed with the point where the two outer
-//! road edges meet, so the pavement covers the outside of the corner. Repeated points are
-//! dropped. The polygon is simple (no self-intersection) and contains the node whenever
-//! no cap was applied; capped short segments can distort it, which is a visual issue
-//! only.
+//! **Setbacks** come from the arms' real edge curves (the segment curve offset by the half
+//! width), not their tangents: where arm `i`'s edge meets its neighbour's facing edge
+//! (sampled, then refined by Newton steps, `shape::edge_meet`), for neighbours under `150°`
+//! apart. A junction arm wants `max(hᵢ, meets)` (for straight arms the meet is
+//! `t = (hⱼ + hᵢ·cos θ) / sin θ`, as before); a bend's arms are cut exactly where their inner
+//! edges meet, so both ends share that corner; a middle node's at the node (0); at a transition
+//! the wider road also keeps [`TRANSITION_LEN`] for its taper; a dead end `hᵢ`. Capped at
+//! [`MAX_SETBACK`]. The two ends of a segment share `2 × 45 %` of its length: when their wants
+//! fit, both are kept; otherwise a hard end keeps its want and a soft one gives way (see
+//! `shared_setback`), so trimmed segments never overlap each other. A node's setbacks therefore
+//! also depend on the nodes at the other ends of its segments: recomputing a node recomputes
+//! those too.
+//!
+//! **Corners** lie on the real curve at the cut, square to it (`trim_t` and the corners agree
+//! exactly). A middle node's two arms share one end line through the node on the bisector,
+//! mitred to keep the road's width.
+//!
+//! **Polygon** (the node's outline): for each arm in counter-clockwise order, its right corner,
+//! its left corner, then the line across the node to the next arm's right corner
+//! ([`side_line`]: a curb curve at a junction's convex corner, a mitre on the inside of a bend,
+//! a round join around the node on the outside of a bend or along a flat side). Points on a
+//! straight run are dropped. Empty for a middle node.
 //!
 //! **Storage**: [`JunctionGeometry`] is a separate resource, *not* part of [`NetGraph`]: it
 //! is never saved and never hashed (it is a function of hashed state). After a load it is

@@ -199,7 +199,7 @@ pub fn build_segment_furniture(
     base.extend(items.iter().map(|i| i.0));
     base.sort_by(f32::total_cmp);
     base.dedup();
-    let (s_list, rings) = ground::rings(&frame, graph, geo, terrain, seg, base);
+    let (s_list, rings) = ground::rings(&frame, graph, geo, terrain, id, seg, base);
     let ring_at = |s: f32| -> Option<&Ring> {
         s_list
             .iter()

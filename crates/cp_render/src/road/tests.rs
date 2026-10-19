@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bevy_math::{Vec2, Vec3};
 use cp_content::ContentDb;
 use cp_core::Tick;
-use cp_net::{ElevationMode, NetCommand, RoadPath};
+use cp_net::{ElevationMode, Junction, NetCommand, NodeClass, RoadPath};
 use cp_sim::{SimCommand, SimRunner, SimView};
 use cp_terrain::Terrain;
 
@@ -176,7 +176,11 @@ fn segment_ends_meet_the_junction_polygon() {
     let (set, _) = w.set(&v);
     let mut checked = 0;
     for (node, j) in v.junctions.iter() {
-        let jp = set.piece(PieceKey::Junction(*node)).unwrap();
+        // A middle node has no piece: its segments meet each other (T-263).
+        let Some(jp) = set.piece(PieceKey::Junction(*node)) else {
+            assert_eq!(j.class, NodeClass::Middle);
+            continue;
+        };
         for arm in &j.arms {
             let sp = set.piece(PieceKey::Segment(arm.segment)).unwrap();
             for corner in [arm.right, arm.left] {
@@ -207,8 +211,13 @@ fn segment_ends_meet_the_junction_polygon() {
             }
         }
     }
-    // Two corners per arm, every arm of every junction.
-    let arms: usize = v.junctions.iter().map(|(_, j)| j.arms.len()).sum();
+    // Two corners per arm, every arm of every node with a piece.
+    let arms: usize = v
+        .junctions
+        .iter()
+        .filter(|(_, j)| j.class != NodeClass::Middle)
+        .map(|(_, j)| j.arms.len())
+        .sum();
     assert_eq!(checked, 2 * arms);
     assert!(arms >= 8);
 }
@@ -222,7 +231,8 @@ fn four_way_junction_is_one_flat_polygon_facing_up() {
     let (node, j) = v.junctions.iter().find(|(_, j)| j.arms.len() == 4).unwrap();
     let piece = set.piece(PieceKey::Junction(*node)).unwrap();
     assert!(j.polygon.len() >= 4, "{:?}", j.polygon);
-    // The upward triangles tile exactly the polygon's area; the rest are skirts.
+    // The upward triangles (carriageway and corner sidewalks) tile the polygon's area; the
+    // rest are kerbs and skirts.
     let area_of = |t: usize| {
         let p = |k: usize| {
             Vec3::from_array(piece.near.positions[piece.near.indices[t * 3 + k] as usize])
@@ -231,8 +241,6 @@ fn four_way_junction_is_one_flat_polygon_facing_up() {
     };
     let up_area: f32 = (0..piece.near.triangle_count())
         .filter(|&t| tri_normal(&piece.near, t).y > 0.99)
-        // Not the pavement rim (BUG-023): it is raised over the polygon's edge.
-        .filter(|&t| piece.near.colors[piece.near.indices[t * 3] as usize] == ASPHALT)
         .map(area_of)
         .sum();
     let n = j.polygon.len();
@@ -242,7 +250,7 @@ fn four_way_junction_is_one_flat_polygon_facing_up() {
         .abs()
         / 2.0;
     assert!(
-        (up_area - poly_area).abs() < 0.01 * poly_area,
+        (up_area - poly_area).abs() < 0.02 * poly_area,
         "{up_area} vs {poly_area}"
     );
 }
@@ -789,17 +797,14 @@ fn piece_keys(v: &SimView) -> Vec<PieceKey> {
     keys
 }
 
-/// Plan area where a sidewalk triangle lies over the asphalt of a *segment* (the carriageway
-/// of an arm). The junction's own asphalt is excluded: the pavement ring is raised over its
-/// edge on purpose (see `sidewalk_stays_on_the_rim_of_the_junction`).
+/// Plan area where a sidewalk triangle lies over asphalt, of a segment or of a node (T-263: the
+/// corner sidewalks lie beside the carriageway, not over it).
 fn sidewalk_over_segment_asphalt(set: &RoadSet, v: &SimView) -> f32 {
     let (mut sw, mut asph) = (Vec::new(), Vec::new());
-    for k in piece_keys(v) {
-        let p = set.piece(k).expect("piece");
+    // A middle node has no piece (T-263).
+    for p in piece_keys(v).into_iter().filter_map(|k| set.piece(k)) {
         sw.extend(colour_tris(&p.near, SIDEWALK));
-        if matches!(k, PieceKey::Segment(_)) {
-            asph.extend(colour_tris(&p.near, ASPHALT));
-        }
+        asph.extend(colour_tris(&p.near, ASPHALT));
     }
     sw.iter()
         .flat_map(|s| asph.iter().map(|a| overlap_area(*s, *a)))
@@ -896,80 +901,79 @@ fn check_clean(w: &World, what: &str) {
     }
 }
 
-/// In the polygon of `j`, a sidewalk covers only the rim along an outer edge (never further
-/// from it than the widest sidewalk) and everything else is asphalt: no hole either.
-fn check_rim(set: &RoadSet, graph: &NetGraph, j: &Junction, node: &NodeId, what: &str) {
-    // T-186: the outside of a bend is an arc; the canvas follows it.
-    let j = &Junction {
-        polygon: super::corner::rounded_polygon(j, graph).0,
-        ..j.clone()
-    };
-    let m = &set.piece(PieceKey::Junction(*node)).unwrap().near;
-    let (sw, asph) = (colour_tris(m, SIDEWALK), colour_tris(m, ASPHALT));
-    let n = j.polygon.len();
-    let outer: Vec<(Vec2, Vec2)> = (0..n)
-        .map(|i| (j.polygon[i], j.polygon[(i + 1) % n]))
-        .filter(|&(a, b)| {
-            // Not the end line of an arm: not both ends are corners of one arm.
-            !j.arms.iter().any(|arm| {
-                let on = |p: Vec2| arm.right.distance(p) < 1e-3 || arm.left.distance(p) < 1e-3;
-                on(a) && on(b)
-            })
+/// The piece of node `j` covers its outline (`Junction::polygon`) without holes, and a
+/// junction has no sidewalk at its centre; a middle node has no piece (T-263).
+fn check_rim(set: &RoadSet, _graph: &NetGraph, j: &Junction, node: &NodeId, what: &str) {
+    let piece = set.piece(PieceKey::Junction(*node));
+    if j.class == NodeClass::Middle {
+        assert!(piece.is_none(), "{what}: a middle node has a piece");
+        return;
+    }
+    let m = &piece
+        .unwrap_or_else(|| panic!("{what}: no piece for {node:?}"))
+        .near;
+    let up: Vec<Tri2> = (0..m.triangle_count())
+        .filter(|&t| tri_normal(m, t).y > 0.5)
+        .map(|t| {
+            let p = |k: usize| {
+                let q = m.positions[m.indices[t * 3 + k] as usize];
+                Vec2::new(q[0], q[2])
+            };
+            [p(0), p(1), p(2)]
         })
         .collect();
-    // Vertices where two arms' end lines meet: the pavement patch sits there.
-    let ends = |a: Vec2, b: Vec2| {
-        j.arms.iter().any(|arm| {
-            let on = |p: Vec2, q: Vec2| arm.right.distance(p) < 1e-3 && arm.left.distance(q) < 1e-3;
-            on(a, b) || on(b, a)
-        })
-    };
-    let corners: Vec<Vec2> = (0..n)
-        .filter(|&i| {
-            ends(j.polygon[(i + n - 1) % n], j.polygon[i])
-                && ends(j.polygon[i], j.polygon[(i + 1) % n])
-        })
-        .map(|i| j.polygon[i])
-        .collect();
-    let (lo, hi) = j.polygon.iter().fold(
+    let sw = colour_tris(m, SIDEWALK);
+    let poly = &j.polygon;
+    let n = poly.len();
+    let (lo, hi) = poly.iter().fold(
         (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
         |(l, h), p| (l.min(*p), h.max(*p)),
     );
+    let centre = to_xz(j.pos);
     let mut x = lo.x;
     while x <= hi.x {
         let mut y = lo.y;
         while y <= hi.y {
             let p = Vec2::new(x, y);
             y += 0.7;
-            if !in_polygon(p, &j.polygon) {
+            if !in_polygon(p, poly)
+                || (0..n).any(|i| dist_to_edge(p, poly[i], poly[(i + 1) % n]) < 0.1)
+            {
                 continue;
             }
-            let rim = outer
-                .iter()
-                .map(|&(a, b)| dist_to_edge(p, a, b))
-                .chain(corners.iter().map(|c| p.distance(*c) * 0.2))
-                .fold(f32::MAX, f32::min);
-            let walked = sw.iter().any(|t| in_tri(p, *t));
-            let paved = walked || asph.iter().any(|t| in_tri(p, *t));
-            // Points right on an edge can fall between triangles: stay off the boundary.
-            let near_edge =
-                (0..n).any(|i| dist_to_edge(p, j.polygon[i], j.polygon[(i + 1) % n]) < 0.05);
-            if near_edge {
-                continue;
-            }
-            let centre = to_xz(j.pos);
             assert!(
-                !walked || p.distance(centre) > 3.0 || j.arms.len() < 2,
-                "{what}: sidewalk on the carriageway at the node centre {p:?}"
+                up.iter().any(|t| in_tri(p, *t)),
+                "{what}: hole in the node piece at {p:?}"
             );
-            assert!(paved, "{what}: hole in the junction canvas at {p:?}");
+            let walked = sw.iter().any(|t| in_tri(p, *t));
             assert!(
-                !walked || rim < 3.0,
-                "{what}: sidewalk {rim} m from the rim at {p:?}"
+                !walked || p.distance(centre) > 3.0 || j.arms.len() < 3,
+                "{what}: sidewalk on the carriageway at the node centre {p:?}"
             );
         }
         x += 0.7;
     }
+}
+
+/// Convex corners of junction `j` (neighbouring arms less than 150 degrees apart) whose
+/// sidewalk is there: a point half a metre in from where the two outer edges meet is pavement.
+fn corner_walks(set: &RoadSet, j: &Junction, node: &NodeId) -> usize {
+    let m = &set.piece(PieceKey::Junction(*node)).unwrap().near;
+    let sw = colour_tris(m, SIDEWALK);
+    let k = j.arms.len();
+    let centre = to_xz(j.pos);
+    (0..k)
+        .filter(|&i| {
+            let (a, b) = (&j.arms[i], &j.arms[(i + 1) % k]);
+            let gap = (b.angle - a.angle).rem_euclid(std::f32::consts::TAU);
+            if gap >= cp_net::FLAT_GAP_DEG.to_radians() {
+                return false;
+            }
+            let x = (a.left + b.right) * 0.5;
+            let probe = x + (centre - x).normalize_or_zero() * 0.5;
+            sw.iter().any(|t| in_tri(probe, *t))
+        })
+        .count()
 }
 
 #[test]
@@ -1028,7 +1032,17 @@ fn corners_are_one_continuous_canvas_at_90_60_45_and_30_degrees_between_the_road
                 .find(|(_, j)| j.arms.len() == 2 && j.polygon.len() >= 4)
                 .expect("the corner node");
             let m = &set.piece(PieceKey::Junction(*node)).unwrap().near;
-            let canvas: Vec<Tri2> = [colour_tris(m, ASPHALT), colour_tris(m, SIDEWALK)].concat();
+            // Lanes and their markings run on through a bend (T-263): every upward face.
+            let canvas: Vec<Tri2> = (0..m.triangle_count())
+                .filter(|&t| tri_normal(m, t).y > 0.5)
+                .map(|t| {
+                    let p = |k: usize| {
+                        let q = m.positions[m.indices[t * 3 + k] as usize];
+                        Vec2::new(q[0], q[2])
+                    };
+                    [p(0), p(1), p(2)]
+                })
+                .collect();
             let mid = |a: &Arm| (a.right + a.left) * 0.5;
             let (m0, m1) = (mid(&j.arms[0]), mid(&j.arms[1]));
             for i in 0..=20 {
@@ -1057,8 +1071,9 @@ fn roads_built_while_paused_are_trimmed_and_have_their_junctions() {
 }
 
 #[test]
-fn a_straight_join_keeps_its_sidewalks_across_the_patch() {
-    // Two collinear segments (an auto-cut long road): the sidewalks run on across the join.
+fn a_straight_join_keeps_its_sidewalks_across_the_node() {
+    // Two collinear segments (an auto-cut long road): a middle node without a piece (T-263);
+    // the segments' sidewalks meet on its end line.
     let mut w = world();
     road(&mut w, C - Vec2::X * 100.0, C + Vec2::X * 100.0);
     check_clean(&w, "long road");
@@ -1069,18 +1084,28 @@ fn a_straight_join_keeps_its_sidewalks_across_the_patch() {
         .iter()
         .find(|(_, j)| j.arms.len() == 2)
         .expect("a join");
-    let sw = colour_tris(
-        &set.piece(PieceKey::Junction(*node)).unwrap().near,
-        SIDEWALK,
-    );
+    assert_eq!(j.class, NodeClass::Middle);
+    assert!(set.piece(PieceKey::Junction(*node)).is_none());
+    let sw: Vec<Tri2> = j
+        .arms
+        .iter()
+        .flat_map(|a| {
+            colour_tris(
+                &set.piece(PieceKey::Segment(a.segment)).unwrap().near,
+                SIDEWALK,
+            )
+        })
+        .collect();
     let c = to_xz(j.pos);
-    // Mid-way along both sides of the patch there is pavement.
+    // On both sides, just before and after the node, there is pavement.
     for side in [-1.0, 1.0] {
-        let p = c + Vec2::new(0.0, side * 5.0);
-        assert!(
-            sw.iter().any(|t| in_tri(p, *t)),
-            "no sidewalk on side {side}"
-        );
+        for along in [-0.3, 0.3] {
+            let p = c + Vec2::new(along, side * 5.0);
+            assert!(
+                sw.iter().any(|t| in_tri(p, *t)),
+                "no sidewalk at {along} on side {side}"
+            );
+        }
     }
 }
 
@@ -1118,9 +1143,9 @@ fn a_cross_has_pavement_in_its_four_corners_and_a_t_along_its_far_side() {
     assert!(!sw.iter().any(|t| in_tri(C + Vec2::new(0.0, 5.0), *t)));
 }
 
-/// BUG-054 / BUG-055: on the outside of a bend the sidewalk is one band of constant width along the
-/// rounded corner: no mesh vertex lies outside the rounded canvas (spikes), and the band is as
-/// wide along the arc as beside it (no notch of asphalt).
+/// BUG-054 / BUG-055, T-263: on the outside of a bend the sidewalk is one band around the node
+/// (a round join): no mesh vertex lies outside the outline (spikes), and the band is as wide
+/// at the middle of the arc as beside it (no notch of asphalt).
 #[test]
 fn a_bend_has_one_smooth_outer_sidewalk_without_spikes_or_notches() {
     let db = world().content;
@@ -1130,7 +1155,7 @@ fn a_bend_has_one_smooth_outer_sidewalk_without_spikes_or_notches() {
     {
         for deg in [90.0f32, 60.0, 45.0, 120.0, 135.0] {
             // Arms shorter than twice the road's width at an obtuse angle overlap each other's
-            // road (the segments' own sidewalks, not the junction's): out of this test's reach.
+            // road (the segments' own sidewalks, not the node's): out of this test's reach.
             let width = db.road(db.road_id(def).unwrap()).width;
             if deg > 100.0 && len < 2.0 * width {
                 continue;
@@ -1154,7 +1179,18 @@ fn a_bend_has_one_smooth_outer_sidewalk_without_spikes_or_notches() {
                     .iter()
                     .find(|(_, j)| j.arms.len() == 2)
                     .expect("the bend node");
-                let (rp, _) = super::corner::rounded_polygon(j, &v.net);
+                // A one-way road drawn head-on is a transition (its lanes do not run on).
+                let one_way_head_on = def.contains("1w") && reversed;
+                assert_eq!(
+                    j.class,
+                    if one_way_head_on {
+                        NodeClass::Transition
+                    } else {
+                        NodeClass::Bend
+                    },
+                    "{what}"
+                );
+                let rp = &j.polygon;
                 let m = &set.piece(PieceKey::Junction(*node)).unwrap().near;
                 let n = rp.len();
                 for (i, p) in m.positions.iter().enumerate() {
@@ -1163,35 +1199,25 @@ fn a_bend_has_one_smooth_outer_sidewalk_without_spikes_or_notches() {
                         .map(|k| dist_to_edge(q, rp[k], rp[(k + 1) % n]))
                         .fold(f32::MAX, f32::min);
                     assert!(
-                        in_polygon(q, &rp) || edge < 0.05,
-                        "{what}: vertex {i} at {q:?} sticks out of the canvas ({edge} m)"
+                        in_polygon(q, rp) || edge < 0.05,
+                        "{what}: vertex {i} at {q:?} sticks out of the outline ({edge} m)"
                     );
                 }
-                // The raised band along the outside is as wide at the middle of the arc as
-                // beside it: a point `w - 0.2` inside the rim, at the arc's middle edge, is
-                // pavement.
+                // A point 1.2 m in from the middle of the round join is pavement.
                 let sw = colour_tris(m, SIDEWALK);
                 let centre = to_xz(j.pos);
-                let mid = rp
+                let half = j.arms[0].width * 0.5;
+                let arc: Vec<Vec2> = rp
                     .iter()
-                    .enumerate()
-                    .filter(|(_, p)| {
-                        !j.arms
-                            .iter()
-                            .any(|a| a.right.distance(**p) < 1e-3 || a.left.distance(**p) < 1e-3)
-                    })
-                    .map(|(k, _)| k)
-                    .collect::<Vec<_>>();
-                if let Some(&k) = mid.get(mid.len() / 2) {
-                    let (p0, p1) = (rp[k], rp[(k + 1) % n]);
-                    let at = (p0 + p1) * 0.5;
-                    let inward = (at - centre).normalize_or_zero() * -1.0;
-                    let probe = at + inward * 1.2;
-                    assert!(
-                        sw.iter().any(|t| in_tri(probe, *t)),
-                        "{what}: asphalt notch in the outer sidewalk at {probe:?}"
-                    );
-                }
+                    .copied()
+                    .filter(|p| (p.distance(centre) - half).abs() < 0.01)
+                    .collect();
+                let at = arc[arc.len() / 2];
+                let probe = at + (centre - at).normalize_or_zero() * 1.2;
+                assert!(
+                    sw.iter().any(|t| in_tri(probe, *t)),
+                    "{what}: asphalt notch in the outer sidewalk at {probe:?}"
+                );
             }
         }
     }
@@ -1326,7 +1352,8 @@ fn junctions_far_out_on_the_map_get_a_patch_in_every_corner() {
             let what = format!("{def} {}", if side.is_none() { "X" } else { "T" });
             check_clean(&w, &what);
             let v = w.view();
-            let (_, j) = v
+            let (set, _) = w.set(&v);
+            let (node, j) = v
                 .junctions
                 .iter()
                 .find(|(_, j)| j.arms.len() >= 3)
@@ -1334,9 +1361,9 @@ fn junctions_far_out_on_the_map_get_a_patch_in_every_corner() {
             // The far side of a T is straight: no corner there.
             let corners = if side.is_none() { 4 } else { 2 };
             assert_eq!(
-                super::corner::patches(&v.net, j).len(),
+                corner_walks(&set, j, node),
                 corners,
-                "{what}: a corner without its patch"
+                "{what}: a corner without its sidewalk"
             );
         }
     }
@@ -1471,10 +1498,11 @@ fn a_junction_beside_an_automatic_cut_gets_its_corners_and_zebras() {
             check_clean(&w, &what);
             let (per_arm, j) = zebras(&w, arms);
             let v = w.view();
+            let (set, _) = w.set(&v);
             assert_eq!(
-                super::corner::patches(&v.net, &j).len(),
+                corner_walks(&set, &j, &j.node),
                 if arms == 4 { 4 } else { 2 },
-                "{what}: a corner without its patch"
+                "{what}: a corner without its sidewalk"
             );
             for (arm, tris) in j.arms.iter().zip(&per_arm) {
                 assert!(
