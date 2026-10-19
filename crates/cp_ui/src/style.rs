@@ -13,8 +13,11 @@ impl Sizes {
     pub const PALETTE_ICON: f32 = 52.0;
     /// Width of the tool panel beside the palette.
     pub const TOOL_PANEL_W: f32 = 300.0;
-    /// The one tile of every construction tool: side of the square.
+    /// The one tile of every construction tool: its width...
     pub const TILE: f32 = 88.0;
+    /// ...and its height: the icon frame and two rows of the name below it (T-274 follow-up:
+    /// the bold names wrap instead of losing their variant number to "…").
+    pub const TILE_H: f32 = 104.0;
     /// The square icon frame inside a tile.
     pub const TILE_ICON: f32 = 64.0;
     /// Gap between the tile's top and its icon frame (and between its sides and it).
@@ -52,7 +55,7 @@ impl Sizes {
     pub const SMALL_PT: f32 = 13.0;
 
     pub const fn tile() -> egui::Vec2 {
-        egui::vec2(Self::TILE, Self::TILE)
+        egui::vec2(Self::TILE, Self::TILE_H)
     }
 
     pub const fn tile_icon() -> egui::Vec2 {

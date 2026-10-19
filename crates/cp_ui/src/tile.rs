@@ -1,8 +1,8 @@
 //! The one tile of every construction tool (T-097, `architecture/system-design.md` §13.7):
 //! road types, zone tools, buildings, pipe, power line, remove, bulldozer, modes. A square
-//! [`Sizes::TILE`] with a square [`Sizes::TILE_ICON`] frame (one background, a 1 px border, a
-//! 6 px corner) on top and the name in one line below; numbers and explanations go to the
-//! hover text the caller adds to the returned response.
+//! [`Sizes::TILE`] wide, [`Sizes::TILE_H`] high, with a square [`Sizes::TILE_ICON`] frame (one
+//! background, a 1 px border, a 6 px corner) on top and the name in up to two centred rows below;
+//! numbers and explanations go to the hover text the caller adds to the returned response.
 
 use bevy_egui::egui;
 
@@ -100,24 +100,25 @@ fn paint(
         egui::Stroke::new(1.0, fade(visuals.widgets.noninteractive.bg_stroke.color)),
         egui::StrokeKind::Inside,
     );
-    // The name: one line, cut with "…".
-    let mut job = egui::text::LayoutJob::simple_singleline(
+    let galley = name_galley(ui, name, fade(visuals.text_color()));
+    // A centred galley is laid out around x = 0.
+    let pos = egui::pos2(rect.center().x, frame.bottom() + Sizes::TILE_PAD * 0.5);
+    painter.galley(pos, galley, visuals.text_color());
+}
+
+/// The name of a tile: wrapped at words into at most two centred rows ("Highway, 3 lanes" keeps
+/// its number); only a name longer than that is cut with "…".
+fn name_galley(ui: &egui::Ui, name: &str, color: egui::Color32) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple(
         name.to_string(),
         egui::TextStyle::Small.resolve(ui.style()),
-        fade(visuals.text_color()),
+        color,
+        Sizes::TILE - 2.0 * Sizes::TILE_PAD,
     );
-    job.wrap = egui::text::TextWrapping {
-        max_width: rect.width() - 2.0 * Sizes::TILE_PAD,
-        max_rows: 1,
-        break_anywhere: true,
-        overflow_character: Some('…'),
-    };
-    let galley = ui.fonts_mut(|f| f.layout_job(job));
-    let pos = egui::pos2(
-        rect.center().x - galley.size().x * 0.5,
-        frame.bottom() + Sizes::TILE_PAD * 0.5,
-    );
-    painter.galley(pos, galley, visuals.text_color());
+    job.wrap.max_rows = 2;
+    job.wrap.overflow_character = Some('…');
+    job.halign = egui::Align::Center;
+    ui.fonts_mut(|f| f.layout_job(job))
 }
 
 fn paint_image(ui: &egui::Ui, frame: egui::Rect, source: egui::ImageSource<'_>, alpha: f32) {
@@ -160,7 +161,7 @@ mod tests {
     use crate::testutil::{frame, input};
 
     #[test]
-    fn a_tile_is_88_square_with_a_64_square_icon_frame_centred_below_a_4_pad() {
+    fn a_tile_is_88_by_104_with_a_64_square_icon_frame_centred_below_a_4_pad() {
         let ctx = egui::Context::default();
         take_rects(&ctx);
         frame(&ctx, input(0.0, vec![]), |ui| {
@@ -182,8 +183,44 @@ mod tests {
         }
     }
 
+    /// T-274 follow-up: in the bold face the road names wrap into two rows and keep their
+    /// variant number (it was cut to "Highway, …"); the rows fit the tile.
     #[test]
-    fn the_name_is_one_line_cut_to_the_tile() {
+    fn a_long_name_wraps_into_two_rows_and_keeps_its_number() {
+        let ctx = egui::Context::default();
+        crate::style::install(&ctx);
+        let names = [
+            "Highway, 1 lane (one-way)",
+            "Highway, 3 lanes (one-way)",
+            "Collector (3 lanes, one-way)",
+            "Collector (4 lanes)",
+            "Arterial (6 lanes)",
+            "Local street (one-way)",
+        ];
+        frame(&ctx, input(0.0, vec![]), |ui| {
+            for name in names {
+                let g = name_galley(ui, name, egui::Color32::WHITE);
+                assert!(g.rows.len() <= 2, "{name}: {} rows", g.rows.len());
+                assert!(
+                    g.size().x <= Sizes::TILE - 2.0 * Sizes::TILE_PAD + 0.5,
+                    "{name}"
+                );
+                let shown: String = g
+                    .rows
+                    .iter()
+                    .flat_map(|r| r.glyphs.iter().map(|gl| gl.chr))
+                    .collect();
+                let digit = name.chars().find(char::is_ascii_digit);
+                assert!(
+                    digit.is_none_or(|d| shown.contains(d)),
+                    "{name}: the tile shows {shown:?}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn a_name_too_long_for_two_rows_is_cut_to_the_tile() {
         let ctx = egui::Context::default();
         let texts = crate::testutil::frame_texts(&ctx, input(0.0, vec![]), |ui| {
             tool_tile(
