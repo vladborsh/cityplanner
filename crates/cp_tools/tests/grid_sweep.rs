@@ -76,22 +76,13 @@ const BEND_R: f32 = 24.642_298;
 /// every case under one of them is expected red. Narrow a prefix (or list single cases) as fixes
 /// land; `known_red_cases_still_fail` names the cases that pass.
 ///
-/// T-261 (2026-10-19, 100 of 432 red, §6.8.1 R4): the U of BUG-081 one and two sections wide and
-/// with rounded corners two wide (cells stretched to 8.2-8.5 m deep), every block off the ticks
-/// (70 x 86 m, skewed, trapezoid: cells stretched to fit, and overlapping) and a block whose
-/// street was upgraded to a wider road (cells squeezed and overlapping). T-265 empties these.
-const KNOWN_RED: &[&str] = &[
-    "u_shape/basic_2l/sharp1/",
-    "u_shape/medium_4l/sharp1/",
-    "u_shape/basic_2l/sharp2/",
-    "u_shape/medium_4l/sharp2/",
-    "u_shape/basic_2l/rounded2/",
-    "u_shape/medium_4l/rounded2/",
-    "off_tick/",
-    "skewed/",
-    "trapezoid/",
-    "upgrade/medium_4l/",
-];
+/// T-261 (2026-10-19, 100 of 432 red, §6.8.1 R4): the U of BUG-081, the blocks off the ticks,
+/// skewed, trapezoid and upgraded; layout v3 (T-265, 8 m cells never stretched) makes them all
+/// green. Left (24): `l_close` with a rounded corner. The legs of a rounded corner count from
+/// their own nodes now (§6.8.3 item 4, "Уточнение": no virtual corner), so the bottom street's
+/// tick stands 2.6 m off where the scenario expects it (from the virtual corner) and the cross
+/// street lands skewed. Owner T-266: the tool snaps the cross street to the cell lines.
+const KNOWN_RED: &[&str] = &["l_close/basic_2l/rounded/", "l_close/medium_4l/rounded/"];
 
 fn known_red(case: &str) -> bool {
     KNOWN_RED.iter().any(|k| case.starts_with(k))

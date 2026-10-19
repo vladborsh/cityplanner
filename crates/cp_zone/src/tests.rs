@@ -1558,11 +1558,10 @@ mod layout_v2 {
         }
     }
 
-    /// T-265 (the rule of BUG-067 gone with `shared_ends`): at a corner each side of the street
-    /// that leaves it counts 8 m cells from its own start: the inner side from the edge of the
-    /// cross street, the outer one from the node.
+    /// BUG-067 (kept by T-265): at a corner the two sides of the street that leaves it count
+    /// from the same distance, so their columns stand opposite each other.
     #[test]
-    fn the_two_sides_of_a_street_leaving_a_corner_count_from_their_own_start() {
+    fn the_two_sides_of_a_street_leaving_a_corner_have_the_same_columns() {
         let mut w = World::new();
         w.line("basic_2l", (1000.0, 1000.0), (1000.0, 1100.0));
         w.line("basic_2l", (1000.0, 1000.0), (1160.0, 1000.0));
@@ -1580,11 +1579,9 @@ mod layout_v2 {
         };
         let (north, south) = (row(-1.0), row(1.0));
         assert!(north.len() >= 15, "{} cells", north.len());
-        for (xs, first) in [(&north, 1000.0 + 8.0 + 4.0), (&south, 1000.0 + H + 4.0)] {
-            assert!((xs[0] - first).abs() < 0.05, "{xs:?}");
-            for p in xs.windows(2) {
-                assert!((p[1] - p[0] - 8.0).abs() < 0.05, "{xs:?}");
-            }
+        assert_eq!(north.len(), south.len(), "{north:?} against {south:?}");
+        for (a, b) in north.iter().zip(&south) {
+            assert!((a - b).abs() < 0.05, "{north:?} against {south:?}");
         }
     }
 

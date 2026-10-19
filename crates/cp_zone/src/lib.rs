@@ -13,7 +13,8 @@ pub use grid::{
     ZoneBlock, ZoneBlockId, ZoneCellRef, ZoneGrid,
 };
 pub use layout::{
-    BlockDraft, CellLine, FrontEnd, Frontage, Mark, cell_lines, frontage_of, frontages,
+    BlockDraft, CellLine, FrontEnd, Frontage, Mark, ROUNDED_CORNER_DEG, ROUNDED_CORNER_MAX_M,
+    cell_lines, frontage_of, frontages,
 };
 
 use bevy_ecs::change_detection::DetectChanges;

@@ -186,6 +186,53 @@ fn exit_of(seg: &Segment, fwd: bool) -> (Vec2, cp_net::NodeId) {
     }
 }
 
+/// A rounded corner of a block (§6.8.3 item 4, "Уточнение", T-265): a curved segment that turns
+/// the street by at least this much end to end...
+pub const ROUNDED_CORNER_DEG: f32 = 30.0;
+/// ...is no longer than this (metres)...
+pub const ROUNDED_CORNER_MAX_M: f32 = 80.0;
+
+/// The turn of a segment end to end, radians.
+fn turn(seg: &Segment) -> f32 {
+    let a = to_xz(seg.curve.tangent(0.0)).try_normalize();
+    let b = to_xz(seg.curve.tangent(1.0)).try_normalize();
+    match (a, b) {
+        (Some(a), Some(b)) => a.dot(b).clamp(-1.0, 1.0).acos(),
+        _ => 0.0,
+    }
+}
+
+/// The segment that runs straight on from `id` at its exit node (within `CORNER_DEG`).
+fn straight_on(net: &NetGraph, id: SegmentId, fwd: bool) -> Option<&Segment> {
+    let seg = net.segment(id)?;
+    let (heading, node) = exit_of(seg, fwd);
+    let n = net.node(node)?;
+    let cos = CORNER_DEG.to_radians().cos();
+    n.segments
+        .iter()
+        .filter(|&&s| s != id)
+        .filter_map(|&s| net.segment(s).map(|g| (g, leave_dir(g, g.start == node))))
+        .filter(|(_, d)| d.dot(heading) >= cos)
+        .max_by(|a, b| a.1.dot(heading).total_cmp(&b.1.dot(heading)))
+        .map(|(g, _)| g)
+}
+
+/// Whether segment `id` is a rounded corner: it turns by [`ROUNDED_CORNER_DEG`] or more, is
+/// no longer than [`ROUNDED_CORNER_MAX_M`] and runs on into a straight segment at both ends (a
+/// piece of a long arc cut automatically is no corner: its neighbours are curved). A frontage
+/// ends at its nodes; the curve is a frontage of its own, the legs count from their own nodes.
+fn rounded_corner(net: &NetGraph, id: SegmentId) -> bool {
+    let Some(seg) = net.segment(id) else {
+        return false;
+    };
+    let straight = |g: &Segment| turn(g) < CORNER_DEG.to_radians();
+    turn(seg) >= ROUNDED_CORNER_DEG.to_radians()
+        && seg.length <= ROUNDED_CORNER_MAX_M
+        && [true, false]
+            .into_iter()
+            .all(|fwd| straight_on(net, id, fwd).is_some_and(straight))
+}
+
 /// The segment the front goes on into at the exit node, when it does.
 fn continuation(
     net: &NetGraph,
@@ -203,7 +250,10 @@ fn continuation(
         .filter(|a| a.dir.dot(heading) >= cos)
         .max_by(|a, b| a.dir.dot(heading).total_cmp(&b.dir.dot(heading)))?;
     let (_, theirs) = zoned(net, roads, straight.seg)?;
-    if (theirs.half_width - ours.half_width).abs() > 1e-3 {
+    if (theirs.half_width - ours.half_width).abs() > 1e-3
+        || rounded_corner(net, id)
+        || rounded_corner(net, straight.seg)
+    {
         return None;
     }
     let v = side_vec(heading, side);
@@ -366,6 +416,37 @@ impl Part<'_> {
     }
 }
 
+/// How the two ends of `f` count: an open end (a dead end, the convex side of a corner) at a
+/// node where the street's other side stops at a cross street's edge starts at that same
+/// distance, so the cells and ticks of the two sides of a street stand opposite each other
+/// (BUG-067; T-265 keeps this one rule: it moves an end, it fits nothing).
+fn shared_ends(
+    net: &NetGraph,
+    roads: &dyn Fn(RoadDefId) -> RoadZoning,
+    f: &Frontage,
+) -> (FrontEnd, FrontEnd) {
+    let (Some(&(first, first_fwd)), Some(&(last, last_fwd))) = (f.segs.first(), f.segs.last())
+    else {
+        return (f.start, f.end);
+    };
+    // Walking back from the first segment our side is `side.flip()`, the other side `side`.
+    let start = match f.start {
+        FrontEnd::Open => match end_of(net, roads, first, !first_fwd, f.side) {
+            FrontEnd::Edge(d) => FrontEnd::Edge(d),
+            FrontEnd::Open => FrontEnd::Open,
+        },
+        e => e,
+    };
+    let end = match f.end {
+        FrontEnd::Open => match end_of(net, roads, last, last_fwd, f.side.flip()) {
+            FrontEnd::Edge(d) => FrontEnd::Edge(d),
+            FrontEnd::Open => FrontEnd::Open,
+        },
+        e => e,
+    };
+    (start, end)
+}
+
 /// The blocks of one frontage: 8 m columns from its start, as many as fit before its end.
 pub(crate) fn layout_frontage(
     net: &NetGraph,
@@ -392,11 +473,12 @@ pub(crate) fn layout_frontage(
         return Vec::new();
     };
     let inner = roads(first.road).half_width;
+    let (start, end) = shared_ends(net, roads, f);
     let edge = |e: FrontEnd| match e {
         FrontEnd::Edge(d) => d,
         FrontEnd::Open => 0.0,
     };
-    let (a0, a1) = (edge(f.start), run - edge(f.end));
+    let (a0, a1) = (edge(start), run - edge(end));
     // A centimetre of slack: a block drawn to whole cells measures a hair under them.
     let n = (((a1 - a0) + 0.01) / CELL_SIZE).floor().max(0.0) as u32;
     if n == 0 {
@@ -406,7 +488,7 @@ pub(crate) fn layout_frontage(
     // The cells count from the edge of a cross street (the corner of the block), else from the
     // start node: from the end when only the end stands at a cross street, the rest under 8 m
     // then falls at the open start.
-    let from_end = matches!(f.start, FrontEnd::Open) && matches!(f.end, FrontEnd::Edge(_));
+    let from_end = matches!(start, FrontEnd::Open) && matches!(end, FrontEnd::Edge(_));
     let origin = if from_end {
         a1 - n as f32 * CELL_SIZE
     } else {
