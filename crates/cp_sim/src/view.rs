@@ -1187,7 +1187,9 @@ mod tests {
             .map(|(_, j)| j)
             .find(|j| j.arms.len() == 2)
             .unwrap();
-        assert_eq!(corner.polygon.len(), 4);
+        // A 90 degree bend (T-263): both ends cut at the inner corner, a round join outside.
+        assert_eq!(corner.class, cp_net::NodeClass::Bend);
+        assert!(corner.polygon.len() >= 4);
         // A quiet tick changes nothing; the snapshot shares its data.
         sim.tick_once();
         assert_eq!(sim.view().junctions.version(), 1);

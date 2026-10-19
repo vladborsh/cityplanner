@@ -68,6 +68,11 @@
 //! unchanged): a pedestrian's walk along a sidewalk ends at the junction setback instead of the
 //! node centre, and corners are walked by arc length, so walks are shorter from the first tick.
 
+//! **T-263.** Re-recorded again, the two "load + 4096 ticks" values only (state at load
+//! unchanged): node geometry v2 cuts a middle node's segments at the node (setback 0, was half
+//! the road's width) and a shallow bend's where the inner edges meet, so the lane connections
+//! there (which start and end at the cuts) are shorter.
+
 //! **T-256.** Re-recorded again, the two "load + 4096 ticks" values only (state at load
 //! unchanged): the walk-or-drive choice (T-242) is made by the path service on its workers and
 //! the trip takes its mode when the route is delivered, 8 ticks after it was asked for.
