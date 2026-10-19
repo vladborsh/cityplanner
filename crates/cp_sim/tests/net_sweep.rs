@@ -253,6 +253,10 @@ impl Case {
                     if i.start != m && i.end != m {
                         return false;
                     }
+                    // Only through a plain cut: two junctions 8 m apart on a wide road stay red.
+                    if !net.node(m).is_some_and(|x| x.segments.len() == 2) {
+                        return false;
+                    }
                     let away = |g: &cp_net::Segment| {
                         if g.start == m {
                             to_xz(g.curve.tangent(0.0)).normalize_or_zero()
