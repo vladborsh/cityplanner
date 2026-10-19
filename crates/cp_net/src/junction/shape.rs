@@ -68,6 +68,14 @@ impl ArmPath {
         })
     }
 
+    /// The start (the node) and unit direction of the arm when its curve is a straight line.
+    fn line(&self) -> Option<(Vec2, Vec2)> {
+        let (p0, p3) = (to_xz(self.curve.p0), to_xz(self.curve.p3));
+        let d = (p3 - p0).try_normalize()?;
+        let off = |p: Vec3| (to_xz(p) - p0).perp_dot(d).abs();
+        (off(self.curve.p1) < 1e-4 && off(self.curve.p2) < 1e-4).then_some((p0, d))
+    }
+
     fn dir_t(&self, u: f32) -> Vec2 {
         to_xz(self.curve.derivative(u))
             .try_normalize()
@@ -108,6 +116,25 @@ fn seg_hit(a0: Vec2, a1: Vec2, b0: Vec2, b1: Vec2) -> Option<(f32, f32)> {
 /// right): arc lengths from the node along each, at the crossing farthest out along `a`. The
 /// edges are the real offset curves: sampled, then refined by Newton steps.
 pub(super) fn edge_meet(pa: &ArmPath, ha: f32, pb: &ArmPath, hb: f32) -> Option<(f32, f32)> {
+    // Two straight arms (most of a city): the edges are lines, their meeting point is exact.
+    if let (Some((a0, da)), Some((b0, db))) = (pa.line(), pb.line()) {
+        let (ea, eb) = (a0 + rot_ccw(da) * ha, b0 - rot_ccw(db) * hb);
+        let den = da.perp_dot(db);
+        if den.abs() < 1e-9 {
+            return None;
+        }
+        let w = eb - ea;
+        let (s, t) = (w.perp_dot(db) / den, w.perp_dot(da) / den);
+        let reach = |p: &ArmPath| p.length.min(MEET_REACH);
+        let inside = |x: f32, p: &ArmPath| (-1e-4..=reach(p) + 1e-4).contains(&x);
+        return (inside(s, pa) && inside(t, pb)).then_some((s.max(0.0), t.max(0.0)));
+    }
+    sampled_meet(pa, ha, pb, hb)
+}
+
+/// [`edge_meet`] for any curves: the edges sampled, the farthest crossing along `a` refined by
+/// Newton steps while they bring the edges closer.
+fn sampled_meet(pa: &ArmPath, ha: f32, pb: &ArmPath, hb: f32) -> Option<(f32, f32)> {
     let n = MEET_SAMPLES;
     let ua = pa.table.s_to_t(pa.length.min(MEET_REACH));
     let ub = pb.table.s_to_t(pb.length.min(MEET_REACH));
@@ -467,5 +494,47 @@ pub fn side_line(
             .offset(c)
         }
         None => straight.offset(c),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn arm(deg: f32, len: f32) -> ArmPath {
+        let d = Vec2::from_angle(deg.to_radians()) * len;
+        let curve = CubicBezier3::line(Vec3::ZERO, Vec3::new(d.x, 0.0, d.y));
+        let table = curve.arc_table();
+        ArmPath {
+            length: table.length(),
+            curve,
+            table,
+        }
+    }
+
+    /// The exact meeting point of two straight arms is the one the sampled search converges to.
+    #[test]
+    fn straight_arms_meet_where_the_sampled_search_finds_them() {
+        for (a, b, ha, hb) in [
+            (0.0, 90.0, 6.0, 6.0),
+            (0.0, 45.0, 14.0, 6.0),
+            (-20.0, 20.0, 6.0, 9.5),
+            (10.0, 150.0, 3.75, 6.0),
+            (0.0, 30.0, 14.0, 14.0),
+        ] {
+            let (pa, pb) = (arm(a, 90.0), arm(b, 70.0));
+            let (exact, sampled) = (edge_meet(&pa, ha, &pb, hb), sampled_meet(&pa, ha, &pb, hb));
+            match (exact, sampled) {
+                (Some(e), Some(s)) => assert!(
+                    (e.0 - s.0).abs() < 1e-3 && (e.1 - s.1).abs() < 1e-3,
+                    "{a} {b}: {e:?} vs {s:?}"
+                ),
+                // Both find no crossing (here `b`'s edge meets `a`'s behind the node).
+                (None, None) => assert_eq!((a, b), (10.0, 150.0)),
+                other => panic!("{a} {b}: {other:?}"),
+            }
+        }
+        // Edges that only meet behind the node do not meet.
+        assert!(edge_meet(&arm(0.0, 90.0), 6.0, &arm(270.0, 90.0), 6.0).is_none());
     }
 }
