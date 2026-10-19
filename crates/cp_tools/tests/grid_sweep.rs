@@ -139,6 +139,9 @@ struct Built {
     ghost: Option<Ghost>,
 }
 
+/// A cell as `GRID_SWEEP_TRACE` remembers it: corner key, valid, segment, row.
+type TracedCell = ([(i32, i32); 4], bool, cp_net::SegmentId, usize);
+
 /// A player in a fresh city: builds with the road tool in a frame turned by `angle` about `o`.
 struct Player {
     sim: SimRunner,
@@ -155,7 +158,7 @@ struct Player {
     tool: RoadTool,
     fails: Vec<(String, String)>,
     /// `GRID_SWEEP_TRACE`: every cell before the last click (key, valid, segment, row).
-    before_all: Vec<([(i32, i32); 4], bool, cp_net::SegmentId, usize)>,
+    before_all: Vec<TracedCell>,
 }
 
 impl Player {
