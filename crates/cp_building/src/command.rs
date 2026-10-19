@@ -84,6 +84,9 @@ pub enum BuildingError {
     DoesNotFit,
     /// A road, a building or another zone block covers part of the footprint.
     Blocked,
+    /// Part of the lot is land no building may stand on (a street's clearance or the next block
+    /// cuts it, as at a corner), though nothing stands there: BUG-082.
+    Cut,
     /// Part of the footprint is on a tile the player does not own.
     NotOwned,
     Water,
@@ -151,6 +154,7 @@ impl fmt::Display for BuildingError {
             Self::NoRoad => "must be next to a road",
             Self::DoesNotFit => "does not fit along the road",
             Self::Blocked => "blocked by a road or another building",
+            Self::Cut => "a street cuts the lot here: try further from the corner",
             Self::NotOwned => "tile not owned",
             Self::Water => "cannot build on water",
             Self::NeedsWater => "must be built on or beside water",
@@ -219,6 +223,9 @@ pub fn oriented_lot(def: &BuildingDef, rot: f32) -> (u8, u8) {
     }
 }
 
+/// How far from the cursor the other blocks of a corner are looked at for a lot, metres.
+const CORNER_REACH_M: f32 = 16.0;
+
 /// The pure placement check. `terrain` and `tiles` are skipped when `None` (bare test
 /// worlds); the sim always has both.
 #[allow(clippy::too_many_arguments)]
@@ -270,17 +277,77 @@ pub fn validate_placement_except(
     let (w, d) = oriented_lot(def, rot);
     let under = zones.cell_at(pos).ok_or(BuildingError::NoRoad)?;
     let block = zones.block(under.block).ok_or(BuildingError::NoRoad)?;
-    let mid = under.cell / BLOCK_DEPTH;
-    let col = mid.saturating_sub(u16::from(w.saturating_sub(1)) / 2);
-    if w == 0 || d == 0 || col + u16::from(w) > block.cols || u16::from(d) > BLOCK_DEPTH {
+    if w == 0 || d == 0 || u16::from(w) > block.cols || u16::from(d) > BLOCK_DEPTH {
         return Err(BuildingError::DoesNotFit);
     }
-    let lot = Lot {
-        block: under.block,
-        col,
-        w,
-        d,
-    };
+    // The lot centred on the cursor's column of the block under it first; where that one is
+    // refused (BUG-082: a block's corner has cells that are dropped or covered by the cross
+    // street) the nearest shift that holds the cursor column wins, then the same on the other
+    // blocks around the cursor, so the lot may face either street. The refusal named is the
+    // first lot's.
+    let mut near = zones.cells_within(pos, CORNER_REACH_M);
+    near.sort_by(|a, b| {
+        let dist = |c: &ZoneCellRef| {
+            zones
+                .cell_footprint(*c)
+                .map_or(f32::MAX, |o| o.c.distance(pos))
+        };
+        dist(a).total_cmp(&dist(b))
+    });
+    let mut seeds = vec![under];
+    seeds.extend(near.into_iter().filter(|c| c.block != under.block));
+    let mut tried = Vec::new();
+    let mut first = None;
+    for seed in seeds {
+        if tried.contains(&seed.block) {
+            continue;
+        }
+        tried.push(seed.block);
+        let Some(block) = zones.block(seed.block) else {
+            continue;
+        };
+        if u16::from(w) > block.cols {
+            continue;
+        }
+        let mid = seed.cell / BLOCK_DEPTH;
+        let centred = mid
+            .saturating_sub(u16::from(w.saturating_sub(1)) / 2)
+            .min(block.cols - u16::from(w));
+        let mut cols: Vec<u16> = (mid.saturating_sub(u16::from(w) - 1)..=mid)
+            .filter(|c| c + u16::from(w) <= block.cols)
+            .collect();
+        cols.sort_by_key(|c| (c.abs_diff(centred), *c));
+        for col in cols {
+            let lot = Lot {
+                block: seed.block,
+                col,
+                w,
+                d,
+            };
+            match check_lot(db, zones, net, terrain, tiles, def, lot, ignore) {
+                Ok(plan) => return Ok(plan),
+                Err(e) => {
+                    first.get_or_insert(e);
+                }
+            }
+        }
+    }
+    Err(first.unwrap_or(BuildingError::DoesNotFit))
+}
+
+/// The checks of one candidate lot.
+#[allow(clippy::too_many_arguments)]
+fn check_lot(
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    net: &NetGraph,
+    terrain: Option<&Terrain>,
+    tiles: Option<&TileOwnership>,
+    def: &BuildingDef,
+    lot: Lot,
+    ignore: &[ZoneCellRef],
+) -> Result<PlacementPlan, BuildingError> {
+    let under = lot.block;
     let site = def
         .service
         .as_deref()
@@ -289,7 +356,7 @@ pub fn validate_placement_except(
     let wet = |c: Vec2| terrain.is_some_and(|t| t.is_water(c));
     let mut centres = Vec::new();
     for cell in lot.cells() {
-        let centre = zones.cell_footprint(cell).ok_or(BuildingError::Blocked)?.c;
+        let centre = zones.cell_footprint(cell).ok_or(BuildingError::Cut)?.c;
         let own = ignore.contains(&cell);
         if zones.is_occupied(cell) && !own {
             return Err(BuildingError::Blocked);
@@ -300,7 +367,7 @@ pub fn validate_placement_except(
             match (wet(centre), site) {
                 (true, ServiceSite::OnWater) => {}
                 (true, _) => return Err(BuildingError::Water),
-                (false, _) => return Err(BuildingError::Blocked),
+                (false, _) => return Err(BuildingError::Cut),
             }
         }
         centres.push(centre);
@@ -336,7 +403,7 @@ pub fn validate_placement_except(
             }
         }
     }
-    let (pos, rot, access) = place(zones, net, under.block, &lot).ok_or(BuildingError::NoRoad)?;
+    let (pos, rot, access) = place(zones, net, under, &lot).ok_or(BuildingError::NoRoad)?;
     Ok(PlacementPlan {
         footprint: Footprint::Lot(lot),
         pos,

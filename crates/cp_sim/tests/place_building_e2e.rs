@@ -155,7 +155,7 @@ fn invalid_placements_are_rejected() {
     // No road: far from any block.
     let e = run(&mut sim, place(Vec2::new(3100.0, 3300.0), pump(&c))).unwrap_err();
     assert!(e.contains("next to a road"), "{e}");
-    // At the last column the lot would run past the end of the block.
+    // At the last column the lot slides back along the street to fit the block (BUG-082).
     let last = sim
         .world()
         .resource::<ZoneGrid>()
@@ -166,8 +166,33 @@ fn invalid_placements_are_rejected() {
         .cols
         - 1;
     let end = spot(&sim, last);
-    let e = run(&mut sim, place(end, pump(&c))).unwrap_err();
-    assert!(e.contains("fit"), "{e}");
+    let plan = {
+        let w = sim.world();
+        cp_building::validate_placement(
+            &c,
+            w.resource::<ZoneGrid>(),
+            w.resource::<cp_net::NetGraph>(),
+            None,
+            None,
+            pump(&c),
+            end,
+            0.0,
+        )
+        .unwrap()
+    };
+    let cols = sim
+        .world()
+        .resource::<ZoneGrid>()
+        .blocks()
+        .next()
+        .unwrap()
+        .1
+        .cols;
+    assert!(
+        plan.cells()
+            .iter()
+            .all(|c| c.cell / cp_zone::BLOCK_DEPTH < cols)
+    );
     // Zoned buildings are not placeable by hand.
     let house = c.building_id("house_low_1").unwrap();
     let e = run(&mut sim, place(s5, house)).unwrap_err();
