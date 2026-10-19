@@ -86,9 +86,10 @@ lockstep multiplayer), so `f32` math is fine. Within that scope:
 
 - Building, road and vehicle types are data in `assets/content/*.ron`. Don't hardcode a
   type in Rust that belongs in content.
-- Any change to a serialized sim type bumps the save version and adds a migration plus a
-  test that loads the previous version's fixture. Never edit a committed fixture save to
-  make a test pass.
+- Any change to a serialized sim type bumps the save version. During active development
+  (user decision 2026-10-19, until the user says saves must be kept) old saves are NOT
+  migrated: an older save is refused with "save from an older version"; no migration code or
+  previous-version fixture is needed. Never edit a committed fixture save to make a test pass.
 
 ## Working in a worktree
 
