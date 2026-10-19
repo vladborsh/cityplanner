@@ -84,6 +84,9 @@ const WATER_SAMPLE_STEP: f32 = 2.0;
 /// steeper than the road may be), and the slack of the piece check.
 const RAMP_SLOPE_SHARE: f32 = 0.9995;
 const SLOPE_EPS: f32 = 1e-4;
+/// A remnant this much under 8 m still counts as 8 m (the arc length of a cut is a float: a
+/// point aimed at 8.000 m from a node must stay a cut).
+const REMNANT_EPS: f32 = 0.02;
 /// Crossings closer than this (metres) to an auto-cut point replace it.
 const CUT_MERGE: f32 = 0.5;
 
@@ -493,7 +496,9 @@ impl Builder<'_> {
         if literal {
             let s = self.graph.segment(segment).expect("segment exists");
             let at = s.curve.arc_table().t_to_s(t);
-            if at < MIN_SEGMENT_LENGTH_BUILD || s.length - at < MIN_SEGMENT_LENGTH_BUILD {
+            if at < MIN_SEGMENT_LENGTH_BUILD - REMNANT_EPS
+                || s.length - at < MIN_SEGMENT_LENGTH_BUILD - REMNANT_EPS
+            {
                 let near = if at <= s.length - at { s.start } else { s.end };
                 return NodeRef::Existing(near);
             }

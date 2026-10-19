@@ -7,7 +7,7 @@
 use bevy_ecs::message::Messages;
 use bevy_math::Vec2;
 use cp_core::CommandOutcome;
-use cp_net::{ElevationMode, NetCommand, RoadPath};
+use cp_net::{Anchor, BuildPlan, ElevationMode, NetCommand, NetGraph, PlanPiece, RoadPath};
 
 use crate::{SimCommand, SimRunner};
 
@@ -317,6 +317,37 @@ pub fn place_sites(road: &'static str, hw: f32) -> Vec<PlaceSite> {
     out
 }
 
+fn shifted(path: &RoadPath, at: Vec2) -> RoadPath {
+    match path {
+        RoadPath::Straight { from, to } => RoadPath::Straight {
+            from: *from + at,
+            to: *to + at,
+        },
+        RoadPath::Curve { from, control, to } => RoadPath::Curve {
+            from: *from + at,
+            control: *control + at,
+            to: *to + at,
+        },
+        RoadPath::Free(v) => RoadPath::Free(v.iter().map(|p| *p + at).collect()),
+    }
+}
+
+/// Runs the commands of one road and returns its refusal, if any.
+fn send(sim: &mut SimRunner, command: NetCommand) -> Option<String> {
+    let tick = sim.tick();
+    sim.push_command(SimCommand::Net(command), tick);
+    sim.tick_once();
+    let out: Vec<CommandOutcome> = sim
+        .world_mut()
+        .resource_mut::<Messages<CommandOutcome>>()
+        .drain()
+        .collect();
+    match out.last().map(|o| &o.result) {
+        Some(Err(e)) => Some(format!("{e:?}")),
+        _ => None,
+    }
+}
+
 /// Lays `roads` with their origin at `at` (world XZ), each as one `BuildRoad`, and runs a tick
 /// after each. Returns the refusals, as `(road index, message)`.
 pub fn build_roads(sim: &mut SimRunner, at: Vec2, roads: &[CaseRoad]) -> Vec<(usize, String)> {
@@ -329,35 +360,101 @@ pub fn build_roads(sim: &mut SimRunner, at: Vec2, roads: &[CaseRoad]) -> Vec<(us
             refused.push((i, format!("no road type {road}")));
             continue;
         };
-        let path = match path {
-            RoadPath::Straight { from, to } => RoadPath::Straight {
-                from: *from + at,
-                to: *to + at,
-            },
-            RoadPath::Curve { from, control, to } => RoadPath::Curve {
-                from: *from + at,
-                control: *control + at,
-                to: *to + at,
-            },
-            RoadPath::Free(v) => RoadPath::Free(v.iter().map(|p| *p + at).collect()),
+        let command = NetCommand::BuildRoad {
+            road: id,
+            path: shifted(path, at),
+            elevation: ElevationMode::Ground,
         };
-        let tick = sim.tick();
-        sim.push_command(
-            SimCommand::Net(NetCommand::BuildRoad {
+        if let Some(e) = send(sim, command) {
+            refused.push((i, e));
+        }
+    }
+    sim.tick_once();
+    refused
+}
+
+/// A point as the road tool resolves it (§6.8.3 item 1): a node under it is that node; a point
+/// within the half width of a ground street is a point of its axis (`OnSegment`); anything else
+/// is free. Returns the anchor and where it stands.
+pub fn resolve_anchor(graph: &NetGraph, db: &cp_content::ContentDb, p: Vec2) -> (Anchor, Vec2) {
+    use cp_core::curve::to_xz;
+    let node = graph
+        .nodes()
+        .filter(|(_, n)| n.elevation == cp_net::Elevation::Ground)
+        .map(|(id, n)| (to_xz(n.pos).distance(p), id, to_xz(n.pos)))
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((d, id, pos)) = node
+        && d <= 0.05
+    {
+        return (Anchor::Node(id), pos);
+    }
+    let seg = graph
+        .segments()
+        .filter(|(_, s)| s.elevation == cp_net::Elevation::Ground)
+        .map(|(id, s)| {
+            let (t, d) = s.curve.nearest_xz(p);
+            (
+                d / (db.road(s.road).width / 2.0).max(0.1),
+                d,
+                id,
+                t,
+                to_xz(s.curve.point(t)),
+            )
+        })
+        .filter(|(rel, ..)| *rel <= 1.0)
+        .min_by(|a, b| a.1.total_cmp(&b.1));
+    match seg {
+        Some((_, _, id, t, pos)) => (Anchor::OnSegment(id, t), pos),
+        None => (Anchor::Free(p), p),
+    }
+}
+
+/// [`build_roads`] through `BuildPlan`: each road is a plan whose points the tool's resolver
+/// ([`resolve_anchor`]) has made nodes, points of a street, or free points; the sim applies
+/// them as they are.
+pub fn build_roads_plan(sim: &mut SimRunner, at: Vec2, roads: &[CaseRoad]) -> Vec<(usize, String)> {
+    let mut refused = Vec::new();
+    let Some(db) = sim.view().content.clone() else {
+        return vec![(0, "no content".into())];
+    };
+    for (i, (road, path)) in roads.iter().enumerate() {
+        let Some(id) = db.road_id(road) else {
+            refused.push((i, format!("no road type {road}")));
+            continue;
+        };
+        // The legs: (from, control points, to) in world XZ.
+        let legs: Vec<(Vec2, Option<Vec2>, Vec2)> = match shifted(path, at) {
+            RoadPath::Straight { from, to } => vec![(from, None, to)],
+            RoadPath::Curve { from, control, to } => vec![(from, Some(control), to)],
+            RoadPath::Free(v) => v.windows(2).map(|w| (w[0], None, w[1])).collect(),
+        };
+        let net = sim.view().net.clone();
+        let mut pieces = Vec::new();
+        let mut prev: Option<(Anchor, Vec2)> = None;
+        for (a, control, b) in legs {
+            let (aa, pa) = prev.unwrap_or_else(|| resolve_anchor(&net, &db, a));
+            let (ab, pb) = resolve_anchor(&net, &db, b);
+            let (c1, c2) = match control {
+                None => (pa.lerp(pb, 1.0 / 3.0), pa.lerp(pb, 2.0 / 3.0)),
+                Some(c) => (pa + (c - pa) * (2.0 / 3.0), pb + (c - pb) * (2.0 / 3.0)),
+            };
+            pieces.push(PlanPiece {
+                from: aa,
+                c1,
+                c2,
+                to: ab,
+            });
+            prev = Some((ab, pb));
+        }
+        let command = NetCommand::BuildPlan {
+            plan: BuildPlan {
                 road: id,
-                path,
                 elevation: ElevationMode::Ground,
-            }),
-            tick,
-        );
-        sim.tick_once();
-        let out: Vec<CommandOutcome> = sim
-            .world_mut()
-            .resource_mut::<Messages<CommandOutcome>>()
-            .drain()
-            .collect();
-        if let Some(Err(e)) = out.last().map(|o| &o.result) {
-            refused.push((i, format!("{e:?}")));
+                pieces,
+            },
+        };
+        if let Some(e) = send(sim, command) {
+            refused.push((i, e));
         }
     }
     sim.tick_once();
