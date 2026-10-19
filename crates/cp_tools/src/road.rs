@@ -5,9 +5,9 @@ use cp_content::{RoadDef, RoadDefId};
 use cp_core::Cost;
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_net::{
-    Anchor, BuildPlan, ControlMark, ElevationMode, PlanPiece, RoadBuildError, RoadBuildPlan,
-    RoadPath, RoadPathRequest, SnapOptions, SnapReport, SnapReportKind, StepContext, cell_ticks,
-    clearance_report, control_points, quantize_path, stretch, validate_build_plan,
+    Anchor, BuildPlan, ElevationMode, PlanPiece, RoadBuildError, RoadBuildPlan, RoadPath,
+    RoadPathRequest, SnapOptions, SnapReport, SnapReportKind, clearance_report,
+    validate_build_plan,
 };
 use cp_sim::SimView;
 
@@ -384,7 +384,17 @@ fn direct_hit(view: &SimView, elevation: ElevationMode, p: Vec2, is_end: bool) -
     );
     match snap.hit {
         Hit::Node(i) => (Anchor::Node(ids[i]), snap.pos),
-        Hit::Edge(i, t) => (Anchor::OnSegment(sids[i], t), snap.pos),
+        Hit::Edge(i, t) => {
+            let moved = cp_net::out_of_end_footprint(net, content, sids[i], t);
+            if moved == t {
+                (Anchor::OnSegment(sids[i], t), snap.pos)
+            } else {
+                (
+                    Anchor::OnSegment(sids[i], moved),
+                    to_xz(edges[i].curve.point(moved)),
+                )
+            }
+        }
         Hit::Free => (Anchor::Free(p), p),
     }
 }
@@ -439,15 +449,15 @@ pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRe
     let Some(content) = view.content.as_deref() else {
         return (req, SnapReport::default());
     };
-    let marks = zone_marks(view, content, &req.path);
-    let cx = StepContext {
+    let marks = crate::lattice::path_marks(view, &req.path);
+    let cx = crate::lattice::LatticeCtx {
         graph: &view.net,
         content,
         alt,
         marks: &marks,
         edge_offset: content.road(req.road).width / 2.0,
     };
-    let (path, report) = quantize_path(&req, &cx);
+    let (path, report) = crate::lattice::quantize_path(&req, &cx);
     (RoadPathRequest { path, ..req }, report)
 }
 
@@ -467,7 +477,7 @@ pub struct Cursor {
     /// What snapped the point.
     pub snap: SnapReport,
     /// The 8-cell block guide, if it moved the cursor.
-    pub block: Option<crate::zone_preview::BlockGuide>,
+    pub block: Option<crate::lattice::BlockGuide>,
 }
 
 /// Resolves the cursor `hover` of `tool` once. `free`: snaps off (`Alt`, the button): no block
@@ -478,7 +488,7 @@ pub fn resolve_cursor(view: &SimView, tool: &RoadTool, hover: Vec2, free: bool) 
     let (hover, block) = if free {
         (hover, None)
     } else {
-        crate::zone_preview::block_hover(view, tool, hover, false)
+        crate::lattice::block_hover(view, tool, hover, false)
     };
     // The path with the cursor; with nothing clicked yet, a probe leg east of the first point:
     // the rules for a vertex do not depend on the leg.
@@ -538,90 +548,6 @@ fn plan_anchors(plan: &BuildPlan, at: &[Vec2]) -> Vec<(Anchor, Vec2)> {
     out
 }
 
-/// How far from the path the ticks of a street still count: a block (24 cells) and more.
-const TICK_REACH: f32 = 220.0;
-
-/// The column boundaries (every 8th, as laid by the zone grid) of the ground streets near the
-/// vertices of `path`: where the length step jumps to, so a street built there ends on a cell
-/// boundary of the cells beside it (BUG-047).
-fn zone_marks(
-    view: &SimView,
-    content: &cp_content::ContentDb,
-    path: &RoadPath,
-) -> Vec<ControlMark> {
-    let points: Vec<Vec2> = match path {
-        RoadPath::Straight { from, to } => vec![*from, *to],
-        RoadPath::Curve { from, control, to } => vec![*from, *control, *to],
-        RoadPath::Free(v) => v.clone(),
-    };
-    let roads = cp_zone::road_zoning(content);
-    let mut out: Vec<ControlMark> = Vec::new();
-    for (id, s) in view.net.segments() {
-        if s.elevation != cp_net::Elevation::Ground {
-            continue;
-        }
-        let dist = points
-            .iter()
-            .map(|p| s.curve.nearest_xz(*p).1)
-            .fold(f32::INFINITY, f32::min);
-        // The ticks of a street across a block count too (the street lands on the opposite
-        // tick): up to a long block away. Its cell boundaries only where the guides reach.
-        if dist > TICK_REACH {
-            continue;
-        }
-        let near = dist <= cp_net::build::GUIDE_RADIUS;
-        // Only the side of the street the new road lies on: the cells of its other side have
-        // a lattice of their own that the new road does not cross.
-        let mut want = [false; 2];
-        for (i, p) in points.iter().enumerate() {
-            let (t, d) = s.curve.nearest_xz(*p);
-            if d > cp_net::build::GUIDE_RADIUS {
-                continue;
-            }
-            let foot = to_xz(s.curve.point(t));
-            let tan = s.curve.tangent(t);
-            let tan = Vec2::new(tan.x, tan.z).normalize_or_zero();
-            // The other vertices decide which side the road runs to.
-            for q in points
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(_, q)| q)
-            {
-                let side = tan.perp_dot(*q - foot);
-                if side.abs() > 1.0 {
-                    want[usize::from(side > 0.0)] = true;
-                }
-            }
-        }
-        // The cell lines of the street (T-265): on the side the road is drawn on every boundary
-        // (a join goes to the nearest), its 8-cell lines (where a cross street's near edge
-        // leaves a block of 8 cells) also on streets further off, both sides.
-        let sides = view.zones.frontage_marks(&view.net, &roads, id);
-        for (slot, marks) in sides.iter().enumerate() {
-            if near && !want[slot] {
-                continue;
-            }
-            let Some(first) = marks.first() else { continue };
-            for m in marks.iter() {
-                let major = m.major && !m.end;
-                if !near && !major {
-                    continue;
-                }
-                let t = s.curve.tangent(s.curve.arc_table().s_to_t(m.arc));
-                out.push(ControlMark {
-                    pos: m.axis,
-                    dir: Vec2::new(t.x, t.z).normalize_or_zero(),
-                    along: (m.arc - first.arc).abs(),
-                    major,
-                    onward: m.onward,
-                });
-            }
-        }
-    }
-    out
-}
-
 /// The verdict shown when a new road runs less than one cell from another (§6.7, T-124).
 pub const TOO_CLOSE: &str = "too close to another road: leave a cell (8 m) or connect";
 
@@ -640,12 +566,13 @@ pub fn too_close_plan(view: &SimView, plan: &BuildPlan) -> bool {
     !clearance_report(&view.net, content, &built).is_empty()
 }
 
-/// What a control-point marker of the road tool stands for.
+/// What a marker of the road tool stands for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MarkerKind {
-    /// A control point: every 64 m from the anchor of a stretch (drawn as a diamond).
+    /// An 8-cell line of a street's cells: where the near edge of a cross street leaves a block
+    /// of 8 cells (drawn as a diamond).
     Control,
-    /// An 8 m tick, shown while the cursor is within a cell of a road edge (a small cross).
+    /// A cell line, shown while the cursor is within a cell of a road edge (a small cross).
     Tick,
 }
 
@@ -655,17 +582,20 @@ pub struct RoadMarker {
     pub kind: MarkerKind,
 }
 
-/// The markers the road tool draws around the cursor `hover`: the control points of every
-/// ground stretch within [`GUIDE_RADIUS`] of it and, when the cursor is within one cell of a
-/// road's edge, the 8 m ticks of that road's stretch. Derived from the graph; nothing is stored.
+/// The markers the road tool draws around the cursor `hover`, all from the cell lines of the
+/// zone layout (T-266, §6.8.3 item 3): the 8-cell lines of every street within [`GUIDE_RADIUS`]
+/// of it and, when the cursor is within one cell of a street's edge, every cell line of that
+/// street. Derived from the net; nothing is stored.
+///
+/// [`GUIDE_RADIUS`]: cp_net::build::GUIDE_RADIUS
 pub fn road_markers(view: &SimView, hover: Vec2) -> Vec<RoadMarker> {
     let Some(content) = view.content.as_deref() else {
         return Vec::new();
     };
     let graph = &*view.net;
-    let mut seen = std::collections::BTreeSet::new();
-    let mut out = Vec::new();
     let mut near_edge: Option<(f32, cp_net::SegmentId)> = None;
+    // The streets within the guide radius show all their control lines.
+    let mut near = std::collections::BTreeSet::new();
     for (id, s) in graph.segments() {
         if s.elevation != cp_net::Elevation::Ground
             || s.curve.bounds_distance_xz(hover) > cp_net::build::GUIDE_RADIUS + 1e-3
@@ -673,29 +603,34 @@ pub fn road_markers(view: &SimView, hover: Vec2) -> Vec<RoadMarker> {
             continue;
         }
         let (_, d) = s.curve.nearest_xz(hover);
-        let reach = content.road(s.road).width * 0.5 + cp_net::ZONE_CELL;
+        let reach = content.road(s.road).width * 0.5 + cp_net::build::ZONE_CELL;
         if d <= reach && near_edge.is_none_or(|(bd, _)| d < bd) {
             near_edge = Some((d, id));
         }
-        if d > cp_net::build::GUIDE_RADIUS || seen.contains(&id) {
-            continue;
+        if d <= cp_net::build::GUIDE_RADIUS {
+            near.insert(id);
         }
-        let Some(st) = stretch(graph, id) else {
+    }
+    let mut out: Vec<RoadMarker> = Vec::new();
+    for l in crate::lattice::all_lines(view).iter() {
+        let m = l.line.mark;
+        let kind = if m.major && !m.end {
+            MarkerKind::Control
+        } else if near_edge.is_some_and(|(_, id)| id == l.line.segment) {
+            MarkerKind::Tick
+        } else {
             continue;
         };
-        seen.extend(st.segments.iter().copied());
-        out.extend(control_points(graph, &st).into_iter().map(|p| RoadMarker {
-            pos: Vec2::new(p.pos.x, p.pos.z),
-            kind: MarkerKind::Control,
-        }));
-    }
-    if let Some((_, id)) = near_edge
-        && let Some(st) = stretch(graph, id)
-    {
-        out.extend(cell_ticks(graph, &st).into_iter().map(|p| RoadMarker {
-            pos: Vec2::new(p.pos.x, p.pos.z),
-            kind: MarkerKind::Tick,
-        }));
+        if kind == MarkerKind::Control && !near.contains(&l.line.segment) {
+            continue;
+        }
+        // One marker per point of the axis (the two sides of a street share their lines).
+        if !out
+            .iter()
+            .any(|o| o.kind == kind && o.pos.distance(m.axis) < 0.05)
+        {
+            out.push(RoadMarker { pos: m.axis, kind });
+        }
     }
     out
 }

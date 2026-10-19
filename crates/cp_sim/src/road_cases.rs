@@ -376,8 +376,8 @@ pub fn build_roads(sim: &mut SimRunner, at: Vec2, roads: &[CaseRoad]) -> Vec<(us
 /// A point as the road tool resolves it (§6.8.3 items 1 and 5, T-264): a point inside the
 /// junction of a node ([`cp_net::in_junction`]: within 8 m, or on the asphalt of one of its arms
 /// within its reach) is that node; else a point
-/// within the half width of a ground street is a point of its axis (`OnSegment`); anything else
-/// is free. Returns the anchor and where it stands.
+/// within the half width of a ground street is a point of its axis (`OnSegment`), moved out of
+/// the footprint of a dead end ([`cp_net::out_of_end_footprint`]); anything else is free. Returns the anchor and where it stands.
 pub fn resolve_anchor(graph: &NetGraph, db: &cp_content::ContentDb, p: Vec2) -> (Anchor, Vec2) {
     use cp_core::curve::to_xz;
     let node = graph
@@ -407,7 +407,11 @@ pub fn resolve_anchor(graph: &NetGraph, db: &cp_content::ContentDb, p: Vec2) -> 
         .filter(|(rel, ..)| *rel <= 1.0)
         .min_by(|a, b| a.1.total_cmp(&b.1));
     match seg {
-        Some((_, _, id, t, pos)) => (Anchor::OnSegment(id, t), pos),
+        Some((_, _, id, t, _)) => {
+            let t = cp_net::out_of_end_footprint(graph, db, id, t);
+            let pos = graph.segment(id).map_or(p, |s| to_xz(s.curve.point(t)));
+            (Anchor::OnSegment(id, t), pos)
+        }
         None => (Anchor::Free(p), p),
     }
 }

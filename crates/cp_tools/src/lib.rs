@@ -17,6 +17,7 @@ pub mod building;
 pub mod bulldozer;
 mod district;
 pub mod flip;
+pub mod lattice;
 pub mod net_debug;
 mod outbox;
 pub mod pick;

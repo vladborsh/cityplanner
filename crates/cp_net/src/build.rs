@@ -169,6 +169,33 @@ pub fn in_junction(graph: &NetGraph, content: &ContentDb, node: NodeId, p: Vec2)
         })
 }
 
+/// A point of the axis of `seg` (at `t`) that would stand inside the footprint of a dead end of
+/// that segment, closer to it along the street than the road's half width, moves out to the half
+/// width (T-266, §6.8.3 item 5): a node there would leave the dead end on the asphalt of the piece
+/// past it. The tool's resolver applies it to a point of a street; returns the new `t` (`t`
+/// itself when nothing moves, or when the rest of the street would get shorter than
+/// [`MIN_SEGMENT_LENGTH_BUILD`]).
+pub fn out_of_end_footprint(graph: &NetGraph, content: &ContentDb, seg: SegmentId, t: f32) -> f32 {
+    let Some(s) = graph.segment(seg) else {
+        return t;
+    };
+    let hw = content.road(s.road).width / 2.0;
+    let dead = |n: NodeId| graph.node(n).is_some_and(|n| n.segments.len() == 1);
+    let table = s.curve.arc_table();
+    let at = table.t_to_s(t.clamp(0.0, 1.0));
+    let to = if dead(s.start) && at < hw {
+        hw
+    } else if dead(s.end) && s.length - at < hw {
+        s.length - hw
+    } else {
+        return t;
+    };
+    if to < MIN_SEGMENT_LENGTH_BUILD || s.length - to < MIN_SEGMENT_LENGTH_BUILD {
+        return t;
+    }
+    table.s_to_t(to)
+}
+
 /// A remnant this much under 8 m still counts as 8 m (the arc length of a cut is a float: a
 /// point aimed at 8.000 m from a node must stay a cut).
 const REMNANT_EPS: f32 = 0.02;
@@ -1058,8 +1085,10 @@ struct Dissolved {
     merged: Vec<SegmentId>,
 }
 
-/// Where a ground plan meets an old street within [`MIN_SEGMENT_LENGTH_BUILD`] (along it) of a
-/// plain cut — an anchor on the street, or a crossing — the cut is dissolved: the two pieces
+/// Where a ground plan meets an old street within [`MIN_SEGMENT_LENGTH_BUILD`] or the street's
+/// half width, whichever is more, (along it) of a plain cut — an anchor on the street, or a
+/// crossing — the cut is dissolved (T-266: a cut closer than the half width would stand on the
+/// asphalt of the new piece past the meeting): the two pieces
 /// become one straight street (`NetGraph::merge_joint`). `None` when nothing is dissolved.
 fn dissolve_cuts(
     graph: &NetGraph,
@@ -1099,11 +1128,9 @@ fn dissolve_cuts(
             continue;
         };
         let at = seg.curve.arc_table().t_to_s(t);
+        let near = MIN_SEGMENT_LENGTH_BUILD.max(content.road(seg.road).width / 2.0);
         for (node, along) in [(seg.start, at), (seg.end, seg.length - at)] {
-            if is_plain_cut(graph, node)
-                && along < MIN_SEGMENT_LENGTH_BUILD - REMNANT_EPS
-                && !cuts.contains(&node)
-            {
+            if is_plain_cut(graph, node) && along < near - REMNANT_EPS && !cuts.contains(&node) {
                 cuts.push(node);
             }
         }
@@ -2123,8 +2150,6 @@ pub fn one_way_report(
 
 mod clearance;
 pub use clearance::{ClearanceWarning, clearance_report};
-mod quantize;
-pub use quantize::{CONTROL_LINE_TOL, ControlMark, StepContext, quantize_path};
 
 #[cfg(test)]
 mod tests;

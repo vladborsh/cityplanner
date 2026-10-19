@@ -24,7 +24,9 @@
 use bevy_math::Vec2;
 use cp_core::curve::CubicBezier3;
 use cp_net::build::{GUIDE_HALF_LENGTH, GUIDE_RADIUS, ZONE_CELL, angle_snap_guides};
-use cp_net::{CONTROL_LINE_TOL, ControlMark, SnapReport, SnapReportKind};
+use cp_net::{SnapReport, SnapReportKind};
+
+use crate::lattice::{CONTROL_LINE_TOL, ControlMark};
 
 /// How far (metres) the cursor may be from the intersection of two guides to snap onto it.
 pub const INTERSECTION_TOL_M: f32 = 3.0;
@@ -95,7 +97,7 @@ pub struct SnapCtx<'a> {
     pub edges: &'a [SnapEdge],
     /// Curves that give guides: parallels, perpendiculars, and the lines through their ends.
     pub guides: &'a [CubicBezier3],
-    /// Column boundaries of the zoning near the cursor (`cp_net::ControlMark`): the length jumps
+    /// Column boundaries of the zoning near the cursor ([`ControlMark`]): the length jumps
     /// onto the perpendicular through a major one.
     pub marks: &'a [ControlMark],
     /// The start of the leg being drawn; `None` for the first point of a drawing.

@@ -46,24 +46,16 @@ const ROADS: [&str; 3] = ["basic_2l", "medium_4l", "large_6l"];
 const MIN_LEN: f32 = 8.0;
 const MAX_LEN: f32 = 100.0;
 
-/// Cases that fail today (T-264 step A; the five prefixes below are step B's). T-262 took the sim's snaps away (R1, R2); T-264 gave the
+/// Cases that fail today: none. T-262 took the sim's snaps away (R1, R2); T-264 gave the
 /// resolver of the road tool the v7 rule (§6.8.3 items 1 and 5: a point inside a junction's reach
 /// is the node, a point within the half width of a street is a point of its axis) and made the
 /// sim refuse a plan whose node stands on the asphalt of a road it does not join (`through_end/3`).
+/// T-266 closed the junction footprint (two junctions 8-12 m apart on a wide road): the resolver
+/// moves a point out of a dead end's footprint (`cp_net::out_of_end_footprint`) and a plan that
+/// meets a street within its half width of a plain cut dissolves the cut.
 /// Prefixes of `scenario/.../road/angle` (a prefix ending in `/` covers every case under it);
 /// `known_red_cases_still_fail` names the cases that pass.
-const KNOWN_RED: &[&str] = &[
-    // Owner T-264 step B (the junction footprint test, architect review of step A): two
-    // junctions 8-12 m apart on a wide road (a T 10 m from the dead end of a 6-lane street; a
-    // crossing 9.3 m from a cut of one) leave a node inside the footprint of the other. The
-    // reach of a dead end or a plain cut is 8 m, so the point is not pulled onto it; the check
-    // that a point inside any arm's asphalt within the junction snaps comes with the resolver.
-    "near_node/end/10/large_6l/",
-    "near_node/end/12/large_6l/",
-    "near_node/end/8/large_6l/15",
-    "near_node/end/8/medium_4l/15",
-    "cross_near_node/24/large_6l/",
-];
+const KNOWN_RED: &[&str] = &[];
 
 fn known_red(case: &str) -> bool {
     KNOWN_RED.iter().any(|k| case.starts_with(k))
@@ -162,7 +154,8 @@ impl Case {
     /// three roads or more, or of a bend (two roads that turn more than 10 degrees, or of two
     /// types), also takes a point on the asphalt of one of its arms, no farther along the arm
     /// than the widest half width there. A dead end and a plain cut (two roads of one type on a
-    /// line) have the 8 m only. Anything else stays.
+    /// line) have the 8 m only. A point on a street closer to its dead end than the half width
+    /// moves out to the half width. Anything else stays.
     fn through(&self, p: Vec2) -> Vec2 {
         let view = self.sim.view();
         let net = &view.net;
@@ -214,11 +207,36 @@ impl Case {
                 (0.0..=reach).contains(&along) && off < self.db.road(s.road).width / 2.0
             })
         };
-        net.nodes()
+        if let Some(q) = net
+            .nodes()
             .filter(|(_, n)| n.elevation == cp_net::Elevation::Ground && inside(n))
             .map(|(_, n)| to_xz(n.pos))
             .min_by(|a, b| a.distance(w).total_cmp(&b.distance(w)))
-            .map_or(p, |q| self.l(q))
+        {
+            return self.l(q);
+        }
+        // T-266: a point on the asphalt of a straight street closer to its dead end than the
+        // half width moves along the axis out to the half width.
+        for (_, n) in net.nodes() {
+            let [sid] = n.segments.as_slice() else {
+                continue;
+            };
+            let Some(s) = net.segment(*sid) else {
+                continue;
+            };
+            let c = to_xz(n.pos);
+            let away = if c.distance(to_xz(s.curve.p0)) < 0.05 {
+                to_xz(s.curve.tangent(0.0)).normalize()
+            } else {
+                -to_xz(s.curve.tangent(1.0)).normalize()
+            };
+            let hw = self.db.road(s.road).width / 2.0;
+            let rel = w - c;
+            if (0.0..hw).contains(&rel.dot(away)) && rel.perp_dot(away).abs() < hw {
+                return self.l(c + away * hw);
+            }
+        }
+        p
     }
 
     /// `moved`: a node stands at each local point.

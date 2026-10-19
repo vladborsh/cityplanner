@@ -246,11 +246,6 @@ pub fn control_points(graph: &NetGraph, st: &Stretch) -> Vec<StretchPoint> {
     marks(graph, st, CONTROL_SPACING)
 }
 
-/// The ticks of a stretch: the same with an 8 m step, for the road tool's snapping.
-pub fn cell_ticks(graph: &NetGraph, st: &Stretch) -> Vec<StretchPoint> {
-    marks(graph, st, ZONE_CELL)
-}
-
 /// Where the bulldozer stops: both ends of the stretch and its control points, in order.
 /// Nodes inside the stretch are not stops.
 pub fn stops(graph: &NetGraph, st: &Stretch) -> Vec<StretchPoint> {
@@ -510,9 +505,6 @@ mod tests {
         // 64 m is 5 m from the far end: it becomes the end, which is a stop already.
         assert!(control_points(&g, &st).is_empty());
         assert_eq!(stops(&g, &st).len(), 2);
-        // 8 m ticks: 8..=56 are inside; 64 is within 8 m of the end.
-        let ticks: Vec<f32> = cell_ticks(&g, &st).iter().map(|p| p.along).collect();
-        assert_eq!(ticks, vec![8.0, 16.0, 24.0, 32.0, 40.0, 48.0, 56.0]);
     }
 
     #[test]
