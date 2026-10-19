@@ -422,20 +422,27 @@ fn a_cross_street_on_a_tick_leaves_exactly_8_cells_before_it() {
             );
             let view = sim.view();
             let roads = cp_zone::road_zoning(&db);
-            // The 1st tick of the east street (BUG-073): the centreline of its 1st cross street.
-            let mut ticks: Vec<cp_zone::StreetTick> = Vec::new();
-            for (id, g) in view.net.segments() {
-                let on_street = (g.curve.p0.z - 4600.0).abs() < 0.1
-                    && (g.curve.p3.z - 4600.0).abs() < 0.1
-                    && g.curve.p3.x.max(g.curve.p0.x) > 4600.5;
-                if on_street {
-                    ticks.extend(
-                        cp_zone::street_ticks(&view.net, &roads, id, 2.0 * hw_c)
-                            .into_iter()
-                            .filter(|t| t.seg == id),
-                    );
-                }
-            }
+            // The 1st tick of the east street: the centreline of its 1st cross street, whose near
+            // edge stands on the first 8-cell line of the street's north cells (T-265).
+            let ids: Vec<_> = view
+                .net
+                .segments()
+                .filter(|(_, g)| {
+                    (g.curve.p0.z - 4600.0).abs() < 0.1
+                        && (g.curve.p3.z - 4600.0).abs() < 0.1
+                        && g.curve.p3.x.max(g.curve.p0.x) > 4600.5
+                })
+                .map(|(id, _)| id)
+                .collect();
+            let mut ticks: Vec<cp_zone::Mark> = cp_zone::cell_lines(&view.net, &roads, ids)
+                .into_iter()
+                .map(|l| l.mark)
+                .filter(|m| m.major && !m.end && m.v.y < 0.0)
+                .map(|m| cp_zone::Mark {
+                    axis: m.axis + m.onward * hw_c,
+                    ..m
+                })
+                .collect();
             ticks.sort_by(|a, b| a.axis.x.total_cmp(&b.axis.x));
             ticks.dedup_by(|a, b| (a.axis.x - b.axis.x).abs() < 0.05);
             let tick = ticks[0];

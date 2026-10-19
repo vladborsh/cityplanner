@@ -35,7 +35,7 @@ fn the_v51_fixture_loads_with_a_docked_ship_and_a_train_round_trips() {
         read_header(&again).unwrap().0.format_version,
         FORMAT_VERSION
     );
-    assert_eq!(FORMAT_VERSION, 55);
+    assert_eq!(FORMAT_VERSION, 56);
     let l2 = load_with_map(&again, content.content_hash(), h.map_hash).unwrap();
     assert_eq!(l.data, l2.data);
     assert_eq!(l2.data.hubs.hubs[&id].premium, 12.5);

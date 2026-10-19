@@ -1090,13 +1090,11 @@ fn blocks_of_any_size_and_angle_have_no_overlapping_cells() {
     }
 }
 
-/// T-185: with the block fit on, a block between two facing streets that is nearly 8 rows
-/// deep is one clean grid of exactly 8 rows, however far off 64 m it is within the fit.
-/// `gap`: metres between the edges of the facing streets (they are 12 m wide).
+/// A block between two facing streets `gap` metres apart (edge to edge; they are 12 m wide),
+/// closed by two cross streets; the facing street may be crooked by `skew_deg`.
 fn block_of(gap: f32, skew_deg: f32) -> World {
     let depth = gap + 12.0;
     let mut w = World::new();
-    w.grid.set_block_fit(6.0);
     let len = 128.0;
     // Two cross streets close the block; the facing street may be crooked.
     w.line("basic_2l", (0.0, 0.0), (len, 0.0));
@@ -1132,23 +1130,37 @@ fn rows_across(w: &World, x: f32) -> Vec<(f32, f32)> {
     spans
 }
 
+/// T-265 (layout v3): cells are never stretched. A block 64 m deep is 4 + 4 rows of 8 m from
+/// edge to edge; one a little shallower or deeper keeps 8 m rows from each street, and where
+/// the two meet in the middle the rows of the older street win (60 m: 4 + 3, a gap of 4 m;
+/// 69 m: 4 + 4, a gap of 5 m).
 #[test]
-fn blocks_nearly_8_cells_deep_are_fitted_to_one_clean_grid() {
-    for depth in [60.0f32, 64.0, 69.0] {
+fn blocks_keep_8_m_rows_whatever_their_depth() {
+    for (depth, rows) in [(60.0f32, 7usize), (64.0, 8), (69.0, 8)] {
         let w = block_of(depth, 0.0);
         let spans = rows_across(&w, 60.0);
         let inner: Vec<_> = spans
             .iter()
             .filter(|s| s.0 > 5.9 && s.1 < depth + 6.1)
             .collect();
-        assert_eq!(inner.len(), 8, "gap {depth}: {inner:?}");
-        for pair in inner.windows(2) {
+        assert_eq!(inner.len(), rows, "gap {depth}: {inner:?}");
+        for s in &inner {
             assert!(
-                (pair[1].0 - pair[0].1).abs() < 0.02,
-                "gap {depth}: gap or overlap between rows {pair:?}"
+                (s.1 - s.0 - 8.0).abs() < 0.02,
+                "gap {depth}: row {s:?} is not 8 m"
             );
         }
-        assert!((inner[0].0 - 6.0).abs() < 0.02 && (inner[7].1 - (depth + 6.0)).abs() < 0.02);
+        assert!(
+            (inner[0].0 - 6.0).abs() < 0.02 && (inner[rows - 1].1 - (depth + 6.0)).abs() < 0.02
+        );
+        if depth == 64.0 {
+            for pair in inner.windows(2) {
+                assert!(
+                    (pair[1].0 - pair[0].1).abs() < 0.02,
+                    "a block of 64 m has no gap between its rows: {pair:?}"
+                );
+            }
+        }
         assert!(worst_overlap(&w) < 0.06, "gap {depth}");
     }
 }
@@ -1157,10 +1169,11 @@ fn blocks_nearly_8_cells_deep_are_fitted_to_one_clean_grid() {
 fn a_slightly_skewed_block_still_has_no_overlap() {
     let w = block_of(64.0, 3.0);
     assert!(worst_overlap(&w) < 0.06);
-    // Eight rows across, none cut off, even at the middle of the crooked block.
+    // Seven or eight rows across at the middle of the crooked block: the crooked street's rows
+    // meet the straight one's at an angle, the older ones win.
     let rows = rows_across(&w, 60.0);
     let between: Vec<_> = rows.iter().filter(|r| r.0 > 5.9 && r.1 < 79.0).collect();
-    assert_eq!(between.len(), 8, "{rows:?}");
+    assert!((7..=8).contains(&between.len()), "{rows:?}");
 }
 
 /// T-091: a segment that is turned round (`FlipSegment`) gets its blocks made again; what was
@@ -1319,7 +1332,6 @@ mod layout_v2 {
     /// A grid of straight streets at `xs` and `zs` (axis positions), cut at every crossing.
     fn city(order: u32, xs: &[f32], zs: &[f32]) -> World {
         let mut w = World::new();
-        w.grid.set_block_fit(6.0);
         let mut pieces: Vec<((f32, f32), (f32, f32))> = Vec::new();
         for &z in zs {
             for p in xs.windows(2) {
@@ -1352,8 +1364,11 @@ mod layout_v2 {
 
     const H: f32 = 6.0;
 
+    /// T-265: a block of 64 m between the road edges is one lattice of 8 x 8 cells of 8 m (a ring
+    /// four deep, the middle empty); blocks of 70 and 80 m keep 8 m cells, never stretched, and
+    /// nothing overlaps or lies on a road.
     #[test]
-    fn a_grid_of_blocks_is_one_lattice_per_block_whatever_their_size() {
+    fn a_grid_of_blocks_keeps_8_m_cells_whatever_their_size() {
         // Axis positions that leave 64, 70 and 80 m between the road edges.
         let gaps = [64.0f32, 70.0, 80.0];
         let mut pos = vec![0.0f32];
@@ -1363,46 +1378,47 @@ mod layout_v2 {
         let w = city(0, &pos, &pos);
         assert_no_overlap_and_off_roads(&w);
         let cells = valid_cells(&w.grid);
-        for (bx, gx) in gaps.iter().enumerate() {
-            for (bz, gz) in gaps.iter().enumerate() {
-                let (x0, z0) = (1000.0 + pos[bx] + H, 1000.0 + pos[bz] + H);
-                let (nx, ny) = (fit_cells(*gx, 6.0), fit_cells(*gz, 6.0));
-                let (cu, cv) = (nx.1, ny.1);
-                assert!((6.0..=10.0).contains(&cu) && (6.0..=10.0).contains(&cv));
-                let mut seen = vec![0u32; (nx.0 * ny.0) as usize];
-                for (_, o) in cells
-                    .iter()
-                    .filter(|(_, o)| o.c.x > x0 && o.c.x < x0 + gx && o.c.y > z0 && o.c.y < z0 + gz)
-                {
-                    let (fi, fj) = ((o.c.x - x0) / cu - 0.5, (o.c.y - z0) / cv - 0.5);
-                    let (i, j) = (fi.round(), fj.round());
-                    assert!(
-                        (fi - i).abs() * cu < 0.05 && (fj - j).abs() * cv < 0.05,
-                        "cell centre {:?} off the lattice",
-                        o.c
-                    );
-                    seen[(i as u32 * ny.0 + j as u32) as usize] += 1;
-                }
-                for i in 0..nx.0 {
-                    for j in 0..ny.0 {
-                        let near = i.min(nx.0 - 1 - i).min(j.min(ny.0 - 1 - j)) < 4;
-                        assert_eq!(
-                            seen[(i * ny.0 + j) as usize],
-                            u32::from(near),
-                            "block {bx},{bz} square {i},{j}"
-                        );
-                    }
-                }
+        for (_, o) in &cells {
+            assert!(
+                (o.half - 4.0).abs() < 1e-3 && (o.half_v - 4.0).abs() < 1e-3,
+                "a cell of {} x {} m",
+                2.0 * o.half,
+                2.0 * o.half_v
+            );
+        }
+        let (gx, gz) = (gaps[0], gaps[0]);
+        let (x0, z0) = (1000.0 + pos[0] + H, 1000.0 + pos[0] + H);
+        let mut seen = [0u32; 64];
+        for (_, o) in cells
+            .iter()
+            .filter(|(_, o)| o.c.x > x0 && o.c.x < x0 + gx && o.c.y > z0 && o.c.y < z0 + gz)
+        {
+            let (fi, fj) = ((o.c.x - x0) / 8.0 - 0.5, (o.c.y - z0) / 8.0 - 0.5);
+            let (i, j) = (fi.round(), fj.round());
+            assert!(
+                (fi - i).abs() * 8.0 < 0.05 && (fj - j).abs() * 8.0 < 0.05,
+                "cell centre {:?} off the lattice",
+                o.c
+            );
+            seen[(i as usize) * 8 + j as usize] += 1;
+        }
+        for i in 0..8u32 {
+            for j in 0..8u32 {
+                let near = i.min(7 - i).min(j.min(7 - j)) < 4;
+                assert_eq!(
+                    seen[(i * 8 + j) as usize],
+                    u32::from(near),
+                    "square {i},{j} of the 64 m block"
+                );
             }
         }
-        // 64 m is 8 cells of 8 m; 70 m is 8 cells of 8.75 m.
-        assert_eq!(fit_cells(64.0, 6.0), (8, 8.0));
-        assert_eq!(fit_cells(70.0, 6.0), (8, 8.75));
     }
 
+    /// Blocks on the 8 m grid (64 m between the edges) get the same cells whatever order their
+    /// streets were built in (T-265: off the grid the older street's cells win, like C:S).
     #[test]
     fn the_layout_does_not_depend_on_the_order_the_streets_were_built_in() {
-        let pos = [0.0f32, 76.0, 158.0, 250.0];
+        let pos = [0.0f32, 76.0, 152.0, 228.0];
         let a = polygons(&city(0, &pos, &pos).grid);
         assert!(!a.is_empty());
         for order in [1, 2] {
@@ -1487,9 +1503,10 @@ mod layout_v2 {
         let _ = Vec2::ZERO;
     }
 
-    /// BUG-056: in a block of any size every point within three rows of an edge is covered by
-    /// a valid cell, and no two valid cells overlap: the perpendicular frontages share one
-    /// lattice, so the seam between two edges is whole cells of one edge, not a staircase.
+    /// BUG-056, T-265: in a block on the 8 m grid every point within three rows of an edge is
+    /// covered by a valid cell; in a block of any size no two valid cells overlap and every cell is
+    /// 8 m (off the grid the rest of a side is lost and the lattices of two sides meet in a
+    /// staircase at a corner, as in C:S: the road tool's snaps make the blocks whole cells).
     #[test]
     fn big_blocks_have_no_holes_along_the_seams() {
         let mut sizes: Vec<(f32, f32)> = Vec::new();
@@ -1512,6 +1529,12 @@ mod layout_v2 {
             assert_no_overlap_and_off_roads(&w);
             let cells = valid_cells(&w.grid);
             let (x0, z0) = (1000.0 + pos_x[1] + H, 1000.0 + pos_z[1] + H);
+            for (_, o) in &cells {
+                assert!((o.half - 4.0).abs() < 1e-3 && (o.half_v - 4.0).abs() < 1e-3);
+            }
+            if gx % 8.0 != 0.0 || gz % 8.0 != 0.0 {
+                continue;
+            }
             let mut holes = Vec::new();
             let (mut x, mut z);
             z = 0.5;
@@ -1535,10 +1558,11 @@ mod layout_v2 {
         }
     }
 
-    /// BUG-067: at a corner the two sides of the street that leaves it count from the same
-    /// distance, so their columns stand opposite each other.
+    /// T-265 (the rule of BUG-067 gone with `shared_ends`): at a corner each side of the street
+    /// that leaves it counts 8 m cells from its own start: the inner side from the edge of the
+    /// cross street, the outer one from the node.
     #[test]
-    fn the_two_sides_of_a_street_leaving_a_corner_have_the_same_columns() {
+    fn the_two_sides_of_a_street_leaving_a_corner_count_from_their_own_start() {
         let mut w = World::new();
         w.line("basic_2l", (1000.0, 1000.0), (1000.0, 1100.0));
         w.line("basic_2l", (1000.0, 1000.0), (1160.0, 1000.0));
@@ -1556,9 +1580,11 @@ mod layout_v2 {
         };
         let (north, south) = (row(-1.0), row(1.0));
         assert!(north.len() >= 15, "{} cells", north.len());
-        assert_eq!(north.len(), south.len(), "{north:?} against {south:?}");
-        for (a, b) in north.iter().zip(&south) {
-            assert!((a - b).abs() < 0.05, "{north:?} against {south:?}");
+        for (xs, first) in [(&north, 1000.0 + 8.0 + 4.0), (&south, 1000.0 + H + 4.0)] {
+            assert!((xs[0] - first).abs() < 0.05, "{xs:?}");
+            for p in xs.windows(2) {
+                assert!((p[1] - p[0] - 8.0).abs() < 0.05, "{xs:?}");
+            }
         }
     }
 

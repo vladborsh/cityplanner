@@ -18,7 +18,7 @@ fn the_v54_net_fixture_gets_build_orders_by_segment_id() {
     let bytes = std::fs::read(Path::new(ROOT).join("../../fixtures/saves/v54-net.sav")).unwrap();
     let (h, _) = read_header(&bytes).unwrap();
     assert_eq!(h.format_version, 54, "made by the v54 writer");
-    assert_eq!(FORMAT_VERSION, 55);
+    assert_eq!(FORMAT_VERSION, 56);
     let content =
         Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
     let loaded = load_with_map(&bytes, content.content_hash(), h.map_hash).unwrap();
@@ -39,7 +39,7 @@ fn the_v54_net_fixture_gets_build_orders_by_segment_id() {
     load_into_runner(&mut sim, &bytes, content.content_hash()).unwrap();
     sim.tick_once();
     let again = save_runner(&sim, content.content_hash(), "flatlands").unwrap();
-    assert_eq!(read_header(&again).unwrap().0.format_version, 55);
+    assert_eq!(read_header(&again).unwrap().0.format_version, 56);
     let mut sim2 = SimRunner::new(1);
     sim2.set_terrain(terrain);
     sim2.set_content(Arc::clone(&content));

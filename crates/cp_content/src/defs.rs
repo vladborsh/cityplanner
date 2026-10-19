@@ -398,9 +398,8 @@ pub struct Balance {
     pub goods_empty_days: f32,
     /// Whether `NO_GOODS` counts towards abandonment (T-169); off by default.
     pub goods_decay: bool,
-    /// Metres by which a block that is nearly whole cells is fitted to them: the cells of a new
-    /// street are stretched or shrunk so a block 64 m deep (8 rows) or a side that is a whole
-    /// number of cells long comes out as one clean grid (T-185). // tune later
+    /// Unused since T-265: layout v3 never stretches cells (it fitted nearly whole blocks to
+    /// whole cells, T-185). Kept so the balance file and the content hash stay as they are.
     pub zoning_block_fit_m: f32,
     /// Intercity trains (T-167): hours between two trains from the outside, hours a train
     /// stands at the station, the share (percent) of arriving households that come by train when

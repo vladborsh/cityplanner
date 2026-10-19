@@ -1,7 +1,7 @@
 //! The grid layouts of the user's BUG-073 shots (T-255) and the U of BUG-081 (T-265), built the way the player built
 //! them: every street through the road tool's own code ([`block_hover`], [`RoadTool::click`],
 //! [`chain_commit`]: the quantizing, the joins, the snaps), a cross street started on the tick
-//! the tool offers (the street's tick series, [`cp_zone::street_ticks`]). The last street of each layout
+//! the tool offers (an 8-cell line of the street's cells, [`cp_zone::cell_lines`]). The last street of each layout
 //! is not built: the camera `grid-shotN` holds its ghost ([`ghost`]), from the click on its
 //! start to the cursor at its end, as the shot shows it. Before/after proof for BUG-073.
 //!
@@ -183,45 +183,37 @@ impl Hand<'_> {
         })
     }
 
-    /// The tick nearest the local point `nominal` on a street (the street's tick series,
-    /// [`cp_zone::street_ticks`], for a cross street of this road), seen on the `side` (local) of
-    /// it; the nominal point if the tool offers none there.
+    /// The tick nearest the local point `nominal` on a street (the centreline station of a cross
+    /// street of this road whose near edge stands on an 8-cell line of the street's cells,
+    /// [`cp_zone::cell_lines`], T-265), seen on the `side` (local) of it; the nominal point if
+    /// the tool offers none there.
     fn tick(&self, nominal: Vec2, side: Vec2) -> Mark {
         let (p, sw) = (self.f.w(nominal), self.f.wv(side));
         let view = self.sim.view();
         let db = view.content.as_deref().expect("content");
         let roads = cp_zone::road_zoning(db);
+        let ids = view.net.segments().map(|(id, _)| id);
         let mut best: Option<(f32, Mark)> = None;
-        for (id, _) in view.net.segments() {
-            for t in cp_zone::street_ticks(&view.net, &roads, id, self.hw * 2.0)
-                .into_iter()
-                .filter(|t| t.seg == id)
-            {
-                let n = Vec2::new(t.dir.y, -t.dir.x);
-                let v = if n.dot(sw) >= 0.0 { n } else { -n };
-                let r = t.axis - p;
-                if v.dot(sw) < 0.9 || r.dot(v).abs() > 3.0 {
-                    continue;
-                }
-                let d = r.perp_dot(v).abs();
-                if d <= self.hw + 3.0 && best.is_none_or(|(bd, _)| d < bd) {
-                    best = Some((
-                        d,
-                        Mark {
-                            axis: t.axis,
-                            v,
-                            major: true,
-                            end: false,
-                            arc: t.arc,
-                        },
-                    ));
-                }
+        for line in cp_zone::cell_lines(&view.net, &roads, ids) {
+            let m = line.mark;
+            if !m.major || m.end || m.v.dot(sw) < 0.9 {
+                continue;
+            }
+            let axis = m.axis + m.onward * self.hw;
+            let r = axis - p;
+            if r.dot(m.v).abs() > 3.0 {
+                continue;
+            }
+            let d = r.perp_dot(m.v).abs();
+            if d <= self.hw + 3.0 && best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, Mark { axis, ..m }));
             }
         }
         best.map_or(
             Mark {
                 axis: p,
                 v: sw,
+                onward: Vec2::new(sw.y, -sw.x),
                 major: true,
                 end: false,
                 arc: 0.0,

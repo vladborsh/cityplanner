@@ -35,7 +35,6 @@ pub(crate) struct RoadPiece {
     pub a: Vec2,
     pub b: Vec2,
     pub half_width: f32,
-    pub footpath: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -71,7 +70,6 @@ impl RoadIndex {
                 a: w[0],
                 b: w[1],
                 half_width: road.half_width,
-                footpath: road.footpath,
             };
             let b = inflate((w[0].min(w[1]), w[0].max(w[1])), road.half_width);
             for key in bucket_range(b, ROAD_BUCKET) {

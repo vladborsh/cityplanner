@@ -1,15 +1,17 @@
 //! Zone blocks and cells (`architecture/system-design.md` §7, §7.1).
 //!
 //! The cells are laid out per *frontage* (one side of a street between its cross streets, see
-//! [`crate::layout`]): one lattice of columns of about 8 m along the street by [`BLOCK_DEPTH`]
-//! rows away from it, starting at the road edge. A frontage is cut into one [`ZoneBlock`] per
+//! [`crate::layout`]): columns of 8 m along the street by [`BLOCK_DEPTH`] rows of 8 m away from
+//! it, starting at the road edge (layout v3, T-265: never stretched). A frontage is cut into one [`ZoneBlock`] per
 //! segment side, the columns belonging to the segment their centre lies on. A cell is *valid*
 //! unless it
 //!
 //! * overlaps a road strip (any ground segment's centre line buffered by half its width),
 //! * on a curve, overlaps the previous column of its own block (the later column loses),
 //! * overlaps a cell that is covered by a building, or a valid cell with a smaller rank
-//!   `(row, ZoneBlockId, cell)` — the cell of the nearest street wins (§7.1),
+//!   `(row, Segment::order, side, start point of the segment)`: the cell nearer its street wins,
+//!   then the older street's (§6.8.3 item 4; never the arena slot, so a rebuilt street ranks as
+//!   a fresh one),
 //! * is covered by a building (see [`ZoneGrid::occupy`]), or
 //! * stands on water (the terrain says so at the cell centre) or on ground steeper than
 //!   [`MAX_CELL_SLOPE`] there (T-062; needs [`ZoneGrid::set_terrain`]).
@@ -30,8 +32,7 @@ use cp_terrain::Terrain;
 use serde::{Deserialize, Serialize};
 
 use crate::geom::{Obb, Quad, quad_aabb, quad_contains, quad_intersection_area};
-use crate::layout::FACING_CELLS;
-use crate::layout::{BlockDraft, frontage_of, layout_frontage};
+use crate::layout::{BlockDraft, CellLine, frontage_of, layout_frontage};
 use crate::roads::{Bounds, RoadIndex, bucket_range, inflate, union};
 
 /// Steepest ground a cell may stand on: rise over run at the cell centre (25 %).
@@ -46,6 +47,9 @@ pub const PENETRATION_EPS: f32 = 1.0;
 pub const ROAD_EPS: f32 = 0.05;
 
 const BLOCK_BUCKET: f32 = 32.0;
+/// How far from a changed road the frontages are laid again: the depth of the cells and a
+/// margin (the layout is local, T-265; validity is revalidated around the change separately).
+const RELAY_REACH: f32 = BLOCK_DEPTH as f32 * CELL_SIZE + 16.0;
 /// Overlap with a cell of another block that wins (smaller rank, or a building) removes the
 /// cell; only grazing contact is let through.
 pub const CROSS_BLOCK_EPS: f32 = 0.05;
@@ -152,8 +156,8 @@ pub struct ZoneBlock {
     pub cols: u16,
     /// Distance from the axis to the near edge of row 0.
     pub inner: f32,
-    /// Length of a cell along the road and depth of a row: [`CELL_SIZE`] unless the block was
-    /// fitted to its surroundings (T-185, `ZoneGrid::set_block_fit`).
+    /// Length of a cell along the road and depth of a row: [`CELL_SIZE`] (layout v3, T-265; a
+    /// save of format 55 or older laid them fitted to the block and is laid again on load).
     pub cell_len: f32,
     pub row_depth: f32,
     /// Painted type per cell (`ZoneType::None` until painted).
@@ -303,6 +307,8 @@ pub(crate) struct Index {
     pub(crate) block_bounds: BTreeMap<ZoneBlockId, Bounds>,
     pub(crate) block_buckets: BTreeMap<(i32, i32), BTreeSet<ZoneBlockId>>,
     pub(crate) roads: RoadIndex,
+    /// The build order of every segment (`Segment::order`): the rank of overlapping cells.
+    pub(crate) orders: BTreeMap<SegmentId, u32>,
 }
 
 /// All zone state.
@@ -337,10 +343,6 @@ pub struct ZoneGrid {
     /// The terrain changed since the last [`ZoneGrid::sync`]: every block is revalidated.
     #[serde(skip)]
     terrain_dirty: bool,
-    /// Metres by which a nearly whole block is fitted to whole cells (T-185); `0` fits nothing.
-    /// Derived input from the balance, not saved; set with [`ZoneGrid::set_block_fit`].
-    #[serde(skip)]
-    fit_m: f32,
     /// Bumped on every change (paint, rebuild, validity, occupancy) so snapshots can be
     /// cached. Not saved, not part of equality.
     #[serde(skip, default = "next_revision")]
@@ -370,9 +372,6 @@ impl ZoneGrid {
         }
     }
 
-    /// Whether `terrain` is the map the grid already uses.
-    /// Sets the block fit in metres (`balance.ron` `zoning_block_fit_m`); it applies to the
-    /// segments built from now on, the cells already laid stay as they are.
     /// A grid from the saved parts of an older format (`legacy`); everything derived is empty
     /// and rebuilt on the first sync.
     pub(crate) fn from_saved_parts(
@@ -408,14 +407,7 @@ impl ZoneGrid {
         )
     }
 
-    pub fn set_block_fit(&mut self, metres: f32) {
-        self.fit_m = metres.max(0.0);
-    }
-
-    pub fn block_fit(&self) -> f32 {
-        self.fit_m
-    }
-
+    /// Whether `terrain` is the map the grid already uses.
     pub fn has_terrain(&self, terrain: &Arc<Terrain>) -> bool {
         self.terrain
             .as_ref()
@@ -509,11 +501,6 @@ impl ZoneGrid {
 }
 
 impl ZoneGrid {
-    /// How far a road reaches into the row depth of the frontages near it (§7.1).
-    fn depth_reach(&self) -> f32 {
-        FACING_CELLS * CELL_SIZE + self.fit_m
-    }
-
     /// Marks every block to be laid again by the next [`ZoneGrid::sync`] (a save of an older
     /// layout was loaded): painted types are carried over by position, validity is recomputed.
     pub fn relay_all(&mut self) {
@@ -557,8 +544,12 @@ impl ZoneGrid {
                 dirty.push(b);
             }
         }
+        for id in &removed {
+            self.index.orders.remove(id);
+        }
         for id in &changed {
             let seg = net.segment(*id).expect("listed segment");
+            self.index.orders.insert(*id, seg.order);
             self.index.roads.add(*id, seg, roads(seg.road));
             if let Some(b) = self.index.roads.bounds.get(id) {
                 dirty.push(*b);
@@ -581,7 +572,7 @@ impl ZoneGrid {
         }
 
         // Frontages to lay again: those with a changed segment, those that end at a node of one,
-        // and those within reach of the change (a parallel street closes a block).
+        // and those close to the change.
         let mut seeds: BTreeSet<SegmentId> = BTreeSet::new();
         if relay {
             seeds.extend(current.keys().copied());
@@ -595,16 +586,15 @@ impl ZoneGrid {
                     }
                 }
             }
-            let reach = self.depth_reach() + 16.0;
             for b in &dirty {
-                for id in self.index.roads.segments_near(inflate(*b, reach)) {
+                for id in self.index.roads.segments_near(inflate(*b, RELAY_REACH)) {
                     if current.contains_key(&id) {
                         seeds.insert(id);
                     }
                 }
             }
         }
-        let (drafts, evaluated) = self.lay_frontages(net, roads, &self.index.roads, &seeds);
+        let (drafts, evaluated) = self.lay_frontages(net, roads, &seeds);
 
         let mut created: BTreeSet<ZoneBlockId> = BTreeSet::new();
         for key in &evaluated {
@@ -657,7 +647,6 @@ impl ZoneGrid {
         &self,
         net: &NetGraph,
         roads: &dyn Fn(RoadDefId) -> RoadZoning,
-        idx: &RoadIndex,
         seeds: &BTreeSet<SegmentId>,
     ) -> (
         BTreeMap<(SegmentId, Side), BlockDraft>,
@@ -675,7 +664,7 @@ impl ZoneGrid {
                         evaluated.insert((id, side));
                     }
                     Some(f) => {
-                        for d in layout_frontage(net, roads, idx, self.fit_m, &f) {
+                        for d in layout_frontage(net, roads, &f) {
                             drafts.insert((d.segment, d.side), d);
                         }
                         for i in 0..f.segs.len() {
@@ -794,6 +783,7 @@ impl ZoneGrid {
     fn rebuild_index(&mut self, net: &NetGraph, roads: &dyn Fn(RoadDefId) -> RoadZoning) {
         self.index = Index::default();
         self.index.roads = RoadIndex::from_net(net, roads);
+        self.index.orders = net.segments().map(|(id, s)| (id, s.order)).collect();
         let ids: Vec<ZoneBlockId> = self.blocks.iter().map(|(id, _)| id).collect();
         for id in ids {
             self.index_block(id);
@@ -834,12 +824,22 @@ impl ZoneGrid {
     /// not on a road, not under a building, not on a rectangle of a free-standing building, not
     /// over the previous column of its own block, and not over a cell that wins: one covered by a
     /// building, or a valid one of smaller rank `(row, block)`.
-    /// Which of two overlapping cells of the same row wins: the one of the lower segment, then
-    /// side, then block (BUG-073: not the arena slot alone, which a rebuilt block may reuse, so
-    /// the cells the ghost shows are the cells the road gets).
-    fn priority(&self, id: ZoneBlockId) -> (Option<SegmentId>, u8, ZoneBlockId) {
-        self.blocks.get(id).map_or((None, 0, id), |b| {
-            (Some(b.segment), b.side.slot() as u8, id)
+    /// Which of two overlapping cells of the same row wins (§6.8.3 item 4): the block of the
+    /// older street (smaller `Segment::order`), then side, then where its segment starts (the
+    /// pieces of one drawn road share their order); never the arena slot, which a rebuilt block
+    /// may reuse (BUG-073), so a demolished and rebuilt street ranks as a fresh one.
+    #[allow(clippy::type_complexity)]
+    fn priority(&self, id: ZoneBlockId) -> (u32, u8, i64, i64, ZoneBlockId) {
+        self.blocks.get(id).map_or((u32::MAX, 0, 0, 0, id), |b| {
+            let order = self
+                .index
+                .orders
+                .get(&b.segment)
+                .copied()
+                .unwrap_or(u32::MAX);
+            let p = to_xz(b.curve.p0);
+            let mm = |v: f32| (v * 1000.0).round() as i64;
+            (order, b.side.slot() as u8, mm(p.x), mm(p.y), id)
         })
     }
 
@@ -918,7 +918,7 @@ impl ZoneGrid {
         let mut out = [Vec::new(), Vec::new()];
         for side in [Side::Left, Side::Right] {
             if let Some(f) = frontage_of(net, roads, segment, side) {
-                for d in layout_frontage(net, roads, &self.index.roads, self.fit_m, &f) {
+                for d in layout_frontage(net, roads, &f) {
                     if d.segment == segment && d.side == side {
                         out[side.slot()] = d.marks;
                     }
@@ -926,6 +926,20 @@ impl ZoneGrid {
             }
         }
         out
+    }
+
+    /// The cell lines of the zoned streets within `radius` of `p` as laid now (T-265, §6.8.3
+    /// item 3): every column boundary of each frontage, its 8-cell lines `major`. The one source
+    /// of "where the cells are" for the road tool's ticks and snaps (T-266).
+    pub fn cell_lines_near(
+        &self,
+        net: &NetGraph,
+        roads: &dyn Fn(RoadDefId) -> RoadZoning,
+        p: Vec2,
+        radius: f32,
+    ) -> Vec<CellLine> {
+        let near = self.index.roads.segments_near(inflate((p, p), radius));
+        crate::layout::cell_lines(net, roads, near)
     }
 
     /// The cells the frontages near `region` get in `net_after` (the net with a planned road
@@ -939,11 +953,24 @@ impl ZoneGrid {
         region: Bounds,
     ) -> Vec<StripPreview> {
         let idx = RoadIndex::from_net(net_after, roads);
-        let seeds: BTreeSet<SegmentId> = idx
-            .segments_near(inflate(region, self.depth_reach() + 16.0))
+        let mut seeds: BTreeSet<SegmentId> = idx
+            .segments_near(inflate(region, RELAY_REACH))
             .into_iter()
             .collect();
-        let (drafts, evaluated) = self.lay_frontages(net_after, roads, &idx, &seeds);
+        // As a real sync: the frontages at the nodes of every new or changed segment (a split
+        // leaves its pieces' tangents a hair off, so the edge of a cross street there moves).
+        for (id, seg) in net_after.segments() {
+            if self.fingerprints.get(&id) == Some(&fingerprint(seg, roads(seg.road))) {
+                continue;
+            }
+            seeds.insert(id);
+            for n in [seg.start, seg.end] {
+                if let Some(n) = net_after.node(n) {
+                    seeds.extend(n.segments.iter().copied());
+                }
+            }
+        }
+        let (drafts, evaluated) = self.lay_frontages(net_after, roads, &seeds);
         let existing =
             |k: &(SegmentId, Side)| self.by_segment.get(&k.0).and_then(|a| a[k.1.slot()]);
         let mut replaced: BTreeSet<ZoneBlockId> = BTreeSet::new();
@@ -961,10 +988,7 @@ impl ZoneGrid {
             fresh.extend(drafts.get(k));
         }
         // Blocks of segments that the plan removed (split) near the region go as well.
-        let gone = self
-            .index
-            .roads
-            .segments_near(inflate(region, self.depth_reach()));
+        let gone = self.index.roads.segments_near(inflate(region, RELAY_REACH));
         for id in gone {
             if net_after.segment(id).is_none() {
                 replaced.extend(self.by_segment.get(&id).into_iter().flatten().flatten());
@@ -975,8 +999,8 @@ impl ZoneGrid {
         }
         let mut scratch = ZoneGrid::new();
         scratch.terrain = self.terrain.clone();
-        scratch.fit_m = self.fit_m;
         scratch.index.roads = idx;
+        scratch.index.orders = net_after.segments().map(|(id, s)| (id, s.order)).collect();
         scratch.index.built = true;
         let mut bounds: Option<Bounds> = None;
         for d in &fresh {

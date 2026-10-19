@@ -163,6 +163,8 @@ struct Player {
     bite: Option<f32>,
     tool: RoadTool,
     fails: Vec<(String, String)>,
+    /// `GRID_SWEEP_TRACE`: every cell before the last click (key, valid, segment, row).
+    before_all: Vec<([(i32, i32); 4], bool, cp_net::SegmentId, usize)>,
 }
 
 impl Player {
@@ -189,6 +191,7 @@ impl Player {
             bite: None,
             tool: RoadTool::default(),
             fails: Vec::new(),
+            before_all: Vec::new(),
         }
     }
 
@@ -278,26 +281,19 @@ impl Player {
         for (id, s) in view.net.segments() {
             let hw = self.db.road(s.road).width / 2.0;
             for side in view.zones.frontage_marks(&view.net, &roads, id) {
-                // The layout's own tick flag is not the tool's tick (BUG-073): plain boundaries.
-                out.extend(side.into_iter().map(|m| (Mark { major: false, ..m }, hw)));
-            }
-            // The ticks: one series per street, the centreline stations, both sides.
-            for t in cp_zone::street_ticks(&view.net, &roads, id, self.hw * 2.0)
-                .into_iter()
-                .filter(|t| t.seg == id)
-            {
-                let n = Vec2::new(t.dir.y, -t.dir.x);
-                for v in [n, -n] {
-                    out.push((
-                        Mark {
-                            axis: t.axis,
-                            v,
-                            major: true,
-                            end: false,
-                            arc: t.arc,
-                        },
-                        hw,
-                    ));
+                for m in side {
+                    // Every boundary plainly, and the ticks: the centreline station of a cross
+                    // street of this road whose near edge stands on an 8-cell line (T-265).
+                    out.push((Mark { major: false, ..m }, hw));
+                    if m.major && !m.end {
+                        out.push((
+                            Mark {
+                                axis: m.axis + m.onward * self.hw,
+                                ..m
+                            },
+                            hw,
+                        ));
+                    }
                 }
             }
         }
@@ -365,6 +361,7 @@ impl Player {
         Mark {
             axis: p,
             v: sw,
+            onward: Vec2::new(sw.y, -sw.x),
             major: true,
             end: false,
             arc: 0.0,
@@ -427,6 +424,31 @@ impl Player {
         drop(view);
         let targets = self.targets();
         let old = self.cell_keys();
+        if std::env::var_os("GRID_SWEEP_TRACE").is_some() {
+            let view = self.sim.view();
+            let mut all = Vec::new();
+            for (id, b) in view.zones.blocks() {
+                for i in 0..b.cell_count() {
+                    if let Some(o) = view.zones.cell_footprint(cp_zone::ZoneCellRef {
+                        block: id,
+                        cell: i as u16,
+                    }) {
+                        all.push((key(o.corners()), b.valid[i], b.segment, i % 4));
+                    }
+                }
+            }
+            self.before_all = all;
+            for (_, b) in view.zones.blocks() {
+                let p = self.l(to_xz(b.curve.p0));
+                let q = self.l(to_xz(b.curve.p3));
+                if p.y.abs() < 1.0 && q.y.abs() < 1.0 {
+                    println!(
+                        "    before block seg {:?} {:?} s0 {} cols {} {p:?}->{q:?}",
+                        b.segment, b.side, b.s0, b.cols
+                    );
+                }
+            }
+        }
         let mut outbox = CommandOutbox::default();
         outbox.push(SimCommand::Net(NetCommand::BuildPlan { plan }));
         outbox.flush_into(&mut self.sim);
@@ -523,6 +545,57 @@ impl Player {
                 };
                 let un: Vec<String> = shown.iter().filter(|k| !now.contains(*k)).map(c).collect();
                 println!("  ghost cells not built: {}", un.join(" "));
+                let hidden: Vec<String> = added
+                    .iter()
+                    .filter(|k| !shown.contains(**k))
+                    .map(|k| c(k))
+                    .collect();
+                println!("  built cells not in the ghost: {}", hidden.join(" "));
+                let view = self.sim.view();
+                for (_, b) in view.zones.blocks() {
+                    let p = self.l(to_xz(b.curve.p0));
+                    let q = self.l(to_xz(b.curve.p3));
+                    if p.y.abs() < 1.0 && q.y.abs() < 1.0 {
+                        println!(
+                            "    after block seg {:?} {:?} s0 {} cols {} {p:?}->{q:?}",
+                            b.segment, b.side, b.s0, b.cols
+                        );
+                    }
+                }
+                for (id, b) in view.zones.blocks() {
+                    for i in 0..b.cell_count() {
+                        let Some(o) = view.zones.cell_footprint(cp_zone::ZoneCellRef {
+                            block: id,
+                            cell: i as u16,
+                        }) else {
+                            continue;
+                        };
+                        if b.valid[i]
+                            && added
+                                .iter()
+                                .any(|k| **k == key(o.corners()) && !shown.contains(*k))
+                        {
+                            let k = key(o.corners());
+                            let before: Vec<_> = self
+                                .before_all
+                                .iter()
+                                .filter(|e| e.0 == k)
+                                .map(|e| (e.1, e.2, e.3))
+                                .collect();
+                            println!("    before: {before:?}");
+                            println!(
+                                "    hidden: block {id:?} segment {:?} order {} side {:?} col {} row {} s0 {:.2} cols {}",
+                                b.segment,
+                                view.net.segment(b.segment).map_or(0, |s| s.order),
+                                b.side,
+                                i / 4,
+                                i % 4,
+                                b.s0,
+                                b.cols
+                            );
+                        }
+                    }
+                }
                 let real: Vec<Obb> = self.cells();
                 let near: Vec<String> = shown
                     .iter()

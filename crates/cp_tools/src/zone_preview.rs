@@ -112,34 +112,30 @@ fn compute_strip(view: &SimView, plan: &RoadBuildPlan) -> ZoneStrip {
         }
         let _ = strip.marks;
     }
-    // Ticks (BUG-073): one series per street, drawn on both sides at the same station.
-    let width = content.road(plan.road).width;
+    // Ticks: the 8-cell lines of the frontages near the plan (T-265, the layout's own cell
+    // lines), each across its band of cells.
     let reach = inflate_bounds(region, 150.0);
-    let mut done: std::collections::BTreeSet<cp_net::SegmentId> = std::collections::BTreeSet::new();
-    for (id, seg) in after.segments() {
-        if done.contains(&id)
-            || seg.elevation != Elevation::Ground
-            || seg.curve.bounds_distance_xz((region.0 + region.1) / 2.0)
-                > (region.1 - region.0).length() / 2.0 + 1.0
-        {
+    let near: Vec<cp_net::SegmentId> = after
+        .segments()
+        .filter(|(_, seg)| {
+            seg.elevation == Elevation::Ground
+                && seg.curve.bounds_distance_xz((region.0 + region.1) / 2.0)
+                    <= (region.1 - region.0).length() / 2.0 + 1.0
+        })
+        .map(|(id, _)| id)
+        .collect();
+    for line in cp_zone::cell_lines(&after, &roads, near) {
+        let m = line.mark;
+        if !m.major || m.end || m.axis.cmple(reach.0).any() || m.axis.cmpge(reach.1).any() {
             continue;
         }
+        let Some(seg) = after.segment(line.segment) else {
+            continue;
+        };
         let hw = content.road(seg.road).width / 2.0;
-        for t in cp_zone::street_ticks(&after, &roads, id, width) {
-            done.insert(t.seg);
-            if t.axis.cmple(reach.0).any() || t.axis.cmpge(reach.1).any() {
-                continue;
-            }
-            let normal = Vec2::new(t.dir.y, -t.dir.x);
-            for side in [-1.0f32, 1.0] {
-                let line = [
-                    t.axis + normal * side * hw,
-                    t.axis + normal * side * (hw + 8.0 * CELL_SIZE),
-                ];
-                if !out.ticks.iter().any(|o| o[0].distance(line[0]) < 0.05) {
-                    out.ticks.push(line);
-                }
-            }
+        let tick = [m.axis + m.v * hw, m.axis + m.v * (hw + 8.0 * CELL_SIZE)];
+        if !out.ticks.iter().any(|o| o[0].distance(tick[0]) < 0.05) {
+            out.ticks.push(tick);
         }
     }
     out

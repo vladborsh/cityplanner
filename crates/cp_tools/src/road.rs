@@ -439,7 +439,7 @@ pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRe
     let Some(content) = view.content.as_deref() else {
         return (req, SnapReport::default());
     };
-    let marks = zone_marks(view, content, &req.path, content.road(req.road).width);
+    let marks = zone_marks(view, content, &req.path);
     let cx = StepContext {
         graph: &view.net,
         content,
@@ -548,7 +548,6 @@ fn zone_marks(
     view: &SimView,
     content: &cp_content::ContentDb,
     path: &RoadPath,
-    width: f32,
 ) -> Vec<ControlMark> {
     let points: Vec<Vec2> = match path {
         RoadPath::Straight { from, to } => vec![*from, *to],
@@ -595,44 +594,27 @@ fn zone_marks(
                 }
             }
         }
-        let sides = if near {
-            view.zones.frontage_marks(&view.net, &roads, id)
-        } else {
-            Default::default()
-        };
-        let counts_forward = cp_zone::ticks_count_forward(&view.net, &roads, id);
+        // The cell lines of the street (T-265): on the side the road is drawn on every boundary
+        // (a join goes to the nearest), its 8-cell lines (where a cross street's near edge
+        // leaves a block of 8 cells) also on streets further off, both sides.
+        let sides = view.zones.frontage_marks(&view.net, &roads, id);
         for (slot, marks) in sides.iter().enumerate() {
-            if !want[slot] {
+            if near && !want[slot] {
                 continue;
             }
             let Some(first) = marks.first() else { continue };
-            let sign = if counts_forward { 1.0 } else { -1.0 };
             for m in marks.iter() {
+                let major = m.major && !m.end;
+                if !near && !major {
+                    continue;
+                }
                 let t = s.curve.tangent(s.curve.arc_table().s_to_t(m.arc));
-                let dir = Vec2::new(t.x, t.z).normalize_or_zero();
                 out.push(ControlMark {
                     pos: m.axis,
-                    dir,
-                    along: m.arc - first.arc,
-                    major: false,
-                    // Away from the street's origin, like the ticks (BUG-073).
-                    onward: dir * sign,
-                });
-            }
-        }
-        // The ticks (BUG-073): one series per street, the centreline stations of its cross
-        // streets, the same on both sides. The mark stands on the near EDGE of that street.
-        if want[0] || want[1] || !near {
-            for t in cp_zone::street_ticks(&view.net, &roads, id, width)
-                .into_iter()
-                .filter(|t| t.seg == id)
-            {
-                out.push(ControlMark {
-                    pos: t.axis - t.onward * (width / 2.0),
-                    dir: t.dir,
-                    along: t.k as f32 * 64.0,
-                    major: true,
-                    onward: t.onward,
+                    dir: Vec2::new(t.x, t.z).normalize_or_zero(),
+                    along: (m.arc - first.arc).abs(),
+                    major,
+                    onward: m.onward,
                 });
             }
         }

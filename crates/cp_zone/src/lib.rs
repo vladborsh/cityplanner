@@ -13,8 +13,7 @@ pub use grid::{
     ZoneBlock, ZoneBlockId, ZoneCellRef, ZoneGrid,
 };
 pub use layout::{
-    BlockDraft, FrontEnd, Frontage, Mark, StreetTick, fit_cells, frontage_of, frontages,
-    street_ticks, ticks_count_forward,
+    BlockDraft, CellLine, FrontEnd, Frontage, Mark, cell_lines, frontage_of, frontages,
 };
 
 use bevy_ecs::change_detection::DetectChanges;
@@ -51,7 +50,6 @@ pub fn update_zones(
 /// Brings `grid` in line with `net` (what [`update_zones`] does once the net changed). Also used
 /// by `cp_sim` on a clone while the sim is paused, so a road built then shows its cells.
 pub fn sync_grid(grid: &mut ZoneGrid, net: &NetGraph, db: &cp_content::ContentDb) {
-    grid.set_block_fit(db.balance().zoning_block_fit_m);
     grid.sync(net, &road_zoning(db));
 }
 
