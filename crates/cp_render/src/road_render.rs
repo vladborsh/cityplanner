@@ -176,8 +176,9 @@ fn update_road_lods(
     }
 }
 
-/// Roughness of the asphalt (T-178): low enough for a sun glint at the right angle, not a mirror.
-pub const ASPHALT_ROUGHNESS: f32 = 0.45;
+/// Roughness of the asphalt (T-178; 0.45 -> 0.38 in T-271, more glint): low enough for a sun
+/// glint at the right angle, not a mirror. The shader varies it over the surface.
+pub const ASPHALT_ROUGHNESS: f32 = 0.38;
 /// Reflectance of the asphalt (Bevy's default is 0.5; 0.3 keeps the glint visible without
 /// blowing the road out to white).
 pub const ASPHALT_REFLECTANCE: f32 = 0.3;

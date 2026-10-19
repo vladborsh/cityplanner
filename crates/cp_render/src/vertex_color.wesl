@@ -176,6 +176,11 @@ fn tilt(n: vec3<f32>, slope: vec2<f32>) -> vec3<f32> {
     return normalize(n - vec3<f32>(slope.x, 0.0, slope.y));
 }
 
+// `p` turned by about 37 degrees: each octave of the clouds on its own axes, so no square shows.
+fn turn37(p: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y);
+}
+
 struct Detail {
     albedo: f32,
     roughness: f32,
@@ -184,19 +189,31 @@ struct Detail {
 
 fn asphalt(p: vec2<f32>, fp: f32) -> Detail {
     var d: Detail;
+    // Aggregate (T-271, "more texture"): the fine grain of the stones, and a coarser mottle a
+    // metre or so across that still reads at city zoom.
     let grain = fbm(p * 3.0);
     let k_grain = keep(0.33, fp);
+    let mottle = fbm(turn37(p) * 0.9 + vec2<f32>(4.0, 1.0));
+    let k_mottle = keep(1.1, fp);
     // Repaired patches: blotches a few metres across, a shade darker and less glossy.
-    let patch_mask = smoothstep(0.66, 0.70, fbm(p * 0.13 + vec2<f32>(31.0, 7.0)));
+    let patch_mask = smoothstep(0.64, 0.69, fbm(p * 0.13 + vec2<f32>(31.0, 7.0)));
     // Cracks: thin lines where a noise crosses one half, only in some places.
     let c = abs(vnoise(p * 0.55 + vec2<f32>(3.0, 11.0)) - 0.5);
     let crack = (1.0 - smoothstep(0.004, 0.012, c))
         * smoothstep(0.55, 0.75, vnoise(p * 0.07)) * keep(0.25, fp);
+    // Sealed cracks: longer, wider tar lines, black and glossy.
+    let t = abs(vnoise(turn37(p) * 0.18 + vec2<f32>(13.0, 2.0)) - 0.5);
+    let seal = (1.0 - smoothstep(0.006, 0.016, t))
+        * smoothstep(0.5, 0.7, vnoise(p * 0.05 + vec2<f32>(8.0, 8.0))) * keep(0.6, fp);
+    // Wear: lighter, drier stretches tens of metres long.
     let wear = fbm(p * 0.35);
-    d.albedo = 1.0 + 0.16 * (grain - 0.5) * k_grain + 0.10 * (wear - 0.5)
-        - 0.09 * patch_mask - 0.35 * crack;
-    d.roughness = 0.12 * (grain - 0.5) * k_grain + 0.12 * patch_mask + 0.2 * crack;
-    d.slope = 0.05 * fbm_slope(p, 3.0) * k_grain;
+    d.albedo = 1.0 + 0.22 * (grain - 0.5) * k_grain + 0.16 * (mottle - 0.5) * k_mottle
+        + 0.18 * (wear - 0.5) - 0.14 * patch_mask - 0.35 * crack - 0.30 * seal;
+    // The gloss varies with the surface so the sun's highlight breaks up into a sheen with
+    // brighter and duller places (T-271, "more glints"): fresh tar is glossy, worn stone dull.
+    d.roughness = 0.20 * (grain - 0.5) * k_grain + 0.18 * (mottle - 0.5) * k_mottle
+        + 0.16 * (wear - 0.5) + 0.12 * patch_mask + 0.2 * crack - 0.2 * seal;
+    d.slope = 0.07 * fbm_slope(p, 3.0) * k_grain;
     return d;
 }
 
@@ -243,11 +260,6 @@ fn grass(p: vec2<f32>, fp: f32) -> Detail {
 // Size of a cloud's shadow, metres (one noise cell), and the wind, metres per second.
 const CLOUD_SIZE: f32 = 220.0;
 const WIND: vec2<f32> = vec2<f32>(6.0, 2.5);
-
-// `p` turned by about 37 degrees: each octave of the clouds on its own axes, so no square shows.
-fn turn37(p: vec2<f32>) -> vec2<f32> {
-    return vec2<f32>(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y);
-}
 
 fn cloud_cover(p: vec2<f32>) -> f32 {
     // `globals.time` wraps after an hour: the clouds then jump once, like a new weather front.
