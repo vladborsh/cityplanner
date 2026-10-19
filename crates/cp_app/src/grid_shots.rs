@@ -141,22 +141,17 @@ impl Hand<'_> {
         let p = self.f.w(l);
         let before = self.tool.clone();
         let view = self.sim.view();
-        let q = block_hover(&view, &self.tool, p, false).0;
+        // The tool's own cursor, as a click takes it (T-264).
+        let q = cp_tools::resolve_cursor(&view, &self.tool, p, false).map_or(p, |c| c.cursor);
         let req = self.tool.click(q)?;
-        let req = chain_commit(Some(&view), &mut self.tool, before, req, false)?;
+        let plan = chain_commit(Some(&view), &mut self.tool, before, req, false)?;
+        let (a, b) = (
+            cp_tools::anchor_pos(&view, &plan.pieces[0].from)?,
+            cp_tools::anchor_pos(&view, &plan.pieces.last()?.to)?,
+        );
         drop(view);
-        let (a, b) = match &req.path {
-            cp_net::RoadPath::Straight { from, to } | cp_net::RoadPath::Curve { from, to, .. } => {
-                (*from, *to)
-            }
-            cp_net::RoadPath::Free(v) => (v[0], *v.last()?),
-        };
         self.sim.push_command(
-            SimCommand::Net(NetCommand::BuildRoad {
-                road: req.road,
-                path: req.path,
-                elevation: req.elevation,
-            }),
+            SimCommand::Net(NetCommand::BuildPlan { plan }),
             self.sim.tick(),
         );
         self.sim.tick_once();

@@ -94,12 +94,28 @@ pub fn junction_reach(graph: &NetGraph, content: &ContentDb, node: NodeId) -> f3
     let Some(n) = graph.node(node) else {
         return MIN_SEGMENT_LENGTH_BUILD;
     };
+    if is_plain_cut_or_end(graph, node) {
+        return MIN_SEGMENT_LENGTH_BUILD;
+    }
+    n.segments
+        .iter()
+        .filter_map(|&s| graph.segment(s))
+        .map(|s| content.road(s.road).width / 2.0)
+        .fold(MIN_SEGMENT_LENGTH_BUILD, f32::max)
+}
+
+/// A node that is no junction at all: a dead end, or an invisible cut of a straight street
+/// (degree 2, same road and level, a corner of at most [`crate::CORNER_DEG`]).
+fn is_plain_cut_or_end(graph: &NetGraph, node: NodeId) -> bool {
+    let Some(n) = graph.node(node) else {
+        return true;
+    };
     let segs: Vec<&Segment> = n
         .segments
         .iter()
         .filter_map(|&s| graph.segment(s))
         .collect();
-    let plain_cut = match segs.as_slice() {
+    match segs.as_slice() {
         [] | [_] => true,
         [a, b] => {
             let away = |s: &Segment| {
@@ -114,13 +130,13 @@ pub fn junction_reach(graph: &NetGraph, content: &ContentDb, node: NodeId) -> f3
                 && away(a).dot(away(b)) <= -crate::CORNER_DEG.to_radians().cos()
         }
         _ => false,
-    };
-    if plain_cut {
-        return MIN_SEGMENT_LENGTH_BUILD;
     }
-    segs.iter()
-        .map(|s| content.road(s.road).width / 2.0)
-        .fold(MIN_SEGMENT_LENGTH_BUILD, f32::max)
+}
+
+/// An invisible cut of a straight street: degree 2, same road and level, no bend. The tool does
+/// not snap to one (it is not there for the player); a plan that meets one dissolves it.
+pub fn is_plain_cut(graph: &NetGraph, node: NodeId) -> bool {
+    graph.node(node).is_some_and(|n| n.segments.len() == 2) && is_plain_cut_or_end(graph, node)
 }
 
 /// Whether `p` lies inside the junction of `node` (§6.8.3 items 1 and 5, T-264): within
@@ -327,6 +343,36 @@ pub struct RoadBuildPlan {
     /// Buildings to demolish (with player confirmation). TODO(T-028): always empty now.
     pub demolish: Vec<DemolishRef>,
     pub cost: Cost,
+    /// Made by [`validate_build_plan`] (T-264): applied as it is, no joint merged afterwards.
+    pub literal: bool,
+    /// Invisible cuts of straight streets that the plan dissolves before anything is split: a
+    /// junction or an end within 8 m of such a cut takes its place on the street's lattice, and
+    /// the street is cut again where it needs it (T-264, what BUG-069 did after the fact).
+    pub dissolve: Vec<NodeId>,
+}
+
+impl RoadBuildError {
+    /// Where on the map the error is, in the plane, when it has a place (the tool draws a mark
+    /// there, §6.8.3 item 9).
+    pub fn pos(&self) -> Option<Vec2> {
+        match self {
+            Self::DegenerateLeg { pos } => Some(*pos),
+            Self::RampTooShort { pos }
+            | Self::RampStartsOverWater { pos }
+            | Self::SegmentTooShort { pos, .. }
+            | Self::SharpAngle { pos, .. }
+            | Self::TooSteep { pos, .. }
+            | Self::WaterWithoutBridge { pos }
+            | Self::TooManySegments { pos }
+            | Self::TileNotOwned { pos }
+            | Self::NodeOnRoad { pos }
+            | Self::RoadsOverlap { pos }
+            | Self::RailCrossesRoad { pos }
+            | Self::ElevatedClearance { pos }
+            | Self::TunnelClearance { pos } => Some(Vec2::new(pos.x, pos.z)),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for RoadBuildError {
@@ -974,15 +1020,173 @@ pub fn validate_build_plan(
             zone_grid: false,
         },
     };
-    validate_inner(
-        graph,
+    // The invisible cuts the plan meets close by are dissolved first; the plan is then checked on
+    // the graph as it will be.
+    let cuts = dissolve_cuts(graph, content, plan);
+    let (g, p) = match &cuts {
+        Some(c) => (&c.graph, &c.plan),
+        None => (graph, plan),
+    };
+    let mut built = validate_inner(
+        g,
         terrain,
         tiles,
         content,
         &req,
-        Some(plan),
+        Some(p),
         &mut SnapReport::default(),
-    )
+    )?;
+    if let Some(c) = &cuts {
+        built.dissolve = c.dissolved.clone();
+    }
+    cut_long_remnants(&mut built, g, cuts.as_ref().map_or(&[][..], |c| &c.merged));
+    Ok(built)
+}
+
+/// The graph with the invisible cuts of a plan dissolved, and the plan with its anchors moved
+/// onto the merged streets.
+struct Dissolved {
+    graph: NetGraph,
+    plan: crate::plan::BuildPlan,
+    /// The cuts (nodes of the original graph) that were merged away, in order.
+    dissolved: Vec<NodeId>,
+    /// The streets they made.
+    merged: Vec<SegmentId>,
+}
+
+/// Where a ground plan meets an old street within [`MIN_SEGMENT_LENGTH_BUILD`] (along it) of a
+/// plain cut — an anchor on the street, or a crossing — the cut is dissolved: the two pieces
+/// become one straight street (`NetGraph::merge_joint`). `None` when nothing is dissolved.
+fn dissolve_cuts(
+    graph: &NetGraph,
+    content: &ContentDb,
+    plan: &crate::plan::BuildPlan,
+) -> Option<Dissolved> {
+    if !matches!(plan.elevation, ElevationMode::Ground) {
+        return None;
+    }
+    let pts = plan_points(graph, plan).ok()?;
+    // Where the plan meets a street: (segment, parameter on it).
+    let mut meets: Vec<(SegmentId, f32)> = Vec::new();
+    for pc in &plan.pieces {
+        for a in [pc.from, pc.to] {
+            if let Anchor::OnSegment(sid, t) = a {
+                meets.push((sid, t.clamp(0.0, 1.0)));
+            }
+        }
+    }
+    let v3 = |p: Vec2| Vec3::new(p.x, 0.0, p.y);
+    for (i, pc) in plan.pieces.iter().enumerate() {
+        let leg = CubicBezier3::new(v3(pts[i]), v3(pc.c1), v3(pc.c2), v3(pts[i + 1]));
+        for (sid, seg) in graph.segments() {
+            if seg.elevation != Elevation::Ground || seg.curve.bounds_distance_xz(pts[i]) > 400.0 {
+                continue;
+            }
+            for (tc, ts) in leg.intersect_xz(&seg.curve) {
+                if (0.002..=0.998).contains(&tc) {
+                    meets.push((sid, ts));
+                }
+            }
+        }
+    }
+    let mut cuts: Vec<NodeId> = Vec::new();
+    for (sid, t) in meets {
+        let Some(seg) = graph.segment(sid) else {
+            continue;
+        };
+        let at = seg.curve.arc_table().t_to_s(t);
+        for (node, along) in [(seg.start, at), (seg.end, seg.length - at)] {
+            let plain = graph.node(node).is_some_and(|n| n.kind == NodeKind::Middle);
+            if plain && along < MIN_SEGMENT_LENGTH_BUILD - REMNANT_EPS && !cuts.contains(&node) {
+                cuts.push(node);
+            }
+        }
+    }
+    if cuts.is_empty() {
+        return None;
+    }
+    let mut work = graph.clone();
+    let (mut dissolved, mut merged) = (Vec::new(), Vec::new());
+    for node in cuts {
+        let Some(road) = graph
+            .node(node)
+            .and_then(|n| n.segments.first())
+            .and_then(|&s| graph.segment(s))
+            .map(|s| s.road)
+        else {
+            continue;
+        };
+        if let Some(m) = work.merge_joint_planar(content.road(road), node) {
+            dissolved.push(node);
+            merged.push(m);
+        }
+    }
+    if dissolved.is_empty() {
+        return None;
+    }
+    // An anchor on a street that was merged away is the same point of the merged street.
+    let moved = |a: Anchor| match a {
+        Anchor::OnSegment(sid, t) if work.segment(sid).is_none() => {
+            let p = to_xz(graph.segment(sid).map_or(Vec3::ZERO, |s| s.curve.point(t)));
+            work.segments()
+                .filter(|(_, s)| s.elevation == Elevation::Ground)
+                .map(|(id, s)| {
+                    let (t, d) = s.curve.nearest_xz(p);
+                    (d, id, t)
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .filter(|(d, ..)| *d < 0.5)
+                .map_or(a, |(_, id, t)| Anchor::OnSegment(id, t))
+        }
+        other => other,
+    };
+    let mut plan = plan.clone();
+    for pc in &mut plan.pieces {
+        pc.from = moved(pc.from);
+        pc.to = moved(pc.to);
+    }
+    Some(Dissolved {
+        graph: work,
+        plan,
+        dissolved,
+        merged,
+    })
+}
+
+/// The pieces an old street is left in after the plan cut it (or after cuts were merged into
+/// it) are at most [`MAX_SEGMENT_LENGTH`] long: a longer span gets equal cuts, like a new road.
+fn cut_long_remnants(built: &mut RoadBuildPlan, graph: &NetGraph, merged: &[SegmentId]) {
+    let mut ids: Vec<SegmentId> = built.splits.iter().map(|s| s.segment).collect();
+    ids.extend_from_slice(merged);
+    ids.sort();
+    ids.dedup();
+    for id in ids {
+        let Some(seg) = graph.segment(id) else {
+            continue;
+        };
+        let table = seg.curve.arc_table();
+        let mut at: Vec<f32> = built
+            .splits
+            .iter()
+            .filter(|s| s.segment == id)
+            .map(|s| table.t_to_s(s.t))
+            .collect();
+        at.sort_by(f32::total_cmp);
+        let mut bounds = vec![0.0];
+        bounds.extend(at);
+        bounds.push(seg.length);
+        for w in bounds.windows(2) {
+            let span = w[1] - w[0];
+            for cut in even_cuts(span) {
+                let t = table.s_to_t(w[0] + cut);
+                built.splits.push(PlannedSplit {
+                    segment: id,
+                    t,
+                    pos: seg.curve.point(t),
+                });
+            }
+        }
+    }
 }
 
 /// Equal pieces of a span (§6.8.3 item 2): `floor(span/96)+1` of them, so none is longer than
@@ -1714,6 +1918,8 @@ fn validate_inner(
         report: *report,
         demolish: Vec::new(),
         cost,
+        literal: literal.is_some(),
+        dissolve: Vec::new(),
     })
 }
 

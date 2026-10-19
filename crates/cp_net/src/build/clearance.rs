@@ -187,6 +187,8 @@ mod tests {
             report: SnapReport::default(),
             demolish: Vec::new(),
             cost: Cost::ZERO,
+            literal: false,
+            dissolve: Vec::new(),
         }
     }
 

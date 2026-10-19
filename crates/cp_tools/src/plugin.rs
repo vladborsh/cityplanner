@@ -9,7 +9,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use cp_core::Cost;
 use cp_net::{
-    NetCommand, RoadBuildError, RoadPath, SegmentId, SnapReport, SnapReportKind, one_way_report,
+    Anchor, NetCommand, RoadBuildError, RoadPath, SegmentId, SnapReport, SnapReportKind,
+    one_way_report,
 };
 use cp_render::camera::math::ray_terrain_hit;
 use cp_render::{RtsCamera, UiCapture};
@@ -23,7 +24,7 @@ use crate::bulldozer::{
     spans_outside_owned,
 };
 use crate::road::{
-    MarkerKind, RoadMarker, RoadTool, TOO_CLOSE, chevron_lines, preview_report, quantized,
+    MarkerKind, RoadMarker, RoadTool, TOO_CLOSE, chevron_lines, preview_plan, resolve_cursor,
     road_is_one_way, road_markers, sample_curve,
 };
 use crate::upgrade::{upgrade_commands, upgrade_preview};
@@ -63,7 +64,7 @@ pub enum ActiveTool {
 }
 
 /// The road ghost: what the cursor would build.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Ghost {
     /// Centre lines to draw (the planned segments, or the raw path when invalid).
     pub polylines: Vec<Vec<Vec3>>,
@@ -84,6 +85,17 @@ pub struct Ghost {
     pub zone: crate::zone_preview::ZoneStrip,
     /// The 8-cell block guide near the cursor, if any (road ghost only).
     pub block: Option<crate::zone_preview::BlockGuide>,
+    /// The cursor the ghost was computed for and the point the resolver put it on (road ghost
+    /// only): a click takes this point, so what is built is what was shown (§6.8.3 item 7).
+    pub hover: Option<Vec2>,
+    pub resolved: Option<Vec2>,
+    /// The plan a click would send: the anchors of the ghost (road ghost, valid only).
+    pub plan: Option<cp_net::BuildPlan>,
+    /// Where each error is, on the map (§6.8.3 item 9): the tool draws a red mark there.
+    pub error_marks: Vec<Vec2>,
+    /// The length of the last leg in cells and its angle to the road it leaves, shown at the
+    /// cursor.
+    pub label: Option<String>,
 }
 
 #[derive(Resource, Default, Debug)]
@@ -97,8 +109,10 @@ pub struct ToolState {
     pub ghost: Option<Ghost>,
     /// Terrain point under the cursor (XZ).
     pub hover: Option<Vec2>,
-    /// `Alt` is held: the road tool neither joins nor steps the length (§6.7).
+    /// `Alt` is held: the road tool snaps to nothing but a node or a street under the cursor.
     pub alt: bool,
+    /// The "snaps" button is off: the same as holding `Alt` (§6.8.3 item 9).
+    pub snaps_off: bool,
     /// Control points of the roads around the cursor (and the 8 m ticks of the one it is next
     /// to) while the road tool is active (§6.7).
     pub markers: Vec<RoadMarker>,
@@ -175,6 +189,11 @@ struct GhostKey {
 }
 
 impl ToolState {
+    /// Snaps off for the road tool: `Alt` held or the button switched off.
+    pub fn free_snaps(&self) -> bool {
+        self.alt || self.snaps_off
+    }
+
     /// Takes the bulldozer up, or puts it down and re-activates the tool it interrupted.
     pub fn toggle_bulldozer(&mut self) {
         if self.active == ActiveTool::Bulldozer {
@@ -680,22 +699,18 @@ pub fn tool_hotkeys(
         let before = state.road.clone();
         if let Some(req) = state.road.finish_free() {
             state.ghost_key = None;
-            let alt = state.alt;
-            if let Some(req) =
-                crate::road::chain_commit(view.as_deref(), &mut state.road, before, req, alt)
+            let free = state.free_snaps();
+            if let Some(plan) =
+                crate::road::chain_commit(view.as_deref(), &mut state.road, before, req, free)
             {
-                outbox.push(build_command(req));
+                outbox.push(build_command(plan));
             }
         }
     }
 }
 
-fn build_command(req: cp_net::RoadPathRequest) -> SimCommand {
-    SimCommand::Net(NetCommand::BuildRoad {
-        road: req.road,
-        path: req.path,
-        elevation: req.elevation,
-    })
+fn build_command(plan: cp_net::BuildPlan) -> SimCommand {
+    SimCommand::Net(NetCommand::BuildPlan { plan })
 }
 
 /// Terrain point under the cursor.
@@ -833,13 +848,14 @@ pub fn tool_hover(
         }
         (ActiveTool::Road, Some(p)) => {
             let key = GhostKey {
-                hover: (p.x.round() as i32, p.y.round() as i32),
-                alt: state.alt,
+                // Centimetres: the ghost follows the cursor and a click is the ghost (T-264).
+                hover: ((p.x * 20.0).round() as i32, (p.y * 20.0).round() as i32),
+                alt: state.free_snaps(),
                 road: state.road.clone(),
                 net_ptr: std::sync::Arc::as_ptr(&view.net) as usize,
             };
             if state.ghost_key.as_ref() != Some(&key) {
-                state.ghost = compute_ghost_alt(&view, &state.road, p, state.alt);
+                state.ghost = compute_ghost_alt(&view, &state.road, p, state.free_snaps());
                 state.markers = road_markers(&view, p);
                 state.ghost_key = Some(key);
             }
@@ -890,96 +906,143 @@ pub fn compute_ghost(view: &SimView, tool: &RoadTool, hover: Vec2) -> Option<Gho
     compute_ghost_alt(view, tool, hover, false)
 }
 
-/// [`compute_ghost`] with the `Alt` state: the path is quantized to the 8 m step and the joins
-/// of §6.7 first (what `BuildRoad` will be sent), unless `alt`.
-pub fn compute_ghost_alt(view: &SimView, tool: &RoadTool, hover: Vec2, alt: bool) -> Option<Ghost> {
-    // The 8-cell block guide may move the cursor onto the distance that closes a block (T-185).
-    let (hover, block) = crate::zone_preview::block_hover(view, tool, hover, alt);
-    let mut ghost = compute_ghost_inner(view, tool, hover, alt)?;
-    ghost.block = block;
+/// [`compute_ghost`] with the snaps switched off (`free`: `Alt` held or the button off): the one
+/// resolver ([`resolve_cursor`]) places the cursor and the plan is validated literally, the way
+/// `BuildPlan` is applied.
+pub fn compute_ghost_alt(
+    view: &SimView,
+    tool: &RoadTool,
+    hover: Vec2,
+    free: bool,
+) -> Option<Ghost> {
+    let cursor = resolve_cursor(view, tool, hover, free)?;
+    let (path, plan) = (cursor.path.clone()?, cursor.plan.clone()?);
+    let content = view.content.as_deref()?;
+    let req = tool.request(path.clone())?;
+    let half_width = content.road(req.road).width * 0.5;
+    let result = preview_plan(view, &plan)?;
+    let mut ghost = Ghost {
+        half_width,
+        snap: cursor.snap,
+        block: cursor.block.clone(),
+        hover: Some(hover),
+        resolved: Some(cursor.point),
+        label: cursor_label(view, tool, &path, &plan),
+        ..Default::default()
+    };
+    match result {
+        Ok(built) if !cp_net::clearance_report(&view.net, content, &built).is_empty() => {
+            ghost.polylines = built
+                .segments
+                .iter()
+                .map(|s| sample_curve(&s.curve, 3.0))
+                .collect();
+            ghost.errors = vec![TOO_CLOSE.to_string()];
+            ghost.error_marks = cp_net::clearance_report(&view.net, content, &built)
+                .iter()
+                .map(|w| w.pos)
+                .collect();
+        }
+        Ok(built) => {
+            let one_way = road_is_one_way(content.road(built.road));
+            ghost.polylines = built
+                .segments
+                .iter()
+                .map(|s| sample_curve(&s.curve, 3.0))
+                .collect();
+            ghost.valid = true;
+            ghost.cost = Some(built.cost);
+            ghost.warnings = one_way_report(&view.net, content, &built)
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            if one_way {
+                ghost.chevrons = built
+                    .segments
+                    .iter()
+                    .flat_map(|s| chevron_lines(&s.curve, s.length))
+                    .collect();
+            }
+            ghost.zone = crate::zone_preview::zone_strip(view, &built);
+            ghost.plan = Some(plan);
+        }
+        Err(errors) => {
+            ghost.polylines = vec![raw_polyline(view, &path)];
+            ghost.errors = errors.iter().map(RoadBuildError::to_string).collect();
+            ghost.error_marks = errors.iter().filter_map(RoadBuildError::pos).collect();
+        }
+    }
     Some(ghost)
 }
 
-fn compute_ghost_inner(view: &SimView, tool: &RoadTool, hover: Vec2, alt: bool) -> Option<Ghost> {
-    let path = tool.path_with_hover(hover)?;
-    let (req, step) = quantized(view, tool.request(path)?, alt);
-    let path = req.path.clone();
-    let half_width = view
-        .content
-        .as_deref()
-        .map_or(0.0, |c| c.road(req.road).width * 0.5);
-    let (result, mut report) = preview_report(view, &req)?;
-    // The step's own snap (a control-point perpendicular, a joined tick) is what the player
-    // should see, unless the validator found something more specific for the last vertex.
-    if matches!(step.kind, SnapReportKind::ControlLine(_))
-        || (report.kind == SnapReportKind::None && step.kind != SnapReportKind::None)
-    {
-        report = step;
+/// "5 cells · 90°": the length of the last leg in cells and the angle between it and the road it
+/// leaves (the leg before it, or the street or the arms at its start), at the cursor (§6.8.3
+/// item 9).
+fn cursor_label(
+    view: &SimView,
+    tool: &RoadTool,
+    path: &RoadPath,
+    plan: &cp_net::BuildPlan,
+) -> Option<String> {
+    let piece = plan.pieces.last()?;
+    let (a, b) = match path {
+        RoadPath::Straight { from, to } | RoadPath::Curve { from, to, .. } => (*from, *to),
+        RoadPath::Free(v) => (*v.get(v.len().checked_sub(2)?)?, *v.last()?),
+    };
+    let leg = b - a;
+    let len = leg.length();
+    if len < 1.0 {
+        return None;
     }
-    Some(match result {
-        Ok(plan)
-            if !cp_net::clearance_report(&view.net, view.content.as_deref()?, &plan).is_empty() =>
-        {
-            Ghost {
-                polylines: plan
-                    .segments
-                    .iter()
-                    .map(|s| sample_curve(&s.curve, 3.0))
-                    .collect(),
-                valid: false,
-                cost: None,
-                errors: vec![TOO_CLOSE.to_string()],
-                half_width,
-                snap: report,
-                warnings: Vec::new(),
-                chevrons: Vec::new(),
-                zone: Default::default(),
-                block: None,
+    let cells = len / cp_net::ZONE_CELL;
+    let mut text = if (cells - cells.round()).abs() < 0.05 {
+        format!("{} cells", cells.round() as i32)
+    } else {
+        format!("{cells:.1} cells")
+    };
+    // The directions the leg is measured against: the road behind it, or the roads at its start.
+    let mut refs: Vec<Vec2> = Vec::new();
+    if let RoadPath::Free(v) = path
+        && v.len() >= 3
+        && let Some(d) = (v[v.len() - 3] - a).try_normalize()
+    {
+        refs.push(d);
+    }
+    let _ = tool;
+    match piece.from {
+        Anchor::Node(id) => {
+            if let Some(n) = view.net.node(id) {
+                for &sid in &n.segments {
+                    if let Some(s) = view.net.segment(sid) {
+                        let t = if s.start == id {
+                            s.curve.tangent(0.0)
+                        } else {
+                            -s.curve.tangent(1.0)
+                        };
+                        refs.extend(Vec2::new(t.x, t.z).try_normalize());
+                    }
+                }
             }
         }
-        Ok(plan) => {
-            let content = view.content.as_deref()?;
-            let one_way = road_is_one_way(content.road(plan.road));
-            Ghost {
-                polylines: plan
-                    .segments
-                    .iter()
-                    .map(|s| sample_curve(&s.curve, 3.0))
-                    .collect(),
-                valid: true,
-                cost: Some(plan.cost),
-                errors: Vec::new(),
-                half_width,
-                snap: report,
-                warnings: one_way_report(&view.net, content, &plan)
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-                chevrons: if one_way {
-                    plan.segments
-                        .iter()
-                        .flat_map(|s| chevron_lines(&s.curve, s.length))
-                        .collect()
-                } else {
-                    Vec::new()
-                },
-                zone: crate::zone_preview::zone_strip(view, &plan),
-                block: None,
+        Anchor::OnSegment(sid, t) => {
+            if let Some(s) = view.net.segment(sid) {
+                let t = s.curve.tangent(t);
+                if let Some(d) = Vec2::new(t.x, t.z).try_normalize() {
+                    refs.extend([d, -d]);
+                }
             }
         }
-        Err(errors) => Ghost {
-            polylines: vec![raw_polyline(view, &path)],
-            valid: false,
-            cost: None,
-            errors: errors.iter().map(RoadBuildError::to_string).collect(),
-            half_width,
-            snap: report,
-            warnings: Vec::new(),
-            chevrons: Vec::new(),
-            zone: Default::default(),
-            block: None,
-        },
-    })
+        Anchor::Free(_) => {}
+    }
+    let dir = leg / len;
+    let best = refs
+        .iter()
+        .map(|r| r.dot(dir).clamp(-1.0, 1.0).acos().to_degrees())
+        .min_by(f32::total_cmp);
+    if let Some(deg) = best {
+        text.push_str(&format!(" · {}°", deg.round() as i32));
+    }
+    Some(text)
 }
 
 /// The ghost for the pipe / power-line tool with the cursor at `hover`: green pieces of the
@@ -1009,6 +1072,7 @@ pub fn compute_utility_ghost_alt(
             chevrons: Vec::new(),
             zone: Default::default(),
             block: None,
+            ..Default::default()
         },
         Err(problems) => Ghost {
             polylines: vec![
@@ -1028,6 +1092,7 @@ pub fn compute_utility_ghost_alt(
             chevrons: Vec::new(),
             zone: Default::default(),
             block: None,
+            ..Default::default()
         },
     })
 }
@@ -1119,17 +1184,27 @@ pub fn tool_click(
     match state.active {
         ActiveTool::Road => {
             let before = state.road.clone();
-            // The click lands where the ghost ends, on the block guide if it snapped (T-185).
-            let p = view.as_deref().map_or(p, |v| {
-                crate::zone_preview::block_hover(v, &state.road, p, state.alt).0
-            });
-            if let Some(req) = state.road.click(p) {
-                let alt = state.alt;
-                if let Some(req) =
-                    crate::road::chain_commit(view.as_deref(), &mut state.road, before, req, alt)
-                {
-                    outbox.push(build_command(req));
-                }
+            // The click is the ghost: it takes the cursor the ghost was made for and the point
+            // the resolver put it on (T-264). A curve's control point is the ghost's point.
+            let free = state.free_snaps();
+            let hover = state
+                .ghost
+                .as_ref()
+                .and_then(|g| g.hover)
+                .filter(|h| h.distance(p) < 0.1)
+                .unwrap_or(p);
+            let cur = view
+                .as_deref()
+                .and_then(|v| resolve_cursor(v, &state.road, hover, free));
+            // A curve's control point is where it is clicked (the cursor after the block guide):
+            // it is no vertex of the road, so it has no length step; the ghost draws the curve
+            // from it as soon as it is set.
+            let q = cur.as_ref().map_or(hover, |c| c.cursor);
+            if let Some(req) = state.road.click(q)
+                && let Some(plan) =
+                    crate::road::chain_commit(view.as_deref(), &mut state.road, before, req, free)
+            {
+                outbox.push(build_command(plan));
             }
             state.ghost_key = None;
         }
@@ -1361,6 +1436,18 @@ fn draw_ghost(
                 at(*b - n * 2.0 + d * 1.5),
                 at(*b + n * 2.0 + d * 1.5),
                 Color::srgb(1.0, 0.9, 0.3),
+            );
+        }
+        // Where the error is (§6.8.3 item 9): a red cross with a ring, on the map.
+        for &m in &ghost.error_marks {
+            let red = Color::srgb(1.0, 0.2, 0.2);
+            let r = 3.0;
+            gizmos.line(at(m + Vec2::new(-r, -r)), at(m + Vec2::new(r, r)), red);
+            gizmos.line(at(m + Vec2::new(-r, r)), at(m + Vec2::new(r, -r)), red);
+            gizmos.circle(
+                Isometry3d::new(at(m), Quat::from_rotation_arc(Vec3::Z, Vec3::Y)),
+                r * 1.6,
+                red,
             );
         }
         // The block guide: dashed, bright when the cursor sits on it.

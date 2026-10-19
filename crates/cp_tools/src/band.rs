@@ -234,6 +234,7 @@ mod tests {
             chevrons: Vec::new(),
             zone: Default::default(),
             block: None,
+            ..Default::default()
         };
         let view = sim.view();
         let ok = band_geometry(&view, Some(&ghost(true, 6.0)), &[], &[], false);

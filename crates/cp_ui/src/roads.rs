@@ -197,6 +197,16 @@ pub fn roads_panel(
             }
         });
         ui.add_space(4.0);
+        // Snaps (§6.8.3 item 9): off is the same as holding Alt.
+        let mut snaps = !tools.snaps_off;
+        if ui
+            .checkbox(&mut snaps, "Snaps")
+            .on_hover_text("Nodes, guides, angles and the 8 m step. Hold Alt for free placement.")
+            .changed()
+        {
+            tools.snaps_off = !snaps;
+        }
+        ui.add_space(4.0);
         ui.weak("Elevation (PgUp / PgDn)");
         ui.horizontal(|ui| {
             if ui

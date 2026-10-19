@@ -5,11 +5,13 @@ use cp_content::{RoadDef, RoadDefId};
 use cp_core::Cost;
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_net::{
-    ControlMark, ElevationMode, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest,
-    SnapOptions, SnapReport, SnapReportKind, StepContext, cell_ticks, clearance_report,
-    control_points, quantize_path, stretch, validate_road_path, validate_road_path_report,
+    Anchor, BuildPlan, ControlMark, ElevationMode, PlanPiece, RoadBuildError, RoadBuildPlan,
+    RoadPath, RoadPathRequest, SnapOptions, SnapReport, SnapReportKind, StepContext, cell_ticks,
+    clearance_report, control_points, quantize_path, stretch, validate_build_plan,
 };
 use cp_sim::SimView;
+
+use crate::snap::{Hit, SnapArm, SnapCtx, SnapEdge, SnapNode, resolve};
 
 /// Metres of road height per PgUp/PgDn step.
 pub const ELEVATION_STEP: f32 = 5.0;
@@ -182,54 +184,257 @@ fn path_end(path: &RoadPath) -> Option<Vec2> {
 }
 
 /// Settles a click that completed a piece (T-176): `tool` already stands in the chain state
-/// ([`RoadTool::click`]); `before` is the tool as it was before the click. A piece that does not
-/// validate (a red ghost, or too close to a road) is not sent and `tool` goes back to `before`,
-/// so the chain and its points are not lost. A good piece comes back quantized, the way
-/// `BuildRoad` is sent, and the chain continues from the end the quantizing gave it.
+/// ([`RoadTool::click`]); `before` is the tool as it was before the click. The points of the
+/// piece are the ones the ghost showed (a click takes the ghost's resolved point, §6.8.3 item 7),
+/// so the plan is made from them as they are: a node under a point is that node, a point on a
+/// street is a point of its axis, anything else is free (the sim snaps nothing). A piece that does
+/// not validate (a red ghost, or too close to a road) is not sent and `tool` goes back to
+/// `before`, so the chain and its points are not lost. The chain continues from the end.
 pub fn chain_commit(
     view: Option<&SimView>,
     tool: &mut RoadTool,
     before: RoadTool,
     req: RoadPathRequest,
-    alt: bool,
-) -> Option<RoadPathRequest> {
+    free: bool,
+) -> Option<BuildPlan> {
+    // The path the ghost showed: quantized by the zone lattice like the ghost's, then resolved to
+    // anchors; `free` (snaps off) places it as it was clicked.
     let req = match view {
-        Some(v) => quantized(v, req, alt).0,
-        None => req,
+        Some(v) if !free => quantized(v, req, false).0,
+        _ => req,
     };
-    if let Some(v) = view
-        && (matches!(preview(v, &req), Some(Err(_))) || too_close(v, &req))
-    {
-        *tool = before;
-        return None;
-    }
-    if let Some(end) = path_end(&req.path) {
-        tool.points = vec![end];
-    }
-    Some(req)
+    let plan = match view {
+        Some(v) => {
+            let (plan, at) = plan_for(v, &req)?;
+            let req = RoadPathRequest {
+                path: with_vertices(&req.path, &at),
+                ..req
+            };
+            let _ = &req;
+            let bad = matches!(preview_plan(v, &plan), Some(Err(_))) || too_close_plan(v, &plan);
+            if bad {
+                *tool = before;
+                return None;
+            }
+            if let Some(end) = at.last() {
+                tool.points = vec![*end];
+            }
+            plan
+        }
+        None => {
+            if let Some(end) = path_end(&req.path) {
+                tool.points = vec![end];
+            }
+            plan_from_anchors(&req, &anchors_free(&req))
+        }
+    };
+    Some(plan)
 }
 
-/// Validates `req` against the snapshot with the same pure function `BuildRoad` uses.
-/// `None` when the view has no terrain or content (nothing to validate against).
-pub fn preview(
+/// Where an anchor of a plan stands in the plane: the node, the point of the street, the free
+/// point. `None` for an anchor the view does not know.
+pub fn anchor_pos(view: &SimView, anchor: &Anchor) -> Option<Vec2> {
+    match anchor {
+        Anchor::Free(p) => Some(*p),
+        Anchor::Node(n) => view.net.node(*n).map(|n| to_xz(n.pos)),
+        Anchor::OnSegment(s, t) => view
+            .net
+            .segment(*s)
+            .map(|s| to_xz(s.curve.point(t.clamp(0.0, 1.0)))),
+    }
+}
+
+/// `path` with its vertices moved to `at` (a control point stays).
+fn with_vertices(path: &RoadPath, at: &[Vec2]) -> RoadPath {
+    match path {
+        RoadPath::Straight { .. } => RoadPath::Straight {
+            from: at[0],
+            to: at[1],
+        },
+        RoadPath::Curve { control, .. } => RoadPath::Curve {
+            from: at[0],
+            control: *control,
+            to: at[1],
+        },
+        RoadPath::Free(_) => RoadPath::Free(at.to_vec()),
+    }
+}
+
+/// The vertices of a path with its control point, if it has one.
+fn path_vertices(path: &RoadPath) -> (Vec<Vec2>, Option<Vec2>) {
+    match path {
+        RoadPath::Straight { from, to } => (vec![*from, *to], None),
+        RoadPath::Curve { from, control, to } => (vec![*from, *to], Some(*control)),
+        RoadPath::Free(v) => (v.clone(), None),
+    }
+}
+
+fn anchors_free(req: &RoadPathRequest) -> Vec<(Anchor, Vec2)> {
+    path_vertices(&req.path)
+        .0
+        .into_iter()
+        .map(|p| (Anchor::Free(p), p))
+        .collect()
+}
+
+/// The plan of a path whose vertices are `anchors` (anchor and where it stands): a straight
+/// leg is a piece with its control points on the chord, a curve the cubic of its quadratic.
+fn plan_from_anchors(req: &RoadPathRequest, anchors: &[(Anchor, Vec2)]) -> BuildPlan {
+    let (_, control) = path_vertices(&req.path);
+    let pieces = anchors
+        .windows(2)
+        .map(|w| {
+            let ((fa, a), (ta, b)) = (w[0], w[1]);
+            let (c1, c2) = match control {
+                Some(c) => (a + (c - a) * (2.0 / 3.0), b + (c - b) * (2.0 / 3.0)),
+                None => (a.lerp(b, 1.0 / 3.0), a.lerp(b, 2.0 / 3.0)),
+            };
+            PlanPiece {
+                from: fa,
+                c1,
+                c2,
+                to: ta,
+            }
+        })
+        .collect();
+    BuildPlan {
+        road: req.road,
+        elevation: req.elevation,
+        pieces,
+    }
+}
+
+/// What the road tool puts under the point `p` (§6.8.3 items 1 and 5): through the one
+/// resolver's direct hit — a node (inside its junction), else a street within its half width —
+/// and nothing else, because the quantizing has already placed the point. `is_end`: an end of the
+/// path. A raised road meets only raised nodes (at its ends also ground ones) and no streets; a
+/// tunnel its own nodes (at its ends the ground ones, the portals).
+fn direct_hit(view: &SimView, elevation: ElevationMode, p: Vec2, is_end: bool) -> (Anchor, Vec2) {
+    let (Some(content), net) = (view.content.as_deref(), &*view.net) else {
+        return (Anchor::Free(p), p);
+    };
+    let level_ok = |e: cp_net::Elevation| match elevation {
+        ElevationMode::Ground => e == cp_net::Elevation::Ground,
+        ElevationMode::Elevated(_) => match e {
+            cp_net::Elevation::Elevated | cp_net::Elevation::Bridge => true,
+            cp_net::Elevation::Ground => is_end,
+            cp_net::Elevation::Tunnel => false,
+        },
+        ElevationMode::Tunnel(_) => match e {
+            cp_net::Elevation::Tunnel => true,
+            cp_net::Elevation::Ground => is_end,
+            _ => false,
+        },
+    };
+    let mut ids = Vec::new();
+    let mut nodes = Vec::new();
+    for (id, n) in net
+        .nodes()
+        .filter(|(id, n)| level_ok(n.elevation) && !cp_net::is_plain_cut(net, *id))
+    {
+        let arms = n
+            .segments
+            .iter()
+            .filter_map(|&s| net.segment(s))
+            .filter_map(|s| {
+                let dir = if s.start == id {
+                    s.curve.tangent(0.0)
+                } else {
+                    -s.curve.tangent(1.0)
+                };
+                Vec2::new(dir.x, dir.z).try_normalize().map(|dir| SnapArm {
+                    dir,
+                    half_width: content.road(s.road).width / 2.0,
+                })
+            })
+            .collect();
+        ids.push(id);
+        nodes.push(SnapNode {
+            pos: to_xz(n.pos),
+            reach: cp_net::junction_reach(net, content, id),
+            arms,
+        });
+    }
+    let mut sids = Vec::new();
+    let mut edges = Vec::new();
+    if matches!(elevation, ElevationMode::Ground) {
+        for (id, s) in net
+            .segments()
+            .filter(|(_, s)| s.elevation == cp_net::Elevation::Ground)
+        {
+            sids.push(id);
+            edges.push(SnapEdge {
+                curve: s.curve,
+                reach: content.road(s.road).width / 2.0,
+            });
+        }
+    }
+    let snap = resolve(
+        p,
+        &SnapCtx {
+            nodes: &nodes,
+            edges: &edges,
+            guides: &[],
+            marks: &[],
+            start: None,
+            refs: &[],
+            snaps: false,
+            length_step: false,
+        },
+    );
+    match snap.hit {
+        Hit::Node(i) => (Anchor::Node(ids[i]), snap.pos),
+        Hit::Edge(i, t) => (Anchor::OnSegment(sids[i], t), snap.pos),
+        Hit::Free => (Anchor::Free(p), p),
+    }
+}
+
+/// The plan of `req` as it stands (§6.8.3 item 1) with the anchors of its vertices: the plan and
+/// where each vertex ended up. `None` without content.
+pub fn plan_for(view: &SimView, req: &RoadPathRequest) -> Option<(BuildPlan, Vec<Vec2>)> {
+    view.content.as_deref()?;
+    let (vertices, _) = path_vertices(&req.path);
+    let last = vertices.len().saturating_sub(1);
+    let anchors: Vec<(Anchor, Vec2)> = vertices
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| direct_hit(view, req.elevation, p, i == 0 || i == last))
+        .collect();
+    let at = anchors.iter().map(|a| a.1).collect();
+    Some((plan_from_anchors(req, &anchors), at))
+}
+
+/// Validates `plan` against the snapshot with the same pure function `BuildPlan` is applied
+/// with. `None` when the view has no terrain or content.
+pub fn preview_plan(
     view: &SimView,
-    req: &RoadPathRequest,
+    plan: &BuildPlan,
 ) -> Option<Result<RoadBuildPlan, Vec<RoadBuildError>>> {
     let terrain = view.terrain.as_deref()?;
     let content = view.content.as_deref()?;
-    Some(validate_road_path(
+    Some(validate_build_plan(
         &view.net,
         terrain,
         &view.tiles,
         content,
-        req,
+        plan,
     ))
 }
 
-/// `req` with its path quantized to the 8 m step and the joins of §6.7 (`Alt` switches them
-/// off), plus what the quantizing snapped. The ghost and the `BuildRoad` command both use the
-/// result, so what is drawn is what is built. Without content there is nothing to look up and
-/// `req` comes back as it is.
+/// Validates `req` the way the command will: its vertices resolved to anchors (a node, a point
+/// of a street, or free), then the plan applied literally. `None` when the view has no terrain or
+/// content (nothing to validate against).
+pub fn preview(
+    view: &SimView,
+    req: &RoadPathRequest,
+) -> Option<Result<RoadBuildPlan, Vec<RoadBuildError>>> {
+    preview_plan(view, &plan_for(view, req)?.0)
+}
+
+/// `req` with its path quantized to the 8 m step and the joins of §6.7 (`alt`: free, no joins and
+/// no step), plus what the quantizing snapped. This is the zone-lattice guide of the resolver:
+/// the length jumps to the cell boundaries of the streets beside it. Without content there is
+/// nothing to look up and `req` comes back as it is.
 pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRequest, SnapReport) {
     let Some(content) = view.content.as_deref() else {
         return (req, SnapReport::default());
@@ -244,6 +449,93 @@ pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRe
     };
     let (path, report) = quantize_path(&req, &cx);
     (RoadPathRequest { path, ..req }, report)
+}
+
+/// The cursor of the road tool after the one resolver (§6.8.3 items 1, 5 and 7): where the ghost
+/// ends, where a click puts the point, and the plan the click sends.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cursor {
+    /// The cursor after the block guide, before the zone lattice: what a click stores (the
+    /// lattice is applied to the whole path, with its first point).
+    pub cursor: Vec2,
+    /// The resolved point (the last vertex of `path`).
+    pub point: Vec2,
+    /// The path with its vertices resolved: nothing is left to snap.
+    pub path: Option<RoadPath>,
+    /// The plan of `path`.
+    pub plan: Option<BuildPlan>,
+    /// What snapped the point.
+    pub snap: SnapReport,
+    /// The 8-cell block guide, if it moved the cursor.
+    pub block: Option<crate::zone_preview::BlockGuide>,
+}
+
+/// Resolves the cursor `hover` of `tool` once. `free`: snaps off (`Alt`, the button): no block
+/// guide, no joins, no length step, only a direct hit on a node or a street within its width.
+/// The ghost and the click both call this, so the click is what the ghost showed.
+pub fn resolve_cursor(view: &SimView, tool: &RoadTool, hover: Vec2, free: bool) -> Option<Cursor> {
+    tool.road?;
+    let (hover, block) = if free {
+        (hover, None)
+    } else {
+        crate::zone_preview::block_hover(view, tool, hover, false)
+    };
+    // The path with the cursor; with nothing clicked yet, a probe leg east of the first point:
+    // the rules for a vertex do not depend on the leg.
+    let drawing = tool.path_with_hover(hover);
+    let req = tool.request(drawing.clone().unwrap_or(RoadPath::Straight {
+        from: hover,
+        to: hover + Vec2::X * 40.0,
+    }))?;
+    let (req, step) = if free {
+        (req, SnapReport::default())
+    } else {
+        quantized(view, req, false)
+    };
+    let (plan, at) = plan_for(view, &req)?;
+    let k = if drawing.is_some() { at.len() - 1 } else { 0 };
+    let point = at[k];
+    // The path with the vertices where the anchors put them (a point on a street is on its axis).
+    let path = drawing.map(|_| with_vertices(&req.path, &at));
+    let plan = path.as_ref().map(|path| {
+        plan_from_anchors(
+            &RoadPathRequest {
+                path: path.clone(),
+                ..req.clone()
+            },
+            &plan_anchors(&plan, &at),
+        )
+    });
+    let mut snap = step;
+    if let Some(plan) = &plan
+        && let Some(last) = plan.pieces.last()
+    {
+        match last.to {
+            Anchor::Node(_) => snap.kind = SnapReportKind::Node,
+            Anchor::OnSegment(..) => snap.kind = SnapReportKind::Segment,
+            Anchor::Free(_) => {}
+        }
+    }
+    Some(Cursor {
+        cursor: hover,
+        point,
+        path,
+        plan,
+        snap,
+        block,
+    })
+}
+
+/// The anchors of a plan with the points they stand at, in vertex order.
+fn plan_anchors(plan: &BuildPlan, at: &[Vec2]) -> Vec<(Anchor, Vec2)> {
+    let mut out = Vec::with_capacity(at.len());
+    for (i, piece) in plan.pieces.iter().enumerate() {
+        if i == 0 {
+            out.push((piece.from, at[0]));
+        }
+        out.push((piece.to, at[i + 1]));
+    }
+    out
 }
 
 /// How far from the path the ticks of a street still count: a block (24 cells) and more.
@@ -354,10 +646,16 @@ pub const TOO_CLOSE: &str = "too close to another road: leave a cell (8 m) or co
 /// Does the path of `req` pass validation but run closer than one cell to an existing road? The
 /// tool then draws a red ghost and sends no command; the command itself does not check this.
 pub fn too_close(view: &SimView, req: &RoadPathRequest) -> bool {
-    let (Some(content), Some(Ok(plan))) = (view.content.as_deref(), preview(view, req)) else {
+    plan_for(view, req).is_some_and(|(plan, _)| too_close_plan(view, &plan))
+}
+
+/// [`too_close`] for a plan.
+pub fn too_close_plan(view: &SimView, plan: &BuildPlan) -> bool {
+    let (Some(content), Some(Ok(built))) = (view.content.as_deref(), preview_plan(view, plan))
+    else {
         return false;
     };
-    !clearance_report(&view.net, content, &plan).is_empty()
+    !clearance_report(&view.net, content, &built).is_empty()
 }
 
 /// What a control-point marker of the road tool stands for.
@@ -418,22 +716,6 @@ pub fn road_markers(view: &SimView, hover: Vec2) -> Vec<RoadMarker> {
         }));
     }
     out
-}
-
-/// [`preview`] plus the snap at the cursor (also for an invalid path).
-pub fn preview_report(
-    view: &SimView,
-    req: &RoadPathRequest,
-) -> Option<(Result<RoadBuildPlan, Vec<RoadBuildError>>, SnapReport)> {
-    let terrain = view.terrain.as_deref()?;
-    let content = view.content.as_deref()?;
-    Some(validate_road_path_report(
-        &view.net,
-        terrain,
-        &view.tiles,
-        content,
-        req,
-    ))
 }
 
 /// Distance between direction chevrons along a one-way ghost, metres.
@@ -773,8 +1055,8 @@ mod tests {
         let before = t.clone();
         let req = t.click(Vec2::new(5096.0, 5000.0)).unwrap();
         let sent = chain_commit(Some(&view), &mut t, before, req, false).expect("valid");
-        let RoadPath::Straight { to, .. } = sent.path else {
-            panic!("straight")
+        let cp_net::Anchor::Free(to) = sent.pieces.last().unwrap().to else {
+            panic!("a free end")
         };
         assert_eq!(t.points, [to]);
     }

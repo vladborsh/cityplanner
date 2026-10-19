@@ -58,8 +58,7 @@ use cp_net::{NetCommand, RoadPath};
 use cp_sim::{SimCommand, SimRunner};
 use cp_terrain::Terrain;
 use cp_tools::road::chain_commit;
-use cp_tools::zone_preview::block_hover;
-use cp_tools::{CommandOutbox, Ghost, RoadMode, RoadTool, compute_ghost_alt};
+use cp_tools::{CommandOutbox, Ghost, RoadMode, RoadTool, compute_ghost_alt, resolve_cursor};
 use cp_zone::Mark;
 use cp_zone::geom::Obb;
 
@@ -406,11 +405,13 @@ impl Player {
         let before = self.tool.clone();
         let view = self.sim.view();
         let ghost = compute_ghost_alt(&view, &self.tool, p, false);
-        let q = block_hover(&view, &self.tool, p, false).0;
+        // The click takes the point the ghost put the cursor on (T-264), as the plugin does.
+        let cur = resolve_cursor(&view, &self.tool, p, false);
+        let q = cur.as_ref().map_or(p, |c| c.cursor);
         drop(view);
         let req = self.tool.click(q)?;
         let view = self.sim.view();
-        let Some(req) = chain_commit(Some(&view), &mut self.tool, before, req, false) else {
+        let Some(plan) = chain_commit(Some(&view), &mut self.tool, before, req, false) else {
             drop(view);
             self.fail(
                 "refused",
@@ -418,19 +419,16 @@ impl Player {
             );
             return None;
         };
+        // The ends as sent: where the anchors of the plan stand.
+        let (a, b) = (
+            cp_tools::anchor_pos(&view, &plan.pieces[0].from).unwrap(),
+            cp_tools::anchor_pos(&view, &plan.pieces.last().unwrap().to).unwrap(),
+        );
         drop(view);
         let targets = self.targets();
-        let (a, b) = match &req.path {
-            RoadPath::Straight { from, to } | RoadPath::Curve { from, to, .. } => (*from, *to),
-            RoadPath::Free(v) => (v[0], *v.last().unwrap()),
-        };
         let old = self.cell_keys();
         let mut outbox = CommandOutbox::default();
-        outbox.push(SimCommand::Net(NetCommand::BuildRoad {
-            road: req.road,
-            path: req.path.clone(),
-            elevation: req.elevation,
-        }));
+        outbox.push(SimCommand::Net(NetCommand::BuildPlan { plan }));
         outbox.flush_into(&mut self.sim);
         self.sim.tick_once();
         let out: Vec<CommandOutcome> = self
@@ -440,7 +438,7 @@ impl Player {
             .drain()
             .collect();
         if let Some(Err(e)) = out.last().map(|o| &o.result) {
-            self.fail("refused", format!("{what}: BuildRoad failed: {e:?}"));
+            self.fail("refused", format!("{what}: BuildPlan failed: {e:?}"));
             return None;
         }
         self.sim.tick_once();

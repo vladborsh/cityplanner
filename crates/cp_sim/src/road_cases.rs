@@ -384,7 +384,9 @@ pub fn resolve_anchor(graph: &NetGraph, db: &cp_content::ContentDb, p: Vec2) -> 
         .nodes()
         .filter(|(_, n)| n.elevation == cp_net::Elevation::Ground)
         .map(|(id, n)| (to_xz(n.pos).distance(p), id, to_xz(n.pos)))
-        .filter(|(_, id, _)| cp_net::in_junction(graph, db, *id, p))
+        .filter(|(_, id, _)| {
+            !cp_net::is_plain_cut(graph, *id) && cp_net::in_junction(graph, db, *id, p)
+        })
         .min_by(|a, b| a.0.total_cmp(&b.0));
     if let Some((_, id, pos)) = node {
         return (Anchor::Node(id), pos);

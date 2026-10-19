@@ -1026,6 +1026,7 @@ mod tests {
             chevrons: Vec::new(),
             zone: Default::default(),
             block: None,
+            ..Default::default()
         });
         draw(&mut tools);
         tools.ghost = Some(Ghost {
@@ -1039,6 +1040,7 @@ mod tests {
             chevrons: Vec::new(),
             zone: Default::default(),
             block: None,
+            ..Default::default()
         });
         draw(&mut tools);
         tools.select(ActiveTool::Bulldozer);

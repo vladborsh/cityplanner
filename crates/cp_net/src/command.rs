@@ -348,7 +348,7 @@ fn build_literal(world: &mut World, plan: &BuildPlan) -> Result<Cost, NetError> 
             let built = validate_build_plan(&graph, &terrain, &tiles, &content, plan)
                 .map_err(NetError::Build)?;
             check_funds(world, built.cost).map_err(NetError::Funds)?;
-            check_plan(&graph, &built).map_err(NetError::from)?;
+            check_plan(&graph, &content, &built).map_err(NetError::from)?;
             #[cfg(debug_assertions)]
             let (backup, before) = (graph.clone(), graph.check_basic_invariants().len());
             match apply_plan_with(&mut graph, &content, &built, false) {
@@ -415,7 +415,7 @@ fn build_paths(
                         .map_err(NetError::Build)?;
                     check_funds(world, Cost(total.0 + plan.cost.0)).map_err(NetError::Funds)?;
                     // Everything is decided before the first change of this piece.
-                    check_plan(&graph, &plan).map_err(NetError::from)?;
+                    check_plan(&graph, &content, &plan).map_err(NetError::from)?;
                     apply_plan(&mut graph, &content, &plan).map_err(NetError::from)?;
                     Ok::<_, NetError>(plan.cost)
                 })();
@@ -467,7 +467,7 @@ pub fn build_unowned(world: &mut World, road: RoadDefId, path: RoadPath) -> Resu
         };
         let plan = validate_road_path(&graph, &terrain, &tiles, &content, &req)
             .map_err(NetError::Build)?;
-        check_plan(&graph, &plan).map_err(NetError::from)?;
+        check_plan(&graph, &content, &plan).map_err(NetError::from)?;
         apply_plan(&mut graph, &content, &plan).map_err(NetError::from)
     })
 }
@@ -491,7 +491,7 @@ pub fn plan_build(world: &World, req: &RoadPathRequest) -> Result<RoadBuildPlan,
         .ok_or(NetError::Missing("net graph"))?;
     let plan =
         validate_road_path(graph, &terrain.0, tiles, &content.0, req).map_err(NetError::Build)?;
-    check_plan(graph, &plan).map_err(NetError::from)?;
+    check_plan(graph, &content.0, &plan).map_err(NetError::from)?;
     Ok(plan)
 }
 
@@ -508,6 +508,7 @@ pub fn apply_build_plan(
     let mut graph = world
         .get_resource_mut::<NetGraph>()
         .ok_or(NetError::Missing("net graph"))?;
+    dissolve(&mut graph, &content, plan);
     for (seg, ts) in grouped_splits(plan) {
         let road = graph
             .segment(seg)
@@ -549,15 +550,41 @@ pub fn plan_applied(
     plan: &RoadBuildPlan,
 ) -> Option<NetGraph> {
     let mut after = graph.clone();
-    apply_plan(&mut after, content, plan).ok()?;
+    apply_plan_with(&mut after, content, plan, !plan.literal).ok()?;
     Some(after)
 }
 
 /// Dry run of [`apply_plan`]: `Ok` exactly when applying the plan would succeed. Nothing is
 /// changed, so no backup of the graph is needed to undo a half-applied plan.
-pub(crate) fn check_plan(graph: &NetGraph, plan: &RoadBuildPlan) -> Result<(), NetOpError> {
+pub(crate) fn check_plan(
+    graph: &NetGraph,
+    content: &cp_content::ContentDb,
+    plan: &RoadBuildPlan,
+) -> Result<(), NetOpError> {
     let curves: Vec<_> = plan.segments.iter().map(|s| s.curve).collect();
-    graph.check_build(&grouped_splits(plan), &curves)
+    if plan.dissolve.is_empty() {
+        return graph.check_build(&grouped_splits(plan), &curves);
+    }
+    // The cuts the plan dissolves are merged first; the rest is decided on that graph.
+    let mut work = graph.clone();
+    dissolve(&mut work, content, plan);
+    work.check_build(&grouped_splits(plan), &curves)
+}
+
+/// Merges the cuts of `plan.dissolve` away, in order (the road of a cut is the road of its
+/// pieces).
+fn dissolve(graph: &mut NetGraph, content: &cp_content::ContentDb, plan: &RoadBuildPlan) {
+    for &node in &plan.dissolve {
+        let Some(road) = graph
+            .node(node)
+            .and_then(|n| n.segments.first())
+            .and_then(|&s| graph.segment(s))
+            .map(|s| s.road)
+        else {
+            continue;
+        };
+        graph.merge_joint_planar(content.road(road), node);
+    }
 }
 
 /// Applies a validated plan: splits first (per segment, ascending `t`), then the new
@@ -579,6 +606,7 @@ fn apply_plan_with(
     plan: &RoadBuildPlan,
     merge: bool,
 ) -> Result<(), NetOpError> {
+    dissolve(graph, content, plan);
     let by_seg = grouped_splits(plan);
     for (seg, ts) in by_seg {
         let road = graph

@@ -455,6 +455,18 @@ impl NetGraph {
     /// is returned. `None` (nothing changed) for any other node. `def` must be the road's
     /// definition.
     pub fn merge_joint(&mut self, def: &RoadDef, node: NodeId) -> Option<SegmentId> {
+        self.merge_joint_in(def, node, false)
+    }
+
+    /// [`Self::merge_joint`] with the straightness judged in the plane (T-264): a cut of a
+    /// street on a slope is not on the 3D line between the ends, and is a cut of a straight
+    /// street all the same. The merged street runs straight between the heights of its ends.
+    pub fn merge_joint_planar(&mut self, def: &RoadDef, node: NodeId) -> Option<SegmentId> {
+        self.merge_joint_in(def, node, true)
+    }
+
+    fn merge_joint_in(&mut self, def: &RoadDef, node: NodeId, planar: bool) -> Option<SegmentId> {
+        let flat = |v: Vec3| if planar { Vec3::new(v.x, 0.0, v.z) } else { v };
         let n = self.nodes.get(node)?;
         if n.kind != NodeKind::Middle || n.segments.len() != 2 {
             return None;
@@ -470,14 +482,14 @@ impl NetGraph {
             return None;
         };
         let straight = |c: &CubicBezier3| {
-            let d = (c.p3 - c.p0).normalize_or_zero();
+            let d = flat(c.p3 - c.p0).normalize_or_zero();
             [c.p1, c.p2]
                 .iter()
-                .all(|p| (*p - c.p0).cross(d).length() < 0.01)
+                .all(|p| flat(*p - c.p0).cross(d).length() < 0.01)
         };
         let (from, to) = (first.curve.p0, second.curve.p3);
-        let dir = (to - from).normalize_or_zero();
-        let on_line = |p: Vec3| (p - from).cross(dir).length() < 0.05;
+        let dir = flat(to - from).normalize_or_zero();
+        let on_line = |p: Vec3| flat(p - from).cross(dir).length() < 0.05;
         if first.road != second.road
             || first.elevation != second.elevation
             || first.start == second.end

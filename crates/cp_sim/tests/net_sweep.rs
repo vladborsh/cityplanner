@@ -169,6 +169,22 @@ impl Case {
         let w = self.w(p);
         let inside = |n: &cp_net::Node| {
             let c = to_xz(n.pos);
+            let segs0: Vec<&cp_net::Segment> =
+                n.segments.iter().filter_map(|&s| net.segment(s)).collect();
+            // An invisible cut of a straight street is not a node to snap to; a plan that meets
+            // one dissolves it and the point stays (T-264).
+            if let [a, b] = segs0.as_slice() {
+                let dir = |s: &cp_net::Segment| {
+                    if c.distance(to_xz(s.curve.p0)) < 0.05 {
+                        to_xz(s.curve.tangent(0.0)).normalize()
+                    } else {
+                        -to_xz(s.curve.tangent(1.0)).normalize()
+                    }
+                };
+                if a.road == b.road && dir(a).dot(dir(b)) < -0.985 {
+                    return false;
+                }
+            }
             if c.distance(w) <= 8.0 {
                 return true;
             }

@@ -434,3 +434,18 @@ fn a_road_whose_asphalt_lies_on_a_road_beside_it_is_refused() {
     build(&mut sim, road, &[p(-60.0, 13.0), p(60.0, 13.0)]).unwrap();
     assert_invariants(&sim);
 }
+
+#[test]
+fn a_crossing_within_8_m_of_a_plain_cut_dissolves_the_cut_and_stays_where_aimed() {
+    let (mut sim, road) = world();
+    // 300 m: cuts at -75, 0, 75. A street across 5 m past the cut at -75 keeps its place; the
+    // cut goes, the pieces around the crossing are 80 and 70 m (BUG-069's job, done by the plan).
+    build(&mut sim, road, &[p(-150.0, 0.0), p(150.0, 0.0)]).unwrap();
+    assert!(node_at(&sim, p(-75.0, 0.0)).is_some());
+    build(&mut sim, road, &[p(-70.0, -80.0), p(-70.0, 80.0)]).unwrap();
+    assert!(node_at(&sim, p(-70.0, 0.0)).is_some());
+    assert!(node_at(&sim, p(-75.0, 0.0)).is_none(), "the cut is gone");
+    assert_eq!(degree(&sim, p(-70.0, 0.0)), 4);
+    assert!(lengths(&sim)[0] >= 8.0);
+    assert_invariants(&sim);
+}

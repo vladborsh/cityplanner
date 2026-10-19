@@ -505,6 +505,7 @@ mod tests {
             zone: Default::default(),
             block: None,
             warnings: vec!["one-way: arms face the same way".into()],
+            ..Default::default()
         });
         rig.frame(vec![]);
         let text = rig.frame(vec![]);
@@ -522,6 +523,7 @@ mod tests {
             zone: Default::default(),
             block: None,
             warnings: vec![],
+            ..Default::default()
         });
         let text = rig.frame(vec![]);
         assert!(text.contains("crosses water"), "{text}");
@@ -653,6 +655,7 @@ mod tests {
             chevrons: Vec::new(),
             zone: Default::default(),
             block: None,
+            ..Default::default()
         });
         let text = rig.frame(vec![]);
         assert!(text.contains("can build"), "{text}");
@@ -672,6 +675,7 @@ mod tests {
             chevrons: Vec::new(),
             zone: Default::default(),
             block: None,
+            ..Default::default()
         });
         let text = rig.frame(vec![]);
         assert!(text.contains("too steep (20%, max 12%)"), "{text}");
@@ -696,6 +700,7 @@ mod tests {
             chevrons: Vec::new(),
             zone: Default::default(),
             block: None,
+            ..Default::default()
         });
         let texts = rig.frame_texts(vec![]);
         for (text, at) in &texts {
@@ -734,6 +739,7 @@ mod tests {
             chevrons: Vec::new(),
             zone: Default::default(),
             block: None,
+            ..Default::default()
         });
         rig.frame(vec![]);
         // The panel fills the height under the top bar; the verdict is in its lower part.

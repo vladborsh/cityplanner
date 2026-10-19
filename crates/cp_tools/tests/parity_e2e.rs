@@ -16,7 +16,7 @@ use cp_net::{
 };
 use cp_sim::{SimCommand, SimRunner};
 use cp_terrain::Terrain;
-use cp_tools::{CommandOutbox, RoadMode, RoadTool, format_money, pick_segment, preview};
+use cp_tools::{CommandOutbox, RoadMode, RoadTool, format_money, pick_segment, plan_for, preview};
 
 const ROOT: &str = env!("CARGO_MANIFEST_DIR");
 
@@ -46,14 +46,11 @@ fn req(road: RoadDefId, path: RoadPath, elevation: ElevationMode) -> RoadPathReq
     }
 }
 
-/// Sends `r` as the tool does (the `BuildRoad` command) and returns its outcome.
+/// Sends `r` as the tool does (the `BuildPlan` command, T-264) and returns its outcome.
 fn command(sim: &mut SimRunner, r: &RoadPathRequest) -> Result<Cost, CommandError> {
+    let plan = plan_for(&sim.view(), r).expect("content present").0;
     let mut outbox = CommandOutbox::default();
-    outbox.push(SimCommand::Net(NetCommand::BuildRoad {
-        road: r.road,
-        path: r.path.clone(),
-        elevation: r.elevation,
-    }));
+    outbox.push(SimCommand::Net(NetCommand::BuildPlan { plan }));
     outbox.flush_into(sim);
     sim.tick_once();
     let outcomes: Vec<CommandOutcome> = sim
