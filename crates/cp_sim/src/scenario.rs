@@ -149,16 +149,40 @@ fn service_sites(
     let terrain = world.get_resource::<crate::SimTerrain>().map(|t| &*t.0);
     let tiles = world.get_resource::<cp_terrain::TileOwnership>();
     let buildings = world.resource::<cp_building::BuildingGrid>();
-    let valid = |def, pos| {
+    // Where a building of `def` placed at `pos` stands: the quads of the cells its lot takes (a lot
+    // may slide along the street to the nearest free one, BUG-082) or its own rectangle when it
+    // stands free; `None` when it cannot stand there.
+    let footprint = |def, pos| -> Option<Vec<cp_zone::geom::Quad>> {
         if cp_building::is_free_standing(content, def) {
+            let (w, d) = content.building(def).lot;
             cp_building::validate_free_placement(
                 content, zones, net, buildings, terrain, tiles, def, pos, 0.0,
             )
-            .is_ok()
+            .ok()?;
+            Some(vec![cp_building::footprint_quad(pos, 0.0, w, d)])
         } else {
-            cp_building::validate_placement(content, zones, net, terrain, tiles, def, pos, 0.0)
-                .is_ok()
+            let plan =
+                cp_building::validate_placement(content, zones, net, terrain, tiles, def, pos, 0.0)
+                    .ok()?;
+            Some(
+                plan.cells()
+                    .into_iter()
+                    .filter_map(|c| zones.cell_footprint(c).map(|o| o.corners()))
+                    .collect(),
+            )
         }
+    };
+    let valid = |def, pos| footprint(def, pos).is_some();
+    // What the sites chosen so far take: every placement is validated against the grid as it
+    // stands before any of them is applied, so two must not land on one lot, nor a lot under a
+    // free-standing building (BUG-084; since BUG-082 a lot slides to the nearest free cells, and
+    // the cells under a turbine are not free).
+    let claimed = std::cell::RefCell::new(Vec::<cp_zone::geom::Quad>::new());
+    let free_of_claimed = |quads: &[cp_zone::geom::Quad]| {
+        let claimed = claimed.borrow();
+        !quads
+            .iter()
+            .any(|q| claimed.iter().any(|c| cp_zone::geom::quads_overlap(q, c)))
     };
     let place = |def, pos| SimCommand::Building(BuildingCommand::Place { def, pos, rot: 0.0 });
     // Where a building of `def` stands in a block: the middle of the block, or the nearest
@@ -174,7 +198,8 @@ fn service_sites(
                     cell: col * BLOCK_DEPTH + 1,
                 })?;
                 let pos = o.c;
-                valid(def, pos).then_some(pos)
+                let quads = footprint(def, pos)?;
+                free_of_claimed(&quads).then_some((pos, quads))
             })
     };
     let mut out = Vec::new();
@@ -293,13 +318,14 @@ fn service_sites(
             let Some((id, cols)) = sites.next() else {
                 break;
             };
-            let Some(pos) = spot(def, id, cols) else {
+            let Some((pos, quads)) = spot(def, id, cols) else {
                 continue;
             };
             if taken.iter().any(|t| t.distance(pos) < 30.0) {
                 continue;
             }
             taken.push(pos);
+            claimed.borrow_mut().extend(quads);
             out.push(place(def, pos));
             placed += 1;
         }
@@ -342,13 +368,14 @@ fn service_sites(
         while next < candidates.len() {
             let (id, cols) = candidates[next];
             next += 1;
-            let Some(pos) = spot(def, id, cols) else {
+            let Some((pos, quads)) = spot(def, id, cols) else {
                 continue;
             };
             if taken.iter().any(|t| t.distance(pos) < 30.0) {
                 continue;
             }
             taken.push(pos);
+            claimed.borrow_mut().extend(quads);
             out.push(place(def, pos));
             next = (next + stride - 1).min(candidates.len());
             break;
