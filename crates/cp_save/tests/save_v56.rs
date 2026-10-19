@@ -75,8 +75,8 @@ fn the_v55_fitted_block_is_laid_again_in_8_m_cells_and_keeps_its_buildings() {
         .filter(|z| **z == ZoneType::ResLow)
         .count();
     assert!(painted > 0, "no painted cell after the relay");
-    // No building was demolished by the relay; some lost their lot (the 8.75 m cells under them
-    // are gone and the new 8 m ones do not make the lot's rectangle) and stand all the same.
+    // No building was demolished by the relay; those whose lot is gone (the 8.75 m cells under
+    // them are; the new 8 m ones do not make the lot where they stand) stand all the same.
     let buildings = sim.world().resource::<BuildingGrid>();
     for id in &before {
         assert!(
@@ -88,11 +88,31 @@ fn the_v55_fitted_block_is_laid_again_in_8_m_cells_and_keeps_its_buildings() {
         .iter()
         .filter(|(_, b)| b.lot().is_some_and(|l| view.zones.block(l.block).is_none()))
         .count();
-    assert!(
-        unbound > 0 && unbound < before.len(),
-        "{unbound} of {} buildings lost their lot",
-        before.len()
-    );
+    // None stands exactly on a lot of the new cells (8 m against 8.75 m), so all keep their old
+    // lot and stand as survivors that nothing grows over.
+    assert!(unbound > 0, "no building lost its lot");
+    // And nothing was built over one: no two buildings overlap, and the new cells under a
+    // building that lost its lot are taken by it (BUG-019, `rebind_lots`).
+    let all: Vec<_> = buildings.iter().collect();
+    for (i, (a, ba)) in all.iter().enumerate() {
+        for (b, bb) in &all[i + 1..] {
+            assert!(
+                !cp_zone::geom::quads_overlap(&ba.footprint_polygon(), &bb.footprint_polygon()),
+                "{a:?} and {b:?} overlap"
+            );
+        }
+    }
+    for (id, b) in all
+        .iter()
+        .filter(|(_, b)| b.lot().is_some_and(|l| view.zones.block(l.block).is_none()))
+    {
+        for c in cp_building::cells_under_lot(&view.zones, b) {
+            assert!(
+                view.zones.is_occupied(c),
+                "{id:?}: cell {c:?} under it is free"
+            );
+        }
+    }
 
     // The saved again file is the current format and loads back the same.
     let again = save_runner(&sim, content.content_hash(), "flatlands").unwrap();

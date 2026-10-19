@@ -4,7 +4,8 @@
 //! segments of one width through nodes where the street runs on (within `CORNER_DEG`) and, at a
 //! T, along its through side. Its cells are 8 x 8 m, never stretched, [`crate::BLOCK_DEPTH`] rows
 //! deep, counted from the edge of a cross street on this side (the frontage's start, else its
-//! end), else from its start node; a rest under 8 m at the other end gets no cell. A frontage runs in the direction of
+//! end: §6.8.3 item 4 (в)), else from its start node; a rest under 8 m at the other end gets no
+//! cell. A frontage runs in the direction of
 //! its oldest segment (smallest `Segment::order`), so a demolished and rebuilt street gets the
 //! same cells as a fresh one.
 

@@ -17,6 +17,7 @@ use cp_content::{BuildingDefId, ContentDb, SimContent, SpecKind, ZoneType};
 use cp_core::{SimLimits, SimRng, Tick};
 use cp_district::{DistrictMap, Districts, spec_at};
 use cp_net::NetGraph;
+use cp_zone::geom::Obb;
 use cp_zone::{BLOCK_DEPTH, CELL_SIZE, ZoneBlock, ZoneBlockId, ZoneCellRef, ZoneGrid};
 use serde::{Deserialize, Serialize};
 
@@ -172,6 +173,19 @@ pub fn pick_def(db: &ContentDb, fitting: &[BuildingDefId], roll: u32) -> Buildin
     fitting[fitting.len() - 1]
 }
 
+/// The rectangle of a lot of `size` cells centred on `pos`, turned by `rot` (as
+/// `footprint_polygon`).
+fn rect_of(pos: Vec2, rot: f32, size: (u8, u8)) -> Obb {
+    let (s, c) = rot.sin_cos();
+    Obb {
+        c: pos,
+        u: Vec2::new(c, s),
+        v: Vec2::new(-s, c),
+        half: f32::from(size.0) * crate::model::FOOTPRINT_CELL_M * 0.5,
+        half_v: f32::from(size.1) * crate::model::FOOTPRINT_CELL_M * 0.5,
+    }
+}
+
 /// World position, yaw and access point of a lot.
 pub fn place(
     grid: &ZoneGrid,
@@ -287,7 +301,20 @@ fn rebind_lots(zones: &mut ZoneGrid, buildings: &mut BuildingGrid) {
         let rows_ok = cells
             .iter()
             .all(|c| c.cell % BLOCK_DEPTH < u16::from(old_lot.d));
-        if cells.len() == usize::from(old_lot.w) * usize::from(old_lot.d) && one_block && rows_ok {
+        // ...and standing where the building stands: a lot of the same cells shifted (a block laid
+        // again in another phase, T-265) would leave the building over its neighbour's cell.
+        let centre = cells
+            .iter()
+            .filter_map(|c| zones.cell_footprint(*c))
+            .map(|o| o.c)
+            .fold(Vec2::ZERO, |a, p| a + p)
+            / cells.len().max(1) as f32;
+        let in_place = centre.distance(b.pos) < 0.05;
+        if cells.len() == usize::from(old_lot.w) * usize::from(old_lot.d)
+            && one_block
+            && rows_ok
+            && in_place
+        {
             let lot = Lot {
                 block: first.block,
                 col,
@@ -346,6 +373,14 @@ pub fn update_buildings(
     }
     let one_in = db.balance().spawn_one_in.max(1);
     let mut rng = rng.fork(SPAWN_STREAM, *tick);
+    // Buildings whose block is gone (their road was removed, or the block was laid again in
+    // cells of another size or phase, T-265) hold no lot cells: a new lot must not overlap them.
+    // Derived from the buildings alone, so a reloaded game decides like a continuous one.
+    let survivors: Vec<Obb> = buildings
+        .iter()
+        .filter(|(_, b)| b.lot().is_some_and(|l| zones.block(l.block).is_none()))
+        .map(|(_, b)| rect_of(b.pos, b.rot, b.size()))
+        .collect();
     for id in ids {
         // Draw first so the stream consumed per block does not depend on the outcome.
         let gate = rng.below(one_in);
@@ -410,6 +445,13 @@ pub fn update_buildings(
         let Some((pos, rot, access)) = place(&zones, &net, id, &lot) else {
             continue;
         };
+        let rect = rect_of(pos, rot, (w, d));
+        if survivors
+            .iter()
+            .any(|o| o.penetration(&rect) > cp_zone::grid::CROSS_BLOCK_EPS)
+        {
+            continue;
+        }
         let cells: Vec<ZoneCellRef> = lot.cells().collect();
         buildings.insert(Building {
             def: def_id,

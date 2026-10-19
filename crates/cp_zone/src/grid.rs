@@ -953,17 +953,19 @@ impl ZoneGrid {
         region: Bounds,
     ) -> Vec<StripPreview> {
         let idx = RoadIndex::from_net(net_after, roads);
-        let mut seeds: BTreeSet<SegmentId> = idx
-            .segments_near(inflate(region, RELAY_REACH))
-            .into_iter()
-            .collect();
+        let near = idx.segments_near(inflate(region, RELAY_REACH));
+        let mut seeds: BTreeSet<SegmentId> = near.iter().copied().collect();
         // As a real sync: the frontages at the nodes of every new or changed segment (a split
         // leaves its pieces' tangents a hair off, so the edge of a cross street there moves).
-        for (id, seg) in net_after.segments() {
+        // The plan's new and split segments all lie in the region: only those are looked at,
+        // not the whole net on every frame of the ghost.
+        for id in near {
+            let Some(seg) = net_after.segment(id) else {
+                continue;
+            };
             if self.fingerprints.get(&id) == Some(&fingerprint(seg, roads(seg.road))) {
                 continue;
             }
-            seeds.insert(id);
             for n in [seg.start, seg.end] {
                 if let Some(n) = net_after.node(n) {
                     seeds.extend(n.segments.iter().copied());
