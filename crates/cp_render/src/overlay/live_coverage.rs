@@ -128,6 +128,7 @@ mod tests {
     fn the_kind_on_screen_is_the_overlays_else_the_ghosts() {
         let fire = OverlayState {
             active: Overlay::Fire,
+            ..Default::default()
         };
         let off = OverlayState::default();
         let ghost = CoverageGhost {

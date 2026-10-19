@@ -451,7 +451,7 @@ pub fn buildings_panel(
                     } else {
                         tools.select(ActiveTool::Utility);
                         tools.utility.set_kind(kind);
-                        overlay.active = shown;
+                        overlay.open_auto(shown);
                     }
                 }
             }
@@ -474,9 +474,9 @@ pub fn buildings_panel(
                 {
                     select(tools, card.id);
                     if let Some((_, _, shown)) = net {
-                        overlay.active = shown;
+                        overlay.open_auto(shown);
                     } else if let Some(shown) = Overlay::for_service(section.kind) {
-                        overlay.active = shown;
+                        overlay.open_auto(shown);
                     }
                 }
             }
@@ -496,7 +496,7 @@ pub fn buildings_panel(
                     } else {
                         tools.select(ActiveTool::UtilityRemove);
                         tools.remove_net = Some(remove_net);
-                        overlay.active = shown;
+                        overlay.open_auto(shown);
                     }
                 }
             }

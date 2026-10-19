@@ -406,7 +406,7 @@ pub fn top_bar(
                             .on_hover_text(o.label());
                         rects.overlays.push((o, r.rect));
                         if r.clicked() {
-                            overlay.active = o;
+                            overlay.open(o);
                             chosen = true;
                         }
                         if n % VIEW_COLUMNS == VIEW_COLUMNS - 1 {

@@ -197,7 +197,10 @@ pub fn run(opts: Options) -> AppExit {
         app.insert_resource(bevy::winit::WinitSettings::continuous());
     }
     if let Some(active) = opts.overlay {
-        app.insert_resource(cp_render::OverlayState { active });
+        app.insert_resource(cp_render::OverlayState {
+            active,
+            ..Default::default()
+        });
     }
     if let Some(demo) = opts.ghost_demo {
         // The tools only run with the UI; a held ghost for a hidden screenshot needs them.

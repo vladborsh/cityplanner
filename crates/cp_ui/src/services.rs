@@ -237,7 +237,7 @@ pub fn services_window(
         .show(ctx, |ui| services_contents(ui, view.city_services()))
         .flatten();
     if let Some(s) = clicked {
-        overlay.active = overlay_of(s);
+        overlay.open(overlay_of(s));
     }
 }
 

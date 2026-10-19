@@ -106,7 +106,7 @@ fn send(outbox: &mut CommandOutbox, cmd: DistrictCommand) {
 
 /// Shows the overlays of the category: the resources under the area tints.
 fn show_overlays(overlay: &mut OverlayState) {
-    overlay.active = Overlay::Resources;
+    overlay.open_auto(Overlay::Resources);
 }
 
 /// The chain buildings of one resource, in role order (main, extractors, processors,

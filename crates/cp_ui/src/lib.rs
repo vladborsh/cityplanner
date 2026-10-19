@@ -293,7 +293,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         // The tool resets itself when it is selected, so fill it afterwards.
         tools.select(cp_tools::ActiveTool::Line);
         tools.line.begin_edit(view, line);
-        overlay.active = cp_render::Overlay::Transit;
+        overlay.open_auto(cp_render::Overlay::Transit);
         picked.0 = None;
     }
 }
@@ -379,7 +379,7 @@ pub(crate) fn keyboard_shortcuts(
     if pressed(egui::Key::Escape) && !had_tool && tools.active == cp_tools::ActiveTool::None {
         // BUG-077: the layout closes before the build menu (tool -> layout -> menu).
         if overlay.active != cp_render::Overlay::Off {
-            overlay.active = cp_render::Overlay::Off;
+            overlay.close();
         } else if state.category.is_some() {
             state.category = None;
         }

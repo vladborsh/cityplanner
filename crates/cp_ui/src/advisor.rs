@@ -759,7 +759,7 @@ impl Advisor {
 /// Runs the action of a "Show" click.
 fn run(action: Action, state: &mut UiState, overlay: &mut cp_render::OverlayState) {
     match action {
-        Action::Overlay(o) => overlay.active = o,
+        Action::Overlay(o) => overlay.open(o),
         Action::Jump(at) => state.camera_goal = Some(at),
         Action::Panel(c) => state.category = Some(c),
         Action::Budget => state.budget_open = true,

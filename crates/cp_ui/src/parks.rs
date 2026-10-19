@@ -60,7 +60,7 @@ fn send(outbox: &mut CommandOutbox, cmd: DistrictCommand) {
 }
 
 fn show_overlay(overlay: &mut OverlayState) {
-    overlay.active = Overlay::Parks;
+    overlay.open_auto(Overlay::Parks);
 }
 
 /// The cards of a section: the gate and the attractions of `kind` by level, or (`None`) the

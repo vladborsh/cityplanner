@@ -209,11 +209,11 @@ pub fn transit_panel(
                     } else {
                         tools.select(ActiveTool::Line);
                         tools.line.mode = section.mode;
-                        overlay.active = if metro {
-                            Overlay::Off
+                        if metro {
+                            overlay.close();
                         } else {
-                            Overlay::Transit
-                        };
+                            overlay.open_auto(Overlay::Transit);
+                        }
                     }
                 }
             }
@@ -243,7 +243,7 @@ pub fn transit_panel(
                 {
                     select(tools, card.id);
                     if section.mode == TransitMode::Bus {
-                        overlay.active = Overlay::Transit;
+                        overlay.open_auto(Overlay::Transit);
                     }
                 }
             }

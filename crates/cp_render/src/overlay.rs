@@ -188,6 +188,31 @@ impl Overlay {
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct OverlayState {
     pub active: Overlay,
+    /// A tool or a category opened `active` by itself, not the player (BUG-083): the UI closes
+    /// it again when the player moves on to another tool or category.
+    pub auto: bool,
+    /// How many times an overlay was opened by itself, so the UI tells a fresh automatic open
+    /// from one it has already tied to a tool.
+    pub auto_opens: u32,
+}
+
+impl OverlayState {
+    /// The player picked `o`: it stays until the player closes it.
+    pub fn open(&mut self, o: Overlay) {
+        self.active = o;
+        self.auto = false;
+    }
+
+    /// A tool or a category shows `o`: it belongs to that tool.
+    pub fn open_auto(&mut self, o: Overlay) {
+        self.active = o;
+        self.auto = true;
+        self.auto_opens = self.auto_opens.wrapping_add(1);
+    }
+
+    pub fn close(&mut self) {
+        self.open(Overlay::Off);
+    }
 }
 
 /// Whether the zone tool is active (written by `cp_tools`). The zone grid is always drawn; in
