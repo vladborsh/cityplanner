@@ -15,7 +15,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
 
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::{Res, ResMut};
+use bevy_ecs::system::{Local, Res, ResMut};
 use bevy_ecs::world::World;
 use cp_building::{AccessPoint, Building, BuildingGrid, BuildingState};
 use cp_content::{ContentDb, ServiceKind, SimContent};
@@ -125,6 +125,8 @@ pub struct RoadGraph {
     segs: Vec<(SegmentId, usize, usize)>,
     /// Per segment index: the live id, its end node indices and its length.
     ends: Vec<Option<(SegmentId, usize, usize, f32)>>,
+    /// Per node: the arena indices of the segments that end there.
+    inc: Vec<Vec<u32>>,
     seg_slots: usize,
 }
 
@@ -141,10 +143,13 @@ impl RoadGraph {
         let mut adj: Vec<Vec<(usize, f32)>> = vec![Vec::new(); nodes];
         let mut segs = Vec::new();
         let mut ends = vec![None; seg_slots];
+        let mut inc: Vec<Vec<u32>> = vec![Vec::new(); nodes];
         for (id, s) in net.segments() {
             let (a, b) = (s.start.index as usize, s.end.index as usize);
             adj[a].push((b, s.length));
             adj[b].push((a, s.length));
+            inc[a].push(id.index);
+            inc[b].push(id.index);
             segs.push((id, a, b));
             ends[id.index as usize] = Some((id, a, b, s.length));
         }
@@ -152,6 +157,7 @@ impl RoadGraph {
             adj,
             segs,
             ends,
+            inc,
             seg_slots,
         }
     }
@@ -283,23 +289,43 @@ impl RoadGraph {
 /// index. 0 on the access segment itself is `d`; otherwise the nearer end of the segment. The
 /// sim folds these by max ([`kind_coverage`]); the client draws them for a ghost (§13.5).
 pub fn site_coverage(g: &RoadGraph, access: AccessPoint, radius_m: f32) -> Vec<(u32, f32)> {
+    site_coverage_with(g, &mut Scratch::new(g), access, radius_m)
+}
+
+/// [`site_coverage`] reusing `sc`, which must belong to `g`. Only the segments that touch a node
+/// the search reached are looked at: the others are out of reach (coverage <= 0).
+fn site_coverage_with(
+    g: &RoadGraph,
+    sc: &mut Scratch,
+    access: AccessPoint,
+    radius_m: f32,
+) -> Vec<(u32, f32)> {
     let mut out = Vec::new();
     if radius_m <= 0.0 || g.seg(access.segment).is_none() {
         return out;
     }
-    let dist = g.node_distances(access, radius_m);
-    for &(id, na, nb) in &g.segs {
+    g.search_scratch(sc, access, radius_m, |_, _| f32::INFINITY);
+    let mut segs: Vec<u32> = sc
+        .touched
+        .iter()
+        .flat_map(|&n| g.inc[n].iter().copied())
+        .collect();
+    segs.sort_unstable();
+    segs.dedup();
+    for si in segs {
+        let Some((id, na, nb, _)) = g.ends[si as usize] else {
+            continue;
+        };
         let d = if id == access.segment {
             0.0
         } else {
-            dist[na].min(dist[nb])
+            sc.dist[na].min(sc.dist[nb])
         };
         let c = 1.0 - d / radius_m;
         if c > 0.0 {
             out.push((id.index, c));
         }
     }
-    out.sort_by_key(|&(i, _)| i);
     out
 }
 
@@ -328,11 +354,12 @@ pub fn kind_coverage(
     kind: ServiceKind,
 ) -> Vec<f32> {
     let mut out = vec![0.0; g.seg_slots];
+    let mut sc = Scratch::new(g);
     for (_, b) in buildings.iter() {
         if let Some((k, access, radius)) = served_site(db, b)
             && k == kind
         {
-            fold_max(&mut out, &site_coverage(g, access, radius));
+            fold_max(&mut out, &site_coverage_with(g, &mut sc, access, radius));
         }
     }
     out
@@ -351,23 +378,79 @@ fn compute(
     buildings: &BuildingGrid,
     content: &SimContent,
 ) -> BTreeMap<ServiceKind, Vec<f32>> {
-    compute_on(&RoadGraph::new(net), buildings, content)
+    compute_on(
+        &std::sync::Arc::new(RoadGraph::new(net)),
+        buildings,
+        content,
+        &mut CoverageMemo::default(),
+    )
+}
+
+/// What one site gave, remembered for the next recomputation: valid while the building, its
+/// access point and radius and the road graph are the same.
+struct SiteMemo {
+    generation: u32,
+    access: (SegmentId, u32),
+    radius: u32,
+    cover: Vec<(u32, f32)>,
+}
+
+/// The per-site results of the last [`update_coverage`] (T-258: a pass re-searched the roads of
+/// every service building, ~30 ms at 100k, although nothing it reads had changed). A cache
+/// only: the values are what a search would give, so it is neither saved nor hashed.
+#[derive(Default)]
+pub struct CoverageMemo {
+    graph: Option<std::sync::Arc<RoadGraph>>,
+    scratch: Option<Scratch>,
+    /// By arena index of the building.
+    sites: Vec<Option<SiteMemo>>,
 }
 
 /// [`compute`] on a road graph already built.
 fn compute_on(
-    g: &RoadGraph,
+    g: &std::sync::Arc<RoadGraph>,
     buildings: &BuildingGrid,
     content: &SimContent,
+    memo: &mut CoverageMemo,
 ) -> BTreeMap<ServiceKind, Vec<f32>> {
+    let same = memo
+        .graph
+        .as_ref()
+        .is_some_and(|old| std::sync::Arc::ptr_eq(old, g) || **old == **g);
+    if !same {
+        memo.graph = Some(std::sync::Arc::clone(g));
+        memo.scratch = Some(Scratch::new(g));
+        memo.sites.clear();
+    }
+    let CoverageMemo { scratch, sites, .. } = memo;
+    let Some(sc) = scratch.as_mut() else {
+        return BTreeMap::new();
+    };
     let mut out: BTreeMap<ServiceKind, Vec<f32>> = BTreeMap::new();
     // Buildings in id order: the max is order-free, but the iteration is deterministic anyway.
-    for (_, b) in buildings.iter() {
+    for (id, b) in buildings.iter() {
         let Some((kind, access, radius)) = served_site(&content.0, b) else {
             continue;
         };
+        let i = id.index as usize;
+        if sites.len() <= i {
+            sites.resize_with(i + 1, || None);
+        }
+        let key = (access.segment, access.t.to_bits());
+        let fresh = matches!(&sites[i], Some(m)
+            if m.generation == id.generation && m.access == key && m.radius == radius.to_bits());
+        if !fresh {
+            sites[i] = Some(SiteMemo {
+                generation: id.generation,
+                access: key,
+                radius: radius.to_bits(),
+                cover: site_coverage_with(g, sc, access, radius),
+            });
+        }
         let v = out.entry(kind).or_insert_with(|| vec![0.0; g.seg_slots]);
-        fold_max(v, &site_coverage(g, access, radius));
+        if let Some(m) = &sites[i] {
+            fold_max(v, &m.cover);
+        }
     }
     out
 }
@@ -379,12 +462,13 @@ pub fn update_coverage(
     net: ServiceNet,
     buildings: Res<BuildingGrid>,
     mut coverage: ResMut<ServiceCoverage>,
+    mut memo: Local<CoverageMemo>,
 ) {
     if !tick.0.is_multiple_of(COVERAGE_PERIOD) {
         return;
     }
     let Some(content) = content else { return };
-    coverage.by_kind = compute_on(&net.graph(), &buildings, &content);
+    coverage.by_kind = compute_on(&net.graph(), &buildings, &content, &mut memo);
     coverage.generation += 1;
 }
 

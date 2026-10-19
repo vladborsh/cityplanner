@@ -355,3 +355,51 @@ fn the_bounded_search_finds_what_a_full_scan_of_distances_finds() {
         }
     }
 }
+
+#[test]
+fn the_remembered_site_results_never_outlive_a_change_of_building_access_or_roads() {
+    // T-258: update_coverage reuses a site's result while nothing it depends on changed; after
+    // every change the sim must give what a fresh search (kind_coverage) gives.
+    let (mut world, mut schedule, clinic, segs) = town();
+    let slots = RoadGraph::new(world.resource::<NetGraph>()).seg_slots();
+    let agree = |world: &World, what: &str| {
+        assert_eq!(
+            sim_values(world, ServiceKind::Health, slots),
+            live_values(world, ServiceKind::Health),
+            "{what}"
+        );
+    };
+    run_at(&mut world, &mut schedule, 64);
+    agree(&world, "first");
+    run_at(&mut world, &mut schedule, 128);
+    agree(&world, "nothing changed");
+    // The clinic's access point moves to the far end.
+    world
+        .resource_mut::<BuildingGrid>()
+        .get_mut(clinic)
+        .unwrap()
+        .access = Some(AccessPoint {
+        segment: segs[3],
+        t: 1.0,
+    });
+    run_at(&mut world, &mut schedule, 192);
+    agree(&world, "access moved");
+    // A road in the middle goes: the far clinic no longer reaches the near segments.
+    world
+        .resource_mut::<NetGraph>()
+        .remove_segment(segs[1])
+        .unwrap();
+    run_at(&mut world, &mut schedule, 256);
+    agree(&world, "road removed");
+    assert_eq!(
+        world
+            .resource::<ServiceCoverage>()
+            .on_segment(ServiceKind::Health, segs[0]),
+        0.0
+    );
+    // A slot reused by another building (new generation) is searched again.
+    world.resource_mut::<BuildingGrid>().remove(clinic);
+    put(&mut world, "clinic", segs[0], 0.0);
+    run_at(&mut world, &mut schedule, 320);
+    agree(&world, "slot reused");
+}

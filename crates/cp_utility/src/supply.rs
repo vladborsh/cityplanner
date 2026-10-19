@@ -186,6 +186,8 @@ struct HopGrid {
     w: usize,
     h: usize,
     start: Vec<u32>,
+    /// Live items of each cell (a prefix of its range): visited sites drop out on a scan.
+    len: Vec<u32>,
     items: Vec<usize>,
 }
 
@@ -207,6 +209,7 @@ impl HopGrid {
                 w: 0,
                 h: 0,
                 start: vec![0],
+                len: Vec::new(),
                 items: Vec::new(),
             };
         }
@@ -219,6 +222,7 @@ impl HopGrid {
         for i in 0..w * h {
             start[i + 1] += start[i];
         }
+        let len: Vec<u32> = (0..w * h).map(|c| start[c + 1] - start[c]).collect();
         let mut fill = start.clone();
         let mut items = vec![0usize; cells.len()];
         for (i, &c) in cells.iter().enumerate() {
@@ -233,17 +237,30 @@ impl HopGrid {
             w,
             h,
             start,
+            len,
             items,
         }
     }
 
-    fn get(&self, bx: i32, bz: i32) -> &[usize] {
+    /// The sites of a cell that are not `visited` (ascending index); the visited ones are
+    /// dropped from the cell for good.
+    fn unvisited(&mut self, bx: i32, bz: i32, visited: &[bool]) -> &[usize] {
         let (x, z) = (bx - self.x0, bz - self.z0);
         if x < 0 || z < 0 || x as usize >= self.w || z as usize >= self.h {
             return &[];
         }
         let c = z as usize * self.w + x as usize;
-        &self.items[self.start[c] as usize..self.start[c + 1] as usize]
+        let from = self.start[c] as usize;
+        let mut keep = from;
+        for k in from..from + self.len[c] as usize {
+            let j = self.items[k];
+            if !visited[j] {
+                self.items[keep] = j;
+                keep += 1;
+            }
+        }
+        self.len[c] = (keep - from) as u32;
+        &self.items[from..keep]
     }
 }
 
@@ -253,6 +270,7 @@ fn source_joins(
     sites: &[Site],
     graph: &UtilityGraph,
     attach: &Attach,
+    near_cache: &mut Vec<Option<CachedNear>>,
     wanted: impl Fn(ServiceKind) -> bool,
 ) -> BTreeMap<u32, u32> {
     let mut parent: BTreeMap<u32, u32> = BTreeMap::new();
@@ -270,7 +288,20 @@ fn source_joins(
         if !wanted(kind) {
             continue;
         }
-        let near = attach.comps_at(graph, s.pos, s.half);
+        let i = s.id.index as usize;
+        if near_cache.len() <= i {
+            near_cache.resize(i + 1, None);
+        }
+        let hit =
+            matches!(&near_cache[i], Some((g, pos, _)) if *g == s.id.generation && *pos == s.pos);
+        if !hit {
+            near_cache[i] = Some((
+                s.id.generation,
+                s.pos,
+                attach.comps_at(graph, s.pos, s.half),
+            ));
+        }
+        let near = near_cache[i].as_ref().map_or(&[][..], |c| &c.2[..]);
         for pair in near.windows(2) {
             let (a, b) = (root(&parent, pair[0]), root(&parent, pair[1]));
             if a != b {
@@ -298,6 +329,9 @@ fn kind_index(k: UtilityKind) -> usize {
 /// `(generation, position, pipe component, line component)` of one building.
 type CachedAttach = (u32, Vec2, Option<u32>, Option<u32>);
 
+/// `(generation, position, components in reach)` of a source building, for one network.
+type CachedNear = (u32, Vec2, Vec<u32>);
+
 #[derive(Default)]
 pub struct AttachCache {
     graph: u64,
@@ -305,6 +339,9 @@ pub struct AttachCache {
     attach: Option<(Attach, Attach)>,
     /// By arena index of the building: `(generation, position, pipe component, line component)`.
     by_building: Vec<Option<CachedAttach>>,
+    /// By arena index of a source: the components of the pipes / of the lines within its reach.
+    pipe_near: Vec<Option<CachedNear>>,
+    line_near: Vec<Option<CachedNear>>,
 }
 
 /// Consumption per utility and the source `(kind, capacity)` of one building def.
@@ -432,6 +469,8 @@ pub fn compute_supply_with(
         cache.graph = fingerprint;
         cache.attach = None;
         cache.by_building.clear();
+        cache.pipe_near.clear();
+        cache.line_near.clear();
     }
     let mut comps: Vec<(Option<u32>, Option<u32>)> = Vec::with_capacity(sites.len());
     for s in &sites {
@@ -472,10 +511,12 @@ pub fn compute_supply_with(
                 Attach::build(graph, UtilityNet::Power, nets.line_reach_m),
             )
         });
-        let pipe_join = source_joins(&sites, graph, pipes, |k| {
+        let pipe_join = source_joins(&sites, graph, pipes, &mut cache.pipe_near, |k| {
             matches!(k, ServiceKind::Water | ServiceKind::Sewage)
         });
-        let line_join = source_joins(&sites, graph, lines, |k| k == ServiceKind::Power);
+        let line_join = source_joins(&sites, graph, lines, &mut cache.line_near, |k| {
+            k == ServiceKind::Power
+        });
         for c in &mut comps {
             c.0 = c.0.map(|x| pipe_join.get(&x).copied().unwrap_or(x));
             c.1 = c.1.map(|x| line_join.get(&x).copied().unwrap_or(x));
@@ -526,7 +567,7 @@ pub fn compute_supply_with(
 
     // --- power ---
     let attached: Vec<Option<u32>> = comps.iter().map(|c| c.1).collect();
-    let hop = HopGrid::build(&sites, power_gap);
+    let mut hop = HopGrid::build(&sites, power_gap);
     // Pools: line components (ascending) first, then unattached plants by id.
     enum Pool {
         Comp(u32),
@@ -545,6 +586,9 @@ pub fn compute_supply_with(
     }
     pools.extend(cap.into_iter().map(|(c, v)| (Pool::Comp(c), v)));
     pools.extend(loose.into_iter().map(|(i, v)| (Pool::Plant(i), v)));
+    // `seen`: visited, or already in the layer being built or processed (a site enters one
+    // layer once, so the scan below never meets it again).
+    let mut seen = vec![false; sites.len()];
     let mut visited = vec![false; sites.len()];
     let mut served = vec![false; sites.len()];
     for (pool, mut left) in pools {
@@ -556,6 +600,9 @@ pub fn compute_supply_with(
         };
         let mut exhausted = false;
         while !layer.is_empty() {
+            for &i in &layer {
+                seen[i] = true;
+            }
             layer.sort_unstable();
             let mut next: BTreeSet<usize> = BTreeSet::new();
             for &i in &layer {
@@ -567,11 +614,19 @@ pub fn compute_supply_with(
                     let (bx, bz) = bucket(sites[i].pos, hop.cell);
                     for dx in -1..=1 {
                         for dz in -1..=1 {
-                            for &j in hop.get(bx + dx, bz + dz) {
+                            for &j in hop.unvisited(bx + dx, bz + dz, &seen) {
+                                // Cheap reject (a few ulps of slack) before the exact test.
+                                let reach = power_gap + sites[i].half + sites[j].half;
+                                if sites[j].pos.distance_squared(sites[i].pos)
+                                    > reach * reach * 1.001
+                                {
+                                    continue;
+                                }
                                 let gap = sites[j].pos.distance(sites[i].pos)
                                     - sites[i].half
                                     - sites[j].half;
-                                if !visited[j] && gap <= power_gap {
+                                if gap <= power_gap {
+                                    seen[j] = true;
                                     next.insert(j);
                                 }
                             }

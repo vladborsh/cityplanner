@@ -565,3 +565,45 @@ fn power_saving_lets_the_same_plant_carry_more_houses() {
     city.mask = PolicyKind::PowerSaving.bit();
     assert_eq!(powered(&with(&city)), 3, "policy on");
 }
+
+#[test]
+fn a_reused_cache_follows_a_moved_source_and_a_changed_graph() {
+    // T-258: the components in reach of a source are remembered between recomputes.
+    let db = db();
+    let mut b = BuildingGrid::new();
+    let mut g = UtilityGraph::new();
+    line(&mut g, UtilityNet::Pipe, 0.0, 200.0);
+    let tower = add(&mut b, &db, "tower", 130.0, -45.0);
+    let house = add(&mut b, &db, "house", 40.0, 15.0);
+    let mut cache = AttachCache::default();
+    let same = |b: &BuildingGrid, g: &UtilityGraph, cache: &mut AttachCache, what: &str| {
+        let fresh = compute_supply_cached(&db, b, g, &mut AttachCache::default());
+        assert_eq!(compute_supply_cached(&db, b, g, cache), fresh, "{what}");
+        fresh
+    };
+    same(&b, &g, &mut cache, "first");
+    same(&b, &g, &mut cache, "again");
+    // A spur 30 m north of the street that the tower stands beside.
+    let p = |x: f32, z: f32| Vec3::new(5000.0 + x, 0.0, 5000.0 + z);
+    let (a, c) = (
+        g.add_node(UtilityNet::Pipe, p(100.0, -30.0)),
+        g.add_node(UtilityNet::Pipe, p(160.0, -30.0)),
+    );
+    g.add_link(a, c, CubicBezier3::line(p(100.0, -30.0), p(160.0, -30.0)))
+        .unwrap();
+    same(&b, &g, &mut cache, "graph changed");
+    // The tower moves out of reach of the street, then back.
+    b.get_mut(tower).unwrap().pos = Vec2::new(5000.0 + 130.0, 5000.0 - 400.0);
+    let far = same(&b, &g, &mut cache, "tower moved away");
+    assert_ne!(
+        far.get(house.index as usize),
+        Some(&0),
+        "the house lost its water"
+    );
+    b.get_mut(tower).unwrap().pos = Vec2::new(5000.0 + 130.0, 5000.0 - 45.0);
+    let back = same(&b, &g, &mut cache, "tower back");
+    assert_eq!(
+        back.get(house.index as usize).copied().unwrap_or(0) & BuildingFlags::NO_WATER,
+        0
+    );
+}
