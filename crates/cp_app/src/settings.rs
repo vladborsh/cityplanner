@@ -105,6 +105,8 @@ impl GradingPrefs {
 #[serde(default)]
 pub struct Settings {
     pub always_day: bool,
+    /// The shadows of passing clouds (T-272).
+    pub cloud_shadows: bool,
     pub ui_scale: f32,
     pub camera: CameraPrefs,
     /// The city advisor snackbar (T-188) and whether it only names problems.
@@ -122,6 +124,7 @@ impl Default for Settings {
             // T-178: the world is lit by the sun all the time unless the player turns the
             // day and night cycle back on.
             always_day: true,
+            cloud_shadows: true,
             ui_scale: 1.0,
             camera: CameraPrefs::default(),
             advisor: true,
@@ -223,6 +226,7 @@ impl Settings {
     ) -> Self {
         Self {
             always_day: lighting.always_day,
+            cloud_shadows: lighting.cloud_shadows,
             ui_scale: ui.prefs.ui_scale,
             camera: CameraPrefs {
                 pan_speed: camera.pan_speed,
@@ -303,6 +307,7 @@ mod tests {
         let d = dir("round");
         let s = Settings {
             always_day: true,
+            cloud_shadows: false,
             ui_scale: 1.5,
             camera: CameraPrefs {
                 pan_speed: 1.7,

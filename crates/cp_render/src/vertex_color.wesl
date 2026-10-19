@@ -8,6 +8,7 @@ import bevy_pbr::render::{
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     pbr_fragment::pbr_input_from_vertex_output,
 };
+import bevy_pbr::render::mesh_view_bindings::globals;
 
 // x = perceptual roughness, y = reflectance; z, w = the same for dark surfaces (asphalt), z = 0
 // switches that off
@@ -18,6 +19,7 @@ import bevy_pbr::render::{
 // z = procedural surface detail (T-238): 0 = none, 1 = roads (asphalt grain, patches and cracks,
 //     paving tiles on the sidewalks), 2 = ground (grass patches); faded out where a pixel covers
 //     more than the detail's size, so nothing shimmers in the distance
+// w = cloud shadows (T-272): how much a passing cloud darkens the lit surface (0 = off)
 @group(constants::MATERIAL_BIND_GROUP) @binding(1) var<uniform> fade: vec4<f32>;
 
 // Lit windows (T-245): x = night factor (0 day .. 1 night), y = lateness of the night (0 at 19:00
@@ -235,6 +237,28 @@ fn grass(p: vec2<f32>, fp: f32) -> Detail {
     return d;
 }
 
+// --- Cloud shadows (T-272). Soft blotches a few hundred metres across on the ground plane,
+// drifting slowly with the wind; 1 in the open, down to 0 under the middle of a cloud.
+
+// Size of a cloud's shadow, metres (one noise cell), and the wind, metres per second.
+const CLOUD_SIZE: f32 = 220.0;
+const WIND: vec2<f32> = vec2<f32>(6.0, 2.5);
+
+// `p` turned by about 37 degrees: each octave of the clouds on its own axes, so no square shows.
+fn turn37(p: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y);
+}
+
+fn cloud_cover(p: vec2<f32>) -> f32 {
+    // `globals.time` wraps after an hour: the clouds then jump once, like a new weather front.
+    let q = (p + WIND * globals.time) / CLOUD_SIZE;
+    let q2 = turn37(q) * 2.1 + vec2<f32>(7.3, 1.9);
+    let q3 = turn37(q2) * 2.2 + vec2<f32>(2.2, 9.4);
+    let n = 0.6 * vnoise(q) + 0.28 * vnoise(q2) + 0.12 * vnoise(q3);
+    // Soft edges: a cloud's shadow fades in over tens of metres.
+    return smoothstep(0.44, 0.72, n);
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_vertex_output(in, is_front, false);
@@ -297,6 +321,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
+    if fade.w > 0.0 {
+        let cover = cloud_cover(in.world_position.xz);
+        out.color = vec4<f32>(out.color.rgb * (1.0 - fade.w * cover), out.color.a);
+    }
     out.color = vec4<f32>(out.color.rgb + emit, out.color.a);
     if fade.y > 0.0 {
         let l = dot(out.color.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));

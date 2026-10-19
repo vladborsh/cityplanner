@@ -5,10 +5,21 @@ use cp_core::GameTime;
 
 /// Client-side lighting options (render only: the sim clock, citizens' routines and the UI
 /// clock never see them).
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LightingSettings {
     /// Light the world as at noon whatever the game time is (no night).
     pub always_day: bool,
+    /// The shadows of passing clouds on the ground, the roads and the buildings (T-272).
+    pub cloud_shadows: bool,
+}
+
+impl Default for LightingSettings {
+    fn default() -> Self {
+        Self {
+            always_day: false,
+            cloud_shadows: true,
+        }
+    }
 }
 
 /// The fixed time of the always-day light, 15:00: a warm afternoon sun about 41° above the
@@ -118,7 +129,10 @@ mod tests {
 
     #[test]
     fn always_day_is_the_afternoon_sun_at_any_time() {
-        let on = LightingSettings { always_day: true };
+        let on = LightingSettings {
+            always_day: true,
+            ..LightingSettings::default()
+        };
         let off = LightingSettings::default();
         let noon = at(ALWAYS_DAY_HOUR);
         let elevation = noon.to_sun[1].asin().to_degrees();

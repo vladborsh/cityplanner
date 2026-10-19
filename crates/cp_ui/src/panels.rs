@@ -489,6 +489,8 @@ pub fn top_bar(
             // Render only: the game clock and everyone's routine keep running at night.
             let r = ui.checkbox(&mut lighting.always_day, "Всегда день");
             rects.always_day = Some(r.rect);
+            // Shadows of passing clouds (T-272).
+            ui.checkbox(&mut lighting.cloud_shadows, "Тени облаков");
             let prefs = &mut state.prefs;
             ui.add(egui::Slider::new(&mut prefs.ui_scale, UI_SCALE_RANGE).text("Масштаб UI"));
             // Sound (T-189).

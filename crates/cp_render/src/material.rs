@@ -35,7 +35,8 @@ pub struct VertexColorMaterial {
     /// x = factor on the alpha of every fragment (the Underground view fades the ground, T-164);
     /// y = how far the surface is desaturated and darkened (0 = not, 1 = fully) while a data
     /// overlay is active (T-183b, written by [`sync_overlay_dim`]; overlay layers are never
-    /// dimmed); z = procedural surface detail, see [`Self::with_detail`]; w unused.
+    /// dimmed); z = procedural surface detail, see [`Self::with_detail`]; w = how much the
+    /// shadow of a passing cloud darkens the surface (T-272, written by [`sync_cloud_shadows`]).
     #[uniform(1)]
     pub fade: Vec4,
     /// Lit windows (T-245): x = night factor (0 day .. 1 night), y = lateness of the night
@@ -57,7 +58,9 @@ impl VertexColorMaterial {
     pub fn opaque(roughness: f32, reflectance: f32) -> Self {
         Self {
             params: Vec4::new(roughness, reflectance, 0.0, 0.0),
-            fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
+            // Cloud shadows on from the start (T-272): a material made with them needs no update
+            // before its first frame; [`sync_cloud_shadows`] turns them off with the setting.
+            fade: Vec4::new(1.0, 0.0, 0.0, CLOUD_SHADOW),
             glow: Vec4::ZERO,
             blend: false,
             depth_bias: false,
@@ -98,8 +101,13 @@ impl VertexColorMaterial {
         Self { sort_bias, ..self }
     }
 
-    pub fn with_depth_bias(self, depth_bias: bool) -> Self {
-        Self { depth_bias, ..self }
+    /// An overlay layer (`depth_bias`) never gets a cloud shadow.
+    pub fn with_depth_bias(mut self, depth_bias: bool) -> Self {
+        self.depth_bias = depth_bias;
+        if depth_bias {
+            self.fade.w = 0.0;
+        }
+        self
     }
 
     pub fn blended(roughness: f32, reflectance: f32) -> Self {
@@ -180,6 +188,39 @@ pub fn sync_overlay_dim(
     }
 }
 
+/// How much the middle of a cloud's shadow darkens a lit surface (T-272: "not too dark").
+pub const CLOUD_SHADOW: f32 = 0.2;
+
+/// Sets the cloud shadow uniform of every scene material from the lighting settings:
+/// [`CLOUD_SHADOW`] when on, 0 when off. Overlay layers (depth-biased) never get one.
+pub fn sync_cloud_shadows(
+    lighting: Option<Res<crate::LightingSettings>>,
+    mut materials: ResMut<Assets<VertexColorMaterial>>,
+) {
+    let on = lighting.is_some_and(|l| l.cloud_shadows);
+    let stale: Vec<_> = materials
+        .iter()
+        .filter(|(_, m)| {
+            let want = if on && !m.depth_bias {
+                CLOUD_SHADOW
+            } else {
+                0.0
+            };
+            m.fade.w != want
+        })
+        .map(|(id, _)| id)
+        .collect();
+    for id in stale {
+        if let Some(mut m) = materials.get_mut(id) {
+            m.fade.w = if on && !m.depth_bias {
+                CLOUD_SHADOW
+            } else {
+                0.0
+            };
+        }
+    }
+}
+
 pub struct VertexColorMaterialPlugin;
 
 impl Plugin for VertexColorMaterialPlugin {
@@ -187,7 +228,7 @@ impl Plugin for VertexColorMaterialPlugin {
         embedded_asset!(app, "vertex_color.wesl");
         app.add_plugins(MaterialPlugin::<VertexColorMaterial>::default())
             .init_resource::<OverlayState>()
-            .add_systems(Update, sync_overlay_dim);
+            .add_systems(Update, (sync_overlay_dim, sync_cloud_shadows));
     }
 }
 
@@ -227,5 +268,40 @@ mod tests {
         app.world_mut().resource_mut::<OverlayState>().active = Overlay::Off;
         app.update();
         assert_eq!(dim(&app, &scene), 0.0);
+    }
+
+    /// T-272: the cloud shadows are on by default, off with the setting, and never on an
+    /// overlay layer.
+    #[test]
+    fn cloud_shadows_follow_the_setting_and_spare_overlay_layers() {
+        let mut app = App::new();
+        app.init_resource::<crate::LightingSettings>()
+            .init_resource::<Assets<VertexColorMaterial>>()
+            .add_systems(Update, sync_cloud_shadows);
+        let (scene, layer) = {
+            let mut mats = app
+                .world_mut()
+                .resource_mut::<Assets<VertexColorMaterial>>();
+            (
+                mats.add(VertexColorMaterial::opaque(0.9, 0.05)),
+                mats.add(VertexColorMaterial::blended(0.9, 0.05).with_depth_bias(true)),
+            )
+        };
+        let cloud = |app: &App, h: &Handle<VertexColorMaterial>| {
+            app.world()
+                .resource::<Assets<VertexColorMaterial>>()
+                .get(h)
+                .unwrap()
+                .fade
+                .w
+        };
+        app.update();
+        assert_eq!(cloud(&app, &scene), CLOUD_SHADOW);
+        assert_eq!(cloud(&app, &layer), 0.0);
+        app.world_mut()
+            .resource_mut::<crate::LightingSettings>()
+            .cloud_shadows = false;
+        app.update();
+        assert_eq!(cloud(&app, &scene), 0.0);
     }
 }
