@@ -117,6 +117,34 @@ impl Attach {
         }
     }
 
+    /// The nearest link within the reach of `p` (ties: the lowest id).
+    pub(crate) fn link_at(
+        &self,
+        graph: &UtilityGraph,
+        p: Vec2,
+        half: f32,
+    ) -> Option<UtilityLinkId> {
+        let mut best: Option<(f32, UtilityLinkId)> = None;
+        self.within(graph, p, half, |d, id, _| {
+            if best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, id));
+            }
+        });
+        best.map(|(_, id)| id)
+    }
+
+    /// Every link within the reach of `p`, ascending.
+    pub(crate) fn links_at(&self, graph: &UtilityGraph, p: Vec2, half: f32) -> Vec<UtilityLinkId> {
+        let mut all = Vec::new();
+        self.within(graph, p, half, |_, id, _| all.push(id));
+        all
+    }
+
+    /// The component of a link of this network (`None` for a link that is gone).
+    fn comp_of(&self, link: UtilityLinkId) -> Option<u32> {
+        self.comp_of_link.get(&link).copied()
+    }
+
     /// The component of the nearest link within the reach of `p`.
     pub(crate) fn comp_at(&self, graph: &UtilityGraph, p: Vec2, half: f32) -> Option<u32> {
         self.nearest(graph, p, half).map(|(_, c)| c)
@@ -298,10 +326,17 @@ fn source_joins(
             near_cache[i] = Some((
                 s.id.generation,
                 s.pos,
-                attach.comps_at(graph, s.pos, s.half),
+                attach.links_at(graph, s.pos, s.half),
             ));
         }
-        let near = near_cache[i].as_ref().map_or(&[][..], |c| &c.2[..]);
+        let mut near: Vec<u32> = near_cache[i]
+            .as_ref()
+            .map_or(&[][..], |c| &c.2[..])
+            .iter()
+            .filter_map(|&l| attach.comp_of(l))
+            .collect();
+        near.sort_unstable();
+        near.dedup();
         for pair in near.windows(2) {
             let (a, b) = (root(&parent, pair[0]), root(&parent, pair[1]));
             if a != b {
@@ -327,25 +362,65 @@ fn kind_index(k: UtilityKind) -> usize {
 /// part of [`compute_supply`]. An entry is valid for the graph it was computed for (a
 /// fingerprint of every link) and for the position it was computed at.
 /// `(generation, position, pipe component, line component)` of one building.
-type CachedAttach = (u32, Vec2, Option<u32>, Option<u32>);
+type CachedAttach = (u32, Vec2, Option<UtilityLinkId>, Option<UtilityLinkId>);
 
-/// `(generation, position, components in reach)` of a source building, for one network.
-type CachedNear = (u32, Vec2, Vec<u32>);
+/// `(generation, position, links in reach)` of a source building, for one network.
+type CachedNear = (u32, Vec2, Vec<UtilityLinkId>);
 
 #[derive(Default)]
 pub struct AttachCache {
     graph: u64,
+    /// Geometry of every link at the last pass: what changed since says which entries to drop.
+    prints: BTreeMap<UtilityLinkId, LinkPrint>,
+    /// The reach of the two networks (bits) the entries were made with.
+    reach: (u32, u32),
     /// The link lookups of that graph, built when the first building needs one.
     attach: Option<(Attach, Attach)>,
-    /// By arena index of the building: `(generation, position, pipe component, line component)`.
+    /// By arena index of the building: `(generation, position, nearest pipe, nearest line)`.
+    /// Links, not components: a link keeps its id when an edit renames the components.
     by_building: Vec<Option<CachedAttach>>,
-    /// By arena index of a source: the components of the pipes / of the lines within its reach.
+    /// By arena index of a source: the pipes / the lines within its reach.
     pipe_near: Vec<Option<CachedNear>>,
     line_near: Vec<Option<CachedNear>>,
 }
 
 /// Consumption per utility and the source `(kind, capacity)` of one building def.
 type DefSupply = ([f32; 3], Option<(ServiceKind, f32)>);
+
+/// Hash and XZ box of the geometry of one link (network and curve): all a building's nearest
+/// link depends on.
+#[derive(Clone, Copy, PartialEq)]
+struct LinkPrint {
+    hash: u64,
+    lo: Vec2,
+    hi: Vec2,
+}
+
+fn link_prints(graph: &UtilityGraph) -> BTreeMap<UtilityLinkId, LinkPrint> {
+    graph
+        .links()
+        .map(|(id, l)| {
+            let mut h = 0xcbf2_9ce4_8422_2325u64;
+            let mut mix = |v: u32| {
+                for b in v.to_le_bytes() {
+                    h ^= u64::from(b);
+                    h = h.wrapping_mul(0x0000_0100_0000_01b3);
+                }
+            };
+            mix(l.net as u32);
+            let pts = [l.curve.p0, l.curve.p1, l.curve.p2, l.curve.p3];
+            for p in pts {
+                mix(p.x.to_bits());
+                mix(p.y.to_bits());
+                mix(p.z.to_bits());
+            }
+            let c = pts.map(to_xz);
+            let lo = c.iter().fold(Vec2::splat(f32::MAX), |a, p| a.min(*p));
+            let hi = c.iter().fold(Vec2::splat(f32::MIN), |a, p| a.max(*p));
+            (id, LinkPrint { hash: h, lo, hi })
+        })
+        .collect()
+}
 
 /// FNV-1a over every link: network, endpoints and curve.
 fn graph_fingerprint(graph: &UtilityGraph, nets: &Networks) -> u64 {
@@ -373,6 +448,25 @@ fn graph_fingerprint(graph: &UtilityGraph, nets: &Networks) -> u64 {
         }
     }
     h
+}
+
+/// Forgets the entries whose position is within `margin` of a box.
+fn drop_near<T>(
+    entries: &mut [Option<T>],
+    pos: impl Fn(&T) -> Vec2,
+    boxes: &[(Vec2, Vec2)],
+    margin: f32,
+) {
+    for e in entries.iter_mut() {
+        let Some(t) = e else { continue };
+        let p = pos(t);
+        if boxes
+            .iter()
+            .any(|&(lo, hi)| (lo - p).max(p - hi).max(Vec2::ZERO).length() <= margin)
+        {
+            *e = None;
+        }
+    }
 }
 
 /// Buildings `(id -> missing-supply bits)` for every `Active` building that lacks something;
@@ -463,34 +557,66 @@ pub fn compute_supply_with(
         missing[id.index as usize] |= bit;
     };
 
-    // The component of each building in the pipe and in the power network.
+    // The component of each building in the pipe and in the power network. What a building
+    // remembers is its nearest link, which an edit changes only for the buildings within reach
+    // of the links it added, removed or moved: the others keep theirs, and the components are
+    // read off the fresh lookup (T-259: every edit used to search all of them again).
     let fingerprint = graph_fingerprint(graph, nets);
     if cache.graph != fingerprint {
         cache.graph = fingerprint;
         cache.attach = None;
-        cache.by_building.clear();
-        cache.pipe_near.clear();
-        cache.line_near.clear();
+        let reach = (nets.pipe_reach_m.to_bits(), nets.line_reach_m.to_bits());
+        let prints = link_prints(graph);
+        let mut boxes: Vec<(Vec2, Vec2)> = Vec::new();
+        for (id, new) in &prints {
+            if cache.prints.get(id) != Some(new) {
+                boxes.push((new.lo, new.hi));
+            }
+        }
+        for (id, old) in &cache.prints {
+            if prints.get(id) != Some(old) {
+                boxes.push((old.lo, old.hi));
+            }
+        }
+        if reach != cache.reach || boxes.len() > 256 {
+            cache.by_building.clear();
+            cache.pipe_near.clear();
+            cache.line_near.clear();
+        } else {
+            let half = sites.iter().fold(0.0f32, |m, s| m.max(s.half));
+            let margin = nets.pipe_reach_m.max(nets.line_reach_m) + half + 1.0;
+            drop_near(&mut cache.by_building, |e| e.1, &boxes, margin);
+            drop_near(&mut cache.pipe_near, |e| e.1, &boxes, margin);
+            drop_near(&mut cache.line_near, |e| e.1, &boxes, margin);
+        }
+        cache.reach = reach;
+        cache.prints = prints;
     }
+    let (pipes, lines) = cache.attach.get_or_insert_with(|| {
+        (
+            Attach::build(graph, UtilityNet::Pipe, nets.pipe_reach_m),
+            Attach::build(graph, UtilityNet::Power, nets.line_reach_m),
+        )
+    });
     let mut comps: Vec<(Option<u32>, Option<u32>)> = Vec::with_capacity(sites.len());
     for s in &sites {
         let i = s.id.index as usize;
+        let live = |l: Option<UtilityLinkId>, a: &Attach| l.is_none_or(|l| a.comp_of(l).is_some());
         let hit = match cache.by_building.get(i) {
-            Some(Some((g, pos, pipe, line))) if *g == s.id.generation && *pos == s.pos => {
+            Some(Some((g, pos, pipe, line)))
+                if *g == s.id.generation
+                    && *pos == s.pos
+                    && live(*pipe, pipes)
+                    && live(*line, lines) =>
+            {
                 Some((*pipe, *line))
             }
             _ => None,
         };
-        let pair = hit.unwrap_or_else(|| {
-            let (pipes, lines) = cache.attach.get_or_insert_with(|| {
-                (
-                    Attach::build(graph, UtilityNet::Pipe, nets.pipe_reach_m),
-                    Attach::build(graph, UtilityNet::Power, nets.line_reach_m),
-                )
-            });
+        let (pipe, line) = hit.unwrap_or_else(|| {
             let pair = (
-                pipes.comp_at(graph, s.pos, s.half),
-                lines.comp_at(graph, s.pos, s.half),
+                pipes.link_at(graph, s.pos, s.half),
+                lines.link_at(graph, s.pos, s.half),
             );
             if cache.by_building.len() <= i {
                 cache.by_building.resize(i + 1, None);
@@ -498,19 +624,16 @@ pub fn compute_supply_with(
             cache.by_building[i] = Some((s.id.generation, s.pos, pair.0, pair.1));
             pair
         });
-        comps.push(pair);
+        comps.push((
+            pipe.and_then(|l| pipes.comp_of(l)),
+            line.and_then(|l| lines.comp_of(l)),
+        ));
     }
 
     // A source stands on every network of its net within reach, and so joins them (BUG-042: a
     // tower beside a spur and a street pipe that are not joined by a node served only the
     // nearer one).
     if sites.iter().any(|s| s.source.is_some()) {
-        let (pipes, lines) = cache.attach.get_or_insert_with(|| {
-            (
-                Attach::build(graph, UtilityNet::Pipe, nets.pipe_reach_m),
-                Attach::build(graph, UtilityNet::Power, nets.line_reach_m),
-            )
-        });
         let pipe_join = source_joins(&sites, graph, pipes, &mut cache.pipe_near, |k| {
             matches!(k, ServiceKind::Water | ServiceKind::Sewage)
         });

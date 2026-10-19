@@ -607,3 +607,55 @@ fn a_reused_cache_follows_a_moved_source_and_a_changed_graph() {
         0
     );
 }
+
+#[test]
+fn a_reused_cache_follows_links_added_and_removed_near_buildings() {
+    // T-259: a building keeps its nearest link across edits that are out of its reach and
+    // takes a new one when an edit brings a nearer or removes its own.
+    let db = db();
+    let mut b = BuildingGrid::new();
+    let mut g = UtilityGraph::new();
+    let p = |x: f32, z: f32| Vec3::new(5000.0 + x, 0.0, 5000.0 + z);
+    let pipe = |g: &mut UtilityGraph, x0: f32, x1: f32, z: f32| {
+        let (a, c) = (
+            g.add_node(UtilityNet::Pipe, p(x0, z)),
+            g.add_node(UtilityNet::Pipe, p(x1, z)),
+        );
+        g.add_link(a, c, CubicBezier3::line(p(x0, z), p(x1, z)))
+            .unwrap()
+    };
+    let street = pipe(&mut g, 0.0, 200.0, 0.0);
+    add(&mut b, &db, "tower", 20.0, -10.0);
+    let houses: Vec<_> = (0..6)
+        .map(|k| add(&mut b, &db, "house", 20.0 + 30.0 * k as f32, 30.0))
+        .collect();
+    let far = add(&mut b, &db, "house", 150.0, 3000.0);
+    let mut cache = AttachCache::default();
+    let mut check = |b: &BuildingGrid, g: &UtilityGraph, what: &str| {
+        let fresh = compute_supply_cached(&db, b, g, &mut AttachCache::default());
+        assert_eq!(
+            compute_supply_cached(&db, b, g, &mut cache),
+            fresh,
+            "{what}"
+        );
+    };
+    check(&b, &g, "first");
+    // A second pipe, nearer to the houses and not joined to the first.
+    let near = pipe(&mut g, 0.0, 200.0, 20.0);
+    check(&b, &g, "nearer pipe");
+    // Its far-away neighbour, out of everyone's reach.
+    pipe(&mut g, 0.0, 200.0, 2000.0);
+    check(&b, &g, "pipe out of reach");
+    // The nearer pipe goes again, then the street the tower stands at.
+    g.remove_link(near).unwrap();
+    check(&b, &g, "nearer pipe removed");
+    g.remove_link(street).unwrap();
+    check(&b, &g, "street removed");
+    let w = compute_supply_cached(&db, &b, &g, &mut cache);
+    assert!(
+        houses
+            .iter()
+            .all(|h| w[h.index as usize] & BuildingFlags::NO_WATER != 0)
+    );
+    assert_ne!(w[far.index as usize] & BuildingFlags::NO_WATER, 0);
+}
