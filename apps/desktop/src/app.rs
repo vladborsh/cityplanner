@@ -49,6 +49,8 @@ pub struct Options {
     pub grading_panel: bool,
     /// `--ui`: keep the egui UI in a `--hidden` run, so screenshots show the panels.
     pub hidden_ui: bool,
+    /// `--category roads|zones|...`: open that palette category at start (screenshots).
+    pub category: Option<cp_ui::Category>,
 }
 
 impl Options {
@@ -101,6 +103,11 @@ impl Options {
             }),
             grading_panel: args.iter().any(|a| a == "--grading-panel"),
             hidden_ui: args.iter().any(|a| a == "--ui"),
+            category: value("--category").and_then(|n| {
+                cp_ui::Category::ALL
+                    .into_iter()
+                    .find(|c| c.label().eq_ignore_ascii_case(&n))
+            }),
             always_day: args.iter().any(|a| a == "--always-day"),
             net_debug: args.iter().any(|a| a == "--net-debug"),
             day_night: args.iter().any(|a| a == "--day-night") || value("--hour").is_some(),
@@ -253,6 +260,7 @@ pub fn run(opts: Options) -> AppExit {
             target: target.clone(),
             grading: opts.grading,
             grading_panel: opts.grading_panel,
+            category: opts.category,
         },
         FrameTimeDiagnosticsPlugin::default(),
         RenderDiagnosticsPlugin,

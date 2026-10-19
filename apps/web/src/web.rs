@@ -48,6 +48,7 @@ pub fn run() {
                 target: None,
                 grading: None,
                 grading_panel: false,
+                category: None,
             },
             FrameTimeDiagnosticsPlugin::default(),
             // FPS and frame time to the browser console every 5 s.

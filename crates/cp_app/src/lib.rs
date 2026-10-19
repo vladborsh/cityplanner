@@ -70,6 +70,8 @@ pub struct GamePlugin {
     pub grading: Option<cp_render::GradingSettings>,
     /// Open the colour grading panel at start (`--grading-panel`, for screenshots).
     pub grading_panel: bool,
+    /// Open this palette category at start (`--category`, for screenshots).
+    pub category: Option<cp_ui::Category>,
 }
 
 #[derive(Resource, Clone)]
@@ -147,6 +149,7 @@ impl Plugin for GamePlugin {
                     },
                 },
                 grading_open: self.grading_panel,
+                category: self.category,
                 ..default()
             })
             .insert_resource(settings::SettingsSaver::new(settings, hidden))
