@@ -128,3 +128,9 @@ fonts are not renamed-reserved; the subset keeps the upstream family names and i
   U+25FC–25FF (U+25FB is left out: it is egui's replacement glyph), U+2600–26FF, U+2700–27BF, U+2B00–2BFF, U+1F4B0.
 - `assets/fonts/NotoSansMath-subset.ttf` — Noto Sans Math (The Noto Project Authors),
   https://github.com/notofonts/math, OFL 1.1. U+2200–22FF, U+263B.
+- `assets/fonts/NotoSans-Bold-subset.ttf` (T-274) — Noto Sans Bold (The Noto Project Authors),
+  https://github.com/notofonts/latin-greek-cyrillic (the static hinted TTF from
+  https://github.com/notofonts/notofonts.github.io, `fonts/NotoSans/hinted/ttf/NotoSans-Bold.ttf`),
+  OFL 1.1. The text face of the menus and panels. U+0020–007E, U+00A0–017F, U+0400–04FF,
+  U+2010–2027, U+2030–205E, U+20A0–20BF, U+2116, U+2122. Its copyright line is added to
+  `assets/fonts/OFL.txt` (the licence text is the same).

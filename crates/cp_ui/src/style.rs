@@ -75,8 +75,31 @@ const SYMBOL_FONTS: [(&str, &[u8]); 2] = [
     ),
 ];
 
+/// The text face of the menus and panels (T-274, the user: "all the font bold"): Noto Sans Bold
+/// (OFL, `assets/LICENSES.md`), Latin, Cyrillic and punctuation. It comes right after the symbol
+/// faces, before egui's own Ubuntu Light (kept as the fallback for anything the subset lacks).
+const TEXT_FONT: (&str, &[u8]) = (
+    "noto_sans_bold",
+    include_bytes!("../../../assets/fonts/NotoSans-Bold-subset.ttf"),
+);
+
 fn install_fonts(ctx: &egui::Context) {
+    ctx.set_fonts(font_definitions());
+}
+
+/// egui's fonts with the symbol faces first, then the text face, then egui's own.
+fn font_definitions() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
+    let (name, bytes) = TEXT_FONT;
+    fonts.font_data.insert(
+        name.to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(bytes)),
+    );
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, name.to_owned());
     for (name, bytes) in SYMBOL_FONTS {
         fonts.font_data.insert(
             name.to_owned(),
@@ -90,7 +113,7 @@ fn install_fonts(ctx: &egui::Context) {
                 .insert(0, name.to_owned());
         }
     }
-    ctx.set_fonts(fonts);
+    fonts
 }
 
 /// Sets the text sizes of the egui style: `Body` 15 pt, `Small` 13 pt (and the headings and
@@ -113,6 +136,21 @@ pub fn install(ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-274: the menus and panels are set in the bold text face; the symbol faces still come
+    /// first and egui's own face stays as the fallback.
+    #[test]
+    fn the_text_face_is_bold_after_the_symbols() {
+        let fonts = font_definitions();
+        let family = &fonts.families[&egui::FontFamily::Proportional];
+        let at = |name: &str| family.iter().position(|f| f == name).expect(name);
+        assert!(at("noto_symbols2") < at("noto_sans_bold"));
+        assert!(at("noto_sans_bold") < at("Ubuntu-Light"));
+        assert!(
+            !fonts.families[&egui::FontFamily::Monospace].contains(&"noto_sans_bold".to_owned()),
+            "the numbers' monospace face stays"
+        );
+    }
 
     #[test]
     fn install_sets_body_15_and_small_13() {
