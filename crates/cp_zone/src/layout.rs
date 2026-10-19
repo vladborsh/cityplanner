@@ -205,6 +205,11 @@ fn turn(seg: &Segment) -> f32 {
 
 /// The segment that runs straight on from `id` at its exit node (within `CORNER_DEG`).
 fn straight_on(net: &NetGraph, id: SegmentId, fwd: bool) -> Option<&Segment> {
+    straight_on_id(net, id, fwd).and_then(|(s, _)| net.segment(s))
+}
+
+/// [`straight_on`] with the segment's id and whether it is walked along its own direction.
+fn straight_on_id(net: &NetGraph, id: SegmentId, fwd: bool) -> Option<(SegmentId, bool)> {
     let seg = net.segment(id)?;
     let (heading, node) = exit_of(seg, fwd);
     let n = net.node(node)?;
@@ -212,16 +217,65 @@ fn straight_on(net: &NetGraph, id: SegmentId, fwd: bool) -> Option<&Segment> {
     n.segments
         .iter()
         .filter(|&&s| s != id)
-        .filter_map(|&s| net.segment(s).map(|g| (g, leave_dir(g, g.start == node))))
-        .filter(|(_, d)| d.dot(heading) >= cos)
-        .max_by(|a, b| a.1.dot(heading).total_cmp(&b.1.dot(heading)))
-        .map(|(g, _)| g)
+        .filter_map(|&s| {
+            net.segment(s)
+                .map(|g| (s, g.start == node, leave_dir(g, g.start == node)))
+        })
+        .filter(|(_, _, d)| d.dot(heading) >= cos)
+        .max_by(|a, b| a.2.dot(heading).total_cmp(&b.2.dot(heading)))
+        .map(|(s, at_start, _)| (s, at_start))
+}
+
+/// How far from a rounded corner its virtual corner may lie, from either end of the bend, for
+/// the legs to count from it (§6.8.3 item 4, ruling on T-266), metres.
+pub const VIRTUAL_CORNER_MAX_M: f32 = 40.0;
+
+/// The end of a straight leg at a rounded corner (§6.8.3 item 4, ruling on T-266): the cells
+/// count from the edge of the other leg's line at the virtual corner (where the two legs' lines
+/// meet), as at a sharp corner, when it lies within [`VIRTUAL_CORNER_MAX_M`] of both ends of the
+/// bend; else from the leg's own node. Negative: the edge stands beyond the node, over the bend
+/// (the cells the bend's road covers are dropped by the general validity rules). `None` when the
+/// street does not run on into a rounded corner there.
+fn rounded_corner_end(
+    net: &NetGraph,
+    roads: &dyn Fn(RoadDefId) -> RoadZoning,
+    id: SegmentId,
+    fwd: bool,
+) -> Option<FrontEnd> {
+    let (seg, ours) = zoned(net, roads, id)?;
+    let (u1, node) = exit_of(seg, fwd);
+    let (bend, bend_fwd) = straight_on_id(net, id, fwd)?;
+    if !rounded_corner(net, bend) {
+        return None;
+    }
+    let b_seg = net.segment(bend)?;
+    // The other leg's direction is the bend's own at its far end (the leg runs straight on from
+    // it): a cut of that leg, which nudges its tangent by a float step, moves nothing here.
+    let (u2, far) = exit_of(b_seg, bend_fwd);
+    let (next, _) = straight_on_id(net, bend, bend_fwd)?;
+    let (_, theirs) = zoned(net, roads, next)?;
+    let (p1, p2) = (to_xz(net.node(node)?.pos), to_xz(net.node(far)?.pos));
+    let c = u1.perp_dot(u2);
+    if c.abs() < 1e-3 {
+        return Some(FrontEnd::Open);
+    }
+    let dd = p2 - p1;
+    // The virtual corner: `p1 + u1·s = p2 - u2·r`.
+    let s = dd.perp_dot(u2) / c;
+    let r = -dd.perp_dot(u1) / c;
+    if s <= 0.0 || r <= 0.0 || s > VIRTUAL_CORNER_MAX_M || r > VIRTUAL_CORNER_MAX_M {
+        return Some(FrontEnd::Open);
+    }
+    let (cos_t, sin_t) = ((-u1).dot(u2), c.abs());
+    let d = (theirs.half_width + ours.half_width * cos_t) / sin_t;
+    Some(FrontEnd::Edge(d - s))
 }
 
 /// Whether segment `id` is a rounded corner: it turns by [`ROUNDED_CORNER_DEG`] or more, is
 /// no longer than [`ROUNDED_CORNER_MAX_M`] and runs on into a straight segment at both ends (a
 /// piece of a long arc cut automatically is no corner: its neighbours are curved). A frontage
-/// ends at its nodes; the curve is a frontage of its own, the legs count from their own nodes.
+/// ends at its nodes; the curve is a frontage of its own, the legs count from its virtual corner
+/// (see `rounded_corner_end`).
 fn rounded_corner(net: &NetGraph, id: SegmentId) -> bool {
     let Some(seg) = net.segment(id) else {
         return false;
@@ -276,6 +330,9 @@ fn end_of(
     let Some((seg, ours)) = zoned(net, roads, id) else {
         return FrontEnd::Open;
     };
+    if let Some(e) = rounded_corner_end(net, roads, id, fwd) {
+        return e;
+    }
     let (heading, node) = exit_of(seg, fwd);
     let back = -heading;
     let v = side_vec(heading, side);
