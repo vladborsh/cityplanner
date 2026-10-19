@@ -47,7 +47,8 @@ pub enum NodeClass {
 /// length table. `at(s, xi)` is the point `s` metres from the node, `xi` to the left looking out.
 pub struct ArmPath {
     curve: CubicBezier3,
-    table: ArcTable,
+    /// Arc length table, `None` for a straight arm (arc length is then linear in `t`).
+    table: Option<ArcTable>,
     pub length: f32,
 }
 
@@ -60,12 +61,35 @@ impl ArmPath {
             (c.p3, c.p2, c.p1, c.p0)
         };
         let curve = CubicBezier3::new(p0 - origin, p1 - origin, p2 - origin, p3 - origin);
-        let table = curve.arc_table();
-        Some(Self {
-            length: table.length(),
+        Some(Self::of(curve))
+    }
+
+    fn of(curve: CubicBezier3) -> Self {
+        let mut path = Self {
             curve,
-            table,
-        })
+            table: None,
+            length: curve.p0.distance(curve.p3),
+        };
+        if path.line().is_none() {
+            let table = curve.arc_table();
+            path.length = table.length();
+            path.table = Some(table);
+        }
+        path
+    }
+
+    fn s_to_t(&self, s: f32) -> f32 {
+        match &self.table {
+            Some(t) => t.s_to_t(s),
+            None => (s / self.length.max(1e-6)).clamp(0.0, 1.0),
+        }
+    }
+
+    fn t_to_s(&self, t: f32) -> f32 {
+        match &self.table {
+            Some(table) => table.t_to_s(t),
+            None => t * self.length,
+        }
     }
 
     /// The start (the node) and unit direction of the arm when its curve is a straight line.
@@ -89,12 +113,12 @@ impl ArmPath {
 
     /// Unit direction away from the node `s` metres out.
     pub fn dir(&self, s: f32) -> Vec2 {
-        self.dir_t(self.table.s_to_t(s.clamp(0.0, self.length)))
+        self.dir_t(self.s_to_t(s.clamp(0.0, self.length)))
     }
 
     /// The point `s` metres out, `xi` to the left looking out (node-relative XZ).
     pub fn at(&self, s: f32, xi: f32) -> Vec2 {
-        self.edge_t(self.table.s_to_t(s.clamp(0.0, self.length)), xi)
+        self.edge_t(self.s_to_t(s.clamp(0.0, self.length)), xi)
     }
 }
 
@@ -136,8 +160,8 @@ pub(super) fn edge_meet(pa: &ArmPath, ha: f32, pb: &ArmPath, hb: f32) -> Option<
 /// Newton steps while they bring the edges closer.
 fn sampled_meet(pa: &ArmPath, ha: f32, pb: &ArmPath, hb: f32) -> Option<(f32, f32)> {
     let n = MEET_SAMPLES;
-    let ua = pa.table.s_to_t(pa.length.min(MEET_REACH));
-    let ub = pb.table.s_to_t(pb.length.min(MEET_REACH));
+    let ua = pa.s_to_t(pa.length.min(MEET_REACH));
+    let ub = pb.s_to_t(pb.length.min(MEET_REACH));
     let sa: Vec<Vec2> = (0..=n)
         .map(|i| pa.edge_t(ua * i as f32 / n as f32, ha))
         .collect();
@@ -182,7 +206,7 @@ fn sampled_meet(pa: &ArmPath, ha: f32, pb: &ArmPath, hb: f32) -> Option<(f32, f3
         }
         (u, v, r) = (nu, nv, nr);
     }
-    Some((pa.table.t_to_s(u), pb.table.t_to_s(v)))
+    Some((pa.t_to_s(u), pb.t_to_s(v)))
 }
 
 /// Whether the segment's lanes read the same from either end: each lane has a mirror image of
@@ -227,6 +251,20 @@ pub(super) fn ccw_gap(a: f32, b: f32) -> f32 {
     if g == 0.0 { TAU } else { g }
 }
 
+/// The class of a node with the two road arms `a` and `b`.
+fn two_arm_class(graph: &NetGraph, a: &Raw, b: &Raw) -> NodeClass {
+    let turn = PI - a.dir.dot(b.dir).clamp(-1.0, 1.0).acos();
+    let road = |r: &Raw| graph.segment(r.segment).map(|s| s.road);
+    // Head-on (both start or both end here) is the same profile only for a road that reads the
+    // same both ways.
+    let same = road(a) == road(b) && (a.at_start != b.at_start || symmetric(graph, a.segment));
+    match (same, turn <= MIDDLE_DEG.to_radians()) {
+        (true, true) => NodeClass::Middle,
+        (true, false) => NodeClass::Bend,
+        (false, _) => NodeClass::Transition,
+    }
+}
+
 /// The class of a node with road arms `raws` (sorted counter-clockwise) and the setback each
 /// arm wants, with whether it is *hard* (see `shared_setback`).
 pub(super) fn class_and_wants(
@@ -244,6 +282,10 @@ pub(super) fn class_and_wants(
                 .collect(),
         );
     }
+    // Most nodes of a city are middle nodes: classed before any curve work.
+    if k == 2 && two_arm_class(graph, &raws[0], &raws[1]) == NodeClass::Middle {
+        return (NodeClass::Middle, vec![(0.0, false); 2]);
+    }
     let paths: Vec<Option<ArmPath>> = raws
         .iter()
         .map(|r| ArmPath::new(graph, r.segment, r.at_start, origin))
@@ -257,15 +299,7 @@ pub(super) fn class_and_wants(
     if k == 2 {
         let (a, b) = (&raws[0], &raws[1]);
         let turn = PI - a.dir.dot(b.dir).clamp(-1.0, 1.0).acos();
-        let road = |r: &Raw| graph.segment(r.segment).map(|s| s.road);
-        // Head-on (both start or both end here) is the same profile only for a road that reads
-        // the same both ways.
-        let same = road(a) == road(b) && (a.at_start != b.at_start || symmetric(graph, a.segment));
-        let class = match (same, turn <= MIDDLE_DEG.to_radians()) {
-            (true, true) => return (NodeClass::Middle, vec![(0.0, false); 2]),
-            (true, false) => NodeClass::Bend,
-            (false, _) => NodeClass::Transition,
-        };
+        let class = two_arm_class(graph, a, b);
         // The inner side of the turn is the gap under 180 degrees.
         let inner = if ccw_gap(a.angle, b.angle) < PI {
             meet(0, 1)
@@ -503,13 +537,7 @@ mod tests {
 
     fn arm(deg: f32, len: f32) -> ArmPath {
         let d = Vec2::from_angle(deg.to_radians()) * len;
-        let curve = CubicBezier3::line(Vec3::ZERO, Vec3::new(d.x, 0.0, d.y));
-        let table = curve.arc_table();
-        ArmPath {
-            length: table.length(),
-            curve,
-            table,
-        }
+        ArmPath::of(CubicBezier3::line(Vec3::ZERO, Vec3::new(d.x, 0.0, d.y)))
     }
 
     /// The exact meeting point of two straight arms is the one the sampled search converges to.

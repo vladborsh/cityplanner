@@ -8,8 +8,8 @@
 //! jam does not depend on the time of day.
 //!
 //! **T-263.** The two `load + 4096 ticks` pins moved (state at load unchanged; m1-small
-//! `0x3c26_0063_288f_0a41` -> `0xc5c2_9546_ecda_1e3b`, m1-traffic `0x42c0_63ee_1822_fa0c` ->
-//! `0x41a3_5a4e_64cf_a24c`): node geometry v2 feeds the lane connections, which start and end
+//! `0x3c26_0063_288f_0a41` -> `0x6c42_58e8_6c3a_1c82`, m1-traffic `0x42c0_63ee_1822_fa0c` ->
+//! `0xaa4e_e438_e778_9fd5`): node geometry v2 feeds the lane connections, which start and end
 //! at the arms' cuts (`trim_t`). The causes: a middle node (two pieces of one road turning at
 //! most 10 degrees, e.g. every automatic cut) cuts at the node, setback 0 instead of half the
 //! road's width, so lanes run on through it on a zero-length connection (`connection_curve`
@@ -19,7 +19,9 @@
 //! ends, so they share a short segment's length with the other end differently; and curved arms
 //! take their setbacks from the real offset curves instead of the tangent lines. Junctions of
 //! straight arms keep their setbacks (the meeting point of two straight edges is computed
-//! exactly, the same value as before up to float rounding, which the checksum also sees).
+//! exactly, the same value as before up to float rounding, which the checksum also sees; a
+//! straight arm meeting a curved one measures its arc length exactly, not by the arc table's
+//! interpolation, a few 1e-5 m).
 //!
 //! **T-262 (save v55).** All four pins moved with the encoding: the checksum hashes the road
 //! network, and every segment now carries its build order (a migrated v54 save gets them by
@@ -225,7 +227,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     assert_eq!(sim.checksum(), 0x68b91d63fd51a77a, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0xc5c29546ecda1e3b,
+        0x6c4258e86c3a1c82,
         "load + 4096 ticks"
     );
 }
@@ -259,7 +261,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x41a35a4e64cfa24c, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0xaa4ee438e7789fd5, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,
