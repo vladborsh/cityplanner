@@ -618,3 +618,95 @@ fn a_ghost_from_a_bend_a_t_or_a_crossing_has_the_same_ticks_on_both_sides() {
         }
     }
 }
+
+/// T-266 (user playtest: the diamonds a cell off the 8-cell lines): every diamond the road tool
+/// shows lies on an 8-cell line of a laid frontage, within 1 cm: a corner of a laid cell stands
+/// on the line through it square to the street, and along the block's streets the diamonds are
+/// 8 cells apart from the left street's edge. The user's block: 16 cells by 8 between a left,
+/// a top, a bottom and a right street; the bottom street gets its diamond 8 cells from the left
+/// street's edge.
+#[test]
+fn every_diamond_lies_on_an_8_cell_line_of_a_laid_frontage() {
+    use cp_tools::road::{MarkerKind, road_markers};
+    let (mut sim, db) = sim();
+    let hw = db.road(db.road_id("basic_2l").unwrap()).width / 2.0;
+    let (x0, top) = (4600.0f32, 4700.0f32);
+    let bottom = top - hw - 64.0 - hw;
+    let right = x0 + hw + 128.0 + hw;
+    for (a, b) in [
+        (Vec2::new(x0, 4500.0), Vec2::new(x0, 4800.0)),
+        (Vec2::new(x0, top), Vec2::new(right + 60.0, top)),
+        (Vec2::new(x0, bottom), Vec2::new(right, bottom)),
+        (Vec2::new(right, bottom), Vec2::new(right, top + 60.0)),
+    ] {
+        build(&mut sim, &db, a, b);
+    }
+    let view = sim.view();
+    let mut corners = Vec::new();
+    for (id, b) in view.zones.blocks() {
+        for i in 0..b.valid.len() {
+            if let Some(o) = view.zones.cell_footprint(cp_zone::ZoneCellRef {
+                block: id,
+                cell: i as u16,
+            }) {
+                corners.extend(o.corners());
+            }
+        }
+    }
+    assert!(!corners.is_empty(), "the block is zoned");
+    let street_dir = |p: Vec2| {
+        view.net
+            .segments()
+            .map(|(_, s)| {
+                let (t, d) = s.curve.nearest_xz(p);
+                (d, cp_core::curve::to_xz(s.curve.tangent(t)).normalize())
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, dir)| dir)
+            .unwrap()
+    };
+    let mut diamonds = Vec::new();
+    let mut hovers = Vec::new();
+    for k in 0..=12 {
+        let s = k as f32 * 16.0;
+        hovers.push(Vec2::new(x0 + 12.0, 4500.0 + s));
+        hovers.push(Vec2::new(x0 + s, top - 10.0));
+        hovers.push(Vec2::new(x0 + s, bottom + 3.0));
+        hovers.push(Vec2::new(right - 10.0, bottom + s));
+    }
+    for h in hovers {
+        for m in road_markers(&view, h) {
+            if m.kind != MarkerKind::Control {
+                continue;
+            }
+            let dir = street_dir(m.pos);
+            let on_line = corners.iter().any(|c| {
+                let r = *c - m.pos;
+                r.dot(dir).abs() < 0.01 && r.perp_dot(dir).abs() <= hw + 2.0
+            });
+            assert!(
+                on_line,
+                "hover {h:?}: the diamond at {:?} is on no 8-cell line of a laid frontage",
+                m.pos
+            );
+            // Along the block's top and bottom streets the frontages count from the left
+            // street's edge: a diamond is 8 cells (64 m) or a multiple from it.
+            let along = m.pos.x - (x0 + hw);
+            if ((m.pos.y - bottom).abs() < 0.01 || (m.pos.y - top).abs() < 0.01) && m.pos.x < right
+            {
+                let off = along - (along / 64.0).round() * 64.0;
+                assert!(
+                    off.abs() < 0.01,
+                    "hover {h:?}: the diamond at {:?} is {off:.2} m off the 8-cell line",
+                    m.pos
+                );
+            }
+            diamonds.push(m.pos);
+        }
+    }
+    let want = Vec2::new(x0 + hw + 64.0, bottom);
+    assert!(
+        diamonds.iter().any(|d| d.distance(want) < 0.01),
+        "the bottom street's diamond 8 cells from the left street's edge at {want:?}: {diamonds:?}"
+    );
+}

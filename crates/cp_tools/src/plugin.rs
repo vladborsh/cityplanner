@@ -313,6 +313,8 @@ fn ghost_demo(
     state.hover = Some(demo.to);
     let (road_tool, to) = (state.road.clone(), demo.to);
     state.ghost = compute_ghost_alt(&view, &road_tool, to, false);
+    // The diamonds and ticks around the cursor, as a hover draws them (T-266 shots).
+    state.markers = road_markers(&view, to);
 }
 
 /// Gizmos drawn over the scene, never hidden by a building: the placement ghost's lot (T-252b).

@@ -17,6 +17,10 @@
 //! * shot 5 (T-265): the U of BUG-081, drawn in one chain: up the left street, across the top for
 //!   two blocks, down the right street; ghost: the street closing the block 8 rows under the top
 //!   street's edge.
+//! * shot 6 (T-266): the user's block of the diamonds playtest, 16 cells by 8: a left street, a
+//!   top street off it, the bottom street off the left street's 8-cell tick under the top street
+//!   into a rounded corner and up across the top street; ghost: a street down from the bottom
+//!   street's 8-cell tick, the cursor near it, so the shot shows the bottom street's diamonds.
 
 use bevy::prelude::*;
 use bevy_ecs::message::Messages;
@@ -39,7 +43,7 @@ const BLOCK: f32 = 64.0;
 /// Radius of the rounded corners.
 const BEND_R: f32 = 24.0;
 
-/// Where layout `n` (1..=5) stands, and the turn of its frame in degrees.
+/// Where layout `n` (1..=6) stands, and the turn of its frame in degrees.
 pub fn origin(n: usize) -> (Vec2, f32) {
     let c = cp_terrain::MAP_SIZE / 2.0;
     let (dx, dz, deg) = match n {
@@ -47,7 +51,8 @@ pub fn origin(n: usize) -> (Vec2, f32) {
         2 => (150.0, 150.0, 40.0),
         3 => (-450.0, -350.0, 0.0),
         4 => (150.0, -350.0, 0.0),
-        _ => (-450.0, -850.0, 0.0),
+        5 => (-450.0, -850.0, 0.0),
+        _ => (150.0, -850.0, 0.0),
     };
     (Vec2::new(c + dx, c + dz), deg)
 }
@@ -60,7 +65,8 @@ pub fn focus(n: usize) -> Vec2 {
         2 => Vec2::new(190.0, 10.0),
         3 => Vec2::new(110.0, 40.0),
         4 => Vec2::new(110.0, 60.0),
-        _ => Vec2::new(76.0, 120.0),
+        5 => Vec2::new(76.0, 120.0),
+        _ => Vec2::new(90.0, 60.0),
     })
 }
 
@@ -331,7 +337,34 @@ fn shot5(h: &mut Hand) -> Option<(Vec2, Vec2)> {
     Some((Vec2::new(left.x(), y), Vec2::new(right.x(), y)))
 }
 
-/// Builds the five layouts and keeps the cursors of their last streets; the clock is held.
+fn shot6(h: &mut Hand) -> Option<(Vec2, Vec2)> {
+    let hw = h.hw;
+    let top_y = 140.0;
+    let left = h.street(Vec2::new(0.0, -60.0), Vec2::new(0.0, 220.0))?;
+    let right_x = left.x() + hw + 2.0 * BLOCK + hw;
+    let top = h.street(Vec2::new(left.x(), top_y), Vec2::new(right_x + 60.0, top_y))?;
+    // The bottom street off the left street's 8-cell tick under the top street, 16 cells on
+    // into a rounded corner and up across the top street.
+    let m = h.tick(Vec2::new(left.x(), top.y() - hw - BLOCK - hw), X);
+    let at = h.at_tick(m);
+    let s = h.snapped(at);
+    h.start(RoadMode::Straight);
+    h.click(at);
+    let bottom = h.click(Vec2::new(right_x - BEND_R, s.y))?;
+    h.tool.mode = RoadMode::Curve;
+    h.click(Vec2::new(right_x, s.y));
+    h.click(Vec2::new(right_x, s.y + BEND_R))?;
+    h.tool.mode = RoadMode::Straight;
+    h.click(Vec2::new(right_x, top.y() + 60.0))?;
+    // Down from the bottom street's 8-cell tick, the cursor 59 m under it (within the 60 m the
+    // diamonds show in).
+    let m = h.tick(Vec2::new(h.station(left.x() + hw, 1.0), bottom.y()), -Y);
+    let at = h.at_tick(m);
+    let s = h.snapped(at);
+    Some((at, Vec2::new(s.x, bottom.y() - 59.0)))
+}
+
+/// Builds the six layouts and keeps the cursors of their last streets; the clock is held.
 /// Returns the rejected commands.
 pub fn build_grid_shots(sim: &mut SimRunner) -> Vec<String> {
     sim.world_mut()
@@ -341,7 +374,7 @@ pub fn build_grid_shots(sim: &mut SimRunner) -> Vec<String> {
     let road = db.road_id(ROAD).expect("basic_2l");
     let mut rejected = Vec::new();
     let mut cursors = Vec::new();
-    for n in 1..=5 {
+    for n in 1..=6 {
         let mut h = Hand {
             sim: &mut *sim,
             f: Frame::new(n),
@@ -355,7 +388,8 @@ pub fn build_grid_shots(sim: &mut SimRunner) -> Vec<String> {
             2 => shot2(&mut h),
             3 => shot3(&mut h),
             4 => shot4(&mut h),
-            _ => shot5(&mut h),
+            5 => shot5(&mut h),
+            _ => shot6(&mut h),
         };
         let f = h.f;
         rejected.append(&mut h.rejected);
@@ -393,17 +427,17 @@ pub fn shot_of_cam(cam: &str) -> Option<usize> {
     cam.strip_prefix("grid-shot")?
         .parse()
         .ok()
-        .filter(|n| (1..=5).contains(n))
+        .filter(|n| (1..=6).contains(n))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The five layouts build through the tool without a rejected command, and each camera
+    /// The six layouts build through the tool without a rejected command, and each camera
     /// gets a ghost of its last street: started on the street it leaves from, a street long.
     #[test]
-    fn the_five_layouts_build_and_hold_a_ghost_each() {
+    fn the_six_layouts_build_and_hold_a_ghost_each() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let terrain = cp_terrain::Terrain::load(&root.join("assets/maps/flatlands")).unwrap();
         let sim = crate::build_sim(
@@ -414,10 +448,10 @@ mod tests {
             Some(GRID_SHOTS),
         );
         let streets = sim.view().net.segments().count();
-        assert!(streets >= 5 * 3, "{streets} streets");
+        assert!(streets >= 6 * 3, "{streets} streets");
         let cursors = sim.world().resource::<GridShotCursors>().clone();
         let view = sim.view();
-        for n in 1..=5 {
+        for n in 1..=6 {
             let g = ghost(&view, &cursors, n).expect("a ghost");
             let on_net = view.net.segments().any(|(_, s)| {
                 let c = &s.curve;
