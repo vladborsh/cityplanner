@@ -408,11 +408,12 @@ fn end_key(
     ))
 }
 
-/// Whether the front of `id` ends at a dead end at its exit node (a node of one segment).
+/// Whether the front of `id` ends at a dead end at its exit node (a node of one segment; an
+/// outside connection is the edge of the map, not a dead end).
 fn dead_end(net: &NetGraph, id: SegmentId, fwd: bool) -> bool {
     net.segment(id)
         .and_then(|s| net.node(exit_of(s, fwd).1))
-        .is_some_and(|n| n.segments.len() == 1)
+        .is_some_and(|n| n.segments.len() == 1 && n.kind != cp_net::NodeKind::Outside)
 }
 
 /// Walks on from `id`: the segments passed (starting with `id`) and how the front ends.
@@ -698,6 +699,39 @@ pub struct CellLine {
     pub segment: SegmentId,
     pub side: Side,
     pub mark: Mark,
+}
+
+/// The columns each frontage through `segments` lays on each of those segments, as
+/// `(segment, side, columns)` (side in the segment's own direction): the cells a road gets along
+/// it, what the road tool's label counts (§6.8.3, the top rule, T-275).
+pub fn columns(
+    net: &NetGraph,
+    roads: &dyn Fn(RoadDefId) -> RoadZoning,
+    segments: &[SegmentId],
+) -> Vec<(SegmentId, Side, u16)> {
+    let mut seen: BTreeSet<(SegmentId, Side)> = BTreeSet::new();
+    let mut out = Vec::new();
+    for &id in segments {
+        for side in [Side::Left, Side::Right] {
+            if seen.contains(&(id, side)) {
+                continue;
+            }
+            let Some(f) = frontage_of(net, roads, id, side) else {
+                seen.insert((id, side));
+                continue;
+            };
+            for i in 0..f.segs.len() {
+                seen.insert((f.segs[i].0, f.block_side(i)));
+            }
+            out.extend(
+                layout_frontage(net, roads, &f)
+                    .into_iter()
+                    .filter(|d| segments.contains(&d.segment))
+                    .map(|d| (d.segment, d.side, d.cols)),
+            );
+        }
+    }
+    out
 }
 
 /// The cell lines of every frontage through `segments` in `net` (each frontage once, all of its

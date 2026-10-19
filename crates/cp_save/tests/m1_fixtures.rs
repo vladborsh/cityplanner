@@ -14,6 +14,12 @@
 //! city grows on; a building that lost its lot to the relay keeps standing and nothing grows over
 //! it (the spawner skips a lot that overlaps it).
 //!
+//! **T-275 (save v57).** The two pins moved again (state at load unchanged; m1-small
+//! `0x183c_c3f0_2c43_c7bb` -> `0x731b_06d0_6751_0f22`, m1-traffic `0x6156_a025_0655_4cd5` ->
+//! `0x4b13_4d8b_75c4_6156`): the blocks are laid again on load by the whole-cell rules (a dead end
+//! keeps a half width free for its cross street; the frontages facing each other across a block
+//! count from the same end), which changes the free lots the city grows on.
+//!
 //! **T-263.** The two `load + 4096 ticks` pins moved (state at load unchanged; m1-small
 //! `0x3c26_0063_288f_0a41` -> `0x6c42_58e8_6c3a_1c82`, m1-traffic `0x42c0_63ee_1822_fa0c` ->
 //! `0xaa4e_e438_e778_9fd5`): node geometry v2 feeds the lane connections, which start and end
@@ -234,7 +240,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     assert_eq!(sim.checksum(), 0x68b91d63fd51a77a, "state at load");
     assert_eq!(
         after_4096(&mut sim),
-        0x183cc3f02c43c7bb,
+        0x731b06d067510f22,
         "load + 4096 ticks"
     );
 }
@@ -268,7 +274,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
-    assert_eq!(sim.checksum(), 0x6156a02506554cd5, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x4b134d8b75c46156, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

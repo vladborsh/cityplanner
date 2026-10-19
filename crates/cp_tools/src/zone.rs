@@ -270,7 +270,9 @@ mod tests {
         };
         let (cells, zone) = t.click(&z, p).unwrap();
         assert_eq!(zone, ZoneType::ComHigh);
-        assert_eq!(cells.len(), 12 * 4);
+        // The grid's lone 96 m road: 10 columns between the half widths its dead ends keep
+        // (T-275).
+        assert_eq!(cells.len(), 10 * 4);
         assert!(
             cells
                 .iter()

@@ -20,7 +20,7 @@ fn the_v53_corner_fixture_is_laid_again_on_load() {
     let bytes = std::fs::read(Path::new(ROOT).join("../../fixtures/saves/v53-corner.sav")).unwrap();
     let (h, _) = read_header(&bytes).unwrap();
     assert_eq!(h.format_version, 53, "made by the v53 writer");
-    assert_eq!(FORMAT_VERSION, 56);
+    assert_eq!(FORMAT_VERSION, 57);
     let content =
         Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
     let terrain =
@@ -76,7 +76,7 @@ fn the_v53_corner_fixture_is_laid_again_on_load() {
     );
     // The saved again file is the current format and loads back the same.
     let again = save_runner(&sim, content.content_hash(), "flatlands").unwrap();
-    assert_eq!(read_header(&again).unwrap().0.format_version, 56);
+    assert_eq!(read_header(&again).unwrap().0.format_version, 57);
     let mut sim2 = SimRunner::new(1);
     sim2.set_terrain(Arc::new(
         Terrain::load(&Path::new(ROOT).join("../../assets/maps/flatlands")).unwrap(),

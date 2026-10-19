@@ -14,7 +14,7 @@ pub use grid::{
 };
 pub use layout::{
     BlockDraft, CellLine, FrontEnd, Frontage, Mark, ROUNDED_CORNER_DEG, ROUNDED_CORNER_MAX_M,
-    cell_lines, frontage_of, frontages,
+    cell_lines, columns, frontage_of, frontages,
 };
 
 use bevy_ecs::change_detection::DetectChanges;

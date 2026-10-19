@@ -50,6 +50,10 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
   3 two parallels closed on the right, 4 a block closed from the top street's tick. Screenshots
   `docs/screenshots/t255-grid-shotN-before.png` (e7fa39c6, before the BUG-073 fix) and
   `t255-grid-shotN-after.png` (after it; the ticks are the streets' centreline stations).
+  `--cam grid-shot7` (T-275): a city of 3 x 3 blocks of 8 x 16 cells built through the tool, long
+  streets first, then the cross streets off the top street's ticks; the ghost of the last cross
+  street with its label (shown at the top of the image: there is no pointer in a `--hidden` run).
+  Screenshots `docs/screenshots/t275-city-before.png` / `t275-city-after.png`.
 * `--scene joins --cam joins|joins-N` (T-261): the junction gallery of the `junction_sweep` test
   (`cp_sim::road_cases::join_cases`: bends of 5-135 degrees for every road, curved arms, T, X and Y
   junctions, width changes, a street into a highway, automatic cuts), one case per 260 m cell;

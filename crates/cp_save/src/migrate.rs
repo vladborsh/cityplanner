@@ -5379,11 +5379,13 @@ fn from_v17(v: SaveDataV17) -> SaveDataV54 {
 /// [`crate::FORMAT_VERSION`]. Add one `match` arm per version and one chain step per bump.
 pub fn decode_and_migrate(version: u32, body: &[u8]) -> Result<SaveData, SaveError> {
     let mut data = decode_and_migrate_ids(version, body)?;
-    if version < 56 {
-        // BUG-047 (v46), BUG-073b (v54) and layout v3 (T-265, v56): the saved blocks were laid
-        // by the old rules (v54: the inner side of a rounded corner followed the arc, and a
-        // seam's winner was the arena slot; v56: cells were stretched to fit a block); the grid
-        // lays them again on its first sync, carrying the painted types over by position.
+    if version < 57 {
+        // BUG-047 (v46), BUG-073b (v54), layout v3 (T-265, v56) and whole cells (T-275, v57): the
+        // saved blocks were laid by the old rules (v54: the inner side of a rounded corner
+        // followed the arc, and a seam's winner was the arena slot; v56: cells were stretched to
+        // fit a block; v57: the cells ran to a dead end, and the frontages facing each other
+        // across a block counted from different ends); the grid lays them again on its first
+        // sync, carrying the painted types over by position.
         data.zones.relay_all();
     }
     if version < 18 {

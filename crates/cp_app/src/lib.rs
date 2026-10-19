@@ -242,7 +242,13 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
     // The layouts of `--scene grid-shots` (T-255), obliquely from the south as in the shots.
     if let Some(n) = grid_shots::shot_of_cam(name) {
         let f = grid_shots::focus(n);
-        return (Vec3::new(f.x, 230.0, f.y + 150.0), Vec3::new(f.x, 0.0, f.y));
+        // The city of shot 7 is 440 m wide: from higher up.
+        let (h, back) = if n == 7 {
+            (520.0, 260.0)
+        } else {
+            (230.0, 150.0)
+        };
+        return (Vec3::new(f.x, h, f.y + back), Vec3::new(f.x, 0.0, f.y));
     }
     // The scenes of the T-261 sweeps.
     if let Some(pose) = road_scenes::camera(name) {

@@ -1130,7 +1130,10 @@ fn dissolve_cuts(
         let at = seg.curve.arc_table().t_to_s(t);
         let near = MIN_SEGMENT_LENGTH_BUILD.max(content.road(seg.road).width / 2.0);
         for (node, along) in [(seg.start, at), (seg.end, seg.length - at)] {
-            if is_plain_cut(graph, node) && along < near - REMNANT_EPS && !cuts.contains(&node) {
+            // Up to a little past the minimum: a point aimed at exactly 8 m from a cut (a cell
+            // line of a street cut in equal pieces, T-275) must not fall on either side of the
+            // remnant rule by an arc-length rounding.
+            if is_plain_cut(graph, node) && along < near + DISSOLVE_SLACK && !cuts.contains(&node) {
                 cuts.push(node);
             }
         }
@@ -1222,6 +1225,10 @@ fn joint_pieces(graph: &NetGraph, node: NodeId) -> Option<(SegmentId, SegmentId)
         None
     }
 }
+
+/// How far past [`MIN_SEGMENT_LENGTH_BUILD`] (metres) a plan's meeting with a street still
+/// dissolves a plain cut there.
+const DISSOLVE_SLACK: f32 = 0.5;
 
 /// How far (metres, vertically) a cut may stand off the straight line between the ends of the
 /// street it is a cut of for the plan to dissolve it.

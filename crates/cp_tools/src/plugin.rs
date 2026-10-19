@@ -929,7 +929,7 @@ pub fn compute_ghost_alt(
         block: cursor.block.clone(),
         hover: Some(hover),
         resolved: Some(cursor.point),
-        label: cursor_label(view, tool, &path, &plan),
+        label: cursor_label(view, tool, &path, &plan, None),
         ..Default::default()
     };
     match result {
@@ -966,6 +966,10 @@ pub fn compute_ghost_alt(
                     .collect();
             }
             ghost.zone = crate::zone_preview::zone_strip(view, &built);
+            // The label counts the cells the street gets, as laid after the click.
+            if let Some(cells) = crate::zone_preview::street_cells(view, &built) {
+                ghost.label = cursor_label(view, tool, &path, &plan, Some(cells));
+            }
             ghost.plan = Some(plan);
         }
         Err(errors) => {
@@ -977,14 +981,16 @@ pub fn compute_ghost_alt(
     Some(ghost)
 }
 
-/// "5 cells · 90°": the length of the last leg in cells and the angle between it and the road it
+/// "5 cells · 90°": the whole cells the street gets (`cells`, as laid after the click; without
+/// it the whole cells of the last leg's length) and the angle between the leg and the road it
 /// leaves (the leg before it, or the street or the arms at its start), at the cursor (§6.8.3
-/// item 9).
+/// item 9 and the top rule: always a whole number, never metres).
 fn cursor_label(
     view: &SimView,
     tool: &RoadTool,
     path: &RoadPath,
     plan: &cp_net::BuildPlan,
+    cells: Option<u32>,
 ) -> Option<String> {
     let piece = plan.pieces.last()?;
     let (a, b) = match path {
@@ -996,12 +1002,8 @@ fn cursor_label(
     if len < 1.0 {
         return None;
     }
-    let cells = len / cp_net::ZONE_CELL;
-    let mut text = if (cells - cells.round()).abs() < 0.05 {
-        format!("{} cells", cells.round() as i32)
-    } else {
-        format!("{cells:.1} cells")
-    };
+    let cells = cells.unwrap_or_else(|| (len / cp_net::ZONE_CELL + 0.05).floor() as u32);
+    let mut text = format!("{cells} cells");
     // The directions the leg is measured against: the road behind it, or the roads at its start.
     let mut refs: Vec<Vec2> = Vec::new();
     if let RoadPath::Free(v) = path

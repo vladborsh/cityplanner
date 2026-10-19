@@ -13,10 +13,9 @@ pub fn cursor_label(ctx: &egui::Context, tools: &ToolState) {
     if tools.active != ActiveTool::Road || tools.hover.is_none() {
         return;
     }
-    let (Some(text), Some(pos)) = (
-        tools.ghost.as_ref().and_then(|g| g.label.as_deref()),
-        ctx.pointer_latest_pos(),
-    ) else {
+    // Without a pointer (a held ghost of a screenshot scene) the label stands at the top left.
+    let pos = ctx.pointer_latest_pos().unwrap_or(egui::pos2(24.0, 24.0));
+    let Some(text) = tools.ghost.as_ref().and_then(|g| g.label.as_deref()) else {
         return;
     };
     let valid = tools.ghost.as_ref().is_some_and(|g| g.valid);

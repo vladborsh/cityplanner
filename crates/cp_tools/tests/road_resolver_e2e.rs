@@ -116,7 +116,8 @@ fn a_click_sends_the_plan_the_ghost_showed() {
     assert_eq!(plan.pieces.len(), 1);
     assert!(matches!(plan.pieces[0].from, Anchor::Free(a) if a == p(0.0, 0.0)));
     assert!(matches!(plan.pieces[0].to, Anchor::Free(b) if b == p(100.0, 3.0)));
-    // With snaps on the point is stepped to the 8 m lattice, and the plan is still the ghost's.
+    // With snaps on the point is stepped to whole cells (between the half widths its dead ends
+    // keep, T-275), and the plan is still the ghost's.
     let (mut sim, db) = world();
     let mut t = tool(&db, "basic_2l");
     click(&mut sim, &mut t, p(0.0, 0.0), false);
@@ -125,10 +126,8 @@ fn a_click_sends_the_plan_the_ghost_showed() {
     let Anchor::Free(end) = sent.unwrap().pieces[0].to else {
         panic!("free end")
     };
-    assert!(
-        (end - p(0.0, 0.0)).length() % 8.0 < 0.05 || (end - p(0.0, 0.0)).length() % 8.0 > 7.95,
-        "{end:?}"
-    );
+    let cells = ((end - p(0.0, 0.0)).length() - 12.0) / 8.0;
+    assert!((cells - cells.round()).abs() < 0.01, "{end:?}");
 }
 
 #[test]
@@ -212,10 +211,11 @@ fn errors_have_a_place_on_the_map_and_the_length_shows_in_cells() {
         "{:?}",
         short.error_marks
     );
-    // 80 m: 10 cells, no road to measure an angle against.
+    // 80 m drawn free: the cells it gets, 8 (68 m between the half widths its dead ends keep,
+    // T-275); no road to measure an angle against.
     let ok = compute_ghost_alt(&view, &t, p(80.0, 0.0), true).unwrap();
     assert!(ok.valid, "{:?}", ok.errors);
-    assert_eq!(ok.label.as_deref(), Some("10 cells"));
+    assert_eq!(ok.label.as_deref(), Some("8 cells"));
 }
 
 #[test]
@@ -229,7 +229,9 @@ fn the_label_gives_the_angle_to_the_road_a_street_leaves() {
     let view = sim.view();
     let g = compute_ghost_alt(&view, &t, p(0.0, 64.0), true).unwrap();
     assert!(g.valid, "{:?}", g.errors);
-    assert_eq!(g.label.as_deref(), Some("8 cells · 90°"));
+    // 64 m drawn free from the axis: its cells start at the street's edge (6 m) and stop a half
+    // width short of its open end, 6 whole cells (T-275: the label is the cells it gets).
+    assert_eq!(g.label.as_deref(), Some("6 cells · 90°"));
 }
 
 /// The sweep "built = aimed" through the tool: a side street drawn from the axis of a street at

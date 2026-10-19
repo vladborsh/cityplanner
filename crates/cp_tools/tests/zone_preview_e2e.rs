@@ -92,7 +92,9 @@ fn round(c: [Vec2; 4]) -> [(i32, i32); 4] {
 #[test]
 fn the_preview_cells_are_the_cells_a_built_road_gets() {
     let (mut sim, db) = sim();
-    let (a, b) = (Vec2::new(4600.0, 4600.0), Vec2::new(4600.0 + 120.0, 4600.0));
+    // 124 m: 14 whole cells between the half widths its dead ends keep (T-275), so the snapped
+    // ghost and the road built to the same point are one road.
+    let (a, b) = (Vec2::new(4600.0, 4600.0), Vec2::new(4600.0 + 124.0, 4600.0));
     let view = sim.view();
     let ghost = compute_ghost(&view, &tool(&db, a), b).expect("a ghost");
     assert!(ghost.valid, "{:?}", ghost.errors);
@@ -209,17 +211,18 @@ fn a_block_built_on_the_guides_is_one_clean_8_by_8_grid() {
 }
 
 /// BUG-073, T-265: the ticks of a ghost stand at the centrelines of cross streets whose near
-/// edge is an 8-cell line of the street's cells, at the same station on both sides: `k*64 + W/2`
-/// from the start (a cross street once built starts the next 8 cells at its far edge).
+/// edge is an 8-cell line of the street's cells, at the same station on both sides: `k*64 + W`
+/// from the start (the cells start a half width off the dead end, T-275, and the tick is a half
+/// width past the line; a cross street once built starts the next 8 cells at its far edge).
 #[test]
 fn the_ticks_are_one_series_at_the_stations_of_the_cross_streets() {
     let (sim, db) = sim();
-    let (a, b) = (Vec2::new(4600.0, 4600.0), Vec2::new(4800.0, 4600.0));
+    let (a, b) = (Vec2::new(4600.0, 4600.0), Vec2::new(4812.0, 4600.0));
     let view = sim.view();
     let ghost = compute_ghost(&view, &tool(&db, a), b).expect("a ghost");
     assert!(ghost.valid, "{:?}", ghost.errors);
     let w = db.road(db.road_id("basic_2l").unwrap()).width;
-    // 200 m open street, 25 cells: an 8-cell line after 8, 16 and 24 cells on each side, where a
+    // 212 m open street, 25 cells: an 8-cell line after 8, 16 and 24 cells on each side, where a
     // cross street's near edge leaves 8 cells (T-265: the street's cell lines as laid now).
     assert_eq!(ghost.zone.ticks.len(), 6, "{:?}", ghost.zone.ticks);
     for side in [-1.0f32, 1.0] {
@@ -231,7 +234,7 @@ fn the_ticks_are_one_series_at_the_stations_of_the_cross_streets() {
             .map(|t| t[0].x - a.x)
             .collect();
         xs.sort_by(f32::total_cmp);
-        let want = [64.0 + w / 2.0, 128.0 + w / 2.0, 192.0 + w / 2.0];
+        let want = [64.0 + w, 128.0 + w, 192.0 + w];
         assert_eq!(xs.len(), 3, "{xs:?}");
         for (x, e) in xs.iter().zip(want) {
             assert!((x - e).abs() < 0.05, "side {side}: {xs:?}, want {want:?}");

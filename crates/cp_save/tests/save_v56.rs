@@ -28,7 +28,7 @@ fn the_v55_fitted_block_is_laid_again_in_8_m_cells_and_keeps_its_buildings() {
     let bytes = std::fs::read(Path::new(ROOT).join("../../fixtures/saves/v55-fitted.sav")).unwrap();
     let (h, _) = read_header(&bytes).unwrap();
     assert_eq!(h.format_version, 55, "made by the v55 writer");
-    assert_eq!(FORMAT_VERSION, 56);
+    assert_eq!(FORMAT_VERSION, 57);
     let (content, terrain) = assets();
 
     // As saved: fitted cells.
@@ -116,7 +116,7 @@ fn the_v55_fitted_block_is_laid_again_in_8_m_cells_and_keeps_its_buildings() {
 
     // The saved again file is the current format and loads back the same.
     let again = save_runner(&sim, content.content_hash(), "flatlands").unwrap();
-    assert_eq!(read_header(&again).unwrap().0.format_version, 56);
+    assert_eq!(read_header(&again).unwrap().0.format_version, 57);
     let (content2, terrain2) = assets();
     let mut sim2 = SimRunner::new(7);
     sim2.set_terrain(terrain2);

@@ -206,6 +206,7 @@ pub fn chain_commit(
     let plan = match view {
         Some(v) => {
             let (plan, at) = plan_for(v, &req)?;
+            let plan = through_nodes(v, plan);
             let req = RoadPathRequest {
                 path: with_vertices(&req.path, &at),
                 ..req
@@ -660,6 +661,7 @@ pub fn resolve_cursor(view: &SimView, tool: &RoadTool, hover: Vec2, free: bool) 
             &plan_anchors(&plan, &at),
         )
     });
+    let plan = plan.map(|p| through_nodes(view, p));
     let mut snap = step;
     if let Some(plan) = &plan
         && let Some(last) = plan.pieces.last()
@@ -679,6 +681,77 @@ pub fn resolve_cursor(view: &SimView, tool: &RoadTool, hover: Vec2, free: bool) 
         block,
     })
 }
+
+/// `plan` with every ground node its straight pieces run through (within [`THROUGH_M`] of the
+/// axis) made a vertex: a street drawn across the dead ends of streets that stop on its line joins
+/// them, instead of being refused for a junction on a road it does not join (T-275: the street
+/// that closes the long streets' ends).
+pub fn through_nodes(view: &SimView, plan: BuildPlan) -> BuildPlan {
+    if !matches!(plan.elevation, ElevationMode::Ground) {
+        return plan;
+    }
+    let net = &*view.net;
+    let mut pieces = Vec::with_capacity(plan.pieces.len());
+    for piece in &plan.pieces {
+        let (Some(a), Some(b)) = (anchor_pos(view, &piece.from), anchor_pos(view, &piece.to))
+        else {
+            pieces.push(*piece);
+            continue;
+        };
+        let chord = b - a;
+        let len = chord.length();
+        let straight = len > 1e-3
+            && [piece.c1, piece.c2]
+                .iter()
+                .all(|c| (*c - a).perp_dot(chord / len).abs() < 0.01);
+        if !straight {
+            pieces.push(*piece);
+            continue;
+        }
+        let u = chord / len;
+        let mut on: Vec<(f32, cp_net::NodeId, Vec2)> = net
+            .nodes()
+            .filter(|(id, n)| {
+                n.elevation == cp_net::Elevation::Ground
+                    && piece.from != Anchor::Node(*id)
+                    && piece.to != Anchor::Node(*id)
+            })
+            .filter_map(|(id, n)| {
+                let p = to_xz(n.pos);
+                let s = (p - a).dot(u);
+                let off = (p - a).perp_dot(u).abs();
+                (off < THROUGH_M
+                    && s > cp_net::build::ZONE_CELL
+                    && s < len - cp_net::build::ZONE_CELL)
+                    .then_some((s, id, p))
+            })
+            .collect();
+        if on.is_empty() {
+            pieces.push(*piece);
+            continue;
+        }
+        on.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let mut from = (piece.from, a);
+        let stops = on
+            .into_iter()
+            .map(|(_, id, p)| (Anchor::Node(id), p))
+            .chain(std::iter::once((piece.to, b)));
+        for (to, p) in stops {
+            let (fa, fp) = from;
+            pieces.push(PlanPiece {
+                from: fa,
+                c1: fp.lerp(p, 1.0 / 3.0),
+                c2: fp.lerp(p, 2.0 / 3.0),
+                to,
+            });
+            from = (to, p);
+        }
+    }
+    BuildPlan { pieces, ..plan }
+}
+
+/// How near (metres) a node must be to a straight piece's axis to become its vertex.
+const THROUGH_M: f32 = 0.5;
 
 /// The anchors of a plan with the points they stand at, in vertex order.
 fn plan_anchors(plan: &BuildPlan, at: &[Vec2]) -> Vec<(Anchor, Vec2)> {

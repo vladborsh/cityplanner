@@ -312,7 +312,9 @@ impl Player {
             if nearest_any.is_none_or(|(bd, _)| d < bd) {
                 nearest_any = Some((d, m));
             }
-            if m.major && !m.end && d <= self.hw + 3.0 && best.is_none_or(|(bd, _)| d < bd) {
+            // Since T-275 a dead end keeps a half width for its cross street (§6.8.3 item 4 (д)),
+            // so a tick counted from one stands a half width further on than the nominal point.
+            if m.major && !m.end && d <= 2.0 * self.hw + 3.0 && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, m));
             }
         }
@@ -844,7 +846,7 @@ impl Player {
             Bend::Sharp => {
                 let left = self.piece("L left", self.w(Vec2::ZERO))?;
                 let bottom = self.piece("L bottom", self.w(end))?;
-                Some((left, bottom))
+                Some(self.onto_bottom(left, bottom))
             }
             Bend::Rounded => {
                 let left = self.piece("L left", self.w(Vec2::new(0.0, BEND_R)))?;
@@ -855,9 +857,22 @@ impl Player {
                 self.piece("L bend", self.w(Vec2::new(x + BEND_R, 0.0)))?;
                 self.mode(RoadMode::Straight);
                 let bottom = self.piece("L bottom", self.w(end))?;
-                Some((left, bottom))
+                Some(self.onto_bottom(left, bottom))
             }
         }
+    }
+
+    /// The frame moved along its `y` so the L's bottom street is its `x` axis: the length step
+    /// of the first stroke (whole cells from its open start, T-275) puts the corner where the
+    /// cells say, and the player builds on from where it stands.
+    fn onto_bottom(&mut self, left: Piece, bottom: Piece) -> (Piece, Piece) {
+        let dy = Vec2::new(0.0, bottom.y());
+        self.o = self.w(dy);
+        let shift = |p: Piece| Piece {
+            a: p.a - dy,
+            b: p.b - dy,
+        };
+        (shift(left), shift(bottom))
     }
 
     /// A straight street from the tick `m` to the local point `to` (the cursor there).
