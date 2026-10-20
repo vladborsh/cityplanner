@@ -676,20 +676,14 @@ mod tests {
 
     #[test]
     fn save_loads_runs_ticks_and_reports_header() {
-        let save = repo("fixtures/saves/v0-basic.sav");
+        let save = repo("fixtures/saves/m1-small.sav");
         let content = repo("assets/content");
         let args = ["--save", save.as_str(), "--content", content.as_str()];
         let (a, b) = (run(&opts(&args)).unwrap(), run(&opts(&args)).unwrap());
         let info = a.save.as_ref().unwrap();
         assert_eq!(a.scenario, "save");
-        // The header reports the file's own version; cp_save migrates it on load.
-        assert_eq!(info.format_version, 0);
-        // The fixture was written against other content, so the warning must surface.
-        assert!(
-            info.warnings
-                .iter()
-                .any(|w| w.contains("ContentHashMismatch"))
-        );
+        // The header reports the file's version: the current one (old saves are refused, T-275).
+        assert_eq!(info.format_version, cp_save::FORMAT_VERSION);
         assert_eq!(a.checksum, b.checksum);
         assert_eq!(a.phases.len(), SimPhase::ORDER.len());
     }

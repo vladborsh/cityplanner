@@ -154,7 +154,8 @@ fn cells_under_a_road_are_invalid() {
     let a = w.line("basic_2l", (1000.0, 1000.0), (1090.0, 1000.0));
     let b = w.line("basic_2l", (1045.0, 940.0), (1045.0, 1060.0));
     w.sync();
-    let hw = 6.0;
+    // basic_2l: 2 cells wide (T-275).
+    let hw = 8.0;
     let axes = [
         (
             bevy_math::Vec2::new(1000.0, 1000.0),
@@ -245,11 +246,12 @@ fn junction_has_no_double_cells_and_older_blocks_win() {
 
 #[test]
 fn the_nearest_street_wins_an_overlap_and_ties_are_a_lattice_square_each() {
-    // Two parallel roads 60 m apart: the facing blocks (rows reach 38 m from each axis)
-    // overlap in the middle without touching the other road.
+    // Two parallel roads 64 m apart (48 m between the edges, roads 16 m wide, T-275): the facing
+    // blocks (rows reach 40 m from each axis) overlap in the middle without touching the other
+    // road.
     let mut w = World::new();
     let a = w.line("basic_2l", (1000.0, 1000.0), (1080.0, 1000.0));
-    let b = w.line("basic_2l", (1000.0, 1060.0), (1080.0, 1060.0));
+    let b = w.line("basic_2l", (1000.0, 1064.0), (1080.0, 1064.0));
     w.sync();
     assert_no_double_cells(&w.grid);
     let facing = |seg: SegmentId, side: Side| {
@@ -1090,10 +1092,10 @@ fn blocks_of_any_size_and_angle_have_no_overlapping_cells() {
     }
 }
 
-/// A block between two facing streets `gap` metres apart (edge to edge; they are 12 m wide),
+/// A block between two facing streets `gap` metres apart (edge to edge; they are 16 m wide),
 /// closed by two cross streets; the facing street may be crooked by `skew_deg`.
 fn block_of(gap: f32, skew_deg: f32) -> World {
-    let depth = gap + 12.0;
+    let depth = gap + 16.0;
     let mut w = World::new();
     let len = 128.0;
     // Two cross streets close the block; the facing street may be crooked.
@@ -1141,7 +1143,7 @@ fn blocks_keep_8_m_rows_whatever_their_depth() {
         let spans = rows_across(&w, 60.0);
         let inner: Vec<_> = spans
             .iter()
-            .filter(|s| s.0 > 5.9 && s.1 < depth + 6.1)
+            .filter(|s| s.0 > 7.9 && s.1 < depth + 8.1)
             .collect();
         assert_eq!(inner.len(), rows, "gap {depth}: {inner:?}");
         for s in &inner {
@@ -1151,7 +1153,7 @@ fn blocks_keep_8_m_rows_whatever_their_depth() {
             );
         }
         assert!(
-            (inner[0].0 - 6.0).abs() < 0.02 && (inner[rows - 1].1 - (depth + 6.0)).abs() < 0.02
+            (inner[0].0 - 8.0).abs() < 0.02 && (inner[rows - 1].1 - (depth + 8.0)).abs() < 0.02
         );
         if depth == 64.0 {
             for pair in inner.windows(2) {
@@ -1362,7 +1364,8 @@ mod layout_v2 {
         w
     }
 
-    const H: f32 = 6.0;
+    /// Half width of `basic_2l`: 2 cells wide (T-275).
+    const H: f32 = 8.0;
 
     /// T-265: a block of 64 m between the road edges is one lattice of 8 x 8 cells of 8 m (a ring
     /// four deep, the middle empty); blocks of 70 and 80 m keep 8 m cells, never stretched, and
@@ -1418,7 +1421,7 @@ mod layout_v2 {
     /// streets were built in (T-265: off the grid the older street's cells win, like C:S).
     #[test]
     fn the_layout_does_not_depend_on_the_order_the_streets_were_built_in() {
-        let pos = [0.0f32, 76.0, 152.0, 228.0];
+        let pos = [0.0f32, 80.0, 160.0, 240.0];
         let a = polygons(&city(0, &pos, &pos).grid);
         assert!(!a.is_empty());
         for order in [1, 2] {

@@ -28,11 +28,11 @@ fn a_load_in_the_middle_of_the_cycle_has_the_same_coverage_and_checksum() {
     let content =
         Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
     let hash = content.content_hash();
-    let bytes = std::fs::read(Path::new(ROOT).join("../../fixtures/saves/v19-basic.sav")).unwrap();
+    let bytes = std::fs::read(Path::new(ROOT).join("../../fixtures/saves/m1-small.sav")).unwrap();
     let mut a = runner(&content);
     load_into_runner(&mut a, &bytes, hash).unwrap();
-    // The fixture's services are free-standing (no road access, so no coverage): put a coal
-    // plant, which has an access point, on the first street.
+    // A coal plant, which has an access point, on the first street (the city of the M1
+    // fixture; old saves are refused since T-275).
     {
         let seg = a
             .world()
@@ -70,10 +70,19 @@ fn a_load_in_the_middle_of_the_cycle_has_the_same_coverage_and_checksum() {
         let net = a.world().resource::<cp_net::NetGraph>();
         let last = net.segments().last().unwrap().0;
         let fresh_before = a.world().resource::<ServiceCoverage>().clone();
-        a.world_mut()
-            .resource_mut::<cp_net::NetGraph>()
-            .remove_segment(last)
-            .unwrap();
+        // As the player removes it: a command (the cars on it go with it, in both runs alike).
+        let tick = a.tick();
+        a.push_command(
+            cp_sim::SimCommand::Net(cp_net::NetCommand::RemoveSegment { seg: last }),
+            tick,
+        );
+        a.tick_once();
+        assert!(
+            a.world()
+                .resource::<cp_net::NetGraph>()
+                .segment(last)
+                .is_none()
+        );
         assert_eq!(*a.world().resource::<ServiceCoverage>(), fresh_before);
     }
     let bytes = save_runner(&a, hash, "flatlands").unwrap();

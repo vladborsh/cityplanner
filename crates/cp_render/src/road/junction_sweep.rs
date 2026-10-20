@@ -362,7 +362,10 @@ fn run_case(case: &JoinCase, turn: f32) -> Run {
         }
         // spill
         if let Some(jf) = junction_faces.get(&nid) {
-            let allow = arms.iter().map(|a| a.hw).fold(0.0, f32::max) + node::CURB_RADIUS + 0.5;
+            // The kerb curve of a wide junction's obtuse corner bows out in proportion to the
+            // width (T-275: 4-cell roads are 32 m): a kerb radius, or a quarter of the half width.
+            let hw = arms.iter().map(|a| a.hw).fold(0.0, f32::max);
+            let allow = hw + node::CURB_RADIUS.max(hw * 0.25) + 0.5;
             let worst = jf
                 .tris
                 .iter()

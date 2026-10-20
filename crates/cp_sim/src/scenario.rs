@@ -26,8 +26,10 @@ use cp_zone::{BLOCK_DEPTH, ZoneCellRef, ZoneCommand, ZoneGrid};
 
 use crate::{SimCommand, SimRunner};
 
-/// Distance between the streets of the lattice, metres.
-pub const STREET_SPACING: f32 = 100.0;
+/// Distance between the streets of the lattice, metres: 12 cells between road centres, so every
+/// block is whole cells (T-275: roads are 2 or 4 cells wide): 10 between two 2-cell streets, 9
+/// beside a 4-cell avenue; about the density of the 100 m lattice before.
+pub const STREET_SPACING: f32 = 96.0;
 /// Blocks per `BuildRoad` command: longer runs are cut into equal pieces that cross the
 /// lattice at awkward places and produce pieces shorter than the sim's minimum.
 const BLOCKS_PER_RUN: usize = 2;

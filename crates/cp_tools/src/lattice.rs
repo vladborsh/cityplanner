@@ -179,29 +179,43 @@ pub fn node_pull(graph: &NetGraph, content: &ContentDb, n: NodeId) -> f32 {
     }
 }
 
-/// The section mark of the street `seg` nearest the point `s` metres along it (from its start):
-/// every [`SECTION_M`] from either end of its stretch (a junction, a dead end or a corner), the
-/// centre where a cross street stands (T-275 spec v2, item 5). The point and the street's
-/// direction there; `None` on a stretch shorter than a section.
-pub fn section_mark(graph: &NetGraph, seg: SegmentId, s: f32) -> Option<(Vec2, Vec2)> {
-    let st = cp_net::stretch(graph, seg)?;
-    let along = cp_net::locate(graph, seg, s)?;
-    let mut best: Option<(f32, f32)> = None;
+/// The section marks of the stretch of `seg` (T-275 spec v2, item 5): every [`SECTION_M`] from
+/// either end of the stretch (a junction, a dead end or a corner), where a cross street's centre
+/// stands; each as `(arc length from the stretch's anchor, point, direction of the street)`.
+pub fn section_marks(graph: &NetGraph, seg: SegmentId) -> Vec<(f32, Vec2, Vec2)> {
+    let Some(st) = cp_net::stretch(graph, seg) else {
+        return Vec::new();
+    };
+    let mut at: Vec<f32> = Vec::new();
     let mut k = SECTION_M;
     while k < st.length - 1.0 {
-        for at in [k, st.length - k] {
-            let miss = (at - along).abs();
-            if best.is_none_or(|(m, _)| miss < m) {
-                best = Some((miss, at));
+        for a in [k, st.length - k] {
+            if !at.iter().any(|b| (b - a).abs() < 0.5) {
+                at.push(a);
             }
         }
         k += SECTION_M;
     }
-    let (_, at) = best?;
-    let (sid, s_on) = cp_net::unlocate(graph, &st, at)?;
-    let sg = graph.segment(sid)?;
-    let t = sg.curve.arc_table().s_to_t(s_on);
-    Some((to_xz(sg.curve.point(t)), dir_xz(sg.curve.tangent(t))))
+    at.sort_by(f32::total_cmp);
+    at.into_iter()
+        .filter_map(|a| {
+            let (sid, s_on) = cp_net::unlocate(graph, &st, a)?;
+            let sg = graph.segment(sid)?;
+            let t = sg.curve.arc_table().s_to_t(s_on);
+            Some((a, to_xz(sg.curve.point(t)), dir_xz(sg.curve.tangent(t))))
+        })
+        .collect()
+}
+
+/// The section mark of the street `seg` nearest the point `s` metres along it (from its start)
+/// ([`section_marks`]): the point and the street's direction there; `None` on a stretch shorter
+/// than a section.
+pub fn section_mark(graph: &NetGraph, seg: SegmentId, s: f32) -> Option<(Vec2, Vec2)> {
+    let along = cp_net::locate(graph, seg, s)?;
+    section_marks(graph, seg)
+        .into_iter()
+        .min_by(|a, b| (a.0 - along).abs().total_cmp(&(b.0 - along).abs()))
+        .map(|(_, p, d)| (p, d))
 }
 
 /// Rule 1 for the point `p`: the centre of a junction within its pull, else the section mark of

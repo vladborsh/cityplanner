@@ -1,8 +1,7 @@
-//! Generates `fixtures/saves/interchange-v37.sav` (T-064): a ground street with two raised roads
-//! over it that cross each other in a node (one level) — an interchange — written by the real
-//! writer of its time. Run from the repo root:
-//! `cargo run -p cp_save --example gen_interchange_fixture`. The committed file is **never
-//! edited or regenerated** afterwards (AGENTS.md).
+//! Generates `fixtures/saves/interchange.sav` (T-064): a ground street with two raised roads
+//! over it that cross each other in a node (one level) — an interchange — written by the current
+//! writer. Run from the repo root: `cargo run -p cp_save --example gen_interchange_fixture`; old
+//! saves are not migrated during development (T-275): when the format changes, run it again.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -65,10 +64,6 @@ fn main() {
         sim.tick_once();
     }
     let bytes = save_runner(&sim, content.content_hash(), "flatlands").expect("save");
-    std::fs::write("fixtures/saves/interchange-v37.sav", &bytes).unwrap();
-    println!(
-        "interchange-v37: {} bytes, tick {}",
-        bytes.len(),
-        sim.tick().0
-    );
+    std::fs::write("fixtures/saves/interchange.sav", &bytes).unwrap();
+    println!("interchange: {} bytes, tick {}", bytes.len(), sim.tick().0);
 }

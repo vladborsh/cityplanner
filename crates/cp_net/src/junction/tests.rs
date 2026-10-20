@@ -170,7 +170,7 @@ fn check_junction(j: &Junction) {
 #[test]
 fn t_junction_is_a_square_of_the_road_width() {
     let db = content();
-    // basic_2l is 12 m wide: half 6. Arms at 0, 90 and 180 degrees.
+    // basic_2l is 16 m wide (2 cells, T-275): half 8. Arms at 0, 90 and 180 degrees.
     let (g, n, _) = star(
         &db,
         &[
@@ -181,13 +181,13 @@ fn t_junction_is_a_square_of_the_road_width() {
     );
     let j = compute_junction(&g, n, 1).unwrap();
     assert_eq!(j.arms.len(), 3);
-    assert!(j.arms.iter().all(|a| (a.width - 12.0).abs() < 1e-4));
+    assert!(j.arms.iter().all(|a| (a.width - 16.0).abs() < 1e-4));
     assert!(
-        j.arms.iter().all(|a| (a.setback - 6.0).abs() < 1e-3),
+        j.arms.iter().all(|a| (a.setback - 8.0).abs() < 1e-3),
         "{:?}",
         j.arms
     );
-    assert_poly(&j, &[(6.0, -6.0), (6.0, 6.0), (-6.0, 6.0), (-6.0, -6.0)]);
+    assert_poly(&j, &[(8.0, -8.0), (8.0, 8.0), (-8.0, 8.0), (-8.0, -8.0)]);
     check_junction(&j);
 }
 
@@ -205,15 +205,15 @@ fn four_way_junction() {
     );
     let j = compute_junction(&g, n, 1).unwrap();
     // Arms sort from -90 degrees, so the polygon starts at the bottom-left corner.
-    assert_poly(&j, &[(-6.0, -6.0), (6.0, -6.0), (6.0, 6.0), (-6.0, 6.0)]);
+    assert_poly(&j, &[(-8.0, -8.0), (8.0, -8.0), (8.0, 8.0), (-8.0, 8.0)]);
     check_junction(&j);
 }
 
 #[test]
 fn mixed_widths_push_the_narrow_road_back() {
     let db = content();
-    // A 12 m street meeting a 28 m avenue at right angles: the street stops at the avenue's
-    // half width (14); the avenue's setback is the street's half width (6) but at least its own 14.
+    // A 16 m street meeting a 32 m avenue at right angles (T-275): the street stops at the avenue's
+    // half width (16); the avenue's setback is the street's half width (8) but at least its own 16.
     let (g, n, segs) = star(
         &db,
         &[
@@ -224,9 +224,9 @@ fn mixed_widths_push_the_narrow_road_back() {
     );
     let j = compute_junction(&g, n, 1).unwrap();
     let street = j.arms.iter().find(|a| a.segment == segs[1]).unwrap();
-    assert!((street.setback - 14.0).abs() < 1e-3, "{street:?}");
+    assert!((street.setback - 16.0).abs() < 1e-3, "{street:?}");
     for a in j.arms.iter().filter(|a| a.segment != segs[1]) {
-        assert!((a.setback - 14.0).abs() < 1e-3);
+        assert!((a.setback - 16.0).abs() < 1e-3);
     }
     check_junction(&j);
 }
@@ -244,12 +244,12 @@ fn y_junction_keeps_arms_at_least_half_width_back() {
     );
     let j = compute_junction(&g, n, 1).unwrap();
     assert_eq!(j.class, NodeClass::Junction);
-    // t = (6 + 6 cos 120) / sin 120 = 3.46 < 6, so the half-width floor applies.
-    assert!(j.arms.iter().all(|a| (a.setback - 6.0).abs() < 1e-3));
+    // t = (8 + 8 cos 120) / sin 120 = 4.62 < 8, so the half-width floor applies.
+    assert!(j.arms.iter().all(|a| (a.setback - 8.0).abs() < 1e-3));
     // Between two arms the outline is a curve from one arm's corner to the next (T-263): it
     // stays inside the corners' distance from the node.
     for p in rel(&j) {
-        assert!(p.length() <= 72f32.sqrt() + 1e-3, "{p:?}");
+        assert!(p.length() <= 128f32.sqrt() + 1e-3, "{p:?}");
     }
     check_junction(&j);
     // Arms come out sorted by angle: -150, -30, 90 degrees.
@@ -264,7 +264,7 @@ fn y_junction_keeps_arms_at_least_half_width_back() {
 #[test]
 fn sharp_y_needs_a_longer_setback() {
     let db = content();
-    // 30 degrees between two arms: t = (6 + 6 cos 30) / sin 30 = 22.39.
+    // 30 degrees between two arms: t = (8 + 8 cos 30) / sin 30 = 29.86.
     let (g, n, _) = star(
         &db,
         &[
@@ -275,7 +275,7 @@ fn sharp_y_needs_a_longer_setback() {
     );
     let j = compute_junction(&g, n, 1).unwrap();
     let s0 = j.arms.iter().find(|a| a.angle.abs() < 1e-3).unwrap();
-    assert!((s0.setback - 22.392).abs() < 0.01, "{s0:?}");
+    assert!((s0.setback - 29.856).abs() < 0.01, "{s0:?}");
     check_junction(&j);
 }
 
@@ -285,8 +285,8 @@ fn dead_end_is_a_rectangle_around_the_node() {
     let (g, n, _) = star(&db, &[(0.0, 80.0, "basic_2l")]);
     let j = compute_junction(&g, n, 1).unwrap();
     assert_eq!(j.arms.len(), 1);
-    assert!((j.arms[0].setback - 6.0).abs() < 1e-4);
-    assert_poly(&j, &[(6.0, -6.0), (6.0, 6.0), (-6.0, 6.0), (-6.0, -6.0)]);
+    assert!((j.arms[0].setback - 8.0).abs() < 1e-4);
+    assert_poly(&j, &[(8.0, -8.0), (8.0, 8.0), (-8.0, 8.0), (-8.0, -8.0)]);
     check_junction(&j);
 }
 
@@ -298,15 +298,15 @@ fn bend_covers_the_outer_corner() {
     let j = compute_junction(&g, n, 1).unwrap();
     assert_eq!(j.class, NodeClass::Bend);
     // The arms are cut where their inner edges meet: both ends share that corner.
-    assert!(j.arms.iter().all(|a| (a.setback - 6.0).abs() < 1e-3));
+    assert!(j.arms.iter().all(|a| (a.setback - 8.0).abs() < 1e-3));
     assert_eq!(j.arms[0].left, j.arms[1].right);
     // The outside is a round join around the node: radius 6 from (0, -6) to (-6, 0).
     let p = rel(&j);
-    assert!(p[0].distance(Vec2::new(6.0, -6.0)) < 1e-3, "{p:?}");
-    assert!(p[2].distance(Vec2::new(-6.0, 6.0)) < 1e-3, "{p:?}");
+    assert!(p[0].distance(Vec2::new(8.0, -8.0)) < 1e-3, "{p:?}");
+    assert!(p[2].distance(Vec2::new(-8.0, 8.0)) < 1e-3, "{p:?}");
     for q in &p[3..] {
-        let on_arc = q.x <= 1e-3 && q.y <= 1e-3 && (q.length() - 6.0).abs() < 1e-3;
-        let on_edge = (q.x + 6.0).abs() < 1e-3 || (q.y + 6.0).abs() < 1e-3;
+        let on_arc = q.x <= 1e-3 && q.y <= 1e-3 && (q.length() - 8.0).abs() < 1e-3;
+        let on_edge = (q.x + 8.0).abs() < 1e-3 || (q.y + 8.0).abs() < 1e-3;
         assert!(on_arc || on_edge, "{q:?} in {p:?}");
     }
     check_junction(&j);
@@ -324,7 +324,7 @@ fn straight_join_is_a_middle_node_with_one_end_line() {
     let ends = [j.arms[0].left - c, j.arms[0].right - c];
     assert!(
         ends.iter()
-            .all(|e| e.x.abs() < 1e-3 && (e.y.abs() - 9.5).abs() < 1e-3)
+            .all(|e| e.x.abs() < 1e-3 && (e.y.abs() - 16.0).abs() < 1e-3)
     );
     check_junction(&j);
     // A slight kink is still a middle node: the end line is mitred to keep the width.
@@ -332,14 +332,14 @@ fn straight_join_is_a_middle_node_with_one_end_line() {
     let j = compute_junction(&g, n, 1).unwrap();
     assert_eq!(j.class, NodeClass::Middle);
     let d = j.arms[0].left.distance(j.arms[0].right);
-    assert!((d - 19.0 / 4f32.to_radians().cos()).abs() < 1e-3, "{d}");
+    assert!((d - 32.0 / 4f32.to_radians().cos()).abs() < 1e-3, "{d}");
     check_junction(&j);
     // Two different roads are a transition, whatever the angle.
     let (g, n, _) = star(&db, &[(0.0, 80.0, "medium_4l"), (180.0, 80.0, "basic_2l")]);
     let j = compute_junction(&g, n, 1).unwrap();
     assert_eq!(j.class, NodeClass::Transition);
-    let wide = j.arms.iter().find(|a| a.width > 15.0).unwrap();
-    let narrow = j.arms.iter().find(|a| a.width < 15.0).unwrap();
+    let wide = j.arms.iter().find(|a| a.width > 20.0).unwrap();
+    let narrow = j.arms.iter().find(|a| a.width < 20.0).unwrap();
     assert!(
         (wide.setback - TRANSITION_LEN).abs() < 1e-3 && narrow.setback < 1e-3,
         "{:?}",
@@ -393,12 +393,12 @@ fn trimmed_curves_meet_the_polygon_and_do_not_overlap() {
     let geo = world.resource::<JunctionGeometry>();
     let g = world.resource::<NetGraph>();
     let tc = geo.trimmed_curve(g, mid).unwrap();
-    // 6 m cut off each end of the 60 m segment.
+    // 8 m cut off each end of the 60 m segment.
     assert!(
-        (tc.p0.x - 6.0).abs() < 0.05 && (tc.p3.x - 54.0).abs() < 0.05,
+        (tc.p0.x - 8.0).abs() < 0.05 && (tc.p3.x - 52.0).abs() < 0.05,
         "{tc:?}"
     );
-    assert!((tc.arc_table().length() - 48.0).abs() < 0.2);
+    assert!((tc.arc_table().length() - 44.0).abs() < 0.2);
     // Trimmed length plus both setbacks is the whole segment: no overlap, no gap.
     let seg = g.segment(mid).unwrap();
     let total = tc.arc_table().length()

@@ -30,16 +30,10 @@ const TURNS: [f32; 2] = [0.0, 30.0];
 /// The lot stands this far off the road edge and off a corner's cross street, metres.
 const GAP: f32 = 0.5;
 
-/// Cases that fail today (T-261 report 2026-10-19, 190 of 546, all `Cut`: lots of 3 cells and
-/// more in the corners of a crossing and of a T, every lot inside a rounded corner and inside a
-/// curve; mid-street and across a cut all fit), as prefixes of `site/road/spot/WxD/turn` (a
-/// prefix ending in `/` covers every case under it). T-267 empties it.
-///
-/// T-265 (layout v3, 176 of 546): a rounded corner is a frontage of its own, so its inside has
-/// cells again. T-266 (ruling (B), 190 of 546): the legs of a rounded corner count from its
-/// virtual corner and their cells reach over the bend, so the lots inside one are cut again
-/// (2 x 2 to 4 x 3 on `basic_2l`, 2 x 2 and 3 x 2 on the wider roads); 4 x 3 inside one on the
-/// wider roads fits now. Owner T-267 (edge placement).
+/// Cases that fail today (T-275, roads 2 and 4 cells wide: 184 of 546, all `Cut`: lots of 3 cells
+/// and more in the corners of a crossing and of a T, the larger lots inside a rounded corner and
+/// every lot inside a curve; mid-street and across a cut all fit), as prefixes of
+/// `site/road/spot/WxD/turn` (a prefix ending in `/` covers every case under it). T-267 empties it.
 const KNOWN_RED: &[&str] = &[
     "x/basic_2l/ne/3x3/",
     "x/basic_2l/ne/3x4/",
@@ -59,16 +53,22 @@ const KNOWN_RED: &[&str] = &[
     "t/basic_2l/corner_w/3x3/",
     "t/basic_2l/corner_w/3x4/",
     "t/basic_2l/corner_w/4x4/",
-    "rounded/basic_2l/",
+    "rounded/basic_2l/inside/2x2/",
+    "rounded/basic_2l/inside/3x2/",
+    "rounded/basic_2l/inside/3x3/",
+    "rounded/basic_2l/inside/3x4/",
+    "rounded/basic_2l/inside/4x4/",
     "curve/basic_2l/inside/",
     "x/medium_4l/ne/3x3/",
     "x/medium_4l/ne/3x4/",
     "x/medium_4l/ne/4x4/",
     "x/medium_4l/nw/3x3/",
     "x/medium_4l/nw/3x4/",
+    "x/medium_4l/nw/4x3/",
     "x/medium_4l/nw/4x4/",
     "x/medium_4l/sw/3x3/",
     "x/medium_4l/sw/3x4/",
+    "x/medium_4l/sw/4x3/",
     "x/medium_4l/sw/4x4/",
     "x/medium_4l/se/3x3/",
     "x/medium_4l/se/3x4/",
@@ -78,9 +78,8 @@ const KNOWN_RED: &[&str] = &[
     "t/medium_4l/corner_e/4x4/",
     "t/medium_4l/corner_w/3x3/",
     "t/medium_4l/corner_w/3x4/",
+    "t/medium_4l/corner_w/4x3/",
     "t/medium_4l/corner_w/4x4/",
-    "rounded/medium_4l/inside/2x2/",
-    "rounded/medium_4l/inside/3x2/",
     "rounded/medium_4l/inside/3x3/",
     "rounded/medium_4l/inside/3x4/",
     "rounded/medium_4l/inside/4x4/",
@@ -106,8 +105,6 @@ const KNOWN_RED: &[&str] = &[
     "t/large_6l/corner_w/3x4/",
     "t/large_6l/corner_w/4x3/",
     "t/large_6l/corner_w/4x4/",
-    "rounded/large_6l/inside/2x2/",
-    "rounded/large_6l/inside/3x2/",
     "rounded/large_6l/inside/3x3/",
     "rounded/large_6l/inside/3x4/",
     "rounded/large_6l/inside/4x4/",

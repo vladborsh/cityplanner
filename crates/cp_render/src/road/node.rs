@@ -510,6 +510,22 @@ fn junction(
     m
 }
 
+/// Keeps every upward face of a ground node piece [`LIFT`] above the terrain: its heights come
+/// from the arms' ends, and a wide node (T-275: 4-cell roads are 32 m) spans enough
+/// uneven ground for its middle to dip under it (BUG-025).
+fn above_ground(m: &mut MeshData, terrain: &Terrain) {
+    for (p, n) in m.positions.iter_mut().zip(&m.normals) {
+        if n[1] > 0.9 {
+            let at = Vec2::new(p[0], p[2]);
+            let ground = (0..crate::chunk::LOD_COUNT)
+                .map(|l| super::ground::lod_height(terrain, l, at))
+                .fold(terrain.height(at), f32::max)
+                + LIFT;
+            p[1] = p[1].max(ground);
+        }
+    }
+}
+
 /// The cap of a dead end: from the cut back past the node by the arm's setback plus its half
 /// width (the polygon of `cp_net`).
 fn cap(
@@ -633,7 +649,7 @@ pub(super) fn build(
     } else {
         all.into_iter().filter(|a| !a.path).collect()
     };
-    let m = match (j.class, arms.len()) {
+    let mut m = match (j.class, arms.len()) {
         (_, 0) => return None,
         (NodeClass::End, _) | (_, 1) => cap(graph, terrain, j, &arms[0], markings, raised),
         (NodeClass::Bend | NodeClass::Transition, 2) => {
@@ -641,5 +657,8 @@ pub(super) fn build(
         }
         _ => junction(graph, terrain, j, &arms, markings, raised),
     };
+    if !raised {
+        above_ground(&mut m, terrain);
+    }
     Some(m)
 }

@@ -277,11 +277,25 @@ fn check_block(
     out
 }
 
-/// The 3 x 3 city: streets `sx` sections apart along `x`, `sy` along `y`, long streets first.
-/// Returns what went wrong.
+/// The 3 x 3 city: streets `sx` sections apart along `x`, `sy` along `y`, long streets first,
+/// all of `road`. Returns what went wrong.
 fn city(road: &'static str, seed: u64, sx: f32, sy: f32) -> Vec<String> {
-    let mut pl = Player::new(road, seed);
-    let w = 2.0 * pl.hw;
+    city_of(seed, sx, sy, |_| road, |_| road)
+        .into_iter()
+        .map(|f| format!("{road} {f}"))
+        .collect()
+}
+
+/// The 3 x 3 city with the long street `j` of road `long(j)` and the cross street `i` of road
+/// `cross(i)`: every block is the whole cells between the edges of its four streets.
+fn city_of(
+    seed: u64,
+    sx: f32,
+    sy: f32,
+    long: impl Fn(usize) -> &'static str,
+    cross: impl Fn(usize) -> &'static str,
+) -> Vec<String> {
+    let mut pl = Player::new(long(0), seed);
     let section = 10.0 * CELL;
     let xs: Vec<f32> = (0..4).map(|i| i as f32 * sx * section).collect();
     let ys: Vec<f32> = (0..4).map(|j| j as f32 * sy * section).collect();
@@ -290,29 +304,34 @@ fn city(road: &'static str, seed: u64, sx: f32, sy: f32) -> Vec<String> {
         pl.origin += a;
         pl.lattice = pl.origin;
     }
+    pl.road = cross(0);
     pl.stroke("left street", v(xs[0], ys[0]), v(xs[0], ys[3]));
     for (j, &y) in ys.iter().enumerate().skip(1) {
+        pl.road = long(j);
         pl.stroke(&format!("long street {j}"), v(xs[0], y), v(xs[3], y));
     }
     for (i, &x) in xs.iter().enumerate().skip(1) {
+        pl.road = cross(i);
         pl.stroke(&format!("cross street {i}"), v(x, ys[0]), v(x, ys[3]));
     }
     let mut fails = std::mem::take(&mut pl.fails);
+    let db = pl.sim.view().content.clone().unwrap();
+    let hw = |r: &str| db.road(db.road_id(r).unwrap()).width / 2.0;
     let zones = &pl.sim.view().zones;
-    let cols = ((sx * section - w) / CELL).round() as u32;
-    let rows = ((sy * section - w) / CELL).round() as u32;
     for i in 0..3 {
         for j in 0..3 {
-            let lo = v(xs[i] + pl.hw, ys[j] + pl.hw);
-            let hi = v(xs[i + 1] - pl.hw, ys[j + 1] - pl.hw);
+            let lo = v(xs[i] + hw(cross(i)), ys[j] + hw(long(j)));
+            let hi = v(xs[i + 1] - hw(cross(i + 1)), ys[j + 1] - hw(long(j + 1)));
+            let cols = ((hi.x - lo.x) / CELL).round() as u32;
+            let rows = ((hi.y - lo.y) / CELL).round() as u32;
             for e in check_block(zones, pl.origin, lo, hi, cols, rows) {
-                fails.push(format!("block ({i}, {j}): {e}"));
+                fails.push(format!("block ({i}, {j}) of {cols} x {rows}: {e}"));
             }
         }
     }
     fails
         .into_iter()
-        .map(|f| format!("{road} seed {seed}: {f}"))
+        .map(|f| format!("seed {seed}: {f}"))
         .collect()
 }
 
@@ -330,4 +349,64 @@ fn a_3x3_city_of_long_blocks_is_whole_cells_with_a_sloppy_hand() {
         fails.len(),
         fails.join("\n")
     );
+}
+
+/// Acceptance 3: blocks of one section each way: 8 x 8 cells between 2-cell streets, 6 x 6
+/// between 4-cell ones.
+#[test]
+fn a_3x3_city_of_8x8_blocks_is_whole_cells_with_a_sloppy_hand() {
+    let mut fails = Vec::new();
+    for road in ["basic_2l", "medium_4l"] {
+        for seed in [4, 5] {
+            fails.extend(city(road, seed, 1.0, 1.0));
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "{} failures:\n{}",
+        fails.len(),
+        fails.join("\n")
+    );
+}
+
+/// Acceptance 3: a 4-cell avenue beside a 2-cell street one section away leaves a block 7 cells
+/// deep (the older street lays 4 rows, the other 3), whole cells on one lattice.
+#[test]
+fn a_city_of_avenues_and_streets_has_7_cell_blocks_on_one_lattice() {
+    let mut fails = Vec::new();
+    for seed in [6, 7] {
+        fails.extend(city_of(
+            seed,
+            2.0,
+            1.0,
+            |j| if j % 2 == 0 { "medium_4l" } else { "basic_2l" },
+            |_| "basic_2l",
+        ));
+    }
+    assert!(
+        fails.is_empty(),
+        "{} failures:\n{}",
+        fails.len(),
+        fails.join("\n")
+    );
+}
+
+/// Acceptance 3: an L turn is one sharp node; the cells inside the corner go right into it: the
+/// 4 x 4 cells there are all laid, on one lattice, nothing over.
+#[test]
+fn the_cells_inside_an_l_go_right_into_the_corner() {
+    for road in ["basic_2l", "medium_4l"] {
+        let mut pl = Player::new(road, 8);
+        let section = 10.0 * CELL;
+        if let Some((a, _)) = pl.stroke("top street", Vec2::ZERO, Vec2::new(3.0 * section, 0.0)) {
+            pl.origin += a;
+            pl.lattice = pl.origin;
+        }
+        pl.stroke("left street", Vec2::ZERO, Vec2::new(0.0, 3.0 * section));
+        assert!(pl.fails.is_empty(), "{road}: {:?}", pl.fails);
+        let lo = Vec2::splat(pl.hw);
+        let hi = lo + Vec2::splat(4.0 * CELL);
+        let e = check_block(&pl.sim.view().zones, pl.origin, lo, hi, 4, 4);
+        assert!(e.is_empty(), "{road}: the corner: {e:?}");
+    }
 }

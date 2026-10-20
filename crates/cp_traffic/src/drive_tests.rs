@@ -387,13 +387,18 @@ fn lattice(lines: usize) -> (Sim, Vec<SegmentId>) {
 }
 
 fn lattice_of(road: Option<&str>, lines: usize) -> (Sim, Vec<SegmentId>) {
+    lattice_pitch(road, lines, 90.0)
+}
+
+/// [`lattice_of`] with its lines `pitch` metres apart.
+fn lattice_pitch(road: Option<&str>, lines: usize, pitch: f32) -> (Sim, Vec<SegmentId>) {
     let mut s = sim();
     let mut segs = Vec::new();
     for line in 0..lines {
-        let o = 1000.0 + line as f32 * 90.0;
+        let o = 1000.0 + line as f32 * pitch;
         for piece in 0..lines - 1 {
-            let a = 1000.0 + piece as f32 * 90.0;
-            for (p, q) in [((a, o), (a + 90.0, o)), ((o, a), (o, a + 90.0))] {
+            let a = 1000.0 + piece as f32 * pitch;
+            for (p, q) in [((a, o), (a + pitch, o)), ((o, a), (o, a + pitch))] {
                 segs.push(match road {
                     Some(r) => s.seg_with(r, p, q),
                     None => s.seg(p, q),
@@ -660,9 +665,11 @@ fn mixed_specs() -> VehicleSpecs {
 }
 
 /// 300 random trips on a 5x5 medium_4l lattice for a game day; every third vehicle is a truck
-/// when `mixed`. Returns the smallest clearance between cars sharing a source lane.
+/// when `mixed`. Returns the smallest clearance between cars sharing a source lane. The lines are
+/// 110 m apart: medium_4l is 32 m wide (4 cells, T-275), so each piece keeps 78 m of street
+/// between its junctions, and the trips start and end on it, past the junction's 16 m.
 fn shared_lane_run(seed: u64, mixed: bool) -> f32 {
-    let (s, segs) = lattice_of(Some("medium_4l"), 5);
+    let (s, segs) = lattice_pitch(Some("medium_4l"), 5, 110.0);
     let mut rig = Rig::new(s);
     if mixed {
         rig.specs = mixed_specs();
@@ -687,8 +694,9 @@ fn shared_lane_run(seed: u64, mixed: bool) -> f32 {
                 Side::Left
             }
         };
-        let from = acc(a, 8.0 + next(70) as f32, side(next(2)));
-        let to = acc(b, 8.0 + next(70) as f32, side(next(2)));
+        // From past the junction (16 m) to 26 m short of the next one: room to change lanes.
+        let from = acc(a, 18.0 + next(50) as f32, side(next(2)));
+        let to = acc(b, 18.0 + next(50) as f32, side(next(2)));
         if find_car_path(&rig.graph, &CongestionMap::default(), &from, &to).is_ok() {
             rig.add_kind(u8::from(mixed && trips % 3 == 0), from, to);
             trips += 1;
@@ -711,8 +719,8 @@ fn shared_lane_run(seed: u64, mixed: bool) -> f32 {
         }
     }
     println!(
-        "seed {seed} mixed {mixed}: clearance {closest:.2} m, arrived {} stuck {} invalid {}",
-        rig.arrived, rig.stuck, rig.invalid
+        "seed {seed} mixed {mixed}: clearance {closest:.2} m, arrived {} stuck {} invalid {} why {:?}",
+        rig.arrived, rig.stuck, rig.invalid, rig.st.stuck_why
     );
     // Long trucks need 15 m of free lane to enter and can jam a dense lattice for good; only
     // the uniform run must lose nobody.

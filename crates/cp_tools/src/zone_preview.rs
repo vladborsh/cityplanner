@@ -102,10 +102,9 @@ fn compute_strip(view: &SimView, plan: &RoadBuildPlan) -> ZoneStrip {
         }
         let _ = strip.marks;
     }
-    // Ticks: the 8-cell lines of the frontages near the plan (T-265, the layout's own cell
-    // lines), each across its band of cells at the centreline of a cross street of the tool's
-    // road whose near edge stands on the line.
-    let width = content.road(plan.road).width;
+    // Ticks: the section marks of the streets near the plan (T-275 spec v2: where a cross
+    // street's centre snaps, every 10 cells from either end of a street's run), across the cells
+    // on both sides.
     let reach = inflate_bounds(region, 150.0);
     let near: Vec<cp_net::SegmentId> = after
         .segments()
@@ -116,19 +115,22 @@ fn compute_strip(view: &SimView, plan: &RoadBuildPlan) -> ZoneStrip {
         })
         .map(|(id, _)| id)
         .collect();
-    for line in cp_zone::cell_lines(&after, &roads, near) {
-        let m = line.mark;
-        if !m.major || m.end || m.axis.cmple(reach.0).any() || m.axis.cmpge(reach.1).any() {
-            continue;
-        }
-        let Some(seg) = after.segment(line.segment) else {
+    for id in near {
+        let Some(seg) = after.segment(id) else {
             continue;
         };
         let hw = content.road(seg.road).width / 2.0;
-        let at = m.axis + m.onward * (width / 2.0);
-        let tick = [at + m.v * hw, at + m.v * (hw + 8.0 * CELL_SIZE)];
-        if !out.ticks.iter().any(|o| o[0].distance(tick[0]) < 0.05) {
-            out.ticks.push(tick);
+        for (_, at, dir) in crate::lattice::section_marks(&after, id) {
+            if at.cmple(reach.0).any() || at.cmpge(reach.1).any() {
+                continue;
+            }
+            let v = Vec2::new(-dir.y, dir.x);
+            for side in [v, -v] {
+                let tick = [at + side * hw, at + side * (hw + 4.0 * CELL_SIZE)];
+                if !out.ticks.iter().any(|o| o[0].distance(tick[0]) < 0.05) {
+                    out.ticks.push(tick);
+                }
+            }
         }
     }
     out

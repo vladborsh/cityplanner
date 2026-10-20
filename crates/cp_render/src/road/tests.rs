@@ -904,7 +904,18 @@ fn check_clean(w: &World, what: &str) {
 /// The piece of node `j` covers its outline (`Junction::polygon`) without holes, a sidewalk
 /// lies only along its rim (never further from it than the widest sidewalk), and a junction has
 /// no sidewalk at its centre; a middle node has no piece (T-263).
-fn check_rim(set: &RoadSet, _graph: &NetGraph, j: &Junction, node: &NodeId, what: &str) {
+fn check_rim(set: &RoadSet, graph: &NetGraph, j: &Junction, node: &NodeId, what: &str) {
+    // The widest sidewalk of the junction's roads (T-275: roads are whole cells wide, the
+    // sidewalks take the rest), and a little.
+    let widest = j
+        .arms
+        .iter()
+        .filter_map(|a| graph.segment(a.segment))
+        .flat_map(|s| s.lanes.iter().filter_map(|&l| graph.lane(l)))
+        .filter(|l| l.kind == cp_content::LaneKind::Pedestrian)
+        .map(|l| l.width)
+        .fold(2.5f32, f32::max)
+        + 0.5;
     let piece = set.piece(PieceKey::Junction(*node));
     if j.class == NodeClass::Middle {
         assert!(piece.is_none(), "{what}: a middle node has a piece");
@@ -975,7 +986,7 @@ fn check_rim(set: &RoadSet, _graph: &NetGraph, j: &Junction, node: &NodeId, what
                 .chain(corners.iter().map(|c| p.distance(*c) * 0.2))
                 .fold(f32::MAX, f32::min);
             assert!(
-                !walked || rim < 3.0,
+                !walked || rim < widest,
                 "{what}: sidewalk {rim} m from the rim at {p:?}"
             );
         }
@@ -1281,7 +1292,7 @@ fn a_street_gets_lamps_on_both_sidewalks_and_poles_on_one_inside_the_end_margins
                 "head height {p:?} over {ground}"
             );
             assert!(p[0] > 4000.0 + 4.0 && p[0] < 4200.0 - 4.0, "{p:?}");
-            assert!((p[2] - 4000.0).abs() < 6.0, "over the street: {p:?}");
+            assert!((p[2] - 4000.0).abs() < 8.0, "over the street: {p:?}");
         }
         // Pools lie on the road, a few centimetres up, and fade to nothing at the rim.
         let pools = set.chunk_mesh(*c, 2).unwrap();

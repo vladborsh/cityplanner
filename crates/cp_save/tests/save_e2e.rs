@@ -30,37 +30,6 @@ fn runner(seed: u64, ticks: u64) -> SimRunner {
     s
 }
 
-fn v0() -> Vec<u8> {
-    std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/saves/v0-basic.sav"))
-        .unwrap()
-}
-
-#[test]
-fn migrated_v0_fixture_resaves_stably_and_resumes() {
-    let old = v0();
-    let (h, _) = read_header(&old).unwrap();
-    assert_eq!(h.format_version, 0);
-    let l1 = load(&old, h.content_hash).unwrap();
-    let a = save(&l1.data, h.content_hash, &h.map_id).unwrap();
-    let l2 = load(&a, h.content_hash).unwrap();
-    assert_eq!(l1.data, l2.data);
-    assert_eq!(
-        a,
-        save(&l2.data, h.content_hash, &h.map_id).unwrap(),
-        "re-save is a fixed point"
-    );
-    // Migrated state resumes like a continuous run: load twice, step both, same checksum.
-    let (mut x, mut y) = (SimRunner::new(0), SimRunner::new(1));
-    l1.data.clone().restore(x.world_mut());
-    l2.data.clone().restore(y.world_mut());
-    for _ in 0..600 {
-        x.tick_once();
-        y.tick_once();
-    }
-    assert_eq!(x.checksum(), y.checksum());
-    assert_eq!(x.tick(), Tick(900));
-}
-
 #[test]
 fn save_at_tick_zero_and_large_tick_round_trip() {
     for (ticks, big) in [(0u64, None), (1, None), (0, Some(u64::MAX / 2))] {
@@ -89,7 +58,8 @@ fn map_id_edge_values_round_trip() {
 
 #[test]
 fn every_truncation_is_rejected_without_panicking() {
-    for good in [save_runner(&runner(3, 40), HASH, "m").unwrap(), v0()] {
+    {
+        let good = save_runner(&runner(3, 40), HASH, "m").unwrap();
         for n in 0..good.len() {
             let r = catch_unwind(|| load(&good[..n], HASH));
             assert!(
@@ -103,7 +73,8 @@ fn every_truncation_is_rejected_without_panicking() {
 
 #[test]
 fn corrupt_bytes_never_panic() {
-    for good in [save_runner(&runner(3, 40), HASH, "m").unwrap(), v0()] {
+    {
+        let good = save_runner(&runner(3, 40), HASH, "m").unwrap();
         for i in 0..good.len() {
             for mask in [0x01u8, 0x80, 0xFF] {
                 let mut b = good.clone();
@@ -188,56 +159,17 @@ fn hash_mismatch_warns_exactly_once_and_data_is_intact() {
     assert_eq!(l.data, SaveData::capture(s.world()));
 }
 
-fn fixture(name: &str) -> Vec<u8> {
-    std::fs::read(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/saves")
-            .join(name),
-    )
-    .unwrap()
+#[test]
+fn trailing_bytes_are_rejected() {
+    let mut b = save_runner(&runner(1, 5), HASH, "m").unwrap();
+    b.extend_from_slice(b"GARBAGE");
+    assert!(load(&b, HASH).is_err());
 }
 
 #[test]
-fn committed_fixtures_of_every_old_version_load_and_resume() {
-    for (name, version) in [("v0-basic.sav", 0), ("v1-basic.sav", 1)] {
-        let bytes = fixture(name);
-        let (h, _) = read_header(&bytes).unwrap();
-        assert_eq!(h.format_version, version, "{name}");
-        let l = load(&bytes, h.content_hash).unwrap();
-        assert!(l.warnings.is_empty());
-        let mut r = SimRunner::new(0);
-        l.data.clone().restore(r.world_mut());
-        let t = r.tick();
-        r.tick_once();
-        assert_eq!(r.tick().0, t.0 + 1);
-        // Migrated re-save is current-version and a fixed point.
-        let a = save(&l.data, h.content_hash, &h.map_id).unwrap();
-        assert_eq!(read_header(&a).unwrap().0.format_version, FORMAT_VERSION);
-        assert_eq!(
-            a,
-            save(
-                &load(&a, h.content_hash).unwrap().data,
-                h.content_hash,
-                &h.map_id
-            )
-            .unwrap()
-        );
-    }
-}
-
-#[test]
-fn trailing_bytes_are_rejected_in_every_version() {
-    let current = save_runner(&runner(1, 5), HASH, "m").unwrap();
-    for mut b in [current, fixture("v0-basic.sav"), fixture("v1-basic.sav")] {
-        b.extend_from_slice(b"GARBAGE");
-        assert!(load(&b, HASH).is_err());
-    }
-}
-
-#[test]
-fn header_tick_must_agree_with_the_body_in_every_version() {
-    let current = save_runner(&runner(1, 5), HASH, "m").unwrap();
-    for good in [current, fixture("v0-basic.sav"), fixture("v1-basic.sav")] {
+fn header_tick_must_agree_with_the_body() {
+    {
+        let good = save_runner(&runner(1, 5), HASH, "m").unwrap();
         let mut b = good.clone();
         let real = read_header(&good).unwrap().0.tick;
         b[16..24].copy_from_slice(&(real + 999).to_le_bytes());
@@ -310,7 +242,7 @@ fn checksum_covers_tiles_speed_and_pending_queue() {
 }
 
 #[test]
-fn set_terrain_after_loading_a_fixture_keeps_the_saved_ownership() {
+fn set_terrain_after_loading_a_save_keeps_the_saved_ownership() {
     use cp_terrain::{GRID, MapMeta, Terrain, TileOwnership};
     use std::sync::Arc;
     let n = GRID * GRID;
@@ -323,16 +255,18 @@ fn set_terrain_after_loading_a_fixture_keeps_the_saved_ownership() {
         entry_rail: None,
     };
     let terrain = Arc::new(Terrain::from_samples(meta, &vec![1000; n], &vec![0; n]).unwrap());
-    for name in ["v0-basic.sav", "v1-basic.sav", "v2-basic.sav"] {
-        let bytes = fixture(name);
-        let (h, _) = read_header(&bytes).unwrap();
-        let mut r = SimRunner::new(0);
-        load_into_runner(&mut r, &bytes, h.content_hash).unwrap();
-        // The fixtures store the 3x3 centre, whatever the map's start tile says.
-        assert_eq!(r.view().tiles, TileOwnership::m1_around((2, 2)), "{name}");
-        r.set_terrain(Arc::clone(&terrain));
-        assert_eq!(r.view().tiles, TileOwnership::m1_around((2, 2)), "{name}");
-    }
+    let mut saved = runner(1, 5);
+    saved
+        .world_mut()
+        .insert_resource(TileOwnership::m1_around((2, 2)));
+    let tiles = TileOwnership::m1_around((2, 2));
+    let bytes = save_runner(&saved, HASH, "m").unwrap();
+    let mut r = SimRunner::new(0);
+    load_into_runner(&mut r, &bytes, HASH).unwrap();
+    // The save's ownership, whatever the map's start tile says.
+    assert_eq!(r.view().tiles, tiles);
+    r.set_terrain(Arc::clone(&terrain));
+    assert_eq!(r.view().tiles, tiles);
 }
 
 /// A runner with `n` SetSpeed commands queued at ticks 0..n, run for `ticks` ticks.
@@ -440,50 +374,6 @@ fn on_map(t: Arc<Terrain>) -> SimRunner {
     let mut s = runner(3, 30);
     s.set_terrain(t);
     s
-}
-
-#[test]
-fn every_fixture_v0_to_v3_loads_keeps_its_ownership_and_resaves_as_v4() {
-    let tm = map("flatlands");
-    for v in 0..=3u32 {
-        let name = format!("v{v}-basic.sav");
-        let bytes = fixture(&name);
-        let (h, _) = read_header(&bytes).unwrap();
-        assert_eq!(h.format_version, v, "{name}");
-        // With and without a terrain present, an old save never warns about the map.
-        let plain = load(&bytes, h.content_hash).unwrap();
-        let with_map = load_with_map(&bytes, h.content_hash, Some(tm.map_hash())).unwrap();
-        assert_eq!(plain.data, with_map.data);
-        assert!(
-            with_map
-                .warnings
-                .iter()
-                .all(|w| !matches!(w, LoadWarning::MapMismatch { .. })),
-            "{name}"
-        );
-        // Ownership stored in the file is what the sim gets, even after set_terrain.
-        let stored = plain.data.tiles;
-        let mut r = SimRunner::new(0);
-        r.set_terrain(flat_at((0, 0), 10));
-        load_into_runner(&mut r, &bytes, h.content_hash).unwrap();
-        assert_eq!(*r.world().resource::<TileOwnership>(), stored, "{name}");
-        r.set_terrain(flat_at((4, 4), 11));
-        assert_eq!(
-            *r.world().resource::<TileOwnership>(),
-            stored,
-            "{name}: set_terrain after load"
-        );
-        // Re-save is the current version (v7 since T-031) and a fixed point.
-        let a = save(&plain.data, h.content_hash, &h.map_id).unwrap();
-        assert_eq!(read_header(&a).unwrap().0.format_version, FORMAT_VERSION);
-        let b = save(
-            &load(&a, h.content_hash).unwrap().data,
-            h.content_hash,
-            &h.map_id,
-        )
-        .unwrap();
-        assert_eq!(a, b, "{name}");
-    }
 }
 
 #[test]

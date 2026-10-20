@@ -75,7 +75,7 @@ live there; then the clock runs on to 07:00 so a bench starts in the morning rus
 goes through commands; the starting balance is the scenario's documented `funds` setting.
 Same `(target_pop, seed, map, content)` gives the same city (checksum and save bytes).
 `target_pop` is the population at which growth stops; the settled fixture's population is higher
-(`bench-10k` ≈ 16.8k citizens).
+(`bench-10k` ≈ 21.8k citizens since T-275: whole-cell roads on a 96 m lattice).
 It needs a map without water in the way: use `flatlands` (the pump and outflow are only placed
 where the owned tiles have water).
 
@@ -87,9 +87,10 @@ scripts/bench.sh 100k           # the nightly one; RUNS=3 scripts/bench.sh 100k 
 scripts/bench.sh 10k --update-baseline   # record a new baseline (deliberately, on a quiet machine)
 ```
 
-* `fixtures/saves/bench-10k.sav` (1.09 MB) is committed, written at the current save version:
-  whoever bumps the save must keep it loading through the migration chain.
-* `fixtures/saves/bench-100k.sav` (11.2 MB) is **gitignored**: `scripts/bench.sh 100k` builds it
+* `fixtures/saves/bench-10k.sav` (1.3 MB) is committed, written at the current save version:
+  old saves are not migrated during development (T-275), so whoever bumps the save makes it again
+  with `cp_bench fixture` and records its checksum in `bench/baseline.json`.
+* `fixtures/saves/bench-100k.sav` (19 MB) is **gitignored**: `scripts/bench.sh 100k` builds it
   on demand (about 80 s in release) and refuses it unless its state checksum equals the one in
   `bench/baseline.json` under `"fixtures"` (as the 10k fixture's checksum is checked by a
   `cp_bench` test).

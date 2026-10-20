@@ -153,10 +153,10 @@ fn a_field_100_m_from_the_road_is_fine_and_costs_the_def_price() {
 #[test]
 fn two_metres_from_the_road_is_road_and_twenty_is_fine() {
     let f = Fixture::new();
-    // The road is 12 m wide (half 6) around z = 5000; the tower is 16 m deep (half 8) at rot 0.
-    // Half a metre of clearance (edge at 5006.5) is too close: 1 m is the rule.
+    // The road is 16 m wide (half 8, T-275) around z = 5000; the tower is 16 m deep (half 8) at
+    // rot 0. Half a metre of clearance (edge at 5008.5) is too close: 1 m is the rule.
     assert_eq!(
-        f.check(Vec2::new(5100.0, 5014.5), 0.0),
+        f.check(Vec2::new(5100.0, 5016.5), 0.0),
         Err(BuildingError::Road)
     );
     // On the road itself.
@@ -164,14 +164,14 @@ fn two_metres_from_the_road_is_road_and_twenty_is_fine() {
         f.check(Vec2::new(5100.0, 5002.0), 0.0),
         Err(BuildingError::Road)
     );
-    // Just beyond the 1 m clearance (edge at 5007 + 0.5).
+    // Just beyond the 1 m clearance (edge at 5009 + 0.5).
     assert!(
-        f.check(Vec2::new(5100.0, 5000.0 + 6.0 + 1.5 + 8.0), 0.0)
+        f.check(Vec2::new(5100.0, 5000.0 + 8.0 + 1.5 + 8.0), 0.0)
             .is_ok()
     );
     // 20 m from the road edge.
     assert!(
-        f.check(Vec2::new(5100.0, 5000.0 + 6.0 + 20.0 + 8.0), 0.0)
+        f.check(Vec2::new(5100.0, 5000.0 + 8.0 + 20.0 + 8.0), 0.0)
             .is_ok()
     );
     // Turned by 45°, the corner is what comes close.

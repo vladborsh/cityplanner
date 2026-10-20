@@ -1,5 +1,5 @@
-//! Track and tunnels (T-161): old saves keep their road types, and a metro tunnel under a
-//! built-up area leaves zones and buildings alone and survives a save.
+//! Track and tunnels (T-161): a metro tunnel under a built-up area (the city of the M1
+//! fixture) leaves zones and buildings alone and survives a save.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -30,30 +30,7 @@ fn runner(content: &Arc<ContentDb>) -> SimRunner {
 }
 
 fn fixture() -> Vec<u8> {
-    std::fs::read(Path::new(ROOT).join("../../fixtures/saves/v30-basic.sav")).unwrap()
-}
-
-#[test]
-fn an_old_save_keeps_its_road_types_when_the_rail_types_join_the_content() {
-    let content = content();
-    let bytes = fixture();
-    let (h, _) = read_header(&bytes).unwrap();
-    let mut l = load_with_map(&bytes, content.content_hash(), h.map_hash).unwrap();
-    let old_names = l.data.def_names.roads.clone();
-    assert!(old_names.len() < content.roads().count(), "new road types");
-    let before: Vec<_> = l
-        .data
-        .net
-        .segments()
-        .map(|(id, s)| (id, old_names[s.road.index()].clone()))
-        .collect();
-    assert!(!before.is_empty());
-    let warnings = l.data.remap_defs(&content);
-    assert!(warnings.is_empty(), "{warnings:?}");
-    for (id, name) in before {
-        let seg = l.data.net.segment(id).unwrap();
-        assert_eq!(content.road(seg.road).id, name);
-    }
+    std::fs::read(Path::new(ROOT).join("../../fixtures/saves/m1-small.sav")).unwrap()
 }
 
 #[test]

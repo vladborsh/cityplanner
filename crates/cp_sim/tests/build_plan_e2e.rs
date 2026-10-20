@@ -426,12 +426,12 @@ fn at_an_acute_junction_a_point_on_the_other_arms_asphalt_is_the_node() {
 fn a_road_whose_asphalt_lies_on_a_road_beside_it_is_refused() {
     let (mut sim, road) = world();
     build(&mut sim, road, &[p(-100.0, 0.0), p(100.0, 0.0)]).unwrap();
-    // Parallel 8 m away: the half widths are 6 and 6, the asphalts overlap by 4 m, though no node
-    // of either lies on the other.
+    // Parallel 8 m away: the half widths are 8 and 8 (T-275), the asphalts overlap by 8 m, though
+    // no node of either lies on the other.
     let e = build(&mut sim, road, &[p(-60.0, 8.0), p(60.0, 8.0)]).unwrap_err();
     assert!(e.contains("RoadsOverlap"), "{e}");
-    // 13 m away the asphalts clear each other: built.
-    build(&mut sim, road, &[p(-60.0, 13.0), p(60.0, 13.0)]).unwrap();
+    // 17 m away the asphalts clear each other: built.
+    build(&mut sim, road, &[p(-60.0, 17.0), p(60.0, 17.0)]).unwrap();
     assert_invariants(&sim);
 }
 

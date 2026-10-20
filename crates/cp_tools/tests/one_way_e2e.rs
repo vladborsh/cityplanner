@@ -17,7 +17,7 @@ use cp_core::CommandOutcome;
 use cp_net::{NetCommand, NetGraph, RoadPath};
 use cp_sim::{SimCommand, SimRunner};
 use cp_terrain::Terrain;
-use cp_tools::{CommandOutbox, RoadMode, RoadTool, compute_ghost};
+use cp_tools::{CommandOutbox, RoadMode, RoadTool, compute_ghost, compute_ghost_alt};
 
 const ROOT: &str = env!("CARGO_MANIFEST_DIR");
 
@@ -62,13 +62,25 @@ fn a_one_way_ghost_has_floor_len_over_16_chevrons_a_two_way_ghost_none() {
     let (sim, db) = sim();
     let view = sim.view();
     let a = Vec2::new(4600.0, 4600.0);
+    // Snaps off: the length as drawn (with snaps on it steps to whole sections, T-275).
     // 80 m: one piece, floor(80 / 16) = 5 chevrons of 3 segments.
-    let one_way =
-        compute_ghost(&view, &tool(&db, "highway_1w_3l", a), a + Vec2::X * 80.0).expect("a ghost");
+    let one_way = compute_ghost_alt(
+        &view,
+        &tool(&db, "highway_1w_3l", a),
+        a + Vec2::X * 80.0,
+        true,
+    )
+    .expect("a ghost");
     assert!(one_way.valid, "{:?}", one_way.errors);
     assert_eq!(one_way.chevrons.len(), 5 * 3);
     // 50 m: floor(50 / 16) = 3.
-    let short = compute_ghost(&view, &tool(&db, "highway_1w_3l", a), a + Vec2::X * 50.0).unwrap();
+    let short = compute_ghost_alt(
+        &view,
+        &tool(&db, "highway_1w_3l", a),
+        a + Vec2::X * 50.0,
+        true,
+    )
+    .unwrap();
     assert_eq!(short.chevrons.len(), 3 * 3);
     // Each chevron's segments are short and point forward: their tips lie ahead of the tail.
     for c in &one_way.chevrons {
@@ -85,7 +97,13 @@ fn chevron_count_sums_the_pieces_of_a_long_plan() {
     let view = sim.view();
     let a = Vec2::new(4600.0, 4700.0);
     // 150 m is cut into floor(150 / 96) + 1 = 2 equal pieces of 75 m (T-262): (4 + 4) chevrons.
-    let g = compute_ghost(&view, &tool(&db, "highway_1w_3l", a), a + Vec2::X * 150.0).unwrap();
+    let g = compute_ghost_alt(
+        &view,
+        &tool(&db, "highway_1w_3l", a),
+        a + Vec2::X * 150.0,
+        true,
+    )
+    .unwrap();
     assert!(g.valid);
     assert_eq!(g.polylines.len(), 2);
     assert_eq!(g.chevrons.len(), 8 * 3);

@@ -1,8 +1,9 @@
 //! Generates `fixtures/saves/m1-small.sav` and `fixtures/saves/m1-traffic.sav` (T-046) with
-//! the format current at the time (16), and prints the reference checksums the tests pin
+//! the current format, and prints the reference checksums the tests pin
 //! (`crates/cp_save/tests/m1_fixtures.rs`): the state after loading the file and running
 //! 4096 ticks. Run from the repo root: `cargo run -p cp_save --example gen_m1_fixtures`.
-//! The committed files are **never edited or regenerated** afterwards (AGENTS.md).
+//! Old saves are not migrated during development (T-275): when the format changes, run it again
+//! and re-pin the checksums.
 //!
 //! * `m1-small`: `grid_city(1800, seed 1)` on a 5x5-street lattice (`people_per_crossing` 100,
 //!   or the default lattice would hold more than twice that) — about 1900 residents, built

@@ -1,5 +1,5 @@
 //! BUG-003: trailing bytes, header/body tick disagreement, over-long map ids and body
-//! corruption. Also the committed v1 fixture (the last format without a body CRC).
+//! corruption. (Old formats are refused since T-275.)
 
 use cp_core::{SimSpeed, Tick};
 use cp_save::*;
@@ -7,15 +7,6 @@ use cp_sim::{SimCommand, SimRunner};
 use std::path::Path;
 
 const HASH: u64 = 0x1234;
-
-fn fixture(name: &str) -> Vec<u8> {
-    std::fs::read(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/saves")
-            .join(name),
-    )
-    .unwrap()
-}
 
 fn good() -> Vec<u8> {
     let mut s = SimRunner::new(4);
@@ -42,18 +33,6 @@ fn trailing_bytes_are_rejected() {
     let mut b = good();
     b.extend_from_slice(b"GARBAGE");
     assert!(load(&b, HASH).is_err());
-    // Without a CRC (v0/v1) the frame-end check catches it.
-    for name in ["v0-basic.sav", "v1-basic.sav"] {
-        let mut b = fixture(name);
-        let (h, _) = read_header(&b).unwrap();
-        assert!(load(&b, h.content_hash).is_ok());
-        b.extend_from_slice(b"GARBAGE");
-        assert_eq!(
-            load(&b, h.content_hash).unwrap_err(),
-            SaveError::TrailingBytes,
-            "{name}"
-        );
-    }
 }
 
 #[test]
@@ -74,15 +53,6 @@ fn header_tick_must_match_body() {
             body: 20
         }
     );
-    for name in ["v0-basic.sav", "v1-basic.sav"] {
-        let mut b = fixture(name);
-        let (h, _) = read_header(&b).unwrap();
-        b[16..24].copy_from_slice(&1u64.to_le_bytes());
-        assert!(matches!(
-            load(&b, h.content_hash).unwrap_err(),
-            SaveError::TickMismatch { header: 1, .. }
-        ));
-    }
 }
 
 #[test]
@@ -121,35 +91,4 @@ fn new_saves_are_current_version_with_a_crc() {
     assert!(h.format_version >= 2);
     let prefix = &b[..b.len() - body.len() - 4];
     assert_eq!(h.body_crc, Some(crc32_parts(&[prefix, body])));
-}
-
-#[test]
-fn v1_fixture_loads_without_crc_and_resaves_as_current() {
-    let bytes = fixture("v1-basic.sav");
-    let (h, _) = read_header(&bytes).unwrap();
-    assert_eq!((h.format_version, h.body_crc, h.tick), (1, None, 500));
-    assert_eq!(h.map_id, "river_valley");
-
-    let l = load(&bytes, h.content_hash).unwrap();
-    assert!(l.warnings.is_empty());
-    assert_eq!(l.data.tick, Tick(500));
-    assert_eq!(l.data.speed, SimSpeed::X3);
-    assert_eq!(l.data.queue.len(), 1);
-    assert_eq!(l.data.log.len(), 1);
-
-    let v2 = save(&l.data, h.content_hash, &h.map_id).unwrap();
-    assert_eq!(
-        read_header(&v2).unwrap().0.format_version,
-        cp_save::FORMAT_VERSION
-    );
-    assert_eq!(load(&v2, h.content_hash).unwrap().data, l.data);
-    assert_eq!(
-        v2,
-        save(
-            &load(&v2, h.content_hash).unwrap().data,
-            h.content_hash,
-            &h.map_id
-        )
-        .unwrap()
-    );
 }

@@ -796,25 +796,18 @@ pub fn road_markers(view: &SimView, hover: Vec2) -> Vec<RoadMarker> {
             near.insert(id);
         }
     }
+    let _ = near_edge;
+    // The section marks of the streets near the cursor (T-275 spec v2): where a street's end or
+    // a cross street's centre snaps, every 10 cells from either end of the street's run.
     let mut out: Vec<RoadMarker> = Vec::new();
-    for l in crate::lattice::all_lines(view).iter() {
-        let m = l.line.mark;
-        let kind = if m.major && !m.end {
-            MarkerKind::Control
-        } else if near_edge.is_some_and(|(_, id)| id == l.line.segment) {
-            MarkerKind::Tick
-        } else {
-            continue;
-        };
-        if kind == MarkerKind::Control && !near.contains(&l.line.segment) {
-            continue;
-        }
-        // One marker per point of the axis (the two sides of a street share their lines).
-        if !out
-            .iter()
-            .any(|o| o.kind == kind && o.pos.distance(m.axis) < 0.05)
-        {
-            out.push(RoadMarker { pos: m.axis, kind });
+    for id in near {
+        for (_, pos, _) in crate::lattice::section_marks(graph, id) {
+            if !out.iter().any(|o| o.pos.distance(pos) < 0.05) {
+                out.push(RoadMarker {
+                    pos,
+                    kind: MarkerKind::Control,
+                });
+            }
         }
     }
     out

@@ -1,5 +1,5 @@
 //! T-064: the interchange fixture (a ground street with two raised roads over it that cross each
-//! other in a node, made by the writer of format 37) loads, keeps its levels and round-trips.
+//! other in a node, made by the current writer, T-275) loads, keeps its levels and round-trips.
 
 use std::path::Path;
 
@@ -12,9 +12,12 @@ const ROOT: &str = env!("CARGO_MANIFEST_DIR");
 #[test]
 fn the_interchange_fixture_loads_with_its_levels_and_its_crossing_node() {
     let bytes =
-        std::fs::read(Path::new(ROOT).join("../../fixtures/saves/interchange-v37.sav")).unwrap();
+        std::fs::read(Path::new(ROOT).join("../../fixtures/saves/interchange.sav")).unwrap();
     let (h, _) = read_header(&bytes).unwrap();
-    assert_eq!(h.format_version, 37, "made by the v37 writer");
+    assert_eq!(
+        h.format_version, FORMAT_VERSION,
+        "made by the current writer"
+    );
     let content = ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap();
     let l = load_with_map(&bytes, content.content_hash(), h.map_hash).unwrap();
     let net: &NetGraph = &l.data.net;

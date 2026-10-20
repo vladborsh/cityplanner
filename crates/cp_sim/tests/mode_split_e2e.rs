@@ -291,7 +291,9 @@ fn starter_split() -> (usize, usize, usize, usize) {
 #[test]
 fn a_12_street_lattice_keeps_its_stuck_cars_below_one_percent() {
     let (_, car, _, pop) = split(4850);
-    assert!(pop > 17_000, "{pop} residents");
+    // 13 000: since T-275 roads are 2 or 4 cells wide and the lattice 96 m (12 cells) between
+    // centres, a block side holds 10 cells instead of 11; the same 12 streets hold ~13 900.
+    assert!(pop > 13_000, "{pop} residents");
     let stuck = STUCK_LAST_DAY.with(|s| s.get());
     assert!(
         stuck * 100 < car as u64,
@@ -358,7 +360,8 @@ fn a_dense_lattice_does_not_gridlock() {
         .stats
         .despawned_stuck
         - before;
-    assert!(population(&sim) > 10_000);
+    // 7 000 since T-275 (whole-cell roads, a 96 m lattice).
+    assert!(population(&sim) > 7_000, "{} residents", population(&sim));
     assert!(
         stuck < 300,
         "{stuck} cars vanished in a day ({car} car trips, {walk} on foot)"
@@ -380,7 +383,8 @@ fn a_17k_lattice_keeps_its_stuck_cars_below_one_percent() {
     // 14 500: since the neighbourhood service radii were cut to a few blocks (T-254 balance)
     // fewer homes reach the levels that need services; the same lattice holds ~14 800 residents
     // instead of ~15 900.
-    assert!(pop > 14_500, "{pop} residents");
+    // 12 500 since T-275 (whole-cell roads, a 96 m lattice: ~13 300).
+    assert!(pop > 12_500, "{pop} residents");
     let stuck = STUCK_LAST_DAY.with(|s| s.get());
     assert!(
         stuck * 100 < car as u64,

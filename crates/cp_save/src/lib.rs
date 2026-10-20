@@ -30,10 +30,10 @@
 //! after the zstd frame, a CRC mismatch and a map id that does not fit are errors. Output is
 //! deterministic: saving the same state twice gives identical bytes.
 //!
-//! **Versions and migrations.** The body of version `N` is the frozen type for `N` (see
-//! [`migrate`]). Loading decodes the body at the file's version and applies
-//! `migrate_vN_to_vN1` steps until it reaches [`FORMAT_VERSION`]. Shipped fixtures in
-//! `fixtures/saves/` must keep loading; never edit them.
+//! **Versions.** During active development old saves are not migrated (the user's decision,
+//! AGENTS.md, T-275): a file of another [`FORMAT_VERSION`] is refused with
+//! [`SaveError::OlderVersion`] (or [`SaveError::UnsupportedVersion`] when it is newer). The header
+//! of any version is still read, so the refusal names the version.
 //!
 //! **What is saved, what is rebuilt (audit, T-046).** Every resource `SimRunner::new` creates:
 //!
@@ -55,12 +55,9 @@
 //! save tests compare a loaded run with the continuous one.
 //!
 //! **Adding state** (a domain's arenas, etc.): add a field to [`SaveData`], bump
-//! [`FORMAT_VERSION`], freeze the previous `SaveData` as `SaveDataV<old>` in
-//! [`migrate`], write `migrate_v<old>_to_v<new>` giving the new field a value, extend
-//! `capture`/`restore`, and add a fixture for the old version plus a load test.
-
-pub mod def_tables;
-pub mod migrate;
+//! [`FORMAT_VERSION`] and extend `capture`/`restore`; the fixtures the tests load
+//! (`fixtures/saves/m1-*.sav`, the interchange, the benches) are made again by their generators
+//! with the new writer.
 
 use std::io::Read;
 
@@ -454,6 +451,8 @@ pub enum SaveError {
     Truncated,
     /// File is from a newer build than this one.
     UnsupportedVersion(u32),
+    /// File is from an older build: old saves are not migrated during development (T-275).
+    OlderVersion(u32),
     Compression(String),
     Decode(String),
     /// The file does not match its CRC (bit rot or tampering).
@@ -475,6 +474,10 @@ impl std::fmt::Display for SaveError {
             Self::BadMagic => write!(f, "not a CPSV save file"),
             Self::Truncated => write!(f, "save file is truncated"),
             Self::UnsupportedVersion(v) => write!(f, "unsupported save format version {v}"),
+            Self::OlderVersion(v) => write!(
+                f,
+                "save from an older version (format {v}; this build reads format {FORMAT_VERSION})"
+            ),
             Self::Compression(e) => write!(f, "decompression failed: {e}"),
             Self::Decode(e) => write!(f, "save body is corrupt: {e}"),
             Self::CrcMismatch => write!(f, "save file failed its integrity check"),
@@ -521,18 +524,6 @@ pub(crate) fn write_prefix(out: &mut Vec<u8>, h: &Header) -> Result<(), SaveErro
     }
     out.extend_from_slice(&len.to_le_bytes());
     out.extend_from_slice(id);
-    Ok(())
-}
-
-/// Writes a complete header of a **legacy** version (< 4), whose CRC (if any) is given in
-/// `h.body_crc`. Version 4+ headers are written by [`save_with_map`].
-pub(crate) fn write_header(out: &mut Vec<u8>, h: &Header) -> Result<(), SaveError> {
-    debug_assert!(h.format_version < 4);
-    write_prefix(out, h)?;
-    if h.format_version >= 2 {
-        let crc = h.body_crc.expect("version 2+ header needs a body CRC");
-        out.extend_from_slice(&crc.to_le_bytes());
-    }
     Ok(())
 }
 
@@ -743,7 +734,7 @@ pub(crate) fn assemble(
     Ok(out)
 }
 
-/// Decodes a save file of any known version, migrating it to the current one.
+/// Decodes a save file of the current version (an older one is refused, T-275).
 /// `current_content_hash` is the hash of the content now loaded; a difference yields a
 /// [`LoadWarning`], not an error. The map is not checked (see [`load_with_map`]).
 pub fn load(bytes: &[u8], current_content_hash: u64) -> Result<Loaded, SaveError> {
@@ -761,8 +752,15 @@ pub fn load_with_map(
     let parsed = parse(bytes)?;
     parsed.check_crc()?;
     let header = parsed.header()?;
+    if header.format_version < FORMAT_VERSION {
+        return Err(SaveError::OlderVersion(header.format_version));
+    }
     let body = decompress(parsed.frame)?;
-    let data = migrate::decode_and_migrate(header.format_version, &body)?;
+    let (data, rest): (SaveData, _) =
+        postcard::take_from_bytes(&body).map_err(|e| SaveError::Decode(e.to_string()))?;
+    if !rest.is_empty() {
+        return Err(SaveError::Decode("trailing bytes after save body".into()));
+    }
     if header.tick != data.tick.0 {
         return Err(SaveError::TickMismatch {
             header: header.tick,
@@ -823,33 +821,16 @@ pub fn load_into_runner(
         loaded.warnings.extend(more);
     }
     loaded.data.restore(sim.world_mut());
-    // A save from before v41 carries no deposits: they start full, from the map.
-    if loaded.header.format_version < 41 {
-        cp_sim::new_game::fill_deposits(sim.world_mut());
-    }
-    // A save from before v22 carries no coverage: compute it now rather than wait for the
-    // next boundary. Newer saves restore exactly what was saved.
-    if loaded.header.format_version < 22 {
-        cp_service::rebuild_coverage(sim.world_mut());
-    }
     Ok((loaded.header, loaded.warnings))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cp_core::{CommandId, SimSpeed};
+    use cp_core::SimSpeed;
     use cp_sim::run_headless;
-    use std::path::PathBuf;
 
     const HASH: u64 = 0xABCD;
-
-    fn fixture(name: &str) -> Vec<u8> {
-        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/saves")
-            .join(name);
-        std::fs::read(&p).unwrap_or_else(|e| panic!("fixture {p:?}: {e}"))
-    }
 
     /// A sim that has run a while with queued and applied commands.
     fn busy_runner(seed: u64, ticks: u64) -> SimRunner {
@@ -937,85 +918,21 @@ mod tests {
         assert_eq!(loaded.data.tick, Tick(3));
     }
 
+    /// T-275: old saves are not migrated during development; one of an older format is refused
+    /// with the version it has.
     #[test]
-    fn v0_fixture_migrates_and_loads() {
-        let bytes = fixture("v0-basic.sav");
-        let (header, _) = read_header(&bytes).unwrap();
-        assert_eq!(header.format_version, 0);
-
-        let loaded = load(&bytes, 0xC17F_0000_0000_0001).unwrap();
-        assert!(loaded.warnings.is_empty());
-        let d = &loaded.data;
-        assert_eq!(d.tick, Tick(300));
-        assert_eq!(d.speed, SimSpeed::X1); // added by the v0 -> v1 migration
-        assert_eq!(d.tiles, TileOwnership::m1_around((2, 2)));
-        assert_eq!(d.queue.len(), 1);
-        assert_eq!(d.log.len(), 1);
-        assert_eq!(d.log.entries()[0].id, CommandId(0));
-        let mut expect = SimRng::seed_from_u64(7);
-        for _ in 0..10 {
-            expect.next_u64();
-        }
-        assert_eq!(d.rng, expect);
-
-        // Re-saving writes the current version, which round-trips.
-        let resaved = save(d, header.content_hash, &header.map_id).unwrap();
+    fn a_save_of_an_older_format_is_refused() {
+        let body = postcard::to_stdvec(&SaveData::capture(SimRunner::new(1).world())).unwrap();
+        let old = assemble(FORMAT_VERSION - 1, 0, &body, HASH, "map", None).unwrap();
         assert_eq!(
-            read_header(&resaved).unwrap().0.format_version,
-            FORMAT_VERSION
+            load(&old, HASH).map(|_| ()),
+            Err(SaveError::OlderVersion(FORMAT_VERSION - 1))
         );
-        assert_eq!(&load(&resaved, header.content_hash).unwrap().data, d);
-
-        // It also runs: restore into a runner and step.
-        let mut sim = SimRunner::new(0);
-        d.clone().restore(sim.world_mut());
-        sim.tick_once();
-        assert_eq!(sim.tick(), Tick(301));
-    }
-
-    #[test]
-    fn v2_fixture_migrates_and_loads() {
-        let bytes = fixture("v2-basic.sav");
-        let (header, _) = read_header(&bytes).unwrap();
-        assert_eq!(header.format_version, 2);
-        let loaded = load(&bytes, 0xC17F_0000_0000_0003).unwrap();
-        assert!(loaded.warnings.is_empty());
-        let d = &loaded.data;
-        assert_eq!(d.tick, Tick(700));
-        assert_eq!(d.speed, SimSpeed::X3);
-        assert_eq!(d.queue.len(), 1);
-        assert_eq!(d.log.len(), 1);
-        assert_eq!(d.net, NetGraph::default()); // added by the v2 -> v3 migration
-        // The frozen v2 writer reproduces the committed bytes exactly.
-        let v2 = migrate::SaveDataV2 {
-            tick: d.tick,
-            rng: d.rng.clone(),
-            speed: d.speed,
-            queue: d.queue.clone(),
-            log: d.log.clone(),
-            tiles: d.tiles,
-        };
-        assert_eq!(
-            migrate::encode_v2(&v2, header.content_hash, &header.map_id).unwrap(),
-            bytes
+        assert!(
+            SaveError::OlderVersion(1)
+                .to_string()
+                .starts_with("save from an older version")
         );
-    }
-
-    #[test]
-    fn older_fixtures_reach_current_version_with_empty_net() {
-        for (name, hash) in [
-            ("v0-basic.sav", 0xC17F_0000_0000_0001),
-            ("v1-basic.sav", 0xC17F_0000_0000_0002),
-        ] {
-            let loaded = load(&fixture(name), hash).unwrap();
-            assert_eq!(loaded.data.net, NetGraph::default(), "{name}");
-            let resaved = save(&loaded.data, hash, &loaded.header.map_id).unwrap();
-            assert_eq!(
-                read_header(&resaved).unwrap().0.format_version,
-                FORMAT_VERSION
-            );
-            assert_eq!(load(&resaved, hash).unwrap().data, loaded.data);
-        }
     }
 
     #[test]

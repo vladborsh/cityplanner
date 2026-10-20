@@ -43,17 +43,13 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
 * `--scene grown --cam place-over --place-demo clinic,5140,5078` (T-252): the placement ghost of a
   clinic held over grown houses: the lot in green drawn over the roofs, the zoned buildings it would
   demolish tinted red whole (T-252b) (`--place-demo def,x,z` works with any scene).
-* `--scene grid-shots --cam grid-shot1|grid-shot2|grid-shot3|grid-shot4` (T-255): the four grid
-  layouts of the user's BUG-073 shots, each built through the road tool's own snap and tick code
-  (`cp_app::grid_shots`), held paused with the ghost of its last street (the zone strip, the ticks
-  and guides): 1 the L closed from the left street's tick, 2 a street extended from a rounded bend,
-  3 two parallels closed on the right, 4 a block closed from the top street's tick. Screenshots
-  `docs/screenshots/t255-grid-shotN-before.png` (e7fa39c6, before the BUG-073 fix) and
-  `t255-grid-shotN-after.png` (after it; the ticks are the streets' centreline stations).
-  `--cam grid-shot7` (T-275 spec v2): a city of 3 x 3 blocks built through the tool, streets 2
-  sections (20 cells) apart one way and 1 section the other, long streets first, then the cross
-  streets; the ghost of the last cross street.
-  Screenshots `docs/screenshots/t275-city-before.png` / `t275-city-after.png`.
+* `--scene grid-shots --cam grid-shot1` (T-275, model v8): a city of 3 x 3 blocks built through
+  the road tool's own code (`cp_app::grid_shots`), streets 2 sections (20 cells) apart one way and
+  1 section the other, long streets first, then the cross streets; held paused with the ghost of
+  the last cross street. `--cam grid-shot1-top` looks straight down on it (the cells can be
+  counted), `--cam grid-shot1-corner` close over the L corner at its top-left. Screenshots
+  `docs/screenshots/t275-city-after.png`, `t275-city-top.png`, `t275-city-corner.png`. (Until T-275 the scene
+  held the four layouts of the user's BUG-073 shots: `docs/screenshots/t255-grid-shotN-*.png`.)
 * `--scene joins --cam joins|joins-N` (T-261): the junction gallery of the `junction_sweep` test
   (`cp_sim::road_cases::join_cases`: bends of 5-135 degrees for every road, curved arms, T, X and Y
   junctions, width changes, a street into a highway, automatic cuts), one case per 260 m cell;
