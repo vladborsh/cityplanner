@@ -140,7 +140,9 @@ impl Options {
             net_debug: args.iter().any(|a| a == "--net-debug"),
             day_night: args.iter().any(|a| a == "--day-night") || value("--hour").is_some(),
             hidden: crate::capture::hidden_requested(args),
-            vsync: !args.iter().any(|a| a == "--no-vsync") && bench.is_none(),
+            // A bench runs without vsync unless `--vsync` (T-281: frame pacing on the display).
+            vsync: !args.iter().any(|a| a == "--no-vsync")
+                && (bench.is_none() || args.iter().any(|a| a == "--vsync")),
         }
     }
 }
