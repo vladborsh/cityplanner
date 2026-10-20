@@ -2,7 +2,7 @@
 //! T-275 spec v2, T-278): the player builds by whole cells, roads are whole cells wide, and a
 //! street's end lands a whole number of cells from the centre it starts at, so every block is
 //! whole cells by construction. The sections (10 cells, [`SECTION_M`]) are only guides now: the
-//! ticks along the ghost ([`cell_ticks`]) and weak pulls. Pure: the same net, the same answer.
+//! ticks along the ghost every 10 cells ([`cell_ticks`]) and weak pulls. Pure: the same net, the same answer.
 //!
 //! Per vertex of the path (`alt`, snaps off, switches all of it off):
 //! 1. **Join**: a cursor within a junction's pull ([`node_pull`]: 1 cell, 2 when a 4-cell road
@@ -915,17 +915,17 @@ pub fn path_marks(view: &SimView, path: &RoadPath) -> Vec<ControlMark> {
 /// The radius within which the road tool draws the ticks around the cursor.
 pub const TICK_RADIUS: f32 = GUIDE_RADIUS;
 
-/// A tick of the road being drawn (T-278): across it at a whole cell from the start of its leg.
+/// A tick of the road being drawn (T-278, T-285): across it every 10 cells (a section, the
+/// 10/20/30 silhouette) from the start of its leg, reaching a cell past the road's edges.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CellTick {
     pub a: Vec2,
     pub b: Vec2,
-    /// Every 10th cell (a section, the 10/20/30 silhouette): longer and drawn bold.
-    pub major: bool,
 }
 
-/// The ticks along `path` for a road of half width `half_width`: one every cell from the start of
-/// each leg (a curve: along its arc), every 10th a major one reaching a cell past the road's edge.
+/// The ticks along `path` for a road of half width `half_width`: one every [`SECTION_M`] from
+/// the start of each leg (a curve: along its arc). No tick per cell (T-285, user: the 10-cell
+/// ticks are enough).
 pub fn cell_ticks(path: &RoadPath, half_width: f32) -> Vec<CellTick> {
     let polylines: Vec<Vec<Vec2>> = match path {
         RoadPath::Straight { from, to } => vec![vec![*from, *to]],
@@ -953,18 +953,12 @@ pub fn cell_ticks(path: &RoadPath, half_width: f32) -> Vec<CellTick> {
                 continue;
             };
             let n = Vec2::new(-d.y, d.x);
-            while k as f32 * ZONE_CELL <= walked + len + 1e-3 {
-                let at = p + d * (k as f32 * ZONE_CELL - walked);
-                let major = k % 10 == 0;
-                let r = if major {
-                    half_width + ZONE_CELL
-                } else {
-                    half_width
-                };
+            while k as f32 * SECTION_M <= walked + len + 1e-3 {
+                let at = p + d * (k as f32 * SECTION_M - walked);
+                let r = half_width + ZONE_CELL;
                 out.push(CellTick {
                     a: at - n * r,
                     b: at + n * r,
-                    major,
                 });
                 k += 1;
             }

@@ -54,9 +54,9 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
   a curve (curve mode); screenshots `docs/screenshots/t268-curve-city.png`, `t268-curve-top.png`,
   `t268-curve-corner.png`.
   `--cam grid-shot3` (`-top`, `-ticks`, T-278): a city of mixed blocks (18 x 8, 5 x 8, 8 x 8 over
-  18 x 3, 5 x 3, 8 x 3 cells) drawn by whole cells; the ghost of its last street shows a tick at
-  every cell, every 10th bold; `-ticks` looks closely at it. Screenshots
-  `docs/screenshots/t278-mixed-blocks-top.png`, `t278-cell-ticks.png`.
+  18 x 3, 5 x 3, 8 x 3 cells) drawn by whole cells; the ghost of its last street shows a bold tick
+  every 10 cells (T-285: none per cell); `-ticks` looks closely at it. Screenshots
+  `docs/screenshots/t278-mixed-blocks-top.png`, `t285-ticks.png`.
 * `--scene joins --cam joins|joins-N` (T-261): the junction gallery of the `junction_sweep` test
   (`cp_sim::road_cases::join_cases`: bends of 5-135 degrees for every road, curved arms, T, X and Y
   junctions, width changes, a street into a highway, automatic cuts), one case per 260 m cell;

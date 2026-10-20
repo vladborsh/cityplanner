@@ -956,7 +956,7 @@ fn a_curve_end_takes_a_guide_near_it_else_the_nearest_whole_cell() {
 
 /// T-278 acceptance: a street drawn in the open towards N cells (the cursor near N cells from its
 /// start, a sloppy hand) is exactly N cells long, for every N from 1 to 25, on 2- and 4-cell
-/// roads; its ghost has a tick at every cell, every 10th a major one.
+/// roads; its ghost has a tick every 10 cells (T-285: none per cell).
 #[test]
 fn a_street_of_every_length_from_1_to_25_cells_lands_exactly() {
     let mut fails = Vec::new();
@@ -977,12 +977,9 @@ fn a_street_of_every_length_from_1_to_25_cells_lands_exactly() {
             if (len - want).abs() > 0.01 {
                 fails.push(format!("{road}: {n} cells: {len:.3} m"));
             }
-            let majors = pl.ticks.iter().filter(|t| t.major).count();
-            if pl.ticks.len() != n as usize || majors != n as usize / 10 {
-                fails.push(format!(
-                    "{road}: {n} cells: {} ticks, {majors} major",
-                    pl.ticks.len()
-                ));
+            // A tick every 10 cells, none per cell (T-285).
+            if pl.ticks.len() != n as usize / 10 {
+                fails.push(format!("{road}: {n} cells: {} ticks", pl.ticks.len()));
             }
         }
         fails.extend(pl.fails.iter().map(|f| format!("{road}: {f}")));

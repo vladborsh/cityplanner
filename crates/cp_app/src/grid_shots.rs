@@ -13,7 +13,7 @@
 //!   three clicks: from the top street's first cross street, the bend at the corner, down to the
 //!   first long street); the left street goes on from the curve's end.
 //! * shot 3 (T-278): a city of mixed blocks, 18 x 8, 5 x 8 and 8 x 8 cells over 18 x 3, 5 x 3
-//!   and 8 x 3; the ghost of its last cross street shows a tick at every cell, the 10th bold
+//!   and 8 x 3; the ghost of its last cross street shows a bold tick every 10 cells (T-285)
 //!   (`grid-shot3-ticks` close over it).
 //!
 //! (Until T-275 the scene held the layouts of the user's BUG-073 shots on the 8 m step; the

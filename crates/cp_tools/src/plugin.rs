@@ -95,8 +95,8 @@ pub struct Ghost {
     /// The length of the last leg in cells and its angle to the road it leaves, shown at the
     /// cursor.
     pub label: Option<String>,
-    /// A tick across the road at every cell from the start of each leg, every 10th bold (T-278:
-    /// the player reads the length from these, no number).
+    /// A bold tick across the road every 10 cells from the start of each leg (T-278, T-285: the
+    /// player reads the length from these, no number).
     pub cell_ticks: Vec<crate::lattice::CellTick>,
 }
 
@@ -1375,19 +1375,17 @@ fn draw_ghost(
                 Color::srgb(1.0, 0.9, 0.3),
             );
         }
-        // A tick at every cell of the road being drawn, every 10th long and bold (T-278), over
-        // the ghost band.
+        // A bold tick every 10 cells of the road being drawn (T-278, T-285), over the ghost band.
         let over = |p: Vec2| at(p) + Vec3::Y * 0.45;
         for t in &ghost.cell_ticks {
             let d = (t.b - t.a).normalize_or_zero();
             let along = Vec2::new(d.y, -d.x);
-            let (offs, color): (&[f32], _) = if t.major {
-                (&[-0.4, 0.0, 0.4], Color::srgb(1.0, 0.9, 0.2))
-            } else {
-                (&[-0.15, 0.15], Color::WHITE)
-            };
-            for &k in offs {
-                gizmos.line(over(t.a + along * k), over(t.b + along * k), color);
+            for k in [-0.4, 0.0, 0.4] {
+                gizmos.line(
+                    over(t.a + along * k),
+                    over(t.b + along * k),
+                    Color::srgb(1.0, 0.9, 0.2),
+                );
             }
         }
         // Where the error is (§6.8.3 item 9): a red cross with a ring, on the map.
