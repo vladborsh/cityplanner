@@ -2,7 +2,7 @@
 //! pauses and a centred window congratulates the player: the status title, the population, what
 //! the milestone unlocks (buildings, policies, zones as square icons), the land tiles it adds and
 //! the next milestone. One window per milestone reached, in order; when the last is closed the
-//! game goes on at the speed it had (x1 if it was paused). Nothing shows when a save is loaded or
+//! game goes on at speed x1 whatever speed it had. Nothing shows when a save is loaded or
 //! a game starts.
 
 use std::collections::VecDeque;
@@ -69,13 +69,12 @@ pub fn next_text(content: &ContentDb, m: usize) -> Option<String> {
     ))
 }
 
-/// Which milestone was last seen, the windows still to show and the speed to go on at.
+/// Which milestone was last seen, the windows still to show.
 #[derive(Default)]
 pub struct MilestoneWindow {
     seen: Option<usize>,
     last_tick: Option<u64>,
     queue: VecDeque<usize>,
-    resume: Option<SimSpeed>,
 }
 
 impl MilestoneWindow {
@@ -110,10 +109,6 @@ impl MilestoneWindow {
             && live
         {
             if self.queue.is_empty() {
-                self.resume = Some(match view.speed {
-                    SimSpeed::Pause => SimSpeed::X1,
-                    s => s,
-                });
                 outbox.push(crate::set_speed(SimSpeed::Pause));
             }
             self.queue.extend(seen + 1..=reached);
@@ -122,13 +117,11 @@ impl MilestoneWindow {
         self.last_tick = Some(tick);
     }
 
-    /// Closes the window on screen; the last one resumes the game.
+    /// Closes the window on screen; after the last one the game always goes on at x1 (the
+    /// user's rule, whatever speed it had).
     pub fn close(&mut self, outbox: &mut CommandOutbox) {
-        if self.queue.pop_front().is_some()
-            && self.queue.is_empty()
-            && let Some(speed) = self.resume.take()
-        {
-            outbox.push(crate::set_speed(speed));
+        if self.queue.pop_front().is_some() && self.queue.is_empty() {
+            outbox.push(crate::set_speed(SimSpeed::X1));
         }
     }
 }
@@ -260,8 +253,8 @@ mod tests {
         assert_eq!(w.current(), None);
         assert_eq!(
             speeds(&outbox),
-            [SimSpeed::Pause, SimSpeed::X3],
-            "the speed it had"
+            [SimSpeed::Pause, SimSpeed::X1],
+            "always x1, not the speed it had"
         );
     }
 
