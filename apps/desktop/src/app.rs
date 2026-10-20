@@ -75,6 +75,10 @@ pub struct Options {
     /// `--log-pipelines`: log every new render pipeline with the time (T-281: a pipeline is
     /// compiled on the render thread, synchronously on macOS).
     pub log_pipelines: bool,
+    /// `--milestone N` / `--milestone N,live`: hold the city at milestone N (an index of
+    /// `milestones.ron`) from the start; with `live` it starts at N-1 and reaches N a moment
+    /// later, so the congratulation window shows (T-283 screenshots).
+    pub milestone: Option<(u8, bool)>,
     /// `--pan`: the camera moves by itself, round a 300 m circle in 20 s while it turns once in
     /// 40 s (T-281: the user's stutter shows when the camera moves).
     pub pan: bool,
@@ -136,6 +140,13 @@ impl Options {
             no_clouds: args.iter().any(|a| a == "--no-clouds"),
             no_parked: args.iter().any(|a| a == "--no-parked"),
             pan: args.iter().any(|a| a == "--pan"),
+            milestone: value("--milestone").and_then(|v| {
+                let (n, live) = match v.split_once(',') {
+                    Some((n, "live")) => (n, true),
+                    _ => (v.as_str(), false),
+                };
+                Some((n.parse().ok()?, live))
+            }),
             log_pipelines: args.iter().any(|a| a == "--log-pipelines"),
             qos: !args.iter().any(|a| a == "--no-qos"),
             size: value("--size").and_then(|v| {
@@ -229,6 +240,44 @@ fn start_speed(
 
 /// The clock of `--log-pipelines`, shared by the render and the main world.
 static LOG_T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// `--milestone`: the milestone to hold the city at, and the frames since the sim stood.
+#[derive(Resource)]
+struct MilestoneDemo {
+    index: u8,
+    live: bool,
+    frames: u32,
+}
+
+/// Holds the progress at the demo's milestone; with `live` it starts one below and reaches the
+/// milestone after a few frames, as the city growing would (the UI then shows its window).
+fn milestone_demo(demo: Option<ResMut<MilestoneDemo>>, sim: Option<ResMut<cp_app::Sim>>) {
+    let (Some(mut demo), Some(mut sim)) = (demo, sim) else {
+        return;
+    };
+    demo.frames += 1;
+    let start = if demo.live {
+        demo.index.saturating_sub(1)
+    } else {
+        demo.index
+    };
+    if demo.frames == 1 {
+        // The jump to `start` is a "load" to the UI (the clock jumps too), so it congratulates
+        // nobody; the rise to the milestone a moment later is the city growing.
+        let tick = sim.0.world().resource::<cp_core::Tick>().0;
+        sim.0
+            .world_mut()
+            .insert_resource(cp_core::Tick(tick + 100_000));
+        sim.0
+            .world_mut()
+            .insert_resource(cp_sim::Progress::at(start));
+    }
+    if demo.live && demo.frames == 40 {
+        sim.0
+            .world_mut()
+            .insert_resource(cp_sim::Progress::at(demo.index));
+    }
+}
 
 /// `--log-pipelines`: each pipeline the cache holds that was not there last frame, by label.
 fn log_pipelines(cache: Res<bevy::render::render_resource::PipelineCache>, mut seen: Local<usize>) {
@@ -444,6 +493,14 @@ pub fn run(opts: Options) -> AppExit {
     }
     if opts.pan {
         app.add_systems(Update, pan_camera);
+    }
+    if let Some((index, live)) = opts.milestone {
+        app.insert_resource(MilestoneDemo {
+            index,
+            live,
+            frames: 0,
+        });
+        app.add_systems(Update, milestone_demo);
     }
     if opts.qos {
         crate::qos::set_current_thread();

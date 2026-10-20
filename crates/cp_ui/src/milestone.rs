@@ -159,7 +159,7 @@ pub fn milestone_window(
         });
         ui.add_space(8.0);
         egui::ScrollArea::vertical()
-            .max_height(320.0)
+            .max_height((ctx.content_rect().height() * 0.62).max(240.0))
             .show(ui, |ui| {
                 group(ui, "Buildings", &unlocked.buildings, &[]);
                 group(ui, "Policies", &unlocked.policies, &[]);

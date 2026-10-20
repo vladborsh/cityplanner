@@ -63,6 +63,7 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
   `joins-N` looks closely at case `N`. `--scene place --cam place|place-N`: the service sites of
   `place_sweep` with `basic_2l` and the largest service lot placed at every spot (refusals are
   logged). Before/after proof for the road redesign (§6.8, T-262…T-268).
+* `--milestone N[,live]` (T-283): hold the city at milestone N (an index of `milestones.ron`); with `live` it reaches N a moment after the start, so the congratulation window shows (use with `--hidden --ui --speed 1`). Screenshots `docs/screenshots/t283-window-village.png`, `t283-window-busy-town.png`; the zoning panel before and after Busy Town (`--milestone 4|5 --category zones`): `t283-zones-before.png`, `t283-zones-after.png`.
 * `--screenshot` never saves a blank frame (BUG-012): blank captures are discarded and
   retried; if no real frame arrives within 20 s it exits with code **3**; a write error exits
   **4**.
