@@ -15,7 +15,7 @@ use bevy::window::PresentMode;
 use cp_app::{GamePlugin, MapLoadFailed, phase_times};
 use cp_core::SimLimits;
 use cp_render::{AgentRenderStats, BuildingStats, RoadStats, TerrainStats};
-use cp_sim::SimRunner;
+use cp_sim::{SimRunner, SimView};
 
 use crate::ASSETS_DIR;
 use crate::capture::{Capture, CapturePlugin};
@@ -82,6 +82,10 @@ pub struct Options {
     /// `--pan`: the camera moves by itself, round a 300 m circle in 20 s while it turns once in
     /// 40 s (T-281: the user's stutter shows when the camera moves).
     pub pan: bool,
+    /// `--zoning` / `--zoning x,z`: switch the zone tool on a second into the run, so the zone
+    /// grid shows in zoning mode after it was first built without; with a point (metres from
+    /// the map centre) the cursor hovers there (BUG-098 screenshots).
+    pub zoning: Option<Option<bevy::math::Vec2>>,
 }
 
 impl Options {
@@ -140,6 +144,13 @@ impl Options {
             no_clouds: args.iter().any(|a| a == "--no-clouds"),
             no_parked: args.iter().any(|a| a == "--no-parked"),
             pan: args.iter().any(|a| a == "--pan"),
+            zoning: args.iter().position(|a| a == "--zoning").map(|i| {
+                let n: Vec<f32> = args
+                    .get(i + 1)
+                    .map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect())
+                    .unwrap_or_default();
+                (n.len() == 2).then(|| bevy::math::Vec2::new(n[0], n[1]))
+            }),
             milestone: value("--milestone").and_then(|v| {
                 let (n, live) = match v.split_once(',') {
                     Some((n, "live")) => (n, true),
@@ -331,6 +342,34 @@ fn pan_camera(
     cam.target = target;
 }
 
+/// Frame of the run at which `--zoning` switches the zone tool on.
+const ZONING_FRAME: u32 = 60;
+
+/// Where `--zoning x,z` holds the cursor (world metres), if anywhere.
+#[derive(Resource)]
+struct ZoningDemo(Option<Vec2>);
+
+/// `--zoning`: the zone tool goes on at [`ZONING_FRAME`], as a player opens it in a running city;
+/// from then on the cursor hovers at the demo's point, if it has one, with the tool's preview
+/// there (a hidden run has no cursor for `tool_hover` to find).
+fn zoning_demo(
+    mut frame: Local<u32>,
+    demo: Res<ZoningDemo>,
+    view: Option<Res<SimView>>,
+    mut tools: ResMut<cp_tools::ToolState>,
+) {
+    *frame += 1;
+    if *frame == ZONING_FRAME {
+        tools.select(cp_tools::ActiveTool::Zone);
+    }
+    if *frame >= ZONING_FRAME
+        && let (Some(p), Some(view)) = (demo.0, view)
+    {
+        tools.hover = Some(p);
+        tools.zone_preview = tools.zone.preview(&view.zones, p);
+    }
+}
+
 /// Frames a built scene must stand before the screenshot, so the chunk meshes are uploaded.
 const SETTLE_FRAMES: u32 = 30;
 /// Extra wall-clock time the screenshot job of a scene may take.
@@ -440,6 +479,19 @@ pub fn run(opts: Options) -> AppExit {
         && !app.is_plugin_added::<cp_tools::ToolsPlugin>()
     {
         app.add_plugins(cp_tools::ToolsPlugin);
+    }
+    if let Some(hover) = opts.zoning {
+        if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
+            app.add_plugins(cp_tools::ToolsPlugin);
+        }
+        let c = cp_terrain::MAP_SIZE / 2.0;
+        app.insert_resource(ZoningDemo(hover.map(|p| p + bevy::math::Vec2::splat(c))))
+            .add_systems(
+                Update,
+                zoning_demo
+                    .after(cp_tools::plugin::tool_hover)
+                    .before(cp_tools::zone_lines::sync_zone_lines),
+            );
     }
     if let Some(demo) = opts.place_demo {
         if opts.hidden && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {

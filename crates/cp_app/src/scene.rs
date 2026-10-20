@@ -1298,6 +1298,54 @@ pub fn build_zone_rect(sim: &mut SimRunner) {
         .insert_resource(cp_core::time::SimSpeed::Pause);
 }
 
+/// The grey half of the zone grid (BUG-098): the user's layout, two rows of four blocks of
+/// 18 x 8 cells between 2-lane streets, centred on the map centre, which is a corner of the
+/// 320 m zone chunks, so the grid spans four of them. Nothing is zoned. Look at it with
+/// `--cam zone-grid --zoning`.
+pub const ZONE_GRID: &str = "zone-grid";
+
+/// The south-west junction of the [`ZONE_GRID`] city; its streets run every 160 m east and
+/// 80 m north from there.
+pub fn zone_grid_origin() -> Vec2 {
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    Vec2::new(c - 320.0, c - 80.0)
+}
+
+/// Builds the [`ZONE_GRID`] scene through the normal commands.
+pub fn build_zone_grid(sim: &mut SimRunner) {
+    let db = embedded_content();
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    let o = zone_grid_origin();
+    let at = |x: f32, y: f32| o + Vec2::new(x, y);
+    let mut legs = Vec::new();
+    for y in [0.0, 80.0, 160.0] {
+        for x in [0.0, 160.0, 320.0, 480.0] {
+            legs.push((at(x, y), at(x + 160.0, y)));
+        }
+    }
+    for x in [0.0, 160.0, 320.0, 480.0, 640.0] {
+        for y in [0.0, 80.0] {
+            legs.push((at(x, y), at(x, y + 80.0)));
+        }
+    }
+    for (from, to) in legs {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: basic,
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+}
+
 /// Big zone blocks (BUG-056): a grid of 3 x 3 blocks of 96 and 112 m (and 100 m, a tie of the
 /// cell fit) between the road edges, every cell painted residential. Look at it with
 /// `--cam zones-big --overlay zones`.

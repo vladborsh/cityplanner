@@ -252,6 +252,19 @@ fn wide_feature(name: &str) -> Option<(usize, bool)> {
 /// allowed view (4000 m).
 pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
     let c = MAP_SIZE / 2.0;
+    // `at:x,y,z,lx,ly,lz`: eye and look-at in metres from the map centre (x, z) and the
+    // ground (y), for exploring a scene (BUG-098).
+    if let Some(n) = name.strip_prefix("at:").map(|s| {
+        s.split(',')
+            .filter_map(|v| v.parse::<f32>().ok())
+            .collect::<Vec<_>>()
+    }) && n.len() == 6
+    {
+        return (
+            Vec3::new(c + n[0], n[1], c + n[2]),
+            Vec3::new(c + n[3], n[4], c + n[5]),
+        );
+    }
     // The city of `--scene grid-shots` (T-275).
     if let Some(pose) = grid_shots::camera(name) {
         return pose;
@@ -371,6 +384,8 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
                 Vec3::new(m.x, 0.0, m.y),
             )
         }
+        // From the south over the user's two rows of blocks of `--scene zone-grid` (BUG-098).
+        "zone-grid" => (Vec3::new(c, 330.0, c + 380.0), Vec3::new(c, 0.0, c - 10.0)),
         "zones" => (
             Vec3::new(c - 10.0, 420.0, c + 330.0),
             Vec3::new(c - 10.0, 0.0, c + 150.0),
@@ -656,6 +671,9 @@ pub fn build_sim(
     } else if scene == Some(scene::ZONE_RECT) {
         scene::build_zone_rect(&mut sim);
         info!("scene zone-rect");
+    } else if scene == Some(scene::ZONE_GRID) {
+        scene::build_zone_grid(&mut sim);
+        info!("scene zone-grid");
     } else if scene == Some(scene::ZONES) {
         scene::build_zones(&mut sim);
         info!("scene zones");
