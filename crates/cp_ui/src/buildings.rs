@@ -404,6 +404,27 @@ pub(crate) fn badge(ui: &egui::Ui, tile: egui::Rect, state: UniqueState) {
     };
 }
 
+/// Which of the sections a menu shows (T-289): Power and Water have menus of their own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    /// Every section but power and water, and the unique buildings.
+    Buildings,
+    Power,
+    Water,
+}
+
+/// Whether the section of `kind` belongs to the menu `scope` (sewage buildings sit in Water).
+pub fn in_scope(kind: ServiceKind, scope: Scope) -> bool {
+    match scope {
+        Scope::Buildings => !matches!(
+            kind,
+            ServiceKind::Power | ServiceKind::Water | ServiceKind::Sewage
+        ),
+        Scope::Power => kind == ServiceKind::Power,
+        Scope::Water => matches!(kind, ServiceKind::Water | ServiceKind::Sewage),
+    }
+}
+
 /// What a network section builds with.
 fn net_parts(net: NetTab) -> (UtilityKind, UtilityNet, Overlay) {
     match net {
@@ -432,11 +453,15 @@ pub fn buildings_panel(
     view: Option<&SimView>,
     tools: &mut ToolState,
     overlay: &mut OverlayState,
+    scope: Scope,
 ) {
     let Some(content) = view.and_then(|v| v.content.as_deref()) else {
         return;
     };
-    for section in sections(content) {
+    for section in sections(content)
+        .into_iter()
+        .filter(|s| in_scope(s.kind, scope))
+    {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             kind_icon(section.kind).show(ui, Sizes::SECTION_ICON);
@@ -547,7 +572,7 @@ pub fn buildings_panel(
             ui.colored_label(egui::Color32::from_rgb(150, 190, 240), site_note(card.site));
         }
     }
-    if let Some(view) = view {
+    if let Some(view) = view.filter(|_| scope == Scope::Buildings) {
         for (monument, cards) in unique_sections(content) {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -658,13 +683,18 @@ mod tests {
     #[test]
     fn clicking_a_card_selects_its_building_and_activates_place() {
         let view = view();
-        let first = groups(view.content.as_deref().unwrap())[0].cards[0].clone();
+        let first = groups(view.content.as_deref().unwrap())
+            .into_iter()
+            .find(|g| in_scope(g.kind, Scope::Buildings))
+            .unwrap()
+            .cards[0]
+            .clone();
         let ctx = egui::Context::default();
         let mut tools = ToolState::default();
         let mut overlay = OverlayState::default();
         let draw = |tools: &mut ToolState, overlay: &mut OverlayState, events| {
             frame_texts(&ctx, input(0.0, events), |ui| {
-                buildings_panel(ui, Some(&view), tools, overlay)
+                buildings_panel(ui, Some(&view), tools, overlay, Scope::Buildings)
             })
         };
         let texts = draw(&mut tools, &mut overlay, vec![]);
@@ -680,7 +710,10 @@ mod tests {
         assert_eq!(tools.building.def, Some(first.id));
         // The text of a card carries the price, upkeep and lot.
         let text = card_text(&first);
-        assert!(text.contains("/wk") && text.contains("lot 2×2"), "{text}");
+        assert!(
+            text.contains("/wk") && text.contains(&format!("lot {}×{}", first.lot.0, first.lot.1)),
+            "{text}"
+        );
     }
 
     #[test]

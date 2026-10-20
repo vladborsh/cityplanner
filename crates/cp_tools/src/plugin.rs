@@ -193,6 +193,9 @@ pub struct ToolState {
     pub utility: UtilityTool,
     /// What the bulldozer may take (T-286): set when it is taken up, from the tool it interrupts.
     pub bulldoze_layer: BulldozeLayer,
+    /// The layer of the bulldozer when it is taken up with no network tool active: the open menu's
+    /// (T-289: the Power and Water menus are layers; set by the UI each frame, `All` otherwise).
+    pub menu_layer: BulldozeLayer,
     /// The layer of the building being placed (a water or power service: its layer), kept by
     /// the hover while the placement tool is active so taking the bulldozer up needs no content.
     pub place_layer: BulldozeLayer,
@@ -268,8 +271,8 @@ impl ToolState {
                     BulldozeLayer::Power
                 }
                 ActiveTool::Utility => BulldozeLayer::Water,
-                ActiveTool::Place => self.place_layer,
-                _ => BulldozeLayer::All,
+                ActiveTool::Place if self.place_layer != BulldozeLayer::All => self.place_layer,
+                _ => self.menu_layer,
             };
         }
         self.active = tool;

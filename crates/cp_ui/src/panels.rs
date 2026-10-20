@@ -72,6 +72,10 @@ pub struct UiState {
     pub prefs: Prefs,
     /// The category whose tool panel is open.
     pub category: Option<Category>,
+    /// A menu was opened this frame and has not taken up its tool yet (T-289).
+    pub entered: Option<Category>,
+    /// The last build tool used in each menu this session (T-289; not saved).
+    pub last_tool: Vec<(Category, crate::menus::Remembered)>,
     /// A tool was active at the end of the last frame: the Esc that cleared it must not also
     /// reset the view (BUG-059).
     pub tool_was_active: bool,
@@ -649,7 +653,12 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
             }
         },
         (
-            Category::Buildings | Category::Transit | Category::Industry | Category::Parks,
+            Category::Buildings
+            | Category::Power
+            | Category::Water
+            | Category::Transit
+            | Category::Industry
+            | Category::Parks,
             ActiveTool::Place,
         ) => match &tools.place_ghost {
             Some(g) => {
@@ -700,19 +709,22 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ui.weak("Hover a spot beside a road. T rotates, Esc leaves the tool.");
             }
         },
-        (Category::Buildings, ActiveTool::Utility) => match &tools.utility_ghost {
-            Some(g) if g.cursor_piece && g.valid => {
-                ui.weak("Click to start. Alt switches the snaps off. Buildings within reach of the network are connected (the band shows the reach). Esc cancels.");
+        (Category::Buildings | Category::Power | Category::Water, ActiveTool::Utility) => {
+            match &tools.utility_ghost {
+                Some(g) if g.cursor_piece && g.valid => {
+                    ui.weak("Click to start. Alt switches the snaps off. Buildings within reach of the network are connected (the band shows the reach). Esc cancels.");
+                }
+                Some(g) if g.valid => {
+                    let snap =
+                        snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));
+                    ok(ui, "can build", g.cost, snap)
+                }
+                Some(g) => bad(ui, &g.errors, "cannot build here"),
+                None => {
+                    ui.weak("Click to start. Alt switches the snaps off. Buildings within reach of the network are connected (the band shows the reach). Esc cancels.");
+                }
             }
-            Some(g) if g.valid => {
-                let snap = snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));
-                ok(ui, "can build", g.cost, snap)
-            }
-            Some(g) => bad(ui, &g.errors, "cannot build here"),
-            None => {
-                ui.weak("Click to start. Alt switches the snaps off. Buildings within reach of the network are connected (the band shows the reach). Esc cancels.");
-            }
-        },
+        }
         (Category::Transit, ActiveTool::Line) => {
             if let Some(notice) = &tools.line_notice {
                 bad(ui, std::slice::from_ref(notice), "cannot place a stop");
@@ -812,13 +824,16 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
         (_, ActiveTool::Bulldozer) if tools.bulldoze_layer == BulldozeLayer::Power => {
             ui.weak("Removes only power lines and power buildings. Hover one and click; B or Esc goes back to the line tool.");
         }
-        (Category::Bulldozer, ActiveTool::Bulldozer) if tools.highlight_outside => {
+        (_, ActiveTool::Bulldozer) if tools.highlight_outside => {
             bad(ui, &["outside your land".to_string()], "cannot remove");
         }
-        (Category::Bulldozer, ActiveTool::Bulldozer) => {
+        (_, ActiveTool::Bulldozer) => {
             ui.weak("Hover a building, bus stop or road segment, click to remove it. Esc leaves the tool.");
         }
         (Category::Buildings, _) => {
+            ui.weak("Pick a building; the overlay shows which buildings lack supply.");
+        }
+        (Category::Power | Category::Water, _) => {
             ui.weak("Pick a building or a network tool; the overlay shows the network and which buildings lack supply.");
         }
         _ => {
@@ -835,15 +850,7 @@ pub fn services_panel(
     tools: &mut ToolState,
     overlay: &mut OverlayState,
 ) {
-    crate::buildings::buildings_panel(ui, view, tools, overlay);
-}
-
-/// The Bulldozer category: the one tool.
-pub fn bulldozer_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
-    let on = tools.active == ActiveTool::Bulldozer;
-    if tool_button(ui, Icon::Bulldozer, "Bulldozer", on).clicked() {
-        tools.toggle_bulldozer();
-    }
+    crate::buildings::buildings_panel(ui, view, tools, overlay, crate::buildings::Scope::Buildings);
 }
 
 fn zone_kind_icon(kind: ZoneToolKind) -> Icon {

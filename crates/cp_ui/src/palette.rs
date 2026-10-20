@@ -12,7 +12,7 @@ use cp_sim::SimView;
 use cp_tools::{CommandOutbox, ToolState};
 
 use crate::icons::Icon;
-use crate::panels::{UiState, bulldozer_panel, roads_panel, services_panel, verdict, zones_panel};
+use crate::panels::{UiState, roads_panel, services_panel, verdict, zones_panel};
 use crate::style::Sizes;
 
 /// Build-menu categories. A category without tools is not drawn ([`Category::available`]).
@@ -21,7 +21,10 @@ pub enum Category {
     Roads,
     Zones,
     Buildings,
-    Bulldozer,
+    /// Wind turbine, coal plant and the power line (T-289: not in Buildings any more).
+    Power,
+    /// Pump, tower, outflow, treatment plant and pipes (T-289).
+    Water,
     /// Districts: brushes, the district list and its taxes (M2).
     Districts,
     /// Public transport (M3): the line tool and the depot. Last, so the hotkeys of the
@@ -34,11 +37,12 @@ pub enum Category {
 }
 
 impl Category {
-    pub const ALL: [Category; 8] = [
+    pub const ALL: [Category; 9] = [
         Category::Roads,
         Category::Zones,
         Category::Buildings,
-        Category::Bulldozer,
+        Category::Power,
+        Category::Water,
         Category::Districts,
         Category::Transit,
         Category::Industry,
@@ -50,7 +54,8 @@ impl Category {
             Category::Roads => "Roads",
             Category::Zones => "Zones",
             Category::Buildings => "Buildings",
-            Category::Bulldozer => "Bulldozer",
+            Category::Power => "Power",
+            Category::Water => "Water",
             Category::Districts => "Districts",
             Category::Transit => "Transport",
             Category::Industry => "Industry",
@@ -63,7 +68,8 @@ impl Category {
             Category::Roads => Icon::Roads,
             Category::Zones => Icon::Zones,
             Category::Buildings => Icon::Buildings,
-            Category::Bulldozer => Icon::Bulldozer,
+            Category::Power => Icon::Power,
+            Category::Water => Icon::Water,
             Category::Districts => Icon::Districts,
             Category::Transit => Icon::Transit,
             Category::Industry => Icon::Industry,
@@ -80,7 +86,8 @@ impl Category {
             Category::Buildings => {
                 content.is_some_and(|c| c.buildings().any(|(_, d)| d.service.is_some()))
             }
-            Category::Zones | Category::Bulldozer | Category::Districts => true,
+            Category::Zones | Category::Districts => true,
+            Category::Power | Category::Water => content.is_some(),
             Category::Transit => crate::transit::has_tools(content),
             Category::Industry | Category::Parks => content.is_some(),
         }
@@ -129,6 +136,8 @@ pub fn toggle(state: &mut UiState, c: Category) {
     state.category = if state.category == Some(c) {
         None
     } else {
+        // A menu just opened: `menus::apply` takes up its tool (T-289).
+        state.entered = Some(c);
         Some(c)
     };
 }
@@ -205,7 +214,20 @@ pub fn tool_panel(
                 Category::Roads => roads_panel(ui, view, tools, state),
                 Category::Zones => zones_panel(ui, view, tools, state),
                 Category::Buildings => services_panel(ui, view, tools, overlay),
-                Category::Bulldozer => bulldozer_panel(ui, tools),
+                Category::Power => crate::buildings::buildings_panel(
+                    ui,
+                    view,
+                    tools,
+                    overlay,
+                    crate::buildings::Scope::Power,
+                ),
+                Category::Water => crate::buildings::buildings_panel(
+                    ui,
+                    view,
+                    tools,
+                    overlay,
+                    crate::buildings::Scope::Water,
+                ),
                 Category::Districts => crate::districts::districts_panel(ui, view, tools, outbox),
                 Category::Transit => {
                     crate::transit::transit_panel(ui, view, tools, overlay, &mut state.lines_open)
@@ -302,7 +324,9 @@ mod tests {
             frame_texts(ctx, raw, |ui| {
                 let mut root = crate::panels::root_ui(ui.ctx());
                 *pal = palette(&mut root, state, view.content.as_deref());
+                crate::menus::apply(state, tools, overlay, Some(view));
                 *panel = tool_panel(&mut root, state, Some(view), tools, overlay, outbox);
+                crate::menus::remember(state, tools, view.content.as_deref());
                 crate::panels::release_auto_overlay(state, tools, overlay);
             })
         }
@@ -423,7 +447,8 @@ mod tests {
         // Tall enough for every card (the list grows until T-098 makes it a grid).
         rig.screen = egui::vec2(1280.0, 3000.0);
         rig.click_category(Category::Roads);
-        rig.click_label("Build");
+        // T-289: the menu opens with the road tool in hand.
+        assert_eq!(rig.tools.active, ActiveTool::Road);
         assert_eq!(rig.tools.active, ActiveTool::Road);
         // Click the first two.
         for c in &cards[..2] {
@@ -476,7 +501,8 @@ mod tests {
     fn elevation_buttons_stay_within_the_levels() {
         let mut rig = Rig::new();
         rig.click_category(Category::Roads);
-        rig.click_label("Build");
+        // T-289: the menu opens with the road tool in hand.
+        assert_eq!(rig.tools.active, ActiveTool::Road);
         rig.click_label("−");
         assert_eq!(rig.tools.road.level, 0);
         for _ in 0..cp_tools::MAX_ELEVATION_LEVEL + 2 {
@@ -491,7 +517,8 @@ mod tests {
     fn the_road_verdict_shows_length_cost_and_errors() {
         let mut rig = Rig::new();
         rig.click_category(Category::Roads);
-        rig.click_label("Build");
+        // T-289: the menu opens with the road tool in hand.
+        assert_eq!(rig.tools.active, ActiveTool::Road);
         rig.tools.ghost = Some(Ghost {
             polylines: vec![vec![
                 bevy::math::Vec3::ZERO,
@@ -560,7 +587,8 @@ mod tests {
 
     /// §13.7: every tile of every construction panel is one size, with a square icon frame.
     #[test]
-    fn every_tile_of_the_roads_zones_buildings_and_bulldozer_panels_is_88_with_a_64_square_icon() {
+    fn every_tile_of_the_roads_zones_buildings_power_and_water_panels_is_88_with_a_64_square_icon()
+    {
         for (category, tool) in [
             (Category::Roads, ActiveTool::Road),
             (Category::Roads, ActiveTool::Upgrade),
@@ -568,7 +596,10 @@ mod tests {
             (Category::Buildings, ActiveTool::Utility),
             (Category::Buildings, ActiveTool::Place),
             (Category::Buildings, ActiveTool::None),
-            (Category::Bulldozer, ActiveTool::Bulldozer),
+            (Category::Power, ActiveTool::Place),
+            (Category::Power, ActiveTool::Utility),
+            (Category::Water, ActiveTool::Place),
+            (Category::Water, ActiveTool::Utility),
             (Category::Districts, ActiveTool::District),
             (Category::Transit, ActiveTool::Line),
             (Category::Industry, ActiveTool::Area),
@@ -622,7 +653,8 @@ mod tests {
                 Category::Roads,
                 Category::Zones,
                 Category::Buildings,
-                Category::Bulldozer,
+                Category::Power,
+                Category::Water,
                 Category::Districts,
                 Category::Transit,
                 Category::Industry,
@@ -631,17 +663,15 @@ mod tests {
         );
         // Without content the road and building tools do not exist either.
         let none = Category::available(None);
-        assert_eq!(
-            none,
-            vec![Category::Zones, Category::Bulldozer, Category::Districts]
-        );
+        assert_eq!(none, vec![Category::Zones, Category::Districts]);
     }
 
     #[test]
     fn clicking_a_tool_activates_it_and_the_verdict_shows_for_valid_and_invalid_ghosts() {
         let mut rig = Rig::new();
         rig.click_category(Category::Roads);
-        rig.click_label("Build");
+        // T-289: the menu opens with the road tool in hand.
+        assert_eq!(rig.tools.active, ActiveTool::Road);
         assert_eq!(rig.tools.active, ActiveTool::Road);
 
         rig.tools.ghost = Some(Ghost {
@@ -688,7 +718,8 @@ mod tests {
     fn the_roads_panel_paints_its_sections() {
         let mut rig = Rig::new();
         rig.click_category(Category::Roads);
-        rig.click_label("Build");
+        // T-289: the menu opens with the road tool in hand.
+        assert_eq!(rig.tools.active, ActiveTool::Road);
         rig.tools.ghost = Some(Ghost {
             polylines: vec![],
             valid: true,
@@ -790,10 +821,6 @@ mod tests {
             let text = rig.frame(vec![]);
             assert!(text.contains(c.label()), "{c:?}: {text}");
         }
-        rig.click_category(Category::Bulldozer);
-        assert_eq!(rig.state.category, Some(Category::Bulldozer));
-        rig.click_label("Bulldozer");
-        assert_eq!(rig.tools.active, ActiveTool::Bulldozer);
     }
 
     fn shift_key(k: egui::Key) -> egui::Event {
@@ -816,7 +843,8 @@ mod tests {
                 Category::Roads,
                 Category::Zones,
                 Category::Buildings,
-                Category::Bulldozer,
+                Category::Power,
+                Category::Water,
                 Category::Districts,
                 Category::Transit,
                 Category::Industry,
@@ -832,6 +860,7 @@ mod tests {
             egui::Key::Num6,
             egui::Key::Num7,
             egui::Key::Num8,
+            egui::Key::Num9,
         ];
         for (n, k) in keys.into_iter().enumerate() {
             let mut got = None;
@@ -869,12 +898,14 @@ mod tests {
 
     /// T-102: the Buildings panel has a section per service kind (water and sewage share one)
     /// in kind order, each a row of tiles: the network tool, the buildings, remove.
+    /// T-289: Power and Water have menus of their own; Buildings keeps the other services and the
+    /// unique buildings.
     #[test]
-    fn the_buildings_panel_has_water_then_power_sections_with_network_tools_beside_the_buildings() {
+    fn the_power_and_water_menus_hold_their_buildings_and_network_tools_and_buildings_has_neither()
+    {
         use cp_content::ServiceKind;
         let mut rig = Rig::new();
         rig.screen = egui::vec2(1280.0, 3000.0);
-        rig.click_category(Category::Buildings);
         let content = rig.view.content.clone().unwrap();
         let sections = crate::buildings::sections(&content);
         let kinds: Vec<ServiceKind> = sections.iter().map(|s| s.kind).collect();
@@ -894,7 +925,6 @@ mod tests {
             ],
             "the depot is in the Transport category"
         );
-        // Water: the pipe, every Water and Sewage service building, remove; Power likewise.
         let service = |kinds: &[ServiceKind]| {
             content
                 .buildings()
@@ -906,38 +936,63 @@ mod tests {
                 })
                 .count()
         };
+        let names = |rig: &mut Rig| -> Vec<String> {
+            rig.frame_texts(vec![])
+                .into_iter()
+                .map(|(t, _)| t)
+                .collect()
+        };
+        // Water: the pipe, every Water and Sewage service building, remove.
+        rig.click_category(Category::Water);
         assert_eq!(
-            sections[0].cards.len(),
-            service(&[ServiceKind::Water, ServiceKind::Sewage])
+            tiles(&mut rig).len(),
+            service(&[ServiceKind::Water, ServiceKind::Sewage]) + 2
         );
-        assert_eq!(sections[1].cards.len(), service(&[ServiceKind::Power]));
-        let tiles = tiles(&mut rig);
-        // The networks add their tool and remove; the Garbage section is just its buildings.
-        let expect: usize = sections
-            .iter()
-            .map(|s| s.cards.len() + if s.net.is_some() { 2 } else { 0 })
-            .sum::<usize>()
-            // The unique buildings and monuments follow in their own sections (T-201).
-            + crate::buildings::unique_sections(&content)
-                .iter()
-                .map(|(_, c)| c.len())
-                .sum::<usize>();
-        assert_eq!(tiles.len(), expect);
-        let texts = rig.frame_texts(vec![]);
-        let names: Vec<&str> = texts.iter().map(|(t, _)| t.as_str()).collect();
+        let n = names(&mut rig);
         for want in [
-            "Water",
-            "Power",
             "Pipe",
             "Water pump",
+            "Water tower",
             "Sewage outflow",
             "Remove pipe",
+        ] {
+            assert!(n.iter().any(|t| t == want), "{want:?} missing from {n:?}");
+        }
+        assert!(!n.iter().any(|t| t == "Power line" || t == "Wind turbine"));
+        // Power likewise.
+        rig.click_category(Category::Power);
+        assert_eq!(tiles(&mut rig).len(), service(&[ServiceKind::Power]) + 2);
+        let n = names(&mut rig);
+        for want in [
             "Power line",
             "Coal power plant",
             "Wind turbine",
             "Remove line",
         ] {
-            assert!(names.contains(&want), "{want:?} missing from {names:?}");
+            assert!(n.iter().any(|t| t == want), "{want:?} missing from {n:?}");
+        }
+        assert!(!n.iter().any(|t| t == "Pipe" || t == "Water pump"));
+        // Buildings: neither network, the rest of the services and the unique buildings.
+        rig.click_category(Category::Buildings);
+        let expect: usize = sections
+            .iter()
+            .filter(|s| crate::buildings::in_scope(s.kind, crate::buildings::Scope::Buildings))
+            .map(|s| s.cards.len())
+            .sum::<usize>()
+            + crate::buildings::unique_sections(&content)
+                .iter()
+                .map(|(_, c)| c.len())
+                .sum::<usize>();
+        assert_eq!(tiles(&mut rig).len(), expect);
+        let n = names(&mut rig);
+        for gone in [
+            "Pipe",
+            "Water pump",
+            "Power line",
+            "Wind turbine",
+            "Remove pipe",
+        ] {
+            assert!(!n.iter().any(|t| t == gone), "{gone:?} still in Buildings");
         }
     }
 
@@ -1010,7 +1065,7 @@ mod tests {
         use cp_render::Overlay;
         let mut rig = Rig::new();
         rig.screen = egui::vec2(1280.0, 3000.0);
-        rig.click_category(Category::Buildings);
+        rig.click_category(Category::Water);
         rig.click_label("Water pump");
         let pump = rig
             .view
@@ -1028,6 +1083,7 @@ mod tests {
         assert_eq!(rig.tools.utility.kind, cp_content::UtilityKind::Water);
         assert_eq!(rig.overlay.active, Overlay::Water);
 
+        rig.click_category(Category::Power);
         rig.click_label("Remove line");
         assert_eq!(rig.tools.active, ActiveTool::Bulldozer);
         assert_eq!(rig.tools.bulldoze_layer, cp_tools::BulldozeLayer::Power);
@@ -1046,7 +1102,7 @@ mod tests {
         use cp_render::Overlay;
         let mut rig = Rig::new();
         rig.screen = egui::vec2(1280.0, 3000.0);
-        rig.click_category(Category::Buildings);
+        rig.click_category(Category::Water);
         rig.click_label("Pipe");
         assert_eq!(rig.tools.active, ActiveTool::Utility);
         assert_eq!(rig.overlay.active, Overlay::Water);
@@ -1054,8 +1110,7 @@ mod tests {
         // To the Roads menu: the water layout goes.
         rig.click_category(Category::Roads);
         assert_eq!(rig.overlay.active, Overlay::Off);
-        // And with the Build tool of the roads, nothing comes back.
-        rig.click_label("Build");
+        // The Roads menu opened with the road tool in hand (T-289); nothing comes back.
         assert_eq!(rig.tools.active, ActiveTool::Road);
         assert_eq!(rig.overlay.active, Overlay::Off);
     }
@@ -1067,14 +1122,15 @@ mod tests {
         rig.screen = egui::vec2(1280.0, 3000.0);
         rig.overlay.open(Overlay::Power);
         rig.click_category(Category::Roads);
-        rig.click_label("Build");
+        // T-289: the menu opens with the road tool in hand.
+        assert_eq!(rig.tools.active, ActiveTool::Road);
         assert_eq!(rig.tools.active, ActiveTool::Road);
         assert_eq!(
             rig.overlay.active,
             Overlay::Power,
             "the player's layout stays"
         );
-        rig.click_category(Category::Buildings);
+        rig.click_category(Category::Water);
         rig.click_label("Pipe");
         // The pipe tool shows the water layout (its own); the player closes what is left.
         assert_eq!(rig.overlay.active, Overlay::Water);
@@ -1106,12 +1162,14 @@ mod tests {
         use cp_content::ServiceSite;
         let mut rig = Rig::new();
         rig.screen = egui::vec2(1280.0, 3000.0);
-        rig.click_category(Category::Buildings);
-        for (label, site) in [
-            ("Water pump", ServiceSite::OnWater),
-            ("Sewage outflow", ServiceSite::Shore),
-            ("Wind turbine", ServiceSite::Land),
+        for (category, label, site) in [
+            (Category::Water, "Water pump", ServiceSite::OnWater),
+            (Category::Water, "Sewage outflow", ServiceSite::Shore),
+            (Category::Power, "Wind turbine", ServiceSite::Land),
         ] {
+            if rig.state.category != Some(category) {
+                rig.click_category(category);
+            }
             rig.click_label(label);
             let text = rig.frame(vec![]);
             let note = crate::buildings::site_note(site);
@@ -1194,13 +1252,78 @@ mod tests {
         rig
     }
 
+    /// T-289: opening a menu takes up the last build tool used in it this session, the first
+    /// time its first tool; Power and Water turn their overlay on.
     #[test]
-    fn the_districts_category_is_the_fifth_and_new_district_creates_and_selects_one() {
+    fn a_menu_opens_with_its_last_tool_and_the_network_menus_show_their_overlay() {
+        use cp_render::Overlay;
+        let mut rig = Rig::new();
+        rig.screen = egui::vec2(1280.0, 3000.0);
+        let def = |rig: &Rig, n: &str| rig.view.content.as_ref().unwrap().building_id(n);
+        // First time: the first tool of the menu.
+        rig.click_category(Category::Power);
+        assert_eq!(rig.tools.active, ActiveTool::Place);
+        assert_eq!(rig.tools.building.def, def(&rig, "wind_turbine"));
+        assert_eq!(rig.overlay.active, Overlay::Power);
+        rig.click_category(Category::Water);
+        assert_eq!(rig.tools.building.def, def(&rig, "water_pump_station"));
+        assert_eq!(rig.overlay.active, Overlay::Water, "the Power layout went");
+        // The pipe tool becomes Water's last tool; the coal plant Power's.
+        rig.click_label("Pipe");
+        assert_eq!(rig.tools.active, ActiveTool::Utility);
+        rig.click_category(Category::Power);
+        rig.click_label("Coal power plant");
+        rig.click_category(Category::Water);
+        assert_eq!(
+            rig.tools.active,
+            ActiveTool::Utility,
+            "Water's last tool: pipes"
+        );
+        assert_eq!(rig.tools.utility.kind, cp_content::UtilityKind::Water);
+        rig.click_category(Category::Power);
+        assert_eq!(rig.tools.active, ActiveTool::Place);
+        assert_eq!(rig.tools.building.def, def(&rig, "coal_power_plant"));
+        // Roads and Zones: their tools.
+        rig.click_category(Category::Roads);
+        assert_eq!(rig.tools.active, ActiveTool::Road);
+        rig.click_category(Category::Zones);
+        assert_eq!(rig.tools.active, ActiveTool::Zone);
+        // Closing a menu keeps nothing but the memory; the Buildings menu has its own.
+        rig.click_category(Category::Buildings);
+        assert_eq!(rig.tools.active, ActiveTool::Place);
+        assert!(rig.tools.building.def != def(&rig, "coal_power_plant"));
+    }
+
+    /// T-289: with the Power or Water menu open the bulldozer is that layer's, even when no
+    /// network tool is in hand; anywhere else it takes everything.
+    #[test]
+    fn the_bulldozer_follows_the_open_menus_layer() {
+        use cp_tools::BulldozeLayer;
+        let mut rig = Rig::new();
+        rig.screen = egui::vec2(1280.0, 3000.0);
+        for (category, layer) in [
+            (Category::Power, BulldozeLayer::Power),
+            (Category::Water, BulldozeLayer::Water),
+            (Category::Roads, BulldozeLayer::All),
+            (Category::Buildings, BulldozeLayer::All),
+        ] {
+            rig.click_category(category);
+            rig.tools.select(ActiveTool::None);
+            rig.frame(vec![]);
+            rig.tools.toggle_bulldozer();
+            assert_eq!(rig.tools.active, ActiveTool::Bulldozer, "{category:?}");
+            assert_eq!(rig.tools.bulldoze_layer, layer, "{category:?}");
+            rig.tools.toggle_bulldozer();
+        }
+    }
+
+    #[test]
+    fn the_districts_category_is_the_sixth_and_new_district_creates_and_selects_one() {
         use cp_district::{DistrictCommand, DistrictId};
         use cp_sim::SimCommand;
         let mut rig = Rig::new();
         assert_eq!(
-            Category::available(rig.view.content.as_deref())[4],
+            Category::available(rig.view.content.as_deref())[5],
             Category::Districts
         );
         rig.click_category(Category::Districts);

@@ -29,6 +29,7 @@ pub mod industry;
 pub mod info;
 pub mod land;
 pub mod lines;
+pub mod menus;
 pub mod metrics;
 pub mod milestone;
 pub mod palette;
@@ -264,6 +265,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         ctx.set_zoom_factor(state.prefs.ui_scale);
     }
     palette(&mut root, state, view.content.as_deref());
+    menus::apply(state, tools, overlay, Some(view));
     tool_panel(&mut root, state, Some(view), tools, overlay, outbox);
     demand_panel::demand_panel(&mut root, view, state, tools);
     remember_map_rect(ctx, &root);
@@ -305,6 +307,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         overlay.open_auto(cp_render::Overlay::Transit);
         picked.0 = None;
     }
+    menus::remember(state, tools, view.content.as_deref());
     // An overlay a tool opened by itself goes with that tool (BUG-083).
     panels::release_auto_overlay(state, tools, overlay);
 }
