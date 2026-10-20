@@ -47,7 +47,8 @@ use cp_core::time::{MOVE_SECONDS_PER_TICK, MOVE_SUBSTEPS};
 use cp_net::{LaneId, Signal};
 
 use crate::agents::{Vehicle, VehicleId};
-use crate::graph::{ExitConn, LaneNode, PathGraph};
+use crate::astar::{CarPath, find_car_path_lanes};
+use crate::graph::{CongestionMap, ExitConn, LaneNode, PathGraph};
 
 /// Seconds of movement per substep.
 pub const DT: f32 = MOVE_SECONDS_PER_TICK / MOVE_SUBSTEPS as f32;
@@ -299,6 +300,19 @@ fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGrap
                 let t = g.car[ts as usize].as_ref().expect("lane");
                 let s = v.s.clamp(t.s_in, t.s_out);
                 if !hop_blockers(g, vehicles, st, v, to, s).is_empty() {
+                    // At the stop line with no gap to change lanes: turn from this lane when it
+                    // has an exit to the same street (BUG-090), else wait.
+                    let at_end = g.car[fs as usize]
+                        .as_ref()
+                        .is_some_and(|f| v.s >= f.s_out - LANE_END_M && v.speed < 0.1);
+                    let head = st.lanes[fs as usize].first() == Some(&id);
+                    if at_end
+                        && head
+                        && let Some(steps) = turn_from_here(g, &v.path, usize::from(v.hop))
+                    {
+                        vehicles.get_mut(id).expect("vehicle").path.steps = steps;
+                        continue;
+                    }
                     break;
                 }
                 st.lane_remove(fs, id);
@@ -319,6 +333,54 @@ fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGrap
             .any(|&id| vehicles.get(id).is_some_and(|v| pending_hop(g, v)));
         st.hop_lanes.set(slot, pending);
     }
+}
+
+/// How near the stop line (metres) a car waiting for a lane change takes the turn from its own
+/// lane instead (BUG-090).
+const LANE_END_M: f32 = 1.0;
+
+/// The route of `path` with the lane change(s) at `hop` replaced by the turn from the lane the car
+/// is on (BUG-090: on a wide road a car that met its lane change too late, behind a queue in the
+/// lane it wants, waited at the stop line until it was removed as stuck). When that lane has an
+/// exit into the street the route turns into, the car takes it (and changes to the planned lane
+/// on that street if it lands in another one); otherwise it takes the exit of its lane with the
+/// quickest way on to its goal, found now. `None` when its lane leads nowhere that reaches it.
+fn turn_from_here(g: &PathGraph, path: &CarPath, hop: usize) -> Option<Vec<(LaneId, LaneId)>> {
+    let steps = &path.steps;
+    let (from, _) = *steps.get(hop)?;
+    // The junction exit the lane changes lead to.
+    let k = (hop..steps.len()).find(|&i| !is_lane_change(g, steps[i].0, steps[i].1))?;
+    let (_, planned) = steps[k];
+    let street = lane_node(g, planned)?.segment;
+    let slot = g.car_slot(from)?;
+    let exits = &g.exits[slot as usize];
+    let mut out = steps[..hop].to_vec();
+    if let Some(exit) = exits
+        .iter()
+        .filter(|e| lane_node(g, e.to).is_some_and(|n| n.segment == street))
+        .min_by_key(|e| (e.to != planned, e.to.index))
+    {
+        out.push((from, exit.to));
+        if exit.to != planned {
+            out.push((exit.to, planned));
+        }
+        out.extend_from_slice(&steps[k + 1..]);
+        return Some(out);
+    }
+    // Another way: from every exit of this lane, the quickest route on to the goal.
+    let cong = CongestionMap::default();
+    let (exit, rest) = exits
+        .iter()
+        .filter_map(|e| {
+            let n = lane_node(g, e.to)?;
+            let p = find_car_path_lanes(g, &cong, (e.to, n.s_in), (path.goal, path.goal_s)).ok()?;
+            Some((e.length + p.cost, e.to.index, e, p))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+        .map(|(_, _, e, p)| (e, p))?;
+    out.push((from, exit.to));
+    out.extend(rest.steps);
+    Some(out)
 }
 
 /// Which lane slots hold a car, as a bitset: the passes of a substep visit the few hundred busy

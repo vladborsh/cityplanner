@@ -699,9 +699,11 @@ fn shared_lane_run(seed: u64, mixed: bool) -> f32 {
                 Side::Left
             }
         };
-        // From past the junction (16 m) to 26 m short of the next one: room to change lanes.
-        let from = acc(a, 18.0 + next(50) as f32, side(next(2)));
-        let to = acc(b, 18.0 + next(50) as f32, side(next(2)));
+        // Anywhere from past the junction (16 m) up to its stop line (94 m): a car that starts
+        // close to the next junction in the wrong lane turns from its own lane or goes another
+        // way (BUG-090), it is never stuck waiting for a lane change.
+        let from = acc(a, 18.0 + next(70) as f32, side(next(2)));
+        let to = acc(b, 18.0 + next(70) as f32, side(next(2)));
         if find_car_path(&rig.graph, &CongestionMap::default(), &from, &to).is_ok() {
             rig.add_kind(u8::from(mixed && trips % 3 == 0), from, to);
             trips += 1;
@@ -726,6 +728,12 @@ fn shared_lane_run(seed: u64, mixed: bool) -> f32 {
     println!(
         "seed {seed} mixed {mixed}: clearance {closest:.2} m, arrived {} stuck {} invalid {} why {:?}",
         rig.arrived, rig.stuck, rig.invalid, rig.st.stuck_why
+    );
+    // BUG-090: nobody is removed for a lane change it could not make.
+    assert_eq!(
+        rig.st.stuck_why[crate::drive::StuckWhy::LaneChange as usize],
+        0,
+        "seed {seed} mixed {mixed}: stuck waiting for a lane change"
     );
     // Long trucks need 15 m of free lane to enter and can jam a dense lattice for good; only
     // the uniform run must lose nobody.
