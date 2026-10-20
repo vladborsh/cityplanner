@@ -810,8 +810,7 @@ fn a_street_across_a_curve_makes_an_x_whichever_comes_first() {
             .nodes()
             .filter(|(_, n)| n.segments.len() == 2)
             .map(|(_, n)| cp_core::curve::to_xz(n.pos) - pl.origin)
-            .filter(|p| p.x > 170.0 && p.y > 50.0 && p.y < 150.0)
-            .next()
+            .find(|p| p.x > 170.0 && p.y > 50.0 && p.y < 150.0)
             .expect("a cut of the curve")
     };
     // At the cut, 6 m from it (it is dissolved: the curve is cut anew), and clear of it.
