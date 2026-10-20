@@ -8,7 +8,9 @@
 //! Old saves are not migrated during development (T-275, AGENTS.md): when the format changes,
 //! `gen_m1_fixtures` writes the two files again with the current writer and prints the checksums
 //! to pin here. Made last for format 57 (T-275: roads are whole cells wide, the 96 m lattice of
-//! `grid_city`).
+//! `grid_city`). BUG-090 moved the two `load + 4096 ticks` pins (state at load unchanged): a car
+//! stopped at the stop line with its lane change blocked now turns from its own lane or goes
+//! another way instead of waiting to be removed as stuck.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -98,7 +100,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     // of the ground per tick, so the day after the load runs differently.
     assert_eq!(
         after_4096(&mut sim),
-        0x606e09d68bd60a0b,
+        0x5599eb4b843a2e4b,
         "load + 4096 ticks"
     );
 }
@@ -133,7 +135,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
         sim.tick_once();
     }
     // T-270: re-recorded, the movement clock is 0.4 s a tick (§2 v1.2).
-    assert_eq!(sim.checksum(), 0xcaaf98390058c83b, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0xa0d024b9d805c774, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,
