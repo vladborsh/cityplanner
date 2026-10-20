@@ -660,3 +660,26 @@ fn a_reused_cache_follows_links_added_and_removed_near_buildings() {
     );
     assert_ne!(w[far.index as usize] & BuildingFlags::NO_WATER, 0);
 }
+
+/// BUG-091: a town of 5 000 houses on one power line walks the line's members a bounded number
+/// of times per supply pass (once per search), not once per member (the square: 25 million).
+#[test]
+fn one_line_through_a_big_town_is_walked_once_per_search() {
+    let db = db_with("networks: (power_gap_m: 64.0, line_reach_m: 80.0, pipe_reach_m: 64.0)");
+    let mut b = BuildingGrid::new();
+    let n = 5000;
+    // A row of houses 10 m apart along the line, the plant at its start.
+    add_sized(&mut b, &db, "bigplant", 2, true, 0.0, 0.0);
+    for k in 0..n {
+        add(&mut b, &db, "house", 10.0 * k as f32, 20.0);
+    }
+    let mut g = UtilityGraph::new();
+    line(&mut g, UtilityNet::Power, 0.0, 10.0 * n as f32);
+    crate::supply::LINE_VISITS.with(|v| v.set(0));
+    let _ = compute_supply(&db, &b, &g);
+    let visits = crate::supply::LINE_VISITS.with(|v| v.get());
+    assert!(
+        visits <= 2 * (n as u64 + 1),
+        "{visits} line members walked for {n} houses"
+    );
+}

@@ -43,6 +43,12 @@ use cp_district::{Policies, PolicyParams};
 
 use crate::graph::{UtilityGraph, UtilityLinkId, UtilityNet};
 
+#[cfg(test)]
+thread_local! {
+    /// Line members walked by the power searches (BUG-091's guard: linear in the buildings).
+    pub(crate) static LINE_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// Recompute period, ticks (§2: utilities run every 64 ticks).
 pub const SUPPLY_PERIOD: u64 = 64;
 
@@ -745,8 +751,15 @@ pub fn compute_supply_pools(
     let gap_ok = |i: usize, j: usize| {
         sites[j].pos.distance(sites[i].pos) - sites[i].half - sites[j].half <= power_gap
     };
-    // Visits the neighbours of `i` not yet `seen`: within the power gap, and on its line.
-    let neighbours = |hop: &mut HopGrid, i: usize, seen: &mut [bool], out: &mut Vec<usize>| {
+    // Visits the neighbours of `i` not yet `seen`: within the power gap, and on its line. A line
+    // is walked once per search (`lines_done`): every member is `seen` after its first walk, so
+    // walking it again for each of them found nothing and cost the square of the line's size
+    // (BUG-091: 0.6 s every 64 ticks in a 29 000-building city on one line).
+    let neighbours = |hop: &mut HopGrid,
+                      i: usize,
+                      seen: &mut [bool],
+                      lines_done: &mut BTreeSet<u32>,
+                      out: &mut Vec<usize>| {
         let (bx, bz) = bucket(sites[i].pos, hop.cell);
         for dx in -1..=1 {
             for dz in -1..=1 {
@@ -766,8 +779,13 @@ pub fn compute_supply_pools(
         for &j in out.iter() {
             seen[j] = true;
         }
-        if let Some(line) = attached[i].and_then(|c| on_line.get(&c)) {
+        if let Some(c) = attached[i]
+            && lines_done.insert(c)
+            && let Some(line) = on_line.get(&c)
+        {
             for &j in line {
+                #[cfg(test)]
+                LINE_VISITS.with(|v| v.set(v.get() + 1));
                 if !seen[j] {
                     seen[j] = true;
                     out.push(j);
@@ -780,6 +798,7 @@ pub fn compute_supply_pools(
     {
         let mut hop = HopGrid::build(&sites, power_gap);
         let mut seen = vec![false; sites.len()];
+        let mut lines_done = BTreeSet::new();
         let mut found = Vec::new();
         for start in 0..sites.len() {
             if seen[start] {
@@ -790,7 +809,7 @@ pub fn compute_supply_pools(
             let mut k = 0;
             while k < members.len() {
                 found.clear();
-                neighbours(&mut hop, members[k], &mut seen, &mut found);
+                neighbours(&mut hop, members[k], &mut seen, &mut lines_done, &mut found);
                 members.extend_from_slice(&found);
                 k += 1;
             }
@@ -801,6 +820,7 @@ pub fn compute_supply_pools(
     // site within a layer): the first building that does not fit and every later one go dark.
     let mut hop = HopGrid::build(&sites, power_gap);
     let mut seen = vec![false; sites.len()];
+    let mut lines_done = BTreeSet::new();
     let mut served = vec![false; sites.len()];
     let mut found = Vec::new();
     let mut pools = PowerPools {
@@ -857,7 +877,7 @@ pub fn compute_supply_pools(
                     exhausted = true;
                 }
                 found.clear();
-                neighbours(&mut hop, i, &mut seen, &mut found);
+                neighbours(&mut hop, i, &mut seen, &mut lines_done, &mut found);
                 next.extend_from_slice(&found);
             }
             layer = next;
