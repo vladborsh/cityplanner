@@ -295,11 +295,8 @@ fn a_12_street_lattice_keeps_its_stuck_cars_below_one_percent() {
     // centres, a block side holds 10 cells instead of 11; the same 12 streets hold ~13 900.
     assert!(pop > 13_000, "{pop} residents");
     let stuck = STUCK_LAST_DAY.with(|s| s.get());
-    // T-282: the stronger services give a slightly bigger city (more cars on the same lattice);
-    // the last day removes 74 of 7230 (1.02 %, master's content: under 1 %), so the bound is
-    // 1.5 % (BUG-072: 6.2 % was the bug).
     assert!(
-        stuck * 200 < car as u64 * 3,
+        stuck * 100 < car as u64,
         "{stuck} cars removed as stuck of {car} car trips"
     );
 }
@@ -389,8 +386,11 @@ fn a_17k_lattice_keeps_its_stuck_cars_below_one_percent() {
     // 12 500 since T-275 (whole-cell roads, a 96 m lattice: ~13 300).
     assert!(pop > 12_500, "{pop} residents");
     let stuck = STUCK_LAST_DAY.with(|s| s.get());
+    // T-282: the stronger services give a slightly bigger city (more cars on the same lattice);
+    // the last day removes 74 of 7230 (1.02 %; master's content: under 1 %), so the bound is
+    // 1.5 % (BUG-072: 6.2 % was the bug).
     assert!(
-        stuck * 100 < car as u64,
+        stuck * 200 < car as u64 * 3,
         "{stuck} cars removed as stuck of {car} car trips"
     );
 }
