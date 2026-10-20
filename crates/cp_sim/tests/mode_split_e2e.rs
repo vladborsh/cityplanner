@@ -369,7 +369,9 @@ fn a_dense_lattice_does_not_gridlock() {
     assert!(car > 1000, "people still drive: {car} car trips");
     // Driving is no longer the slow way: a car trip takes about as long as a walk, not three times.
     let minutes = sim.world().resource::<cp_traffic::TripTimes>().avg_minutes;
-    assert!(minutes[1] < 8.0, "a car trip takes {:.1} min", minutes[1]);
+    // 8.5 since BUG-095 (8.1): services no longer count as industry in the demand, the city
+    // grows a little more industry and its trucks.
+    assert!(minutes[1] < 8.5, "a car trip takes {:.1} min", minutes[1]);
 }
 
 /// BUG-072: a 17 000-resident lattice (16 000 and more) removes few cars as stuck. Before the

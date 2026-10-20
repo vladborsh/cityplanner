@@ -86,7 +86,9 @@ fn no_mail_while_the_post_office_is_locked_and_vans_collect_it_after() {
     let m = sim.world().resource::<MailState>();
     assert!(m.yesterday.made > 100, "{:?}", m.yesterday);
     assert!(
-        m.yesterday.collected * 10 >= m.yesterday.made * 8,
+        // 75 % since BUG-095 (78.7 %): services no longer count as industry in the demand,
+        // the town grows a little more industry and its trucks share the vans' streets.
+        m.yesterday.collected * 4 >= m.yesterday.made * 3,
         "most of the mail is collected: {:?}",
         m.yesterday
     );
