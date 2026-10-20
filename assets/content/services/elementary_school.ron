@@ -1,10 +1,11 @@
+// T-282: radius x1.7 (was 600) and capacity x3 (was 300).
 // Numbers: tune later. capacity = places.
 Service((
     id: "elementary_school",
     name: "Elementary school",
     kind: Education,
-    radius_m: 600.0,
-    capacity: 300,
+    radius_m: 1020.0,
+    capacity: 900,
     tier: 1,
     vehicles: [],
 ))

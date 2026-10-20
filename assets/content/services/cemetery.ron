@@ -1,10 +1,11 @@
+// T-282: radius x1.7 (was 1200) and capacity x3 (was 200).
 // Numbers: tune later. `capacity` is the bodies it takes per game day, `storage` how many it holds.
 Service((
     id: "cemetery",
     name: "Cemetery",
     kind: Deathcare,
-    radius_m: 1200.0,
-    capacity: 200,
+    radius_m: 2040.0,
+    capacity: 600,
     storage: 2000,
     vehicles: [],
 ))

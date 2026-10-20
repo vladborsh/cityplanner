@@ -1,10 +1,11 @@
+// T-282: radius x1.7 (was 1500) and capacity x3 (was 300).
 // Numbers: tune later. `capacity` is the sick it treats per game day; without power it does
 // not work.
 Service((
     id: "hospital",
     name: "Hospital",
     kind: Health,
-    radius_m: 1500.0,
-    capacity: 300,
+    radius_m: 2550.0,
+    capacity: 900,
     vehicles: [],
 ))

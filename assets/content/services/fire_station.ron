@@ -1,10 +1,11 @@
+// T-282: radius x1.7 (was 600) and capacity x3 (was 3).
 // Numbers: tune later. `capacity` is the number of engines that can be out at once; without
 // power the station does not work.
 Service((
     id: "fire_station",
     name: "Fire Station",
     kind: Fire,
-    radius_m: 600.0,
-    capacity: 3,
+    radius_m: 1020.0,
+    capacity: 9,
     vehicles: [],
 ))

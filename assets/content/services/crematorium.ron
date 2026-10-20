@@ -1,9 +1,10 @@
+// T-282: radius x1.7 (was 1500) and capacity x3 (was 200).
 // Numbers: tune later. `capacity` is the bodies it burns per game day; without power it does not work.
 Service((
     id: "crematorium",
     name: "Crematorium",
     kind: Deathcare,
-    radius_m: 1500.0,
-    capacity: 200,
+    radius_m: 2550.0,
+    capacity: 600,
     vehicles: [],
 ))

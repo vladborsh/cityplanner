@@ -1,9 +1,10 @@
+// T-282: radius x1.7 (was 1500) and capacity x3 (was 10000).
 // Numbers: tune later. No stock: it burns what it takes; without power it does not work.
 Service((
     id: "incinerator",
     name: "Incinerator",
     kind: Garbage,
-    radius_m: 1500.0,
-    capacity: 10000,
+    radius_m: 2550.0,
+    capacity: 30000,
     vehicles: [],
 ))
