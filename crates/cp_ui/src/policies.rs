@@ -14,7 +14,7 @@ use cp_tools::{CommandOutbox, format_money};
 
 use crate::icons::Icon;
 use crate::style::Sizes;
-use crate::tile::{TileIcon, tool_tile};
+use crate::tile::{TileIcon, tool_tile_enabled};
 
 /// What a policy does, in words (`value` is the one number of its definition).
 pub fn effect_text(kind: PolicyKind, value: f32) -> String {
@@ -88,6 +88,13 @@ pub fn hover(view: &SimView, def: &PolicyDef, district: Option<DistrictId>) -> S
     )
 }
 
+/// Why `kind` cannot be switched on yet: the milestone it waits for; `None` when it is open.
+pub fn lock_text(view: &SimView, db: &ContentDb, kind: PolicyKind) -> Option<String> {
+    let m = view.progress.policy_locked_by(db, kind)?;
+    let ms = db.milestones().get(m)?;
+    Some(crate::buildings::unlocks_at(ms.population, &ms.name))
+}
+
 /// The tiles for `district` (`None`: the city); a click switches the policy.
 pub fn policy_tiles(
     ui: &mut egui::Ui,
@@ -102,8 +109,14 @@ pub fn policy_tiles(
         ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
         for def in shown(db, district) {
             let on = is_on(view, district, def.kind);
-            if tool_tile(ui, TileIcon::Def(&def.icon), &def.name, on)
-                .on_hover_text(hover(view, def, district))
+            // A policy that waits for a milestone stays in the list, greyed (T-283).
+            let lock = lock_text(view, db, def.kind);
+            let text = match &lock {
+                Some(l) => format!("{l}\n{}", hover(view, def, district)),
+                None => hover(view, def, district),
+            };
+            if tool_tile_enabled(ui, TileIcon::Def(&def.icon), &def.name, on, lock.is_none())
+                .on_hover_text(text)
                 .clicked()
             {
                 outbox.push(SimCommand::District(DistrictCommand::SetPolicy {
@@ -182,6 +195,21 @@ mod tests {
         }
         sim.tick_once();
         sim.view()
+    }
+
+    /// T-283: a policy that waits for a milestone says when it unlocks; Hamlet's is open.
+    #[test]
+    fn a_locked_policy_says_where_it_unlocks() {
+        let mut view = view_with_district();
+        view.progress = cp_sim::Progress::START;
+        let db = view.content.clone().unwrap();
+        assert_eq!(
+            lock_text(&view, &db, PolicyKind::NeighborhoodWatch).as_deref(),
+            Some("Unlocks at 700 (Large Village)")
+        );
+        assert_eq!(lock_text(&view, &db, PolicyKind::PowerSaving), None);
+        view.progress = cp_sim::Progress::at(2);
+        assert_eq!(lock_text(&view, &db, PolicyKind::NeighborhoodWatch), None);
     }
 
     /// Draws the tiles for `district` and returns the tile rectangles.

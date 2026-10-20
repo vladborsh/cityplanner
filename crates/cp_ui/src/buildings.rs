@@ -117,10 +117,17 @@ pub fn card_text(c: &Card) -> String {
 pub fn lock_text(view: &SimView, content: &ContentDb, id: BuildingDefId) -> Option<String> {
     let m = view.progress.locked_by(content, id)?;
     let ms = &content.milestones()[m];
-    Some(format!(
-        "Opens at {} residents ({})",
-        ms.population, ms.name
-    ))
+    Some(unlocks_at(ms.population, &ms.name))
+}
+
+/// "Unlocks at 3,000 (Town)": the tooltip of a locked building, policy or zone (T-283).
+pub fn unlocks_at(population: u32, name: &str) -> String {
+    format!("Unlocks at {} ({name})", thousands(population))
+}
+
+/// `3000` as "3,000".
+pub fn thousands(n: u32) -> String {
+    spaced(n).replace(' ', ",")
 }
 
 /// Selects `id` for placing.

@@ -1135,7 +1135,8 @@ mod tests {
             !got.contains(&"mail") && !got.contains(&"mail_sorting"),
             "{got:?}"
         );
-        sim.world_mut().insert_resource(cp_sim::Progress::at(3));
+        // T-283: the post office opens at Small Town (3), the sorting facility at Busy Town (5).
+        sim.world_mut().insert_resource(cp_sim::Progress::at(5));
         let advice = collect(&sim.view(), &mut None);
         let mail = advice.iter().find(|a| a.id == "mail").expect("mail");
         assert!(mail.text.contains("build a post office"), "{}", mail.text);

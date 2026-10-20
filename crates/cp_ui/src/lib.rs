@@ -167,7 +167,7 @@ pub(crate) struct UiFrame<'a> {
     pub files: &'a mut FileMenu,
     pub inspected: &'a cp_tools::Inspected,
     pub picked: &'a mut cp_tools::Picked,
-    pub toast: &'a mut milestone::MilestoneToast,
+    pub toast: &'a mut milestone::MilestoneWindow,
     pub advisor: &'a mut advisor::Advisor,
 }
 
@@ -187,7 +187,7 @@ fn draw_ui(
     mut files: ResMut<FileMenu>,
     inspected: Res<cp_tools::Inspected>,
     mut picked: ResMut<cp_tools::Picked>,
-    mut local: Local<(bool, milestone::MilestoneToast, advisor::Advisor)>,
+    mut local: Local<(bool, milestone::MilestoneWindow, advisor::Advisor)>,
     mut shown: MessageWriter<advisor::AdvisorShown>,
 ) -> Result {
     let Some(view) = view else {
@@ -292,7 +292,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         );
     }
     file_window(ctx, files);
-    milestone::milestone_toast(ctx, view, toast);
+    milestone::milestone_window(ctx, view, toast, outbox);
     advisor::advisor_snackbar(ctx, view, state, overlay, advisor);
     land::confirm_window(ctx, view, &mut state.budget.buy_tile, outbox);
     demolish_confirm::confirm_window(ctx, tools, outbox);
@@ -539,7 +539,7 @@ mod capture_tests {
         net_debug: cp_tools::NetDebug,
         inspected: cp_tools::Inspected,
         picked: cp_tools::Picked,
-        toast: milestone::MilestoneToast,
+        toast: milestone::MilestoneWindow,
         advisor: advisor::Advisor,
     }
 
@@ -565,7 +565,7 @@ mod capture_tests {
                 files: FileMenu::default(),
                 inspected: cp_tools::Inspected::default(),
                 picked: cp_tools::Picked::default(),
-                toast: milestone::MilestoneToast::default(),
+                toast: milestone::MilestoneWindow::default(),
                 advisor: advisor::Advisor::default(),
             }
         }

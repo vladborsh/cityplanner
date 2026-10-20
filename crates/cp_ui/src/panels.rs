@@ -889,32 +889,45 @@ pub fn zones_panel(
         });
     });
     section(ui, "Zone", |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
-            for zone in PALETTE {
-                let locked = view.is_some_and(|v| crate::windows::zone_lock(v, zone).is_some());
-                let tile = tool_tile_enabled(
-                    ui,
-                    TileIcon::Icon(crate::icons::zone_icon(zone)),
-                    zone_name(zone),
-                    tools.zone.zone == zone,
-                    !locked,
-                );
-                if locked {
-                    crate::buildings::badge(ui, tile.rect, crate::buildings::UniqueState::Locked);
-                }
-                let tile = match view {
-                    Some(view) => tile.on_hover_text(crate::windows::zone_tooltip(view, zone)),
-                    None => tile,
-                };
-                if tile.clicked() && !locked {
-                    tools.zone.zone = zone;
-                    if tools.active != ActiveTool::Zone {
-                        tools.select(ActiveTool::Zone);
+        // A zone type that waits for a milestone is hidden; once open it comes as its own row,
+        // one row per milestone that opened zones (T-283).
+        let mut rows: std::collections::BTreeMap<usize, Vec<cp_content::ZoneType>> =
+            Default::default();
+        for zone in PALETTE {
+            let locked = view.is_some_and(|v| crate::windows::zone_lock(v, zone).is_some());
+            if locked {
+                continue;
+            }
+            let row = view
+                .and_then(|v| v.content.as_deref())
+                .and_then(|db| db.zone_unlock_milestone(zone))
+                .unwrap_or(0);
+            rows.entry(row).or_default().push(zone);
+        }
+        for zones in rows.values() {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
+                for &zone in zones {
+                    let tile = tool_tile_enabled(
+                        ui,
+                        TileIcon::Icon(crate::icons::zone_icon(zone)),
+                        zone_name(zone),
+                        tools.zone.zone == zone,
+                        true,
+                    );
+                    let tile = match view {
+                        Some(view) => tile.on_hover_text(crate::windows::zone_tooltip(view, zone)),
+                        None => tile,
+                    };
+                    if tile.clicked() {
+                        tools.zone.zone = zone;
+                        if tools.active != ActiveTool::Zone {
+                            tools.select(ActiveTool::Zone);
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
     });
     if ui.button("Demand by zone ▸").clicked() {
         state.demand_open = true;
@@ -1308,6 +1321,43 @@ mod tests {
             tools.zone.corner.is_none(),
             "leaving the tool cancels the rectangle"
         );
+    }
+
+    /// T-283: a locked zone type is hidden; once its milestone is reached it comes as a row of
+    /// its own under the first one.
+    #[test]
+    fn locked_zones_are_hidden_and_an_unlocked_group_is_a_separate_row() {
+        let db = std::sync::Arc::new(
+            cp_content::ContentDb::load_dir(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/content"
+            ))
+            .unwrap(),
+        );
+        // (tiles drawn, distinct tile rows) of the zones panel at milestone `reached`.
+        let drawn = |reached: u8| {
+            let mut sim = SimRunner::new(1);
+            sim.set_content(db.clone());
+            sim.world_mut()
+                .insert_resource(cp_sim::Progress::at(reached));
+            let view = sim.view();
+            let ctx = egui::Context::default();
+            let mut tools = ToolState::default();
+            let mut state = UiState::default();
+            crate::tile::take_rects(&ctx);
+            crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
+                zones_panel(ui, Some(&view), &mut tools, &mut state);
+            });
+            let rects = crate::tile::take_rects(&ctx).0;
+            let mut tops: Vec<i32> = rects.iter().map(|(t, _)| t.top() as i32).collect();
+            tops.sort_unstable();
+            tops.dedup();
+            (rects.len(), tops.len())
+        };
+        let (hamlet, hamlet_rows) = drawn(0);
+        let (busy, busy_rows) = drawn(5);
+        assert_eq!(busy, hamlet + 3, "ResHigh, ComHigh and Office appear");
+        assert_eq!(busy_rows, hamlet_rows + 1, "as a row of their own");
     }
 
     #[test]

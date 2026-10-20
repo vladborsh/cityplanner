@@ -71,16 +71,12 @@ pub fn demand_formula(zone: ZoneType) -> &'static str {
     }
 }
 
-/// "Opens at 5 000 residents (Large town)" while painting `zone` waits for a milestone (T-231).
+/// "Unlocks at 5,000 (Busy Town)" while painting `zone` waits for a milestone (T-231).
 pub fn zone_lock(view: &SimView, zone: ZoneType) -> Option<String> {
     let db = view.content.as_deref()?;
     let m = view.progress.zone_locked_by(db, zone)?;
     let ms = db.milestones().get(m)?;
-    Some(format!(
-        "Opens at {} residents ({})",
-        crate::buildings::spaced(ms.population),
-        ms.name
-    ))
+    Some(crate::buildings::unlocks_at(ms.population, &ms.name))
 }
 
 /// The zone group of `zone` has demand (20+) but no free painted cell a building could cover

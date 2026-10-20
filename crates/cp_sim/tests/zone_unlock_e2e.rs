@@ -124,7 +124,10 @@ fn the_unlock_is_read_from_content() {
     // anywhere.
     let ms = ms
         .replace(", zones: [ResHigh, ComHigh, Office]", "")
-        .replace("zones: [ResLow, ComLow, Industrial]", "zones: [ResLow, ComLow]")
+        .replace(
+            "zones: [ResLow, ComLow, Industrial]",
+            "zones: [ResLow, ComLow]",
+        )
         .replace(
             r#"name: "Town", unlocks"#,
             r#"name: "Town", zones: [Industrial], unlocks"#,

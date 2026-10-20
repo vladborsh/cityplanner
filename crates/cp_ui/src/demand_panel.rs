@@ -367,14 +367,14 @@ mod tests {
     }
 
     #[test]
-    fn the_office_bar_is_locked_below_large_town_and_its_click_selects_nothing() {
+    fn the_office_bar_is_locked_below_busy_town_and_its_click_selects_nothing() {
         let mut rig = Rig::new(locked_view());
         assert_eq!(
             crate::windows::zone_lock(&rig.view, ZoneType::Office).as_deref(),
-            Some("Opens at 5 000 residents (Large town)")
+            Some("Unlocks at 5,000 (Busy Town)")
         );
         assert!(crate::windows::zone_lock(&rig.view, ZoneType::ResLow).is_none());
-        assert!(zone_tooltip(&rig.view, ZoneType::Office).contains("Opens at 5 000"));
+        assert!(zone_tooltip(&rig.view, ZoneType::Office).contains("Unlocks at 5,000"));
         let at = |rig: &Rig, z| {
             rig.rects
                 .columns
@@ -391,9 +391,9 @@ mod tests {
         rig.click(r);
         assert_eq!(rig.tools.zone.zone, ZoneType::ResLow);
 
-        // Large town reached: open.
+        // Busy Town reached: open.
         let mut view = rig.view.clone();
-        view.progress = cp_sim::Progress::at(3);
+        view.progress = cp_sim::Progress::at(5);
         assert!(crate::windows::zone_lock(&view, ZoneType::Office).is_none());
     }
 
