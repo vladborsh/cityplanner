@@ -66,9 +66,11 @@ pub const DECEL: f32 = 4.0;
 pub const REACTION: f32 = 1.0;
 /// Distance before a stop line inside which a car with priority blocks yielding traffic.
 pub const PRIORITY_ZONE: f32 = 30.0;
-/// Ticks standing for a suspicious reason (no room beyond the junction, or behind such a car)
-/// before a car is removed (§9.4: 120 s of movement). A red light or yielding does not count.
-pub const STUCK_TICKS: u32 = 60;
+/// Seconds of movement standing for a suspicious reason (no room beyond the junction, or behind
+/// such a car) before a car is removed (§9.4). A red light or yielding does not count.
+pub const STUCK_SECONDS: f32 = 120.0;
+/// [`STUCK_SECONDS`] on the movement clock (T-270: in ticks it follows `MOVE_SECONDS_PER_TICK`).
+pub const STUCK_TICKS: u32 = (STUCK_SECONDS / MOVE_SECONDS_PER_TICK) as u32;
 /// Hard cap on a standstill for any reason, in multiples of the stuck threshold (§9.4 v1.1).
 pub const HARD_CAP_FACTOR: u32 = 10;
 /// A car waiting to enter the road gives up after this many times the hard cap (BUG-072b).
@@ -153,10 +155,13 @@ impl VehicleSpecs {
     }
 }
 
-/// Plan time of the signal at `substep` of `tick`: the plan counts 50 ms ticks, one substep
-/// is 0.5 s of movement = 10 plan ticks.
+/// Plan ticks (50 ms of movement) in one substep: [`DT`] / 0.05 (T-270: 2 at 0.1 s, was 10).
+const PLAN_TICKS_PER_SUBSTEP: u64 = (DT * 20.0 + 0.5) as u64;
+
+/// Plan time of the signal at `substep` of `tick`: the plan counts 50 ms of movement, one
+/// substep is [`DT`] seconds of movement.
 pub fn signal_tick(tick: u64, substep: u32) -> u64 {
-    (tick * u64::from(MOVE_SUBSTEPS) + u64::from(substep)) * 10
+    (tick * u64::from(MOVE_SUBSTEPS) + u64::from(substep)) * PLAN_TICKS_PER_SUBSTEP
 }
 
 /// Is `(from, to)` a lateral hop between two lanes of one segment (not a junction connection)?

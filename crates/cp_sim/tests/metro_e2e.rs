@@ -167,9 +167,10 @@ fn two_trains_run_out_and_back_with_a_turn_at_both_ends() {
             .state,
         cp_transit::LineState::Ok
     );
-    // One game hour: every train's stands, by position of the ride (0 = A, 1 = B, 2 = C, 3 = B).
+    // 342 s of movement (one game hour before T-270, §2 v1.2): every train's stands, by
+    // position of the ride (0 = A, 1 = B, 2 = C, 3 = B).
     let mut stands: BTreeMap<BusId, Vec<u16>> = BTreeMap::new();
-    for _ in 0..171 {
+    for _ in 0..(342.0 / cp_core::time::MOVE_SECONDS_PER_TICK).ceil() as u64 {
         m.sim.tick_once();
         for (id, bus) in m.sim.world().resource::<TransitFleet>().buses.iter() {
             if let BusPhase::Dwell { idx, .. } = bus.phase {

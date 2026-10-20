@@ -77,7 +77,8 @@ fn a_post_office_and_a_house_show_their_mail_once_the_post_is_open() {
 
     run(&mut sim, 6 * TICKS_PER_DAY, 2);
     let r = rows(&sim, office);
-    assert!(get(&r, "Vans").unwrap().ends_with("out of 5"), "{r:?}");
+    // T-270: 40 vans (was 5), post_office.ron.
+    assert!(get(&r, "Vans").unwrap().ends_with("out of 40"), "{r:?}");
     assert!(get(&r, "Collected today").is_some() && get(&r, "Backlog to sort").is_some());
     let r = rows(&sim, house);
     assert!(

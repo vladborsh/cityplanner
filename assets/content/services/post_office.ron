@@ -1,12 +1,15 @@
 // T-247. Numbers: tune later. `capacity` is the mail it collects per game day (and delivers: the
 // same trips), `storage` the vans it has, `tier` 1 = post office. Without power it does not work.
+// T-270: 40 vans (was 5): a van's run takes five times more of the day on the movement clock of
+// system-design §2 v1.2, and the fuller roads slow it more; 25 vans collected 79 % of a town's
+// mail a day, 40 collect what 5 did before (mail_e2e).
 Service((
     id: "post_office",
     name: "Post Office",
     kind: Post,
     radius_m: 1200.0,
     capacity: 2400,
-    storage: 5,
+    storage: 40,
     tier: 1,
     vehicles: ["mail_van"],
 ))

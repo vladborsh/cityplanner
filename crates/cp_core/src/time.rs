@@ -13,8 +13,10 @@ pub const TICKS_PER_HOUR: f32 = TICKS_PER_DAY as f32 / 24.0;
 /// seconds of agent movement. Kinematics, path costs and abstract trip durations use it,
 /// with content speeds in real units (m/s, km/h); schedules use the day clock
 /// (4096 ticks = 24 h) instead. Change only together with a `balance.ron` recalibration.
-pub const MOVE_SECONDS_PER_TICK: f32 = 2.0;
-/// Integration substeps per tick for agent movement (`MOVE_SECONDS_PER_TICK / 4` = 0.5 s).
+/// 0.4 since T-270 (was 2.0): agents move 5 times slower on screen at every game speed, the
+/// day and the economy keep their pace; trips take 5 times more of the day.
+pub const MOVE_SECONDS_PER_TICK: f32 = 0.4;
+/// Integration substeps per tick for agent movement (`MOVE_SECONDS_PER_TICK / 4` = 0.1 s).
 pub const MOVE_SUBSTEPS: u32 = 4;
 pub const DAYS_PER_WEEK: u64 = 7;
 pub const TICKS_PER_WEEK: u64 = TICKS_PER_DAY * DAYS_PER_WEEK;

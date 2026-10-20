@@ -213,7 +213,7 @@ impl SegmentLoad {
 pub struct AgentSettings {
     /// Step pedestrians on the compute pool (the result is the same either way).
     pub parallel: bool,
-    /// Ticks a car may stand still before it disappears (§9.4: 60 ticks = 120 s of movement).
+    /// Ticks a car may stand still before it disappears (§9.4: [`STUCK_TICKS`], 120 s of movement).
     pub stuck_ticks: u32,
     /// Walk or drive by the real routes' times (T-242); tests that inject trips of a given mode
     /// switch it off.

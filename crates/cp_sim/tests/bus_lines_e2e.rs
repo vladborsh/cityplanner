@@ -169,7 +169,8 @@ fn two_buses_call_at_all_four_stops_in_order_and_stand_for_the_dwell() {
     let mut t = town();
     t.depot();
     let line = t.line(&[0, 1, 2, 3]);
-    t.run(260);
+    // 520 s of movement (T-270: the budget is movement time, §2 v1.2).
+    t.run((520.0 / cp_core::time::MOVE_SECONDS_PER_TICK).ceil() as u64);
     assert_eq!(t.buses(), 2);
     assert_eq!(t.state(line), LineState::Ok);
     assert_eq!(t.dwells.len(), 2);

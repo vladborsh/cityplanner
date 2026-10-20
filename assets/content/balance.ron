@@ -1,7 +1,7 @@
 // Global balance knobs (Balance Analyst). See cp_content::Balance; a missing field keeps its default.
 Balance((
     // Trips shorter than this straight-line distance are walked (system-design §9.2).
-    walk_limit_m: 400.0,
+    walk_limit_m: 300.0,
     // T-242: seconds before a car trip moves (to the car, parking); a citizen with a car walks when
     // the real walking route takes less than the drive plus this. // tune later
     car_start_penalty_s: 90.0,

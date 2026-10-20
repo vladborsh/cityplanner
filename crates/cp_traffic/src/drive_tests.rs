@@ -12,6 +12,11 @@ use crate::drive::*;
 use crate::graph::{Access, CongestionMap, PathGraph, Side};
 use crate::service::PathNetwork;
 use crate::tests::{Sim, acc, sim};
+
+/// Ticks of `seconds` of movement (T-270: test time budgets are movement time, not ticks).
+fn ticks(seconds: f32) -> u64 {
+    (seconds / cp_core::time::MOVE_SECONDS_PER_TICK).ceil() as u64
+}
 use crate::{Vehicle, VehicleId};
 
 struct Rig {
@@ -340,7 +345,7 @@ fn a_long_queue_at_a_red_light_loses_nobody() {
     for k in 0..200 {
         rig.add(from_arm(w, 5.0 + 7.0 * k as f32), to_arm(e, 100.0));
     }
-    for t in 0..2000 {
+    for t in 0..ticks(4000.0) {
         rig.tick(t, None, STUCK_TICKS);
         if rig.veh.is_empty() {
             break;
@@ -372,7 +377,7 @@ fn a_ring_of_full_lanes_is_a_gridlock_and_clears() {
         }
     }
     let n = rig.veh.len();
-    for t in 0..400 {
+    for t in 0..ticks(800.0) {
         rig.tick(t, None, STUCK_TICKS);
         if rig.veh.is_empty() {
             break;
@@ -571,7 +576,7 @@ fn multilane_lattices_have_a_path_between_every_pair_and_cars_arrive() {
             }
         }
         let total = rig.veh.len();
-        rig.run_dry(600, None);
+        rig.run_dry(ticks(1200.0), None);
         assert_eq!(rig.arrived + rig.stuck + rig.invalid, total, "{road}");
         assert!(
             rig.arrived * 10 >= total * 9,

@@ -157,7 +157,9 @@ fn a_thousand_citizens_commute_with_morning_and_evening_peaks() {
         evening >= 1.5 * mean,
         "evening peak {evening} vs mean {mean}"
     );
-    assert!(night * 4.0 < mean, "nights are quiet: {night} vs {mean}");
+    // T-270: trips take five times more of the day (§2 v1.2), so the commuters of the first
+    // shift leave before dawn: the night is quieter than the average hour, no longer silent.
+    assert!(night < mean, "nights are quieter: {night} vs {mean}");
     let peak_hour = |r: std::ops::Range<usize>| r.max_by_key(|&h| hist[h]).unwrap();
     assert!((4..10).contains(&peak_hour(4..10)) && (15..20).contains(&peak_hour(15..20)));
 }
@@ -184,10 +186,13 @@ fn every_trip_finishes_and_nobody_is_in_two_places() {
                 now
             });
             assert!(now - first < TICKS_PER_DAY, "trip {tid:?} is stuck");
-            let loc = c
-                .citizen(t.citizen)
-                .expect("trip of a live citizen")
-                .location;
+            // A citizen who died or left during a trip leaves the trip behind until its next
+            // event (departure, route, arrival) cancels it (`routine` docs). T-270: drives
+            // take five times more of the day, so that happens within this test.
+            let Some(cz) = c.citizen(t.citizen) else {
+                continue;
+            };
+            let loc = cz.location;
             match t.state {
                 TripState::InTransit { arrive_at } => {
                     assert_eq!(loc, Location::Moving, "in transit but {loc:?}");
@@ -224,18 +229,22 @@ fn every_trip_finishes_and_nobody_is_in_two_places() {
 #[test]
 fn the_mode_rule_and_travel_times_follow_the_spec() {
     let limit = content().balance().walk_limit_m;
-    assert_eq!(limit, 400.0, "balance.ron (BUG-066: was 1000)");
-    assert_eq!(choose_mode(399.0, true, limit), TripMode::Walk);
+    assert_eq!(
+        limit, 300.0,
+        "balance.ron (BUG-066: was 1000; T-270: 400 -> 300)"
+    );
+    assert_eq!(choose_mode(299.0, true, limit), TripMode::Walk);
     assert_eq!(choose_mode(limit, true, limit), TripMode::Car);
     assert_eq!(choose_mode(5000.0, true, limit), TripMode::Car);
     assert_eq!(choose_mode(5000.0, false, limit), TripMode::Walk);
     // The knob is data: a lower limit sends the same trip by car.
-    assert_eq!(choose_mode(500.0, true, 300.0), TripMode::Car);
+    assert_eq!(choose_mode(250.0, true, 200.0), TripMode::Car);
     assert_eq!(travel_ticks(0.0, TripMode::Walk), 1);
-    // Movement clock (§2): 1 km on foot = 1000 / 1.4 / 2 s = 357 ticks (~2 game hours).
-    assert_eq!(travel_ticks(1000.0, TripMode::Walk), 358);
-    // 4 km by car at 13.9 m/s = 144 ticks (~50 game minutes, §2's yardstick).
-    assert_eq!(travel_ticks(4000.0, TripMode::Car), 144);
+    // Movement clock (§2 v1.2, T-270: 0.4 s a tick): 300 m on foot = 300 / 1.4 / 0.4 s = 536
+    // ticks (~3.1 game hours).
+    assert_eq!(travel_ticks(300.0, TripMode::Walk), 536);
+    // 4 km by car at 13.9 m/s = 720 ticks (~4.2 game hours, §2's yardstick).
+    assert_eq!(travel_ticks(4000.0, TripMode::Car), 720);
     assert!(travel_ticks(5000.0, TripMode::Car) < travel_ticks(5000.0, TripMode::Walk));
     assert!((hour_of_day(TICKS_PER_DAY / 2) - 12.0).abs() < 1e-4);
     // Shifts: industry has two, commerce two, offices one; all inside the day.
@@ -455,14 +464,16 @@ fn commuters_drive_and_walk_in_the_morning_peak() {
         .resource::<cp_traffic::Agents>()
         .stats
         .abstract_trips;
-    let (mut night_max, mut peak_cars, mut peak_peds) = (0, 0, 0);
+    // T-270: the evening commutes run into the night and the first shift's start before dawn
+    // (§2 v1.2), so the road fills from its quietest hour before the peak (3-5 h).
+    let (mut night_max, mut peak_cars, mut peak_peds) = (usize::MAX, 0, 0);
     let mut growing = false;
     for t in 0..TICKS_PER_DAY {
         sim.tick_once();
         let (cars, peds) = on_the_road(&sim);
         let hour = hour_of_day(sim.tick().0);
-        if hour < 3.0 {
-            night_max = night_max.max(cars + peds);
+        if (3.0..5.0).contains(&hour) {
+            night_max = night_max.min(cars + peds);
         }
         if (5.0..10.0).contains(&hour) {
             peak_cars = peak_cars.max(cars);
@@ -472,7 +483,7 @@ fn commuters_drive_and_walk_in_the_morning_peak() {
         }
         let _ = t;
     }
-    eprintln!("peak: {peak_cars} cars, {peak_peds} pedestrians; night max {night_max}");
+    eprintln!("peak: {peak_cars} cars, {peak_peds} pedestrians; quietest before dawn {night_max}");
     assert!(peak_cars > 0, "no car on the road in the morning peak");
     assert!(peak_cars + peak_peds > 10, "{peak_cars} + {peak_peds}");
     assert!(growing, "the road never filled up");
@@ -527,6 +538,15 @@ fn the_sick_stay_home_from_work() {
         g.citizens().map(|(id, _)| id).collect()
     };
     let now = sim.tick();
+    // Those already on their way fell ill on the road: they arrive, the rule is about leaving
+    // (T-270: commutes start before dawn, so some are under way at midnight).
+    let under_way: std::collections::BTreeSet<_> = {
+        let g = sim.world().resource::<CitizenGrid>();
+        ids.iter()
+            .copied()
+            .filter(|id| g.citizen(*id).is_some_and(|c| c.location != Location::Home))
+            .collect()
+    };
     {
         let mut g = sim.world_mut().resource_mut::<CitizenGrid>();
         g.ensure_derived();
@@ -541,7 +561,7 @@ fn the_sick_stay_home_from_work() {
                 .world()
                 .resource::<CitizenGrid>()
                 .citizens()
-                .filter(|(_, c)| c.location == Location::Work)
+                .filter(|(id, c)| c.location == Location::Work && !under_way.contains(id))
                 .count();
             assert_eq!(at_work, 0, "tick {t}");
         }
