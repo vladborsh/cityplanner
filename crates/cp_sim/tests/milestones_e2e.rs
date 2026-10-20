@@ -133,7 +133,7 @@ fn a_locked_policy_is_refused_until_its_milestone() {
     use cp_district::DistrictCommand;
     let c = content();
     let mut sim = world(&c);
-    let mut set = |sim: &mut SimRunner, policy, on| {
+    let set = |sim: &mut SimRunner, policy, on| {
         sim.push_command(
             SimCommand::District(DistrictCommand::SetPolicy {
                 district: None,
