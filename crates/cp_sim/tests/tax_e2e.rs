@@ -119,10 +119,11 @@ fn a_painted_district_reports_its_residents_and_tax() {
 /// T-187: taxes are worth it. A mid town earns clearly more than its upkeep, but not by a
 /// factor that makes money meaningless (measured: ~4.9x at 2400 residents, ~6.3x at 8900).
 #[test]
-fn a_mid_town_earns_between_two_and_twelve_times_its_upkeep() {
+// T-282: taxes x5 (the 700 town earns a basic service in ~2 days), so the ratio was 2..12 and is 10..20 (15.35 measured).
+fn a_mid_town_earns_between_ten_and_twenty_times_its_upkeep() {
     let (mut sim, pop) = city(1_000);
     assert!(pop >= 1_000);
     let (income, upkeep) = week(&mut sim, 9);
     let ratio = income.0 as f64 / upkeep.0 as f64;
-    assert!((2.0..12.0).contains(&ratio), "{ratio:.2}");
+    assert!((10.0..20.0).contains(&ratio), "{ratio:.2}");
 }
