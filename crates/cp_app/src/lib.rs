@@ -333,6 +333,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         // The specialisation buildings, kinds in columns and sizes in rows (`--scene specs`).
         "specs" => (Vec3::new(c, 170.0, c + 120.0), Vec3::new(c, 5.0, c - 85.0)),
         // The five cargo trucks queued at the east end of the street (`--scene trucks`).
+        // The town of the BUG-087 shot (`--scene power-town --overlay power`).
+        "power-town" => (
+            Vec3::new(c + 170.0, 300.0, c + 360.0),
+            Vec3::new(c + 170.0, 0.0, c + 50.0),
+        ),
         "trucks" => (
             Vec3::new(c - 10.0, 6.0, c + 92.0),
             Vec3::new(c - 10.0, 2.0, c),
@@ -596,6 +601,9 @@ pub fn build_sim(
             warn!("scene command rejected: {reason}");
         }
         info!("scene shadows");
+    } else if scene == Some(scene::POWER_TOWN) {
+        scene::build_power_town(&mut sim);
+        info!("scene power-town");
     } else if scene == Some(scene::LAMPS) {
         scene::build_lamps(&mut sim);
         info!("scene lamps");

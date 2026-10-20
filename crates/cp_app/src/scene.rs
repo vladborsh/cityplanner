@@ -2059,3 +2059,80 @@ pub fn build_showcase(sim: &mut SimRunner) -> usize {
     }
     placed
 }
+
+/// BUG-087: the user's town of the power shot, from its buildings (all free-standing, no
+/// roads: the supply does not read them). Two wind turbines without a power line north-west of
+/// four blocks in a row, 64 m by 128 m with 24 m between them: industrial, commercial and two
+/// residential. Run past the first supply pass and held; look at it with
+/// `--cam power-town --overlay power`.
+pub const POWER_TOWN: &str = "power-town";
+
+/// Builds the [`POWER_TOWN`] scene.
+pub fn build_power_town(sim: &mut SimRunner) {
+    use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingState, Footprint};
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let cell = cp_building::FOOTPRINT_CELL_M;
+    let mut place = |sim: &mut SimRunner, def: &str, pos: Vec2| {
+        let id = db.building_id(def).expect("building def");
+        let (w, d) = db.building(id).lot;
+        sim.world_mut()
+            .resource_mut::<BuildingGrid>()
+            .insert(Building {
+                def: id,
+                footprint: Footprint::Free { w, d },
+                level: 1,
+                state: BuildingState::Active,
+                ready_at: Tick(0),
+                pos,
+                rot: 0.0,
+                access: None,
+                flags: BuildingFlags::default(),
+                level_progress: 0.0,
+            });
+    };
+    for x in [12.0, 52.0] {
+        place(sim, "wind_turbine", Vec2::new(c + x, c - 40.0));
+    }
+    let blocks: [&[&str]; 4] = [
+        &["ind_2", "ind_3", "ind_5", "ind_1", "ind_6"],
+        &["com_low_1", "com_low_2", "com_low_3", "com_low_1b"],
+        &[
+            "house_low_2",
+            "house_low_3",
+            "apt_high_4",
+            "house_low_1",
+            "house_low_5",
+        ],
+        &["apt_high_4", "apt_high_5", "house_low_2", "house_low_3"],
+    ];
+    for (i, defs) in blocks.into_iter().enumerate() {
+        let x0 = c + i as f32 * (64.0 + 24.0);
+        let mut k = 0;
+        for side in [0, 1] {
+            let mut z = 0.0;
+            loop {
+                let def = defs[k % defs.len()];
+                let (w, d) = db.building(db.building_id(def).expect("def")).lot;
+                let (along, deep) = (f32::from(w) * cell, f32::from(d) * cell);
+                if z + along > 128.0 {
+                    break;
+                }
+                let x = if side == 0 {
+                    x0 + deep / 2.0
+                } else {
+                    x0 + 64.0 - deep / 2.0
+                };
+                place(sim, def, Vec2::new(x, c + z + along / 2.0));
+                z += along;
+                k += 1;
+            }
+        }
+    }
+    // Past the first supply pass (every 64 ticks), then held.
+    for _ in 0..=cp_utility::SUPPLY_PERIOD {
+        sim.tick_once();
+    }
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+}
