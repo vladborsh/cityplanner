@@ -70,10 +70,16 @@ pub fn window_plugin(window: Window, hidden: bool) -> WindowPlugin {
 
 /// The off-screen colour target of a hidden run.
 pub fn offscreen_target(images: &mut Assets<Image>) -> Handle<Image> {
+    offscreen_target_sized(images, HIDDEN_SIZE)
+}
+
+/// [`offscreen_target`] of `size` pixels (`--size`, T-281: a bench at the pixels of a Retina
+/// window).
+pub fn offscreen_target_sized(images: &mut Assets<Image>, size: (u32, u32)) -> Handle<Image> {
     use bevy::render::render_resource::TextureFormat;
     images.add(Image::new_target_texture(
-        HIDDEN_SIZE.0,
-        HIDDEN_SIZE.1,
+        size.0,
+        size.1,
         TextureFormat::Rgba8UnormSrgb,
         None,
     ))

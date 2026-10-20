@@ -59,15 +59,26 @@ pub fn focus(n: usize) -> Vec2 {
 pub struct GridShotCursors(pub Vec<(Vec2, Vec2)>);
 
 /// The player's hand on the road tool.
-struct Hand<'a> {
+pub(crate) struct Hand<'a> {
     sim: &'a mut SimRunner,
     o: Vec2,
     road: RoadDefId,
     tool: RoadTool,
-    rejected: Vec<String>,
+    pub(crate) rejected: Vec<String>,
 }
 
-impl Hand<'_> {
+impl<'a> Hand<'a> {
+    /// A hand drawing `road` with points given from `o` (world).
+    pub(crate) fn new(sim: &'a mut SimRunner, o: Vec2, road: RoadDefId) -> Self {
+        Self {
+            sim,
+            o,
+            road,
+            tool: RoadTool::default(),
+            rejected: Vec::new(),
+        }
+    }
+
     /// A click at the point `l` (from the origin, world axes), as the tool takes it; a completed
     /// piece is built.
     fn click(&mut self, l: Vec2) -> Option<()> {
@@ -96,7 +107,7 @@ impl Hand<'_> {
     }
 
     /// A straight street between two cursor points.
-    fn street(&mut self, from: Vec2, to: Vec2) -> Option<()> {
+    pub(crate) fn street(&mut self, from: Vec2, to: Vec2) -> Option<()> {
         self.tool = RoadTool {
             mode: RoadMode::Straight,
             road: Some(self.road),

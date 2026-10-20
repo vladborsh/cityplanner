@@ -1925,14 +1925,23 @@ const CITY_SUPPLY_MARGIN: f32 = 1.3;
 /// street and that row. The plants need no line: power passes from building to building
 /// (`power_gap_m`). Then held past a supply pass, so the flags are right from the first frame.
 fn supply_city(sim: &mut SimRunner, n: usize) {
-    use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingState, Footprint};
-    use cp_content::UtilityKind;
-    let db = sim.world().resource::<cp_content::SimContent>().0.clone();
     let c = cp_terrain::MAP_SIZE / 2.0;
     let span = (n - 1) as f32 * SPACING;
     let (x0, z0) = (c - span / 2.0, c - span / 2.0);
+    let rows: Vec<f32> = (0..n).map(|i| z0 + i as f32 * SPACING).collect();
+    supply_town(sim, x0, x0 + span, &rows);
+}
+
+/// [`supply_city`] for a town between `x0` and `x1` whose east-west streets run at `rows`
+/// (world z, north to south; T-281's `town:N` too): the plants in a row south of it, a pipe
+/// winding along the streets and that row.
+pub fn supply_town(sim: &mut SimRunner, x0: f32, x1: f32, rows: &[f32]) {
+    use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingState, Footprint};
+    use cp_content::UtilityKind;
+    let db = sim.world().resource::<cp_content::SimContent>().0.clone();
+    let span = x1 - x0;
     let mut used = [0.0f32; 3];
-    let mut south = z0 + span;
+    let mut south = rows.last().copied().unwrap_or(0.0);
     for (_, b) in sim.world().resource::<BuildingGrid>().iter() {
         south = south.max(b.pos.y);
         if b.state != BuildingState::UnderConstruction {
@@ -1982,7 +1991,7 @@ fn supply_city(sim: &mut SimRunner, n: usize) {
     let (xl, xr) = (x0 - 60.0, (x0 + span + 60.0).max(x + 20.0));
     let steps = ((xr - xl) / (SPACING / 2.0)).ceil() as usize;
     let mut path: Vec<Vec2> = Vec::new();
-    let rows = (0..n).map(|i| z0 + i as f32 * SPACING).chain([row_z]);
+    let rows = rows.iter().copied().chain([row_z]);
     for (i, z) in rows.enumerate() {
         if let Some(&last) = path.last()
             && z - last.y > SPACING * 0.75

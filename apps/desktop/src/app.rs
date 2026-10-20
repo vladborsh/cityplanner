@@ -55,6 +55,16 @@ pub struct Options {
     pub no_clouds: bool,
     /// `--no-parked`: no parked cars in this run (T-276).
     pub no_parked: bool,
+    /// `--speed 1|2|3`: run the game at that speed from the start (T-281 benches).
+    pub speed: Option<cp_core::SimSpeed>,
+    /// `--size WxH`: the pixels of a `--hidden` run's target (default 1600x900).
+    pub size: Option<(u32, u32)>,
+    /// `--log-pipelines`: log every new render pipeline with the time (T-281: a pipeline is
+    /// compiled on the render thread, synchronously on macOS).
+    pub log_pipelines: bool,
+    /// `--pan`: the camera moves by itself, round a 300 m circle in 20 s while it turns once in
+    /// 40 s (T-281: the user's stutter shows when the camera moves).
+    pub pan: bool,
 }
 
 impl Options {
@@ -109,6 +119,18 @@ impl Options {
             hidden_ui: args.iter().any(|a| a == "--ui"),
             no_clouds: args.iter().any(|a| a == "--no-clouds"),
             no_parked: args.iter().any(|a| a == "--no-parked"),
+            pan: args.iter().any(|a| a == "--pan"),
+            log_pipelines: args.iter().any(|a| a == "--log-pipelines"),
+            size: value("--size").and_then(|v| {
+                let (w, h) = v.split_once('x')?;
+                Some((w.parse().ok()?, h.parse().ok()?))
+            }),
+            speed: value("--speed").and_then(|v| match v.as_str() {
+                "1" => Some(cp_core::SimSpeed::X1),
+                "2" => Some(cp_core::SimSpeed::X2),
+                "3" => Some(cp_core::SimSpeed::X3),
+                _ => None,
+            }),
             category: value("--category").and_then(|n| {
                 cp_ui::Category::ALL
                     .into_iter()
@@ -143,6 +165,9 @@ struct Job {
     bench_secs: Option<f32>,
     frame: u32,
     frame_ms: Vec<f32>,
+    /// Per measured frame: its ms, what the sim cost in it, and the render stats' update times
+    /// (T-281: what a hitch was).
+    frames: Vec<FrameRecord>,
     /// A `--scene` was asked for: its roads and buildings come from sim ticks, so a screenshot
     /// waits for them (BUG-017).
     scene: bool,
@@ -152,6 +177,78 @@ struct Job {
     last_counts: (usize, usize, usize),
     /// Real time of the first frame of the screenshot wait.
     scene_since: Option<f32>,
+}
+
+/// One measured frame of a bench.
+#[derive(Clone, Copy, Debug)]
+struct FrameRecord {
+    ms: f32,
+    sim: cp_app::FrameSim,
+    roads_ms: f32,
+    buildings_ms: f32,
+    agents_ms: f32,
+}
+
+/// A frame slower than this is a hitch (two frames at 60 Hz).
+const HITCH_MS: f32 = 33.0;
+
+/// The speed of `--speed`, set once the sim stands.
+#[derive(Resource)]
+struct StartSpeed(cp_core::SimSpeed);
+
+fn start_speed(
+    speed: Option<Res<StartSpeed>>,
+    sim: Option<ResMut<cp_app::Sim>>,
+    mut commands: Commands,
+) {
+    let (Some(speed), Some(mut sim)) = (speed, sim) else {
+        return;
+    };
+    sim.0.world_mut().insert_resource(speed.0);
+    commands.remove_resource::<StartSpeed>();
+}
+
+/// `--log-pipelines`: each pipeline the cache holds that was not there last frame, by label.
+fn log_pipelines(
+    cache: Res<bevy::render::render_resource::PipelineCache>,
+    mut start: Local<Option<std::time::Instant>>,
+    mut seen: Local<usize>,
+) {
+    let t0 = *start.get_or_insert_with(std::time::Instant::now);
+    use bevy::render::render_resource::PipelineDescriptor;
+    let all: Vec<_> = cache.pipelines().collect();
+    for p in &all[(*seen).min(all.len())..] {
+        let label = match &p.descriptor {
+            PipelineDescriptor::RenderPipelineDescriptor(d) => d.label.clone(),
+            PipelineDescriptor::ComputePipelineDescriptor(d) => d.label.clone(),
+            PipelineDescriptor::MeshPipelineDescriptor(d) => d.label.clone(),
+        };
+        println!(
+            "PIPELINE t={:.3} {}",
+            t0.elapsed().as_secs_f32(),
+            label.as_deref().unwrap_or("?")
+        );
+    }
+    *seen = all.len();
+}
+
+/// `--pan`: the camera's target moves round a circle and turns, from where it started.
+fn pan_camera(
+    time: Res<Time<Real>>,
+    mut cams: Query<&mut cp_render::camera::RtsCamera>,
+    mut start: Local<Option<(cp_render::camera::Rig, f32)>>,
+) {
+    let Some(mut cam) = cams.iter_mut().next() else {
+        return;
+    };
+    let now = time.elapsed_secs();
+    let (rig, t0) = *start.get_or_insert((cam.target, now));
+    let t = now - t0;
+    let a = std::f32::consts::TAU * t / 20.0;
+    let mut target = rig;
+    target.focus = rig.focus + Vec2::new(a.cos() - 1.0, a.sin()) * 300.0;
+    target.yaw = rig.yaw + std::f32::consts::TAU * t / 40.0;
+    cam.target = target;
 }
 
 /// Frames a built scene must stand before the screenshot, so the chunk meshes are uploaded.
@@ -215,7 +312,10 @@ pub fn run(opts: Options) -> AppExit {
     );
     // `--hidden`: no window; cameras render into an image (see `capture::window_plugin`).
     let target = opts.hidden.then(|| {
-        crate::capture::offscreen_target(&mut app.world_mut().resource_mut::<Assets<Image>>())
+        crate::capture::offscreen_target_sized(
+            &mut app.world_mut().resource_mut::<Assets<Image>>(),
+            opts.size.unwrap_or(crate::capture::HIDDEN_SIZE),
+        )
     });
     if opts.hidden && opts.bench.is_some() {
         // With no window the loop counts as unfocused and would idle at 60 Hz: a bench runs
@@ -284,12 +384,24 @@ pub fn run(opts: Options) -> AppExit {
         bench_secs: opts.bench,
         frame: 0,
         frame_ms: Vec::new(),
+        frames: Vec::new(),
         scene: opts.scene.is_some(),
         built_frames: 0,
         last_counts: (0, 0, 0),
         scene_since: None,
     })
-    .add_systems(Update, (job, exit_on_load_failure));
+    .add_systems(Update, (job, exit_on_load_failure, start_speed));
+    if let Some(speed) = opts.speed {
+        app.insert_resource(StartSpeed(speed));
+    }
+    if opts.pan {
+        app.add_systems(Update, pan_camera);
+    }
+    if opts.log_pipelines
+        && let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp)
+    {
+        render.add_systems(bevy::render::Render, log_pipelines);
+    }
     if let Some(path) = opts.screenshot {
         let mut capture = Capture::new(
             path,
@@ -346,6 +458,7 @@ fn job(
     roads: Res<RoadStats>,
     buildings: Res<BuildingStats>,
     agents: Res<AgentRenderStats>,
+    frame_sim: Res<cp_app::FrameSim>,
     diagnostics: Res<DiagnosticsStore>,
     capture: Option<ResMut<Capture>>,
     mut exit: MessageWriter<AppExit>,
@@ -392,6 +505,13 @@ fn job(
         return;
     }
     job.frame_ms.push(time.delta_secs() * 1000.0);
+    job.frames.push(FrameRecord {
+        ms: time.delta_secs() * 1000.0,
+        sim: *frame_sim,
+        roads_ms: roads.last_update_ms,
+        buildings_ms: buildings.last_update_ms,
+        agents_ms: agents.prepare_ms,
+    });
     let total: f32 = job.frame_ms.iter().sum::<f32>() / 1000.0;
     if frame == WARMUP + 1 {
         info!("bench: warm-up done, measuring {secs} s");
@@ -440,6 +560,7 @@ fn job(
         agents.prepare_ms,
         agents.view_ms
     );
+    print_hitches(&job.frames);
     for d in diagnostics.iter() {
         if let Some(v) = d.smoothed() {
             println!("BENCH diag {} = {v:.3}{}", d.path(), d.suffix);
@@ -452,6 +573,61 @@ fn job(
         _ => {
             exit.write(AppExit::Success);
         }
+    }
+}
+
+/// The bench's hitch report (T-281): frames over [`HITCH_MS`] with what the sim and the
+/// renderers cost in them, and the frame time by the ticks the frame stepped.
+fn print_hitches(frames: &[FrameRecord]) {
+    let hitches: Vec<(usize, &FrameRecord)> = frames
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.ms > HITCH_MS)
+        .collect();
+    println!(
+        "BENCH hitches over {HITCH_MS} ms: {} of {}",
+        hitches.len(),
+        frames.len()
+    );
+    for (i, f) in hitches.iter().take(40) {
+        println!(
+            "BENCH hitch frame={i} ms={:.1} ticks={} step_ms={:.1} view_ms={:.2} roads_ms={:.2} buildings_ms={:.2} agents_ms={:.2}",
+            f.ms,
+            f.sim.ticks,
+            f.sim.step_ms,
+            f.sim.view_ms,
+            f.roads_ms,
+            f.buildings_ms,
+            f.agents_ms
+        );
+    }
+    for ticks in 0..=cp_sim::MAX_TICKS_PER_STEP {
+        let mut ms: Vec<f32> = frames
+            .iter()
+            .filter(|f| f.sim.ticks == ticks)
+            .map(|f| f.ms)
+            .collect();
+        let mut step: Vec<f32> = frames
+            .iter()
+            .filter(|f| f.sim.ticks == ticks)
+            .map(|f| f.sim.step_ms)
+            .collect();
+        if ms.is_empty() {
+            continue;
+        }
+        ms.sort_by(f32::total_cmp);
+        step.sort_by(f32::total_cmp);
+        let pct = |v: &[f32], p: f32| v[((v.len() - 1) as f32 * p) as usize];
+        println!(
+            "BENCH by_ticks ticks={ticks} frames={} frame_p50={:.2} frame_p95={:.2} frame_max={:.2} step_p50={:.2} step_p95={:.2} step_max={:.2}",
+            ms.len(),
+            pct(&ms, 0.5),
+            pct(&ms, 0.95),
+            ms[ms.len() - 1],
+            pct(&step, 0.5),
+            pct(&step, 0.95),
+            step[step.len() - 1]
+        );
     }
 }
 

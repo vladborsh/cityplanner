@@ -12,6 +12,7 @@ pub mod road_scenes;
 pub mod saves;
 pub mod scene;
 pub mod settings;
+pub mod town;
 
 pub use map::{MapLoadFailed, RawFile};
 
@@ -121,6 +122,7 @@ impl Plugin for GamePlugin {
         .add_systems(Update, cp_tools::net_debug::draw_net_debug)
         .insert_resource(settings.camera_settings())
         .init_resource::<PhaseTimes>()
+        .init_resource::<FrameSim>()
         .init_resource::<CommandOutbox>()
         .add_plugins((
             map::MapPlugin,
@@ -248,6 +250,10 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
     }
     // The scenes of the T-261 sweeps.
     if let Some(pose) = road_scenes::camera(name) {
+        return pose;
+    }
+    // The town of `--scene town:N` (T-281).
+    if let Some(pose) = town::camera(name) {
         return pose;
     }
     match name {
@@ -717,6 +723,12 @@ pub fn build_sim(
     } else if let Some(n) = scene.and_then(scene::parse_night) {
         let (built, dark) = scene::build_night(&mut sim, n, hour);
         info!("scene night:{n}: {built} buildings, {dark} without power");
+    } else if let Some(n) = scene.and_then(town::parse_town) {
+        let (residents, rejected) = town::build_town(&mut sim, n);
+        for reason in rejected {
+            warn!("scene command rejected: {reason}");
+        }
+        info!("scene town:{n}: {residents} residents");
     } else if let Some(n) = scene.and_then(scene::parse_city) {
         let built = scene::build_city(&mut sim, n, 5200, 6000);
         info!("scene city:{n}: {built} buildings");
@@ -770,6 +782,15 @@ pub fn load_sim(
 }
 
 /// Median ms per phase over the last [`PHASE_WINDOW_TICKS`] ticks, as the F3 window shows it.
+/// What the sim cost this frame (T-281, for the bench's hitch report): the ticks stepped, the
+/// wall time of the step and of publishing the view, ms.
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct FrameSim {
+    pub ticks: u32,
+    pub step_ms: f32,
+    pub view_ms: f32,
+}
+
 pub fn phase_times(sim: &SimRunner) -> PhaseTimes {
     let means = sim
         .world()
@@ -797,6 +818,7 @@ fn step_sim(
     prefs: Option<Res<cp_ui::UiState>>,
     mut sounds: Option<ResMut<audio::SoundQueue>>,
     mut played: Option<ResMut<audio::AudioPrefsRes>>,
+    mut frame_sim: ResMut<FrameSim>,
 ) {
     let (Some(mut sim), Some(mut view)) = (sim, view) else {
         return;
@@ -829,16 +851,23 @@ fn step_sim(
         }
     }
     let scale = game_speed_scale(sim.0.speed());
+    let started = bevy::platform::time::Instant::now();
     let ticks = sim
         .0
         .step(Duration::from_secs_f64(time.delta_secs_f64() * scale));
     if ticks > 0 {
         scene::top_up_traffic(&mut sim.0);
     }
+    *frame_sim = FrameSim {
+        ticks,
+        step_ms: started.elapsed().as_secs_f32() * 1000.0,
+        view_ms: 0.0,
+    };
     if submitted || ticks > 0 {
         let start = bevy::platform::time::Instant::now();
         *view = sim.0.view();
         agent_stats.view_ms = start.elapsed().as_secs_f32() * 1000.0;
+        frame_sim.view_ms = agent_stats.view_ms;
     }
     if ticks > 0 {
         *phases = phase_times(&sim.0);
