@@ -325,6 +325,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 20.0, 230.0, c + 190.0),
             Vec3::new(c + 20.0, 0.0, c + 40.0),
         ),
+        // Close over the north street of `--scene pipes`, the pipe under it (T-286).
+        "pipes" => (
+            Vec3::new(c - 20.0, 45.0, c - 5.0),
+            Vec3::new(c - 20.0, 0.0, c - 60.0),
+        ),
         // Over both residential blocks of `--scene road-over` (BUG-096).
         "road-over" => (
             Vec3::new(c - 10.0, 170.0, c + 140.0),
@@ -601,6 +606,9 @@ pub fn build_sim(
     } else if scene == Some(scene::CORNERS_WIDE) {
         scene::build_corners_wide(&mut sim);
         info!("scene corners-wide");
+    } else if scene == Some(scene::PIPES) {
+        scene::build_pipes(&mut sim);
+        info!("scene pipes");
     } else if scene == Some(scene::ROAD_OVER) {
         scene::build_road_over(&mut sim);
         info!("scene road-over");

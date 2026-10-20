@@ -40,6 +40,10 @@ pub struct Options {
     /// `--ghost-demo basic_2l,x1,z1,x2,z2`: hold the road tool's ghost from (x1, z1) to the
     /// cursor at (x2, z2) without a cursor (screenshots of the zone strip, T-185).
     pub ghost_demo: Option<cp_tools::GhostDemo>,
+    /// `--utility-demo water,x1,z1,...,x,z` (or `power`): hold the pipe / line tool with the
+    /// points clicked and the cursor at the last (x, z); `water-bulldoze,x,z`: the bulldozer in
+    /// the water layer over (x, z) (T-286 shots).
+    pub utility_demo: Option<cp_tools::UtilityDemo>,
     /// `--place-demo fire_station,x,z`: hold the placement tool's ghost of that building at
     /// (x, z) without a cursor (screenshots of the coverage preview, T-254).
     pub place_demo: Option<cp_tools::PlaceDemo>,
@@ -102,6 +106,7 @@ impl Options {
                     to: bevy::math::Vec2::new(n[2], n[3]),
                 })
             }),
+            utility_demo: value("--utility-demo").and_then(|v| cp_tools::UtilityDemo::parse(&v)),
             place_demo: value("--place-demo").and_then(|v| {
                 let mut it = v.split(',');
                 let def = it.next()?.to_string();
@@ -356,6 +361,12 @@ pub fn run(opts: Options) -> AppExit {
     if let Some(demo) = opts.ghost_demo {
         // The tools only run with the UI; a held ghost for a hidden screenshot needs them.
         if opts.hidden && !opts.hidden_ui {
+            app.add_plugins(cp_tools::ToolsPlugin);
+        }
+        app.insert_resource(demo);
+    }
+    if let Some(demo) = opts.utility_demo {
+        if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
             app.add_plugins(cp_tools::ToolsPlugin);
         }
         app.insert_resource(demo);

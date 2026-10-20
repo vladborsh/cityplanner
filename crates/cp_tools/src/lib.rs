@@ -47,8 +47,9 @@ pub use net_debug::{DebugLine, NetDebug, net_debug_lines};
 pub use outbox::CommandOutbox;
 pub use pick::{Inspected, Picked, pick, pick_line, pick_with};
 pub use plugin::{
-    ActiveTool, Ghost, GhostDemo, PlaceDemo, ToolState, ToolsPlugin, compute_ghost,
-    compute_ghost_alt, compute_utility_ghost, compute_utility_ghost_alt, tool_click, tool_hotkeys,
+    ActiveTool, BulldozeLayer, Ghost, GhostDemo, PlaceDemo, ToolState, ToolsPlugin, UtilityDemo,
+    bulldozer_hover, compute_ghost, compute_ghost_alt, compute_utility_ghost,
+    compute_utility_ghost_alt, road_cursor_piece, tool_click, tool_hotkeys,
 };
 pub use road::{
     CHEVRON_SPACING, Cursor, ELEVATION_STEP, MAX_ELEVATION_LEVEL, MarkerKind, ROAD_TUNNEL_DEPTH,
@@ -63,7 +64,8 @@ pub use transit::{
 pub use under_road::{ConfirmDemolish, UnderRoad, road_click, under_road};
 pub use upgrade::{UpgradePreview, upgrade_commands, upgrade_preview};
 pub use utility::{
-    LINK_PICK_RADIUS, UtilityMode, UtilityTool, pick_link, snap_cursor, snapped_cursor,
+    LINK_PICK_RADIUS, UtilityLattice, UtilityMode, UtilityTool, pick_link, snap_cursor,
+    snapped_cursor,
 };
 pub use zone::{PALETTE, ZoneTool, ZoneToolKind, rect_cells, zone_color, zone_name};
 

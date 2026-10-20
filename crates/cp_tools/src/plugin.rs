@@ -54,12 +54,53 @@ pub enum ActiveTool {
     Place,
     /// Drawing pipes or power lines (Water / Power tabs).
     Utility,
-    /// Removing the pipe or power-line piece under the cursor.
-    UtilityRemove,
     /// Drawing a bus line stop by stop (Transport category, T-157).
     Line,
     /// Turning a one-way road round (T-091).
     Flip,
+}
+
+/// What the bulldozer may take (T-286, §13.5 v7.1): everything, or only one utility layer —
+/// taken up while a water (power) tool is active, it removes only pipes (lines) and the water
+/// and sewage (power) buildings, never roads, houses or anything else.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BulldozeLayer {
+    #[default]
+    All,
+    Water,
+    Power,
+}
+
+impl BulldozeLayer {
+    /// The network of a utility layer.
+    pub fn net(self) -> Option<UtilityNet> {
+        match self {
+            Self::All => None,
+            Self::Water => Some(UtilityNet::Pipe),
+            Self::Power => Some(UtilityNet::Power),
+        }
+    }
+
+    /// The layer of a service kind: water and sewage buildings, power buildings.
+    pub fn of_service(kind: cp_content::ServiceKind) -> Self {
+        use cp_content::ServiceKind as K;
+        match kind {
+            K::Water | K::Sewage => Self::Water,
+            K::Power => Self::Power,
+            _ => Self::All,
+        }
+    }
+
+    /// Whether the bulldozer in this layer may take the building `def`.
+    pub fn takes(self, db: &cp_content::ContentDb, def: cp_content::BuildingDefId) -> bool {
+        self == Self::All
+            || db
+                .building(def)
+                .service
+                .as_deref()
+                .and_then(|s| db.service_id(s))
+                .is_some_and(|s| Self::of_service(db.service(s).kind) == self)
+    }
 }
 
 /// The road ghost: what the cursor would build.
@@ -100,6 +141,11 @@ pub struct Ghost {
     pub cell_ticks: Vec<crate::lattice::CellTick>,
     /// The buildings the click would demolish (BUG-096: the road stands on them), tinted red.
     pub demolish: Vec<cp_building::BuildingId>,
+    /// The 1-cell piece the cursor shows before the first click (T-286): what would be built
+    /// from `resolved`, the point a click puts down; nothing is sent from it.
+    pub cursor_piece: bool,
+    /// The buildings a pipe ghost would connect (T-286: newly in its reach), highlighted.
+    pub connect: Vec<cp_building::BuildingId>,
 }
 
 #[derive(Resource, Default, Debug)]
@@ -145,8 +191,11 @@ pub struct ToolState {
     pub area_preview: Vec<cp_district::Cell>,
     pub building: BuildingTool,
     pub utility: UtilityTool,
-    /// Which network the remove tool picks from.
-    pub remove_net: Option<UtilityNet>,
+    /// What the bulldozer may take (T-286): set when it is taken up, from the tool it interrupts.
+    pub bulldoze_layer: BulldozeLayer,
+    /// The layer of the building being placed (a water or power service: its layer), kept by
+    /// the hover while the placement tool is active so taking the bulldozer up needs no content.
+    pub place_layer: BulldozeLayer,
     /// The pipe / power-line ghost (separate from the road ghost).
     pub utility_ghost: Option<Ghost>,
     /// Link the remove tool would delete.
@@ -214,6 +263,14 @@ impl ToolState {
     pub fn select(&mut self, tool: ActiveTool) {
         if tool == ActiveTool::Bulldozer && self.active != ActiveTool::Bulldozer {
             self.before_bulldozer = self.active;
+            self.bulldoze_layer = match self.active {
+                ActiveTool::Utility if self.utility.kind == UtilityKind::Power => {
+                    BulldozeLayer::Power
+                }
+                ActiveTool::Utility => BulldozeLayer::Water,
+                ActiveTool::Place => self.place_layer,
+                _ => BulldozeLayer::All,
+            };
         }
         self.active = tool;
         self.road.cancel();
@@ -242,6 +299,13 @@ impl ToolState {
         self.line_key = None;
         self.stop_highlight = None;
         self.building.moving = None;
+    }
+
+    /// The bulldozer in `layer` (the "Remove pipe / line" buttons, T-286): B, Esc or its button
+    /// hand back the tool it interrupted.
+    pub fn bulldoze_in(&mut self, layer: BulldozeLayer) {
+        self.select(ActiveTool::Bulldozer);
+        self.bulldoze_layer = layer;
     }
 
     /// Picks the service building `id` up to carry it elsewhere (T-177): the placement tool
@@ -298,6 +362,78 @@ pub fn place_demo(
     let ghost = place_preview(&view, &state.building, demo.at);
     if state.place_ghost != ghost {
         state.place_ghost = ghost;
+    }
+}
+
+/// A pipe or power-line tool held without a cursor (`--utility-demo` of the desktop client, for
+/// the T-286 shots): the tool of `kind` with `points` clicked and the cursor at `hover`; with
+/// `bulldoze`, the bulldozer taken up from that tool (its layer) over `hover`.
+#[derive(Resource, Clone, Debug)]
+pub struct UtilityDemo {
+    pub kind: UtilityKind,
+    pub points: Vec<Vec2>,
+    pub hover: Vec2,
+    pub bulldoze: bool,
+}
+
+impl UtilityDemo {
+    /// `water,x1,z1,...,x,z` (or `power`): the points clicked, the cursor at the last (x, z);
+    /// `water-bulldoze,x,z` (or `power-bulldoze`): the bulldozer in that layer over (x, z).
+    pub fn parse(spec: &str) -> Option<Self> {
+        let mut it = spec.split(',');
+        let (kind, bulldoze) = match it.next()? {
+            "water" => (UtilityKind::Water, false),
+            "power" => (UtilityKind::Power, false),
+            "water-bulldoze" => (UtilityKind::Water, true),
+            "power-bulldoze" => (UtilityKind::Power, true),
+            _ => return None,
+        };
+        let n: Vec<f32> = it.map(|x| x.parse().ok()).collect::<Option<_>>()?;
+        if n.len() < 2 || !n.len().is_multiple_of(2) {
+            return None;
+        }
+        let mut points: Vec<Vec2> = n.chunks(2).map(|c| Vec2::new(c[0], c[1])).collect();
+        let hover = points.pop()?;
+        Some(Self {
+            kind,
+            points,
+            hover,
+            bulldoze,
+        })
+    }
+}
+
+fn utility_demo(
+    demo: Option<Res<UtilityDemo>>,
+    view: Option<Res<SimView>>,
+    mut state: ResMut<ToolState>,
+) {
+    let (Some(demo), Some(view)) = (demo, view) else {
+        return;
+    };
+    let want = if demo.bulldoze {
+        ActiveTool::Bulldozer
+    } else {
+        ActiveTool::Utility
+    };
+    if state.active != want {
+        state.select(ActiveTool::Utility);
+        state.utility.set_kind(demo.kind);
+        if demo.bulldoze {
+            state.toggle_bulldozer();
+        }
+    }
+    state.hover = Some(demo.hover);
+    if demo.bulldoze {
+        bulldozer_hover(&mut state, &view, demo.hover);
+        return;
+    }
+    if state.utility.points != demo.points {
+        state.utility.points = demo.points.clone();
+    }
+    let ghost = compute_utility_ghost_alt(&view, &state.utility, demo.hover, false);
+    if state.utility_ghost != ghost {
+        state.utility_ghost = ghost;
     }
 }
 
@@ -363,8 +499,16 @@ fn sync_demolish_layer(state: Res<ToolState>, mut out: ResMut<cp_render::Demolis
         (_, ActiveTool::Upgrade) => state.upgrade_demolish.clone(),
         _ => Vec::new(),
     };
+    // The buildings a pipe ghost would connect (T-286), tinted blue.
+    let connect = match (&state.utility_ghost, state.active) {
+        (Some(g), ActiveTool::Utility) => g.connect.clone(),
+        _ => Vec::new(),
+    };
     if out.ids != want {
         out.ids = want;
+    }
+    if out.connect != connect {
+        out.connect = connect;
     }
 }
 
@@ -545,12 +689,7 @@ fn sync_pipe_layers(
     let highlight = view
         .as_deref()
         .zip(state.link_highlight)
-        .filter(|_| {
-            matches!(
-                state.active,
-                ActiveTool::UtilityRemove | ActiveTool::Bulldozer
-            )
-        })
+        .filter(|_| state.active == ActiveTool::Bulldozer)
         .and_then(|(v, id)| v.utilities.link(id))
         .filter(|l| l.net == UtilityNet::Pipe)
         .map(|l| l.curve);
@@ -570,12 +709,7 @@ fn sync_pipe_layers(
     let power_highlight = view
         .as_deref()
         .zip(state.link_highlight)
-        .filter(|_| {
-            matches!(
-                state.active,
-                ActiveTool::UtilityRemove | ActiveTool::Bulldozer
-            )
-        })
+        .filter(|_| state.active == ActiveTool::Bulldozer)
         .and_then(|(v, id)| v.utilities.link(id))
         .filter(|l| l.net == UtilityNet::Power)
         .map(|l| [l.curve.point(0.0), l.curve.point(1.0)]);
@@ -630,7 +764,7 @@ impl Plugin for ToolsPlugin {
             )
             .add_systems(
                 Update,
-                (ghost_demo, sync_zone_strip)
+                (ghost_demo, utility_demo, sync_zone_strip)
                     .chain()
                     .after(tool_hover)
                     .before(draw_ghost),
@@ -657,6 +791,54 @@ impl Plugin for ToolsPlugin {
             .init_resource::<BandState>()
             .add_systems(Update, sync_bands.after(tool_hover));
     }
+}
+
+/// What the bulldozer would take at `p` (the hover of [`ActiveTool::Bulldozer`]; T-286: in a
+/// utility layer only that layer's links and buildings).
+pub fn bulldozer_hover(state: &mut ToolState, view: &SimView, p: Vec2) {
+    if state.bulldoze_layer != BulldozeLayer::All {
+        // One utility layer (T-286): its links and its buildings, nothing else.
+        let layer = state.bulldoze_layer;
+        state.building_highlight = pick_building(view, p).filter(|id| {
+            view.content
+                .as_deref()
+                .zip(view.buildings.get(*id))
+                .is_some_and(|(db, b)| layer.takes(db, b.def))
+        });
+        state.stop_highlight = None;
+        state.spans.clear();
+        state.link_highlight = match (state.building_highlight, layer.net()) {
+            (None, Some(net)) => pick_link(&view.utilities, net, p, LINK_PICK_RADIUS),
+            _ => None,
+        };
+        state.highlight.clear();
+        state.highlight_outside = false;
+        return;
+    }
+    state.building_highlight = pick_building(view, p);
+    state.stop_highlight = if state.building_highlight.is_some() {
+        None
+    } else {
+        pick_stop(view, p)
+    };
+    state.spans = if state.building_highlight.is_some() || state.stop_highlight.is_some() {
+        Vec::new()
+    } else {
+        demolition(&view.net, p, PICK_RADIUS, state.shift)
+    };
+    // A pipe or power line only when no road is under the cursor.
+    state.link_highlight = if state.building_highlight.is_some()
+        || state.stop_highlight.is_some()
+        || !state.spans.is_empty()
+    {
+        None
+    } else {
+        [UtilityNet::Power, UtilityNet::Pipe]
+            .into_iter()
+            .find_map(|net| pick_link(&view.utilities, net, p, LINK_PICK_RADIUS))
+    };
+    state.highlight = state.spans.iter().map(|s| s.0).collect();
+    state.highlight_outside = spans_outside_owned(&view.net, &view.tiles, &state.spans);
 }
 
 /// Exported for the headless input tests (`tests/click_through.rs`).
@@ -823,32 +1005,7 @@ pub fn tool_hover(
     };
     let hover = state.hover;
     match (state.active, hover) {
-        (ActiveTool::Bulldozer, Some(p)) => {
-            state.building_highlight = pick_building(&view, p);
-            state.stop_highlight = if state.building_highlight.is_some() {
-                None
-            } else {
-                pick_stop(&view, p)
-            };
-            state.spans = if state.building_highlight.is_some() || state.stop_highlight.is_some() {
-                Vec::new()
-            } else {
-                demolition(&view.net, p, PICK_RADIUS, state.shift)
-            };
-            // A pipe or power line only when no road is under the cursor.
-            state.link_highlight = if state.building_highlight.is_some()
-                || state.stop_highlight.is_some()
-                || !state.spans.is_empty()
-            {
-                None
-            } else {
-                [UtilityNet::Power, UtilityNet::Pipe]
-                    .into_iter()
-                    .find_map(|net| pick_link(&view.utilities, net, p, LINK_PICK_RADIUS))
-            };
-            state.highlight = state.spans.iter().map(|s| s.0).collect();
-            state.highlight_outside = spans_outside_owned(&view.net, &view.tiles, &state.spans);
-        }
+        (ActiveTool::Bulldozer, Some(p)) => bulldozer_hover(&mut state, &view, p),
         (ActiveTool::Upgrade, Some(p)) => {
             let preview = match (state.road.road, view.content.as_deref()) {
                 (Some(target), Some(content)) => {
@@ -897,6 +1054,15 @@ pub fn tool_hover(
         }
         (ActiveTool::Place, Some(p)) => {
             state.place_ghost = place_preview(&view, &state.building, p);
+            state.place_layer = state
+                .building
+                .def
+                .zip(view.content.as_deref())
+                .and_then(|(def, db)| {
+                    let svc = db.service_id(db.building(def).service.as_deref()?)?;
+                    Some(BulldozeLayer::of_service(db.service(svc).kind))
+                })
+                .unwrap_or_default();
         }
         (ActiveTool::Zone, Some(p)) => {
             state.zone_preview = state.zone.preview(&view.zones, p);
@@ -920,11 +1086,6 @@ pub fn tool_hover(
                 state.utility_key = Some(key);
             }
         }
-        (ActiveTool::UtilityRemove, Some(p)) => {
-            state.link_highlight = state
-                .remove_net
-                .and_then(|net| pick_link(&view.utilities, net, p, LINK_PICK_RADIUS));
-        }
         (ActiveTool::Road, Some(p)) => {
             let key = GhostKey {
                 // Centimetres: the ghost follows the cursor and a click is the ghost (T-264).
@@ -934,7 +1095,11 @@ pub fn tool_hover(
                 net_ptr: std::sync::Arc::as_ptr(&view.net) as usize,
             };
             if state.ghost_key.as_ref() != Some(&key) {
-                state.ghost = compute_ghost_alt(&view, &state.road, p, state.free_snaps());
+                state.ghost = if state.road.points.is_empty() {
+                    road_cursor_piece(&view, &state.road, p, state.free_snaps())
+                } else {
+                    compute_ghost_alt(&view, &state.road, p, state.free_snaps())
+                };
                 state.markers = road_markers(&view, p);
                 state.ghost_key = Some(key);
             }
@@ -988,6 +1153,44 @@ pub fn compute_ghost(view: &SimView, tool: &RoadTool, hover: Vec2) -> Option<Gho
 /// [`compute_ghost`] with the snaps switched off (`free`: `Alt` held or the button off): the one
 /// resolver ([`resolve_cursor`]) places the cursor and the plan is validated literally, the way
 /// `BuildPlan` is applied.
+/// The road tool's cursor before the first click (T-286, §13.5 v7.1): a 1-cell piece of the
+/// road from the point a click would put down ([`resolve_cursor`]), along [`probe_dir`], with
+/// its zoning cells; green when that piece could be built.
+///
+/// [`probe_dir`]: crate::lattice::probe_dir
+pub fn road_cursor_piece(
+    view: &SimView,
+    tool: &RoadTool,
+    hover: Vec2,
+    free: bool,
+) -> Option<Ghost> {
+    if !tool.points.is_empty() {
+        return None;
+    }
+    let content = view.content.as_deref()?;
+    let point = resolve_cursor(view, tool, hover, free)?.point;
+    let src = crate::lattice::RoadLattice {
+        graph: &view.net,
+        content,
+    };
+    let dir = crate::lattice::probe_dir(&src, point, hover);
+    let probe = RoadTool {
+        mode: crate::RoadMode::Straight,
+        points: vec![point],
+        ..tool.clone()
+    };
+    // Snaps off for the probe's end: exactly one cell from the point.
+    let mut ghost = compute_ghost_alt(view, &probe, point + dir * cp_net::build::ZONE_CELL, true)?;
+    ghost.hover = Some(hover);
+    ghost.resolved = Some(point);
+    ghost.cursor_piece = true;
+    ghost.cost = None;
+    ghost.cell_ticks.clear();
+    ghost.block = None;
+    ghost.plan = None;
+    Some(ghost)
+}
+
 pub fn compute_ghost_alt(
     view: &SimView,
     tool: &RoadTool,
@@ -1070,9 +1273,14 @@ pub fn compute_utility_ghost_alt(
     hover: Vec2,
     alt: bool,
 ) -> Option<Ghost> {
+    if tool.points.is_empty() {
+        return crate::utility::cursor_piece(view, tool, hover, alt);
+    }
+    let raw = hover;
     let (hover, snap) = crate::utility::snapped_cursor(view, tool, hover, alt);
     let path = tool.path_with_hover(hover)?;
-    Some(match utility_preview(view, tool.kind, &path)? {
+    let ticks = crate::lattice::cell_ticks(&RoadPath::Free(path.clone()), 0.0);
+    let mut ghost = match utility_preview(view, tool.kind, &path)? {
         Ok(plan) => Ghost {
             polylines: plan_polylines(&view.utilities, &plan),
             valid: true,
@@ -1106,7 +1314,14 @@ pub fn compute_utility_ghost_alt(
             block: None,
             ..Default::default()
         },
-    })
+    };
+    ghost.cell_ticks = ticks;
+    ghost.hover = Some(raw);
+    ghost.resolved = Some(hover);
+    if ghost.valid && tool.kind == UtilityKind::Water {
+        ghost.connect = crate::utility::connects(view, tool.kind, &path);
+    }
+    Some(ghost)
 }
 
 /// The drawn path itself at terrain height, for the red ghost.
@@ -1319,11 +1534,6 @@ pub fn tool_click(
             }
             state.line_key = None;
         }
-        ActiveTool::UtilityRemove => {
-            if let Some(link) = state.link_highlight.take() {
-                outbox.push(SimCommand::Utility(UtilityCommand::RemoveLink { link }));
-            }
-        }
         ActiveTool::None | ActiveTool::Zone | ActiveTool::District | ActiveTool::Area => {}
     }
 }
@@ -1435,6 +1645,32 @@ fn draw_ghost(
             Vec3::new(b.x, y(b), b.y),
             Color::srgba(0.4, 0.8, 1.0, 0.8),
         );
+    }
+    // The bold 10-cell ticks of a pipe or power line being drawn (T-286, as the road's).
+    if let Some(ghost) = state
+        .utility_ghost
+        .as_ref()
+        .filter(|_| state.active == ActiveTool::Utility)
+        && let Some(view) = view.as_deref()
+    {
+        let at = |p: Vec2| {
+            Vec3::new(
+                p.x,
+                view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.9,
+                p.y,
+            )
+        };
+        for t in &ghost.cell_ticks {
+            let d = (t.b - t.a).normalize_or_zero();
+            let along = Vec2::new(d.y, -d.x);
+            for k in [-0.4, 0.0, 0.4] {
+                on_top.line(
+                    at(t.a + along * k),
+                    at(t.b + along * k),
+                    Color::srgb(1.0, 0.9, 0.2),
+                );
+            }
+        }
     }
     if let Some(ghost) = &state.ghost
         && state.active == ActiveTool::Road

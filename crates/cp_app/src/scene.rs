@@ -1441,6 +1441,28 @@ pub fn build_grown(sim: &mut SimRunner) {
     }
 }
 
+/// The [`GROWN`] scene with a pipe along the north street, under the road (T-286 shots): the
+/// pipe cursor, a pipe dragged along the middle street with the reach band and the buildings it
+/// would connect, the bulldozer in the water layer over the pipe under the road.
+/// `--cam grown --utility-demo water,5290,5150` (cursor), `water,5000,5150,5200,5150` (drag),
+/// `--cam pipes --utility-demo water-bulldoze,5100,5060` (the layer bulldozer).
+pub const PIPES: &str = "pipes";
+
+/// Builds the [`PIPES`] scene.
+pub fn build_pipes(sim: &mut SimRunner) {
+    build_grown(sim);
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let y = c - 60.0;
+    sim.push_command(
+        SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
+            kind: cp_content::UtilityKind::Water,
+            path: vec![Vec2::new(c - 120.0, y), Vec2::new(c + 104.0, y)],
+        }),
+        sim.tick(),
+    );
+    sim.tick_once();
+}
+
 /// The [`GROWN`] scene with a police station in the east residential block (BUG-096): a road
 /// ghost across the west block tints the houses it demolishes, one across the station holds the
 /// question. `--cam road-over --ghost-demo basic_2l,5150,5060,5150,5140 --ui`.

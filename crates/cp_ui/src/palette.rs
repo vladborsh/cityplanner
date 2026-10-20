@@ -567,7 +567,6 @@ mod tests {
             (Category::Zones, ActiveTool::Zone),
             (Category::Buildings, ActiveTool::Utility),
             (Category::Buildings, ActiveTool::Place),
-            (Category::Buildings, ActiveTool::UtilityRemove),
             (Category::Buildings, ActiveTool::None),
             (Category::Bulldozer, ActiveTool::Bulldozer),
             (Category::Districts, ActiveTool::District),
@@ -1009,7 +1008,6 @@ mod tests {
     #[test]
     fn the_tiles_of_the_buildings_panel_set_the_tools_and_the_overlay() {
         use cp_render::Overlay;
-        use cp_utility::UtilityNet;
         let mut rig = Rig::new();
         rig.screen = egui::vec2(1280.0, 3000.0);
         rig.click_category(Category::Buildings);
@@ -1031,8 +1029,8 @@ mod tests {
         assert_eq!(rig.overlay.active, Overlay::Water);
 
         rig.click_label("Remove line");
-        assert_eq!(rig.tools.active, ActiveTool::UtilityRemove);
-        assert_eq!(rig.tools.remove_net, Some(UtilityNet::Power));
+        assert_eq!(rig.tools.active, ActiveTool::Bulldozer);
+        assert_eq!(rig.tools.bulldoze_layer, cp_tools::BulldozeLayer::Power);
         assert_eq!(rig.overlay.active, Overlay::Power);
 
         rig.click_label("Coal power plant");

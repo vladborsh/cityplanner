@@ -7,7 +7,7 @@ use cp_content::{BuildingDefId, ContentDb, ServiceKind, ServiceSite, UtilityKind
 use cp_core::Cost;
 use cp_render::{Overlay, OverlayState};
 use cp_sim::SimView;
-use cp_tools::{ActiveTool, ToolState, UtilityMode, format_money};
+use cp_tools::{ActiveTool, BulldozeLayer, ToolState, UtilityMode, format_money};
 use cp_utility::UtilityNet;
 
 use crate::icons::Icon;
@@ -481,8 +481,12 @@ pub fn buildings_panel(
                 }
             }
             if let Some((_, remove_net, shown)) = net {
-                let on = tools.active == ActiveTool::UtilityRemove
-                    && tools.remove_net == Some(remove_net);
+                // The bulldozer in this network's layer (T-286).
+                let layer = match remove_net {
+                    UtilityNet::Power => BulldozeLayer::Power,
+                    UtilityNet::Pipe => BulldozeLayer::Water,
+                };
+                let on = tools.active == ActiveTool::Bulldozer && tools.bulldoze_layer == layer;
                 let (icon, name) = match section.net {
                     Some(NetTab::Power) => (Icon::RemoveLine, "Remove line"),
                     _ => (Icon::RemovePipe, "Remove pipe"),
@@ -492,10 +496,9 @@ pub fn buildings_panel(
                     .clicked()
                 {
                     if on {
-                        tools.select(ActiveTool::None);
+                        tools.toggle_bulldozer();
                     } else {
-                        tools.select(ActiveTool::UtilityRemove);
-                        tools.remove_net = Some(remove_net);
+                        tools.bulldoze_in(layer);
                         overlay.open_auto(shown);
                     }
                 }

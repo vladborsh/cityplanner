@@ -1,5 +1,6 @@
-//! T-182: the pipe and power-line tools snap like the road tool — key angles from a
-//! neighbouring link, guides parallel to a street, nodes — and `Alt` turns it all off.
+//! T-182, T-286 (§13.5 v7.1): the pipe and power-line tools snap by the road tool's rules —
+//! square to a neighbouring link within 7°, whole cells long, a street's direction for a start in
+//! the open, nodes of their own network — and `Alt` turns it all off.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -10,7 +11,7 @@ use cp_core::curve::CubicBezier3;
 use cp_net::{Elevation, NetGraph, SnapReportKind};
 use cp_sim::{SimCommand, SimRunner};
 use cp_terrain::Terrain;
-use cp_tools::{UtilityMode, UtilityTool, compute_utility_ghost_alt, snap_label};
+use cp_tools::{UtilityMode, UtilityTool, compute_utility_ghost_alt};
 use cp_utility::UtilityCommand;
 
 const ROOT: &str = env!("CARGO_MANIFEST_DIR");
@@ -69,11 +70,12 @@ fn a_pipe_from_a_node_at_88_degrees_stands_at_90_with_its_label() {
         C + 30.0 * 2f32.to_radians().cos(),
     );
     let g = compute_utility_ghost_alt(&view, &tool, p, false).unwrap();
-    assert_eq!(g.snap.kind, SnapReportKind::KeyAngle(90));
-    assert_eq!(snap_label(g.snap.kind).as_deref(), Some("90°"));
+    // Square (the guide line shows it), 30 m is 4 whole cells.
+    assert_eq!(g.snap.kind, SnapReportKind::CellStep(32));
     assert!(g.snap.guide.is_some());
     let end = g.polylines[0].last().unwrap();
-    assert!((end.x - (C + 60.0)).abs() < 0.1, "{end:?}");
+    assert!((end.x - (C + 60.0)).abs() < 1e-3, "{end:?}");
+    assert!((end.z - (C + 32.0)).abs() < 1e-3, "{end:?}");
     // Alt: no snaps, the cursor stays where it is.
     let g = compute_utility_ghost_alt(&view, &tool, p, true).unwrap();
     assert_eq!(g.snap.kind, SnapReportKind::None);
@@ -82,21 +84,17 @@ fn a_pipe_from_a_node_at_88_degrees_stands_at_90_with_its_label() {
 }
 
 #[test]
-fn a_run_parallel_to_a_street_20_m_away_is_caught_by_the_guide() {
+fn a_run_started_beside_a_street_runs_parallel_to_it() {
     let sim = town(UtilityKind::Water);
     let view = sim.view();
-    // Start far from the link so that only the street gives a direction.
+    // A start in the open 20 m from the street (far from the link): the street's direction is
+    // the reference, a cursor 3 m off it gives a run parallel to the street.
     let tool = drawing(UtilityKind::Water, Vec2::new(C - 80.0, C + 80.0));
     let p = Vec2::new(C + 20.0, C + 83.0);
     let g = compute_utility_ghost_alt(&view, &tool, p, false).unwrap();
-    assert_eq!(
-        g.snap.kind,
-        SnapReportKind::Guide {
-            perpendicular: false
-        }
-    );
+    assert_eq!(g.snap.kind, SnapReportKind::CellStep(104));
     let end = g.polylines[0].last().unwrap();
-    assert!((end.z - (C + 80.0)).abs() < 0.1, "{end:?}");
+    assert!((end.z - (C + 80.0)).abs() < 1e-3, "{end:?}");
 }
 
 #[test]
@@ -106,7 +104,9 @@ fn power_lines_snap_the_same_way_and_a_node_pulls_the_cursor() {
     let tool = drawing(UtilityKind::Power, Vec2::new(C + 60.0, C));
     let p = Vec2::new(C + 62.0, C + 30.0);
     let g = compute_utility_ghost_alt(&view, &tool, p, false).unwrap();
-    assert_eq!(g.snap.kind, SnapReportKind::KeyAngle(90));
+    assert_eq!(g.snap.kind, SnapReportKind::CellStep(32));
+    let end = g.polylines[0].last().unwrap();
+    assert!((end.x - (C + 60.0)).abs() < 1e-3, "square: {end:?}");
     // Near the other end of the line: the cursor jumps to that node.
     let p = Vec2::new(C + 4.0, C + 4.0);
     let g = compute_utility_ghost_alt(&view, &tool, p, false).unwrap();

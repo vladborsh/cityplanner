@@ -215,7 +215,6 @@ fn no_tool_reacts_to_a_click_over_the_ui() {
         ActiveTool::District,
         ActiveTool::Place,
         ActiveTool::Utility,
-        ActiveTool::UtilityRemove,
         ActiveTool::Line,
     ];
     for tool in tools {

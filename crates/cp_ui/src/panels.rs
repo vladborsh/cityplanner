@@ -8,8 +8,8 @@ use cp_core::SimSpeed;
 use cp_render::{LightingSettings, Overlay, OverlayState};
 use cp_sim::SimView;
 use cp_tools::{
-    ActiveTool, CommandOutbox, PALETTE, ToolState, ZoneToolKind, format_money, snap_label,
-    zone_name,
+    ActiveTool, BulldozeLayer, CommandOutbox, PALETTE, ToolState, ZoneToolKind, format_money,
+    snap_label, zone_name,
 };
 
 use crate::files::{FileMenu, toggle_saves};
@@ -120,7 +120,7 @@ struct ToolKey {
     active: ActiveTool,
     building: Option<cp_content::BuildingDefId>,
     utility: Option<cp_content::UtilityKind>,
-    remove: Option<cp_utility::UtilityNet>,
+    remove: BulldozeLayer,
 }
 
 impl ToolKey {
@@ -129,7 +129,7 @@ impl ToolKey {
             active: tools.active,
             building: tools.building.def,
             utility: Some(tools.utility.kind),
-            remove: tools.remove_net,
+            remove: tools.bulldoze_layer,
         }
     }
 }
@@ -585,6 +585,10 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
     };
     match (category, tools.active) {
         (Category::Roads, ActiveTool::Road) => match &tools.ghost {
+            // The 1-cell cursor before the first click (T-286).
+            Some(g) if g.cursor_piece && g.valid => {
+                ui.weak("Click to start a road. Esc cancels.");
+            }
             Some(g) if g.valid => {
                 let snap = snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));
                 // The 8-cell block guide's verdict (T-185).
@@ -697,6 +701,9 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
             }
         },
         (Category::Buildings, ActiveTool::Utility) => match &tools.utility_ghost {
+            Some(g) if g.cursor_piece && g.valid => {
+                ui.weak("Click to start. Alt switches the snaps off. Buildings within reach of the network are connected (the band shows the reach). Esc cancels.");
+            }
             Some(g) if g.valid => {
                 let snap = snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));
                 ok(ui, "can build", g.cost, snap)
@@ -706,9 +713,6 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ui.weak("Click to start. Alt switches the snaps off. Buildings within reach of the network are connected (the band shows the reach). Esc cancels.");
             }
         },
-        (Category::Buildings, ActiveTool::UtilityRemove) => {
-            ui.weak("Hover a piece and click to remove it. Esc leaves the tool.");
-        }
         (Category::Transit, ActiveTool::Line) => {
             if let Some(notice) = &tools.line_notice {
                 bad(ui, std::slice::from_ref(notice), "cannot place a stop");
@@ -800,6 +804,13 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
         }
         (Category::Zones, _) => {
             ui.weak("Pick a zoning tool or a zone type to show the zone grid.");
+        }
+        // The bulldozer in one utility layer (T-286).
+        (_, ActiveTool::Bulldozer) if tools.bulldoze_layer == BulldozeLayer::Water => {
+            ui.weak("Removes only pipes and water buildings. Hover one and click; B or Esc goes back to the pipe tool.");
+        }
+        (_, ActiveTool::Bulldozer) if tools.bulldoze_layer == BulldozeLayer::Power => {
+            ui.weak("Removes only power lines and power buildings. Hover one and click; B or Esc goes back to the line tool.");
         }
         (Category::Bulldozer, ActiveTool::Bulldozer) if tools.highlight_outside => {
             bad(ui, &["outside your land".to_string()], "cannot remove");

@@ -7,13 +7,17 @@
 
 use bevy_math::{Vec2, Vec3};
 use cp_content::UtilityKind;
-use cp_net::SnapReport;
+use cp_core::curve::{CubicBezier3, to_xz};
+use cp_net::build::{GUIDE_RADIUS, ZONE_CELL};
+use cp_net::{RoadPath, SnapReport};
 use cp_sim::{SimCommand, SimView};
 
-use crate::snap::{SnapCtx, SnapEdge, SnapNode, resolve};
+use crate::lattice::{
+    EXACT_REACH_M, GuideLine, Joined, LatticeSource, Lx, SECTION_M, WEAK_M, quantize_with,
+};
 use cp_utility::{
     LinkPlan, PathProblem, PlanInputs, PlanNode, UtilityCommand, UtilityGraph, UtilityLinkId,
-    UtilityNet, plan_link_path,
+    UtilityNet, UtilityNodeId, plan_link_path,
 };
 
 /// Pick radius of the remove tool, metres.
@@ -132,115 +136,397 @@ pub fn chain_commit(
     Some(tool.command(path))
 }
 
-/// The directions a leg starting at `from` is measured against: the links of the network that
-/// leave a node at `from`, and the leg before `from` in the drawing, turned round (so that
-/// 180° is straight on and 90° is a right angle either way).
-fn direction_refs(view: &SimView, net: UtilityNet, tool: &UtilityTool, from: Vec2) -> Vec<Vec2> {
-    let mut refs = Vec::new();
-    if let [.., before, last] = tool.points.as_slice()
-        && last.distance(from) < 0.5
-        && let Some(d) = (*before - *last).try_normalize()
-    {
-        refs.push(d);
-    }
-    let g = &*view.utilities;
-    for (_, n) in g.nodes().filter(|(_, n)| n.net == net) {
-        if Vec2::new(n.pos.x, n.pos.z).distance(from) > 0.5 {
-            continue;
-        }
-        for l in &n.links {
-            let Some(link) = g.link(*l) else { continue };
-            let (a, b) = (
-                Vec2::new(link.curve.p0.x, link.curve.p0.z),
-                Vec2::new(link.curve.p3.x, link.curve.p3.z),
-            );
-            let other = if a.distance(from) < 0.5 { b } else { a };
-            if let Some(d) = (other - from).try_normalize() {
-                refs.push(d);
-            }
-        }
-    }
-    refs
-}
-
-/// What the pipe and power-line tools may snap to, as the one resolver ([`crate::snap`]) reads
-/// it: the nodes of the network at the radius `cp_utility`'s own validator snaps with, its links
-/// as edges, and the ground roads and links as guides. No length step: pipes have none.
+/// The cursor `p` of the tool's drawing, on the utility lattice (T-286, [`UtilityLattice`]): the
+/// clicked points with the cursor go through the road tool's rules ([`quantize_with`]), the
+/// cursor's vertex is where a click puts the point. `alt` switches every snap off (a direct hit on
+/// a node or link stays: [`plan_link_path`] snaps it).
 fn resolve_cursor(
     view: &SimView,
     kind: UtilityKind,
-    tool: &UtilityTool,
-    start: Option<Vec2>,
+    points: &[Vec2],
     p: Vec2,
     alt: bool,
 ) -> (Vec2, SnapReport) {
-    let net = net_of(kind);
-    let nodes: Vec<SnapNode> = view
-        .utilities
-        .nodes()
-        .filter(|(_, n)| n.net == net)
-        .map(|(_, n)| {
-            SnapNode::radial(
-                Vec2::new(n.pos.x, n.pos.z),
-                cp_utility::plan::NODE_SNAP_RADIUS,
-            )
-        })
-        .collect();
-    let links = || view.utilities.links().filter(|(_, l)| l.net == net);
-    let edges: Vec<SnapEdge> = links()
-        .map(|(_, l)| SnapEdge {
-            curve: l.curve,
-            reach: cp_utility::plan::LINK_SNAP_RADIUS,
-        })
-        .collect();
-    let guides: Vec<_> = view
-        .net
-        .segments()
-        .filter(|(_, s)| s.elevation == cp_net::Elevation::Ground)
-        .map(|(_, s)| s.curve)
-        .chain(links().map(|(_, l)| l.curve))
-        .collect();
-    let refs = start.map_or_else(Vec::new, |s| direction_refs(view, net, tool, s));
-    let snap = resolve(
-        p,
-        &SnapCtx {
-            nodes: &nodes,
-            edges: &edges,
-            guides: &guides,
-            marks: &[],
-            start,
-            refs: &refs,
-            snaps: !alt,
-            length_step: false,
-        },
-    );
-    (snap.pos, snap.report())
+    // Alt as in the road tool: no snap at all (a direct hit is `plan_link_path`'s).
+    if alt || view.content.is_none() {
+        return (p, SnapReport::default());
+    }
+    let src = UtilityLattice {
+        view,
+        net: net_of(kind),
+    };
+    let mut pts = points.to_vec();
+    pts.push(p);
+    let (path, report) = quantize_with(&src, &Lx::default(), &RoadPath::Free(pts), true, true);
+    let at = match path {
+        RoadPath::Free(v) => v.last().copied().unwrap_or(p),
+        _ => p,
+    };
+    (at, report)
 }
 
-/// The cursor `p` of a leg from `prev`, snapped by the one resolver (T-264, [`crate::snap`]): to
-/// a node or a link of the network being drawn, to the guides of the roads and links near it, to
-/// the key angles and the 15° step from the directions at `prev`. Returns the new point and what
-/// snapped it. `alt` turns every snap off (a direct hit on a node or link stays).
+/// The cursor `p` of a leg from `prev`, snapped on the utility lattice ([`resolve_cursor`]).
 pub fn snap_cursor(
     view: &SimView,
     kind: UtilityKind,
-    tool: &UtilityTool,
+    _tool: &UtilityTool,
     prev: Vec2,
     p: Vec2,
     alt: bool,
 ) -> (Vec2, SnapReport) {
-    resolve_cursor(view, kind, tool, Some(prev), p, alt)
+    resolve_cursor(view, kind, &[prev], p, alt)
 }
 
-/// `p` snapped for the tool's current drawing; before the first click the cursor may still jump
-/// to a node or a link.
+/// `p` snapped for the tool's current drawing; before the first click the cursor still joins a
+/// node or a whole cell of a link of its network.
 pub fn snapped_cursor(
     view: &SimView,
     tool: &UtilityTool,
     p: Vec2,
     alt: bool,
 ) -> (Vec2, SnapReport) {
-    resolve_cursor(view, tool.kind, tool, tool.points.last().copied(), p, alt)
+    resolve_cursor(view, tool.kind, &tool.points, p, alt)
+}
+
+/// How far (metres) from one of its links a point joins the network being drawn: half a cell,
+/// so a pipe drawn a cell beside its own pipe stays a parallel pipe.
+pub const LINK_JOIN_M: f32 = 0.5 * ZONE_CELL;
+
+/// The lattice of the pipe and power-line tools (T-286, §13.5 v7.1): the road tool's rules on
+/// one utility network. Only that network joins (a node within a cell, a whole cell of a chain
+/// of its links); the roads, the pipes and the power lines guide (their extensions and the
+/// squares through their nodes) but never join, so a pipe along a street runs beside it.
+pub struct UtilityLattice<'a> {
+    pub view: &'a SimView,
+    pub net: UtilityNet,
+}
+
+impl UtilityLattice<'_> {
+    fn graph(&self) -> &UtilityGraph {
+        &self.view.utilities
+    }
+
+    /// The directions of the links of any network leaving `node`.
+    fn link_dirs(&self, node: UtilityNodeId) -> Vec<Vec2> {
+        let g = self.graph();
+        let Some(n) = g.node(node) else {
+            return Vec::new();
+        };
+        let at = to_xz(n.pos);
+        n.links
+            .iter()
+            .filter_map(|l| g.link(*l))
+            .filter_map(|l| {
+                let (a, b) = (to_xz(l.curve.p0), to_xz(l.curve.p3));
+                let other = if a.distance(at) < 0.5 { b } else { a };
+                (other - at).try_normalize()
+            })
+            .collect()
+    }
+
+    /// The chain of links of this network through `link` (across nodes with two links), in
+    /// order, as curves running one way.
+    fn chain(&self, link: UtilityLinkId) -> Vec<CubicBezier3> {
+        let g = self.graph();
+        let Some(first) = g.link(link) else {
+            return Vec::new();
+        };
+        let mut seen = vec![link];
+        // Walks from `node` away from `from`, returning the curves met (each oriented onward).
+        let walk =
+            |seen: &mut Vec<UtilityLinkId>, mut node: UtilityNodeId, mut from: UtilityLinkId| {
+                let mut out = Vec::new();
+                while let Some(n) = g.node(node)
+                    && n.links.len() == 2
+                {
+                    let Some(&next) = n.links.iter().find(|l| **l != from) else {
+                        break;
+                    };
+                    if seen.contains(&next) {
+                        break;
+                    }
+                    let Some(l) = g.link(next).filter(|l| l.net == self.net) else {
+                        break;
+                    };
+                    seen.push(next);
+                    let (c, far) = if l.a == node {
+                        (l.curve, l.b)
+                    } else {
+                        (reversed(&l.curve), l.a)
+                    };
+                    out.push(c);
+                    (node, from) = (far, next);
+                }
+                out
+            };
+        let ahead = walk(&mut seen, first.b, link);
+        let behind = walk(&mut seen, first.a, link);
+        let mut curves: Vec<CubicBezier3> = behind.iter().rev().map(reversed).collect();
+        curves.push(first.curve);
+        curves.extend(ahead);
+        curves
+    }
+}
+
+fn reversed(c: &CubicBezier3) -> CubicBezier3 {
+    CubicBezier3 {
+        p0: c.p3,
+        p1: c.p2,
+        p2: c.p1,
+        p3: c.p0,
+    }
+}
+
+/// The whole cell of a chain of straight pieces nearest its point `along` metres from its
+/// start (as `lattice::street_cell` for a street): whole cells from the nearer end, a cell clear
+/// of both, unless a 10-cell mark from either end is within `WEAK_M`. The point and the chain's
+/// direction there; `None` on a chain shorter than two cells.
+fn chain_cell(curves: &[CubicBezier3], along: f32) -> Option<(Vec2, Vec2)> {
+    let lens: Vec<f32> = curves
+        .iter()
+        .map(|c| to_xz(c.p0).distance(to_xz(c.p3)))
+        .collect();
+    let total: f32 = lens.iter().sum();
+    if total < 2.0 * ZONE_CELL {
+        return None;
+    }
+    let mut marks = Vec::new();
+    let mut k = SECTION_M;
+    while k < total - 1.0 {
+        marks.extend([k, total - k]);
+        k += SECTION_M;
+    }
+    let at = match marks
+        .iter()
+        .copied()
+        .filter(|m| (m - along).abs() <= WEAK_M)
+        .min_by(|a, b| (a - along).abs().total_cmp(&(b - along).abs()))
+    {
+        Some(m) => m,
+        None => {
+            let cells = |k: f32| (k / ZONE_CELL).round() * ZONE_CELL;
+            if along <= total / 2.0 {
+                cells(along)
+            } else {
+                total - cells(total - along)
+            }
+            .clamp(ZONE_CELL, total - ZONE_CELL)
+        }
+    };
+    let mut walked = 0.0;
+    for (c, len) in curves.iter().zip(&lens) {
+        if at <= walked + len + 1e-3 {
+            let (a, b) = (to_xz(c.p0), to_xz(c.p3));
+            let d = (b - a).try_normalize()?;
+            return Some((a + d * (at - walked).clamp(0.0, *len), d));
+        }
+        walked += len;
+    }
+    None
+}
+
+impl LatticeSource for UtilityLattice<'_> {
+    type Line = UtilityLinkId;
+
+    fn join(&self, p: Vec2) -> Option<Joined<UtilityLinkId>> {
+        let g = self.graph();
+        if let Some(id) = g.nearest_node(self.net, p, ZONE_CELL) {
+            let n = g.node(id)?;
+            return Some(Joined {
+                pos: to_xz(n.pos),
+                node: Some(self.link_dirs(id)),
+                along: None,
+                line: None,
+            });
+        }
+        let (link, _, _) = g.nearest_link(self.net, p, LINK_JOIN_M)?;
+        let curves = self.chain(link);
+        // The cursor's distance along the chain.
+        let mut walked = 0.0;
+        let mut along = None;
+        let mut best = f32::MAX;
+        for c in &curves {
+            let (a, b) = (to_xz(c.p0), to_xz(c.p3));
+            let len = a.distance(b);
+            let d = (b - a).normalize_or_zero();
+            let k = (p - a).dot(d).clamp(0.0, len);
+            let miss = (a + d * k).distance(p);
+            if miss < best {
+                best = miss;
+                along = Some(walked + k);
+            }
+            walked += len;
+        }
+        let (pos, dir) = chain_cell(&curves, along?)?;
+        Some(Joined {
+            pos,
+            node: None,
+            along: Some(dir),
+            line: Some(link),
+        })
+    }
+
+    fn square_on_line(
+        &self,
+        link: UtilityLinkId,
+        from: Vec2,
+        refs: &[Vec2],
+        p: Vec2,
+    ) -> Option<(Vec2, Vec2)> {
+        crate::lattice::square_on_curves(&self.chain(link), ZONE_CELL, from, refs, p)
+    }
+
+    fn guide_nodes(&self, near: Vec2, radius: f32) -> Vec<(Vec2, Vec<Vec2>)> {
+        let roads = crate::lattice::RoadLattice {
+            graph: &self.view.net,
+            content: self
+                .view
+                .content
+                .as_deref()
+                .expect("a lattice needs content"),
+        };
+        let mut out = roads.guide_nodes(near, radius);
+        out.extend(
+            self.graph()
+                .nodes()
+                .filter(|(_, n)| to_xz(n.pos).distance(near) <= radius)
+                .map(|(id, n)| (to_xz(n.pos), self.link_dirs(id))),
+        );
+        out
+    }
+
+    fn guide_lines(&self, near: Vec2, radius: f32) -> Vec<GuideLine> {
+        let roads = crate::lattice::RoadLattice {
+            graph: &self.view.net,
+            content: self
+                .view
+                .content
+                .as_deref()
+                .expect("a lattice needs content"),
+        };
+        // Straight streets only: a curve's chord is no line a pipe follows.
+        let mut out: Vec<GuideLine> = roads
+            .guide_lines(near, radius)
+            .into_iter()
+            .filter(|g| g.straight)
+            .collect();
+        out.extend(
+            self.graph()
+                .links()
+                .filter(|(_, l)| l.curve.bounds_distance_xz(near) <= radius)
+                .filter_map(|(_, l)| {
+                    let a = to_xz(l.curve.p0);
+                    Some(GuideLine {
+                        at: a,
+                        dir: (to_xz(l.curve.p3) - a).try_normalize()?,
+                        straight: true,
+                    })
+                }),
+        );
+        out
+    }
+
+    fn exact_dirs(&self, at: Vec2) -> Vec<Vec2> {
+        let roads = crate::lattice::RoadLattice {
+            graph: &self.view.net,
+            content: self
+                .view
+                .content
+                .as_deref()
+                .expect("a lattice needs content"),
+        };
+        let mut out = roads.exact_dirs(at);
+        out.extend(
+            self.graph()
+                .links()
+                .filter(|(_, l)| l.curve.bounds_distance_xz(at) <= EXACT_REACH_M)
+                .filter_map(|(_, l)| (to_xz(l.curve.p3) - to_xz(l.curve.p0)).try_normalize()),
+        );
+        out
+    }
+
+    fn free_refs(&self, p: Vec2) -> Vec<Vec2> {
+        // The direction of the nearest straight ground street within the guide radius.
+        self.view
+            .net
+            .segments()
+            .filter(|(_, s)| {
+                s.elevation == cp_net::Elevation::Ground
+                    && crate::lattice::is_straight(&s.curve)
+                    && s.curve.bounds_distance_xz(p) <= GUIDE_RADIUS
+            })
+            .map(|(_, s)| (s.curve.nearest_xz(p).1, s))
+            .filter(|(d, _)| *d <= GUIDE_RADIUS)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .and_then(|(_, s)| (to_xz(s.curve.p3) - to_xz(s.curve.p0)).try_normalize())
+            .into_iter()
+            .collect()
+    }
+}
+
+/// The inputs [`plan_link_path`] reads from the view, as the command reads them from the world.
+fn plan_inputs(view: &SimView) -> PlanInputs<'_> {
+    PlanInputs {
+        tiles: &view.tiles,
+        terrain: view.terrain.as_deref(),
+        buildings: Some((&view.buildings, &view.zones)),
+    }
+}
+
+/// The cursor of the pipe and power-line tools before the first click (T-286, §13.5 v7.1), at
+/// the point a click puts down: a pipe as a 1-cell piece along [`crate::lattice::probe_dir`]
+/// (its reach band around it shows the reach), a line as one pole. Green when it can be built:
+/// the piece validates; a pole stands on owned land and on no building.
+pub fn cursor_piece(
+    view: &SimView,
+    tool: &UtilityTool,
+    hover: Vec2,
+    alt: bool,
+) -> Option<crate::Ghost> {
+    view.content.as_deref()?;
+    let (at, snap) = snapped_cursor(view, tool, hover, alt);
+    let lift = |p: Vec2| {
+        let y = view.terrain.as_deref().map_or(0.0, |t| t.height(p));
+        Vec3::new(p.x, y + 0.5, p.y)
+    };
+    let (polyline, valid) = if tool.kind == UtilityKind::Power {
+        let free = view.tiles.contains_point(at)
+            && cp_utility::plan::building_on_leg(&plan_inputs(view), at, at).is_none();
+        (vec![lift(at), lift(at)], free)
+    } else {
+        let src = UtilityLattice {
+            view,
+            net: net_of(tool.kind),
+        };
+        let b = at + crate::lattice::probe_dir(&src, at, hover) * ZONE_CELL;
+        let ok = matches!(preview(view, tool.kind, &[at, b]), Some(Ok(_)));
+        (vec![lift(at), lift(b)], ok)
+    };
+    Some(crate::Ghost {
+        polylines: vec![polyline],
+        valid,
+        snap,
+        hover: Some(hover),
+        resolved: Some(at),
+        cursor_piece: true,
+        ..Default::default()
+    })
+}
+
+/// The buildings a link along `path` of `kind` would connect (T-286): newly in the reach of its
+/// network ([`cp_utility::newly_in_reach`]).
+pub fn connects(view: &SimView, kind: UtilityKind, path: &[Vec2]) -> Vec<cp_building::BuildingId> {
+    let Some(db) = view.content.as_deref() else {
+        return Vec::new();
+    };
+    cp_utility::newly_in_reach(
+        &view.utilities,
+        net_of(kind),
+        &view.buildings,
+        db,
+        &db.balance().networks,
+        path,
+    )
 }
 
 /// The network a kind builds into.
@@ -257,12 +543,12 @@ pub fn preview(
 ) -> Option<Result<LinkPlan, Vec<PathProblem>>> {
     view.terrain.as_deref()?;
     let (_, def) = view.content.as_deref()?.utility_for_kind(kind)?;
-    let inputs = PlanInputs {
-        tiles: &view.tiles,
-        terrain: view.terrain.as_deref(),
-        buildings: Some((&view.buildings, &view.zones)),
-    };
-    Some(plan_link_path(&view.utilities, &inputs, def, path))
+    Some(plan_link_path(
+        &view.utilities,
+        &plan_inputs(view),
+        def,
+        path,
+    ))
 }
 
 /// The pieces of a plan as two-point polylines (for the ghost), at node height.
@@ -291,7 +577,8 @@ pub fn pipes_visible(
     }
     match state.active {
         ActiveTool::Utility => state.utility.kind == UtilityKind::Water,
-        ActiveTool::UtilityRemove => state.remove_net == Some(UtilityNet::Pipe),
+        // The bulldozer in the water layer (T-286): the pipes stay in sight.
+        ActiveTool::Bulldozer => state.bulldoze_layer == crate::BulldozeLayer::Water,
         ActiveTool::Place => content.is_some_and(|db| {
             state
                 .building
@@ -553,12 +840,12 @@ mod tests {
         assert!(vis(&st, Overlay::Off));
         st.utility.set_kind(UtilityKind::Power);
         assert!(!vis(&st, Overlay::Off));
-        // Removing pipes, not lines.
-        st.active = ActiveTool::UtilityRemove;
-        st.remove_net = Some(UtilityNet::Pipe);
+        // The bulldozer in the water layer, not the power layer (T-286).
+        st.bulldoze_in(crate::BulldozeLayer::Water);
         assert!(vis(&st, Overlay::Off));
-        st.remove_net = Some(UtilityNet::Power);
+        st.bulldoze_in(crate::BulldozeLayer::Power);
         assert!(!vis(&st, Overlay::Off));
+        st.bulldoze_layer = crate::BulldozeLayer::All;
         // Placing a pump or an outflow, not a power plant.
         st.active = ActiveTool::Place;
         for (name, want) in [

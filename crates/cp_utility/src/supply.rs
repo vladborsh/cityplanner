@@ -962,3 +962,54 @@ impl Coverage {
         self.attach.comp_at(graph, p, half)
     }
 }
+
+/// The buildings a new link along `polyline` would bring into the reach of `net` (T-286: the
+/// pipe ghost highlights them): the active buildings that need what the network carries (water
+/// or sewage for pipes, power for lines), within its reach of the polyline by the rule buildings
+/// attach with ([`Coverage::covers`]: the centre within the reach plus half the longer side of
+/// the footprint) and not within its reach of a link of `net` now. In id order. Pure.
+pub fn newly_in_reach(
+    graph: &UtilityGraph,
+    net: UtilityNet,
+    buildings: &BuildingGrid,
+    db: &ContentDb,
+    nets: &Networks,
+    polyline: &[Vec2],
+) -> Vec<BuildingId> {
+    let reach = reach_m(nets, net);
+    let now = Coverage::new(graph, net, nets);
+    let kinds: &[UtilityKind] = match net {
+        UtilityNet::Pipe => &[UtilityKind::Water, UtilityKind::Sewage],
+        UtilityNet::Power => &[UtilityKind::Power],
+    };
+    let near_line = |p: Vec2, r: f32| {
+        polyline.windows(2).any(|w| {
+            let (a, b) = (w[0], w[1]);
+            let ab = b - a;
+            let k = if ab.length_squared() < 1e-6 {
+                0.0
+            } else {
+                ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+            };
+            (a + ab * k).distance(p) <= r
+        })
+    };
+    let mut out: Vec<BuildingId> = buildings
+        .iter()
+        .filter(|(_, b)| b.state == BuildingState::Active)
+        .filter(|(_, b)| {
+            db.building(b.def)
+                .consumption
+                .iter()
+                .any(|(k, v)| *v > 0.0 && kinds.contains(k))
+        })
+        .filter(|(_, b)| {
+            let (w, d) = b.size();
+            let half = f32::from(w.max(d)) * cp_building::FOOTPRINT_CELL_M * 0.5;
+            near_line(b.pos, reach + half) && !now.covers(graph, b.pos, half)
+        })
+        .map(|(id, _)| id)
+        .collect();
+    out.sort();
+    out
+}

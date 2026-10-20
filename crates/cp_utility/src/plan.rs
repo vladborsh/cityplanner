@@ -115,8 +115,9 @@ fn lift(w: &PlanInputs, p: Vec2) -> Vec3 {
     Vec3::new(p.x, w.terrain.map_or(0.0, |t| t.height(p)), p.y)
 }
 
-/// Whether the segment `a`–`b` passes through a building; returns the first one found.
-fn building_on_leg(w: &PlanInputs, a: Vec2, b: Vec2) -> Option<BuildingId> {
+/// Whether the segment `a`–`b` passes through a building; returns the first one found (`a`–`a`:
+/// whether a pole at `a` stands on one, T-286).
+pub fn building_on_leg(w: &PlanInputs, a: Vec2, b: Vec2) -> Option<BuildingId> {
     let (grid, zones) = w.buildings?;
     let mid = (a + b) * 0.5;
     let reach = a.distance(b) * 0.5 + BUILDING_CULL_M;
