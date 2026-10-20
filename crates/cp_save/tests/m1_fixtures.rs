@@ -97,11 +97,12 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((2400..=3000).contains(&people), "{people} residents");
     assert_eq!(sim.checksum(), 0xed09dac134bc16ac, "state at load");
+    // T-282: re-recorded after the balance pass (taxes x5, escalation 5x slower, services 3x).
     // T-270: re-recorded, the movement clock is 0.4 s a tick (§2 v1.2): agents cover a fifth
     // of the ground per tick, so the day after the load runs differently.
     assert_eq!(
         after_4096(&mut sim),
-        0xd5745d0da649fd01,
+        0x4959363440dc4be3,
         "load + 4096 ticks"
     );
 }
@@ -136,7 +137,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
         sim.tick_once();
     }
     // T-270: re-recorded, the movement clock is 0.4 s a tick (§2 v1.2).
-    assert_eq!(sim.checksum(), 0xb58b9d4f71baefbf, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x73d4747e1021c0af, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,
