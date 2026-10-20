@@ -1218,6 +1218,86 @@ pub fn build_zones(sim: &mut SimRunner) {
     }
 }
 
+/// The zoning rectangle on a turned city (BUG-093): two blocks of 18 x 8 cells between 2-cell
+/// streets laid at [`ZONE_RECT_DEG`] to the map, one above the other; the lower block zoned
+/// residential by a rectangle from its corner cell to the opposite one (clicks off the cell
+/// centres, as a hand lands), the upper one a 3 x 5 commercial rectangle from its corner. Look
+/// at it with `--cam zone-rect`.
+pub const ZONE_RECT: &str = "zone-rect";
+
+/// The angle of the [`ZONE_RECT`] city's streets to the map, degrees.
+pub const ZONE_RECT_DEG: f32 = 30.0;
+
+/// Where the [`ZONE_RECT`] city stands: its corner junction and its two axes.
+pub fn zone_rect_frame() -> (Vec2, Vec2, Vec2) {
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let u = Vec2::from_angle(ZONE_RECT_DEG.to_radians());
+    (Vec2::new(c - 60.0, c - 80.0), u, u.perp())
+}
+
+/// Builds the [`ZONE_RECT`] scene through the normal commands and the zone tool.
+pub fn build_zone_rect(sim: &mut SimRunner) {
+    use cp_zone::ZoneCommand;
+    let db = embedded_content();
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    let (o, u, v) = zone_rect_frame();
+    let at = |x: f32, y: f32| o + u * x + v * y;
+    let mut legs = Vec::new();
+    for y in [0.0, 80.0, 160.0] {
+        legs.push((at(0.0, y), at(160.0, y)));
+    }
+    for x in [0.0, 160.0] {
+        legs.push((at(x, 0.0), at(x, 80.0)));
+        legs.push((at(x, 80.0), at(x, 160.0)));
+    }
+    for (from, to) in legs {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: basic,
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    for (a, b, zone) in [
+        (
+            at(10.0, 14.5),
+            at(150.5, 66.0),
+            cp_content::ZoneType::ResLow,
+        ),
+        (
+            at(13.0, 90.0),
+            at(29.5, 125.0),
+            cp_content::ZoneType::ComLow,
+        ),
+    ] {
+        let mut tool = cp_tools::ZoneTool {
+            kind: cp_tools::ZoneToolKind::Rectangle,
+            zone,
+            ..Default::default()
+        };
+        let view = sim.view();
+        tool.click(&view.zones, a);
+        let Some((cells, zone)) = tool.click(&view.zones, b) else {
+            bevy::log::warn!("zone-rect: the rectangle paints nothing");
+            continue;
+        };
+        drop(view);
+        sim.push_command(
+            SimCommand::Zone(ZoneCommand::PaintZones { cells, zone }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+}
+
 /// Big zone blocks (BUG-056): a grid of 3 x 3 blocks of 96 and 112 m (and 100 m, a tie of the
 /// cell fit) between the road edges, every cell painted residential. Look at it with
 /// `--cam zones-big --overlay zones`.

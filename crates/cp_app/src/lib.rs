@@ -329,6 +329,15 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 20.0, 560.0, c + 330.0),
             Vec3::new(c + 20.0, 0.0, c + 20.0),
         ),
+        // Over the turned city of `--scene zone-rect` (BUG-093).
+        "zone-rect" => {
+            let (o, u, v) = scene::zone_rect_frame();
+            let m = o + u * 80.0 + v * 80.0;
+            (
+                Vec3::new(m.x - 20.0, 260.0, m.y + 160.0),
+                Vec3::new(m.x, 0.0, m.y),
+            )
+        }
         "zones" => (
             Vec3::new(c - 10.0, 420.0, c + 330.0),
             Vec3::new(c - 10.0, 0.0, c + 150.0),
@@ -587,6 +596,9 @@ pub fn build_sim(
     } else if scene == Some(scene::ZONES_BIG) {
         scene::build_zones_big(&mut sim);
         info!("scene zones-big");
+    } else if scene == Some(scene::ZONE_RECT) {
+        scene::build_zone_rect(&mut sim);
+        info!("scene zone-rect");
     } else if scene == Some(scene::ZONES) {
         scene::build_zones(&mut sim);
         info!("scene zones");

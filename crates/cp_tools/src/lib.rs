@@ -63,7 +63,7 @@ pub use upgrade::{UpgradePreview, upgrade_commands, upgrade_preview};
 pub use utility::{
     LINK_PICK_RADIUS, UtilityMode, UtilityTool, pick_link, snap_cursor, snapped_cursor,
 };
-pub use zone::{PALETTE, ZoneTool, ZoneToolKind, zone_color, zone_name};
+pub use zone::{PALETTE, ZoneTool, ZoneToolKind, rect_cells, zone_color, zone_name};
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_tools";

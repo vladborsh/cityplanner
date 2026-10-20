@@ -1,6 +1,7 @@
 //! T-027 headless: the zoning tools paint through `PaintZones` via the command layer, painted
 //! types follow the road when it is split, and they are saved and loaded.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -223,4 +224,118 @@ fn painted_zones_survive_a_road_split_and_a_save_load() {
     );
     assert_eq!(painted(&fresh, ZoneType::ResLow), after);
     assert_eq!(fresh.checksum(), sim.checksum());
+}
+
+/// BUG-093: a city whose streets run at `deg` to the map: two blocks of 18 x 8 cells between
+/// 2-cell streets, one above the other. Returns the sim, the city's corner and its axes.
+fn rotated_city(deg: f32) -> (SimRunner, Vec2, Vec2, Vec2) {
+    let (mut sim, road) = setup();
+    sim.world_mut().resource_mut::<cp_core::Treasury>().balance =
+        cp_core::Cost::from_units(1_000_000_000.0);
+    let o = Vec2::new(4400.0, 4400.0);
+    let u = Vec2::from_angle(deg.to_radians());
+    let v = u.perp();
+    let at = |x: f32, y: f32| {
+        let p = o + u * x + v * y;
+        (p.x, p.y)
+    };
+    let mut cmds = Vec::new();
+    for y in [0.0, 80.0, 160.0] {
+        cmds.push(build(road, at(0.0, y), at(160.0, y)));
+    }
+    for x in [0.0, 160.0] {
+        cmds.push(build(road, at(x, 0.0), at(x, 80.0)));
+        cmds.push(build(road, at(x, 80.0), at(x, 160.0)));
+    }
+    for c in cmds {
+        let out = run(&mut sim, vec![c]);
+        assert!(out.iter().all(|o| o.result.is_ok()), "{deg}°: {out:?}");
+    }
+    (sim, o, u, v)
+}
+
+/// BUG-093: the rectangle is square to the block under its first click, whatever angle the
+/// streets have on the map: corner to corner it paints the whole block, 3 x 5 cells paint 15,
+/// and across a street it takes whole rows of the parallel block beyond. Clicks land anywhere
+/// in their cells; the preview is what the click paints.
+#[test]
+fn the_rectangle_follows_the_blocks_cells_at_any_angle() {
+    for deg in [0.0f32, 23.0, 45.0, 67.0] {
+        let (sim, o, u, v) = rotated_city(deg);
+        let view = sim.view();
+        let zones = &view.zones;
+        let world = |x: f32, y: f32| o + u * x + v * y;
+        // Valid cells whose centre lies in `lo..=hi` of the city's frame.
+        let inside = |lo: Vec2, hi: Vec2| -> BTreeSet<cp_zone::ZoneCellRef> {
+            zones
+                .blocks()
+                .flat_map(|(id, b)| {
+                    (0..b.cell_count() as u16)
+                        .map(move |cell| cp_zone::ZoneCellRef { block: id, cell })
+                })
+                .filter(|c| zones.is_valid(*c))
+                .filter(|c| {
+                    let p = zones.cell_footprint(*c).unwrap().c - o;
+                    let q = Vec2::new(p.dot(u), p.dot(v));
+                    q.cmpge(lo - 0.5).all() && q.cmple(hi + 0.5).all()
+                })
+                .collect()
+        };
+        let paint = |a: Vec2, b: Vec2| -> BTreeSet<cp_zone::ZoneCellRef> {
+            let mut t = ZoneTool {
+                kind: ZoneToolKind::Rectangle,
+                zone: ZoneType::ResLow,
+                ..Default::default()
+            };
+            assert!(t.click(zones, a).is_none());
+            let shown: BTreeSet<_> = t.preview(zones, b).into_iter().collect();
+            let done: BTreeSet<_> = t
+                .click(zones, b)
+                .map(|(c, _)| c.into_iter().collect())
+                .unwrap_or_default();
+            assert_eq!(shown, done, "{deg}°: the preview is what the click paints");
+            done
+        };
+        // The lower block: cell centres 12..=148 along, 12..=68 across.
+        let block = inside(Vec2::new(12.0, 12.0), Vec2::new(148.0, 68.0));
+        assert_eq!(
+            block.len(),
+            18 * 8,
+            "{deg}°: the block is 18 x 8 whole cells"
+        );
+        // Corner to corner, clicks off the centres (inward, outward), either way round.
+        for (a, b) in [
+            (world(10.0, 14.5), world(150.5, 66.0)),
+            (world(14.0, 9.5), world(146.0, 70.5)),
+            (world(149.0, 69.0), world(11.0, 11.0)),
+        ] {
+            let got = paint(a, b);
+            let local = |c: &cp_zone::ZoneCellRef| {
+                let p = zones.cell_footprint(*c).unwrap().c - o;
+                Vec2::new(p.dot(u), p.dot(v)).round()
+            };
+            let extra: Vec<Vec2> = got.difference(&block).map(local).collect();
+            let missing: Vec<Vec2> = block.difference(&got).map(local).collect();
+            assert!(
+                extra.is_empty() && missing.is_empty(),
+                "{deg}°: corner to corner, {a} to {b}: extra {extra:?}, missing {missing:?}"
+            );
+        }
+        // 3 x 5 cells.
+        let small = paint(world(13.0, 10.0), world(29.5, 45.0));
+        assert_eq!(small.len(), 15, "{deg}°: 3 x 5");
+        assert_eq!(
+            small,
+            inside(Vec2::new(12.0, 12.0), Vec2::new(28.0, 44.0)),
+            "{deg}°"
+        );
+        // Across the middle street into the upper block: 4 columns of 8 + 8 rows.
+        let both = paint(world(11.0, 13.0), world(37.0, 147.0));
+        assert_eq!(both.len(), 4 * 16, "{deg}°: across the street");
+        assert_eq!(
+            both,
+            inside(Vec2::new(12.0, 12.0), Vec2::new(36.0, 148.0)),
+            "{deg}°"
+        );
+    }
 }

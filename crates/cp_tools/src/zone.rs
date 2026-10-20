@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use bevy_math::Vec2;
 use cp_content::ZoneType;
-use cp_zone::{ZoneCellRef, ZoneGrid};
+use cp_zone::{CELL_SIZE, ZoneCellRef, ZoneGrid};
 
 pub const BRUSH_SMALL_RADIUS: f32 = 10.0;
 pub const BRUSH_LARGE_RADIUS: f32 = 24.0;
@@ -20,7 +20,8 @@ pub enum ZoneToolKind {
     FillBlock,
     BrushSmall,
     BrushLarge,
-    /// Two clicks: opposite corners of an axis-aligned rectangle.
+    /// Two clicks: opposite corners of a rectangle square to the cells under the first
+    /// (BUG-093), see [`rect_cells`].
     Rectangle,
     Eraser,
 }
@@ -94,6 +95,46 @@ pub fn zone_color(z: ZoneType) -> [f32; 3] {
     }
 }
 
+/// Distance a centre may stand outside the rectangle and still count, metres.
+const RECT_EPS: f32 = 0.25;
+
+/// The cells of the rectangle with corners `a` and `b` (BUG-093): the rectangle lies in the
+/// frame of the cell under `a` (along its street and across), whatever angle that street has
+/// on the map. It reaches the centre of that cell and the centre of the cell under `b` when
+/// that one is square to the first (its block runs parallel or across), else the whole cell of
+/// the first cell's lattice nearest to `b`; both corner cells are inside (BUG-050). Every cell
+/// whose centre lies inside counts: whole rows of the first block, and of any block on the
+/// same lattice beyond a street. With no cell under `a` the rectangle is the map's.
+pub fn rect_cells(zones: &ZoneGrid, a: Vec2, b: Vec2) -> Vec<ZoneCellRef> {
+    let foot = |p: Vec2| zones.cell_at(p).and_then(|c| zones.cell_footprint(c));
+    let Some(fa) = foot(a) else {
+        return zones.cells_in_rect(a, b);
+    };
+    let (o, u, v) = (fa.c, fa.u, fa.v);
+    let local = |p: Vec2| Vec2::new((p - o).dot(u), (p - o).dot(v));
+    let square = |w: Vec2| w.dot(u).abs().max(w.dot(v).abs()) > 0.999;
+    let far = match foot(b) {
+        Some(fb) if square(fb.u) => local(fb.c),
+        _ => (local(b) / CELL_SIZE).round() * CELL_SIZE,
+    };
+    let (lo, hi) = (
+        far.min(Vec2::ZERO) - Vec2::splat(RECT_EPS),
+        far.max(Vec2::ZERO) + Vec2::splat(RECT_EPS),
+    );
+    let mid = (lo + hi) * 0.5;
+    let centre = o + u * mid.x + v * mid.y;
+    zones
+        .cells_within(centre, (hi - lo).length() * 0.5)
+        .into_iter()
+        .filter(|c| {
+            zones.cell_footprint(*c).is_some_and(|f| {
+                let p = local(f.c);
+                p.cmpge(lo).all() && p.cmple(hi).all()
+            })
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ZoneTool {
     pub kind: ZoneToolKind,
@@ -156,7 +197,7 @@ impl ZoneTool {
                 .map(|c| zones.block_cells(c.block))
                 .unwrap_or_default(),
             ZoneToolKind::Rectangle => match self.corner {
-                Some(a) => zones.cells_in_rect(a, hover),
+                Some(a) => rect_cells(zones, a, hover),
                 None => zones.cell_at(hover).into_iter().collect(),
             },
             k => zones.cells_within(hover, k.radius()),
@@ -174,7 +215,7 @@ impl ZoneTool {
                     None
                 }
                 Some(a) => {
-                    let cells = self.paintable(zones, zones.cells_in_rect(a, p));
+                    let cells = self.paintable(zones, rect_cells(zones, a, p));
                     (!cells.is_empty()).then(|| (cells, self.paint_type()))
                 }
             },
@@ -340,8 +381,7 @@ mod tests {
         assert_eq!(zone, ZoneType::Industrial);
         assert_eq!(shown, cells, "the preview is what the second click paints");
         // Columns 1..=4 x rows 0..=1 of the right block, minus any invalid cell.
-        let valid = z
-            .cells_in_rect(a, b)
+        let valid = rect_cells(&z, a, b)
             .into_iter()
             .filter(|c| z.is_valid(*c))
             .count();
@@ -358,7 +398,7 @@ mod tests {
         let (_, a) = right_cell(&z, 1, 0);
         let (_, b) = right_cell(&z, 4, 1);
         let want: Vec<_> = {
-            let mut v = z.cells_in_rect(a, b);
+            let mut v = rect_cells(&z, a, b);
             v.sort();
             v
         };
@@ -367,7 +407,7 @@ mod tests {
         for shift in [0.0f32, 2.0, 3.5] {
             // Start and end hit the half of their cell that faces the rest of the rectangle.
             let (a2, b2) = (a + toward * shift, b - toward * shift);
-            let mut got = z.cells_in_rect(a2, b2);
+            let mut got = rect_cells(&z, a2, b2);
             got.sort();
             assert_eq!(got, want, "shift {shift}");
         }
