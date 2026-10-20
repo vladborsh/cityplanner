@@ -26,6 +26,11 @@ import bevy_pbr::render::mesh_view_bindings::globals;
 // .. 1 at 04:00), z = intensity, w = 1 when the vertex alpha holds window glow codes (buildings)
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var<uniform> glow: vec4<f32>;
 
+// The cloud shadows' value noise (T-281b, `material::cloud_noise_image`): repeats every
+// CLOUD_PERIOD cells, sampled with a repeating linear filter.
+@group(constants::MATERIAL_BIND_GROUP) @binding(3) var cloud_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(4) var cloud_smp: sampler;
+
 // Lamp colours, the same as `building::lights::TINTS`.
 fn tint_of(t: u32) -> vec3<f32> {
     return select(
@@ -261,12 +266,20 @@ fn grass(p: vec2<f32>, fp: f32) -> Detail {
 const CLOUD_SIZE: f32 = 220.0;
 const WIND: vec2<f32> = vec2<f32>(6.0, 2.5);
 
+// Noise cells across the cloud texture (`material::CLOUD_PERIOD`).
+const CLOUD_PERIOD: f32 = 64.0;
+
+// One octave of cloud noise, 0..1: one texture sample instead of four hashes.
+fn cloud_noise(q: vec2<f32>) -> f32 {
+    return textureSampleLevel(cloud_tex, cloud_smp, q / CLOUD_PERIOD, 0.0).r;
+}
+
 fn cloud_cover(p: vec2<f32>) -> f32 {
     // `globals.time` wraps after an hour: the clouds then jump once, like a new weather front.
     let q = (p + WIND * globals.time) / CLOUD_SIZE;
     let q2 = turn37(q) * 2.1 + vec2<f32>(7.3, 1.9);
     let q3 = turn37(q2) * 2.2 + vec2<f32>(2.2, 9.4);
-    let n = 0.6 * vnoise(q) + 0.28 * vnoise(q2) + 0.12 * vnoise(q3);
+    let n = 0.6 * cloud_noise(q) + 0.28 * cloud_noise(q2) + 0.12 * cloud_noise(q3);
     // Soft edges: a cloud's shadow fades in over tens of metres.
     return smoothstep(0.44, 0.72, n);
 }

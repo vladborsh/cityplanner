@@ -3,10 +3,11 @@
 //! Used for terrain, water and (later) other flat-shaded city geometry. See
 //! `vertex_color.wesl` for why it exists.
 
-use bevy::asset::embedded_asset;
+use bevy::asset::{RenderAssetUsages, embedded_asset, uuid_handle};
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::pbr::{Material, MaterialPlugin};
 use bevy::prelude::*;
-use bevy::render::render_resource::AsBindGroup;
+use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
 
 use crate::overlay::{Overlay, OverlayState};
@@ -44,6 +45,10 @@ pub struct VertexColorMaterial {
     /// window glow codes (`building::lights::glow_alpha`, `pattern_alpha`; the buildings), 0 otherwise.
     #[uniform(2)]
     pub glow: Vec4,
+    /// The cloud shadows' noise (T-281b): the one shared [`CLOUD_NOISE`] texture.
+    #[texture(3)]
+    #[sampler(4)]
+    pub cloud: Handle<Image>,
     /// Alpha-blend using the vertex alpha (water) instead of drawing opaque.
     pub blend: bool,
     /// Pull the surface towards the camera in the depth test so a layer lying a few
@@ -62,6 +67,7 @@ impl VertexColorMaterial {
             // before its first frame; [`sync_cloud_shadows`] turns them off with the setting.
             fade: Vec4::new(1.0, 0.0, 0.0, CLOUD_SHADOW),
             glow: Vec4::ZERO,
+            cloud: CLOUD_NOISE,
             blend: false,
             depth_bias: false,
             sort_bias: 0.0,
@@ -221,6 +227,71 @@ pub fn sync_cloud_shadows(
     }
 }
 
+/// The cloud shadows' value noise (T-281b), made once at start-up by [`cloud_noise_image`]: one
+/// texture sample per octave in `vertex_color.wesl` instead of four hashes.
+pub const CLOUD_NOISE: Handle<Image> = uuid_handle!("5d0c6a3e-8f2b-4c71-9e4a-2b7f1c9d3e60");
+
+/// Noise cells across the tileable [`CLOUD_NOISE`] texture (`CLOUD_PERIOD` in the shader).
+pub const CLOUD_PERIOD: u32 = 64;
+/// Texels per noise cell: the smooth interpolation is baked in, the sampler's linear filter
+/// only bridges an eighth of a cell.
+const CLOUD_TEXELS: u32 = 8;
+
+/// Value noise that repeats every [`CLOUD_PERIOD`] cells, smoothstep-interpolated, in an R8
+/// texture with a repeating, linearly filtered sampler.
+pub fn cloud_noise_image() -> Image {
+    fn hash(x: u32, y: u32) -> f32 {
+        let mut v = (x % CLOUD_PERIOD).wrapping_mul(747_796_405)
+            ^ (y % CLOUD_PERIOD).wrapping_mul(2_891_336_453);
+        v = v.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+        v ^= v >> 16;
+        v = v.wrapping_mul(0x85eb_ca6b);
+        v ^= v >> 13;
+        (v & 0xffff) as f32 / 65_535.0
+    }
+    let side = CLOUD_PERIOD * CLOUD_TEXELS;
+    let mut data = Vec::with_capacity((side * side) as usize);
+    for ty in 0..side {
+        for tx in 0..side {
+            let (ix, iy) = (tx / CLOUD_TEXELS, ty / CLOUD_TEXELS);
+            let f = |t: u32| {
+                let f = (t % CLOUD_TEXELS) as f32 / CLOUD_TEXELS as f32;
+                f * f * (3.0 - 2.0 * f)
+            };
+            let (ux, uy) = (f(tx), f(ty));
+            let top = hash(ix, iy) * (1.0 - ux) + hash(ix + 1, iy) * ux;
+            let bottom = hash(ix, iy + 1) * (1.0 - ux) + hash(ix + 1, iy + 1) * ux;
+            let n = top * (1.0 - uy) + bottom * uy;
+            data.push((n * 255.0).round() as u8);
+        }
+    }
+    let mut image = Image::new(
+        Extent3d {
+            width: side,
+            height: side,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::R8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    image
+}
+
+fn insert_cloud_noise(images: Option<ResMut<Assets<Image>>>) {
+    if let Some(mut images) = images {
+        let _ = images.insert(&CLOUD_NOISE, cloud_noise_image());
+    }
+}
+
 pub struct VertexColorMaterialPlugin;
 
 impl Plugin for VertexColorMaterialPlugin {
@@ -228,6 +299,7 @@ impl Plugin for VertexColorMaterialPlugin {
         embedded_asset!(app, "vertex_color.wesl");
         app.add_plugins(MaterialPlugin::<VertexColorMaterial>::default())
             .init_resource::<OverlayState>()
+            .add_systems(PreStartup, insert_cloud_noise)
             .add_systems(Update, (sync_overlay_dim, sync_cloud_shadows));
     }
 }
