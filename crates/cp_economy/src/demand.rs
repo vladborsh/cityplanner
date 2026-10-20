@@ -20,9 +20,9 @@
 //!   weight + base_C` (BUG-076)
 //! * `I = commercial job slots × industry per shop job − industrial job slots + unemployed
 //!   adults of education ≤ 1 + counted unemployed beyond the manual ones × job weight + base_I
-//!   + the industrial jobs that would make the goods of the shops out of goods` (BUG-095: the
-//!   job slots of the `NO_GOODS` shops × `goods_per_job / goods_per_worker`, counted over the
-//!   whole grid when the cycle is published, not in the sums: no save change)
+//!   plus the industrial jobs that would make the goods of the shops out of goods` (BUG-095:
+//!   the job slots of the `NO_GOODS` shops × `goods_per_job / goods_per_worker`, counted over
+//!   the whole grid when the cycle is published, not in the sums: no save change)
 //! * move-in `= Σ weight(level) × free job slots − unemployed adults + base_R`: `R` without the
 //!   vacant homes, the gate of households moving into existing homes
 //! * `O = unemployed adults of education ≥ 2 − free office job slots + base_O`

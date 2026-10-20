@@ -136,6 +136,44 @@ pub fn update_entry_reach(graph: Res<NetGraph>, mut reach: ResMut<EntryReach>) {
     }
 }
 
+/// `Outside` nodes with their positions, in id order ([`outside_ways`]).
+pub type OutsideEnds = Vec<(NodeId, Vec2)>;
+
+/// The `Outside` nodes of the entry roads (not the railway's) by the way a vehicle can use them
+/// (BUG-095): `(entries, exits)`, each `(node, position)` in id order. An entry has a segment a
+/// vehicle can drive away from it on (two-way, or one-way starting there), an exit one it can
+/// arrive by (two-way, or one-way ending there). The entry highway's inbound carriageway starts
+/// at one `Outside` node and its outbound ends at the other: a truck from the outside must start
+/// at the first, one leaving the map must end at the second.
+pub fn outside_ways(
+    graph: &NetGraph,
+    content: &cp_content::ContentDb,
+) -> (OutsideEnds, OutsideEnds) {
+    let (mut entries, mut exits) = (Vec::new(), Vec::new());
+    for (id, n) in graph.nodes() {
+        if n.kind != NodeKind::Outside || n.segments.is_empty() || node_is_rail(graph, n) {
+            continue;
+        }
+        let pos = Vec2::new(n.pos.x, n.pos.z);
+        let ways = n
+            .segments
+            .iter()
+            .filter_map(|s| graph.segment(*s))
+            .map(|s| {
+                let one_way = content.road(s.road).is_one_way();
+                (!one_way || s.start == id, !one_way || s.end == id)
+            });
+        let (from, to) = ways.fold((false, false), |a, w| (a.0 || w.0, a.1 || w.1));
+        if from {
+            entries.push((id, pos));
+        }
+        if to {
+            exits.push((id, pos));
+        }
+    }
+    (entries, exits)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,39 +211,4 @@ mod tests {
         g.remove_segment(a).unwrap();
         assert!(!EntryReach::compute(&g).reaches(b));
     }
-}
-
-/// The `Outside` nodes of the entry roads (not the railway's) by the way a vehicle can use them
-/// (BUG-095): `(entries, exits)`, each `(node, position)` in id order. An entry has a segment a
-/// vehicle can drive away from it on (two-way, or one-way starting there), an exit one it can
-/// arrive by (two-way, or one-way ending there). The entry highway's inbound carriageway starts
-/// at one `Outside` node and its outbound ends at the other: a truck from the outside must start
-/// at the first, one leaving the map must end at the second.
-pub fn outside_ways(
-    graph: &NetGraph,
-    content: &cp_content::ContentDb,
-) -> (Vec<(NodeId, Vec2)>, Vec<(NodeId, Vec2)>) {
-    let (mut entries, mut exits) = (Vec::new(), Vec::new());
-    for (id, n) in graph.nodes() {
-        if n.kind != NodeKind::Outside || n.segments.is_empty() || node_is_rail(graph, n) {
-            continue;
-        }
-        let pos = Vec2::new(n.pos.x, n.pos.z);
-        let ways = n
-            .segments
-            .iter()
-            .filter_map(|s| graph.segment(*s))
-            .map(|s| {
-                let one_way = content.road(s.road).is_one_way();
-                (!one_way || s.start == id, !one_way || s.end == id)
-            });
-        let (from, to) = ways.fold((false, false), |a, w| (a.0 || w.0, a.1 || w.1));
-        if from {
-            entries.push((id, pos));
-        }
-        if to {
-            exits.push((id, pos));
-        }
-    }
-    (entries, exits)
 }
