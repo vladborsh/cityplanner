@@ -19,6 +19,8 @@
 #
 # Portable bash (macOS 3.2 and Linux 5). Uses the caller's CARGO_TARGET_DIR; hardcodes none.
 set -euo pipefail
+# CP_LOW_PRIORITY=1: run at background QoS (scripts/low-priority.sh).
+. "$(dirname "$0")/low-priority.sh"
 cd "$(dirname "$0")/.."
 
 LOG_DIR="${CARGO_TARGET_DIR:-$PWD/target}/gate"

@@ -17,6 +17,8 @@
 # CITYPLANNER_COORD defaults to /Users/Vladyslav_Borsh/Documents/cityplanner.
 # Portable bash (macOS 3.2 and Linux 5).
 set -euo pipefail
+# CP_LOW_PRIORITY=1: run at background QoS (scripts/low-priority.sh).
+. "$(dirname "$0")/low-priority.sh"
 cd "$(dirname "$0")/.."
 
 COORD="${CITYPLANNER_COORD:-/Users/Vladyslav_Borsh/Documents/cityplanner}"

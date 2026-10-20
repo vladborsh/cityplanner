@@ -14,6 +14,8 @@
 #
 # Cargo output goes to log files, never piped (see gate.sh). Portable bash (macOS 3.2).
 set -euo pipefail
+# CP_LOW_PRIORITY=1: run at background QoS (scripts/low-priority.sh).
+. "$(dirname "$0")/low-priority.sh"
 cd "$(dirname "$0")/.."
 
 [ "$#" -eq 1 ] || { echo "usage: scripts/quick-gate.sh <base-sha>"; exit 2; }

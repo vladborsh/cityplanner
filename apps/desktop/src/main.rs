@@ -3,6 +3,7 @@
 mod app;
 mod capture;
 mod gallery;
+mod qos;
 
 /// The repo's `assets/` directory.
 pub const ASSETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");

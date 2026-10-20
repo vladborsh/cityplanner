@@ -57,6 +57,9 @@ pub struct Options {
     pub no_parked: bool,
     /// `--speed 1|2|3`: run the game at that speed from the start (T-281 benches).
     pub speed: Option<cp_core::SimSpeed>,
+    /// `--no-qos`: leave the game's threads at the default quality of service (T-281: to
+    /// measure what [`crate::qos`] gives).
+    pub qos: bool,
     /// `--size WxH`: the pixels of a `--hidden` run's target (default 1600x900).
     pub size: Option<(u32, u32)>,
     /// `--log-pipelines`: log every new render pipeline with the time (T-281: a pipeline is
@@ -121,6 +124,7 @@ impl Options {
             no_parked: args.iter().any(|a| a == "--no-parked"),
             pan: args.iter().any(|a| a == "--pan"),
             log_pipelines: args.iter().any(|a| a == "--log-pipelines"),
+            qos: !args.iter().any(|a| a == "--no-qos"),
             size: value("--size").and_then(|v| {
                 let (w, h) = v.split_once('x')?;
                 Some((w.parse().ok()?, h.parse().ok()?))
@@ -294,6 +298,11 @@ pub fn run(opts: Options) -> AppExit {
     let mut app = App::new();
     app.add_plugins(
         audio_plugins(opts.hidden)
+            .set(if opts.qos {
+                crate::qos::task_pool_plugin()
+            } else {
+                bevy::app::TaskPoolPlugin::default()
+            })
             .set(AssetPlugin {
                 file_path: ASSETS_DIR.into(),
                 ..default()
@@ -398,6 +407,10 @@ pub fn run(opts: Options) -> AppExit {
     }
     if opts.pan {
         app.add_systems(Update, pan_camera);
+    }
+    if opts.qos {
+        crate::qos::set_current_thread();
+        crate::qos::add_render_thread(&mut app);
     }
     if opts.log_pipelines
         && let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp)
