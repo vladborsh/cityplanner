@@ -336,7 +336,9 @@ fn a_service_makes_no_goods_and_is_no_industry_in_the_demand() {
             )
         })
         .map(|(_, b)| db.building(b.def))
-        .filter(|d| d.zone == ZoneType::Industrial && cp_building::is_growable(d))
+        .filter(|d| {
+            d.zone == ZoneType::Industrial && (cp_building::is_growable(d) || d.industry.is_some())
+        })
         .map(|d| d.jobs.iter().map(|j| u32::from(*j)).sum::<u32>())
         .sum();
     assert!(grown > 0);

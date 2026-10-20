@@ -279,12 +279,12 @@ pub fn run_goods(
         }
         match zone {
             // A service, park or landmark stands on an `Industrial` def (BUG-095): it makes no
-            // shop goods.
+            // shop goods (an industry chain building may name a service too: it keeps its role).
             ZoneType::Industrial
-                if db.building(b.def).service.is_some()
-                    || db.building(b.def).park.is_some()
-                    || (db.building(b.def).unique.is_some()
-                        && db.building(b.def).industry.is_none()) => {}
+                if db.building(b.def).industry.is_none()
+                    && (db.building(b.def).service.is_some()
+                        || db.building(b.def).park.is_some()
+                        || db.building(b.def).unique.is_some()) => {}
             ZoneType::Industrial => {
                 let s = goods.stock.entry(id).or_default();
                 // A unique factory (T-215) puts its Goods into the stock itself; the chain
