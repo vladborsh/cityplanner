@@ -213,7 +213,13 @@ fn vehicle_and_pedestrian_panels_equal_the_records_and_picking_finds_them() {
     assert!(agents.vehicle_count() > 0 && agents.pedestrian_count() > 0);
 
     // Vehicles: picked at the place the renderer draws them (fraction 1.0 = the latest pose).
-    let (vid, v) = agents.vehicles().find(|(_, v)| v.spawned).unwrap();
+    // A car on a citizen's trip (service vehicles, which the scene's services send out since
+    // T-267 placed them at the road edge, have none).
+    let book = sim.world().resource::<TripBook>();
+    let (vid, v) = agents
+        .vehicles()
+        .find(|(_, v)| v.spawned && book.get(v.trip).is_some())
+        .unwrap();
     let key = u64::from(vid.generation) << 32 | u64::from(vid.index);
     let pose = view
         .agents

@@ -113,12 +113,12 @@ fn a_service_stands_flush_against_the_edge_facing_the_road() {
             .unwrap()
             .0
     );
-    // 3 x 2 cells, 3 along the street and 2 deep: the front on the edge (6 m from the axis), the
-    // back 16 m further.
+    // 3 x 2 cells, 3 along the street and 2 deep: the front on the edge (8 m from the axis: the
+    // road is 2 cells wide, T-275), the back 16 m further.
     let q = b.footprint_polygon();
     let (near, far) = gap_to(&q, 3000.0);
-    assert!((near - 6.0).abs() < 0.06, "front at {near} m from the axis");
-    assert!((far - 22.0).abs() < 0.06, "back at {far} m");
+    assert!((near - 8.0).abs() < 0.06, "front at {near} m from the axis");
+    assert!((far - 24.0).abs() < 0.06, "back at {far} m");
     // On the cursor's side, and the access point is the foot of its centre.
     assert!(b.pos.y > 3000.0);
     assert_eq!(b.state, BuildingState::Active);
@@ -126,26 +126,26 @@ fn a_service_stands_flush_against_the_edge_facing_the_road() {
 
 #[test]
 fn two_four_cell_deep_services_fit_back_to_back_between_streets_64_m_apart() {
-    // Edge to edge 64 m: axes 76 m apart (half width 6).
-    let mut sim = town(&[3000.0, 3076.0]);
-    place(&mut sim, "university", Vec2::new(3100.0, 3020.0)).unwrap();
-    place(&mut sim, "landfill", Vec2::new(3100.0, 3056.0)).unwrap();
+    // Edge to edge 64 m: axes 80 m apart, one section (half width 8, T-275).
+    let mut sim = town(&[3000.0, 3080.0]);
+    place(&mut sim, "university", Vec2::new(3100.0, 3022.0)).unwrap();
+    place(&mut sim, "landfill", Vec2::new(3100.0, 3058.0)).unwrap();
     let r = rects(&sim);
     assert_eq!(r.len(), 2);
     assert!(!cp_zone::geom::quads_overlap(&r[0], &r[1]));
     // Each has its front on its own street's edge, and their backs meet.
     let on = |q: &[Vec2; 4]| {
         let c = (q[0] + q[2]) * 0.5;
-        if c.y < 3038.0 {
+        if c.y < 3040.0 {
             gap_to(q, 3000.0)
         } else {
-            gap_to(q, 3076.0)
+            gap_to(q, 3080.0)
         }
     };
     for q in &r {
         let (near, far) = on(q);
-        assert!((near - 6.0).abs() < 0.06, "front at {near}");
-        assert!((far - 38.0).abs() < 0.06, "back at {far}");
+        assert!((near - 8.0).abs() < 0.06, "front at {near}");
+        assert!((far - 40.0).abs() < 0.06, "back at {far}");
     }
 }
 
@@ -260,8 +260,9 @@ fn t_junction() -> SimRunner {
 fn the_corner_cell_of_a_block_takes_free_standing_buildings_and_a_service() {
     let mut sim = t_junction();
     let db = content();
-    // The corner cell north-east of the junction: edges at x = 3106 and z = 3006, 8 m cells.
-    let corner = Vec2::new(3110.0, 3010.0);
+    // The corner cell north-east of the junction: edges at x = 3108 and z = 3008 (roads 2 cells
+    // wide, T-275), 8 m cells.
+    let corner = Vec2::new(3112.0, 3012.0);
     let w = sim.world();
     let (zones, net, buildings) = (
         w.resource::<ZoneGrid>(),
@@ -298,21 +299,56 @@ fn the_corner_cell_of_a_block_takes_free_standing_buildings_and_a_service() {
 #[test]
 fn the_coal_plant_goes_flush_into_the_corner_of_a_block_at_a_t() {
     let mut sim = t_junction();
-    let corner = Vec2::new(3110.0, 3010.0);
+    let corner = Vec2::new(3112.0, 3012.0);
     place(&mut sim, "coal_power_plant", corner).expect("the plant in the corner");
     let g = sim.world().resource::<BuildingGrid>();
     let (_, b) = g.iter().next().unwrap();
     assert!(matches!(b.footprint, Footprint::Free { w: 3, d: 3 }));
-    // Edges of the streets: x = 3100 + 6 and z = 3000 + 6; the plant is 24 m square in that corner.
+    // Edges of the streets: x = 3100 + 8 and z = 3000 + 8; the plant is 24 m square in that corner.
     let q = b.footprint_polygon();
     let (lo, hi) = cp_zone::geom::quad_aabb(&q);
     assert!(
-        (lo.x - 3106.0).abs() < 0.06 && (lo.y - 3006.0).abs() < 0.06,
+        (lo.x - 3108.0).abs() < 0.06 && (lo.y - 3008.0).abs() < 0.06,
         "{lo:?}"
     );
     assert!(
-        (hi.x - 3130.0).abs() < 0.06 && (hi.y - 3030.0).abs() < 0.06,
+        (hi.x - 3132.0).abs() < 0.06 && (hi.y - 3032.0).abs() < 0.06,
         "{hi:?}"
     );
     assert!(b.access().is_some());
+}
+
+/// T-267 on whole-cell roads (T-275): a service dropped anywhere along a street slides onto the
+/// street's cells: its sides stand on cell lines (here every 8 m from the street's start at
+/// x = 3000), so the cells beside it stay whole; only the cells under it go.
+#[test]
+fn a_service_stands_on_the_cell_lines_of_its_street() {
+    for x in [3093.3f32, 3101.0, 3110.7, 3127.9] {
+        let mut sim = town(&[3000.0]);
+        place(&mut sim, "fire_station", Vec2::new(x, 3030.0)).unwrap();
+        let r = rects(&sim);
+        let (lo, hi) = cp_zone::geom::quad_aabb(&r[0]);
+        for side in [lo.x, hi.x] {
+            let k = (side - 3000.0) / 8.0;
+            assert!(
+                (k - k.round()).abs() * 8.0 < 0.06,
+                "cursor x {x}: a side at x = {side} is off the cell lines"
+            );
+        }
+        // The cells on that side of the street: whole outside the building, none cut by it.
+        sim.tick_once();
+        let z = sim.world().resource::<ZoneGrid>();
+        let cut = z
+            .blocks()
+            .flat_map(|(id, _)| z.block_cells(id))
+            .filter_map(|c| z.cell_footprint(c))
+            .filter(|o| {
+                let (a, b) = cp_zone::geom::quad_aabb(&o.corners());
+                let overlap_x = (b.x.min(hi.x) - a.x.max(lo.x)).max(0.0);
+                let overlap_z = (b.y.min(hi.y) - a.y.max(lo.y)).max(0.0);
+                overlap_x > 0.05 && overlap_x < 7.95 && overlap_z > 0.05
+            })
+            .count();
+        assert_eq!(cut, 0, "cursor x {x}: {cut} cells cut by the building");
+    }
 }

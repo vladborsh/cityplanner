@@ -13,7 +13,10 @@
 //!
 //! **Order of candidates.** For every nearby road and side the lot may stand at a slide from the
 //! cursor's foot of up to [`SLIDE_M`] either way, every 2 m, and at the exact slides where its
-//! side stands flush against the edge of a cross street. All candidates are sorted by the
+//! side stands flush against the edge of a cross street. The slides that put a side of the lot on
+//! a cell line of the street come first (T-275: roads are whole cells wide, so the cells beside
+//! the building stay whole), then the others flush on the edge, then the ones pushed off it. In
+//! each group the candidates are sorted by the
 //! distance from the cursor to the rectangle's centre (millimetres), then by the build order of
 //! the road, the side and the slide; they are checked in that order and the first that fits wins.
 //! Two roads or sides never tie on an arena slot (`SegmentId`), which a rebuilt street may reuse.
@@ -193,7 +196,11 @@ pub fn edge_search(
         return Err(bare(BuildingError::NoRoad));
     }
 
+    // The cell lines of the streets near the cursor (T-275: whole-cell roads, so the cells of a
+    // street lie on one lattice): a lot whose sides stand on them leaves the cells beside it whole.
+    let lines = zones.cell_lines_near(net, &cp_zone::road_zoning(db), cursor, radius);
     let mm = |v: f32| (v * 1000.0).round() as i64;
+    let mut aligned: Vec<Candidate> = Vec::new();
     let mut flush: Vec<Candidate> = Vec::new();
     let mut pushed: Vec<Candidate> = Vec::new();
     for &(id, order) in &roads {
@@ -207,6 +214,17 @@ pub fn edge_search(
                 ..=(SLIDE_M / SLIDE_STEP_M) as i32)
                 .map(|k| k as f32 * SLIDE_STEP_M)
                 .collect();
+            // The slides that put a side of the lot on a cell line of this street.
+            let mut on_cells: Vec<f32> = Vec::new();
+            for l in lines.iter().filter(|l| l.segment == id) {
+                for off in [along_m / 2.0, -along_m / 2.0] {
+                    let slide = l.mark.arc + off - s0;
+                    if slide.abs() <= SLIDE_M && !on_cells.iter().any(|o| (o - slide).abs() < 0.01)
+                    {
+                        on_cells.push(slide);
+                    }
+                }
+            }
             // The exact slides: where the rectangle's side stands flush against another road.
             let clear = |slide: f32| {
                 let s = s0 + slide;
@@ -236,14 +254,27 @@ pub fn edge_search(
                 }
                 prev = now;
             }
-            for slide in slides {
+            let tagged = on_cells
+                .into_iter()
+                .map(|s| (s, true))
+                .chain(slides.into_iter().map(|s| (s, false)));
+            for (slide, on_cells) in tagged {
                 let s = s0 + slide;
                 if !(0.0..=table.length()).contains(&s) {
                     continue;
                 }
                 for push in std::iter::once(0.0).chain(PUSHES_M) {
+                    if on_cells && push != 0.0 {
+                        continue;
+                    }
                     let (centre, rot, t) = frame(curve, s, side, half, push, depth_m);
-                    let list = if push == 0.0 { &mut flush } else { &mut pushed };
+                    let list = if on_cells {
+                        &mut aligned
+                    } else if push == 0.0 {
+                        &mut flush
+                    } else {
+                        &mut pushed
+                    };
                     list.push(Candidate {
                         key: (
                             mm(centre.distance(cursor)),
@@ -263,7 +294,7 @@ pub fn edge_search(
     }
 
     let mut first: Option<EdgeBlocked> = None;
-    for list in [&mut flush, &mut pushed] {
+    for list in [&mut aligned, &mut flush, &mut pushed] {
         list.sort_by_key(|c| c.key);
         for c in list.iter() {
             match ctx.check(c.centre, c.rot, w, d, -ROAD_EPS, free_cells) {
