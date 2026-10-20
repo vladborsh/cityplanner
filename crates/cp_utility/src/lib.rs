@@ -19,8 +19,8 @@ pub use plan::{
     plan_link_path,
 };
 pub use supply::{
-    AttachCache, Coverage, SUPPLY_PERIOD, compute_supply, compute_supply_cached,
-    compute_supply_with, reach_m, update_supply,
+    AttachCache, Coverage, PowerPool, PowerPools, SUPPLY_PERIOD, compute_supply,
+    compute_supply_cached, compute_supply_pools, compute_supply_with, reach_m, update_supply,
 };
 
 /// Crate name, used by the skeleton smoke test.

@@ -52,6 +52,9 @@ pub struct BuildingInfo {
     pub lot: (u8, u8),
     /// Names of the flags that are up (`"no water"`, ...).
     pub problems: Vec<&'static str>,
+    /// Without power (BUG-087): the output and the demand of the pool of buildings it is in,
+    /// so the player sees a shortage (`capacity < demand`) or no plant at all (`capacity` 0).
+    pub power: Option<cp_utility::PowerPool>,
     pub households: u16,
     pub apartments: u16,
     pub residents: u32,
@@ -331,6 +334,21 @@ impl SimRunner {
                         }
                     });
                 let mut problems = flag_names(b.flags);
+                // Why there is no power (BUG-087): no plant reaches it, or too little power.
+                let power = b
+                    .flags
+                    .has(BuildingFlags::NO_POWER)
+                    .then(|| w.get_resource::<cp_utility::PowerPools>()?.of(id))
+                    .flatten();
+                if let (Some(p), Some(name)) =
+                    (power, problems.iter_mut().find(|n| **n == "no power"))
+                {
+                    *name = if p.capacity > 0.0 {
+                        "no power: not enough power"
+                    } else {
+                        "no power: no power plant connected"
+                    };
+                }
                 if svc
                     .is_some_and(|st| st.problems_of(id).has(cp_service::ServiceProblems::GARBAGE))
                 {
@@ -350,6 +368,7 @@ impl SimRunner {
                     state: b.state,
                     lot: b.size(),
                     problems,
+                    power,
                     households,
                     apartments: def.households,
                     residents,
@@ -626,6 +645,16 @@ impl Inspection {
                         b.problems.join(", ")
                     },
                 ));
+                if let Some(p) = b.power {
+                    r.push(row(
+                        "Power",
+                        if p.capacity > 0.0 {
+                            format!("supply {:.0} < demand {:.0}", p.capacity, p.demand)
+                        } else {
+                            "no plant: build one nearby or a power line".to_string()
+                        },
+                    ));
+                }
                 if let Some(t) = b.trouble {
                     r.push(row(
                         "In trouble for",

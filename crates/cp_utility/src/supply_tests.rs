@@ -215,6 +215,7 @@ fn the_system_writes_flags_every_64_ticks_only() {
     world.insert_resource(Tick(1));
     world.insert_resource(cp_content::SimContent(std::sync::Arc::new(db)));
     world.insert_resource(UtilityGraph::new());
+    world.init_resource::<PowerPools>();
     let mut grid = BuildingGrid::new();
     let h = {
         let db = &world.resource::<cp_content::SimContent>().0;

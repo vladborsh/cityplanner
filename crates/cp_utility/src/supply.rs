@@ -18,15 +18,15 @@
 //!   treatment plants), but such a source only works when its pipe component also holds a
 //!   working water source (service kind `Water`: a pump or a water tower; "a sewage source
 //!   with no connection to water does not work").
-//! * **Power.** Plants (`Power`) add capacity to the line component they are attached to (a
-//!   plant with no line is a pool of its own). From the pool a BFS runs in layers: layer 0
-//!   is the buildings attached to the pool's lines (and the plants), each following layer is
-//!   the buildings whose footprint edge is within `power_gap_m` (64 m) of the
-//!   footprint edge of a building *supplied* in the previous one (BUG-036: centre distances
-//!   never got within 30 m for 3×3 lots). Within a layer buildings are served in ascending id; the first that does not fit
-//!   and everything after it (this layer and later ones) get `NO_POWER`. Pools are
-//!   processed in order of their line component, then unattached plants by id; a building
-//!   belongs to the first pool that reaches it.
+//! * **Power.** Buildings pass power on to each other: two whose footprint edges are within
+//!   `power_gap_m` (64 m) are joined (BUG-036), and so are the buildings attached to one power
+//!   line component (`line_reach_m`, 80 m, of a link). A connected group of buildings is one
+//!   pool with the summed capacity of every plant (`Power`) in it (BUG-087: a plant without a
+//!   line was a pool of its own, and the first one claimed the town). Each pool serves from all
+//!   its plants and the buildings on their lines at once, in layers outwards over the gap and
+//!   the lines, ascending id within a layer; the first building that does not fit and every
+//!   later one (this layer and the farther ones) get `NO_POWER`. A group with no plant has no
+//!   power.
 //!
 //! Plant output does not depend on the plants' own power; service buildings are ordinary
 //! consumers for their flags.
@@ -506,6 +506,46 @@ pub fn compute_supply_with(
     cache: &mut AttachCache,
     policies: Option<&Policies>,
 ) -> Vec<u8> {
+    compute_supply_pools(db, buildings, graph, cache, policies).0
+}
+
+/// One power pool (BUG-087): the plants' output and what its buildings need.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PowerPool {
+    pub capacity: f32,
+    pub demand: f32,
+}
+
+/// The power pools of the last supply pass (BUG-087), so a building without power can say why:
+/// derived like the flags (rewritten every [`SUPPLY_PERIOD`] ticks, never saved; empty until
+/// the first pass after a load).
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct PowerPools {
+    /// By building arena index: its generation and the index of its pool in `pools`.
+    pub pool_of: Vec<Option<(u32, u32)>>,
+    pub pools: Vec<PowerPool>,
+}
+
+impl PowerPools {
+    /// The pool of building `id`, if the last pass saw it.
+    pub fn of(&self, id: BuildingId) -> Option<PowerPool> {
+        match self.pool_of.get(id.index as usize) {
+            Some(Some((generation, pool))) if *generation == id.generation => {
+                self.pools.get(*pool as usize).copied()
+            }
+            _ => None,
+        }
+    }
+}
+
+/// [`compute_supply_with`] and the power pools it found.
+pub fn compute_supply_pools(
+    db: &ContentDb,
+    buildings: &BuildingGrid,
+    graph: &UtilityGraph,
+    cache: &mut AttachCache,
+    policies: Option<&Policies>,
+) -> (Vec<u8>, PowerPools) {
     let nets = &db.balance().networks;
     let power_gap = nets.power_gap_m;
     // Needs and source of each building def, once.
@@ -553,6 +593,7 @@ pub fn compute_supply_with(
             .max()
             .unwrap_or(0)
     ];
+    let slots = missing.len();
     let mut flag = |id: BuildingId, bit: u8| {
         missing[id.index as usize] |= bit;
     };
@@ -689,87 +730,146 @@ pub fn compute_supply_with(
     }
 
     // --- power ---
+    // Pools (BUG-087): the buildings joined by the power gap (and by the lines they stand on)
+    // are one pool with the output of every plant in it. A plant without a line used to be a
+    // pool of its own whose search claimed the buildings it could not serve, so the town got
+    // the output of one plant only.
     let attached: Vec<Option<u32>> = comps.iter().map(|c| c.1).collect();
-    let mut hop = HopGrid::build(&sites, power_gap);
-    // Pools: line components (ascending) first, then unattached plants by id.
-    enum Pool {
-        Comp(u32),
-        Plant(usize),
-    }
-    let mut cap: BTreeMap<u32, f32> = BTreeMap::new();
-    let mut pools: Vec<(Pool, f32)> = Vec::new();
-    let mut loose: Vec<(usize, f32)> = Vec::new();
-    for (i, s) in sites.iter().enumerate() {
-        if let Some((ServiceKind::Power, c)) = s.source {
-            match attached[i] {
-                Some(comp) => *cap.entry(comp).or_default() += c,
-                None => loose.push((i, c)),
-            }
+    // The sites on each line component, ascending.
+    let mut on_line: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    for (i, c) in attached.iter().enumerate() {
+        if let Some(c) = c {
+            on_line.entry(*c).or_default().push(i);
         }
     }
-    pools.extend(cap.into_iter().map(|(c, v)| (Pool::Comp(c), v)));
-    pools.extend(loose.into_iter().map(|(i, v)| (Pool::Plant(i), v)));
-    // `seen`: visited, or already in the layer being built or processed (a site enters one
-    // layer once, so the scan below never meets it again).
+    let gap_ok = |i: usize, j: usize| {
+        sites[j].pos.distance(sites[i].pos) - sites[i].half - sites[j].half <= power_gap
+    };
+    // Visits the neighbours of `i` not yet `seen`: within the power gap, and on its line.
+    let neighbours = |hop: &mut HopGrid, i: usize, seen: &mut [bool], out: &mut Vec<usize>| {
+        let (bx, bz) = bucket(sites[i].pos, hop.cell);
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                for &j in hop.unvisited(bx + dx, bz + dz, seen) {
+                    // Cheap reject (a few ulps of slack) before the exact test.
+                    let reach = power_gap + sites[i].half + sites[j].half;
+                    if sites[j].pos.distance_squared(sites[i].pos) > reach * reach * 1.001 {
+                        continue;
+                    }
+                    if gap_ok(i, j) {
+                        out.push(j);
+                    }
+                }
+            }
+        }
+        // Marked as they are found: a building beside `i` that is also on its line comes once.
+        for &j in out.iter() {
+            seen[j] = true;
+        }
+        if let Some(line) = attached[i].and_then(|c| on_line.get(&c)) {
+            for &j in line {
+                if !seen[j] {
+                    seen[j] = true;
+                    out.push(j);
+                }
+            }
+        }
+    };
+    // 1. The groups: connected over the gap and the lines, numbered by their smallest site.
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    {
+        let mut hop = HopGrid::build(&sites, power_gap);
+        let mut seen = vec![false; sites.len()];
+        let mut found = Vec::new();
+        for start in 0..sites.len() {
+            if seen[start] {
+                continue;
+            }
+            seen[start] = true;
+            let mut members = vec![start];
+            let mut k = 0;
+            while k < members.len() {
+                found.clear();
+                neighbours(&mut hop, members[k], &mut seen, &mut found);
+                members.extend_from_slice(&found);
+                k += 1;
+            }
+            groups.push(members);
+        }
+    }
+    // 2. Each group serves from all its plants at once, layer by layer outwards (ascending
+    // site within a layer): the first building that does not fit and every later one go dark.
+    let mut hop = HopGrid::build(&sites, power_gap);
     let mut seen = vec![false; sites.len()];
-    let mut visited = vec![false; sites.len()];
     let mut served = vec![false; sites.len()];
-    for (pool, mut left) in pools {
-        let mut layer: Vec<usize> = match pool {
-            Pool::Comp(c) => (0..sites.len())
-                .filter(|&i| attached[i] == Some(c) && !visited[i])
-                .collect(),
-            Pool::Plant(i) => vec![i],
-        };
+    let mut found = Vec::new();
+    let mut pools = PowerPools {
+        pool_of: vec![None; slots],
+        pools: Vec::with_capacity(groups.len()),
+    };
+    for members in &groups {
+        let pool = pools.pools.len() as u32;
+        let mut report = PowerPool::default();
+        for &i in members {
+            pools.pool_of[sites[i].id.index as usize] = Some((sites[i].id.generation, pool));
+            report.demand += sites[i].needs[2];
+            if let Some((ServiceKind::Power, c)) = sites[i].source {
+                report.capacity += c;
+            }
+        }
+        pools.pools.push(report);
+        let mut left = 0.0f32;
+        let mut powered_lines: BTreeSet<u32> = BTreeSet::new();
+        for &i in members {
+            if let Some((ServiceKind::Power, c)) = sites[i].source {
+                left += c;
+                powered_lines.extend(attached[i]);
+            }
+        }
+        if left <= 0.0 {
+            // No plant: only the buildings that need nothing are fine.
+            for &i in members {
+                served[i] = sites[i].needs[2] <= 0.0;
+            }
+            continue;
+        }
+        let mut layer: Vec<usize> = members
+            .iter()
+            .copied()
+            .filter(|&i| {
+                matches!(sites[i].source, Some((ServiceKind::Power, _)))
+                    || attached[i].is_some_and(|c| powered_lines.contains(&c))
+            })
+            .collect();
+        for &i in &layer {
+            seen[i] = true;
+        }
         let mut exhausted = false;
         while !layer.is_empty() {
-            for &i in &layer {
-                seen[i] = true;
-            }
             layer.sort_unstable();
-            let mut next: BTreeSet<usize> = BTreeSet::new();
+            let mut next = Vec::new();
             for &i in &layer {
-                visited[i] = true;
                 let need = sites[i].needs[2];
                 if need <= 0.0 || (!exhausted && left >= need) {
                     left -= need;
                     served[i] = true;
-                    let (bx, bz) = bucket(sites[i].pos, hop.cell);
-                    for dx in -1..=1 {
-                        for dz in -1..=1 {
-                            for &j in hop.unvisited(bx + dx, bz + dz, &seen) {
-                                // Cheap reject (a few ulps of slack) before the exact test.
-                                let reach = power_gap + sites[i].half + sites[j].half;
-                                if sites[j].pos.distance_squared(sites[i].pos)
-                                    > reach * reach * 1.001
-                                {
-                                    continue;
-                                }
-                                let gap = sites[j].pos.distance(sites[i].pos)
-                                    - sites[i].half
-                                    - sites[j].half;
-                                if gap <= power_gap {
-                                    seen[j] = true;
-                                    next.insert(j);
-                                }
-                            }
-                        }
-                    }
                 } else {
                     exhausted = true;
                 }
+                found.clear();
+                neighbours(&mut hop, i, &mut seen, &mut found);
+                next.extend_from_slice(&found);
             }
-            // Every member of `layer` is visited by now, so this also drops those.
-            next.retain(|j| !visited[*j]);
-            layer = next.into_iter().collect();
+            layer = next;
         }
+        debug_assert!(members.iter().all(|&i| seen[i]), "a group is connected");
     }
     for (i, s) in sites.iter().enumerate() {
         if s.needs[2] > 0.0 && !served[i] {
             flag(s.id, BuildingFlags::NO_POWER);
         }
     }
-    missing
+    (missing, pools)
 }
 
 /// `Utilities`-phase system: every [`SUPPLY_PERIOD`] ticks, rewrites the utility bits of the
@@ -780,6 +880,7 @@ pub fn update_supply(
     graph: Res<UtilityGraph>,
     mut buildings: ResMut<BuildingGrid>,
     mut cache: Local<AttachCache>,
+    mut pools: ResMut<PowerPools>,
     policies: PolicyParams,
 ) {
     if !tick.0.is_multiple_of(SUPPLY_PERIOD) {
@@ -787,13 +888,16 @@ pub fn update_supply(
     }
     let Some(content) = content else { return };
     let policies = policies.get();
-    let missing = compute_supply_with(
+    let (missing, found) = compute_supply_pools(
         &content.0,
         &buildings,
         &graph,
         &mut cache,
         policies.as_ref(),
     );
+    if *pools != found {
+        *pools = found;
+    }
     let changes: Vec<(BuildingId, u8)> = buildings
         .iter()
         .filter(|(_, b)| b.state == BuildingState::Active)

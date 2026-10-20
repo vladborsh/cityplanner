@@ -2073,7 +2073,7 @@ pub fn build_power_town(sim: &mut SimRunner) {
     let db = embedded_content();
     let c = cp_terrain::MAP_SIZE / 2.0;
     let cell = cp_building::FOOTPRINT_CELL_M;
-    let mut place = |sim: &mut SimRunner, def: &str, pos: Vec2| {
+    let place = |sim: &mut SimRunner, def: &str, pos: Vec2| {
         let id = db.building_id(def).expect("building def");
         let (w, d) = db.building(id).lot;
         sim.world_mut()
