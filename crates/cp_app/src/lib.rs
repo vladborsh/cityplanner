@@ -71,6 +71,8 @@ pub struct GamePlugin {
     pub grading: Option<cp_render::GradingSettings>,
     /// Open the colour grading panel at start (`--grading-panel`, for screenshots).
     pub grading_panel: bool,
+    /// `--fold-overlays`: start with the overlays panel folded to its strip (T-289 screenshots).
+    pub fold_overlays: bool,
     /// Open this palette category at start (`--category`, for screenshots).
     pub category: Option<cp_ui::Category>,
     /// No cloud shadows in this run (`--no-clouds`, T-272: shots without them).
@@ -161,6 +163,7 @@ impl Plugin for GamePlugin {
                     },
                 },
                 grading_open: self.grading_panel,
+                overlays_collapsed: self.fold_overlays,
                 category: self.category,
                 // T-289: a menu started open takes up its tool and shows its overlay, as a click would.
                 entered: self.category,

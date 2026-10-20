@@ -48,6 +48,7 @@ pub fn run() {
                 target: None,
                 grading: None,
                 grading_panel: false,
+                fold_overlays: false,
                 category: None,
                 no_clouds: false,
                 no_parked: false,

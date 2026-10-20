@@ -57,6 +57,8 @@ pub struct Options {
     pub grading: Option<cp_render::GradingSettings>,
     /// `--grading-panel`: open the F8 colour grading panel at start.
     pub grading_panel: bool,
+    /// `--fold-overlays`: the overlays panel starts folded (T-289 screenshots).
+    pub fold_overlays: bool,
     /// `--ui`: keep the egui UI in a `--hidden` run, so screenshots show the panels.
     pub hidden_ui: bool,
     /// `--category roads|zones|...`: open that palette category at start (screenshots).
@@ -140,6 +142,7 @@ impl Options {
                 }
             }),
             grading_panel: args.iter().any(|a| a == "--grading-panel"),
+            fold_overlays: args.iter().any(|a| a == "--fold-overlays"),
             hidden_ui: args.iter().any(|a| a == "--ui"),
             no_clouds: args.iter().any(|a| a == "--no-clouds"),
             no_parked: args.iter().any(|a| a == "--no-parked"),
@@ -520,6 +523,7 @@ pub fn run(opts: Options) -> AppExit {
             target: target.clone(),
             grading: opts.grading,
             grading_panel: opts.grading_panel,
+            fold_overlays: opts.fold_overlays,
             category: opts.category,
             no_clouds: opts.no_clouds,
             no_parked: opts.no_parked,
