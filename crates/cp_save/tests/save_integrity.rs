@@ -4,7 +4,6 @@
 use cp_core::{SimSpeed, Tick};
 use cp_save::*;
 use cp_sim::{SimCommand, SimRunner};
-use std::path::Path;
 
 const HASH: u64 = 0x1234;
 

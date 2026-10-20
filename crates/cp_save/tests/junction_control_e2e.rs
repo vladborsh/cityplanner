@@ -11,7 +11,7 @@ use cp_core::{CommandError, CommandOutcome, Tick};
 use cp_net::{
     ElevationMode, JunctionControl, JunctionGeometry, NetCommand, NetGraph, NodeId, RoadPath,
 };
-use cp_save::{load_into_runner, read_header, save_runner};
+use cp_save::{load_into_runner, save_runner};
 use cp_sim::{SimCommand, SimRunner};
 use cp_terrain::Terrain;
 
