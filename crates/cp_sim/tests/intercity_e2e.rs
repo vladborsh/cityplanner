@@ -32,6 +32,8 @@ fn world(station: bool) -> SimRunner {
     sim.set_terrain(Arc::clone(&terrain));
     sim.set_content(Arc::clone(&db));
     sim.new_game().unwrap();
+    // T-283: the train station waits for Town; this test is about the station, not the unlock.
+    sim.world_mut().insert_resource(cp_sim::Progress::ALL);
     sim.world_mut().insert_resource(TileOwnership::only((2, 2)));
     sim.world_mut().resource_mut::<Treasury>().balance = Cost(1_000_000_000);
     *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);

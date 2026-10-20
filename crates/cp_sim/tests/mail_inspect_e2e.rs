@@ -67,7 +67,7 @@ fn a_post_office_and_a_house_show_their_mail_once_the_post_is_open() {
             .unwrap();
         (office, house)
     };
-    run(&mut sim, TICKS_PER_DAY, 1);
+    run(&mut sim, TICKS_PER_DAY, 2); // T-283: the post office opens at Small Town (3)
     assert_eq!(
         get(&rows(&sim, office), "Vans"),
         None,
@@ -75,7 +75,7 @@ fn a_post_office_and_a_house_show_their_mail_once_the_post_is_open() {
     );
     assert_eq!(get(&rows(&sim, house), "Mail held"), None);
 
-    run(&mut sim, 6 * TICKS_PER_DAY, 2);
+    run(&mut sim, 6 * TICKS_PER_DAY, 3);
     let r = rows(&sim, office);
     // T-270: 40 vans (was 5), post_office.ron.
     assert!(get(&r, "Vans").unwrap().ends_with("out of 40"), "{r:?}");

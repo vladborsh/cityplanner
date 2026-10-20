@@ -133,6 +133,8 @@ fn place_station(sim: &mut SimRunner, def: cp_content::BuildingDefId, pos: Vec2)
 fn a_station_joined_to_the_railway_reaches_the_outside_and_one_without_track_does_not() {
     let db = db();
     let (mut sim, terrain) = new_game("flatlands");
+    // T-283: the train station waits for Town; this test is about the station, not the unlock.
+    sim.world_mut().insert_resource(cp_sim::Progress::ALL);
     sim.world_mut().insert_resource(TileOwnership::only((2, 2)));
     sim.world_mut().resource_mut::<Treasury>().balance = Cost(1_000_000_000);
     let end = terrain.meta().entry_rail.as_ref().unwrap().dead_end();
