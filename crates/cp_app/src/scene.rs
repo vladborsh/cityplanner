@@ -1441,9 +1441,54 @@ pub fn build_grown(sim: &mut SimRunner) {
     }
 }
 
+/// The puffs a scene leaves for `--dust-demo` (T-288 shots), kept in the sim world.
+#[derive(bevy_ecs::prelude::Resource, Clone, Debug, Default)]
+pub struct DustPuffs(pub Vec<cp_render::dust::Puff>);
+
+/// The [`GROWN`] scene with a row of its houses demolished (T-288 shots: `--cam road-over
+/// --dust-demo 0.4` holds the dust where they stood).
+pub const DUST: &str = "dust";
+
+/// Builds the [`DUST`] scene.
+pub fn build_dust(sim: &mut SimRunner) {
+    build_grown(sim);
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    // The houses of the east residential block's front row, along its north street.
+    let row: Vec<(cp_building::BuildingId, cp_building::Building)> = sim
+        .world()
+        .resource::<cp_building::BuildingGrid>()
+        .iter()
+        .filter(|(_, b)| {
+            (c - 30.0..c + 90.0).contains(&b.pos.x) && (c - 52.0..c - 30.0).contains(&b.pos.y)
+        })
+        .map(|(id, b)| (id, b.clone()))
+        .collect();
+    let mut puffs = Vec::new();
+    for (id, b) in row {
+        sim.push_command(
+            SimCommand::Building(cp_building::BuildingCommand::Demolish { building: id }),
+            sim.tick(),
+        );
+        sim.tick_once();
+        let change = cp_render::city_events::BuildingChange {
+            id,
+            event: cp_render::city_events::BuildingEvent::Removed,
+            building: b,
+            before: None,
+        };
+        puffs.extend(cp_render::dust::puffs(
+            &[change],
+            &[],
+            &[],
+            &embedded_content(),
+        ));
+    }
+    sim.world_mut().insert_resource(DustPuffs(puffs));
+}
+
 /// The [`GROWN`] scene with an elementary school finished in the east residential block (T-287
 /// shots: `--cam road-over --mood-demo elementary_school,0.3` holds the wave of the houses it
-/// covers 0.3 s after it opened).
+/// covers 0.3 s after it opened; T-288: `--dust-demo 0.4` its dust as it went up).
 pub const SCHOOL: &str = "school";
 
 /// Builds the [`SCHOOL`] scene.
@@ -1473,6 +1518,20 @@ pub fn build_school(sim: &mut SimRunner) {
             break;
         }
     }
+    let placed: Vec<cp_render::city_events::BuildingChange> = sim
+        .world()
+        .resource::<cp_building::BuildingGrid>()
+        .iter()
+        .filter(|(_, b)| b.def == def)
+        .map(|(id, b)| cp_render::city_events::BuildingChange {
+            id,
+            event: cp_render::city_events::BuildingEvent::Placed,
+            building: b.clone(),
+            before: None,
+        })
+        .collect();
+    let puffs = cp_render::dust::puffs(&placed, &[], &[], &db);
+    sim.world_mut().insert_resource(DustPuffs(puffs));
 }
 
 /// The [`GROWN`] scene with a pipe along the north street, under the road (T-286 shots): the

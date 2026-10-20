@@ -1,12 +1,14 @@
-//! Bevy side of the city's little reactions (T-287): when the building grid of `SimView`
-//! changes, [`crate::city_events`] diffs it once into [`CityChange`], and the houses' moods
-//! ([`crate::mood`]) pop up over their roofs as a wave. One alpha-blended, unlit mesh entity,
-//! rebuilt each frame while an emoji lives. Render time only (the app's `Time`), never the sim
+//! Bevy side of the city's little reactions: when the building grid or the roads of `SimView`
+//! change, [`crate::city_events`] diffs them once into [`CityChange`]; the houses' moods
+//! ([`crate::mood`], T-287) pop up over their roofs as a wave, and dust puffs ([`crate::dust`],
+//! T-288) rise where something was built or knocked down. Each an alpha-blended, unlit mesh
+//! entity, rebuilt each frame while something lives. Render time only (the app's `Time`), never the sim
 //! tick; nothing here touches the sim.
 
 use std::sync::Arc;
 
 use bevy::camera::visibility::NoFrustumCulling;
+use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use cp_building::BuildingGrid;
 use cp_net::NetGraph;
@@ -18,7 +20,7 @@ use crate::mood::{Emoji, LIFE_S, Mood, emoji_mesh, moods_of};
 use crate::problem::Facing;
 use crate::problem_render::{set_effect_visible, to_bevy_mesh};
 
-/// Emojis farther than this from the camera are not drawn, metres.
+/// Emojis and dust farther than this from the camera are not drawn, metres.
 pub const EMOJI_RANGE_M: f32 = 800.0;
 
 pub struct EventFxPlugin;
@@ -28,9 +30,17 @@ impl Plugin for EventFxPlugin {
         app.init_resource::<CityChange>()
             .init_resource::<Snapshot>()
             .init_resource::<MoodFx>()
+            .init_resource::<DustFx>()
             .add_systems(
                 Update,
-                (diff_city, mood_demo, start_moods, draw_moods)
+                (
+                    diff_city,
+                    mood_demo,
+                    start_moods,
+                    draw_moods,
+                    start_dust,
+                    draw_dust,
+                )
                     .chain()
                     .after(BuildingSync),
             );
@@ -263,7 +273,145 @@ fn draw_moods(
                         MeshMaterial3d(material),
                         Transform::default(),
                         NoFrustumCulling,
+                        // Air: no shadow on the ground.
+                        NotShadowCaster,
                         Name::new("moods"),
+                    ))
+                    .id(),
+            );
+            fx.mesh = Some(h);
+        }
+    }
+}
+
+/// Dust held at one moment (`--dust-demo` of the desktop client, T-288 shots): these puffs,
+/// `age` seconds old; `puffs` stays `None` until the scene hands them over.
+#[derive(Resource, Clone, Debug)]
+pub struct DustDemo {
+    pub age: f32,
+    pub puffs: Option<Vec<crate::dust::Puff>>,
+}
+
+/// The live dust puffs and their mesh.
+#[derive(Resource, Default)]
+struct DustFx {
+    live: Vec<(crate::dust::LivePuff, f32)>,
+    /// [`DustDemo`]: render time stands at this.
+    frozen: Option<f32>,
+    seed: u32,
+    mesh: Option<Handle<Mesh>>,
+    entity: Option<Entity>,
+}
+
+fn start_dust(
+    time: Res<Time>,
+    view: Option<Res<SimView>>,
+    change: Res<CityChange>,
+    demo: Option<Res<DustDemo>>,
+    mut fx: ResMut<DustFx>,
+) {
+    if fx.frozen.is_some() {
+        return;
+    }
+    if let (Some(demo), Some(view)) = (demo.as_deref(), view.as_deref()) {
+        if let Some(puffs) = &demo.puffs {
+            for (k, p) in puffs.iter().enumerate() {
+                let y = view.terrain.as_deref().map_or(0.0, |t| t.height(p.at));
+                let live = crate::dust::LivePuff {
+                    at: Vec3::new(p.at.x, y, p.at.y),
+                    radius: p.radius,
+                    demolish: p.demolish,
+                    age: 0.0,
+                    seed: k as u32,
+                };
+                fx.live.push((live, 0.0));
+            }
+            fx.frozen = Some(demo.age);
+        }
+        return;
+    }
+    let now = time.elapsed_secs();
+    fx.live.retain(|(_, t0)| now - t0 < crate::dust::PUFF_S);
+    let (Some(view), Some(db)) = (
+        view.as_deref(),
+        view.as_deref().and_then(|v| v.content.as_deref()),
+    ) else {
+        return;
+    };
+    if change.buildings.is_empty() && change.laid.is_empty() && change.removed.is_empty() {
+        return;
+    }
+    for p in crate::dust::puffs(&change.buildings, &change.laid, &change.removed, db) {
+        let y = view.terrain.as_deref().map_or(0.0, |t| t.height(p.at));
+        fx.seed = fx.seed.wrapping_add(1);
+        let live = crate::dust::LivePuff {
+            at: Vec3::new(p.at.x, y, p.at.y),
+            radius: p.radius,
+            demolish: p.demolish,
+            age: 0.0,
+            seed: fx.seed,
+        };
+        fx.live.push((live, now));
+    }
+    // The cap: the oldest go first.
+    crate::dust::cap(&mut fx.live);
+}
+
+fn draw_dust(
+    time: Res<Time>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
+    mut fx: ResMut<DustFx>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut commands: Commands,
+) {
+    let Some(cam) = camera.iter().next() else {
+        return;
+    };
+    let (_, rotation, position) = cam.to_scale_rotation_translation();
+    let facing = Facing {
+        position,
+        right: rotation * Vec3::X,
+        up: rotation * Vec3::Y,
+    };
+    let now = fx.frozen.unwrap_or_else(|| time.elapsed_secs());
+    let puffs: Vec<crate::dust::LivePuff> = fx
+        .live
+        .iter()
+        .filter(|(p, _)| p.at.distance(position) <= EMOJI_RANGE_M)
+        .map(|(p, t0)| crate::dust::LivePuff {
+            age: now - t0,
+            ..*p
+        })
+        .collect();
+    let data = crate::dust::dust_mesh(&puffs, &facing);
+    if !set_effect_visible(!data.indices.is_empty(), fx.entity, &mut commands) {
+        return;
+    }
+    let mesh = to_bevy_mesh(data);
+    match fx.mesh.clone() {
+        Some(h) => {
+            let _ = meshes.insert(&h, mesh);
+        }
+        None => {
+            let h = meshes.add(mesh);
+            let material = materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                unlit: true,
+                cull_mode: None,
+                alpha_mode: AlphaMode::Blend,
+                ..default()
+            });
+            fx.entity = Some(
+                commands
+                    .spawn((
+                        Mesh3d(h.clone()),
+                        MeshMaterial3d(material),
+                        Transform::default(),
+                        NoFrustumCulling,
+                        // Air: no shadow on the ground.
+                        NotShadowCaster,
+                        Name::new("dust"),
                     ))
                     .id(),
             );

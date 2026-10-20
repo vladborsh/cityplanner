@@ -182,6 +182,7 @@ impl Plugin for GamePlugin {
                 ),
             );
         }
+        app.add_systems(Update, hand_dust_demo);
         if let Some(n) = grid_shots::shot_of_cam(&self.cam) {
             app.add_systems(
                 Update,
@@ -546,6 +547,18 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
     }
 }
 
+/// `--dust-demo` (T-288 shots): once the scene stands, its puffs go to the renderer.
+fn hand_dust_demo(sim: Option<Res<Sim>>, demo: Option<ResMut<cp_render::DustDemo>>) {
+    let (Some(sim), Some(mut demo)) = (sim, demo) else {
+        return;
+    };
+    if demo.puffs.is_none()
+        && let Some(p) = sim.0.world().get_resource::<scene::DustPuffs>()
+    {
+        demo.puffs = Some(p.0.clone());
+    }
+}
+
 /// `--cam grid-shotN` over `--scene grid-shots` (T-255): once the scene stands, the road tool
 /// holds the ghost of layout N's last street (`cp_tools::GhostDemo`).
 fn hold_grid_shot_ghost(n: usize, sim: Option<Res<Sim>>, commands: &mut Commands, held: bool) {
@@ -610,6 +623,9 @@ pub fn build_sim(
     } else if scene == Some(scene::CORNERS_WIDE) {
         scene::build_corners_wide(&mut sim);
         info!("scene corners-wide");
+    } else if scene == Some(scene::DUST) {
+        scene::build_dust(&mut sim);
+        info!("scene dust");
     } else if scene == Some(scene::SCHOOL) {
         scene::build_school(&mut sim);
         info!("scene school");
