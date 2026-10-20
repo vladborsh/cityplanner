@@ -21,10 +21,45 @@ use cp_sim::SimRunner;
 use cp_traffic::{AgentSettings, Agents, PED_STEP, PathNetwork, crossing_of};
 use cp_zone::{ZoneCellRef, ZoneGrid};
 
+/// The shipped content with every car trip taking a car (T-280's `car_visible_share` hides
+/// most in the game): these tests are about the pools and the agents themselves.
 fn content() -> Arc<ContentDb> {
-    Arc::new(
-        ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content")).unwrap(),
-    )
+    fn walk(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|x| x == "ron") {
+                let mut text = std::fs::read_to_string(&path).unwrap();
+                if path.file_name().is_some_and(|n| n == "balance.ron") {
+                    text = text
+                        .lines()
+                        .map(|l| {
+                            if l.trim_start().starts_with("car_visible_share:") {
+                                "    car_visible_share: 1.0,"
+                            } else {
+                                l
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                }
+                out.push((path.display().to_string(), text));
+            }
+        }
+    }
+    let mut src = Vec::new();
+    walk(
+        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content")),
+        &mut src,
+    );
+    let db = ContentDb::from_sources(src).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(db.balance().car_visible_share, 1.0);
+    Arc::new(db)
 }
 
 /// An `n`-line lattice of 90 m streets of `road`; blocks are zoned in a repeating pattern.

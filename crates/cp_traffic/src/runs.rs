@@ -41,6 +41,20 @@ pub type RunId = u32;
 /// `cp_content::VehicleKind` has this number, so the saved layout of a run is unchanged.
 pub const WALK_KIND: u8 = u8::MAX;
 
+/// Whether runs of this `ServiceRun::kind` are goods trucks (T-280): the cargo kinds, not the
+/// garbage `Truck` nor any other service vehicle.
+pub fn is_goods_kind(kind: u8) -> bool {
+    [
+        VehicleKind::Cargo,
+        VehicleKind::CargoFarm,
+        VehicleKind::CargoLogs,
+        VehicleKind::CargoOre,
+        VehicleKind::CargoTanker,
+    ]
+    .iter()
+    .any(|k| *k as u8 == kind)
+}
+
 /// Whether runs of this `ServiceRun::kind` ride the track (metro and intercity trains).
 pub fn is_rail_kind(kind: u8) -> bool {
     kind == VehicleKind::Metro as u8
@@ -534,7 +548,12 @@ pub fn receive_service_paths(
     limits: Res<SimLimits>,
     mut runs: ResMut<ServiceRuns>,
     mut agents: ResMut<Agents>,
+    rng: Res<cp_core::SimRng>,
+    content: Option<Res<cp_content::SimContent>>,
 ) {
+    // T-280: most goods trucks run on a timer; service vehicles always drive. Without content
+    // (bare tests) every truck drives.
+    let truck_share = content.map_or(1.0, |c| c.0.balance().truck_visible_share);
     for outcome in &results.0 {
         let Some((id, run)) = runs
             .iter()
@@ -610,7 +629,20 @@ pub fn receive_service_paths(
                 },
             ),
             PathResult::Car(Ok(path)) => {
-                if agents.vehicle_count() < limits.vehicles as usize {
+                let shown = !is_goods_kind(run.kind)
+                    || crate::agents::car_visible(
+                        TripId::new(id, SERVICE_GEN),
+                        rng.seed(),
+                        truck_share,
+                    );
+                if !shown {
+                    runs.set_state(
+                        id,
+                        RunState::Timer {
+                            arrive_at: Tick(tick.0 + travel_ticks(path.cost)),
+                        },
+                    );
+                } else if agents.vehicle_count() < limits.vehicles as usize {
                     agents.spawn_service_vehicle(Vehicle {
                         trip: TripId::new(id, SERVICE_GEN),
                         citizen: CitizenId::new(u32::MAX, u32::MAX),

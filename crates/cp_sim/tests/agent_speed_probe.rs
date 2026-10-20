@@ -35,11 +35,13 @@ fn agents_and_trips_by_day() {
         50.0 / 3.6 * MOVE_SECONDS_PER_TICK
     );
     println!(
-        "day   pop  agents(max)  in-transit(avg)  walk-min  car-min  stuck  no-path  load(avg/max)  employed unemployed abandoned"
+        "day   pop  cars(max) agents(max)  in-transit(avg)  walk-min  car-min  stuck  no-path  load(avg/max)  employed unemployed abandoned"
     );
     let samples = 16;
     for day in 0..days {
-        let (mut max_agents, mut transit) = (0u32, 0u64);
+        let (mut max_agents, mut max_cars, mut transit) = (0u32, 0u32, 0u64);
+        let mut kinds = [0u32; 6];
+        let st0 = sim.world().resource::<cp_traffic::Agents>().stats.clone();
         for _ in 0..samples {
             for _ in 0..TICKS_PER_DAY / samples {
                 sim.tick_once();
@@ -47,14 +49,38 @@ fn agents_and_trips_by_day() {
             let city = sim.view().city.clone();
             let t = &city.traffic;
             max_agents = max_agents.max(t.vehicles + t.pedestrians);
+            if t.vehicles > max_cars {
+                max_cars = t.vehicles;
+                // What the vehicles on the map are at the peak: citizens' cars, keep runs
+                // moving and parked, garbage trucks, goods trucks, other service vehicles.
+                let mut k = [0u32; 6];
+                for (_, v) in sim.world().resource::<cp_traffic::Agents>().vehicles() {
+                    let i = if v.is_parked() {
+                        2
+                    } else if v.is_keep() {
+                        1
+                    } else if v.citizen.index != u32::MAX {
+                        0
+                    } else if cp_traffic::runs::is_goods_kind(v.kind_id()) {
+                        4
+                    } else if v.kind_id() == 1 {
+                        3
+                    } else {
+                        5
+                    };
+                    k[i] += 1;
+                }
+                kinds = k;
+            }
             transit += u64::from(t.trips_in_transit);
         }
         let city = sim.view().city.clone();
         let t = &city.traffic;
         println!(
-            "{:3} {:5} {:11} {:16.0} {:9.1} {:8.1} {:6} {:8} {:6.2}/{:.2} {:9} {:10} {:9}",
+            "{:3} {:5} {:9} {:11} {:16.0} {:9.1} {:8.1} {:6} {:8} {:6.2}/{:.2} {:9} {:10} {:9}",
             day + 1,
             population(&sim),
+            max_cars,
             max_agents,
             transit as f64 / samples as f64,
             t.trip_minutes[0],
@@ -66,6 +92,17 @@ fn agents_and_trips_by_day() {
             city.employed,
             city.unemployed,
             city.buildings.abandoned,
+        );
+        let st = sim.world().resource::<cp_traffic::Agents>().stats.clone();
+        println!(
+            "      cars arrived {}  walks {}  abstract {}",
+            st.driven - st0.driven,
+            st.walked - st0.walked,
+            st.abstract_trips - st0.abstract_trips
+        );
+        println!(
+            "      at the peak: citizens' cars {} keep {} parked {} garbage {} goods {} other service {}",
+            kinds[0], kinds[1], kinds[2], kinds[3], kinds[4], kinds[5]
         );
     }
 }

@@ -194,6 +194,13 @@ pub struct Balance {
     /// with a car drives when the drive plus this is shorter than walking the real route.
     /// // tune later
     pub car_start_penalty_s: f32,
+    /// Share of car trips that put a car on the road, `0..=1` (T-280); the others run
+    /// abstractly: they take their route's travel time and occupy no lane, as a trip does when
+    /// the vehicle pool is full. Which ones is a hash of the trip id and the seed.
+    pub car_visible_share: f32,
+    /// The same for goods truck runs (the cargo kinds; T-280). Service vehicles (garbage, fire,
+    /// police, ambulance, hearse, mail, buses) always drive: they are the player's feedback.
+    pub truck_visible_share: f32,
     /// A spawn attempt on a zone block proceeds with probability `1 / spawn_one_in` (§8).
     pub spawn_one_in: u32,
     /// Share of the gap a demand value closes per recomputation (every 64 ticks), `0..=1` (§11).
@@ -670,6 +677,8 @@ impl Default for Balance {
         Self {
             walk_limit_m: 400.0,
             car_start_penalty_s: 90.0,
+            car_visible_share: 0.15,
+            truck_visible_share: 0.25,
             spawn_one_in: 4,
             demand_ema: 0.25,
             demand_base: [10.0, 5.0, 5.0, 0.0],

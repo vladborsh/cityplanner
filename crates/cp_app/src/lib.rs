@@ -213,14 +213,17 @@ impl Plugin for GamePlugin {
     }
 }
 
-/// How much faster than the base rate (20 ticks/s per speed step) game time runs in the app
-/// (BUG-061): ×1 runs twice, ×2 four times, ×3 eight times (so ×3 is four times ×1): a game day
-/// lasts 102 s at ×1, 51 s at ×2, 26 s at ×3. The sim itself keeps its whole-step multipliers;
-/// only the real time fed to `step` is scaled.
+/// How much faster than the base rate (20 ticks/s per speed step) game time runs in the app:
+/// ×1 runs at the base rate, 20 ticks/s, so a 50 km/h car moves 111 m/s on screen (T-280: cars
+/// half as fast as BUG-061's 40 ticks/s; the trips keep their share of the day); ×2 at 60 and
+/// ×3 at 160 ticks/s (as fast as before, to grow a city). A game day lasts 205 s at ×1, 68 s at
+/// ×2, 26 s at ×3. The sim itself keeps its whole-step multipliers; only the real time fed to
+/// `step` is scaled.
 pub fn game_speed_scale(speed: cp_core::SimSpeed) -> f64 {
     match speed {
+        cp_core::SimSpeed::X2 => 1.5,
         cp_core::SimSpeed::X3 => 8.0 / 3.0,
-        _ => 2.0,
+        _ => 1.0,
     }
 }
 
@@ -1064,14 +1067,15 @@ mod pacing_tests {
     use super::*;
     use cp_core::SimSpeed;
 
-    /// BUG-061: the length of a game day in real time at each speed.
+    /// The length of a game day in real time at each speed: BUG-061 set ×3 to 26 s; T-280 runs
+    /// ×1 at 20 ticks/s (cars half as fast on screen) and ×2 at 60.
     #[test]
-    fn a_game_day_lasts_102_51_and_26_real_seconds_and_x3_is_four_times_x1() {
+    fn a_game_day_lasts_205_68_and_26_real_seconds() {
         let day = |s| real_seconds_per_day(s).unwrap();
-        assert!((day(SimSpeed::X1) - 102.4).abs() < 0.1);
-        assert!((day(SimSpeed::X2) - 51.2).abs() < 0.1);
+        assert!((day(SimSpeed::X1) - 204.8).abs() < 0.1);
+        assert!((day(SimSpeed::X2) - 68.3).abs() < 0.1);
         assert!((day(SimSpeed::X3) - 25.6).abs() < 0.1);
-        assert!((day(SimSpeed::X1) / day(SimSpeed::X3) - 4.0).abs() < 1e-6);
+        assert!((day(SimSpeed::X1) / day(SimSpeed::X3) - 8.0).abs() < 1e-6);
         assert_eq!(real_seconds_per_day(SimSpeed::Pause), None);
         // At 60 frames per second even ×3 needs under 3 ticks a frame (the sim runs at most 4).
         let per_frame = 160.0 / 60.0;

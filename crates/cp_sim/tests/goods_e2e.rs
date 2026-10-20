@@ -48,7 +48,11 @@ fn content() -> Arc<ContentDb> {
         ),
         (
             "balance.ron".into(),
-            "Balance((goods_per_worker: 10.0, goods_per_job: 1.0, goods_truck_load: 20.0))".into(),
+            // Every goods run drives (T-280's truck_visible_share hides 3 in 4 in the game):
+            // these tests watch the trucks on the road.
+            "Balance((goods_per_worker: 10.0, goods_per_job: 1.0, goods_truck_load: 20.0, \
+             truck_visible_share: 1.0))"
+                .into(),
         ),
     ];
     src.extend([

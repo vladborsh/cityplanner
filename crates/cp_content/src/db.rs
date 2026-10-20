@@ -830,6 +830,20 @@ impl ContentDb {
                 "more than one Balance file".to_string(),
             ));
         }
+        for (field, v) in balances.first().map_or(vec![], |(_, b)| {
+            vec![
+                ("car_visible_share", b.car_visible_share),
+                ("truck_visible_share", b.truck_visible_share),
+            ]
+        }) {
+            if !(0.0..=1.0).contains(&v) {
+                errors.push(ContentError::new(
+                    &balances[0].0,
+                    Some(field),
+                    "must be in 0..=1".to_string(),
+                ));
+            }
+        }
         if let Some((path, b)) = balances.first()
             && !(b.walk_limit_m.is_finite() && b.walk_limit_m >= 0.0)
         {

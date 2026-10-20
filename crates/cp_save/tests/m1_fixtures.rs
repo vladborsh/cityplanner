@@ -97,12 +97,15 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((2400..=3000).contains(&people), "{people} residents");
     assert_eq!(sim.checksum(), 0xed09dac134bc16ac, "state at load");
+    // T-280: re-recorded (was 0xa0961668822b2784 since T-282): only 15 % of car trips and
+    // 25 % of goods trucks take a vehicle, the rest run abstractly, so the day after the load
+    // has other cars on the road.
     // T-282: re-recorded after the balance pass (taxes x5, escalation 5x slower, services 3x, cheaper basic services).
     // T-270: re-recorded, the movement clock is 0.4 s a tick (§2 v1.2): agents cover a fifth
     // of the ground per tick, so the day after the load runs differently.
     assert_eq!(
         after_4096(&mut sim),
-        0xa0961668822b2784,
+        0x0b9c9b963cbbf6d0,
         "load + 4096 ticks"
     );
 }
@@ -136,8 +139,10 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     for _ in 0..4095 {
         sim.tick_once();
     }
+    // T-280: re-recorded (was 0x35693ab6f390ce23 since T-270): the trips planned after the
+    // load mostly run abstractly (car_visible_share 0.15); the jam saved with the file drives.
     // T-270: re-recorded, the movement clock is 0.4 s a tick (§2 v1.2).
-    assert_eq!(sim.checksum(), 0x35693ab6f390ce23, "load + 4096 ticks");
+    assert_eq!(sim.checksum(), 0x6157ca2ba25af219, "load + 4096 ticks");
     let trips_after = sim.world().resource::<TripBook>().len();
     assert!(
         trips_after < trips_at_load,

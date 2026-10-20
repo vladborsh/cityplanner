@@ -5,6 +5,12 @@ Balance((
     // T-242: seconds before a car trip moves (to the car, parking); a citizen with a car walks when
     // the real walking route takes less than the drive plus this. // tune later
     car_start_penalty_s: 90.0,
+    // T-280: share of car trips that put a car on the road; the rest run abstractly (their
+    // route's travel time, no lane taken), as a trip with the vehicle pool full. 0.15, not 0.25:
+    // emptier roads turn walks into drives, 0.15 gives ~4x fewer cars. The same for goods
+    // trucks; service vehicles always drive.
+    car_visible_share: 0.15,
+    truck_visible_share: 0.25,
     // A spawn attempt on a zone block proceeds with probability 1 / spawn_one_in (§8).
     spawn_one_in: 4,
 

@@ -690,6 +690,25 @@ fn drop_vehicle(
     }
 }
 
+/// Whether car trip `trip` puts a car on the road (T-280): a hash of the trip id and the sim
+/// seed against `share` (`balance.car_visible_share`). No RNG draw, so the same for any thread
+/// count and order; `share >= 1` keeps every car.
+pub fn car_visible(trip: TripId, seed: [u8; 32], share: f32) -> bool {
+    if share >= 1.0 {
+        return true;
+    }
+    let mut s = [0u8; 8];
+    s.copy_from_slice(&seed[..8]);
+    let mut h = u64::from_le_bytes(s)
+        ^ (u64::from(trip.index) << 32 | u64::from(trip.generation))
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    // splitmix64 finaliser
+    h = (h ^ (h >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h = (h ^ (h >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    h ^= h >> 31;
+    ((h >> 11) as f64 / (1u64 << 53) as f64) < f64::from(share)
+}
+
 /// `Paths` phase (after `deliver_paths`): turns results into agents or abstract trips.
 #[allow(clippy::too_many_arguments)]
 pub fn receive_paths(
@@ -704,10 +723,13 @@ pub fn receive_paths(
     mut grid: ResMut<CitizenGrid>,
     mut agents: ResMut<Agents>,
     mut runs: Option<ResMut<crate::runs::ServiceRuns>>,
+    content: Option<Res<cp_content::SimContent>>,
 ) {
     book.ensure_derived();
     agents.ensure_derived(&book);
     let now = tick.0;
+    // Without content (bare tests) every car trip keeps its car.
+    let visible_share = content.map_or(1.0, |c| c.0.balance().car_visible_share);
     for outcome in &results.0 {
         if let Some(vid) = agents.reroutes.remove(&outcome.id.0) {
             let live = agents
@@ -844,7 +866,16 @@ pub fn receive_paths(
                 }
             }
             PathResult::Car(Ok(path)) if trip.mode == TripMode::Car => {
-                if agents.vehicles.len() < limits.vehicles as usize {
+                // T-280: most car trips run abstractly; only `car_visible_share` take a car.
+                // (`abstract_trips` keeps counting the pool-full ones only.)
+                if !car_visible(tid, rng.seed(), visible_share) {
+                    book.set_state(
+                        tid,
+                        TripState::InTransit {
+                            arrive_at: Tick(now + travel_ticks(path.cost)),
+                        },
+                    );
+                } else if agents.vehicles.len() < limits.vehicles as usize {
                     let id = agents.vehicles.insert(Vehicle {
                         trip: tid,
                         citizen: trip.citizen,
@@ -1322,3 +1353,32 @@ pub fn update_traffic_load(
 const EMA_TICKS: f32 = 120.0;
 /// How often the pathfinder's congestion map is refreshed.
 const LOAD_PUSH_TICKS: u64 = 32;
+
+#[cfg(test)]
+mod visible_tests {
+    use super::*;
+
+    /// T-280: about a quarter of car trips take a car, the same ones every time, none at 0 and
+    /// all at 1; another seed picks others.
+    #[test]
+    fn a_quarter_of_car_trips_take_a_car_by_trip_and_seed() {
+        let seed = |n: u8| {
+            let mut s = [0u8; 32];
+            s[0] = n;
+            s
+        };
+        let ids: Vec<TripId> = (0..20_000)
+            .map(|i| TripId::new(i % 5000, i / 5000))
+            .collect();
+        let shown = |s: [u8; 32], share: f32| -> Vec<bool> {
+            ids.iter().map(|t| car_visible(*t, s, share)).collect()
+        };
+        let a = shown(seed(1), 0.25);
+        let n = a.iter().filter(|v| **v).count();
+        assert!((4600..=5400).contains(&n), "{n} of 20000");
+        assert_eq!(a, shown(seed(1), 0.25), "deterministic");
+        assert_ne!(a, shown(seed(2), 0.25), "the seed picks others");
+        assert!(shown(seed(1), 1.0).iter().all(|v| *v));
+        assert!(!shown(seed(1), 0.0).iter().any(|v| *v));
+    }
+}
