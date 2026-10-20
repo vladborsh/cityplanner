@@ -1795,7 +1795,7 @@ pub fn build_city(sim: &mut SimRunner, n: usize, target: usize, max_ticks: u64) 
     use cp_building::{BuildingGrid, BuildingState};
     use cp_zone::{ZoneCellRef, ZoneGrid};
     // A scripted scene is not waited for: every zone is wanted while it grows.
-    // The scene has no water or power lines and shows buildings in every state: no decay.
+    // The scene shows buildings in every state: no decay.
     *sim.world_mut().resource_mut::<cp_economy::Decay>() = cp_economy::Decay::disabled();
     let demand = *sim.world().resource::<cp_building::Demand>();
     *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
@@ -1831,8 +1831,113 @@ pub fn build_city(sim: &mut SimRunner, n: usize, target: usize, max_ticks: u64) 
     }
     *sim.world_mut().resource_mut::<cp_building::Demand>() = demand;
     dress_city(sim);
+    supply_city(sim, n);
     let _ = BuildingState::Active;
     sim.world().resource::<BuildingGrid>().len()
+}
+
+/// Head room of the city scene's water, sewage and power over what its buildings use.
+const CITY_SUPPLY_MARGIN: f32 = 1.3;
+
+/// Supplies the [`build_city`] town (BUG-092: without it every building showed "no power"):
+/// coal plants, water pumps and sewage outflows in a row past the town's south edge, with
+/// [`CITY_SUPPLY_MARGIN`] over the buildings' consumption, and one pipe along every east-west
+/// street and that row. The plants need no line: power passes from building to building
+/// (`power_gap_m`). Then held past a supply pass, so the flags are right from the first frame.
+fn supply_city(sim: &mut SimRunner, n: usize) {
+    use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingState, Footprint};
+    use cp_content::UtilityKind;
+    let db = sim.world().resource::<cp_content::SimContent>().0.clone();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let span = (n - 1) as f32 * SPACING;
+    let (x0, z0) = (c - span / 2.0, c - span / 2.0);
+    let mut used = [0.0f32; 3];
+    let mut south = z0 + span;
+    for (_, b) in sim.world().resource::<BuildingGrid>().iter() {
+        south = south.max(b.pos.y);
+        if b.state != BuildingState::UnderConstruction {
+            for (kind, v) in &db.building(b.def).consumption {
+                used[*kind as usize] += *v;
+            }
+        }
+    }
+    // Clear of the last buildings and the edge street; within the power gap of the town.
+    let row_z = south + 45.0;
+    let mut x = x0;
+    for (def, kind) in [
+        ("coal_power_plant", UtilityKind::Power),
+        ("water_pump_station", UtilityKind::Water),
+        ("sewage_outflow_station", UtilityKind::Sewage),
+    ] {
+        let id = db.building_id(def).expect("building def");
+        let d = db.building(id);
+        let capacity = d
+            .service
+            .as_deref()
+            .and_then(|s| db.service_id(s))
+            .map_or(1.0, |s| db.service(s).capacity as f32);
+        let count = (used[kind as usize] * CITY_SUPPLY_MARGIN / capacity).ceil() as usize;
+        let (w, deep) = d.lot;
+        let along = f32::from(w) * cp_building::FOOTPRINT_CELL_M;
+        for _ in 0..count {
+            sim.world_mut()
+                .resource_mut::<BuildingGrid>()
+                .insert(Building {
+                    def: id,
+                    footprint: Footprint::Free { w, d: deep },
+                    level: 1,
+                    state: BuildingState::Active,
+                    ready_at: Tick(0),
+                    pos: Vec2::new(x + along / 2.0, row_z),
+                    rot: 0.0,
+                    access: None,
+                    flags: BuildingFlags::default(),
+                    level_progress: 0.0,
+                });
+            x += along + 8.0;
+        }
+    }
+    // One pipe winding along the east-west streets, then along the row (pipes may run under
+    // buildings); a vertex every half block, links are at most 100 m.
+    let (xl, xr) = (x0 - 60.0, (x0 + span + 60.0).max(x + 20.0));
+    let steps = ((xr - xl) / (SPACING / 2.0)).ceil() as usize;
+    let mut path: Vec<Vec2> = Vec::new();
+    let rows = (0..n).map(|i| z0 + i as f32 * SPACING).chain([row_z]);
+    for (i, z) in rows.enumerate() {
+        if let Some(&last) = path.last()
+            && z - last.y > SPACING * 0.75
+        {
+            path.push(Vec2::new(last.x, (z + last.y) / 2.0));
+        }
+        for k in 0..=steps {
+            let t = k as f32 / steps as f32;
+            let t = if i % 2 == 0 { t } else { 1.0 - t };
+            path.push(Vec2::new(xl + (xr - xl) * t, z));
+        }
+    }
+    let treasury = sim.world().resource::<cp_core::Treasury>().balance;
+    sim.world_mut().resource_mut::<cp_core::Treasury>().balance = cp_core::Cost(i64::MAX / 2);
+    sim.push_command(
+        SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
+            kind: UtilityKind::Water,
+            path,
+        }),
+        sim.tick(),
+    );
+    sim.tick_once();
+    for o in sim
+        .world_mut()
+        .resource_mut::<Messages<CommandOutcome>>()
+        .drain()
+    {
+        if let Err(e) = o.result {
+            bevy::log::warn!("city scene pipe rejected: {e}");
+        }
+    }
+    sim.world_mut().resource_mut::<cp_core::Treasury>().balance = treasury;
+    for _ in 0..cp_utility::SUPPLY_PERIOD {
+        sim.tick_once();
+    }
 }
 
 /// Night scene (T-245): `night:N` is [`build_city`] held (paused) at the asked hour of the next
@@ -1935,6 +2040,34 @@ fn dress_city(sim: &mut SimRunner) {
 mod city_tests {
     use super::*;
     use cp_terrain::Terrain;
+
+    /// BUG-092: the town has its plants, pumps and outflows and every working building is
+    /// supplied.
+    #[test]
+    fn city_scene_supplies_every_active_building() {
+        use cp_building::{BuildingFlags, BuildingState};
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps/flatlands");
+        let mut sim = SimRunner::new(1);
+        sim.set_terrain(Arc::new(Terrain::load(&dir).unwrap()));
+        sim.set_content(embedded_content());
+        build_city(&mut sim, 10, 5200, 6000);
+        let v = sim.view();
+        let active: Vec<_> = v
+            .buildings
+            .iter()
+            .filter(|(_, b)| b.state == BuildingState::Active)
+            .collect();
+        assert!(active.len() > 500, "{}", active.len());
+        for (bit, name) in [
+            (BuildingFlags::NO_POWER, "power"),
+            (BuildingFlags::NO_WATER, "water"),
+            (BuildingFlags::NO_SEWAGE, "sewage"),
+        ] {
+            let without = active.iter().filter(|(_, b)| b.flags.has(bit)).count();
+            assert_eq!(without, 0, "{without} of {} without {name}", active.len());
+        }
+    }
 
     #[test]
     fn city_scene_spawns_and_dresses_buildings() {
