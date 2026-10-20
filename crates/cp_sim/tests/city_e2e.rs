@@ -373,13 +373,13 @@ fn a_city_goes_through_abandonment_and_demolition_consistently() {
             .count()
     };
 
-    run(&mut sim, 7 * TICKS_PER_DAY - 300);
-    assert_eq!(in_trouble(&sim), 0, "not yet a week");
+    run(&mut sim, 35 * TICKS_PER_DAY - 300);
+    assert_eq!(in_trouble(&sim), 0, "not yet 35 days (T-282: abandon_days 7 -> 35)");
     run(&mut sim, 600);
     let abandoned = in_trouble(&sim);
     assert!(
         abandoned > 0,
-        "after a week the buildings in trouble are abandoned"
+        "after 35 days the buildings in trouble are abandoned"
     );
     assert_eq!(
         sim.world().resource::<BuildingGrid>().len(),
@@ -396,8 +396,8 @@ fn a_city_goes_through_abandonment_and_demolition_consistently() {
         }
     }
 
-    // Day 14: demolished, one pass after the buildings were first seen in trouble at the latest.
-    while sim.tick().0 < t0 + 14 * TICKS_PER_DAY + 512 {
+    // Day 70 (T-282: was 14): demolished, one pass after the buildings were first seen in trouble at the latest.
+    while sim.tick().0 < t0 + 70 * TICKS_PER_DAY + 512 {
         sim.tick_once();
         let b = sim.world().resource::<BuildingGrid>();
         let c = sim.world().resource::<CitizenGrid>();
