@@ -162,11 +162,11 @@ fn a_service_building_costs_its_price_and_is_refused_without_money() {
         rot: 0.0,
     });
 
-    set_balance(&mut sim, Cost(-1_900_000)); // 1000.00 of headroom, the turbine is 2500.00
+    set_balance(&mut sim, Cost(-1_900_000)); // 1000.00 of headroom, the turbine is 1400.00 (T-282, was 2500)
     assert!(matches!(
         run(&mut sim, place.clone()),
         Err(CommandError::InsufficientFunds {
-            needed: Cost(250_000),
+            needed: Cost(140_000),
             available: Cost(100_000)
         })
     ));
@@ -188,8 +188,8 @@ fn a_service_building_costs_its_price_and_is_refused_without_money() {
     );
 
     set_balance(&mut sim, Cost(7_000_000));
-    assert_eq!(run(&mut sim, place), Ok(Cost(250_000)));
-    assert_eq!(balance(&sim), Cost(6_750_000));
+    assert_eq!(run(&mut sim, place), Ok(Cost(140_000)));
+    assert_eq!(balance(&sim), Cost(6_860_000));
     assert_eq!(sim.world().resource::<BuildingGrid>().len(), 1);
 }
 
