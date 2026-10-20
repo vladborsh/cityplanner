@@ -173,6 +173,10 @@ pub struct MilestoneDef {
     /// Zone types that can be painted from this milestone on (T-231).
     #[serde(default)]
     pub zones: Vec<ZoneType>,
+    /// Policies that can be switched on from this milestone on (T-283); one a milestone does
+    /// not name is always available.
+    #[serde(default)]
+    pub policies: Vec<PolicyKind>,
     /// Tiles this milestone lets the player buy on top of the start tile.
     #[serde(default)]
     pub tiles: u8,

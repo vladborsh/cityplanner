@@ -66,10 +66,10 @@ fn zone_at(sim: &SimRunner, cell: u16) -> ZoneType {
 }
 
 #[test]
-fn high_density_and_offices_wait_for_large_town() {
+fn high_density_and_offices_wait_for_busy_town() {
     let c = content();
     let mut sim = world(&c);
-    for reached in [0, 3] {
+    for reached in [0, 5] {
         sim.world_mut().insert_resource(Progress::at(reached));
         for (i, zone) in [ZoneType::ResHigh, ZoneType::ComHigh, ZoneType::Office]
             .into_iter()
@@ -79,7 +79,7 @@ fn high_density_and_offices_wait_for_large_town() {
             if reached == 0 {
                 assert!(
                     matches!(&r, Err(CommandError::Locked { milestone, population: 5000 })
-                        if milestone == "Large town"),
+                        if milestone == "Busy Town"),
                     "{zone:?}: {r:?}"
                 );
                 assert_eq!(zone_at(&sim, i as u16 * 4 + 1), ZoneType::None);
@@ -120,9 +120,11 @@ fn the_unlock_is_read_from_content() {
     let _ = std::fs::remove_dir_all(&dir);
     copy_dir(&src, &dir);
     let ms = std::fs::read_to_string(dir.join("milestones.ron")).unwrap();
-    // Industry now waits for "Town"; the high-density types are no longer named anywhere.
+    // Industry now waits for "Town" (T-283: index 4); the high-density types are no longer named
+    // anywhere.
     let ms = ms
         .replace(", zones: [ResHigh, ComHigh, Office]", "")
+        .replace("zones: [ResLow, ComLow, Industrial]", "zones: [ResLow, ComLow]")
         .replace(
             r#"name: "Town", unlocks"#,
             r#"name: "Town", zones: [Industrial], unlocks"#,
@@ -130,17 +132,17 @@ fn the_unlock_is_read_from_content() {
     std::fs::write(dir.join("milestones.ron"), ms).unwrap();
     let c = Arc::new(ContentDb::load_dir(&dir).unwrap());
     let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(c.zone_unlock_milestone(ZoneType::Industrial), Some(2));
+    assert_eq!(c.zone_unlock_milestone(ZoneType::Industrial), Some(4));
     assert_eq!(c.zone_unlock_milestone(ZoneType::ResHigh), None);
 
     let mut sim = world(&c);
-    sim.world_mut().insert_resource(Progress::at(1));
+    sim.world_mut().insert_resource(Progress::at(3));
     paint(&mut sim, 1, ZoneType::ResHigh).unwrap();
     assert!(matches!(
         paint(&mut sim, 5, ZoneType::Industrial),
-        Err(CommandError::Locked { milestone, population: 2000 }) if milestone == "Town"
+        Err(CommandError::Locked { milestone, population: 3000 }) if milestone == "Town"
     ));
-    sim.world_mut().insert_resource(Progress::at(2));
+    sim.world_mut().insert_resource(Progress::at(4));
     paint(&mut sim, 5, ZoneType::Industrial).unwrap();
 }
 

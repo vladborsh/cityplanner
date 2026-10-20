@@ -282,6 +282,7 @@ pub fn milestones(
     }
     let mut seen: std::collections::BTreeSet<&str> = Default::default();
     let mut seen_zones: std::collections::BTreeSet<ZoneType> = Default::default();
+    let mut seen_policies: std::collections::BTreeSet<crate::PolicyKind> = Default::default();
     for (i, ms) in m.milestones.iter().enumerate() {
         if ms.name.trim().is_empty() {
             bad(format!("milestones[{i}].name"), "must not be empty".into());
@@ -308,6 +309,14 @@ pub fn milestones(
                 bad(
                     format!("milestones[{i}].unlocks"),
                     format!("`{u}` is unlocked by more than one milestone"),
+                );
+            }
+        }
+        for p in &ms.policies {
+            if !seen_policies.insert(*p) {
+                bad(
+                    format!("milestones[{i}].policies"),
+                    format!("{p:?} is unlocked by more than one milestone"),
                 );
             }
         }

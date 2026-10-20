@@ -409,6 +409,14 @@ impl ContentDb {
         self.milestones.iter().position(|m| m.zones.contains(&zone))
     }
 
+    /// The milestone (index into [`Self::milestones`]) that lets the player switch `policy` on;
+    /// `None` for a policy no milestone names, which is always available (T-283).
+    pub fn policy_unlock_milestone(&self, policy: PolicyKind) -> Option<usize> {
+        self.milestones
+            .iter()
+            .position(|m| m.policies.contains(&policy))
+    }
+
     /// The balance knobs (`balance.ron`; defaults when the file is absent).
     pub fn balance(&self) -> &Balance {
         &self.balance

@@ -12,7 +12,9 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::prelude::{Res, ResMut, Resource};
 use cp_building::BuildingGrid;
-use cp_content::{BuildingDefId, ContentDb, ServiceKind, SimContent, UnlockCond, ZoneType};
+use cp_content::{
+    BuildingDefId, ContentDb, PolicyKind, ServiceKind, SimContent, UnlockCond, ZoneType,
+};
 use cp_core::{CommandError, Tick};
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +58,13 @@ impl Progress {
     pub fn zone_locked_by(&self, content: &ContentDb, zone: ZoneType) -> Option<usize> {
         content
             .zone_unlock_milestone(zone)
+            .filter(|&m| m > usize::from(self.reached))
+    }
+
+    /// The milestone switching `policy` on waits for, if it is still ahead: its index (T-283).
+    pub fn policy_locked_by(&self, content: &ContentDb, policy: PolicyKind) -> Option<usize> {
+        content
+            .policy_unlock_milestone(policy)
             .filter(|&m| m > usize::from(self.reached))
     }
 
@@ -217,6 +226,24 @@ pub fn lock_demand(
     }
     if locked(&[ZoneType::Office]) {
         demand.o = 0.0;
+    }
+}
+
+/// `Err(Locked)` when switching `policy` on is still ahead of the city's progress (T-283).
+pub fn check_policy_unlocked(
+    progress: &Progress,
+    content: &ContentDb,
+    policy: PolicyKind,
+) -> Result<(), CommandError> {
+    match progress.policy_locked_by(content, policy) {
+        Some(m) => {
+            let ms = &content.milestones()[m];
+            Err(CommandError::Locked {
+                milestone: ms.name.clone(),
+                population: ms.population,
+            })
+        }
+        None => Ok(()),
     }
 }
 

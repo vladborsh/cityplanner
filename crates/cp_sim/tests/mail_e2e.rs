@@ -1,4 +1,4 @@
-//! T-247: mail in a real grid city. Locked (before the Town milestone) it makes no mail and no
+//! T-247: mail in a real grid city. Locked (before the Small Town milestone, T-283) it makes no mail and no
 //! problem; open, the city's post offices collect it with mail vans, sort it, and the city has
 //! (almost) no MAIL problem; without them the problems come; the same city twice is the same.
 
@@ -65,7 +65,7 @@ fn no_mail_while_the_post_office_is_locked_and_vans_collect_it_after() {
         post_offices(&sim) >= 1,
         "the scripted city has a post office"
     );
-    run(&mut sim, 3 * TICKS_PER_DAY, 1);
+    run(&mut sim, 3 * TICKS_PER_DAY, 2); // T-283: Large Village, the post office waits for Small Town (3)
     assert!(
         !sim.world()
             .resource::<ServiceUnlocks>()
@@ -78,7 +78,7 @@ fn no_mail_while_the_post_office_is_locked_and_vans_collect_it_after() {
     // Town: the post office opens; the mail starts and is collected by vans.
     let mut vans_seen = false;
     for _ in 0..8 * 4 {
-        run(&mut sim, TICKS_PER_DAY / 4, 2);
+        run(&mut sim, TICKS_PER_DAY / 4, 3);
         let runs = sim.world().resource::<cp_traffic::ServiceRuns>();
         vans_seen |= runs.iter().any(|(_, r)| r.kind == VehicleKind::Mail as u8);
     }
@@ -130,7 +130,7 @@ fn without_post_offices_the_mail_piles_into_problems() {
         sim.world_mut().resource_mut::<BuildingGrid>().remove(id);
     }
     assert_eq!(post_offices(&sim), 0);
-    run(&mut sim, 12 * TICKS_PER_DAY, 2);
+    run(&mut sim, 12 * TICKS_PER_DAY, 3);
     assert!(mail_problems(&sim) > 20, "{}", mail_problems(&sim));
 }
 
@@ -138,7 +138,7 @@ fn without_post_offices_the_mail_piles_into_problems() {
 fn the_same_city_twice_has_the_same_mail() {
     let go = || {
         let mut sim = city();
-        run(&mut sim, 4 * TICKS_PER_DAY, 2);
+        run(&mut sim, 4 * TICKS_PER_DAY, 3);
         (sim.checksum(), sim.world().resource::<MailState>().clone())
     };
     assert_eq!(go(), go());

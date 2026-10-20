@@ -156,6 +156,21 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
             .map_err(|e| rejected_or_funds("utility", &e, e.insufficient_funds())),
         SimCommand::Economy(c) => cp_economy::apply(world, c).map_err(|e| rejected("economy", e)),
         SimCommand::District(c) => {
+            // Only switching a policy ON is locked: a locked one can never have been on, and an
+            // old save's policy must still be switchable off.
+            if let (
+                cp_district::DistrictCommand::SetPolicy {
+                    policy, on: true, ..
+                },
+                Some(content),
+            ) = (c, world.get_resource::<cp_content::SimContent>())
+            {
+                let progress = world
+                    .get_resource::<crate::Progress>()
+                    .cloned()
+                    .unwrap_or_default();
+                crate::progress::check_policy_unlocked(&progress, &content.0, *policy)?;
+            }
             cp_district::apply(world, c).map_err(|e| rejected("district", e))
         }
         SimCommand::Terrain(c) => crate::tiles::apply(world, c),

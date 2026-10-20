@@ -86,9 +86,9 @@ fn a_locked_building_is_refused_until_its_milestone_is_reached_and_the_milestone
     // Before: the clinic waits for a milestone.
     assert!(matches!(
         place(&mut sim, "clinic", 3),
-        Err(CommandError::Locked { milestone, population: 500 }) if milestone == "Small town"
+        Err(CommandError::Locked { milestone, population: 300 }) if milestone == "Village"
     ));
-    // A building no milestone names is not locked.
+    // A building of the first milestone is open from the start.
     place(&mut sim, "coal_power_plant", 8).unwrap();
     let home = sim
         .world()
@@ -123,4 +123,40 @@ fn a_locked_building_is_refused_until_its_milestone_is_reached_and_the_milestone
     *sim.world_mut().resource_mut::<Tick>() = Tick(2 * PROGRESS_PERIOD);
     sim.world_mut().run_system_once(update_progress).unwrap();
     assert_eq!(sim.world().resource::<Progress>().reached, 1);
+}
+
+/// T-283: a policy waits for its milestone like a building; Hamlet's policy is open from the
+/// start; switching a policy off is never refused.
+#[test]
+fn a_locked_policy_is_refused_until_its_milestone() {
+    use cp_content::PolicyKind;
+    use cp_district::DistrictCommand;
+    let c = content();
+    let mut sim = world(&c);
+    let mut set = |sim: &mut SimRunner, policy, on| {
+        sim.push_command(
+            SimCommand::District(DistrictCommand::SetPolicy {
+                district: None,
+                policy,
+                on,
+            }),
+            sim.tick(),
+        );
+        sim.apply_due_commands();
+        let out: Vec<CommandOutcome> = sim
+            .world_mut()
+            .resource_mut::<Messages<CommandOutcome>>()
+            .drain()
+            .collect();
+        out.last().unwrap().result.clone().map(|_| ())
+    };
+    sim.world_mut().insert_resource(Progress::START);
+    set(&mut sim, PolicyKind::PowerSaving, true).unwrap();
+    assert!(matches!(
+        set(&mut sim, PolicyKind::NeighborhoodWatch, true),
+        Err(CommandError::Locked { milestone, population: 700 }) if milestone == "Large Village"
+    ));
+    set(&mut sim, PolicyKind::NeighborhoodWatch, false).unwrap();
+    sim.world_mut().insert_resource(Progress::at(2));
+    set(&mut sim, PolicyKind::NeighborhoodWatch, true).unwrap();
 }
