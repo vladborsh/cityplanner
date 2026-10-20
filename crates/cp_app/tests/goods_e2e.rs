@@ -272,3 +272,76 @@ fn shops_out_of_goods_raise_the_industrial_demand() {
     let got = cp_economy::shortage_jobs(sim.world().resource::<BuildingGrid>(), &db, b);
     assert!(want > 0.0 && (got - want).abs() < 1e-3, "{got} vs {want}");
 }
+
+/// A service stands on an `Industrial` def: it makes no shop goods and its jobs are no industry
+/// in the demand (they used to count against I like a factory's).
+#[test]
+fn a_service_makes_no_goods_and_is_no_industry_in_the_demand() {
+    let mut sim = town(1.0, true);
+    run_day(&mut sim);
+    let db = sim.world().resource::<SimContent>().0.clone();
+    let (seg, at) = {
+        let net = sim.world().resource::<cp_net::NetGraph>();
+        let (id, s) = net
+            .segments()
+            .find(|(_, s)| s.elevation == cp_net::Elevation::Ground)
+            .unwrap();
+        (id, bevy_math::Vec2::new(s.curve.p0.x, s.curve.p0.z))
+    };
+    let police = sim
+        .world_mut()
+        .resource_mut::<BuildingGrid>()
+        .insert(cp_building::Building {
+            def: db.building_id("police_station").unwrap(),
+            footprint: cp_building::Footprint::Free { w: 2, d: 2 },
+            level: 1,
+            state: BuildingState::Active,
+            ready_at: cp_core::Tick(0),
+            pos: at + bevy_math::Vec2::new(0.0, 30.0),
+            rot: 0.0,
+            access: Some(cp_building::AccessPoint {
+                segment: seg,
+                t: 0.5,
+            }),
+            flags: BuildingFlags::default(),
+            level_progress: 0.0,
+        });
+    run_day(&mut sim);
+    run_day(&mut sim);
+    let goods = sim.world().resource::<Goods>();
+    assert_eq!(
+        goods.stock_of(police),
+        0.0,
+        "a police station makes no goods"
+    );
+    assert!(
+        goods
+            .hauls
+            .values()
+            .all(|h| h.from != Endpoint::Building(police))
+    );
+    // A whole demand cycle: the industrial jobs are the grown industry's only.
+    while !sim.tick().0.is_multiple_of(cp_building::DEMAND_PERIOD) {
+        sim.tick_once();
+    }
+    let acc = *sim.world().resource::<cp_economy::DemandAcc>();
+    let grown: u32 = sim
+        .world()
+        .resource::<BuildingGrid>()
+        .iter()
+        .filter(|(_, b)| {
+            matches!(
+                b.state,
+                BuildingState::Active | BuildingState::UnderConstruction
+            )
+        })
+        .map(|(_, b)| db.building(b.def))
+        .filter(|d| d.zone == ZoneType::Industrial && cp_building::is_growable(d))
+        .map(|d| d.jobs.iter().map(|j| u32::from(*j)).sum::<u32>())
+        .sum();
+    assert!(grown > 0);
+    assert_eq!(
+        acc.industrial_jobs, grown,
+        "the police station's jobs are not industry"
+    );
+}

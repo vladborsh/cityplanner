@@ -172,9 +172,13 @@ pub fn update_demand(
             slots += u32::from(jobs);
             free += u32::from(open);
         }
+        // A service, park or landmark stands on an `Industrial` def (BUG-095): its jobs are no
+        // industry and no shop, only free jobs above.
+        let grown = cp_building::is_growable(def);
         match def.zone {
-            ZoneType::ComLow | ZoneType::ComHigh => acc.commercial_jobs += slots,
-            ZoneType::Industrial => acc.industrial_jobs += slots,
+            ZoneType::ComLow | ZoneType::ComHigh if grown => acc.commercial_jobs += slots,
+            ZoneType::Industrial if grown => acc.industrial_jobs += slots,
+            ZoneType::ComLow | ZoneType::ComHigh | ZoneType::Industrial => {}
             ZoneType::Office => acc.free_office_jobs += free,
             ZoneType::ResLow | ZoneType::ResHigh => {
                 let living = if active {
