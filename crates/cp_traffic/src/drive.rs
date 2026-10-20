@@ -300,15 +300,22 @@ fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGrap
                 let t = g.car[ts as usize].as_ref().expect("lane");
                 let s = v.s.clamp(t.s_in, t.s_out);
                 if !hop_blockers(g, vehicles, st, v, to, s).is_empty() {
-                    // At the stop line with no gap to change lanes: turn from this lane when it
-                    // has an exit to the same street (BUG-090), else wait.
+                    // Standing at the stop line with no gap to change lanes: turn from this lane
+                    // when it has an exit to the same street (BUG-090), else wait; after a long
+                    // wait, take another way.
                     let at_end = g.car[fs as usize]
                         .as_ref()
-                        .is_some_and(|f| v.s >= f.s_out - LANE_END_M && v.speed < 0.1);
+                        .is_some_and(|f| v.s >= f.s_out - LANE_END_M && v.speed < 0.1)
+                        && v.stuck_timer >> 16 > TURN_WAIT_TICKS;
                     let head = st.lanes[fs as usize].first() == Some(&id);
                     if at_end
                         && head
-                        && let Some(steps) = turn_from_here(g, &v.path, usize::from(v.hop))
+                        && let Some(steps) = turn_from_here(
+                            g,
+                            &v.path,
+                            usize::from(v.hop),
+                            v.stuck_timer >> 16 > STUCK_TICKS / 2,
+                        )
                     {
                         vehicles.get_mut(id).expect("vehicle").path.steps = steps;
                         continue;
@@ -339,13 +346,26 @@ fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGrap
 /// lane instead (BUG-090).
 const LANE_END_M: f32 = 1.0;
 
+/// How long (ticks standing) a car waits at the stop line for a gap to change lanes before it
+/// turns from its own lane (BUG-090): a red light or a short queue beside it is waited out, so
+/// the cars keep their routes and lanes.
+const TURN_WAIT_TICKS: u32 = STUCK_TICKS / 4;
+
 /// The route of `path` with the lane change(s) at `hop` replaced by the turn from the lane the car
 /// is on (BUG-090: on a wide road a car that met its lane change too late, behind a queue in the
 /// lane it wants, waited at the stop line until it was removed as stuck). When that lane has an
 /// exit into the street the route turns into, the car takes it (and changes to the planned lane
-/// on that street if it lands in another one); otherwise it takes the exit of its lane with the
-/// quickest way on to its goal, found now. `None` when its lane leads nowhere that reaches it.
-fn turn_from_here(g: &PathGraph, path: &CarPath, hop: usize) -> Option<Vec<(LaneId, LaneId)>> {
+/// on that street if it lands in another one). When it has no such exit and `reroute` (the car
+/// has stood for half of [`STUCK_TICKS`]), it takes the exit of its lane with the quickest way on
+/// to its goal; a shorter wait keeps the route, the queue beside it usually moves first (a car
+/// that starts near the junction in a lane it must leave starts in the right one instead, see
+/// [`spawn_waiting`]).
+fn turn_from_here(
+    g: &PathGraph,
+    path: &CarPath,
+    hop: usize,
+    reroute: bool,
+) -> Option<Vec<(LaneId, LaneId)>> {
     let steps = &path.steps;
     let (from, _) = *steps.get(hop)?;
     // The junction exit the lane changes lead to.
@@ -366,6 +386,9 @@ fn turn_from_here(g: &PathGraph, path: &CarPath, hop: usize) -> Option<Vec<(Lane
         }
         out.extend_from_slice(&steps[k + 1..]);
         return Some(out);
+    }
+    if !reroute {
+        return None;
     }
     // Another way: from every exit of this lane, the quickest route on to the goal.
     let cong = CongestionMap::default();
@@ -986,6 +1009,36 @@ fn step_place(ctx: &Ctx, p: Place, out: &mut Vec<Upd>) {
     }
 }
 
+/// How near its junction (metres) a car starting in a lane it must leave starts in the lane its
+/// route needs instead (BUG-090).
+const START_CHANGE_M: f32 = 40.0;
+
+/// A car not yet on the road whose route begins with lane changes, starting within
+/// [`START_CHANGE_M`] of the junction, starts in the lane those changes lead to: it pulls out
+/// into the lane it needs, rather than meeting its lane change at the stop line behind a queue
+/// and waiting there until it is removed as stuck (BUG-090, wide roads).
+fn start_in_the_lane_it_needs(g: &PathGraph, v: &mut Vehicle) {
+    let Some(node) = lane_node(g, v.path.start) else {
+        return;
+    };
+    if v.path.start_s < node.s_out - START_CHANGE_M {
+        return;
+    }
+    let mut lane = v.path.start;
+    let mut n = 0;
+    while let Some(&(a, b)) = v.path.steps.get(n) {
+        if a != lane || !is_lane_change(g, a, b) {
+            break;
+        }
+        lane = b;
+        n += 1;
+    }
+    if n > 0 {
+        v.path.start = lane;
+        v.path.steps.drain(..n);
+    }
+}
+
 /// Puts waiting vehicles on the road where there is room. Returns those that cannot ever
 /// start (their start lane is gone).
 pub(crate) fn spawn_waiting(
@@ -998,6 +1051,9 @@ pub(crate) fn spawn_waiting(
     let mut waiting = std::mem::take(&mut st.waiting);
     waiting.sort_unstable();
     for id in waiting {
+        if let Some(v) = vehicles.get_mut(id) {
+            start_in_the_lane_it_needs(g, v);
+        }
         let Some(v) = vehicles.get(id) else { continue };
         let Some(slot) = g.car_slot(v.path.start) else {
             if let Some(v) = vehicles.remove(id) {
