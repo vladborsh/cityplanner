@@ -4,11 +4,9 @@
 // Pedestrians sway in this vertex shader: the head side-steps and the body bobs with the
 // per-instance gait phase, scaled by the instance's sway amplitude (0 = standing).
 //
-// Shadows (BUG-063): agents receive the sun's cascaded shadows, and cast their own as a
-// second draw of the same instances (`vertex_shadow`/`fragment_shadow`): the model flattened
-// along the sun direction onto a plane just above the ground it stands on, multiplied onto
-// what is drawn there. That pass writes depth and tests strictly, so overlapping triangles
-// of the flattened model darken a pixel once.
+// Shadows: agents receive the sun's cascaded shadows (BUG-063), and cast their own into the
+// same shadow maps (BUG-094): `vertex_depth` is a depth-only draw of the instances in each
+// cascade's shadow pass, so the ground filters their shadows like the buildings'.
 import bevy_pbr::render::mesh_view_bindings::{view, lights};
 import bevy_pbr::render::mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT;
 import bevy_pbr::render::shadows::fetch_directional_shadow;
@@ -28,28 +26,6 @@ struct VertexOutput {
     @location(1) color: vec3<f32>,
     @location(2) world_position: vec3<f32>,
 };
-
-struct ShadowOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) world_position: vec3<f32>,
-};
-
-// Height of the cast shadow's plane above the instance origin, metres: the road surface for
-// vehicles (origin on the lane curve, road 0.06 above), the sidewalk for pedestrians (origin
-// on the terrain, sidewalk 0.21 above). Only pedestrians carry a gait phase.
-const VEHICLE_SHADOW_LIFT: f32 = 0.06;
-const PEDESTRIAN_SHADOW_LIFT: f32 = 0.21;
-// The shadow is drawn this far towards the camera (a depth bias in metres): lane curves and
-// the terrain under a sidewalk differ by a few decimetres, and the shadow must still win over
-// the ground it lies on, while a car or a wall in front of it keeps hiding it.
-const SHADOW_PULL: f32 = 0.5;
-// See `fragment_shadow`.
-const AMBIENT_GAIN: f32 = 12.0;
-// Below this sun height (sine of the elevation) the shadow would stretch too far: none.
-const MIN_SUN_Y: f32 = 0.08;
-
-// Unit vector from the ground towards the sun (xyz).
-@group(3) @binding(0) var<uniform> to_sun_uniform: vec4<f32>;
 
 fn world_of(v: Vertex) -> vec3<f32> {
     var p = v.position * v.scale_phase.xyz;
@@ -110,39 +86,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(in.color * radiance, 1.0);
 }
 
+// The model into a cascade's shadow map; the view is the cascade's (the shadow pass binds it
+// at group 0, as for Bevy's own casters). Points nearer the sun than the cascade's near plane
+// clamp onto it where the pipeline cannot leave depth unclipped.
 @vertex
-fn vertex_shadow(v: Vertex) -> ShadowOutput {
-    let to_sun = to_sun_uniform.xyz;
-    var out: ShadowOutput;
-    if (to_sun.y < MIN_SUN_Y) {
-        // Degenerate: every vertex at the same point outside the clip volume.
-        out.clip_position = vec4<f32>(0.0, 0.0, -2.0, 1.0);
-        out.world_position = vec3<f32>(0.0);
-        return out;
-    }
-    let pedestrian = v.scale_phase.w != 0.0 || v.color_sway.w != 0.0;
-    let plane = v.pos_yaw.y + select(VEHICLE_SHADOW_LIFT, PEDESTRIAN_SHADOW_LIFT, pedestrian);
-    let world = world_of(v);
-    // Slide along the sun ray down (or, for points under it, up) to the plane.
-    let ground = world - to_sun * ((world.y - plane) / to_sun.y);
-    let pulled = ground + normalize(view.world_position - ground) * SHADOW_PULL;
-    out.clip_position = view.clip_from_world * vec4<f32>(pulled, 1.0);
-    out.world_position = ground;
-    return out;
-}
-
-@fragment
-fn fragment_shadow(in: ShadowOutput) -> @location(0) vec4<f32> {
-    let light = lights.directional_lights[0u];
-    // Ground lit by sun + ambient, against ambient only: the factor a shadow of the scene
-    // leaves, so agent shadows match the buildings' and follow the light through the day
-    // (weak, long ones at dusk). The PBR ground takes more from the ambient than a plain
-    // Lambert term; AMBIENT_GAIN is calibrated on screenshots so that both shadows leave the
-    // same share of light (about 45 % at the always-day sun). Where the ground is already in
-    // a scene shadow, the factor fades to 1 (no double darkening).
-    let sun = light.color.rgb * max(light.direction_to_light.y, 0.0) / 3.14159;
-    let ambient = lights.ambient_color.rgb * AMBIENT_GAIN;
-    let shadowed = ambient / max(ambient + sun, vec3<f32>(1e-5));
-    let lit = sun_visibility(in.world_position, vec3<f32>(0.0, 1.0, 0.0), in.clip_position.xy);
-    return vec4<f32>(mix(vec3<f32>(1.0), shadowed, lit), 1.0);
+fn vertex_depth(v: Vertex) -> @builtin(position) vec4<f32> {
+    var clip = view.clip_from_world * vec4<f32>(world_of(v), 1.0);
+    clip.z = min(clip.z, clip.w);
+    return clip;
 }

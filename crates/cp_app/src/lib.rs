@@ -271,6 +271,15 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         ),
         // Close to the grid centre, looking along a street (see `scene`).
         "street" => (Vec3::new(c - 140.0, 35.0, c + 60.0), Vec3::new(c, 0.0, c)),
+        // The same, moved 5 and 10 cm sideways (a pixel or two): shadows must hold still as
+        // the camera moves (BUG-094).
+        "street-b" | "street-c" => {
+            let dx = if name == "street-b" { 0.05 } else { 0.10 };
+            (
+                Vec3::new(c - 140.0 + dx, 35.0, c + 60.0),
+                Vec3::new(c + dx, 0.0, c),
+            )
+        }
         "junction" => (Vec3::new(c - 30.0, 16.0, c + 38.0), Vec3::new(c, 0.0, c)),
         // Low over the grid looking into the always-day sun (it stands west-south-west): the
         // glint on the asphalt, shadows lying towards the camera (T-178).

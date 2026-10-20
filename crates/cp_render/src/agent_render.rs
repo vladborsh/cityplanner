@@ -5,6 +5,11 @@
 //! works on WebGL2 too (no storage buffers, no indirect drawing). Reads only `SimView`.
 //!
 //! The camera must carry `NoIndirectDrawing` (set where it is spawned).
+//!
+//! Shadows (BUG-094): every batch is also queued into each sun cascade's shadow phase, a
+//! depth-only draw of the same instances, so cars and pedestrians cast into the sun's shadow
+//! map like buildings and lamp posts and get the same filtered, soft shadow on the ground
+//! (BUG-063's flattened copy of the model drawn onto the ground was hard-edged and blotchy).
 
 use std::sync::Arc;
 
@@ -16,9 +21,10 @@ use bevy::ecs::query::QueryItem;
 use bevy::ecs::system::{SystemParamItem, lifetimeless::*};
 use bevy::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexBufferLayout};
 use bevy::pbr::{
-    self, MeshInputUniform, MeshPipeline, MeshPipelineKey, MeshPipelineSystems, MeshUniform,
-    RenderMeshInstances, SetMeshBindGroup, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup,
-    ViewKeyCache,
+    self, LightEntity, MeshInputUniform, MeshPipeline, MeshPipelineKey, MeshPipelineSystems,
+    MeshUniform, PrepassPipeline, RenderMeshInstances, SetMeshBindGroup, SetMeshViewBindGroup,
+    SetMeshViewBindingArrayBindGroup, SetPrepassViewBindGroup, Shadow, ShadowBatchSetKey,
+    ShadowBinKey, ViewKeyCache,
 };
 use bevy::prelude::*;
 use bevy::render::batching::gpu_preprocessing::BatchedInstanceBuffers;
@@ -27,8 +33,9 @@ use bevy::render::mesh::allocator::MeshAllocator;
 use bevy::render::mesh::{RenderMesh, RenderMeshBufferInfo};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_phase::{
-    AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex, RenderCommand,
-    RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewSortedRenderPhases,
+    AddRenderCommand, BinnedRenderPhaseType, DrawFunctions, InputUniformIndex, PhaseItem,
+    PhaseItemExtraIndex, RenderCommand, RenderCommandResult, SetItemPipeline, TrackedRenderPass,
+    ViewBinnedRenderPhases, ViewSortedRenderPhases,
 };
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
@@ -93,26 +100,6 @@ enum Slot {
 #[derive(Component)]
 struct AgentBatch(Slot);
 
-/// Marks the shadow twin of a batch (BUG-063): an entity that draws the same instances, from
-/// the GPU buffer of the batch entity it names (main world), as cast shadows. A twin because a
-/// sorted phase holds one item per entity.
-#[derive(Component, Clone, Copy)]
-struct ShadowTwin(Entity);
-
-impl SyncComponent<RenderApp> for ShadowTwin {
-    type Target = Self;
-}
-
-impl ExtractComponent<RenderApp> for ShadowTwin {
-    type QueryData = &'static ShadowTwin;
-    type QueryFilter = ();
-    type Out = Self;
-
-    fn extract_component(item: QueryItem<'_, '_, Self::QueryData>) -> Option<Self> {
-        Some(*item)
-    }
-}
-
 pub struct AgentRenderPlugin;
 
 impl Plugin for AgentRenderPlugin {
@@ -122,7 +109,6 @@ impl Plugin for AgentRenderPlugin {
             .init_resource::<AgentRenderStats>()
             .init_resource::<FrameInstances>()
             .add_plugins(ExtractComponentPlugin::<InstanceBatch>::default())
-            .add_plugins(ExtractComponentPlugin::<ShadowTwin>::default())
             .add_systems(Startup, spawn_batches)
             .add_systems(
                 PostUpdate,
@@ -133,19 +119,21 @@ impl Plugin for AgentRenderPlugin {
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
             render
                 .add_render_command::<Transparent3d, DrawAgents>()
+                .add_render_command::<Shadow, DrawAgentDepth>()
                 .init_resource::<SpecializedMeshPipelines<AgentPipeline>>()
+                .init_resource::<SpecializedMeshPipelines<AgentDepthPipeline>>()
                 .init_resource::<InstanceBuffers>()
-                .init_resource::<SunUniform>()
                 .add_systems(
                     RenderStartup,
-                    init_agent_pipeline.after(MeshPipelineSystems),
+                    init_agent_pipeline
+                        .after(MeshPipelineSystems)
+                        .after(pbr::init_prepass_pipeline),
                 )
                 .add_systems(
                     Render,
                     (
-                        queue_agents.in_set(RenderSystems::QueueMeshes),
+                        (queue_agents, queue_agent_shadows).in_set(RenderSystems::QueueMeshes),
                         upload_instances.in_set(RenderSystems::PrepareResources),
-                        prepare_sun.in_set(RenderSystems::PrepareBindGroups),
                     ),
                 );
         }
@@ -166,23 +154,13 @@ fn to_bevy_mesh(m: MeshData) -> Mesh {
 fn spawn_batches(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     let mut spawn = |slot: Slot, data: MeshData, name: &'static str| {
         let mesh = meshes.add(to_bevy_mesh(data));
-        let batch = commands
-            .spawn((
-                Mesh3d(mesh.clone()),
-                InstanceBatch::default(),
-                AgentBatch(slot),
-                // Instances carry their own transforms; the entity's AABB means nothing.
-                NoFrustumCulling,
-                Name::new(name),
-            ))
-            .id();
         commands.spawn((
             Mesh3d(mesh),
             InstanceBatch::default(),
             AgentBatch(slot),
-            ShadowTwin(batch),
+            // Instances carry their own transforms; the entity's AABB means nothing.
             NoFrustumCulling,
-            Name::new("agent shadows"),
+            Name::new(name),
         ));
     };
     for kind in 0..VEHICLE_KINDS {
@@ -306,20 +284,11 @@ fn build_agent_instances(
         );
     }
     let mut draws = 0;
-    // One shared list per slot: the batch and its shadow twin hold the same `Arc`.
-    let mut shared: Vec<(Slot, Arc<Vec<InstanceData>>)> = Vec::new();
     for (batch, mut data) in &mut batches {
-        let list = match shared.iter().find(|(s, _)| *s == batch.0) {
-            Some((_, list)) => Arc::clone(list),
-            None => {
-                let list = Arc::new(match batch.0 {
-                    Slot::Vehicle { kind, detail } => out.vehicles[kind][detail].clone(),
-                    Slot::Pedestrian { detail } => out.pedestrians[detail].clone(),
-                });
-                shared.push((batch.0, Arc::clone(&list)));
-                list
-            }
-        };
+        let list = Arc::new(match batch.0 {
+            Slot::Vehicle { kind, detail } => out.vehicles[kind][detail].clone(),
+            Slot::Pedestrian { detail } => out.pedestrians[detail].clone(),
+        });
         draws += usize::from(!list.is_empty());
         data.0 = list;
     }
@@ -340,151 +309,114 @@ fn build_agent_instances(
 struct AgentPipeline {
     shader: Handle<Shader>,
     mesh_pipeline: MeshPipeline,
-    /// Group 3: the direction towards the sun, for the shadow pass's vertex stage (the view's
-    /// light bindings are visible to fragment stages only).
-    sun_layout: BindGroupLayoutDescriptor,
 }
 
-/// The sun direction uniform and its bind group, refreshed every frame.
-#[derive(Resource, Default)]
-struct SunUniform {
-    buffer: UniformBuffer<Vec4>,
-    group: Option<BindGroup>,
-}
-
-fn prepare_sun(
-    mut sun: ResMut<SunUniform>,
-    lights: Query<&pbr::ExtractedDirectionalLight>,
-    pipeline: Res<AgentPipeline>,
-    pipeline_cache: Res<PipelineCache>,
-    device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
-) {
-    // The game has one directional light, the sun; without one there are no cast shadows.
-    let to_sun = lights
-        .iter()
-        .next()
-        .map_or(Vec3::NEG_Y, |l| l.transform.back().as_vec3());
-    sun.buffer.set(to_sun.extend(0.0));
-    sun.buffer.write_buffer(&device, &queue);
-    if sun.group.is_none()
-        && let Some(binding) = sun.buffer.binding()
-    {
-        let layout = pipeline_cache.get_bind_group_layout(&pipeline.sun_layout);
-        sun.group = Some(device.create_bind_group(
-            "agent_sun",
-            &layout,
-            &BindGroupEntries::single(binding),
-        ));
-    }
-}
-
-struct SetSunBindGroup<const I: usize>;
-
-impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetSunBindGroup<I> {
-    type Param = SRes<SunUniform>;
-    type ViewQuery = ();
-    type ItemQuery = ();
-
-    fn render<'w>(
-        _item: &P,
-        _view: (),
-        _entity: Option<()>,
-        sun: SystemParamItem<'w, '_, Self::Param>,
-        pass: &mut TrackedRenderPass<'w>,
-    ) -> RenderCommandResult {
-        let Some(group) = sun.into_inner().group.as_ref() else {
-            return RenderCommandResult::Skip;
-        };
-        pass.set_bind_group(I, group, &[]);
-        RenderCommandResult::Success
-    }
+/// The depth-only draw of the instances into a sun cascade's shadow map (BUG-094).
+#[derive(Resource)]
+struct AgentDepthPipeline {
+    shader: Handle<Shader>,
+    /// The view bind group the shadow pass sets (`SetPrepassViewBindGroup`).
+    view_layout: BindGroupLayoutDescriptor,
+    /// Depth clamping instead of clipping, as Bevy's shadow casters: a caster between the sun
+    /// and a cascade's near plane still lands in its map. Where the device lacks it the vertex
+    /// stage clamps (see `vertex_depth`).
+    unclipped_depth: bool,
 }
 
 fn init_agent_pipeline(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mesh_pipeline: Res<MeshPipeline>,
+    prepass_pipeline: Res<PrepassPipeline>,
+    device: Res<RenderDevice>,
 ) {
+    let shader = asset_server.load("embedded://cp_render/agent_render.wesl");
     commands.insert_resource(AgentPipeline {
-        shader: asset_server.load("embedded://cp_render/agent_render.wesl"),
+        shader: shader.clone(),
         mesh_pipeline: mesh_pipeline.clone(),
-        sun_layout: BindGroupLayoutDescriptor::new(
-            "agent_sun_layout",
-            &BindGroupLayoutEntries::single(
-                ShaderStages::VERTEX,
-                binding_types::uniform_buffer::<Vec4>(false),
-            ),
-        ),
+    });
+    commands.insert_resource(AgentDepthPipeline {
+        shader,
+        view_layout: prepass_pipeline.view_layout_no_motion_vectors.clone(),
+        unclipped_depth: device.features().contains(WgpuFeatures::DEPTH_CLIP_CONTROL),
     });
 }
 
-/// Which of the two draws of a batch: the agents themselves, or their cast shadows (BUG-063).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct AgentPipelineKey {
-    mesh: MeshPipelineKey,
-    shadow: bool,
+/// The per-instance vertex buffer: three `vec4`s at locations 8, 9, 10 (locations 0, 1, 5 are
+/// position, normal and colour of the mesh).
+fn instance_layout() -> VertexBufferLayout {
+    let f4 = VertexFormat::Float32x4;
+    VertexBufferLayout {
+        array_stride: size_of::<InstanceData>() as u64,
+        step_mode: VertexStepMode::Instance,
+        attributes: (0..3)
+            .map(|i| VertexAttribute {
+                format: f4,
+                offset: f4.size() * i,
+                shader_location: 8 + i as u32,
+            })
+            .collect(),
+    }
 }
 
 impl SpecializedMeshPipeline for AgentPipeline {
-    type Key = AgentPipelineKey;
+    type Key = MeshPipelineKey;
 
     fn specialize(
         &self,
         key: Self::Key,
         layout: &MeshVertexBufferLayoutRef,
     ) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
-        let mut descriptor = self.mesh_pipeline.specialize(key.mesh, layout)?;
+        let mut descriptor = self.mesh_pipeline.specialize(key, layout)?;
         descriptor.vertex.shader = self.shader.clone();
         descriptor.vertex.entry_point = Some("vertex".into());
-        descriptor.layout.push(self.sun_layout.clone());
-        let f4 = VertexFormat::Float32x4;
-        descriptor.vertex.buffers.push(VertexBufferLayout {
-            array_stride: size_of::<InstanceData>() as u64,
-            step_mode: VertexStepMode::Instance,
-            // Locations 0, 1, 5 are position, normal, colour of the mesh.
-            attributes: (0..3)
-                .map(|i| VertexAttribute {
-                    format: f4,
-                    offset: f4.size() * i,
-                    shader_location: 8 + i as u32,
-                })
-                .collect(),
-        });
+        descriptor.vertex.buffers.push(instance_layout());
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader = self.shader.clone();
             fragment.entry_point = Some("fragment".into());
         }
-        if key.shadow {
-            // The flattened model, multiplied onto the ground. Strict depth test plus depth
-            // write: a pixel is darkened once however many triangles fold onto it, and the
-            // flattening may flip the winding.
-            descriptor.label = Some("agent_shadow_pipeline".into());
-            descriptor.vertex.entry_point = Some("vertex_shadow".into());
-            if let Some(fragment) = descriptor.fragment.as_mut() {
-                fragment.entry_point = Some("fragment_shadow".into());
-                for target in fragment.targets.iter_mut().flatten() {
-                    target.blend = Some(BlendState {
-                        color: BlendComponent {
-                            src_factor: BlendFactor::Dst,
-                            dst_factor: BlendFactor::Zero,
-                            operation: BlendOperation::Add,
-                        },
-                        alpha: BlendComponent {
-                            src_factor: BlendFactor::Zero,
-                            dst_factor: BlendFactor::One,
-                            operation: BlendOperation::Add,
-                        },
-                    });
-                }
-            }
-            descriptor.primitive.cull_mode = None;
-            if let Some(depth) = descriptor.depth_stencil.as_mut() {
-                depth.depth_write_enabled = Some(true);
-                depth.depth_compare = Some(CompareFunction::Greater);
-            }
-        }
         Ok(descriptor)
+    }
+}
+
+impl SpecializedMeshPipeline for AgentDepthPipeline {
+    type Key = ();
+
+    fn specialize(
+        &self,
+        _key: Self::Key,
+        layout: &MeshVertexBufferLayoutRef,
+    ) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
+        let mesh = layout.0.get_layout(&[
+            Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
+            Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
+            Mesh::ATTRIBUTE_COLOR.at_shader_location(5),
+        ])?;
+        Ok(RenderPipelineDescriptor {
+            label: Some("agent_shadow_depth_pipeline".into()),
+            layout: vec![self.view_layout.clone()],
+            vertex: VertexState {
+                shader: self.shader.clone(),
+                entry_point: Some("vertex_depth".into()),
+                buffers: vec![mesh, instance_layout()],
+                ..default()
+            },
+            fragment: None,
+            primitive: PrimitiveState {
+                cull_mode: Some(Face::Back),
+                unclipped_depth: self.unclipped_depth,
+                ..default()
+            },
+            // As Bevy's own shadow casters: reversed depth, no bias here (the receivers bias).
+            depth_stencil: Some(DepthStencilState {
+                format: bevy::core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(CompareFunction::GreaterEqual),
+                stencil: StencilState::default(),
+                bias: DepthBiasState::default(),
+            }),
+            ..default()
+        })
     }
 }
 
@@ -497,7 +429,7 @@ fn queue_agents(
     meshes: Res<RenderAssets<RenderMesh>>,
     render_mesh_instances: Res<RenderMeshInstances>,
     batched: Option<Res<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>>,
-    batches: Query<(Entity, &MainEntity, &InstanceBatch, Has<ShadowTwin>)>,
+    batches: Query<(Entity, &MainEntity, &InstanceBatch)>,
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     views: Query<&ExtractedView>,
     view_key_cache: Res<ViewKeyCache>,
@@ -510,7 +442,7 @@ fn queue_agents(
         let Some(&view_key) = view_key_cache.get(&view.retained_view_entity) else {
             continue;
         };
-        for (entity, main_entity, batch, shadow) in &batches {
+        for (entity, main_entity, batch) in &batches {
             if batch.0.is_empty() {
                 continue;
             }
@@ -532,12 +464,8 @@ fn queue_agents(
                 batched.as_deref(),
             )
             .transform_point3(mesh.aabb_center);
-            let key = AgentPipelineKey {
-                mesh: mesh_key,
-                shadow,
-            };
             let Ok(pipeline_id) =
-                pipelines.specialize(&pipeline_cache, &pipeline, key, &mesh.layout)
+                pipelines.specialize(&pipeline_cache, &pipeline, mesh_key, &mesh.layout)
             else {
                 continue;
             };
@@ -558,6 +486,64 @@ fn queue_agents(
     }
 }
 
+/// Queues every batch into the shadow phase of each sun cascade (BUG-094). The phase is
+/// retained and adding an entity again only refreshes its bin, so this runs every frame for
+/// cascades that come and go. An empty batch draws nothing (`DrawInstanced` skips it).
+#[allow(clippy::too_many_arguments)]
+fn queue_agent_shadows(
+    draw_functions: Res<DrawFunctions<Shadow>>,
+    pipeline: Res<AgentDepthPipeline>,
+    mut pipelines: ResMut<SpecializedMeshPipelines<AgentDepthPipeline>>,
+    pipeline_cache: Res<PipelineCache>,
+    meshes: Res<RenderAssets<RenderMesh>>,
+    render_mesh_instances: Res<RenderMeshInstances>,
+    mesh_allocator: Res<MeshAllocator>,
+    batches: Query<(Entity, &MainEntity), With<InstanceBatch>>,
+    mut phases: ResMut<ViewBinnedRenderPhases<Shadow>>,
+    lights: Query<(&ExtractedView, &LightEntity)>,
+) {
+    let draw = draw_functions.read().id::<DrawAgentDepth>();
+    for (view, light) in &lights {
+        // The sun only: lamps cast no shadows.
+        if !matches!(light, LightEntity::Directional { .. }) {
+            continue;
+        }
+        let Some(phase) = phases.get_mut(&view.retained_view_entity) else {
+            continue;
+        };
+        for (entity, main_entity) in &batches {
+            let Some(instance) = render_mesh_instances.render_mesh_queue_data(*main_entity) else {
+                continue;
+            };
+            let Some(mesh) = meshes.get(instance.mesh_asset_id()) else {
+                continue;
+            };
+            let Some(slabs) = mesh_allocator.mesh_slabs(&instance.mesh_asset_id()) else {
+                continue;
+            };
+            let Ok(pipeline_id) =
+                pipelines.specialize(&pipeline_cache, &pipeline, (), &mesh.layout)
+            else {
+                continue;
+            };
+            phase.add(
+                ShadowBatchSetKey {
+                    pipeline: pipeline_id,
+                    draw_function: draw,
+                    material_bind_group_index: None,
+                    slabs,
+                },
+                ShadowBinKey {
+                    asset_id: instance.mesh_asset_id().into(),
+                },
+                (entity, *main_entity),
+                InputUniformIndex::default(),
+                BinnedRenderPhaseType::NonMesh,
+            );
+        }
+    }
+}
+
 /// A growing GPU buffer per batch entity, rewritten each frame.
 struct GpuInstances {
     buffer: Buffer,
@@ -570,7 +556,7 @@ struct InstanceBuffers(bevy::platform::collections::HashMap<MainEntity, GpuInsta
 
 fn upload_instances(
     mut buffers: ResMut<InstanceBuffers>,
-    batches: Query<(&MainEntity, &InstanceBatch), Without<ShadowTwin>>,
+    batches: Query<(&MainEntity, &InstanceBatch)>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
 ) {
@@ -611,9 +597,11 @@ type DrawAgents = (
     SetMeshViewBindGroup<0>,
     SetMeshViewBindingArrayBindGroup<1>,
     SetMeshBindGroup<2>,
-    SetSunBindGroup<3>,
     DrawInstanced,
 );
+
+/// The instances into a shadow map: the shadow view's uniforms, then the instanced draw.
+type DrawAgentDepth = (SetItemPipeline, SetPrepassViewBindGroup<0>, DrawInstanced);
 
 struct DrawInstanced;
 
@@ -625,13 +613,13 @@ impl<P: PhaseItem> RenderCommand<P> for DrawInstanced {
         SRes<InstanceBuffers>,
     );
     type ViewQuery = ();
-    type ItemQuery = Option<Read<ShadowTwin>>;
+    type ItemQuery = ();
 
     #[inline]
     fn render<'w>(
         item: &P,
         _view: (),
-        twin: Option<Option<&'w ShadowTwin>>,
+        _entity: Option<()>,
         (meshes, render_mesh_instances, mesh_allocator, buffers): SystemParamItem<
             'w,
             '_,
@@ -647,12 +635,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawInstanced {
         let Some(gpu_mesh) = meshes.into_inner().get(mesh_instance.mesh_asset_id()) else {
             return RenderCommandResult::Skip;
         };
-        // A shadow twin draws its batch's instances.
-        let source = match twin.flatten() {
-            Some(t) => MainEntity::from(t.0),
-            None => item.main_entity(),
-        };
-        let Some(instances) = buffers.into_inner().0.get(&source) else {
+        let Some(instances) = buffers.into_inner().0.get(&item.main_entity()) else {
             return RenderCommandResult::Skip;
         };
         if instances.count == 0 {
@@ -686,5 +669,35 @@ impl<P: PhaseItem> RenderCommand<P> for DrawInstanced {
             }
         }
         RenderCommandResult::Success
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::mesh::MeshVertexBufferLayouts;
+
+    /// BUG-094: the agents' shadow draw is a depth-only pass like Bevy's own casters (reversed
+    /// depth, written, no fragment stage) with the shadow view as its only bind group and the
+    /// instances as a second vertex buffer.
+    #[test]
+    fn the_shadow_draw_writes_depth_only_with_the_instances() {
+        let pipeline = AgentDepthPipeline {
+            shader: Handle::default(),
+            view_layout: BindGroupLayoutDescriptor::new("view", &[]),
+            unclipped_depth: true,
+        };
+        let mesh = to_bevy_mesh(vehicle_mesh(0, 0));
+        let layout = mesh.get_mesh_vertex_buffer_layout(&mut MeshVertexBufferLayouts::default());
+        let d = pipeline.specialize((), &layout).expect("specialized");
+        assert_eq!(d.vertex.entry_point.as_deref(), Some("vertex_depth"));
+        assert!(d.fragment.is_none());
+        assert_eq!(d.layout.len(), 1);
+        assert_eq!(d.vertex.buffers.len(), 2);
+        assert_eq!(d.vertex.buffers[1].step_mode, VertexStepMode::Instance);
+        assert!(d.primitive.unclipped_depth);
+        let depth = d.depth_stencil.expect("depth");
+        assert_eq!(depth.depth_write_enabled, Some(true));
+        assert_eq!(depth.depth_compare, Some(CompareFunction::GreaterEqual));
     }
 }
