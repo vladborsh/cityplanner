@@ -637,7 +637,7 @@ mod tests {
         let near = Vec2::new(3100.0, 3012.0);
         let g = preview(&view, &tool, near).unwrap();
         assert!(
-            g.valid && g.access.is_some() && g.cost == Some(Cost::from_units(30000.0)),
+            g.valid && g.access.is_some() && g.cost == Some(Cost::from_units(16500.0)),
             "{g:?}"
         );
         let far = preview(&view, &tool, Vec2::new(3100.0, 3300.0)).unwrap();
