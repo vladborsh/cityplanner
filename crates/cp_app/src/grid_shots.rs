@@ -9,6 +9,9 @@
 //!   off its section marks), then the cross streets down across them; the camera `grid-shot1`
 //!   holds the ghost of the last cross street, from the top street's end down to the bottom
 //!   street's ([`ghost`]).
+//! * shot 2 (T-268): the same city with its top-left corner drawn as a curve (the curve mode's
+//!   three clicks: from the top street's first cross street, the bend at the corner, down to the
+//!   first long street); the left street goes on from the curve's end.
 //!
 //! (Until T-275 the scene held the layouts of the user's BUG-073 shots on the 8 m step; the
 //! screenshots `docs/screenshots/t255-grid-shotN-*.png` are of those.)
@@ -23,7 +26,7 @@ use cp_tools::road::chain_commit;
 use cp_tools::{GhostDemo, RoadMode, RoadTool};
 
 /// The layouts of the scene.
-const LAYOUTS: usize = 1;
+const LAYOUTS: usize = 2;
 
 /// `--scene grid-shots`.
 pub const GRID_SHOTS: &str = "grid-shots";
@@ -32,9 +35,9 @@ pub const GRID_SHOTS: &str = "grid-shots";
 const ROAD: &str = "basic_2l";
 
 /// Where layout `n` stands (its first junction), in the world.
-pub fn origin(_n: usize) -> Vec2 {
+pub fn origin(n: usize) -> Vec2 {
     let c = cp_terrain::MAP_SIZE / 2.0;
-    Vec2::new(c - 450.0, c - 1800.0)
+    Vec2::new(c - 450.0 + (n as f32 - 1.0) * 900.0, c - 1800.0)
 }
 
 /// Where the camera `grid-shotN` looks: the middle of the layout, in the world.
@@ -94,6 +97,18 @@ impl Hand<'_> {
         self.click(from);
         self.click(to)
     }
+
+    /// A curve: its start, its bend and its end, cursor points.
+    fn curve(&mut self, from: Vec2, bend: Vec2, to: Vec2) -> Option<()> {
+        self.tool = RoadTool {
+            mode: RoadMode::Curve,
+            road: Some(self.road),
+            ..Default::default()
+        };
+        self.click(from);
+        self.click(bend);
+        self.click(to)
+    }
 }
 
 fn shot1(h: &mut Hand) -> Option<(Vec2, Vec2)> {
@@ -102,6 +117,28 @@ fn shot1(h: &mut Hand) -> Option<(Vec2, Vec2)> {
     let y = |j: f32| j * section;
     h.street(Vec2::new(x(0.0), y(0.0)), Vec2::new(x(3.0), y(0.0)))?;
     h.street(Vec2::new(x(0.0), y(0.0)), Vec2::new(x(0.0), y(3.0)))?;
+    for j in 1..=3 {
+        let j = j as f32;
+        h.street(Vec2::new(x(0.0), y(j)), Vec2::new(x(3.0), y(j)))?;
+    }
+    for i in 1..=2 {
+        let i = i as f32;
+        h.street(Vec2::new(x(i), y(0.0)), Vec2::new(x(i), y(3.0)))?;
+    }
+    Some((Vec2::new(x(3.0), y(0.0)), Vec2::new(x(3.0), y(3.0))))
+}
+
+fn shot2(h: &mut Hand) -> Option<(Vec2, Vec2)> {
+    let section = 10.0 * cp_net::build::ZONE_CELL;
+    let x = |i: f32| i * 2.0 * section;
+    let y = |j: f32| j * section;
+    h.street(Vec2::new(x(1.0), y(0.0)), Vec2::new(x(3.0), y(0.0)))?;
+    h.curve(
+        Vec2::new(x(1.0), y(0.0)),
+        Vec2::new(x(0.0), y(0.0)),
+        Vec2::new(x(0.0), y(1.0)),
+    )?;
+    h.street(Vec2::new(x(0.0), y(1.0)), Vec2::new(x(0.0), y(3.0)))?;
     for j in 1..=3 {
         let j = j as f32;
         h.street(Vec2::new(x(0.0), y(j)), Vec2::new(x(3.0), y(j)))?;
@@ -131,7 +168,7 @@ pub fn build_grid_shots(sim: &mut SimRunner) -> Vec<String> {
             tool: RoadTool::default(),
             rejected: Vec::new(),
         };
-        let last = shot1(&mut h);
+        let last = if n == 1 { shot1(&mut h) } else { shot2(&mut h) };
         let o = h.o;
         rejected.append(&mut h.rejected);
         match last {

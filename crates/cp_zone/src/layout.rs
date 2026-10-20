@@ -448,6 +448,9 @@ pub fn frontages(net: &NetGraph, roads: &dyn Fn(RoadDefId) -> RoadZoning) -> Vec
 struct Part<'a> {
     seg: &'a Segment,
     table: ArcTable,
+    /// On a curve the front runs along the kerb of the block's side (T-268): its positions are
+    /// arc lengths along the kerb.
+    kerb: Option<crate::grid::KerbTable>,
     fwd: bool,
     /// Arc position of the part's start on the front.
     a: f32,
@@ -455,15 +458,29 @@ struct Part<'a> {
 
 impl Part<'_> {
     fn len(&self) -> f32 {
-        self.table.length()
+        self.kerb
+            .as_ref()
+            .map_or_else(|| self.table.length(), |k| k.len())
+    }
+
+    /// Arc length along the segment's axis (from its start) at front position `a`, clamped to
+    /// the part.
+    fn axis(&self, a: f32) -> f32 {
+        let s = (a - self.a).clamp(0.0, self.len());
+        let s = if self.fwd { s } else { self.len() - s };
+        self.kerb.as_ref().map_or(s, |k| k.to_axis(s))
+    }
+
+    /// Front position (from the part's start) of the point `s` metres along the segment's axis.
+    fn front(&self, s: f32) -> f32 {
+        let k = self.kerb.as_ref().map_or(s, |k| k.to_kerb(s));
+        if self.fwd { k } else { self.len() - k }
     }
 
     /// Point and heading (along the front) at front position `a`.
     fn at(&self, a: f32) -> (Vec2, Vec2) {
         let raw = a - self.a;
-        let s = raw.clamp(0.0, self.len());
-        let s = if self.fwd { s } else { self.len() - s };
-        let t = self.table.s_to_t(s);
+        let t = self.table.s_to_t(self.axis(a));
         let tg = to_xz(self.seg.curve.tangent(t))
             .try_normalize()
             .unwrap_or(Vec2::X);
@@ -511,32 +528,48 @@ pub(crate) fn layout_frontage(
     roads: &dyn Fn(RoadDefId) -> RoadZoning,
     f: &Frontage,
 ) -> Vec<BlockDraft> {
-    let mut parts: Vec<Part> = Vec::new();
-    let mut run = 0.0;
-    for &(id, fwd) in &f.segs {
-        let Some(seg) = net.segment(id) else {
-            return Vec::new();
-        };
-        let table = ArcTable::build(&seg.curve);
-        let l = table.length();
-        parts.push(Part {
-            seg,
-            table,
-            fwd,
-            a: run,
-        });
-        run += l;
-    }
     let Some(first) = f.segs.first().and_then(|(s, _)| net.segment(*s)) else {
         return Vec::new();
     };
     let inner = roads(first.road).half_width;
+    let mut parts: Vec<Part> = Vec::new();
+    let mut run = 0.0;
+    for (k, &(id, fwd)) in f.segs.iter().enumerate() {
+        let Some(seg) = net.segment(id) else {
+            return Vec::new();
+        };
+        let table = ArcTable::build(&seg.curve);
+        let kerb = crate::grid::KerbTable::of(&seg.curve, f.block_side(k), inner);
+        let part = Part {
+            seg,
+            table,
+            kerb,
+            fwd,
+            a: run,
+        };
+        run += part.len();
+        parts.push(part);
+    }
     let (start, end) = shared_ends(net, roads, f);
-    let edge = |e: FrontEnd| match e {
+    // The edge of a cross street, `d` along the axis from the frontage's end node, as a front
+    // position (along the kerb on a curve).
+    let (head, tail) = (&parts[0], &parts[parts.len() - 1]);
+    let a0 = match start {
+        FrontEnd::Edge(d) if head.kerb.is_some() => {
+            let len = head.table.length();
+            head.front(if head.fwd { d } else { len - d })
+        }
         FrontEnd::Edge(d) => d,
         FrontEnd::Open => 0.0,
     };
-    let (a0, a1) = (edge(start), run - edge(end));
+    let a1 = match end {
+        FrontEnd::Edge(d) if tail.kerb.is_some() => {
+            let len = tail.table.length();
+            tail.a + tail.front(if tail.fwd { len - d } else { d })
+        }
+        FrontEnd::Edge(d) => run - d,
+        FrontEnd::Open => run,
+    };
     // A centimetre of slack: a block drawn to whole cells measures a hair under them.
     let n = (((a1 - a0) + 0.01) / CELL_SIZE).floor().max(0.0) as u32;
     if n == 0 {
@@ -590,8 +623,7 @@ pub(crate) fn layout_frontage(
         let a = origin + j as f32 * CELL_SIZE;
         let k = locate(a);
         let (p, u) = parts[k].at(a);
-        let s = (a - parts[k].a).clamp(0.0, parts[k].len());
-        let arc = if parts[k].fwd { s } else { parts[k].len() - s };
+        let arc = parts[k].axis(a);
         let mark = Mark {
             axis: p,
             v: side_vec(u, f.side),

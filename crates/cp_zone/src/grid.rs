@@ -149,9 +149,9 @@ pub struct ZoneBlock {
     pub side: Side,
     /// The stretch of the segment curve this block was built from.
     pub curve: CubicBezier3,
-    /// Arc length of the curve (metres).
+    /// Arc length of the curve (metres); of its kerb on the block's side on a curve (T-268).
     pub length: f32,
-    /// Arc offset of the first column from the curve start.
+    /// Arc offset of the first column from the curve start (along the kerb on a curve, T-268).
     pub s0: f32,
     pub cols: u16,
     /// Distance from the axis to the near edge of row 0.
@@ -178,6 +178,8 @@ impl ZoneBlock {
     /// Footprints of all cells, in cell order.
     pub fn footprints(&self) -> Vec<Obb> {
         let table = ArcTable::build(&self.curve);
+        // On a curve the columns stand a cell apart along the kerb (T-268).
+        let kerb = KerbTable::of(&self.curve, self.side, self.inner);
         let mut out = Vec::with_capacity(self.cell_count());
         for col in 0..self.cols {
             let s = self.s0 + (f32::from(col) + 0.5) * self.cell_len;
@@ -196,14 +198,28 @@ impl ZoneBlock {
                     dir(1.0),
                 )
             } else {
+                let s = kerb.as_ref().map_or(s, |k| k.to_axis(s));
                 let t = table.s_to_t(s);
                 (to_xz(self.curve.point(t)), dir(t))
             };
             let u = tg;
             // Left of the travel direction in XZ is (t.z, -t.x), as in `offset_xz`.
             let v = Vec2::new(tg.y, -tg.x) * self.side.sign();
+            // On the inner side of a bend a cell touching the kerb at its middle would put its
+            // corners on the sidewalk: it stands back by the sagitta of its half length (T-268).
+            let back = if kerb.is_some() && (0.0..=self.length).contains(&s) {
+                inner_setback(
+                    &self.curve,
+                    table.s_to_t(kerb.as_ref().map_or(s, |k| k.to_axis(s))),
+                    v,
+                    self.inner,
+                    self.cell_len / 2.0,
+                )
+            } else {
+                0.0
+            };
             for row in 0..BLOCK_DEPTH {
-                let d = self.inner + (f32::from(row) + 0.5) * self.row_depth;
+                let d = self.inner + back + (f32::from(row) + 0.5) * self.row_depth;
                 out.push(Obb {
                     c: p + v * d,
                     u,
@@ -215,6 +231,107 @@ impl ZoneBlock {
         }
         out
     }
+}
+
+/// How far a cell of half length `half` stands back from the kerb at `t` of `curve`, on the side
+/// `v` (unit, away from the axis) whose kerb is `inner` from the axis: the sagitta of the kerb's
+/// circle on the inner side of a bend, 0 on the outer side.
+fn inner_setback(curve: &CubicBezier3, t: f32, v: Vec2, inner: f32, half: f32) -> f32 {
+    let d1 = to_xz(curve.derivative(t));
+    let u = 1.0 - t;
+    let d2 = to_xz(
+        (curve.p2 - curve.p1 * 2.0 + curve.p0) * (6.0 * u)
+            + (curve.p3 - curve.p2 * 2.0 + curve.p1) * (6.0 * t),
+    );
+    let cross = d1.perp_dot(d2).abs();
+    // The bend turns towards the cells: their side is the inner one.
+    let towards = d2 - d1 * (d2.dot(d1) / d1.length_squared().max(1e-12));
+    if cross < 1e-9 || towards.dot(v) <= 0.0 {
+        return 0.0;
+    }
+    let r = d1.length().powi(3) / cross - inner;
+    if r <= half {
+        return half;
+    }
+    r - (r * r - half * half).sqrt()
+}
+
+/// Arc length along the kerb of one side of a curve against arc length along its axis (T-268):
+/// on a curve the columns of cells stand a cell apart along the kerb, so the cells of the first
+/// row touch on the inner side of a bend as on a straight street. `None` for a straight curve
+/// (the two are the same there).
+pub(crate) struct KerbTable {
+    /// `(along the kerb, along the axis)` from the curve's start, both increasing.
+    at: Vec<(f32, f32)>,
+}
+
+impl KerbTable {
+    pub(crate) fn of(curve: &CubicBezier3, side: Side, inner: f32) -> Option<Self> {
+        let (a, b) = (to_xz(curve.p0), to_xz(curve.p3));
+        let u = (b - a).normalize_or_zero();
+        if [curve.p1, curve.p2]
+            .iter()
+            .all(|p| (to_xz(*p) - a).perp_dot(u).abs() < 0.01)
+        {
+            return None;
+        }
+        let table = ArcTable::build(curve);
+        let len = table.length();
+        const N: usize = 128;
+        let mut at = Vec::with_capacity(N + 1);
+        let mut prev: Option<Vec2> = None;
+        let mut k = 0.0;
+        for i in 0..=N {
+            let s = len * i as f32 / N as f32;
+            let t = table.s_to_t(s);
+            let tg = to_xz(curve.tangent(t)).try_normalize().unwrap_or(Vec2::X);
+            let q = to_xz(curve.point(t)) + Vec2::new(tg.y, -tg.x) * side.sign() * inner;
+            if let Some(p) = prev {
+                k += p.distance(q);
+            }
+            prev = Some(q);
+            at.push((k, s));
+        }
+        Some(Self { at })
+    }
+
+    /// The length of the kerb.
+    pub(crate) fn len(&self) -> f32 {
+        self.at.last().map_or(0.0, |p| p.0)
+    }
+
+    /// Axis arc length at kerb arc length `k` (clamped to the curve).
+    pub(crate) fn to_axis(&self, k: f32) -> f32 {
+        interp(&self.at, k, |p| p.0, |p| p.1)
+    }
+
+    /// Kerb arc length at axis arc length `s` (clamped to the curve).
+    pub(crate) fn to_kerb(&self, s: f32) -> f32 {
+        interp(&self.at, s, |p| p.1, |p| p.0)
+    }
+}
+
+fn interp(
+    at: &[(f32, f32)],
+    x: f32,
+    key: fn(&(f32, f32)) -> f32,
+    val: fn(&(f32, f32)) -> f32,
+) -> f32 {
+    let i = at.partition_point(|p| key(p) < x);
+    if i == 0 {
+        return val(&at[0]);
+    }
+    if i >= at.len() {
+        return val(&at[at.len() - 1]);
+    }
+    let (a, b) = (&at[i - 1], &at[i]);
+    let span = key(b) - key(a);
+    let f = if span > 1e-9 {
+        (x - key(a)) / span
+    } else {
+        0.0
+    };
+    val(a) + (val(b) - val(a)) * f
 }
 
 /// The cells one side of a new frontage would get (the road tool's ghost, T-185, §7.1).
@@ -848,7 +965,12 @@ impl ZoneGrid {
         let row_i = usize::from(row);
         let cols = obbs.len() / depth;
         let mut out = vec![true; cols];
-        for (col, ok) in out.iter_mut().enumerate() {
+        let Some(block) = self.blocks.get(id) else {
+            return out;
+        };
+        for col in 0..cols {
+            let (done, rest) = out.split_at_mut(col);
+            let ok = &mut rest[0];
             let i = col * depth + row_i;
             let o = &obbs[i];
             if self.occupied.contains(&ZoneCellRef {
@@ -867,15 +989,27 @@ impl ZoneGrid {
                 *ok = false;
                 continue;
             }
-            // The previous column of the same block (curves): the later column loses.
-            if col > 0 {
-                let prev = (col - 1) * depth;
-                if (row_i.saturating_sub(1)..=(row_i + 1).min(depth - 1))
-                    .any(|r| obbs[prev + r].penetration(o) > PENETRATION_EPS)
-                {
-                    *ok = false;
-                    continue;
-                }
+            // The earlier columns of the same block (curves): the later column loses, to a cell
+            // there that stands (one the rule already dropped takes nothing, T-268: else on the
+            // inner side of a bend one dropped cell drops the whole row after it). The rows above
+            // this one are settled, this row is settled up to here, the one below is not yet: it
+            // counts as standing.
+            let stands = |c: usize, r: usize| match r.cmp(&row_i) {
+                std::cmp::Ordering::Less => block.valid[c * depth + r],
+                std::cmp::Ordering::Equal => done[c],
+                std::cmp::Ordering::Greater => true,
+            };
+            let over = (0..col)
+                .rev()
+                .take_while(|&c| obbs[c * depth + row_i].c.distance(o.c) < 3.0 * CELL_SIZE)
+                .any(|c| {
+                    (row_i.saturating_sub(1)..=(row_i + 1).min(depth - 1)).any(|r| {
+                        stands(c, r) && obbs[c * depth + r].penetration(o) > PENETRATION_EPS
+                    })
+                });
+            if over {
+                *ok = false;
+                continue;
             }
             // The cells that win over this one.
             let mut near: BTreeSet<ZoneBlockId> = BTreeSet::new();

@@ -814,3 +814,106 @@ fn a_queue_of_twelve_metre_trucks_is_spaced_by_their_length() {
     }
     assert_eq!((rig.stuck, rig.invalid), (0, 0));
 }
+
+/// T-268 acceptance (f): cars drive round curves of the smallest radius a 4-cell road takes
+/// (5 cells, 40 m): a loop of four streets with a quarter curve at every corner, trips from
+/// every street to every other, in either direction and lane. Everybody arrives, nobody is
+/// removed as stuck, no two bodies in one lane touch.
+#[test]
+fn cars_drive_round_the_tightest_curves_of_a_4_cell_road() {
+    use bevy_math::Vec3;
+    use cp_core::curve::CubicBezier3;
+    let mut s = sim();
+    let road = s.road("medium_4l");
+    let def = s.db.road(road).clone();
+    let r = 40.0;
+    // A circle's quarter as a cubic (handles 0.5523 r long).
+    let k = 0.552_284_8 * r;
+    let (lo, hi) = (1000.0, 1300.0);
+    let v = |x: f32, z: f32| Vec3::new(x, 0.0, z);
+    let mut sides = Vec::new();
+    let add = |s: &mut Sim, c: CubicBezier3| {
+        s.world
+            .resource_mut::<cp_net::NetGraph>()
+            .add_segment(&def, road, c, cp_net::Elevation::Ground)
+            .unwrap()
+    };
+    // Clockwise (x east, z south): the top street, the top-right curve, the right street, ...
+    let corners = [
+        (
+            v(hi - r, lo),
+            v(hi - r + k, lo),
+            v(hi, lo + r - k),
+            v(hi, lo + r),
+        ),
+        (
+            v(hi, hi - r),
+            v(hi, hi - r + k),
+            v(hi - r + k, hi),
+            v(hi - r, hi),
+        ),
+        (
+            v(lo + r, hi),
+            v(lo + r - k, hi),
+            v(lo, hi - r + k),
+            v(lo, hi - r),
+        ),
+        (
+            v(lo, lo + r),
+            v(lo, lo + r - k),
+            v(lo + r - k, lo),
+            v(lo + r, lo),
+        ),
+    ];
+    for (i, &(a, b, c, d)) in corners.iter().enumerate() {
+        let prev = corners[(i + 3) % 4].3;
+        sides.push(add(&mut s, CubicBezier3::line(prev, a)));
+        add(&mut s, CubicBezier3::new(a, b, c, d));
+    }
+    let mut rig = Rig::new(s);
+    let mut trips = 0;
+    for i in 0..4 {
+        for j in 0..4 {
+            if i == j {
+                continue;
+            }
+            for side in [Side::Right, Side::Left] {
+                for at in [30.0, 90.0, 150.0] {
+                    let from = acc(sides[i], at, side);
+                    let to = acc(sides[j], 180.0 - at, side);
+                    if find_car_path(&rig.graph, &CongestionMap::default(), &from, &to).is_ok() {
+                        rig.add(from, to);
+                        trips += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert!(trips >= 60, "{trips} trips");
+    let mut closest = f32::MAX;
+    for t in 0..cp_core::time::TICKS_PER_DAY {
+        rig.tick(t, None, STUCK_TICKS);
+        rig.check_invariants();
+        if let Some(d) = min_shared_lane_distance(&rig) {
+            closest = closest.min(d);
+        }
+        if rig.veh.is_empty() {
+            break;
+        }
+    }
+    println!(
+        "{trips} trips round the loop: arrived {} stuck {} clearance {closest:.2} m",
+        rig.arrived, rig.stuck
+    );
+    assert!(
+        rig.veh.is_empty(),
+        "{} cars still on the loop",
+        rig.veh.len()
+    );
+    assert_eq!(
+        rig.arrived, trips,
+        "stuck {} invalid {}",
+        rig.stuck, rig.invalid
+    );
+    assert!(closest > 0.0, "bodies overlap by {closest}");
+}

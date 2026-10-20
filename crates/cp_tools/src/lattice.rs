@@ -11,8 +11,15 @@
 //! 2. **Direction**: within 7° of a reference direction (the street it leaves, the leg before)
 //!    or its square, exactly that.
 //! 3. **Length**: whole sections from the start, or a line of a street within a section (its
-//!    extension, or the square through one of its nodes) within 1.5 cells. A curve keeps its
-//!    corner and slides its end along the line from the corner.
+//!    extension, or the square through one of its nodes) within 1.5 cells.
+//!
+//! A curve (T-268, [`quantize_curve`]) starts like a street and leaves in the direction of its
+//! bend click, snapped like a leg (rule 2), at any distance. Its end goes to a junction or a
+//! street's section mark (rule 1), else to the guides near the cursor (a whole section from the
+//! start along or across its direction, the extension of a street, the square through a node; two
+//! of them meet in a point), else to the nearest whole cell from the start. Its end direction
+//! snaps like a leg (the start's direction, the street or junction it ends on, or their squares),
+//! and the bend then moves to where the two directions meet: both ends leave exactly so.
 
 use std::sync::{Arc, Mutex};
 
@@ -35,8 +42,6 @@ pub const JOIN_M: f32 = 6.0;
 pub const BLOCK_SNAP_M: f32 = 3.0;
 /// Cells between the edges of two parallel streets in a block (4 rows from each).
 pub const BLOCK_CELLS: u32 = 8;
-/// A curve may be extended past its end up to this parameter.
-const MAX_CURVE_T: f32 = 1.25;
 
 /// A cell line of the zoning along a street, as the tool uses it: the perpendicular to `dir`
 /// through `pos` is a candidate for the length step and the joins.
@@ -146,6 +151,9 @@ pub struct LatticeCtx<'a> {
     /// Half the width of the road being drawn: a street joined to a line is placed so that its
     /// near edge stands on it, its axis this much further on (BUG-067).
     pub edge_offset: f32,
+    /// The bend of a curve is being placed (T-268): the last leg keeps its direction snap but
+    /// not its length step or joins, the bend may stand anywhere along it.
+    pub bend: bool,
 }
 
 /// Where a joined vertex landed, with what the next leg takes as direction references.
@@ -323,66 +331,6 @@ fn node_dirs(graph: &NetGraph, n: NodeId) -> Vec<Vec2> {
         .collect()
 }
 
-/// The point of the quadratic `a → c → b` extended to parameter `t`, and the quadratic cut at `t`.
-fn cut_quad(a: Vec2, c: Vec2, b: Vec2, t: f32) -> (Vec2, Vec2) {
-    let ctrl = a.lerp(c, t);
-    let u = 1.0 - t;
-    (ctrl, a * (u * u) + c * (2.0 * u * t) + b * (t * t))
-}
-
-fn quad_len(a: Vec2, c: Vec2, b: Vec2) -> f32 {
-    let v3 = |p: Vec2| Vec3::new(p.x, 0.0, p.y);
-    CubicBezier3::new(
-        v3(a),
-        v3(a + (c - a) * (2.0 / 3.0)),
-        v3(b + (c - b) * (2.0 / 3.0)),
-        v3(b),
-    )
-    .arc_table()
-    .length()
-}
-
-/// The closest 8 m multiple of the length of the curve (never below 8). The curve keeps its
-/// corner `c` and the line `c → b` its end is on: the end slides along that line (BUG-073b), so
-/// the street that goes on from it leaves in exactly the direction the player aimed. When the
-/// curve is already longer than that, it is cut as a quadratic.
-fn step_curve(a: Vec2, c: Vec2, b: Vec2) -> (Vec2, Vec2) {
-    let len = quad_len(a, c, b);
-    let want = ((len / ZONE_CELL).round() * ZONE_CELL).max(ZONE_CELL);
-    if let Some(dir) = (b - c).try_normalize() {
-        let at = |k: f32| c + dir * k;
-        if quad_len(a, c, at(0.05)) < want {
-            let (mut lo, mut hi) = (0.05_f32, 4.0 * len.max(want));
-            for _ in 0..50 {
-                let mid = 0.5 * (lo + hi);
-                if quad_len(a, c, at(mid)) < want {
-                    lo = mid;
-                } else {
-                    hi = mid;
-                }
-            }
-            return (c, at(0.5 * (lo + hi)));
-        }
-    }
-    let len_at = |t: f32| {
-        let (ctrl, to) = cut_quad(a, c, b, t);
-        quad_len(a, ctrl, to)
-    };
-    if len_at(MAX_CURVE_T) < want {
-        return cut_quad(a, c, b, MAX_CURVE_T);
-    }
-    let (mut lo, mut hi) = (0.0_f32, MAX_CURVE_T);
-    for _ in 0..40 {
-        let mid = 0.5 * (lo + hi);
-        if len_at(mid) < want {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    cut_quad(a, c, b, 0.5 * (lo + hi))
-}
-
 /// One leg from `prev` to the cursor `p`: rule 2, then rule 3 (unless `alt`).
 fn leg(
     cx: &LatticeCtx,
@@ -399,24 +347,13 @@ fn leg(
     }
     let mut dir = d / len;
     // Rule 2: within SQUARE_DEG of a reference or its square, exactly that (spec v2, item 7).
-    if snap_angle {
-        let cos = SQUARE_DEG.to_radians().cos();
-        let best = refs
-            .iter()
-            .flat_map(|r| [*r, Vec2::new(-r.y, r.x), -*r, Vec2::new(r.y, -r.x)])
-            .filter(|c| c.length() > 0.5)
-            .map(|c| c.normalize())
-            .max_by(|a, b| a.dot(dir).total_cmp(&b.dot(dir)))
-            .filter(|c| c.dot(dir) >= cos);
-        if let Some(c) = best {
-            let square = refs.iter().any(|r| r.dot(c).abs() < 0.5);
-            dir = c;
-            report.kind = SnapReportKind::KeyAngle(if square { 90 } else { 0 });
-            report.guide = Some((prev, prev + dir * GUIDE_HALF_LENGTH * 2.0));
-        }
+    if snap_angle && let Some((c, square)) = square_dir(refs, dir) {
+        dir = c;
+        report.kind = SnapReportKind::KeyAngle(if square { 90 } else { 0 });
+        report.guide = Some((prev, prev + dir * GUIDE_HALF_LENGTH * 2.0));
     }
     let along = d.dot(dir);
-    if cx.alt {
+    if cx.alt || cx.bend {
         return (prev + dir * along, report);
     }
     // Rule 3: whole sections from the start (spec v2, item 5), or a line of a street within a
@@ -475,6 +412,218 @@ fn leg(
     )
 }
 
+/// Rule 2 for the unit direction `dir`: the reference or square of one within [`SQUARE_DEG`]
+/// nearest it, and whether it is a square of a reference.
+fn square_dir(refs: &[Vec2], dir: Vec2) -> Option<(Vec2, bool)> {
+    let cos = SQUARE_DEG.to_radians().cos();
+    let best = refs
+        .iter()
+        .flat_map(|r| [*r, Vec2::new(-r.y, r.x), -*r, Vec2::new(r.y, -r.x)])
+        .filter(|c| c.length() > 0.5)
+        .map(|c| c.normalize())
+        .max_by(|a, b| a.dot(dir).total_cmp(&b.dot(dir)))
+        .filter(|c| c.dot(dir) >= cos)?;
+    Some((best, refs.iter().any(|r| r.dot(best).abs() < 0.5)))
+}
+
+/// A guide line for the end of a curve: through `at` along the unit `dir`.
+#[derive(Clone, Copy, Debug)]
+struct Line {
+    at: Vec2,
+    dir: Vec2,
+}
+
+impl Line {
+    /// How far `p` is from the line.
+    fn miss(&self, p: Vec2) -> f32 {
+        (p - self.at).perp_dot(self.dir).abs()
+    }
+
+    /// Where two lines meet; `None` when they are near parallel.
+    fn meet(&self, o: &Line) -> Option<Vec2> {
+        let den = self.dir.perp_dot(o.dir);
+        if den.abs() < 0.2 {
+            return None;
+        }
+        Some(self.at + self.dir * ((o.at - self.at).perp_dot(o.dir) / den))
+    }
+
+    fn foot(&self, p: Vec2) -> Vec2 {
+        self.at + self.dir * (p - self.at).dot(self.dir)
+    }
+}
+
+/// The guides near the end `p` of a curve from `a` leaving along `u` (T-268, user decision
+/// 2026-10-20): the lines a whole section from `a` along and across `u`, the extension of every
+/// straight ground street within a section of `p`, and the squares and extensions through its
+/// junctions and dead ends there.
+fn curve_guides(cx: &LatticeCtx, a: Vec2, u: Vec2, p: Vec2) -> Vec<Line> {
+    let w = Vec2::new(-u.y, u.x);
+    let mut out = Vec::new();
+    let (pu, pw) = ((p - a).dot(u), (p - a).dot(w));
+    for (dir, along, k) in [(w, u, pu), (u, w, pw)] {
+        let n = (k / SECTION_M).round();
+        for m in [n - 1.0, n, n + 1.0] {
+            if m != 0.0 {
+                out.push(Line {
+                    at: a + along * (m * SECTION_M),
+                    dir,
+                });
+            }
+        }
+    }
+    for (_, sg) in cx.graph.segments() {
+        if sg.elevation != Elevation::Ground || sg.curve.bounds_distance_xz(p) > SECTION_M {
+            continue;
+        }
+        let (s0, s3) = (to_xz(sg.curve.p0), to_xz(sg.curve.p3));
+        let straight = [sg.curve.p1, sg.curve.p2].iter().all(|c| {
+            (to_xz(*c) - s0)
+                .perp_dot((s3 - s0).normalize_or_zero())
+                .abs()
+                < 0.01
+        });
+        if straight && let Some(dir) = (s3 - s0).try_normalize() {
+            out.push(Line { at: s0, dir });
+        }
+    }
+    for (id, n) in cx.graph.nodes() {
+        let q = to_xz(n.pos);
+        if n.elevation != Elevation::Ground
+            || cp_net::is_plain_cut(cx.graph, id)
+            || q.distance(p) > SECTION_M
+            || q.distance(a) < 1e-3
+        {
+            continue;
+        }
+        for d in node_dirs(cx.graph, id) {
+            out.push(Line { at: q, dir: d });
+            out.push(Line {
+                at: q,
+                dir: Vec2::new(-d.y, d.x),
+            });
+        }
+    }
+    out
+}
+
+/// Where the end `p` of a curve from `a` leaving along `u` lands when it joins nothing (T-268):
+/// where the two guides nearest it within [`LINE_TOL_M`] meet, else on the nearest guide at the
+/// nearest whole cell from `a` along it, else at the nearest whole cell from `a` (along and across
+/// `u`). With the directions of the guides it landed on.
+fn curve_end(cx: &LatticeCtx, a: Vec2, u: Vec2, p: Vec2) -> (Vec2, Vec<Vec2>, SnapReportKind) {
+    let w = Vec2::new(-u.y, u.x);
+    let cell = |p: Vec2| {
+        let (k, l) = ((p - a).dot(u), (p - a).dot(w));
+        a + u * ((k / ZONE_CELL).round() * ZONE_CELL) + w * ((l / ZONE_CELL).round() * ZONE_CELL)
+    };
+    let mut near: Vec<(f32, Line)> = curve_guides(cx, a, u, p)
+        .into_iter()
+        .map(|l| (l.miss(p), l))
+        .filter(|(m, _)| *m <= LINE_TOL_M)
+        .collect();
+    near.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let guide = SnapReportKind::Guide {
+        perpendicular: true,
+    };
+    let Some(&(_, first)) = near.first() else {
+        return (cell(p), Vec::new(), SnapReportKind::CellStep(0));
+    };
+    let second = near
+        .iter()
+        .filter_map(|(_, l)| Some((first.meet(l)?, l.dir)))
+        .find(|(q, _)| q.distance(p) <= LINE_TOL_M * 1.5);
+    if let Some((q, d)) = second {
+        return (q, vec![first.dir, d], guide);
+    }
+    // On the one guide, at the whole cell from `a` along it nearest the cursor.
+    let foot = first.foot(p);
+    let k = (foot - a).dot(first.dir);
+    let base = foot - first.dir * k;
+    let q = base + first.dir * ((k / ZONE_CELL).round() * ZONE_CELL);
+    (q, vec![first.dir], guide)
+}
+
+/// Applies the curve rules of the module doc to the curve `from → control → to` (T-268).
+fn quantize_curve(
+    cx: &LatticeCtx,
+    joins: bool,
+    angle: bool,
+    from: Vec2,
+    control: Vec2,
+    to: Vec2,
+) -> (RoadPath, SnapReport) {
+    let mut report = SnapReport::default();
+    let start = if joins { join(cx, from) } else { None };
+    let a = start.as_ref().map_or(from, |j| j.pos);
+    let mut refs: Vec<Vec2> = match &start {
+        Some(Joined { node: Some(n), .. }) => node_dirs(cx.graph, *n),
+        Some(Joined { along: Some(t), .. }) => vec![*t],
+        _ => Vec::new(),
+    };
+    if refs.is_empty() {
+        refs.push(Vec2::X);
+    }
+    let Some(mut u) = (control - a).try_normalize() else {
+        return (
+            RoadPath::Curve {
+                from: a,
+                control,
+                to,
+            },
+            report,
+        );
+    };
+    if angle && let Some((c, _)) = square_dir(&refs, u) {
+        u = c;
+    }
+    let mut c = a + u * (control - a).dot(u).max(0.0);
+    let mut end_refs = vec![u];
+    let b = if cx.alt {
+        to
+    } else if let Some(j) = join(cx, to).filter(|_| joins) {
+        report.kind = if j.node.is_some() {
+            SnapReportKind::Node
+        } else {
+            SnapReportKind::Segment
+        };
+        match (j.node, j.along) {
+            (Some(n), _) => end_refs.extend(node_dirs(cx.graph, n)),
+            (_, Some(t)) => end_refs.push(t),
+            _ => {}
+        }
+        j.pos
+    } else {
+        let (q, dirs, kind) = curve_end(cx, a, u, to);
+        report.kind = kind;
+        end_refs.extend(dirs);
+        q
+    };
+    // The end direction: snapped, the bend moves to where it meets the start's direction.
+    if angle
+        && let Some(e) = (b - c).try_normalize()
+        && let Some((e, _)) = square_dir(&end_refs, e)
+    {
+        let start_ray = Line { at: a, dir: u };
+        let end_ray = Line { at: b, dir: e };
+        if let Some(q) = start_ray.meet(&end_ray)
+            && (q - a).dot(u) > ZONE_CELL
+            && (b - q).dot(e) > ZONE_CELL
+        {
+            c = q;
+            report.guide = Some((b, b - e * GUIDE_HALF_LENGTH * 2.0));
+        }
+    }
+    (
+        RoadPath::Curve {
+            from: a,
+            control: c,
+            to: b,
+        },
+        report,
+    )
+}
+
 /// One section (T-275 spec v2, item 3): 10 cells between road centres.
 pub const SECTION_M: f32 = 10.0 * ZONE_CELL;
 /// Within this many degrees of a reference direction or its square the leg goes exactly so.
@@ -489,21 +638,28 @@ const LINE_TOL_M: f32 = 1.5 * ZONE_CELL;
 pub fn quantize_path(req: &RoadPathRequest, cx: &LatticeCtx) -> (RoadPath, SnapReport) {
     let ground = matches!(req.elevation, cp_net::ElevationMode::Ground);
     let joins = ground && !cx.alt && req.snap.segment;
-    let (pts, control): (Vec<Vec2>, Option<Vec2>) = match &req.path {
-        RoadPath::Straight { from, to } => (vec![*from, *to], None),
-        RoadPath::Curve { from, control, to } => (vec![*from, *to], Some(*control)),
-        RoadPath::Free(p) => (p.clone(), None),
+    let pts: Vec<Vec2> = match &req.path {
+        RoadPath::Straight { from, to } => vec![*from, *to],
+        RoadPath::Curve { from, to, .. } => vec![*from, *to],
+        RoadPath::Free(p) => p.clone(),
     };
-    let angle = req.snap.angle && control.is_none();
+    if let RoadPath::Curve { from, control, to } = req.path {
+        return quantize_curve(cx, joins, req.snap.angle, from, control, to);
+    }
+    let angle = req.snap.angle;
     let mut out: Vec<Vec2> = Vec::with_capacity(pts.len());
     let mut refs: Vec<Vec2> = Vec::new();
     // Whether `refs` come from a road or a leg (not the fallback for a start in the open).
     let mut real_refs = false;
     let mut report = SnapReport::default();
-    let mut stepped_curve = None;
     for (i, &p) in pts.iter().enumerate() {
         report = SnapReport::default();
-        let mut joined = if joins { join(cx, p) } else { None };
+        let last = i + 1 == pts.len();
+        let mut joined = if joins && !(cx.bend && last) {
+            join(cx, p)
+        } else {
+            None
+        };
         // The end of a leg on a street stands where the leg's snapped direction meets it, not
         // at the cursor's foot (BUG-088: a block closed along the guides is square). Only from
         // a start with real directions (a road, or the leg before); a start in the open has none.
@@ -535,15 +691,6 @@ pub fn quantize_path(req: &RoadPathRequest, cx: &LatticeCtx) -> (RoadPath, SnapR
             j.pos
         } else if i == 0 {
             p
-        } else if let (Some(c), true) = (control, i == 1) {
-            if cx.alt {
-                p
-            } else {
-                let (ctrl, to) = step_curve(out[0], c, p);
-                report.kind = SnapReportKind::CellStep(quad_len(out[0], ctrl, to).round() as i32);
-                stepped_curve = Some(ctrl);
-                to
-            }
         } else {
             let (q, r) = leg(cx, angle, out[i - 1], &refs, p);
             report = r;
@@ -567,11 +714,7 @@ pub fn quantize_path(req: &RoadPathRequest, cx: &LatticeCtx) -> (RoadPath, SnapR
             from: out[0],
             to: out[1],
         },
-        RoadPath::Curve { control, .. } => RoadPath::Curve {
-            from: out[0],
-            control: stepped_curve.unwrap_or(*control),
-            to: out[1],
-        },
+        RoadPath::Curve { .. } => unreachable!("a curve is quantized above"),
         RoadPath::Free(_) => RoadPath::Free(out),
     };
     (path, report)

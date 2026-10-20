@@ -50,6 +50,9 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
   counted), `--cam grid-shot1-corner` close over the L corner at its top-left. Screenshots
   `docs/screenshots/t275-city-after.png`, `t275-city-top.png`, `t275-city-corner.png`. (Until T-275 the scene
   held the four layouts of the user's BUG-073 shots: `docs/screenshots/t255-grid-shotN-*.png`.)
+  `--cam grid-shot2` (`-top`, `-corner`, T-268): the same city with its top-left corner drawn as
+  a curve (curve mode); screenshots `docs/screenshots/t268-curve-city.png`, `t268-curve-top.png`,
+  `t268-curve-corner.png`.
 * `--scene joins --cam joins|joins-N` (T-261): the junction gallery of the `junction_sweep` test
   (`cp_sim::road_cases::join_cases`: bends of 5-135 degrees for every road, curved arms, T, X and Y
   junctions, width changes, a street into a highway, automatic cuts), one case per 260 m cell;

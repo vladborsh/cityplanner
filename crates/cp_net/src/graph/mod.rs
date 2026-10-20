@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use bevy_ecs::resource::Resource;
-use bevy_math::Vec3;
+use bevy_math::{Vec2, Vec3};
 use cp_content::{LaneDir, RoadDef, RoadDefId};
 use cp_core::Arena;
 use cp_core::curve::CubicBezier3;
@@ -493,18 +493,23 @@ impl NetGraph {
         if first.road != second.road
             || first.elevation != second.elevation
             || first.start == second.end
-            || !straight(&first.curve)
-            || !straight(&second.curve)
-            || !on_line(first.curve.p3)
         {
             return None;
         }
+        let curve = if straight(&first.curve) && straight(&second.curve) && on_line(first.curve.p3)
+        {
+            CubicBezier3::line(from, to)
+        } else if planar {
+            // T-268: two pieces of one curve (a cut of an arc) are that curve again.
+            unsplit(&first.curve, &second.curve)?
+        } else {
+            return None;
+        };
         let (start, end, road, elevation) = (first.start, second.end, first.road, first.elevation);
         let (order_a, order_b) = (first.order, second.order);
         self.take_segment(a).ok()?;
         self.take_segment(b).ok()?;
         self.prune_node(node);
-        let curve = CubicBezier3::line(from, to);
         let length = curve.arc_table().length();
         let order = order_a.min(order_b);
         Some(self.insert_segment(def, road, curve, elevation, start, end, length, order))
@@ -743,3 +748,29 @@ pub use invariants::{MAX_LEN, MIN_LEN, Violation};
 
 #[cfg(test)]
 mod tests;
+
+/// The cubic that `f` and `g` were split from (`f` its part up to the split, `g` the rest), in
+/// the plane: the inverse of de Casteljau's split, checked by splitting the result again (within
+/// 5 cm). The heights of the control points run evenly between the ends, like a merged straight
+/// street. `None` when the two are not one curve.
+pub fn unsplit(f: &CubicBezier3, g: &CubicBezier3) -> Option<CubicBezier3> {
+    let (fx, gx) = (f.xz(), g.xz());
+    let (a, b) = (fx[3].distance(fx[2]), gx[1].distance(gx[0]));
+    if a + b < 1e-4 || fx[3].distance(gx[0]) > 0.05 {
+        return None;
+    }
+    let tau = a / (a + b);
+    let p1 = fx[0] + (fx[1] - fx[0]) / tau;
+    let p2 = gx[3] + (gx[2] - gx[3]) / (1.0 - tau);
+    let (y0, y3) = (f.p0.y, g.p3.y);
+    let v = |p: Vec2, k: f32| Vec3::new(p.x, y0 + (y3 - y0) * k, p.y);
+    let c = CubicBezier3 {
+        p0: f.p0,
+        p1: v(p1, 1.0 / 3.0),
+        p2: v(p2, 2.0 / 3.0),
+        p3: g.p3,
+    };
+    let (sf, sg) = c.split(tau);
+    let close = |x: [Vec2; 4], y: [Vec2; 4]| x.iter().zip(y).all(|(p, q)| p.distance(q) < 0.05);
+    (c.is_finite() && close(sf.xz(), fx) && close(sg.xz(), gx)).then_some(c)
+}

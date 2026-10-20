@@ -309,9 +309,10 @@ fn plan_from_anchors(req: &RoadPathRequest, anchors: &[(Anchor, Vec2)]) -> Build
 /// (BUG-085): a cursor just off the kerb joins the street, like in C:S.
 pub const DIRECT_PULL_M: f32 = 4.0;
 
-/// Whether both pieces at the plain cut `id` are straight: then a plan that meets the street there
-/// dissolves the cut (`cp_net`), and the tool does not snap to it. A cut beside a curve (the end of
-/// a rounded corner's bend) stays a node to snap to: it cannot be dissolved (BUG-085).
+/// Whether both pieces at the plain cut `id` are straight, or two pieces of one curve (T-268):
+/// then a plan that meets the street there dissolves the cut (`cp_net`), and the tool does not
+/// snap to it. A cut between a straight street and a curve stays a node to snap to: it cannot be
+/// dissolved (BUG-085).
 fn dissolvable_cut(net: &cp_net::NetGraph, id: cp_net::NodeId) -> bool {
     let straight = |c: &CubicBezier3| {
         let (a, b) = (to_xz(c.p0), to_xz(c.p3));
@@ -320,12 +321,27 @@ fn dissolvable_cut(net: &cp_net::NetGraph, id: cp_net::NodeId) -> bool {
             .iter()
             .all(|p| (to_xz(*p) - a).perp_dot(d).abs() < 0.01)
     };
+    let one_curve = || {
+        let n = net.node(id)?;
+        let [a, b] = n.segments.as_slice() else {
+            return None;
+        };
+        let (a, b) = (net.segment(*a)?, net.segment(*b)?);
+        let (f, g) = if a.end == id && b.start == id {
+            (a, b)
+        } else if b.end == id && a.start == id {
+            (b, a)
+        } else {
+            return None;
+        };
+        cp_net::graph::unsplit(&f.curve, &g.curve)
+    };
     cp_net::is_plain_cut(net, id)
-        && net.node(id).is_some_and(|n| {
+        && (net.node(id).is_some_and(|n| {
             n.segments
                 .iter()
                 .all(|&s| net.segment(s).is_some_and(|s| straight(&s.curve)))
-        })
+        }) || one_curve().is_some())
 }
 
 /// What the road tool puts under the point `p` (§6.8.3 items 1 and 5): through the one
@@ -477,6 +493,17 @@ pub fn preview(
 /// the length jumps to the cell boundaries of the streets beside it. Without content there is
 /// nothing to look up and `req` comes back as it is.
 pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRequest, SnapReport) {
+    quantized_in(view, req, alt, false)
+}
+
+/// [`quantized`]; `bend`: the path is the leg to a curve's bend (T-268), which keeps its direction
+/// snap but goes as far as the cursor.
+fn quantized_in(
+    view: &SimView,
+    req: RoadPathRequest,
+    alt: bool,
+    bend: bool,
+) -> (RoadPathRequest, SnapReport) {
     let Some(content) = view.content.as_deref() else {
         return (req, SnapReport::default());
     };
@@ -487,6 +514,7 @@ pub fn quantized(view: &SimView, req: RoadPathRequest, alt: bool) -> (RoadPathRe
         alt,
         marks: &marks,
         edge_offset: content.road(req.road).width / 2.0,
+        bend,
     };
     // A vertex on or beside a road is that road (BUG-085): the lattice never moves it off.
     let (vertices, _) = path_vertices(&req.path);
@@ -613,7 +641,9 @@ pub fn resolve_cursor(view: &SimView, tool: &RoadTool, hover: Vec2, free: bool) 
     let (req, step) = if free {
         (req, SnapReport::default())
     } else {
-        quantized(view, req, false)
+        // The leg to a curve's bend: the bend goes as far as the cursor (T-268).
+        let bend = tool.mode == RoadMode::Curve && tool.points.len() == 1;
+        quantized_in(view, req, false, bend)
     };
     let (plan, at) = plan_for(view, &req)?;
     let k = if drawing.is_some() { at.len() - 1 } else { 0 };

@@ -296,8 +296,9 @@ fn a_street_dragged_to_a_road_ends_on_it() {
     for road in ["basic_2l", "large_6l"] {
         let db = world().1;
         let hw = db.road(db.road_id(road).unwrap()).width / 2.0;
-        // The user's corner on a 2-lane street; a wide road gets a bend it can take.
-        let r = if hw > 6.0 { 48.0 } else { 24.0 };
+        // The user's corner on a 2-lane street (legs of 5 cells: a radius of 3 cells at the
+        // apex); a wide road gets a bend it can take (T-268: not under 5 cells of radius).
+        let r = if hw > 6.0 { 60.0 } else { 40.0 };
         let k = std::f32::consts::FRAC_1_SQRT_2;
         let targets = [
             ("beside the bend node", p(hw + 2.0, r)),

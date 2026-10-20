@@ -29,7 +29,7 @@
 //! independent of anything but the inputs.
 
 use bevy_math::{Vec2, Vec3};
-use cp_content::{ContentDb, LaneDir, LaneKind, RoadClass, RoadDefId};
+use cp_content::{ContentDb, LaneDir, LaneKind, RoadClass, RoadDef, RoadDefId};
 use cp_core::Cost;
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_terrain::{Terrain, TileOwnership};
@@ -45,6 +45,44 @@ pub const MAX_SEGMENT_LENGTH: f32 = 96.0;
 pub const MIN_SEGMENT_LENGTH_BUILD: f32 = 8.0;
 /// Smallest angle between two segments leaving a node, degrees.
 pub const MIN_JUNCTION_ANGLE_DEG: f32 = 30.0;
+
+/// The smallest radius (metres, of the centre line) a curve of a zoned road may have (T-268, user
+/// decision 2026-10-20): 3 cells for a 2-cell road, 5 cells for a 4-cell one, so the inner kerb
+/// keeps 2 and 3 cells of radius and the lanes follow the offset curve closely. Other roads (the
+/// highways, rail, paths) have no limit here. `None`: no limit.
+pub fn min_curve_radius(def: &RoadDef) -> Option<f32> {
+    if !def.allows_zoning {
+        return None;
+    }
+    Some(if def.width >= 4.0 * ZONE_CELL - 1e-3 {
+        5.0 * ZONE_CELL
+    } else {
+        3.0 * ZONE_CELL
+    })
+}
+
+/// The smallest radius of curvature along `c` in the plane, and where it is (64 samples; a
+/// straight curve has an infinite radius).
+pub fn min_radius_xz(c: &CubicBezier3) -> (f32, Vec2) {
+    let d2 = |t: f32| {
+        let u = 1.0 - t;
+        (c.p2 - c.p1 * 2.0 + c.p0) * (6.0 * u) + (c.p3 - c.p2 * 2.0 + c.p1) * (6.0 * t)
+    };
+    let mut best = (f32::INFINITY, to_xz(c.p0));
+    for i in 0..=64 {
+        let t = i as f32 / 64.0;
+        let (d, dd) = (to_xz(c.derivative(t)), to_xz(d2(t)));
+        let cross = d.perp_dot(dd).abs();
+        if cross < 1e-9 {
+            continue;
+        }
+        let r = d.length().powi(3) / cross;
+        if r < best.0 {
+            best = (r, to_xz(c.point(t)));
+        }
+    }
+    best
+}
 pub const NODE_SNAP_RADIUS: f32 = 12.0;
 pub const SEGMENT_SNAP_RADIUS: f32 = 6.0;
 pub const ANGLE_STEP_DEG: f32 = 15.0;
@@ -397,6 +435,7 @@ impl RoadBuildError {
             | Self::TileNotOwned { pos }
             | Self::NodeOnRoad { pos }
             | Self::RoadsOverlap { pos }
+            | Self::TooTight { pos, .. }
             | Self::RailCrossesRoad { pos }
             | Self::ElevatedClearance { pos }
             | Self::TunnelClearance { pos } => Some(Vec2::new(pos.x, pos.z)),
@@ -441,6 +480,9 @@ impl std::fmt::Display for RoadBuildError {
             Self::TooManySegments { .. } => write!(f, "too many roads meet here"),
             Self::TileNotOwned { .. } => write!(f, "tile not owned"),
             Self::RoadsOverlap { .. } => write!(f, "this road would lie on another road"),
+            Self::TooTight { radius, min, .. } => {
+                write!(f, "curve too tight ({radius:.0} m, min {min:.0} m)")
+            }
             Self::NodeOnRoad { .. } => {
                 write!(f, "a junction would stand on a road it does not join")
             }
@@ -494,6 +536,12 @@ pub enum RoadBuildError {
     SharpAngle {
         pos: Vec3,
         degrees: f32,
+    },
+    /// A curve bends tighter than [`min_curve_radius`] of its road (T-268): `pos` is where.
+    TooTight {
+        pos: Vec3,
+        radius: f32,
+        min: f32,
     },
     TooSteep {
         pos: Vec3,
@@ -1491,6 +1539,17 @@ fn validate_inner(
         };
         let tab = leg.arc_table();
         let len = tab.length();
+        if let Some(min) = min_curve_radius(def) {
+            let (radius, at) = min_radius_xz(&leg);
+            if radius < min - 0.05 {
+                errors.push(RoadBuildError::TooTight {
+                    pos: Vec3::new(at.x, terrain.height(at), at.y),
+                    radius,
+                    min,
+                });
+                continue;
+            }
+        }
         if len < MIN_SEGMENT_LENGTH_BUILD {
             errors.push(RoadBuildError::SegmentTooShort {
                 pos: b.node_pos(v0.node),

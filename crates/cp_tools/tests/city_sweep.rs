@@ -61,6 +61,13 @@ struct Player {
     lattice: Vec2,
     /// What went wrong, per stroke.
     fails: Vec<String>,
+    /// How sloppy the hand is: 1 the sloppy hand, 0 an exact one.
+    slop_k: f32,
+    /// Every straight street is checked to run square to the map.
+    axes: bool,
+    /// After every stroke every cell of a straight street stands on the city's lattice (a city
+    /// with a curve is checked once it stands, see [`arc_city`]).
+    lattice_each: bool,
 }
 
 impl Player {
@@ -80,6 +87,9 @@ impl Player {
             origin: C,
             lattice: C,
             fails: Vec::new(),
+            slop_k: 1.0,
+            axes: true,
+            lattice_each: true,
         }
     }
 
@@ -102,21 +112,39 @@ impl Player {
     }
 
     fn slop(&mut self) -> Vec2 {
-        Vec2::new(self.rand(), self.rand()) * SLOP_M
+        Vec2::new(self.rand(), self.rand()) * SLOP_M * self.slop_k
     }
 
     /// One stroke from about `a` to about `b` (local metres, `x` east, `y` south): a click near
     /// `a`, the ghost at a cursor near `b`, a click there. Checks the ghost, the label and the
-    /// built street; returns the new street's segments.
+    /// built street; returns where its ends stand (local).
     fn stroke(&mut self, name: &str, a: Vec2, b: Vec2) -> Option<(Vec2, Vec2)> {
+        self.draw(name, a, None, b)
+    }
+
+    /// A curve (T-268): a click near `a`, a click near its bend `c`, the ghost at a cursor near
+    /// `b`, a click there.
+    fn curve(&mut self, name: &str, a: Vec2, c: Vec2, b: Vec2) -> Option<(Vec2, Vec2)> {
+        self.draw(name, a, Some(c), b)
+    }
+
+    fn draw(&mut self, name: &str, a: Vec2, bend: Option<Vec2>, b: Vec2) -> Option<(Vec2, Vec2)> {
         let o = self.origin;
         let mut t = self.tool();
+        if bend.is_some() {
+            t.mode = RoadMode::Curve;
+        }
         let start = o + a + self.slop();
-        let turn = Vec2::from_angle((self.rand() * WOBBLE_DEG).to_radians());
+        let turn = Vec2::from_angle((self.rand() * WOBBLE_DEG * self.slop_k).to_radians());
+        let bend = bend.map(|c| o + a + turn.rotate(c - a) + self.slop());
         let end = o + a + turn.rotate(b - a) + self.slop();
         let view = self.sim.view();
         let q = resolve_cursor(&view, &t, start, false).map_or(start, |c| c.cursor);
         let _ = t.click(q);
+        if let Some(c) = bend {
+            let q = resolve_cursor(&view, &t, c, false).map_or(c, |c| c.cursor);
+            let _ = t.click(q);
+        }
         let Some(ghost) = compute_ghost_alt(&view, &t, end, false) else {
             self.fails.push(format!("{name}: no ghost"));
             return None;
@@ -179,27 +207,41 @@ impl Player {
             })
             .map(|(id, _)| id)
             .collect();
-        for &id in &ids {
+        for &id in ids.iter().filter(|_| self.axes && bend.is_none()) {
             let s = view.net.segment(id).unwrap();
-            let d = cp_core::curve::to_xz(s.curve.p3 - s.curve.p0);
-            let deg = d.y.atan2(d.x).to_degrees().rem_euclid(90.0);
-            let off = deg.min(90.0 - deg);
+            let off = off_axes(cp_core::curve::to_xz(s.curve.p3 - s.curve.p0));
             if off > 0.05 {
                 self.fails.push(format!(
                     "{name}: a piece runs {off:.3} deg off the map's axes"
                 ));
             }
         }
+        if bend.is_some() && self.axes {
+            // A curve leaves and arrives square to the map at both its ends.
+            for (id, s) in view
+                .net
+                .segments()
+                .filter(|(id, _)| !before_ids.contains(id))
+            {
+                let _ = id;
+                let c = &s.curve;
+                for (p, t) in [(c.p0, 0.0), (c.p3, 1.0)] {
+                    let p = cp_core::curve::to_xz(p);
+                    if p.distance(pa) < 0.05 || p.distance(pb) < 0.05 {
+                        let off = off_axes(cp_core::curve::to_xz(c.tangent(t)));
+                        if off > 0.05 {
+                            self.fails.push(format!(
+                                "{name}: the curve leaves {off:.3} deg off the map's axes"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
         println!("{} {name}: from {:?} to {:?}", self.road, pa - o, pb - o);
         // No cell shifts: every cell of the city stands on the lattice of the first junction.
-        if name != "top street" || self.origin != C {
-            let off = valid_centres(&view.zones)
-                .into_iter()
-                .filter(|c| {
-                    let g = (*c - self.lattice) / CELL - Vec2::splat(0.5);
-                    (g - g.round()).abs().max_element() * CELL > 0.01
-                })
-                .count();
+        if self.lattice_each && (name != "top street" || self.origin != C) {
+            let off = self.off_lattice(&view.zones, |_| true);
             if off > 0 {
                 self.fails.push(format!(
                     "{name}: {off} cells off the city's lattice after it"
@@ -208,15 +250,96 @@ impl Player {
         }
         Some((pa - o, pb - o))
     }
+
+    /// The valid cells of straight streets with their centre (local) in `area` that are off the
+    /// city's lattice.
+    fn off_lattice(&self, zones: &cp_zone::ZoneGrid, area: impl Fn(Vec2) -> bool) -> usize {
+        lattice_centres(zones)
+            .into_iter()
+            .filter(|c| area(*c - self.origin))
+            .filter(|c| {
+                let g = (*c - self.lattice) / CELL - Vec2::splat(0.5);
+                (g - g.round()).abs().max_element() * CELL > 0.01
+            })
+            .count()
+    }
 }
 
+/// Degrees between `d` and the nearest axis of the map.
+fn off_axes(d: Vec2) -> f32 {
+    let deg = d.y.atan2(d.x).to_degrees().rem_euclid(90.0);
+    deg.min(90.0 - deg)
+}
+
+/// The centres of the valid cells.
 fn valid_centres(zones: &cp_zone::ZoneGrid) -> Vec<Vec2> {
+    cells(zones, |_| true)
+}
+
+/// The centres of the valid cells of straight streets (a curve's cells follow the curve).
+fn lattice_centres(zones: &cp_zone::ZoneGrid) -> Vec<Vec2> {
+    cells(zones, |b| straight(&b.curve))
+}
+
+fn cells(zones: &cp_zone::ZoneGrid, keep: impl Fn(&cp_zone::ZoneBlock) -> bool) -> Vec<Vec2> {
     zones
         .blocks()
+        .filter(|(_, b)| keep(b))
         .flat_map(|(id, _)| zones.block_cells(id))
         .filter(|c| zones.is_valid(*c))
         .filter_map(|c| zones.cell_footprint(c).map(|o| o.c))
         .collect()
+}
+
+fn straight(c: &cp_core::curve::CubicBezier3) -> bool {
+    let (a, b) = (cp_core::curve::to_xz(c.p0), cp_core::curve::to_xz(c.p3));
+    let u = (b - a).normalize_or_zero();
+    [c.p1, c.p2]
+        .iter()
+        .all(|p| (cp_core::curve::to_xz(*p) - a).perp_dot(u).abs() < 0.01)
+}
+
+/// No valid cell lies on a road (more than the zoning's own tolerance) or in another valid cell
+/// (more than a block's own tolerance): what is wrong, if anything.
+fn cells_clear(view: &cp_sim::SimView) -> Vec<String> {
+    let db = view.content.clone().unwrap();
+    let zones = &view.zones;
+    let obbs: Vec<cp_zone::geom::Obb> = zones
+        .blocks()
+        .flat_map(|(id, _)| zones.block_cells(id))
+        .filter(|c| zones.is_valid(*c))
+        .filter_map(|c| zones.cell_footprint(c))
+        .collect();
+    let mut out = Vec::new();
+    for (_, s) in view.net.segments() {
+        let hw = db.road(s.road).width / 2.0;
+        let pts: Vec<Vec2> = (0..=64)
+            .map(|i| cp_core::curve::to_xz(s.curve.point(i as f32 / 64.0)))
+            .collect();
+        for o in &obbs {
+            let d = pts
+                .windows(2)
+                .map(|w| o.distance_to_segment(w[0], w[1]))
+                .fold(f32::MAX, f32::min);
+            if d < hw - cp_zone::grid::ROAD_EPS - 0.02 {
+                out.push(format!(
+                    "a cell at {:?} lies {:.2} m on a road",
+                    o.c,
+                    hw - d
+                ));
+            }
+        }
+    }
+    for (i, a) in obbs.iter().enumerate() {
+        for b in &obbs[i + 1..] {
+            if a.c.distance(b.c) < 2.0 * CELL
+                && a.penetration(b) > cp_zone::grid::PENETRATION_EPS + 0.01
+            {
+                out.push(format!("the cells at {:?} and {:?} overlap", a.c, b.c));
+            }
+        }
+    }
+    out
 }
 
 fn dist_seg(p: Vec2, a: Vec2, b: Vec2) -> f32 {
@@ -409,4 +532,374 @@ fn the_cells_inside_an_l_go_right_into_the_corner() {
         let e = check_block(&pl.sim.view().zones, pl.origin, lo, hi, 4, 4);
         assert!(e.is_empty(), "{road}: the corner: {e:?}");
     }
+}
+
+// ---------- T-268: curves ----------
+
+/// The 3 x 3 city of 18 x 8 blocks (T-268 acceptance (a)) with its top-left corner drawn as a
+/// curve: the top street starts at its first cross street, the curve goes from there round the
+/// corner (its bend clicked near the corner) down to the first long street, and the left street
+/// goes on from the curve's end. Every block the curve does not touch is its whole cells on the
+/// city's lattice; the curve's own block keeps cells on its inner side; no cell lies on a road or
+/// in another cell.
+fn arc_city(road: &'static str, seed: u64) -> Vec<String> {
+    let mut pl = Player::new(road, seed);
+    pl.lattice_each = false;
+    let section = 10.0 * CELL;
+    let xs: Vec<f32> = (0..4).map(|i| i as f32 * 2.0 * section).collect();
+    let ys: Vec<f32> = (0..4).map(|j| j as f32 * section).collect();
+    let v = Vec2::new;
+    if let Some((a, _)) = pl.stroke("top street", v(xs[1], 0.0), v(xs[3], 0.0)) {
+        pl.origin += a - v(xs[1], 0.0);
+        pl.lattice = pl.origin;
+    }
+    pl.curve("corner curve", v(xs[1], 0.0), v(0.0, 0.0), v(0.0, ys[1]));
+    pl.stroke("left street", v(0.0, ys[1]), v(0.0, ys[3]));
+    for (j, &y) in ys.iter().enumerate().skip(1) {
+        pl.stroke(&format!("long street {j}"), v(0.0, y), v(xs[3], y));
+    }
+    for (i, &x) in xs.iter().enumerate().skip(1) {
+        pl.stroke(&format!("cross street {i}"), v(x, 0.0), v(x, ys[3]));
+    }
+    let mut fails = std::mem::take(&mut pl.fails);
+    let view = pl.sim.view();
+    let hw = pl.hw;
+    for i in 0..3 {
+        for j in 0..3 {
+            if (i, j) == (0, 0) {
+                continue;
+            }
+            let lo = v(xs[i] + hw, ys[j] + hw);
+            let hi = v(xs[i + 1] - hw, ys[j + 1] - hw);
+            let cols = ((hi.x - lo.x) / CELL).round() as u32;
+            let rows = ((hi.y - lo.y) / CELL).round() as u32;
+            for e in check_block(&view.zones, pl.origin, lo, hi, cols, rows) {
+                fails.push(format!("block ({i}, {j}) of {cols} x {rows}: {e}"));
+            }
+        }
+    }
+    // The straight streets' cells inside the city, but for the curve's block, on the lattice.
+    let in_city = |l: Vec2| l.x > 0.0 && l.y > 0.0 && l.x < xs[3] && l.y < ys[3];
+    let in_corner = |l: Vec2| l.x < xs[1] && l.y < ys[1];
+    let off = pl.off_lattice(&view.zones, |l| in_city(l) && !in_corner(l));
+    if off > 0 {
+        fails.push(format!(
+            "{off} cells of straight streets off the city's lattice"
+        ));
+    }
+    fails.extend(cells_clear(&view));
+    // The curve's cells on its inner side, in the corner block.
+    let inner = cells(&view.zones, |b| !straight(&b.curve))
+        .into_iter()
+        .filter(|c| {
+            let l = *c - pl.origin;
+            in_city(l) && in_corner(l)
+        })
+        .count();
+    println!("{road} seed {seed}: {inner} cells inside the curve");
+    if inner == 0 {
+        fails.push("no cells inside the curve".into());
+    }
+    fails
+        .into_iter()
+        .map(|f| format!("{road} seed {seed}: {f}"))
+        .collect()
+}
+
+#[test]
+fn a_3x3_city_with_a_curved_corner_is_whole_cells_with_a_sloppy_hand() {
+    let mut fails = Vec::new();
+    for road in ["basic_2l", "medium_4l"] {
+        for seed in [11, 12] {
+            fails.extend(arc_city(road, seed));
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "{} failures:\n{}",
+        fails.len(),
+        fails.join("\n")
+    );
+}
+
+/// T-268 acceptance (b): an S between two parallel streets, drawn as two curves (the second
+/// starts where the first ends and leaves along it): it leaves the first street square at a
+/// section mark and meets the second square at its section mark, a T there.
+#[test]
+fn an_s_of_two_curves_joins_two_parallel_streets_square() {
+    for road in ["basic_2l", "medium_4l"] {
+        for seed in [13, 14] {
+            let mut pl = Player::new(road, seed);
+            pl.lattice_each = false;
+            let section = 10.0 * CELL;
+            // Each half turns a quarter at the smallest legs its road takes comfortably.
+            let l = if pl.hw > 10.0 { section } else { section / 2.0 };
+            let gap = 2.0 * l;
+            let v = Vec2::new;
+            if let Some((a, _)) = pl.stroke("first street", v(0.0, 0.0), v(4.0 * section, 0.0)) {
+                pl.origin += a;
+                pl.lattice = pl.origin;
+            }
+            pl.stroke("left street", v(0.0, 0.0), v(0.0, gap));
+            pl.stroke("second street", v(0.0, gap), v(4.0 * section, gap));
+            let x0 = section;
+            pl.curve("S, first half", v(x0, 0.0), v(x0, l), v(x0 + l, l));
+            let end = pl.curve(
+                "S, second half",
+                v(x0 + l, l),
+                v(x0 + 2.0 * l, l),
+                v(x0 + 2.0 * l, gap),
+            );
+            assert!(pl.fails.is_empty(), "{road} seed {seed}: {:?}", pl.fails);
+            let (_, b) = end.unwrap();
+            assert!(
+                b.distance(v(x0 + 2.0 * l, gap)) < 0.01,
+                "{road} seed {seed}: the S ends at {b:?}"
+            );
+            let view = pl.sim.view();
+            let t = view
+                .net
+                .nodes()
+                .find(|(_, n)| cp_core::curve::to_xz(n.pos).distance(pl.origin + b) < 0.01)
+                .map(|(_, n)| n.segments.len());
+            assert_eq!(t, Some(3), "{road} seed {seed}: a T at the S's end");
+        }
+    }
+}
+
+/// T-268 acceptance (c): a curve tighter than its road takes (3 cells of radius for a 2-cell
+/// road, 5 for a 4-cell one) is red with the mark at its bend, and a click builds nothing; a
+/// curve just wide enough builds.
+#[test]
+fn a_curve_tighter_than_its_road_takes_is_refused_at_its_bend() {
+    for (road, tight, ok) in [("basic_2l", 24.0, 40.0), ("medium_4l", 40.0, 64.0)] {
+        let mut pl = Player::new(road, 15);
+        pl.slop_k = 0.0;
+        let v = Vec2::new;
+        let a = v(2.0 * 10.0 * CELL, 0.0);
+        if let Some((s, _)) = pl.stroke("street", v(0.0, 0.0), a) {
+            pl.origin += s;
+        }
+        let o = pl.origin;
+        let mut t = pl.tool();
+        t.mode = RoadMode::Curve;
+        let view = pl.sim.view();
+        for p in [a, a + v(tight, 0.0)] {
+            let q = resolve_cursor(&view, &t, o + p, false).unwrap().cursor;
+            let _ = t.click(q);
+        }
+        let g = compute_ghost_alt(&view, &t, o + a + v(tight, tight), false).unwrap();
+        assert!(!g.valid, "{road}: a curve of legs {tight} m is not refused");
+        assert!(
+            g.errors.iter().any(|e| e.contains("too tight")),
+            "{road}: {:?}",
+            g.errors
+        );
+        let apex = o + a + v(0.75 * tight, 0.25 * tight);
+        assert!(
+            g.error_marks.iter().any(|m| m.distance(apex) < tight / 2.0),
+            "{road}: the mark is not at the bend: {:?} (bend {apex:?})",
+            g.error_marks
+        );
+        let before = t.clone();
+        let q = resolve_cursor(&view, &t, o + a + v(tight, tight), false)
+            .unwrap()
+            .cursor;
+        let req = t.click(q).unwrap();
+        assert!(
+            chain_commit(Some(&view), &mut t, before, req, false).is_none(),
+            "{road}: the click builds the tight curve"
+        );
+        drop(view);
+        let built = pl.curve("wide enough", a, a + v(ok, 0.0), a + v(ok, ok));
+        assert!(
+            built.is_some() && pl.fails.is_empty(),
+            "{road}: {:?}",
+            pl.fails
+        );
+    }
+}
+
+/// A quarter curve from the end of a street (2-cell road, exact hand): from `(160, 0)` round to
+/// `(320, 160)`, its bend at `(320, 0)`; 260 m long, so the net cuts it in three.
+fn street_and_curve(seed: u64) -> Player {
+    let mut pl = Player::new("basic_2l", seed);
+    pl.slop_k = 0.0;
+    pl.lattice_each = false;
+    let v = Vec2::new;
+    if let Some((s, _)) = pl.stroke("street", v(0.0, 0.0), v(160.0, 0.0)) {
+        pl.origin += s;
+    }
+    pl.curve("curve", v(160.0, 0.0), v(320.0, 0.0), v(320.0, 160.0));
+    assert!(pl.fails.is_empty(), "{:?}", pl.fails);
+    pl
+}
+
+/// T-268 acceptance (d): a street started from the middle of a curve (at its section mark)
+/// leaves it square to the curve there, a T.
+#[test]
+fn a_street_from_a_curve_leaves_it_square() {
+    for seed in [16, 17] {
+        let mut pl = street_and_curve(seed);
+        pl.slop_k = 1.0;
+        pl.axes = false;
+        let v = Vec2::new;
+        // The player aims at the section mark the curve shows near its middle, square out of it.
+        let (a, out) = {
+            let view = pl.sim.view();
+            let seg = view
+                .net
+                .segments()
+                .find(|(_, s)| !straight(&s.curve))
+                .unwrap()
+                .0;
+            let marks = cp_tools::lattice::section_marks(&view.net, seg);
+            let mid = pl.origin + v(290.0, 40.0);
+            let &(_, p, d) = marks
+                .iter()
+                .min_by(|x, y| x.1.distance(mid).total_cmp(&y.1.distance(mid)))
+                .unwrap();
+            (p - pl.origin, v(d.y, -d.x))
+        };
+        let (s, _) = pl
+            .stroke("side street", a, a + out * 80.0)
+            .unwrap_or_else(|| panic!("seed {seed}: {:?}", pl.fails));
+        assert!(pl.fails.is_empty(), "seed {seed}: {:?}", pl.fails);
+        let view = pl.sim.view();
+        let (_, node) = view
+            .net
+            .nodes()
+            .find(|(_, n)| cp_core::curve::to_xz(n.pos).distance(pl.origin + s) < 0.01)
+            .expect("the side street's start is a node");
+        assert_eq!(node.segments.len(), 3, "seed {seed}: a T on the curve");
+        let dirs: Vec<(bool, Vec2)> = node
+            .segments
+            .iter()
+            .map(|&id| {
+                let sg = view.net.segment(id).unwrap();
+                let d = if cp_core::curve::to_xz(sg.curve.p0).distance(pl.origin + s) < 0.01 {
+                    sg.curve.tangent(0.0)
+                } else {
+                    -sg.curve.tangent(1.0)
+                };
+                (straight(&sg.curve), cp_core::curve::to_xz(d).normalize())
+            })
+            .collect();
+        println!("T at {s:?}, aim {a:?} out {out:?}: {dirs:?}");
+        let side = dirs.iter().find(|d| d.0).expect("the side street").1;
+        for (_, d) in dirs.iter().filter(|d| !d.0) {
+            let off = side.dot(*d).asin().to_degrees().abs();
+            assert!(
+                off < 0.05,
+                "seed {seed}: {off:.3} deg off square to the curve"
+            );
+        }
+    }
+}
+
+/// T-268 acceptance (e): a street across a curve makes an X on it, near the curve's own cut and
+/// on it alike, and the net is the same whichever is drawn first.
+#[test]
+fn a_street_across_a_curve_makes_an_x_whichever_comes_first() {
+    let v = Vec2::new;
+    // The curve's lower cut (the net cuts it in three).
+    let cut = {
+        let pl = street_and_curve(18);
+        let view = pl.sim.view();
+        view.net
+            .nodes()
+            .filter(|(_, n)| n.segments.len() == 2)
+            .map(|(_, n)| cp_core::curve::to_xz(n.pos) - pl.origin)
+            .filter(|p| p.x > 170.0 && p.y > 50.0 && p.y < 150.0)
+            .next()
+            .expect("a cut of the curve")
+    };
+    // At the cut, 6 m from it (it is dissolved: the curve is cut anew), and clear of it.
+    for y in [cut.y, cut.y + 6.0, cut.y + 30.0] {
+        let across = |pl: &mut Player| {
+            pl.stroke("across", v(400.0, y), v(240.0, y))
+                .unwrap_or_else(|| panic!("y {y}: {:?}", pl.fails));
+        };
+        let mut a = street_and_curve(18);
+        across(&mut a);
+        let mut b = Player::new("basic_2l", 18);
+        b.slop_k = 0.0;
+        b.lattice_each = false;
+        if let Some((s, _)) = b.stroke("street", v(0.0, 0.0), v(160.0, 0.0)) {
+            b.origin += s;
+        }
+        across(&mut b);
+        b.curve("curve", v(160.0, 0.0), v(320.0, 0.0), v(320.0, 160.0));
+        for pl in [&a, &b] {
+            assert!(pl.fails.is_empty(), "y {y}: {:?}", pl.fails);
+            let net = &pl.sim.view().net;
+            assert_eq!(
+                net.check_invariants(),
+                Vec::<cp_net::Violation>::new(),
+                "y {y}"
+            );
+            let x = net.nodes().filter(|(_, n)| n.segments.len() == 4).count();
+            assert_eq!(x, 1, "y {y}: one X");
+        }
+        // The same roads: every point of one net lies on the other.
+        let (na, nb) = (&a.sim.view().net, &b.sim.view().net);
+        for (n1, n2) in [(na, nb), (nb, na)] {
+            for (_, s) in n1.segments() {
+                for i in 0..=8 {
+                    let p = cp_core::curve::to_xz(s.curve.point(i as f32 / 8.0));
+                    let d = n2
+                        .segments()
+                        .map(|(_, t)| t.curve.nearest_xz(p).1)
+                        .fold(f32::MAX, f32::min);
+                    assert!(d < 0.05, "y {y}: {p:?} is {d:.3} m off the other net");
+                }
+            }
+        }
+    }
+}
+
+/// T-268 (user decision 2026-10-20): a curve's end near a guide lands exactly on it, one far
+/// from every guide lands where the cursor is, on a whole cell from the curve's start.
+#[test]
+fn a_curve_end_takes_a_guide_near_it_else_the_nearest_whole_cell() {
+    let v = Vec2::new;
+    let fresh = || {
+        let mut pl = Player::new("basic_2l", 19);
+        pl.slop_k = 0.0;
+        pl.lattice_each = false;
+        if let Some((s, _)) = pl.stroke("street", v(0.0, 0.0), v(320.0, 0.0)) {
+            pl.origin += s;
+        }
+        pl
+    };
+    // A whole section along and across from the start, 7 m and 6 m off.
+    let mut pl = fresh();
+    let (_, b) = pl
+        .curve(
+            "to a section",
+            v(160.0, 0.0),
+            v(160.0, 60.0),
+            v(240.0 + 7.0, 80.0 - 6.0),
+        )
+        .unwrap();
+    assert!(b.distance(v(240.0, 80.0)) < 0.01, "a section: {b:?}");
+    // The square through the street's end, 5 m off: on it, a whole cell down from the start.
+    let mut pl = fresh();
+    let (_, b) = pl
+        .curve(
+            "to a street's line",
+            v(160.0, 0.0),
+            v(160.0, 50.0),
+            v(325.0, 58.0),
+        )
+        .unwrap();
+    assert!(b.distance(v(320.0, 56.0)) < 0.01, "a street's line: {b:?}");
+    // Nothing near: the nearest whole cell.
+    let mut pl = fresh();
+    pl.axes = false;
+    let (_, b) = pl
+        .curve("free", v(160.0, 0.0), v(160.0, 50.0), v(290.5, 110.5))
+        .unwrap();
+    assert!(b.distance(v(288.0, 112.0)) < 0.01, "free: {b:?}");
+    assert!(pl.fails.is_empty(), "{:?}", pl.fails);
 }

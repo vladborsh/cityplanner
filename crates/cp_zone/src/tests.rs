@@ -1615,6 +1615,19 @@ mod layout_v2 {
         let cells = valid_cells(&w.grid);
         for i in 0..cells.len() {
             for j in i + 1..cells.len() {
+                // Cells of one block on the inner side of the curve may wedge into each other
+                // up to the block's tolerance (T-268: they stand a cell apart along the kerb);
+                // cells of two blocks do not overlap.
+                if cells[i].0.block == cells[j].0.block {
+                    let p = cells[i].1.penetration(&cells[j].1);
+                    assert!(
+                        p <= PENETRATION_EPS,
+                        "{:?} {:?} interpenetrate {p} m",
+                        cells[i].0,
+                        cells[j].0
+                    );
+                    continue;
+                }
                 let a = quad_intersection_area(&cells[i].1.corners(), &cells[j].1.corners());
                 assert!(
                     a <= 0.05,
