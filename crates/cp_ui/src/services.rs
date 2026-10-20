@@ -181,24 +181,29 @@ pub fn services_contents(ui: &mut egui::Ui, rows: &[SectorBalance]) -> Option<Se
     clicked
 }
 
-/// The rows of the City services window that belong to `overlay` and are open: Water gives
-/// water and sewage, Education the three schools, a service its own row; others none.
+/// The rows of the City services window that belong to `overlay` and are open: Education
+/// the three schools, a service its own row; others none. Power, water and sewage have their
+/// gauges in the top bar (T-279), so the Power and Water overlays show no panel.
 pub fn overlay_rows(view: &SimView, overlay: Overlay) -> Vec<&SectorBalance> {
     view.city_services()
         .iter()
-        .filter(|r| !r.locked && overlay_of(r.sector) == overlay)
+        .filter(|r| {
+            !r.locked
+                && overlay_of(r.sector) == overlay
+                && !crate::gauges::SECTORS.contains(&r.sector)
+        })
         .collect()
 }
 
 /// Offset of the overlay panel from the top-right screen corner: right margin, and just
 /// under the top bar.
-fn overlay_panel_offset() -> egui::Vec2 {
-    egui::vec2(-12.0, Sizes::TOP_BAR_H + 8.0)
+fn overlay_panel_offset(inset: f32) -> egui::Vec2 {
+    egui::vec2(-(inset + 4.0), Sizes::TOP_BAR_H + 8.0)
 }
 
 /// A compact panel with the rows of the active overlay (T-241), top-right under the top bar:
 /// the same bars as the City services window. Nothing for an overlay without a service.
-pub fn overlay_services_panel(ctx: &egui::Context, view: &SimView, overlay: Overlay) {
+pub fn overlay_services_panel(ctx: &egui::Context, view: &SimView, overlay: Overlay, inset: f32) {
     let rows = overlay_rows(view, overlay);
     if rows.is_empty() {
         return;
@@ -206,7 +211,7 @@ pub fn overlay_services_panel(ctx: &egui::Context, view: &SimView, overlay: Over
     // BUG-074: top-right of the map, just under the top bar, so it never covers the build
     // menu (left) or the palette / demand panel.
     egui::Area::new(egui::Id::new("overlay_services"))
-        .anchor(egui::Align2::RIGHT_TOP, overlay_panel_offset())
+        .anchor(egui::Align2::RIGHT_TOP, overlay_panel_offset(inset))
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 egui::Grid::new("overlay_services_rows")
@@ -320,8 +325,9 @@ mod tests {
         assert_eq!(overlay_of(Sector::Sorting), Overlay::Mail);
     }
 
-    /// T-241: an active service overlay shows its rows (Water also sewage) in a compact panel;
-    /// no overlay, or one without a service, shows none; a locked row stays out.
+    /// T-241: an active service overlay shows its rows (Education the schools) in a compact
+    /// panel; no overlay, or one without a service, shows none; a locked row stays out. T-279:
+    /// power, water and sewage are the top bar's gauges, never in this panel.
     #[test]
     fn the_overlay_panel_shows_the_rows_of_the_active_overlay_only() {
         let mut view = cp_sim::SimRunner::new(1).view();
@@ -330,22 +336,30 @@ mod tests {
             row(Sector::Water, 300.0, 28.0, false),
             row(Sector::Sewage, 10.0, 40.0, false),
             row(Sector::Power, 50.0, 50.0, false),
+            row(Sector::Elementary, 300.0, 28.0, false),
+            row(Sector::HighSchool, 10.0, 40.0, false),
+            row(Sector::Garbage, 50.0, 50.0, false),
             row(Sector::University, 0.0, 5.0, true),
         ];
         view.city = std::sync::Arc::new(stats);
         let sectors =
             |o| -> Vec<Sector> { overlay_rows(&view, o).iter().map(|r| r.sector).collect() };
-        assert_eq!(sectors(Overlay::Water), [Sector::Water, Sector::Sewage]);
-        assert_eq!(sectors(Overlay::Power), [Sector::Power]);
-        assert!(sectors(Overlay::Education).is_empty(), "locked");
+        assert_eq!(
+            sectors(Overlay::Education),
+            [Sector::Elementary, Sector::HighSchool],
+            "the locked university stays out"
+        );
+        assert_eq!(sectors(Overlay::Garbage), [Sector::Garbage]);
+        assert!(sectors(Overlay::Water).is_empty(), "a gauge");
+        assert!(sectors(Overlay::Power).is_empty(), "a gauge");
         assert!(sectors(Overlay::Off).is_empty());
 
         let drawn = |o| -> Vec<String> {
             let ctx = egui::Context::default();
             let mut out = Vec::new();
-            for t in [0.0, 0.1] {
+            for t in [0.0, 0.1, 0.2, 0.3] {
                 out = frame_texts(&ctx, input(t, vec![]), |ui| {
-                    overlay_services_panel(ui.ctx(), &view, o);
+                    overlay_services_panel(ui.ctx(), &view, o, 0.0);
                 })
                 .into_iter()
                 .map(|(s, _)| s)
@@ -353,11 +367,13 @@ mod tests {
             }
             out
         };
-        let on = drawn(Overlay::Water);
+        let on = drawn(Overlay::Education);
         assert!(on.contains(&"300 / 28 units/day".to_string()), "{on:?}");
         assert!(on.contains(&"10 / 40 units/day".to_string()));
         assert!(!on.iter().any(|t| t.starts_with("50 / 50")));
         assert!(drawn(Overlay::Off).is_empty());
+        assert!(drawn(Overlay::Water).is_empty());
+        assert!(drawn(Overlay::Power).is_empty());
     }
 
     /// BUG-074: the overlay panel sits top-right under the top bar, clear of the palette and
@@ -367,8 +383,8 @@ mod tests {
         let mut view = cp_sim::SimRunner::new(1).view();
         let mut stats = (*view.city).clone();
         stats.services = vec![
-            row(Sector::Water, 300.0, 28.0, false),
-            row(Sector::Sewage, 10.0, 40.0, false),
+            row(Sector::Elementary, 300.0, 28.0, false),
+            row(Sector::HighSchool, 10.0, 40.0, false),
         ];
         view.city = std::sync::Arc::new(stats);
         for (w, h) in [(1280.0, 720.0), (1920.0, 1080.0), (2560.0, 1440.0)] {
@@ -380,7 +396,7 @@ mod tests {
                     egui::vec2(w, h),
                 ));
                 frame_texts(&ctx, raw, |ui| {
-                    overlay_services_panel(ui.ctx(), &view, Overlay::Water);
+                    overlay_services_panel(ui.ctx(), &view, Overlay::Education, 0.0);
                 });
             }
             let r = ctx

@@ -632,10 +632,6 @@ mod tests {
                     &mut root,
                     &view,
                     &mut cp_tools::CommandOutbox::default(),
-                    &mut OverlayState::default(),
-                    &mut cp_render::LightingSettings::default(),
-                    &mut UiState::default(),
-                    &mut crate::files::FileMenu::default(),
                 );
                 bar = rects.bar;
             });

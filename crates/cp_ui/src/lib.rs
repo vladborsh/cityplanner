@@ -22,6 +22,7 @@ pub mod demolish_confirm;
 pub mod districts;
 pub mod files;
 pub mod frame;
+pub mod gauges;
 mod glyphs;
 pub mod grading;
 pub mod icons;
@@ -32,6 +33,7 @@ pub mod lines;
 pub mod menus;
 pub mod metrics;
 pub mod milestone;
+pub mod overlays_panel;
 pub mod palette;
 pub mod panels;
 pub mod parks;
@@ -96,7 +98,7 @@ impl Plugin for UiPlugin {
                     districts::draw_labels,
                     land::land_overlay,
                     transit::transit_labels,
-                    utility_legend::utility_legend,
+                    utility_legend::source_captions,
                     parks::draw_labels,
                     service_marks::draw_service_marks,
                 )
@@ -252,11 +254,10 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     }
     keyboard_shortcuts(ctx, state, tools, overlay, outbox);
     if panels::view_hotkey(ctx) {
-        state.view_menu_open = !state.view_menu_open;
-        state.settings_open = false;
+        state.overlays_collapsed = !state.overlays_collapsed;
     }
     let mut root = root_ui(ctx);
-    top_bar(&mut root, view, outbox, overlay, lighting, state, files);
+    top_bar(&mut root, view, outbox);
     // The settings menu edits `state.prefs`; push it out to where it takes effect (T-069).
     if *camera != state.prefs.camera {
         *camera = state.prefs.camera.clone();
@@ -267,7 +268,8 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     palette(&mut root, state, view.content.as_deref());
     menus::apply(state, tools, overlay, Some(view));
     tool_panel(&mut root, state, Some(view), tools, overlay, outbox);
-    demand_panel::demand_panel(&mut root, view, state, tools);
+    demand_panel::demand_panel(&mut root, view, state, tools, overlay);
+    overlays_panel::overlays_panel(ctx, state, overlay, lighting, files);
     remember_map_rect(ctx, &root);
     bulldozer_bar::bulldozer_bar(ctx, tools);
     cursor_label::cursor_label(ctx, tools);
@@ -277,7 +279,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         windows::demand_window(ctx, &mut st.demand_open, view);
         metrics::metrics_window(ctx, &mut st.metrics_open, view);
         services::services_window(ctx, &mut st.services_open, view, overlay);
-        services::overlay_services_panel(ctx, view, overlay.active);
+        services::overlay_services_panel(ctx, view, overlay.active, overlays_panel::width(st));
         lines::lines_window(ctx, &mut st.lines_open, view, &mut st.lines, outbox);
         policies::city_policies_window(ctx, &mut st.policies_open, view, outbox);
     }
@@ -635,10 +637,11 @@ mod capture_tests {
         let base = rig.owned();
         // Top bar and bottom demand bar across the whole width.
         assert_eq!(row(&base, 8), 16, "top bar");
+        // T-289: the palette, and the overlays panel at the top right (two points of the grid).
         assert_eq!(
             row(&base, 328),
-            1,
-            "only the palette is owned in the middle row"
+            3,
+            "the palette and the overlays panel are owned in the middle row"
         );
         assert_eq!(row(&base, 710), 16, "bottom bar");
         // The palette on the left.
@@ -658,7 +661,7 @@ mod capture_tests {
     fn every_window_and_menu_owns_the_pointer_where_it_is_drawn() {
         let base = Rig::new().owned().len();
         type Open = fn(&mut Rig);
-        let surfaces: [(&str, Open); 10] = [
+        let surfaces: [(&str, Open); 9] = [
             ("budget", |r| r.state.budget_open = true),
             ("demand", |r| r.state.demand_open = true),
             ("metrics", |r| r.state.metrics_open = true),
@@ -667,7 +670,6 @@ mod capture_tests {
             ("policies", |r| r.state.policies_open = true),
             ("debug", |r| r.state.debug_open = true),
             ("saves", |r| r.files.open = true),
-            ("view menu", |r| r.state.view_menu_open = true),
             ("settings", |r| r.state.settings_open = true),
         ];
         for (name, open) in surfaces {
@@ -676,6 +678,50 @@ mod capture_tests {
             let n = rig.owned().len();
             assert!(n > base, "{name} owns no pointer area ({n} vs {base})");
         }
+    }
+
+    /// The texts one full frame of the UI paints, with where each starts (the UI settled).
+    fn texts(rig: &mut Rig) -> Vec<(String, egui::Pos2)> {
+        let ctx = egui::Context::default();
+        egui_extras::install_image_loaders(&ctx);
+        let mut out = Vec::new();
+        for n in 0..5 {
+            out =
+                crate::testutil::frame_texts(&ctx, input(0.05 * f64::from(n + 1), vec![]), |ui| {
+                    rig.draw(ui.ctx())
+                });
+        }
+        out
+    }
+
+    /// T-289: the balance and the population are at the left of the bottom panel, not in the top
+    /// bar; the bottom-left legend of the power and water overlays is gone (T-279).
+    #[test]
+    fn money_and_population_are_in_the_bottom_panel_and_no_legend_stands_at_the_bottom_left() {
+        let mut rig = Rig::new();
+        rig.overlay.open(cp_render::Overlay::Power);
+        let all = texts(&mut rig);
+        let money = all
+            .iter()
+            .find(|(t, _)| t.starts_with("💰"))
+            .expect("money");
+        let pop = all
+            .iter()
+            .find(|(t, _)| t.starts_with("☻"))
+            .expect("population");
+        for (what, at) in [("money", money.1), ("population", pop.1)] {
+            assert!(at.y > 560.0, "{what} is in the bottom panel, not at {at:?}");
+            assert!(at.x < 420.0, "{what} is at the left, not at {at:?}");
+        }
+        for (t, at) in &all {
+            assert!(
+                !t.contains("supply / demand (") && !t.starts_with("Network 1"),
+                "a legend: {t:?} at {at:?}"
+            );
+        }
+        // The clock and the speeds are all the top bar holds.
+        assert!(all.iter().any(|(t, at)| at.y < 44.0 && t.contains("day")));
+        assert!(!all.iter().any(|(t, at)| at.y < 44.0 && t.starts_with("💰")));
     }
 
     #[test]

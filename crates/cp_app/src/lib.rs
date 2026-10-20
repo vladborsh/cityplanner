@@ -162,6 +162,8 @@ impl Plugin for GamePlugin {
                 },
                 grading_open: self.grading_panel,
                 category: self.category,
+                // T-289: a menu started open takes up its tool and shows its overlay, as a click would.
+                entered: self.category,
                 ..default()
             })
             .insert_resource(settings::SettingsSaver::new(settings, hidden))
