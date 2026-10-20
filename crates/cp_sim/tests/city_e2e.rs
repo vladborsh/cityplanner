@@ -374,7 +374,11 @@ fn a_city_goes_through_abandonment_and_demolition_consistently() {
     };
 
     run(&mut sim, 35 * TICKS_PER_DAY - 300);
-    assert_eq!(in_trouble(&sim), 0, "not yet 35 days (T-282: abandon_days 7 -> 35)");
+    assert_eq!(
+        in_trouble(&sim),
+        0,
+        "not yet 35 days (T-282: abandon_days 7 -> 35)"
+    );
     run(&mut sim, 600);
     let abandoned = in_trouble(&sim);
     assert!(
