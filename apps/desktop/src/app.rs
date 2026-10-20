@@ -446,8 +446,27 @@ fn exit_on_load_failure(failed: Option<Res<MapLoadFailed>>, mut exit: MessageWri
 /// `--headless N`: N ticks without a window, then the F3 window's numbers on stdout:
 /// the periodic checksum from `SimView`, an on-demand checksum, and median ms per phase.
 fn headless(mut sim: SimRunner, ticks: u64) {
+    // The slowest ticks with their phases (T-281: what a sim spike is).
+    let mut slow: Vec<(f64, u64, Vec<u64>)> = Vec::new();
     for _ in 0..ticks {
         sim.tick_once();
+        if let Some(row) = cp_app::last_tick_phases(&sim) {
+            let total = row.iter().sum::<u64>() as f64 / 1e6;
+            slow.push((total, sim.tick().0, row));
+        }
+    }
+    slow.sort_by(|a, b| b.0.total_cmp(&a.0));
+    for (total, tick, row) in slow.iter().take(25) {
+        let phases: Vec<String> = cp_sim::SimPhase::ORDER
+            .iter()
+            .zip(row)
+            .filter(|(_, ns)| **ns > 500_000)
+            .map(|(p, ns)| format!("{p:?}={:.1}", *ns as f64 / 1e6))
+            .collect();
+        println!(
+            "DEBUG slow_tick tick={tick} total_ms={total:.1} {}",
+            phases.join(" ")
+        );
     }
     let view = sim.view();
     match view.stats.checksum {

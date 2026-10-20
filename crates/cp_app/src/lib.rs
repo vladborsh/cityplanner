@@ -791,6 +791,14 @@ pub struct FrameSim {
     pub view_ms: f32,
 }
 
+/// The last tick's phases, ns each, in [`cp_sim::SimPhase::ORDER`] (T-281: the slowest ticks of
+/// `--headless`).
+pub fn last_tick_phases(sim: &SimRunner) -> Option<Vec<u64>> {
+    sim.world()
+        .get_resource::<PhaseClock>()
+        .and_then(|c| c.samples.back().map(|row| row.to_vec()))
+}
+
 pub fn phase_times(sim: &SimRunner) -> PhaseTimes {
     let means = sim
         .world()
