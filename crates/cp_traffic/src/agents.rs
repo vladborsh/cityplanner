@@ -482,13 +482,19 @@ pub(crate) fn access_of(net: &NetGraph, b: &Building) -> Option<Access> {
 }
 
 /// The path request of a move-in car (T-118): from the lane leaving the `Outside` node nearest
-/// to `home` to the lane of the home's access point.
+/// to `home` that has one to the lane of the home's access point.
 fn move_in_request(net: &NetGraph, pnet: &PathNetwork, home: &Building) -> Option<PathRequest> {
     let g = pnet.graph();
+    // Only a node a car can leave by (BUG-095: the outbound carriageway's end has no lane into
+    // the city, and the homes nearest it got no move-in car).
     let (node, segment) = net
         .nodes()
         .filter(|(_, n)| n.kind == NodeKind::Outside && !cp_net::node_is_rail(net, n))
         .filter_map(|(id, n)| Some((id, *n.segments.first()?, n.pos)))
+        .filter(|(id, seg, _)| {
+            net.segment(*seg)
+                .is_some_and(|s| g.entry_lane(*seg, s.start == *id).is_some())
+        })
         .min_by(|a, b| {
             let d = |p: bevy_math::Vec3| to_xz(p).distance_squared(home.pos);
             d(a.2).total_cmp(&d(b.2)).then(a.0.cmp(&b.0))

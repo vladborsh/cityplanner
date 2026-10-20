@@ -17,7 +17,7 @@ use cp_building::{BuildingGrid, BuildingId, BuildingState};
 use cp_content::{PolicyKind, SimContent, VehicleKind, ZoneType};
 use cp_core::time::{TICKS_PER_DAY, TICKS_PER_HOUR, TICKS_PER_WEEK};
 use cp_core::{Cost, SimLimits, SimRng, Tick};
-use cp_net::{NetGraph, NodeId, NodeKind, RailReach, node_is_rail};
+use cp_net::{NetGraph, NodeId, RailReach};
 use cp_traffic::{Agents, RunId, RunPoint, RunState, ServiceRuns, WALK_KIND};
 use serde::{Deserialize, Serialize};
 
@@ -148,7 +148,10 @@ pub fn run_tourists(
                             },
                         );
                     }
-                } else if runs.continue_run(id, RunPoint::Outside(t.entry)).is_ok() {
+                } else if runs
+                    .continue_run(id, RunPoint::Outside(exit_near(&net, db, t.entry)))
+                    .is_ok()
+                {
                     if let Some(v) = tourists.visits.get_mut(&id) {
                         v.phase = TouristPhase::Leaving;
                     }
@@ -166,13 +169,8 @@ pub fn run_tourists(
     }
 
     // 2. New tourists.
-    let entries: Vec<(NodeId, Vec2)> = net
-        .nodes()
-        .filter(|(_, n)| {
-            n.kind == NodeKind::Outside && !n.segments.is_empty() && !node_is_rail(&net, n)
-        })
-        .map(|(id, n)| (id, Vec2::new(n.pos.x, n.pos.z)))
-        .collect();
+    // They drive in where a car can enter the city (BUG-095).
+    let (entries, _) = cp_net::outside_ways(&net, db);
     if entries.is_empty() {
         return;
     }
@@ -329,4 +327,21 @@ pub fn bring_by_train(
             },
         );
     }
+}
+
+/// Where a tourist that came in at `entry` drives out of the map (BUG-095): the exit nearest to
+/// it (the entry highway's other carriageway), else `entry` itself.
+fn exit_near(net: &cp_net::NetGraph, db: &cp_content::ContentDb, entry: NodeId) -> NodeId {
+    let Some(at) = net.node(entry).map(|n| Vec2::new(n.pos.x, n.pos.z)) else {
+        return entry;
+    };
+    let (_, exits) = cp_net::outside_ways(net, db);
+    exits
+        .into_iter()
+        .min_by(|a, b| {
+            a.1.distance(at)
+                .total_cmp(&b.1.distance(at))
+                .then(a.0.cmp(&b.0))
+        })
+        .map_or(entry, |(id, _)| id)
 }

@@ -25,13 +25,12 @@ use crate::fleet::TransitLedger;
 use crate::hubs::{exit_for, hub_sites, is_hub_def};
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Res, ResMut};
-use bevy_math::Vec2;
 use cp_building::{BuildingFlags, BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::CitizenGrid;
 use cp_content::{CargoKind, IndustryRole, SimContent, VehicleKind, ZoneType};
 use cp_core::time::{TICKS_PER_DAY, TICKS_PER_HOUR};
 use cp_core::{Cost, Tick};
-use cp_net::{NetGraph, NodeId, NodeKind, node_is_rail};
+use cp_net::{NetGraph, NodeId};
 use cp_traffic::{Agents, RunId, RunPoint, RunState, ServiceRuns};
 use serde::{Deserialize, Serialize};
 
@@ -245,14 +244,10 @@ pub fn run_goods(
     let filled = |id: BuildingId| workers.get(id.index as usize).copied().unwrap_or(0) as f32;
     let empty_after = (bal.goods_empty_days * TICKS_PER_DAY as f32) as u64;
 
-    // The entry highways: `Outside` nodes with a road (not the railway's).
-    let entries: Vec<(NodeId, Vec2)> = net
-        .nodes()
-        .filter(|(_, n)| {
-            n.kind == NodeKind::Outside && !n.segments.is_empty() && !node_is_rail(&net, n)
-        })
-        .map(|(id, n)| (id, Vec2::new(n.pos.x, n.pos.z)))
-        .collect();
+    // The entry highways' `Outside` nodes (not the railway's): an import starts where a truck can
+    // drive into the city, an export ends where one can drive out (BUG-095: the nearest node of
+    // either carriageway sent half the trucks the wrong way, and they never got there).
+    let (entries, exits) = cp_net::outside_ways(&net, db);
     // The working cargo stations (T-216): the exports and imports go through the nearest of them
     // and the entry highways.
     let sites = hub_sites(db, &transit, &rail, &buildings);
@@ -311,7 +306,7 @@ pub fn run_goods(
                                 Some((Endpoint::Building(shop), RunPoint::Building(shop)))
                             }
                             // Nobody to sell to nearby: the goods go out of the country.
-                            None => exit_for(&entries, &sites, b.pos).map(|e| (e, point(e))),
+                            None => exit_for(&exits, &sites, b.pos).map(|e| (e, point(e))),
                         }
                     };
                     if let Some((to, point)) = to {

@@ -37,7 +37,8 @@ pub use junction::{
 pub use model::*;
 pub use plan::{Anchor, BuildPlan, PlanPiece};
 pub use reach::{
-    EntryReach, RailReach, is_rail_segment, node_is_rail, update_entry_reach, update_rail_reach,
+    EntryReach, RailReach, is_rail_segment, node_is_rail, outside_ways, update_entry_reach,
+    update_rail_reach,
 };
 pub use run::road_run;
 pub use stretches::{

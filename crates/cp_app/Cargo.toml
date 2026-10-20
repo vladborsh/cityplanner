@@ -36,3 +36,7 @@ cp_prof.workspace = true
 # Rendering features are enabled in client crates only; sim crates never see them.
 # `bevy_audio` + `wav`: the sound effects (T-189); the desktop client turns the device off for --hidden.
 bevy = { workspace = true, features = ["3d", "bevy_audio", "wav"] }
+
+[dev-dependencies]
+cp_citizen.workspace = true
+cp_economy.workspace = true

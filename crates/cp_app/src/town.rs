@@ -54,6 +54,39 @@ pub fn camera(name: &str) -> Option<(Vec3, Vec3)> {
 /// Builds the town (see the module docs). Returns the residents it reached and the commands
 /// the sim refused.
 pub fn build_town(sim: &mut SimRunner, residents: u32) -> (u32, Vec<String>) {
+    let mut rejected = lay_out_town(sim);
+    let o = origin();
+    let ys: Vec<f32> = (0..=ROWS).map(|j| j as f32 * DY).collect();
+    let x1 = COLS as f32 * DX;
+    let decay = sim.world().resource::<cp_economy::Decay>().clone();
+    let demand = *sim.world().resource::<cp_building::Demand>();
+    *sim.world_mut().resource_mut::<cp_economy::Decay>() = cp_economy::Decay::disabled();
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
+    let population = |sim: &SimRunner| {
+        sim.world()
+            .get_resource::<cp_sim::stats::CityStats>()
+            .map_or(0, |c| c.population)
+    };
+    let start = sim.tick().0;
+    while population(sim) < residents && sim.tick().0 - start < MAX_TICKS {
+        sim.tick_once();
+    }
+    let rows: Vec<f32> = ys.iter().map(|y| o.y + y).collect();
+    scene::supply_town(sim, o.x, o.x + x1, &rows);
+    *sim.world_mut().resource_mut::<cp_economy::Decay>() = decay;
+    *sim.world_mut().resource_mut::<cp_building::Demand>() = demand;
+    rejected.extend(
+        sim.world_mut()
+            .resource_mut::<bevy_ecs::message::Messages<cp_core::CommandOutcome>>()
+            .drain()
+            .filter_map(|o| o.result.err().map(|e| e.to_string())),
+    );
+    (population(sim), rejected)
+}
+
+/// The town's streets and zones as a player lays them out (the module docs), nothing grown yet;
+/// the commands the sim refused. BUG-095's probe grows it with the game's own demand.
+pub fn lay_out_town(sim: &mut SimRunner) -> Vec<String> {
     use cp_content::ZoneType;
     use cp_zone::{ZoneCellRef, ZoneGrid};
     sim.world_mut()
@@ -65,7 +98,7 @@ pub fn build_town(sim: &mut SimRunner, residents: u32) -> (u32, Vec<String>) {
     let xs: Vec<f32> = (0..=COLS).map(|i| i as f32 * DX).collect();
     let ys: Vec<f32> = (0..=ROWS).map(|j| j as f32 * DY).collect();
     let (x1, y1) = (xs[COLS], ys[ROWS]);
-    let mut rejected = {
+    let rejected = {
         let mut h = Hand::new(sim, o, road);
         let v = Vec2::new;
         h.street(v(0.0, 0.0), v(x1, 0.0));
@@ -109,30 +142,7 @@ pub fn build_town(sim: &mut SimRunner, residents: u32) -> (u32, Vec<String>) {
             zones.set_zone(cell, zone);
         }
     }
-    let decay = sim.world().resource::<cp_economy::Decay>().clone();
-    let demand = *sim.world().resource::<cp_building::Demand>();
-    *sim.world_mut().resource_mut::<cp_economy::Decay>() = cp_economy::Decay::disabled();
-    *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
-    let population = |sim: &SimRunner| {
-        sim.world()
-            .get_resource::<cp_sim::stats::CityStats>()
-            .map_or(0, |c| c.population)
-    };
-    let start = sim.tick().0;
-    while population(sim) < residents && sim.tick().0 - start < MAX_TICKS {
-        sim.tick_once();
-    }
-    let rows: Vec<f32> = ys.iter().map(|y| o.y + y).collect();
-    scene::supply_town(sim, o.x, o.x + x1, &rows);
-    *sim.world_mut().resource_mut::<cp_economy::Decay>() = decay;
-    *sim.world_mut().resource_mut::<cp_building::Demand>() = demand;
-    rejected.extend(
-        sim.world_mut()
-            .resource_mut::<bevy_ecs::message::Messages<cp_core::CommandOutcome>>()
-            .drain()
-            .filter_map(|o| o.result.err().map(|e| e.to_string())),
-    );
-    (population(sim), rejected)
+    rejected
 }
 
 #[cfg(test)]

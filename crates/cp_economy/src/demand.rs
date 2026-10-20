@@ -19,7 +19,10 @@
 //! * `C = citizens × shop jobs per citizen − commercial job slots + counted unemployed × job
 //!   weight + base_C` (BUG-076)
 //! * `I = commercial job slots × industry per shop job − industrial job slots + unemployed
-//!   adults of education ≤ 1 + counted unemployed beyond the manual ones × job weight + base_I`
+//!   adults of education ≤ 1 + counted unemployed beyond the manual ones × job weight + base_I
+//!   + the industrial jobs that would make the goods of the shops out of goods` (BUG-095: the
+//!   job slots of the `NO_GOODS` shops × `goods_per_job / goods_per_worker`, counted over the
+//!   whole grid when the cycle is published, not in the sums: no save change)
 //! * move-in `= Σ weight(level) × free job slots − unemployed adults + base_R`: `R` without the
 //!   vacant homes, the gate of households moving into existing homes
 //! * `O = unemployed adults of education ≥ 2 − free office job slots + base_O`
@@ -29,7 +32,7 @@
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Res, ResMut};
-use cp_building::{BuildingGrid, BuildingState, DEMAND_PERIOD, Demand};
+use cp_building::{BuildingFlags, BuildingGrid, BuildingState, DEMAND_PERIOD, Demand};
 use cp_citizen::CitizenGrid;
 use cp_content::{Balance, SimContent, ZoneType};
 use cp_core::Tick;
@@ -96,6 +99,24 @@ impl DemandAcc {
             clamp(self.free_jobs_weighted - counted + b.demand_base[0]),
         ]
     }
+}
+
+/// The industrial jobs the shops out of goods ask for (BUG-095): their job slots × the goods a
+/// shop job sells ÷ the goods an industrial job makes. Active shops with `NO_GOODS`, id order.
+pub fn shortage_jobs(buildings: &BuildingGrid, db: &cp_content::ContentDb, b: &Balance) -> f32 {
+    if b.goods_per_worker <= 0.0 {
+        return 0.0;
+    }
+    let slots: u32 = buildings
+        .iter()
+        .filter(|(_, bl)| {
+            bl.state == BuildingState::Active && bl.flags.0 & BuildingFlags::NO_GOODS != 0
+        })
+        .map(|(_, bl)| db.building(bl.def))
+        .filter(|d| matches!(d.zone, ZoneType::ComLow | ZoneType::ComHigh))
+        .map(|d| d.jobs.iter().map(|j| u32::from(*j)).sum::<u32>())
+        .sum();
+    slots as f32 * b.goods_per_job / b.goods_per_worker
 }
 
 /// One step of the smoothing: closes `ema` of the gap to `raw`.
@@ -180,7 +201,10 @@ pub fn update_demand(
     acc.seen += 1;
 
     if bucket as u64 == DEMAND_PERIOD - 1 && u64::from(acc.seen) == DEMAND_PERIOD {
-        let raw = acc.raw(bal);
+        let mut raw = acc.raw(bal);
+        if let Some(db) = db {
+            raw[2] = (raw[2] + shortage_jobs(&buildings, db, bal)).clamp(-LIMIT, LIMIT);
+        }
         demand.r = smooth(demand.r, raw[0], bal.demand_ema);
         demand.c = smooth(demand.c, raw[1], bal.demand_ema);
         demand.i = smooth(demand.i, raw[2], bal.demand_ema);

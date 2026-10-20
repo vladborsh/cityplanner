@@ -13,14 +13,13 @@
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Res, ResMut};
-use bevy_math::Vec2;
 use cp_building::{BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::CitizenGrid;
 use cp_content::{CargoKind, IndustryRole, SimContent};
 use cp_core::Cost;
 use cp_core::Tick;
 use cp_district::{AreaMap, Areas, area_at};
-use cp_net::{NetGraph, NodeId, NodeKind, node_is_rail};
+use cp_net::NetGraph;
 use cp_traffic::ServiceRuns;
 use cp_transit::{CargoArrivals, CargoHubs, Endpoint, Goods, exit_for, hub_sites, is_hub_def};
 use serde::{Deserialize, Serialize};
@@ -123,13 +122,9 @@ pub fn run_freight(
     let load = bal.goods_truck_load;
     let radius = bal.freight_radius_m;
 
-    let entries: Vec<(NodeId, Vec2)> = net
-        .nodes()
-        .filter(|(_, n)| {
-            n.kind == NodeKind::Outside && !n.segments.is_empty() && !node_is_rail(&net, n)
-        })
-        .map(|(id, n)| (id, Vec2::new(n.pos.x, n.pos.z)))
-        .collect();
+    // Imports start where a truck can drive into the city, exports end where one can drive out
+    // (BUG-095).
+    let (entries, exits) = cp_net::outside_ways(&net, db);
     // The working cargo stations: exports and imports go through the nearest of them and the
     // entry highways (T-216).
     let sites = hub_sites(db, &transit, &rail, &buildings);
@@ -215,7 +210,7 @@ pub fn run_freight(
                 let to = best
                     .or(shelf)
                     .map(|(_, t)| Endpoint::Building(t))
-                    .or_else(|| exit_for(&entries, &sites, b.pos));
+                    .or_else(|| exit_for(&exits, &sites, b.pos));
                 if let Some(to) = to {
                     state.add(id, cargo, -load);
                     goods.start_cargo_haul(&mut runs, cargo, Endpoint::Building(id), to, load);
@@ -262,7 +257,7 @@ pub fn run_freight(
                 }
                 let to = best.map(|(_, t)| Endpoint::Building(t)).or_else(|| {
                     (set.mode == crate::warehouse::WarehouseMode::Empty)
-                        .then(|| exit_for(&entries, &sites, b.pos))
+                        .then(|| exit_for(&exits, &sites, b.pos))
                         .flatten()
                 });
                 if let Some(to) = to {
