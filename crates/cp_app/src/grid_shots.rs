@@ -1,8 +1,8 @@
 //! The city of the T-275 acceptance (`architecture/system-design.md` §6.8, model v8), built the
 //! way the player builds it: every street through the road tool's own code
 //! ([`RoadTool::click`], [`chain_commit`]: the sections, the joins, the snaps). Roads are whole
-//! cells wide and a street ends a whole number of sections (10 cells between road centres) from
-//! where it starts.
+//! cells wide and a street ends a whole number of cells from where it starts (T-278; the sections
+//! of 10 cells are guides).
 //!
 //! * shot 1: a city of 3 x 3 blocks, streets 2 sections (20 cells) apart one way and 1 section
 //!   (10 cells) the other, long streets first (the top street, the left street, the long streets
@@ -12,6 +12,9 @@
 //! * shot 2 (T-268): the same city with its top-left corner drawn as a curve (the curve mode's
 //!   three clicks: from the top street's first cross street, the bend at the corner, down to the
 //!   first long street); the left street goes on from the curve's end.
+//! * shot 3 (T-278): a city of mixed blocks, 18 x 8, 5 x 8 and 8 x 8 cells over 18 x 3, 5 x 3
+//!   and 8 x 3; the ghost of its last cross street shows a tick at every cell, the 10th bold
+//!   (`grid-shot3-ticks` close over it).
 //!
 //! (Until T-275 the scene held the layouts of the user's BUG-073 shots on the 8 m step; the
 //! screenshots `docs/screenshots/t255-grid-shotN-*.png` are of those.)
@@ -26,7 +29,7 @@ use cp_tools::road::chain_commit;
 use cp_tools::{GhostDemo, RoadMode, RoadTool};
 
 /// The layouts of the scene.
-const LAYOUTS: usize = 2;
+const LAYOUTS: usize = 3;
 
 /// `--scene grid-shots`.
 pub const GRID_SHOTS: &str = "grid-shots";
@@ -42,7 +45,12 @@ pub fn origin(n: usize) -> Vec2 {
 
 /// Where the camera `grid-shotN` looks: the middle of the layout, in the world.
 pub fn focus(n: usize) -> Vec2 {
-    origin(n) + Vec2::new(240.0, 120.0)
+    origin(n)
+        + if n == 3 {
+            Vec2::new(148.0, 60.0)
+        } else {
+            Vec2::new(240.0, 120.0)
+        }
 }
 
 /// The cursors of the street each layout leaves unbuilt: the click on its start and the cursor
@@ -150,6 +158,32 @@ fn shot2(h: &mut Hand) -> Option<(Vec2, Vec2)> {
     Some((Vec2::new(x(3.0), y(0.0)), Vec2::new(x(3.0), y(3.0))))
 }
 
+/// The centres of the mixed city's streets (cells from the first): blocks of `blocks` cells
+/// between 2-cell roads.
+fn centres(blocks: &[f32]) -> Vec<f32> {
+    let cell = cp_net::build::ZONE_CELL;
+    let mut out = vec![0.0];
+    for b in blocks {
+        out.push(out.last().unwrap() + (b + 2.0) * cell);
+    }
+    out
+}
+
+fn shot3(h: &mut Hand) -> Option<(Vec2, Vec2)> {
+    let (xs, ys) = (centres(&[18.0, 5.0, 8.0]), centres(&[8.0, 3.0]));
+    let v = Vec2::new;
+    let (x1, y1) = (xs[3], ys[2]);
+    h.street(v(0.0, 0.0), v(x1, 0.0))?;
+    h.street(v(0.0, 0.0), v(0.0, y1))?;
+    for &y in &ys[1..] {
+        h.street(v(0.0, y), v(x1, y))?;
+    }
+    for &x in &xs[1..3] {
+        h.street(v(x, 0.0), v(x, y1))?;
+    }
+    Some((v(x1, 0.0), v(x1, y1)))
+}
+
 /// Builds the layouts and keeps the cursors of their last streets; the clock is held. Returns
 /// the rejected commands.
 pub fn build_grid_shots(sim: &mut SimRunner) -> Vec<String> {
@@ -168,7 +202,11 @@ pub fn build_grid_shots(sim: &mut SimRunner) -> Vec<String> {
             tool: RoadTool::default(),
             rejected: Vec::new(),
         };
-        let last = if n == 1 { shot1(&mut h) } else { shot2(&mut h) };
+        let last = match n {
+            1 => shot1(&mut h),
+            2 => shot2(&mut h),
+            _ => shot3(&mut h),
+        };
         let o = h.o;
         rejected.append(&mut h.rejected);
         match last {
@@ -196,25 +234,46 @@ pub fn ghost(view: &SimView, cursors: &GridShotCursors, n: usize) -> Option<Ghos
     })
 }
 
+/// The ends of layout `n`'s last street, the ghost (world), as its builder aims them.
+fn last_street(n: usize) -> (Vec2, Vec2) {
+    let o = origin(n);
+    let (xs, ys) = if n == 3 {
+        (centres(&[18.0, 5.0, 8.0]), centres(&[8.0, 3.0]))
+    } else {
+        (vec![0.0, 0.0, 0.0, 480.0], vec![0.0, 0.0, 0.0, 240.0])
+    };
+    let x = xs[3];
+    (o + Vec2::new(x, 0.0), o + Vec2::new(x, *ys.last().unwrap()))
+}
+
 /// `grid-shotN` camera (also `grid-shotN-top` and `grid-shotN-corner`): the shot number.
 pub fn shot_of_cam(cam: &str) -> Option<usize> {
     let rest = cam.strip_prefix("grid-shot")?;
     let n = rest
         .strip_suffix("-top")
         .or_else(|| rest.strip_suffix("-corner"))
+        .or_else(|| rest.strip_suffix("-ticks"))
         .unwrap_or(rest);
     n.parse().ok().filter(|n| (1..=LAYOUTS).contains(n))
 }
 
 /// The cameras of the scene, `(position, look_at)`: `grid-shotN` obliquely from the south over
 /// the whole city, `grid-shotN-top` straight down on it (the cells can be counted), and
-/// `grid-shotN-corner` close over the L corner at its top-left (the cells inside it).
+/// `grid-shotN-corner` close over the L corner at its top-left (the cells inside it), and
+/// `grid-shotN-ticks` close over the ghost of its last street (its cell ticks).
 pub fn camera(name: &str) -> Option<(Vec3, Vec3)> {
     let n = shot_of_cam(name)?;
     let (f, o) = (focus(n), origin(n));
     Some(if name.ends_with("-top") {
         // A hair off the vertical, so the view has an up direction.
         (Vec3::new(f.x, 430.0, f.y + 1.0), Vec3::new(f.x, 0.0, f.y))
+    } else if name.ends_with("-ticks") {
+        let (a, b) = last_street(n);
+        let c = (a + b) * 0.5;
+        (
+            Vec3::new(c.x - 45.0, 75.0, c.y + 25.0),
+            Vec3::new(c.x, 0.0, c.y),
+        )
     } else if name.ends_with("-corner") {
         let c = o + Vec2::splat(24.0);
         (Vec3::new(c.x, 95.0, c.y + 45.0), Vec3::new(c.x, 0.0, c.y))

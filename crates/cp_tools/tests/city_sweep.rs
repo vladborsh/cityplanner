@@ -2,8 +2,8 @@
 //! a city of blocks with the real road tool ([`resolve_cursor`], [`RoadTool::click`],
 //! [`chain_commit`], the ghost [`compute_ghost_alt`]) and a sloppy hand: every click lands up to
 //! 3 m off the point meant and every stroke wobbles up to 2 degrees. Roads are whole cells wide
-//! and a street ends a whole number of sections (10 cells between road centres) from where it
-//! starts, so the tool must give:
+//! and a street ends a whole number of cells from where it starts (T-278; the sections of 10
+//! cells between road centres are guides), so the tool must give:
 //!
 //! * every street square to the map (0.05 degrees);
 //! * every block exactly its whole cells on one lattice, nothing over, nothing missing;
@@ -68,6 +68,11 @@ struct Player {
     /// After every stroke every cell of a straight street stands on the city's lattice (a city
     /// with a curve is checked once it stands, see [`arc_city`]).
     lattice_each: bool,
+    /// The ticks of the last stroke's ghost (T-278).
+    ticks: Vec<cp_tools::lattice::CellTick>,
+    /// The end is aimed from where the start landed (a street in the open: the player drags it
+    /// out from the click), not from the point meant; so is the first street of a net.
+    from_start: bool,
 }
 
 impl Player {
@@ -90,6 +95,8 @@ impl Player {
             slop_k: 1.0,
             axes: true,
             lattice_each: true,
+            ticks: Vec::new(),
+            from_start: false,
         }
     }
 
@@ -136,8 +143,18 @@ impl Player {
         }
         let start = o + a + self.slop();
         let turn = Vec2::from_angle((self.rand() * WOBBLE_DEG * self.slop_k).to_radians());
+        let curve = bend.is_some();
         let bend = bend.map(|c| o + a + turn.rotate(c - a) + self.slop());
-        let end = o + a + turn.rotate(b - a) + self.slop();
+        // A straight street's end: the stroke's direction wobbles (the square takes it up); a
+        // curve's end is a point of its own (T-278: within half a cell of a guide it takes it).
+        let empty = self.sim.view().net.segments().next().is_none();
+        let end = if self.from_start || empty {
+            start + turn.rotate(b - a) + self.slop()
+        } else if curve {
+            o + b + self.slop()
+        } else {
+            o + a + turn.rotate(b - a) + self.slop()
+        };
         let view = self.sim.view();
         let q = resolve_cursor(&view, &t, start, false).map_or(start, |c| c.cursor);
         let _ = t.click(q);
@@ -154,6 +171,7 @@ impl Player {
                 .push(format!("{name}: red ghost {:?}", ghost.errors));
             return None;
         }
+        self.ticks = ghost.cell_ticks.clone();
         let before_ids: BTreeSet<SegmentId> = view.net.segments().map(|(id, _)| id).collect();
         let q = resolve_cursor(&view, &t, end, false).map_or(end, |c| c.cursor);
         let before = t.clone();
@@ -418,44 +436,61 @@ fn city_of(
     long: impl Fn(usize) -> &'static str,
     cross: impl Fn(usize) -> &'static str,
 ) -> Vec<String> {
-    let mut pl = Player::new(long(0), seed);
     let section = 10.0 * CELL;
     let xs: Vec<f32> = (0..4).map(|i| i as f32 * sx * section).collect();
     let ys: Vec<f32> = (0..4).map(|j| j as f32 * sy * section).collect();
+    grid_city(seed, &xs, &ys, long, cross).1
+}
+
+/// A city of the streets at `xs` along `x` and `ys` along `y` (local metres, their centres; the
+/// first of each at 0), long streets first: every block is the whole cells between the edges of
+/// its four streets. The player who built it and what went wrong.
+fn grid_city(
+    seed: u64,
+    xs: &[f32],
+    ys: &[f32],
+    long: impl Fn(usize) -> &'static str,
+    cross: impl Fn(usize) -> &'static str,
+) -> (Player, Vec<String>) {
+    let mut pl = Player::new(long(0), seed);
     let v = Vec2::new;
-    if let Some((a, _)) = pl.stroke("top street", v(xs[0], ys[0]), v(xs[3], ys[0])) {
+    let (x1, y1) = (*xs.last().unwrap(), *ys.last().unwrap());
+    if let Some((a, _)) = pl.stroke("top street", v(xs[0], ys[0]), v(x1, ys[0])) {
         pl.origin += a;
         pl.lattice = pl.origin;
     }
     pl.road = cross(0);
-    pl.stroke("left street", v(xs[0], ys[0]), v(xs[0], ys[3]));
+    pl.stroke("left street", v(xs[0], ys[0]), v(xs[0], y1));
     for (j, &y) in ys.iter().enumerate().skip(1) {
         pl.road = long(j);
-        pl.stroke(&format!("long street {j}"), v(xs[0], y), v(xs[3], y));
+        pl.stroke(&format!("long street {j}"), v(xs[0], y), v(x1, y));
     }
     for (i, &x) in xs.iter().enumerate().skip(1) {
         pl.road = cross(i);
-        pl.stroke(&format!("cross street {i}"), v(x, ys[0]), v(x, ys[3]));
+        pl.stroke(&format!("cross street {i}"), v(x, ys[0]), v(x, y1));
     }
     let mut fails = std::mem::take(&mut pl.fails);
     let db = pl.sim.view().content.clone().unwrap();
     let hw = |r: &str| db.road(db.road_id(r).unwrap()).width / 2.0;
-    let zones = &pl.sim.view().zones;
-    for i in 0..3 {
-        for j in 0..3 {
-            let lo = v(xs[i] + hw(cross(i)), ys[j] + hw(long(j)));
-            let hi = v(xs[i + 1] - hw(cross(i + 1)), ys[j + 1] - hw(long(j + 1)));
-            let cols = ((hi.x - lo.x) / CELL).round() as u32;
-            let rows = ((hi.y - lo.y) / CELL).round() as u32;
-            for e in check_block(zones, pl.origin, lo, hi, cols, rows) {
-                fails.push(format!("block ({i}, {j}) of {cols} x {rows}: {e}"));
+    {
+        let zones = &pl.sim.view().zones;
+        for i in 0..xs.len() - 1 {
+            for j in 0..ys.len() - 1 {
+                let lo = v(xs[i] + hw(cross(i)), ys[j] + hw(long(j)));
+                let hi = v(xs[i + 1] - hw(cross(i + 1)), ys[j + 1] - hw(long(j + 1)));
+                let cols = ((hi.x - lo.x) / CELL).round() as u32;
+                let rows = ((hi.y - lo.y) / CELL).round() as u32;
+                for e in check_block(zones, pl.origin, lo, hi, cols, rows) {
+                    fails.push(format!("block ({i}, {j}) of {cols} x {rows}: {e}"));
+                }
             }
         }
     }
-    fails
+    let fails = fails
         .into_iter()
         .map(|f| format!("seed {seed}: {f}"))
-        .collect()
+        .collect();
+    (pl, fails)
 }
 
 #[test]
@@ -871,28 +906,42 @@ fn a_curve_end_takes_a_guide_near_it_else_the_nearest_whole_cell() {
         }
         pl
     };
-    // A whole section along and across from the start, 7 m and 6 m off.
+    // A whole section along and across from the start, 3.5 m and 3 m off (T-278: half a cell).
     let mut pl = fresh();
     let (_, b) = pl
         .curve(
             "to a section",
             v(160.0, 0.0),
             v(160.0, 60.0),
-            v(240.0 + 7.0, 80.0 - 6.0),
+            v(240.0 + 3.5, 80.0 - 3.0),
         )
         .unwrap();
     assert!(b.distance(v(240.0, 80.0)) < 0.01, "a section: {b:?}");
-    // The square through the street's end, 5 m off: on it, a whole cell down from the start.
+    // The square through the street's end, 3.5 m off: on it, a whole cell down from the start.
     let mut pl = fresh();
     let (_, b) = pl
         .curve(
             "to a street's line",
             v(160.0, 0.0),
             v(160.0, 50.0),
-            v(325.0, 58.0),
+            v(323.5, 58.0),
         )
         .unwrap();
     assert!(b.distance(v(320.0, 56.0)) < 0.01, "a street's line: {b:?}");
+    // The same line 5 m off: past half a cell, the nearest whole cell from the start.
+    let mut pl = fresh();
+    let (_, b) = pl
+        .curve(
+            "past a street's line",
+            v(160.0, 0.0),
+            v(160.0, 50.0),
+            v(325.0, 58.0),
+        )
+        .unwrap();
+    assert!(
+        b.distance(v(328.0, 56.0)) < 0.01,
+        "past a street's line: {b:?}"
+    );
     // Nothing near: the nearest whole cell.
     let mut pl = fresh();
     pl.axes = false;
@@ -901,4 +950,179 @@ fn a_curve_end_takes_a_guide_near_it_else_the_nearest_whole_cell() {
         .unwrap();
     assert!(b.distance(v(288.0, 112.0)) < 0.01, "free: {b:?}");
     assert!(pl.fails.is_empty(), "{:?}", pl.fails);
+}
+
+// ---------- T-278: a street by whole cells ----------
+
+/// T-278 acceptance: a street drawn in the open towards N cells (the cursor near N cells from its
+/// start, a sloppy hand) is exactly N cells long, for every N from 1 to 25, on 2- and 4-cell
+/// roads; its ghost has a tick at every cell, every 10th a major one.
+#[test]
+fn a_street_of_every_length_from_1_to_25_cells_lands_exactly() {
+    let mut fails = Vec::new();
+    for (road, seed) in [("basic_2l", 21), ("medium_4l", 22)] {
+        let mut pl = Player::new(road, seed);
+        pl.lattice_each = false;
+        pl.from_start = true;
+        for n in 1..=25u32 {
+            // A hand 3 m off over a cell or two aims wider than the 7 degrees of the square.
+            pl.axes = n >= 3;
+            // Far apart, so that no street is a guide for another.
+            let a = Vec2::new(((n - 1) % 5) as f32 * 320.0, ((n - 1) / 5) as f32 * 120.0);
+            let want = n as f32 * CELL;
+            let Some((s, e)) = pl.stroke(&format!("{n} cells"), a, a + Vec2::new(want, 0.0)) else {
+                continue;
+            };
+            let len = s.distance(e);
+            if (len - want).abs() > 0.01 {
+                fails.push(format!("{road}: {n} cells: {len:.3} m"));
+            }
+            let majors = pl.ticks.iter().filter(|t| t.major).count();
+            if pl.ticks.len() != n as usize || majors != n as usize / 10 {
+                fails.push(format!(
+                    "{road}: {n} cells: {} ticks, {majors} major",
+                    pl.ticks.len()
+                ));
+            }
+        }
+        fails.extend(pl.fails.iter().map(|f| format!("{road}: {f}")));
+    }
+    assert!(
+        fails.is_empty(),
+        "{} failures:\n{}",
+        fails.len(),
+        fails.join("\n")
+    );
+}
+
+/// T-278 acceptance: a cursor within half a cell of the 10, 20 or 30 cell mark lands on the mark;
+/// past half a cell, on the cell beside it.
+#[test]
+fn a_cursor_within_half_a_cell_of_a_section_mark_lands_on_it() {
+    let mut pl = Player::new("basic_2l", 23);
+    pl.slop_k = 0.0;
+    pl.lattice_each = false;
+    let mut row = 0.0;
+    for k in 1..=3 {
+        for (off, cells) in [(-3.5, 0), (3.5, 0), (4.5, 1), (-4.5, -1)] {
+            let a = Vec2::new(0.0, row);
+            row += 80.0;
+            let mark = k as f32 * 10.0 * CELL;
+            let (s, e) = pl
+                .stroke("to the mark", a, a + Vec2::new(mark + off, 0.0))
+                .unwrap_or_else(|| panic!("{:?}", pl.fails));
+            let want = mark + cells as f32 * CELL;
+            assert!(
+                (s.distance(e) - want).abs() < 0.01,
+                "{k}0 cells {off:+} m: {:.3} m, want {want}",
+                s.distance(e)
+            );
+        }
+    }
+    assert!(pl.fails.is_empty(), "{:?}", pl.fails);
+}
+
+/// The streets' centres for blocks of `blocks` cells in a row between roads of half width `hw`.
+fn centres(blocks: impl IntoIterator<Item = u32>, hw: f32) -> Vec<f32> {
+    let mut out = vec![0.0];
+    for b in blocks {
+        out.push(out.last().unwrap() + b as f32 * CELL + 2.0 * hw);
+    }
+    out
+}
+
+/// T-278 acceptance: blocks of every width from 1 to 18 cells, a row of them between two long
+/// streets a section apart, each its whole cells on the one lattice (2- and 4-cell roads).
+#[test]
+fn blocks_of_1_to_18_cells_are_whole_on_one_lattice() {
+    let mut fails = Vec::new();
+    for (road, hw) in [("basic_2l", CELL), ("medium_4l", 2.0 * CELL)] {
+        for (blocks, seed) in [(1..=9, 24), (10..=18, 25)] {
+            let xs = centres(blocks, hw);
+            let ys = [0.0, 10.0 * CELL];
+            let (_, f) = grid_city(seed, &xs, &ys, |_| road, |_| road);
+            fails.extend(f.into_iter().map(|f| format!("{road} {f}")));
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "{} failures:\n{}",
+        fails.len(),
+        fails.join("\n")
+    );
+}
+
+/// T-278 shot city: blocks of 18 x 8, 5 x 8 and 8 x 8 cells, and 18 x 3, 5 x 3 and 8 x 3 below
+/// them, each its whole cells on the one lattice.
+#[test]
+fn a_city_of_mixed_blocks_is_whole_cells_with_a_sloppy_hand() {
+    let mut fails = Vec::new();
+    for seed in [26, 27] {
+        let xs = centres([18, 5, 8], CELL);
+        let ys = centres([8, 3], CELL);
+        fails.extend(grid_city(seed, &xs, &ys, |_| "basic_2l", |_| "basic_2l").1);
+    }
+    assert!(
+        fails.is_empty(),
+        "{} failures:\n{}",
+        fails.len(),
+        fails.join("\n")
+    );
+}
+
+/// T-278 acceptance: a street branches from any whole cell of a street, drawn in any order, and
+/// starts exactly there.
+#[test]
+fn a_street_branches_from_any_cell_of_a_street() {
+    for (road, seed) in [("basic_2l", 28), ("medium_4l", 29)] {
+        let mut pl = Player::new(road, seed);
+        let v = Vec2::new;
+        if let Some((a, _)) = pl.stroke("top street", v(0.0, 0.0), v(32.0 * CELL, 0.0)) {
+            pl.origin += a;
+            pl.lattice = pl.origin;
+        }
+        for k in [14, 4, 27, 9, 21] {
+            let x = k as f32 * CELL;
+            let (s, _) = pl
+                .stroke(&format!("branch at {k}"), v(x, 0.0), v(x, 5.0 * CELL))
+                .unwrap_or_else(|| panic!("{road}: {:?}", pl.fails));
+            assert!(
+                s.distance(v(x, 0.0)) < 0.01,
+                "{road}: the branch at {k} cells starts at {s:?}"
+            );
+        }
+        assert!(pl.fails.is_empty(), "{road}: {:?}", pl.fails);
+    }
+}
+
+/// T-278: a street's end within a junction's pull (1 cell, 2 where a 4-cell road meets) goes to
+/// its centre: the corner closes exactly.
+#[test]
+fn a_street_end_within_the_pull_closes_on_the_junction() {
+    for (road, off) in [("basic_2l", 5.0), ("medium_4l", 11.0)] {
+        let mut pl = Player::new(road, 30);
+        pl.slop_k = 0.0;
+        let v = Vec2::new;
+        if let Some((a, _)) = pl.stroke("top street", v(0.0, 0.0), v(20.0 * CELL, 0.0)) {
+            pl.origin += a;
+            pl.lattice = pl.origin;
+        }
+        pl.stroke(
+            "cross street",
+            v(10.0 * CELL, 0.0),
+            v(10.0 * CELL, 10.0 * CELL),
+        );
+        let (_, e) = pl
+            .stroke(
+                "up to the T",
+                v(0.0, 10.0 * CELL),
+                v(10.0 * CELL - off, 10.0 * CELL - off),
+            )
+            .unwrap_or_else(|| panic!("{road}: {:?}", pl.fails));
+        assert!(
+            e.distance(v(10.0 * CELL, 10.0 * CELL)) < 0.01,
+            "{road}: the end is at {e:?}"
+        );
+        assert!(pl.fails.is_empty(), "{road}: {:?}", pl.fails);
+    }
 }

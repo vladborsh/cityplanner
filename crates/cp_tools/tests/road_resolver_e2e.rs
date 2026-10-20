@@ -116,8 +116,8 @@ fn a_click_sends_the_plan_the_ghost_showed() {
     assert_eq!(plan.pieces.len(), 1);
     assert!(matches!(plan.pieces[0].from, Anchor::Free(a) if a == p(0.0, 0.0)));
     assert!(matches!(plan.pieces[0].to, Anchor::Free(b) if b == p(100.0, 3.0)));
-    // With snaps on the point is stepped to whole sections (10 cells, T-275), and the plan is
-    // still the ghost's.
+    // With snaps on the point is stepped to whole cells (T-278), and the plan is still the
+    // ghost's.
     let (mut sim, db) = world();
     let mut t = tool(&db, "basic_2l");
     click(&mut sim, &mut t, p(0.0, 0.0), false);
@@ -126,8 +126,8 @@ fn a_click_sends_the_plan_the_ghost_showed() {
     let Anchor::Free(end) = sent.unwrap().pieces[0].to else {
         panic!("free end")
     };
-    let sections = (end - p(0.0, 0.0)).length() / 80.0;
-    assert!((sections - sections.round()).abs() < 0.01, "{end:?}");
+    let cells = (end - p(0.0, 0.0)).length() / 8.0;
+    assert!((cells - cells.round()).abs() < 0.01, "{end:?}");
 }
 
 #[test]

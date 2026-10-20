@@ -70,7 +70,7 @@ fn segments(sim: &SimRunner) -> Vec<SegmentId> {
 }
 
 #[test]
-fn a_clicked_road_is_built_with_whole_sections_and_equals_the_preview() {
+fn a_clicked_road_is_built_with_whole_cells_and_equals_the_preview() {
     let (mut sim, _, road) = setup();
     street(&mut sim, road);
     let old = segments(&sim);
@@ -79,14 +79,14 @@ fn a_clicked_road_is_built_with_whole_sections_and_equals_the_preview() {
         road: Some(road),
         ..Default::default()
     };
-    // Far from every road: the first point stays, the length goes 101 m -> 80 m: a whole number
-    // of sections (10 cells) from where it starts (T-275).
+    // Far from every road: the first point stays, the length goes 101 m -> 104 m: a whole number
+    // of cells from where it starts (T-278).
     assert!(tool.click(Vec2::new(4700.0, 4800.0)).is_none());
     let raw = tool.click(Vec2::new(4700.0, 4901.0)).unwrap();
     let (q, _) = quantized(&sim.view(), raw, false);
     let plan = preview(&sim.view(), &q).unwrap().unwrap();
     let planned: f32 = plan.segments.iter().map(|s| s.length).sum();
-    assert!((planned - 80.0).abs() < 0.01, "{planned}");
+    assert!((planned - 104.0).abs() < 0.01, "{planned}");
 
     send(
         &mut sim,
@@ -103,12 +103,12 @@ fn a_clicked_road_is_built_with_whole_sections_and_equals_the_preview() {
         .map(|(_, s)| s.length)
         .sum();
     assert!((built - planned).abs() < 0.01, "{built} vs {planned}");
-    let sections = built / 80.0;
-    assert!((sections - sections.round()).abs() < 0.001);
+    let cells = built / 8.0;
+    assert!((cells - cells.round()).abs() < 0.001);
 }
 
 #[test]
-fn an_end_within_a_cell_of_a_street_joins_it_on_a_section_mark_as_a_three_way_junction() {
+fn an_end_within_a_cell_of_a_street_joins_it_on_a_whole_cell_as_a_three_way_junction() {
     let (mut sim, db, road) = setup();
     street(&mut sim, road);
     let half = db.road(road).width * 0.5;
@@ -129,13 +129,13 @@ fn an_end_within_a_cell_of_a_street_joins_it_on_a_section_mark_as_a_three_way_ju
         }),
     );
     let graph = sim.world().resource::<NetGraph>();
-    // The street's section marks (T-275): every 10 cells from either end of its 200 m, at 40, 80,
-    // 120 and 160 m; the one nearest the cursor (19 m along) is at 40 m.
+    // The street's whole cells from its nearer end (T-278): the one nearest the cursor (19 m
+    // along) is at 16 m; the section marks (40, 80, 120, 160 m) are not within half a cell.
     let _ = half;
     let junction = graph
         .nodes()
-        .find(|(_, n)| (n.pos.x - 4640.0).abs() < 0.6 && (n.pos.z - 4600.0).abs() < 0.6)
-        .expect("a node on the section mark");
+        .find(|(_, n)| (n.pos.x - 4616.0).abs() < 0.6 && (n.pos.z - 4600.0).abs() < 0.6)
+        .expect("a node on the whole cell");
     assert_eq!(junction.1.segments.len(), 3);
 }
 

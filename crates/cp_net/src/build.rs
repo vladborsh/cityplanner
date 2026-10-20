@@ -43,6 +43,9 @@ use crate::plan::Anchor;
 pub const MAX_SEGMENT_LENGTH: f32 = 96.0;
 /// Shortest allowed segment, metres.
 pub const MIN_SEGMENT_LENGTH_BUILD: f32 = 8.0;
+/// How far under [`MIN_SEGMENT_LENGTH_BUILD`] a piece may measure and still be built: a street of
+/// one cell (T-278) measures a hair under 8 m in `f32`.
+const LENGTH_EPS: f32 = 0.01;
 /// Smallest angle between two segments leaving a node, degrees.
 pub const MIN_JUNCTION_ANGLE_DEG: f32 = 30.0;
 
@@ -1550,7 +1553,7 @@ fn validate_inner(
                 continue;
             }
         }
-        if len < MIN_SEGMENT_LENGTH_BUILD {
+        if len < MIN_SEGMENT_LENGTH_BUILD - LENGTH_EPS {
             errors.push(RoadBuildError::SegmentTooShort {
                 pos: b.node_pos(v0.node),
                 length: len,
@@ -1875,7 +1878,7 @@ fn validate_inner(
     for s in &segments {
         let raised = s.elevation != Elevation::Ground;
         let at = b.node_pos(s.start);
-        if s.length < MIN_SEGMENT_LENGTH_BUILD {
+        if s.length < MIN_SEGMENT_LENGTH_BUILD - LENGTH_EPS {
             errors.push(RoadBuildError::SegmentTooShort {
                 pos: at,
                 length: s.length,

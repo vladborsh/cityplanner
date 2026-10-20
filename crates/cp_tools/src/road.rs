@@ -583,7 +583,11 @@ fn quantized_in(
                 path: with_vertices(&path, at),
                 ..req.clone()
             };
-            matches!(preview(view, &r), Some(Err(_)))
+            // As the click sends it: with the nodes it runs through (T-278: the dead ends of
+            // the streets it closes, a hair off its axis).
+            plan_for(view, &r)
+                .and_then(|(plan, _)| preview_plan(view, &through_nodes(view, plan)))
+                .is_some_and(|r| r.is_err())
         };
         if refused(&at) && !refused(&aimed) {
             at = aimed;

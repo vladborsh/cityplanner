@@ -1,25 +1,29 @@
-//! The section candidate of the road tool's resolver (`architecture/system-design.md` §6.8,
-//! T-275 spec v2): the player builds by whole cells, roads are whole cells wide, and a street's
-//! end lands a whole number of sections (10 cells, [`SECTION_M`]) from the centre it starts at,
-//! so every block is whole cells by construction. Pure: the same net, the same answer.
+//! The cell candidate of the road tool's resolver (`architecture/system-design.md` §6.8,
+//! T-275 spec v2, T-278): the player builds by whole cells, roads are whole cells wide, and a
+//! street's end lands a whole number of cells from the centre it starts at, so every block is
+//! whole cells by construction. The sections (10 cells, [`SECTION_M`]) are only guides now: the
+//! ticks along the ghost ([`cell_ticks`]) and weak pulls. Pure: the same net, the same answer.
 //!
 //! Per vertex of the path (`alt`, snaps off, switches all of it off):
-//! 1. **Join**: a cursor within a junction's pull ([`node_pull`]: 1.5 cells, 2.5 when a 4-cell
-//!    road meets there) goes to its centre; a point on a street goes to the street's nearest
-//!    section mark ([`section_mark`]: every 10 cells from either end of its stretch). The end of a
-//!    leg on a street goes where the leg's square direction meets it (BUG-088).
+//! 1. **Join**: a cursor within a junction's pull ([`node_pull`]: 1 cell, 2 when a 4-cell road
+//!    meets there) goes to its centre; a point on a street goes to the street's whole cell nearest
+//!    it ([`street_cell`]: whole cells from the nearer end of its stretch), or to its section mark
+//!    within [`WEAK_M`]. The end of a leg on a street goes where the leg's square direction meets
+//!    it (BUG-088).
 //! 2. **Direction**: within 7° of a reference direction (the street it leaves, the leg before)
 //!    or its square, exactly that.
-//! 3. **Length**: whole sections from the start, or a line of a street within a section (its
-//!    extension, or the square through one of its nodes) within 1.5 cells.
+//! 3. **Length**: whole cells from the start (the 10/20/30 marks are whole cells of the same
+//!    frame), or a line of a street (its extension, or the square through one of its nodes) within
+//!    [`WEAK_M`].
 //!
 //! A curve (T-268, [`quantize_curve`]) starts like a street and leaves in the direction of its
 //! bend click, snapped like a leg (rule 2), at any distance. Its end goes to a junction or a
-//! street's section mark (rule 1), else to the guides near the cursor (a whole section from the
-//! start along or across its direction, the extension of a street, the square through a node; two
-//! of them meet in a point), else to the nearest whole cell from the start. Its end direction
-//! snaps like a leg (the start's direction, the street or junction it ends on, or their squares),
-//! and the bend then moves to where the two directions meet: both ends leave exactly so.
+//! street's whole cell (rule 1), else to the guides within [`WEAK_M`] of the cursor (a whole
+//! section from the start along or across its direction, the extension of a street, the square
+//! through a node; two of them meet in a point), else to the nearest whole cell from the start.
+//! Its end direction snaps like a leg (the start's direction, the street or junction it ends on,
+//! or their squares), and the bend then moves to where the two directions meet: both ends leave
+//! exactly so.
 
 use std::sync::{Arc, Mutex};
 
@@ -170,8 +174,18 @@ fn dir_xz(v: Vec3) -> Vec2 {
     Vec2::new(v.x, v.z).normalize_or_zero()
 }
 
-/// The junction pull of node `n` (T-275 spec v2, item 8): a cursor within 1.5 cells of its
-/// centre goes to it, within 2.5 cells when a 4-cell road meets there.
+/// The direction of the street `c` at `t`: the chord of a straight one (exact to its ends, where
+/// the tangent of the cubic is off by its rounding: 9 mm over a 480 m street), else the tangent.
+fn street_dir(c: &CubicBezier3, t: f32) -> Vec2 {
+    if is_straight(c) {
+        (to_xz(c.p3) - to_xz(c.p0)).normalize_or_zero()
+    } else {
+        dir_xz(c.tangent(t))
+    }
+}
+
+/// The junction pull of node `n` (T-275 spec v2, item 8; T-278): a cursor within 1 cell of its
+/// centre goes to it, within 2 cells when a 4-cell road meets there.
 pub fn node_pull(graph: &NetGraph, content: &ContentDb, n: NodeId) -> f32 {
     let wide = graph.node(n).is_some_and(|node| {
         node.segments.iter().any(|&s| {
@@ -180,11 +194,7 @@ pub fn node_pull(graph: &NetGraph, content: &ContentDb, n: NodeId) -> f32 {
                 .is_some_and(|s| content.road(s.road).width >= 4.0 * ZONE_CELL - 1e-3)
         })
     });
-    if wide {
-        2.5 * ZONE_CELL
-    } else {
-        1.5 * ZONE_CELL
-    }
+    if wide { 2.0 * ZONE_CELL } else { ZONE_CELL }
 }
 
 /// The section marks of the stretch of `seg` (T-275 spec v2, item 5): every [`SECTION_M`] from
@@ -210,23 +220,42 @@ pub fn section_marks(graph: &NetGraph, seg: SegmentId) -> Vec<(f32, Vec2, Vec2)>
             let (sid, s_on) = cp_net::unlocate(graph, &st, a)?;
             let sg = graph.segment(sid)?;
             let t = sg.curve.arc_table().s_to_t(s_on);
-            Some((a, to_xz(sg.curve.point(t)), dir_xz(sg.curve.tangent(t))))
+            Some((a, to_xz(sg.curve.point(t)), street_dir(&sg.curve, t)))
         })
         .collect()
 }
 
-/// The section mark of the street `seg` nearest the point `s` metres along it (from its start)
-/// ([`section_marks`]): the point and the street's direction there; `None` on a stretch shorter
-/// than a section.
-pub fn section_mark(graph: &NetGraph, seg: SegmentId, s: f32) -> Option<(Vec2, Vec2)> {
+/// The whole cell of the street `seg` nearest the point `s` metres along it (from its start)
+/// (T-278): whole cells from the nearer end of its stretch, kept a cell clear of both ends, unless
+/// a section mark ([`section_marks`]) is within [`WEAK_M`]. The point and the street's direction
+/// there; `None` on a stretch shorter than two cells.
+pub fn street_cell(graph: &NetGraph, seg: SegmentId, s: f32) -> Option<(Vec2, Vec2)> {
+    let st = cp_net::stretch(graph, seg)?;
     let along = cp_net::locate(graph, seg, s)?;
-    section_marks(graph, seg)
+    if st.length < 2.0 * ZONE_CELL {
+        return None;
+    }
+    let mark = section_marks(graph, seg)
         .into_iter()
-        .min_by(|a, b| (a.0 - along).abs().total_cmp(&(b.0 - along).abs()))
-        .map(|(_, p, d)| (p, d))
+        .filter(|m| (m.0 - along).abs() <= WEAK_M)
+        .min_by(|a, b| (a.0 - along).abs().total_cmp(&(b.0 - along).abs()));
+    if let Some((_, p, d)) = mark {
+        return Some((p, d));
+    }
+    let cells = |k: f32| (k / ZONE_CELL).round() * ZONE_CELL;
+    let at = if along <= st.length / 2.0 {
+        cells(along)
+    } else {
+        st.length - cells(st.length - along)
+    }
+    .clamp(ZONE_CELL, st.length - ZONE_CELL);
+    let (sid, s_on) = cp_net::unlocate(graph, &st, at)?;
+    let sg = graph.segment(sid)?;
+    let t = sg.curve.arc_table().s_to_t(s_on);
+    Some((to_xz(sg.curve.point(t)), street_dir(&sg.curve, t)))
 }
 
-/// Rule 1 for the point `p`: the centre of a junction within its pull, else the section mark of
+/// Rule 1 for the point `p`: the centre of a junction within its pull, else the whole cell of
 /// the street under it.
 fn join(cx: &LatticeCtx, p: Vec2) -> Option<Joined> {
     if let Some((id, n)) = cx
@@ -264,8 +293,8 @@ fn join(cx: &LatticeCtx, p: Vec2) -> Option<Joined> {
     let (_, seg, t) = best?;
     let s = cx.graph.segment(seg)?;
     let at = s.curve.arc_table().t_to_s(t);
-    let (pos, along) = section_mark(cx.graph, seg, at)
-        .unwrap_or((to_xz(s.curve.point(t)), dir_xz(s.curve.tangent(t))));
+    let (pos, along) = street_cell(cx.graph, seg, at)
+        .unwrap_or((to_xz(s.curve.point(t)), street_dir(&s.curve, t)));
     Some(Joined {
         pos,
         node: None,
@@ -287,48 +316,65 @@ fn square_on_street(
 ) -> Option<(Vec2, Vec2)> {
     let s = cx.graph.segment(seg)?;
     let reach = cx.content.road(s.road).width * 0.5 + ZONE_CELL;
+    // The whole stretch: a direction may meet the street at a plain cut, the end of `seg`.
+    let segs = cp_net::stretch(cx.graph, seg).map_or(vec![seg], |st| st.segments);
     let v3 = |q: Vec2| Vec3::new(q.x, 0.0, q.y);
-    let mut best: Option<(bool, f32, Vec2, f32)> = None;
+    let mut best: Option<(f32, Vec2, Vec2)> = None;
     for r in refs {
         for k in 0..4 {
             let (sin, cos) = (k as f32 * 90.0).to_radians().sin_cos();
             let dir = Vec2::new(r.x * cos - r.y * sin, r.x * sin + r.y * cos);
             let ray = CubicBezier3::line(v3(from), v3(from + dir * RAY_M));
-            for (_, ts) in ray.intersect_xz(&s.curve) {
-                let q = to_xz(s.curve.point(ts));
-                let d = q.distance(p);
-                if q.distance(from) < ZONE_CELL || d > reach {
-                    continue;
-                }
-                let rank = (false, d);
-                if best.is_none_or(|(bk, bd, ..)| rank < (bk, bd)) {
-                    best = Some((rank.0, d, q, ts));
+            for sg in segs.iter().filter_map(|id| cx.graph.segment(*id)) {
+                for (_, ts) in ray.intersect_xz(&sg.curve) {
+                    let q = to_xz(sg.curve.point(ts));
+                    let d = q.distance(p);
+                    if q.distance(from) < ZONE_CELL || d > reach {
+                        continue;
+                    }
+                    if best.is_none_or(|(bd, ..)| d < bd) {
+                        best = Some((d, q, street_dir(&sg.curve, ts)));
+                    }
                 }
             }
         }
     }
-    best.map(|(_, _, q, t)| (q, dir_xz(s.curve.tangent(t))))
+    best.map(|(_, q, t)| (q, t))
 }
 
 /// How far a snapped direction is followed to meet a street (metres).
 const RAY_M: f32 = 2000.0;
 
-/// Directions leaving the node, as the angle snap takes them.
+/// Directions leaving the node, as the angle snap takes them: those of straight streets first
+/// (exact, where a curve's tangent is only as exact as its control points).
 fn node_dirs(graph: &NetGraph, n: NodeId) -> Vec<Vec2> {
     let Some(node) = graph.node(n) else {
         return Vec::new();
     };
-    node.segments
+    let mut dirs: Vec<(bool, Vec2)> = node
+        .segments
         .iter()
         .filter_map(|sid| graph.segment(*sid))
         .map(|s| {
-            if s.start == n {
-                dir_xz(s.curve.tangent(0.0))
+            let d = if s.start == n {
+                street_dir(&s.curve, 0.0)
             } else {
-                -dir_xz(s.curve.tangent(1.0))
-            }
+                -street_dir(&s.curve, 1.0)
+            };
+            (!is_straight(&s.curve), d)
         })
-        .collect()
+        .collect();
+    dirs.sort_by_key(|d| d.0);
+    dirs.into_iter().map(|d| d.1).collect()
+}
+
+/// Whether the curve is a straight line (its controls on its chord).
+fn is_straight(c: &CubicBezier3) -> bool {
+    let (s0, s3) = (to_xz(c.p0), to_xz(c.p3));
+    let u = (s3 - s0).normalize_or_zero();
+    [c.p1, c.p2]
+        .iter()
+        .all(|p| (to_xz(*p) - s0).perp_dot(u).abs() < 0.01)
 }
 
 /// One leg from `prev` to the cursor `p`: rule 2, then rule 3 (unless `alt`).
@@ -348,7 +394,7 @@ fn leg(
     let mut dir = d / len;
     // Rule 2: within SQUARE_DEG of a reference or its square, exactly that (spec v2, item 7).
     if snap_angle && let Some((c, square)) = square_dir(refs, dir) {
-        dir = c;
+        dir = exact_dir(cx, prev, c);
         report.kind = SnapReportKind::KeyAngle(if square { 90 } else { 0 });
         report.guide = Some((prev, prev + dir * GUIDE_HALF_LENGTH * 2.0));
     }
@@ -356,15 +402,15 @@ fn leg(
     if cx.alt || cx.bend {
         return (prev + dir * along, report);
     }
-    // Rule 3: whole sections from the start (spec v2, item 5), or a line of a street within a
-    // section (its extension or the square through one of its nodes, item 6) within LINE_TOL_M.
-    let mut at = ((along / SECTION_M).round() * SECTION_M).max(SECTION_M);
+    // Rule 3: whole cells from the start (T-278; a 10/20/30 mark is one of them), or a line of a
+    // street (its extension or the square through one of its nodes, item 6) within WEAK_M.
+    let mut at = ((along / ZONE_CELL).round() * ZONE_CELL).max(ZONE_CELL);
     let mut kind = SnapReportKind::CellStep(at as i32);
     let cursor = prev + dir * along;
     let mut best_line: Option<(f32, f32)> = None;
     let mut consider = |u: f32| {
         let miss = (u - along).abs();
-        if u >= ZONE_CELL && miss <= LINE_TOL_M && best_line.is_none_or(|(m, _)| miss < m) {
+        if u >= ZONE_CELL && miss <= WEAK_M && best_line.is_none_or(|(m, _)| miss < m) {
             best_line = Some((miss, u));
         }
     };
@@ -395,9 +441,7 @@ fn leg(
         }
         consider((a - prev).perp_dot(u) / den);
     }
-    if let Some((miss, u)) = best_line
-        && miss < (at - along).abs()
-    {
+    if let Some((_, u)) = best_line {
         at = u;
         kind = SnapReportKind::Guide {
             perpendicular: true,
@@ -416,13 +460,22 @@ fn leg(
 /// nearest it, and whether it is a square of a reference.
 fn square_dir(refs: &[Vec2], dir: Vec2) -> Option<(Vec2, bool)> {
     let cos = SQUARE_DEG.to_radians().cos();
-    let best = refs
+    let cands: Vec<Vec2> = refs
         .iter()
         .flat_map(|r| [*r, Vec2::new(-r.y, r.x), -*r, Vec2::new(r.y, -r.x)])
         .filter(|c| c.length() > 0.5)
         .map(|c| c.normalize())
+        .collect();
+    let nearest = cands
+        .iter()
+        .copied()
         .max_by(|a, b| a.dot(dir).total_cmp(&b.dot(dir)))
         .filter(|c| c.dot(dir) >= cos)?;
+    // Of references that are the same direction but for rounding, the first.
+    let best = cands
+        .into_iter()
+        .find(|c| same_dir(*c, nearest))
+        .unwrap_or(nearest);
     Some((best, refs.iter().any(|r| r.dot(best).abs() < 0.5)))
 }
 
@@ -477,13 +530,9 @@ fn curve_guides(cx: &LatticeCtx, a: Vec2, u: Vec2, p: Vec2) -> Vec<Line> {
             continue;
         }
         let (s0, s3) = (to_xz(sg.curve.p0), to_xz(sg.curve.p3));
-        let straight = [sg.curve.p1, sg.curve.p2].iter().all(|c| {
-            (to_xz(*c) - s0)
-                .perp_dot((s3 - s0).normalize_or_zero())
-                .abs()
-                < 0.01
-        });
-        if straight && let Some(dir) = (s3 - s0).try_normalize() {
+        if is_straight(&sg.curve)
+            && let Some(dir) = (s3 - s0).try_normalize()
+        {
             out.push(Line { at: s0, dir });
         }
     }
@@ -508,7 +557,7 @@ fn curve_guides(cx: &LatticeCtx, a: Vec2, u: Vec2, p: Vec2) -> Vec<Line> {
 }
 
 /// Where the end `p` of a curve from `a` leaving along `u` lands when it joins nothing (T-268):
-/// where the two guides nearest it within [`LINE_TOL_M`] meet, else on the nearest guide at the
+/// where the two guides nearest it within [`WEAK_M`] meet, else on the nearest guide at the
 /// nearest whole cell from `a` along it, else at the nearest whole cell from `a` (along and across
 /// `u`). With the directions of the guides it landed on.
 fn curve_end(cx: &LatticeCtx, a: Vec2, u: Vec2, p: Vec2) -> (Vec2, Vec<Vec2>, SnapReportKind) {
@@ -520,7 +569,7 @@ fn curve_end(cx: &LatticeCtx, a: Vec2, u: Vec2, p: Vec2) -> (Vec2, Vec<Vec2>, Sn
     let mut near: Vec<(f32, Line)> = curve_guides(cx, a, u, p)
         .into_iter()
         .map(|l| (l.miss(p), l))
-        .filter(|(m, _)| *m <= LINE_TOL_M)
+        .filter(|(m, _)| *m <= WEAK_M)
         .collect();
     near.sort_by(|x, y| x.0.total_cmp(&y.0));
     let guide = SnapReportKind::Guide {
@@ -532,7 +581,7 @@ fn curve_end(cx: &LatticeCtx, a: Vec2, u: Vec2, p: Vec2) -> (Vec2, Vec<Vec2>, Sn
     let second = near
         .iter()
         .filter_map(|(_, l)| Some((first.meet(l)?, l.dir)))
-        .find(|(q, _)| q.distance(p) <= LINE_TOL_M * 1.5);
+        .find(|(q, _)| q.distance(p) <= WEAK_M * 1.5);
     if let Some((q, d)) = second {
         return (q, vec![first.dir, d], guide);
     }
@@ -575,7 +624,7 @@ fn quantize_curve(
         );
     };
     if angle && let Some((c, _)) = square_dir(&refs, u) {
-        u = c;
+        u = exact_dir(cx, a, c);
     }
     let mut c = a + u * (control - a).dot(u).max(0.0);
     let mut end_refs = vec![u];
@@ -604,6 +653,7 @@ fn quantize_curve(
         && let Some(e) = (b - c).try_normalize()
         && let Some((e, _)) = square_dir(&end_refs, e)
     {
+        let e = exact_dir(cx, b, e);
         let start_ray = Line { at: a, dir: u };
         let end_ray = Line { at: b, dir: e };
         if let Some(q) = start_ray.meet(&end_ray)
@@ -624,13 +674,40 @@ fn quantize_curve(
     )
 }
 
-/// One section (T-275 spec v2, item 3): 10 cells between road centres.
+/// One section (T-275 spec v2, item 3): 10 cells between road centres; a guide since T-278.
 pub const SECTION_M: f32 = 10.0 * ZONE_CELL;
 /// Within this many degrees of a reference direction or its square the leg goes exactly so.
 const SQUARE_DEG: f32 = 7.0;
-/// How near (metres along the leg) the cursor must be to a line of a street for the end to take
-/// it instead of the section step.
-const LINE_TOL_M: f32 = 1.5 * ZONE_CELL;
+/// Two directions closer than this (radians, about 0.006 degrees) are one direction.
+const SAME_DIR_RAD: f32 = 1e-4;
+/// How far (metres) from a vertex the straight streets give [`exact_dir`] their directions.
+const EXACT_REACH_M: f32 = 3.0 * SECTION_M;
+
+fn same_dir(a: Vec2, b: Vec2) -> bool {
+    a.dot(b) > 0.0 && a.perp_dot(b).abs() < SAME_DIR_RAD
+}
+
+/// The snapped direction `dir` from `at`, made exact: the chord of a straight ground street near
+/// `at` (or its square) that is the same direction but for rounding. A curve's tangent is as
+/// exact as its control points (2e-5 rad at the map's coordinates): a street squared off it would
+/// pass that on (1 cm over 480 m) to every street squared off that one.
+fn exact_dir(cx: &LatticeCtx, at: Vec2, dir: Vec2) -> Vec2 {
+    cx.graph
+        .segments()
+        .filter(|(_, s)| {
+            s.elevation == Elevation::Ground
+                && s.curve.bounds_distance_xz(at) <= EXACT_REACH_M
+                && is_straight(&s.curve)
+        })
+        .filter_map(|(_, s)| (to_xz(s.curve.p3) - to_xz(s.curve.p0)).try_normalize())
+        .flat_map(|r| [r, Vec2::new(-r.y, r.x), -r, Vec2::new(r.y, -r.x)])
+        .find(|c| same_dir(*c, dir))
+        .unwrap_or(dir)
+}
+/// How near (metres) the cursor must be to a guide (a section mark, a line of a street) for the
+/// end to take it instead of the nearest whole cell (T-278: half a cell, so a sloppy hand still
+/// reaches the cell beside a guide).
+pub const WEAK_M: f32 = 0.5 * ZONE_CELL;
 
 /// Applies the rules of the module doc to `req.path`, returning the path and the snap at its
 /// last vertex. Pure: the same inputs, the same output; applying it to its own output changes
@@ -837,3 +914,62 @@ pub fn path_marks(view: &SimView, path: &RoadPath) -> Vec<ControlMark> {
 
 /// The radius within which the road tool draws the ticks around the cursor.
 pub const TICK_RADIUS: f32 = GUIDE_RADIUS;
+
+/// A tick of the road being drawn (T-278): across it at a whole cell from the start of its leg.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CellTick {
+    pub a: Vec2,
+    pub b: Vec2,
+    /// Every 10th cell (a section, the 10/20/30 silhouette): longer and drawn bold.
+    pub major: bool,
+}
+
+/// The ticks along `path` for a road of half width `half_width`: one every cell from the start of
+/// each leg (a curve: along its arc), every 10th a major one reaching a cell past the road's edge.
+pub fn cell_ticks(path: &RoadPath, half_width: f32) -> Vec<CellTick> {
+    let polylines: Vec<Vec<Vec2>> = match path {
+        RoadPath::Straight { from, to } => vec![vec![*from, *to]],
+        RoadPath::Free(v) => v.windows(2).map(|w| w.to_vec()).collect(),
+        RoadPath::Curve { from, control, to } => {
+            const N: usize = 128;
+            vec![
+                (0..=N)
+                    .map(|i| {
+                        let t = i as f32 / N as f32;
+                        let s = 1.0 - t;
+                        *from * (s * s) + *control * (2.0 * s * t) + *to * (t * t)
+                    })
+                    .collect(),
+            ]
+        }
+    };
+    let mut out = Vec::new();
+    for line in polylines {
+        let (mut walked, mut k) = (0.0, 1u32);
+        for w in line.windows(2) {
+            let (p, q) = (w[0], w[1]);
+            let len = p.distance(q);
+            let Some(d) = (q - p).try_normalize() else {
+                continue;
+            };
+            let n = Vec2::new(-d.y, d.x);
+            while k as f32 * ZONE_CELL <= walked + len + 1e-3 {
+                let at = p + d * (k as f32 * ZONE_CELL - walked);
+                let major = k % 10 == 0;
+                let r = if major {
+                    half_width + ZONE_CELL
+                } else {
+                    half_width
+                };
+                out.push(CellTick {
+                    a: at - n * r,
+                    b: at + n * r,
+                    major,
+                });
+                k += 1;
+            }
+            walked += len;
+        }
+    }
+    out
+}
