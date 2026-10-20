@@ -152,7 +152,8 @@ fn building_panel_equals_the_records() {
     assert!(info.problems.contains(&"no water") && info.problems.contains(&"no road"));
     let t = info.trouble.expect("a timer is running");
     assert!((t.days - 1.0).abs() < 0.01);
-    assert!((t.days_to_abandon - 6.0).abs() < 0.01 && (t.days_to_demolition - 13.0).abs() < 0.01);
+    // T-282: abandon_days 35, demolish_days 70 (were 7 and 14), one day in.
+    assert!((t.days_to_abandon - 34.0).abs() < 0.01 && (t.days_to_demolition - 69.0).abs() < 0.01);
     let rows = Inspection::Building(info).rows();
     let text = |label: &str| {
         rows.iter()
