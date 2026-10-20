@@ -44,6 +44,9 @@ pub struct Options {
     /// points clicked and the cursor at the last (x, z); `water-bulldoze,x,z`: the bulldozer in
     /// the water layer over (x, z) (T-286 shots).
     pub utility_demo: Option<cp_tools::UtilityDemo>,
+    /// `--mood-demo elementary_school,0.3`: the houses' emoji wave of that building as if it had
+    /// just opened, held 0.3 s in (T-287 shots).
+    pub mood_demo: Option<cp_render::MoodDemo>,
     /// `--place-demo fire_station,x,z`: hold the placement tool's ghost of that building at
     /// (x, z) without a cursor (screenshots of the coverage preview, T-254).
     pub place_demo: Option<cp_tools::PlaceDemo>,
@@ -107,6 +110,7 @@ impl Options {
                 })
             }),
             utility_demo: value("--utility-demo").and_then(|v| cp_tools::UtilityDemo::parse(&v)),
+            mood_demo: value("--mood-demo").and_then(|v| cp_render::MoodDemo::parse(&v)),
             place_demo: value("--place-demo").and_then(|v| {
                 let mut it = v.split(',');
                 let def = it.next()?.to_string();
@@ -363,6 +367,9 @@ pub fn run(opts: Options) -> AppExit {
         if opts.hidden && !opts.hidden_ui {
             app.add_plugins(cp_tools::ToolsPlugin);
         }
+        app.insert_resource(demo);
+    }
+    if let Some(demo) = opts.mood_demo {
         app.insert_resource(demo);
     }
     if let Some(demo) = opts.utility_demo {

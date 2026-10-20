@@ -141,7 +141,11 @@ impl Plugin for GamePlugin {
             AgentRenderPlugin,
             RtsCameraPlugin,
         ))
-        .add_plugins((cp_render::GradingPlugin, cp_render::PipelineWarmUpPlugin))
+        .add_plugins((
+            cp_render::GradingPlugin,
+            cp_render::PipelineWarmUpPlugin,
+            cp_render::EventFxPlugin,
+        ))
         .add_systems(PreUpdate, step_sim);
         if self.ui {
             app.insert_resource(cp_ui::UiState {
@@ -606,6 +610,9 @@ pub fn build_sim(
     } else if scene == Some(scene::CORNERS_WIDE) {
         scene::build_corners_wide(&mut sim);
         info!("scene corners-wide");
+    } else if scene == Some(scene::SCHOOL) {
+        scene::build_school(&mut sim);
+        info!("scene school");
     } else if scene == Some(scene::PIPES) {
         scene::build_pipes(&mut sim);
         info!("scene pipes");

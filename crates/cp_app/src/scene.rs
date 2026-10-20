@@ -1441,6 +1441,40 @@ pub fn build_grown(sim: &mut SimRunner) {
     }
 }
 
+/// The [`GROWN`] scene with an elementary school finished in the east residential block (T-287
+/// shots: `--cam road-over --mood-demo elementary_school,0.3` holds the wave of the houses it
+/// covers 0.3 s after it opened).
+pub const SCHOOL: &str = "school";
+
+/// Builds the [`SCHOOL`] scene.
+pub fn build_school(sim: &mut SimRunner) {
+    build_grown(sim);
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let def = db
+        .building_id("elementary_school")
+        .expect("elementary_school");
+    sim.push_command(
+        SimCommand::Building(cp_building::BuildingCommand::Place {
+            def,
+            pos: Vec2::new(c + 30.0, c - 20.0),
+            rot: 0.0,
+        }),
+        sim.tick(),
+    );
+    for _ in 0..20_000 {
+        sim.tick_once();
+        let open = sim
+            .world()
+            .resource::<cp_building::BuildingGrid>()
+            .iter()
+            .any(|(_, b)| b.def == def && b.state == cp_building::BuildingState::Active);
+        if open {
+            break;
+        }
+    }
+}
+
 /// The [`GROWN`] scene with a pipe along the north street, under the road (T-286 shots): the
 /// pipe cursor, a pipe dragged along the middle street with the reach band and the buildings it
 /// would connect, the bulldozer in the water layer over the pipe under the road.
