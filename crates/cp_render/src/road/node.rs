@@ -368,7 +368,10 @@ fn joint(
         .iter()
         .map(|&(xa, xb)| joint_line(graph, j, a, b, xa, xb))
         .collect();
-    let pts = align(&lines);
+    let mut pts = align(&lines);
+    if j.class == NodeClass::Bend {
+        round_inner_kerb(&lines, &bands, &mut pts);
+    }
     let (ya, yb) = (a.y(), b.y());
     let length = dash_len(&pts);
     let period = dash_period(length);
@@ -424,6 +427,88 @@ fn joint(
         node_pier(&mut m, graph, terrain, j);
     }
     m
+}
+
+/// Largest radius of the rounded inner kerb of a bend (T-277), metres.
+const INNER_KERB_R: f32 = 6.0;
+/// Bends turning more than this (radians, 120°) keep a sharp inner kerb.
+const MAX_ROUNDED_TURN: f32 = 2.0 * std::f32::consts::FRAC_PI_3;
+
+/// The inner kerb of a bend rounded (T-277, spec v2 item 10): an L turn is one sharp node, but
+/// its inner kerb is a circular fillet tangent to both kerbs, centred on the block's side: the
+/// road's inner edge curves round the corner like a kerb radius, the sidewalk there narrows. The
+/// sidewalk's outer edge (the road edge) keeps its sharp corner, so the cells and the building
+/// lots beside it do not change. The radius is [`INNER_KERB_R`]
+/// at most, and small enough that the fillet keeps clear of the next lane line and fits on the
+/// arms. `pts` are the aligned lines: the inner side's lines repeat their corner point once per
+/// point of the outer arc, which become the points of the fillet.
+fn round_inner_kerb(lines: &[SideLine], bands: &[Band], pts: &mut [Vec<Vec2>]) {
+    let walk = |b: &Band| b.raise > 0.0;
+    for k in 1..bands.len() {
+        let (l, h) = (&bands[k - 1], &bands[k]);
+        if walk(l) == walk(h) || lines[k].joint.len() != 1 {
+            continue;
+        }
+        // The next line on the carriageway side.
+        let next = if walk(l) { k + 1 } else { k - 1 };
+        let line = &pts[k];
+        let corner = lines[k].joint[0];
+        let at: Vec<usize> = (0..line.len())
+            .filter(|&i| line[i].distance(corner) < 1e-4)
+            .collect();
+        let (Some(&first), Some(&last)) = (at.first(), at.last()) else {
+            continue;
+        };
+        if first == 0 || last + 1 >= line.len() {
+            continue;
+        }
+        let u1 = (corner - line[0]).normalize_or_zero();
+        let u2 = (line[line.len() - 1] - corner).normalize_or_zero();
+        let turn = u1.dot(u2).clamp(-1.0, 1.0).acos();
+        // An L and what is near it; a hairpin keeps its mitre (its fillet would fill the bend).
+        if u1 == Vec2::ZERO || u2 == Vec2::ZERO || turn < 0.05 || turn > MAX_ROUNDED_TURN {
+            continue;
+        }
+        let half = turn / 2.0;
+        // Room: the corner of the fillet may come no nearer the next line than 40 % of the lane.
+        let room = pts[next]
+            .iter()
+            .map(|q| q.distance(corner))
+            .fold(f32::MAX, f32::min);
+        let legs = line[0]
+            .distance(corner)
+            .min(line[line.len() - 1].distance(corner));
+        let mut r = INNER_KERB_R.min(0.6 * room / (1.0 / half.cos() - 1.0).max(1e-3));
+        r = r.min(0.9 * legs / half.tan().max(1e-3));
+        if r < 0.5 {
+            continue;
+        }
+        let t = r * half.tan();
+        let (t1, t2) = (corner - u1 * t, corner + u2 * t);
+        let left = u1.perp_dot(u2) > 0.0;
+        let n1 = if left { u1.perp() } else { -u1.perp() };
+        let centre = t1 + n1 * r;
+        let from = t1 - centre;
+        let signed = if left { turn } else { -turn };
+        let line = &mut pts[k];
+        // Leg points within the tangent length go onto the tangent points...
+        for p in line.iter_mut().take(first) {
+            if p.distance(corner) < t {
+                *p = t1;
+            }
+        }
+        for p in line.iter_mut().skip(last + 1) {
+            if p.distance(corner) < t {
+                *p = t2;
+            }
+        }
+        // ...and the corner's points spread along the arc between them.
+        let n = last - first;
+        for (m, i) in (first..=last).enumerate() {
+            let f = if n == 0 { 0.5 } else { m as f32 / n as f32 };
+            line[i] = centre + Vec2::from_angle(signed * f).rotate(from);
+        }
+    }
 }
 
 /// The piece of a junction of three or more arms.

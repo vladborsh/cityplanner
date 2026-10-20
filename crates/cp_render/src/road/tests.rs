@@ -1262,6 +1262,46 @@ fn a_bend_has_one_smooth_outer_sidewalk_without_spikes_or_notches() {
     }
 }
 
+/// T-277 (spec v2 item 10): an L turn is one sharp node, but its inner kerb is rounded: a kerb
+/// radius round the block's corner (a point just inside the sidewalk at the old sharp kerb corner
+/// is road now), the road edge keeps its sharp corner (so the cells beside it do not change), and
+/// the middle of the road is no sidewalk.
+#[test]
+fn an_l_turn_has_a_rounded_inner_kerb_and_a_sharp_road_edge() {
+    for (def, kerb, hw) in [("basic_2l", 3.5f32, 8.0f32), ("medium_4l", 7.0, 16.0)] {
+        let mut w = world();
+        road_of(&mut w, def, C - Vec2::X * 80.0, C);
+        road_of(&mut w, def, C, C + dir(90.0) * 80.0);
+        let v = w.view();
+        let (set, _) = w.set(&v);
+        let (node, j) = v
+            .junctions
+            .iter()
+            .find(|(_, j)| j.arms.len() == 2)
+            .expect("the L node");
+        assert_eq!(j.class, NodeClass::Bend, "{def}");
+        let m = &set.piece(PieceKey::Junction(*node)).unwrap().near;
+        let sw = colour_tris(m, SIDEWALK);
+        let walked = |p: Vec2| sw.iter().any(|t| in_tri(p, *t));
+        // The inner side lies between the arms, towards (-1, 1).
+        let inner = Vec2::new(-1.0, 1.0);
+        let kerb_corner = C + inner * kerb;
+        assert!(
+            !walked(kerb_corner + inner * 0.4),
+            "{def}: the inner kerb keeps its sharp corner"
+        );
+        assert!(
+            walked(kerb_corner + inner * 2.0),
+            "{def}: no sidewalk inside the rounded kerb"
+        );
+        assert!(
+            walked(C + inner * (hw - 0.3)),
+            "{def}: the road edge lost its sharp corner"
+        );
+        assert!(!walked(C), "{def}: sidewalk in the middle of the road");
+    }
+}
+
 // T-233: street lamps and utility poles.
 
 fn furniture(w: &World) -> (furniture::FurnitureSet, Update) {
