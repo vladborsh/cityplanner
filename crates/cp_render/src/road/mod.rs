@@ -555,6 +555,58 @@ fn skirt_depth(terrain: &Terrain, p: Vec2, y: f32) -> f32 {
     (y - terrain.height(p) + 0.4).clamp(0.4, 8.0)
 }
 
+/// What a band is in a parking bay (T-276): nothing, the bay's white line, or its surface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BayPart {
+    None,
+    Line,
+    Surface,
+}
+
+/// `bands` with the kerb-side [`parking::BAY_W`] of each sidewalk that has a bay split off as
+/// the bay's line and surface (still sidewalks: [`extrude`] lowers them along the bays' stretch).
+fn with_bays(bands: Vec<Band>, bays: Option<&parking::Bays>) -> (Vec<Band>, Vec<BayPart>) {
+    let Some(bays) = bays else {
+        let n = bands.len();
+        return (bands, vec![BayPart::None; n]);
+    };
+    let (mut out, mut parts) = (Vec::new(), Vec::new());
+    for b in bands {
+        let side = bays.sides.iter().find(|s| {
+            b.raise > 1e-3
+                && ((s.sign > 0.0 && (b.lo - s.kerb).abs() < 1e-3)
+                    || (s.sign < 0.0 && (b.hi - s.kerb).abs() < 1e-3))
+        });
+        let Some(side) = side else {
+            out.push(b);
+            parts.push(BayPart::None);
+            continue;
+        };
+        let k = side.kerb;
+        let line = k + side.sign * parking::BAY_LINE_W;
+        let outer = k + side.sign * parking::BAY_W;
+        let piece = |lo: f32, hi: f32| Band { lo, hi, ..b };
+        let mut pieces = vec![
+            (piece(k.min(line), k.max(line)), BayPart::Line),
+            (piece(line.min(outer), line.max(outer)), BayPart::Surface),
+            (
+                if side.sign > 0.0 {
+                    piece(outer, b.hi)
+                } else {
+                    piece(b.lo, outer)
+                },
+                BayPart::None,
+            ),
+        ];
+        pieces.sort_by(|a, c| a.0.lo.total_cmp(&c.0.lo));
+        for (band, part) in pieces {
+            out.push(band);
+            parts.push(part);
+        }
+    }
+    (out, parts)
+}
+
 fn extrude(
     graph: &NetGraph,
     geo: &JunctionGeometry,
@@ -581,7 +633,8 @@ fn extrude(
         start: arm_of(geo, seg.start, id, true),
         end: arm_of(geo, seg.end, id, false),
     };
-    let bands = cross_section(graph, seg, markings);
+    let bays = parking::bays(graph, geo, id);
+    let (bands, parts) = with_bays(cross_section(graph, seg, markings), bays.as_ref());
     let has_dashes = bands.iter().any(|b| b.dashed);
     // Chevrons (near mesh, one-way roads): `(lo, hi)` is the carriageway they replace.
     let chevron = (markings && is_one_way(graph, seg))
@@ -611,7 +664,33 @@ fn extrude(
         base.sort_by(f32::total_cmp);
         base.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
     }
+    if let Some(bays) = &bays {
+        // Exact rings where the bays begin and end.
+        base.extend([bays.a, bays.b]);
+        base.sort_by(f32::total_cmp);
+        base.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
+    }
     let (s_list, rings) = ground::rings(&frame, graph, geo, terrain, id, seg, base);
+    // Whether ring pair `k - 1, k` lies along the bays (their bands are lowered there).
+    let in_bay = |k: usize| {
+        k > 0
+            && bays
+                .as_ref()
+                .is_some_and(|b| b.covers((s_list[k - 1] + s_list[k]) * 0.5))
+    };
+    // Height and colour of band `i` on ring pair `k`.
+    let raise_of = |i: usize, k: usize| {
+        if parts[i] != BayPart::None && in_bay(k) {
+            0.0
+        } else {
+            bands[i].raise
+        }
+    };
+    let color_of = |i: usize, k: usize| match parts[i] {
+        BayPart::Line if in_bay(k) => WHITE,
+        BayPart::Surface if in_bay(k) => ASPHALT,
+        _ => bands[i].color,
+    };
     // Ring pairs `k - 1, k` that hold a chevron.
     let chevron_row = |k: usize| {
         k > 0
@@ -627,8 +706,21 @@ fn extrude(
     let up = Vec3::Y;
     let mut m = MeshData::default();
 
-    // Surface bands.
-    for b in &bands {
+    // Surface bands. A bay band is drawn pair by pair: lowered and asphalt along the bays.
+    for (i, b) in bands.iter().enumerate() {
+        if parts[i] != BayPart::None {
+            for k in 1..rings.len() {
+                let (q, r) = (&rings[k - 1], &rings[k]);
+                let h = raise_of(i, k);
+                flat_quad(
+                    &mut m,
+                    [q.at(b.lo, h), q.at(b.hi, h), r.at(b.hi, h), r.at(b.lo, h)],
+                    up,
+                    color_of(i, k),
+                );
+            }
+            continue;
+        }
         let mut prev: Option<(u32, u32)> = None;
         // Under a chevron the carriageway is drawn by `chevron_quads` instead, in a zone
         // everything at road level by `zone_quads`.
@@ -683,32 +775,59 @@ fn extrude(
         }
     }
 
-    // Kerb faces where neighbouring bands differ in height.
+    // Kerb faces where neighbouring bands differ in height (ring pair by ring pair: a parking
+    // bay moves the kerb to its outer edge along its stretch).
     if markings {
-        for pair in bands.windows(2) {
-            let (a, b) = (pair[0], pair[1]);
-            if (a.raise - b.raise).abs() < 1e-3 {
-                continue;
-            }
-            let (low, high) = if a.raise < b.raise { (a, b) } else { (b, a) };
-            let x = a.hi;
-            // Face towards the lower band.
-            let towards = if a.raise < b.raise { -1.0 } else { 1.0 };
-            for w in rings.windows(2) {
-                let n3 = |r: &Ring| {
-                    let l = r.left * towards;
-                    Vec3::new(l.x, 0.0, l.y)
-                };
-                let nrm = n3(&w[0]);
+        for i in 1..bands.len() {
+            let x = bands[i - 1].hi;
+            for k in 1..rings.len() {
+                let (ra, rb) = (raise_of(i - 1, k), raise_of(i, k));
+                if (ra - rb).abs() < 1e-3 {
+                    continue;
+                }
+                let (low, high) = (ra.min(rb), ra.max(rb));
+                // Face towards the lower band.
+                let towards = if ra < rb { -1.0 } else { 1.0 };
+                let w = [&rings[k - 1], &rings[k]];
+                let l = w[0].left * towards;
                 flat_quad(
                     &mut m,
                     [
-                        w[0].at(x, low.raise),
-                        w[1].at(x, low.raise),
-                        w[1].at(x, high.raise),
-                        w[0].at(x, high.raise),
+                        w[0].at(x, low),
+                        w[1].at(x, low),
+                        w[1].at(x, high),
+                        w[0].at(x, high),
                     ],
-                    nrm,
+                    Vec3::new(l.x, 0.0, l.y),
+                    KERB,
+                );
+            }
+        }
+        // Across a bay where it begins and ends: the kerb between the bay and the sidewalk.
+        for (k, r) in rings
+            .iter()
+            .enumerate()
+            .take(rings.len().saturating_sub(1))
+            .skip(1)
+        {
+            if in_bay(k) == in_bay(k + 1) {
+                continue;
+            }
+            // Towards the bay: back along the curve where it ends, forward where it begins.
+            let along = Vec2::new(-r.left.y, r.left.x) * if in_bay(k) { -1.0 } else { 1.0 };
+            for (i, b) in bands.iter().enumerate() {
+                if parts[i] == BayPart::None {
+                    continue;
+                }
+                flat_quad(
+                    &mut m,
+                    [
+                        r.at(b.lo, 0.0),
+                        r.at(b.hi, 0.0),
+                        r.at(b.hi, b.raise),
+                        r.at(b.lo, b.raise),
+                    ],
+                    Vec3::new(along.x, 0.0, along.y),
                     KERB,
                 );
             }
@@ -1199,6 +1318,7 @@ pub mod band;
 pub mod furniture;
 mod ground;
 mod node;
+pub mod parking;
 pub use band::{BAND_LIFT, BAND_STEP, band_data, band_mesh, band_polyline, to_mesh};
 pub use ground::{CLEARANCE, lod_height, max_mesh_height};
 

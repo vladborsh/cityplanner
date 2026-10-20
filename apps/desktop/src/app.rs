@@ -53,6 +53,8 @@ pub struct Options {
     pub category: Option<cp_ui::Category>,
     /// `--no-clouds`: no cloud shadows in this run (T-272).
     pub no_clouds: bool,
+    /// `--no-parked`: no parked cars in this run (T-276).
+    pub no_parked: bool,
 }
 
 impl Options {
@@ -106,6 +108,7 @@ impl Options {
             grading_panel: args.iter().any(|a| a == "--grading-panel"),
             hidden_ui: args.iter().any(|a| a == "--ui"),
             no_clouds: args.iter().any(|a| a == "--no-clouds"),
+            no_parked: args.iter().any(|a| a == "--no-parked"),
             category: value("--category").and_then(|n| {
                 cp_ui::Category::ALL
                     .into_iter()
@@ -247,6 +250,11 @@ pub fn run(opts: Options) -> AppExit {
         }
         app.insert_resource(demo);
     }
+    // GPU timestamps of the render passes: a hidden run (no window) on Metal cannot allocate
+    // their counter buffers and loses the device a few seconds in (T-276: `--hidden --bench`).
+    if !opts.hidden {
+        app.add_plugins(RenderDiagnosticsPlugin);
+    }
     app.add_plugins((
         GamePlugin {
             map: opts.map,
@@ -265,9 +273,9 @@ pub fn run(opts: Options) -> AppExit {
             grading_panel: opts.grading_panel,
             category: opts.category,
             no_clouds: opts.no_clouds,
+            no_parked: opts.no_parked,
         },
         FrameTimeDiagnosticsPlugin::default(),
-        RenderDiagnosticsPlugin,
     ))
     .add_plugins(CapturePlugin)
     .insert_resource(Job {

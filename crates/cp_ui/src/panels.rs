@@ -491,6 +491,8 @@ pub fn top_bar(
             rects.always_day = Some(r.rect);
             // Shadows of passing clouds (T-272).
             ui.checkbox(&mut lighting.cloud_shadows, "Тени облаков");
+            // Parked cars along the kerbs (T-276).
+            ui.checkbox(&mut lighting.parked_cars, "Припаркованные машины");
             let prefs = &mut state.prefs;
             ui.add(egui::Slider::new(&mut prefs.ui_scale, UI_SCALE_RANGE).text("Масштаб UI"));
             // Sound (T-189).

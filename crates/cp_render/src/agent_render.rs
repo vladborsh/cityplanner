@@ -203,6 +203,19 @@ fn spawn_batches(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     }
 }
 
+/// How often (real seconds) the parked cars are laid again while the city changes: they follow
+/// the buildings slowly, never per tick.
+const PARKED_REFRESH_S: f32 = 2.0;
+
+/// The parked cars and the bays of the net they were laid on.
+#[derive(Default)]
+struct ParkedCache {
+    key: Option<(usize, usize)>,
+    built_at: f32,
+    cars: Arc<Vec<crate::parked::ParkedBucket>>,
+    index: Arc<crate::parked::BayIndex>,
+}
+
 /// Scratch lists kept across frames, so the per-frame build does not reallocate.
 #[derive(Resource, Default)]
 struct FrameInstances(AgentInstances);
@@ -224,6 +237,8 @@ fn build_agent_instances(
     mut stats: ResMut<AgentRenderStats>,
     mut looks: Local<Looks>,
     mut headings: Local<Headings>,
+    settings: Option<Res<crate::LightingSettings>>,
+    mut parked_cache: Local<ParkedCache>,
 ) {
     let (Some(view), Some((cam, frustum))) = (view, camera.iter().next()) else {
         return;
@@ -245,6 +260,27 @@ fn build_agent_instances(
         alpha: snap.blend(fraction.0),
         time: time.elapsed_secs(),
     };
+    // Parked cars in the bays (T-276): the settings switch, on by default.
+    let parked_on = settings.is_none_or(|s| s.parked_cars);
+    if parked_on && let Some(db) = view.content.as_deref() {
+        let key = (
+            Arc::as_ptr(&view.net) as usize,
+            Arc::as_ptr(&view.buildings) as usize,
+        );
+        let now = time.elapsed_secs();
+        if parked_cache.key != Some(key)
+            && (parked_cache.key.is_none() || now - parked_cache.built_at >= PARKED_REFRESH_S)
+        {
+            let (cars, index) =
+                crate::parked::parked_cars(&view.net, &view.junctions, db, &view.buildings);
+            *parked_cache = ParkedCache {
+                key: Some(key),
+                built_at: now,
+                cars: Arc::new(crate::parked::bucketed(&cars)),
+                index: Arc::new(index),
+            };
+        }
+    }
     let out = &mut scratch.0;
     out.clear();
     build_vehicles(
@@ -254,11 +290,16 @@ fn build_agent_instances(
         &cull,
         out,
     );
+    if parked_on {
+        crate::agent::build_parked(&parked_cache.cars, &looks.looks, &cull, out);
+    }
     if let Some(terrain) = view.terrain.as_ref() {
+        let index = &parked_cache.index;
         build_pedestrians(
             &snap.prev.pedestrians,
             &snap.cur.pedestrians,
             |x, z| terrain.height(Vec2::new(x, z)),
+            |p| if parked_on { index.nudge(p) } else { p },
             &cull,
             &mut headings,
             out,

@@ -107,6 +107,8 @@ pub struct Settings {
     pub always_day: bool,
     /// The shadows of passing clouds (T-272).
     pub cloud_shadows: bool,
+    /// Parked cars along the kerbs (T-276).
+    pub parked_cars: bool,
     pub ui_scale: f32,
     pub camera: CameraPrefs,
     /// The city advisor snackbar (T-188) and whether it only names problems.
@@ -125,6 +127,7 @@ impl Default for Settings {
             // day and night cycle back on.
             always_day: true,
             cloud_shadows: true,
+            parked_cars: true,
             ui_scale: 1.0,
             camera: CameraPrefs::default(),
             advisor: true,
@@ -227,6 +230,7 @@ impl Settings {
         Self {
             always_day: lighting.always_day,
             cloud_shadows: lighting.cloud_shadows,
+            parked_cars: lighting.parked_cars,
             ui_scale: ui.prefs.ui_scale,
             camera: CameraPrefs {
                 pan_speed: camera.pan_speed,
@@ -308,6 +312,7 @@ mod tests {
         let s = Settings {
             always_day: true,
             cloud_shadows: false,
+            parked_cars: false,
             ui_scale: 1.5,
             camera: CameraPrefs {
                 pan_speed: 1.7,

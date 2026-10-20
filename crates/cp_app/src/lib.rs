@@ -74,6 +74,8 @@ pub struct GamePlugin {
     pub category: Option<cp_ui::Category>,
     /// No cloud shadows in this run (`--no-clouds`, T-272: shots without them).
     pub no_clouds: bool,
+    /// No parked cars in this run (`--no-parked`, T-276: shots without them).
+    pub no_parked: bool,
 }
 
 #[derive(Resource, Clone)]
@@ -107,6 +109,7 @@ impl Plugin for GamePlugin {
         .insert_resource(cp_render::LightingSettings {
             always_day: !self.day_night && (self.always_day || settings.always_day),
             cloud_shadows: settings.cloud_shadows && !self.no_clouds,
+            parked_cars: settings.parked_cars && !self.no_parked,
         })
         .insert_resource(self.grading.unwrap_or(settings.grading.settings()))
         .insert_resource(cp_tools::NetDebug {

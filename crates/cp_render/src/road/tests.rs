@@ -1593,3 +1593,166 @@ fn a_junction_beside_an_automatic_cut_gets_its_corners_and_zebras() {
         }
     }
 }
+
+// ---- T-276: parking bays and parked cars --------------------------------------------------
+
+/// The lateral offset of `p` from the trimmed curve of `id` and its arc length there.
+fn lateral(v: &SimView, id: SegmentId, p: Vec2) -> (f32, f32) {
+    let curve = v.junctions.trimmed_curve(&v.net, id).unwrap();
+    let (t, _) = curve.nearest_xz(p);
+    let tangent = to_xz(curve.tangent(t)).normalize();
+    let left = Vec2::new(tangent.y, -tangent.x);
+    (
+        (p - to_xz(curve.point(t))).dot(left),
+        curve.arc_table().t_to_s(t),
+    )
+}
+
+#[test]
+fn bays_line_local_streets_a_cell_clear_of_junctions_and_not_wide_roads() {
+    let mut w = world();
+    cross(&mut w, "basic_2l");
+    let v = w.view();
+    let mut seen = 0;
+    for (id, seg) in v.net.segments() {
+        let b = parking::bays(&v.net, &v.junctions, id).expect("a local street has bays");
+        assert_eq!(b.sides.len(), 2, "both sidewalks");
+        let length = v
+            .junctions
+            .trimmed_curve(&v.net, id)
+            .unwrap()
+            .arc_table()
+            .length();
+        for (node, at) in [(seg.start, b.a), (seg.end, length - b.b)] {
+            if v.junctions.get(node).is_some_and(|j| j.arms.len() >= 3) {
+                assert!(at >= 8.0 - 1e-3, "{at} m from the junction");
+            }
+        }
+        seen += 1;
+    }
+    assert!(seen >= 4, "{seen} segments (the long arms are cut)");
+    for road in ["large_6l", "highway_1w_2l"] {
+        let mut w = world();
+        w.line(road, (X0, Z0), (X0 + 200.0, Z0));
+        let v = w.view();
+        assert!(
+            v.net
+                .segments()
+                .all(|(id, _)| parking::bays(&v.net, &v.junctions, id).is_none()),
+            "{road}: no bays"
+        );
+    }
+}
+
+#[test]
+fn lamps_and_poles_stand_beside_the_bays_not_in_them() {
+    let mut w = world();
+    cross(&mut w, "basic_2l");
+    let v = w.view();
+    for (id, _) in v.net.segments() {
+        let b = parking::bays(&v.net, &v.junctions, id).unwrap();
+        let f =
+            furniture::build_segment_furniture(&v.net, &v.junctions, &w.terrain, &w.content, id)
+                .expect("lamps");
+        let ground = f
+            .posts
+            .positions
+            .iter()
+            .map(|p| p[1])
+            .fold(f32::MAX, f32::min);
+        for p in &f.posts.positions {
+            if p[1] > ground + 1.0 {
+                continue; // arms and heads reach over the street
+            }
+            let (x, _) = lateral(&v, id, Vec2::new(p[0], p[2]));
+            for side in &b.sides {
+                let (lo, hi) = side.range();
+                assert!(
+                    x < lo + 0.01 || x > hi - 0.01,
+                    "a post foot at {x} in the bay {lo}..{hi}"
+                );
+            }
+        }
+    }
+}
+
+/// A building at `along` metres of segment `id`, 20 m to its left (`side` 1) or right (-1).
+#[allow(clippy::too_many_arguments)]
+fn front(
+    v: &SimView,
+    db: &ContentDb,
+    grid: &mut cp_building::BuildingGrid,
+    def: &str,
+    id: SegmentId,
+    t: f32,
+    side: f32,
+    level: u8,
+) -> cp_building::BuildingId {
+    let seg = v.net.segment(id).unwrap();
+    let at = to_xz(seg.curve.point(t));
+    let tangent = to_xz(seg.curve.tangent(t)).normalize();
+    let left = Vec2::new(tangent.y, -tangent.x);
+    grid.insert(cp_building::Building {
+        def: db.building_id(def).unwrap(),
+        footprint: cp_building::Footprint::Free { w: 2, d: 2 },
+        level,
+        state: cp_building::BuildingState::Active,
+        ready_at: Tick(0),
+        pos: at + left * (20.0 * side),
+        rot: 0.0,
+        access: Some(cp_building::AccessPoint { segment: id, t }),
+        flags: cp_building::BuildingFlags::default(),
+        level_progress: 0.0,
+    })
+}
+
+#[test]
+fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
+    let mut w = world();
+    w.line("basic_2l", (X0, Z0), (X0 + 96.0, Z0));
+    let v = w.view();
+    let db = &*w.content;
+    let id = v.net.segments().next().unwrap().0;
+    let empty = cp_building::BuildingGrid::new();
+    let (cars, _) = crate::parked::parked_cars(&v.net, &v.junctions, db, &empty);
+    assert!(cars.is_empty(), "empty lots: no parked cars");
+
+    // Busy houses along the left side, a fire station in their middle.
+    let mut grid = cp_building::BuildingGrid::new();
+    for k in 1..10 {
+        front(&v, db, &mut grid, "apt_high_3", id, k as f32 / 10.0, 1.0, 3);
+    }
+    let station = 0.5;
+    front(&v, db, &mut grid, "fire_station", id, station, 1.0, 1);
+    let (cars, index) = crate::parked::parked_cars(&v.net, &v.junctions, db, &grid);
+    assert!(cars.len() >= 4, "{} cars by busy houses", cars.len());
+    let b = parking::bays(&v.net, &v.junctions, id).unwrap();
+    let side = b.sides.iter().find(|s| s.sign > 0.0).unwrap();
+    let (lo, hi) = side.range();
+    let st = lateral(
+        &v,
+        id,
+        to_xz(v.net.segment(id).unwrap().curve.point(station)),
+    )
+    .1;
+    for c in &cars {
+        let (x, s) = lateral(&v, id, Vec2::new(c.pos.x, c.pos.z));
+        assert!(x > lo && x < hi, "a car at {x}, the left bay is {lo}..{hi}");
+        assert!(s > b.a && s < b.b, "a car at {s} outside the bay's stretch");
+        assert!(
+            (s - st).abs() >= parking::SLOT_LEN - 1e-3,
+            "a car before the fire station"
+        );
+    }
+    // The same city, the same cars; a pedestrian walking the bay is drawn beyond it.
+    assert_eq!(
+        crate::parked::parked_cars(&v.net, &v.junctions, db, &grid).0,
+        cars
+    );
+    let c = cars[0];
+    let p = index.nudge(Vec2::new(c.pos.x, c.pos.z));
+    let (x, _) = lateral(&v, id, p);
+    assert!(x > hi, "nudged to {x}, beyond the bay's edge {hi}");
+    let far = Vec2::new(X0 + 48.0, Z0 + 7.5);
+    assert_eq!(index.nudge(far), far, "the outer sidewalk is left alone");
+}

@@ -334,6 +334,37 @@ pub fn build_vehicles(
     );
 }
 
+/// Fills `out.vehicles` (cars, kind 0) with the parked cars of the bays (T-276), culled like
+/// the moving ones: none above [`VEHICLE_MAX_HEIGHT`], the box from [`VEHICLE_DETAIL_HEIGHT`].
+pub fn build_parked(
+    buckets: &[crate::parked::ParkedBucket],
+    looks: &VehicleLooks,
+    cull: &Cull,
+    out: &mut AgentInstances,
+) {
+    let h = cull.height;
+    if h > VEHICLE_MAX_HEIGHT {
+        return;
+    }
+    let detail = usize::from(h > VEHICLE_DETAIL_HEIGHT);
+    let size = looks.sizes[0];
+    for c in buckets
+        .iter()
+        .filter(|b| cull.sees(b.center, b.radius + VEHICLE_RADIUS))
+        .flat_map(|b| &b.cars)
+    {
+        if !cull.sees(c.pos, VEHICLE_RADIUS) {
+            continue;
+        }
+        let col = vehicle_color(0, mix(c.key));
+        out.vehicles[0][detail].push(InstanceData {
+            pos_yaw: [c.pos.x, c.pos.y, c.pos.z, c.yaw],
+            scale_phase: [size.x, size.y, size.z, 0.0],
+            color_sway: [col[0], col[1], col[2], 0.0],
+        });
+    }
+}
+
 /// Last heading of every pedestrian `(key, yaw)`, ascending by key: one that stops keeps
 /// facing the way it walked instead of snapping to a random direction (BUG-064).
 #[derive(Clone, Debug, Default)]
@@ -345,11 +376,13 @@ pub struct Headings {
 /// Fills `out.pedestrians`. Nothing is drawn above [`PEDESTRIAN_MAX_HEIGHT`]. `ground` gives
 /// the terrain height at (x, z). Heading follows the motion between the snapshots; a
 /// pedestrian that did not move stands (no sway) facing its last heading in `headings` (a
-/// random one the first time it is seen).
+/// random one the first time it is seen). `nudge` moves a drawn position (out of the parking
+/// bays, T-276; the heading follows the sim's motion).
 pub fn build_pedestrians(
     prev: &[PedestrianPose],
     cur: &[PedestrianPose],
     ground: impl Fn(f32, f32) -> f32,
+    nudge: impl Fn(bevy_math::Vec2) -> bevy_math::Vec2,
     cull: &Cull,
     headings: &mut Headings,
     out: &mut AgentInstances,
@@ -388,10 +421,13 @@ pub fn build_pedestrians(
                     .map_or(unit(hash, 32) * std::f32::consts::TAU, |(_, y)| *y)
             };
             next.push((c.key, yaw));
+            // Culled where the sim has it (with room for the nudge), then nudged.
             let y = ground(pos.x, pos.y);
-            if !cull.sees(Vec3::new(pos.x, y + 0.9, pos.y), PEDESTRIAN_RADIUS) {
+            if !cull.sees(Vec3::new(pos.x, y + 0.9, pos.y), PEDESTRIAN_RADIUS + 3.0) {
                 return;
             }
+            let pos = nudge(pos);
+            let y = ground(pos.x, pos.y);
             let col = SHIRT_COLORS[(hash % SHIRT_COLORS.len() as u64) as usize];
             let phase = cull.time * GAIT_HZ * std::f32::consts::TAU
                 + unit(hash, 16) * std::f32::consts::TAU;

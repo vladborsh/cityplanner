@@ -11,6 +11,8 @@ pub struct LightingSettings {
     pub always_day: bool,
     /// The shadows of passing clouds on the ground, the roads and the buildings (T-272).
     pub cloud_shadows: bool,
+    /// Parked cars in the parking bays along the kerbs (T-276).
+    pub parked_cars: bool,
 }
 
 impl Default for LightingSettings {
@@ -18,6 +20,7 @@ impl Default for LightingSettings {
         Self {
             always_day: false,
             cloud_shadows: true,
+            parked_cars: true,
         }
     }
 }

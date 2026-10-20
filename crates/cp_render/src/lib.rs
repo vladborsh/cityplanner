@@ -16,6 +16,7 @@ pub mod furniture_render;
 pub mod grading;
 pub mod material;
 pub mod overlay;
+pub mod parked;
 pub mod portal_render;
 pub mod problem;
 pub mod problem_render;
