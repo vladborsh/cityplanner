@@ -254,8 +254,10 @@ pub fn place_sites(road: &'static str, hw: f32) -> Vec<PlaceSite> {
             },
         ],
     });
-    // An L whose corner is a quadratic of radius 24 m about (24, 24): the inside of the bend.
-    let r = 24.0;
+    // An L whose corner is a quadratic with legs of `r` (T-268: the curve takes no less than
+    // 3 cells of radius on a 2-cell road, 5 on a 4-cell one; the apex radius is r / sqrt 2):
+    // the inside of the bend, just past its apex.
+    let r = if hw > 10.0 { 64.0 } else { 40.0 };
     out.push(PlaceSite {
         name: format!("rounded/{road}"),
         roads: vec![
@@ -272,7 +274,7 @@ pub fn place_sites(road: &'static str, hw: f32) -> Vec<PlaceSite> {
         ],
         spots: vec![PlaceSpot {
             name: "inside",
-            at: Vec2::new(hw, hw),
+            at: Vec2::splat(r / 4.0 + hw),
             along: x,
             into: y,
         }],
