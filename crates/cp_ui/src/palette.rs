@@ -938,33 +938,23 @@ mod tests {
                 .map(|(t, _)| t)
                 .collect()
         };
-        // Water: the pipe, every Water and Sewage service building, remove.
+        // Water: the pipe and every Water and Sewage service building (T-289: no Remove tile, the
+        // bulldozer is its own button).
         rig.click_category(Category::Water);
         assert_eq!(
             tiles(&mut rig).len(),
-            service(&[ServiceKind::Water, ServiceKind::Sewage]) + 2
+            service(&[ServiceKind::Water, ServiceKind::Sewage]) + 1
         );
         let n = names(&mut rig);
-        for want in [
-            "Pipe",
-            "Water pump",
-            "Water tower",
-            "Sewage outflow",
-            "Remove pipe",
-        ] {
+        for want in ["Pipe", "Water pump", "Water tower", "Sewage outflow"] {
             assert!(n.iter().any(|t| t == want), "{want:?} missing from {n:?}");
         }
         assert!(!n.iter().any(|t| t == "Power line" || t == "Wind turbine"));
         // Power likewise.
         rig.click_category(Category::Power);
-        assert_eq!(tiles(&mut rig).len(), service(&[ServiceKind::Power]) + 2);
+        assert_eq!(tiles(&mut rig).len(), service(&[ServiceKind::Power]) + 1);
         let n = names(&mut rig);
-        for want in [
-            "Power line",
-            "Coal power plant",
-            "Wind turbine",
-            "Remove line",
-        ] {
+        for want in ["Power line", "Coal power plant", "Wind turbine"] {
             assert!(n.iter().any(|t| t == want), "{want:?} missing from {n:?}");
         }
         assert!(!n.iter().any(|t| t == "Pipe" || t == "Water pump"));
@@ -987,6 +977,7 @@ mod tests {
             "Power line",
             "Wind turbine",
             "Remove pipe",
+            "Remove line",
         ] {
             assert!(!n.iter().any(|t| t == gone), "{gone:?} still in Buildings");
         }
@@ -1080,11 +1071,12 @@ mod tests {
         assert_eq!(rig.overlay.active, Overlay::Water);
 
         rig.click_category(Category::Power);
-        rig.click_label("Remove line");
-        assert_eq!(rig.tools.active, ActiveTool::Bulldozer);
-        assert_eq!(rig.tools.bulldoze_layer, cp_tools::BulldozeLayer::Power);
-        assert_eq!(rig.overlay.active, Overlay::Power);
-
+        assert!(
+            !rig.frame_texts(vec![])
+                .iter()
+                .any(|(t, _)| t == "Remove line" || t == "Remove pipe"),
+            "the bulldozer is its own button"
+        );
         rig.click_label("Coal power plant");
         assert_eq!(rig.tools.active, ActiveTool::Place);
         assert_eq!(rig.overlay.active, Overlay::Power);

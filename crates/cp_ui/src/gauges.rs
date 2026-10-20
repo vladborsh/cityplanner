@@ -80,7 +80,7 @@ fn icon_of(sector: Sector) -> Icon {
     match sector {
         Sector::Power => Icon::Power,
         Sector::Water => Icon::Water,
-        _ => Icon::SewageTreatment,
+        _ => Icon::Sewage,
     }
 }
 
@@ -287,6 +287,16 @@ mod tests {
             unit: "units/day",
             locked: false,
         }
+    }
+
+    /// The three gauges have three different icons; sewage has one of its own, not the treatment
+    /// plant's building icon.
+    #[test]
+    fn each_gauge_has_its_own_icon_and_sewage_is_not_a_building_icon() {
+        let icons: Vec<Icon> = SECTORS.into_iter().map(icon_of).collect();
+        assert_eq!(icons, [Icon::Power, Icon::Water, Icon::Sewage]);
+        assert_ne!(icon_of(Sector::Sewage), Icon::SewageTreatment);
+        assert_eq!(Icon::Sewage.stem(), "sewage");
     }
 
     #[test]

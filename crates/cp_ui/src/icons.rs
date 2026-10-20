@@ -41,6 +41,7 @@ icons! {
     Roads => "roads",
     Zones => "zones",
     Water => "water",
+    Sewage => "sewage",
     Power => "power",
     Buildings => "buildings",
     Bulldozer => "bulldozer",
