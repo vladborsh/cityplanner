@@ -258,14 +258,22 @@ fn pending_hop(g: &PathGraph, v: &Vehicle) -> bool {
 
 impl DriveState {
     /// Recomputes [`DriveState::hop_lanes`] from the cars on the lanes.
-    fn refresh_hop_lanes(&mut self, vehicles: &Arena<Vehicle>, g: &PathGraph) {
-        self.hop_lanes = OccBits::with_len(self.lanes.len());
+    fn refresh_hop_lanes(
+        &mut self,
+        vehicles: &Arena<Vehicle>,
+        g: &PathGraph,
+        pool: Option<&TaskPool>,
+    ) {
         let slots: Vec<usize> = self.occ.iter().collect();
-        for slot in slots {
-            if self.lanes[slot]
+        let lanes = &self.lanes;
+        let hops = par_map(pool, &slots, |&slot| {
+            lanes[slot]
                 .iter()
                 .any(|&id| vehicles.get(id).is_some_and(|v| pending_hop(g, v)))
-            {
+        });
+        self.hop_lanes = OccBits::with_len(self.lanes.len());
+        for (slot, hop) in slots.into_iter().zip(hops) {
+            if hop {
                 self.hop_lanes.set(slot, true);
             }
         }
@@ -526,6 +534,16 @@ struct Upd {
     s: f32,
     v: f32,
     ev: Ev,
+}
+
+/// Adds `u` for `v`, unless it is a plain move to exactly where `v` already is at the speed it
+/// already has (a standing car): applying it would change nothing, and the sequential apply
+/// is bound by the writes to the vehicles (T-259).
+fn push_upd(out: &mut Vec<Upd>, v: &Vehicle, u: Upd) {
+    if u.ev == Ev::Stay && u.s.to_bits() == v.s.to_bits() && u.v.to_bits() == v.speed.to_bits() {
+        return;
+    }
+    out.push(u);
 }
 
 #[derive(Clone, Copy)]
@@ -819,12 +837,16 @@ fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
         let Some(v) = ctx.veh.get(id) else { continue };
         if v.is_parked() {
             // Stands at its goal until a run continues it; it still holds its place.
-            out.push(Upd {
-                id,
-                s: v.s,
-                v: 0.0,
-                ev: Ev::Stay,
-            });
+            push_upd(
+                out,
+                v,
+                Upd {
+                    id,
+                    s: v.s,
+                    v: 0.0,
+                    ev: Ev::Stay,
+                },
+            );
             prev = Some(v);
             continue;
         }
@@ -897,7 +919,7 @@ fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
                 }
             }
         }
-        out.push(Upd { id, s, v: nv, ev });
+        push_upd(out, v, Upd { id, s, v: nv, ev });
         prev = Some(v);
     }
 }
@@ -992,12 +1014,16 @@ fn step_conn(ctx: &Ctx, key: (u32, u32), out: &mut Vec<Upd>) {
         } else {
             Ev::Stay
         };
-        out.push(Upd {
-            id,
-            s: if prev.is_some() { s.min(ex.length) } else { s },
-            v: nv,
-            ev,
-        });
+        push_upd(
+            out,
+            v,
+            Upd {
+                id,
+                s: if prev.is_some() { s.min(ex.length) } else { s },
+                v: nv,
+                ev,
+            },
+        );
         prev = Some(v);
     }
 }
@@ -1045,6 +1071,7 @@ pub(crate) fn spawn_waiting(
     vehicles: &mut Arena<Vehicle>,
     st: &mut DriveState,
     g: &PathGraph,
+    pool: Option<&TaskPool>,
     finished: &mut Finished,
 ) {
     // Id order, whatever the order they arrived in: a load rebuilds the list from the arena.
@@ -1093,7 +1120,7 @@ pub(crate) fn spawn_waiting(
         }
     }
     // Routes can change between ticks and cars appear: look at all lanes once per tick.
-    st.refresh_hop_lanes(vehicles, g);
+    st.refresh_hop_lanes(vehicles, g, pool);
 }
 
 /// Is the front car `v` of its lane held by something that should not last: no room beyond the
@@ -1185,6 +1212,7 @@ fn suspicious_flags(
     st: &DriveState,
     g: &PathGraph,
     signal: u64,
+    pool: Option<&TaskPool>,
 ) -> Vec<(VehicleId, bool, bool)> {
     let mut out = Vec::with_capacity(veh.len());
     let mut walk = |list: &[VehicleId], front: Option<bool>, root: bool| {
@@ -1202,16 +1230,20 @@ fn suspicious_flags(
             lead = standing.then_some(sus);
         }
     };
-    for slot in st.occ.iter() {
-        let list = &st.lanes[slot];
-        let Some(&first) = list.first() else { continue };
-        let front = match (veh.get(first), g.car[slot].as_ref()) {
+    // The verdicts on the lane heads are the costly part and only read: in parallel (T-259).
+    let slots: Vec<usize> = st.occ.iter().collect();
+    let fronts = par_map(pool, &slots, |&slot| {
+        let first = *st.lanes[slot].first()?;
+        Some(match (veh.get(first), g.car[slot].as_ref()) {
             (Some(v), Some(node)) if v.speed < 0.1 => {
-                Some(front_suspicious(g, veh, st, signal, v, node, 0))
+                front_suspicious(g, veh, st, signal, v, node, 0)
             }
-            _ => Some(false),
-        };
-        walk(list, front, false);
+            _ => false,
+        })
+    });
+    for (slot, front) in slots.into_iter().zip(fronts) {
+        let Some(front) = front else { continue };
+        walk(&st.lanes[slot], Some(front), false);
     }
     for list in st.conns.values() {
         // A car standing inside a junction waits for room beyond it.
@@ -1238,12 +1270,14 @@ pub(crate) fn drive_tick(
 ) -> Finished {
     st.specs = *specs;
     let mut finished = Finished::default();
-    spawn_waiting(vehicles, st, g, &mut finished);
+    // The drive's parallel parts use the pool from the same size on as the substeps.
+    let pool = pool.filter(|_| vehicles.len() >= PARALLEL_MIN);
+    spawn_waiting(vehicles, st, g, pool, &mut finished);
     for sub in 0..MOVE_SUBSTEPS {
         substep(vehicles, st, g, signal_tick(tick, sub), pool, &mut finished);
     }
     // Stuck timers (§9.4 v1.1): only a standstill for a suspicious reason counts.
-    let flags = suspicious_flags(vehicles, st, g, signal_tick(tick, MOVE_SUBSTEPS - 1));
+    let flags = suspicious_flags(vehicles, st, g, signal_tick(tick, MOVE_SUBSTEPS - 1), pool);
     let mut stuck = Vec::new();
     for (id, suspicious, root) in flags {
         let v = vehicles.get_mut(id).expect("flagged vehicle");
@@ -1378,7 +1412,7 @@ pub(crate) fn substep(
                     });
                 }
             });
-            chunks.into_iter().flatten().collect()
+            concat(chunks)
         }
         _ => {
             let mut out = Vec::new();
@@ -1389,6 +1423,36 @@ pub(crate) fn substep(
         }
     };
     apply(vehicles, st, g, signal, updates, finished);
+}
+
+/// The chunk results in chunk order, copied in bulk (T-259: a `flatten().collect()` moved them
+/// one at a time and was a seventh of the drive's sequential time at 100k).
+pub(crate) fn concat<T>(chunks: Vec<Vec<T>>) -> Vec<T> {
+    let mut out = Vec::with_capacity(chunks.iter().map(Vec::len).sum());
+    for mut c in chunks {
+        out.append(&mut c);
+    }
+    out
+}
+
+/// `f` of every item, in item order: on `pool` in fixed chunks of [`CHUNK`] items when there
+/// is one, else in sequence. `f` only reads, so the result is the same either way.
+fn par_map<T: Sync, R: Send + 'static>(
+    pool: Option<&TaskPool>,
+    items: &[T],
+    f: impl Fn(&T) -> R + Sync,
+) -> Vec<R> {
+    match pool {
+        Some(pool) if items.len() > CHUNK => {
+            let f = &f;
+            concat(pool.scope(|scope| {
+                for chunk in items.chunks(CHUNK) {
+                    scope.spawn(async move { chunk.iter().map(f).collect::<Vec<R>>() });
+                }
+            }))
+        }
+        _ => items.iter().map(f).collect(),
+    }
 }
 
 fn apply(

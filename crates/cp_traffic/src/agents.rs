@@ -1133,7 +1133,7 @@ pub fn move_agents(
                 });
             }
         });
-        chunks.into_iter().flatten().collect()
+        crate::drive::concat(chunks)
     } else {
         refs.iter_mut()
             .map(|(id, p)| (*id, step_pedestrian(p, &ctx)))

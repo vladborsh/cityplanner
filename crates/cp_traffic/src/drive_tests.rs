@@ -208,7 +208,7 @@ fn nobody_enters_the_junction_on_red() {
     let mut tick = 0u64;
     let mut finished = Finished::default();
     while !rig.veh.is_empty() && tick < 3000 {
-        spawn_waiting(&mut rig.veh, &mut rig.st, &rig.graph, &mut finished);
+        spawn_waiting(&mut rig.veh, &mut rig.st, &rig.graph, None, &mut finished);
         for sub in 0..cp_core::time::MOVE_SUBSTEPS {
             let before: Vec<(VehicleId, bool)> =
                 rig.veh.iter().map(|(id, v)| (id, v.in_conn)).collect();
