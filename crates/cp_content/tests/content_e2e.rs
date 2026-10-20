@@ -218,7 +218,7 @@ fn content_hash_changes_with_any_value() {
     for (file, from, to) in [
         ("basic_2l", "speed_kmh: 40", "speed_kmh: 41"),
         ("basic_2l", "rank: 1", "rank: 2"),
-        ("services/water_pump", "capacity: 1000", "capacity: 1001"),
+        ("services/water_pump", "capacity: 3000", "capacity: 3001"),
         ("basic_2l", "road/asphalt", "road/asphalt2"),
     ] {
         let h = ContentDb::from_sources(mutate(file, from, to))
