@@ -321,6 +321,16 @@ fn ghost_demo(
     state.hover = Some(demo.to);
     let (road_tool, to) = (state.road.clone(), demo.to);
     state.ghost = compute_ghost_alt(&view, &road_tool, to, false);
+    // Over a protected building the held ghost also holds the click's question (BUG-096 shots).
+    if let Some(plan) = state
+        .ghost
+        .as_ref()
+        .filter(|g| g.valid)
+        .and_then(|g| g.plan.clone())
+        && let Err(ask) = crate::road_click(Some(&view), vec![build_command(plan)])
+    {
+        state.confirm = Some(ask);
+    }
     // The diamonds and ticks around the cursor, as a hover draws them (T-266 shots).
     state.markers = road_markers(&view, to);
 }

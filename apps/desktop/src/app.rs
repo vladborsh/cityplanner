@@ -343,7 +343,7 @@ pub fn run(opts: Options) -> AppExit {
     }
     if let Some(demo) = opts.ghost_demo {
         // The tools only run with the UI; a held ghost for a hidden screenshot needs them.
-        if opts.hidden {
+        if opts.hidden && !opts.hidden_ui {
             app.add_plugins(cp_tools::ToolsPlugin);
         }
         app.insert_resource(demo);

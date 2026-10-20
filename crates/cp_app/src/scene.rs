@@ -1441,6 +1441,27 @@ pub fn build_grown(sim: &mut SimRunner) {
     }
 }
 
+/// The [`GROWN`] scene with a police station in the east residential block (BUG-096): a road
+/// ghost across the west block tints the houses it demolishes, one across the station holds the
+/// question. `--cam road-over --ghost-demo basic_2l,5150,5060,5150,5140 --ui`.
+pub const ROAD_OVER: &str = "road-over";
+
+/// Builds the [`ROAD_OVER`] scene.
+pub fn build_road_over(sim: &mut SimRunner) {
+    build_grown(sim);
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.push_command(
+        SimCommand::Building(cp_building::BuildingCommand::Place {
+            def: db.building_id("police_station").expect("police_station"),
+            pos: Vec2::new(c + 30.0, c - 20.0),
+            rot: 0.0,
+        }),
+        sim.tick(),
+    );
+    sim.tick_once();
+}
+
 /// Corner scene (T-186): an X crossing, T junctions and 90 degree bends of basic streets, for
 /// the rounded curbs. Look at it with `--cam corners`.
 pub const CORNERS: &str = "corners";

@@ -325,6 +325,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 20.0, 230.0, c + 190.0),
             Vec3::new(c + 20.0, 0.0, c + 40.0),
         ),
+        // Over both residential blocks of `--scene road-over` (BUG-096).
+        "road-over" => (
+            Vec3::new(c - 10.0, 170.0, c + 140.0),
+            Vec3::new(c - 10.0, 0.0, c - 20.0),
+        ),
         // Close over the residential block of `--scene grown`, where `--place-demo
         // clinic,5140,5078` holds a clinic's ghost over houses (T-252).
         "place-over" => (
@@ -596,6 +601,9 @@ pub fn build_sim(
     } else if scene == Some(scene::CORNERS_WIDE) {
         scene::build_corners_wide(&mut sim);
         info!("scene corners-wide");
+    } else if scene == Some(scene::ROAD_OVER) {
+        scene::build_road_over(&mut sim);
+        info!("scene road-over");
     } else if scene == Some(scene::GROWN) {
         scene::build_grown(&mut sim);
         info!("scene grown");
