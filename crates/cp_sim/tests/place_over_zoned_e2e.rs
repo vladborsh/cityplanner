@@ -8,8 +8,8 @@ use std::sync::Arc;
 use bevy_ecs::message::Messages;
 use bevy_math::{Vec2, Vec3};
 use cp_building::{
-    Building, BuildingCommand, BuildingError, BuildingFlags, BuildingGrid, BuildingId,
-    BuildingState, Footprint, Lot,
+    Building, BuildingCommand, BuildingFlags, BuildingGrid, BuildingId, BuildingState, Footprint,
+    Lot,
 };
 use cp_citizen::{CitizenGrid, DAYS_PER_YEAR, HouseholdId};
 use cp_content::ContentDb;
