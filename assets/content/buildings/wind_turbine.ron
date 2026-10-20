@@ -1,3 +1,4 @@
+// T-282: cost and upkeep cut (was 2500 / 67 a week).
 Building((
     id: "wind_turbine",
     name: "Wind turbine",
@@ -7,8 +8,8 @@ Building((
     jobs: (0, 0, 0, 0),
     consumption: {},
     tax_base: 0.0,
-    cost: 2500.0,
-    upkeep_week: 67.0,
+    cost: 1400.0,
+    upkeep_week: 34.0,
     styles: ["service_wind_turbine"],
     service: Some("wind_turbine"),
     icon: "wind_turbine",

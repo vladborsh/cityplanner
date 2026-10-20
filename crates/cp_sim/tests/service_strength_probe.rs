@@ -88,6 +88,32 @@ fn town(target: usize) -> (usize, u32, [u32; 6], u32) {
         per_day(week.upkeep()),
         per_day(week.income()) / population(&sim).max(1) as f64
     );
+    {
+        // What the town asks of the pipes, per resident (T-282: plant capacities are set from it).
+        use cp_content::UtilityKind;
+        let b = sim.world().resource::<BuildingGrid>();
+        let ask = |k| {
+            b.iter()
+                .map(|(_, x)| {
+                    db.building(x.def)
+                        .consumption
+                        .get(&k)
+                        .copied()
+                        .unwrap_or(0.0)
+                })
+                .sum::<f32>()
+        };
+        let pop = population(&sim).max(1) as f32;
+        println!(
+            "  demand: water {:.0} ({:.2}/res) sewage {:.0} ({:.2}/res) power {:.0} ({:.2}/res)",
+            ask(UtilityKind::Water),
+            ask(UtilityKind::Water) / pop,
+            ask(UtilityKind::Sewage),
+            ask(UtilityKind::Sewage) / pop,
+            ask(UtilityKind::Power),
+            ask(UtilityKind::Power) / pop,
+        );
+    }
     let abandoned = sim.view().city.buildings.abandoned;
     let counts = sim.world().resource::<ServiceState>().summary().counts;
     let _ = sim.world().resource::<BuildingGrid>();

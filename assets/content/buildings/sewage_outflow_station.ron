@@ -1,3 +1,4 @@
+// T-282: cost and upkeep cut (was 8000 / 204 a week).
 Building((
     id: "sewage_outflow_station",
     name: "Sewage outflow",
@@ -7,8 +8,8 @@ Building((
     jobs: (1, 1, 0, 0),
     consumption: {Power: 5.0},
     tax_base: 0.0,
-    cost: 8000.0,
-    upkeep_week: 204.0,
+    cost: 4400.0,
+    upkeep_week: 102.0,
     styles: ["service_outflow"],
     service: Some("sewage_outflow"),
     icon: "sewage_outflow_station",

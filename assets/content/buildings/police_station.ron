@@ -1,3 +1,4 @@
+// T-282: cost and upkeep cut (was 18000 / 1023 a week).
 Building((
     id: "police_station",
     name: "Police Station",
@@ -7,8 +8,8 @@ Building((
     jobs: (2, 6, 2, 0),
     consumption: {Power: 25.0},
     tax_base: 0.0,
-    cost: 18000.0,
-    upkeep_week: 1023.0,
+    cost: 9900.0,
+    upkeep_week: 512.0,
     styles: ["service_police_station"],
     service: Some("police_station"),
     icon: "police_station",

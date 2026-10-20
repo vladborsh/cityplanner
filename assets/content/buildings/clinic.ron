@@ -1,3 +1,4 @@
+// T-282: cost and upkeep cut (was 12000 / 512 a week).
 Building((
     id: "clinic",
     name: "Clinic",
@@ -7,8 +8,8 @@ Building((
     jobs: (1, 3, 1, 0),
     consumption: {Power: 10.0},
     tax_base: 0.0,
-    cost: 12000.0,
-    upkeep_week: 512.0,
+    cost: 6600.0,
+    upkeep_week: 256.0,
     styles: ["service_clinic"],
     service: Some("clinic"),
     icon: "clinic",

@@ -1,9 +1,10 @@
+// T-282: capacity 1500 -> 3000 (demand measured 0.5 per resident incl. jobs: one plant ~6000 residents, a tower ~800).
 Service((
     id: "sewage_treatment_plant",
     name: "Sewage treatment plant",
     kind: Sewage,
     radius_m: 800.0,
-    capacity: 1500,
+    capacity: 3000,
     site: Land,
     vehicles: [],
 ))

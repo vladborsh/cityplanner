@@ -1,3 +1,4 @@
+// T-282: cost and upkeep cut (was 2000 / 126 a week).
 Building((
     id: "water_tower",
     name: "Water tower",
@@ -7,8 +8,8 @@ Building((
     jobs: (0, 0, 0, 0),
     consumption: {Power: 10.0},
     tax_base: 0.0,
-    cost: 2000.0,
-    upkeep_week: 126.0,
+    cost: 1000.0,
+    upkeep_week: 63.0,
     styles: ["service_water_tower"],
     service: Some("water_tower"),
     icon: "water_tower",

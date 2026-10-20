@@ -1,3 +1,4 @@
+// T-282: cost and upkeep cut (was 18000 / 683 a week).
 Building((
     id: "landfill",
     name: "Landfill",
@@ -7,8 +8,8 @@ Building((
     jobs: (4, 2, 0, 0),
     consumption: {},
     tax_base: 0.0,
-    cost: 18000.0,
-    upkeep_week: 683.0,
+    cost: 9900.0,
+    upkeep_week: 342.0,
     styles: ["service_landfill"],
     service: Some("landfill"),
     icon: "landfill",

@@ -1,3 +1,4 @@
+// T-282: cost and upkeep cut (was 15000 / 683 a week).
 Building((
     id: "elementary_school",
     name: "Elementary school",
@@ -7,8 +8,8 @@ Building((
     jobs: (0, 4, 2, 0),
     consumption: {},
     tax_base: 0.0,
-    cost: 15000.0,
-    upkeep_week: 683.0,
+    cost: 8200.0,
+    upkeep_week: 342.0,
     styles: ["service_school"],
     service: Some("elementary_school"),
     icon: "elementary_school",

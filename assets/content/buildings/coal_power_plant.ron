@@ -1,3 +1,4 @@
+// T-282: cost and upkeep cut (was 30000 / 1536 a week).
 Building((
     id: "coal_power_plant",
     name: "Coal power plant",
@@ -7,8 +8,8 @@ Building((
     jobs: (6, 6, 2, 0),
     consumption: {},
     tax_base: 0.0,
-    cost: 30000.0,
-    upkeep_week: 1536.0,
+    cost: 16500.0,
+    upkeep_week: 768.0,
     styles: ["service_coal_plant"],
     service: Some("coal_plant"),
     icon: "coal_power_plant",
