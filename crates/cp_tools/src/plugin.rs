@@ -98,6 +98,8 @@ pub struct Ghost {
     /// A bold tick across the road every 10 cells from the start of each leg (T-278, T-285: the
     /// player reads the length from these, no number).
     pub cell_ticks: Vec<crate::lattice::CellTick>,
+    /// The buildings the click would demolish (BUG-096: the road stands on them), tinted red.
+    pub demolish: Vec<cp_building::BuildingId>,
 }
 
 #[derive(Resource, Default, Debug)]
@@ -128,6 +130,10 @@ pub struct ToolState {
     pub shift: bool,
     /// What the upgrade tool would do to the run under the cursor (T-081).
     pub upgrade_preview: Option<crate::upgrade::UpgradePreview>,
+    /// The buildings the upgrade under the cursor would demolish (BUG-096), tinted red.
+    pub upgrade_demolish: Vec<cp_building::BuildingId>,
+    /// A road click over protected buildings, waiting for the player's yes or no (BUG-096).
+    pub confirm: Option<crate::ConfirmDemolish>,
     /// What the flip tool would do to the run under the cursor (T-091).
     pub flip_preview: Option<crate::flip::FlipPreview>,
     pub zone: ZoneTool,
@@ -328,6 +334,12 @@ pub struct GhostOnTop;
 fn sync_demolish_layer(state: Res<ToolState>, mut out: ResMut<cp_render::DemolishLayer>) {
     let want = match (&state.place_ghost, state.active) {
         (Some(g), ActiveTool::Place) if g.valid => g.demolish.clone(),
+        (_, ActiveTool::Road) => state
+            .ghost
+            .as_ref()
+            .filter(|g| g.valid)
+            .map_or(Vec::new(), |g| g.demolish.clone()),
+        (_, ActiveTool::Upgrade) => state.upgrade_demolish.clone(),
         _ => Vec::new(),
     };
     if out.ids != want {
@@ -704,11 +716,43 @@ pub fn tool_hotkeys(
         if let Some(req) = state.road.finish_free() {
             state.ghost_key = None;
             let free = state.free_snaps();
-            if let Some(plan) =
-                crate::road::chain_commit(view.as_deref(), &mut state.road, before, req, free)
-            {
-                outbox.push(build_command(plan));
+            if let Some(plan) = crate::road::chain_commit(
+                view.as_deref(),
+                &mut state.road,
+                before.clone(),
+                req,
+                free,
+            ) {
+                send_road(
+                    &mut state,
+                    view.as_deref(),
+                    &mut outbox,
+                    vec![build_command(plan)],
+                    Some(before),
+                );
             }
+        }
+    }
+}
+
+/// Sends road commands, or holds them as a question when they would demolish protected
+/// buildings (BUG-096; `restore`: the road tool before the click, put back on a no).
+fn send_road(
+    state: &mut ToolState,
+    view: Option<&SimView>,
+    outbox: &mut CommandOutbox,
+    commands: Vec<SimCommand>,
+    restore: Option<RoadTool>,
+) {
+    match crate::road_click(view, commands) {
+        Ok(commands) => {
+            for c in commands {
+                outbox.push(c);
+            }
+        }
+        Err(mut ask) => {
+            ask.restore = restore;
+            state.confirm = Some(ask);
         }
     }
 }
@@ -796,6 +840,15 @@ pub fn tool_hover(
             state.highlight_outside = preview
                 .as_ref()
                 .is_some_and(|u| u.errors.iter().any(|e| e == crate::upgrade::OUTSIDE_LAND));
+            // What the upgrade would take down (BUG-096), only when the cursor's preview changed.
+            if state.upgrade_preview != preview {
+                state.upgrade_demolish = match (&preview, state.road.road) {
+                    (Some(u), Some(target)) if u.errors.is_empty() => {
+                        crate::under_road(&view, &upgrade_commands(u, target)).buildings
+                    }
+                    _ => Vec::new(),
+                };
+            }
             state.upgrade_preview = preview;
         }
         (ActiveTool::Flip, Some(p)) => {
@@ -970,6 +1023,7 @@ pub fn compute_ghost_alt(
                     .collect();
             }
             ghost.zone = crate::zone_preview::zone_strip(view, &built);
+            ghost.demolish = crate::under_road(view, &[build_command(plan.clone())]).buildings;
             ghost.plan = Some(plan);
         }
         Err(errors) => {
@@ -1137,10 +1191,21 @@ pub fn tool_click(
             // from it as soon as it is set.
             let q = cur.as_ref().map_or(hover, |c| c.cursor);
             if let Some(req) = state.road.click(q)
-                && let Some(plan) =
-                    crate::road::chain_commit(view.as_deref(), &mut state.road, before, req, free)
+                && let Some(plan) = crate::road::chain_commit(
+                    view.as_deref(),
+                    &mut state.road,
+                    before.clone(),
+                    req,
+                    free,
+                )
             {
-                outbox.push(build_command(plan));
+                send_road(
+                    &mut state,
+                    view.as_deref(),
+                    &mut outbox,
+                    vec![build_command(plan)],
+                    Some(before),
+                );
             }
             state.ghost_key = None;
         }
@@ -1176,9 +1241,8 @@ pub fn tool_click(
         }
         ActiveTool::Upgrade => {
             if let (Some(preview), Some(target)) = (state.upgrade_preview.take(), state.road.road) {
-                for command in upgrade_commands(&preview, target) {
-                    outbox.push(command);
-                }
+                let commands = upgrade_commands(&preview, target);
+                send_road(&mut state, view.as_deref(), &mut outbox, commands, None);
                 state.highlight.clear();
             }
         }

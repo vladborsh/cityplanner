@@ -12,6 +12,7 @@ pub mod park;
 pub mod park_site;
 pub mod respec;
 pub mod spawn;
+pub mod under_road;
 
 pub use command::{
     BuildingCommand, BuildingError, Clearance, MOVE_COST_FRACTION, Placed, PlacementPlan, apply,
@@ -47,6 +48,7 @@ pub use spawn::{
     BLOCK_BUCKETS, DEMAND_PERIOD, Demand, SPAWN_STREAM, pick_def, place, spawnable, unfit_cells,
     update_buildings,
 };
+pub use under_road::buildings_under_road;
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_building";

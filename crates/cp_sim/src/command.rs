@@ -34,6 +34,10 @@ pub enum SimCommand {
     Industry(cp_industry::IndustryCommand),
     /// M6 (T-225): the entrance fee of a park area.
     Park(cp_park::ParkCommand),
+    /// BUG-096: a road command the player confirmed over protected buildings (a service, a
+    /// unique building, a park): those under the new road are demolished with the grown ones.
+    /// Plain [`SimCommand::Net`] demolishes only grown buildings and refuses over a protected one.
+    NetDemolish(NetCommand),
     // M3+: ...
 }
 
@@ -59,14 +63,23 @@ impl SimCommand {
     ) {
         match self {
             SimCommand::Net(NetCommand::BuildRoad { road: r, .. })
-            | SimCommand::Net(NetCommand::UpgradeSegment { road: r, .. }) => *r = road(*r),
-            SimCommand::Net(NetCommand::BuildPlan { plan }) => plan.road = road(plan.road),
+            | SimCommand::Net(NetCommand::UpgradeSegment { road: r, .. })
+            | SimCommand::NetDemolish(NetCommand::BuildRoad { road: r, .. })
+            | SimCommand::NetDemolish(NetCommand::UpgradeSegment { road: r, .. }) => *r = road(*r),
+            SimCommand::Net(NetCommand::BuildPlan { plan })
+            | SimCommand::NetDemolish(NetCommand::BuildPlan { plan }) => {
+                plan.road = road(plan.road)
+            }
             SimCommand::Building(BuildingCommand::Place { def, .. }) => *def = building(*def),
             SimCommand::SetSpeed { .. }
             | SimCommand::Net(NetCommand::RemoveSegment { .. })
             | SimCommand::Net(NetCommand::RemovePart { .. })
             | SimCommand::Net(NetCommand::FlipSegment { .. })
             | SimCommand::Net(NetCommand::ToggleTrafficLight { .. })
+            | SimCommand::NetDemolish(NetCommand::RemoveSegment { .. })
+            | SimCommand::NetDemolish(NetCommand::RemovePart { .. })
+            | SimCommand::NetDemolish(NetCommand::FlipSegment { .. })
+            | SimCommand::NetDemolish(NetCommand::ToggleTrafficLight { .. })
             | SimCommand::Building(BuildingCommand::Demolish { .. })
             | SimCommand::Building(BuildingCommand::Move { .. })
             | SimCommand::Zone(_)
@@ -107,20 +120,8 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
             world.insert_resource(*speed);
             Ok(Cost::ZERO)
         }
-        SimCommand::Net(c) => {
-            if let Some(seg) = platform_target(c)
-                && world
-                    .get_resource::<cp_transit::TransitNet>()
-                    .is_some_and(|t| is_platform(t, seg))
-            {
-                return Err(rejected(
-                    "net",
-                    "the platform of a station goes with its building",
-                ));
-            }
-            cp_net::apply(world, c)
-                .map_err(|e| rejected_or_funds("net", &e, e.insufficient_funds()))
-        }
+        SimCommand::Net(c) => apply_net(world, c, false),
+        SimCommand::NetDemolish(c) => apply_net(world, c, true),
         SimCommand::Zone(c) => {
             if let (ZoneCommand::PaintZones { zone, .. }, Some(content)) =
                 (c, world.get_resource::<cp_content::SimContent>())
@@ -166,6 +167,65 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
         SimCommand::Park(c) => cp_park::apply(world, c).map_err(|e| rejected("park", e)),
         SimCommand::Debug(c) => apply_debug(world, c),
     }
+}
+
+/// A road command (BUG-096): the buildings under the road it lays go down with it. A grown one
+/// always; a protected one (a service, a unique building, a park, see
+/// [`cp_building::is_growable`]) only with the player's consent (`demolish`), else the command is
+/// refused and nothing changes. The road is applied first; the buildings are demolished after it
+/// in id order, the way a `Demolish` command takes them (a station takes its platform along).
+fn apply_net(world: &mut World, c: &NetCommand, demolish: bool) -> Result<Cost, CommandError> {
+    if let Some(seg) = platform_target(c)
+        && world
+            .get_resource::<cp_transit::TransitNet>()
+            .is_some_and(|t| is_platform(t, seg))
+    {
+        return Err(rejected(
+            "net",
+            "the platform of a station goes with its building",
+        ));
+    }
+    let hits = buildings_under(world, c);
+    if !demolish
+        && let Some(content) = world.get_resource::<cp_content::SimContent>()
+        && let Some(grid) = world.get_resource::<cp_building::BuildingGrid>()
+    {
+        let names: Vec<String> = hits
+            .iter()
+            .filter_map(|id| grid.get(*id))
+            .filter(|b| !cp_building::is_growable(content.0.building(b.def)))
+            .map(|b| content.0.building(b.def).name.clone())
+            .collect();
+        if !names.is_empty() {
+            return Err(rejected(
+                "net",
+                format!("would demolish: {}", names.join(", ")),
+            ));
+        }
+    }
+    let cost = cp_net::apply(world, c)
+        .map_err(|e| rejected_or_funds("net", &e, e.insufficient_funds()))?;
+    for building in hits {
+        // A building the road already took (a station's platform) is gone: nothing to do.
+        let _ = apply_building(world, &BuildingCommand::Demolish { building });
+    }
+    Ok(cost)
+}
+
+/// The buildings the road command `c` would stand on ([`cp_net::command_strips`],
+/// [`cp_building::buildings_under_road`]); none without a map, content or buildings.
+pub fn buildings_under(world: &World, c: &NetCommand) -> Vec<cp_building::BuildingId> {
+    let (Some(net), Some(terrain), Some(tiles), Some(content), Some(grid)) = (
+        world.get_resource::<cp_net::NetGraph>(),
+        world.get_resource::<cp_terrain::SimTerrain>(),
+        world.get_resource::<cp_terrain::TileOwnership>(),
+        world.get_resource::<cp_content::SimContent>(),
+        world.get_resource::<cp_building::BuildingGrid>(),
+    ) else {
+        return Vec::new();
+    };
+    let strips = cp_net::command_strips(net, &terrain.0, tiles, &content.0, c);
+    cp_building::buildings_under_road(grid, &strips)
 }
 
 /// The segment a net command would remove or change.

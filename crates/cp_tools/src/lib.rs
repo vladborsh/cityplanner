@@ -25,6 +25,7 @@ pub mod plugin;
 pub mod road;
 pub mod snap;
 pub mod transit;
+pub mod under_road;
 pub mod upgrade;
 pub mod utility;
 pub mod zone;
@@ -59,6 +60,7 @@ pub use transit::{
     Click, LineGhostInfo, LineTool, ROAD_PICK_RADIUS, STOP_PICK_RADIUS, Target, line_ghost,
     route_summary,
 };
+pub use under_road::{ConfirmDemolish, UnderRoad, road_click, under_road};
 pub use upgrade::{UpgradePreview, upgrade_commands, upgrade_preview};
 pub use utility::{
     LINK_PICK_RADIUS, UtilityMode, UtilityTool, pick_link, snap_cursor, snapped_cursor,

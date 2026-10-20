@@ -18,6 +18,7 @@ pub mod bulldozer_bar;
 pub mod cursor_label;
 pub mod debug;
 pub mod demand_panel;
+pub mod demolish_confirm;
 pub mod districts;
 pub mod files;
 pub mod frame;
@@ -294,6 +295,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     milestone::milestone_toast(ctx, view, toast);
     advisor::advisor_snackbar(ctx, view, state, overlay, advisor);
     land::confirm_window(ctx, view, &mut state.budget.buy_tile, outbox);
+    demolish_confirm::confirm_window(ctx, tools, outbox);
     info_panel(ctx, inspected, picked, Some(view), tools, outbox);
     let line_out = lines::line_info_panel(ctx, view, picked, &mut state.lines, outbox);
     if let Some(line) = line_out.edit {

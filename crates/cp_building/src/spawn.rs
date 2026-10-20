@@ -175,7 +175,7 @@ pub fn pick_def(db: &ContentDb, fitting: &[BuildingDefId], roll: u32) -> Buildin
 
 /// The rectangle of a lot of `size` cells centred on `pos`, turned by `rot` (as
 /// `footprint_polygon`).
-fn rect_of(pos: Vec2, rot: f32, size: (u8, u8)) -> Obb {
+pub(crate) fn rect_of(pos: Vec2, rot: f32, size: (u8, u8)) -> Obb {
     let (s, c) = rot.sin_cos();
     Obb {
         c: pos,

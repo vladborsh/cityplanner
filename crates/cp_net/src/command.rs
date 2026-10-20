@@ -379,6 +379,53 @@ fn build_literal(world: &mut World, plan: &BuildPlan) -> Result<Cost, NetError> 
     Ok(cost)
 }
 
+/// The ground strips the road command `cmd` would lay (BUG-096): each new or upgraded ground
+/// segment's curve with the half width of its road (asphalt and sidewalks). Pure, from the same
+/// validators [`apply`] uses; empty for a command that lays no road or would be refused.
+pub fn command_strips(
+    graph: &NetGraph,
+    terrain: &cp_terrain::Terrain,
+    tiles: &TileOwnership,
+    content: &cp_content::ContentDb,
+    cmd: &NetCommand,
+) -> Vec<(CubicBezier3, f32)> {
+    let planned = |plan: RoadBuildPlan| -> Vec<(CubicBezier3, f32)> {
+        let hw = content.road(plan.road).width * 0.5;
+        plan.segments
+            .iter()
+            .filter(|s| s.elevation == Elevation::Ground)
+            .map(|s| (s.curve, hw))
+            .collect()
+    };
+    match cmd {
+        NetCommand::BuildRoad {
+            road,
+            path,
+            elevation,
+        } => {
+            let req = RoadPathRequest {
+                road: *road,
+                path: path.clone(),
+                elevation: *elevation,
+                snap: SnapOptions::default(),
+            };
+            validate_road_path(graph, terrain, tiles, content, &req).map_or(Vec::new(), planned)
+        }
+        NetCommand::BuildPlan { plan } => {
+            validate_build_plan(graph, terrain, tiles, content, plan).map_or(Vec::new(), planned)
+        }
+        NetCommand::UpgradeSegment { seg, road } => match graph.segment(*seg) {
+            Some(s)
+                if s.elevation == Elevation::Ground && road.index() < content.roads().count() =>
+            {
+                vec![(s.curve, content.road(*road).width * 0.5)]
+            }
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
 /// Builds `paths` one after another with the existing validator (`BuildRoad` semantics): all
 /// or nothing, charged once.
 fn build_paths(
