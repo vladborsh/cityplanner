@@ -28,6 +28,7 @@ pub mod train_render;
 pub mod ui_capture;
 pub mod underground;
 pub mod utility_render;
+pub mod warmup;
 pub mod zone_ghost;
 
 pub use agent_render::{AgentRenderPlugin, AgentRenderStats, TickFraction};
@@ -57,6 +58,7 @@ pub use train_render::TrainRenderPlugin;
 pub use ui_capture::UiCapture;
 pub use underground::{UndergroundPlugin, UndergroundView};
 pub use utility_render::{PipeGhost, PipeLayers, PowerGhost, UtilityRenderPlugin, ghost_graph};
+pub use warmup::PipelineWarmUpPlugin;
 pub use zone_ghost::{ZoneGhostPlugin, ZoneStripLayer};
 
 /// Crate name, used by the skeleton smoke test.

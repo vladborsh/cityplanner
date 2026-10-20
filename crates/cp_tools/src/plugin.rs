@@ -339,6 +339,17 @@ fn ghost_demo(
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct GhostOnTop;
 
+/// A zero-length line in each gizmo group for the first frames (T-281b, as
+/// `cp_render::warmup`): their pipelines compile at start-up, not on the first tool hover.
+fn warm_gizmos(mut frames: Local<u32>, mut gizmos: Gizmos, mut top: Gizmos<GhostOnTop>) {
+    if *frames >= cp_render::warmup::WARM_FRAMES {
+        return;
+    }
+    *frames += 1;
+    gizmos.line(Vec3::ZERO, Vec3::ZERO, Color::NONE);
+    top.line(Vec3::ZERO, Vec3::ZERO, Color::NONE);
+}
+
 /// Hands the buildings a valid placement ghost would demolish to the renderer, which tints them
 /// red (T-252b).
 fn sync_demolish_layer(state: Res<ToolState>, mut out: ResMut<cp_render::DemolishLayer>) {
@@ -609,6 +620,7 @@ impl Plugin for ToolsPlugin {
                 Update,
                 sync_demolish_layer.after(tool_hover).after(place_demo),
             )
+            .add_systems(Update, warm_gizmos)
             .insert_gizmo_config(
                 GhostOnTop,
                 GizmoConfig {

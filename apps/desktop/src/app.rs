@@ -214,13 +214,12 @@ fn start_speed(
     commands.remove_resource::<StartSpeed>();
 }
 
+/// The clock of `--log-pipelines`, shared by the render and the main world.
+static LOG_T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
 /// `--log-pipelines`: each pipeline the cache holds that was not there last frame, by label.
-fn log_pipelines(
-    cache: Res<bevy::render::render_resource::PipelineCache>,
-    mut start: Local<Option<std::time::Instant>>,
-    mut seen: Local<usize>,
-) {
-    let t0 = *start.get_or_insert_with(std::time::Instant::now);
+fn log_pipelines(cache: Res<bevy::render::render_resource::PipelineCache>, mut seen: Local<usize>) {
+    let t0 = *LOG_T0.get_or_init(std::time::Instant::now);
     use bevy::render::render_resource::PipelineDescriptor;
     let all: Vec<_> = cache.pipelines().collect();
     for p in &all[(*seen).min(all.len())..] {
@@ -236,6 +235,19 @@ fn log_pipelines(
         );
     }
     *seen = all.len();
+}
+
+/// `--log-pipelines`: each main-world frame over 50 ms, on the same clock (T-281b: the start-up
+/// stall while the pipelines compile).
+fn log_slow_frames(mut last: Local<Option<std::time::Instant>>) {
+    let t0 = *LOG_T0.get_or_init(std::time::Instant::now);
+    let now = std::time::Instant::now();
+    if let Some(prev) = last.replace(now) {
+        let ms = (now - prev).as_secs_f32() * 1000.0;
+        if ms > 50.0 {
+            println!("SLOW t={:.3} ms={ms:.0}", t0.elapsed().as_secs_f32());
+        }
+    }
 }
 
 /// `--pan`: the camera's target moves round a circle and turns, from where it started.
@@ -412,10 +424,11 @@ pub fn run(opts: Options) -> AppExit {
         crate::qos::set_current_thread();
         crate::qos::add_render_thread(&mut app);
     }
-    if opts.log_pipelines
-        && let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp)
-    {
-        render.add_systems(bevy::render::Render, log_pipelines);
+    if opts.log_pipelines {
+        app.add_systems(First, log_slow_frames);
+        if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
+            render.add_systems(bevy::render::Render, log_pipelines);
+        }
     }
     if let Some(path) = opts.screenshot {
         let mut capture = Capture::new(

@@ -141,7 +141,7 @@ impl Plugin for GamePlugin {
             AgentRenderPlugin,
             RtsCameraPlugin,
         ))
-        .add_plugins(cp_render::GradingPlugin)
+        .add_plugins((cp_render::GradingPlugin, cp_render::PipelineWarmUpPlugin))
         .add_systems(PreUpdate, step_sim);
         if self.ui {
             app.insert_resource(cp_ui::UiState {
