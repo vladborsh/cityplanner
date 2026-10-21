@@ -256,6 +256,15 @@ mod tests {
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps/flatlands"),
         )
         .unwrap();
-        assert_eq!(fill_mesh(&map, &ds, &t, None).indices.len(), 3 * 6);
+        // BUG-112: the soft fill is, per district, a quad per cell in or beside it: 4 x 3 round
+        // the two-cell district and 3 x 3 round the one-cell one. A corner's alpha is the tint
+        // times the share of its four cells in the district: a strip one cell thick peaks at a
+        // half, the ring's outer corners are clear.
+        let m = fill_mesh(&map, &ds, &t, None);
+        assert_eq!(m.indices.len(), (4 * 3 + 3 * 3) * 6);
+        let alphas: Vec<f32> = m.colors.iter().map(|c| c[3]).collect();
+        let max = alphas.iter().copied().fold(0.0f32, f32::max);
+        assert!((max - FILL_ALPHA * 0.5).abs() < 1e-5, "{max}");
+        assert!(alphas.iter().any(|&a| a == 0.0));
     }
 }
