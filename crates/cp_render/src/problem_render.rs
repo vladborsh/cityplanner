@@ -155,6 +155,8 @@ fn draw_problem_icons(
                     Transform::default(),
                     // The mesh is rebuilt in world space each frame; its bounds are not kept.
                     NoFrustumCulling,
+                    // Unlit flat quads: a shadow of them is a dark parallelogram on the ground.
+                    bevy::light::NotShadowCaster,
                     Name::new("problem icons"),
                 ))
                 .id();
