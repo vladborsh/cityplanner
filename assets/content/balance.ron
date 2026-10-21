@@ -81,9 +81,9 @@ Balance((
     // --- Tax (system-design §16 M2 A): weekly, at a 100% rate; the city rate scales it ---
     // T-282: taxes x5 (was 528..860 and 108/81/117/162): x1 became 2x slower, and a 700 town now earns a basic service in ~2 game days.
     // Per household living in a residential building of level 1..5. BUG-061: x2 for levels 1-2 (was 264, 336). T-244: levels 3-5 raised so a level-up never pays less (was 420, 516, 624).
-    tax_household: (2640.0, 3360.0, 3500.0, 3900.0, 4300.0),
+    tax_household: (1320.0, 1680.0, 1750.0, 1950.0, 2150.0),
     // Per filled job of education 0..3. // tune later
-    tax_job: (540.0, 405.0, 585.0, 810.0),
+    tax_job: (270.0, 202.5, 292.5, 405.0),
     // Multiplier of tax_job by building level 1..3. T-244: 1.2/1.45 -> 1.15/1.35 to offset the household tax of levels 3-5.
     level_mul: (1.0, 1.15, 1.35),
 
@@ -111,7 +111,7 @@ Balance((
 
     // --- Fire (system-design §16 M2 D): all // tune later ---
     // Chance per building and game day without cover; cover removes up to fire_cover of it.
-    fire_base: 0.0004,
+    fire_base: 0.0008,
     fire_cover: 0.8,
     // Hours an engine works at the fire; hours until an unattended fire burns the building down;
     // days a burned building stands before demolition.

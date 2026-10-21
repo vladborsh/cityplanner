@@ -5,7 +5,7 @@ Service((
     name: "Landfill",
     kind: Garbage,
     radius_m: 2040.0,
-    capacity: 15000,
+    capacity: 3500,
     storage: 1000000,
     vehicles: [],
 ))
