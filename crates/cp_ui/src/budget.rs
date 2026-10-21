@@ -241,6 +241,13 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
     if week.park_fees != Cost::ZERO {
         income.push(("Park entry fees".into(), [None, Some(week.park_fees), None]));
     }
+    // What bulldozing gave back (BUG-097): the last day and the week so far.
+    if day.refunds != Cost::ZERO || week.refunds != Cost::ZERO {
+        income.push((
+            "Demolition refund".into(),
+            [Some(day.refunds), Some(week.refunds), None],
+        ));
+    }
     if week.industry_import != Cost::ZERO {
         expenses.push((
             "Industry import".into(),
@@ -1361,5 +1368,42 @@ mod tests {
         // Without the money the button is dead.
         sim.world_mut().resource_mut::<cp_core::Treasury>().balance = Cost(100);
         assert_eq!(click_for_command(&sim.view()), None);
+    }
+
+    /// BUG-097: a demolition refund is an income line of the budget, as it came (not scaled up
+    /// to a day like the hourly lines), and the bulldozer shows it as "+$N" before the click.
+    #[test]
+    fn a_demolition_refund_is_an_income_line_and_the_bulldozer_shows_it() {
+        let mut view = SimRunner::new(1).view();
+        let f = Flow {
+            refunds: Cost(28_000),
+            ..Flow::default()
+        };
+        view.flow.hours.push_back((1, f));
+        view.flow.week_to_date = f;
+        let day = view.flow.last_day(&view.economy).unwrap();
+        assert_eq!(day.refunds, Cost(28_000));
+        let (income, _) = flow_rows(&day, &view.flow.week_to_date, &view.economy.last_week);
+        let row = income
+            .iter()
+            .find(|(name, _)| name == "Demolition refund")
+            .expect("the refund line");
+        assert_eq!(row.1, [Some(Cost(28_000)), Some(Cost(28_000)), None]);
+
+        let mut tools = cp_tools::ToolState::default();
+        tools.select(cp_tools::ActiveTool::Bulldozer);
+        tools.bulldoze_refund = Cost(28_000);
+        assert_eq!(crate::cursor_label::refund_text(&tools), None, "no cursor");
+        tools.hover = Some(bevy::math::Vec2::ZERO);
+        assert_eq!(
+            crate::cursor_label::refund_text(&tools).as_deref(),
+            Some("+$280.00")
+        );
+        tools.bulldoze_refund = Cost::ZERO;
+        assert_eq!(
+            crate::cursor_label::refund_text(&tools),
+            None,
+            "nothing back"
+        );
     }
 }

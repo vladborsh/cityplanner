@@ -66,6 +66,52 @@ pub enum NetCommand {
 /// A `RemovePart` end closer than this (metres) to an end of the segment moves onto that end.
 pub const PART_SNAP: f32 = 8.0;
 
+/// The stretch `RemovePart { s0, s1 }` takes from a segment of length `len`: each end within
+/// [`PART_SNAP`] of an end of the segment moved onto it; `None` if nothing is left between them.
+pub fn part_range(len: f32, s0: f32, s1: f32) -> Option<(f32, f32)> {
+    let s0 = if s0 < PART_SNAP { 0.0 } else { s0 };
+    let s1 = if s1 > len - PART_SNAP { len } else { s1 };
+    (s0 < s1).then_some((s0, s1))
+}
+
+/// What a metre of `def` costs to build at `elevation`: its elevated, bridge or tunnel variant's
+/// price where it has one (as a plan prices it), else the ground price.
+pub fn price_per_m(def: &cp_content::RoadDef, elevation: Elevation) -> f32 {
+    match elevation {
+        Elevation::Elevated => def
+            .elevated
+            .as_ref()
+            .map_or(def.cost_per_m, |v| v.cost_per_m),
+        Elevation::Bridge => def.bridge.as_ref().map_or(def.cost_per_m, |v| v.cost_per_m),
+        Elevation::Tunnel => def.tunnel.as_ref().map_or(def.cost_per_m, |v| v.cost_per_m),
+        Elevation::Ground => def.cost_per_m,
+    }
+}
+
+/// What the road a removal takes would cost to build now (BUG-097): the whole segment
+/// (`part: None`) or the stretch `RemovePart { s0, s1 }` takes, at the price of the segment's
+/// road and elevation, so an upgrade counts at the road it upgraded to. `None` for an unknown
+/// segment or an empty stretch.
+pub fn removal_value(
+    graph: &NetGraph,
+    content: &cp_content::ContentDb,
+    seg: SegmentId,
+    part: Option<(f32, f32)>,
+) -> Option<Cost> {
+    let s = graph.segment(seg)?;
+    let length = match part {
+        None => s.length,
+        Some((s0, s1)) => {
+            let (s0, s1) = part_range(s.length, s0, s1)?;
+            s1 - s0
+        }
+    };
+    Some(segment_cost(
+        length,
+        price_per_m(content.road(s.road), s.elevation),
+    ))
+}
+
 /// Validation failure of a NetCommand; wrapped into `CommandError::Rejected` by the dispatcher.
 #[derive(Clone, Debug, PartialEq)]
 pub enum NetError {
@@ -271,11 +317,7 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
             let mut graph = world.resource_mut::<NetGraph>();
             let s = graph.segment(*seg).ok_or(NetError::UnknownSegment(*seg))?;
             let (len, road, curve) = (s.length, s.road, s.curve);
-            let s0 = if *s0 < PART_SNAP { 0.0 } else { *s0 };
-            let s1 = if *s1 > len - PART_SNAP { len } else { *s1 };
-            if s0 >= s1 {
-                return Err(NetError::BadPartRange);
-            }
+            let (s0, s1) = part_range(len, *s0, *s1).ok_or(NetError::BadPartRange)?;
             // Cuts only where the part does not already reach the end. A split checks all its
             // pieces before it changes anything, so a failure leaves the graph as it was.
             let table = curve.arc_table();

@@ -217,6 +217,8 @@ pub struct ToolState {
     pub line_notice: Option<String>,
     /// The stop the bulldozer would remove.
     pub stop_highlight: Option<cp_transit::StopId>,
+    /// What a bulldozer click would give back now (BUG-097, shown as "+N" by the cursor).
+    pub bulldoze_refund: Cost,
     /// The speed Space resumes after a pause (never `Pause`; `X1` until one was running).
     pub resume_speed: cp_core::SimSpeed,
     /// Inputs the current ghost was computed from; unchanged inputs skip the revalidation.
@@ -799,6 +801,39 @@ impl Plugin for ToolsPlugin {
 /// What the bulldozer would take at `p` (the hover of [`ActiveTool::Bulldozer`]; T-286: in a
 /// utility layer only that layer's links and buildings).
 pub fn bulldozer_hover(state: &mut ToolState, view: &SimView, p: Vec2) {
+    bulldozer_targets(state, view, p);
+    state.bulldoze_refund = cp_sim::refund::RefundInputs::of_view(view).map_or(Cost::ZERO, |i| {
+        bulldozer_commands(state, Some(view))
+            .iter()
+            .map(|c| cp_sim::refund::demolition_refund(&i, c))
+            .fold(Cost::ZERO, |a, b| a + b)
+    });
+}
+
+/// The commands a bulldozer click sends for what is highlighted now: the building, else the
+/// stop, else the pipe or power line, else the road under the cursor (none outside the bought
+/// tiles).
+pub fn bulldozer_commands(state: &ToolState, view: Option<&SimView>) -> Vec<SimCommand> {
+    if let Some(building) = state.building_highlight {
+        vec![SimCommand::Building(BuildingCommand::Demolish { building })]
+    } else if let Some(stop) = state.stop_highlight {
+        vec![SimCommand::Transit(
+            cp_transit::TransitCommand::RemoveStop { stop },
+        )]
+    } else if let Some(link) = state.link_highlight {
+        vec![SimCommand::Utility(UtilityCommand::RemoveLink { link })]
+    } else if !state.highlight.is_empty() && !state.highlight_outside {
+        match view {
+            Some(v) if !state.spans.is_empty() => span_commands(&v.net, &state.spans),
+            _ => remove_run_commands(&state.highlight),
+        }
+    } else {
+        Vec::new()
+    }
+}
+
+/// What the bulldozer would take at `p`: a building, a stop, a utility link or road spans.
+fn bulldozer_targets(state: &mut ToolState, view: &SimView, p: Vec2) {
     if state.bulldoze_layer != BulldozeLayer::All {
         // One utility layer (T-286): its links and its buildings, nothing else.
         let layer = state.bulldoze_layer;
@@ -1450,26 +1485,19 @@ pub fn tool_click(
             state.ghost_key = None;
         }
         ActiveTool::Bulldozer => {
-            if let Some(building) = state.building_highlight {
-                outbox.push(SimCommand::Building(BuildingCommand::Demolish { building }));
-                state.building_highlight = None;
-            } else if let Some(stop) = state.stop_highlight.take() {
-                outbox.push(SimCommand::Transit(
-                    cp_transit::TransitCommand::RemoveStop { stop },
-                ));
-            } else if let Some(link) = state.link_highlight.take() {
-                outbox.push(SimCommand::Utility(UtilityCommand::RemoveLink { link }));
-            } else if !state.highlight.is_empty() && !state.highlight_outside {
-                let commands = match view.as_deref() {
-                    Some(v) if !state.spans.is_empty() => span_commands(&v.net, &state.spans),
-                    _ => remove_run_commands(&state.highlight),
-                };
-                for command in commands {
-                    outbox.push(command);
-                }
+            for command in bulldozer_commands(&state, view.as_deref()) {
+                outbox.push(command);
+            }
+            // What was taken is gone: nothing is highlighted until the cursor moves again.
+            if state.building_highlight.take().is_none()
+                && state.stop_highlight.take().is_none()
+                && state.link_highlight.take().is_none()
+                && !state.highlight_outside
+            {
                 state.highlight.clear();
                 state.spans.clear();
             }
+            state.bulldoze_refund = Cost::ZERO;
         }
         ActiveTool::Flip => {
             if let Some(preview) = state.flip_preview.take() {

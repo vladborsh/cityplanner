@@ -834,6 +834,7 @@ impl ContentDb {
             vec![
                 ("car_visible_share", b.car_visible_share),
                 ("truck_visible_share", b.truck_visible_share),
+                ("demolish_refund", b.demolish_refund),
             ]
         }) {
             if !(0.0..=1.0).contains(&v) {

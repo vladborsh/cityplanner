@@ -112,9 +112,60 @@ fn rejected_or_funds(
     funds.map_or_else(|| rejected(domain, e), CommandError::from)
 }
 
-/// Applies one command. The `match` has no wildcard: a new variant won't compile until
-/// it is routed here.
+/// Applies one command and pays back what it demolished (BUG-097, [`crate::refund`]): the
+/// refund is worked out before the command runs, while what it removes still stands, and paid
+/// only if it succeeds. The cost returned is what the command charged minus the refund.
 fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
+    let refund = refund_of(world, cmd);
+    let cost = apply_command(world, cmd)?;
+    if refund.0 > 0 {
+        cp_core::treasury::charge_funds(world, Cost(-refund.0));
+        if let Some(mut booked) = world.get_resource_mut::<cp_economy::DemolitionRefunds>() {
+            booked.0 += refund;
+        }
+    }
+    Ok(Cost(cost.0 - refund.0))
+}
+
+/// What `cmd` would give back if it ran now: [`crate::refund::demolition_refund`], plus, for a
+/// road laid over buildings (BUG-096), the refund of each building it takes (a grown one
+/// gives nothing). Zero without content.
+fn refund_of(world: &World, cmd: &SimCommand) -> Cost {
+    let (Some(content), Some(net), Some(buildings), Some(utilities)) = (
+        world.get_resource::<cp_content::SimContent>(),
+        world.get_resource::<cp_net::NetGraph>(),
+        world.get_resource::<cp_building::BuildingGrid>(),
+        world.get_resource::<cp_utility::UtilityGraph>(),
+    ) else {
+        return Cost::ZERO;
+    };
+    let inputs = crate::refund::RefundInputs {
+        content: &content.0,
+        net,
+        buildings,
+        utilities,
+        transit: world.get_resource::<cp_transit::TransitNet>(),
+        meta: world
+            .get_resource::<cp_terrain::SimTerrain>()
+            .map(|t| t.0.meta()),
+    };
+    let mut refund = crate::refund::demolition_refund(&inputs, cmd);
+    if let SimCommand::Net(c) | SimCommand::NetDemolish(c) = cmd
+        && matches!(
+            c,
+            NetCommand::BuildRoad { .. } | NetCommand::BuildPlan { .. }
+        )
+    {
+        for building in buildings_under(world, c) {
+            refund += crate::refund::building_refund(&inputs, building);
+        }
+    }
+    refund
+}
+
+/// The commands themselves. The `match` has no wildcard: a new variant won't compile until
+/// it is routed here.
+fn apply_command(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
     match cmd {
         SimCommand::SetSpeed { speed } => {
             world.insert_resource(*speed);

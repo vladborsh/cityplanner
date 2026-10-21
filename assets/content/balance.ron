@@ -11,6 +11,9 @@ Balance((
     // trucks; service vehicles always drive.
     car_visible_share: 0.15,
     truck_visible_share: 0.25,
+    // BUG-097: bulldozing gives back this share of what the player paid (placed buildings, road
+    // length, pipes and power lines, bus stops); grown buildings give nothing.
+    demolish_refund: 0.7,
     // A spawn attempt on a zone block proceeds with probability 1 / spawn_one_in (§8).
     spawn_one_in: 4,
 

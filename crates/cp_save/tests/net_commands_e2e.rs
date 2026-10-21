@@ -174,11 +174,17 @@ fn builds_a_5x5_grid_then_upgrades_and_removes() {
     assert_eq!(g2.node_count(), nodes);
 
     let victim = g2.segments().nth(7).unwrap().0;
+    // BUG-097: the removal gives back 70 % of the piece's value, a negative cost.
+    let content = sim.world().resource::<cp_content::SimContent>().0.clone();
+    let value = cp_net::removal_value(&g2, &content, victim, None).unwrap();
     let out = run(
         &mut sim,
         vec![SimCommand::Net(NetCommand::RemoveSegment { seg: victim })],
     );
-    assert_eq!(out[0].result.clone().unwrap().0, 0);
+    assert_eq!(
+        out[0].result.clone().unwrap().0,
+        -((value.0 as f64 * 0.7).round() as i64)
+    );
     let g3 = graph(&sim);
     assert!(g3.segment(victim).is_none());
     assert_eq!(g3.segment_count(), segs - 1);

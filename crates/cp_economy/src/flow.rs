@@ -44,6 +44,9 @@ pub struct Flow {
     pub industry_import: Cost,
     /// Entrance fees of the park areas (T-225), booked once a week.
     pub park_fees: Cost,
+    /// What bulldozing gave back (BUG-097): paid into the treasury by the command, booked here
+    /// by the hour it fell in.
+    pub refunds: Cost,
     pub road_upkeep: Cost,
     /// Pipes and power lines.
     pub utility_upkeep: Cost,
@@ -68,6 +71,7 @@ impl Flow {
             + self.exports
             + self.industry_export
             + self.park_fees
+            + self.refunds
     }
 
     pub fn building_upkeep(&self) -> Cost {
@@ -101,6 +105,7 @@ impl Flow {
         self.industry_export += o.industry_export;
         self.industry_import += o.industry_import;
         self.park_fees += o.park_fees;
+        self.refunds += o.refunds;
         self.road_upkeep += o.road_upkeep;
         self.utility_upkeep += o.utility_upkeep;
         self.transit_upkeep += o.transit_upkeep;
@@ -119,6 +124,7 @@ impl Flow {
             industry_export: f(self.industry_export),
             industry_import: f(self.industry_import),
             park_fees: f(self.park_fees),
+            refunds: f(self.refunds),
             road_upkeep: f(self.road_upkeep),
             utility_upkeep: f(self.utility_upkeep),
             services: self.services.map(f),
@@ -128,6 +134,13 @@ impl Flow {
         }
     }
 }
+
+/// The demolition refunds paid since the last hour was booked (BUG-097). The commands pay them
+/// into the treasury at once; the hourly settlement books them as that hour's
+/// [`Flow::refunds`] and empties this. Like [`MoneyFlow`] not saved and not in the checksum: it
+/// only feeds the budget's lines.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DemolitionRefunds(pub Cost);
 
 /// The hourly bookings of the last [`FLOW_HOURS`] hours and the week so far.
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
@@ -153,6 +166,8 @@ impl MoneyFlow {
             sum.add(f);
         }
         let mut day = sum.scaled(24, n as i64);
+        // A refund is paid once, not by the hour: as it came (BUG-097).
+        day.refunds = sum.refunds;
         let w: &WeekReport = &state.last_week;
         day.fares = Cost(w.transit_fares.0 / 7);
         day.tourism = Cost(w.tourism.0 / 7);

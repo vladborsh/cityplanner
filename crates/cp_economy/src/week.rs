@@ -32,7 +32,7 @@ use cp_net::{Elevation, NetGraph, Segment};
 use cp_transit::TransitLedger;
 use cp_utility::{UtilityGraph, UtilityNet};
 
-use crate::flow::{FLOW_HOURS, Flow, MoneyFlow, SERVICE_KINDS};
+use crate::flow::{DemolitionRefunds, FLOW_HOURS, Flow, MoneyFlow, SERVICE_KINDS};
 use crate::state::{DistrictIncome, EconomyState, Loan, WeekReport};
 
 fn percent(pct: u8) -> f64 {
@@ -250,7 +250,10 @@ pub fn settle_week(
     city_policies: Res<CityPolicies>,
     ledger: Option<ResMut<TransitLedger>>,
     industry: Option<ResMut<cp_industry::IndustryLedger>>,
-    parks: Option<ResMut<cp_park::ParkLedger>>,
+    (parks, refunds): (
+        Option<ResMut<cp_park::ParkLedger>>,
+        Option<ResMut<DemolitionRefunds>>,
+    ),
 ) {
     let hour = game_hour(tick.0);
     if tick.0 == 0 || hour == game_hour(tick.0 - 1) {
@@ -327,6 +330,10 @@ pub fn settle_week(
         }
         state.loans.retain(|l| l.weeks_left > 0);
         state.last_week = report;
+    }
+    // Already in the treasury: the command paid it (BUG-097).
+    if let Some(mut refunds) = refunds {
+        booked.refunds = std::mem::take(&mut refunds.0);
     }
     flow.week_to_date.add(&booked);
     if flow.hours.len() == FLOW_HOURS {

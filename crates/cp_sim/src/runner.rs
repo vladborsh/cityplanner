@@ -147,6 +147,7 @@ impl SimRunner {
         world.init_resource::<cp_economy::EconomyState>();
         world.init_resource::<cp_economy::DistrictIncome>();
         world.init_resource::<cp_economy::MoneyFlow>();
+        world.init_resource::<cp_economy::DemolitionRefunds>();
         world.init_resource::<cp_economy::DemandAcc>();
         world.init_resource::<cp_economy::LandGrids>();
         world.init_resource::<cp_economy::Decay>();
