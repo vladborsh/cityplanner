@@ -4,7 +4,7 @@
 
 use bevy_egui::egui;
 use cp_content::{BuildingDefId, CargoKind, ContentDb, IndustryRole, ResourceKind};
-use cp_district::{AreaId, AreaKind, DistrictCommand, MAX_AREAS, NAME_MAX};
+use cp_district::{AreaId, AreaKind, DistrictCommand, NAME_MAX};
 use cp_locale::{tr, trf};
 use cp_render::{Overlay, OverlayState, resource_color};
 use cp_sim::{SimCommand, SimView};
@@ -50,20 +50,12 @@ fn kind_icon(kind: DistrictToolKind) -> Icon {
 
 /// The id the next `CreateArea` will get: the lowest free slot (the rule of `cp_district`).
 pub fn next_id(view: &SimView) -> Option<AreaId> {
-    let list = &view.areas.list;
-    let slot = list.iter().position(Option::is_none).unwrap_or(list.len());
-    (slot < MAX_AREAS).then(|| AreaId(slot as u8 + 1))
+    cp_tools::area::next_area(&view.areas)
 }
 
 /// "Forestry area 3" with `3` the id the new area gets.
 pub fn new_name(kind: ResourceKind, id: AreaId) -> String {
-    let n = id.0;
-    match kind {
-        ResourceKind::Farming => trf!("Farming area {n}", n = n),
-        ResourceKind::Forestry => trf!("Forestry area {n}", n = n),
-        ResourceKind::Ore => trf!("Ore area {n}", n = n),
-        ResourceKind::Oil => trf!("Oil area {n}", n = n),
-    }
+    cp_tools::area::new_area_name(AreaKind::Industry(kind), id)
 }
 
 /// The name of a cargo as the player reads it (the key is the variant's name).
@@ -531,7 +523,7 @@ pub fn industry_panel(
                 ui.colored_label(
                     egui::Color32::YELLOW,
                     tr(
-                        "No area chosen: pick a resource above (it makes an area) or choose one below.",
+                        "No area chosen: a stroke makes an area of the richest resource under the brush, or pick a resource above or an area below.",
                     ),
                 );
             }

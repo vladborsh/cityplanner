@@ -55,6 +55,9 @@ pub struct Options {
     pub place_demo: Option<cp_tools::PlaceDemo>,
     /// `--upgrade-demo road,x,z[,whole]`: the upgrade tool held over (x, z) (BUG-103 shots).
     pub upgrade_demo: Option<cp_tools::UpgradeDemo>,
+    /// `--brush-demo district|area,small|large|erase,x,z`: one stroke of the district or area
+    /// brush at (x, z), then its ghost held there (BUG-108 shots).
+    pub brush_demo: Option<cp_tools::BrushDemo>,
     /// `--grading exposure=0.1,contrast=1.1,...`: this run's colour grading (T-273).
     pub grading: Option<cp_render::GradingSettings>,
     /// `--grading-panel`: open the F8 colour grading panel at start.
@@ -139,6 +142,22 @@ impl Options {
                 (n.len() == 2).then(|| cp_tools::PlaceDemo {
                     def,
                     at: bevy::math::Vec2::new(n[0], n[1]),
+                })
+            }),
+            brush_demo: value("--brush-demo").and_then(|v| {
+                let mut it = v.split(',');
+                let area = it.next()? == "area";
+                let kind = match it.next()? {
+                    "large" => cp_tools::DistrictToolKind::BrushLarge,
+                    "erase" => cp_tools::DistrictToolKind::Erase,
+                    _ => cp_tools::DistrictToolKind::BrushSmall,
+                };
+                let n: Vec<f32> = it.filter_map(|x| x.parse().ok()).collect();
+                (n.len() == 2).then(|| cp_tools::BrushDemo {
+                    area,
+                    kind,
+                    at: bevy::math::Vec2::new(n[0], n[1]),
+                    done: false,
                 })
             }),
             upgrade_demo: value("--upgrade-demo").and_then(|v| {
@@ -538,6 +557,12 @@ pub fn run(opts: Options) -> AppExit {
             );
     }
     if let Some(demo) = opts.place_demo {
+        if opts.hidden && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
+            app.add_plugins(cp_tools::ToolsPlugin);
+        }
+        app.insert_resource(demo);
+    }
+    if let Some(demo) = opts.brush_demo {
         if opts.hidden && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
             app.add_plugins(cp_tools::ToolsPlugin);
         }

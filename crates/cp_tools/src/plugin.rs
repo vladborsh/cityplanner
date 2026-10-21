@@ -370,6 +370,61 @@ pub fn place_demo(
     }
 }
 
+/// The district or area brush held over `at` without a cursor (`--brush-demo` of the desktop
+/// client, for the BUG-108 shots): one stroke there first (as a click), then the circle ghost.
+#[derive(Resource, Clone, Debug)]
+pub struct BrushDemo {
+    pub area: bool,
+    pub kind: crate::district::DistrictToolKind,
+    pub at: Vec2,
+    pub done: bool,
+}
+
+pub fn brush_demo(
+    demo: Option<ResMut<BrushDemo>>,
+    view: Option<Res<SimView>>,
+    mut state: ResMut<ToolState>,
+    mut outbox: ResMut<CommandOutbox>,
+) {
+    let (Some(mut demo), Some(view)) = (demo, view) else {
+        return;
+    };
+    let tool = if demo.area {
+        ActiveTool::Area
+    } else {
+        ActiveTool::District
+    };
+    if state.active != tool {
+        state.select(tool);
+    }
+    state.hover = Some(demo.at);
+    let p = demo.at;
+    if demo.area {
+        state.area.set_kind(demo.kind);
+        state.area_preview = state.area.preview(p);
+    } else {
+        state.district.set_kind(demo.kind);
+        state.district_preview = state.district.preview(p);
+    }
+    if demo.done {
+        return;
+    }
+    demo.done = true;
+    let mut cmds = Vec::new();
+    if demo.area {
+        let res = view.terrain.as_deref().map(|t| t.resources());
+        let richness = |r| res.map_or(0.0, |m| m.richness_at(r, p));
+        cmds.extend(state.area.choose_or_create(&view.areas, richness));
+        cmds.extend(state.area.drag(&view.area_map, p));
+    } else {
+        cmds.extend(state.district.choose_or_create(&view.districts));
+        cmds.extend(state.district.drag(&view.district_map, p));
+    }
+    for c in cmds {
+        outbox.push(SimCommand::District(c));
+    }
+}
+
 /// The upgrade tool held over `at` without a cursor (`--upgrade-demo` of the desktop client, for
 /// the BUG-103 shots): the piece it would change to `road`; `whole`: as with Shift held.
 #[derive(Resource, Clone, Debug)]
@@ -817,7 +872,7 @@ impl Plugin for ToolsPlugin {
             .init_resource::<cp_render::CoverageGhost>()
             .add_systems(
                 Update,
-                (place_demo, upgrade_demo, sync_coverage_ghost)
+                (place_demo, upgrade_demo, brush_demo, sync_coverage_ghost)
                     .chain()
                     .after(tool_hover),
             )
@@ -1220,6 +1275,31 @@ pub fn tool_hover(
     }
 }
 
+/// The district or area brush's ghost (BUG-108): a circle draped on the ground round the cell
+/// under the cursor, where the cells the brush takes reach.
+fn brush_circle(
+    gizmos: &mut Gizmos,
+    view: &SimView,
+    hover: Vec2,
+    kind: crate::district::DistrictToolKind,
+    color: Color,
+) {
+    let Some(c) = crate::district::brush_centre(hover) else {
+        return;
+    };
+    let r = kind.reach();
+    let height = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.8;
+    let n = 48;
+    gizmos.linestrip(
+        (0..=n).map(|i| {
+            let a = i as f32 / n as f32 * std::f32::consts::TAU;
+            let q = c + Vec2::new(a.cos(), a.sin()) * r;
+            Vec3::new(q.x, height(q), q.y)
+        }),
+        color,
+    );
+}
+
 /// The stop within reach of `p` (the bulldozer's target; stops come before roads).
 fn pick_stop(view: &SimView, p: Vec2) -> Option<cp_transit::StopId> {
     view.transit
@@ -1462,6 +1542,9 @@ pub fn tool_click(
         && let (Some(view), Some(p)) = (view.as_deref(), state.hover)
         && (buttons.just_pressed(MouseButton::Left) || buttons.pressed(MouseButton::Left))
     {
+        if let Some(create) = state.district.choose_or_create(&view.districts) {
+            outbox.push(SimCommand::District(create));
+        }
         if let Some(cmd) = state.district.drag(&view.district_map, p) {
             outbox.push(SimCommand::District(cmd));
         }
@@ -1472,6 +1555,11 @@ pub fn tool_click(
         && let (Some(view), Some(p)) = (view.as_deref(), state.hover)
         && (buttons.just_pressed(MouseButton::Left) || buttons.pressed(MouseButton::Left))
     {
+        let resources = view.terrain.as_deref().map(|t| t.resources());
+        let richness = |r| resources.map_or(0.0, |m| m.richness_at(r, p));
+        if let Some(create) = state.area.choose_or_create(&view.areas, richness) {
+            outbox.push(SimCommand::District(create));
+        }
         if let Some(cmd) = state.area.drag(&view.area_map, p) {
             outbox.push(SimCommand::District(cmd));
         }
@@ -1658,18 +1746,8 @@ fn draw_ghost(
                 Color::srgb_u8(c[0], c[1], c[2])
             }),
         };
-        let height = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.8;
-        for &cell in &state.district_preview {
-            let c = cp_district::DistrictMap::cell_center(cell);
-            let h = cp_district::CELL_M * 0.5;
-            let k = [
-                Vec2::new(c.x - h, c.y - h),
-                Vec2::new(c.x + h, c.y - h),
-                Vec2::new(c.x + h, c.y + h),
-                Vec2::new(c.x - h, c.y + h),
-            ]
-            .map(|q| Vec3::new(q.x, height(q), q.y));
-            gizmos.linestrip([k[0], k[1], k[2], k[3], k[0]], color);
+        if let Some(p) = state.hover {
+            brush_circle(&mut gizmos, view, p, state.district.kind, color);
         }
     }
     if state.active == ActiveTool::Area
@@ -1690,18 +1768,8 @@ fn draw_ghost(
                 }
             }
         };
-        let height = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.8;
-        for &cell in &state.area_preview {
-            let c = cp_district::DistrictMap::cell_center(cell);
-            let h = cp_district::CELL_M * 0.5;
-            let k = [
-                Vec2::new(c.x - h, c.y - h),
-                Vec2::new(c.x + h, c.y - h),
-                Vec2::new(c.x + h, c.y + h),
-                Vec2::new(c.x - h, c.y + h),
-            ]
-            .map(|q| Vec3::new(q.x, height(q), q.y));
-            gizmos.linestrip([k[0], k[1], k[2], k[3], k[0]], color);
+        if let Some(p) = state.hover {
+            brush_circle(&mut gizmos, view, p, state.area.kind, color);
         }
     }
     if let Some(ghost) = &state.ghost
