@@ -1,9 +1,9 @@
 Style((
     id: "res_low_long_house_a",
-    massing: Box,
+    massing: Detached,
     roof: Gabled,
     floors: (1, 2),
-    footprint_fill: (0.70, 0.92),
+    footprint_fill: (0.45, 0.60),
     palette: (
         walls: [(0.90, 0.86, 0.74), (0.74, 0.82, 0.88)],
         roof: [(0.42, 0.22, 0.18)],

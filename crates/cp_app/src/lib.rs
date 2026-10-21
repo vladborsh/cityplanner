@@ -421,8 +421,8 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         ),
         // Low-density homes by level (`--scene low-houses`, T-296).
         "low-houses" => (
-            Vec3::new(c + 60.0, 105.0, c + 140.0),
-            Vec3::new(c + 60.0, 0.0, c + 30.0),
+            Vec3::new(c + 60.0, 135.0, c + 175.0),
+            Vec3::new(c + 60.0, 0.0, c + 50.0),
         ),
         "low-houses-close" => (
             Vec3::new(c + 96.0, 38.0, c + 70.0),

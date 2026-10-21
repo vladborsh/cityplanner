@@ -475,13 +475,14 @@ fn variant_is_deterministic_and_spread_over_the_styles() {
     }
 }
 
-const MASSINGS: [&str; 6] = [
+const MASSINGS: [&str; 7] = [
     "Box",
     "LShape",
     "Stepped",
     "TowerOnPodium",
     "TwinBlocks",
     "Sawtooth",
+    "Detached",
 ];
 const ROOFS: [&str; 5] = ["Flat", "Gabled", "Hipped", "Shed", "Mansard"];
 const LOTS: [(u8, u8); 3] = [(1, 1), (2, 3), (4, 4)];

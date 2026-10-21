@@ -1181,6 +1181,8 @@ pub enum Massing {
     /// The post office and the mail sorting facility (T-248).
     PostOffice = 100,
     PostSortingFacility = 101,
+    /// T-296b: two or three small separate houses side by side on one low-density lot.
+    Detached = 102,
 }
 
 /// Facade pattern family of a style.

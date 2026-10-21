@@ -1,9 +1,9 @@
 Style((
     id: "res_low_duplex_garage_b",
-    massing: TwinBlocks,
+    massing: Detached,
     roof: Hipped,
     floors: (1, 2),
-    footprint_fill: (0.70, 0.90),
+    footprint_fill: (0.45, 0.60),
     palette: (
         walls: [(0.84, 0.66, 0.60), (0.70, 0.78, 0.66)],
         roof: [(0.40, 0.26, 0.22)],

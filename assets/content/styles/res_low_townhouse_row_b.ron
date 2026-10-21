@@ -1,12 +1,12 @@
 Style((
     id: "res_low_townhouse_row_b",
-    massing: TwinBlocks,
-    roof: Mansard,
+    massing: Detached,
+    roof: Gabled,
     floors: (2, 2),
-    footprint_fill: (0.70, 0.90),
+    footprint_fill: (0.45, 0.60),
     palette: (
         walls: [(0.66, 0.74, 0.60), (0.82, 0.76, 0.58)],
-        roof: [(0.30, 0.32, 0.36)],
+        roof: [(0.44, 0.22, 0.18)],
         trim: [(0.95, 0.95, 0.92)],
         glass: (0.18, 0.24, 0.30),
     ),
