@@ -268,7 +268,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     palette(&mut root, state, view.content.as_deref());
     menus::apply(state, tools, overlay, Some(view));
     tool_panel(&mut root, state, Some(view), tools, overlay, outbox);
-    demand_panel::demand_panel(&mut root, view, state, tools, overlay);
+    demand_panel::demand_panel(&mut root, view, state, tools);
     overlays_panel::overlays_panel(ctx, state, overlay, lighting, files);
     remember_map_rect(ctx, &root);
     bulldozer_bar::bulldozer_bar(ctx, tools);

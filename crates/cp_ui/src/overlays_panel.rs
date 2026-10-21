@@ -1,7 +1,7 @@
-//! The permanent panel at the top right of the map (T-289): a small row of buttons for the
-//! windows and the settings, and under it every map overlay as an icon, two to a row, the active
-//! one lit, a tooltip with its name. A small arrow folds the panel to a thin strip (O does the
-//! same). It replaces the View menu popup and the window icons of the top bar.
+//! The permanent panel at the top right of the map (T-289): every map overlay as an icon, two to
+//! a row, the active one lit, a tooltip with its name. A small arrow folds the panel to a thin strip (O does the
+//! same). T-298: the buttons for the windows and the settings are one row at the right end of
+//! the top bar ([`window_bar`]).
 
 use bevy_egui::egui;
 use cp_locale::tr;
@@ -15,8 +15,8 @@ use crate::style::Sizes;
 /// Icon of an overlay button and of a window button.
 const OVERLAY_ICON: f32 = 28.0;
 const WINDOW_ICON: f32 = 24.0;
-/// Window buttons to a row, overlay icons to a row.
-const WINDOW_COLUMNS: usize = 4;
+/// Height of the button row in the top bar.
+const WINDOW_BAR_H: f32 = WINDOW_ICON + 2.0 * 4.0;
 const OVERLAY_COLUMNS: usize = 2;
 /// Width of the folded strip, and of the open panel.
 const STRIP_W: f32 = 22.0;
@@ -37,7 +37,7 @@ pub struct OverlayRects {
     pub always_day: Option<egui::Rect>,
 }
 
-/// The windows of the row, in order (four to a row): money, charts, services, lines; policies,
+/// The windows of the row, in order (one row in the top bar): money, charts, services, lines; policies,
 /// saves, debug; then the settings button follows.
 const ROW: [UiWindow; 8] = [
     UiWindow::Budget,
@@ -98,6 +98,7 @@ pub fn overlays_panel(
     files: &mut FileMenu,
 ) -> OverlayRects {
     let mut rects = OverlayRects::default();
+    window_bar(ctx, state, files, &mut rects);
     let area = egui::Area::new(egui::Id::new("overlays_panel"))
         .anchor(
             egui::Align2::RIGHT_TOP,
@@ -128,33 +129,6 @@ pub fn overlays_panel(
                         return;
                     }
                     ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
-                    // The buttons.
-                    egui::Grid::new("overlays_windows")
-                        .spacing(egui::vec2(2.0, 2.0))
-                        .show(ui, |ui| {
-                            for (n, w) in ROW.into_iter().enumerate() {
-                                let on = window_on(state, files, w);
-                                let r = w
-                                    .icon()
-                                    .button(ui, WINDOW_ICON, Sizes::BUTTON_PAD, on)
-                                    .on_hover_text(tr(w.label()));
-                                rects.windows.push((w, r.rect));
-                                if r.clicked() {
-                                    toggle_window(state, files, w);
-                                }
-                                if n % WINDOW_COLUMNS == WINDOW_COLUMNS - 1 {
-                                    ui.end_row();
-                                }
-                            }
-                            let r = Icon::Settings
-                                .button(ui, WINDOW_ICON, Sizes::BUTTON_PAD, state.settings_open)
-                                .on_hover_text(tr("Settings"));
-                            rects.settings = Some(r.rect);
-                            if r.clicked() {
-                                state.settings_open = !state.settings_open;
-                            }
-                        });
-                    ui.separator();
                     // The overlays, two to a row.
                     egui::Grid::new("overlays_grid")
                         .spacing(egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP))
@@ -181,12 +155,48 @@ pub fn overlays_panel(
         });
     rects.panel = Some(area.response.rect);
     if state.settings_open
-        && !state.overlays_collapsed
         && let Some(anchor) = rects.settings
     {
         settings_popup(ctx, anchor, state, lighting, &mut rects);
     }
     rects
+}
+
+/// The window buttons and the settings button, one row at the right end of the top bar (T-298).
+fn window_bar(
+    ctx: &egui::Context,
+    state: &mut UiState,
+    files: &mut FileMenu,
+    rects: &mut OverlayRects,
+) {
+    egui::Area::new(egui::Id::new("window_bar"))
+        .anchor(
+            egui::Align2::RIGHT_TOP,
+            egui::vec2(-MARGIN, (Sizes::TOP_BAR_H - WINDOW_BAR_H) * 0.5),
+        )
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.set_height(WINDOW_BAR_H);
+                for w in ROW {
+                    let on = window_on(state, files, w);
+                    let r = w
+                        .icon()
+                        .button(ui, WINDOW_ICON, Sizes::BUTTON_PAD, on)
+                        .on_hover_text(tr(w.label()));
+                    rects.windows.push((w, r.rect));
+                    if r.clicked() {
+                        toggle_window(state, files, w);
+                    }
+                }
+                let r = Icon::Settings
+                    .button(ui, WINDOW_ICON, Sizes::BUTTON_PAD, state.settings_open)
+                    .on_hover_text(tr("Settings"));
+                rects.settings = Some(r.rect);
+                if r.clicked() {
+                    state.settings_open = !state.settings_open;
+                }
+            });
+        });
 }
 
 /// The settings menu, under the settings button; a press anywhere else closes it.
