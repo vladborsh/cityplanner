@@ -25,8 +25,33 @@ use crate::style::Sizes;
 
 /// Seconds (UI time) a snackbar stays.
 pub const SHOWN_SECS: f64 = 8.0;
-/// Game days before the same advice may come again, unless it got worse.
-pub const COOLDOWN_DAYS: u64 = 2;
+/// Game days before the same advice may come again, unless it got much worse (BUG-115).
+pub const COOLDOWN_DAYS: u64 = 3;
+/// BUG-115: it takes this many times the count (at least one more) to lift the cooldown.
+pub const WORSE_FACTOR: u32 = 2;
+/// BUG-115: a problem notifies only after it has stood this many game hours (half a day).
+pub const PERSIST_HOURS: u64 = 12;
+/// BUG-115: at most one new city-problem notification per this many game hours (a day).
+pub const PROBLEM_GAP_HOURS: u64 = 24;
+/// BUG-115: a problem of fewer buildings than this, or than [`MIN_SHARE_PERCENT`] of the
+/// active buildings, is not worth a notification.
+pub const MIN_BUILDINGS: u32 = 5;
+pub const MIN_SHARE_PERCENT: u32 = 3;
+/// BUG-115: this many problems at once become one "N problems" entry.
+pub const MERGE_FROM: usize = 3;
+/// The advice ids that count buildings (the small-count rule applies to these).
+const BUILDING_COUNTS: [&str; 10] = [
+    "no_water",
+    "no_power",
+    "no_sewage",
+    "burned",
+    "abandoned",
+    "garbage",
+    "sick",
+    "dead",
+    "fire",
+    "crime",
+];
 /// Demand (±100) from which the city "wants" a zone type.
 const HIGH_DEMAND: f32 = 30.0;
 /// Side of the snackbar's square icon.
@@ -755,6 +780,10 @@ pub struct Advisor {
     shown: Option<Shown>,
     unique_seen: UniqueSeen,
     level_seen: LevelSeen,
+    /// Advice id -> the game hour it was first seen in the current run (BUG-115).
+    since: BTreeMap<&'static str, u64>,
+    /// The game hour of the last problem notification.
+    last_problem_hour: Option<u64>,
     /// Severity of the snackbar that appeared in the last frame (taken by `draw_ui`).
     pub just_shown: Option<Severity>,
 }
@@ -782,12 +811,32 @@ impl Advisor {
         let mut all = collect(view, &mut self.unique_seen);
         all.extend(level_advice(view, &mut self.level_seen));
         all.retain(|a| !(problems_only && a.severity == Severity::Info));
+        // BUG-115: a few buildings are not a crisis.
+        let active = view.city.buildings.active;
+        all.retain(|a| {
+            !BUILDING_COUNTS.contains(&a.id)
+                || (a.count >= MIN_BUILDINGS && a.count * 100 >= MIN_SHARE_PERCENT * active)
+        });
+        // How long each advice has stood; the ones gone are forgotten.
+        self.since.retain(|id, _| all.iter().any(|a| a.id == *id));
+        for a in &all {
+            self.since.entry(a.id).or_insert(hour);
+        }
+        let problem = |a: &Advice| a.severity != Severity::Info;
+        all.retain(|a| !problem(a) || hour >= self.since[a.id] + PERSIST_HOURS);
         all.retain(|a| match self.last.get(a.id) {
             None => true,
             Some(&(shown_day, was)) => {
-                day >= shown_day + COOLDOWN_DAYS || a.count > was + (was / 4).max(1)
+                day >= shown_day + COOLDOWN_DAYS || a.count >= (was * WORSE_FACTOR).max(was + 1)
             }
         });
+        // At most one new problem notification a game day.
+        if self
+            .last_problem_hour
+            .is_some_and(|h| hour < h + PROBLEM_GAP_HOURS)
+        {
+            all.retain(|a| !problem(a));
+        }
         all.retain(|a| on_screen.is_none_or(|s| a.severity > s));
         // Most urgent first; the biggest problem of a severity, then the id, for a stable pick.
         all.sort_by(|a, b| {
@@ -796,8 +845,30 @@ impl Advisor {
                 .then(b.count.cmp(&a.count))
                 .then(a.id.cmp(b.id))
         });
-        if let Some(advice) = all.into_iter().next() {
+        let problems: Vec<&Advice> = all.iter().filter(|a| problem(a)).collect();
+        let advice = if problems.len() >= MERGE_FROM {
+            // Many at once: one entry that names the worst and counts the rest.
+            let worst = problems[0];
+            let n = problems.len() as u32;
+            for a in &problems {
+                self.last.insert(a.id, (day, a.count));
+            }
+            Some(Advice {
+                id: "problems",
+                severity: worst.severity,
+                text: trf!(plural "{n} city problems — the worst: {worst}", n = n, worst = worst.text),
+                count: n,
+                icon: worst.icon,
+                action: worst.action,
+            })
+        } else {
+            all.into_iter().next()
+        };
+        if let Some(advice) = advice {
             self.last.insert(advice.id, (day, advice.count));
+            if problem(&advice) {
+                self.last_problem_hour = Some(hour);
+            }
             self.just_shown = Some(advice.severity);
             self.shown = Some(Shown { advice, at: now });
         }
@@ -1027,6 +1098,19 @@ mod tests {
         v
     }
 
+    /// The first tick of game hour `h`.
+    fn hour_tick(h: u64) -> u64 {
+        (h * TICKS_PER_DAY).div_ceil(24)
+    }
+
+    /// An advisor that has seen `v` for the persistence time: the next look may notify.
+    fn warmed(v: &SimView) -> Advisor {
+        let mut adv = Advisor::default();
+        adv.observe(&at_tick(v.clone(), 0), 0.0, true);
+        assert!(adv.current(0.1).is_none(), "a new problem waits");
+        adv
+    }
+
     #[test]
     fn five_houses_without_water_give_the_water_advice_with_the_overlay_action() {
         let all = collect(&no_water(5), &mut None);
@@ -1068,23 +1152,112 @@ mod tests {
         assert!(all.iter().all(|a| a.id != "fire" && a.id != "dead"));
     }
 
+    /// BUG-115: a problem notifies after half a day, the same one is quiet for three days unless
+    /// it doubled.
     #[test]
-    fn a_repeat_waits_two_days_unless_it_got_worse() {
-        let mut adv = Advisor::default();
-        // A game hour is 85.33 ticks: 86 is the first tick of hour 1.
-        let hour = TICKS_PER_DAY / 24 + 1;
-        adv.observe(&at_tick(no_water(5), 0), 0.0, true);
+    fn a_repeat_waits_three_days_unless_it_doubled() {
+        let mut adv = warmed(&no_water(5));
+        adv.observe(&at_tick(no_water(5), hour_tick(12)), 20.0, true);
         assert_eq!(adv.just_shown.take(), Some(Severity::Warn));
-        // Snackbar gone, same problem an hour later and a day later: silent.
-        adv.observe(&at_tick(no_water(5), hour), 20.0, true);
-        adv.observe(&at_tick(no_water(5), TICKS_PER_DAY), 40.0, true);
+        // Snackbar gone; the same problem a day and two days later: silent.
+        adv.observe(&at_tick(no_water(5), hour_tick(36)), 40.0, true);
+        adv.observe(&at_tick(no_water(5), hour_tick(60)), 60.0, true);
         assert_eq!(adv.just_shown, None);
-        // Clearly worse: shown again at once.
-        adv.observe(&at_tick(no_water(9), TICKS_PER_DAY + 2 * hour), 60.0, true);
+        // Worse, but not twice as bad: silent.
+        adv.observe(&at_tick(no_water(9), hour_tick(61)), 80.0, true);
+        assert_eq!(adv.just_shown, None);
+        // Twice as bad: shown at once.
+        adv.observe(&at_tick(no_water(10), hour_tick(62)), 100.0, true);
+        assert_eq!(adv.just_shown.take(), Some(Severity::Critical));
+        // Three days after that: again, though not worse.
+        adv.observe(&at_tick(no_water(10), hour_tick(62 + 72)), 120.0, true);
+        assert_eq!(adv.just_shown.take(), Some(Severity::Critical));
+    }
+
+    /// BUG-115: a problem that comes and goes inside half a day never notifies; one that stands
+    /// does, once.
+    #[test]
+    fn a_problem_notifies_only_after_it_has_stood_half_a_day() {
+        let mut adv = Advisor::default();
+        adv.observe(&at_tick(no_water(5), hour_tick(0)), 0.0, true);
+        adv.observe(&at_tick(no_water(5), hour_tick(11)), 10.0, true);
+        assert_eq!(adv.just_shown, None);
+        // It clears for an hour: the clock starts again.
+        adv.observe(&at_tick(no_water(0), hour_tick(12)), 20.0, true);
+        adv.observe(&at_tick(no_water(5), hour_tick(13)), 30.0, true);
+        adv.observe(&at_tick(no_water(5), hour_tick(24)), 40.0, true);
+        assert_eq!(adv.just_shown, None);
+        adv.observe(&at_tick(no_water(5), hour_tick(25)), 50.0, true);
         assert_eq!(adv.just_shown.take(), Some(Severity::Warn));
-        // Two days after that: again, though not worse.
-        adv.observe(&at_tick(no_water(9), 4 * TICKS_PER_DAY), 80.0, true);
-        assert_eq!(adv.just_shown.take(), Some(Severity::Warn));
+    }
+
+    /// BUG-115: under 5 buildings, or under 3 % of the active ones, is no notification.
+    #[test]
+    fn a_small_problem_does_not_notify() {
+        let mut few = no_water(4);
+        let mut adv = warmed(&few);
+        adv.observe(&at_tick(few.clone(), hour_tick(30)), 20.0, true);
+        assert_eq!(adv.just_shown, None);
+        // 5 buildings of 1000 active: under 3 %.
+        let mut city = (*few.city).clone();
+        city.buildings.no_water = 5;
+        city.buildings.active = 1000;
+        few.city = std::sync::Arc::new(city);
+        let mut adv = warmed(&few);
+        adv.observe(&at_tick(few.clone(), hour_tick(30)), 20.0, true);
+        assert_eq!(adv.just_shown, None);
+        // 30 of 1000: 3 %.
+        let mut city = (*few.city).clone();
+        city.buildings.no_water = 30;
+        few.city = std::sync::Arc::new(city);
+        let mut adv = warmed(&few);
+        adv.observe(&at_tick(few.clone(), hour_tick(30)), 20.0, true);
+        assert_eq!(adv.just_shown.take(), Some(Severity::Critical));
+    }
+
+    /// BUG-115: one new problem notification a game day; a second problem waits for the day.
+    #[test]
+    fn at_most_one_new_problem_notification_a_day() {
+        let mut v = no_water(5);
+        let mut city = (*v.city).clone();
+        city.buildings.no_power = 6;
+        city.buildings.active = 6;
+        v.city = std::sync::Arc::new(city);
+        let mut adv = warmed(&v);
+        adv.observe(&at_tick(v.clone(), hour_tick(12)), 20.0, true);
+        let first = adv.current(21.0).unwrap().id;
+        assert!(adv.just_shown.take().is_some());
+        // The next hours, snackbar gone: silent until a day after the first.
+        for h in 13..36 {
+            adv.observe(
+                &at_tick(v.clone(), hour_tick(h)),
+                20.0 + 10.0 * h as f64,
+                true,
+            );
+            assert_eq!(adv.just_shown, None, "hour {h}");
+        }
+        adv.observe(&at_tick(v, hour_tick(36)), 1000.0, true);
+        assert_ne!(adv.current(1001.0).unwrap().id, first);
+    }
+
+    /// BUG-115: three problems at once are one "N city problems" entry (the worst one's action).
+    #[test]
+    fn many_problems_at_once_are_one_entry() {
+        let mut v = no_water(6);
+        let mut city = (*v.city).clone();
+        city.buildings.no_power = 7;
+        city.buildings.no_sewage = 8;
+        city.buildings.active = 8;
+        v.city = std::sync::Arc::new(city);
+        let mut adv = warmed(&v);
+        adv.observe(&at_tick(v.clone(), hour_tick(12)), 20.0, true);
+        let a = adv.current(21.0).unwrap();
+        assert_eq!(a.id, "problems");
+        assert_eq!(a.count, 3);
+        assert!(a.text.starts_with("3 city problems"), "{}", a.text);
+        // All three are on cooldown now: no second entry the same day.
+        adv.observe(&at_tick(v, hour_tick(40)), 1000.0, true);
+        assert!(adv.current(1001.0).is_none());
     }
 
     #[test]
@@ -1093,9 +1266,9 @@ mod tests {
         let mut city = (*v.city).clone();
         city.buildings.no_power = 12;
         v.city = std::sync::Arc::new(city);
-        let mut adv = Advisor::default();
-        adv.observe(&at_tick(v, 0), 0.0, true);
-        assert_eq!(adv.current(1.0).unwrap().id, "no_power");
+        let mut adv = warmed(&v);
+        adv.observe(&at_tick(v, hour_tick(12)), 1.0, true);
+        assert_eq!(adv.current(1.1).unwrap().id, "no_power");
         assert_eq!(adv.just_shown, Some(Severity::Critical));
         // Info never shows with "only problems", and a milder one does not push out a shown one.
         let mut info = no_water(0);
@@ -1109,8 +1282,8 @@ mod tests {
 
     #[test]
     fn the_snackbar_hides_after_its_time_and_show_runs_the_action() {
-        let mut adv = Advisor::default();
-        adv.observe(&at_tick(no_water(5), 0), 0.0, true);
+        let mut adv = warmed(&no_water(5));
+        adv.observe(&at_tick(no_water(5), hour_tick(12)), 0.0, true);
         assert!(adv.current(SHOWN_SECS - 0.1).is_some());
         assert!(adv.current(SHOWN_SECS + 0.1).is_none());
         let mut state = UiState::default();

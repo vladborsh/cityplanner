@@ -954,6 +954,7 @@
     "{name}: click two points to lay a track on the ground, and on to go on. Esc ends the chain. Join the railway from the map edge to a station.": "{name}: щёлкните две точки, чтобы проложить путь по земле, и дальше, чтобы продолжить. Esc завершает цепочку. Проведите железную дорогу от края карты до станции.",
     "{n} a day": "{n} в день",
     "{n} buildings": ["{n} здание", "{n} здания", "{n} зданий"],
+    "{n} city problems — the worst: {worst}": ["{n} проблема в городе — главная: {worst}", "{n} проблемы в городе — главная: {worst}", "{n} проблем в городе — главная: {worst}"],
     "{n} buildings abandoned": ["{n} здание заброшено", "{n} здания заброшены", "{n} зданий заброшено"],
     "{n} buildings buried in garbage": ["{n} здание завалено мусором", "{n} здания завалены мусором", "{n} зданий завалены мусором"],
     "{n} buildings buried in garbage — try the {policy} policy": ["{n} здание завалено мусором — попробуйте политику «{policy}»", "{n} здания завалены мусором — попробуйте политику «{policy}»", "{n} зданий завалены мусором — попробуйте политику «{policy}»"],
