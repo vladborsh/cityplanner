@@ -7,7 +7,7 @@
 //!
 //! Old saves are not migrated during development (T-275, AGENTS.md): when the format changes,
 //! `gen_m1_fixtures` writes the two files again with the current writer and prints the checksums
-//! to pin here. Made last for format 57 (T-275: roads are whole cells wide, the 96 m lattice of
+//! to pin here. Made last for format 58 (T-290: the land grids carry the garbage nuisance; format 57 was T-275: roads are whole cells wide, the 96 m lattice of
 //! `grid_city`). BUG-090 moved the two `load + 4096 ticks` pins (state at load unchanged): a car
 //! that has stood at the stop line with its lane change blocked now turns from its own lane or
 //! goes another way instead of waiting to be removed as stuck, and a car starting near its
@@ -96,7 +96,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
     assert!((2400..=3000).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0xed09dac134bc16ac, "state at load");
+    assert_eq!(sim.checksum(), 0xa8a91ba70860d53c, "state at load");
     // T-280: re-recorded (was 0xa0961668822b2784 since T-282): only 15 % of car trips and
     // 25 % of goods trucks take a vehicle, the rest run abstractly, so the day after the load
     // has other cars on the road.
@@ -105,7 +105,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     // of the ground per tick, so the day after the load runs differently.
     assert_eq!(
         after_4096(&mut sim),
-        0x7134fe512b0b480b, // BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
+        0x8bd7e0e335426bf8, // BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
         "load + 4096 ticks"
     );
 }
@@ -116,7 +116,9 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     let mut sim = loaded(&fixture("m1-traffic.sav"));
     {
         let a = sim.world().resource::<Agents>();
-        assert!(a.vehicle_count() >= 500, "{} cars", a.vehicle_count());
+        // T-290: 20 (was 500): since T-280 only 15 % of the car trips take a vehicle, so the
+        // jam the generator stops at holds ~30 cars (the rest of the trips run abstractly).
+        assert!(a.vehicle_count() >= 20, "{} cars", a.vehicle_count());
         assert!(
             a.pedestrian_count() >= 100,
             "{} pedestrians",
@@ -130,8 +132,11 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
         "a demolished building is waiting to be purged"
     );
     let trips_at_load = sim.world().resource::<TripBook>().len();
-    assert!(trips_at_load >= 800, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0x099a46365229b7a2, "state at load");
+    let done_at_load = sim.world().resource::<TripBook>().completed;
+    // T-290: 300 (was 800): the trips that run abstractly (T-280) are over by the time cars
+    // and pedestrians are on the road; ~330 are in flight when the generator stops.
+    assert!(trips_at_load >= 300, "{trips_at_load} trips in flight");
+    assert_eq!(sim.checksum(), 0xc7d2865b29ac6a5b, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -144,11 +149,13 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // T-280: re-recorded (was 0x35693ab6f390ce23 since T-270): the trips planned after the
     // load mostly run abstractly (car_visible_share 0.15); the jam saved with the file drives.
     // T-270: re-recorded, the movement clock is 0.4 s a tick (§2 v1.2).
-    assert_eq!(sim.checksum(), 0x7a59f3504ac68ff4, "load + 4096 ticks");
-    let trips_after = sim.world().resource::<TripBook>().len();
+    assert_eq!(sim.checksum(), 0x54a58aeb68367963, "load + 4096 ticks");
+    // T-290: the trips of the saved jam arrive (completed grows by hundreds); the number in flight
+    // no longer falls, the routine plans new ones all day (most of them abstract, T-280).
+    let done_after = sim.world().resource::<TripBook>().completed;
     assert!(
-        trips_after < trips_at_load,
-        "the jam clears: {trips_at_load} -> {trips_after} trips in flight"
+        done_after >= done_at_load + 200,
+        "the trips go on: {done_at_load} -> {done_after} completed"
     );
 }
 
