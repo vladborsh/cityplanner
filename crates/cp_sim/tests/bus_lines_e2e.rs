@@ -16,8 +16,8 @@ use cp_net::{Elevation, NetGraph, SegmentId};
 use cp_sim::SimRunner;
 use cp_traffic::{Agents, Side};
 use cp_transit::{
-    BusId, BusPhase, LineId, LineState, StopRef, TransitCommand, TransitFleet, TransitMode,
-    TransitNet, apply,
+    BusId, BusPhase, LineId, LineState, StopRef, TransitCommand, TransitError, TransitFleet,
+    TransitMode, TransitNet, apply,
 };
 
 const ROOT: &str = env!("CARGO_MANIFEST_DIR");
@@ -219,7 +219,33 @@ fn taking_a_vehicle_off_the_line_sends_one_bus_home_and_removes_it() {
 #[test]
 fn without_a_depot_the_line_has_no_depot_and_no_buses() {
     let mut t = town();
+    // T-302, station first: no line without a depot at all.
+    let stops: Vec<StopRef> = [0usize, 1, 2, 3]
+        .iter()
+        .map(|&i| StopRef::NewRoad {
+            seg: t.sides[i],
+            s: 50.0,
+            side: Side::Right,
+        })
+        .collect();
+    assert_eq!(
+        cp_transit::apply(
+            t.sim.world_mut(),
+            &TransitCommand::CreateLine {
+                mode: TransitMode::Bus,
+                stops,
+            },
+        ),
+        Err(TransitError::NotReady(TransitMode::Bus))
+    );
+    // With a depot the line is made; the depot goes: the line has no depot and sends out no
+    // more buses.
+    let depot = t.depot();
     let line = t.line(&[0, 1, 2, 3]);
+    t.sim
+        .world_mut()
+        .resource_mut::<BuildingGrid>()
+        .remove(depot);
     t.run(60);
     assert_eq!(t.state(line), LineState::NoDepot);
     assert_eq!(t.buses(), 0);

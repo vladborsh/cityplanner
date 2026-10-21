@@ -91,30 +91,25 @@ fn committed_content_loads_with_eleven_road_types_nine_roads_and_two_tracks() {
             true,
         ),
         // T-302: transit-only streets and collectors with transit lanes.
-        ("tram_2l", RoadClass::Local, "Tram street (2 tracks)", false),
-        ("bus_2l", RoadClass::Local, "Bus street (2 lanes)", false),
+        ("tram_2l", RoadClass::Local, "Tram street", false),
+        ("transitway_2l", RoadClass::Local, "Bus street", false),
+        ("trolley_2l", RoadClass::Local, "Trolleybus street", false),
         (
-            "trolley_2l",
-            RoadClass::Local,
-            "Trolleybus street (2 lanes)",
+            "transitway_4l",
+            RoadClass::Collector,
+            "Bus-lane road (4 lanes)",
             false,
         ),
         (
-            "medium_4l_bus",
+            "tram_4l",
             RoadClass::Collector,
-            "Collector with bus lanes (4 lanes)",
+            "Tram road (4 lanes)",
             false,
         ),
         (
-            "medium_4l_tram",
+            "trolley_4l",
             RoadClass::Collector,
-            "Collector with tram tracks (4 lanes)",
-            false,
-        ),
-        (
-            "medium_4l_trolley",
-            RoadClass::Collector,
-            "Collector with trolleybus lanes (4 lanes)",
+            "Trolleybus road (4 lanes)",
             false,
         ),
     ];
@@ -164,7 +159,13 @@ fn committed_content_loads_with_eleven_road_types_nine_roads_and_two_tracks() {
             "medium_4l",
             "metro_track",
             "park_path",
-            "rail_2t"
+            "rail_2t",
+            "tram_2l",
+            "tram_4l",
+            "transitway_2l",
+            "transitway_4l",
+            "trolley_2l",
+            "trolley_4l",
         ]
     );
     // T-172: one-way streets with sidewalks and zoning on both sides.

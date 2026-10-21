@@ -1,7 +1,7 @@
 // T-302: tram tracks in the middle, cars at the kerbs. Profile of `medium_4l`; whole cells wide. Numbers: tune later.
 Road((
-    id: "medium_4l_tram",
-    name: "Collector with tram tracks (4 lanes)",
+    id: "tram_4l",
+    name: "Tram road (4 lanes)",
     class: Collector,
     width: 32.0,
     lanes: [

@@ -315,7 +315,7 @@ fn a_bus_stop_needs_a_lane_a_bus_may_drive() {
     let db = &t.db;
     let mut g = NetGraph::new();
     let tram = db.road_id("tram_2l").unwrap();
-    let bus = db.road_id("bus_2l").unwrap();
+    let bus = db.road_id("transitway_2l").unwrap();
     let a = g
         .add_segment(
             db.road(tram),

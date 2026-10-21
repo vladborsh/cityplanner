@@ -498,11 +498,7 @@ fn tram_lanes_connect_to_tram_lanes_only_and_cross_the_cars() {
     let db = content();
     let (g, n, _) = star(
         &db,
-        &[
-            (0.0, "medium_4l_tram"),
-            (180.0, "medium_4l_tram"),
-            (90.0, "basic_2l"),
-        ],
+        &[(0.0, "tram_4l"), (180.0, "tram_4l"), (90.0, "basic_2l")],
     );
     let j = junction(&g, n);
     check(&g, &j);
@@ -574,8 +570,8 @@ fn bus_lanes_go_on_to_bus_lanes_or_cars_but_cars_never_enter_a_bus_lane() {
     let (g, n, _) = star(
         &db,
         &[
-            (0.0, "medium_4l_bus"),
-            (180.0, "medium_4l_bus"),
+            (0.0, "transitway_4l"),
+            (180.0, "transitway_4l"),
             (90.0, "basic_2l"),
         ],
     );
@@ -618,7 +614,11 @@ fn a_bus_only_street_is_entered_from_car_lanes() {
     // A T, not a straight join: a two-arm node is a `Middle` where lanes just run on.
     let (g, n, _) = star(
         &db,
-        &[(0.0, "basic_2l"), (180.0, "bus_2l"), (90.0, "basic_2l")],
+        &[
+            (0.0, "basic_2l"),
+            (180.0, "transitway_2l"),
+            (90.0, "basic_2l"),
+        ],
     );
     let j = junction(&g, n);
     check(&g, &j);

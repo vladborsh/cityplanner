@@ -1312,7 +1312,6 @@ mod tests {
             [
                 "basic_1w_2l",
                 "basic_2l",
-                "bus_2l",
                 "highway_1w_1l",
                 "highway_1w_2l",
                 "highway_1w_3l",
@@ -1320,14 +1319,15 @@ mod tests {
                 "large_6l",
                 "medium_1w_3l",
                 "medium_4l",
-                "medium_4l_bus",
-                "medium_4l_tram",
-                "medium_4l_trolley",
                 "metro_track",
                 "park_path",
                 "rail_2t",
                 "tram_2l",
+                "tram_4l",
+                "transitway_2l",
+                "transitway_4l",
                 "trolley_2l",
+                "trolley_4l",
             ]
         );
         let hw = db.road(db.road_id("highway_1w_3l").unwrap());

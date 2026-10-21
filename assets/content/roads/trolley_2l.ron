@@ -1,7 +1,7 @@
 // T-302: only trolleybuses (under the wires), no cars. Profile of `basic_2l`; whole cells wide. Numbers: tune later.
 Road((
     id: "trolley_2l",
-    name: "Trolleybus street (2 lanes)",
+    name: "Trolleybus street",
     class: Local,
     width: 16.0,
     lanes: [
