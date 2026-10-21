@@ -1156,6 +1156,10 @@ pub enum Detail {
     LoadingDock = 5,
     Tanks = 6,
     Fence = 7,
+    /// T-296: a swimming pool in the largest free margin of the lot.
+    Pool = 8,
+    /// T-296: a paved drive from the lot's front edge to the house.
+    Driveway = 9,
 }
 
 /// Linear RGB colour, `0..=1` per channel.

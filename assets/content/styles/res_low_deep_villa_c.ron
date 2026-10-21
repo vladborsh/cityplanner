@@ -1,0 +1,16 @@
+// T-296: a low detached house; the plot, not the height, grows with the level.
+Style((
+    id: "res_low_deep_villa_c",
+    massing: LShape,
+    roof: Gabled,
+    floors: (2, 2),
+    footprint_fill: (0.20, 0.30),
+    palette: (
+        walls: [(0.62, 0.76, 0.62), (0.86, 0.70, 0.66)],
+        roof: [(0.30, 0.30, 0.34)],
+        trim: [(0.95, 0.95, 0.92)],
+        glass: (0.18, 0.24, 0.30),
+    ),
+    facade: Punched,
+    details: [Balconies, Fence, Pool, Driveway],
+))

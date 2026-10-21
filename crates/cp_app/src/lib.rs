@@ -419,6 +419,15 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 170.0, 300.0, c + 360.0),
             Vec3::new(c + 170.0, 0.0, c + 50.0),
         ),
+        // Low-density homes by level (`--scene low-houses`, T-296).
+        "low-houses" => (
+            Vec3::new(c + 60.0, 105.0, c + 140.0),
+            Vec3::new(c + 60.0, 0.0, c + 30.0),
+        ),
+        "low-houses-close" => (
+            Vec3::new(c + 96.0, 38.0, c + 70.0),
+            Vec3::new(c + 96.0, 0.0, c + 14.0),
+        ),
         "trucks" => (
             Vec3::new(c - 10.0, 6.0, c + 92.0),
             Vec3::new(c - 10.0, 2.0, c),
@@ -712,6 +721,9 @@ pub fn build_sim(
             warn!("scene command rejected: {reason}");
         }
         info!("scene shadows");
+    } else if scene == Some(scene::LOW_HOUSES) {
+        scene::build_low_houses(&mut sim);
+        info!("scene low-houses");
     } else if scene == Some(scene::POWER_TOWN) {
         scene::build_power_town(&mut sim);
         info!("scene power-town");

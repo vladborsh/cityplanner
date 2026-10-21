@@ -2542,3 +2542,58 @@ pub fn build_power_town(sim: &mut SimRunner) {
     sim.world_mut()
         .insert_resource(cp_core::time::SimSpeed::Pause);
 }
+
+/// Low-density homes by level (T-296): two rows of detached houses, levels 1 to 5 left to right
+/// (the second row the `b` lots), each on its own lot, no roads. Look at it with
+/// `--cam low-houses` (`low-houses-close`).
+pub const LOW_HOUSES: &str = "low-houses";
+
+/// Builds the [`LOW_HOUSES`] scene.
+pub fn build_low_houses(sim: &mut SimRunner) {
+    use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingState, Footprint};
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let cell = cp_building::FOOTPRINT_CELL_M;
+    let rows: [[&str; 5]; 2] = [
+        [
+            "house_low_1",
+            "house_low_2",
+            "house_low_3",
+            "house_low_4",
+            "house_low_5",
+        ],
+        [
+            "house_low_1b",
+            "house_low_2b",
+            "house_low_3b",
+            "house_low_4b",
+            "house_low_5b",
+        ],
+    ];
+    for (r, row) in rows.into_iter().enumerate() {
+        let mut x = c - 20.0;
+        for def in row {
+            let id = db.building_id(def).expect("house def");
+            let (w, d) = db.building(id).lot;
+            let (along, deep) = (f32::from(w) * cell, f32::from(d) * cell);
+            sim.world_mut()
+                .resource_mut::<BuildingGrid>()
+                .insert(Building {
+                    def: id,
+                    footprint: Footprint::Free { w, d },
+                    level: db.building(id).level,
+                    state: BuildingState::Active,
+                    ready_at: Tick(0),
+                    pos: Vec2::new(x + along / 2.0, c + r as f32 * 44.0 + deep / 2.0),
+                    rot: 0.0,
+                    access: None,
+                    flags: BuildingFlags::default(),
+                    level_progress: 0.0,
+                });
+            x += along + 6.0;
+        }
+    }
+    sim.tick_once();
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+}

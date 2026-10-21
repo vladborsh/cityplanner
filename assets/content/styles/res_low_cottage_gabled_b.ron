@@ -1,9 +1,10 @@
+// T-296: a low detached house; the plot, not the height, grows with the level.
 Style((
     id: "res_low_cottage_gabled_b",
     massing: Box,
     roof: Gabled,
-    floors: (2, 3),
-    footprint_fill: (0.52, 0.75),
+    floors: (1, 2),
+    footprint_fill: (0.42, 0.58),
     palette: (
         walls: [(0.82, 0.74, 0.62), (0.86, 0.80, 0.70), (0.78, 0.66, 0.50)],
         roof: [(0.50, 0.22, 0.17), (0.42, 0.20, 0.16)],
@@ -11,5 +12,5 @@ Style((
         glass: (0.18, 0.24, 0.30),
     ),
     facade: Punched,
-    details: [Chimney, Fence],
+    details: [Chimney, Fence, Driveway],
 ))

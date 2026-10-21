@@ -2,7 +2,7 @@ Style((
     id: "res_low_townhouse_row_b",
     massing: TwinBlocks,
     roof: Mansard,
-    floors: (2, 3),
+    floors: (2, 2),
     footprint_fill: (0.70, 0.90),
     palette: (
         walls: [(0.66, 0.74, 0.60), (0.82, 0.76, 0.58)],
