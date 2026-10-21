@@ -1,0 +1,27 @@
+// T-302: only trams (rails in the asphalt), no cars. Profile of `basic_2l`; whole cells wide. Numbers: tune later.
+Road((
+    id: "tram_2l",
+    name: "Tram street (2 tracks)",
+    class: Local,
+    width: 16.0,
+    lanes: [
+        (kind: Pedestrian, dir: Forward, width: 4.5, offset: 5.75),
+        (kind: Tram, dir: Backward, width: 3.5, offset: 1.75),
+        (kind: Tram, dir: Forward, width: 3.5, offset: -1.75),
+        (kind: Pedestrian, dir: Forward, width: 4.5, offset: -5.75),
+    ],
+    median_width: 0.0,
+    speed_kmh: 40,
+    max_slope: 0.12,
+    cost_per_m: 6.0,
+    upkeep_per_m_week: 0.08,
+    // A transit-only road: no zoning (its homes would have no way for a car).
+    allows_zoning: false,
+    lamp_spacing_m: 26.0,
+    crosswalks: true,
+    rank: 2,
+    elevated: Some((cost_per_m: 18.0, upkeep_per_m_week: 0.160, mesh: "road/basic_2l_elevated")),
+    bridge: Some((cost_per_m: 36.0, upkeep_per_m_week: 0.240, mesh: "road/basic_2l_bridge")),
+    mesh: "road/basic_2l",
+    material: "road/asphalt",
+))

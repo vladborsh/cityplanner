@@ -21,8 +21,8 @@ pub use agents::{
     purge_removed_buildings, receive_paths, route_trips, update_traffic_load,
 };
 pub use astar::{
-    CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_ped_path, find_rail_path,
-    find_truck_path, find_truck_path_lanes,
+    CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_class_path,
+    find_class_path_lanes, find_ped_path, find_rail_path, find_truck_path, find_truck_path_lanes,
 };
 pub use graph::{
     Access, CONGESTION_K, CongestionMap, LEFT_TURN_PENALTY, PED_SPEED, PathGraph, SegEnd, Side,

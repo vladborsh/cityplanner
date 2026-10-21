@@ -75,6 +75,21 @@ pub enum TransitMode {
     Train = 2,
 }
 
+impl TransitMode {
+    /// The content side of the mode (T-302): what a depot's `ServiceDef.transit_mode` names.
+    pub const fn kind(self) -> cp_content::TransitKind {
+        match self {
+            Self::Bus => cp_content::TransitKind::Bus,
+            Self::Metro => cp_content::TransitKind::Metro,
+            Self::Train => cp_content::TransitKind::Train,
+        }
+    }
+    /// The lane permissions class of the mode's vehicles (T-302).
+    pub const fn class(self) -> cp_content::VehicleClass {
+        self.kind().class()
+    }
+}
+
 /// Append-only. `Broken` and `Ok` follow the route; `NoDepot` is set by T-156.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LineState {

@@ -102,6 +102,9 @@ impl Default for VehicleLooks {
                 Vec3::new(3.0, 3.6, 140.0),
                 // The mail van (T-247).
                 Vec3::new(2.0, 2.3, 5.5),
+                // The tram and the trolleybus (T-302; their meshes come with T-302b/c).
+                Vec3::new(2.6, 3.4, 30.0),
+                Vec3::new(2.5, 3.2, 12.0),
             ],
         }
     }

@@ -671,3 +671,66 @@ fn congestion_makes_the_drive_slower_than_a_walk_of_the_same_route() {
     assert!(jam > free * 1.5, "{jam} against {free}");
     let _ = TripMode::Car;
 }
+
+/// T-302: a route keeps to the lanes its vehicle class may use. A car cannot cross a tram-only
+/// street, a tram cannot leave the rails, a bus rides a bus street and a car street alike, a
+/// trolleybus only its wired street.
+#[test]
+fn routes_keep_to_the_lanes_of_the_vehicle_class() {
+    use cp_content::VehicleClass as V;
+    let mut s = sim();
+    // A car street, then a tram-only street, then a car street, in a line.
+    let a = s.seg_with("basic_2l", (0.0, 0.0), (200.0, 0.0));
+    let t = s.seg_with("tram_2l", (200.0, 0.0), (400.0, 0.0));
+    let b = s.seg_with("basic_2l", (400.0, 0.0), (600.0, 0.0));
+    // A bus street beside them.
+    let p = s.seg_with("basic_2l", (0.0, 300.0), (200.0, 300.0));
+    let u = s.seg_with("bus_2l", (200.0, 300.0), (400.0, 300.0));
+    let q = s.seg_with("basic_2l", (400.0, 300.0), (600.0, 300.0));
+    s.tick();
+    fn class(s: &mut Sim, class: V, from: Access, to: Access) -> Result<CarPath, NoPath> {
+        car_path(s.solve(PathRequest {
+            mode: Mode::Class { class },
+            from,
+            to,
+        }))
+    }
+    let (from, to) = (acc(a, 50.0, Side::Right), acc(b, 150.0, Side::Right));
+    assert_eq!(
+        class(&mut s, V::Car, from, to),
+        Err(NoPath),
+        "a car cannot cross the rails"
+    );
+    assert_eq!(class(&mut s, V::Bus, from, to), Err(NoPath), "nor a bus");
+    // A tram rides the rails, between two points on them.
+    let (ta, tb) = (acc(t, 20.0, Side::Right), acc(t, 180.0, Side::Right));
+    let tram = class(&mut s, V::Tram, ta, tb).expect("a tram on its rails");
+    assert!(tram.start == tram.goal || tram.steps.is_empty());
+    assert_eq!(
+        class(&mut s, V::Car, ta, tb),
+        Err(NoPath),
+        "no car on the rails"
+    );
+    // A bus crosses the bus street, a car cannot.
+    let (pf, qt) = (acc(p, 50.0, Side::Right), acc(q, 150.0, Side::Right));
+    let bus = class(&mut s, V::Bus, pf, qt).expect("a bus over the bus street");
+    let g = std::sync::Arc::clone(s.world.resource::<crate::service::PathNetwork>().graph());
+    assert!(
+        bus.steps
+            .iter()
+            .any(|(_, l)| g.car_lane(*l).is_some_and(|n| n.segment == u)),
+        "the bus takes the bus street"
+    );
+    assert_eq!(
+        class(&mut s, V::Car, pf, qt),
+        Err(NoPath),
+        "a car cannot use the bus street"
+    );
+    assert_eq!(
+        class(&mut s, V::Trolley, pf, qt),
+        Err(NoPath),
+        "no wires anywhere"
+    );
+    // The plain car request is the car class.
+    assert_eq!(car_path(s.solve(car(pf, qt))), Err(NoPath));
+}

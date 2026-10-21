@@ -56,7 +56,7 @@ fn mutate(file: &str, from: &str, to: &str) -> Vec<(String, String)> {
 #[test]
 fn committed_content_loads_with_eleven_road_types_nine_roads_and_two_tracks() {
     let db = ContentDb::load_dir(root()).unwrap();
-    assert_eq!(db.roads().count(), 12); // + the park path (T-222)
+    assert_eq!(db.roads().count(), 18); // + the park path (T-222), six transit roads (T-302)
     let want = [
         ("basic_2l", RoadClass::Local, "Local street", false),
         (
@@ -89,6 +89,33 @@ fn committed_content_loads_with_eleven_road_types_nine_roads_and_two_tracks() {
             RoadClass::Highway,
             "Highway, 4 lanes (one-way)",
             true,
+        ),
+        // T-302: transit-only streets and collectors with transit lanes.
+        ("tram_2l", RoadClass::Local, "Tram street (2 tracks)", false),
+        ("bus_2l", RoadClass::Local, "Bus street (2 lanes)", false),
+        (
+            "trolley_2l",
+            RoadClass::Local,
+            "Trolleybus street (2 lanes)",
+            false,
+        ),
+        (
+            "medium_4l_bus",
+            RoadClass::Collector,
+            "Collector with bus lanes (4 lanes)",
+            false,
+        ),
+        (
+            "medium_4l_tram",
+            RoadClass::Collector,
+            "Collector with tram tracks (4 lanes)",
+            false,
+        ),
+        (
+            "medium_4l_trolley",
+            RoadClass::Collector,
+            "Collector with trolleybus lanes (4 lanes)",
+            false,
         ),
     ];
     for (id, class, name, highway) in want {

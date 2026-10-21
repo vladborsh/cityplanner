@@ -81,6 +81,8 @@ const KERB: [f32; 4] = [0.42, 0.42, 0.40, 1.0];
 const BIKE: [f32; 4] = [0.10, 0.30, 0.16, 1.0];
 const BUS: [f32; 4] = [0.30, 0.10, 0.10, 1.0];
 const TRAM: [f32; 4] = [0.20, 0.20, 0.21, 1.0];
+/// Trolleybus lane (T-302): a yellowish asphalt under the wires.
+const TROLLEY: [f32; 4] = [0.26, 0.22, 0.10, 1.0];
 const MEDIAN: [f32; 4] = [0.30, 0.34, 0.26, 1.0];
 const WHITE: [f32; 4] = [0.80, 0.80, 0.78, 1.0];
 const YELLOW: [f32; 4] = [0.80, 0.62, 0.12, 1.0];
@@ -202,11 +204,12 @@ fn lane_color(kind: LaneKind) -> ([f32; 4], f32) {
         LaneKind::Tram => (TRAM, 0.0),
         LaneKind::Bus => (BUS, 0.0),
         LaneKind::Rail => (TRAM, 0.0),
+        LaneKind::Trolley => (TROLLEY, 0.0),
     }
 }
 
 fn is_vehicle(kind: LaneKind) -> bool {
-    matches!(kind, LaneKind::Car | LaneKind::Bus)
+    kind.is_road_vehicle()
 }
 
 /// Half width of the road, from the lanes (what `cp_net::junction` uses for its arms).

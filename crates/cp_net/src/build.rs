@@ -29,7 +29,7 @@
 //! independent of anything but the inputs.
 
 use bevy_math::{Vec2, Vec3};
-use cp_content::{ContentDb, LaneDir, LaneKind, RoadClass, RoadDef, RoadDefId};
+use cp_content::{ContentDb, LaneDir, RoadClass, RoadDef, RoadDefId};
 use cp_core::Cost;
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_terrain::{Terrain, TileOwnership};
@@ -2121,7 +2121,8 @@ impl ArmDirs {
 fn segment_car_dirs(graph: &NetGraph, seg: &Segment) -> (bool, bool) {
     let (mut fwd, mut bwd) = (false, false);
     for lane in seg.lanes.iter().filter_map(|&l| graph.lane(l)) {
-        if lane.kind == LaneKind::Car {
+        // T-302: a transit lane carries the road's direction too.
+        if lane.kind.is_road_vehicle() {
             match lane.dir {
                 LaneDir::Forward => fwd = true,
                 LaneDir::Backward => bwd = true,
@@ -2145,7 +2146,7 @@ pub fn one_way_report(
     let (fwd, bwd) =
         def.lanes
             .iter()
-            .filter(|l| l.kind == LaneKind::Car)
+            .filter(|l| l.kind.is_road_vehicle())
             .fold((false, false), |(f, b), l| match l.dir {
                 LaneDir::Forward => (true, b),
                 LaneDir::Backward => (f, true),

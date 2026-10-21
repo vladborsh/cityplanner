@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy_ecs::prelude::*;
 use cp_building::{BuildingGrid, BuildingId};
 use cp_citizen::{CitizenId, TripId};
-use cp_content::VehicleKind;
+use cp_content::{VehicleClass, VehicleKind};
 use cp_core::{SimLimits, Tick};
 use cp_net::{LaneId, NetGraph, NodeId, NodeKind};
 use serde::{Deserialize, Serialize};
@@ -479,11 +479,20 @@ fn run_request(
     }
     // Trucks avoid districts with the heavy traffic ban (T-195).
     let truck = run.kind == VehicleKind::Truck as u8;
+    // T-302: a bus, tram or trolleybus keeps to the lanes its class may use.
+    let class = VehicleKind::ALL
+        .get(usize::from(run.kind))
+        .map(|k| k.class())
+        .filter(|c| !matches!(c, VehicleClass::Car | VehicleClass::Rail));
     if from_lane.is_none()
         && let (Some(a), Some(b)) = (plain(run.from), plain(run.to))
     {
         return Some(PathRequest {
-            mode: if truck { Mode::Truck } else { Mode::Car },
+            mode: match class {
+                Some(class) => Mode::Class { class },
+                None if truck => Mode::Truck,
+                None => Mode::Car,
+            },
             from: a,
             to: b,
         });
@@ -499,10 +508,10 @@ fn run_request(
         side: Side::Right,
     };
     Some(PathRequest {
-        mode: if truck {
-            Mode::TruckLanes { from, to }
-        } else {
-            Mode::CarLanes { from, to }
+        mode: match class {
+            Some(class) => Mode::ClassLanes { class, from, to },
+            None if truck => Mode::TruckLanes { from, to },
+            None => Mode::CarLanes { from, to },
         },
         from: at(from_s),
         to: at(to_s),

@@ -39,8 +39,8 @@ use cp_net::{JunctionGeometry, NetGraph};
 use serde::{Deserialize, Serialize};
 
 use crate::astar::{
-    CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_ped_path, find_rail_path,
-    find_truck_path, find_truck_path_lanes,
+    CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_class_path,
+    find_class_path_lanes, find_ped_path, find_rail_path, find_truck_path, find_truck_path_lanes,
 };
 use crate::graph::{Access, CongestionMap, PathGraph};
 use crate::heavy::HeavyBan;
@@ -80,6 +80,17 @@ pub enum Mode {
     ByTime {
         car_start_penalty_bits: u32,
         fallback_car: bool,
+    },
+    /// A route for a vehicle of `class` between two access points (T-302: a bus, tram or
+    /// trolleybus keeps to the lanes it may use). Appended.
+    Class {
+        class: cp_content::VehicleClass,
+    },
+    /// A vehicle of `class` already on the road, like `CarLanes` (T-302). Appended.
+    ClassLanes {
+        class: cp_content::VehicleClass,
+        from: cp_net::LaneId,
+        to: cp_net::LaneId,
     },
 }
 
@@ -227,6 +238,16 @@ fn compute(
         Mode::CarLanes { from, to } => PathResult::Car(find_car_path_lanes(
             graph,
             cong,
+            (from, req.from.s),
+            (to, req.to.s),
+        )),
+        Mode::Class { class } => {
+            PathResult::Car(find_class_path(graph, cong, class, &req.from, &req.to))
+        }
+        Mode::ClassLanes { class, from, to } => PathResult::Car(find_class_path_lanes(
+            graph,
+            cong,
+            class,
             (from, req.from.s),
             (to, req.to.s),
         )),
