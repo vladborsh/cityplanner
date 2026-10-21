@@ -208,6 +208,14 @@ mod tests {
         for c in '\u{410}'..='\u{44F}' {
             assert!(letters.contains(&(c as u32)), "{c} not in the bold face");
         }
+        // The Russian thousands separator comes from code (T-284b: "1 500").
+        cp_locale::set_lang(cp_locale::Lang::Ru);
+        let sep = cp_locale::thousands_separator();
+        cp_locale::set_lang(cp_locale::Lang::En);
+        assert!(
+            letters.contains(&(sep as u32)),
+            "{sep:?} not in the bold face"
+        );
         let mut missing: Vec<char> = cp_locale::Lang::Ru
             .source()
             .chars()

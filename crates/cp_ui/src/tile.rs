@@ -82,7 +82,7 @@ fn paint(
         painter.rect_stroke(
             rect,
             Sizes::TILE_ROUNDING,
-            egui::Stroke::new(2.0, fade(visuals.selection.stroke.color)),
+            egui::Stroke::new(SELECTED_STROKE, fade(visuals.selection.stroke.color)),
             egui::StrokeKind::Inside,
         );
     }
@@ -102,12 +102,18 @@ fn paint(
     );
     let galley = name_galley(ui, name, fade(visuals.text_color()));
     // A centred galley is laid out around x = 0.
-    let pos = egui::pos2(rect.center().x, frame.bottom() + Sizes::TILE_PAD * 0.5);
+    let pos = egui::pos2(rect.center().x, rect.top() + NAME_TOP);
     painter.galley(pos, galley, visuals.text_color());
 }
 
 /// The smallest size a tile name steps down to so that its longest word fits (T-284).
 const MIN_NAME_PT: f32 = 10.0;
+/// Row spacing of a tile name, in font sizes (T-284b: two rows fit under the icon).
+const NAME_LINE: f32 = 1.15;
+/// Width of the frame of a selected tile.
+const SELECTED_STROKE: f32 = 2.0;
+/// Where a tile's name starts below its top: the icon frame and half a pad.
+const NAME_TOP: f32 = Sizes::TILE_PAD + Sizes::TILE_ICON + Sizes::TILE_PAD * 0.5;
 
 /// The name of a tile: wrapped at words into at most two centred rows ("Highway, 3 lanes" keeps
 /// its number); only a name longer than that is cut with "…". A word wider than the tile (long
@@ -128,7 +134,11 @@ fn name_galley(ui: &egui::Ui, name: &str, color: egui::Color32) -> std::sync::Ar
     while font.size > MIN_NAME_PT && widest(&font) > width {
         font.size = (font.size - 0.5).max(MIN_NAME_PT);
     }
+    // Two rows end inside the tile, clear of the selection frame (T-284b): the rows sit closer
+    // than the face's default spacing.
+    let line = (font.size * NAME_LINE).round();
     let mut job = egui::text::LayoutJob::simple(name.to_string(), font, color, width);
+    job.sections[0].format.line_height = Some(line);
     job.wrap.max_rows = 2;
     job.wrap.overflow_character = Some('…');
     job.halign = egui::Align::Center;
@@ -233,10 +243,10 @@ mod tests {
         });
     }
 
-    /// T-284: in Russian every name a tile shows (buildings, roads, the zone and tool cards)
+    /// T-284: in English and Russian every name a tile shows (buildings, roads, the zone and tool cards)
     /// fits its two rows whole: nothing is cut with "…".
     #[test]
-    fn every_tile_name_fits_two_rows_in_russian() {
+    fn every_tile_name_fits_its_tile_in_both_languages() {
         let db = cp_content::ContentDb::load_dir(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"),
         )
@@ -269,14 +279,31 @@ mod tests {
         }
         names.sort();
         names.dedup();
-        let ru = cp_locale::locale(cp_locale::Lang::Ru);
         let ctx = egui::Context::default();
         crate::style::install(&ctx);
         let mut cut = Vec::new();
         frame(&ctx, input(0.0, vec![]), |ui| {
-            for name in &names {
-                let text = ru.get(name);
+            for (lang, name) in cp_locale::Lang::ALL
+                .into_iter()
+                .flat_map(|l| names.iter().map(move |n| (l, n)))
+            {
+                let text = cp_locale::locale(lang).get(name).to_string();
+                let text = text.as_str();
+                // T-284b: the rows end inside the tile, clear of a selected tile's frame.
+                let room = Sizes::TILE_H - NAME_TOP - SELECTED_STROKE;
                 let g = name_galley(ui, text, egui::Color32::WHITE);
+                if g.size().y > room + 0.01 {
+                    cut.push(format!(
+                        "{lang:?} {name:?}: {} rows {:.1} px, room {room:.1}",
+                        g.rows.len(),
+                        g.size().y
+                    ));
+                }
+                // Whole, in Russian (a long English name was cut before T-284 and keeps its
+                // number, see above).
+                if lang != cp_locale::Lang::Ru {
+                    continue;
+                }
                 let shown: String = g
                     .rows
                     .iter()

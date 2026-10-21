@@ -936,20 +936,17 @@ pub fn snap_label(kind: SnapReportKind) -> Option<String> {
     }
 }
 
-/// Cost as a money string: cents → `$1,234.56`.
+/// Cost as a money string: cents → `$1,234.56`, in Russian `$1 234,56` (T-284b).
 pub fn format_money(cost: Cost) -> String {
     let cents = cost.0;
     let sign = if cents < 0 { "-" } else { "" };
     let cents = cents.unsigned_abs();
-    let dollars = (cents / 100).to_string();
-    let mut grouped = String::new();
-    for (i, ch) in dollars.chars().enumerate() {
-        if i > 0 && (dollars.len() - i).is_multiple_of(3) {
-            grouped.push(',');
-        }
-        grouped.push(ch);
-    }
-    format!("{sign}${grouped}.{:02}", cents % 100)
+    let grouped = cp_locale::group_digits(&(cents / 100).to_string());
+    format!(
+        "{sign}${grouped}{}{:02}",
+        cp_locale::decimal_mark(),
+        cents % 100
+    )
 }
 
 /// Points along a curve, about every `step` metres.

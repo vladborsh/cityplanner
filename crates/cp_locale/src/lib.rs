@@ -230,6 +230,36 @@ macro_rules! trf {
     };
 }
 
+/// The separator of the thousands in the current language: English `,` ("1,500"), Russian a
+/// no-break space ("1 500"; the bold face has no thin space, and a number must not wrap).
+pub fn thousands_separator() -> char {
+    match lang() {
+        Lang::En => ',',
+        Lang::Ru => '\u{A0}',
+    }
+}
+
+/// The decimal mark of the current language: English `.`, Russian `,`.
+pub fn decimal_mark() -> char {
+    match lang() {
+        Lang::En => '.',
+        Lang::Ru => ',',
+    }
+}
+
+/// `digits` (an unsigned integer as written) grouped by thousands in the current language.
+pub fn group_digits(digits: &str) -> String {
+    let sep = thousands_separator();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3 * 2);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(sep);
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// The plural form of `key` for `n` in the current language, placeholders not filled (for
 /// [`trf!`]).
 #[doc(hidden)]
@@ -278,6 +308,19 @@ mod tests {
         );
         assert_eq!(fill("no braces", &[]), "no braces");
         assert_eq!(fill("open { brace", &[]), "open { brace");
+    }
+
+    #[test]
+    fn numbers_are_grouped_by_the_language() {
+        assert_eq!(group_digits("1500"), "1,500");
+        assert_eq!(group_digits("178613"), "178,613");
+        assert_eq!(group_digits("999"), "999");
+        set_lang(Lang::Ru);
+        assert_eq!(group_digits("1500"), "1\u{A0}500");
+        assert_eq!(group_digits("1234567"), "1\u{A0}234\u{A0}567");
+        assert_eq!(decimal_mark(), ',');
+        set_lang(Lang::En);
+        assert_eq!(decimal_mark(), '.');
     }
 
     #[test]

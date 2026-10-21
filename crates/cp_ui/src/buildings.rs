@@ -132,9 +132,9 @@ pub fn unlocks_at(population: u32, name: &str) -> String {
     )
 }
 
-/// `3000` as "3,000".
+/// `3000` as "3,000", in Russian "3 000" (T-284b).
 pub fn thousands(n: u32) -> String {
-    spaced(n).replace(' ', ",")
+    cp_locale::group_digits(&n.to_string())
 }
 
 /// Selects `id` for placing.
