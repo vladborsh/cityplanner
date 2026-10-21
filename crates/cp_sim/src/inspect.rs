@@ -68,6 +68,8 @@ pub struct BuildingInfo {
     pub near_garbage: bool,
     pub pollution: f32,
     pub noise: f32,
+    /// A water pump or tower whose ground is polluted (T-300): its water makes people ill.
+    pub polluted_water: bool,
     pub tax_base: f32,
     pub footprint: Vec<cp_zone::ZoneCellRef>,
     /// Garbage piled up in the building (T-136).
@@ -359,6 +361,21 @@ impl SimRunner {
                 if svc.is_some_and(|st| st.problems_of(id).has(cp_service::ServiceProblems::MAIL)) {
                     problems.push("mail");
                 }
+                if svc.is_some_and(|st| {
+                    st.problems_of(id)
+                        .has(cp_service::ServiceProblems::BAD_WATER)
+                }) {
+                    problems.push("bad water");
+                }
+                // A water source on polluted ground (T-300): the homes of its pool drink it.
+                let is_water_source = def
+                    .service
+                    .as_deref()
+                    .and_then(|s| db.service_id(s))
+                    .is_some_and(|s| db.service(s).kind == cp_content::ServiceKind::Water);
+                let polluted_water = is_water_source
+                    && w.get_resource::<cp_economy::Emissions>()
+                        .is_some_and(|e| e.source_dirt(b) >= db.balance().bad_water_at);
                 let mail = mail_info(w, db, id, def);
                 Some(Inspection::Building(BuildingInfo {
                     id,
@@ -382,6 +399,7 @@ impl SimRunner {
                         && grids.garbage_at(b.pos) > 0.0,
                     pollution: grids.pollution_at(b.pos),
                     noise: grids.noise_at(b.pos),
+                    polluted_water,
                     tax_base: def.tax_base,
                     footprint: cp_building::held_cells(w.resource::<cp_zone::ZoneGrid>(), b),
                     garbage: svc.and_then(|st| st.get(id)).map_or(0, |r| r.garbage),
@@ -674,6 +692,9 @@ impl Inspection {
                 }
                 r.push(row("Pollution", format!("{:.0}", b.pollution)));
                 r.push(row("Noise", format!("{:.0}", b.noise)));
+                if b.polluted_water {
+                    r.push(row("Water", "Polluted water".to_string()));
+                }
                 r
             }
             Inspection::Area { .. } => Vec::new(),

@@ -253,7 +253,7 @@ fn the_power_pools_are_deterministic() {
 fn a_building_without_power_says_why() {
     let db = content();
     let t = town(&db);
-    let (flags, pools) = cp_utility::compute_supply_pools(
+    let (flags, pools, _) = cp_utility::compute_supply_pools(
         &db,
         &t.grid,
         &UtilityGraph::new(),
@@ -278,7 +278,7 @@ fn a_building_without_power_says_why() {
         Vec2::new(5000.0, 5000.0 + 400.0),
         false,
     );
-    let (flags, pools) = cp_utility::compute_supply_pools(
+    let (flags, pools, _) = cp_utility::compute_supply_pools(
         &db,
         &far.grid,
         &UtilityGraph::new(),

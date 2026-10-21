@@ -544,14 +544,38 @@ impl PowerPools {
     }
 }
 
-/// [`compute_supply_with`] and the power pools it found.
+/// One water pool (T-300): the water sources of a pipe network, by id, with their capacity.
+/// A pool is a component after the sources' joins (BUG-042), so a source joined to several
+/// networks is in the one pool they make.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WaterPool {
+    pub sources: Vec<(BuildingId, f32)>,
+}
+
+/// The water pools of the last supply pass (T-300): which pool each building that got water
+/// drinks from. Derived like [`PowerPools`] (rewritten every [`SUPPLY_PERIOD`] ticks, never
+/// saved); the Economy pass of the same tick reads it.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct WaterPools {
+    pub pool_of: BTreeMap<BuildingId, u32>,
+    pub pools: Vec<WaterPool>,
+}
+
+impl WaterPools {
+    /// The pool building `id` drinks from, if it got water in the last pass.
+    pub fn of(&self, id: BuildingId) -> Option<&WaterPool> {
+        self.pools.get(*self.pool_of.get(&id)? as usize)
+    }
+}
+
+/// [`compute_supply_with`] and the power and water pools it found.
 pub fn compute_supply_pools(
     db: &ContentDb,
     buildings: &BuildingGrid,
     graph: &UtilityGraph,
     cache: &mut AttachCache,
     policies: Option<&Policies>,
-) -> (Vec<u8>, PowerPools) {
+) -> (Vec<u8>, PowerPools, WaterPools) {
     let nets = &db.balance().networks;
     let power_gap = nets.power_gap_m;
     // Needs and source of each building def, once.
@@ -889,11 +913,35 @@ pub fn compute_supply_pools(
             flag(s.id, BuildingFlags::NO_POWER);
         }
     }
-    (missing, pools)
+    // The water pools (T-300): the components with a source, numbered in label order, and the
+    // buildings that got their water from one.
+    let mut water = WaterPools::default();
+    let mut pool_of_comp: BTreeMap<u32, u32> = BTreeMap::new();
+    for (s, c) in sites.iter().zip(&comp) {
+        if let (Some((ServiceKind::Water, cap)), Some(c)) = (s.source, c) {
+            let next = pool_of_comp.len() as u32;
+            let p = *pool_of_comp.entry(*c).or_insert(next);
+            if p as usize == water.pools.len() {
+                water.pools.push(WaterPool::default());
+            }
+            water.pools[p as usize].sources.push((s.id, cap));
+        }
+    }
+    for (s, c) in sites.iter().zip(&comp) {
+        if s.needs[0] > 0.0
+            && missing[s.id.index as usize] & BuildingFlags::NO_WATER == 0
+            && let Some(p) = c.and_then(|c| pool_of_comp.get(&c))
+        {
+            water.pool_of.insert(s.id, *p);
+        }
+    }
+
+    (missing, pools, water)
 }
 
 /// `Utilities`-phase system: every [`SUPPLY_PERIOD`] ticks, rewrites the utility bits of the
 /// buildings' flags.
+#[allow(clippy::too_many_arguments)]
 pub fn update_supply(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
@@ -901,6 +949,7 @@ pub fn update_supply(
     mut buildings: ResMut<BuildingGrid>,
     mut cache: Local<AttachCache>,
     mut pools: ResMut<PowerPools>,
+    mut water: ResMut<WaterPools>,
     policies: PolicyParams,
 ) {
     if !tick.0.is_multiple_of(SUPPLY_PERIOD) {
@@ -908,7 +957,7 @@ pub fn update_supply(
     }
     let Some(content) = content else { return };
     let policies = policies.get();
-    let (missing, found) = compute_supply_pools(
+    let (missing, found, found_water) = compute_supply_pools(
         &content.0,
         &buildings,
         &graph,
@@ -917,6 +966,9 @@ pub fn update_supply(
     );
     if *pools != found {
         *pools = found;
+    }
+    if *water != found_water {
+        *water = found_water;
     }
     let changes: Vec<(BuildingId, u8)> = buildings
         .iter()

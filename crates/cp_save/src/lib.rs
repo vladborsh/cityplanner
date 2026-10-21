@@ -45,7 +45,7 @@
 //! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `Goods`, `Intercity` (stops, lines, riders, line figures, buses, week's money, tourist visits, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
 //! | `ResourceDeposits` (ore and oil left per 64 m cell; a save from before v41 is filled from the map by `load_into_runner`) | yes |
 //! | `AreaMap`, `Areas`, `IndustryState` (stock and problems of the chain buildings), `IndustryLedger`, `WarehouseSettings`, `ParkState` (attractiveness, capacity, visitors and fee per park area), `LeisureTargets`, `ParkVisits` (who is inside, the walkers), `ParkLedger`, `CargoHubs` (cargo station stock and orders) | yes |
-//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Emissions` (the ground and the noise), `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
+//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Emissions` (the ground, the noise, the water), `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
 //! | `SimLimits`, `RoutineSettings`, `AgentSettings`, `SimContent`, `SimTerrain` | configuration of the runner, not of the game |
@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 60;
+pub const FORMAT_VERSION: u32 = 61;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).

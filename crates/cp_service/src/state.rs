@@ -21,6 +21,8 @@ impl ServiceProblems {
     pub const CRIME: u16 = 16;
     /// Mail waiting for a van (T-247).
     pub const MAIL: u16 = 32;
+    /// The home drinks dirty water: its pool's sources stand on polluted ground (T-300).
+    pub const BAD_WATER: u16 = 64;
 
     pub fn has(self, bit: u16) -> bool {
         self.0 & bit != 0
@@ -198,7 +200,8 @@ impl ServiceState {
         }
     }
 
-    /// Counts of buildings with each problem bit: garbage, sick, dead, fire, crime, mail.
+    /// Counts of buildings with each problem bit: garbage, sick, dead, fire, crime, mail, bad
+    /// water.
     pub fn summary(&self) -> ServiceSummary {
         let mut s = ServiceSummary::default();
         for b in &self.buildings {
@@ -209,6 +212,7 @@ impl ServiceState {
                 ServiceProblems::FIRE,
                 ServiceProblems::CRIME,
                 ServiceProblems::MAIL,
+                ServiceProblems::BAD_WATER,
             ]) {
                 *n += u32::from(b.problems.has(bit));
             }
@@ -220,5 +224,5 @@ impl ServiceState {
 /// How many buildings suffer each problem, in the bit order of [`ServiceProblems`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ServiceSummary {
-    pub counts: [u32; 6],
+    pub counts: [u32; 7],
 }
