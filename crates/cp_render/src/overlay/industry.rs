@@ -502,11 +502,19 @@ mod tests {
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps/flatlands"),
         )
         .unwrap();
+        // BUG-112: a soft-edged fill, a quad per cell in or beside the area (the two cells
+        // and the ring round them, 4 x 3), all in the resource's colour, the full tint inside.
         let m = area_fill_mesh(&map, &areas, &t, None, AreaFamily::Industry);
-        assert_eq!(m.indices.len(), 2 * 6);
-        let [r, g, b, a] = m.colors[0];
-        assert_eq!([r, g, b], resource_color(R::Forestry));
-        assert_eq!(a, FILL_ALPHA);
+        assert_eq!(m.indices.len(), 4 * 3 * 6);
+        assert!(
+            m.colors
+                .iter()
+                .all(|c| c[..3] == resource_color(R::Forestry))
+        );
+        // A corner's alpha is the tint times the share of its four cells in the area: a strip
+        // one cell thick peaks at a half.
+        let max = m.colors.iter().map(|c| c[3]).fold(0.0f32, f32::max);
+        assert!((max - FILL_ALPHA * 0.5).abs() < 1e-5, "{max}");
     }
 
     /// T-226: the four park kinds have their own colours, and each family draws only its areas.
@@ -532,10 +540,22 @@ mod tests {
         )
         .unwrap();
         let parks = area_fill_mesh(&map, &areas, &t, None, AreaFamily::Park);
-        assert_eq!(parks.indices.len(), 6, "one quad: the zoo cell");
-        assert_eq!(parks.colors[0][..3], park_color(ParkKind::Zoo));
+        // BUG-112: the soft fill of one cell is that cell and the ring round it, 3 x 3.
+        assert_eq!(parks.indices.len(), 9 * 6, "the zoo cell and its ring");
+        assert!(
+            parks
+                .colors
+                .iter()
+                .all(|c| c[..3] == park_color(ParkKind::Zoo))
+        );
         let industry = area_fill_mesh(&map, &areas, &t, None, AreaFamily::Industry);
-        assert_eq!(industry.colors[0][..3], resource_color(R::Ore));
+        assert_eq!(industry.indices.len(), 9 * 6, "the ore cell and its ring");
+        assert!(
+            industry
+                .colors
+                .iter()
+                .all(|c| c[..3] == resource_color(R::Ore))
+        );
         let outline = area_contour_mesh(&map, &areas, &t, None, 1.0, AreaFamily::Park);
         let all = area_contour_mesh(&map, &areas, &t, None, 1.0, AreaFamily::Industry);
         assert!(!outline.indices.is_empty() && !all.indices.is_empty());
