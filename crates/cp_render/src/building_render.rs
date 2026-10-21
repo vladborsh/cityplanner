@@ -35,7 +35,7 @@ impl Plugin for BuildingRenderPlugin {
                 (
                     sync_buildings,
                     building_night,
-                    building_see_through,
+                    building_shadows,
                     update_building_lods,
                     spin_rotors,
                 )
@@ -60,6 +60,7 @@ pub struct BuildingStats {
 }
 
 #[derive(Component)]
+#[cfg_attr(test, derive(Default))]
 pub struct BuildingChunk {
     meshes: [Handle<Mesh>; 3],
     level: usize,
@@ -290,28 +291,16 @@ fn building_night(
 /// the player must see where to carry on.
 pub const WATER_LAYER_BUILDING_ALPHA: f32 = 0.35;
 
-/// In the water layer (a water tool or the water overlay, [`PipeLayers::visible`]) the buildings
-/// are drawn see-through and cast no shadow, so the pipes under them show; back to normal
-/// outside it.
-fn building_see_through(
+/// In the water layer the buildings (chunks and the turning parts) cast no shadow: the see-through
+/// shell would leave a dark ghost on the ground. The alpha itself is set by one owner,
+/// `underground::fade_surfaces`, with the Underground view.
+fn building_shadows(
     layers: Option<Res<PipeLayers>>,
-    state: Res<BuildingState>,
-    mut materials: ResMut<Assets<VertexColorMaterial>>,
     mut commands: Commands,
-    chunks: Query<(Entity, Has<NotShadowCaster>), With<BuildingChunk>>,
+    parts: Query<(Entity, Has<NotShadowCaster>), Or<(With<BuildingChunk>, With<RotorSpin>)>>,
 ) {
     let on = layers.is_some_and(|l| l.visible);
-    if let Some(handle) = state.material.as_ref() {
-        let want = if on { WATER_LAYER_BUILDING_ALPHA } else { 1.0 };
-        if materials
-            .get(handle)
-            .is_some_and(|m| (m.fade.x - want).abs() > 1e-4)
-            && let Some(mut m) = materials.get_mut(handle)
-        {
-            m.set_see_through(on, WATER_LAYER_BUILDING_ALPHA);
-        }
-    }
-    for (e, has) in &chunks {
+    for (e, has) in &parts {
         if on && !has {
             commands.entity(e).insert(NotShadowCaster);
         } else if !on && has {
@@ -356,50 +345,34 @@ mod tests {
     use super::*;
 
     fn chunk() -> BuildingChunk {
-        BuildingChunk {
-            meshes: Default::default(),
-            level: 0,
-            min: Vec3::ZERO,
-            max: Vec3::ONE,
-            tris: [0; 3],
-        }
+        BuildingChunk::default()
     }
 
-    /// BUG-109: in the water layer the buildings are see-through and cast no shadow; outside
-    /// it they are as before.
+    /// BUG-109: in the water layer the buildings and their rotors cast no shadow; outside it
+    /// they do.
     #[test]
-    fn buildings_are_see_through_only_in_the_water_layer() {
+    fn buildings_cast_no_shadow_only_in_the_water_layer() {
         let mut app = App::new();
-        app.init_resource::<Assets<VertexColorMaterial>>()
-            .init_resource::<BuildingState>()
-            .init_resource::<PipeLayers>()
-            .add_systems(Update, building_see_through);
-        let handle = app
+        app.init_resource::<PipeLayers>()
+            .add_systems(Update, building_shadows);
+        let chunk = app.world_mut().spawn(chunk()).id();
+        let rotor = app
             .world_mut()
-            .resource_mut::<Assets<VertexColorMaterial>>()
-            .add(VertexColorMaterial::opaque(0.85, 0.05));
-        app.world_mut().resource_mut::<BuildingState>().material = Some(handle.clone());
-        let e = app.world_mut().spawn(chunk()).id();
-        let alpha = |app: &App| {
-            let m = app
-                .world()
-                .resource::<Assets<VertexColorMaterial>>()
-                .get(&handle)
-                .unwrap();
-            (m.fade.x, m.blend)
-        };
+            .spawn(RotorSpin {
+                phase: 0.0,
+                facing: Quat::IDENTITY,
+                speed: 1.0,
+            })
+            .id();
+        let shadowless =
+            |app: &App| [chunk, rotor].map(|e| app.world().entity(e).contains::<NotShadowCaster>());
         app.update();
-        assert_eq!(alpha(&app), (1.0, false));
-        assert!(!app.world().entity(e).contains::<NotShadowCaster>());
-
+        assert_eq!(shadowless(&app), [false, false]);
         app.world_mut().resource_mut::<PipeLayers>().visible = true;
         app.update();
-        assert_eq!(alpha(&app), (WATER_LAYER_BUILDING_ALPHA, true));
-        assert!(app.world().entity(e).contains::<NotShadowCaster>());
-
+        assert_eq!(shadowless(&app), [true, true]);
         app.world_mut().resource_mut::<PipeLayers>().visible = false;
         app.update();
-        assert_eq!(alpha(&app), (1.0, false));
-        assert!(!app.world().entity(e).contains::<NotShadowCaster>());
+        assert_eq!(shadowless(&app), [false, false]);
     }
 }

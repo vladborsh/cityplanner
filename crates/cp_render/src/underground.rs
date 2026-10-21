@@ -507,13 +507,17 @@ fn fade_surfaces(
     buildings: Query<&MeshMaterial3d<VertexColorMaterial>, With<BuildingChunk>>,
     sea: Query<&MeshMaterial3d<VertexColorMaterial>, With<SeaPlane>>,
     water: Query<&MeshMaterial3d<VertexColorMaterial>, With<WaterSurface>>,
+    layers: Option<Res<crate::PipeLayers>>,
 ) {
     let on = mode.on();
-    if !on && !*touched {
+    // The water layer (BUG-109) shows the buildings see-through so the pipes under them read.
+    // The building material has this one owner: the Underground view wins over the layer.
+    let water_layer = layers.is_some_and(|l| l.visible);
+    if !on && !water_layer && !*touched {
         return;
     }
     let mut changed = false;
-    let mut pass = |handles: Vec<AssetId<VertexColorMaterial>>, alpha: f32| {
+    let mut pass = |handles: Vec<AssetId<VertexColorMaterial>>, on: bool, alpha: f32| {
         let want = if on { alpha } else { 1.0 };
         for id in handles {
             if materials
@@ -532,12 +536,20 @@ fn fade_surfaces(
         v.dedup();
         v
     };
-    pass(ids(ground.iter().collect()), GROUND_ALPHA);
-    pass(ids(roads.iter().collect()), ROAD_ALPHA);
-    pass(ids(buildings.iter().collect()), BUILDING_ALPHA);
-    pass(ids(sea.iter().collect()), WATER_ALPHA);
-    pass(ids(water.iter().collect()), WATER_ALPHA);
-    *touched = on || changed;
+    pass(ids(ground.iter().collect()), on, GROUND_ALPHA);
+    pass(ids(roads.iter().collect()), on, ROAD_ALPHA);
+    let (b_on, b_alpha) = if on {
+        (true, BUILDING_ALPHA)
+    } else {
+        (
+            water_layer,
+            crate::building_render::WATER_LAYER_BUILDING_ALPHA,
+        )
+    };
+    pass(ids(buildings.iter().collect()), b_on, b_alpha);
+    pass(ids(sea.iter().collect()), on, WATER_ALPHA);
+    pass(ids(water.iter().collect()), on, WATER_ALPHA);
+    *touched = on || water_layer || changed;
 }
 
 /// The View menu's Underground entry is the manual switch.
@@ -569,6 +581,70 @@ impl Plugin for UndergroundPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// BUG-109: the building material has one owner. The water layer makes the buildings
+    /// see-through, the Underground view keeps its own alpha over it, and both give it back.
+    #[test]
+    fn the_building_alpha_follows_the_view_and_the_water_layer() {
+        let mut app = App::new();
+        app.init_resource::<Assets<VertexColorMaterial>>()
+            .init_resource::<UndergroundView>()
+            .init_resource::<crate::PipeLayers>()
+            .add_systems(Update, fade_surfaces);
+        let handle = app
+            .world_mut()
+            .resource_mut::<Assets<VertexColorMaterial>>()
+            .add(VertexColorMaterial::opaque(0.85, 0.05));
+        app.world_mut().spawn((
+            MeshMaterial3d(handle.clone()),
+            crate::building_render::BuildingChunk::default(),
+        ));
+        let alpha = |app: &App| {
+            app.world()
+                .resource::<Assets<VertexColorMaterial>>()
+                .get(&handle)
+                .unwrap()
+                .fade
+                .x
+        };
+        let water = |app: &mut App, on: bool| {
+            app.world_mut().resource_mut::<crate::PipeLayers>().visible = on;
+        };
+        let under = |app: &mut App, on: bool| {
+            app.world_mut().resource_mut::<UndergroundView>().manual = on;
+        };
+        let settle = |app: &mut App| {
+            for _ in 0..3 {
+                app.update();
+            }
+        };
+        settle(&mut app);
+        assert_eq!(alpha(&app), 1.0);
+        water(&mut app, true);
+        settle(&mut app);
+        assert_eq!(
+            alpha(&app),
+            crate::building_render::WATER_LAYER_BUILDING_ALPHA
+        );
+        // Underground on, water off: the view's alpha, stable over the updates.
+        under(&mut app, true);
+        water(&mut app, false);
+        settle(&mut app);
+        assert_eq!(alpha(&app), BUILDING_ALPHA);
+        // Both on: the view wins.
+        water(&mut app, true);
+        settle(&mut app);
+        assert_eq!(alpha(&app), BUILDING_ALPHA);
+        under(&mut app, false);
+        settle(&mut app);
+        assert_eq!(
+            alpha(&app),
+            crate::building_render::WATER_LAYER_BUILDING_ALPHA
+        );
+        water(&mut app, false);
+        settle(&mut app);
+        assert_eq!(alpha(&app), 1.0);
+    }
 
     fn finite(m: &MeshData) -> bool {
         m.positions
