@@ -695,6 +695,9 @@ pub fn build_sim(
     } else if scene == Some(scene::GROWN) {
         scene::build_grown(&mut sim);
         info!("scene grown");
+    } else if scene == Some(scene::MOVE_OVER) {
+        scene::build_move_over(&mut sim);
+        info!("scene move-over");
     } else if scene == Some(scene::ZONES_BIG) {
         scene::build_zones_big(&mut sim);
         info!("scene zones-big");

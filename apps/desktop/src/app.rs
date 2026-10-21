@@ -50,7 +50,7 @@ pub struct Options {
     /// `--dust-demo 0.4`: the dust the scene leaves (`--scene school`, `--scene dust`), held
     /// 0.4 s in (T-288 shots).
     pub dust_demo: Option<f32>,
-    /// `--place-demo fire_station,x,z`: hold the placement tool's ghost of that building at
+    /// `--place-demo fire_station,x,z[,move]`: hold the placement tool's ghost of that building at
     /// (x, z) without a cursor (screenshots of the coverage preview, T-254).
     pub place_demo: Option<cp_tools::PlaceDemo>,
     /// `--upgrade-demo road,x,z[,whole]`: the upgrade tool held over (x, z) (BUG-103 shots).
@@ -138,10 +138,13 @@ impl Options {
             place_demo: value("--place-demo").and_then(|v| {
                 let mut it = v.split(',');
                 let def = it.next()?.to_string();
-                let n: Vec<f32> = it.filter_map(|x| x.parse().ok()).collect();
+                let rest: Vec<&str> = it.collect();
+                let moving = rest.contains(&"move");
+                let n: Vec<f32> = rest.iter().filter_map(|x| x.parse().ok()).collect();
                 (n.len() == 2).then(|| cp_tools::PlaceDemo {
                     def,
                     at: bevy::math::Vec2::new(n[0], n[1]),
+                    moving,
                 })
             }),
             brush_demo: value("--brush-demo").and_then(|v| {
@@ -559,19 +562,19 @@ pub fn run(opts: Options) -> AppExit {
             );
     }
     if let Some(demo) = opts.place_demo {
-        if opts.hidden && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
+        if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
             app.add_plugins(cp_tools::ToolsPlugin);
         }
         app.insert_resource(demo);
     }
     if let Some(demo) = opts.brush_demo {
-        if opts.hidden && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
+        if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
             app.add_plugins(cp_tools::ToolsPlugin);
         }
         app.insert_resource(demo);
     }
     if let Some(demo) = opts.upgrade_demo {
-        if opts.hidden && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
+        if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
             app.add_plugins(cp_tools::ToolsPlugin);
         }
         app.insert_resource(demo);

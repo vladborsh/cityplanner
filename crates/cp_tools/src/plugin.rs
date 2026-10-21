@@ -347,6 +347,9 @@ pub struct GhostDemo {
 pub struct PlaceDemo {
     pub def: String,
     pub at: Vec2,
+    /// BUG-110 shots: pick the first standing building of `def` up (the move tool) instead of
+    /// placing a new one, so the ghost shows what the move would demolish.
+    pub moving: bool,
 }
 
 pub fn place_demo(
@@ -366,6 +369,16 @@ pub fn place_demo(
     };
     if state.active != ActiveTool::Place {
         state.select(ActiveTool::Place);
+    }
+    if demo.moving && state.building.moving.is_none() {
+        let id = view
+            .buildings
+            .iter()
+            .find(|(_, b)| b.def == def)
+            .map(|(id, _)| id);
+        if let Some(id) = id {
+            state.begin_move(&view, id);
+        }
     }
     state.building.def = Some(def);
     state.hover = Some(demo.at);
