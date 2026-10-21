@@ -16,12 +16,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use bevy_ecs::resource::Resource;
 use bevy_math::Vec2;
-use cp_building::{BuildingGrid, BuildingState};
+use cp_building::{Building, BuildingGrid, BuildingId, BuildingState};
 use cp_content::{BuildingDef, ContentDb, Emit, ResourceKind, RoadClass, ZoneType};
 use cp_core::time::TICKS_PER_DAY;
 use cp_net::NetGraph;
 use cp_terrain::MAP_SIZE;
 use cp_traffic::SegmentLoad;
+use cp_utility::WaterPools;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::CITY_PERIOD;
@@ -119,6 +120,11 @@ pub struct Emissions {
     /// The loudest source of each cell while a pass builds the fields. Not saved.
     #[serde(skip, default = "zeros")]
     loud: Vec<f32>,
+    /// The dirt of the water each home drinks (T-300 step 2), hundredths, ascending by id, only
+    /// the homes whose water is not clean. Rebuilt every pass from the water pools and the
+    /// ground; saved, so a game loaded between passes falls ill like the one that went on.
+    #[serde(default)]
+    pub water_dirt: Vec<(BuildingId, u16)>,
     /// Changes whenever the grids are rebuilt and is never shared between instances, so a
     /// snapshot cache can key on it. Not saved, not compared.
     #[serde(skip, default = "next_revision")]
@@ -168,15 +174,18 @@ impl Default for Emissions {
             ground: ground_zeros(),
             noise: ground_zeros(),
             loud: zeros(),
+            water_dirt: Vec::new(),
             revision: next_revision(),
         }
     }
 }
 
 impl PartialEq for Emissions {
-    /// The saved state: the ground and the noise.
+    /// The saved state: the ground, the noise and the water.
     fn eq(&self, other: &Self) -> bool {
-        self.ground == other.ground && self.noise == other.noise
+        self.ground == other.ground
+            && self.noise == other.noise
+            && self.water_dirt == other.water_dirt
     }
 }
 
@@ -340,6 +349,61 @@ impl Emissions {
             let target = (*s * 100.0).round() as u32;
             self.ground[c] = step_ground(g, target.min(FULL), rise, decay) as u16;
         }
+    }
+
+    /// The dirt of a water source (T-300): the most polluted ground under its lot, `0..=100`.
+    pub fn source_dirt(&self, b: &Building) -> f32 {
+        let (w, d) = b.size();
+        let reach = (f32::from(w).hypot(f32::from(d))) * cp_building::FOOTPRINT_CELL_M * 0.5;
+        let mut worst = self.ground[cell_of(b.pos)];
+        cells_near(b.pos, reach + CELL_E, |c, _| {
+            let centre = Vec2::new(
+                ((c % SIDE_E) as f32 + 0.5) * CELL_E,
+                ((c / SIDE_E) as f32 + 0.5) * CELL_E,
+            );
+            if b.footprint_contains(centre) {
+                worst = worst.max(self.ground[c]);
+            }
+        });
+        f32::from(worst) / 100.0
+    }
+
+    /// The dirt of the water `home` drinks, `0..=100` (0 when clean or without water).
+    pub fn water_dirt_of(&self, home: BuildingId) -> f32 {
+        self.water_dirt
+            .binary_search_by_key(&home, |(id, _)| *id)
+            .map_or(0.0, |i| f32::from(self.water_dirt[i].1) / 100.0)
+    }
+
+    /// Rebuilds [`Self::water_dirt`]: a pool's water is as dirty as the capacity-weighted mean
+    /// of its sources' [`Self::source_dirt`]; every building that drinks from it gets that.
+    pub fn update_water(&mut self, pools: &WaterPools, buildings: &BuildingGrid) {
+        let dirt: Vec<u16> = pools
+            .pools
+            .iter()
+            .map(|pool| {
+                let (mut sum, mut cap) = (0.0f32, 0.0f32);
+                for (id, c) in &pool.sources {
+                    if let Some(b) = buildings.get(*id) {
+                        sum += self.source_dirt(b) * c;
+                        cap += c;
+                    }
+                }
+                if cap > 0.0 {
+                    ((sum / cap) * 100.0).round().clamp(0.0, FULL as f32) as u16
+                } else {
+                    0
+                }
+            })
+            .collect();
+        self.water_dirt = pools
+            .pool_of
+            .iter()
+            .filter_map(|(id, p)| {
+                let w = dirt.get(*p as usize).copied().unwrap_or(0);
+                (w > 0).then_some((*id, w))
+            })
+            .collect();
     }
 
     /// The mean of the 4 × 4 cells under each cell of the 64 m land grid: `(pollution from the

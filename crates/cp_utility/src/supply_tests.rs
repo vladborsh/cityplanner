@@ -216,6 +216,7 @@ fn the_system_writes_flags_every_64_ticks_only() {
     world.insert_resource(cp_content::SimContent(std::sync::Arc::new(db)));
     world.insert_resource(UtilityGraph::new());
     world.init_resource::<PowerPools>();
+    world.init_resource::<crate::WaterPools>();
     let mut grid = BuildingGrid::new();
     let h = {
         let db = &world.resource::<cp_content::SimContent>().0;
@@ -682,4 +683,26 @@ fn one_line_through_a_big_town_is_walked_once_per_search() {
         visits <= 2 * (n as u64 + 1),
         "{visits} line members walked for {n} houses"
     );
+}
+
+/// T-300: two pipe networks with a pump each are two water pools; every house drinks from the
+/// pump of its own network, and a house without water is in none.
+#[test]
+fn each_house_drinks_from_the_pool_of_its_own_pipe_network() {
+    let db = db();
+    let mut b = BuildingGrid::new();
+    let mut g = UtilityGraph::new();
+    line(&mut g, UtilityNet::Pipe, 0.0, 100.0);
+    line(&mut g, UtilityNet::Pipe, 400.0, 500.0);
+    let west = add(&mut b, &db, "pump", 0.0, 10.0);
+    let east = add(&mut b, &db, "pump", 400.0, 10.0);
+    let a = add(&mut b, &db, "house", 50.0, 15.0);
+    let c = add(&mut b, &db, "house", 450.0, 15.0);
+    let dry = add(&mut b, &db, "house", 250.0, 15.0);
+    let (_, _, water) = compute_supply_pools(&db, &b, &g, &mut AttachCache::default(), None);
+    assert_eq!(water.pools.len(), 2);
+    assert_eq!(water.of(a).unwrap().sources, vec![(west, 25.0)]);
+    assert_eq!(water.of(c).unwrap().sources, vec![(east, 25.0)]);
+    assert!(water.of(dry).is_none());
+    assert!(water.of(west).is_none(), "a pump drinks nothing");
 }

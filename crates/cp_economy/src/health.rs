@@ -5,15 +5,17 @@
 //! * **Falling ill** (each tick, the citizen bucket `id % 256 == tick % 256`, so
 //!   `TICKS_PER_DAY / 256` visits a game day): a healthy citizen at home gets `sick_since` with
 //!   the chance per day `(sick_base + sick_pollution × G) × (1 − GREEN_SICK_CUT × green) +
-//!   sick_noise × N` (T-300, §11.1), shared out over the visits; `G` is the ground pollution and
-//!   `N` the noise of the home's 16 m cell. Parks soften the base and the pollution, not the
-//!   noise.
+//!   sick_noise × N + sick_water × W` (T-300, §11.1), shared out over the visits; `G` is the
+//!   ground pollution and `N` the noise of the home's 16 m cell, `W` the dirt of the water it
+//!   drinks (`Emissions::water_dirt`). Parks soften the base and the pollution only.
+//! * **Bad water** (with the treatment, building bucket `index % 64`): a building whose water
+//!   is at least `bad_water_at` dirty has the BAD_WATER problem; clean or no water clears it.
 //! * **Treatment** (each tick, the building bucket `index % 64 == tick % 64`, as police): the
 //!   sick of a building with Health coverage are cured one capacity unit each by the nearest
 //!   powered clinic or hospital with room; the others keep SICK on the building.
 
 use bevy_ecs::system::{Res, ResMut};
-use cp_building::{BuildingGrid, BuildingState};
+use cp_building::{BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::CitizenGrid;
 use cp_citizen::system::CITIZEN_BUCKETS;
 use cp_content::{ServiceKind, ServiceUnlocks, SimContent};
@@ -61,6 +63,7 @@ pub fn update_health(
             if state.problems_of(id).has(ServiceProblems::SICK) {
                 state.get_mut(id).problems.set(ServiceProblems::SICK, false);
             }
+            mark_bad_water(&mut state, &emissions, id, bal.bad_water_at);
         }
         return;
     }
@@ -78,8 +81,7 @@ pub fn update_health(
         let Some(b) = buildings.get(home) else {
             continue;
         };
-        // The water term (`sick_water × W`) comes with the water pools (T-300 step 2).
-        let water = 0.0;
+        let water = emissions.water_dirt_of(home);
         let p = (cp_building::sick_chance(
             bal.sick_base,
             bal.sick_pollution * emissions.ground_at(b.pos),
@@ -127,5 +129,18 @@ pub fn update_health(
                 .problems
                 .set(ServiceProblems::SICK, problem);
         }
+        mark_bad_water(&mut state, &emissions, id, bal.bad_water_at);
+    }
+}
+
+/// Sets or clears BAD_WATER on `id` by the dirt of the water it drinks (T-300). Whether a clinic
+/// is open or not: the problem is the water's.
+fn mark_bad_water(state: &mut ServiceState, emissions: &Emissions, id: BuildingId, at: f32) {
+    let bad = emissions.water_dirt_of(id) >= at;
+    if bad != state.problems_of(id).has(ServiceProblems::BAD_WATER) {
+        state
+            .get_mut(id)
+            .problems
+            .set(ServiceProblems::BAD_WATER, bad);
     }
 }

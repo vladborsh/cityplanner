@@ -119,6 +119,7 @@ impl SimRunner {
         world.init_resource::<cp_building::Demand>();
         world.init_resource::<cp_utility::UtilityGraph>();
         world.init_resource::<cp_utility::PowerPools>();
+        world.init_resource::<cp_utility::WaterPools>();
         world.init_resource::<cp_citizen::CitizenGrid>();
         world.init_resource::<cp_traffic::PathNetwork>();
         world.init_resource::<cp_traffic::PathService>();

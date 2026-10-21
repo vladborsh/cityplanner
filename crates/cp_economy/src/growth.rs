@@ -220,7 +220,11 @@ pub fn update_city(
     citizens: Res<CitizenGrid>,
     mut buildings: ResMut<BuildingGrid>,
     mut zones: ResMut<ZoneGrid>,
-    (mut grids, mut emissions): (ResMut<LandGrids>, ResMut<crate::Emissions>),
+    (mut grids, mut emissions, water): (
+        ResMut<LandGrids>,
+        ResMut<crate::Emissions>,
+        Option<Res<cp_utility::WaterPools>>,
+    ),
     mut decay: ResMut<Decay>,
     mut shortage: ResMut<WorkerShortage>,
     coverage: Option<Res<ServiceCoverage>>,
@@ -242,6 +246,11 @@ pub fn update_city(
         net: &net,
         load: &agents.load,
     });
+    // The dirt of the water each home drinks (T-300 step 2): the supply pass of this tick (every
+    // 64 ticks, Utilities before Economy) has just rewritten the pools.
+    if let Some(water) = water.as_deref() {
+        emissions.update_water(water, &buildings);
+    }
     *grids = LandGrids::compute(&LandInputs {
         content: db,
         buildings: &buildings,

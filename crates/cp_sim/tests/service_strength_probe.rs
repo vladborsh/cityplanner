@@ -53,7 +53,7 @@ fn place_central(sim: &mut SimRunner, db: &ContentDb, def: &str) -> bool {
 
 /// (population, abandoned, [garbage, sick, dead, fire, crime, mail] at the end, worst crime
 /// problem count over the ten days).
-fn town(target: usize) -> (usize, u32, [u32; 6], u32) {
+fn town(target: usize) -> (usize, u32, [u32; 7], u32) {
     let db = Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
     let terrain =
         Arc::new(Terrain::load(&Path::new(ROOT).join("../../assets/maps/flatlands")).unwrap());
