@@ -1071,7 +1071,7 @@ mod tests {
     #[test]
     fn a_repeat_waits_two_days_unless_it_got_worse() {
         let mut adv = Advisor::default();
-        // A game hour is 170.67 ticks: 171 is the first tick of hour 1.
+        // A game hour is 85.33 ticks: 86 is the first tick of hour 1.
         let hour = TICKS_PER_DAY / 24 + 1;
         adv.observe(&at_tick(no_water(5), 0), 0.0, true);
         assert_eq!(adv.just_shown.take(), Some(Severity::Warn));

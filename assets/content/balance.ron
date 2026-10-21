@@ -76,8 +76,8 @@ Balance((
     // Average worker education needed for industrial and office levels 1..3.
     level_ind_edu: (0.0, 0.7, 1.5),
     level_office_edu: (0.0, 1.5, 2.3),
-    // Consecutive level checks (every 256 ticks) that move a building one level.
-    level_checks: 3,
+    // Consecutive level checks (every 256 ticks, 8 a day since T-301; 6 = 3/4 of a day, as 3 of 16 were) that move a building one level.
+    level_checks: 6,
 
     // --- Decay (system-design §8) ---
     // Days of an unbroken problem until abandoned, and until demolished (from the first problem).

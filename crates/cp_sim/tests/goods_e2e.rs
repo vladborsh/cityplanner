@@ -481,7 +481,7 @@ fn the_shop_is_never_out_of_goods_for_long_next_to_a_weak_factory() {
         .balance()
         .goods_empty_days
         * cp_core::time::TICKS_PER_DAY as f32) as u64;
-    let longest = longest_no_goods(&mut t, 4096 * 8);
+    let longest = longest_no_goods(&mut t, cp_core::time::TICKS_PER_DAY * 8); // T-301: 8 days (a random fire burns the shop on day 16)
     assert!(longest <= empty_after, "NO_GOODS for {longest} ticks");
 }
 

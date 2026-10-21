@@ -267,15 +267,15 @@ fn weekly_balance_matches_the_hand_calculation() {
 #[test]
 fn settles_once_per_hour_and_never_at_tick_zero() {
     let (mut world, mut schedule) = city();
-    for t in [0, 1, 100] {
+    for t in [0, 1, 80] {
         run_at(&mut world, &mut schedule, t);
         assert_eq!(balance(&world), Treasury::default().balance, "tick {t}");
     }
     // The first hour boundary books one share; the same hour again books nothing.
-    run_at(&mut world, &mut schedule, 171);
+    run_at(&mut world, &mut schedule, 86);
     let after_one = balance(&world);
     assert_ne!(after_one, Treasury::default().balance);
-    run_at(&mut world, &mut schedule, 172);
+    run_at(&mut world, &mut schedule, 87);
     assert_eq!(balance(&world), after_one);
     // The week's report is settled once, on its boundary.
     run_at(&mut world, &mut schedule, TICKS_PER_WEEK - 1);

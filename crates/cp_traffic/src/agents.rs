@@ -1367,7 +1367,7 @@ pub fn update_traffic_load(
     }
 }
 
-/// Averaging window of the segment load: 2 game hours of 170.67 ticks.
+/// Averaging window of the segment load: 120 ticks of movement (since T-301 about 1.4 game hours; the traffic clock is not the day clock).
 const EMA_TICKS: f32 = 120.0;
 /// How often the pathfinder's congestion map is refreshed.
 const LOAD_PUSH_TICKS: u64 = 32;

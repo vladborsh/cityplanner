@@ -1,14 +1,14 @@
 //! T-046: the two M1 fixtures (`gen_m1_fixtures`): a city of about 2700 residents built by
 //! `grid_city`, and the same kind of city in a jam, with some 600 cars and 450 pedestrians on the
 //! road and a building demolished on pause right before the save (`BuildingGrid.removed` not
-//! empty). Both load without warnings and save back to the same bytes, and load + 4096 ticks
+//! empty). Both load without warnings and save back to the same bytes, and load + a day (2048 ticks since T-301)
 //! gives the recorded checksum. The jam's 850 trips are sent by `scenario::send_citizens` so it
 //! does not depend on the time of day.
 //!
 //! Old saves are not migrated during development (T-275, AGENTS.md): when the format changes,
 //! `gen_m1_fixtures` writes the two files again with the current writer and prints the checksums
-//! to pin here. Made last for format 58 (T-290: the land grids carry the garbage nuisance; format 57 was T-275: roads are whole cells wide, the 96 m lattice of
-//! `grid_city`). BUG-090 moved the two `load + 4096 ticks` pins (state at load unchanged): a car
+//! to pin here. Made last for format 59 (T-301: the game day is 2048 ticks; format 58 was T-290: the land grids carry the garbage nuisance; format 57 was T-275: roads are whole cells wide, the 96 m lattice of
+//! `grid_city`). BUG-090 moved the two `load + a day (2048 ticks since T-301)` pins (state at load unchanged): a car
 //! that has stood at the stop line with its lane change blocked now turns from its own lane or
 //! goes another way instead of waiting to be removed as stuck, and a car starting near its
 //! junction starts in the lane it needs.
@@ -83,8 +83,8 @@ fn check_file(name: &str) {
     );
 }
 
-fn after_4096(sim: &mut SimRunner) -> u64 {
-    for _ in 0..4096 {
+fn after_a_day(sim: &mut SimRunner) -> u64 {
+    for _ in 0..cp_core::time::TICKS_PER_DAY {
         sim.tick_once();
     }
     sim.checksum()
@@ -95,11 +95,8 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     check_file("m1-small.sav");
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
-    // T-300: 3000..=4000 (was 2400..=3000): the service buildings no longer pollute, the homes
-    // stand higher.
-    assert!((3000..=4000).contains(&people), "{people} residents");
-    // T-300: re-recorded (was 0xa8a91ba70860d53c), save format 59 and the new pollution.
-    assert_eq!(sim.checksum(), 0x0088f5455f058275, "state at load");
+    assert!((2400..=3000).contains(&people), "{people} residents");
+    assert_eq!(sim.checksum(), 0x3278d51fc47d9bea, "state at load");
     // T-280: re-recorded (was 0xa0961668822b2784 since T-282): only 15 % of car trips and
     // 25 % of goods trucks take a vehicle, the rest run abstractly, so the day after the load
     // has other cars on the road.
@@ -107,9 +104,9 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     // T-270: re-recorded, the movement clock is 0.4 s a tick (§2 v1.2): agents cover a fifth
     // of the ground per tick, so the day after the load runs differently.
     assert_eq!(
-        after_4096(&mut sim),
-        0x52c66547e3b6afad, // T-300: re-recorded (was 0x68f162061e8c655), the 16 m pollution and noise. T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
-        "load + 4096 ticks"
+        after_a_day(&mut sim),
+        0xf0850af73e95d6c4, // T-301: re-recorded, the day is 2048 ticks and the test runs a day (was 0x68f162061e8c655). T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
+        "load + a day"
     );
 }
 
@@ -139,13 +136,12 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // T-290: 300 (was 800): the trips that run abstractly (T-280) are over by the time cars
     // and pedestrians are on the road; ~330 are in flight when the generator stops.
     assert!(trips_at_load >= 300, "{trips_at_load} trips in flight");
-    // T-300: re-recorded (was 0xc7d2865b29ac6a5b), save format 59 and the new pollution.
-    assert_eq!(sim.checksum(), 0xec589aa66b424514, "state at load");
+    assert_eq!(sim.checksum(), 0xa09aeb5b229c19c2, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
     assert!(sim.world().resource::<BuildingGrid>().removed().is_empty());
-    for _ in 0..4095 {
+    for _ in 0..cp_core::time::TICKS_PER_DAY - 1 {
         sim.tick_once();
     }
     // BUG-095: re-recorded (was 0x6157ca2ba25af219), services make no shop goods and are no
@@ -154,8 +150,8 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // load mostly run abstractly (car_visible_share 0.15); the jam saved with the file drives.
     // T-270: re-recorded, the movement clock is 0.4 s a tick (§2 v1.2).
     // T-295: re-recorded (was 0x54a58aeb68367963), the balance pass.
-    // T-300: re-recorded (was 0x63538024f0946108), the 16 m pollution and noise.
-    assert_eq!(sim.checksum(), 0xad784072578c4567, "load + 4096 ticks");
+    // T-301: re-recorded, a game day is 2048 ticks (was 0x63538024f0946108 after 4096).
+    assert_eq!(sim.checksum(), 0x88b58818ef9e401a, "load + a day");
     // T-290: the trips of the saved jam arrive (completed grows by hundreds); the number in flight
     // no longer falls, the routine plans new ones all day (most of them abstract, T-280).
     let done_after = sim.world().resource::<TripBook>().completed;

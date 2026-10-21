@@ -5,14 +5,16 @@ use serde::{Deserialize, Serialize};
 
 /// One tick is 50 ms of game time.
 pub const TICK_MILLIS: u32 = 50;
-pub const TICKS_PER_DAY: u64 = 4096;
-/// Ticks in one game hour (`TICKS_PER_DAY / 24`, not an integer: 170.67).
+/// T-301: 2048 (was 4096), an x1 day is ~102 s. The movement clock is unchanged: trips take twice
+/// the share of a day.
+pub const TICKS_PER_DAY: u64 = 2048;
+/// Ticks in one game hour (`TICKS_PER_DAY / 24`, not an integer: 85.33).
 pub const TICKS_PER_HOUR: f32 = TICKS_PER_DAY as f32 / 24.0;
 
 /// The **movement clock** (`architecture/system-design.md` §2): one tick is this many
 /// seconds of agent movement. Kinematics, path costs and abstract trip durations use it,
 /// with content speeds in real units (m/s, km/h); schedules use the day clock
-/// (4096 ticks = 24 h) instead. Change only together with a `balance.ron` recalibration.
+/// (2048 ticks = 24 h) instead. Change only together with a `balance.ron` recalibration.
 /// 0.4 since T-270 (was 2.0): agents move 5 times slower on screen at every game speed, the
 /// day and the economy keep their pace; trips take 5 times more of the day.
 pub const MOVE_SECONDS_PER_TICK: f32 = 0.4;
@@ -105,14 +107,14 @@ mod tests {
         let t = Tick(0).game_time();
         assert_eq!((t.day, t.tick_of_day, t.week(), t.hour()), (0, 0, 0, 0));
         let t = Tick(TICKS_PER_DAY - 1).game_time();
-        assert_eq!((t.day, t.tick_of_day, t.hour()), (0, 4095, 23));
+        assert_eq!((t.day, t.tick_of_day, t.hour()), (0, 2047, 23));
         let t = Tick(TICKS_PER_DAY).game_time();
         assert_eq!((t.day, t.tick_of_day), (1, 0));
         let t = Tick(TICKS_PER_WEEK - 1).game_time();
         assert_eq!((t.week(), t.day_of_week()), (0, 6));
         let t = Tick(TICKS_PER_WEEK).game_time();
         assert_eq!((t.week(), t.day_of_week()), (1, 0));
-        assert_eq!(TICKS_PER_WEEK, 28_672);
+        assert_eq!(TICKS_PER_WEEK, 14_336);
     }
 
     #[test]

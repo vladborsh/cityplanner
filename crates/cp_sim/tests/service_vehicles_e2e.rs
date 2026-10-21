@@ -175,7 +175,7 @@ impl Town {
     }
 }
 
-const WORK: u64 = (2.0 * TICKS_PER_HOUR) as u64;
+const WORK: u64 = (2.0 * TICKS_PER_HOUR).round() as u64;
 
 #[test]
 fn the_fire_goes_out_two_hours_after_the_engine_drives_in() {

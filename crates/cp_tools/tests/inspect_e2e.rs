@@ -103,7 +103,7 @@ fn building_panel_equals_the_records() {
     sim.world_mut()
         .resource_mut::<Decay>()
         .since
-        .insert(home, cp_core::Tick(now - 4096));
+        .insert(home, cp_core::Tick(now - cp_core::time::TICKS_PER_DAY));
 
     for id in [home, work] {
         let Some(Inspection::Building(info)) = sim.inspect(Selection::Building(id)) else {
