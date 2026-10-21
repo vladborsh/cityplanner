@@ -119,7 +119,8 @@ fn plate(m: &mut MeshData, terrain: &cp_terrain::Terrain, q: &[Vec2; 4]) {
 /// cells of one lot give its outline and not their grid.
 fn boundary_edges(quads: &[[Vec2; 4]]) -> Vec<(Vec2, Vec2)> {
     let key = |p: Vec2| ((p.x * 100.0).round() as i64, (p.y * 100.0).round() as i64);
-    let mut edges: Vec<((i64, i64), (i64, i64), Vec2, Vec2)> = Vec::new();
+    type Edge = ((i64, i64), (i64, i64), Vec2, Vec2);
+    let mut edges: Vec<Edge> = Vec::new();
     for q in quads {
         for i in 0..4 {
             let (a, b) = (q[i], q[(i + 1) % 4]);
@@ -246,10 +247,12 @@ mod tests {
     #[test]
     fn the_tint_is_strong_and_the_outline_is_opaque_red() {
         // Stronger than the 0.55 of before; red dominates; the outline is opaque.
-        assert!(DEMOLISH_TINT[3] >= 0.75);
-        assert!(DEMOLISH_TINT[0] > 0.9 && DEMOLISH_TINT[1] < 0.1 && DEMOLISH_TINT[2] < 0.1);
-        assert_eq!(OUTLINE_COLOR[3], 1.0);
-        assert!(OUTLINE_COLOR[0] > 0.9 && OUTLINE_COLOR[1] < 0.15);
-        assert!(OUTLINE_W >= 1.5, "wide enough to show at 300-800 m");
+        const {
+            assert!(DEMOLISH_TINT[3] >= 0.75);
+            assert!(DEMOLISH_TINT[0] > 0.9 && DEMOLISH_TINT[1] < 0.1 && DEMOLISH_TINT[2] < 0.1);
+            assert!(OUTLINE_COLOR[3] == 1.0);
+            assert!(OUTLINE_COLOR[0] > 0.9 && OUTLINE_COLOR[1] < 0.15);
+            assert!(OUTLINE_W >= 1.5);
+        }
     }
 }

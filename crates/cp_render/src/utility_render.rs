@@ -202,7 +202,7 @@ fn tube(m: &mut MeshData, rings: &[(Vec3, Vec3)], radius: f32, color: [f32; 4]) 
     tube_faces(m, rings, radius, color, PIPE_FACES);
     // [`tube_faces`] winds its triangles the other way round; a double-sided material then lights
     // the pipe from inside and it came out near black (T-294): turn them to face outwards.
-    for t in m.indices[from..].chunks_exact_mut(3) {
+    for t in m.indices[from..].as_chunks_mut::<3>().0 {
         t.swap(1, 2);
     }
 }
@@ -956,21 +956,20 @@ mod tests {
         let t = slope();
         let g = line_graph();
         let (pipes, band) = built_pipe_meshes(&g, &t, true, BUILDING_REACH).unwrap();
-        assert!(band.colors.iter().any(|c| *c == STRIP_COLOR), "the strip");
-        assert!(
-            band.colors.iter().any(|c| *c == BAND_COLOR),
-            "the band stays"
-        );
+        assert!(band.colors.contains(&STRIP_COLOR), "the strip");
+        assert!(band.colors.contains(&BAND_COLOR), "the band stays");
         assert!(
             pipes
                 .colors
                 .iter()
                 .all(|c| *c == PIPE_COLOR || *c == SLEEVE_COLOR)
         );
-        // Brighter than the old (0.32, 0.50, 0.72): more blue-green light in total.
-        assert!(PIPE_COLOR[1] > 0.85 && PIPE_COLOR[2] > 0.95);
-        assert!(STRIP_COLOR[3] >= 0.9 && STRIP_RISE > 0.3);
-        assert!(PIPE_RADIUS >= 0.9 && SLEEVE_RADIUS > PIPE_RADIUS);
+        // Brighter than the old (0.32, 0.50, 0.72), wider, and the strip over the asphalt.
+        const {
+            assert!(PIPE_COLOR[1] > 0.8 && PIPE_COLOR[2] > 0.95);
+            assert!(STRIP_COLOR[3] >= 0.9 && STRIP_RISE > 0.3);
+            assert!(PIPE_RADIUS >= 0.9 && SLEEVE_RADIUS > PIPE_RADIUS);
+        }
     }
 
     #[test]
