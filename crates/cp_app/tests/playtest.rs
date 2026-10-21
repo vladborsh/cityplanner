@@ -65,6 +65,13 @@ fn a_new_game_played_to_busy_town() {
                 a.free_office_jobs
             );
         }
+        if d.stuck > 0 {
+            let w = d.stuck_why;
+            eprintln!(
+                "      stuck: waiting {} in-junction {} lane-change {} conflict-stands {} full-beyond {} front-other {} hard-cap {} hard-cap-head {}",
+                w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]
+            );
+        }
         if !d.actions.is_empty() {
             eprintln!("      did: {}", d.actions.join("; "));
         }

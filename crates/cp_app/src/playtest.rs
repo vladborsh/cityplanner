@@ -65,6 +65,9 @@ pub struct Day {
     pub overloaded: u32,
     /// Cars removed as stuck over the day.
     pub stuck: u64,
+    /// The same by reason over the day (cp_traffic `StuckWhy` order: waiting, in junction, lane
+    /// change, conflict stands, full beyond, front other, hard cap, hard cap head).
+    pub stuck_why: [u64; 8],
     pub demand: [f32; 3],
     /// The move-in demand (households moving into homes that stand).
     pub move_in: f32,
@@ -103,6 +106,7 @@ pub struct Player {
     last_acc: cp_economy::DemandAcc,
     last_money: f64,
     last_stuck: u64,
+    last_why: [u64; 8],
     day: u32,
     actions: Vec<String>,
     refused: Vec<String>,
@@ -137,6 +141,7 @@ impl Player {
             last_acc: cp_economy::DemandAcc::default(),
             last_money: money,
             last_stuck: 0,
+            last_why: [0; 8],
             day: 0,
             actions: Vec::new(),
             refused: Vec::new(),
@@ -634,6 +639,15 @@ impl Player {
             self.free_cells(ZoneType::ComLow),
             self.free_cells(ZoneType::Industrial),
         ];
+        let why = self
+            .sim
+            .world()
+            .resource::<cp_traffic::Agents>()
+            .stuck_reasons();
+        for (k, w) in why.iter().enumerate() {
+            d.stuck_why[k] = w - self.last_why[k];
+        }
+        self.last_why = why;
         self.last_money = money;
         self.last_stuck = s.traffic.despawned_stuck;
         let _ = ServiceKind::Police;
@@ -641,13 +655,190 @@ impl Player {
     }
 }
 
+impl Player {
+    /// BUG-100 diagnostics: the cars that have not got onto the road yet (waiting for a gap at
+    /// their start), by start lane: the lane's road, segment and where it is, how many wait there,
+    /// how long the longest has stood (ticks), their vehicle kinds, and the cars driving on it.
+    pub fn waiting_report(&self) -> String {
+        use std::collections::BTreeMap;
+        let w = self.sim.world();
+        let agents = w.resource::<cp_traffic::Agents>();
+        let net = w.resource::<cp_net::NetGraph>();
+        let mut by_lane: BTreeMap<cp_net::LaneId, (usize, u32, BTreeMap<String, usize>)> =
+            BTreeMap::new();
+        let mut driving: BTreeMap<cp_net::LaneId, usize> = BTreeMap::new();
+        let mut total = 0;
+        for (_, v) in agents.vehicles() {
+            if v.spawned {
+                *driving.entry(v.lane()).or_default() += 1;
+                continue;
+            }
+            total += 1;
+            let e = by_lane.entry(v.lane()).or_default();
+            e.0 += 1;
+            e.1 = e.1.max(v.stuck_timer >> 16);
+            // What the car is: a citizen's trip by purpose, else a service run (tourists, trucks).
+            let what = w
+                .resource::<cp_citizen::TripBook>()
+                .get(v.trip)
+                .map_or(format!("run kind {}", v.kind_id()), |t| {
+                    format!("{:?}", t.purpose)
+                });
+            *e.2.entry(what).or_default() += 1;
+        }
+        let mut rows: Vec<_> = by_lane.into_iter().collect();
+        rows.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+        let mut out = format!("waiting {total} on {} lanes;", rows.len());
+        // The fullest segments (cars on the road) with their mean speed: where a queue stands.
+        let mut seg: BTreeMap<cp_net::SegmentId, (usize, f32)> = BTreeMap::new();
+        for (_, v) in agents.vehicles().filter(|(_, v)| v.spawned && !v.in_conn) {
+            if let Some(l) = net.lane(v.lane()) {
+                let e = seg.entry(l.segment).or_default();
+                e.0 += 1;
+                e.1 += v.speed;
+            }
+        }
+        // The pieces between the highway's end and the town (the stub and the road in).
+        out += " entry pieces:";
+        for (id, sg) in net.segments() {
+            let (a, b) = (sg.curve.point(0.0), sg.curve.point(1.0));
+            let near = |p: bevy::math::Vec3| {
+                (5080.0..5160.0).contains(&p.x) && (4250.0..4440.0).contains(&p.z)
+            };
+            if !near(a) && !near(b) {
+                continue;
+            }
+            let (n, sum) = seg.get(&id).copied().unwrap_or((0, 0.0));
+            out += &format!(
+                " [{} {} ({:.0},{:.0})->({:.0},{:.0}) {n} cars {:.1} m/s]",
+                id.index,
+                self.db.road(sg.road).id,
+                a.x,
+                a.z,
+                b.x,
+                b.z,
+                if n > 0 { sum / n as f32 } else { 0.0 }
+            );
+        }
+        out += ";";
+        // The cars at and in the town's first crossing (5120, 4428): lane end (s vs length),
+        // speed, inside the junction or not, ticks standing.
+        out += " crossing cars:";
+        for (_, v) in agents.vehicles().filter(|(_, v)| v.spawned) {
+            let Some(l) = net.lane(v.lane()) else {
+                continue;
+            };
+            let Some(sg) = net.segment(l.segment) else {
+                continue;
+            };
+            let end = if l.dir == cp_content::LaneDir::Forward {
+                sg.curve.point(1.0)
+            } else {
+                sg.curve.point(0.0)
+            };
+            let at_end = (end.x - 5120.0).abs() < 2.0 && (end.z - 4428.0).abs() < 2.0;
+            let left = sg.length - v.s.min(sg.length);
+            if at_end && (v.in_conn || left < 12.0 || v.s < 12.0) {
+                out += &format!(
+                    " [seg {} {:?} s {:.0}/{:.0} v {:.1} {} still {}]",
+                    l.segment.index,
+                    l.dir,
+                    v.s,
+                    sg.length,
+                    v.speed,
+                    if v.in_conn { "IN-JUNCTION" } else { "lane" },
+                    v.stuck_timer >> 16
+                );
+            }
+        }
+        out += ";";
+        // The inbound highway, piece by piece from the map edge: where its queue ends.
+        out += " highway:";
+        for (id, sg) in net.segments() {
+            if !self.db.road(sg.road).id.starts_with("highway") {
+                continue;
+            }
+            let (n, sum) = seg.get(&id).copied().unwrap_or((0, 0.0));
+            let a = sg.curve.point(0.0);
+            out += &format!(
+                " {}@{:.0}:{n}/{:.1}",
+                id.index,
+                a.z,
+                if n > 0 { sum / n as f32 } else { 0.0 }
+            );
+        }
+        out += ";";
+        let mut full: Vec<_> = seg.into_iter().collect();
+        full.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+        out += " fullest segments:";
+        for (id, (n, sum)) in full.into_iter().take(8) {
+            if let Some(sg) = net.segment(id) {
+                let (a, b) = (sg.curve.point(0.0), sg.curve.point(1.0));
+                out += &format!(
+                    " [{} {:?} ({:.0},{:.0})->({:.0},{:.0}) {n} cars, mean {:.1} m/s]",
+                    self.db.road(sg.road).id,
+                    id,
+                    a.x,
+                    a.z,
+                    b.x,
+                    b.z,
+                    sum / n as f32
+                );
+            }
+        }
+        out += ";";
+        // The cars on the worst lane: where they stand and how fast they go.
+        if let Some((lane, _)) = rows.first() {
+            let mut on: Vec<(f32, f32, u32)> = agents
+                .vehicles()
+                .filter(|(_, v)| v.spawned && v.lane() == *lane)
+                .map(|(_, v)| (v.s, v.speed, v.stuck_timer >> 16))
+                .collect();
+            on.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let len = net
+                .lane(*lane)
+                .and_then(|l| net.segment(l.segment))
+                .map_or(0.0, |sg| sg.length);
+            out += &format!(" worst lane {len:.0} m long, cars (s, speed, still ticks):");
+            for (s_, v_, t_) in on.iter().take(14) {
+                out += &format!(" ({s_:.0},{v_:.1},{t_})");
+            }
+            out += ";";
+        }
+        for (lane, (n, still, kinds)) in rows.into_iter().take(6) {
+            let (road, seg, at) = net
+                .lane(lane)
+                .and_then(|l| Some((l, net.segment(l.segment)?)))
+                .map_or(("?".to_string(), String::new(), Vec2::ZERO), |(l, sg)| {
+                    let p = sg.curve.point(0.5);
+                    (
+                        self.db.road(sg.road).id.clone(),
+                        format!("{:?} {:?}", l.segment, l.dir),
+                        Vec2::new(p.x, p.z),
+                    )
+                });
+            out += &format!(
+                " [{road} {seg} at ({:.0},{:.0}): {n} waiting, longest {still} ticks, kinds {kinds:?}, {} driving]",
+                at.x,
+                at.y,
+                driving.get(&lane).copied().unwrap_or(0)
+            );
+        }
+        out
+    }
+}
+
 /// Plays a new game until `target` residents or `max_days` days; `each` sees every day.
 pub fn play(target: u32, max_days: u32, mut each: impl FnMut(&Day)) -> Vec<Day> {
     let mut p = Player::new_game();
     let mut days = Vec::new();
+    let waiting = std::env::var("PLAYTEST_WAITING").is_ok();
     for _ in 0..max_days {
         let d = p.play_day();
         each(&d);
+        if waiting {
+            eprintln!("      {}", p.waiting_report());
+        }
         let done = d.population >= target;
         days.push(d);
         if done {
