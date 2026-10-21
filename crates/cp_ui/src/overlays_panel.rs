@@ -431,7 +431,9 @@ mod tests {
         assert!(rig.state.overlays_collapsed);
         let strip = rig.rects.panel.unwrap();
         assert!(strip.width() < open.width() / 2.0, "{strip:?} vs {open:?}");
-        assert!(rig.rects.overlays.is_empty() && rig.rects.windows.is_empty());
+        // T-298: the window buttons are in the top bar and stay when the panel folds.
+        assert!(rig.rects.overlays.is_empty());
+        assert_eq!(rig.rects.windows.len(), ROW.len());
         assert!(width(&rig.state) < 60.0);
         rig.click(rig.rects.fold.unwrap().center());
         assert!(!rig.state.overlays_collapsed);

@@ -656,7 +656,7 @@ mod capture_tests {
         // T-289: the palette, and the overlays panel at the top right (two points of the grid).
         assert_eq!(
             row(&base, 328),
-            3,
+            2, // T-298: the panel lost the window buttons row, it no longer reaches this row
             "the palette and the overlays panel are owned in the middle row"
         );
         assert_eq!(row(&base, 710), 16, "bottom bar");
