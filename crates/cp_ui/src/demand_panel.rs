@@ -10,7 +10,6 @@
 use bevy_egui::egui;
 use cp_content::ZoneType;
 use cp_locale::tr;
-use cp_render::OverlayState;
 use cp_sim::SimView;
 use cp_tools::{ActiveTool, BulldozeLayer, ToolState};
 
@@ -78,13 +77,11 @@ pub struct DemandRects {
     /// top bar).
     pub money: Option<egui::Rect>,
     pub population: Option<egui::Rect>,
-    /// The utility gauges (T-279).
-    pub gauges: Vec<(cp_sim::city_services::Sector, egui::Rect)>,
     /// The bulldozer button, right of the demand columns (T-289).
     pub bulldozer: Option<egui::Rect>,
 }
 
-/// Width of the block of money, population and gauges at the left of the panel.
+/// Width of the block of money and population at the left of the panel.
 const STATS_W: f32 = 330.0;
 /// Icon of the bulldozer button.
 const BULLDOZER_ICON: f32 = 48.0;
@@ -112,27 +109,24 @@ fn population_row(ui: &mut egui::Ui, view: &SimView, rects: &mut DemandRects) {
     crate::budget::population_trend_label(ui, view);
 }
 
-/// Money, income, population and its change, and the utility gauges (T-289, T-279): the city's
-/// status block at the left of the bottom panel. In the folded strip they stand in one row.
+/// Money, income, population and its change (T-289; T-298: the utility gauges are gone, the
+/// overlays show the networks): the city's status block at the left of the bottom panel. In the folded strip they stand in one row.
 fn stats(
     ui: &mut egui::Ui,
     view: &SimView,
     state: &mut UiState,
-    overlay: &mut OverlayState,
     rects: &mut DemandRects,
     one_row: bool,
 ) {
     if one_row {
         money_row(ui, view, state, rects);
         population_row(ui, view, rects);
-        rects.gauges = crate::gauges::utility_gauges(ui, view, overlay);
         return;
     }
     ui.vertical(|ui| {
         ui.set_width(STATS_W);
         ui.horizontal(|ui| money_row(ui, view, state, rects));
         ui.horizontal(|ui| population_row(ui, view, rects));
-        ui.horizontal(|ui| rects.gauges = crate::gauges::utility_gauges(ui, view, overlay));
     });
 }
 
@@ -161,7 +155,6 @@ pub fn demand_panel(
     view: &SimView,
     state: &mut UiState,
     tools: &mut ToolState,
-    overlay: &mut OverlayState,
 ) -> DemandRects {
     let mut rects = DemandRects::default();
     let height = if state.demand_collapsed {
@@ -175,7 +168,7 @@ pub fn demand_panel(
         .show(root, |ui| {
             if state.demand_collapsed {
                 ui.horizontal_centered(|ui| {
-                    stats(ui, view, state, overlay, &mut rects, true);
+                    stats(ui, view, state, &mut rects, true);
                     ui.separator();
                     let r = ui.small_button("▴").on_hover_text(tr("Show demand"));
                     rects.fold = Some(r.rect);
@@ -192,7 +185,7 @@ pub fn demand_panel(
                 return;
             }
             ui.horizontal(|ui| {
-                stats(ui, view, state, overlay, &mut rects, false);
+                stats(ui, view, state, &mut rects, false);
                 ui.separator();
                 // The controls, left of the columns.
                 ui.vertical(|ui| {
@@ -315,7 +308,6 @@ mod tests {
         ctx: egui::Context,
         state: UiState,
         tools: ToolState,
-        overlay: OverlayState,
         view: SimView,
         rects: DemandRects,
         t: f64,
@@ -327,7 +319,6 @@ mod tests {
                 ctx: egui::Context::default(),
                 state: UiState::default(),
                 tools: ToolState::default(),
-                overlay: OverlayState::default(),
                 view,
                 rects: DemandRects::default(),
                 t: 0.0,
@@ -343,14 +334,13 @@ mod tests {
                 ctx,
                 state,
                 tools,
-                overlay,
                 view,
                 rects,
                 t,
             } = self;
             frame(ctx, input(*t, events), |ui| {
                 let mut root = crate::panels::root_ui(ui.ctx());
-                *rects = demand_panel(&mut root, view, state, tools, overlay);
+                *rects = demand_panel(&mut root, view, state, tools);
             });
         }
 
@@ -492,39 +482,19 @@ mod tests {
     }
 
     /// A view whose city has these `(supply, demand)` for power, water and sewage.
-    fn view_with_utilities(figures: [(f32, f32); 3]) -> SimView {
-        use cp_sim::city_services::{Sector, SectorBalance};
-        let mut view = SimRunner::new(1).view();
-        let mut stats = (*view.city).clone();
-        stats.services = [Sector::Power, Sector::Water, Sector::Sewage]
-            .into_iter()
-            .zip(figures)
-            .map(|(sector, (supply, demand))| SectorBalance {
-                sector,
-                supply,
-                demand,
-                unit: "units/day",
-                locked: false,
-            })
-            .collect();
-        view.city = std::sync::Arc::new(stats);
-        view
-    }
-
     fn texts(rig: &mut Rig, events: Vec<egui::Event>) -> Vec<String> {
         rig.t += 0.1;
         let Rig {
             ctx,
             state,
             tools,
-            overlay,
             view,
             rects,
             t,
         } = rig;
         crate::testutil::frame_texts(ctx, input(*t, events), |ui| {
             let mut root = crate::panels::root_ui(ui.ctx());
-            *rects = demand_panel(&mut root, view, state, tools, overlay);
+            *rects = demand_panel(&mut root, view, state, tools);
         })
         .into_iter()
         .map(|(t, _)| t)
@@ -549,52 +519,6 @@ mod tests {
         assert!(rig.state.budget_open);
     }
 
-    /// T-279: power, water and sewage as gauges with `supply / demand` on them, left of the
-    /// demand columns; a click opens the overlay, a hover lists the networks.
-    #[test]
-    fn the_bottom_panel_has_the_utility_gauges_and_a_click_opens_their_overlay() {
-        use cp_render::Overlay;
-        use cp_sim::city_services::Sector;
-        let mut rig = Rig::new(view_with_utilities([
-            (340.0, 60.0),
-            (100.0, 95.0),
-            (10.0, 40.0),
-        ]));
-        let all = texts(&mut rig, vec![]);
-        for t in ["340 / 60", "100 / 95", "10 / 40"] {
-            assert!(all.iter().any(|s| s == t), "{t:?} in {all:?}");
-        }
-        let sectors: Vec<Sector> = rig.rects.gauges.iter().map(|(s, _)| *s).collect();
-        assert_eq!(sectors, [Sector::Power, Sector::Water, Sector::Sewage]);
-        let panel = rig.rects.panel.unwrap();
-        for (s, r) in &rig.rects.gauges {
-            assert!(panel.contains_rect(*r), "{s:?} {r:?} outside {panel:?}");
-            assert!(r.right() < rig.rects.columns[0].rect.left());
-        }
-        let power = rig.rects.gauges[0].1.center();
-        rig.click(power);
-        assert_eq!(rig.overlay.active, Overlay::Power);
-        let sewage = rig.rects.gauges[2].1.center();
-        rig.click(sewage);
-        assert_eq!(
-            rig.overlay.active,
-            Overlay::Water,
-            "sewage runs in the pipes"
-        );
-        // Hover the power gauge: the tooltip shows after the pointer rests.
-        let mut all = Vec::new();
-        // Move the pointer once, then let it rest: the tooltip comes after its delay.
-        texts(&mut rig, vec![egui::Event::PointerMoved(power)]);
-        for _ in 0..12 {
-            all = texts(&mut rig, vec![]);
-        }
-        assert!(
-            all.iter().any(|t| t.starts_with("Electricity: 340 / 60")),
-            "{all:?}"
-        );
-        assert!(all.iter().any(|t| t == "No network yet"), "{all:?}");
-    }
-
     /// The panel's content fits a 1280 wide window with the longest figures, the demand columns
     /// and the bulldozer button right of them.
     #[test]
@@ -607,11 +531,7 @@ mod tests {
 
     /// T-284: the check above in `lang`.
     fn bottom_panel_fits(lang: cp_locale::Lang) {
-        let mut rig = Rig::new(view_with_utilities([
-            (1_240_000.0, 1_100_000.0),
-            (88_000.0, 99_000.0),
-            (8888.0, 8888.0),
-        ]));
+        let mut rig = Rig::new(SimRunner::new(1).view());
         rig.frame(vec![]);
         let panel = rig.rects.panel.unwrap();
         let bull = rig.rects.bulldozer.unwrap();
@@ -622,9 +542,6 @@ mod tests {
             bull.left() > rig.rects.columns[3].rect.right(),
             "right of the demand"
         );
-        for (_, g) in &rig.rects.gauges {
-            assert!(panel.contains_rect(*g), "{g:?} not in {panel:?}");
-        }
     }
 
     /// T-289: the bulldozer button takes the bulldozer up and puts it down; with the Power or
