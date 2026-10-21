@@ -598,6 +598,50 @@ fn edge_preview(
 }
 
 /// The building whose lot covers `p` (lowest id wins).
+/// How tall a building's pick box is, metres (BUG-111): a water tower's tank stands 13 m up.
+pub const PICK_BOX_H: f32 = 16.0;
+
+/// [`pick_building`] at the ground point `p`, else (BUG-111) the building whose body the cursor
+/// ray passes through: the nearest one along the ray whose footprint, extruded to
+/// [`PICK_BOX_H`], holds a point of the ray. A click on a water tower's tank lands on the
+/// ground behind the tower; this still picks the tower.
+pub fn pick_building_ray(
+    view: &SimView,
+    p: Vec2,
+    ray: Option<(bevy_math::Vec3, bevy_math::Vec3)>,
+) -> Option<BuildingId> {
+    if let Some(id) = pick_building(view, p) {
+        return Some(id);
+    }
+    let (o, d) = ray?;
+    if d.y >= -1e-4 {
+        return None;
+    }
+    let ground = |q: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(q));
+    let mut best: Option<(f32, BuildingId)> = None;
+    for (id, b) in view.buildings.iter() {
+        if b.pos.distance(p) > PICK_REACH + PICK_BOX_H * 4.0 {
+            continue;
+        }
+        let base = ground(b.pos);
+        for k in 0..=8 {
+            let y = base + PICK_BOX_H * k as f32 / 8.0;
+            let t = (y - o.y) / d.y;
+            if t <= 0.0 {
+                continue;
+            }
+            let q = o + d * t;
+            if b.footprint_contains(Vec2::new(q.x, q.z)) {
+                if best.is_none_or(|(bt, bid)| t < bt || (t == bt && id < bid)) {
+                    best = Some((t, id));
+                }
+                break;
+            }
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
 pub fn pick_building(view: &SimView, p: Vec2) -> Option<BuildingId> {
     view.buildings
         .iter()

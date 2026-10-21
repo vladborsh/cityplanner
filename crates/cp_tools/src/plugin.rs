@@ -17,7 +17,7 @@ use cp_sim::{SimCommand, SimView};
 
 use crate::CommandOutbox;
 use crate::band::{BandState, sync_bands};
-use crate::building::{BuildingTool, PlacementGhost, pick_building, preview as place_preview};
+use crate::building::{BuildingTool, PlacementGhost, pick_building_ray, preview as place_preview};
 use crate::bulldozer::{
     PICK_RADIUS, Span, demolition, pick_segment, remove_run_commands, span_commands,
     spans_outside_owned,
@@ -159,6 +159,9 @@ pub struct ToolState {
     pub ghost: Option<Ghost>,
     /// Terrain point under the cursor (XZ).
     pub hover: Option<Vec2>,
+    /// The cursor's ray `(origin, direction)` that gave `hover` (BUG-111: a tall building is
+    /// picked where the ray meets its body, not where it meets the ground behind it).
+    pub cursor_ray: Option<(Vec3, Vec3)>,
     /// `Alt` is held: the road tool snaps to nothing but a node or a street under the cursor.
     pub alt: bool,
     /// The "snaps" button is off: the same as holding `Alt` (§6.8.3 item 9).
@@ -963,7 +966,7 @@ fn bulldozer_targets(state: &mut ToolState, view: &SimView, p: Vec2) {
     if state.bulldoze_layer != BulldozeLayer::All {
         // One utility layer (T-286): its links and its buildings, nothing else.
         let layer = state.bulldoze_layer;
-        state.building_highlight = pick_building(view, p).filter(|id| {
+        state.building_highlight = pick_building_ray(view, p, state.cursor_ray).filter(|id| {
             view.content
                 .as_deref()
                 .zip(view.buildings.get(*id))
@@ -979,7 +982,7 @@ fn bulldozer_targets(state: &mut ToolState, view: &SimView, p: Vec2) {
         state.highlight_outside = false;
         return;
     }
-    state.building_highlight = pick_building(view, p);
+    state.building_highlight = pick_building_ray(view, p, state.cursor_ray);
     state.stop_highlight = if state.building_highlight.is_some() {
         None
     } else {
@@ -990,17 +993,9 @@ fn bulldozer_targets(state: &mut ToolState, view: &SimView, p: Vec2) {
     } else {
         demolition(&view.net, p, PICK_RADIUS, state.shift)
     };
-    // A pipe or power line only when no road is under the cursor.
-    state.link_highlight = if state.building_highlight.is_some()
-        || state.stop_highlight.is_some()
-        || !state.spans.is_empty()
-    {
-        None
-    } else {
-        [UtilityNet::Power, UtilityNet::Pipe]
-            .into_iter()
-            .find_map(|net| pick_link(&view.utilities, net, p, LINK_PICK_RADIUS))
-    };
+    // Pipes and power lines go only with their layer's bulldozer (BUG-111): the plain one never
+    // picks them, so a click on open ground cannot take a pipe underneath.
+    state.link_highlight = None;
     state.highlight = state.spans.iter().map(|s| s.0).collect();
     state.highlight_outside = spans_outside_owned(&view.net, &view.tiles, &state.spans);
 }
@@ -1129,18 +1124,18 @@ fn build_command(plan: cp_net::BuildPlan) -> SimCommand {
     SimCommand::Net(NetCommand::BuildPlan { plan })
 }
 
-/// Terrain point under the cursor.
-fn cursor_ground(
+/// The terrain point under the cursor (XZ) and the ray that found it.
+fn cursor_ground_ray(
     view: &SimView,
     window: &Window,
     camera: &Camera,
     transform: &GlobalTransform,
-) -> Option<Vec2> {
+) -> Option<(Vec2, (Vec3, Vec3))> {
     let cursor = window.cursor_position()?;
     let ray = camera.viewport_to_world(transform, cursor).ok()?;
     let terrain = view.terrain.as_deref()?;
     let hit = ray_terrain_hit(terrain, ray.origin, *ray.direction, 20_000.0)?;
-    Some(Vec2::new(hit.x, hit.z))
+    Some((Vec2::new(hit.x, hit.z), (ray.origin, *ray.direction)))
 }
 
 pub fn tool_hover(
@@ -1162,11 +1157,13 @@ pub fn tool_hover(
     else {
         return;
     };
-    state.hover = if capture.pointer_over_ui {
+    let under = if capture.pointer_over_ui {
         None
     } else {
-        cursor_ground(&view, window, camera, transform)
+        cursor_ground_ray(&view, window, camera, transform)
     };
+    state.hover = under.map(|(p, _)| p);
+    state.cursor_ray = under.map(|(_, ray)| ray);
     let hover = state.hover;
     match (state.active, hover) {
         (ActiveTool::Bulldozer, Some(p)) => bulldozer_hover(&mut state, &view, p),

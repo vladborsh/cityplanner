@@ -560,3 +560,153 @@ fn a_stroke_with_nothing_chosen_makes_a_district_or_an_area_and_paints_it() {
     }
     assert_eq!(sim.world().resource::<AreaMap>().get(cell), Some(area));
 }
+
+/// BUG-111: what each bulldozer layer takes. A pipe goes only with the Water layer (a power line
+/// only with Power); the plain bulldozer never picks a pipe or a line; a water tower goes with
+/// the plain bulldozer and with the Water layer.
+mod bulldozer_layers {
+    use super::*;
+    use bevy_math::Vec3;
+    use cp_building::{BuildingCommand, BuildingGrid};
+    use cp_core::curve::CubicBezier3;
+    use cp_net::{Elevation, NetGraph};
+    use cp_terrain::TileOwnership;
+    use cp_tools::{BulldozeLayer, bulldozer_hover};
+    use cp_utility::UtilityCommand;
+
+    const TOWER: Vec2 = Vec2::new(5100.0, 5120.0);
+    const PIPE_AT: Vec2 = Vec2::new(5100.0, 5200.0);
+
+    /// A road, a water tower beside it on open ground and a pipe farther off.
+    fn world() -> SimRunner {
+        let (mut sim, db) = sim();
+        let mut tiles = TileOwnership::none();
+        for tz in 0..cp_terrain::TILES_PER_SIDE {
+            for tx in 0..cp_terrain::TILES_PER_SIDE {
+                tiles.set(tx, tz, true);
+            }
+        }
+        sim.world_mut().insert_resource(tiles);
+        let road = db.road_id("basic_2l").unwrap();
+        let def = db.road(road).clone();
+        sim.world_mut()
+            .resource_mut::<NetGraph>()
+            .add_segment(
+                &def,
+                road,
+                CubicBezier3::line(
+                    Vec3::new(5000.0, 0.0, 5000.0),
+                    Vec3::new(5200.0, 0.0, 5000.0),
+                ),
+                Elevation::Ground,
+            )
+            .unwrap();
+        sim.tick_once();
+        let mut out = CommandOutbox::default();
+        out.push(SimCommand::Building(BuildingCommand::Place {
+            def: db.building_id("water_tower").unwrap(),
+            pos: TOWER,
+            rot: 0.0,
+        }));
+        out.push(SimCommand::Utility(UtilityCommand::BuildLink {
+            kind: cp_content::UtilityKind::Water,
+            path: vec![Vec2::new(5040.0, 5200.0), Vec2::new(5160.0, 5200.0)],
+        }));
+        out.flush_into(&mut sim);
+        sim.tick_once();
+        assert_eq!(towers(&sim), 1, "the tower stands");
+        assert!(pipes(&sim) >= 1, "the pipe is laid");
+        sim
+    }
+
+    fn towers(sim: &SimRunner) -> usize {
+        sim.world().resource::<BuildingGrid>().iter().count()
+    }
+
+    fn pipes(sim: &SimRunner) -> usize {
+        sim.view().utilities.links().count()
+    }
+
+    /// A bulldozer click of `layer` at `p`; the commands it sent, applied.
+    fn bulldoze(sim: &mut SimRunner, layer: BulldozeLayer, p: Vec2) -> usize {
+        let mut app = app();
+        app.insert_resource(sim.view());
+        {
+            let view = sim.view();
+            let mut state = app.world_mut().resource_mut::<ToolState>();
+            state.bulldoze_in(layer);
+            state.hover = Some(p);
+            bulldozer_hover(&mut state, &view, p);
+        }
+        click(&mut app);
+        let n = app
+            .world_mut()
+            .resource_mut::<CommandOutbox>()
+            .flush_into(sim);
+        sim.tick_once();
+        n
+    }
+
+    #[test]
+    fn the_plain_bulldozer_leaves_a_pipe_and_the_water_layer_takes_it() {
+        let mut sim = world();
+        let laid = pipes(&sim);
+        assert_eq!(bulldoze(&mut sim, BulldozeLayer::All, PIPE_AT), 0);
+        assert_eq!(pipes(&sim), laid, "the plain bulldozer leaves pipes alone");
+        assert_eq!(bulldoze(&mut sim, BulldozeLayer::Power, PIPE_AT), 0);
+        assert_eq!(pipes(&sim), laid, "the power layer leaves pipes alone");
+        assert!(bulldoze(&mut sim, BulldozeLayer::Water, PIPE_AT) > 0);
+        assert!(pipes(&sim) < laid, "the water layer takes the pipe");
+    }
+
+    /// The user's case: the tower's tank stands 13 m up, so a click on it meets the ground well
+    /// behind the 16 m footprint. The pick follows the cursor ray through the tower's body.
+    #[test]
+    fn a_click_on_the_towers_tank_picks_the_tower_and_shows_its_refund() {
+        let mut sim = world();
+        let ground = sim.view().terrain.as_deref().unwrap().height(TOWER);
+        // A camera 60 m up and 80 m south, aimed at the tank: the ray meets the ground ~30 m
+        // north of the tower, outside its footprint.
+        let origin = Vec3::new(TOWER.x, ground + 60.0, TOWER.y + 80.0);
+        let target = Vec3::new(TOWER.x, ground + 12.0, TOWER.y);
+        let dir = (target - origin).normalize();
+        let t = -(origin.y - ground) / dir.y;
+        let hit = origin + dir * t;
+        let p = Vec2::new(hit.x, hit.z);
+        assert!(
+            p.distance(TOWER) > 12.0,
+            "the ground hit is off the footprint: {p}"
+        );
+        let mut app = app();
+        app.insert_resource(sim.view());
+        {
+            let view = sim.view();
+            let mut state = app.world_mut().resource_mut::<ToolState>();
+            state.bulldoze_in(BulldozeLayer::All);
+            state.hover = Some(p);
+            state.cursor_ray = Some((origin, dir));
+            bulldozer_hover(&mut state, &view, p);
+            assert!(state.building_highlight.is_some(), "the tower is picked");
+            assert_eq!(
+                state.bulldoze_refund,
+                cp_core::Cost::from_units(700.0),
+                "70 % back"
+            );
+        }
+        click(&mut app);
+        app.world_mut()
+            .resource_mut::<CommandOutbox>()
+            .flush_into(&mut sim);
+        sim.tick_once();
+        assert_eq!(towers(&sim), 0, "the tower is gone");
+    }
+
+    #[test]
+    fn a_water_tower_goes_with_the_plain_bulldozer_and_with_the_water_layer() {
+        for layer in [BulldozeLayer::All, BulldozeLayer::Water] {
+            let mut sim = world();
+            bulldoze(&mut sim, layer, TOWER);
+            assert_eq!(towers(&sim), 0, "{layer:?} takes the tower");
+        }
+    }
+}
