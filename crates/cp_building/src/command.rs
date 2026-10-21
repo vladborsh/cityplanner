@@ -535,9 +535,67 @@ pub fn validate_placement_over(
     pos: Vec2,
     rot: f32,
 ) -> Result<Clearance, BuildingError> {
-    let near = zoned_near(db, zones, buildings, pos);
-    let cells: Vec<ZoneCellRef> = near.iter().flat_map(|(_, c)| c.iter().copied()).collect();
-    let ids: Vec<BuildingId> = near.iter().map(|(id, _)| *id).collect();
+    validate_over(
+        db, zones, net, buildings, terrain, tiles, def, pos, rot, None,
+    )
+}
+
+/// [`validate_placement_over`] for the move of `moving` (BUG-110): its own cells and rectangle
+/// are no obstacle, and the zoned buildings near the new spot are cleared the way a `Place`
+/// clears them (they are demolished with the move); a service, a unique building or a park
+/// still blocks.
+#[allow(clippy::too_many_arguments)]
+pub fn validate_move_over(
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+    terrain: Option<&Terrain>,
+    tiles: Option<&TileOwnership>,
+    def: BuildingDefId,
+    pos: Vec2,
+    rot: f32,
+    moving: BuildingId,
+) -> Result<Clearance, BuildingError> {
+    validate_over(
+        db,
+        zones,
+        net,
+        buildings,
+        terrain,
+        tiles,
+        def,
+        pos,
+        rot,
+        Some(moving),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_over(
+    db: &ContentDb,
+    zones: &ZoneGrid,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+    terrain: Option<&Terrain>,
+    tiles: Option<&TileOwnership>,
+    def: BuildingDefId,
+    pos: Vec2,
+    rot: f32,
+    moving: Option<BuildingId>,
+) -> Result<Clearance, BuildingError> {
+    let near: Vec<_> = zoned_near(db, zones, buildings, pos)
+        .into_iter()
+        .filter(|(id, _)| Some(*id) != moving)
+        .collect();
+    let mut cells: Vec<ZoneCellRef> = near.iter().flat_map(|(_, c)| c.iter().copied()).collect();
+    let mut ids: Vec<BuildingId> = near.iter().map(|(id, _)| *id).collect();
+    if let Some(m) = moving {
+        ids.push(m);
+        if let Some(b) = buildings.get(m) {
+            cells.extend(crate::grid::held_cells(zones, b));
+        }
+    }
     let plan = validate_placement_for(
         db, zones, net, buildings, terrain, tiles, def, pos, rot, &ids, &cells,
     )?;
@@ -847,7 +905,7 @@ pub fn apply_placed(
             ))
         }
         BuildingCommand::Move { building, pos, rot } => {
-            let (plan, cost) = {
+            let (plan, demolish, cost) = {
                 let (Some(content), Some(zones), Some(net), Some(buildings)) = (
                     world.get_resource::<SimContent>(),
                     world.get_resource::<ZoneGrid>(),
@@ -865,24 +923,13 @@ pub fn apply_placed(
                 }
                 let terrain = world.get_resource::<SimTerrain>().map(|t| &*t.0);
                 let tiles = world.get_resource::<TileOwnership>();
-                let held = crate::grid::held_cells(zones, b);
-                let plan = validate_placement_for(
-                    &content.0,
-                    zones,
-                    net,
-                    buildings,
-                    terrain,
-                    tiles,
-                    def,
-                    *pos,
-                    *rot,
-                    &[*building],
-                    &held,
+                let Clearance { plan, demolish } = validate_move_over(
+                    &content.0, zones, net, buildings, terrain, tiles, def, *pos, *rot, *building,
                 )?;
                 check_industry(world, &content.0, zones, def, &plan, Some(*building))?;
                 check_park(world, &content.0, zones, def, &plan)?;
                 let cost = Cost::from_units(content.0.building(def).cost * MOVE_COST_FRACTION);
-                (plan, cost)
+                (plan, demolish, cost)
             };
             check_funds(world, cost).map_err(BuildingError::Funds)?;
             let old = {
@@ -890,6 +937,19 @@ pub fn apply_placed(
                 let buildings = world.resource::<BuildingGrid>();
                 crate::grid::held_cells(zones, &buildings.get(*building).unwrap().clone())
             };
+            // The zoned buildings on the new spot go first, as the bulldozer takes them (BUG-110).
+            let mut demolished = Vec::with_capacity(demolish.len());
+            world.resource_scope(|world, mut buildings: bevy_ecs::world::Mut<BuildingGrid>| {
+                let mut zones = world.resource_mut::<ZoneGrid>();
+                for id in &demolish {
+                    let at = buildings.get(*id).map(|b| b.pos);
+                    if crate::grid::demolish_building(&mut buildings, &mut zones, *id)
+                        && let Some(at) = at
+                    {
+                        demolished.push((*id, at));
+                    }
+                }
+            });
             {
                 let mut buildings = world.resource_mut::<BuildingGrid>();
                 let b = buildings.get_mut(*building).unwrap();
@@ -902,7 +962,12 @@ pub fn apply_placed(
             zones.release(&old);
             zones.occupy(&plan.cells());
             charge_funds(world, cost);
-            Ok((cost, None))
+            let placed = (!demolished.is_empty()).then_some(Placed {
+                building: *building,
+                platform: None,
+                demolished,
+            });
+            Ok((cost, placed))
         }
         BuildingCommand::Demolish { building } => {
             let mut buildings = world

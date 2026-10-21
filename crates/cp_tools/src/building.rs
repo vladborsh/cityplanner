@@ -336,7 +336,7 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
     let richness = lot_richness_percent(view, db, def, hover, tool.rot(), &held);
     let mut demolish = Vec::new();
     Some(
-        match place_over(view, db, tool, def, hover, tool.rot(), &held).and_then(|(plan, over)| {
+        match place_over(view, db, tool, def, hover, tool.rot()).and_then(|(plan, over)| {
             demolish = over;
             // A chain building also needs its industrial area (T-208).
             if let Some(terrain) = view.terrain.as_deref() {
@@ -400,8 +400,8 @@ pub fn preview(view: &SimView, tool: &BuildingTool, hover: Vec2) -> Option<Place
 }
 
 /// The placement check for a new building ([`validate_placement_over`]: zoned buildings are no
-/// obstacle, they are named) or for a building being moved (its own cells are free, zoned
-/// buildings still block).
+/// obstacle, they are named) or for a building being moved ([`cp_building::validate_move_over`]:
+/// its own cells are free, the zoned buildings on the new spot are named too, BUG-110).
 fn place_over(
     view: &SimView,
     db: &ContentDb,
@@ -409,11 +409,9 @@ fn place_over(
     def: BuildingDefId,
     pos: Vec2,
     rot: f32,
-    held: &[ZoneCellRef],
 ) -> Result<(PlacementPlan, Vec<BuildingId>), BuildingError> {
-    if tool.moving.is_some() {
-        let ignore: Vec<BuildingId> = tool.moving.into_iter().collect();
-        return cp_building::validate_placement_for(
+    if let Some(moving) = tool.moving {
+        return cp_building::validate_move_over(
             db,
             &view.zones,
             &view.net,
@@ -423,10 +421,9 @@ fn place_over(
             def,
             pos,
             rot,
-            &ignore,
-            held,
+            moving,
         )
-        .map(|plan| (plan, Vec::new()));
+        .map(|c| (c.plan, c.demolish));
     }
     validate_placement_over(
         db,
@@ -500,7 +497,7 @@ fn free_preview(
         edge: false,
     };
     let mut demolish = Vec::new();
-    match place_over(view, db, tool, def, pos, rot, &[]).and_then(|(plan, over)| {
+    match place_over(view, db, tool, def, pos, rot).and_then(|(plan, over)| {
         demolish = over;
         // A park attraction or prop also needs its park area (T-223).
         cp_building::validate_park_site(
@@ -540,12 +537,7 @@ fn edge_preview(
     def: BuildingDefId,
     hover: Vec2,
 ) -> PlacementGhost {
-    let held = tool
-        .moving
-        .and_then(|id| view.buildings.get(id))
-        .map(|b| cp_building::held_cells(&view.zones, b))
-        .unwrap_or_default();
-    match place_over(view, db, tool, def, hover, tool.rot(), &held) {
+    match place_over(view, db, tool, def, hover, tool.rot()) {
         Ok((plan, demolish)) => {
             let (w, d) = match plan.footprint {
                 cp_building::Footprint::Free { w, d } => (w, d),
