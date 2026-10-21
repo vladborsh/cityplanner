@@ -13,4 +13,6 @@ Building((
     styles: ["service_outflow"],
     service: Some("sewage_outflow"),
     icon: "sewage_outflow_station",
+    // Pollution / noise (T-300, system-design §11.1).
+    emits: Some((pollution: Some((strength: 60.0, radius_cells: 8)))),
 ))

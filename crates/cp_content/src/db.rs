@@ -581,6 +581,21 @@ impl ContentDb {
                 ));
             }
         }
+        // Pollution and noise sources (T-300): strength 0..=100, radius 1..=16 zone cells.
+        for (i, b) in buildings.defs.iter().enumerate() {
+            let Some(e) = &b.emits else { continue };
+            for (field, emit) in [("emits.pollution", e.pollution), ("emits.noise", e.noise)] {
+                let Some(emit) = emit else { continue };
+                if !(0.0..=100.0).contains(&emit.strength) || !(1..=16).contains(&emit.radius_cells)
+                {
+                    errors.push(ContentError::new(
+                        &buildings.files[i],
+                        Some(field),
+                        "strength must be in 0..=100 and radius_cells in 1..=16".to_string(),
+                    ));
+                }
+            }
+        }
         // A free-standing building (`road_access: false`, §8.1) has nobody who could reach it.
         for (i, b) in buildings.defs.iter().enumerate() {
             let Some(s) = b.service.as_deref().and_then(|s| services.get_id(s)) else {

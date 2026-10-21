@@ -2,9 +2,12 @@
 //! clinics and hospitals within reach treat the sick by their daily capacity, and a home with
 //! sick people nobody treats has the SICK problem. The sick stay home from work (the routine).
 //!
-//! * **Falling ill** (each tick, the citizen bucket `id % 256 == tick % 256`, 16 visits a game
-//!   day): a healthy citizen at home gets `sick_since` with chance `(sick_base + sick_pollution ×
-//!   pollution at the home) / 16`.
+//! * **Falling ill** (each tick, the citizen bucket `id % 256 == tick % 256`, so
+//!   `TICKS_PER_DAY / 256` visits a game day): a healthy citizen at home gets `sick_since` with
+//!   the chance per day `(sick_base + sick_pollution × G) × (1 − GREEN_SICK_CUT × green) +
+//!   sick_noise × N` (T-300, §11.1), shared out over the visits; `G` is the ground pollution and
+//!   `N` the noise of the home's 16 m cell. Parks soften the base and the pollution, not the
+//!   noise.
 //! * **Treatment** (each tick, the building bucket `index % 64 == tick % 64`, as police): the
 //!   sick of a building with Health coverage are cured one capacity unit each by the nearest
 //!   powered clinic or hospital with room; the others keep SICK on the building.
@@ -18,7 +21,7 @@ use cp_core::time::TICKS_PER_DAY;
 use cp_core::{SimRng, Tick};
 use cp_service::{COVERAGE_PERIOD, FacilityFinder, ServiceCoverage, ServiceProblems, ServiceState};
 
-use crate::land::LandGrids;
+use crate::emissions::Emissions;
 
 /// The RNG stream of this system (`SimRng::fork`).
 pub const HEALTH_STREAM: u64 = 0x4EA1;
@@ -32,7 +35,7 @@ pub fn update_health(
     content: Option<Res<SimContent>>,
     net: cp_service::ServiceNet,
     buildings: Res<BuildingGrid>,
-    land: Res<LandGrids>,
+    emissions: Res<Emissions>,
     coverage: Res<ServiceCoverage>,
     rng: Res<SimRng>,
     mut grid: ResMut<CitizenGrid>,
@@ -75,11 +78,15 @@ pub fn update_health(
         let Some(b) = buildings.get(home) else {
             continue;
         };
-        let p = cp_building::sick_chance(
+        // The water term (`sick_water × W`) comes with the water pools (T-300 step 2).
+        let water = 0.0;
+        let p = (cp_building::sick_chance(
             bal.sick_base,
-            bal.sick_pollution * land.pollution_at(b.pos),
+            bal.sick_pollution * emissions.ground_at(b.pos),
             cp_building::green_at(&parks, b.pos),
-        ) / VISITS_PER_DAY;
+        ) + bal.sick_noise * emissions.noise_at(b.pos)
+            + bal.sick_water * water)
+            / VISITS_PER_DAY;
         if rng.next_f32() < p {
             grid.set_sick(id, Some(*tick));
         }

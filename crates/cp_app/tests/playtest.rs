@@ -49,6 +49,16 @@ fn a_new_game_played_to_busy_town() {
             d.free[1],
             d.free[2]
         );
+        eprintln!(
+            "      sick people {} | homes on polluted ground {} ({} people) with {} sick | fell ill today: {} of them, {} of the {} elsewhere",
+            d.sick_people,
+            d.homes_dirty,
+            d.people_dirty,
+            d.sick_dirty,
+            d.new_sick_dirty,
+            d.new_sick_clean,
+            d.people_clean
+        );
         if std::env::var("PLAYTEST_ACC").is_ok() {
             let a = d.acc;
             eprintln!(

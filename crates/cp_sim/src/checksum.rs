@@ -116,6 +116,8 @@ pub(crate) fn economy_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_building::Demand>());
     h.write_serialized(world.resource::<cp_economy::DemandAcc>());
     h.write_serialized(world.resource::<cp_economy::LandGrids>());
+    // The ground pollution (T-300), as the save writes it: its non-zero cells.
+    h.write_serialized(world.resource::<cp_economy::Emissions>());
     h.write_serialized(world.resource::<cp_economy::Decay>());
     // Absent when empty, so states without a shortage keep the checksum they had before v23.
     let shortage = world.resource::<cp_economy::WorkerShortage>();

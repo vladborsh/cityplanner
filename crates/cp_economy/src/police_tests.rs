@@ -72,6 +72,7 @@ fn town(capacity: u32) -> Town {
     world.init_resource::<NetGraph>();
     world.init_resource::<BuildingGrid>();
     world.init_resource::<LandGrids>();
+    world.init_resource::<crate::Emissions>();
     ServicePlugin::init(&mut world);
     let road = db.road_id("street").unwrap();
     let def = db.road(road).clone();

@@ -13,4 +13,6 @@ Building((
     styles: ["service_coal_plant"],
     service: Some("coal_plant"),
     icon: "coal_power_plant",
+    // Pollution / noise (T-300, system-design §11.1).
+    emits: Some((pollution: Some((strength: 90.0, radius_cells: 8)))),
 ))

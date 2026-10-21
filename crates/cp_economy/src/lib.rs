@@ -9,6 +9,7 @@
 pub mod command;
 pub mod deathcare;
 pub mod demand;
+pub mod emissions;
 pub mod flow;
 pub mod growth;
 pub mod health;
@@ -20,6 +21,7 @@ pub mod week;
 pub use command::{EconomyCommand, EconomyError, apply};
 pub use deathcare::update_deathcare;
 pub use demand::{DemandAcc, shortage_jobs, smooth, update_demand};
+pub use emissions::{CELL_E, EmissionInputs, Emissions, SIDE_E, emission_of};
 pub use flow::{DemolitionRefunds, FLOW_HOURS, Flow, MoneyFlow, SERVICE_KINDS, SERVICE_ORDER};
 pub use growth::{CITY_PERIOD, Decay, WorkerShortage, level_for, update_city};
 pub use health::{HEALTH_STREAM, update_health};
@@ -39,6 +41,8 @@ pub const CRATE: &str = "cp_economy";
 
 #[cfg(test)]
 mod deathcare_tests;
+#[cfg(test)]
+mod emissions_tests;
 #[cfg(test)]
 mod health_tests;
 #[cfg(test)]

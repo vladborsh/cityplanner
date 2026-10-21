@@ -13,4 +13,6 @@ Building((
     styles: ["service_wind_turbine"],
     service: Some("wind_turbine"),
     icon: "wind_turbine",
+    // Pollution / noise (T-300, system-design §11.1).
+    emits: Some((noise: Some((strength: 35.0, radius_cells: 5)))),
 ))

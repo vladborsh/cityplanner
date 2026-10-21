@@ -235,13 +235,32 @@ pub struct Balance {
     /// Weight of a counted unemployed adult (above the commuter allowance) in commercial and
     /// in industrial demand: the jobless ask for jobs (BUG-076).
     pub demand_unemployed_job_weight: f32,
-    /// Pollution an active industrial building makes per level, at its own cell (`0..=100`
-    /// scale), fading linearly to nothing at `pollution_radius_m` (§11).
-    pub pollution_per_level: f32,
-    pub pollution_radius_m: f32,
-    /// Noise of a road at full load, fading linearly to nothing at `noise_radius_m`.
-    pub noise_per_load: f32,
-    pub noise_radius_m: f32,
+    /// Pollution and noise of the buildings without an `emits` of their own (T-300, §11.1):
+    /// strength `0..=100` at the centre, radius in zone cells (8 m), falling off linearly. An
+    /// industrial-zone building and a factory pollute `pollution_industry`; a chain building by
+    /// its resource (`pollution_industry_res`, Farming, Forestry, Ore, Oil), oil out to
+    /// `pollution_oil_radius_cells`. // tune later
+    pub pollution_industry: f32,
+    pub pollution_industry_res: [f32; 4],
+    pub pollution_radius_cells: f32,
+    pub pollution_oil_radius_cells: f32,
+    /// Noise of industry (zone and chain), of high and low commerce, and their radii (the shops'
+    /// as `[ComHigh, ComLow]`).
+    pub noise_industry: f32,
+    pub noise_com_high: f32,
+    pub noise_com_low: f32,
+    pub noise_radius_cells: f32,
+    pub noise_com_radius_cells: [f32; 2],
+    /// Noise of a highway per unit of its 2-hour average load, out to its radius; other roads
+    /// make none.
+    pub noise_highway_per_load: f32,
+    pub noise_highway_radius_cells: f32,
+    /// A zone building's strength grows by this per level above 1.
+    pub emit_level_step: f32,
+    /// Game days the ground takes to reach a source's strength, and to lose 100 once the source
+    /// is gone (T-300).
+    pub pollution_rise_days: f32,
+    pub pollution_decay_days: f32,
     /// Land value (`0..=100`): a base, plus up to `land_access` for a road within reach, plus
     /// `land_water` / `land_power` for a pipe / power line within `land_utility_reach_m`,
     /// minus pollution and noise times their weights.
@@ -331,8 +350,13 @@ pub struct Balance {
     pub birth_chance: f32,
     /// Chance per game day to fall ill at home with no pollution (T-139). // tune later
     pub sick_base: f32,
-    /// Extra chance per game day per point (0..=100) of pollution at the home.
+    /// Extra chance per game day per point (0..=100) of ground pollution at the home (cut by
+    /// green, like the base), of noise there, and of the dirt of the water it drinks (T-300).
     pub sick_pollution: f32,
+    pub sick_noise: f32,
+    pub sick_water: f32,
+    /// Water dirt from which a home has the BAD_WATER problem (T-300, step 2).
+    pub bad_water_at: f32,
     /// Land value a full coverage of Health, Police, Fire and Education adds (T-146). // tune later
     pub land_service: [f32; 4],
     /// Land value a building with the GARBAGE / CRIME problem takes from its cell.
@@ -556,10 +580,18 @@ impl Balance {
     /// in declaration order: for validation and the content hash.
     pub fn land_knobs(&self) -> Vec<f32> {
         let mut v = vec![
-            self.pollution_per_level,
-            self.pollution_radius_m,
-            self.noise_per_load,
-            self.noise_radius_m,
+            self.pollution_industry,
+            self.pollution_radius_cells,
+            self.pollution_oil_radius_cells,
+            self.noise_industry,
+            self.noise_com_high,
+            self.noise_com_low,
+            self.noise_radius_cells,
+            self.noise_highway_per_load,
+            self.noise_highway_radius_cells,
+            self.emit_level_step,
+            self.pollution_rise_days,
+            self.pollution_decay_days,
             self.land_base,
             self.land_access,
             self.land_water,
@@ -572,6 +604,8 @@ impl Balance {
             self.no_workers_ratio,
             self.no_workers_days,
         ];
+        v.extend(self.pollution_industry_res);
+        v.extend(self.noise_com_radius_cells);
         v.extend(self.level_res_land);
         v.extend(self.level_com_land);
         v.extend(self.level_ind_edu);
@@ -604,6 +638,9 @@ impl Balance {
             self.birth_chance,
             self.sick_base,
             self.sick_pollution,
+            self.sick_noise,
+            self.sick_water,
+            self.bad_water_at,
             self.land_garbage,
             self.land_crime,
             self.garbage_nuisance_m,
@@ -709,10 +746,20 @@ impl Default for Balance {
             demand_commuter_min: 20.0,
             demand_unemployed_industry_weight: 2.0,
             demand_unemployed_job_weight: 0.5,
-            pollution_per_level: 40.0,
-            pollution_radius_m: 150.0,
-            noise_per_load: 60.0,
-            noise_radius_m: 96.0,
+            pollution_industry: 50.0,
+            pollution_industry_res: [30.0, 30.0, 70.0, 80.0],
+            pollution_radius_cells: 8.0,
+            pollution_oil_radius_cells: 12.0,
+            noise_industry: 60.0,
+            noise_com_high: 35.0,
+            noise_com_low: 20.0,
+            noise_radius_cells: 8.0,
+            noise_com_radius_cells: [6.0, 5.0],
+            noise_highway_per_load: 60.0,
+            noise_highway_radius_cells: 6.0,
+            emit_level_step: 0.15,
+            pollution_rise_days: 3.0,
+            pollution_decay_days: 10.0,
             land_base: 20.0,
             land_access: 30.0,
             land_water: 10.0,
@@ -757,7 +804,10 @@ impl Default for Balance {
             sick_death_chance: 0.1,
             birth_chance: 0.02,
             sick_base: 0.003,
-            sick_pollution: 0.0002,
+            sick_pollution: 0.0003,
+            sick_noise: 0.0001,
+            sick_water: 0.0003,
+            bad_water_at: 10.0,
             land_service: [8.0, 6.0, 4.0, 8.0],
             land_garbage: 8.0,
             land_crime: 10.0,
@@ -1254,6 +1304,30 @@ pub struct BuildingDef {
     /// The role in a park (T-223); `None` for every other building.
     #[serde(default)]
     pub park: Option<ParkSpec>,
+    /// The pollution and noise this building makes (T-300, §11.1), when they are its own;
+    /// `None` takes the zone or industry rule of the balance (`cp_economy::emission_of`), and
+    /// `Some` with both empty silences the building.
+    #[serde(default)]
+    pub emits: Option<Emits>,
+}
+
+/// What a building gives off (T-300): pollution and noise, each optional.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Emits {
+    #[serde(default)]
+    pub pollution: Option<Emit>,
+    #[serde(default)]
+    pub noise: Option<Emit>,
+}
+
+/// One source: `strength` (`0..=100`) at the building's centre, falling off linearly to 0 at
+/// `radius_cells` zone cells (8 m each).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Emit {
+    pub strength: f32,
+    pub radius_cells: u8,
 }
 
 /// What a building does in a park (T-223, design §16 M6 C). Numbers: tune later.
