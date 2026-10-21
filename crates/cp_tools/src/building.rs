@@ -597,30 +597,29 @@ fn edge_preview(
     }
 }
 
-/// The building whose lot covers `p` (lowest id wins).
 /// How tall a building's pick box is, metres (BUG-111): a water tower's tank stands 13 m up.
 pub const PICK_BOX_H: f32 = 16.0;
 
-/// [`pick_building`] at the ground point `p`, else (BUG-111) the building whose body the cursor
-/// ray passes through: the nearest one along the ray whose footprint, extruded to
-/// [`PICK_BOX_H`], holds a point of the ray. A click on a water tower's tank lands on the
-/// ground behind the tower; this still picks the tower.
-pub fn pick_building_ray(
+/// The building the cursor ray `(origin, direction)` passes through (BUG-111): the nearest along
+/// the ray whose footprint, extruded to [`PICK_BOX_H`], holds a point of it. A click on a water
+/// tower's tank meets the ground behind the tower; the ray still meets the tower first. The
+/// tools try this last, after what stands at the ground point (a lot, a stop, a road, a pipe):
+/// a 16 m box must not beat a road 10 m behind a house.
+pub fn pick_building_along_ray(
     view: &SimView,
-    p: Vec2,
-    ray: Option<(bevy_math::Vec3, bevy_math::Vec3)>,
+    ray: (bevy_math::Vec3, bevy_math::Vec3),
 ) -> Option<BuildingId> {
-    if let Some(id) = pick_building(view, p) {
-        return Some(id);
-    }
-    let (o, d) = ray?;
+    let (o, d) = ray;
     if d.y >= -1e-4 {
         return None;
     }
     let ground = |q: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(q));
+    // Where the ray meets the ground: only buildings near there can be on it.
+    let hit = o + d * (-(o.y - ground(Vec2::new(o.x, o.z))) / d.y);
+    let near = Vec2::new(hit.x, hit.z);
     let mut best: Option<(f32, BuildingId)> = None;
     for (id, b) in view.buildings.iter() {
-        if b.pos.distance(p) > PICK_REACH + PICK_BOX_H * 4.0 {
+        if b.pos.distance(near) > PICK_REACH + PICK_BOX_H * 8.0 {
             continue;
         }
         let base = ground(b.pos);
@@ -642,6 +641,7 @@ pub fn pick_building_ray(
     best.map(|(_, id)| id)
 }
 
+/// The building whose lot covers `p` (lowest id wins).
 pub fn pick_building(view: &SimView, p: Vec2) -> Option<BuildingId> {
     view.buildings
         .iter()

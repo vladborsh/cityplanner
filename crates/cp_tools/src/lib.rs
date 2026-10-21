@@ -45,7 +45,7 @@ pub use district::{DistrictTool, DistrictToolKind};
 pub use flip::{FlipPreview, NOT_ONE_WAY, flip_commands, flip_preview};
 pub use net_debug::{DebugLine, NetDebug, net_debug_lines};
 pub use outbox::CommandOutbox;
-pub use pick::{Inspected, Picked, pick, pick_line, pick_with};
+pub use pick::{Inspected, Picked, pick, pick_line, pick_with, pick_with_ray};
 pub use plugin::{
     ActiveTool, BrushDemo, BulldozeLayer, Ghost, GhostDemo, PlaceDemo, ToolState, ToolsPlugin,
     UpgradeDemo, UtilityDemo, bulldozer_hover, compute_ghost, compute_ghost_alt,
