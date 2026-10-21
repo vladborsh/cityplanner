@@ -3,9 +3,15 @@
 //! on the grid (a building belongs to the cell its position is in, as before); only the drawing
 //! changes:
 //!
-//! * the contour: the oriented cell sides of a district are linked into closed loops and each
-//!   loop is rounded by [`CHAIKIN_ITERATIONS`] of Chaikin's corner cutting, so a staircase reads
-//!   as a nearly straight slanted line and a disk brush as a disk;
+//! * the contour: the oriented cell sides of a district are linked into closed loops; each loop
+//!   is resampled every [`SAMPLE_M`] along its length, averaged twice along the loop over a
+//!   window of up to [`MAX_HALF_WINDOW`] samples each side (a triangle filter of about 200 m,
+//!   capped at a quarter of the loop so a small brush shape keeps its size) and finished with
+//!   [`CHAIKIN_ITERATIONS`] of Chaikin's corner cutting. Chaikin alone is not enough: on a
+//!   staircase its limit curve still passes every step's side with the side's direction, a
+//!   scallop with a 45° swing; the average over several steps is what straightens it. Steps up
+//!   to 1:3 (a street at 18°) come out within a few degrees of straight, a 90° corner is
+//!   rounded by about a cell and a disk brush is a disk;
 //! * the fill: a soft-edged field. Every cell in or next to the district gets a quad whose
 //!   corner alpha is the share of the four cells round that corner that belong to the district,
 //!   so the tint fades over one cell across the border instead of stepping.
@@ -19,8 +25,12 @@ use bevy::math::Vec2;
 use super::{push, ribbon_with};
 use crate::chunk::MeshData;
 
-/// Rounds of corner cutting on a contour loop.
-pub const CHAIKIN_ITERATIONS: usize = 3;
+/// Spacing of the samples along a loop before smoothing, metres.
+pub const SAMPLE_M: f32 = 8.0;
+/// Most samples each side of a sample that the box filter averages (each of its two passes).
+pub const MAX_HALF_WINDOW: usize = 6;
+/// Rounds of corner cutting on a contour loop after the averaging.
+pub const CHAIKIN_ITERATIONS: usize = 1;
 
 /// The oriented sides of the cells where `inside` holds that border a cell where it does not
 /// (clockwise round each cell in `(x, z)`), `(a, b)` in world metres.
@@ -106,11 +116,63 @@ pub fn chaikin(ring: &[Vec2], n: usize) -> Vec<Vec2> {
     cur
 }
 
-/// The smooth contour loops of the cells where `inside` holds.
+/// The closed polyline `ring` resampled into evenly spaced points about `step` apart (at
+/// least 4 of them).
+pub fn resample(ring: &[Vec2], step: f32) -> Vec<Vec2> {
+    let n = ring.len();
+    let sides: Vec<f32> = (0..n)
+        .map(|i| ring[i].distance(ring[(i + 1) % n]))
+        .collect();
+    let perimeter: f32 = sides.iter().sum();
+    let count = ((perimeter / step).round() as usize).max(4);
+    let spacing = perimeter / count as f32;
+    let mut out = Vec::with_capacity(count);
+    let (mut i, mut along) = (0, 0.0f32);
+    for k in 0..count {
+        let target = k as f32 * spacing;
+        while along + sides[i] < target && i + 1 < n {
+            along += sides[i];
+            i += 1;
+        }
+        let t = if sides[i] > 0.0 {
+            ((target - along) / sides[i]).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        out.push(ring[i].lerp(ring[(i + 1) % n], t));
+    }
+    out
+}
+
+/// Each point of the closed polyline replaced by the mean of itself and `half` neighbours each
+/// way round the loop.
+pub fn box_smooth(ring: &[Vec2], half: usize) -> Vec<Vec2> {
+    let n = ring.len();
+    if half == 0 || n < 3 {
+        return ring.to_vec();
+    }
+    let half = half.min((n - 1) / 2);
+    let w = (2 * half + 1) as f32;
+    (0..n)
+        .map(|i| {
+            let sum: Vec2 = (0..=2 * half).map(|j| ring[(i + n + j - half) % n]).sum();
+            sum / w
+        })
+        .collect()
+}
+
+/// The smooth contour loops of the cells where `inside` holds (see the module doc).
 pub fn smooth_loops(inside: &dyn Fn(i32, i32) -> bool, side: usize, cell: f32) -> Vec<Vec<Vec2>> {
     link_loops(&border_edges(inside, side, cell), cell)
         .iter()
-        .map(|ring| chaikin(ring, CHAIKIN_ITERATIONS))
+        .map(|ring| {
+            let samples = resample(ring, SAMPLE_M);
+            // The window (4 × half + 1 samples over the two passes) stays within a quarter of
+            // the loop, so a small shape is rounded, not shrunk to a dot.
+            let half = (samples.len() / 16).clamp(1, MAX_HALF_WINDOW);
+            let smooth = box_smooth(&box_smooth(&samples, half), half);
+            chaikin(&smooth, CHAIKIN_ITERATIONS)
+        })
         .collect()
 }
 
@@ -239,36 +301,62 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_diagonal_stroke_has_straight_slanted_sides_not_axis_steps() {
-        // A 45° stroke: the cells within one cell of the line (k, k), k in 10..40.
-        let inside = |c: i32, r: i32| {
-            (10..=40).any(|k| {
-                let (dx, dz) = ((c - k) as f32, (r - k) as f32);
-                (dx * dx + dz * dz).sqrt() <= 1.0 + 1e-3
-            })
+    /// The worst angle, degrees, by which a piece of the long sides of a stroke of the
+    /// 3-cell brush along the line through `(10, 10)` with slope `dz/dx` leaves that line.
+    fn worst_slant(dx: f32, dz: f32) -> f32 {
+        let dir = Vec2::new(dx, dz).normalize();
+        let (a, b) = (Vec2::splat(10.5), Vec2::splat(10.5) + dir * 40.0);
+        let inside = move |c: i32, r: i32| {
+            let p = Vec2::new(c as f32 + 0.5, r as f32 + 0.5);
+            let t = (p - a).dot(dir).clamp(0.0, 40.0);
+            p.distance(a + dir * t) <= 3.0 + 1e-3
         };
         let loops = smooth_loops(&inside, 64, CELL);
         assert_eq!(loops.len(), 1);
         let ring = &loops[0];
-        let (a, b) = (Vec2::splat(10.5 * CELL), Vec2::splat(40.5 * CELL));
-        let mut off = 0;
+        let mut worst = 0.0f32;
         for i in 0..ring.len() {
             let (p, q) = (ring[i], ring[(i + 1) % ring.len()]);
-            // The ends of the stroke are round; the long sides must run at 45°.
-            if p.distance(a) < 3.0 * CELL || p.distance(b) < 3.0 * CELL {
+            // The ends of the stroke are round; only the long sides count.
+            if p.distance(a * CELL) < 5.0 * CELL || p.distance(b * CELL) < 5.0 * CELL {
                 continue;
             }
-            let dir = (q - p).normalize_or_zero();
-            let along = dir.dot(Vec2::splat(std::f32::consts::FRAC_1_SQRT_2)).abs();
-            if along < (22.5f32).to_radians().cos() {
-                off += 1;
-            }
+            let along = (q - p).normalize_or_zero().dot(dir).abs().min(1.0);
+            worst = worst.max(along.acos().to_degrees());
         }
-        assert_eq!(
-            off, 0,
-            "{off} pieces of the long sides leave the 45° line by > 22.5°"
-        );
+        worst
+    }
+
+    #[test]
+    fn a_diagonal_stroke_has_straight_slanted_sides_not_axis_steps() {
+        let raw = {
+            let inside = |c: i32, r: i32| (c - r).abs() <= 1 && (10..=40).contains(&c);
+            let ring = &link_loops(&border_edges(&inside, 64, CELL), CELL)[0];
+            turns(ring).into_iter().fold(0.0f32, f32::max)
+        };
+        assert!(raw > 89.0, "the raw staircase turns by {raw}°");
+        for (dx, dz) in [(1.0, 1.0), (3.0, 1.0), (1.0, 3.0), (2.0, 1.0)] {
+            let worst = worst_slant(dx, dz);
+            assert!(
+                worst < 10.0,
+                "a stroke along ({dx}, {dz}) leaves its line by {worst}°"
+            );
+        }
+    }
+
+    #[test]
+    fn a_small_shape_is_rounded_not_shrunk() {
+        // The small brush: a plus of 5 cells. Its loop must still reach out to about the
+        // arms' ends, not collapse into a dot.
+        let inside = |c: i32, r: i32| (c - 20).abs() + (r - 20).abs() <= 1;
+        let loops = smooth_loops(&inside, 64, CELL);
+        assert_eq!(loops.len(), 1);
+        let centre = Vec2::splat(20.5 * CELL);
+        let reach = loops[0]
+            .iter()
+            .map(|p| p.distance(centre) / CELL)
+            .fold(0.0f32, f32::max);
+        assert!((1.0..=1.6).contains(&reach), "reach {reach} cells");
     }
 
     #[test]
