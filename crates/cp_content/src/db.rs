@@ -233,6 +233,9 @@ pub struct ContentDb {
     /// The cargo definitions, one per kind at most, in kind order (T-208).
     cargos: Vec<CargoDef>,
     content_hash: u64,
+    /// The service of each building def, its `service` name resolved once at load (T-291: the
+    /// services looked it up by name for every building every tick). Derived from the tables.
+    building_services: Vec<Option<ServiceDefId>>,
 }
 
 macro_rules! accessors {
@@ -259,6 +262,13 @@ macro_rules! accessors {
 }
 
 impl ContentDb {
+    /// The service of the building def `def`: its `service` name resolved at load, `None` for a
+    /// building without one (and the placeholder). The same as
+    /// `building(def).service.and_then(service_id)`, without the lookup by name (T-291).
+    pub fn building_service(&self, def: BuildingDefId) -> Option<ServiceDefId> {
+        self.building_services.get(def.index()).copied().flatten()
+    }
+
     accessors!(roads, road, RoadDef, RoadDefId, road, road_id, roads);
     accessors!(
         buildings,
@@ -1066,10 +1076,21 @@ impl ContentDb {
                 &postcard::to_stdvec(&cargos).expect("cargos are serialisable"),
             );
         }
+        let (buildings, services) = (buildings.strip(), services.strip());
+        let building_services = buildings
+            .defs
+            .iter()
+            .map(|d| {
+                d.service
+                    .as_deref()
+                    .and_then(|name| services.get_id(name))
+                    .map(ServiceDefId)
+            })
+            .collect();
         Ok(Self {
             roads: roads.strip(),
-            buildings: buildings.strip(),
-            services: services.strip(),
+            buildings,
+            services,
             vehicles: vehicles.strip(),
             utilities: utilities.strip(),
             styles: styles.strip(),
@@ -1080,6 +1101,7 @@ impl ContentDb {
             specs,
             cargos,
             content_hash: hash,
+            building_services,
         })
     }
 }

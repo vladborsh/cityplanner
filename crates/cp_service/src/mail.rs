@@ -111,8 +111,7 @@ fn post_def<'a>(
 ) -> Option<&'a cp_content::ServiceDef> {
     buildings
         .get(id)
-        .and_then(|f| db.building(f.def).service.as_deref())
-        .and_then(|s| db.service_id(s))
+        .and_then(|f| db.building_service(f.def))
         .map(|s| db.service(s))
         .filter(|s| s.kind == ServiceKind::Post)
 }
@@ -308,10 +307,8 @@ pub fn update_mail(
         }
         let def = db.building(b.def);
         // The post's own buildings send no mail.
-        if def
-            .service
-            .as_deref()
-            .and_then(|s| db.service_id(s))
+        if db
+            .building_service(b.def)
             .is_some_and(|s| db.service(s).kind == ServiceKind::Post)
         {
             continue;

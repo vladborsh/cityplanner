@@ -67,13 +67,7 @@ impl<'a> FacilityFinder<'a> {
                 continue;
             }
             let Some(to) = b.access() else { continue };
-            let Some(svc) = db
-                .building(b.def)
-                .service
-                .as_deref()
-                .and_then(|s| db.service_id(s))
-                .map(|s| db.service(s))
-            else {
+            let Some(svc) = db.building_service(b.def).map(|s| db.service(s)) else {
                 continue;
             };
             if svc.kind == kind {

@@ -149,11 +149,7 @@ pub fn city_services(i: &BalanceInputs) -> Vec<SectorBalance> {
             continue;
         }
         let def = i.db.building(b.def);
-        let svc = def
-            .service
-            .as_deref()
-            .and_then(|s| i.db.service_id(s))
-            .map(|s| i.db.service(s));
+        let svc = i.db.building_service(b.def).map(|s| i.db.service(s));
         if let Some(svc) = svc {
             // A service without power does not work (as the facility finder).
             if !b.flags.has(BuildingFlags::NO_POWER) {

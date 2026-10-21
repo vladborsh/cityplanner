@@ -64,6 +64,9 @@ struct Derived {
     jobs: PerBuilding<[u16; 4]>,
     /// The sick citizens by the building they live in (T-139).
     sick: BTreeMap<BuildingId, BTreeSet<CitizenId>>,
+    /// The pupils of each school (T-291: the education phase counted them over every citizen
+    /// every tick).
+    pupils: PerBuilding<u32>,
 }
 
 impl Derived {
@@ -89,6 +92,19 @@ impl Derived {
             set.remove(&id);
             if set.is_empty() {
                 self.sick.remove(&home);
+            }
+        }
+    }
+
+    fn add_pupil(&mut self, school: BuildingId) {
+        *self.pupils.entry(school) += 1;
+    }
+
+    fn remove_pupil(&mut self, school: BuildingId) {
+        if let Some(n) = self.pupils.get_mut(school) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                self.pupils.remove(school);
             }
         }
     }
@@ -148,8 +164,9 @@ impl CitizenGrid {
     /// Drops the school of every citizen whose school `gone` says is demolished.
     pub fn clear_schools(&mut self, gone: impl Fn(BuildingId) -> bool) {
         for (_, c) in self.citizens.iter_mut() {
-            if c.school.is_some_and(&gone) {
+            if let Some(s) = c.school.filter(|s| gone(*s)) {
                 c.school = None;
+                self.derived.remove_pupil(s);
             }
         }
     }
@@ -251,6 +268,9 @@ impl CitizenGrid {
             {
                 d.add_sick(h, id);
             }
+            if let Some(s) = c.school {
+                d.add_pupil(s);
+            }
         }
         d.ready = true;
         self.derived = d;
@@ -289,8 +309,18 @@ impl CitizenGrid {
     /// Enrols the citizen in `school`, or takes them out of it (`None`).
     pub fn set_school(&mut self, id: CitizenId, school: Option<BuildingId>) {
         if let Some(c) = self.citizens.get_mut(id) {
-            c.school = school;
+            if let Some(old) = std::mem::replace(&mut c.school, school) {
+                self.derived.remove_pupil(old);
+            }
+            if let Some(new) = school {
+                self.derived.add_pupil(new);
+            }
         }
+    }
+
+    /// The citizens enrolled in `school` (needs [`Self::ensure_derived`]).
+    pub fn pupils_in(&self, school: BuildingId) -> u32 {
+        self.derived.pupils.get(school).copied().unwrap_or(0)
     }
 
     /// Sets a citizen's age in game days (tests and scenarios).
@@ -393,6 +423,9 @@ impl CitizenGrid {
                 if let (Some(_), Some(home)) = (c.sick_since, c.home) {
                     self.derived.remove_sick(home, cid);
                 }
+                if let Some(s) = c.school {
+                    self.derived.remove_pupil(s);
+                }
             }
         }
         self.derived.remove_home(h.home);
@@ -431,6 +464,9 @@ impl CitizenGrid {
         }
         if let (Some(_), Some(home)) = (c.sick_since, c.home) {
             self.derived.remove_sick(home, id);
+        }
+        if let Some(s) = c.school {
+            self.derived.remove_pupil(s);
         }
         let mut empty = false;
         if let Some(h) = self.households.get_mut(c.household) {
@@ -501,5 +537,52 @@ impl CitizenGrid {
 
     pub(crate) fn household_mut(&mut self, id: HouseholdId) -> Option<&mut Household> {
         self.households.get_mut(id)
+    }
+}
+
+#[cfg(test)]
+mod pupil_tests {
+    use super::*;
+
+    /// T-291: the pupil counts are what counting the citizens' schools gives, through
+    /// enrolments, moves between schools, deaths, households leaving, demolished schools and a
+    /// rebuild after a load.
+    #[test]
+    fn the_pupil_counts_follow_the_citizens() {
+        let home = BuildingId::new(0, 0);
+        let schools = [BuildingId::new(1, 0), BuildingId::new(2, 0)];
+        let mut g = CitizenGrid::new();
+        g.ensure_derived();
+        let hs: Vec<HouseholdId> = (0..6)
+            .map(|_| g.add_household(home, 0, Tick(0), &[(3000, 0, false), (2000, 0, false)]))
+            .collect();
+        let count = |g: &CitizenGrid, s: BuildingId| {
+            g.citizens().filter(|(_, c)| c.school == Some(s)).count() as u32
+        };
+        let check = |g: &CitizenGrid| {
+            for s in schools {
+                assert_eq!(g.pupils_in(s), count(g, s), "{s:?}");
+            }
+        };
+        let ids: Vec<CitizenId> = g.citizens().map(|(id, _)| id).collect();
+        for (k, id) in ids.iter().enumerate() {
+            g.set_school(*id, Some(schools[k % 2]));
+        }
+        check(&g);
+        g.set_school(ids[0], Some(schools[1]));
+        g.set_school(ids[1], None);
+        check(&g);
+        g.remove_citizen(ids[2]);
+        g.remove_household(hs[3]);
+        check(&g);
+        g.clear_schools(|s| s == schools[0]);
+        check(&g);
+        assert_eq!(g.pupils_in(schools[0]), 0);
+        // A load: the counts are derived again from the arenas.
+        let (c, h) = g.parts();
+        let mut loaded = CitizenGrid::from_parts(c.clone(), h.clone(), g.dead.clone());
+        loaded.ensure_derived();
+        check(&loaded);
+        assert!(loaded.pupils_in(schools[1]) > 0);
     }
 }

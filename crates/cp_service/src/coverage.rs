@@ -335,11 +335,7 @@ fn served_site(db: &ContentDb, b: &Building) -> Option<(ServiceKind, AccessPoint
         return None;
     }
     let access = b.access()?;
-    let service = db
-        .building(b.def)
-        .service
-        .as_deref()
-        .and_then(|s| db.service_id(s))?;
+    let service = db.building_service(b.def)?;
     let def = db.service(service);
     (def.radius_m > 0.0).then_some((def.kind, access, def.radius_m))
 }

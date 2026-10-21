@@ -19,12 +19,13 @@
 //! its way gets a truck from the nearest `Outside` node, free for the treasury (it is traffic on the entry road). With
 //! no `Outside` node nothing is exported or imported, as before.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::fleet::TransitLedger;
 use crate::hubs::{exit_for, hub_sites, is_hub_def};
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Res, ResMut};
+use bevy_math::Vec2;
 use cp_building::{BuildingFlags, BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::CitizenGrid;
 use cp_content::{CargoKind, IndustryRole, SimContent, VehicleKind, ZoneType};
@@ -264,6 +265,8 @@ pub fn run_goods(
         .filter(|(id, b)| u64::from(id.index) % 64 == bucket && b.state == BuildingState::Active)
         .map(|(id, _)| id)
         .collect();
+    // Built the first time a factory or shop of the bucket asks (T-291).
+    let mut lookup: Option<Lookup> = None;
     for id in mine {
         let b = buildings.get(id).expect("listed");
         let zone = db.building(b.def).zone;
@@ -296,19 +299,14 @@ pub fn run_goods(
                 let full = stock >= bal.goods_truck_load;
                 // A small factory may send a part load (BUG-058) to a shop that stands empty.
                 let partial = !full && stock >= bal.goods_truck_load * PARTIAL_LOAD_SHARE;
-                if (full || partial)
-                    && b.access().is_some()
-                    && !goods
-                        .hauls
-                        .values()
-                        .any(|h| h.from == Endpoint::Building(id))
-                {
+                let lk = lookup.get_or_insert_with(|| Lookup::new(&buildings, db, &goods));
+                if (full || partial) && b.access().is_some() && !lk.from.contains(&id) {
                     let load = stock.min(bal.goods_truck_load);
                     let to = if partial {
-                        pick_empty_shop(&buildings, &goods, db, id, bal.freight_radius_m)
+                        pick_empty_shop(lk, &goods, b.pos, bal.freight_radius_m)
                             .map(|shop| (Endpoint::Building(shop), RunPoint::Building(shop)))
                     } else {
-                        match pick_shop(&buildings, &goods, db, id, bal.freight_radius_m) {
+                        match pick_shop(lk, &goods, b.pos, bal.freight_radius_m) {
                             Some(shop) => {
                                 Some((Endpoint::Building(shop), RunPoint::Building(shop)))
                             }
@@ -324,15 +322,14 @@ pub fn run_goods(
                             false,
                         );
                         *goods.stock.get_mut(&id).expect("just set") -= load;
-                        goods.hauls.insert(
-                            run,
-                            Haul {
-                                from: Endpoint::Building(id),
-                                to,
-                                load,
-                                cargo: CargoKind::Goods,
-                            },
-                        );
+                        let haul = Haul {
+                            from: Endpoint::Building(id),
+                            to,
+                            load,
+                            cargo: CargoKind::Goods,
+                        };
+                        lk.note(&haul);
+                        goods.hauls.insert(run, haul);
                     }
                 }
             }
@@ -348,12 +345,13 @@ pub fn run_goods(
                 let empty = *s <= 0.0;
                 let low = *s < bal.goods_import_threshold;
                 let b = buildings.get(id).expect("listed");
+                let lk = lookup.get_or_insert_with(|| Lookup::new(&buildings, db, &goods));
                 // No factory within reach, stock running out: a truck from the outside.
                 if low
                     && b.access().is_some()
-                    && !goods.hauls.values().any(|h| h.to == Endpoint::Building(id))
+                    && !lk.to.contains(&id)
                     && !hubs.pending(id, CargoKind::Goods)
-                    && !has_stocked_supplier(&buildings, &goods, db, id, bal)
+                    && !has_stocked_supplier(lk, &goods, b.pos, bal)
                     && let Some(via) = exit_for(&entries, &sites, b.pos)
                 {
                     match via {
@@ -373,15 +371,14 @@ pub fn run_goods(
                                 RunPoint::Building(id),
                                 false,
                             );
-                            goods.hauls.insert(
-                                run,
-                                Haul {
-                                    from: Endpoint::Outside(entry),
-                                    to: Endpoint::Building(id),
-                                    load: bal.goods_truck_load,
-                                    cargo: CargoKind::Goods,
-                                },
-                            );
+                            let haul = Haul {
+                                from: Endpoint::Outside(entry),
+                                to: Endpoint::Building(id),
+                                load: bal.goods_truck_load,
+                                cargo: CargoKind::Goods,
+                            };
+                            lk.note(&haul);
+                            goods.hauls.insert(run, haul);
                         }
                     }
                 }
@@ -400,26 +397,69 @@ pub fn run_goods(
     }
 }
 
-/// The shop with the least stock within `radius` of the factory `from` (smaller id on a tie).
-fn pick_shop(
-    buildings: &BuildingGrid,
-    goods: &Goods,
-    db: &cp_content::ContentDb,
-    from: BuildingId,
-    radius: f32,
-) -> Option<BuildingId> {
-    let origin = buildings.get(from)?.pos;
+/// What the factories and shops of one bucket look up again and again, built once for it
+/// (T-291: every lookup walked all the buildings and all the trucks): the shops and the goods
+/// factories with their positions, in id order, and the buildings a truck (of any cargo) is on its
+/// way from or to, kept up as the bucket sends trucks. The buildings do not change during the
+/// bucket (only their flags); the stocks are read when asked.
+struct Lookup {
+    shops: Vec<(BuildingId, Vec2)>,
+    factories: Vec<(BuildingId, Vec2)>,
+    from: BTreeSet<BuildingId>,
+    to: BTreeSet<BuildingId>,
+}
+
+impl Lookup {
+    fn new(buildings: &BuildingGrid, db: &cp_content::ContentDb, goods: &Goods) -> Self {
+        let mut shops = Vec::new();
+        let mut factories = Vec::new();
+        for (id, b) in buildings.iter() {
+            if b.state != BuildingState::Active || b.access().is_none() {
+                continue;
+            }
+            let def = db.building(b.def);
+            match def.zone {
+                ZoneType::ComLow | ZoneType::ComHigh if def.industry.is_none() => {
+                    shops.push((id, b.pos));
+                }
+                ZoneType::Industrial
+                    if def
+                        .industry
+                        .as_ref()
+                        .is_none_or(|i| i.role == IndustryRole::Factory) =>
+                {
+                    factories.push((id, b.pos));
+                }
+                _ => {}
+            }
+        }
+        let mut lk = Self {
+            shops,
+            factories,
+            from: BTreeSet::new(),
+            to: BTreeSet::new(),
+        };
+        for h in goods.hauls.values() {
+            lk.note(h);
+        }
+        lk
+    }
+
+    fn note(&mut self, h: &Haul) {
+        if let Endpoint::Building(b) = h.from {
+            self.from.insert(b);
+        }
+        if let Endpoint::Building(b) = h.to {
+            self.to.insert(b);
+        }
+    }
+}
+
+/// The shop with the least stock within `radius` of `origin` (smaller id on a tie).
+fn pick_shop(lk: &Lookup, goods: &Goods, origin: Vec2, radius: f32) -> Option<BuildingId> {
     let mut best: Option<(f32, BuildingId)> = None;
-    for (id, b) in buildings.iter() {
-        if b.state != BuildingState::Active
-            || b.access().is_none()
-            || !matches!(
-                db.building(b.def).zone,
-                ZoneType::ComLow | ZoneType::ComHigh
-            )
-            || db.building(b.def).industry.is_some()
-            || b.pos.distance(origin) > radius
-        {
+    for &(id, pos) in &lk.shops {
+        if pos.distance(origin) > radius {
             continue;
         }
         let s = goods.stock_of(id);
@@ -430,65 +470,33 @@ fn pick_shop(
     best.map(|(_, id)| id)
 }
 
-/// The shop within `radius` of the factory `from` that has no stock (smaller id on a tie of
-/// distance order: the first by id) and no truck on its way.
-fn pick_empty_shop(
-    buildings: &BuildingGrid,
-    goods: &Goods,
-    db: &cp_content::ContentDb,
-    from: BuildingId,
-    radius: f32,
-) -> Option<BuildingId> {
-    let origin = buildings.get(from)?.pos;
-    buildings
+/// The shop within `radius` of `origin` that has no stock and no truck on its way, nearest first
+/// (smaller id on a tie).
+fn pick_empty_shop(lk: &Lookup, goods: &Goods, origin: Vec2, radius: f32) -> Option<BuildingId> {
+    lk.shops
         .iter()
-        .filter(|(id, b)| {
-            b.state == BuildingState::Active
-                && b.access().is_some()
-                && matches!(
-                    db.building(b.def).zone,
-                    ZoneType::ComLow | ZoneType::ComHigh
-                )
-                && db.building(b.def).industry.is_none()
-                && b.pos.distance(origin) <= radius
-                && goods.stock_of(*id) <= 0.0
-                && !goods
-                    .hauls
-                    .values()
-                    .any(|h| h.to == Endpoint::Building(*id))
+        .filter(|(id, pos)| {
+            pos.distance(origin) <= radius && goods.stock_of(*id) <= 0.0 && !lk.to.contains(id)
         })
         .min_by(|a, b| {
-            a.1.pos
-                .distance(origin)
-                .total_cmp(&b.1.pos.distance(origin))
+            a.1.distance(origin)
+                .total_cmp(&b.1.distance(origin))
                 .then(a.0.cmp(&b.0))
         })
-        .map(|(id, _)| id)
+        .map(|&(id, _)| id)
 }
 
-/// Whether an active factory with a road stands within the delivery radius of the shop `shop`
-/// and could send a load soon: it holds a truck load, or a part load while the shop is empty
-/// (BUG-058). A weak factory that cannot fill a truck does not block imports.
+/// Whether an active factory with a road stands within the delivery radius of a shop at
+/// `origin` and could send a load soon: it holds a truck load, or a part load while the shop is
+/// empty (BUG-058). A weak factory that cannot fill a truck does not block imports.
 fn has_stocked_supplier(
-    buildings: &BuildingGrid,
+    lk: &Lookup,
     goods: &Goods,
-    db: &cp_content::ContentDb,
-    shop: BuildingId,
+    origin: Vec2,
     bal: &cp_content::Balance,
 ) -> bool {
-    let Some(origin) = buildings.get(shop).map(|b| b.pos) else {
-        return false;
-    };
-    buildings.iter().any(|(id, b)| {
-        b.state == BuildingState::Active
-            && b.access().is_some()
-            && db.building(b.def).zone == ZoneType::Industrial
-            && db
-                .building(b.def)
-                .industry
-                .as_ref()
-                .is_none_or(|i| i.role == IndustryRole::Factory)
-            && b.pos.distance(origin) <= bal.freight_radius_m
+    lk.factories.iter().any(|&(id, pos)| {
+        pos.distance(origin) <= bal.freight_radius_m
             && goods.stock_of(id) >= bal.goods_truck_load * PARTIAL_LOAD_SHARE
     })
 }

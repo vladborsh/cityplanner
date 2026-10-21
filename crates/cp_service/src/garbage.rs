@@ -118,8 +118,7 @@ pub fn update_garbage(
         {
             let svc = buildings
                 .get(facility)
-                .and_then(|f| db.building(f.def).service.as_deref())
-                .and_then(|s| db.service_id(s))
+                .and_then(|f| db.building_service(f.def))
                 .map(|s| db.service(s));
             if let Some(svc) = svc {
                 let used = state.facility(facility).copied().unwrap_or_default();

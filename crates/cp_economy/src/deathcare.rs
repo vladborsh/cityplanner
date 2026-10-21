@@ -67,8 +67,7 @@ pub fn update_deathcare(
             };
             let Some(svc) = buildings
                 .get(station)
-                .and_then(|f| db.building(f.def).service.as_deref())
-                .and_then(|s| db.service_id(s))
+                .and_then(|f| db.building_service(f.def))
                 .map(|s| db.service(s))
             else {
                 break;

@@ -169,7 +169,7 @@ pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost
                 r.policies += Cost::scaled(p.cost_per_building_week, 1.0);
             }
         }
-        if let Some(service) = def.service.as_deref().and_then(|s| i.content.service_id(s)) {
+        if let Some(service) = i.content.building_service(b.def) {
             let kind = i.content.service(service).kind;
             let upkeep = Cost::scaled(def.upkeep_week, percent(st.budgets.get(kind)));
             r.building_upkeep += upkeep;

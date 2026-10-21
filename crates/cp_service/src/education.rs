@@ -13,8 +13,6 @@
 //!
 //! A student of the university takes no job (the job search skips citizens with a school).
 
-use std::collections::BTreeMap;
-
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::system::CITIZEN_BUCKETS;
@@ -58,12 +56,7 @@ pub fn update_education(
         let b = buildings
             .get(id)
             .filter(|b| b.state == BuildingState::Active)?;
-        let svc = db
-            .building(b.def)
-            .service
-            .as_deref()
-            .and_then(|s| db.service_id(s))
-            .map(|s| db.service(s))?;
+        let svc = db.building_service(b.def).map(|s| db.service(s))?;
         (svc.kind == ServiceKind::Education).then_some(svc.tier)
     };
     let schools: Vec<BuildingId> = buildings
@@ -74,15 +67,10 @@ pub fn update_education(
     if schools.is_empty() {
         return;
     }
-    // The places taken, counted from the citizens and kept in `stored`.
-    let mut taken: BTreeMap<BuildingId, u32> = BTreeMap::new();
-    for (_, c) in grid.citizens() {
-        if let Some(s) = c.school {
-            *taken.entry(s).or_default() += 1;
-        }
-    }
+    // The places taken, from the citizens' enrolment (kept by `CitizenGrid`, T-291), in `stored`.
+    grid.ensure_derived();
     for &s in &schools {
-        let n = taken.get(&s).copied().unwrap_or(0);
+        let n = grid.pupils_in(s);
         if state.facility(s).is_none_or(|f| f.stored != n) {
             state.facility_mut(s).stored = n;
         }
@@ -128,8 +116,7 @@ pub fn update_education(
         };
         let radius = buildings
             .get(school)
-            .and_then(|b| db.building(b.def).service.as_deref())
-            .and_then(|s| db.service_id(s))
+            .and_then(|b| db.building_service(b.def))
             .map_or(0.0, |s| db.service(s).radius_m);
         if metres >= radius {
             continue;
