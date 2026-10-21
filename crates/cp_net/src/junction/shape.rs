@@ -310,11 +310,19 @@ pub(super) fn class_and_wants(
             let s = half(a).max(half(b)) * (turn * 0.5).tan();
             (s, s)
         });
-        if class == NodeClass::Transition && (a.width - b.width).abs() > 0.01 {
-            if a.width > b.width {
-                sa = sa.max(TRANSITION_LEN);
+        if class == NodeClass::Transition {
+            if (a.width - b.width).abs() > 0.01 {
+                if a.width > b.width {
+                    sa = sa.max(TRANSITION_LEN);
+                } else {
+                    sb = sb.max(TRANSITION_LEN);
+                }
             } else {
-                sb = sb.max(TRANSITION_LEN);
+                // BUG-116: the same width with other lanes (a 6-lane into a 4-lane road, both
+                // whole cells wide) joined straight on: the edges never meet, both setbacks were
+                // zero and the polygon collapsed to a line. Each side takes half the taper.
+                sa = sa.max(TRANSITION_LEN * 0.5);
+                sb = sb.max(TRANSITION_LEN * 0.5);
             }
         }
         return (
