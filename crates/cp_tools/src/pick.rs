@@ -14,7 +14,7 @@ use cp_render::agent::{
 };
 use cp_sim::{Selection, SimView};
 
-use crate::building::pick_building;
+use crate::building::pick_building_along_ray;
 use crate::bulldozer::{PICK_RADIUS, pick_segment};
 
 /// Reach around a vehicle's centre at ground level, metres (a car is about 4 m long).
@@ -76,6 +76,19 @@ pub fn pick_with(
     camera_height: f32,
     lines: bool,
 ) -> Option<Selection> {
+    pick_with_ray(view, alpha, p, camera_height, lines, None)
+}
+
+/// [`pick_with`] with the cursor ray (BUG-111): a tall building is picked where the ray meets
+/// its body, not only where it meets the ground.
+pub fn pick_with_ray(
+    view: &SimView,
+    alpha: f32,
+    p: Vec2,
+    camera_height: f32,
+    lines: bool,
+    ray: Option<(bevy_math::Vec3, bevy_math::Vec3)>,
+) -> Option<Selection> {
     let grow = camera_height.max(0.0) * REACH_PER_HEIGHT;
     let mut best: Option<(f32, Selection)> = None;
     let mut consider = |score: f32, sel: Selection| {
@@ -121,7 +134,7 @@ pub fn pick_with(
     {
         return Some(Selection::Line(line));
     }
-    if let Some(id) = pick_building(view, p) {
+    if let Some(id) = crate::plugin::building_under(view, p, ray) {
         return Some(Selection::Building(id));
     }
     if lines && let Some(line) = pick_line(view, p) {
@@ -129,6 +142,10 @@ pub fn pick_with(
     }
     if let Some(seg) = pick_segment(&view.net, p, PICK_RADIUS) {
         return Some(Selection::Segment(seg));
+    }
+    // A tall building the ray passes through, after everything at the ground point (BUG-111).
+    if let Some(id) = ray.and_then(|r| pick_building_along_ray(view, r)) {
+        return Some(Selection::Building(id));
     }
     // A park area's ground (T-229); its gate is a building and picked above.
     cp_district::area_at(&view.area_map, p)

@@ -17,7 +17,9 @@ use cp_sim::{SimCommand, SimView};
 
 use crate::CommandOutbox;
 use crate::band::{BandState, sync_bands};
-use crate::building::{BuildingTool, PlacementGhost, pick_building_ray, preview as place_preview};
+use crate::building::{
+    BuildingTool, PlacementGhost, pick_building, pick_building_along_ray, preview as place_preview,
+};
 use crate::bulldozer::{
     PICK_RADIUS, Span, demolition, pick_segment, remove_run_commands, span_commands,
     spans_outside_owned,
@@ -966,23 +968,31 @@ fn bulldozer_targets(state: &mut ToolState, view: &SimView, p: Vec2) {
     if state.bulldoze_layer != BulldozeLayer::All {
         // One utility layer (T-286): its links and its buildings, nothing else.
         let layer = state.bulldoze_layer;
-        state.building_highlight = pick_building_ray(view, p, state.cursor_ray).filter(|id| {
+        let takes = |id: &BuildingId| {
             view.content
                 .as_deref()
                 .zip(view.buildings.get(*id))
                 .is_some_and(|(db, b)| layer.takes(db, b.def))
-        });
+        };
+        state.building_highlight = building_under(view, p, state.cursor_ray).filter(takes);
         state.stop_highlight = None;
         state.spans.clear();
         state.link_highlight = match (state.building_highlight, layer.net()) {
             (None, Some(net)) => pick_link(&view.utilities, net, p, LINK_PICK_RADIUS),
             _ => None,
         };
+        // Last: a tall building the cursor ray passes through (BUG-111).
+        if state.building_highlight.is_none()
+            && state.link_highlight.is_none()
+            && let Some(ray) = state.cursor_ray
+        {
+            state.building_highlight = pick_building_along_ray(view, ray).filter(takes);
+        }
         state.highlight.clear();
         state.highlight_outside = false;
         return;
     }
-    state.building_highlight = pick_building_ray(view, p, state.cursor_ray);
+    state.building_highlight = building_under(view, p, state.cursor_ray);
     state.stop_highlight = if state.building_highlight.is_some() {
         None
     } else {
@@ -996,8 +1006,29 @@ fn bulldozer_targets(state: &mut ToolState, view: &SimView, p: Vec2) {
     // Pipes and power lines go only with their layer's bulldozer (BUG-111): the plain one never
     // picks them, so a click on open ground cannot take a pipe underneath.
     state.link_highlight = None;
+    // Last: a tall building the cursor ray passes through (BUG-111), only when nothing stands
+    // at the ground point: a house's box must not beat the road behind it.
+    if state.building_highlight.is_none()
+        && state.stop_highlight.is_none()
+        && state.spans.is_empty()
+        && let Some(ray) = state.cursor_ray
+    {
+        state.building_highlight = pick_building_along_ray(view, ray);
+    }
     state.highlight = state.spans.iter().map(|s| s.0).collect();
     state.highlight_outside = spans_outside_owned(&view.net, &view.tiles, &state.spans);
+}
+
+/// The building a click on `p` means (BUG-111): with a building at the ground point, the
+/// buildings compete along the cursor ray and the nearest one wins (a tower's tank before the
+/// lot its click lands on); with none there, nothing — the ray is tried last, after the stops,
+/// roads and links at the ground point, so a house's box never hides the road behind it.
+pub fn building_under(view: &SimView, p: Vec2, ray: Option<(Vec3, Vec3)>) -> Option<BuildingId> {
+    let at_ground = pick_building(view, p)?;
+    Some(
+        ray.and_then(|r| pick_building_along_ray(view, r))
+            .unwrap_or(at_ground),
+    )
 }
 
 /// Exported for the headless input tests (`tests/click_through.rs`).
@@ -2067,7 +2098,7 @@ fn tool_pick(
     let height = cam.translation().y - ground;
     let alpha = view.agents.blend(fraction.map_or(1.0, |f| f.0));
     let lines = overlay.active == cp_render::Overlay::Transit;
-    picked.0 = crate::pick_with(&view, alpha, p, height, lines);
+    picked.0 = crate::pick::pick_with_ray(&view, alpha, p, height, lines, state.cursor_ray);
 }
 
 /// Outlines the selection: a building's lot, a citizen's home and workplace (or the pedestrian

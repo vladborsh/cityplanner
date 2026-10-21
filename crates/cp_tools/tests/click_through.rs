@@ -612,6 +612,10 @@ mod bulldozer_layers {
             kind: cp_content::UtilityKind::Water,
             path: vec![Vec2::new(5040.0, 5200.0), Vec2::new(5160.0, 5200.0)],
         }));
+        out.push(SimCommand::Utility(UtilityCommand::BuildLink {
+            kind: cp_content::UtilityKind::Power,
+            path: vec![Vec2::new(5040.0, 5260.0), Vec2::new(5160.0, 5260.0)],
+        }));
         out.flush_into(&mut sim);
         sim.tick_once();
         assert_eq!(towers(&sim), 1, "the tower stands");
@@ -623,8 +627,43 @@ mod bulldozer_layers {
         sim.world().resource::<BuildingGrid>().iter().count()
     }
 
+    fn links_of(sim: &SimRunner, net: cp_utility::UtilityNet) -> usize {
+        sim.view()
+            .utilities
+            .links()
+            .filter(|(_, l)| l.net == net)
+            .count()
+    }
+
     fn pipes(sim: &SimRunner) -> usize {
-        sim.view().utilities.links().count()
+        links_of(sim, cp_utility::UtilityNet::Pipe)
+    }
+
+    /// The bulldozer of `layer` hovering with a ray from `origin` towards `target`; the ground
+    /// point of the ray and the tool's state after the hover.
+    fn hover_ray(
+        sim: &SimRunner,
+        layer: BulldozeLayer,
+        origin: Vec3,
+        target: Vec3,
+    ) -> (Vec2, ToolState) {
+        let ground = sim
+            .view()
+            .terrain
+            .as_deref()
+            .unwrap()
+            .height(Vec2::new(target.x, target.z));
+        let dir = (target - origin).normalize();
+        let t = -(origin.y - ground) / dir.y;
+        let hit = origin + dir * t;
+        let p = Vec2::new(hit.x, hit.z);
+        let view = sim.view();
+        let mut state = ToolState::default();
+        state.bulldoze_in(layer);
+        state.hover = Some(p);
+        state.cursor_ray = Some((origin, dir));
+        bulldozer_hover(&mut state, &view, p);
+        (p, state)
     }
 
     /// A bulldozer click of `layer` at `p`; the commands it sent, applied.
@@ -699,6 +738,92 @@ mod bulldozer_layers {
             .flush_into(&mut sim);
         sim.tick_once();
         assert_eq!(towers(&sim), 0, "the tower is gone");
+    }
+
+    #[test]
+    fn a_power_line_goes_only_with_the_power_layer() {
+        use cp_utility::UtilityNet::Power;
+        let mut sim = world();
+        let laid = links_of(&sim, Power);
+        assert!(laid >= 1);
+        let at = Vec2::new(5100.0, 5260.0);
+        assert_eq!(bulldoze(&mut sim, BulldozeLayer::All, at), 0);
+        assert_eq!(bulldoze(&mut sim, BulldozeLayer::Water, at), 0);
+        assert_eq!(links_of(&sim, Power), laid, "All and Water leave the line");
+        assert!(bulldoze(&mut sim, BulldozeLayer::Power, at) > 0);
+        assert!(links_of(&sim, Power) < laid, "Power takes it");
+    }
+
+    /// Reviewer's case 1: a tall building beside a road; the click's ray crosses its box and
+    /// meets the ground on the road. The road is what stands at the ground point: it wins.
+    #[test]
+    fn a_building_before_the_road_does_not_hide_the_road() {
+        let (mut sim, db) = (world(), super::sim().1);
+        let mut out = CommandOutbox::default();
+        out.push(SimCommand::Building(BuildingCommand::Place {
+            def: db.building_id("water_tower").unwrap(),
+            pos: Vec2::new(5100.0, 5030.0),
+            rot: 0.0,
+        }));
+        out.flush_into(&mut sim);
+        sim.tick_once();
+        assert_eq!(towers(&sim), 2);
+        let ground = sim
+            .view()
+            .terrain
+            .as_deref()
+            .unwrap()
+            .height(Vec2::new(5100.0, 5000.0));
+        let (p, state) = hover_ray(
+            &sim,
+            BulldozeLayer::All,
+            Vec3::new(5100.0, ground + 40.0, 5110.0),
+            Vec3::new(5100.0, ground, 5000.0),
+        );
+        assert!(
+            p.distance(Vec2::new(5100.0, 5000.0)) < 1.0,
+            "the ground point is on the road"
+        );
+        assert!(
+            state.building_highlight.is_none(),
+            "the tower's box does not hide the road"
+        );
+        assert!(!state.spans.is_empty(), "the road is picked");
+    }
+
+    /// Reviewer's case 2: a building stands right where the tank click meets the ground. The
+    /// buildings compete along the ray: the tower, met first, wins.
+    #[test]
+    fn the_building_the_ray_meets_first_wins_over_the_one_at_the_ground_point() {
+        let (mut sim, db) = (world(), super::sim().1);
+        let ground = sim.view().terrain.as_deref().unwrap().height(TOWER);
+        // From 160 m south: the ray through the tank meets the ground ~40 m north of the tower.
+        let origin = Vec3::new(TOWER.x, ground + 60.0, TOWER.y + 160.0);
+        let target = Vec3::new(TOWER.x, ground + 12.0, TOWER.y);
+        let (p, _) = hover_ray(&sim, BulldozeLayer::All, origin, target);
+        assert!(p.distance(TOWER) > 20.0, "room for another tower at {p}");
+        let mut out = CommandOutbox::default();
+        out.push(SimCommand::Building(BuildingCommand::Place {
+            def: db.building_id("water_tower").unwrap(),
+            pos: p,
+            rot: 0.0,
+        }));
+        out.flush_into(&mut sim);
+        sim.tick_once();
+        assert_eq!(towers(&sim), 2);
+        let behind = sim
+            .world()
+            .resource::<BuildingGrid>()
+            .iter()
+            .find(|(_, b)| b.pos.distance(p) < 1.0)
+            .map(|(id, _)| id)
+            .expect("the tower at the ground point");
+        let (_, state) = hover_ray(&sim, BulldozeLayer::All, origin, target);
+        let picked = state.building_highlight.expect("a building");
+        assert_ne!(
+            picked, behind,
+            "the tower the ray meets first, not the one behind"
+        );
     }
 
     #[test]
