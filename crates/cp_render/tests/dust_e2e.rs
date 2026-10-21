@@ -1,8 +1,8 @@
 //! T-288: dust when something is built or knocked down (`cp_render::city_events`,
 //! `cp_render::dust`, pure). The diff of two snapshots of a sim gives one change per building
 //! placed or removed and the road pieces laid or removed; the puffs: one per placed service (none
-//! for a grown house), one per 2 cells of a new road, a darker, bigger one per building or road
-//! gone; at most 64 live.
+//! for a grown house), one per 6 cells of a new road, a darker, bigger one per building or road
+//! gone; at most 24 live.
 
 use std::path::Path;
 use std::sync::Arc;

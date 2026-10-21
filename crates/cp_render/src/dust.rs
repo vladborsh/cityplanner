@@ -13,17 +13,19 @@ use crate::city_events::{BuildingChange, BuildingEvent, SegmentChange};
 use crate::problem::Facing;
 
 /// Seconds a puff lives.
-pub const PUFF_S: f32 = 1.5;
+pub const PUFF_S: f32 = 2.2;
 /// At most this many puffs live at once (the oldest go first).
-pub const MAX_PUFFS: usize = 64;
-/// One puff per this many metres of a road laid or removed (2 cells).
-pub const ROAD_STEP_M: f32 = 16.0;
+pub const MAX_PUFFS: usize = 24;
+/// One puff per this many metres of a road laid or removed (6 cells; T-299: was 2).
+pub const ROAD_STEP_M: f32 = 48.0;
 /// More changes than this in one diff: a load or a scenario, no dust.
 pub const LOAD_CHANGES: usize = 400;
 /// A demolition's puff is this much bigger than a build's.
 const DEMOLISH_K: f32 = 1.15;
-/// Blobs per puff.
-const BLOBS: usize = 6;
+/// Spheres per puff.
+const BLOBS: usize = 4;
+/// Opacity of a sphere where it faces the eye, at the start.
+const PEAK_ALPHA: f32 = 0.9;
 
 /// Light sandy beige (a build) and a darker grey-brown (a demolition).
 pub const BUILD_DUST: [f32; 3] = [0.82, 0.72, 0.52];
@@ -137,10 +139,83 @@ pub struct LivePuff {
     pub seed: u32,
 }
 
-/// One camera-facing mesh of every live puff: each a ring of soft blobs (a fan from an opaque
-/// centre to a clear rim) that billows out low, rises a little and fades.
+/// The unit icosphere (one subdivision: 42 vertices, 80 triangles, wound outward), once.
+fn sphere() -> &'static (Vec<Vec3>, Vec<[u32; 3]>) {
+    static SPHERE: std::sync::OnceLock<(Vec<Vec3>, Vec<[u32; 3]>)> = std::sync::OnceLock::new();
+    SPHERE.get_or_init(|| {
+        let t = (1.0 + 5f32.sqrt()) / 2.0;
+        let mut v: Vec<Vec3> = [
+            (-1.0, t, 0.0),
+            (1.0, t, 0.0),
+            (-1.0, -t, 0.0),
+            (1.0, -t, 0.0),
+            (0.0, -1.0, t),
+            (0.0, 1.0, t),
+            (0.0, -1.0, -t),
+            (0.0, 1.0, -t),
+            (t, 0.0, -1.0),
+            (t, 0.0, 1.0),
+            (-t, 0.0, -1.0),
+            (-t, 0.0, 1.0),
+        ]
+        .into_iter()
+        .map(|(x, y, z)| Vec3::new(x, y, z).normalize())
+        .collect();
+        let f: [[u32; 3]; 20] = [
+            [0, 11, 5],
+            [0, 5, 1],
+            [0, 1, 7],
+            [0, 7, 10],
+            [0, 10, 11],
+            [1, 5, 9],
+            [5, 11, 4],
+            [11, 10, 2],
+            [10, 7, 6],
+            [7, 1, 8],
+            [3, 9, 4],
+            [3, 4, 2],
+            [3, 2, 6],
+            [3, 6, 8],
+            [3, 8, 9],
+            [4, 9, 5],
+            [2, 4, 11],
+            [6, 2, 10],
+            [8, 6, 7],
+            [9, 8, 1],
+        ];
+        let mut mid = std::collections::BTreeMap::new();
+        let mut tris = Vec::new();
+        let mut half = |a: u32, b: u32, v: &mut Vec<Vec3>| -> u32 {
+            let key = (a.min(b), a.max(b));
+            *mid.entry(key).or_insert_with(|| {
+                v.push(((v[a as usize] + v[b as usize]) * 0.5).normalize());
+                v.len() as u32 - 1
+            })
+        };
+        for [a, b, c] in f {
+            let (ab, bc, ca) = (half(a, b, &mut v), half(b, c, &mut v), half(c, a, &mut v));
+            tris.extend([[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]);
+        }
+        for t in &mut tris {
+            let (p0, p1, p2) = (v[t[0] as usize], v[t[1] as usize], v[t[2] as usize]);
+            if (p1 - p0).cross(p2 - p0).dot(p0 + p1 + p2) < 0.0 {
+                t.swap(1, 2);
+            }
+        }
+        (v, tris)
+    })
+}
+
+/// Direction the light comes from, for the blobs' baked shading (the sun stands high).
+const LIGHT: Vec3 = Vec3::new(0.35, 0.85, 0.4);
+
+/// One mesh of every live puff (T-299): each a few lit, translucent spheres that billow out
+/// low, rise and thin out. The shading is baked into the vertex colour (light from above, the
+/// underside darker) and the rim fades where the surface turns away from the eye, so a puff
+/// reads as a soft body, not a flat disc. Draw it with back faces culled.
 pub fn dust_mesh(puffs: &[LivePuff], facing: &Facing) -> MeshData {
-    const RIM: usize = 12;
+    let (verts, tris) = sphere();
+    let light = LIGHT.normalize();
     let mut m = MeshData::default();
     for p in puffs {
         if !(0.0..PUFF_S).contains(&p.age) {
@@ -148,55 +223,44 @@ pub fn dust_mesh(puffs: &[LivePuff], facing: &Facing) -> MeshData {
         }
         let t = p.age / PUFF_S;
         let grow = 1.0 - (1.0 - t).powi(3);
-        let alpha = (1.0 - t).sqrt() * (t / 0.08).min(1.0);
+        let alpha = PEAK_ALPHA * (1.0 - t).sqrt() * (t / 0.1).min(1.0);
         let rgb = if p.demolish {
             DEMOLISH_DUST
         } else {
             BUILD_DUST
         };
-        // Overlapping blobs add up: a demolition's are bigger, each a little thinner.
         let (k, density) = if p.demolish {
-            (DEMOLISH_K, 0.85)
+            (DEMOLISH_K, 0.9)
         } else {
             (1.0, 1.0)
         };
         for b in 0..BLOBS {
             let seed = p.seed.wrapping_mul(31).wrapping_add(b as u32);
             let ang = (b as f32 + unit(seed) * 0.6) / BLOBS as f32 * std::f32::consts::TAU;
-            let out = p.radius * (0.35 + 0.65 * grow) * (0.8 + 0.4 * unit(seed ^ 0x9e37));
-            let size = p.radius * 0.45 * k * (0.5 + 0.7 * grow);
-            // Lifted by its own size: a camera-facing disc must not sink into the ground.
-            let centre = p.at
-                + Vec3::new(ang.cos(), 0.0, ang.sin()) * out
-                + Vec3::Y * (size * 0.8 + 1.2 * grow + unit(seed ^ 0x51) * 0.6);
-            let toward = (facing.position - centre).normalize_or_zero();
-            // A soft blob: as thick as the centre out to 75 %, then a clear rim.
-            let a0 = (alpha * density).min(1.0);
+            let out = p.radius * (0.3 + 0.6 * grow) * (0.8 + 0.4 * unit(seed ^ 0x9e37));
+            let size = p.radius * 0.42 * k * (0.45 + 0.75 * grow);
+            // The cloud climbs as it thins; each blob at its own pace.
+            let rise = (2.0 + 5.0 * unit(seed ^ 0x51)) * grow;
+            let centre =
+                p.at + Vec3::new(ang.cos(), 0.0, ang.sin()) * out + Vec3::Y * (size * 0.7 + rise);
             let base = m.positions.len() as u32;
-            m.positions.push(centre.to_array());
-            m.normals.push(toward.to_array());
-            m.colors.push([rgb[0], rgb[1], rgb[2], a0]);
-            for (r, a) in [(0.75, a0), (1.0, 0.0)] {
-                for i in 0..RIM {
-                    let ang = i as f32 / RIM as f32 * std::f32::consts::TAU;
-                    let v = centre + (facing.right * ang.cos() + facing.up * ang.sin()) * size * r;
-                    m.positions.push(v.to_array());
-                    m.normals.push(toward.to_array());
-                    m.colors.push([rgb[0], rgb[1], rgb[2], a]);
-                }
-            }
-            let (inner, outer) = (base + 1, base + 1 + RIM as u32);
-            for i in 0..RIM as u32 {
-                let j = (i + 1) % RIM as u32;
-                m.indices.extend([base, inner + i, inner + j]);
-                m.indices.extend([
-                    inner + i,
-                    outer + i,
-                    outer + j,
-                    inner + i,
-                    outer + j,
-                    inner + j,
+            for n in verts {
+                let pos = centre + *n * size;
+                let to_eye = (facing.position - pos).normalize_or_zero();
+                // Facing the eye: thick; turning away: a thin rim.
+                let face = n.dot(to_eye).max(0.0).powf(0.6);
+                let lit = 0.62 + 0.38 * (0.5 + 0.5 * n.dot(light));
+                m.positions.push(pos.to_array());
+                m.normals.push(n.to_array());
+                m.colors.push([
+                    rgb[0] * lit,
+                    rgb[1] * lit,
+                    rgb[2] * lit,
+                    (alpha * density * (0.15 + 0.85 * face)).min(1.0),
                 ]);
+            }
+            for tri in tris {
+                m.indices.extend(tri.map(|i| base + i));
             }
         }
     }

@@ -398,7 +398,7 @@ fn draw_dust(
             let material = materials.add(StandardMaterial {
                 base_color: Color::WHITE,
                 unlit: true,
-                cull_mode: None,
+                cull_mode: Some(bevy::render::render_resource::Face::Back),
                 alpha_mode: AlphaMode::Blend,
                 ..default()
             });
