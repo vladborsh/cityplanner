@@ -424,7 +424,7 @@ mod tests {
         ];
         view.city = std::sync::Arc::new(stats);
         let ctx = egui::Context::default();
-        let mut texts = |o| {
+        let texts = |o| {
             frame_texts(&ctx, input(0.1, vec![]), |ui| overlay_hover(ui, &view, o))
                 .into_iter()
                 .map(|(t, _)| t)
