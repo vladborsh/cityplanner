@@ -404,14 +404,16 @@ pub fn brush_demo(
     if state.active != tool {
         state.select(tool);
     }
-    state.hover = Some(demo.at);
+    // The ghost rests where the stroke ends (BUG-112), else at the click.
+    let end = demo.to.unwrap_or(demo.at);
+    state.hover = Some(end);
     let p = demo.at;
     if demo.area {
         state.area.set_kind(demo.kind);
-        state.area_preview = state.area.preview(p);
+        state.area_preview = state.area.preview(end);
     } else {
         state.district.set_kind(demo.kind);
-        state.district_preview = state.district.preview(p);
+        state.district_preview = state.district.preview(end);
     }
     if demo.done {
         return;
