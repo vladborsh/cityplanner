@@ -6,9 +6,39 @@ use std::collections::BTreeSet;
 
 use bevy_math::Vec2;
 use cp_content::{ParkKind, ResourceKind};
-use cp_district::{AreaId, AreaMap, Cell, DistrictCommand};
+use cp_district::{AreaId, AreaKind, AreaMap, Areas, Cell, DistrictCommand, MAX_AREAS};
+use cp_locale::{tr, trf};
 
-use crate::district::{BRUSH_LARGE_RADIUS, DistrictToolKind, cells_within};
+use crate::district::DistrictToolKind;
+
+/// The id the next `CreateArea` will get: the lowest free slot (the rule of `cp_district`).
+pub fn next_area(areas: &Areas) -> Option<AreaId> {
+    let list = &areas.list;
+    let slot = list.iter().position(Option::is_none).unwrap_or(list.len());
+    (slot < MAX_AREAS).then(|| AreaId(slot as u8 + 1))
+}
+
+/// The name of a park kind as the player reads it.
+pub fn park_kind_name(kind: ParkKind) -> &'static str {
+    match kind {
+        ParkKind::CityPark => "City park",
+        ParkKind::Nature => "Nature reserve",
+        ParkKind::Zoo => "Zoo",
+        ParkKind::Amusement => "Amusement park",
+    }
+}
+
+/// "Forestry area 3" or "Zoo 3", with `3` the id the new area gets.
+pub fn new_area_name(kind: AreaKind, id: AreaId) -> String {
+    let n = id.0;
+    match kind {
+        AreaKind::Industry(ResourceKind::Farming) => trf!("Farming area {n}", n = n),
+        AreaKind::Industry(ResourceKind::Forestry) => trf!("Forestry area {n}", n = n),
+        AreaKind::Industry(ResourceKind::Ore) => trf!("Ore area {n}", n = n),
+        AreaKind::Industry(ResourceKind::Oil) => trf!("Oil area {n}", n = n),
+        AreaKind::Park(k) => format!("{} {}", tr(park_kind_name(k)), n),
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AreaTool {
@@ -33,6 +63,44 @@ impl AreaTool {
         self.stroke.clear();
     }
 
+    /// A brush stroke at `at` with no area chosen (BUG-108): an area of the kind being brushed
+    /// is chosen, else made. The kind is the park kind or the resource last picked in the panel,
+    /// else the richest resource under the cursor (`richness`), else farming. Returns the
+    /// `CreateArea` to send before the stroke's paint. The eraser needs none.
+    pub fn choose_or_create(
+        &mut self,
+        areas: &Areas,
+        richness: impl Fn(ResourceKind) -> f32,
+    ) -> Option<DistrictCommand> {
+        if self.selected.is_some() || self.kind == DistrictToolKind::Erase {
+            return None;
+        }
+        let kind = match (self.new_park, self.new_resource) {
+            (Some(k), _) => AreaKind::Park(k),
+            (None, Some(r)) => AreaKind::Industry(r),
+            (None, None) => {
+                let mut best = (ResourceKind::Farming, 0.0);
+                for r in ResourceKind::ALL {
+                    let v = richness(r);
+                    if v > best.1 {
+                        best = (r, v);
+                    }
+                }
+                AreaKind::Industry(best.0)
+            }
+        };
+        if let Some((id, _)) = areas.iter().find(|(_, a)| a.kind == kind) {
+            self.selected = Some(id);
+            return None;
+        }
+        let id = next_area(areas)?;
+        self.selected = Some(id);
+        Some(DistrictCommand::CreateArea {
+            kind,
+            name: new_area_name(kind, id),
+        })
+    }
+
     /// The button was released: the next press starts a new stroke.
     pub fn end_stroke(&mut self) {
         self.stroke.clear();
@@ -40,11 +108,7 @@ impl AreaTool {
 
     /// The cells under the brush with the cursor at `hover` (the highlight).
     pub fn preview(&self, hover: Vec2) -> Vec<Cell> {
-        let radius = match self.kind {
-            DistrictToolKind::BrushLarge => BRUSH_LARGE_RADIUS,
-            _ => 0.0,
-        };
-        cells_within(hover, radius)
+        crate::district::brush_cells(hover, self.kind)
     }
 
     /// One stroke step over `cells`: the one `PaintArea` / `EraseArea` for the cells that

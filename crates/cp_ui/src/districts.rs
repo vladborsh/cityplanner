@@ -3,7 +3,7 @@
 
 use bevy_egui::egui;
 use cp_content::ZoneType;
-use cp_district::{DistrictCommand, DistrictId, MAX_DISTRICTS, PALETTE_RGB, TAX_MAX, TAX_MIN};
+use cp_district::{DistrictCommand, DistrictId, PALETTE_RGB, TAX_MAX, TAX_MIN};
 use cp_locale::{tr, trf, trn};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{ActiveTool, CommandOutbox, DistrictToolKind, PALETTE, ToolState, zone_name};
@@ -29,14 +29,12 @@ pub fn swatch(color: u8) -> egui::Color32 {
 
 /// The id the next `Create` will get: the lowest free slot (the rule of `cp_district::apply`).
 pub fn next_id(view: &SimView) -> Option<DistrictId> {
-    let list = &view.districts.list;
-    let slot = list.iter().position(Option::is_none).unwrap_or(list.len());
-    (slot < MAX_DISTRICTS).then(|| DistrictId(slot as u8 + 1))
+    cp_tools::district::next_district(&view.districts)
 }
 
 /// "District N" with `N` the id the new district gets.
 pub fn new_name(id: DistrictId) -> String {
-    trf!("District {n}", n = id.0)
+    cp_tools::district::new_district_name(id)
 }
 
 fn send(outbox: &mut CommandOutbox, cmd: DistrictCommand) {
@@ -233,6 +231,24 @@ pub fn districts_panel(
         });
     });
     let Some(view) = view else { return };
+    // What a stroke paints (BUG-108: with nothing chosen it painted nothing, without a word).
+    if tools.active == ActiveTool::District && tools.district.kind != DistrictToolKind::Erase {
+        match tools
+            .district
+            .selected
+            .and_then(|id| view.districts.get(id))
+        {
+            Some(d) => {
+                ui.label(trf!("Painting: {name}", name = d.name));
+            }
+            None => {
+                ui.colored_label(
+                    egui::Color32::YELLOW,
+                    tr("No district chosen: a stroke makes a new one, or choose one below."),
+                );
+            }
+        }
+    }
     section(ui, &tr("Districts"), |ui| {
         if view.districts.iter().next().is_none() {
             ui.weak(tr(

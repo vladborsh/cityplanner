@@ -480,3 +480,83 @@ mod moving {
         assert!(sim.world().resource::<BuildingGrid>().get(id).is_some());
     }
 }
+
+/// BUG-108: a click with the district brush (and with the area brush of the Industry panel)
+/// paints the cells under it in the sim.
+#[test]
+fn the_district_and_area_brushes_paint_the_sim_maps() {
+    use cp_district::{AreaKind, AreaMap, DistrictCommand, DistrictMap};
+    let (mut sim, _) = sim();
+    let mut out = CommandOutbox::default();
+    out.push(SimCommand::District(DistrictCommand::Create {
+        name: "D".into(),
+    }));
+    out.push(SimCommand::District(DistrictCommand::CreateArea {
+        kind: AreaKind::Industry(cp_content::ResourceKind::Farming),
+        name: "A".into(),
+    }));
+    out.flush_into(&mut sim);
+    sim.tick_once();
+    let district = sim.view().districts.iter().next().expect("district").0;
+    let area = sim.view().areas.iter().next().expect("area").0;
+    for brush in ["district", "area"] {
+        let mut app = app();
+        app.insert_resource(sim.view());
+        {
+            let mut state = app.world_mut().resource_mut::<ToolState>();
+            if brush == "district" {
+                state.select(ActiveTool::District);
+                state.district.selected = Some(district);
+            } else {
+                state.select(ActiveTool::Area);
+                state.area.selected = Some(area);
+            }
+        }
+        click(&mut app);
+        let n = app
+            .world_mut()
+            .resource_mut::<CommandOutbox>()
+            .flush_into(&mut sim);
+        assert!(n > 0, "{brush}: the click sent a command");
+        sim.tick_once();
+    }
+    let cell = DistrictMap::cell_of(SPOT).unwrap();
+    let w = sim.world();
+    assert_eq!(w.resource::<DistrictMap>().get(cell), Some(district));
+    assert_eq!(w.resource::<AreaMap>().get(cell), Some(area));
+}
+
+/// BUG-108: a brush stroke with nothing chosen made nothing and said nothing. Now it makes a
+/// district (an industry area of the richest resource under the brush) and paints it, in the
+/// same tick.
+#[test]
+fn a_stroke_with_nothing_chosen_makes_a_district_or_an_area_and_paints_it() {
+    use cp_district::{AreaKind, AreaMap, DistrictMap};
+    let (mut sim, _) = sim();
+    for tool in [ActiveTool::District, ActiveTool::Area] {
+        let mut app = app();
+        app.insert_resource(sim.view());
+        app.world_mut().resource_mut::<ToolState>().select(tool);
+        click(&mut app);
+        app.world_mut()
+            .resource_mut::<CommandOutbox>()
+            .flush_into(&mut sim);
+        sim.tick_once();
+    }
+    let view = sim.view();
+    let cell = DistrictMap::cell_of(SPOT).unwrap();
+    let (district, _) = view.districts.iter().next().expect("a district was made");
+    assert_eq!(view.district_map.get(cell), Some(district));
+    let (area, a) = view.areas.iter().next().expect("an area was made");
+    let AreaKind::Industry(r) = a.kind else {
+        panic!("an industry area: {:?}", a.kind)
+    };
+    let res = view.terrain.as_deref().unwrap().resources();
+    for other in cp_content::ResourceKind::ALL {
+        assert!(
+            res.richness_at(r, SPOT) >= res.richness_at(other, SPOT),
+            "{r:?} the richest"
+        );
+    }
+    assert_eq!(sim.world().resource::<AreaMap>().get(cell), Some(area));
+}

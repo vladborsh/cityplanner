@@ -359,6 +359,45 @@ mod tests {
         }
     }
 
+    /// BUG-108: the Districts panel as the player uses it — New district, then a brush, then a
+    /// stroke on the map paints the district in the sim.
+    #[test]
+    fn a_new_district_from_the_panel_can_be_painted() {
+        let mut sim = SimRunner::new(1);
+        sim.set_content(content());
+        sim.tick_once();
+        let mut rig = Rig::new();
+        rig.view = sim.view();
+        rig.click_category(Category::Districts);
+        rig.click_label("New district");
+        rig.outbox.flush_into(&mut sim);
+        sim.tick_once();
+        rig.view = sim.view();
+        rig.frame(vec![]);
+        assert_eq!(rig.tools.active, ActiveTool::District);
+        let id = rig.tools.district.selected.expect("a district chosen");
+        assert!(rig.view.districts.get(id).is_some(), "{id:?} exists");
+        rig.click_label("Brush L");
+        assert_eq!(rig.tools.active, ActiveTool::District);
+        assert_eq!(
+            rig.tools.district.selected,
+            Some(id),
+            "the brush keeps the district"
+        );
+        let p = bevy::math::Vec2::new(5000.0, 5000.0);
+        let cmd = rig
+            .tools
+            .district
+            .drag(&rig.view.district_map, p)
+            .expect("paint");
+        let mut out = CommandOutbox::default();
+        out.push(cp_sim::SimCommand::District(cmd));
+        out.flush_into(&mut sim);
+        sim.tick_once();
+        let cell = cp_district::DistrictMap::cell_of(p).unwrap();
+        assert_eq!(sim.view().district_map.get(cell), Some(id));
+    }
+
     #[test]
     fn clicking_a_category_icon_opens_its_panel_and_clicking_again_closes_it() {
         let mut rig = Rig::new();

@@ -673,6 +673,28 @@ mod capture_tests {
         assert!(rig.owned().len() > base.len(), "tool panel");
     }
 
+    /// BUG-108: with any menu open and its tool in hand, the middle of the map stays the map's.
+    #[test]
+    fn every_open_menu_leaves_the_middle_of_the_map_to_the_tools() {
+        for c in Category::ALL {
+            let mut rig = Rig::new();
+            rig.state.category = Some(c);
+            match c {
+                Category::Districts => rig.tools.select(cp_tools::ActiveTool::District),
+                Category::Industry | Category::Parks => {
+                    rig.tools.select(cp_tools::ActiveTool::Area)
+                }
+                _ => {}
+            }
+            let owned = rig.owned();
+            let mid: Vec<_> = owned
+                .iter()
+                .filter(|p| (408..=808).contains(&p.0) && (168..=568).contains(&p.1))
+                .collect();
+            assert!(mid.is_empty(), "{c:?}: the UI owns {mid:?}");
+        }
+    }
+
     #[test]
     fn every_window_and_menu_owns_the_pointer_where_it_is_drawn() {
         let base = Rig::new().owned().len();

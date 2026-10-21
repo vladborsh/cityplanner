@@ -20,12 +20,7 @@ use crate::style::Sizes;
 use crate::tile::{TileIcon, tool_tile, tool_tile_enabled};
 
 pub fn kind_name(kind: ParkKind) -> &'static str {
-    match kind {
-        ParkKind::CityPark => "City park",
-        ParkKind::Nature => "Nature reserve",
-        ParkKind::Zoo => "Zoo",
-        ParkKind::Amusement => "Amusement park",
-    }
+    cp_tools::area::park_kind_name(kind)
 }
 
 pub fn kind_icon(kind: ParkKind) -> Icon {
@@ -45,7 +40,7 @@ pub fn swatch(kind: ParkKind) -> egui::Color32 {
 
 /// "Zoo 3" with `3` the id the new area gets.
 pub fn new_name(kind: ParkKind, id: AreaId) -> String {
-    format!("{} {}", tr(kind_name(kind)), id.0)
+    cp_tools::area::new_area_name(AreaKind::Park(kind), id)
 }
 
 fn kind_tool_icon(kind: DistrictToolKind) -> Icon {
