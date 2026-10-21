@@ -697,6 +697,9 @@ pub fn build_sim(
     } else if scene == Some(scene::ROAD_OVER) {
         scene::build_road_over(&mut sim);
         info!("scene road-over");
+    } else if scene == Some(scene::GROWN_HIGH) {
+        scene::build_grown_high(&mut sim);
+        info!("scene grown-high");
     } else if scene == Some(scene::GROWN) {
         scene::build_grown(&mut sim);
         info!("scene grown");

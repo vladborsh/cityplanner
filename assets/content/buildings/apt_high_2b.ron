@@ -8,5 +8,5 @@ Building((
     households: 12,
     consumption: {Water: 7.2, Sewage: 7.2, Power: 12.6},
     tax_base: 72.0,
-    styles: ["res_high_brick_terrace_a", "res_high_mansard_hotel_a", "res_high_slab_block_a", "res_high_twin_towers_a"],
+    styles: ["res_high_brick_terrace_a", "res_high_mansard_hotel_a", "res_high_slab_block_a", "res_high_twin_towers_a", "res_high_l_court_a"],
 ))

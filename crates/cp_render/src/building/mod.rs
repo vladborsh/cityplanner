@@ -1036,11 +1036,19 @@ pub fn build_building(
     }
     // Trees and bushes in the free part of a low-density lot (T-234); the far level stays a
     // plain box.
-    if def.zone == ZoneType::ResLow
-        && matches!(b.state, BuildingState::Active | BuildingState::Abandoned)
+    // T-309: the high-density homes and the offices get trees on their free ground too.
+    if matches!(
+        def.zone,
+        ZoneType::ResLow | ZoneType::ResHigh | ZoneType::Office
+    ) && matches!(b.state, BuildingState::Active | BuildingState::Abandoned)
         && !silhouette
     {
         let mut spots = shapes::garden_spots(w, d, (hu, hv, cv), sd);
+        if def.zone != ZoneType::ResLow {
+            // Rows of trees in the strips round the block, bushes from the garden between.
+            spots.retain(|s| s.kind == 2);
+            spots.extend(shapes::lot_trees(w, d, (hu, hv, cv), sd));
+        }
         // T-296: no plant in the pool, where the style has one.
         if style_def.details.contains(&Detail::Pool)
             && let Some(((pu, pv), (hpu, hpv))) = shapes::pool_rect(w, d, (hu, hv, cv))

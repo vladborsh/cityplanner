@@ -1,0 +1,16 @@
+// T-309: an L-shaped block with a court, trees in the free part of the lot.
+Style((
+    id: "office_l_campus_a",
+    massing: LShape,
+    roof: Flat,
+    floors: (3, 4),
+    footprint_fill: (0.58, 0.76),
+    palette: (
+        walls: [(0.84, 0.78, 0.66), (0.36, 0.38, 0.42), (0.62, 0.72, 0.78)],
+        roof: [(0.30, 0.31, 0.33)],
+        trim: [(0.90, 0.88, 0.82)],
+        glass: (0.18, 0.24, 0.30),
+    ),
+    facade: Ribbon,
+    details: [RooftopUnits],
+))
