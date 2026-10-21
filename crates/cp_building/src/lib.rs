@@ -17,8 +17,8 @@ pub mod under_road;
 pub use command::{
     BuildingCommand, BuildingError, Clearance, MOVE_COST_FRACTION, Placed, PlacementPlan, apply,
     apply_placed, edge_blocker, is_growable, oriented_lot, platform_request,
-    platform_request_behind, platform_shift, validate_placement, validate_placement_except,
-    validate_placement_for, validate_placement_over,
+    platform_request_behind, platform_shift, validate_move_over, validate_placement,
+    validate_placement_except, validate_placement_for, validate_placement_over,
 };
 pub use edge::{
     EDGE_REACH_M, EdgeBlocked, SLIDE_M, edge_search, is_edge_placed, validate_edge_placement,
