@@ -251,7 +251,10 @@ fn moving_a_clinic_onto_a_school_never_demolishes_the_school() {
         )
     };
     if let Ok(c) = shown {
-        assert!(c.demolish.is_empty(), "no service in the ghost's demolish list");
+        assert!(
+            c.demolish.is_empty(),
+            "no service in the ghost's demolish list"
+        );
     }
     mv(&mut sim, clinic, centre).expect("the clinic is set beside the school");
     let buildings = sim.world().resource::<BuildingGrid>();
