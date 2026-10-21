@@ -770,6 +770,47 @@ fn plan_anchors(plan: &BuildPlan, at: &[Vec2]) -> Vec<(Anchor, Vec2)> {
 /// The verdict shown when a new road runs less than one cell from another (§6.7, T-124).
 pub const TOO_CLOSE: &str = "too close to another road: leave a cell (8 m) or connect";
 
+/// The ghost's text for `e` in the player's language (the English is `e`'s `Display`).
+pub fn road_error_text(e: &cp_net::RoadBuildError) -> String {
+    use cp_locale::{tr, trf};
+    use cp_net::RoadBuildError as E;
+    use cp_net::build::{
+        ELEVATED_CLEARANCE, MIN_JUNCTION_ANGLE_DEG, MIN_SEGMENT_LENGTH_BUILD, TUNNEL_CLEARANCE,
+    };
+    match e {
+        E::SegmentTooShort { length, .. } => trf!(
+            "piece too short ({length} m, min {min} m)",
+            length = format!("{length:.1}"),
+            min = format!("{MIN_SEGMENT_LENGTH_BUILD:.0}")
+        ),
+        E::SharpAngle { degrees, .. } => trf!(
+            "angle too sharp ({degrees}°, min {min}°)",
+            degrees = format!("{degrees:.0}"),
+            min = format!("{MIN_JUNCTION_ANGLE_DEG:.0}")
+        ),
+        E::TooSteep { slope, max, .. } => trf!(
+            "too steep ({slope}%, max {max}%)",
+            slope = format!("{:.0}", slope * 100.0),
+            max = format!("{:.0}", max * 100.0)
+        ),
+        E::TooTight { radius, min, .. } => trf!(
+            "curve too tight ({radius} m, min {min} m)",
+            radius = format!("{radius:.0}"),
+            min = format!("{min:.0}")
+        ),
+        E::ElevatedClearance { .. } => trf!(
+            "roads crossing here need {m} m between the decks (or one level)",
+            m = format!("{ELEVATED_CLEARANCE:.0}")
+        ),
+        E::TunnelClearance { .. } => trf!(
+            "tunnels crossing here need {m} m between them",
+            m = format!("{TUNNEL_CLEARANCE:.0}")
+        ),
+        // The rest are fixed texts: the text is its own key.
+        _ => tr(&e.to_string()),
+    }
+}
+
 /// Does the path of `req` pass validation but run closer than one cell to an existing road? The
 /// tool then draws a red ghost and sends no command; the command itself does not check this.
 pub fn too_close(view: &SimView, req: &RoadPathRequest) -> bool {

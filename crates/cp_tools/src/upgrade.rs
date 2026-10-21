@@ -5,6 +5,7 @@
 
 use cp_content::{ContentDb, RoadDefId};
 use cp_core::Cost;
+use cp_locale::{tr, trf};
 use cp_net::{
     Elevation, NetCommand, NetGraph, SegmentId, curve_outside_owned, road_run, segment_cost,
 };
@@ -39,9 +40,9 @@ impl UpgradePreview {
     /// The warning for the verdict, if the new type drops zoned blocks that have buildings.
     pub fn warning(&self) -> Option<String> {
         (self.dropped_building_cells > 0).then(|| {
-            format!(
-                "no zoning on the new type: {} built cells lose their road (NO_ROAD)",
-                self.dropped_building_cells
+            trf!(
+                plural "no zoning on the new type: {n} built cells lose their road (NO_ROAD)",
+                n = self.dropped_building_cells
             )
         })
     }
@@ -62,7 +63,7 @@ pub fn upgrade_preview(
         ..Default::default()
     };
     if target.index() >= content.roads().count() {
-        out.errors.push("pick a road type first".to_string());
+        out.errors.push(tr("pick a road type first"));
         return out;
     }
     let def = content.road(target);
@@ -70,7 +71,7 @@ pub fn upgrade_preview(
         net.segment(id)
             .is_some_and(|s| curve_outside_owned(tiles, &s.curve).is_some())
     }) {
-        out.errors.push(OUTSIDE_LAND.to_string());
+        out.errors.push(tr(OUTSIDE_LAND));
         return out;
     }
     for id in run {
@@ -83,7 +84,7 @@ pub fn upgrade_preview(
                 Some(v) => v.cost_per_m,
                 None => {
                     out.errors
-                        .push(format!("{} has no elevated variant", def.name));
+                        .push(trf!("{name} has no elevated variant", name = tr(&def.name)));
                     continue;
                 }
             }

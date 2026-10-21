@@ -79,6 +79,8 @@ pub struct GamePlugin {
     pub no_clouds: bool,
     /// No parked cars in this run (`--no-parked`, T-276: shots without them).
     pub no_parked: bool,
+    /// The language of this run (`--lang ru`, T-284); else the player's setting.
+    pub lang: Option<cp_locale::Lang>,
 }
 
 #[derive(Resource, Clone)]
@@ -102,6 +104,11 @@ impl Plugin for GamePlugin {
         } else {
             settings::Settings::default()
         };
+        let lang = self
+            .lang
+            .or_else(|| cp_locale::Lang::from_code(&settings.language))
+            .unwrap_or_default();
+        cp_locale::set_lang(lang);
         app.insert_resource(GameConfig {
             map: self.map.clone(),
             limits: self.limits,
@@ -161,6 +168,7 @@ impl Plugin for GamePlugin {
                         effects: settings.audio.effects,
                         mute: settings.audio.mute,
                     },
+                    lang,
                 },
                 grading_open: self.grading_panel,
                 overlays_collapsed: self.fold_overlays,
@@ -1009,8 +1017,8 @@ pub fn handle_file_request(
         FileRequest::Refresh => refresh(menu),
         FileRequest::Save(name) => {
             menu.status = match saves::save_game(sim, data, &name, map) {
-                Ok(path) => format!("Saved {}", path.display()),
-                Err(e) => format!("Save failed: {e}"),
+                Ok(path) => cp_locale::trf!("Saved {path}", path = path.display()),
+                Err(e) => cp_locale::trf!("Save failed: {e}", e = e),
             };
             refresh(menu);
         }
@@ -1023,12 +1031,16 @@ pub fn handle_file_request(
                         .insert_resource(cp_core::time::SimSpeed::Pause);
                     *view = sim.view();
                     if warnings.is_empty() {
-                        format!("Loaded {name}")
+                        cp_locale::trf!("Loaded {name}", name = name)
                     } else {
-                        format!("Loaded {name} ({})", warnings.join(", "))
+                        cp_locale::trf!(
+                            "Loaded {name} ({warnings})",
+                            name = name,
+                            warnings = warnings.join(", ")
+                        )
                     }
                 }
-                Err(e) => format!("Load failed: {e}"),
+                Err(e) => cp_locale::trf!("Load failed: {e}", e = e),
             };
         }
     }

@@ -5,6 +5,7 @@
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
+use cp_locale::tr;
 use cp_render::GradingSettings;
 
 use crate::UiState;
@@ -17,41 +18,37 @@ pub fn grading_panel(
     open: &mut bool,
 ) -> Option<String> {
     let mut copied = None;
-    crate::frame::window(
-        "grading",
-        crate::icons::Icon::Debug,
-        "Colour grading (F8)",
-        open,
-    )
-    .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -48.0))
-    .show(ctx, |ui| {
-        egui::Grid::new("grading_grid")
-            .num_columns(2)
-            .spacing([8.0, 4.0])
-            .show(ui, |ui| {
-                for (name, value, range) in g.fields() {
-                    ui.label(name);
-                    ui.add(
-                        egui::Slider::new(value, range)
-                            .step_by(0.005)
-                            // The step snapping of a range from -0.2 leaves -3e-9 for 0: shown
-                            // as 0.000, not "-0.000".
-                            .custom_formatter(|v, _| {
-                                format!("{:.3}", if v.abs() < 5e-4 { 0.0 } else { v })
-                            }),
-                    );
-                    ui.end_row();
+    let title = tr("Colour grading (F8)");
+    crate::frame::window("grading", crate::icons::Icon::Debug, &title, open)
+        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -48.0))
+        .show(ctx, |ui| {
+            egui::Grid::new("grading_grid")
+                .num_columns(2)
+                .spacing([8.0, 4.0])
+                .show(ui, |ui| {
+                    for (name, value, range) in g.fields() {
+                        ui.label(name);
+                        ui.add(
+                            egui::Slider::new(value, range)
+                                .step_by(0.005)
+                                // The step snapping of a range from -0.2 leaves -3e-9 for 0: shown
+                                // as 0.000, not "-0.000".
+                                .custom_formatter(|v, _| {
+                                    format!("{:.3}", if v.abs() < 5e-4 { 0.0 } else { v })
+                                }),
+                        );
+                        ui.end_row();
+                    }
+                });
+            ui.horizontal(|ui| {
+                if ui.button(tr("Copy values")).clicked() {
+                    copied = Some(g.to_line());
+                }
+                if ui.button(tr("Reset")).clicked() {
+                    *g = GradingSettings::NEUTRAL;
                 }
             });
-        ui.horizontal(|ui| {
-            if ui.button("Copy values").clicked() {
-                copied = Some(g.to_line());
-            }
-            if ui.button("Reset").clicked() {
-                *g = GradingSettings::NEUTRAL;
-            }
         });
-    });
     copied
 }
 

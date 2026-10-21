@@ -4,6 +4,7 @@
 
 use bevy::prelude::*;
 use bevy_egui::egui;
+use cp_locale::{tr, trf};
 
 use crate::icons::Icon;
 
@@ -58,13 +59,14 @@ pub fn toggle_saves(menu: &mut FileMenu) {
 pub fn file_window(ctx: &egui::Context, menu: &mut FileMenu) -> FileRects {
     let mut rects = FileRects::default();
     let mut open = menu.open;
-    crate::frame::window("file_menu", Icon::Saves, "Save / Load", &mut open)
+    let title = tr("Save / Load");
+    crate::frame::window("file_menu", Icon::Saves, &title, &mut open)
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 40.0))
         .show(ctx, |ui| {
             ui.weak(&menu.dir);
             ui.horizontal(|ui| {
                 ui.text_edit_singleline(&mut menu.name);
-                let r = ui.add_enabled(!menu.name.trim().is_empty(), egui::Button::new("Save"));
+                let r = ui.add_enabled(!menu.name.trim().is_empty(), egui::Button::new(tr("Save")));
                 rects.save = Some(r.rect);
                 if r.clicked() {
                     menu.request = Some(FileRequest::Save(menu.name.trim().to_string()));
@@ -72,17 +74,17 @@ pub fn file_window(ctx: &egui::Context, menu: &mut FileMenu) -> FileRects {
             });
             ui.separator();
             if menu.files.is_empty() {
-                ui.weak("No saves yet.");
+                ui.weak(tr("No saves yet."));
             }
             for f in &menu.files {
                 ui.horizontal(|ui| {
-                    ui.label(format!(
-                        "{}  ({} kB, tick {})",
-                        f.name,
-                        f.bytes / 1024,
-                        f.tick
+                    ui.label(trf!(
+                        "{name}  ({size} kB, tick {tick})",
+                        name = f.name,
+                        size = f.bytes / 1024,
+                        tick = f.tick
                     ));
-                    let r = ui.button("Load");
+                    let r = ui.button(tr("Load"));
                     rects.loads.push((f.name.clone(), r.rect));
                     if r.clicked() {
                         menu.request = Some(FileRequest::Load(f.name.clone()));

@@ -4,6 +4,7 @@
 //! same). It replaces the View menu popup and the window icons of the top bar.
 
 use bevy_egui::egui;
+use cp_locale::tr;
 use cp_render::{LightingSettings, Overlay, OverlayState};
 
 use crate::files::{FileMenu, toggle_saves};
@@ -115,9 +116,9 @@ pub fn overlays_panel(
                     let r = ui
                         .small_button(arrow)
                         .on_hover_text(if state.overlays_collapsed {
-                            "Show the overlays (O)"
+                            tr("Show the overlays (O)")
                         } else {
-                            "Fold the panel (O)"
+                            tr("Fold the panel (O)")
                         });
                     rects.fold = Some(r.rect);
                     if r.clicked() {
@@ -136,7 +137,7 @@ pub fn overlays_panel(
                                 let r = w
                                     .icon()
                                     .button(ui, WINDOW_ICON, Sizes::BUTTON_PAD, on)
-                                    .on_hover_text(w.label());
+                                    .on_hover_text(tr(w.label()));
                                 rects.windows.push((w, r.rect));
                                 if r.clicked() {
                                     toggle_window(state, files, w);
@@ -147,7 +148,7 @@ pub fn overlays_panel(
                             }
                             let r = Icon::Settings
                                 .button(ui, WINDOW_ICON, Sizes::BUTTON_PAD, state.settings_open)
-                                .on_hover_text("Settings");
+                                .on_hover_text(tr("Settings"));
                             rects.settings = Some(r.rect);
                             if r.clicked() {
                                 state.settings_open = !state.settings_open;
@@ -166,7 +167,7 @@ pub fn overlays_panel(
                                         Sizes::BUTTON_PAD,
                                         overlay.active == o,
                                     )
-                                    .on_hover_text(o.label());
+                                    .on_hover_text(tr(o.label()));
                                 rects.overlays.push((o, r.rect));
                                 if r.clicked() {
                                     overlay.open(o);
@@ -205,47 +206,60 @@ fn settings_popup(
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 // Render only: the game clock and everyone's routine keep running at night.
-                let r = ui.checkbox(&mut lighting.always_day, "Всегда день");
+                let r = ui.checkbox(&mut lighting.always_day, tr("Always day"));
                 rects.always_day = Some(r.rect);
                 // Shadows of passing clouds (T-272).
-                ui.checkbox(&mut lighting.cloud_shadows, "Тени облаков");
+                ui.checkbox(&mut lighting.cloud_shadows, tr("Cloud shadows"));
                 // Parked cars along the kerbs (T-276).
-                ui.checkbox(&mut lighting.parked_cars, "Припаркованные машины");
+                ui.checkbox(&mut lighting.parked_cars, tr("Parked cars"));
                 let prefs = &mut state.prefs;
-                ui.add(egui::Slider::new(&mut prefs.ui_scale, UI_SCALE_RANGE).text("Масштаб UI"));
+                // The language (T-284): its own name in each, so it reads in either; applies live.
+                ui.horizontal(|ui| {
+                    ui.label("Language / Язык");
+                    for lang in cp_locale::Lang::ALL {
+                        if ui
+                            .selectable_label(prefs.lang == lang, lang.native_name())
+                            .clicked()
+                        {
+                            prefs.lang = lang;
+                            cp_locale::set_lang(lang);
+                        }
+                    }
+                });
+                ui.add(egui::Slider::new(&mut prefs.ui_scale, UI_SCALE_RANGE).text(tr("UI scale")));
                 // Sound (T-189).
-                ui.checkbox(&mut prefs.audio.mute, "Mute");
+                ui.checkbox(&mut prefs.audio.mute, tr("Mute"));
                 ui.add_enabled(
                     !prefs.audio.mute,
-                    egui::Slider::new(&mut prefs.audio.master, 0.0..=1.0).text("Volume"),
+                    egui::Slider::new(&mut prefs.audio.master, 0.0..=1.0).text(tr("Volume")),
                 );
                 ui.add_enabled(
                     !prefs.audio.mute,
-                    egui::Slider::new(&mut prefs.audio.effects, 0.0..=1.0).text("Effects"),
+                    egui::Slider::new(&mut prefs.audio.effects, 0.0..=1.0).text(tr("Effects")),
                 );
                 let cam = &mut prefs.camera;
-                ui.add(egui::Slider::new(&mut cam.pan_speed, 0.2..=3.0).text("Скорость сдвига"));
+                ui.add(egui::Slider::new(&mut cam.pan_speed, 0.2..=3.0).text(tr("Pan speed")));
                 ui.add(
                     egui::Slider::new(&mut cam.key_rotate_speed, 0.4..=4.0)
-                        .text("Скорость поворота"),
+                        .text(tr("Rotation speed")),
                 );
                 ui.add(
                     egui::Slider::new(&mut cam.drag_rotate_sens, 0.001..=0.02)
-                        .text("Чувствительность мыши"),
+                        .text(tr("Mouse sensitivity")),
                 );
                 // Distance factor per notch: smaller = faster, shown the other way round.
                 let mut zoom = 1.0 - cam.zoom_step;
                 if ui
-                    .add(egui::Slider::new(&mut zoom, 0.02..=0.4).text("Шаг зума"))
+                    .add(egui::Slider::new(&mut zoom, 0.02..=0.4).text(tr("Zoom step")))
                     .changed()
                 {
                     cam.zoom_step = 1.0 - zoom;
                 }
-                ui.checkbox(&mut cam.edge_pan, "Сдвиг у края экрана");
-                ui.checkbox(&mut prefs.advisor, "City advisor");
+                ui.checkbox(&mut cam.edge_pan, tr("Pan at the screen edge"));
+                ui.checkbox(&mut prefs.advisor, tr("City advisor"));
                 ui.add_enabled(
                     prefs.advisor,
-                    egui::Checkbox::new(&mut prefs.advisor_problems_only, "Only problems"),
+                    egui::Checkbox::new(&mut prefs.advisor_problems_only, tr("Only problems")),
                 );
             });
         });

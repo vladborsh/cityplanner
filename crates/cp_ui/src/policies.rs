@@ -9,6 +9,7 @@ use cp_building::BuildingState;
 use cp_content::{ContentDb, PolicyDef, PolicyKind};
 use cp_core::Cost;
 use cp_district::{DistrictCommand, DistrictId};
+use cp_locale::{tr, trf};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, format_money};
 
@@ -20,16 +21,20 @@ use crate::tile::{TileIcon, tool_tile_enabled};
 pub fn effect_text(kind: PolicyKind, value: f32) -> String {
     let pct = (value * 100.0).round() as i32;
     match kind {
-        PolicyKind::Recycling => format!("Buildings make {pct}% less garbage"),
-        PolicyKind::SmokeDetectors => format!("{pct}% less fire risk"),
-        PolicyKind::NeighborhoodWatch => format!("{pct}% less crime"),
-        PolicyKind::PowerSaving => format!("{pct}% less electricity used"),
-        PolicyKind::HighRiseBan => format!("Tall buildings stop at level {value:.0}"),
-        PolicyKind::HeavyTrafficBan => "Trucks drive around instead of through".to_string(),
-        PolicyKind::FreeTransit => {
-            format!("Free tickets; transit looks {pct}% better when choosing how to travel")
-        }
-        PolicyKind::TourismPromotion => format!("{pct}% more tourists"),
+        PolicyKind::Recycling => trf!("Buildings make {pct}% less garbage", pct = pct),
+        PolicyKind::SmokeDetectors => trf!("{pct}% less fire risk", pct = pct),
+        PolicyKind::NeighborhoodWatch => trf!("{pct}% less crime", pct = pct),
+        PolicyKind::PowerSaving => trf!("{pct}% less electricity used", pct = pct),
+        PolicyKind::HighRiseBan => trf!(
+            "Tall buildings stop at level {level}",
+            level = format!("{value:.0}")
+        ),
+        PolicyKind::HeavyTrafficBan => tr("Trucks drive around instead of through"),
+        PolicyKind::FreeTransit => trf!(
+            "Free tickets; transit looks {pct}% better when choosing how to travel",
+            pct = pct
+        ),
+        PolicyKind::TourismPromotion => trf!("{pct}% more tourists", pct = pct),
     }
 }
 
@@ -80,11 +85,14 @@ pub fn week_cost(def: &PolicyDef, buildings: u32) -> Cost {
 pub fn hover(view: &SimView, def: &PolicyDef, district: Option<DistrictId>) -> String {
     let n = covered(view, district);
     format!(
-        "{}\n{}\n{}/wk for {n} building{}",
-        def.name,
+        "{}\n{}\n{}",
+        tr(&def.name),
         effect_text(def.kind, def.value),
-        format_money(week_cost(def, n)),
-        if n == 1 { "" } else { "s" }
+        trf!(
+            plural "{money}/wk for {n} buildings",
+            n = n,
+            money = format_money(week_cost(def, n))
+        )
     )
 }
 
@@ -115,9 +123,15 @@ pub fn policy_tiles(
                 Some(l) => format!("{l}\n{}", hover(view, def, district)),
                 None => hover(view, def, district),
             };
-            if tool_tile_enabled(ui, TileIcon::Def(&def.icon), &def.name, on, lock.is_none())
-                .on_hover_text(text)
-                .clicked()
+            if tool_tile_enabled(
+                ui,
+                TileIcon::Def(&def.icon),
+                &tr(&def.name),
+                on,
+                lock.is_none(),
+            )
+            .on_hover_text(text)
+            .clicked()
             {
                 outbox.push(SimCommand::District(DistrictCommand::SetPolicy {
                     district,
@@ -139,14 +153,16 @@ pub fn city_policies_window(
     crate::frame::window(
         "city_policies",
         Icon::DistrictTabPolicies,
-        "City policies",
+        &tr("City policies"),
         open,
     )
     .show(ctx, |ui| {
         if view.content.is_none() {
             return;
         }
-        ui.weak("They apply everywhere in the city and cost money every week.");
+        ui.weak(tr(
+            "They apply everywhere in the city and cost money every week.",
+        ));
         policy_tiles(ui, view, outbox, None);
         let n = covered(view, None);
         let total: Cost = view
@@ -160,9 +176,9 @@ pub fn city_policies_window(
                     .fold(Cost::ZERO, |a, c| a + c)
             })
             .unwrap_or(Cost::ZERO);
-        ui.label(format!(
-            "City policies in force cost {}/wk",
-            format_money(total)
+        ui.label(trf!(
+            "City policies in force cost {money}/wk",
+            money = format_money(total)
         ));
     });
 }

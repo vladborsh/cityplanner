@@ -9,8 +9,9 @@
 
 use std::path::{Path, PathBuf};
 
-use cp_content::SimContent;
+use cp_content::{DefKind, SimContent};
 use cp_core::SimLimits;
+use cp_locale::{tr, trf};
 use cp_prof::PhaseClock;
 use cp_save::{LoadWarning, load_into_runner, read_header, save_runner};
 use cp_sim::{SimRunner, SimTerrain};
@@ -45,7 +46,10 @@ pub fn clean_name(typed: &str) -> Option<String> {
 
 fn path_of(data: &Path, name: &str) -> Result<PathBuf, String> {
     let name = clean_name(name).ok_or_else(|| {
-        format!("'{name}' is not a usable save name (letters, digits, space, _ and -)")
+        trf!(
+            "'{name}' is not a usable save name (letters, digits, space, _ and -)",
+            name = name
+        )
     })?;
     Ok(saves_dir(data).join(format!("{name}.{EXT}")))
 }
@@ -88,12 +92,15 @@ pub fn save_game(
         .world()
         .get_resource::<SimContent>()
         .map_or(0, |c| c.0.content_hash());
-    let bytes = save_runner(sim, content_hash, map_id).map_err(|e| e.to_string())?;
+    let bytes = save_runner(sim, content_hash, map_id).map_err(|e| save_error_text(&e))?;
     let dir = saves_dir(data);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| trf!("cannot create {path}: {e}", path = dir.display(), e = e))?;
     let tmp = path.with_extension("sav.tmp");
-    std::fs::write(&tmp, &bytes).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    std::fs::write(&tmp, &bytes)
+        .map_err(|e| trf!("cannot write {path}: {e}", path = tmp.display(), e = e))?;
+    std::fs::rename(&tmp, &path)
+        .map_err(|e| trf!("cannot write {path}: {e}", path = path.display(), e = e))?;
     Ok(path)
 }
 
@@ -126,28 +133,75 @@ pub fn load_game(
     name: &str,
 ) -> Result<(SimRunner, Vec<String>), String> {
     let path = path_of(data, name)?;
-    let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let bytes = std::fs::read(&path)
+        .map_err(|e| trf!("cannot read {path}: {e}", path = path.display(), e = e))?;
     let content_hash = old
         .world()
         .get_resource::<SimContent>()
         .map_or(0, |c| c.0.content_hash());
     let mut sim = fresh_like(old);
     let (_, warnings) = load_into_runner(&mut sim, &bytes, content_hash)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+        .map_err(|e| format!("{}: {}", path.display(), save_error_text(&e)))?;
     let warnings = warnings
         .into_iter()
         .map(|w| match w {
-            LoadWarning::ContentHashMismatch { .. } => "saved with different content".to_string(),
-            LoadWarning::MapMismatch { .. } => "saved on a different map".to_string(),
-            LoadWarning::UnknownDef { kind, name } => {
-                format!(
-                    "unknown {} type `{name}` replaced by a placeholder",
-                    kind.label()
-                )
-            }
+            LoadWarning::ContentHashMismatch { .. } => tr("saved with different content"),
+            LoadWarning::MapMismatch { .. } => tr("saved on a different map"),
+            LoadWarning::UnknownDef { kind, name } => match kind {
+                DefKind::Road => {
+                    trf!(
+                        "unknown road type `{name}` replaced by a placeholder",
+                        name = name
+                    )
+                }
+                DefKind::Building => {
+                    trf!(
+                        "unknown building type `{name}` replaced by a placeholder",
+                        name = name
+                    )
+                }
+                DefKind::Service => {
+                    trf!(
+                        "unknown service type `{name}` replaced by a placeholder",
+                        name = name
+                    )
+                }
+                DefKind::Vehicle => {
+                    trf!(
+                        "unknown vehicle type `{name}` replaced by a placeholder",
+                        name = name
+                    )
+                }
+                DefKind::Utility => {
+                    trf!(
+                        "unknown utility type `{name}` replaced by a placeholder",
+                        name = name
+                    )
+                }
+            },
         })
         .collect();
     Ok((sim, warnings))
+}
+
+/// What went wrong with a save file, in the player's language (the English is `e`'s `Display`).
+fn save_error_text(e: &cp_save::SaveError) -> String {
+    use cp_save::SaveError;
+    match e {
+        SaveError::BadMagic
+        | SaveError::Truncated
+        | SaveError::CrcMismatch
+        | SaveError::TrailingBytes => tr(&e.to_string()),
+        SaveError::UnsupportedVersion(v) => {
+            trf!("unsupported save format version {v}", v = v)
+        }
+        SaveError::OlderVersion(v) => trf!(
+            "save from an older version (format {v}; this build reads format {now})",
+            v = v,
+            now = cp_save::FORMAT_VERSION
+        ),
+        _ => e.to_string(),
+    }
 }
 
 #[cfg(test)]

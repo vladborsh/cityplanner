@@ -980,9 +980,9 @@ pub struct BlockGuide {
 
 fn cells_text(cells: u32) -> String {
     if cells == BLOCK_CELLS {
-        format!("block {BLOCK_CELLS} cells")
+        cp_locale::trf!("block {n} cells", n = BLOCK_CELLS)
     } else {
-        format!("{cells} cells — partial block")
+        cp_locale::trn("{n} cells — partial block", i64::from(cells))
     }
 }
 

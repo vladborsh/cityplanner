@@ -5,6 +5,7 @@
 use bevy_egui::egui;
 use cp_content::{BuildingDefId, ContentDb, ServiceKind, ServiceSite, UtilityKind};
 use cp_core::Cost;
+use cp_locale::{tr, trf};
 use cp_render::{Overlay, OverlayState};
 use cp_sim::SimView;
 use cp_tools::{ActiveTool, ToolState, UtilityMode, format_money};
@@ -99,17 +100,19 @@ fn kind_icon(kind: ServiceKind) -> Icon {
 /// The text of a card: name, then price and upkeep, then capacity and lot.
 pub fn card_text(c: &Card) -> String {
     let capacity = if c.capacity > 0 {
-        format!("capacity {} · ", c.capacity)
+        trf!("capacity {n} · ", n = c.capacity)
     } else {
         String::new()
     };
     format!(
-        "{}\n{} · {}/wk\n{capacity}lot {}×{}",
-        c.name,
-        format_money(c.cost),
-        format_money(c.upkeep_week),
-        c.lot.0,
-        c.lot.1
+        "{}\n{}\n{capacity}{}",
+        tr(&c.name),
+        trf!(
+            "{cost} · {upkeep}/wk",
+            cost = format_money(c.cost),
+            upkeep = format_money(c.upkeep_week)
+        ),
+        trf!("lot {w}×{h}", w = c.lot.0, h = c.lot.1)
     )
 }
 
@@ -122,7 +125,11 @@ pub fn lock_text(view: &SimView, content: &ContentDb, id: BuildingDefId) -> Opti
 
 /// "Unlocks at 3,000 (Town)": the tooltip of a locked building, policy or zone (T-283).
 pub fn unlocks_at(population: u32, name: &str) -> String {
-    format!("Unlocks at {} ({name})", thousands(population))
+    trf!(
+        "Unlocks at {population} ({name})",
+        population = thousands(population),
+        name = tr(name)
+    )
 }
 
 /// `3000` as "3,000".
@@ -158,7 +165,7 @@ pub struct Section {
 
 impl Section {
     pub fn title(&self) -> String {
-        kind_label(self.kind)
+        tr(&kind_label(self.kind))
     }
 }
 
@@ -298,15 +305,19 @@ pub fn unique_hover(view: &SimView, card: &Card) -> String {
     let state = unique_state(view, card.id);
     let mut out = String::new();
     match state {
-        UniqueState::Built => out.push_str("Built — one per city\n"),
+        UniqueState::Built => {
+            out.push_str(&tr("Built — one per city"));
+            out.push('\n');
+        }
         UniqueState::Locked => {
-            out.push_str("Locked\n");
+            out.push_str(&tr("Locked"));
+            out.push('\n');
             if let Some(u) = view.uniques.iter().find(|u| u.def == card.id) {
                 for (cond, cur, need) in &u.conditions {
                     out.push_str(&format!(
                         "{} {} {} / {}\n",
                         if cur >= need { "✓" } else { "•" },
-                        cp_sim::progress::cond_name(cond),
+                        tr(&cp_sim::progress::cond_name(cond)),
                         spaced(*cur),
                         spaced(*need)
                     ));
@@ -327,32 +338,36 @@ pub fn unique_rows(content: &ContentDb, def: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     if let Some(spec) = d.spec.and_then(|k| content.spec(k)) {
         out.push((
-            "Specialisation".to_string(),
-            format!("{}: {}", spec.name, crate::specs::effect_text(spec)),
+            tr("Specialisation"),
+            format!("{}: {}", tr(&spec.name), crate::specs::effect_text(spec)),
         ));
     }
     if let Some(e) = d.land_effect {
         out.push((
-            "Land value".to_string(),
-            format!("{:+.0} within {:.0} m", e.add, e.radius_m),
+            tr("Land value"),
+            trf!(
+                "{add} within {radius} m",
+                add = format!("{:+.0}", e.add),
+                radius = format!("{:.0}", e.radius_m)
+            ),
         ));
         if e.green > 0.0 {
             // T-237: what the neighbours get besides the price of their land.
             out.push((
-                "Wellbeing".to_string(),
-                format!(
-                    "{:.0} % fewer sick, {:.0} % likelier to move in, within {:.0} m",
-                    e.green * cp_building::GREEN_SICK_CUT * 100.0,
-                    e.green * cp_building::GREEN_MOVE_IN_BONUS * 100.0,
-                    e.radius_m
+                tr("Wellbeing"),
+                trf!(
+                    "{sick} % fewer sick, {move_in} % likelier to move in, within {radius} m",
+                    sick = format!("{:.0}", e.green * cp_building::GREEN_SICK_CUT * 100.0),
+                    move_in = format!("{:.0}", e.green * cp_building::GREEN_MOVE_IN_BONUS * 100.0),
+                    radius = format!("{:.0}", e.radius_m)
                 ),
             ));
         }
     }
     if let Some(u) = &d.unique {
         out.push((
-            "Tourists".to_string(),
-            format!("{:.0} a day", u.tourists_per_day),
+            tr("Tourists"),
+            trf!("{n} a day", n = format!("{:.0}", u.tourists_per_day)),
         ));
     }
     out
@@ -436,12 +451,12 @@ fn net_parts(net: NetTab) -> (UtilityKind, UtilityNet, Overlay) {
 /// The plate under a section's tiles for the selected building's site (`ServiceDef.site`).
 pub fn site_note(site: ServiceSite) -> String {
     match site {
-        ServiceSite::OnWater => "Stands on water: at least one lot cell over water".to_string(),
-        ServiceSite::Shore => format!(
-            "Stands on the shore: lot on land, water no farther than {:.0} m",
-            ServiceSite::SHORE_REACH_M
+        ServiceSite::OnWater => tr("Stands on water: at least one lot cell over water"),
+        ServiceSite::Shore => trf!(
+            "Stands on the shore: lot on land, water no farther than {m} m",
+            m = format!("{:.0}", ServiceSite::SHORE_REACH_M)
         ),
-        ServiceSite::Land => "Land only".to_string(),
+        ServiceSite::Land => tr("Land only"),
     }
 }
 
@@ -474,8 +489,11 @@ pub fn buildings_panel(
                 && let Some((_, def)) = content.utility_for_kind(kind)
             {
                 let on = tools.active == ActiveTool::Utility && tools.utility.kind == kind;
-                if tool_tile(ui, TileIcon::Def(&def.icon), &def.name, on)
-                    .on_hover_text(format!("{}: click to start, click to end", def.name))
+                if tool_tile(ui, TileIcon::Def(&def.icon), &tr(&def.name), on)
+                    .on_hover_text(trf!(
+                        "{name}: click to start, click to end",
+                        name = tr(&def.name)
+                    ))
                     .clicked()
                 {
                     if on {
@@ -497,7 +515,7 @@ pub fn buildings_panel(
                 if tool_tile_enabled(
                     ui,
                     TileIcon::Def(&card.icon),
-                    &card.name,
+                    &tr(&card.name),
                     on,
                     lock.is_none(),
                 )
@@ -518,7 +536,7 @@ pub fn buildings_panel(
             && tools.active == ActiveTool::Utility
             && tools.utility.kind == kind
         {
-            ui.weak("Mode");
+            ui.weak(tr("Mode"));
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
                 for (mode, icon, label, hover) in [
@@ -530,9 +548,14 @@ pub fn buildings_panel(
                         "Enter ends",
                     ),
                 ] {
-                    if tool_tile(ui, TileIcon::Icon(icon), label, tools.utility.mode == mode)
-                        .on_hover_text(hover)
-                        .clicked()
+                    if tool_tile(
+                        ui,
+                        TileIcon::Icon(icon),
+                        &tr(label),
+                        tools.utility.mode == mode,
+                    )
+                    .on_hover_text(tr(hover))
+                    .clicked()
                     {
                         tools.utility.set_mode(mode);
                     }
@@ -554,7 +577,7 @@ pub fn buildings_panel(
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 Icon::Buildings.show(ui, Sizes::SECTION_ICON);
-                ui.strong(unique_title(monument));
+                ui.strong(tr(unique_title(monument)));
             });
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
@@ -565,7 +588,7 @@ pub fn buildings_panel(
                     let r = tool_tile_enabled(
                         ui,
                         TileIcon::Def(&card.icon),
-                        &card.name,
+                        &tr(&card.name),
                         on,
                         state == UniqueState::Open,
                     )

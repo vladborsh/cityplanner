@@ -5,6 +5,7 @@
 use bevy_egui::egui;
 use cp_content::{BuildingDefId, CargoKind, ContentDb, IndustryRole, ResourceKind};
 use cp_district::{AreaId, AreaKind, DistrictCommand, MAX_AREAS, NAME_MAX};
+use cp_locale::{tr, trf};
 use cp_render::{Overlay, OverlayState, resource_color};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{ActiveTool, CommandOutbox, DistrictToolKind, ToolState};
@@ -56,7 +57,18 @@ pub fn next_id(view: &SimView) -> Option<AreaId> {
 
 /// "Forestry area 3" with `3` the id the new area gets.
 pub fn new_name(kind: ResourceKind, id: AreaId) -> String {
-    format!("{} area {}", resource_name(kind), id.0)
+    let n = id.0;
+    match kind {
+        ResourceKind::Farming => trf!("Farming area {n}", n = n),
+        ResourceKind::Forestry => trf!("Forestry area {n}", n = n),
+        ResourceKind::Ore => trf!("Ore area {n}", n = n),
+        ResourceKind::Oil => trf!("Oil area {n}", n = n),
+    }
+}
+
+/// The name of a cargo as the player reads it (the key is the variant's name).
+fn cargo_name(cargo: CargoKind) -> String {
+    tr(&format!("{cargo:?}"))
 }
 
 /// Picking a resource gives the brush an area of that kind (BUG-062): the selected one if it is
@@ -160,8 +172,10 @@ pub fn industry_lock(view: &SimView, db: &ContentDb, def: BuildingDefId) -> Opti
         }
     }
     match best {
-        None => Some("needs main building".to_string()),
-        Some(level) if level < spec.min_level => Some(format!("area level {}", spec.min_level)),
+        None => Some(tr("needs main building")),
+        Some(level) if level < spec.min_level => {
+            Some(trf!("area level {level}", level = spec.min_level))
+        }
         Some(_) => None,
     }
 }
@@ -239,10 +253,13 @@ pub fn problem_text(p: cp_industry::IndustryProblem) -> Option<&'static str> {
 pub fn industry_rows(view: &SimView, id: cp_building::BuildingId) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for &(cargo, v) in view.industry.stock.get(&id).map_or(&[][..], Vec::as_slice) {
-        out.push((format!("Stock: {cargo:?}"), format!("{v:.0}")));
+        out.push((
+            trf!("Stock: {cargo}", cargo = cargo_name(cargo)),
+            format!("{v:.0}"),
+        ));
     }
     if let Some(t) = problem_text(view.industry.problem_of(id)) {
-        out.push(("Problem".to_string(), t.to_string()));
+        out.push((tr("Problem"), tr(t)));
     }
     out
 }
@@ -296,8 +313,8 @@ pub fn warehouse_controls(
             ),
         ] {
             let r = ui
-                .selectable_label(now.mode == mode, label)
-                .on_hover_text(hint);
+                .selectable_label(now.mode == mode, tr(label))
+                .on_hover_text(tr(hint));
             actions.push((label.to_string(), r.rect));
             if r.clicked() && now.mode != mode {
                 send(now.cargo, mode);
@@ -310,8 +327,9 @@ pub fn warehouse_controls(
                 .into_iter()
                 .map(|c| (Some(c), format!("{c:?}"))),
         );
+        // `label` is the English key (tests click by it); the button shows its translation.
         for (cargo, label) in options {
-            let r = ui.selectable_label(now.cargo == cargo, &label);
+            let r = ui.selectable_label(now.cargo == cargo, tr(&label));
             actions.push((label, r.rect));
             if r.clicked() && now.cargo != cargo {
                 send(cargo, now.mode);
@@ -325,21 +343,29 @@ fn area_panel(ui: &mut egui::Ui, view: &SimView, id: AreaId) {
         return;
     };
     section(ui, &s.name, |ui| {
-        ui.label(format!("{} · level {}", resource_name(s.resource), s.level));
+        ui.label(trf!(
+            "{resource} · level {level}",
+            resource = tr(resource_name(s.resource)),
+            level = s.level
+        ));
         let (frac, text) = match s.next_xp {
             Some(next) => (
                 (s.xp as f32 / next.max(1) as f32).min(1.0),
-                format!("{} / {} xp", s.xp, next),
+                trf!("{xp} / {next} xp", xp = s.xp, next = next),
             ),
-            None => (1.0, format!("{} xp (top level)", s.xp)),
+            None => (1.0, trf!("{xp} xp (top level)", xp = s.xp)),
         };
         ui.add(egui::ProgressBar::new(frac).text(text));
-        ui.label(format!("{} buildings · {} jobs", s.buildings, s.jobs));
+        ui.label(trf!(
+            plural "{n} buildings · {jobs} jobs",
+            n = s.buildings,
+            jobs = s.jobs
+        ));
         if s.stock.is_empty() {
-            ui.weak("Nothing stored yet.");
+            ui.weak(tr("Nothing stored yet."));
         }
         for (cargo, v) in &s.stock {
-            ui.label(format!("{cargo:?}: {v:.0}"));
+            ui.label(format!("{}: {v:.0}", cargo_name(*cargo)));
         }
     });
 }
@@ -357,7 +383,7 @@ fn chain_panel(
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             resource_icon(res).show(ui, Sizes::SECTION_ICON);
-            ui.strong(resource_name(res));
+            ui.strong(tr(resource_name(res)));
         });
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
@@ -365,13 +391,17 @@ fn chain_panel(
                 let lock = industry_lock(view, db, card.id);
                 let on = tools.active == ActiveTool::Place && tools.building.def == Some(card.id);
                 let hover = match &lock {
-                    Some(l) => format!("Locked: {l}\n{}", card_text(card)),
+                    Some(l) => format!(
+                        "{}\n{}",
+                        trf!("Locked: {reason}", reason = l),
+                        card_text(card)
+                    ),
                     None => card_text(card),
                 };
                 let r = tool_tile_enabled(
                     ui,
                     TileIcon::Def(&card.icon),
-                    &card.name,
+                    &tr(&card.name),
                     on,
                     lock.is_none(),
                 )
@@ -396,12 +426,18 @@ pub fn industry_panel(
     overlay: &mut OverlayState,
     outbox: &mut CommandOutbox,
 ) {
-    section(ui, "Tool", |ui| {
+    section(ui, &tr("Tool"), |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             for kind in DistrictToolKind::ALL {
                 let selected = tools.active == ActiveTool::Area && tools.area.kind == kind;
-                if tool_tile(ui, TileIcon::Icon(kind_icon(kind)), kind.label(), selected).clicked()
+                if tool_tile(
+                    ui,
+                    TileIcon::Icon(kind_icon(kind)),
+                    &tr(kind.label()),
+                    selected,
+                )
+                .clicked()
                 {
                     if tools.active != ActiveTool::Area {
                         tools.select(ActiveTool::Area);
@@ -422,7 +458,7 @@ pub fn industry_panel(
             if tool_tile_enabled(
                 ui,
                 TileIcon::Icon(Icon::Remove),
-                "Off",
+                &tr("Off"),
                 false,
                 tools.active == ActiveTool::Area,
             )
@@ -433,8 +469,8 @@ pub fn industry_panel(
         });
     });
     let Some(view) = view else { return };
-    section(ui, "New area", |ui| {
-        ui.weak("Choose what the area works, then press New area.");
+    section(ui, &tr("New area"), |ui| {
+        ui.weak(tr("Choose what the area works, then press New area."));
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             for kind in ResourceKind::ALL {
@@ -442,12 +478,12 @@ pub fn industry_panel(
                 if tool_tile(
                     ui,
                     TileIcon::Icon(resource_icon(kind)),
-                    resource_name(kind),
+                    &tr(resource_name(kind)),
                     on,
                 )
-                .on_hover_text(format!(
-                    "{}: the colour of its area and the overlay",
-                    resource_name(kind)
+                .on_hover_text(trf!(
+                    "{resource}: the colour of its area and the overlay",
+                    resource = tr(resource_name(kind))
                 ))
                 .clicked()
                 {
@@ -460,7 +496,7 @@ pub fn industry_panel(
             if tool_tile_enabled(
                 ui,
                 TileIcon::Icon(Icon::DistrictNew),
-                "New area",
+                &tr("New area"),
                 false,
                 can.is_some(),
             )
@@ -488,20 +524,24 @@ pub fn industry_panel(
         match tools.area.selected {
             Some(id) => {
                 if let Some(a) = view.areas.get(id) {
-                    ui.label(format!("Painting: {}", a.name));
+                    ui.label(trf!("Painting: {name}", name = a.name));
                 }
             }
             None => {
                 ui.colored_label(
                     egui::Color32::YELLOW,
-                    "No area chosen: pick a resource above (it makes an area) or choose one below.",
+                    tr(
+                        "No area chosen: pick a resource above (it makes an area) or choose one below.",
+                    ),
                 );
             }
         }
     }
-    section(ui, "Areas", |ui| {
+    section(ui, &tr("Areas"), |ui| {
         if view.areas.iter().next().is_none() {
-            ui.weak("No areas yet: pick a resource, press New area, then paint with a brush.");
+            ui.weak(tr(
+                "No areas yet: pick a resource, press New area, then paint with a brush.",
+            ));
         }
         for (id, a) in view.areas.iter() {
             let AreaKind::Industry(kind) = a.kind else {
@@ -520,7 +560,7 @@ pub fn industry_panel(
                         egui::StrokeKind::Outside,
                     );
                 }
-                if resp.on_hover_text("Choose this area").clicked() {
+                if resp.on_hover_text(tr("Choose this area")).clicked() {
                     tools.area.selected = Some(id);
                     if tools.active != ActiveTool::Area {
                         tools.select(ActiveTool::Area);
@@ -550,8 +590,8 @@ pub fn industry_panel(
                     );
                 }
                 ui.data_mut(|m| m.insert_temp(key, buf));
-                ui.label(format!("L{}", a.level));
-                if ui.small_button("Delete").clicked() {
+                ui.label(trf!("L{level}", level = a.level));
+                if ui.small_button(tr("Delete")).clicked() {
                     send(outbox, DistrictCommand::DeleteArea { area: id });
                     if selected {
                         tools.area.selected = None;
@@ -559,9 +599,12 @@ pub fn industry_panel(
                 }
             });
             ui.weak(format!(
-                "    {} · {} cells",
-                resource_name(kind),
-                view.area_map.cell_count(id)
+                "    {}",
+                trf!(
+                    plural "{resource} · {n} cells",
+                    n = view.area_map.cell_count(id),
+                    resource = tr(resource_name(kind))
+                )
             ));
         }
     });

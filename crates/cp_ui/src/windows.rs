@@ -3,6 +3,7 @@
 
 use bevy_egui::egui;
 use cp_content::ZoneType;
+use cp_locale::{tr, trf};
 use cp_sim::SimView;
 use cp_sim::stats::{ZONES, ZoneStats};
 use cp_tools::{zone_color, zone_name};
@@ -42,31 +43,33 @@ fn row(zone: ZoneType, s: &ZoneStats) -> ZoneRow {
         zone,
         cells: format!("{} / {}", s.painted, s.occupied),
         free: if residential {
-            format!("{} homes free", s.homes_free)
+            trf!(plural "{n} homes free", n = s.homes_free)
         } else {
-            format!("{} jobs free", s.jobs_free)
+            trf!(plural "{n} jobs free", n = s.jobs_free)
         },
         levels: s.by_level,
-        status: format!("{} building / {} abandoned", s.constructing, s.abandoned),
+        status: trf!(
+            "{building} building / {abandoned} abandoned",
+            building = s.constructing,
+            abandoned = s.abandoned
+        ),
     }
 }
 
 /// How the demand of a zone's group comes about (§11), for the bar's hover text.
-pub fn demand_formula(zone: ZoneType) -> &'static str {
+pub fn demand_formula(zone: ZoneType) -> String {
     match zone {
-        ZoneType::ResLow | ZoneType::ResHigh => {
-            "Residential demand = free jobs (weighted) − unemployed above the commuter allowance + base attraction, \
-             less vacant homes. Shared by both residential types."
-        }
-        ZoneType::ComLow | ZoneType::ComHigh => {
-            "Commercial demand = goods the residents need − commercial capacity. \
-             Shared by both commercial types."
-        }
-        ZoneType::Industrial => {
-            "Industrial demand = goods the shops need − industrial output + available workforce."
-        }
+        ZoneType::ResLow | ZoneType::ResHigh => tr(
+            "Residential demand = free jobs (weighted) − unemployed above the commuter allowance + base attraction, less vacant homes. Shared by both residential types.",
+        ),
+        ZoneType::ComLow | ZoneType::ComHigh => tr(
+            "Commercial demand = goods the residents need − commercial capacity. Shared by both commercial types.",
+        ),
+        ZoneType::Industrial => tr(
+            "Industrial demand = goods the shops need − industrial output + available workforce.",
+        ),
         ZoneType::Office | ZoneType::None => {
-            "Office demand = educated workforce available − free office jobs."
+            tr("Office demand = educated workforce available − free office jobs.")
         }
     }
 }
@@ -102,16 +105,16 @@ pub fn land_shortage(view: &SimView, zone: ZoneType) -> Option<String> {
     if valid > unfit {
         return None;
     }
-    let name = match letter {
-        "R" => "Residential",
-        "C" => "Commercial",
-        "I" => "Industrial",
-        _ => "Office",
-    };
-    Some(if painted == 0 || valid == 0 {
-        format!("No free {name} land — zone more")
-    } else {
-        format!("{name} land left is too narrow for any building — zone more")
+    let used_up = painted == 0 || valid == 0;
+    Some(match (letter, used_up) {
+        ("R", true) => tr("No free Residential land — zone more"),
+        ("C", true) => tr("No free Commercial land — zone more"),
+        ("I", true) => tr("No free Industrial land — zone more"),
+        (_, true) => tr("No free Office land — zone more"),
+        ("R", false) => tr("Residential land left is too narrow for any building — zone more"),
+        ("C", false) => tr("Commercial land left is too narrow for any building — zone more"),
+        ("I", false) => tr("Industrial land left is too narrow for any building — zone more"),
+        (_, false) => tr("Office land left is too narrow for any building — zone more"),
     })
 }
 
@@ -119,7 +122,14 @@ pub fn land_shortage(view: &SimView, zone: ZoneType) -> Option<String> {
 pub fn demand_line(view: &SimView, zone: ZoneType) -> String {
     let (letter, v) = zone_group_demand(zone, &view.demand);
     let shown = v.clamp(0.0, 100.0).round();
-    let mut text = format!("{letter} demand {shown:.0}/100\n");
+    let value = format!("{shown:.0}");
+    let mut text = match letter {
+        "R" => trf!("R demand {value}/100", value = value),
+        "C" => trf!("C demand {value}/100", value = value),
+        "I" => trf!("I demand {value}/100", value = value),
+        _ => trf!("O demand {value}/100", value = value),
+    };
+    text.push('\n');
     if let Some(short) = land_shortage(view, zone) {
         text.push_str(&short);
         text.push('\n');
@@ -139,26 +149,26 @@ fn low_demand_reason(view: &SimView, zone: ZoneType) -> Option<String> {
     Some(match zone {
         ZoneType::ResLow | ZoneType::ResHigh => {
             if city.unemployed > 0 {
-                format!(
-                    "No free jobs: {} unemployed — zone industry/commerce",
-                    city.unemployed
+                trf!(
+                    "No free jobs: {n} unemployed — zone industry/commerce",
+                    n = city.unemployed
                 )
             } else {
-                "Enough homes stand empty".to_string()
+                tr("Enough homes stand empty")
             }
         }
         ZoneType::ComLow | ZoneType::ComHigh => {
-            "Enough shops for the residents — more residents need more shops".to_string()
+            tr("Enough shops for the residents — more residents need more shops")
         }
-        ZoneType::Industrial if city.unemployed > 0 => format!(
-            "Enough industry for the shops; {} unemployed mostly fit commerce and offices",
-            city.unemployed
+        ZoneType::Industrial if city.unemployed > 0 => trf!(
+            "Enough industry for the shops; {n} unemployed mostly fit commerce and offices",
+            n = city.unemployed
         ),
         ZoneType::Industrial => {
-            "Enough industry for the shops and no manual workers without a job".to_string()
+            tr("Enough industry for the shops and no manual workers without a job")
         }
         ZoneType::Office | ZoneType::None => {
-            "Enough office jobs for the educated residents without a job".to_string()
+            tr("Enough office jobs for the educated residents without a job")
         }
     })
 }
@@ -173,11 +183,11 @@ pub fn zone_tooltip(view: &SimView, zone: ZoneType) -> String {
         .map(|s| row(zone, s).free)
         .unwrap_or_default();
     let lock = zone_lock(view, zone)
-        .map(|l| format!("Locked: {l}\n"))
+        .map(|l| trf!("Locked: {what}", what = l) + "\n")
         .unwrap_or_default();
     format!(
         "{lock}{}\n{}{free}\n{}",
-        zone_name(zone),
+        tr(zone_name(zone)),
         demand_line(view, zone),
         demand_formula(zone)
     )
@@ -202,33 +212,38 @@ fn level_histogram(ui: &mut egui::Ui, levels: [u32; 5], tint: egui::Color32) {
         );
         ui.painter().rect_filled(bar, 0.0, tint);
     }
-    resp.on_hover_text(format!(
-        "Buildings by level: L1 {} · L2 {} · L3 {} · L4 {} · L5 {}",
-        levels[0], levels[1], levels[2], levels[3], levels[4]
+    resp.on_hover_text(trf!(
+        "Buildings by level: L1 {l1} · L2 {l2} · L3 {l3} · L4 {l4} · L5 {l5}",
+        l1 = levels[0],
+        l2 = levels[1],
+        l3 = levels[2],
+        l4 = levels[3],
+        l5 = levels[4]
     ));
 }
 
 /// Demand by zone: the group bar, cells, free homes or jobs, level histogram and status.
 pub fn demand_window(ctx: &egui::Context, open: &mut bool, view: &SimView) {
-    frame::window("demand", Icon::Demand, "Demand by zone", open).show(ctx, |ui| {
+    let title = tr("Demand by zone");
+    frame::window("demand", Icon::Demand, &title, open).show(ctx, |ui| {
         egui::Grid::new("demand_rows")
             .num_columns(6)
             .spacing([10.0, 6.0])
             .show(ui, |ui| {
                 for h in [
-                    "Zone",
-                    "Demand",
-                    "Cells (painted / built)",
-                    "Free",
-                    "Levels",
-                    "Status",
+                    tr("Zone"),
+                    tr("Demand"),
+                    tr("Cells (painted / built)"),
+                    tr("Free"),
+                    tr("Levels"),
+                    tr("Status"),
                 ] {
                     ui.weak(h);
                 }
                 ui.end_row();
                 for r in rows(view) {
                     let tint = color(r.zone);
-                    ui.colored_label(tint, zone_name(r.zone));
+                    ui.colored_label(tint, tr(zone_name(r.zone)));
                     let (_, v) = zone_group_demand(r.zone, &view.demand);
                     ui.add(
                         egui::ProgressBar::new(demand_fraction(v))

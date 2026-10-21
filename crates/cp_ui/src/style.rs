@@ -155,6 +155,69 @@ mod tests {
         );
     }
 
+    /// The code points of a TrueType font's `cmap` (formats 4 and 12).
+    fn cmap(font: &[u8]) -> std::collections::HashSet<u32> {
+        let u16_at = |o: usize| u16::from_be_bytes([font[o], font[o + 1]]) as usize;
+        let u32_at =
+            |o: usize| u32::from_be_bytes([font[o], font[o + 1], font[o + 2], font[o + 3]]);
+        let tables = (0..u16_at(4))
+            .map(|i| 12 + 16 * i)
+            .find(|&r| &font[r..r + 4] == b"cmap")
+            .expect("a cmap table");
+        let cmap = u32_at(tables + 8) as usize;
+        let mut out = std::collections::HashSet::new();
+        for i in 0..u16_at(cmap + 2) {
+            let sub = cmap + u32_at(cmap + 4 + 8 * i + 4) as usize;
+            match u16_at(sub) {
+                4 => {
+                    let seg = u16_at(sub + 6) / 2;
+                    for k in 0..seg {
+                        let end = u16_at(sub + 14 + 2 * k) as u32;
+                        let start = u16_at(sub + 16 + 2 * seg + 2 * k) as u32;
+                        if start != 0xFFFF {
+                            out.extend(start..=end);
+                        }
+                    }
+                }
+                12 => {
+                    for k in 0..u32_at(sub + 12) as usize {
+                        let g = sub + 16 + 12 * k;
+                        out.extend(u32_at(g)..=u32_at(g + 4));
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// T-284: our faces draw every character of the Russian texts (no fallback to egui's face,
+    /// no tofu): the letters the bold text face, the symbols (`−`, `▸`) the symbol faces before it.
+    #[test]
+    fn our_faces_have_every_character_of_the_russian_texts() {
+        let mut have = cmap(include_bytes!(
+            "../../../assets/fonts/NotoSans-Bold-subset.ttf"
+        ));
+        let letters = have.clone();
+        have.extend(cmap(include_bytes!(
+            "../../../assets/fonts/NotoSansSymbols2-subset.ttf"
+        )));
+        have.extend(cmap(include_bytes!(
+            "../../../assets/fonts/NotoSansMath-subset.ttf"
+        )));
+        for c in '\u{410}'..='\u{44F}' {
+            assert!(letters.contains(&(c as u32)), "{c} not in the bold face");
+        }
+        let mut missing: Vec<char> = cp_locale::Lang::Ru
+            .source()
+            .chars()
+            .filter(|c| !c.is_whitespace() && !have.contains(&(*c as u32)))
+            .collect();
+        missing.sort();
+        missing.dedup();
+        assert!(missing.is_empty(), "not in our faces: {missing:?}");
+    }
+
     #[test]
     fn install_sets_body_15_and_small_13() {
         let ctx = egui::Context::default();

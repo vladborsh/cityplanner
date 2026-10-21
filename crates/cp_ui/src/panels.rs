@@ -5,6 +5,7 @@ use bevy::prelude::Resource;
 use bevy_egui::egui;
 use cp_building::Demand;
 use cp_core::SimSpeed;
+use cp_locale::{tr, trf, trn};
 use cp_render::{Overlay, OverlayState};
 use cp_sim::SimView;
 use cp_tools::{
@@ -48,6 +49,8 @@ pub struct Prefs {
     pub advisor: bool,
     pub advisor_problems_only: bool,
     pub audio: AudioPrefs,
+    /// The language of the UI (T-284); [`cp_locale::set_lang`] follows it.
+    pub lang: cp_locale::Lang,
 }
 
 impl Default for Prefs {
@@ -58,6 +61,7 @@ impl Default for Prefs {
             advisor: true,
             advisor_problems_only: false,
             audio: AudioPrefs::default(),
+            lang: cp_locale::Lang::En,
         }
     }
 }
@@ -229,18 +233,28 @@ pub const SPEEDS: [(SimSpeed, &str); 4] = [
     (SimSpeed::X3, "×3"),
 ];
 
-const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+/// The short name of day `d` of the week (0 is Monday).
+fn weekday(d: usize) -> String {
+    match d {
+        0 => tr("Mon"),
+        1 => tr("Tue"),
+        2 => tr("Wed"),
+        3 => tr("Thu"),
+        4 => tr("Fri"),
+        5 => tr("Sat"),
+        _ => tr("Sun"),
+    }
+}
 
 /// "Mon 12:30, day 4" from the game time.
 pub fn format_time(view: &SimView) -> String {
     let t = view.game_time;
     let minutes = u64::from(t.tick_of_day) * 24 * 60 / cp_core::time::TICKS_PER_DAY;
-    format!(
-        "{} {:02}:{:02}  ·  day {}",
-        WEEKDAYS[t.day_of_week() as usize],
-        minutes / 60,
-        minutes % 60,
-        t.day + 1
+    trf!(
+        "{weekday} {time}  ·  day {day}",
+        weekday = weekday(t.day_of_week() as usize),
+        time = format!("{:02}:{:02}", minutes / 60, minutes % 60),
+        day = t.day + 1
     )
 }
 
@@ -346,15 +360,13 @@ pub fn plan_length(g: &cp_tools::Ghost) -> f32 {
         .fold(0.0, |acc, w| acc + w[0].distance(w[1]))
 }
 
-/// The legend under a service ghost's coverage line (T-254).
-pub const COVERAGE_LEGEND: &str =
-    "Blue: newly covered · white: already covered · green to yellow: coverage now";
-
 /// The line under a service ghost's verdict (T-254): what its road coverage would reach.
 pub fn coverage_text(c: cp_render::CoverageCount) -> String {
-    format!(
-        "Covers {} buildings, {} newly · capacity {}",
-        c.reached, c.newly, c.capacity
+    trf!(
+        plural "Covers {n} buildings, {newly} newly · capacity {capacity}",
+        n = c.reached,
+        newly = c.newly,
+        capacity = c.capacity
     )
 }
 
@@ -377,7 +389,7 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
         (Category::Roads, ActiveTool::Road) => match &tools.ghost {
             // The 1-cell cursor before the first click (T-286).
             Some(g) if g.cursor_piece && g.valid => {
-                ui.weak("Click to start a road. Esc cancels.");
+                ui.weak(tr("Click to start a road. Esc cancels."));
             }
             Some(g) if g.valid => {
                 let snap = snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));
@@ -386,56 +398,59 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                     .block
                     .as_ref()
                     .map_or(String::new(), |b| format!("  ▦ {}", b.note));
+                let length = trf!("{len} m", len = format!("{:.0}", plan_length(g)));
                 ok(
                     ui,
-                    "can build",
+                    &tr("can build"),
                     g.cost,
-                    format!(" · {:.0} m{snap}{block}", plan_length(g)),
+                    format!(" · {length}{snap}{block}"),
                 );
                 // One-way direction warnings (§6.6): yellow, they never block the build.
                 for w in &g.warnings {
                     ui.colored_label(egui::Color32::YELLOW, format!("⚠ {w}"));
                 }
             }
-            Some(g) => bad(ui, &g.errors, "cannot build here"),
+            Some(g) => bad(ui, &g.errors, &tr("cannot build here")),
             None => {
-                ui.weak("Click to start a road. Esc cancels.");
+                ui.weak(tr("Click to start a road. Esc cancels."));
             }
         },
         (Category::Roads, ActiveTool::Flip) => match &tools.flip_preview {
-            Some(f) if !f.errors.is_empty() => bad(ui, &f.errors, "cannot flip"),
+            Some(f) if !f.errors.is_empty() => bad(ui, &f.errors, &tr("cannot flip")),
             Some(f) => {
                 let n = f.run.len();
                 ok(
                     ui,
-                    "can flip",
+                    &tr("can flip"),
                     None,
-                    format!(" · {n} segment{}", if n == 1 { "" } else { "s" }),
+                    format!(" · {}", trn("{n} segments", n as i64)),
                 );
             }
             None => {
-                ui.weak("Click a one-way road to turn its whole run round. Esc leaves the tool.");
+                ui.weak(tr(
+                    "Click a one-way road to turn its whole run round. Esc leaves the tool.",
+                ));
             }
         },
         (Category::Roads, ActiveTool::Upgrade) => match &tools.upgrade_preview {
-            Some(u) if !u.errors.is_empty() => bad(ui, &u.errors, "cannot upgrade"),
+            Some(u) if !u.errors.is_empty() => bad(ui, &u.errors, &tr("cannot upgrade")),
             Some(u) if u.is_noop() => {
-                ui.weak("This run already has the chosen road type.");
+                ui.weak(tr("This run already has the chosen road type."));
             }
             Some(u) => {
                 let n = u.changes.len();
                 ok(
                     ui,
-                    "can upgrade",
+                    &tr("can upgrade"),
                     Some(u.cost),
-                    format!(" · {n} segment{}", if n == 1 { "" } else { "s" }),
+                    format!(" · {}", trn("{n} segments", n as i64)),
                 );
                 if let Some(w) = u.warning() {
                     ui.colored_label(egui::Color32::YELLOW, format!("⚠ {w}"));
                 }
             }
             None => {
-                ui.weak("Pick a road type, then click a road to change its whole run. Esc leaves the tool.");
+                ui.weak(tr("Pick a road type, then click a road to change its whole run. Esc leaves the tool."));
             }
         },
         (
@@ -454,13 +469,22 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                     } else {
                         egui::Color32::from_rgb(230, 90, 80)
                     };
-                    ui.colored_label(color, format!("Lot richness {have}% (needs {need}%)"));
+                    ui.colored_label(
+                        color,
+                        trf!(
+                            "Lot richness {have}% (needs {need}%)",
+                            have = have,
+                            need = need
+                        ),
+                    );
                 }
                 if g.valid {
-                    ok(ui, "can place", g.cost, String::new());
+                    ok(ui, &tr("can place"), g.cost, String::new());
                     if let Some(c) = tools.coverage {
                         ui.colored_label(egui::Color32::from_rgb(110, 190, 255), coverage_text(c));
-                        ui.weak(COVERAGE_LEGEND);
+                        ui.weak(tr(
+                            "Blue: newly covered · white: already covered · green to yellow: coverage now",
+                        ));
                     }
                     if let Some(text) = g.demolish_text() {
                         ui.colored_label(egui::Color32::from_rgb(230, 90, 80), text);
@@ -469,7 +493,7 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                     bad(
                         ui,
                         &g.error.iter().cloned().collect::<Vec<_>>(),
-                        "cannot place here",
+                        &tr("cannot place here"),
                     );
                 }
                 match &g.free {
@@ -482,50 +506,52 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                             };
                             ui.colored_label(color, &h.text);
                         }
-                        ui.weak(
+                        ui.weak(tr(
                             "T turns 15°, Shift+T along the nearest road, Esc leaves the tool.",
-                        );
+                        ));
                     }
                     None => {
-                        ui.weak("T rotates, Esc leaves the tool.");
+                        ui.weak(tr("T rotates, Esc leaves the tool."));
                     }
                 }
             }
             None => {
-                ui.weak("Hover a spot beside a road. T rotates, Esc leaves the tool.");
+                ui.weak(tr(
+                    "Hover a spot beside a road. T rotates, Esc leaves the tool.",
+                ));
             }
         },
         (Category::Buildings | Category::Power | Category::Water, ActiveTool::Utility) => {
             match &tools.utility_ghost {
                 Some(g) if g.cursor_piece && g.valid => {
-                    ui.weak("Click to start. Alt switches the snaps off. Buildings within reach of the network are connected (the band shows the reach). Esc cancels.");
+                    ui.weak(tr("Click to start. Alt switches the snaps off. Buildings within reach of the network are connected (the band shows the reach). Esc cancels."));
                 }
                 Some(g) if g.valid => {
                     let snap =
                         snap_label(g.snap.kind).map_or(String::new(), |l| format!("  ⌖ {l}"));
-                    ok(ui, "can build", g.cost, snap)
+                    ok(ui, &tr("can build"), g.cost, snap)
                 }
-                Some(g) => bad(ui, &g.errors, "cannot build here"),
+                Some(g) => bad(ui, &g.errors, &tr("cannot build here")),
                 None => {
-                    ui.weak("Click to start. Alt switches the snaps off. Buildings within reach of the network are connected (the band shows the reach). Esc cancels.");
+                    ui.weak(tr("Click to start. Alt switches the snaps off. Buildings within reach of the network are connected (the band shows the reach). Esc cancels."));
                 }
             }
         }
         (Category::Transit, ActiveTool::Line) => {
             if let Some(notice) = &tools.line_notice {
-                bad(ui, std::slice::from_ref(notice), "cannot place a stop");
+                bad(ui, std::slice::from_ref(notice), &tr("cannot place a stop"));
             }
             match &tools.line_ghost {
                 Some(g) if g.error.is_some() && g.hover.is_some_and(|h| !h.1) => {
                     bad(
                         ui,
                         &g.error.iter().cloned().collect::<Vec<_>>(),
-                        "cannot stop here",
+                        &tr("cannot stop here"),
                     );
                 }
                 Some(g) if g.closes => ok(
                     ui,
-                    "click to close the line",
+                    &tr("click to close the line"),
                     Some(g.cost),
                     format!(" · {}", cp_tools::route_summary(g)),
                 ),
@@ -533,97 +559,119 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                     if let Some(e) = &g.error {
                         ui.colored_label(egui::Color32::YELLOW, format!("⚠ {e}"));
                     }
-                    ui.weak(format!(
-                        "{} stop{} · {}. Click the first stop to close the line.",
-                        g.stops.len(),
-                        if g.stops.len() == 1 { "" } else { "s" },
-                        cp_tools::route_summary(g)
+                    ui.weak(trf!(
+                        plural "{n} stops · {route}. Click the first stop to close the line.",
+                        n = g.stops.len(),
+                        route = cp_tools::route_summary(g)
                     ));
                 }
                 _ => {
-                    ui.weak("Click a road to put the first stop. Backspace undoes, Esc cancels.");
+                    ui.weak(tr(
+                        "Click a road to put the first stop. Backspace undoes, Esc cancels.",
+                    ));
                 }
             }
         }
         (Category::Transit, _) => {
-            ui.weak("Pick the bus line tool or the depot; the Transit view shows the lines.");
+            ui.weak(tr(
+                "Pick the bus line tool or the depot; the Transit view shows the lines.",
+            ));
         }
         (Category::Zones, ActiveTool::Zone) => {
             let n = tools.zone_preview.len();
             let what = match tools.zone.kind {
                 ZoneToolKind::Rectangle if tools.zone.corner.is_some() => {
-                    "click the opposite corner".to_string()
+                    tr("click the opposite corner")
                 }
-                ZoneToolKind::Rectangle => "click the first corner".to_string(),
-                ZoneToolKind::FillBlock => "click a block to fill it".to_string(),
-                _ => "hold and drag to paint".to_string(),
+                ZoneToolKind::Rectangle => tr("click the first corner"),
+                ZoneToolKind::FillBlock => tr("click a block to fill it"),
+                _ => tr("hold and drag to paint"),
             };
-            ui.weak(format!("{what} — {n} cells under the cursor. Esc cancels."));
+            ui.weak(trf!(
+                plural "{what} — {n} cells under the cursor. Esc cancels.",
+                n = n,
+                what = what
+            ));
         }
         (Category::Districts, ActiveTool::District) if tools.district.selected.is_none() => {
-            ui.weak("Choose a district in the list (or press New district), then paint.");
+            ui.weak(tr(
+                "Choose a district in the list (or press New district), then paint.",
+            ));
         }
         (Category::Districts, ActiveTool::District) => {
             let n = tools.district_preview.len();
-            ui.weak(format!(
-                "hold and drag to paint — {n} cells under the cursor. Esc leaves the brush."
+            ui.weak(trf!(
+                plural "hold and drag to paint — {n} cells under the cursor. Esc leaves the brush.",
+                n = n
             ));
         }
         (Category::Districts, _) => {
-            ui.weak("Pick a brush or create a district; the overlay shows the districts.");
+            ui.weak(tr(
+                "Pick a brush or create a district; the overlay shows the districts.",
+            ));
         }
         (Category::Industry, ActiveTool::Area) if tools.area.selected.is_none() => {
-            ui.weak("Choose an area in the list (or press New area), then paint.");
+            ui.weak(tr(
+                "Choose an area in the list (or press New area), then paint.",
+            ));
         }
         (Category::Industry, ActiveTool::Area) => {
             let n = tools.area_preview.len();
-            ui.weak(format!(
-                "hold and drag to paint — {n} cells under the cursor. Esc leaves the brush."
+            ui.weak(trf!(
+                plural "hold and drag to paint — {n} cells under the cursor. Esc leaves the brush.",
+                n = n
             ));
         }
         (Category::Industry, _) => {
-            ui.weak(
+            ui.weak(tr(
                 "Pick a brush or create an area; the overlays show the resources and the areas.",
-            );
+            ));
         }
         (Category::Parks, ActiveTool::Area) if tools.area.selected.is_none() => {
-            ui.weak("Choose a park area in the list (or press New area), then paint.");
+            ui.weak(tr(
+                "Choose a park area in the list (or press New area), then paint.",
+            ));
         }
         (Category::Parks, ActiveTool::Area) => {
             let n = tools.area_preview.len();
-            ui.weak(format!(
-                "hold and drag to paint — {n} cells under the cursor. Esc leaves the brush."
+            ui.weak(trf!(
+                plural "hold and drag to paint — {n} cells under the cursor. Esc leaves the brush.",
+                n = n
             ));
         }
         (Category::Parks, _) => {
-            ui.weak(
+            ui.weak(tr(
                 "Pick a brush or a park kind; the overlay shows the park areas and their gates.",
-            );
+            ));
         }
         (Category::Zones, _) => {
-            ui.weak("Pick a zoning tool or a zone type to show the zone grid.");
+            ui.weak(tr(
+                "Pick a zoning tool or a zone type to show the zone grid.",
+            ));
         }
         // The bulldozer in one utility layer (T-286).
         (_, ActiveTool::Bulldozer) if tools.bulldoze_layer == BulldozeLayer::Water => {
-            ui.weak("Removes only pipes and water buildings. Hover one and click; B or Esc goes back to the pipe tool.");
+            ui.weak(tr("Removes only pipes and water buildings. Hover one and click; B or Esc goes back to the pipe tool."));
         }
         (_, ActiveTool::Bulldozer) if tools.bulldoze_layer == BulldozeLayer::Power => {
-            ui.weak("Removes only power lines and power buildings. Hover one and click; B or Esc goes back to the line tool.");
+            ui.weak(tr("Removes only power lines and power buildings. Hover one and click; B or Esc goes back to the line tool."));
         }
         (_, ActiveTool::Bulldozer) if tools.highlight_outside => {
-            bad(ui, &["outside your land".to_string()], "cannot remove");
+            bad(ui, &[tr("outside your land")], &tr("cannot remove"));
         }
         (_, ActiveTool::Bulldozer) => {
-            ui.weak("Hover a building, bus stop or road segment, click to remove it. Esc leaves the tool.");
+            ui.weak(tr("Hover a building, bus stop or road segment, click to remove it. Esc leaves the tool."));
         }
         (Category::Buildings, _) => {
-            ui.weak("Pick a building; the overlay shows which buildings lack supply.");
+            ui.weak(tr(
+                "Pick a building; the overlay shows which buildings lack supply.",
+            ));
         }
         (Category::Power | Category::Water, _) => {
-            ui.weak("Pick a building or a network tool; the overlay shows the network and which buildings lack supply.");
+            ui.weak(tr("Pick a building or a network tool; the overlay shows the network and which buildings lack supply."));
         }
         _ => {
-            ui.weak("Pick a tool.");
+            ui.weak(tr("Pick a tool."));
         }
     }
 }
@@ -657,11 +705,11 @@ pub fn zones_panel(
     tools: &mut ToolState,
     state: &mut UiState,
 ) {
-    section(ui, "Tool", |ui| {
+    section(ui, &tr("Tool"), |ui| {
         ui.horizontal_wrapped(|ui| {
             for kind in ZoneToolKind::ALL {
                 let selected = tools.active == ActiveTool::Zone && tools.zone.kind == kind;
-                if tool_button(ui, zone_kind_icon(kind), kind.label(), selected).clicked() {
+                if tool_button(ui, zone_kind_icon(kind), &tr(kind.label()), selected).clicked() {
                     if tools.active != ActiveTool::Zone {
                         tools.select(ActiveTool::Zone);
                     }
@@ -671,7 +719,7 @@ pub fn zones_panel(
             if tool_tile_enabled(
                 ui,
                 TileIcon::Icon(Icon::Remove),
-                "Off",
+                &tr("Off"),
                 false,
                 tools.active == ActiveTool::Zone,
             )
@@ -681,7 +729,7 @@ pub fn zones_panel(
             }
         });
     });
-    section(ui, "Zone", |ui| {
+    section(ui, &tr("Zone"), |ui| {
         // A zone type that waits for a milestone is hidden; once open it comes as its own row,
         // one row per milestone that opened zones (T-283).
         let mut rows: std::collections::BTreeMap<usize, Vec<cp_content::ZoneType>> =
@@ -704,7 +752,7 @@ pub fn zones_panel(
                     let tile = tool_tile_enabled(
                         ui,
                         TileIcon::Icon(crate::icons::zone_icon(zone)),
-                        zone_name(zone),
+                        &tr(zone_name(zone)),
                         tools.zone.zone == zone,
                         true,
                     );
@@ -722,7 +770,7 @@ pub fn zones_panel(
             });
         }
     });
-    if ui.button("Demand by zone ▸").clicked() {
+    if ui.button(tr("Demand by zone ▸")).clicked() {
         state.demand_open = true;
     }
 }
@@ -958,7 +1006,7 @@ mod tests {
     fn the_top_bar_has_only_the_clock_and_speeds() {
         let mut bar = Bar::new();
         let texts: Vec<String> = bar.frame(vec![]).into_iter().map(|(t, _)| t).collect();
-        for gone in ["R", "C", "I", "O", "Всегда день"] {
+        for gone in ["R", "C", "I", "O", "Always day"] {
             assert!(!texts.iter().any(|t| t == gone), "{gone:?} in {texts:?}");
         }
         for o in Overlay::ALL {
@@ -991,13 +1039,33 @@ mod tests {
 
     #[test]
     fn the_bars_content_fits_a_1280_wide_window() {
-        let bar = Bar::new();
-        assert!(bar.rects.content_width > 0.0);
-        assert!(
-            bar.rects.content_width <= 1280.0,
-            "{}",
-            bar.rects.content_width
-        );
+        // T-284: in Russian too.
+        for lang in cp_locale::Lang::ALL {
+            let _lang = crate::testutil::in_lang(lang);
+            let bar = Bar::new();
+            assert!(bar.rects.content_width > 0.0);
+            assert!(
+                bar.rects.content_width <= 1280.0,
+                "{lang:?}: {}",
+                bar.rects.content_width
+            );
+        }
+    }
+
+    /// T-284: the language switches while the game runs: the next frame of the bar is in it.
+    #[test]
+    fn switching_the_language_changes_the_bars_text_at_once() {
+        let mut bar = Bar::new();
+        let texts = |bar: &mut Bar| -> Vec<String> {
+            bar.frame(vec![]).into_iter().map(|(t, _)| t).collect()
+        };
+        let en = texts(&mut bar);
+        let _lang = crate::testutil::in_lang(cp_locale::Lang::Ru);
+        let ru = texts(&mut bar);
+        assert_ne!(en, ru, "the bar did not change");
+        let cyrillic = |t: &String| t.chars().any(|c| ('\u{400}'..='\u{4FF}').contains(&c));
+        assert!(!en.iter().any(cyrillic), "{en:?}");
+        assert!(ru.iter().any(cyrillic), "{ru:?}");
     }
 
     #[test]

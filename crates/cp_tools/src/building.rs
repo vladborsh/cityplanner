@@ -14,6 +14,7 @@ use cp_building::{
 use cp_content::{BuildingDefId, ContentDb, ServiceKind, ServiceSite};
 use cp_core::Cost;
 use cp_core::curve::to_xz;
+use cp_locale::{tr, trf, trn};
 use cp_sim::SimView;
 use cp_utility::{UtilityNet, reach_m};
 use cp_zone::ZoneCellRef;
@@ -125,16 +126,46 @@ fn road_angle(view: &SimView, pos: Vec2) -> Option<f32> {
 pub fn error_text(e: &BuildingError, site: ServiceSite) -> String {
     match (e, site) {
         (BuildingError::NeedsWater, ServiceSite::OnWater) => {
-            "needs water under the lot: put at least one cell over water".to_string()
+            tr("needs water under the lot: put at least one cell over water")
         }
-        (BuildingError::NeedsWater, _) => format!(
-            "needs a shore: the lot on land with water within {:.0} m",
-            ServiceSite::SHORE_REACH_M
+        (BuildingError::NeedsWater, _) => trf!(
+            "needs a shore: the lot on land with water within {reach} m",
+            reach = format!("{:.0}", ServiceSite::SHORE_REACH_M)
         ),
-        (BuildingError::Water, _) => "water here: this building goes on land only".to_string(),
-        (BuildingError::Road, _) => "a road is in the way".to_string(),
-        (BuildingError::TooSteep, _) => "ground too steep: 25 % at most".to_string(),
-        _ => e.to_string(),
+        (BuildingError::Water, _) => tr("water here: this building goes on land only"),
+        (BuildingError::Road, _) => tr("a road is in the way"),
+        (BuildingError::TooSteep, _) => tr("ground too steep: 25 % at most"),
+        _ => building_error_text(e),
+    }
+}
+
+/// The command's own text of `e` in the player's language (the English is `e`'s `Display`).
+/// The texts naming a resource or park kind stay English.
+pub fn building_error_text(e: &BuildingError) -> String {
+    match e {
+        BuildingError::Funds(f) => trf!(
+            "insufficient funds: need {need}, can spend {have}",
+            need = f.needed.0,
+            have = f.available.0
+        ),
+        BuildingError::Platform(why) => {
+            trf!("no room for the platform: {why}", why = tr(why))
+        }
+        BuildingError::AreaLevel { need, have } => trf!(
+            "needs area level {need} (it is {have})",
+            need = need,
+            have = have
+        ),
+        BuildingError::Poor { pct, need_pct } => trf!(
+            "only {pct}% of the resource here, needs {need_pct}%",
+            pct = pct,
+            need_pct = need_pct
+        ),
+        BuildingError::NotInArea(Some(_))
+        | BuildingError::NotInPark(Some(_))
+        | BuildingError::GateAway(_) => e.to_string(),
+        // The rest are fixed texts: the text is its own key.
+        _ => tr(&e.to_string()),
     }
 }
 
@@ -172,12 +203,14 @@ impl PlacementGhost {
         if n == 0 {
             return None;
         }
-        let what = if n == 1 { "building" } else { "buildings" };
         Some(match self.evicted {
-            Some((residents, jobs)) => {
-                format!("Demolishes {n} {what} ({residents} residents evicted, {jobs} jobs)")
-            }
-            None => format!("Demolishes {n} {what}"),
+            Some((residents, jobs)) => trf!(
+                plural "Demolishes {n} buildings ({residents} residents evicted, {jobs} jobs)",
+                n = n,
+                residents = residents,
+                jobs = jobs
+            ),
+            None => trn("Demolishes {n} buildings", n as i64),
         })
     }
 }
@@ -238,8 +271,8 @@ pub fn connection_hint(view: &SimView, def: BuildingDefId, pos: Vec2) -> Option<
     let mut target =
         line.and_then(|(id, t, _)| view.utilities.link(id).map(|l| to_xz(l.curve.point(t))));
     let mut what = match net {
-        UtilityNet::Pipe => "the pipe",
-        UtilityNet::Power => "the power line",
+        UtilityNet::Pipe => "will connect to the pipe",
+        UtilityNet::Power => "will connect to the power line",
     };
     if target.is_none() && net == UtilityNet::Power {
         // A supplied building passes the current on (edge to edge).
@@ -252,16 +285,18 @@ pub fn connection_hint(view: &SimView, def: BuildingDefId, pos: Vec2) -> Option<
             .filter(|(_, b)| b.pos.distance(pos) - my_half - half(b.size()) <= nets.power_gap_m)
             .map(|(_, b)| b.pos)
             .min_by(|a, b| a.distance(pos).total_cmp(&b.distance(pos)));
-        what = "a powered building";
+        what = "will connect to a powered building";
     }
     let text = match (target.is_some(), net) {
-        (true, _) => format!("will connect to {what}"),
-        (false, UtilityNet::Pipe) => {
-            format!("no pipe within {reach:.0} m — lay a pipe")
-        }
-        (false, UtilityNet::Power) => format!(
-            "no power line within {reach:.0} m, no powered building within {:.0} m — build a line",
-            nets.power_gap_m
+        (true, _) => tr(what),
+        (false, UtilityNet::Pipe) => trf!(
+            "no pipe within {reach} m — lay a pipe",
+            reach = format!("{reach:.0}")
+        ),
+        (false, UtilityNet::Power) => trf!(
+            "no power line within {reach} m, no powered building within {gap} m — build a line",
+            reach = format!("{reach:.0}"),
+            gap = format!("{:.0}", nets.power_gap_m)
         ),
     };
     Some(ConnectionHint {
@@ -558,8 +593,8 @@ fn edge_preview(
                 });
             PlacementGhost {
                 error: Some(match e {
-                    BuildingError::Road => "a road is in the way".to_string(),
-                    BuildingError::Blocked => "another building is in the way".to_string(),
+                    BuildingError::Road => tr("a road is in the way"),
+                    BuildingError::Blocked => tr("another building is in the way"),
                     e => error_text(&e, ServiceSite::Land),
                 }),
                 free,

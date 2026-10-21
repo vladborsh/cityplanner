@@ -4,6 +4,7 @@
 
 use bevy_egui::egui;
 use cp_building::BuildingCommand;
+use cp_locale::{tr, trf};
 use cp_sim::{Inspection, Selection, SimCommand, SimView};
 use cp_tools::{CommandOutbox, Inspected, Picked, ToolState};
 
@@ -18,6 +19,21 @@ pub struct InfoRects {
     pub actions: Vec<(String, egui::Rect)>,
     /// The entrance fee slider of a park panel (T-229).
     pub fee_slider: Option<egui::Rect>,
+}
+
+/// The title of the panel: [`Inspection::title`] in the player's language.
+fn title(info: &Inspection) -> String {
+    match info {
+        Inspection::Building(b) => trf!(
+            "{name} (level {level})",
+            name = tr(&b.name),
+            level = b.level
+        ),
+        Inspection::Citizen(c) => trf!("Citizen {id}", id = c.id.index),
+        Inspection::Vehicle(v) => trf!("Vehicle {id}", id = cp_sim::key_parts(v.key).0),
+        Inspection::Segment(s) => trf!("{name} segment {id}", name = tr(&s.name), id = s.id.index),
+        _ => info.title(),
+    }
 }
 
 /// Shows the panel for `inspected` (nothing when empty). Close and the go-to buttons write
@@ -40,7 +56,7 @@ pub fn info_panel(
         return rects;
     }
     let mut open = true;
-    let title = info.title();
+    let title = title(info);
     // A click on a park's gate or ground shows the park (T-229).
     let park = view.and_then(|v| match info {
         Inspection::Area { id, .. } => Some(*id),
@@ -51,14 +67,15 @@ pub fn info_panel(
         .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -8.0))
         .show(ctx, |ui| {
             egui::Grid::new("info_rows").num_columns(2).show(ui, |ui| {
+                // The labels and the values of the sim's rows (built in English by `cp_sim`).
                 for (label, value) in info.rows() {
-                    ui.weak(label);
-                    ui.label(value);
+                    ui.weak(tr(&label));
+                    ui.label(tr_value(&value));
                     ui.end_row();
                 }
             });
             let mut go = |ui: &mut egui::Ui, label: &str, to: Selection| {
-                let r = ui.button(label);
+                let r = ui.button(tr(label));
                 rects.goto.push((label.to_string(), r.rect, to));
                 if r.clicked() {
                     picked.0 = Some(to);
@@ -148,7 +165,7 @@ fn building_actions(
     let key = egui::Id::new("demolish_confirm");
     let asking = ui.data(|d| d.get_temp::<cp_building::BuildingId>(key)) == Some(id);
     ui.horizontal(|ui| {
-        let r = ui.button("Move");
+        let r = ui.button(tr("Move"));
         rects.actions.push(("Move".into(), r.rect));
         if r.clicked() && tools.begin_move(view, id) {
             ui.data_mut(|d| d.remove::<cp_building::BuildingId>(key));
@@ -159,7 +176,7 @@ fn building_actions(
         } else {
             "Demolish"
         };
-        let r = ui.button(label);
+        let r = ui.button(tr(label));
         rects.actions.push((label.into(), r.rect));
         if r.clicked() {
             if asking {
@@ -173,13 +190,66 @@ fn building_actions(
             }
         }
         if asking {
-            let r = ui.button("Cancel");
+            let r = ui.button(tr("Cancel"));
             rects.actions.push(("Cancel".into(), r.rect));
             if r.clicked() {
                 ui.data_mut(|d| d.remove::<cp_building::BuildingId>(key));
             }
         }
     });
+}
+
+/// A value of the inspector's rows in the UI's language (T-284). `cp_sim` writes them in English
+/// in a few shapes: a fixed word or state (`"none"`, `"UnderConstruction"`), counts (`"5 of 10"`,
+/// `"2 out of 3"`, `"40 of 60 a day"`, `"3 of 4 out"`), the level (`"1 (progress +0.25)"`),
+/// a power shortfall (`"supply 40 < demand 60"`) and a list of problems (`"no water, no power"`).
+/// Anything else (numbers, names) shows as it is.
+pub fn tr_value(v: &str) -> String {
+    // The state of a building: its own key, a word may mean another thing elsewhere.
+    if let s @ ("UnderConstruction" | "Active" | "Abandoned" | "Burned") = v {
+        return match s {
+            "UnderConstruction" => tr("building state UnderConstruction"),
+            "Active" => tr("building state Active"),
+            "Abandoned" => tr("building state Abandoned"),
+            _ => tr("building state Burned"),
+        };
+    }
+    if cp_locale::locale(cp_locale::lang()).texts.contains_key(v) {
+        return tr(v);
+    }
+    let words: Vec<&str> = v.split(' ').collect();
+    let num = |s: &str| {
+        !s.is_empty()
+            && s.trim_start_matches(['+', '-'])
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '.')
+    };
+    match words.as_slice() {
+        [a, "of", b] if num(a) && num(b) => return trf!("{a} of {b}", a = a, b = b),
+        [a, "out", "of", b] if num(a) && num(b) => {
+            return trf!("{a} out of {b}", a = a, b = b);
+        }
+        [a, "of", b, "a", "day"] if num(a) && num(b) => {
+            return trf!("{a} of {b} a day", a = a, b = b);
+        }
+        [a, "of", b, "out"] if num(a) && num(b) => {
+            return trf!("{a} of {b} out", a = a, b = b);
+        }
+        [level, "(progress", p] if num(level) && p.ends_with(')') => {
+            let p = p.trim_end_matches(')');
+            return trf!("{level} (progress {p})", level = level, p = p);
+        }
+        ["supply", s, "<", "demand", d] if num(s) && num(d) => {
+            return trf!("supply {s} < demand {d}", s = s, d = d);
+        }
+        _ => {}
+    }
+    let parts: Vec<&str> = v.split(", ").collect();
+    let ru = cp_locale::locale(cp_locale::lang());
+    if parts.len() > 1 && parts.iter().all(|p| ru.texts.contains_key(*p)) {
+        return parts.iter().map(|p| tr(p)).collect::<Vec<_>>().join(", ");
+    }
+    v.to_string()
 }
 
 #[cfg(test)]

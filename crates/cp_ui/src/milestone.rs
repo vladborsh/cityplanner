@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use bevy_egui::egui;
 use cp_content::{ContentDb, ZoneType};
 use cp_core::time::SimSpeed;
+use cp_locale::{tr, trf, trn};
 use cp_sim::SimView;
 use cp_tools::CommandOutbox;
 
@@ -62,10 +63,10 @@ pub fn unlocked_by(content: &ContentDb, m: usize) -> Unlocked {
 /// "Next: Town — 3,000 residents", or `None` at the last milestone.
 pub fn next_text(content: &ContentDb, m: usize) -> Option<String> {
     let next = content.milestones().get(m + 1)?;
-    Some(format!(
-        "Next: {} — {} residents",
-        next.name,
-        crate::buildings::thousands(next.population)
+    Some(trf!(
+        "Next: {name} — {pop} residents",
+        name = tr(&next.name),
+        pop = crate::buildings::thousands(next.population)
     ))
 }
 
@@ -144,10 +145,10 @@ pub fn milestone_window(
     let modal = egui::Modal::new(egui::Id::new("milestone_window")).show(ctx, |ui| {
         ui.set_width(460.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new(&ms.name).size(34.0).strong());
-            ui.label(format!(
-                "{} residents",
-                crate::buildings::thousands(ms.population)
+            ui.label(egui::RichText::new(tr(&ms.name)).size(34.0).strong());
+            ui.label(trf!(
+                "{pop} residents",
+                pop = crate::buildings::thousands(ms.population)
             ));
         });
         ui.add_space(8.0);
@@ -159,17 +160,13 @@ pub fn milestone_window(
                 group(ui, "Zones", &[], &unlocked.zones);
                 if unlocked.tiles > 0 {
                     ui.add_space(4.0);
-                    ui.label(format!(
-                        "+{} land tile{}",
-                        unlocked.tiles,
-                        if unlocked.tiles == 1 { "" } else { "s" }
-                    ));
+                    ui.label(trn("+{n} land tiles", i64::from(unlocked.tiles)));
                 }
             });
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
-            ui.weak(next.as_deref().unwrap_or("The highest milestone"));
-            if ui.button("Continue").clicked() {
+            ui.weak(next.clone().unwrap_or_else(|| tr("The highest milestone")));
+            if ui.button(tr("Continue")).clicked() {
                 close = true;
             }
         });
@@ -185,17 +182,17 @@ fn group(ui: &mut egui::Ui, title: &str, defs: &[(String, String)], zones: &[Zon
         return;
     }
     ui.add_space(4.0);
-    ui.strong(title);
+    ui.strong(tr(title));
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
         for (icon, name) in defs {
-            tool_tile(ui, TileIcon::Def(icon), name, false);
+            tool_tile(ui, TileIcon::Def(icon), &tr(name), false);
         }
         for &z in zones {
             tool_tile(
                 ui,
                 TileIcon::Icon(zone_icon(z)),
-                cp_tools::zone_name(z),
+                &tr(cp_tools::zone_name(z)),
                 false,
             );
         }

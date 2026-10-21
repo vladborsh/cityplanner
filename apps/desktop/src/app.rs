@@ -67,6 +67,11 @@ pub struct Options {
     pub no_clouds: bool,
     /// `--no-parked`: no parked cars in this run (T-276).
     pub no_parked: bool,
+    /// `--lang en|ru`: the language of the UI in this run (T-284 screenshots).
+    pub lang: Option<cp_locale::Lang>,
+    /// `--inspect`: the first building of the city is picked a second into the run, so the
+    /// inspector shows (T-284 screenshots).
+    pub inspect: bool,
     /// `--speed 1|2|3`: run the game at that speed from the start (T-281 benches).
     pub speed: Option<cp_core::SimSpeed>,
     /// `--no-qos`: leave the game's threads at the default quality of service (T-281: to
@@ -146,6 +151,8 @@ impl Options {
             hidden_ui: args.iter().any(|a| a == "--ui"),
             no_clouds: args.iter().any(|a| a == "--no-clouds"),
             no_parked: args.iter().any(|a| a == "--no-parked"),
+            lang: value("--lang").and_then(|v| cp_locale::Lang::from_code(&v)),
+            inspect: args.iter().any(|a| a == "--inspect"),
             pan: args.iter().any(|a| a == "--pan"),
             zoning: args.iter().position(|a| a == "--zoning").map(|i| {
                 let n: Vec<f32> = args
@@ -348,6 +355,24 @@ fn pan_camera(
 /// Frame of the run at which `--zoning` switches the zone tool on.
 const ZONING_FRAME: u32 = 60;
 
+/// `--inspect`: from [`ZONING_FRAME`] on, the first building is picked while nothing is.
+fn inspect_demo(
+    mut frame: Local<u32>,
+    view: Option<Res<SimView>>,
+    picked: Option<ResMut<cp_tools::Picked>>,
+) {
+    *frame += 1;
+    let (Some(view), Some(mut picked)) = (view, picked) else {
+        return;
+    };
+    if *frame >= ZONING_FRAME
+        && picked.0.is_none()
+        && let Some((id, _)) = view.buildings.iter().next()
+    {
+        picked.0 = Some(cp_sim::inspect::Selection::Building(id));
+    }
+}
+
 /// Where `--zoning x,z` holds the cursor (world metres), if anywhere.
 #[derive(Resource)]
 struct ZoningDemo(Option<Vec2>);
@@ -483,6 +508,9 @@ pub fn run(opts: Options) -> AppExit {
     {
         app.add_plugins(cp_tools::ToolsPlugin);
     }
+    if opts.inspect {
+        app.add_systems(Update, inspect_demo);
+    }
     if let Some(hover) = opts.zoning {
         if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
             app.add_plugins(cp_tools::ToolsPlugin);
@@ -527,6 +555,7 @@ pub fn run(opts: Options) -> AppExit {
             category: opts.category,
             no_clouds: opts.no_clouds,
             no_parked: opts.no_parked,
+            lang: opts.lang,
         },
         FrameTimeDiagnosticsPlugin::default(),
     ))

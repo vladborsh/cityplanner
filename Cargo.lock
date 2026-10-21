@@ -2411,6 +2411,7 @@ dependencies = [
  "cp_core",
  "cp_district",
  "cp_economy",
+ "cp_locale",
  "cp_net",
  "cp_prof",
  "cp_render",
@@ -2509,6 +2510,7 @@ dependencies = [
  "bevy",
  "cp_app",
  "cp_core",
+ "cp_locale",
  "cp_render",
  "cp_sim",
  "cp_terrain",
@@ -2568,6 +2570,14 @@ dependencies = [
  "cp_traffic",
  "cp_transit",
  "cp_zone",
+ "serde",
+]
+
+[[package]]
+name = "cp_locale"
+version = "0.0.0"
+dependencies = [
+ "ron",
  "serde",
 ]
 
@@ -2731,6 +2741,7 @@ dependencies = [
  "cp_core",
  "cp_district",
  "cp_economy",
+ "cp_locale",
  "cp_net",
  "cp_render",
  "cp_save",
@@ -2789,6 +2800,7 @@ dependencies = [
  "cp_district",
  "cp_economy",
  "cp_industry",
+ "cp_locale",
  "cp_net",
  "cp_park",
  "cp_render",

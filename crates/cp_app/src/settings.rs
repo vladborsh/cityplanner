@@ -118,6 +118,8 @@ pub struct Settings {
     pub audio: crate::audio::AudioSettings,
     /// Colour grading (T-273).
     pub grading: GradingPrefs,
+    /// The language of the UI, `"en"` or `"ru"` (T-284); English until the user decides.
+    pub language: String,
 }
 
 impl Default for Settings {
@@ -134,6 +136,7 @@ impl Default for Settings {
             advisor_problems_only: false,
             audio: crate::audio::AudioSettings::default(),
             grading: GradingPrefs::default(),
+            language: cp_locale::Lang::En.code().to_string(),
         }
     }
 }
@@ -248,6 +251,7 @@ impl Settings {
                 mute: ui.prefs.audio.mute,
             },
             grading: GradingPrefs::from(*grading),
+            language: ui.prefs.lang.code().to_string(),
         }
     }
 }
@@ -326,6 +330,7 @@ mod tests {
                 effects: 0.25,
                 mute: true,
             },
+            language: "ru".to_string(),
             grading: GradingPrefs {
                 contrast: 1.2,
                 temperature: -0.1,

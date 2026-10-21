@@ -14,6 +14,7 @@ use cp_core::Cost;
 use cp_core::treasury::DEBT_FLOOR;
 use cp_economy::state::{BUDGET_MAX, BUDGET_MIN, BUDGETED, TAX_MAX, TAX_MIN, TAXED_ZONES};
 use cp_economy::{EconomyCommand, Flow, Loan, SERVICE_ORDER, WeekReport};
+use cp_locale::{tr, trf};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, format_money, zone_name};
 
@@ -47,15 +48,15 @@ pub fn debt_level(balance: Cost) -> DebtLevel {
 pub fn debt_warning(balance: Cost) -> Option<String> {
     match debt_level(balance) {
         DebtLevel::Fine => None,
-        DebtLevel::Debt => Some(format!(
-            "In debt ({}). Building stops at {}.",
-            format_money(balance),
-            format_money(DEBT_FLOOR)
+        DebtLevel::Debt => Some(trf!(
+            "In debt ({balance}). Building stops at {floor}.",
+            balance = format_money(balance),
+            floor = format_money(DEBT_FLOOR)
         )),
-        DebtLevel::NearFloor => Some(format!(
-            "Almost at the debt limit ({} of {})! Building will be refused.",
-            format_money(balance),
-            format_money(DEBT_FLOOR)
+        DebtLevel::NearFloor => Some(trf!(
+            "Almost at the debt limit ({balance} of {floor})! Building will be refused.",
+            balance = format_money(balance),
+            floor = format_money(DEBT_FLOOR)
         )),
     }
 }
@@ -90,9 +91,9 @@ pub fn daily_trend(view: &SimView) -> Option<Cost> {
 /// `+$1,234.00/day` or `-$56.00/day` (the arrow is drawn by [`trend_arrow`]).
 pub fn trend_text(daily: Cost) -> String {
     if daily.0 >= 0 {
-        format!("+{}/day", format_money(daily))
+        trf!("+{money}/day", money = format_money(daily))
     } else {
-        format!("-{}/day", format_money(Cost(-daily.0)))
+        trf!("-{money}/day", money = format_money(Cost(-daily.0)))
     }
 }
 
@@ -162,7 +163,7 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
     let mut income: Vec<FlowRow> = Vec::new();
     for (i, zone) in TAXED_ZONES.into_iter().enumerate() {
         income.push((
-            format!("Tax: {}", zone_name(zone)),
+            trf!("Tax: {zone}", zone = tr(zone_name(zone))),
             [
                 Some(day.income_by_zone[i]),
                 Some(week.income_by_zone[i]),
@@ -172,7 +173,7 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
     }
     let mut expenses: Vec<FlowRow> = vec![
         (
-            "Roads".into(),
+            tr("Roads"),
             [
                 Some(day.road_upkeep),
                 Some(week.road_upkeep),
@@ -180,7 +181,7 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
             ],
         ),
         (
-            "Pipes and power lines".into(),
+            tr("Pipes and power lines"),
             [
                 Some(day.utility_upkeep),
                 Some(week.utility_upkeep),
@@ -191,7 +192,7 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
     for (i, kind) in SERVICE_ORDER.into_iter().enumerate() {
         if day.services[i] != Cost::ZERO || week.services[i] != Cost::ZERO {
             expenses.push((
-                service_line_name(kind).into(),
+                tr(service_line_name(kind)),
                 [Some(day.services[i]), Some(week.services[i]), None],
             ));
         }
@@ -204,53 +205,53 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
         ("Loans", [day.loans, week.loans, last.loan_payments]),
     ];
     for (name, c) in rest {
-        expenses.push((name.into(), c.map(Some)));
+        expenses.push((tr(name), c.map(Some)));
     }
     if day.policies != Cost::ZERO || week.policies != Cost::ZERO || last.policies != Cost::ZERO {
         expenses.push((
-            "Policies".into(),
+            tr("Policies"),
             [Some(day.policies), Some(week.policies), Some(last.policies)],
         ));
     }
     if day.fares != Cost::ZERO || week.fares != Cost::ZERO || last.transit_fares != Cost::ZERO {
         income.push((
-            "Fares".into(),
+            tr("Fares"),
             [Some(day.fares), Some(week.fares), Some(last.transit_fares)],
         ));
     }
     if day.tourism != Cost::ZERO || week.tourism != Cost::ZERO || last.tourism != Cost::ZERO {
         income.push((
-            "Tourism".into(),
+            tr("Tourism"),
             [Some(day.tourism), Some(week.tourism), Some(last.tourism)],
         ));
     }
     if day.exports != Cost::ZERO || week.exports != Cost::ZERO || last.exports != Cost::ZERO {
         income.push((
-            "Exports".into(),
+            tr("Exports"),
             [Some(day.exports), Some(week.exports), Some(last.exports)],
         ));
     }
     // Cargo trade (T-210): kept for the week so far only.
     if week.industry_export != Cost::ZERO {
         income.push((
-            "Industry export".into(),
+            tr("Industry export"),
             [None, Some(week.industry_export), None],
         ));
     }
     // Entrance fees of the park areas (T-225): kept for the week so far only.
     if week.park_fees != Cost::ZERO {
-        income.push(("Park entry fees".into(), [None, Some(week.park_fees), None]));
+        income.push((tr("Park entry fees"), [None, Some(week.park_fees), None]));
     }
     // What bulldozing gave back (BUG-097): the last day and the week so far.
     if day.refunds != Cost::ZERO || week.refunds != Cost::ZERO {
         income.push((
-            "Demolition refund".into(),
+            tr("Demolition refund"),
             [Some(day.refunds), Some(week.refunds), None],
         ));
     }
     if week.industry_import != Cost::ZERO {
         expenses.push((
-            "Industry import".into(),
+            tr("Industry import"),
             [None, Some(week.industry_import), None],
         ));
     }
@@ -260,10 +261,10 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
 /// The text of the money tooltip: the last day's income and expenses by line.
 pub fn trend_breakdown(view: &SimView) -> String {
     let Some(day) = view.flow.last_day(&view.economy) else {
-        return "No hour booked yet.".to_string();
+        return tr("No hour booked yet.");
     };
     let (income, expenses) = flow_rows(&day, &day, &view.economy.last_week);
-    let mut out = String::from("Last 24 hours:");
+    let mut out = tr("Last 24 hours:");
     for (name, c) in income {
         if let Some(c) = c[0].filter(|c| c.0 != 0) {
             out += &format!("\n{name} +{}", format_money(c));
@@ -297,9 +298,12 @@ pub fn population_trend(view: &SimView) -> (i64, String, String) {
         n if n > 0 => format!("+{n}"),
         n => format!("-{}", -n),
     };
-    let hover = format!(
-        "Last day:\nMoved in +{}\nBorn +{}\nMoved out -{}\nDied -{}",
-        d.arrived, d.born, d.left, d.died
+    let hover = trf!(
+        "Last day:\nMoved in +{arrived}\nBorn +{born}\nMoved out -{left}\nDied -{died}",
+        arrived = d.arrived,
+        born = d.born,
+        left = d.left,
+        died = d.died
     );
     (net, text, hover)
 }
@@ -436,7 +440,7 @@ pub fn budget_window(
     crate::frame::window(
         "budget",
         crate::icons::Icon::Budget,
-        "Economy & budget",
+        &tr("Economy & budget"),
         open,
     )
     .show(ctx, |ui| {
@@ -534,7 +538,7 @@ pub fn overview(view: &SimView) -> Overview {
 /// week so far and the last week, and the balance of the last two days by hour.
 fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
     let Some(day) = view.flow.last_day(&view.economy) else {
-        ui.weak("No game hour booked yet.");
+        ui.weak(tr("No game hour booked yet."));
         return;
     };
     let week = &view.flow.week_to_date;
@@ -545,13 +549,14 @@ fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
     };
     egui::Grid::new("cash_flow").striped(true).show(ui, |ui| {
         ui.strong("");
-        ui.strong("Last day");
-        ui.strong("This week");
-        ui.strong("Last week");
+        ui.strong(tr("Last day"));
+        ui.strong(tr("This week"));
+        ui.strong(tr("Last week"));
         ui.end_row();
-        for (title, rows, total) in [
+        for (title, total_title, rows, total) in [
             (
                 "Income",
+                "Total income",
                 &income,
                 (
                     day.income(),
@@ -561,6 +566,7 @@ fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
             ),
             (
                 "Expenses",
+                "Total expenses",
                 &expenses,
                 (
                     day.expenses(),
@@ -569,7 +575,7 @@ fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
                 ),
             ),
         ] {
-            ui.strong(title);
+            ui.strong(tr(title));
             ui.end_row();
             for (name, c) in rows {
                 ui.label(name);
@@ -578,19 +584,19 @@ fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
                 }
                 ui.end_row();
             }
-            ui.strong(format!("Total {}", title.to_lowercase()));
+            ui.strong(tr(total_title));
             cell(ui, Some(total.0));
             cell(ui, Some(total.1));
             cell(ui, Some(total.2));
             ui.end_row();
         }
-        ui.strong("Net");
+        ui.strong(tr("Net"));
         cell(ui, Some(day.net()));
         cell(ui, Some(week.net()));
         cell(ui, Some(last.balance()));
         ui.end_row();
     });
-    ui.weak("Balance, last 2 days, by hour");
+    ui.weak(tr("Balance, last 2 days, by hour"));
     let hours: Vec<f32> = view
         .city
         .history
@@ -608,64 +614,66 @@ pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
     let o = overview(view);
     cash_flow_table(ui, view);
     ui.separator();
-    ui.strong("Last week");
+    ui.strong(tr("Last week"));
     egui::Grid::new("overview_week").show(ui, |ui| {
         for (name, cost) in [("Income", o.income), ("Expenses", o.upkeep), ("Net", o.net)] {
-            ui.label(name);
+            ui.label(tr(name));
             ui.label(format_money(cost));
             ui.end_row();
         }
     });
-    ui.weak("Balance, 7 days");
+    ui.weak(tr("Balance, 7 days"));
     crate::metrics::sparkline(ui, &o.balance_history, egui::vec2(260.0, 36.0));
     ui.separator();
-    ui.strong("Income by zone");
+    ui.strong(tr("Income by zone"));
     egui::Grid::new("overview_income").show(ui, |ui| {
         for (zone, cost) in &o.income_by_zone {
-            ui.label(zone_name(*zone));
+            ui.label(tr(zone_name(*zone)));
             ui.label(format_money(*cost));
             ui.end_row();
         }
-        ui.label("Fares");
+        ui.label(tr("Fares"));
         ui.label(format_money(o.transit_fares));
         ui.end_row();
-        ui.label("Tourism");
+        ui.label(tr("Tourism"));
         ui.label(format_money(o.tourism));
         ui.end_row();
-        ui.label("Exports");
+        ui.label(tr("Exports"));
         ui.label(format_money(o.exports));
         ui.end_row();
     });
     ui.separator();
-    ui.strong("Expenses");
+    ui.strong(tr("Expenses"));
     egui::Grid::new("overview_expenses").show(ui, |ui| {
         for r in &o.roads {
-            ui.label(format!(
-                "Roads: {} ({} seg, {:.0} m)",
-                r.name, r.segments, r.meters
+            ui.label(trf!(
+                "Roads: {name} ({segments} seg, {meters} m)",
+                name = tr(&r.name),
+                segments = r.segments,
+                meters = format!("{:.0}", r.meters)
             ));
             ui.label(format_money(r.upkeep_week));
             ui.end_row();
         }
-        ui.label("Roads, all classes");
+        ui.label(tr("Roads, all classes"));
         ui.label(format_money(o.roads_sum));
         ui.end_row();
-        ui.label("Roads, settled last week");
+        ui.label(tr("Roads, settled last week"));
         ui.label(format_money(o.road_upkeep));
         ui.end_row();
-        ui.label("Service buildings");
+        ui.label(tr("Service buildings"));
         ui.label(format_money(o.building_upkeep));
         ui.end_row();
-        ui.label("Pipes and power lines");
+        ui.label(tr("Pipes and power lines"));
         ui.label(format_money(o.utility_upkeep));
         ui.end_row();
-        ui.label("Public transport");
+        ui.label(tr("Public transport"));
         ui.label(format_money(o.transit_upkeep));
         ui.end_row();
-        ui.label("Loans");
+        ui.label(tr("Loans"));
         ui.label(format_money(o.loan_payments));
         ui.end_row();
-        ui.label("Policies");
+        ui.label(tr("Policies"));
         ui.label(format_money(o.policies));
         ui.end_row();
     });
@@ -688,11 +696,11 @@ pub fn budget_contents(
                 ui.label(egui::RichText::new(trend_text(d)).color(trend_colour(d.0 >= 0)));
             }
             None => {
-                ui.weak("no hour booked yet");
+                ui.weak(tr("no hour booked yet"));
             }
         }
         if week.week > 0 {
-            ui.label(format!("last settled: week {}", week.week));
+            ui.label(trf!("last settled: week {week}", week = week.week));
         }
     });
     if let Some(w) = debt_warning(balance) {
@@ -700,7 +708,10 @@ pub fn budget_contents(
     }
     ui.horizontal(|ui| {
         for tab in BudgetTab::ALL {
-            if ui.selectable_label(draft.tab == tab, tab.label()).clicked() {
+            if ui
+                .selectable_label(draft.tab == tab, tr(tab.label()))
+                .clicked()
+            {
                 draft.tab = tab;
             }
         }
@@ -722,11 +733,11 @@ fn taxes_tab(
     outbox: &mut CommandOutbox,
 ) {
     let (state, week) = (&view.economy, &view.economy.last_week);
-    ui.strong("Taxes: last day, this week, last week");
+    ui.strong(tr("Taxes: last day, this week, last week"));
     let day = view.flow.last_day(state);
     egui::Grid::new("budget_taxes").show(ui, |ui| {
         for (i, zone) in TAXED_ZONES.into_iter().enumerate() {
-            ui.label(zone_name(zone));
+            ui.label(tr(zone_name(zone)));
             ui.label(format_money(
                 day.map_or(Cost::ZERO, |d| d.income_by_zone[i]),
             ));
@@ -749,7 +760,7 @@ fn budgets_tab(
     outbox: &mut CommandOutbox,
 ) {
     let state = &view.economy;
-    ui.strong("Service budgets");
+    ui.strong(tr("Service budgets"));
     for (i, kind) in BUDGETED.into_iter().enumerate() {
         let current = state.budgets.get(kind);
         let name = match kind {
@@ -761,7 +772,7 @@ fn budgets_tab(
         };
         if let Some(pct) = pct_slider(
             ui,
-            name,
+            &tr(name),
             current,
             &mut draft.budgets[i],
             BUDGET_MIN..=BUDGET_MAX,
@@ -775,78 +786,82 @@ fn budgets_tab(
 /// pay-off button. Only sends `TakeLoan` / `RepayLoan`; the sim checks the rest.
 fn loans_tab(ui: &mut egui::Ui, view: &SimView, outbox: &mut CommandOutbox) {
     let offers = view.loan_offers();
-    ui.strong("Bank offers");
+    ui.strong(tr("Bank offers"));
     if offers.is_empty() {
-        ui.weak("The bank has no offers.");
+        ui.weak(tr("The bank has no offers."));
     }
     for o in &offers {
         let weekly = Loan::new(o.index, &o.offer, view.tick).weekly();
         ui.group(|ui| {
             ui.horizontal(|ui| {
-                ui.label(format!(
-                    "{}  ·  {}% interest  ·  {} weeks",
-                    format_money(Cost::from_units(o.offer.amount)),
-                    o.offer.interest_pct,
-                    o.offer.weeks
+                ui.label(trf!(
+                    plural "{amount}  ·  {pct}% interest  ·  {n} weeks",
+                    n = o.offer.weeks,
+                    amount = format_money(Cost::from_units(o.offer.amount)),
+                    pct = o.offer.interest_pct
                 ));
-                let label = if o.active.is_some() { "Taken" } else { "Take" };
+                let label = if o.active.is_some() {
+                    tr("Taken")
+                } else {
+                    tr("Take")
+                };
                 let r = ui.add_enabled(o.available, egui::Button::new(label));
                 let r = if o.active.is_some() {
-                    r.on_disabled_hover_text("Already taken; pay it off to take it again.")
+                    r.on_disabled_hover_text(tr("Already taken; pay it off to take it again."))
                 } else if o.available {
                     r
                 } else {
-                    r.on_disabled_hover_text(format!(
-                        "The bank wants {} residents.",
-                        o.offer.min_population
+                    r.on_disabled_hover_text(trf!(
+                        plural "The bank wants {n} residents.",
+                        n = o.offer.min_population
                     ))
                 };
                 if r.clicked() {
                     outbox.push(take_loan_command(o.index));
                 }
             });
-            ui.weak(format!(
-                "Weekly payment {}{}",
-                format_money(weekly),
-                if o.offer.min_population > 0 {
-                    format!("  ·  from {} residents", o.offer.min_population)
-                } else {
-                    String::new()
-                }
-            ));
+            ui.weak(if o.offer.min_population > 0 {
+                trf!(
+                    plural "Weekly payment {money}  ·  from {n} residents",
+                    n = o.offer.min_population,
+                    money = format_money(weekly)
+                )
+            } else {
+                trf!("Weekly payment {money}", money = format_money(weekly))
+            });
         });
     }
     ui.separator();
-    ui.strong("Active loans");
+    ui.strong(tr("Active loans"));
     if view.economy.loans.is_empty() {
-        ui.weak("No active loans.");
+        ui.weak(tr("No active loans."));
     }
     for l in &view.economy.loans {
         ui.group(|ui| {
-            ui.label(format!(
-                "Offer {}: debt left {}, interest left {}",
-                u16::from(l.offer) + 1,
-                format_money(l.principal_left),
-                format_money(l.interest_left)
+            ui.label(trf!(
+                "Offer {offer}: debt left {debt}, interest left {interest}",
+                offer = u16::from(l.offer) + 1,
+                debt = format_money(l.principal_left),
+                interest = format_money(l.interest_left)
             ));
             ui.horizontal(|ui| {
-                ui.label(format!(
-                    "{} weeks left  ·  {} a week",
-                    l.weeks_left,
-                    format_money(l.weekly())
+                ui.label(trf!(
+                    plural "{n} weeks left  ·  {money} a week",
+                    n = l.weeks_left,
+                    money = format_money(l.weekly())
                 ));
                 let can = view.treasury.balance >= l.principal_left;
                 let r = ui.add_enabled(
                     can,
-                    egui::Button::new(format!(
-                        "Pay off early — {}",
-                        format_money(l.principal_left)
+                    egui::Button::new(trf!(
+                        "Pay off early — {money}",
+                        money = format_money(l.principal_left)
                     )),
                 );
                 let r = if can {
                     r
                 } else {
-                    r.on_disabled_hover_text("Not enough money.")
+                    r.on_disabled_hover_text(tr("Not enough money."))
                 };
                 if r.clicked() {
                     outbox.push(repay_loan_command(l.offer));

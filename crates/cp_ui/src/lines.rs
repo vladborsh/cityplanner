@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use bevy_egui::egui;
 use cp_core::Cost;
+use cp_locale::{tr, trf};
 use cp_sim::{LineView, SimCommand, SimView};
 use cp_tools::{CommandOutbox, format_money};
 use cp_transit::{
@@ -149,7 +150,7 @@ fn delete_button(
     outbox: &mut CommandOutbox,
 ) -> bool {
     let pending = draft.confirm_delete == Some(l.id);
-    let label = if pending { "Sure?" } else { "Delete" };
+    let label = tr(if pending { "Sure?" } else { "Delete" });
     if ui.small_button(label).clicked() {
         if pending {
             outbox.push(delete_command(l.id));
@@ -170,18 +171,18 @@ fn line_row(
 ) {
     color_menu(ui, l, outbox);
     name_edit(ui, l, draft, outbox);
-    ui.label(mode_name(l.mode));
+    ui.label(tr(mode_name(l.mode)));
     ui.label(l.stops.to_string());
     buses_slider(ui, l, draft, outbox);
-    ui.label(format!("{} out", l.vehicles_out));
+    ui.label(trf!("{n} out", n = l.vehicles_out));
     ui.label(l.riders_week.to_string());
     ui.label(l.waiting.to_string());
     let (fares, upkeep) = line_money(view, l);
     ui.label(format_money(fares));
     ui.label(format_money(upkeep));
     match state_text(l.state) {
-        Some(t) => ui.colored_label(egui::Color32::from_rgb(240, 120, 60), t),
-        None => ui.label("OK"),
+        Some(t) => ui.colored_label(egui::Color32::from_rgb(240, 120, 60), tr(t)),
+        None => ui.label(tr("OK")),
     };
     delete_button(ui, l, draft, outbox);
     ui.end_row();
@@ -214,7 +215,8 @@ pub fn line_info_panel(
     };
     let mut open = true;
     let mut gone = false;
-    frame::window("line_info", Icon::Lines, "Line", &mut open)
+    let title = tr("Line");
+    frame::window("line_info", Icon::Lines, &title, &mut open)
         .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -8.0))
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -225,41 +227,42 @@ pub fn line_info_panel(
             egui::Grid::new("line_info_rows")
                 .num_columns(2)
                 .show(ui, |ui| {
-                    ui.weak("Mode");
-                    ui.label(mode_name(l.mode));
+                    ui.weak(tr("Mode"));
+                    ui.label(tr(mode_name(l.mode)));
                     ui.end_row();
-                    ui.weak("Stops");
+                    ui.weak(tr("Stops"));
                     ui.label(l.stops.to_string());
                     ui.end_row();
-                    ui.weak("Buses");
+                    ui.weak(tr("Buses"));
                     buses_slider(ui, l, draft, outbox);
                     ui.end_row();
-                    ui.weak("Out now");
+                    ui.weak(tr("Out now"));
                     ui.label(l.vehicles_out.to_string());
                     ui.end_row();
-                    ui.weak("Riders");
-                    ui.label(format!(
-                        "{} today, {} this week",
-                        l.riders_today, l.riders_week
+                    ui.weak(tr("Riders"));
+                    ui.label(trf!(
+                        "{today} today, {week} this week",
+                        today = l.riders_today,
+                        week = l.riders_week
                     ));
                     ui.end_row();
-                    ui.weak("Waiting");
+                    ui.weak(tr("Waiting"));
                     ui.label(l.waiting.to_string());
                     ui.end_row();
-                    ui.weak("Fares / upkeep");
+                    ui.weak(tr("Fares / upkeep"));
                     ui.label(format!(
                         "{} / {}",
                         format_money(fares),
                         format_money(upkeep)
                     ));
                     ui.end_row();
-                    ui.weak("State");
-                    ui.label(state_text(l.state).unwrap_or("OK"));
+                    ui.weak(tr("State"));
+                    ui.label(tr(state_text(l.state).unwrap_or("OK")));
                     ui.end_row();
                 });
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button("Edit stops").clicked() {
+                if ui.button(tr("Edit stops")).clicked() {
                     out.edit = Some(l.id);
                 }
                 gone = delete_button(ui, l, draft, outbox);
@@ -279,7 +282,9 @@ pub fn lines_contents(
     outbox: &mut CommandOutbox,
 ) {
     if view.lines.is_empty() {
-        ui.weak("No lines yet. Build bus stops with the Transport tools and close a ring.");
+        ui.weak(tr(
+            "No lines yet. Build bus stops with the Transport tools and close a ring.",
+        ));
         return;
     }
     egui::Grid::new("lines_grid").striped(true).show(ui, |ui| {
@@ -297,7 +302,11 @@ pub fn lines_contents(
             "State",
             "",
         ] {
-            ui.strong(h);
+            if h.is_empty() {
+                ui.strong(h);
+            } else {
+                ui.strong(tr(h));
+            }
         }
         ui.end_row();
         for l in &view.lines {
@@ -306,12 +315,12 @@ pub fn lines_contents(
     });
     ui.separator();
     let w = &view.economy.last_week;
-    ui.weak(format!(
-        "Last week: fares {}, bus upkeep {}. This week so far: fares {}, upkeep {}.",
-        format_money(w.transit_fares),
-        format_money(w.transit_upkeep),
-        format_money(view.transit_ledger.fares),
-        format_money(view.transit_ledger.upkeep),
+    ui.weak(trf!(
+        "Last week: fares {last_fares}, bus upkeep {last_upkeep}. This week so far: fares {fares}, upkeep {upkeep}.",
+        last_fares = format_money(w.transit_fares),
+        last_upkeep = format_money(w.transit_upkeep),
+        fares = format_money(view.transit_ledger.fares),
+        upkeep = format_money(view.transit_ledger.upkeep),
     ));
 }
 
@@ -323,7 +332,8 @@ pub fn lines_window(
     draft: &mut LinesDraft,
     outbox: &mut CommandOutbox,
 ) {
-    frame::window("lines", Icon::Lines, "Lines", open).show(ctx, |ui| {
+    let title = tr("Lines");
+    frame::window("lines", Icon::Lines, &title, open).show(ctx, |ui| {
         egui::ScrollArea::both()
             .max_height(520.0)
             .show(ui, |ui| lines_contents(ui, view, draft, outbox));

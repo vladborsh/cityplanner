@@ -14,6 +14,7 @@ disallowed_methods = "allow"
 cp_sim.workspace = true
 cp_transit.workspace = true
 cp_render.workspace = true
+cp_locale.workspace = true
 bevy_ecs.workspace = true
 cp_net.workspace = true
 cp_content.workspace = true

@@ -52,6 +52,7 @@ pub fn run() {
                 category: None,
                 no_clouds: false,
                 no_parked: false,
+                lang: None,
             },
             FrameTimeDiagnosticsPlugin::default(),
             // FPS and frame time to the browser console every 5 s.

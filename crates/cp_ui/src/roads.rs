@@ -5,6 +5,7 @@
 use bevy_egui::egui;
 use cp_content::{ContentDb, LaneKind, RoadClass, RoadDefId};
 use cp_core::Cost;
+use cp_locale::{tr, trf, trn};
 use cp_tools::{
     ActiveTool, ELEVATION_STEP, MAX_ELEVATION_LEVEL, RoadMode, ToolState, format_money,
 };
@@ -53,15 +54,21 @@ pub fn cards(content: &ContentDb) -> Vec<Card> {
 /// "2 lanes · 50 km/h · one-way".
 pub fn card_summary(c: &Card) -> String {
     if c.class == RoadClass::Path {
-        return format!("Pedestrian lanes only · {:.0} km/h", c.speed_kmh);
+        return trf!(
+            "Pedestrian lanes only · {speed} km/h",
+            speed = format!("{:.0}", c.speed_kmh)
+        );
     }
-    format!(
-        "{} {} · {:.0} km/h{}",
-        c.lanes,
-        if c.lanes == 1 { "lane" } else { "lanes" },
-        c.speed_kmh,
-        if c.one_way { " · one-way" } else { "" }
-    )
+    let mut out = format!(
+        "{} · {}",
+        trn("{n} lanes", c.lanes as i64),
+        trf!("{speed} km/h", speed = format!("{:.0}", c.speed_kmh))
+    );
+    if c.one_way {
+        out.push_str(" · ");
+        out.push_str(&tr("one-way"));
+    }
+    out
 }
 
 fn class_label(class: RoadClass) -> &'static str {
@@ -78,7 +85,10 @@ fn class_label(class: RoadClass) -> &'static str {
 /// The height of the road tool as the panel states it: under the ground, on it or raised.
 pub fn road_height_text(tool: &cp_tools::RoadTool) -> String {
     if tool.underground {
-        format!("Tunnel {:.0} m", cp_tools::ROAD_TUNNEL_DEPTH)
+        trf!(
+            "Tunnel {m} m",
+            m = format!("{:.0}", cp_tools::ROAD_TUNNEL_DEPTH)
+        )
     } else {
         elevation_text(tool.level)
     }
@@ -87,23 +97,30 @@ pub fn road_height_text(tool: &cp_tools::RoadTool) -> String {
 /// The elevation as the panel states it.
 pub fn elevation_text(level: u8) -> String {
     if level == 0 {
-        "Ground".to_string()
+        tr("Ground")
     } else {
-        format!("Raised {:.0} m", f32::from(level) * ELEVATION_STEP)
+        trf!(
+            "Raised {m} m",
+            m = format!("{:.0}", f32::from(level) * ELEVATION_STEP)
+        )
     }
 }
 
 /// The hover text of a road tile: everything the tile itself leaves out.
 pub fn tile_tooltip(c: &Card) -> String {
     let mut text = format!(
-        "{}\n{}\n{}/m · {}/m/wk",
-        c.name,
+        "{}\n{}\n{}",
+        tr(&c.name),
         card_summary(c),
-        format_money(c.cost_per_m),
-        format_money(c.upkeep_per_m_week)
+        trf!(
+            "{cost}/m · {upkeep}/m/wk",
+            cost = format_money(c.cost_per_m),
+            upkeep = format_money(c.upkeep_per_m_week)
+        )
     );
     if !c.allows_zoning {
-        text.push_str("\nno zoning");
+        text.push('\n');
+        text.push_str(&tr("no zoning"));
     }
     text
 }
@@ -120,7 +137,7 @@ fn road_tile_widget(
     let draw = |painter: &egui::Painter, rect: egui::Rect| {
         icons::road_tile_scaled(painter, def, rect, widest);
     };
-    tool_tile(ui, TileIcon::Draw(&draw), &c.name, selected).on_hover_text(tile_tooltip(c))
+    tool_tile(ui, TileIcon::Draw(&draw), &tr(&c.name), selected).on_hover_text(tile_tooltip(c))
 }
 
 /// The footpath tile for the Parks category (T-226): the same tool and tile as the Paths row of
@@ -150,10 +167,10 @@ pub fn roads_panel(
     types_folded: &mut bool,
 ) {
     ui.add_space(4.0);
-    ui.weak("Tools");
+    ui.weak(tr("Tools"));
     ui.horizontal_wrapped(|ui| {
         let on = tools.active == ActiveTool::Road;
-        if crate::panels::tool_button(ui, Icon::Road, "Build", on).clicked() {
+        if crate::panels::tool_button(ui, Icon::Road, &tr("Build"), on).clicked() {
             tools.select(if on {
                 ActiveTool::None
             } else {
@@ -161,7 +178,7 @@ pub fn roads_panel(
             });
         }
         let on = tools.active == ActiveTool::Upgrade;
-        if crate::panels::tool_button(ui, Icon::Roads, "Upgrade", on).clicked() {
+        if crate::panels::tool_button(ui, Icon::Roads, &tr("Upgrade"), on).clicked() {
             tools.select(if on {
                 ActiveTool::None
             } else {
@@ -169,7 +186,7 @@ pub fn roads_panel(
             });
         }
         let on = tools.active == ActiveTool::Flip;
-        if crate::panels::tool_button(ui, Icon::FlipRoad, "Flip", on).clicked() {
+        if crate::panels::tool_button(ui, Icon::FlipRoad, &tr("Flip"), on).clicked() {
             tools.select(if on {
                 ActiveTool::None
             } else {
@@ -177,21 +194,23 @@ pub fn roads_panel(
             });
         }
         let on = tools.active == ActiveTool::Bulldozer;
-        if crate::panels::tool_button(ui, Icon::Bulldozer, "Bulldozer", on).clicked() {
+        if crate::panels::tool_button(ui, Icon::Bulldozer, &tr("Bulldozer"), on).clicked() {
             tools.toggle_bulldozer();
         }
     });
     let building = tools.active == ActiveTool::Road;
     if building {
         ui.add_space(4.0);
-        ui.weak("Mode");
+        ui.weak(tr("Mode"));
         ui.horizontal_wrapped(|ui| {
             for (mode, icon, label) in [
                 (RoadMode::Straight, Icon::Road, "Straight"),
                 (RoadMode::Curve, Icon::Curve, "Curve"),
                 (RoadMode::Free, Icon::FreeRoad, "Free"),
             ] {
-                if crate::panels::tool_button(ui, icon, label, tools.road.mode == mode).clicked() {
+                if crate::panels::tool_button(ui, icon, &tr(label), tools.road.mode == mode)
+                    .clicked()
+                {
                     tools.road.set_mode(mode);
                 }
             }
@@ -200,14 +219,16 @@ pub fn roads_panel(
         // Snaps (§6.8.3 item 9): off is the same as holding Alt.
         let mut snaps = !tools.snaps_off;
         if ui
-            .checkbox(&mut snaps, "Snaps")
-            .on_hover_text("Nodes, guides, angles and the 8 m step. Hold Alt for free placement.")
+            .checkbox(&mut snaps, tr("Snaps"))
+            .on_hover_text(tr(
+                "Nodes, guides, angles and the 8 m step. Hold Alt for free placement.",
+            ))
             .changed()
         {
             tools.snaps_off = !snaps;
         }
         ui.add_space(4.0);
-        ui.weak("Elevation (PgUp / PgDn)");
+        ui.weak(tr("Elevation (PgUp / PgDn)"));
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -243,7 +264,7 @@ pub fn roads_panel(
     }
     ui.add_space(4.0);
     let upgrading = tools.active == ActiveTool::Upgrade;
-    let title = if upgrading { "Upgrade to" } else { "Road type" };
+    let title = tr(if upgrading { "Upgrade to" } else { "Road type" });
     // BUG-044: the section is open until the player folds it, whatever the tool.
     if ui
         .button(format!("{} {title}", if *types_folded { "▸" } else { "▾" }))
@@ -259,7 +280,7 @@ pub fn roads_panel(
     let mut classes: Vec<RoadClass> = cards.iter().map(|c| c.class).collect();
     classes.dedup();
     for class in classes {
-        ui.strong(class_label(class));
+        ui.strong(tr(class_label(class)));
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             for c in cards.iter().filter(|c| c.class == class) {

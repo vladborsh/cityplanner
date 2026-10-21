@@ -5,6 +5,7 @@
 //! (their service is not open yet) are greyed with a padlock and have no bar.
 
 use bevy_egui::egui;
+use cp_locale::tr;
 use cp_render::{Overlay, OverlayState};
 use cp_sim::SimView;
 use cp_sim::city_services::{Sector, SectorBalance};
@@ -49,7 +50,7 @@ pub fn percent_text(balance: f32) -> String {
 
 /// `"supply / demand unit"`.
 pub fn numbers_text(row: &SectorBalance) -> String {
-    format!("{:.0} / {:.0} {}", row.supply, row.demand, row.unit)
+    format!("{:.0} / {:.0} {}", row.supply, row.demand, tr(row.unit))
 }
 
 /// The overlay a click on the row opens.
@@ -139,7 +140,7 @@ pub fn services_contents(ui: &mut egui::Ui, rows: &[SectorBalance]) -> Option<Se
     let mut clicked = None;
     ui.set_min_size(egui::vec2(480.0, 120.0));
     if rows.is_empty() {
-        ui.weak("No figures yet");
+        ui.weak(tr("No figures yet"));
         return None;
     }
     egui::Grid::new("city_services")
@@ -152,10 +153,10 @@ pub fn services_contents(ui: &mut egui::Ui, rows: &[SectorBalance]) -> Option<Se
                         ui.disable();
                     }
                     icon_of(row.sector).show(ui, Sizes::ROW_ICON);
-                    ui.label(row.sector.label());
+                    ui.label(tr(row.sector.label()));
                     if row.locked {
                         ui.allocate_exact_size(BAR, egui::Sense::hover());
-                        ui.label("locked");
+                        ui.label(tr("locked"));
                         padlock(ui);
                     } else {
                         bar(ui, row.balance());
@@ -170,7 +171,7 @@ pub fn services_contents(ui: &mut egui::Ui, rows: &[SectorBalance]) -> Option<Se
                             egui::Id::new(("service_row", row.sector as u8)),
                             egui::Sense::click(),
                         )
-                        .on_hover_text("Show the overlay")
+                        .on_hover_text(tr("Show the overlay"))
                         .clicked()
                 {
                     clicked = Some(row.sector);
@@ -220,7 +221,7 @@ pub fn overlay_services_panel(ctx: &egui::Context, view: &SimView, overlay: Over
                     .show(ui, |ui| {
                         for row in rows {
                             icon_of(row.sector).show(ui, Sizes::ROW_ICON);
-                            ui.label(row.sector.label());
+                            ui.label(tr(row.sector.label()));
                             bar(ui, row.balance());
                             ui.label(numbers_text(row));
                             ui.label(percent_text(row.balance()));
@@ -238,7 +239,7 @@ pub fn services_window(
     view: &SimView,
     overlay: &mut OverlayState,
 ) {
-    let clicked = frame::window("services", Icon::Services, "City services", open)
+    let clicked = frame::window("services", Icon::Services, &tr("City services"), open)
         .show(ctx, |ui| services_contents(ui, view.city_services()))
         .flatten();
     if let Some(s) = clicked {

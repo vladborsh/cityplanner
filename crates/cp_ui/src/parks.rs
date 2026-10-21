@@ -7,6 +7,7 @@ use bevy_egui::egui;
 use cp_content::{BuildingDefId, ContentDb, ParkKind, ParkRole, ServiceKind};
 use cp_core::Cost;
 use cp_district::{AreaId, AreaKind, DistrictCommand, NAME_MAX};
+use cp_locale::{tr, trf, trn};
 use cp_render::{Overlay, OverlayState, park_color};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{ActiveTool, CommandOutbox, DistrictToolKind, ToolState, format_money};
@@ -44,7 +45,7 @@ pub fn swatch(kind: ParkKind) -> egui::Color32 {
 
 /// "Zoo 3" with `3` the id the new area gets.
 pub fn new_name(kind: ParkKind, id: AreaId) -> String {
-    format!("{} {}", kind_name(kind), id.0)
+    format!("{} {}", tr(kind_name(kind)), id.0)
 }
 
 fn kind_tool_icon(kind: DistrictToolKind) -> Icon {
@@ -100,13 +101,11 @@ pub fn park_lock(view: &SimView, db: &ContentDb, def: BuildingDefId) -> Option<S
     match (spec.role, spec.park) {
         // A city park of the Buildings panel stands anywhere.
         (ParkRole::Attraction, None) => None,
-        (ParkRole::Prop, _) => best(None)
-            .is_none()
-            .then(|| "needs a park area".to_string()),
+        (ParkRole::Prop, _) => best(None).is_none().then(|| tr("needs a park area")),
         (role, Some(kind)) => match best(Some(kind)) {
-            None => Some(format!("needs a {} area", kind_name(kind))),
+            None => Some(trf!("needs a {kind} area", kind = tr(kind_name(kind)))),
             Some(level) if role == ParkRole::Attraction && level < spec.min_level => {
-                Some(format!("area level {}", spec.min_level))
+                Some(trf!("area level {n}", n = spec.min_level))
             }
             Some(_) => None,
         },
@@ -129,13 +128,17 @@ fn card_row(
             let lock = park_lock(view, db, card.id);
             let on = tools.active == ActiveTool::Place && tools.building.def == Some(card.id);
             let hover = match &lock {
-                Some(l) => format!("Locked: {l}\n{}", card_text(card)),
+                Some(l) => format!(
+                    "{}\n{}",
+                    trf!("Locked: {reason}", reason = l),
+                    card_text(card)
+                ),
                 None => card_text(card),
             };
             let r = tool_tile_enabled(
                 ui,
                 TileIcon::Def(&card.icon),
-                &card.name,
+                &tr(&card.name),
                 on,
                 lock.is_none(),
             )
@@ -165,7 +168,12 @@ pub fn area_labels(view: &SimView) -> Vec<(String, bevy::math::Vec2)> {
                 );
                 n += 1.0;
             }
-            (n > 0.0).then(|| (format!("{} · L{}", a.name, a.level), sum / n))
+            (n > 0.0).then(|| {
+                (
+                    format!("{} · {}", a.name, trf!("L{n}", n = a.level)),
+                    sum / n,
+                )
+            })
         })
         .collect()
 }
@@ -225,7 +233,7 @@ pub fn parks_panel(
             .get(id)
             .is_some_and(|a| a.kind == AreaKind::Park(kind))
     };
-    section(ui, "Tool", |ui| {
+    section(ui, &tr("Tool"), |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             for kind in DistrictToolKind::ALL {
@@ -233,7 +241,7 @@ pub fn parks_panel(
                 if tool_tile(
                     ui,
                     TileIcon::Icon(kind_tool_icon(kind)),
-                    kind.label(),
+                    &tr(kind.label()),
                     selected,
                 )
                 .clicked()
@@ -260,7 +268,7 @@ pub fn parks_panel(
             if tool_tile_enabled(
                 ui,
                 TileIcon::Icon(Icon::Remove),
-                "Off",
+                &tr("Off"),
                 false,
                 tools.active == ActiveTool::Area,
             )
@@ -274,18 +282,23 @@ pub fn parks_panel(
     let Some(db) = view.content.as_deref() else {
         return;
     };
-    section(ui, "New area", |ui| {
-        ui.weak("Choose the kind of park, then press New area.");
+    section(ui, &tr("New area"), |ui| {
+        ui.weak(tr("Choose the kind of park, then press New area."));
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             for kind in ParkKind::ALL {
                 let on = tools.area.new_park == Some(kind);
-                if tool_tile(ui, TileIcon::Icon(kind_icon(kind)), kind_name(kind), on)
-                    .on_hover_text(format!(
-                        "{}: the colour of its area and the overlay",
-                        kind_name(kind)
-                    ))
-                    .clicked()
+                if tool_tile(
+                    ui,
+                    TileIcon::Icon(kind_icon(kind)),
+                    &tr(kind_name(kind)),
+                    on,
+                )
+                .on_hover_text(trf!(
+                    "{kind}: the colour of its area and the overlay",
+                    kind = tr(kind_name(kind))
+                ))
+                .clicked()
                 {
                     tools.area.new_park = Some(kind);
                     // The selected area of that kind, else the first, else a new one.
@@ -324,7 +337,7 @@ pub fn parks_panel(
             if tool_tile_enabled(
                 ui,
                 TileIcon::Icon(Icon::DistrictNew),
-                "New area",
+                &tr("New area"),
                 false,
                 can.is_some(),
             )
@@ -350,15 +363,17 @@ pub fn parks_panel(
         && let Some(id) = tools.area.selected
         && let Some(a) = view.areas.get(id)
     {
-        ui.label(format!("Painting: {}", a.name));
+        ui.label(trf!("Painting: {name}", name = a.name));
     }
-    section(ui, "Areas", |ui| {
+    section(ui, &tr("Areas"), |ui| {
         if !view
             .areas
             .iter()
             .any(|(_, a)| matches!(a.kind, AreaKind::Park(_)))
         {
-            ui.weak("No park areas yet: pick a kind, press New area, then paint with a brush.");
+            ui.weak(tr(
+                "No park areas yet: pick a kind, press New area, then paint with a brush.",
+            ));
         }
         for (id, a) in view.areas.iter() {
             let AreaKind::Park(kind) = a.kind else {
@@ -377,7 +392,7 @@ pub fn parks_panel(
                         egui::StrokeKind::Outside,
                     );
                 }
-                if resp.on_hover_text("Choose this area").clicked() {
+                if resp.on_hover_text(tr("Choose this area")).clicked() {
                     tools.area.selected = Some(id);
                     if tools.active != ActiveTool::Area {
                         tools.select(ActiveTool::Area);
@@ -407,8 +422,8 @@ pub fn parks_panel(
                     );
                 }
                 ui.data_mut(|m| m.insert_temp(key, buf));
-                ui.label(format!("L{}", a.level));
-                if ui.small_button("Delete").clicked() {
+                ui.label(trf!("L{n}", n = a.level));
+                if ui.small_button(tr("Delete")).clicked() {
                     send(outbox, DistrictCommand::DeleteArea { area: id });
                     if selected {
                         tools.area.selected = None;
@@ -416,9 +431,9 @@ pub fn parks_panel(
                 }
             });
             ui.weak(format!(
-                "    {} · {} cells",
-                kind_name(kind),
-                view.area_map.cell_count(id)
+                "    {} · {}",
+                tr(kind_name(kind)),
+                trn("{n} cells", view.area_map.cell_count(id) as i64)
             ));
         }
     });
@@ -430,18 +445,18 @@ pub fn parks_panel(
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             kind_icon(kind).show(ui, Sizes::SECTION_ICON);
-            ui.strong(kind_name(kind));
+            ui.strong(tr(kind_name(kind)));
         });
         card_row(ui, view, db, &cards, tools, overlay);
     }
     let props = section_cards(db, None);
     if !props.is_empty() {
         ui.add_space(4.0);
-        ui.strong("Props");
+        ui.strong(tr("Props"));
         card_row(ui, view, db, &props, tools, overlay);
     }
     ui.add_space(4.0);
-    ui.strong("Path");
+    ui.strong(tr("Path"));
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
         crate::roads::path_tile(ui, db, tools);
@@ -560,27 +575,31 @@ pub fn park_panel(
     };
     ui.horizontal(|ui| {
         kind_icon(s.kind).show(ui, Sizes::SECTION_ICON);
-        ui.strong(kind_name(s.kind));
+        ui.strong(tr(kind_name(s.kind)));
     });
-    ui.label(format!("Level {}", s.level));
+    ui.label(trf!("Level {n}", n = s.level));
     let (frac, text) = match s.next_xp {
         Some(next) => (
             (s.xp as f32 / next.max(1) as f32).min(1.0),
-            format!("{} / {} xp", s.xp, next),
+            trf!("{xp} / {next} xp", xp = s.xp, next = next),
         ),
-        None => (1.0, format!("{} xp (top level)", s.xp)),
+        None => (1.0, trf!("{xp} xp (top level)", xp = s.xp)),
     };
     ui.add(egui::ProgressBar::new(frac).text(text));
     egui::Grid::new("park_rows").num_columns(2).show(ui, |ui| {
         let mut row = |l: &str, v: String| {
-            ui.weak(l);
+            ui.weak(tr(l));
             ui.label(v);
             ui.end_row();
         };
         row("Inside now", format!("{} / {}", s.inside, s.capacity));
         row(
             "Visitors",
-            format!("{} today · {} this week", s.visitors_day, s.visitors_week),
+            trf!(
+                "{today} today · {week} this week",
+                today = s.visitors_day,
+                week = s.visitors_week
+            ),
         );
         row("Attraction", format!("{:.0}", s.attract));
         row("Gates", s.gates.to_string());
@@ -594,11 +613,11 @@ pub fn park_panel(
     if s.gates == 0 {
         ui.colored_label(
             egui::Color32::from_rgb(230, 160, 40),
-            "No gate: nobody can come in. Put a gate on a road next to the area.",
+            tr("No gate: nobody can come in. Put a gate on a road next to the area."),
         );
     }
     ui.horizontal(|ui| {
-        ui.label("Entrance fee");
+        ui.label(tr("Entrance fee"));
         let mut fee = s.fee;
         let r = ui.add(
             egui::Slider::new(&mut fee, 0.0..=s.fee_max)

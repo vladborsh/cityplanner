@@ -13,6 +13,7 @@ use bevy::math::Vec2;
 use bevy_egui::egui;
 use cp_building::{BuildingFlags, BuildingState};
 use cp_core::time::TICKS_PER_DAY;
+use cp_locale::{tr, trf, trn};
 use cp_render::Overlay;
 use cp_service::ServiceProblems;
 use cp_sim::SimView;
@@ -67,8 +68,41 @@ pub struct Advice {
     pub action: Option<Action>,
 }
 
-fn plural(n: u32, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
+/// The text of a service problem advice (`id` of [`SERVICE_ADVICE`]) for `n` buildings, with
+/// the name of a policy that helps, if any.
+fn service_text(id: &str, n: u32, policy: Option<&str>) -> String {
+    match (id, policy) {
+        ("garbage", None) => trn("{n} buildings buried in garbage", i64::from(n)),
+        ("garbage", Some(p)) => trf!(
+            plural "{n} buildings buried in garbage — try the {policy} policy",
+            n = n,
+            policy = tr(p)
+        ),
+        ("sick", None) => trn("{n} buildings with sick residents", i64::from(n)),
+        ("sick", Some(p)) => trf!(
+            plural "{n} buildings with sick residents — try the {policy} policy",
+            n = n,
+            policy = tr(p)
+        ),
+        ("dead", None) => trn("{n} buildings with uncollected dead", i64::from(n)),
+        ("dead", Some(p)) => trf!(
+            plural "{n} buildings with uncollected dead — try the {policy} policy",
+            n = n,
+            policy = tr(p)
+        ),
+        ("fire", None) => trn("{n} buildings on fire", i64::from(n)),
+        ("fire", Some(p)) => trf!(
+            plural "{n} buildings on fire — try the {policy} policy",
+            n = n,
+            policy = tr(p)
+        ),
+        (_, None) => trn("{n} buildings hit by crime", i64::from(n)),
+        (_, Some(p)) => trf!(
+            plural "{n} buildings hit by crime — try the {policy} policy",
+            n = n,
+            policy = tr(p)
+        ),
+    }
 }
 
 /// Counts and first position of the active buildings with a problem flag.
@@ -84,40 +118,36 @@ fn flagged(view: &SimView, bit: u8) -> (u32, Option<Vec2>) {
     (n, first)
 }
 
-/// Service problems (`ServiceProblems` bit, advice id, text, icon, the service's overlay).
-const SERVICE_ADVICE: [(u16, &str, &str, Icon, Overlay); 5] = [
+/// Service problems (`ServiceProblems` bit, advice id, icon, the service's overlay); the text is
+/// [`service_text`].
+const SERVICE_ADVICE: [(u16, &str, Icon, Overlay); 5] = [
     (
         ServiceProblems::GARBAGE,
         "garbage",
-        "buried in garbage",
         Icon::OverlayGarbage,
         Overlay::Garbage,
     ),
     (
         ServiceProblems::SICK,
         "sick",
-        "with sick residents",
         Icon::OverlayHealth,
         Overlay::Health,
     ),
     (
         ServiceProblems::DEAD,
         "dead",
-        "with uncollected dead",
         Icon::OverlayDeathcare,
         Overlay::Deathcare,
     ),
     (
         ServiceProblems::FIRE,
         "fire",
-        "on fire",
         Icon::OverlayFire,
         Overlay::Fire,
     ),
     (
         ServiceProblems::CRIME,
         "crime",
-        "hit by crime",
         Icon::OverlayPolice,
         Overlay::Police,
     ),
@@ -143,12 +173,12 @@ fn unique_advice(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for (monument, id, what, icon) in [
-        (false, "unique_unlocked", "Unique building", Icon::Buildings),
-        (true, "monument_unlocked", "Monument", Icon::Buildings),
+    for (monument, id, icon) in [
+        (false, "unique_unlocked", Icon::Buildings),
+        (true, "monument_unlocked", Icon::Buildings),
     ] {
         let of_kind = |u: &&cp_sim::UniqueStatus| u.monument == monument && u.unlocked;
-        let names: Vec<&str> = view
+        let names: Vec<String> = view
             .uniques
             .iter()
             .filter(of_kind)
@@ -158,6 +188,7 @@ fn unique_advice(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
                     .as_deref()
                     .map_or(u.id.as_str(), |db| db.building(u.def).name.as_str())
             })
+            .map(tr)
             .collect();
         if names.is_empty() {
             continue;
@@ -167,7 +198,14 @@ fn unique_advice(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
         out.push(Advice {
             id,
             severity: Severity::Info,
-            text: format!("{what} unlocked: {}", names.join(", ")),
+            text: if monument {
+                trf!("Monument unlocked: {names}", names = names.join(", "))
+            } else {
+                trf!(
+                    "Unique building unlocked: {names}",
+                    names = names.join(", ")
+                )
+            },
             count: total * 100,
             icon,
             action: Some(Action::Panel(Category::Buildings)),
@@ -202,7 +240,11 @@ pub fn level_advice(view: &SimView, seen: &mut LevelSeen) -> Vec<Advice> {
             out.push(Advice {
                 id: adv_id,
                 severity: Severity::Info,
-                text: format!("{} reached level {}", a.name, a.level),
+                text: trf!(
+                    "{name} reached level {level}",
+                    name = a.name,
+                    level = a.level
+                ),
                 count: u32::from(a.level) * 100,
                 icon,
                 action: Some(Action::Panel(panel)),
@@ -275,9 +317,15 @@ fn industry_advice(view: &SimView, out: &mut Vec<Advice>) {
     if !idle.is_empty() {
         let n = idle.len() as u32;
         let text = if let [name] = idle[..] {
-            format!("{name} has no main building — its buildings stand idle")
+            trf!(
+                "{name} has no main building — its buildings stand idle",
+                name = name
+            )
         } else {
-            format!("{n} industry areas have no main building — their buildings stand idle")
+            trf!(
+                plural "{n} industry areas have no main building — their buildings stand idle",
+                n = n
+            )
         };
         out.push(Advice {
             id: "industry_no_main",
@@ -288,12 +336,12 @@ fn industry_advice(view: &SimView, out: &mut Vec<Advice>) {
             action: Some(Action::Panel(Category::Industry)),
         });
     }
-    let mut push = |id, n: u32, what: &str, at: Option<Vec2>| {
+    let mut push = |id, n: u32, key: &str, at: Option<Vec2>| {
         if n > 0 {
             out.push(Advice {
                 id,
                 severity: Severity::Warn,
-                text: format!("{} {what}", plural(n, "building", "buildings")),
+                text: trn(key, i64::from(n)),
                 count: n,
                 icon: Icon::Industry,
                 action: Some(at.map_or(Action::Panel(Category::Industry), Action::Jump)),
@@ -303,19 +351,19 @@ fn industry_advice(view: &SimView, out: &mut Vec<Advice>) {
     push(
         "industry_depleted",
         depleted,
-        "on spent ground — move the extractors to a richer lot",
+        "{n} buildings on spent ground — move the extractors to a richer lot",
         at_depleted,
     );
     push(
         "industry_no_input",
         no_input,
-        "waiting for input — feed the processors from the extractors or a warehouse",
+        "{n} buildings waiting for input — feed the processors from the extractors or a warehouse",
         at_no_input,
     );
     push(
         "warehouse_full",
         full,
-        "full warehouses — export, or set a warehouse to Empty",
+        "{n} buildings full warehouses — export, or set a warehouse to Empty",
         at_full,
     );
 }
@@ -345,9 +393,12 @@ fn park_advice(view: &SimView, out: &mut Vec<Advice>) {
     if !no_gate.is_empty() {
         let n = no_gate.len() as u32;
         let text = if let [name] = no_gate[..] {
-            format!("{name} has no gate — nobody can visit it")
+            trf!("{name} has no gate — nobody can visit it", name = name)
         } else {
-            format!("{n} park areas have no gate — nobody can visit them")
+            trf!(
+                plural "{n} park areas have no gate — nobody can visit them",
+                n = n
+            )
         };
         out.push(Advice {
             id: "park_no_gate",
@@ -362,9 +413,9 @@ fn park_advice(view: &SimView, out: &mut Vec<Advice>) {
         out.push(Advice {
             id: "park_full",
             severity: Severity::Info,
-            text: format!(
-                "{} full — add attractions, or raise the fee",
-                plural(full, "park", "parks")
+            text: trn(
+                "{n} parks full — add attractions, or raise the fee",
+                i64::from(full),
             ),
             count: full,
             icon: Icon::CategoryParks,
@@ -379,7 +430,7 @@ fn park_advice(view: &SimView, out: &mut Vec<Advice>) {
         out.push(Advice {
             id: "leisure_none",
             severity: Severity::Info,
-            text: "The town has no park — people want somewhere to go".into(),
+            text: tr("The town has no park — people want somewhere to go"),
             count: 1,
             icon: Icon::CategoryParks,
             action: Some(Action::Panel(Category::Buildings)),
@@ -409,9 +460,9 @@ fn mail_advice(view: &SimView, out: &mut Vec<Advice>) {
             } else {
                 Severity::Info
             },
-            text: format!(
-                "Mail is piling up in {} — build a post office",
-                plural(n, "building", "buildings")
+            text: trn(
+                "Mail is piling up in {n} buildings — build a post office",
+                i64::from(n),
             ),
             count: n,
             icon: Icon::ProblemMail,
@@ -427,7 +478,7 @@ fn mail_advice(view: &SimView, out: &mut Vec<Advice>) {
         out.push(Advice {
             id: "mail_sorting",
             severity: Severity::Warn,
-            text: hint.into(),
+            text: tr(hint),
             count: view.mail.unsorted,
             icon: Icon::OverlayMail,
             action: Some(Action::Panel(Category::Buildings)),
@@ -461,17 +512,17 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
         });
     };
     // T-242: most trips by car and the roads are jammed.
-    let tr = &city.traffic;
-    let moving: u32 = tr.trips_by_mode.iter().sum();
+    let traffic = &city.traffic;
+    let moving: u32 = traffic.trips_by_mode.iter().sum();
     if moving >= 40
-        && tr.trips_by_mode[1] * 10 >= moving * 7
-        && (tr.overloaded >= 3 || tr.avg_load > 0.3)
+        && traffic.trips_by_mode[1] * 10 >= moving * 7
+        && (traffic.overloaded >= 3 || traffic.avg_load > 0.3)
     {
         push(
             "traffic_jam",
             Severity::Warn,
-            "Traffic jams: add public transport or footpaths".into(),
-            tr.overloaded.max(1),
+            tr("Traffic jams: add public transport or footpaths"),
+            traffic.overloaded.max(1),
             Icon::OverlayTraffic,
             Some(Action::Overlay(Overlay::Traffic)),
         );
@@ -480,7 +531,7 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
         push(
             "debt",
             Severity::Critical,
-            "The treasury is negative — raise taxes or cut budgets".into(),
+            tr("The treasury is negative — raise taxes or cut budgets"),
             1,
             Icon::Budget,
             Some(Action::Budget),
@@ -490,7 +541,7 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
         push(
             "deficit",
             Severity::Warn,
-            format!("The budget lost ${loss} last week"),
+            trf!("The budget lost ${loss} last week", loss = loss),
             u32::try_from(loss).unwrap_or(u32::MAX),
             Icon::Budget,
             Some(Action::Budget),
@@ -500,31 +551,31 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
         push(
             "highway",
             Severity::Critical,
-            "No road to the highway — nobody can move in".into(),
+            tr("No road to the highway — nobody can move in"),
             1,
             Icon::Road,
             None,
         );
     }
-    for (id, n, what, icon, overlay) in [
+    for (id, n, key, icon, overlay) in [
         (
             "no_water",
             st.no_water,
-            "without water",
+            "{n} buildings without water",
             Icon::OverlayWater,
             Overlay::Water,
         ),
         (
             "no_power",
             st.no_power,
-            "without power",
+            "{n} buildings without power",
             Icon::OverlayPower,
             Overlay::Power,
         ),
         (
             "no_sewage",
             st.no_sewage,
-            "without sewage",
+            "{n} buildings without sewage",
             Icon::OverlayWater,
             Overlay::Water,
         ),
@@ -533,7 +584,7 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
             push(
                 id,
                 sev(n),
-                format!("{} {what}", plural(n, "building", "buildings")),
+                trn(key, i64::from(n)),
                 n,
                 icon,
                 Some(Action::Overlay(overlay)),
@@ -544,7 +595,7 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
         push(
             "burned",
             Severity::Warn,
-            format!("{} burned down", plural(st.burned, "building", "buildings")),
+            trn("{n} buildings burned down", i64::from(st.burned)),
             st.burned,
             Icon::OverlayFire,
             Some(Action::Overlay(Overlay::Fire)),
@@ -554,10 +605,7 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
         push(
             "abandoned",
             Severity::Warn,
-            format!(
-                "{} abandoned",
-                plural(st.abandoned, "building", "buildings")
-            ),
+            trn("{n} buildings abandoned", i64::from(st.abandoned)),
             st.abandoned,
             Icon::Building,
             None,
@@ -565,12 +613,16 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
     }
     // BUG-058: say why a shop has no goods.
     let no_goods = if view.city.connected_to_highway {
-        "out of goods — the factories are too small or short of workers, importing"
+        "{n} buildings out of goods — the factories are too small or short of workers, importing"
     } else {
-        "out of goods — no road to the highway for imports"
+        "{n} buildings out of goods — no road to the highway for imports"
     };
-    for (id, bit, what) in [
-        ("no_workers", BuildingFlags::NO_WORKERS, "short of workers"),
+    for (id, bit, key) in [
+        (
+            "no_workers",
+            BuildingFlags::NO_WORKERS,
+            "{n} buildings short of workers",
+        ),
         ("no_goods", BuildingFlags::NO_GOODS, no_goods),
     ] {
         let (n, at) = flagged(view, bit);
@@ -578,7 +630,7 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
             push(
                 id,
                 sev(n),
-                format!("{} {what}", plural(n, "building", "buildings")),
+                trn(key, i64::from(n)),
                 n,
                 Icon::Building,
                 at.map(Action::Jump),
@@ -587,7 +639,7 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
     }
     // Service problems per building (T-134 state): a count per kind.
     let counts = view.service_state.summary().counts;
-    for (n, (_, id, text, icon, overlay)) in counts.into_iter().zip(SERVICE_ADVICE) {
+    for (n, (_, id, icon, overlay)) in counts.into_iter().zip(SERVICE_ADVICE) {
         if n > 0 {
             // A policy of the city that helps, if it is defined and still off (T-193).
             let help = match id {
@@ -599,12 +651,12 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
             .filter(|k| !view.city_policies.has(*k))
             .and_then(|k| view.content.as_deref()?.policy(k))
             .filter(|p| p.scope.allows_city());
-            let mut line = format!("{} {text}", plural(n, "building", "buildings"));
-            let mut action = Action::Overlay(overlay);
-            if let Some(p) = help {
-                line.push_str(&format!(" — try the {} policy", p.name));
-                action = Action::Policies;
-            }
+            let line = service_text(id, n, help.map(|p| p.name.as_str()));
+            let action = if help.is_some() {
+                Action::Policies
+            } else {
+                Action::Overlay(overlay)
+            };
             push(id, sev(n), line, n, icon, Some(action));
         }
     }
@@ -617,9 +669,9 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
         push(
             "policy_cost",
             Severity::Warn,
-            format!(
-                "Policies cost {} a day — over a fifth of the income",
-                cp_tools::format_money(day.policies)
+            trf!(
+                "Policies cost {money} a day — over a fifth of the income",
+                money = cp_tools::format_money(day.policies)
             ),
             u32::try_from(day.policies.0 / 100).unwrap_or(u32::MAX),
             Icon::Budget,
@@ -630,9 +682,9 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
         push(
             "unemployed",
             Severity::Warn,
-            format!(
-                "{} without a job — zone industry or commerce",
-                plural(city.unemployed, "resident", "residents")
+            trn(
+                "{n} residents without a job — zone industry or commerce",
+                i64::from(city.unemployed),
             ),
             city.unemployed,
             Icon::ZoneIndustrial,
@@ -673,7 +725,7 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
         // A zone type that is still locked is not advised (BUG-060).
         if v >= HIGH_DEMAND && crate::windows::zone_lock(view, zone).is_none() {
             // BUG-076b: wanted, but no free cell can take a building: say so instead.
-            let text = crate::windows::land_shortage(view, zone).unwrap_or_else(|| text.into());
+            let text = crate::windows::land_shortage(view, zone).unwrap_or_else(|| tr(text));
             push(
                 id,
                 Severity::Info,
@@ -808,7 +860,7 @@ pub fn advisor_snackbar(
                         advice.icon.show(ui, ICON);
                         ui.label(&advice.text);
                         if advice.action.is_some() {
-                            show = ui.button("Show").clicked();
+                            show = ui.button(tr("Show")).clicked();
                         }
                         close = ui.small_button("×").clicked();
                     });

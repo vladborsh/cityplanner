@@ -4,6 +4,7 @@
 use bevy_egui::egui;
 use cp_content::ZoneType;
 use cp_district::{DistrictCommand, DistrictId, MAX_DISTRICTS, PALETTE_RGB, TAX_MAX, TAX_MIN};
+use cp_locale::{tr, trf, trn};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{ActiveTool, CommandOutbox, DistrictToolKind, PALETTE, ToolState, zone_name};
 
@@ -35,7 +36,7 @@ pub fn next_id(view: &SimView) -> Option<DistrictId> {
 
 /// "District N" with `N` the id the new district gets.
 pub fn new_name(id: DistrictId) -> String {
-    format!("District {}", id.0)
+    trf!("District {n}", n = id.0)
 }
 
 fn send(outbox: &mut CommandOutbox, cmd: DistrictCommand) {
@@ -152,7 +153,7 @@ fn stats_tab(ui: &mut egui::Ui, view: &SimView, id: DistrictId) {
         .num_columns(2)
         .show(ui, |ui| {
             let row = |ui: &mut egui::Ui, label: &str, value: String| {
-                ui.weak(label);
+                ui.weak(tr(label));
                 ui.label(value);
                 ui.end_row();
             };
@@ -161,11 +162,10 @@ fn stats_tab(ui: &mut egui::Ui, view: &SimView, id: DistrictId) {
             row(ui, "Jobs (capacity)", s.jobs.to_string());
             row(ui, "Buildings", s.buildings.to_string());
             for (k, z) in cp_sim::stats::ZONES.iter().enumerate() {
-                row(
-                    ui,
-                    &format!("  {}", zone_name(*z)),
-                    s.by_zone[k].to_string(),
-                );
+                // The zone rows are indented under "Buildings"; `row` translates the name.
+                ui.weak(format!("  {}", tr(zone_name(*z))));
+                ui.label(s.by_zone[k].to_string());
+                ui.end_row();
             }
             row(
                 ui,
@@ -184,12 +184,17 @@ pub fn districts_panel(
     tools: &mut ToolState,
     outbox: &mut CommandOutbox,
 ) {
-    section(ui, "Tool", |ui| {
+    section(ui, &tr("Tool"), |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             for kind in DistrictToolKind::ALL {
                 let selected = tools.active == ActiveTool::District && tools.district.kind == kind;
-                let tile = tool_tile(ui, TileIcon::Icon(kind_icon(kind)), kind.label(), selected);
+                let tile = tool_tile(
+                    ui,
+                    TileIcon::Icon(kind_icon(kind)),
+                    &tr(kind.label()),
+                    selected,
+                );
                 if tile.clicked() {
                     if tools.active != ActiveTool::District {
                         tools.select(ActiveTool::District);
@@ -201,7 +206,7 @@ pub fn districts_panel(
             if tool_tile_enabled(
                 ui,
                 TileIcon::Icon(Icon::DistrictNew),
-                "New district",
+                &tr("New district"),
                 false,
                 next.is_some(),
             )
@@ -217,7 +222,7 @@ pub fn districts_panel(
             if tool_tile_enabled(
                 ui,
                 TileIcon::Icon(Icon::Remove),
-                "Off",
+                &tr("Off"),
                 false,
                 tools.active == ActiveTool::District,
             )
@@ -228,9 +233,11 @@ pub fn districts_panel(
         });
     });
     let Some(view) = view else { return };
-    section(ui, "Districts", |ui| {
+    section(ui, &tr("Districts"), |ui| {
         if view.districts.iter().next().is_none() {
-            ui.weak("No districts yet: press New district, then paint with a brush.");
+            ui.weak(tr(
+                "No districts yet: press New district, then paint with a brush.",
+            ));
         }
         for (id, d) in view.districts.iter() {
             district_row(ui, view, tools, outbox, id, d);
@@ -244,7 +251,7 @@ pub fn districts_panel(
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
                 for t in DistrictTab::ALL {
-                    if tool_tile(ui, TileIcon::Icon(t.icon()), t.label(), tab == t).clicked() {
+                    if tool_tile(ui, TileIcon::Icon(t.icon()), &tr(t.label()), tab == t).clicked() {
                         ui.ctx().data_mut(|m| m.insert_temp(tab_key(), t));
                     }
                 }
@@ -283,7 +290,7 @@ fn district_row(
                 egui::StrokeKind::Outside,
             );
         }
-        if resp.on_hover_text("Choose this district").clicked() {
+        if resp.on_hover_text(tr("Choose this district")).clicked() {
             tools.district.selected = Some(id);
             if tools.active != ActiveTool::District {
                 tools.select(ActiveTool::District);
@@ -314,7 +321,7 @@ fn district_row(
             );
         }
         ui.data_mut(|m| m.insert_temp(key, buf));
-        if ui.small_button("Delete").clicked() {
+        if ui.small_button(tr("Delete")).clicked() {
             send(outbox, DistrictCommand::Delete { district: id });
             if selected {
                 tools.district.selected = None;
@@ -323,10 +330,13 @@ fn district_row(
     });
     if let Some(s) = view.city.districts.iter().find(|s| s.id == id) {
         ui.weak(format!(
-            "    {} residents · {} buildings · tax {} last week",
-            s.population,
-            s.buildings,
-            cp_tools::format_money(s.income_last_week)
+            "    {} · {} · {}",
+            trn("{n} residents", i64::from(s.population)),
+            trn("{n} buildings", i64::from(s.buildings)),
+            trf!(
+                "tax {money} last week",
+                money = cp_tools::format_money(s.income_last_week)
+            )
         ));
     }
 }
@@ -347,7 +357,7 @@ fn tax_block(
         let own = d.tax[slot];
         ui.horizontal(|ui| {
             let mut on = own.is_some();
-            if ui.checkbox(&mut on, zone_short(zone)).changed() {
+            if ui.checkbox(&mut on, tr(zone_short(zone))).changed() {
                 send(
                     outbox,
                     DistrictCommand::SetTax {
@@ -370,15 +380,15 @@ fn tax_block(
                             },
                         );
                     }
-                    ui.weak(format!("city {city} %"));
+                    ui.weak(trf!("city {city} %", city = city));
                 }
                 None => {
-                    ui.weak(format!("city rate {city} %"));
+                    ui.weak(trf!("city rate {city} %", city = city));
                 }
             }
         })
         .response
-        .on_hover_text(zone_name(zone));
+        .on_hover_text(tr(zone_name(zone)));
     }
 }
 

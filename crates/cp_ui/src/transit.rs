@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use cp_content::{ContentDb, RoadClass, RoadDefId, ServiceKind};
+use cp_locale::{tr, trf};
 use cp_render::{Overlay, OverlayState, RtsCamera};
 use cp_sim::SimView;
 use cp_tools::{ActiveTool, ToolState, route_summary};
@@ -143,7 +144,7 @@ pub fn transit_panel(
                 _ => Icon::LineBus,
             };
             icon.show(ui, Sizes::SECTION_ICON);
-            ui.strong(section.title());
+            ui.strong(tr(section.title()));
         });
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
@@ -154,25 +155,24 @@ pub fn transit_panel(
                 let (icon, name, hint) = if track.depth > 0.0 {
                     (
                         Icon::MetroTrack,
-                        "Metro track",
-                        format!(
-                            "{}: click two points to dig a tunnel {:.0} m deep, and on to go on. \
-                             Esc ends the chain. Join the platforms of the stations.",
-                            track.name, track.depth
+                        tr("Metro track"),
+                        trf!(
+                            "{name}: click two points to dig a tunnel {depth} m deep, and on to go on. Esc ends the chain. Join the platforms of the stations.",
+                            name = tr(&track.name),
+                            depth = format!("{:.0}", track.depth)
                         ),
                     )
                 } else {
                     (
                         Icon::RailTrack,
-                        "Railway",
-                        format!(
-                            "{}: click two points to lay a track on the ground, and on to go on. \
-                             Esc ends the chain. Join the railway from the map edge to a station.",
-                            track.name
+                        tr("Railway"),
+                        trf!(
+                            "{name}: click two points to lay a track on the ground, and on to go on. Esc ends the chain. Join the railway from the map edge to a station.",
+                            name = tr(&track.name)
                         ),
                     )
                 };
-                if tool_tile(ui, TileIcon::Icon(icon), name, on)
+                if tool_tile(ui, TileIcon::Icon(icon), &name, on)
                     .on_hover_text(hint)
                     .clicked()
                 {
@@ -190,17 +190,17 @@ pub fn transit_panel(
                 let (icon, name, hint) = if metro {
                     (
                         Icon::LineMetro,
-                        "Metro line",
-                        "Click stations to set the stops, click the first station to close the line: trains ride there and back. Backspace takes the last stop away.",
+                        tr("Metro line"),
+                        tr("Click stations to set the stops, click the first station to close the line: trains ride there and back. Backspace takes the last stop away."),
                     )
                 } else {
                     (
                         Icon::LineBus,
-                        "Bus line",
-                        "Click roads to place stops, click the first stop to close the line. Backspace takes the last stop away.",
+                        tr("Bus line"),
+                        tr("Click roads to place stops, click the first stop to close the line. Backspace takes the last stop away."),
                     )
                 };
-                if tool_tile(ui, TileIcon::Icon(icon), name, on)
+                if tool_tile(ui, TileIcon::Icon(icon), &name, on)
                     .on_hover_text(hint)
                     .clicked()
                 {
@@ -218,8 +218,8 @@ pub fn transit_panel(
                 }
             }
             if section.mode == TransitMode::Bus
-                && tool_tile(ui, TileIcon::Icon(Icon::Lines), "Lines", *lines_open)
-                    .on_hover_text("The Lines window: riders, buses and money of every line.")
+                && tool_tile(ui, TileIcon::Icon(Icon::Lines), &tr("Lines"), *lines_open)
+                    .on_hover_text(tr("The Lines window: riders, buses and money of every line."))
                     .clicked()
             {
                 *lines_open = !*lines_open;
@@ -234,7 +234,7 @@ pub fn transit_panel(
                 if tool_tile_enabled(
                     ui,
                     TileIcon::Def(&card.icon),
-                    &card.name,
+                    &tr(&card.name),
                     on,
                     lock.is_none(),
                 )

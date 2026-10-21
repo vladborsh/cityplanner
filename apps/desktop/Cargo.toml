@@ -16,6 +16,7 @@ cp_core.workspace = true
 cp_terrain.workspace = true
 cp_app.workspace = true
 cp_render.workspace = true
+cp_locale.workspace = true
 cp_tools.workspace = true
 cp_ui.workspace = true
 # Rendering features are enabled here only; sim crates never see them.

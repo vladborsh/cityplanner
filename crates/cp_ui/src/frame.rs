@@ -3,6 +3,7 @@
 //! [`window`], so the look changes in one place.
 
 use bevy_egui::egui;
+use cp_locale::tr;
 
 use crate::icons::Icon;
 use crate::style::Sizes;
@@ -56,7 +57,7 @@ impl Win<'_> {
                 self.icon.show(ui, Sizes::WINDOW_ICON);
                 ui.strong(self.title);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("✖").on_hover_text("Close").clicked() {
+                    if ui.small_button("✖").on_hover_text(tr("Close")).clicked() {
                         close = true;
                     }
                 });

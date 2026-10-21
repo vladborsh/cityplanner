@@ -2,11 +2,11 @@
 //! active tool (T-175).
 
 use bevy_egui::egui;
+use cp_locale::tr;
 use cp_tools::{ActiveTool, ToolState};
 
 pub const BAR_H: f32 = 24.0;
 const STRIPE_W: f32 = 18.0;
-const LABEL: &str = "Bulldozer — Esc to exit";
 
 /// Draws the bar over everything else at the bottom edge; the rect it covers, or `None` when
 /// the bulldozer is not active. Not interactive: clicks reach whatever lies beneath.
@@ -24,7 +24,8 @@ pub fn bulldozer_bar(ctx: &egui::Context, tools: &ToolState) -> Option<egui::Rec
             let painter = ui.painter();
             paint_stripes(painter, rect);
             let font = egui::FontId::proportional(14.0);
-            let galley = painter.layout_no_wrap(LABEL.into(), font, egui::Color32::BLACK);
+            let galley =
+                painter.layout_no_wrap(tr("Bulldozer — Esc to exit"), font, egui::Color32::BLACK);
             let size = galley.size() + egui::vec2(24.0, 4.0);
             let plate = egui::Rect::from_center_size(rect.center(), size);
             painter.rect_filled(plate, 3.0, egui::Color32::from_rgb(255, 160, 0));

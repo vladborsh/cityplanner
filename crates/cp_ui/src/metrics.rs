@@ -4,6 +4,7 @@
 
 use bevy_egui::egui;
 use cp_content::UtilityKind;
+use cp_locale::{tr, trf, trn};
 use cp_sim::SimView;
 use cp_sim::stats::{CityStats, ZONES};
 use cp_tools::{format_money, zone_name};
@@ -11,7 +12,8 @@ use cp_tools::{format_money, zone_name};
 use crate::frame;
 use crate::icons::Icon;
 
-/// One section of the window.
+/// One section of the window. The title and the row labels are the English keys; they are
+/// translated where they are drawn ([`metrics_contents`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Section {
     pub title: &'static str,
@@ -62,16 +64,20 @@ pub fn sections(view: &SimView) -> Vec<Section> {
 
     let mut jobs = vec![row(
         "All zones",
-        format!(
-            "{} / {} free",
-            s.zones.iter().map(|z| z.jobs).sum::<u32>(),
-            s.zones.iter().map(|z| z.jobs_free).sum::<u32>()
+        trf!(
+            "{jobs} / {free} free",
+            jobs = s.zones.iter().map(|z| z.jobs).sum::<u32>(),
+            free = s.zones.iter().map(|z| z.jobs_free).sum::<u32>()
         ),
     )];
     for (k, z) in ZONES.iter().enumerate() {
         jobs.push(row(
             zone_name(*z),
-            format!("{} / {} free", s.zones[k].jobs, s.zones[k].jobs_free),
+            trf!(
+                "{jobs} / {free} free",
+                jobs = s.zones[k].jobs,
+                free = s.zones[k].jobs_free
+            ),
         ));
     }
     out.push(Section {
@@ -113,7 +119,11 @@ pub fn sections(view: &SimView) -> Vec<Section> {
             ),
             row(
                 "Average trip (foot / car)",
-                format!("{:.1} / {:.1} min", t.trip_minutes[0], t.trip_minutes[1]),
+                trf!(
+                    "{foot} / {car} min",
+                    foot = format!("{:.1}", t.trip_minutes[0]),
+                    car = format!("{:.1}", t.trip_minutes[1])
+                ),
             ),
             row("Average load", percent(t.avg_load)),
             row("Maximum load", percent(t.max_load)),
@@ -137,9 +147,11 @@ pub fn sections(view: &SimView) -> Vec<Section> {
         let n = &s.utilities[CityStats::utility_index(kind)];
         utilities.push(row(
             name,
-            format!(
-                "capacity {:.0} · use {:.0} · unsupplied {}",
-                n.capacity, n.consumption, n.unsupplied
+            trf!(
+                "capacity {capacity} · use {usage} · unsupplied {unsupplied}",
+                capacity = format!("{:.0}", n.capacity),
+                usage = format!("{:.0}", n.consumption),
+                unsupplied = n.unsupplied
             ),
         ));
     }
@@ -204,9 +216,12 @@ fn transport_section(view: &SimView) -> Section {
             row("Goods trucks out", f.trucks),
             row(
                 "Exports (week)",
-                format!("{} loads · {}", l.export_loads, format_money(l.exports)),
+                trf!(plural "{n} loads · {money}", n = l.export_loads, money = format_money(l.exports)),
             ),
-            row("Imports (week)", format!("{} loads", l.import_loads)),
+            row(
+                "Imports (week)",
+                trn("{n} loads", i64::from(l.import_loads)),
+            ),
             row("Buildings without goods", no_goods),
         ],
         spark: None,
@@ -252,7 +267,10 @@ fn parks_section(view: &SimView) -> Section {
             ),
             row("Areas without a gate", no_gate),
             row("Visitors inside", format!("{inside} / {capacity}")),
-            row("Visitors", format!("{day} today · {week} this week")),
+            row(
+                "Visitors",
+                trf!("{day} today · {week} this week", day = day, week = week),
+            ),
             row("Entrance fees (week)", format_money(l.fees)),
             row("Last week: entrance fees", format_money(l.last_fees)),
         ],
@@ -298,16 +316,19 @@ fn industry_section(view: &SimView) -> Section {
                     levels.join(" · ")
                 },
             ),
-            row("Chain buildings", format!("{buildings} · {jobs} jobs")),
+            row(
+                "Chain buildings",
+                trf!(plural "{buildings} · {n} jobs", n = jobs, buildings = buildings),
+            ),
             row("Cargo stored", format!("{stored:.0}")),
             row("Buildings with a problem", problems),
             row(
                 "Cargo exports (week)",
-                format!("{} loads · {}", l.export_loads, format_money(l.exports)),
+                trf!(plural "{n} loads · {money}", n = l.export_loads, money = format_money(l.exports)),
             ),
             row(
                 "Cargo imports (week)",
-                format!("{} loads · {}", l.import_loads, format_money(l.imports)),
+                trf!(plural "{n} loads · {money}", n = l.import_loads, money = format_money(l.imports)),
             ),
             row(
                 "Last week: exports / imports",
@@ -465,12 +486,12 @@ pub fn sparkline(ui: &mut egui::Ui, values: &[f32], size: egui::Vec2) -> egui::R
 pub fn metrics_contents(ui: &mut egui::Ui, view: &SimView) {
     for section in sections(view) {
         ui.add_space(4.0);
-        ui.strong(section.title);
+        ui.strong(tr(section.title));
         egui::Grid::new(("metrics", section.title))
             .num_columns(2)
             .show(ui, |ui| {
                 for (label, value) in &section.rows {
-                    ui.weak(label);
+                    ui.weak(tr(label));
                     ui.label(value);
                     ui.end_row();
                 }
@@ -483,7 +504,7 @@ pub fn metrics_contents(ui: &mut egui::Ui, view: &SimView) {
 
 /// The window itself, shown while `*open`.
 pub fn metrics_window(ctx: &egui::Context, open: &mut bool, view: &SimView) {
-    frame::window("metrics", Icon::Metrics, "City metrics", open).show(ctx, |ui| {
+    frame::window("metrics", Icon::Metrics, &tr("City metrics"), open).show(ctx, |ui| {
         egui::ScrollArea::vertical()
             .max_height(520.0)
             .show(ui, |ui| metrics_contents(ui, view));

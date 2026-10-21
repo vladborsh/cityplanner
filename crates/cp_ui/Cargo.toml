@@ -23,6 +23,7 @@ cp_industry.workspace = true
 cp_park.workspace = true
 cp_core.workspace = true
 cp_render.workspace = true
+cp_locale.workspace = true
 cp_district.workspace = true
 cp_transit.workspace = true
 cp_terrain.workspace = true

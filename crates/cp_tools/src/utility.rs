@@ -23,6 +23,17 @@ use cp_utility::{
 /// Pick radius of the remove tool, metres.
 pub const LINK_PICK_RADIUS: f32 = 8.0;
 
+/// The ghost's text for `p` in the player's language (the English is `p`'s `Display`).
+pub fn path_problem_text(p: &PathProblem) -> String {
+    match p {
+        PathProblem::LinkTooShort { length, .. } => cp_locale::trf!(
+            "piece too short ({length} m)",
+            length = format!("{length:.0}")
+        ),
+        _ => cp_locale::tr(&p.to_string()),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum UtilityMode {
     /// Two clicks: start, end.

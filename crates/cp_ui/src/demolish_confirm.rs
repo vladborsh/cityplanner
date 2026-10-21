@@ -3,13 +3,15 @@
 //! `NetDemolish`); No puts the road tool back as it was before the click and sends nothing.
 
 use bevy_egui::egui;
+use cp_locale::{tr, trf};
 use cp_tools::{CommandOutbox, ToolState};
 
 /// The question's text for `names`.
 pub fn question(names: &[String]) -> String {
-    format!(
-        "Building this road will demolish: {}. Continue?",
-        names.join(", ")
+    let names: Vec<String> = names.iter().map(|n| tr(n)).collect();
+    trf!(
+        "Building this road will demolish: {names}. Continue?",
+        names = names.join(", ")
     )
 }
 
@@ -46,17 +48,18 @@ pub fn confirm_window(ctx: &egui::Context, tools: &mut ToolState, outbox: &mut C
     };
     let text = question(&ask.names);
     let mut picked = None;
-    egui::Window::new("Demolish buildings?")
+    egui::Window::new(tr("Demolish buildings?"))
+        .id(egui::Id::new("demolish_confirm"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ctx, |ui| {
             ui.label(text);
             ui.horizontal(|ui| {
-                if ui.button("Yes").clicked() {
+                if ui.button(tr("Yes")).clicked() {
                     picked = Some(Answer::Yes);
                 }
-                if ui.button("No").clicked() {
+                if ui.button(tr("No")).clicked() {
                     picked = Some(Answer::No);
                 }
             });

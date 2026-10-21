@@ -1054,9 +1054,11 @@ pub fn tool_hover(
                 _ => None,
             };
             state.highlight = preview.as_ref().map(|u| u.run.clone()).unwrap_or_default();
-            state.highlight_outside = preview
-                .as_ref()
-                .is_some_and(|u| u.errors.iter().any(|e| e == crate::upgrade::OUTSIDE_LAND));
+            state.highlight_outside = preview.as_ref().is_some_and(|u| {
+                u.errors
+                    .iter()
+                    .any(|e| *e == cp_locale::tr(crate::upgrade::OUTSIDE_LAND))
+            });
             // What the upgrade would take down (BUG-096), only when the cursor's preview changed.
             if state.upgrade_preview != preview {
                 state.upgrade_demolish = match (&preview, state.road.road) {
@@ -1074,9 +1076,11 @@ pub fn tool_hover(
                     .map(|seg| crate::flip::flip_preview(&view.net, &view.tiles, content, seg))
             });
             state.highlight = preview.as_ref().map(|f| f.run.clone()).unwrap_or_default();
-            state.highlight_outside = preview
-                .as_ref()
-                .is_some_and(|f| f.errors.iter().any(|e| e == crate::upgrade::OUTSIDE_LAND));
+            state.highlight_outside = preview.as_ref().is_some_and(|f| {
+                f.errors
+                    .iter()
+                    .any(|e| *e == cp_locale::tr(crate::upgrade::OUTSIDE_LAND))
+            });
             state.flip_preview = preview;
         }
         (ActiveTool::Line, Some(p)) => {
@@ -1259,7 +1263,7 @@ pub fn compute_ghost_alt(
                 .iter()
                 .map(|s| sample_curve(&s.curve, 3.0))
                 .collect();
-            ghost.errors = vec![TOO_CLOSE.to_string()];
+            ghost.errors = vec![cp_locale::tr(TOO_CLOSE)];
             ghost.error_marks = cp_net::clearance_report(&view.net, content, &built)
                 .iter()
                 .map(|w| w.pos)
@@ -1276,7 +1280,7 @@ pub fn compute_ghost_alt(
             ghost.cost = Some(built.cost);
             ghost.warnings = one_way_report(&view.net, content, &built)
                 .iter()
-                .map(ToString::to_string)
+                .map(|w| cp_locale::tr(&w.to_string()))
                 .collect();
             if one_way {
                 ghost.chevrons = built
@@ -1291,7 +1295,7 @@ pub fn compute_ghost_alt(
         }
         Err(errors) => {
             ghost.polylines = vec![raw_polyline(view, &path)];
-            ghost.errors = errors.iter().map(RoadBuildError::to_string).collect();
+            ghost.errors = errors.iter().map(crate::road::road_error_text).collect();
             ghost.error_marks = errors.iter().filter_map(RoadBuildError::pos).collect();
         }
     }
@@ -1343,7 +1347,10 @@ pub fn compute_utility_ghost_alt(
             ],
             valid: false,
             cost: None,
-            errors: problems.iter().map(ToString::to_string).collect(),
+            errors: problems
+                .iter()
+                .map(crate::utility::path_problem_text)
+                .collect(),
             half_width: 0.0,
             snap,
             warnings: Vec::new(),

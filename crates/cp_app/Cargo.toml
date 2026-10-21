@@ -30,6 +30,7 @@ ron.workspace = true
 bevy_math.workspace = true
 bevy_ecs.workspace = true
 cp_render.workspace = true
+cp_locale.workspace = true
 cp_tools.workspace = true
 cp_ui.workspace = true
 cp_prof.workspace = true

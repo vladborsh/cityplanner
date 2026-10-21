@@ -10,6 +10,7 @@
 
 use bevy_math::Vec2;
 use cp_core::{Arena, Cost};
+use cp_locale::{tr, trf};
 use cp_sim::{SimCommand, SimView};
 use cp_traffic::{Access, Side};
 use cp_transit::{
@@ -173,7 +174,7 @@ pub fn target_at(view: &SimView, tool: &LineTool, p: Vec2) -> Target {
                 .map_or(on, |o| cp_transit::rules::pavement_point(seg, s, o));
             Target::Refused {
                 pos,
-                why: e.to_string(),
+                why: stop_error_text(&e),
             }
         }
     }
@@ -242,7 +243,10 @@ impl LineTool {
                     return Click::Nothing;
                 }
                 if self.stops.len() >= MAX_LINE_STOPS {
-                    return Click::Refused(format!("a line has at most {MAX_LINE_STOPS} stops"));
+                    return Click::Refused(trf!(
+                        "a line has at most {n} stops",
+                        n = MAX_LINE_STOPS
+                    ));
                 }
                 self.stops.push(placed);
                 Click::Added
@@ -338,7 +342,7 @@ pub fn line_ghost(view: &SimView, tool: &LineTool, hover: Vec2) -> Option<LineGh
         info.cycle_s = plan.cycle_s;
         if !plan.is_ok() {
             info.error
-                .get_or_insert_with(|| "no way between two stops".to_string());
+                .get_or_insert_with(|| tr("no way between two stops"));
         }
     }
     Some(info)
@@ -347,12 +351,24 @@ pub fn line_ghost(view: &SimView, tool: &LineTool, hover: Vec2) -> Option<LineGh
 /// "320 m · 1 min 05 s round trip" for the verdict line.
 pub fn route_summary(info: &LineGhostInfo) -> String {
     let secs = info.cycle_s.round() as u32;
-    format!(
-        "{:.0} m · round trip {}:{:02}",
-        info.length_m,
-        secs / 60,
-        secs % 60
+    trf!(
+        "{m} m · round trip {time}",
+        m = format!("{:.0}", info.length_m),
+        time = format!("{}:{:02}", secs / 60, secs % 60)
     )
+}
+
+/// Why a stop cannot go here, in the player's language (the English is `e`'s `Display`).
+fn stop_error_text(e: &cp_transit::StopError) -> String {
+    use cp_transit::{STOP_NODE_CLEARANCE, STOP_SPACING, StopError};
+    match e {
+        StopError::NearNode => trf!(
+            "a stop is at least {m} m from a junction",
+            m = STOP_NODE_CLEARANCE
+        ),
+        StopError::NearStop(_) => trf!("a stop is at least {m} m from the next", m = STOP_SPACING),
+        _ => tr(&e.to_string()),
+    }
 }
 
 #[cfg(test)]

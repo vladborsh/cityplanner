@@ -7,6 +7,7 @@
 
 use bevy_egui::egui;
 use cp_content::ContentDb;
+use cp_locale::{tr, trf};
 use cp_render::OverlayState;
 use cp_sim::SimView;
 use cp_tools::{CommandOutbox, ToolState};
@@ -120,7 +121,11 @@ pub fn palette(
                     let r = c
                         .icon()
                         .button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, selected)
-                        .on_hover_text(format!("{} (Shift+{})", c.label(), n + 1));
+                        .on_hover_text(trf!(
+                            "{category} (Shift+{key})",
+                            category = tr(c.label()),
+                            key = n + 1
+                        ));
                     rects.push((c, r.rect));
                     if r.clicked() {
                         toggle(state, c);
@@ -200,7 +205,7 @@ pub fn tool_panel(
         .show(root, |ui| {
             ui.horizontal(|ui| {
                 category.icon().show(ui, Sizes::PANEL_HEADER_ICON);
-                ui.heading(category.label());
+                ui.heading(tr(category.label()));
             });
             ui.separator();
             // The pinned block goes first so that the content above leaves room for it.

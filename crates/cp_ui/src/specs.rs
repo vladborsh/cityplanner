@@ -6,6 +6,7 @@
 use bevy_egui::egui;
 use cp_content::{ContentDb, SpecDef, SpecKind, ZoneType};
 use cp_district::{DistrictCommand, DistrictId, zone_slot};
+use cp_locale::{tr, trf};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::CommandOutbox;
 
@@ -52,22 +53,31 @@ fn pct(x: f32) -> i32 {
 pub fn effect_text(d: &SpecDef) -> String {
     let mut parts = Vec::new();
     if pct(d.tax_mul) != 0 {
-        parts.push(format!("{:+}% tax", pct(d.tax_mul)));
+        parts.push(trf!("{v}% tax", v = format!("{:+}", pct(d.tax_mul))));
     }
     if pct(d.tourist_weight) != 0 {
-        parts.push(format!("{:+}% tourists", pct(d.tourist_weight)));
+        parts.push(trf!(
+            "{v}% tourists",
+            v = format!("{:+}", pct(d.tourist_weight))
+        ));
     }
     if d.noise_add > 0.0 {
-        parts.push(format!("noisier (+{:.0})", d.noise_add));
+        parts.push(trf!("noisier (+{v})", v = format!("{:.0}", d.noise_add)));
     }
     if d.land_value_add > 0.0 {
-        parts.push(format!("land value +{:.0}", d.land_value_add));
+        parts.push(trf!(
+            "land value +{v}",
+            v = format!("{:.0}", d.land_value_add)
+        ));
     }
     if pct(d.goods_mul) != 0 {
-        parts.push(format!("{:+}% goods used", pct(d.goods_mul)));
+        parts.push(trf!(
+            "{v}% goods used",
+            v = format!("{:+}", pct(d.goods_mul))
+        ));
     }
     if parts.is_empty() {
-        "Its own look".to_string()
+        tr("Its own look")
     } else {
         parts.join(", ")
     }
@@ -79,14 +89,19 @@ pub fn specs_tab(ui: &mut egui::Ui, view: &SimView, outbox: &mut CommandOutbox, 
         return;
     };
     for (zones, specs) in groups(db) {
-        ui.weak(group_name(&zones));
+        ui.weak(tr(group_name(&zones)));
         let now = current(view, id, &zones);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             let mut pick: Option<Option<SpecKind>> = None;
-            if tool_tile(ui, TileIcon::Icon(Icon::SpecNone), "None", now.is_none())
-                .on_hover_text("Ordinary buildings")
-                .clicked()
+            if tool_tile(
+                ui,
+                TileIcon::Icon(Icon::SpecNone),
+                &tr("None"),
+                now.is_none(),
+            )
+            .on_hover_text(tr("Ordinary buildings"))
+            .clicked()
             {
                 pick = Some(None);
             }
@@ -94,10 +109,10 @@ pub fn specs_tab(ui: &mut egui::Ui, view: &SimView, outbox: &mut CommandOutbox, 
                 if tool_tile(
                     ui,
                     TileIcon::Def(&def.icon),
-                    &def.name,
+                    &tr(&def.name),
                     now == Some(def.kind),
                 )
-                .on_hover_text(format!("{}\n{}", def.name, effect_text(def)))
+                .on_hover_text(format!("{}\n{}", tr(&def.name), effect_text(def)))
                 .clicked()
                 {
                     pick = Some(Some(def.kind));

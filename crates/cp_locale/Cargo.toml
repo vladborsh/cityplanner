@@ -1,0 +1,15 @@
+[package]
+name = "cp_locale"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints.clippy]
+# Not a sim crate: the client's text only (see the workspace lint in the root Cargo.toml).
+disallowed_types = "allow"
+disallowed_methods = "allow"
+
+[dependencies]
+serde.workspace = true
+ron.workspace = true

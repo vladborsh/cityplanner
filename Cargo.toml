@@ -65,6 +65,7 @@ cp_prof = { path = "crates/cp_prof" }
 cp_render = { path = "crates/cp_render" }
 cp_app = { path = "crates/cp_app" }
 cp_tools = { path = "crates/cp_tools" }
+cp_locale = { path = "crates/cp_locale" }
 cp_ui = { path = "crates/cp_ui" }
 
 # SimRng forks per entity per tick; ChaCha and the generic rand_core code monomorphised

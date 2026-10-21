@@ -9,6 +9,7 @@
 
 use bevy_egui::egui;
 use cp_content::ZoneType;
+use cp_locale::tr;
 use cp_render::OverlayState;
 use cp_sim::SimView;
 use cp_tools::{ActiveTool, BulldozeLayer, ToolState};
@@ -106,7 +107,7 @@ fn money_row(ui: &mut egui::Ui, view: &SimView, state: &mut UiState, rects: &mut
 fn population_row(ui: &mut egui::Ui, view: &SimView, rects: &mut DemandRects) {
     let r = ui
         .label(format!("☻ {}", view.city.population))
-        .on_hover_text("Residents");
+        .on_hover_text(tr("Residents"));
     rects.population = Some(r.rect);
     crate::budget::population_trend_label(ui, view);
 }
@@ -139,14 +140,14 @@ fn stats(
 /// their own buildings and links (T-286) — on and off; B does the same.
 fn bulldozer_button(ui: &mut egui::Ui, tools: &mut ToolState, size: f32) -> egui::Rect {
     let on = tools.active == ActiveTool::Bulldozer;
-    let layer = match tools.menu_layer {
-        BulldozeLayer::All => "",
-        BulldozeLayer::Power => " — power lines and buildings only",
-        BulldozeLayer::Water => " — pipes and water buildings only",
+    let hover = match tools.menu_layer {
+        BulldozeLayer::All => tr("Bulldozer (B)"),
+        BulldozeLayer::Power => tr("Bulldozer (B) — power lines and buildings only"),
+        BulldozeLayer::Water => tr("Bulldozer (B) — pipes and water buildings only"),
     };
     let r = crate::icons::Icon::Bulldozer
         .button(ui, size, Sizes::BUTTON_PAD, on)
-        .on_hover_text(format!("Bulldozer (B){layer}"));
+        .on_hover_text(hover);
     if r.clicked() {
         tools.toggle_bulldozer();
     }
@@ -176,16 +177,16 @@ pub fn demand_panel(
                 ui.horizontal_centered(|ui| {
                     stats(ui, view, state, overlay, &mut rects, true);
                     ui.separator();
-                    let r = ui.small_button("▴").on_hover_text("Show demand");
+                    let r = ui.small_button("▴").on_hover_text(tr("Show demand"));
                     rects.fold = Some(r.rect);
                     if r.clicked() {
                         state.demand_collapsed = false;
                     }
-                    ui.label("Demand");
+                    ui.label(tr("Demand"));
                     rects.bulldozer = Some(bulldozer_button(ui, tools, 20.0));
                     if unconnected_stub(view).is_some() {
                         rects.notice = true;
-                        ui.colored_label(egui::Color32::YELLOW, format!("⚠ {NOT_CONNECTED}"));
+                        ui.colored_label(egui::Color32::YELLOW, format!("⚠ {}", tr(NOT_CONNECTED)));
                     }
                 });
                 return;
@@ -196,15 +197,15 @@ pub fn demand_panel(
                 // The controls, left of the columns.
                 ui.vertical(|ui| {
                     ui.set_width(Sizes::DEMAND_COL_W);
-                    ui.strong("Demand");
-                    let r = ui.small_button("▾").on_hover_text("Fold the panel");
+                    ui.strong(tr("Demand"));
+                    let r = ui.small_button("▾").on_hover_text(tr("Fold the panel"));
                     rects.fold = Some(r.rect);
                     if r.clicked() {
                         state.demand_collapsed = true;
                     }
                     let r = ui
                         .small_button("▸")
-                        .on_hover_text("Demand by zone (window)");
+                        .on_hover_text(tr("Demand by zone (window)"));
                     rects.details = Some(r.rect);
                     if r.clicked() {
                         state.demand_open = true;
@@ -228,10 +229,10 @@ pub fn demand_panel(
                     ui.vertical(|ui| {
                         ui.add_space(8.0);
                         ui.set_max_width(260.0);
-                        ui.colored_label(egui::Color32::YELLOW, format!("⚠ {NOT_CONNECTED}"));
+                        ui.colored_label(egui::Color32::YELLOW, format!("⚠ {}", tr(NOT_CONNECTED)));
                         let r = ui
-                            .button("Show")
-                            .on_hover_text("Centre the camera on the dead end");
+                            .button(tr("Show"))
+                            .on_hover_text(tr("Centre the camera on the dead end"));
                         rects.show_stub = Some(r.rect);
                         if r.clicked() {
                             state.camera_goal = Some(stub);
@@ -598,6 +599,14 @@ mod tests {
     /// and the bulldozer button right of them.
     #[test]
     fn the_bottom_panel_fits_a_1280_wide_window_with_big_numbers() {
+        for lang in cp_locale::Lang::ALL {
+            let _lang = crate::testutil::in_lang(lang);
+            bottom_panel_fits(lang);
+        }
+    }
+
+    /// T-284: the check above in `lang`.
+    fn bottom_panel_fits(lang: cp_locale::Lang) {
         let mut rig = Rig::new(view_with_utilities([
             (1_240_000.0, 1_100_000.0),
             (88_000.0, 99_000.0),
@@ -608,7 +617,7 @@ mod tests {
         let bull = rig.rects.bulldozer.unwrap();
         assert!(panel.contains_rect(bull), "{bull:?} not in {panel:?}");
         // Palette (72) and an open tool panel (300) leave 908: the bulldozer must still be in.
-        assert!(bull.right() <= 1280.0 - 72.0 - 300.0, "{bull:?}");
+        assert!(bull.right() <= 1280.0 - 72.0 - 300.0, "{lang:?}: {bull:?}");
         assert!(
             bull.left() > rig.rects.columns[3].rect.right(),
             "right of the demand"

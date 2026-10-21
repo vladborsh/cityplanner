@@ -411,6 +411,22 @@ pub fn set_speed(speed: SimSpeed) -> SimCommand {
 pub(crate) mod testutil {
     use bevy_egui::egui;
 
+    /// The UI in `lang` until the guard drops, then English again (T-284). The language is
+    /// process-wide; nextest runs every test in its own process.
+    #[must_use]
+    pub fn in_lang(lang: cp_locale::Lang) -> LangGuard {
+        cp_locale::set_lang(lang);
+        LangGuard
+    }
+
+    pub struct LangGuard;
+
+    impl Drop for LangGuard {
+        fn drop(&mut self) {
+            cp_locale::set_lang(cp_locale::Lang::En);
+        }
+    }
+
     /// One headless egui frame; the texture upload egui wants handled is discarded.
     pub fn frame(ctx: &egui::Context, input: egui::RawInput, f: impl FnMut(&mut egui::Ui)) {
         let mut out = ctx.run_ui(input, f);

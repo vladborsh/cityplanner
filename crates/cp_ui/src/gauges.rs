@@ -6,6 +6,7 @@
 
 use bevy_egui::egui;
 use cp_building::BuildingFlags;
+use cp_locale::{tr, trf};
 use cp_render::{OverlayState, UtilityLayer, UtilityReport, utility_report};
 use cp_sim::SimView;
 use cp_sim::city_services::{Sector, SectorBalance};
@@ -104,42 +105,57 @@ pub fn tooltip_lines(
     report: Option<&UtilityReport>,
     without_sewage: u32,
 ) -> Vec<String> {
-    let what = match row.sector {
-        Sector::Power => "power",
-        Sector::Water => "water",
-        _ => "sewage",
-    };
-    let mut lines = vec![format!(
-        "{}: {:.0} / {:.0} {} (supply / demand)",
-        row.sector.label(),
-        row.supply,
-        row.demand,
-        row.unit
+    let mut lines = vec![trf!(
+        "{sector}: {supply} / {demand} {unit} (supply / demand)",
+        sector = tr(row.sector.label()),
+        supply = format!("{:.0}", row.supply),
+        demand = format!("{:.0}", row.demand),
+        unit = tr(row.unit)
     )];
     let Some(report) = report else {
-        lines.push(format!("Buildings without {what}: {without_sewage}"));
+        lines.push(match row.sector {
+            Sector::Power => trf!("Buildings without power: {n}", n = without_sewage),
+            Sector::Water => trf!("Buildings without water: {n}", n = without_sewage),
+            _ => trf!("Buildings without sewage: {n}", n = without_sewage),
+        });
         return lines;
     };
     if report.networks.is_empty() {
-        lines.push("No network yet".to_string());
+        lines.push(tr("No network yet"));
     }
-    for (k, n) in report.networks.iter().enumerate() {
-        lines.push(format!(
-            "Network {}: {:.0} / {:.0}, {} buildings{}",
+    for (k, network) in report.networks.iter().enumerate() {
+        let (net, cap, dem, deficit) = (
             k + 1,
-            n.capacity,
-            n.demand,
-            n.buildings,
-            if n.deficit > 0 {
-                format!(", {} short", n.deficit)
-            } else {
-                String::new()
-            }
-        ));
+            format!("{:.0}", network.capacity),
+            format!("{:.0}", network.demand),
+            network.deficit,
+        );
+        lines.push(if deficit > 0 {
+            trf!(
+                plural "Network {k}: {capacity} / {demand}, {n} buildings, {short} short",
+                n = network.buildings,
+                k = net,
+                capacity = cap,
+                demand = dem,
+                short = deficit
+            )
+        } else {
+            trf!(
+                plural "Network {k}: {capacity} / {demand}, {n} buildings",
+                n = network.buildings,
+                k = net,
+                capacity = cap,
+                demand = dem
+            )
+        });
     }
-    lines.push(format!("Not connected: {}", report.unconnected));
+    lines.push(trf!("Not connected: {n}", n = report.unconnected));
     let short: u32 = report.networks.iter().map(|n| n.deficit).sum();
-    lines.push(format!("Not enough {what}: {short}"));
+    lines.push(match row.sector {
+        Sector::Power => trf!("Not enough power: {n}", n = short),
+        Sector::Water => trf!("Not enough water: {n}", n = short),
+        _ => trf!("Not enough sewage: {n}", n = short),
+    });
     lines
 }
 

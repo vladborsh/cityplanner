@@ -10,6 +10,8 @@ use cp_sim::tiles::{TileState, tile_state};
 use cp_terrain::{TILE_SIZE, TILES_PER_SIDE, TerrainCommand};
 use cp_tools::{CommandOutbox, UiCapture, format_money};
 
+use cp_locale::{tr, trf};
+
 use crate::panels::UiState;
 
 /// The tile under a world point, if on the map.
@@ -111,20 +113,24 @@ pub fn confirm_window(
         return;
     };
     let mut keep = true;
-    egui::Window::new("Buy land")
+    egui::Window::new(tr("Buy land"))
+        .id(egui::Id::new("buy_land"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ctx, |ui| {
-            ui.label(format!("Buy this tile for {}?", format_money(price)));
+            ui.label(trf!(
+                "Buy this tile for {price}?",
+                price = format_money(price)
+            ));
             ui.horizontal(|ui| {
-                if ui.button("Buy").clicked() {
+                if ui.button(tr("Buy")).clicked() {
                     outbox.push(cp_sim::SimCommand::Terrain(TerrainCommand::BuyTile {
                         tile,
                     }));
                     keep = false;
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     keep = false;
                 }
             });

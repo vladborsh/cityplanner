@@ -106,15 +106,29 @@ fn paint(
     painter.galley(pos, galley, visuals.text_color());
 }
 
+/// The smallest size a tile name steps down to so that its longest word fits (T-284).
+const MIN_NAME_PT: f32 = 10.0;
+
 /// The name of a tile: wrapped at words into at most two centred rows ("Highway, 3 lanes" keeps
-/// its number); only a name longer than that is cut with "…".
+/// its number); only a name longer than that is cut with "…". A word wider than the tile (long
+/// Russian words: «Мусоросжигатель», T-284) would be broken inside it: the face steps down until
+/// every word fits, to [`MIN_NAME_PT`] at most.
 fn name_galley(ui: &egui::Ui, name: &str, color: egui::Color32) -> std::sync::Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::simple(
-        name.to_string(),
-        egui::TextStyle::Small.resolve(ui.style()),
-        color,
-        Sizes::TILE - 2.0 * Sizes::TILE_PAD,
-    );
+    let width = Sizes::TILE - 2.0 * Sizes::TILE_PAD;
+    let mut font = egui::TextStyle::Small.resolve(ui.style());
+    let widest = |font: &egui::FontId| {
+        name.split_whitespace()
+            .map(|w| {
+                ui.fonts_mut(|f| f.layout_no_wrap(w.to_string(), font.clone(), color))
+                    .size()
+                    .x
+            })
+            .fold(0.0f32, f32::max)
+    };
+    while font.size > MIN_NAME_PT && widest(&font) > width {
+        font.size = (font.size - 0.5).max(MIN_NAME_PT);
+    }
+    let mut job = egui::text::LayoutJob::simple(name.to_string(), font, color, width);
     job.wrap.max_rows = 2;
     job.wrap.overflow_character = Some('…');
     job.halign = egui::Align::Center;
@@ -217,6 +231,73 @@ mod tests {
                 );
             }
         });
+    }
+
+    /// T-284: in Russian every name a tile shows (buildings, roads, the zone and tool cards)
+    /// fits its two rows whole: nothing is cut with "…".
+    #[test]
+    fn every_tile_name_fits_two_rows_in_russian() {
+        let db = cp_content::ContentDb::load_dir(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"),
+        )
+        .unwrap();
+        let mut names: Vec<String> = db.buildings().map(|(_, d)| d.name.clone()).collect();
+        names.extend(db.roads().map(|(_, d)| d.name.clone()));
+        names.extend(db.utilities().map(|(_, d)| d.name.clone()));
+        {
+            use cp_content::ZoneType as Z;
+            use cp_tools::ZoneToolKind as K;
+            for z in [
+                Z::ResLow,
+                Z::ResHigh,
+                Z::ComLow,
+                Z::ComHigh,
+                Z::Industrial,
+                Z::Office,
+            ] {
+                names.push(cp_tools::zone_name(z).to_string());
+            }
+            for k in [
+                K::FillBlock,
+                K::BrushSmall,
+                K::BrushLarge,
+                K::Rectangle,
+                K::Eraser,
+            ] {
+                names.push(k.label().to_string());
+            }
+        }
+        names.sort();
+        names.dedup();
+        let ru = cp_locale::locale(cp_locale::Lang::Ru);
+        let ctx = egui::Context::default();
+        crate::style::install(&ctx);
+        let mut cut = Vec::new();
+        frame(&ctx, input(0.0, vec![]), |ui| {
+            for name in &names {
+                let text = ru.get(name);
+                let g = name_galley(ui, text, egui::Color32::WHITE);
+                let shown: String = g
+                    .rows
+                    .iter()
+                    .flat_map(|r| r.glyphs.iter().map(|gl| gl.chr))
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                let whole: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+                if shown != whole {
+                    cut.push(format!("{name:?} -> {text:?} shows {shown:?}"));
+                }
+                // And no word is broken across the rows.
+                let words: Vec<&str> = text.split_whitespace().collect();
+                for row in &g.rows {
+                    let row_text: String = row.glyphs.iter().map(|gl| gl.chr).collect();
+                    if let Some(w) = row_text.split_whitespace().find(|w| !words.contains(w)) {
+                        cut.push(format!("{name:?} -> {text:?}: {w:?} is a broken word"));
+                    }
+                }
+            }
+        });
+        assert!(cut.is_empty(), "{} cut:\n{}", cut.len(), cut.join("\n"));
     }
 
     #[test]

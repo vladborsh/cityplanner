@@ -2,6 +2,7 @@
 //! the ones that can be bought with their price.
 
 use bevy_egui::egui;
+use cp_locale::{tr, trf};
 use cp_sim::SimView;
 use cp_sim::tiles::{TileState, tile_state};
 use cp_terrain::TILES_PER_SIDE;
@@ -10,7 +11,7 @@ use cp_tools::format_money;
 /// The grid; a click on a buyable tile sets `pending`, which `land::confirm_window` confirms.
 pub fn tile_section(ui: &mut egui::Ui, view: &SimView, pending: &mut Option<(u8, u8)>) {
     ui.separator();
-    ui.strong("Land");
+    ui.strong(tr("Land"));
     let size = egui::vec2(46.0, 34.0);
     for tz in 0..TILES_PER_SIDE as u8 {
         ui.horizontal(|ui| {
@@ -19,18 +20,16 @@ pub fn tile_section(ui: &mut egui::Ui, view: &SimView, pending: &mut Option<(u8,
                 let tile = (tx, tz);
                 let state = tile_state(view, tile);
                 let (label, hover, enabled) = match state {
-                    TileState::Owned => ("own".to_owned(), "Owned".to_owned(), false),
+                    TileState::Owned => (tr("own"), tr("Owned"), false),
                     TileState::Buyable(p) => (
                         format_money(p),
-                        format!("Buy for {}", format_money(p)),
+                        trf!("Buy for {price}", price = format_money(p)),
                         true,
                     ),
-                    TileState::NeedsMilestone => (
-                        "—".to_owned(),
-                        "Opens at the next milestone".to_owned(),
-                        false,
-                    ),
-                    TileState::Far => (String::new(), "Not next to your land".to_owned(), false),
+                    TileState::NeedsMilestone => {
+                        ("—".to_owned(), tr("Opens at the next milestone"), false)
+                    }
+                    TileState::Far => (String::new(), tr("Not next to your land"), false),
                 };
                 let selected = *pending == Some(tile);
                 let button =
@@ -38,11 +37,11 @@ pub fn tile_section(ui: &mut egui::Ui, view: &SimView, pending: &mut Option<(u8,
                 if ui
                     .add_enabled(enabled, button.min_size(size))
                     .on_hover_text(hover)
-                    .on_disabled_hover_text(match state {
+                    .on_disabled_hover_text(tr(match state {
                         TileState::Owned => "Owned",
                         TileState::NeedsMilestone => "Opens at the next milestone",
                         _ => "Not next to your land",
-                    })
+                    }))
                     .clicked()
                 {
                     *pending = Some(tile);

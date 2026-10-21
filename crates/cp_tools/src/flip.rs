@@ -3,6 +3,7 @@
 //! has nothing to flip.
 
 use cp_content::ContentDb;
+use cp_locale::tr;
 use cp_net::{NetCommand, NetGraph, SegmentId, curve_outside_owned, road_run};
 use cp_sim::SimCommand;
 use cp_terrain::TileOwnership;
@@ -34,14 +35,14 @@ pub fn flip_preview(
     };
     out.run = road_run(net, seg);
     if !content.road(s.road).is_one_way() {
-        out.errors.push(NOT_ONE_WAY.to_string());
+        out.errors.push(tr(NOT_ONE_WAY));
         return out;
     }
     if out.run.iter().any(|&id| {
         net.segment(id)
             .is_some_and(|s| curve_outside_owned(tiles, &s.curve).is_some())
     }) {
-        out.errors.push(OUTSIDE_LAND.to_string());
+        out.errors.push(tr(OUTSIDE_LAND));
     }
     out
 }
