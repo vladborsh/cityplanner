@@ -208,3 +208,79 @@ fn the_view_shares_the_summary_until_it_is_recomputed() {
     assert!(!Arc::ptr_eq(&v1.city, &v3.city));
     assert!(v3.city.generation > v1.city.generation);
 }
+
+#[test]
+fn education_and_job_slots_hold_their_invariants() {
+    let mut sim = city(3);
+    to_boundary(&mut sim);
+    let w = sim.world();
+    let s = w.resource::<CityStats>();
+    let content = w.resource::<cp_content::SimContent>();
+    let db = &*content.0;
+
+    // Education: the levels add up to the totals, every adult is in exactly one group.
+    let sum =
+        |f: &dyn Fn(&cp_sim::stats::EducationStat) -> u32| s.education.iter().map(f).sum::<u32>();
+    assert_eq!(sum(&|e| e.residents), s.population);
+    assert_eq!(sum(&|e| e.adults), s.adults);
+    assert_eq!(sum(&|e| e.employed), s.employed);
+    let grouped = sum(&|e| e.employed + e.looking + e.retired);
+    assert!(grouped <= s.adults);
+    // The rest of the adults are the jobless who study.
+    let studying_adults = s.adults - grouped;
+    assert!(studying_adults <= sum(&|e| e.studying));
+    for e in &s.education {
+        assert!(e.adults <= e.residents);
+        assert!(e.employed + e.looking + e.retired <= e.adults);
+    }
+    assert!(sum(&|e| e.looking) + sum(&|e| e.retired) + studying_adults == s.unemployed);
+
+    // Jobs: totals are the slots of the active buildings, free = total - filled.
+    let b = w.resource::<BuildingGrid>();
+    let citizens = w.resource::<CitizenGrid>();
+    for l in 0..4 {
+        let (mut total, mut filled, mut building) = (0u32, 0u32, 0u32);
+        for (id, x) in b.iter() {
+            let def = db.building(x.def);
+            match x.state {
+                BuildingState::Active => {
+                    total += u32::from(def.jobs[l]);
+                    filled += u32::from(def.jobs[l].min(citizens.jobs_filled(id, l)));
+                }
+                BuildingState::UnderConstruction => building += u32::from(def.jobs[l]),
+                _ => {}
+            }
+        }
+        assert_eq!(s.jobs[l].total, total, "level {l}");
+        assert_eq!(s.jobs[l].building, building, "level {l}");
+        // The fills move between the buildings slice and the publish (like the counters above).
+        assert!(s.jobs[l].free.abs_diff(total - filled) <= 8, "level {l}");
+    }
+    assert!(s.jobs.iter().map(|j| j.total).sum::<u32>() > 0);
+}
+
+#[test]
+fn the_daily_series_grows_once_a_day_and_keeps_thirty() {
+    let mut sim = city(3);
+    to_boundary(&mut sim);
+    let first = sim.world().resource::<CityStats>().daily.len();
+    assert!(first >= 1);
+    for _ in 0..3 * TICKS_PER_DAY {
+        sim.tick_once();
+    }
+    let s = sim.world().resource::<CityStats>();
+    assert_eq!(s.daily.len(), first + 3);
+    assert!(
+        s.daily
+            .iter()
+            .zip(s.daily.iter().skip(1))
+            .all(|(a, b)| b.day == a.day + 1)
+    );
+    for _ in 0..31 * TICKS_PER_DAY {
+        sim.tick_once();
+    }
+    let s = sim.world().resource::<CityStats>();
+    assert_eq!(s.daily.len(), cp_sim::stats::DAILY_DAYS);
+    let d = s.daily.back().unwrap();
+    assert_eq!(d.adults, s.adults);
+}

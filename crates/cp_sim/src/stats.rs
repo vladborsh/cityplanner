@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use bevy_ecs::prelude::*;
 use cp_building::{BuildingFlags, BuildingGrid, BuildingState, Demand};
-use cp_citizen::{CitizenGrid, PopFlow, TripBook, TripState};
+use cp_citizen::{CitizenGrid, DAYS_PER_YEAR, PopFlow, TripBook, TripState};
 use cp_content::{RoadClass, RoadDefId, ServiceKind, SimContent, UtilityKind, ZoneType};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{Cost, Tick, Treasury};
@@ -27,6 +27,10 @@ use cp_zone::{ZoneCellRef, ZoneGrid};
 pub const STATS_PERIOD: u64 = 64;
 /// Hourly samples kept: 7 game days.
 pub const HISTORY_HOURS: usize = 7 * 24;
+/// Daily samples kept (T-307): 30 game days.
+pub const DAILY_DAYS: usize = 30;
+/// Age in game days from which a jobless adult is retired and no longer looks for work.
+pub const RETIRE_AGE_DAYS: u32 = 65 * DAYS_PER_YEAR;
 /// A segment loaded above this share of its capacity counts as overloaded.
 pub const OVERLOAD: f32 = 0.8;
 
@@ -143,12 +147,48 @@ pub struct RoadGroup {
     pub upkeep_week: Cost,
 }
 
+/// The citizens of one education level (T-307).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EducationStat {
+    pub residents: u32,
+    pub adults: u32,
+    /// Adults with a job.
+    pub employed: u32,
+    /// Jobless adults who do not study and are under 65.
+    pub looking: u32,
+    /// Citizens of any age at a school.
+    pub studying: u32,
+    /// Jobless adults of 65 and over (not studying).
+    pub retired: u32,
+}
+
+/// The job slots that require one education level (T-307).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct JobSlots {
+    /// Slots of active buildings.
+    pub total: u32,
+    /// `total` minus the filled ones.
+    pub free: u32,
+    /// Slots of buildings under construction.
+    pub building: u32,
+}
+
+/// One game day for the unemployment sparkline (T-307).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DailySample {
+    pub day: u64,
+    pub adults: u32,
+    pub employed: u32,
+    pub looking: u32,
+}
+
 /// One hourly sample for the sparklines.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HistorySample {
     pub tick: u64,
     pub population: u32,
     pub employed: u32,
+    pub adults: u32,
     pub balance: Cost,
     pub avg_load: f32,
     pub pollution: f32,
@@ -177,6 +217,10 @@ pub struct CityStats {
     pub adults: u32,
     pub employed: u32,
     pub unemployed: u32,
+    /// By education level 0..=3 (T-307).
+    pub education: [EducationStat; 4],
+    /// Job slots by the level they require (T-307).
+    pub jobs: [JobSlots; 4],
     pub zones: [ZoneStats; 6],
     pub buildings: BuildingStats,
     /// Per existing district, in id order (T-132).
@@ -190,6 +234,10 @@ pub struct CityStats {
     /// By road type, ascending `RoadDefId`; road types without segments are absent.
     pub roads: Vec<RoadGroup>,
     pub history: VecDeque<HistorySample>,
+    /// One sample per game day, 30 kept (T-307). Derived: starts again after a load.
+    pub daily: VecDeque<DailySample>,
+    /// Game day of the newest `daily` sample.
+    last_day: Option<u64>,
     /// Game hour (`tick * 24 / TICKS_PER_DAY`) of the newest history sample.
     last_hour: Option<u64>,
     /// The recompute in progress (between its first and last stage), not published.
@@ -338,11 +386,27 @@ pub fn update_city_stats(
                     tick: tick.0,
                     population: next.population,
                     employed: next.employed,
+                    adults: next.adults,
                     balance: treasury.balance,
                     avg_load: next.traffic.avg_load,
                     pollution: next.land.avg_pollution,
                     demand: demands,
                     flow: next.pop_flow,
+                });
+            }
+            let mut daily = std::mem::take(&mut stats.daily);
+            let mut last_day = stats.last_day;
+            let day = tick.0 / TICKS_PER_DAY;
+            if last_day != Some(day) {
+                last_day = Some(day);
+                if daily.len() == DAILY_DAYS {
+                    daily.pop_front();
+                }
+                daily.push_back(DailySample {
+                    day,
+                    adults: next.adults,
+                    employed: next.employed,
+                    looking: next.education.iter().map(|e| e.looking).sum(),
                 });
             }
             // The last day: against the newest sample at least a day old, else the oldest.
@@ -374,6 +438,8 @@ pub fn update_city_stats(
             stats.generation = generation;
             stats.tick = tick.0;
             stats.history = history;
+            stats.daily = daily;
+            stats.last_day = last_day;
             stats.last_hour = last_hour;
             return;
         }
@@ -399,10 +465,21 @@ fn stage_citizens_traffic_land(
     s.pop_flow = citizens.flow;
     s.households = citizens.household_count() as u32;
     for (_, c) in citizens.citizens() {
+        let e = &mut s.education[usize::from(c.education.min(3))];
+        e.residents += 1;
+        e.studying += u32::from(c.school.is_some());
         if c.is_adult() {
             s.adults += 1;
+            e.adults += 1;
             if c.work.is_some() {
                 s.employed += 1;
+                e.employed += 1;
+            } else if c.school.is_none() {
+                if c.age_days >= RETIRE_AGE_DAYS {
+                    e.retired += 1;
+                } else {
+                    e.looking += 1;
+                }
             }
         }
     }
@@ -580,6 +657,21 @@ fn stage_buildings(
             && b.access().is_some_and(|a| reach.reaches(a.segment))
         {
             s.connected_to_highway = true;
+        }
+        match b.state {
+            BuildingState::Active => {
+                for l in 0..4 {
+                    let total = u32::from(def.jobs[l]);
+                    s.jobs[l].total += total;
+                    s.jobs[l].free += total.saturating_sub(u32::from(citizens.jobs_filled(id, l)));
+                }
+            }
+            BuildingState::UnderConstruction => {
+                for l in 0..4 {
+                    s.jobs[l].building += u32::from(def.jobs[l]);
+                }
+            }
+            _ => {}
         }
         let f = b.flags;
         s.buildings.no_water += u32::from(f.has(BuildingFlags::NO_WATER));
