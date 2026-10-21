@@ -6,7 +6,9 @@
 //! 1. keeps the utilities ahead of the use (wind turbines, water towers, a sewage treatment plant,
 //!    all on land: no water body needed), placed with the placement tool's own preview;
 //! 2. builds the services as the milestones open them and the money allows (police, fire, clinic,
-//!    landfill; school, cemetery; a park now and then), on the town's outer frontage;
+//!    landfill; school, cemetery; a park now and then), on the town's outer frontage; with
+//!    `PLAYTEST_SERVICES=reactive` police, fire, clinic, landfill and cemetery only where their
+//!    problem shows;
 //! 3. when the zoned land is nearly full and there is money, adds a row or a column of blocks
 //!    (streets drawn with the road tool by its rules, a power line and a pipe along each new
 //!    block side) and zones each new block for the demand that is highest (R, C or I);
@@ -36,6 +38,18 @@ const STUB_END: Vec2 = Vec2::new(5120.0, 4348.0);
 /// The utility lane runs this far north of the top street: the utilities stand between the two,
 /// within reach of one or the other.
 const LANE_M: f32 = 110.0;
+/// Reactive services (`PLAYTEST_SERVICES=reactive`): the problem each one cures.
+const REACTIVE: [(u16, &str); 5] = [
+    (ServiceProblems::CRIME, "police_station"),
+    (ServiceProblems::FIRE, "fire_station"),
+    (ServiceProblems::GARBAGE, "landfill"),
+    (ServiceProblems::SICK, "clinic"),
+    (ServiceProblems::DEAD, "cemetery"),
+];
+/// Buildings with a problem before its service is built.
+const REACT_AT: u32 = 3;
+/// Days a new service gets to cure its problem before another of its kind is built.
+const REACT_DAYS: u32 = 3;
 /// Money the player keeps back for the running costs before building more.
 const RESERVE: f64 = 15_000.0;
 
@@ -96,6 +110,8 @@ pub struct Player {
     r1: i32,
     /// Services placed, by building def name.
     placed: Vec<String>,
+    /// The day each service was last placed (reactive mode).
+    last_placed: std::collections::BTreeMap<String, u32>,
     /// Blocks laid out and not zoned yet (nothing was asked for when they were built).
     spare: Vec<(i32, i32)>,
     /// Buildings of [R, C, I] at the start of the day: a zone whose count did not move while its
@@ -144,6 +160,7 @@ impl Player {
             c1: 0,
             r1: 0,
             placed: Vec::new(),
+            last_placed: Default::default(),
             spare: Vec::new(),
             built: [0; 3],
             stalled: [false; 3],
@@ -512,6 +529,11 @@ impl Player {
                 }
             }
         }
+        // `PLAYTEST_SERVICES=reactive`: a care service only where its problem shows (T-295).
+        if std::env::var("PLAYTEST_SERVICES").is_ok_and(|v| v == "reactive") {
+            self.build_services_reactive(stats.population);
+            return;
+        }
         // Services, one each as they open; a second police and fire station from 3000.
         let pop = stats.population;
         for (def, from_pop, many) in [
@@ -524,6 +546,50 @@ impl Player {
             ("small_park", 400, 1),
             ("police_station", 3000, 2),
             ("fire_station", 3000, 2),
+            ("high_school", 1500, 1),
+            ("small_park", 2000, 2),
+        ] {
+            if pop >= from_pop && self.count(def) < many {
+                self.place(def);
+            }
+        }
+    }
+
+    /// Services in reactive mode (T-295): police, fire, clinic, landfill and cemetery only once
+    /// [`REACT_AT`] buildings have the problem it cures, then one more each [`REACT_DAYS`] days
+    /// while it is still there; schools and parks as in the default mode. Shows each problem
+    /// appear and get cured.
+    fn build_services_reactive(&mut self, pop: u32) {
+        let mut seen = [0u32; 5];
+        {
+            let w = self.sim.world();
+            let st = w.resource::<ServiceState>();
+            for (id, bl) in w.resource::<BuildingGrid>().iter() {
+                if bl.state != BuildingState::Active {
+                    continue;
+                }
+                let p = st.problems_of(id);
+                for (k, (flag, _)) in REACTIVE.iter().enumerate() {
+                    seen[k] += u32::from(p.has(*flag));
+                }
+            }
+        }
+        for (k, (_, def)) in REACTIVE.iter().enumerate() {
+            let recent = self
+                .last_placed
+                .get(*def)
+                .is_some_and(|&d| self.day < d + REACT_DAYS);
+            if seen[k] >= REACT_AT && !recent {
+                self.actions
+                    .push(format!("{def}: {} buildings with the problem", seen[k]));
+                if self.place(def) {
+                    self.last_placed.insert(def.to_string(), self.day);
+                }
+            }
+        }
+        for (def, from_pop, many) in [
+            ("elementary_school", 0, 1),
+            ("small_park", 400, 1),
             ("high_school", 1500, 1),
             ("small_park", 2000, 2),
         ] {

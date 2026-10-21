@@ -2,7 +2,7 @@
 //! and tools (`cp_app::playtest`), one line per game day. Re-run after balance changes:
 //! `cargo test --release -p cp_app --test playtest -- --ignored --nocapture`
 //! (`PLAYTEST_DAYS`, default 80; `PLAYTEST_POP`, default 5000; `PLAYTEST_SEED`, the sim's seed,
-//! default 1).
+//! default 1; `PLAYTEST_SERVICES=reactive`, care services only where their problem shows).
 
 #[test]
 #[ignore = "T-293 playtest: prints a report"]
