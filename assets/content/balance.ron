@@ -143,6 +143,11 @@ Balance((
     // Land value a building with GARBAGE / CRIME takes from its cell.
     land_garbage: 8.0,
     land_crime: 10.0,
+    // T-290: a garbage facility upsets the homes within garbage_nuisance_m (8 cells) of its footprint:
+    // the land loses up to land_nuisance_garbage at the footprint, falling to 0 at that distance.
+    // Industry, shops and offices do not feel it (the 'fine next to the industrial zone' case).
+    garbage_nuisance_m: 64.0,
+    land_nuisance_garbage: 24.0,
     // A home of level 1..5 needs this many of Health, Police, Fire, Education covered at least
     // res_service_cover.
     res_level_services: (0, 0, 1, 2, 4),

@@ -9,7 +9,7 @@ use cp_building::{BuildingFlags, BuildingId, BuildingState};
 use cp_citizen::{
     CitizenGrid, CitizenId, DAYS_PER_YEAR, Location, TripBook, TripMode, TripPurpose, TripState,
 };
-use cp_content::SimContent;
+use cp_content::{SimContent, ZoneType};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_economy::{Decay, LandGrids};
@@ -64,6 +64,8 @@ pub struct BuildingInfo {
     /// Days of an unbroken problem, and the days left until abandoned / demolished.
     pub trouble: Option<Trouble>,
     pub land_value: f32,
+    /// A home within reach of a garbage facility, which upsets it (T-290).
+    pub near_garbage: bool,
     pub pollution: f32,
     pub noise: f32,
     pub tax_base: f32,
@@ -375,7 +377,9 @@ impl SimRunner {
                     workers,
                     jobs: def.jobs,
                     trouble,
-                    land_value: grids.value_at(b.pos),
+                    land_value: grids.value_for(def.zone, b.pos),
+                    near_garbage: matches!(def.zone, ZoneType::ResLow | ZoneType::ResHigh)
+                        && grids.garbage_at(b.pos) > 0.0,
                     pollution: grids.pollution_at(b.pos),
                     noise: grids.noise_at(b.pos),
                     tax_base: def.tax_base,
@@ -665,6 +669,9 @@ impl Inspection {
                     ));
                 }
                 r.push(row("Land value", format!("{:.0}", b.land_value)));
+                if b.near_garbage {
+                    r.push(row("Nuisance", "Near a landfill".to_string()));
+                }
                 r.push(row("Pollution", format!("{:.0}", b.pollution)));
                 r.push(row("Noise", format!("{:.0}", b.noise)));
                 r

@@ -331,8 +331,12 @@ pub fn update_city(
             continue;
         }
         let utility_trouble = flags.0 & BuildingFlags::UTILITY_MASK != 0;
-        if let Some(mut wanted) = wanted_level(bal, def.zone, grids.value_at(pos), workers.get(id))
-        {
+        if let Some(mut wanted) = wanted_level(
+            bal,
+            def.zone,
+            grids.value_for(def.zone, pos),
+            workers.get(id),
+        ) {
             // Homes also need services in reach for the higher levels (T-146).
             if matches!(def.zone, ZoneType::ResLow | ZoneType::ResHigh)
                 && let Some(cov) = coverage.as_deref()

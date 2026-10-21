@@ -50,6 +50,9 @@ pub struct LandGrids {
     pub pollution: Vec<f32>,
     pub noise: Vec<f32>,
     pub land_value: Vec<f32>,
+    /// The land a garbage facility took off a cell (T-290): already out of `land_value`, kept
+    /// apart so that only homes feel it ([`LandGrids::value_for`]). Saved with the others.
+    pub garbage: Vec<f32>,
     /// Changes whenever the grids are replaced and is never shared between instances, so a
     /// snapshot cache can key on it. Not saved, not compared.
     #[serde(skip, default = "next_revision")]
@@ -67,6 +70,7 @@ impl PartialEq for LandGrids {
         self.pollution == other.pollution
             && self.noise == other.noise
             && self.land_value == other.land_value
+            && self.garbage == other.garbage
     }
 }
 
@@ -78,6 +82,7 @@ impl Default for LandGrids {
             pollution: vec![0.0; SIDE * SIDE],
             noise: vec![0.0; SIDE * SIDE],
             land_value: vec![Balance::default().land_base; SIDE * SIDE],
+            garbage: vec![0.0; SIDE * SIDE],
             revision: next_revision(),
         }
     }
@@ -103,6 +108,19 @@ pub const SERVICE_KINDS: [ServiceKind; 4] = [
     ServiceKind::Fire,
     ServiceKind::Education,
 ];
+
+/// Whether `def` is a garbage facility: a service building of the Garbage kind.
+pub fn is_garbage_facility(db: &ContentDb, def: &cp_content::BuildingDef) -> bool {
+    def.service
+        .as_deref()
+        .and_then(|s| db.service_id(s))
+        .is_some_and(|s| db.service(s).kind == ServiceKind::Garbage)
+}
+
+/// Half the longer side of a building's lot, metres: the nuisance counts from its footprint.
+fn footprint_half_m(def: &cp_content::BuildingDef) -> f32 {
+    f32::from(def.lot.0.max(def.lot.1)) * cp_building::FOOTPRINT_CELL_M * 0.5
+}
 
 fn centre(i: usize) -> Vec2 {
     Vec2::new(
@@ -153,6 +171,22 @@ impl LandGrids {
         self.value_at(p)
     }
 
+    /// What the garbage facilities near `p` take off its land (T-290).
+    pub fn garbage_at(&self, p: Vec2) -> f32 {
+        self.garbage.get(Self::index(p)).copied().unwrap_or(0.0)
+    }
+
+    /// The land value a building of `zone` at `p` sees: homes feel the nuisance of a garbage
+    /// facility near them, industry, shops and offices do not (T-290).
+    pub fn value_for(&self, zone: ZoneType, p: Vec2) -> f32 {
+        let v = self.value_at(p);
+        if matches!(zone, ZoneType::ResLow | ZoneType::ResHigh) {
+            v
+        } else {
+            v + self.garbage_at(p)
+        }
+    }
+
     pub fn pollution_at(&self, p: Vec2) -> f32 {
         self.pollution[Self::index(p)]
     }
@@ -173,8 +207,29 @@ impl LandGrids {
             pollution: vec![0.0; SIDE * SIDE],
             noise: vec![0.0; SIDE * SIDE],
             land_value: vec![0.0; SIDE * SIDE],
+            garbage: vec![0.0; SIDE * SIDE],
             revision: next_revision(),
         };
+
+        // Garbage facilities (T-290): within `garbage_nuisance_m` of the footprint, falling to 0.
+        // Buildings are visited in arena order, so the sums come out the same every run.
+        if bal.garbage_nuisance_m > 0.0 && bal.land_nuisance_garbage > 0.0 {
+            let reach = bal.garbage_nuisance_m;
+            for (_, b) in i.buildings.iter() {
+                if b.state != BuildingState::Active {
+                    continue;
+                }
+                let def = i.content.building(b.def);
+                if !is_garbage_facility(i.content, def) {
+                    continue;
+                }
+                let half = footprint_half_m(def);
+                cells_near(b.pos, reach + half, |c, d| {
+                    let away = (d - half).max(0.0);
+                    g.garbage[c] += bal.land_nuisance_garbage * (1.0 - away / reach)
+                });
+            }
+        }
 
         for (_, b) in i.buildings.iter() {
             let def = i.content.building(b.def);
@@ -347,7 +402,12 @@ impl LandGrids {
                 + effect[c]
                 + park[c]
                 + spec_land[c];
-            g.land_value[c] = v.clamp(0.0, 100.0);
+            // The garbage nuisance (T-290) is taken off the clamped value, and what it took is
+            // kept, so that adding it back gives exactly the land without the facility.
+            let without = v.clamp(0.0, 100.0);
+            let with = (v - g.garbage[c]).clamp(0.0, 100.0);
+            g.land_value[c] = with;
+            g.garbage[c] = without - with;
         }
         g
     }
