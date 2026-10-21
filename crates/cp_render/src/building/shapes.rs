@@ -4793,6 +4793,67 @@ pub fn garden_spots(w: f32, d: f32, (hu, hv, cv): (f32, f32, f32), seed: u32) ->
     out
 }
 
+/// Trees in the free strips of a high-density or office lot (T-309): rows along the front
+/// setback, the back and the sides, never on the building; at most eight, 7 to 10 m tall.
+pub fn lot_trees(w: f32, d: f32, (hu, hv, cv): (f32, f32, f32), seed: u32) -> Vec<Spot> {
+    let mut x = seed.wrapping_mul(0x2545_f491) ^ 0x9e37_79b1 | 1;
+    let mut next = move || {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        x
+    };
+    let frac = |n: u32| (n % 1000) as f32 / 1000.0;
+    let kind = (next() % 2) as u8;
+    let h = 7.0 + frac(next()) * 3.0;
+    let r = if kind == 0 { h * 0.24 } else { h * 0.27 };
+    let mut out = Vec::new();
+    // (u0, u1, v0, v1) strips of free ground, the trunk range.
+    let strips = [
+        (-w * 0.5 + r, w * 0.5 - r, -d * 0.5 + r, cv - hv - 0.3 - r),
+        (-w * 0.5 + r, w * 0.5 - r, cv + hv + 0.3 + r, d * 0.5 - r),
+        (-w * 0.5 + r, -(hu + 0.3) - r, -d * 0.5 + r, d * 0.5 - r),
+        (hu + 0.3 + r, w * 0.5 - r, -d * 0.5 + r, d * 0.5 - r),
+    ];
+    for (k, (u0, u1, v0, v1)) in strips.into_iter().enumerate() {
+        if u0 > u1 || v0 > v1 || out.len() >= 8 {
+            continue;
+        }
+        // Along the longer side of the strip, one trunk per 4 crown radii.
+        let along_u = (u1 - u0) >= (v1 - v0);
+        let len = if along_u { u1 - u0 } else { v1 - v0 };
+        let n = ((len / (4.0 * r)) as u32 + 1).clamp(1, 3);
+        for i in 0..n {
+            let t = if n == 1 {
+                0.5
+            } else {
+                i as f32 / (n - 1) as f32
+            };
+            let (u, v) = if along_u {
+                (u0 + t * (u1 - u0), 0.5 * (v0 + v1))
+            } else {
+                (0.5 * (u0 + u1), v0 + t * (v1 - v0))
+            };
+            if out.len() >= 8 {
+                break;
+            }
+            out.push(Spot {
+                u,
+                v,
+                kind: if (k + i as usize).is_multiple_of(3) {
+                    1 - kind
+                } else {
+                    kind
+                },
+                h: h * (0.85 + 0.3 * frac(next())),
+                r,
+                tint: frac(next()),
+            });
+        }
+    }
+    out
+}
+
 /// Draws a garden: conifers, round broadleaf trees and bushes standing at `ground(u, v)`.
 pub fn garden(
     m: &mut MeshData,

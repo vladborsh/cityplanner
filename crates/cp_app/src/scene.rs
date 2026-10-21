@@ -1514,6 +1514,27 @@ pub const GROWN: &str = "grown";
 
 /// Builds the [`GROWN`] scene through the normal commands and lets the blocks grow.
 pub fn build_grown(sim: &mut SimRunner) {
+    build_grown_zones(
+        sim,
+        cp_content::ZoneType::ResLow,
+        cp_content::ZoneType::Industrial,
+    );
+}
+
+/// High-density homes in the top row of blocks and offices in the bottom row, grown like
+/// [`GROWN`] (T-309 shots). Look at it with `--scene grown-high --cam grown`.
+pub const GROWN_HIGH: &str = "grown-high";
+
+/// Builds the [`GROWN_HIGH`] scene.
+pub fn build_grown_high(sim: &mut SimRunner) {
+    build_grown_zones(
+        sim,
+        cp_content::ZoneType::ResHigh,
+        cp_content::ZoneType::Office,
+    );
+}
+
+fn build_grown_zones(sim: &mut SimRunner, top: cp_content::ZoneType, bottom: cp_content::ZoneType) {
     use cp_zone::{ZoneCommand, ZoneGrid};
     let db = embedded_content();
     let c = cp_terrain::MAP_SIZE / 2.0;
@@ -1572,11 +1593,11 @@ pub fn build_grown(sim: &mut SimRunner) {
         vec![
             SimCommand::Zone(ZoneCommand::PaintZones {
                 cells: res,
-                zone: cp_content::ZoneType::ResLow,
+                zone: top,
             }),
             SimCommand::Zone(ZoneCommand::PaintZones {
                 cells: ind,
-                zone: cp_content::ZoneType::Industrial,
+                zone: bottom,
             }),
         ]
     };

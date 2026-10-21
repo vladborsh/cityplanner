@@ -8,5 +8,5 @@ Building((
     jobs: (0, 4, 8, 2),
     consumption: {Water: 7.8, Sewage: 7.8, Power: 13.2},
     tax_base: 98.0,
-    styles: ["office_glass_tower_a", "office_ribbon_block_a", "office_stepped_hq_a", "office_twin_offices_a"],
+    styles: ["office_glass_tower_a", "office_ribbon_block_a", "office_stepped_hq_a", "office_twin_offices_a", "office_l_campus_a"],
 ))

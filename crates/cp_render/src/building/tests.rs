@@ -1548,3 +1548,31 @@ fn the_factory_and_cargo_station_silhouettes_are_distinct_and_fit_their_lots() {
     assert_eq!(masses.len(), names.len());
     assert_eq!(shapes.len(), names.len(), "{shapes:?}");
 }
+
+/// T-309: the trees of a high-density or office lot stand inside the lot, off the building,
+/// at most eight.
+#[test]
+fn lot_trees_stand_in_the_free_strips_and_never_on_the_building() {
+    for (w, d) in [(16.0f32, 16.0f32), (24.0, 24.0), (32.0, 24.0), (32.0, 32.0)] {
+        // The building takes 0.58..0.76 of the lot area; the setback is as in `build_building`.
+        for fill in [0.58f32, 0.76] {
+            let shrink = fill.sqrt();
+            let hu = ((w * 0.5 - 1.0) * shrink).max(1.0);
+            let hv = (((d - 4.0 - 2.0) * 0.5) * shrink).max(1.0);
+            let cv = (4.0 - 2.0) * 0.5;
+            for seed in 0..64u32 {
+                let trees = super::shapes::lot_trees(w, d, (hu, hv, cv), seed);
+                assert!(trees.len() <= 8);
+                for t in &trees {
+                    assert!(t.u.abs() + t.r <= w * 0.5 + 1e-3, "{w}x{d} u {t:?}");
+                    assert!(t.v.abs() + t.r <= d * 0.5 + 1e-3, "{w}x{d} v {t:?}");
+                    let on_building = (t.u.abs() < hu + 0.3) && ((t.v - cv).abs() < hv + 0.3);
+                    assert!(
+                        !on_building,
+                        "{w}x{d} seed {seed}: tree on the building {t:?}"
+                    );
+                }
+            }
+        }
+    }
+}
