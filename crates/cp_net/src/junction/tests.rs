@@ -781,3 +781,22 @@ fn a_new_junction_updates_the_joint_beside_it() {
         fresh.arms.iter().map(|a| a.setback).collect::<Vec<_>>()
     );
 }
+
+/// BUG-116 (found by the proptest at arms (194.42, 140, large_6l), (374.42, 140, medium_4l)):
+/// a straight join of two roads of the same width but other lanes is a transition whose edges
+/// never meet; both setbacks were zero and the polygon collapsed to a line. Now each side
+/// takes half the taper and the polygon is a proper quad round the node.
+#[test]
+fn a_straight_transition_between_equal_widths_keeps_a_polygon() {
+    let db = content();
+    let (g, n, _) = star(
+        &db,
+        &[(194.42, 140.0, "large_6l"), (374.42, 140.0, "medium_4l")],
+    );
+    let j = compute_junction(&g, n, 1).unwrap();
+    assert_eq!(j.class, NodeClass::Transition);
+    assert!(j.arms.iter().all(|a| a.setback > 1.0), "{:?}", j.arms);
+    assert!(area(&j.polygon) > 0.0, "area {}", area(&j.polygon));
+    assert!(is_simple(&j.polygon));
+    assert!(contains(&j.polygon, to_xz(j.pos)));
+}
