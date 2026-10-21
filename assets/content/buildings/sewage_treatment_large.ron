@@ -1,0 +1,19 @@
+// T-308: about 0.85 of three plants' cost and upkeep per unit of capacity (economy of scale).
+Building((
+    id: "sewage_treatment_large",
+    name: "Large sewage treatment plant",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 3),
+    jobs: (4, 6, 2, 0),
+    consumption: {Power: 110.0},
+    tax_base: 0.0,
+    cost: 30000.0,
+    upkeep_week: 800.0,
+    styles: ["service_treatment_plant_large"],
+    service: Some("sewage_treatment_large"),
+    icon: "sewage_treatment_large",
+    // Pollution / noise (T-300, system-design §11.1): twice the small plant's for three times
+    // the capacity.
+    emits: Some((pollution: Some((strength: 60.0, radius_cells: 10)))),
+))

@@ -1,0 +1,15 @@
+// T-308: a bigger service building: the massing of the small one, drawn on the larger lot.
+Style((
+    id: "service_gas_plant",
+    massing: CoalPlant,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.78, 0.80, 0.84), (0.72, 0.76, 0.82)],
+        roof: [(0.30, 0.34, 0.40)],
+        trim: [(0.20, 0.50, 0.80)],
+        glass: (0.20, 0.26, 0.32),
+    ),
+    facade: Industrial,
+))

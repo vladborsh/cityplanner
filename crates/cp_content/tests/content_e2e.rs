@@ -218,7 +218,11 @@ fn content_hash_changes_with_any_value() {
     for (file, from, to) in [
         ("basic_2l", "speed_kmh: 40", "speed_kmh: 41"),
         ("basic_2l", "rank: 1", "rank: 2"),
-        ("services/water_pump", "capacity: 3000", "capacity: 3001"),
+        (
+            "services/water_pump.ron",
+            "capacity: 3000",
+            "capacity: 3001",
+        ),
         ("basic_2l", "road/asphalt", "road/asphalt2"),
     ] {
         let h = ContentDb::from_sources(mutate(file, from, to))
@@ -303,7 +307,7 @@ fn invalid_content_is_rejected_with_file_and_field() {
     assert!(e.contains("lanes[0].offset"), "lane outside road: {e}");
 
     let e = errs(mutate(
-        "services/water_pump",
+        "services/water_pump.ron",
         "vehicles: []",
         "vehicles: [\"nope\"]",
     ));
@@ -454,7 +458,18 @@ fn the_six_service_buildings_have_six_different_silhouettes() {
             .and_then(|s| db.service_id(s))
             .is_some_and(|s| db.service(s).kind <= ServiceKind::Sewage)
     };
-    for (_, d) in db.buildings().filter(|(_, d)| m1(d)) {
+    // T-308: the bigger variants of a small kind draw its massing on a larger lot.
+    let bigger = [
+        "water_pump_large",
+        "water_reservoir",
+        "sewage_treatment_large",
+        "gas_power_plant",
+        "wind_farm",
+    ];
+    for (_, d) in db
+        .buildings()
+        .filter(|(_, d)| m1(d) && !bigger.contains(&d.id.as_str()))
+    {
         assert_eq!(d.styles.len(), 1, "{}", d.id);
         assert!(
             d.styles[0].starts_with("service_"),

@@ -461,10 +461,7 @@ impl Player {
         let (x0, x1) = (self.c0 as f32 * DX + 20.0, self.c1 as f32 * DX - 20.0);
         // Utilities stand within reach of the top street's or the lane's pipe and line
         // (pipe_reach_m 64): further off they would count as capacity and supply nobody.
-        let utility = matches!(
-            def,
-            "wind_turbine" | "water_tower" | "sewage_treatment_plant"
-        );
+        let utility = UTILITIES.contains(&def);
         let rows: &[f32] = if utility {
             &[30.0, 50.0, 70.0, 90.0, 140.0]
         } else {
@@ -518,11 +515,17 @@ impl Player {
             n.capacity < n.consumption * 1.3 + 1.0 || (n.sources == 0 && stats.buildings.total > 0)
         };
         // As many as it takes (a source adds its capacity at once; up to 6 of a kind a day).
-        for (k, def) in [
-            (2, "wind_turbine"),
-            (0, "water_tower"),
-            (1, "sewage_treatment_plant"),
+        // T-308: the biggest one that is unlocked and affordable first, then the small one.
+        for (k, defs) in [
+            (2, &["gas_power_plant", "wind_farm", "wind_turbine"][..]),
+            (0, &["water_reservoir", "water_tower"][..]),
+            (1, &["sewage_treatment_large", "sewage_treatment_plant"][..]),
         ] {
+            let def = defs
+                .iter()
+                .copied()
+                .find(|d| self.unlocked(d) && self.money() >= self.cost(d) + RESERVE)
+                .unwrap_or(defs[defs.len() - 1]);
             let n = &stats.utilities[k];
             let need = (n.consumption * 1.3 + 1.0 - n.capacity).max(0.0);
             let cap = self
@@ -977,6 +980,18 @@ impl Player {
 /// Ground pollution from which a home counts as standing on polluted ground in the report.
 const DIRTY_GROUND: f32 = 10.0;
 
+/// The water, sewage and power buildings, small ones and the bigger ones that unlock later.
+const UTILITIES: [&str; 8] = [
+    "water_tower",
+    "water_reservoir",
+    "sewage_treatment_plant",
+    "sewage_treatment_large",
+    "wind_turbine",
+    "wind_farm",
+    "gas_power_plant",
+    "coal_power_plant",
+];
+
 pub fn play(target: u32, max_days: u32, mut each: impl FnMut(&Day)) -> Vec<Day> {
     let mut p = Player::new_game();
     let mut days = Vec::new();
@@ -993,5 +1008,13 @@ pub fn play(target: u32, max_days: u32, mut each: impl FnMut(&Day)) -> Vec<Day> 
             break;
         }
     }
+    // T-308: how many of each utility the bot needed.
+    let mut utilities = std::collections::BTreeMap::new();
+    for def in &p.placed {
+        if UTILITIES.contains(&def.as_str()) {
+            *utilities.entry(def.as_str()).or_insert(0u32) += 1;
+        }
+    }
+    eprintln!("utility buildings placed: {utilities:?}");
     days
 }

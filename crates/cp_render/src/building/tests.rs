@@ -87,8 +87,9 @@ fn every_def_builds_valid_meshes_that_fit_their_lot() {
         let (hw, hd) = (f32::from(def.lot.0) * 4.0, f32::from(def.lot.1) * 4.0);
         assert!(
             lo.x >= b.pos.x - hw - 1e-3 && hi.x <= b.pos.x + hw + 1e-3,
-            "{} x",
-            def.id
+            "{} x {lo:?} {hi:?} pos {:?} hw {hw}",
+            def.id,
+            b.pos
         );
         assert!(
             lo.z >= b.pos.y - hd - 1e-3 && hi.z <= b.pos.y + hd + 1e-3,

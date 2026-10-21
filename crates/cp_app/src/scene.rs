@@ -1614,6 +1614,51 @@ pub fn build_move_over(sim: &mut SimRunner) {
         .insert_resource(cp_core::time::SimSpeed::Pause);
 }
 
+/// The small and the bigger utility buildings side by side (T-308): water pump / large pump
+/// is skipped (it needs water); tower and reservoir, treatment plant and large plant, wind
+/// turbine and wind farm, coal and gas plant, left to right. Look at it with `--cam big-utilities`.
+pub const BIG_UTILITIES: &str = "big-utilities";
+
+/// Builds the [`BIG_UTILITIES`] scene.
+pub fn build_big_utilities(sim: &mut SimRunner) {
+    use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingState, Footprint};
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let cell = cp_building::FOOTPRINT_CELL_M;
+    let pairs = [
+        ["water_tower", "water_reservoir"],
+        ["sewage_treatment_plant", "sewage_treatment_large"],
+        ["wind_turbine", "wind_farm"],
+        ["coal_power_plant", "gas_power_plant"],
+    ];
+    let mut x = c - 60.0;
+    for pair in pairs {
+        for (r, def) in pair.into_iter().enumerate() {
+            let id = db.building_id(def).expect("utility def");
+            let (w, d) = db.building(id).lot;
+            let (along, deep) = (f32::from(w) * cell, f32::from(d) * cell);
+            sim.world_mut()
+                .resource_mut::<BuildingGrid>()
+                .insert(Building {
+                    def: id,
+                    footprint: Footprint::Free { w, d },
+                    level: db.building(id).level,
+                    state: BuildingState::Active,
+                    ready_at: Tick(0),
+                    pos: Vec2::new(x + along / 2.0, c + r as f32 * 50.0 + deep / 2.0),
+                    rot: 0.0,
+                    access: None,
+                    flags: BuildingFlags::default(),
+                    level_progress: 0.0,
+                });
+        }
+        x += 56.0;
+    }
+    sim.tick_once();
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+}
+
 /// The puffs a scene leaves for `--dust-demo` (T-288 shots), kept in the sim world.
 #[derive(bevy_ecs::prelude::Resource, Clone, Debug, Default)]
 pub struct DustPuffs(pub Vec<cp_render::dust::Puff>);

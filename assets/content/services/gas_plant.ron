@@ -1,0 +1,9 @@
+// T-308: three coal plants in one (4000 -> 12000), with half their pollution.
+Service((
+    id: "gas_plant",
+    name: "Gas power plant",
+    kind: Power,
+    radius_m: 800.0,
+    capacity: 12000,
+    vehicles: [],
+))
