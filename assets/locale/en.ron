@@ -954,6 +954,7 @@
     "{name}: click two points to lay a track on the ground, and on to go on. Esc ends the chain. Join the railway from the map edge to a station.": "{name}: click two points to lay a track on the ground, and on to go on. Esc ends the chain. Join the railway from the map edge to a station.",
     "{n} a day": "{n} a day",
     "{n} buildings": ["{n} building", "{n} buildings"],
+    "{n} city problems — the worst: {worst}": ["{n} city problem — the worst: {worst}", "{n} city problems — the worst: {worst}"],
     "{n} buildings abandoned": ["{n} building abandoned", "{n} buildings abandoned"],
     "{n} buildings buried in garbage": ["{n} building buried in garbage", "{n} buildings buried in garbage"],
     "{n} buildings buried in garbage — try the {policy} policy": ["{n} building buried in garbage — try the {policy} policy", "{n} buildings buried in garbage — try the {policy} policy"],
