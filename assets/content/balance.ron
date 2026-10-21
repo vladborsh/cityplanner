@@ -294,6 +294,16 @@ Balance((
     industry_levels: (2000, 8000, 25000, 60000),
     industry_storage_per_level: 0.1,
 
+    // --- Work and education reminder (T-307): the advisor mentions the Jobs & education window when
+    // unemployment is above jobs_unemployment_warn of the adults, free slots above jobs_shortage_share,
+    // or free slots of education 2+ above jobs_educated_share, for jobs_persist_days days in a row;
+    // again every jobs_repeat_days. // tune later
+    jobs_unemployment_warn: 0.10,
+    jobs_shortage_share: 0.15,
+    jobs_educated_share: 0.05,
+    jobs_persist_days: 5,
+    jobs_repeat_days: 5,
+
     // --- Networks (T-181): distances of water, sewage and power // tune later ---
     // power_gap_m: largest gap between the footprint edges of two buildings over which one
     //   passes power on to the other. line_reach_m / pipe_reach_m: how far a building's edge may

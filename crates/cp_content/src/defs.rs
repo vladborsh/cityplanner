@@ -230,6 +230,16 @@ pub struct Balance {
     pub demand_commuter_share: f32,
     /// ... but at least this many unemployed are always allowed.
     pub demand_commuter_min: f32,
+    /// The advisor's reminder about work and education (T-307, client only): it speaks up when
+    /// one of the problems below has stood `jobs_persist_days` game days in a row, and again
+    /// every `jobs_repeat_days`. Unemployment above `jobs_unemployment_warn` of the adults;
+    /// free job slots above `jobs_shortage_share` of the adults (too few workers), or free
+    /// slots of education 2+ above `jobs_educated_share` of the adults (too few educated).
+    pub jobs_unemployment_warn: f32,
+    pub jobs_shortage_share: f32,
+    pub jobs_educated_share: f32,
+    pub jobs_persist_days: u32,
+    pub jobs_repeat_days: u32,
     /// Weight of an unemployed manual worker in industrial demand.
     pub demand_unemployed_industry_weight: f32,
     /// Weight of a counted unemployed adult (above the commuter allowance) in commercial and
@@ -576,6 +586,17 @@ pub struct LoanOffer {
 }
 
 impl Balance {
+    /// The advisor's work and education knobs (T-307) as floats: for validation and the hash.
+    pub fn jobs_knobs(&self) -> [f32; 5] {
+        [
+            self.jobs_unemployment_warn,
+            self.jobs_shortage_share,
+            self.jobs_educated_share,
+            self.jobs_persist_days as f32,
+            self.jobs_repeat_days as f32,
+        ]
+    }
+
     /// The land value, pollution, noise, level and decay knobs (T-042) that are plain floats,
     /// in declaration order: for validation and the content hash.
     pub fn land_knobs(&self) -> Vec<f32> {
@@ -884,6 +905,11 @@ impl Default for Balance {
             mail_problem: 80.0,
             mail_post_sort: 300.0,
             mail_backlog_days: 2.0,
+            jobs_unemployment_warn: 0.10,
+            jobs_shortage_share: 0.15,
+            jobs_educated_share: 0.05,
+            jobs_persist_days: 5,
+            jobs_repeat_days: 5,
             land_mail: 3.0,
             land_mail_work: 4.0,
             industry_levels: [2_000, 8_000, 25_000, 60_000],

@@ -49,6 +49,7 @@ pub fn run() {
                 grading: None,
                 grading_panel: false,
                 fold_overlays: false,
+                open_windows: Vec::new(),
                 category: None,
                 no_clouds: false,
                 no_parked: false,

@@ -89,6 +89,8 @@ pub struct UiState {
     pub budget_open: bool,
     pub demand_open: bool,
     pub metrics_open: bool,
+    /// The Jobs & education window (T-307).
+    pub jobs_open: bool,
     pub services_open: bool,
     /// The Lines window (T-160).
     pub lines_open: bool,
@@ -180,6 +182,7 @@ pub enum UiWindow {
     Budget,
     Demand,
     Metrics,
+    Jobs,
     Services,
     Lines,
     Policies,
@@ -187,11 +190,29 @@ pub enum UiWindow {
     Debug,
 }
 
+impl UiState {
+    /// Opens `w` (the advisor's "Show"); the save menu is not a `UiState` window.
+    pub fn open_window(&mut self, w: UiWindow) {
+        match w {
+            UiWindow::Budget => self.budget_open = true,
+            UiWindow::Demand => self.demand_open = true,
+            UiWindow::Metrics => self.metrics_open = true,
+            UiWindow::Jobs => self.jobs_open = true,
+            UiWindow::Services => self.services_open = true,
+            UiWindow::Lines => self.lines_open = true,
+            UiWindow::Policies => self.policies_open = true,
+            UiWindow::Debug => self.debug_open = true,
+            UiWindow::Saves => {}
+        }
+    }
+}
+
 impl UiWindow {
-    pub const ALL: [UiWindow; 8] = [
+    pub const ALL: [UiWindow; 9] = [
         UiWindow::Budget,
         UiWindow::Demand,
         UiWindow::Metrics,
+        UiWindow::Jobs,
         UiWindow::Services,
         UiWindow::Lines,
         UiWindow::Policies,
@@ -199,11 +220,28 @@ impl UiWindow {
         UiWindow::Debug,
     ];
 
+    /// The window named `name` (lower case: `budget`, `jobs`, ...), for the `--open` flag.
+    pub fn parse(name: &str) -> Option<UiWindow> {
+        Some(match name {
+            "budget" => UiWindow::Budget,
+            "demand" => UiWindow::Demand,
+            "metrics" => UiWindow::Metrics,
+            "jobs" => UiWindow::Jobs,
+            "services" => UiWindow::Services,
+            "lines" => UiWindow::Lines,
+            "policies" => UiWindow::Policies,
+            "saves" => UiWindow::Saves,
+            "debug" => UiWindow::Debug,
+            _ => return None,
+        })
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             UiWindow::Budget => "Budget",
             UiWindow::Demand => "Demand",
             UiWindow::Metrics => "Metrics",
+            UiWindow::Jobs => "Jobs & education",
             UiWindow::Services => "City services (F4)",
             UiWindow::Lines => "Lines",
             UiWindow::Policies => "City policies",
@@ -217,6 +255,7 @@ impl UiWindow {
             UiWindow::Budget => Icon::Budget,
             UiWindow::Demand => Icon::Demand,
             UiWindow::Metrics => Icon::Metrics,
+            UiWindow::Jobs => Icon::Jobs,
             UiWindow::Services => Icon::Services,
             UiWindow::Lines => Icon::Lines,
             UiWindow::Policies => Icon::DistrictTabPolicies,

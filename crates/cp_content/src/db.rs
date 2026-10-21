@@ -943,6 +943,17 @@ impl ContentDb {
                 }
             }
         }
+        if let Some((path, b)) = balances.first()
+            && (b.jobs_knobs().iter().any(|v| !v.is_finite() || *v < 0.0)
+                || b.jobs_persist_days == 0
+                || b.jobs_repeat_days == 0)
+        {
+            errors.push(ContentError::new(
+                path,
+                Some("jobs_*"),
+                "shares must be finite and >= 0, days >= 1".to_string(),
+            ));
+        }
         if let Some((path, b)) = balances.first() {
             if b.land_knobs().iter().any(|v| !v.is_finite() || *v < 0.0) {
                 errors.push(ContentError::new(
@@ -1027,6 +1038,13 @@ impl ContentDb {
                     b.demand_unemployed_industry_weight,
                     b.demand_unemployed_job_weight,
                 ] {
+                    fnv1a(&mut hash, &v.to_bits().to_le_bytes());
+                }
+            }
+            // The T-307 reminder knobs, the same way.
+            if b.jobs_knobs() != Balance::default().jobs_knobs() {
+                fnv1a(&mut hash, b"jobs");
+                for v in b.jobs_knobs() {
                     fnv1a(&mut hash, &v.to_bits().to_le_bytes());
                 }
             }

@@ -39,9 +39,10 @@ pub struct OverlayRects {
 
 /// The windows of the row, in order (one row in the top bar): money, charts, services, lines; policies,
 /// saves, debug; then the settings button follows.
-const ROW: [UiWindow; 8] = [
+const ROW: [UiWindow; 9] = [
     UiWindow::Budget,
     UiWindow::Metrics,
+    UiWindow::Jobs,
     UiWindow::Services,
     UiWindow::Lines,
     UiWindow::Policies,
@@ -67,6 +68,7 @@ fn window_on(state: &UiState, files: &FileMenu, w: UiWindow) -> bool {
         UiWindow::Budget => state.budget_open,
         UiWindow::Demand => state.demand_open,
         UiWindow::Metrics => state.metrics_open,
+        UiWindow::Jobs => state.jobs_open,
         UiWindow::Services => state.services_open,
         UiWindow::Lines => state.lines_open,
         UiWindow::Policies => state.policies_open,
@@ -81,6 +83,7 @@ fn toggle_window(state: &mut UiState, files: &mut FileMenu, w: UiWindow) {
         UiWindow::Budget => state.budget_open = !on,
         UiWindow::Demand => state.demand_open = !on,
         UiWindow::Metrics => state.metrics_open = !on,
+        UiWindow::Jobs => state.jobs_open = !on,
         UiWindow::Services => state.services_open = !on,
         UiWindow::Lines => state.lines_open = !on,
         UiWindow::Policies => state.policies_open = !on,
@@ -412,6 +415,21 @@ mod tests {
             rig.files.request.take(),
             Some(crate::files::FileRequest::Refresh)
         );
+    }
+
+    /// T-307: the Jobs & education button sits in the row and opens its window.
+    #[test]
+    fn the_jobs_button_opens_the_jobs_window() {
+        let mut rig = Rig::new();
+        let (_, rect) = *rig
+            .rects
+            .windows
+            .iter()
+            .find(|(w, _)| *w == UiWindow::Jobs)
+            .expect("a Jobs button");
+        assert!(!rig.state.jobs_open);
+        rig.click(rect.center());
+        assert!(rig.state.jobs_open);
     }
 
     #[test]

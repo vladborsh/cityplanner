@@ -80,6 +80,8 @@ pub enum Action {
     Budget,
     /// The City policies window (T-193).
     Policies,
+    /// Opens a window of the top bar (T-307).
+    Window(crate::panels::UiWindow),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -703,19 +705,6 @@ pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
             Some(Action::Budget),
         );
     }
-    if city.unemployed >= 20 && city.unemployed * 10 >= city.adults {
-        push(
-            "unemployed",
-            Severity::Warn,
-            trn(
-                "{n} residents without a job — zone industry or commerce",
-                i64::from(city.unemployed),
-            ),
-            city.unemployed,
-            Icon::ZoneIndustrial,
-            Some(Action::Panel(Category::Zones)),
-        );
-    }
     let d = &view.demand;
     for (id, zone, v, text, icon) in [
         (
@@ -782,6 +771,10 @@ pub struct Advisor {
     level_seen: LevelSeen,
     /// Advice id -> the game hour it was first seen in the current run (BUG-115).
     since: BTreeMap<&'static str, u64>,
+    /// The game day the work and education problem began (T-307); `None` while there is none.
+    jobs_problem_since: Option<u64>,
+    /// The game day of the last reminder about it.
+    jobs_last: Option<u64>,
     /// The game hour of the last problem notification.
     last_problem_hour: Option<u64>,
     /// Severity of the snackbar that appeared in the last frame (taken by `draw_ui`).
@@ -810,6 +803,7 @@ impl Advisor {
         let on_screen = self.current(now).map(|a| a.severity);
         let mut all = collect(view, &mut self.unique_seen);
         all.extend(level_advice(view, &mut self.level_seen));
+        all.extend(self.jobs_advice(view, day));
         all.retain(|a| !(problems_only && a.severity == Severity::Info));
         // BUG-115: a few buildings are not a crisis.
         let active = view.city.buildings.active;
@@ -866,6 +860,9 @@ impl Advisor {
         };
         if let Some(advice) = advice {
             self.last.insert(advice.id, (day, advice.count));
+            if advice.id == "jobs" {
+                self.jobs_last = Some(day);
+            }
             if problem(&advice) {
                 self.last_problem_hour = Some(hour);
             }
@@ -874,9 +871,49 @@ impl Advisor {
         }
     }
 
+    /// T-307: a mild reminder to look at the Jobs & education window once its problem has stood
+    /// for `jobs_persist_days` game days, and again every `jobs_repeat_days` while it stands.
+    fn jobs_advice(&mut self, view: &SimView, day: u64) -> Option<Advice> {
+        let knobs = view
+            .content
+            .as_ref()
+            .map_or_else(cp_content::Balance::default, |db| db.balance().clone());
+        if !jobs_problem(&view.city, &knobs) {
+            self.jobs_problem_since = None;
+            return None;
+        }
+        let since = *self.jobs_problem_since.get_or_insert(day);
+        let due = self
+            .jobs_last
+            .is_none_or(|d| day >= d + u64::from(knobs.jobs_repeat_days));
+        (day >= since + u64::from(knobs.jobs_persist_days) && due).then(|| Advice {
+            id: "jobs",
+            severity: Severity::Info,
+            text: tr("Jobs & education: take a look"),
+            count: 1,
+            icon: Icon::Jobs,
+            action: Some(Action::Window(crate::panels::UiWindow::Jobs)),
+        })
+    }
+
     fn close(&mut self) {
         self.shown = None;
     }
+}
+
+/// Whether work and education have a problem worth a look (T-307): unemployment, too few
+/// workers for the free slots, or too few educated ones.
+fn jobs_problem(city: &cp_sim::stats::CityStats, k: &cp_content::Balance) -> bool {
+    if city.adults == 0 {
+        return false;
+    }
+    let adults = city.adults as f32;
+    let looking: u32 = city.education.iter().map(|e| e.looking).sum();
+    let free: u32 = city.jobs.iter().map(|j| j.free).sum();
+    let free_educated: u32 = city.jobs[2..].iter().map(|j| j.free).sum();
+    looking as f32 / adults > k.jobs_unemployment_warn
+        || free as f32 > k.jobs_shortage_share * adults
+        || free_educated as f32 > k.jobs_educated_share * adults
 }
 
 /// Runs the action of a "Show" click.
@@ -887,6 +924,7 @@ fn run(action: Action, state: &mut UiState, overlay: &mut cp_render::OverlayStat
         Action::Panel(c) => state.category = Some(c),
         Action::Budget => state.budget_open = true,
         Action::Policies => state.policies_open = true,
+        Action::Window(w) => state.open_window(w),
     }
 }
 
@@ -1150,6 +1188,67 @@ mod tests {
         assert_eq!(get("crime").count, 1);
         assert_eq!(get("crime").action, Some(Action::Policies));
         assert!(all.iter().all(|a| a.id != "fire" && a.id != "dead"));
+    }
+
+    /// A view whose adults are `looking` jobless out of 100.
+    fn jobless(looking: u32) -> SimView {
+        let mut v = view_with(|_| {});
+        let mut city = (*v.city).clone();
+        city.adults = 100;
+        city.education[1].adults = 100;
+        city.education[1].looking = looking;
+        city.connected_to_highway = true;
+        v.city = std::sync::Arc::new(city);
+        v
+    }
+
+    /// T-307: unemployment above the knob for 5 game days gives one soft advice that opens the
+    /// Jobs window; it repeats after 5 more days and goes with the problem.
+    #[test]
+    fn the_jobs_reminder_comes_after_five_days_repeats_and_goes_with_the_problem() {
+        let day = |d: u64| hour_tick(24 * d);
+        let mut adv = Advisor::default();
+        let sick = jobless(30);
+        assert!(
+            collect(&sick, &mut None)
+                .iter()
+                .all(|a| a.id != "unemployed")
+        );
+        // Days 0..=4: quiet.
+        for d in 0..5 {
+            adv.observe(&at_tick(sick.clone(), day(d)), d as f64 * 100.0, false);
+            assert!(adv.current(d as f64 * 100.0).is_none(), "day {d}");
+        }
+        // Day 5: the advice.
+        adv.observe(&at_tick(sick.clone(), day(5)), 500.0, false);
+        let a = adv.current(500.1).expect("advice on day 5").clone();
+        assert_eq!(a.id, "jobs");
+        assert_eq!(a.severity, Severity::Info);
+        assert_eq!(
+            a.action,
+            Some(Action::Window(crate::panels::UiWindow::Jobs))
+        );
+        let mut state = UiState::default();
+        run(a.action.unwrap(), &mut state, &mut Default::default());
+        assert!(state.jobs_open);
+        // Days 6..=9: quiet; day 10: again.
+        for d in 6..10 {
+            adv.observe(&at_tick(sick.clone(), day(d)), d as f64 * 100.0, false);
+            assert!(adv.current(d as f64 * 100.0 + 0.1).is_none(), "day {d}");
+        }
+        adv.observe(&at_tick(sick.clone(), day(10)), 1000.0, false);
+        assert_eq!(adv.current(1000.1).map(|a| a.id), Some("jobs"));
+        // The problem goes: no advice, and a new one starts its five days again.
+        let well = jobless(2);
+        adv.observe(&at_tick(well, day(11)), 1100.0, false);
+        assert!(adv.current(1100.1).is_none());
+        assert_eq!(adv.jobs_problem_since, None);
+        for d in 12..17 {
+            adv.observe(&at_tick(sick.clone(), day(d)), d as f64 * 100.0, false);
+            assert!(adv.current(d as f64 * 100.0 + 0.1).is_none(), "day {d}");
+        }
+        adv.observe(&at_tick(sick, day(17)), 1700.0, false);
+        assert_eq!(adv.current(1700.1).map(|a| a.id), Some("jobs"));
     }
 
     /// BUG-115: a problem notifies after half a day, the same one is quiet for three days unless

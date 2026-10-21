@@ -28,6 +28,7 @@ pub mod grading;
 pub mod icons;
 pub mod industry;
 pub mod info;
+pub mod jobs;
 pub mod land;
 pub mod lines;
 pub mod menus;
@@ -278,6 +279,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         budget::budget_window(ctx, &mut st.budget_open, view, &mut st.budget, outbox);
         windows::demand_window(ctx, &mut st.demand_open, view);
         metrics::metrics_window(ctx, &mut st.metrics_open, view);
+        jobs::jobs_window(ctx, &mut st.jobs_open, view);
         services::services_window(ctx, &mut st.services_open, view, overlay);
         services::overlay_services_panel(ctx, view, overlay.active, overlays_panel::width(st));
         lines::lines_window(ctx, &mut st.lines_open, view, &mut st.lines, outbox);
@@ -699,10 +701,11 @@ mod capture_tests {
     fn every_window_and_menu_owns_the_pointer_where_it_is_drawn() {
         let base = Rig::new().owned().len();
         type Open = fn(&mut Rig);
-        let surfaces: [(&str, Open); 9] = [
+        let surfaces: [(&str, Open); 10] = [
             ("budget", |r| r.state.budget_open = true),
             ("demand", |r| r.state.demand_open = true),
             ("metrics", |r| r.state.metrics_open = true),
+            ("jobs", |r| r.state.jobs_open = true),
             ("services", |r| r.state.services_open = true),
             ("lines", |r| r.state.lines_open = true),
             ("policies", |r| r.state.policies_open = true),

@@ -263,6 +263,14 @@ pub fn demand_window(ctx: &egui::Context, open: &mut bool, view: &SimView) {
                     ui.end_row();
                 }
             });
+        // T-307: the number the advisor used to nag about; the Jobs window explains it.
+        let city = &view.city;
+        ui.add_space(4.0);
+        ui.label(trf!(
+            "Unemployed: {n} ({percent} %)",
+            n = city.unemployed,
+            percent = format!("{:.1}", crate::metrics::unemployment_percent(city))
+        ));
     });
 }
 

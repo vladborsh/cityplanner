@@ -74,6 +74,8 @@ pub struct GamePlugin {
     pub grading_panel: bool,
     /// `--fold-overlays`: start with the overlays panel folded to its strip (T-289 screenshots).
     pub fold_overlays: bool,
+    /// Windows that start open (`--open`, for screenshots).
+    pub open_windows: Vec<cp_ui::UiWindow>,
     /// Open this palette category at start (`--category`, for screenshots).
     pub category: Option<cp_ui::Category>,
     /// No cloud shadows in this run (`--no-clouds`, T-272: shots without them).
@@ -158,7 +160,7 @@ impl Plugin for GamePlugin {
         ))
         .add_systems(PreUpdate, step_sim);
         if self.ui {
-            app.insert_resource(cp_ui::UiState {
+            let mut ui_state = cp_ui::UiState {
                 prefs: cp_ui::Prefs {
                     ui_scale: settings.ui_scale,
                     camera: settings.camera_settings(),
@@ -177,9 +179,13 @@ impl Plugin for GamePlugin {
                 // T-289: a menu started open takes up its tool and shows its overlay, as a click would.
                 entered: self.category,
                 ..default()
-            })
-            .insert_resource(settings::SettingsSaver::new(settings, hidden))
-            .add_plugins((UiPlugin, cp_tools::ToolsPlugin));
+            };
+            for &w in &self.open_windows {
+                ui_state.open_window(w);
+            }
+            app.insert_resource(ui_state)
+                .insert_resource(settings::SettingsSaver::new(settings, hidden))
+                .add_plugins((UiPlugin, cp_tools::ToolsPlugin));
             // A hidden run with the UI (`--ui`, screenshots of the panels) has no audio device.
             if app.is_plugin_added::<bevy::audio::AudioPlugin>() {
                 app.add_plugins(audio::SoundPlugin);

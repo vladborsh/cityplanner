@@ -65,6 +65,8 @@ pub struct Options {
     pub grading_panel: bool,
     /// `--fold-overlays`: the overlays panel starts folded (T-289 screenshots).
     pub fold_overlays: bool,
+    /// `--open jobs,metrics`: windows that start open (screenshots).
+    pub open_windows: Vec<cp_ui::UiWindow>,
     /// `--ui`: keep the egui UI in a `--hidden` run, so screenshots show the panels.
     pub hidden_ui: bool,
     /// `--category roads|zones|...`: open that palette category at start (screenshots).
@@ -188,6 +190,9 @@ impl Options {
             }),
             grading_panel: args.iter().any(|a| a == "--grading-panel"),
             fold_overlays: args.iter().any(|a| a == "--fold-overlays"),
+            open_windows: value("--open")
+                .map(|v| v.split(',').filter_map(cp_ui::UiWindow::parse).collect())
+                .unwrap_or_default(),
             hidden_ui: args.iter().any(|a| a == "--ui"),
             no_clouds: args.iter().any(|a| a == "--no-clouds"),
             no_parked: args.iter().any(|a| a == "--no-parked"),
@@ -604,6 +609,7 @@ pub fn run(opts: Options) -> AppExit {
             grading: opts.grading,
             grading_panel: opts.grading_panel,
             fold_overlays: opts.fold_overlays,
+            open_windows: opts.open_windows.clone(),
             category: opts.category,
             no_clouds: opts.no_clouds,
             no_parked: opts.no_parked,
