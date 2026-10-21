@@ -265,6 +265,6 @@ mod tests {
         let alphas: Vec<f32> = m.colors.iter().map(|c| c[3]).collect();
         let max = alphas.iter().copied().fold(0.0f32, f32::max);
         assert!((max - FILL_ALPHA * 0.5).abs() < 1e-5, "{max}");
-        assert!(alphas.iter().any(|&a| a == 0.0));
+        assert!(alphas.contains(&0.0));
     }
 }
