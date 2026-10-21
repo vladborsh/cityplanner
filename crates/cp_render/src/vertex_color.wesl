@@ -218,7 +218,10 @@ fn asphalt(p: vec2<f32>, fp: f32) -> Detail {
     // brighter and duller places (T-271, "more glints"): fresh tar is glossy, worn stone dull.
     d.roughness = 0.20 * (grain - 0.5) * k_grain + 0.18 * (mottle - 0.5) * k_mottle
         + 0.16 * (wear - 0.5) + 0.12 * patch_mask + 0.2 * crack - 0.2 * seal;
-    d.slope = 0.07 * fbm_slope(p, 3.0) * k_grain;
+    // The highlight depends on where the normal points, so a flat road glints only towards the
+    // sun. Tilt the normal more (BUG-107): the grain scatters it, and a swell a few metres across
+    // lets other headings catch a bright spot too.
+    d.slope = 0.12 * fbm_slope(p, 3.0) * k_grain + 0.10 * fbm_slope(p, 0.4);
     return d;
 }
 
