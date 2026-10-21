@@ -95,8 +95,9 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     check_file("m1-small.sav");
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
+    // T-300 + T-301 (format 60): the fixture holds 2479 residents.
     assert!((2400..=3000).contains(&people), "{people} residents");
-    assert_eq!(sim.checksum(), 0x3278d51fc47d9bea, "state at load");
+    assert_eq!(sim.checksum(), 0xe9b7853bdf81930c, "state at load");
     // T-280: re-recorded (was 0xa0961668822b2784 since T-282): only 15 % of car trips and
     // 25 % of goods trucks take a vehicle, the rest run abstractly, so the day after the load
     // has other cars on the road.
@@ -105,7 +106,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     // of the ground per tick, so the day after the load runs differently.
     assert_eq!(
         after_a_day(&mut sim),
-        0xf0850af73e95d6c4, // T-301: re-recorded, the day is 2048 ticks and the test runs a day (was 0x68f162061e8c655). T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
+        0x3866742d9e32e64a, // T-301: re-recorded, the day is 2048 ticks and the test runs a day (was 0x68f162061e8c655). T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
         "load + a day"
     );
 }
@@ -136,7 +137,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // T-290: 300 (was 800): the trips that run abstractly (T-280) are over by the time cars
     // and pedestrians are on the road; ~330 are in flight when the generator stops.
     assert!(trips_at_load >= 300, "{trips_at_load} trips in flight");
-    assert_eq!(sim.checksum(), 0xa09aeb5b229c19c2, "state at load");
+    assert_eq!(sim.checksum(), 0xf40fb99b2b6cb199, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -151,7 +152,7 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // T-270: re-recorded, the movement clock is 0.4 s a tick (§2 v1.2).
     // T-295: re-recorded (was 0x54a58aeb68367963), the balance pass.
     // T-301: re-recorded, a game day is 2048 ticks (was 0x63538024f0946108 after 4096).
-    assert_eq!(sim.checksum(), 0x88b58818ef9e401a, "load + a day");
+    assert_eq!(sim.checksum(), 0x26a9f8b1caa043b8, "load + a day");
     // T-290: the trips of the saved jam arrive (completed grows by hundreds); the number in flight
     // no longer falls, the routine plans new ones all day (most of them abstract, T-280).
     let done_after = sim.world().resource::<TripBook>().completed;
