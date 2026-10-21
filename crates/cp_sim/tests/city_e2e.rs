@@ -385,10 +385,12 @@ fn a_city_goes_through_abandonment_and_demolition_consistently() {
         abandoned > 0,
         "after 35 days the buildings in trouble are abandoned"
     );
-    assert_eq!(
-        sim.world().resource::<BuildingGrid>().len(),
-        total,
-        "none demolished yet"
+    // T-295: fire_base x2, and with no fire station a house may burn down within the 35 days;
+    // an abandoned one is never demolished yet (it is after demolish_days).
+    let left = sim.world().resource::<BuildingGrid>().len();
+    assert!(
+        left + 3 >= total && left <= total,
+        "none demolished yet: {left} of {total}"
     );
     // The people of abandoned homes have gone (the citizens' next update evicts them).
     run(&mut sim, 600);

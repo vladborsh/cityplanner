@@ -105,7 +105,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     // of the ground per tick, so the day after the load runs differently.
     assert_eq!(
         after_4096(&mut sim),
-        0x8bd7e0e335426bf8, // BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
+        0x68f162061e8c655, // T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
         "load + 4096 ticks"
     );
 }
@@ -149,7 +149,8 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // T-280: re-recorded (was 0x35693ab6f390ce23 since T-270): the trips planned after the
     // load mostly run abstractly (car_visible_share 0.15); the jam saved with the file drives.
     // T-270: re-recorded, the movement clock is 0.4 s a tick (§2 v1.2).
-    assert_eq!(sim.checksum(), 0x54a58aeb68367963, "load + 4096 ticks");
+    // T-295: re-recorded (was 0x54a58aeb68367963), the balance pass.
+    assert_eq!(sim.checksum(), 0x63538024f0946108, "load + 4096 ticks");
     // T-290: the trips of the saved jam arrive (completed grows by hundreds); the number in flight
     // no longer falls, the routine plans new ones all day (most of them abstract, T-280).
     let done_after = sim.world().resource::<TripBook>().completed;
