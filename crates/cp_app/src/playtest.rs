@@ -5,10 +5,11 @@
 //!
 //! 1. keeps the utilities ahead of the use (wind turbines, water towers, a sewage treatment plant,
 //!    all on land: no water body needed), placed with the placement tool's own preview;
-//! 2. builds the services as the milestones open them and the money allows (police, fire, clinic,
-//!    landfill; school, cemetery; a park now and then), on the town's outer frontage; with
+//! 2. builds the services as the milestones open them and the money allows: police, fire, clinic
+//!    and landfill one per 900 buildings (BUG-114), on the newest blocks' frontage; school,
+//!    cemetery and a park now and then on the town's north frontage; with
 //!    `PLAYTEST_SERVICES=reactive` police, fire, clinic, landfill and cemetery only where their
-//!    problem shows;
+//!    problem shows (one a day while it grows);
 //! 3. when the zoned land is nearly full and there is money, adds a row or a column of blocks
 //!    (streets drawn with the road tool by its rules, a power line and a pipe along each new
 //!    block side) and zones each new block for the demand that is highest (R, C or I);
@@ -52,6 +53,11 @@ const REACT_AT: u32 = 3;
 const REACT_DAYS: u32 = 3;
 /// Money the player keeps back for the running costs before building more.
 const RESERVE: f64 = 15_000.0;
+/// The care services the default mode scales with the town (BUG-114): one of each per this
+/// many buildings. A police station clears 2000 crime a day against `crime_base` 4 per
+/// building: ~500 buildings at full cover on cheap land, 900 with the usual cover.
+const BUILDINGS_PER_SERVICE: usize = 900;
+const CARE: [&str; 4] = ["police_station", "fire_station", "landfill", "clinic"];
 
 /// One game day as the player sees it at its end.
 #[derive(Clone, Debug, Default)]
@@ -122,6 +128,12 @@ pub struct Player {
     placed: Vec<String>,
     /// The day each service was last placed (reactive mode).
     last_placed: std::collections::BTreeMap<String, u32>,
+    /// Buildings with each reactive problem when its service was last placed (reactive mode,
+    /// BUG-114: a growing problem gets a service a day, not one per [`REACT_DAYS`]).
+    last_seen: [u32; 5],
+    /// Blocks in the order they were laid out, newest last: the care services stand on the
+    /// newest blocks' frontage (BUG-114), so their cover follows the town.
+    blocks: Vec<(i32, i32)>,
     /// Blocks laid out and not zoned yet (nothing was asked for when they were built).
     spare: Vec<(i32, i32)>,
     /// Buildings of [R, C, I] at the start of the day: a zone whose count did not move while its
@@ -173,6 +185,8 @@ impl Player {
             r1: 0,
             placed: Vec::new(),
             last_placed: Default::default(),
+            last_seen: [0; 5],
+            blocks: Vec::new(),
             spare: Vec::new(),
             built: [0; 3],
             stalled: [false; 3],
@@ -376,6 +390,7 @@ impl Player {
         for _ in 0..4 {
             self.sim.tick_once();
         }
+        self.blocks.extend_from_slice(blocks);
         self.spare.extend_from_slice(blocks);
         self.zone_spare();
     }
@@ -443,7 +458,20 @@ impl Player {
 
     /// Places `def` on the town's outer frontage where the placement tool says it fits (no
     /// house in the way), as a click would. Whether it was placed.
+    /// Utilities, schools and parks: north of the top street, where the town never grows.
     fn place(&mut self, def: &str) -> bool {
+        self.place_at(def, false)
+    }
+
+    /// The care services (police, fire, landfill, clinic; BUG-114): on the frontage of the
+    /// newest blocks, so a station's reach follows the town instead of all standing at its
+    /// north edge (two stations 850 m from the southern blocks covered nothing there and the
+    /// town stalled at ~5200 with crime on 700+ buildings).
+    fn place_near_growth(&mut self, def: &str) -> bool {
+        self.place_at(def, true)
+    }
+
+    fn place_at(&mut self, def: &str, newest: bool) -> bool {
         let Some(id) = self.db.building_id(def) else {
             return false;
         };
@@ -454,9 +482,25 @@ impl Player {
             def: Some(id),
             ..Default::default()
         };
-        // North of the top street, where the town never grows (it grows south, east and west):
-        // its frontage first, then further back, every half block.
         let mut spots = Vec::new();
+        if newest {
+            // Inside each block, newest first: just off its north and south streets at a
+            // quarter, half and three quarters of its width, then off its side streets.
+            for &(i, j) in self.blocks.iter().rev() {
+                let (lo, hi) = (self.at(i, j), self.at(i + 1, j + 1));
+                for f in [0.25, 0.5, 0.75] {
+                    let x = lo.x + (hi.x - lo.x) * f;
+                    spots.push(Vec2::new(x, lo.y + 14.0));
+                    spots.push(Vec2::new(x, hi.y - 14.0));
+                }
+                let y = (lo.y + hi.y) * 0.5;
+                spots.push(Vec2::new(lo.x + 14.0, y));
+                spots.push(Vec2::new(hi.x - 14.0, y));
+            }
+        }
+        // North of the top street, where the town never grows (it grows south, east and west):
+        // its frontage first, then further back, every half block (the fallback for the care
+        // services when no block has room).
         // Within the top street's ends: a column added later must not run into them.
         let (x0, x1) = (self.c0 as f32 * DX + 20.0, self.c1 as f32 * DX - 20.0);
         // Utilities stand within reach of the top street's or the lane's pipe and line
@@ -547,18 +591,24 @@ impl Player {
             self.build_services_reactive(stats.population);
             return;
         }
-        // Services, one each as they open; a second police and fire station from 3000.
+        // The care services scale with the town (BUG-114): one per [`BUILDINGS_PER_SERVICE`]
+        // buildings, a new one a day at most, on the newest blocks. Before: one each, a second
+        // police and fire station from 3000 residents and never more, so from ~1000 buildings
+        // (2 x 2000 crime a day cleared, 4 per building) crime grew without bound.
         let pop = stats.population;
+        let wanted = (stats.buildings.total as usize)
+            .div_ceil(BUILDINGS_PER_SERVICE)
+            .max(1);
+        for def in CARE {
+            if self.count(def) < wanted {
+                self.place_near_growth(def);
+            }
+        }
+        // The others, one each as they open.
         for (def, from_pop, many) in [
-            ("clinic", 0, 1),
-            ("police_station", 0, 1),
-            ("fire_station", 0, 1),
-            ("landfill", 0, 1),
             ("elementary_school", 0, 1),
             ("cemetery", 0, 1),
             ("small_park", 400, 1),
-            ("police_station", 3000, 2),
-            ("fire_station", 3000, 2),
             ("high_school", 1500, 1),
             ("small_park", 2000, 2),
         ] {
@@ -592,11 +642,16 @@ impl Player {
                 .last_placed
                 .get(*def)
                 .is_some_and(|&d| self.day < d + REACT_DAYS);
-            if seen[k] >= REACT_AT && !recent {
+            // BUG-114: while the problem keeps growing, one a day; the wait is for a problem
+            // that holds still (the new service may be curing it).
+            let growing = seen[k] > self.last_seen[k]
+                && self.last_placed.get(*def).is_none_or(|&d| self.day > d);
+            if seen[k] >= REACT_AT && (!recent || growing) {
                 self.actions
                     .push(format!("{def}: {} buildings with the problem", seen[k]));
-                if self.place(def) {
+                if self.place_near_growth(def) {
                     self.last_placed.insert(def.to_string(), self.day);
+                    self.last_seen[k] = seen[k];
                 }
             }
         }
