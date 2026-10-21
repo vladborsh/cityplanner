@@ -42,12 +42,24 @@ Balance((
     demand_industry_jobs_per_shop_job: 0.8,
 
     // --- Land value, pollution, noise (system-design §11), recomputed every 256 ticks ---
-    // Industrial pollution per building level and its reach.
-    pollution_per_level: 40.0,
-    pollution_radius_m: 150.0,
-    // Noise of a fully loaded road and its reach.
-    noise_per_load: 60.0,
-    noise_radius_m: 96.0,
+    // Pollution and noise of the buildings without `emits` of their own (T-300, §11.1): strength
+    // 0..100, radius in 8 m zone cells. Industry by resource: Farming, Forestry, Ore, Oil. Shop
+    // radii: (ComHigh, ComLow). Only highways make road noise. The ground takes the rise days to
+    // reach a source and the decay days to lose 100 after it.
+    pollution_industry: 50.0,
+    pollution_industry_res: (30.0, 30.0, 70.0, 80.0),
+    pollution_radius_cells: 8.0,
+    pollution_oil_radius_cells: 12.0,
+    noise_industry: 60.0,
+    noise_com_high: 35.0,
+    noise_com_low: 20.0,
+    noise_radius_cells: 8.0,
+    noise_com_radius_cells: (6.0, 5.0),
+    noise_highway_per_load: 60.0,
+    noise_highway_radius_cells: 6.0,
+    emit_level_step: 0.15,
+    pollution_rise_days: 3.0,
+    pollution_decay_days: 10.0,
     // Land value 0..100 = base + road access + water + power - weighted pollution and noise.
     land_base: 20.0,
     land_access: 30.0,
@@ -145,7 +157,10 @@ Balance((
     // --- Health (system-design §16 M2 D): all // tune later ---
     // Chance per game day to fall ill, plus this much per point (0..100) of pollution at the home.
     sick_base: 0.003,
-    sick_pollution: 0.0002,
+    sick_pollution: 0.0003,
+    sick_noise: 0.0001,
+    sick_water: 0.0003,
+    bad_water_at: 10.0,
 
     // --- Service effects (system-design §16 M2 D "Эффекты"): all // tune later ---
     // Land value a full coverage of Health, Police, Fire, Education adds to a cell.

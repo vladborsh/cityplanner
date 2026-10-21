@@ -5,12 +5,8 @@
 //! grids are part of the save and of the checksum).
 //!
 //! All three are `0..=100`:
-//! * **Pollution**: every active industrial-zone building adds `pollution_per_level × level`
-//!   at its own cell, fading linearly to nothing at `pollution_radius_m`; contributions add
-//!   up.
-//! * **Noise**: points every 32 m along each road segment carry `noise_per_load × load`
-//!   (the 2-hour average load, `Agents::load.ema`), fading linearly to nothing at
-//!   `noise_radius_m`; a cell takes the loudest.
+//! * **Pollution** and **noise**: the means of the 16 m [`Emissions`] grids under each cell
+//!   (pollution from the ground, so it stays after a source is gone; T-300, §11.1).
 //! * **Land value** = `land_base` + up to `land_access` for the nearest road (full within
 //!   32 m of the cell centre, none from 96 m) + `land_water` / `land_power` for a pipe / power
 //!   line within `land_utility_reach_m` − `land_pollution_weight × pollution` −
@@ -28,9 +24,10 @@ use cp_content::{Balance, ContentDb, ServiceKind, ZoneType};
 use cp_net::NetGraph;
 use cp_service::{ServiceCoverage, ServiceProblems, ServiceState};
 use cp_terrain::MAP_SIZE;
-use cp_traffic::SegmentLoad;
 use cp_utility::{UtilityGraph, UtilityNet};
 use serde::{Deserialize, Serialize};
+
+use crate::emissions::Emissions;
 
 /// Side of a grid cell, metres.
 pub const CELL_M: f32 = 64.0;
@@ -94,7 +91,8 @@ pub struct LandInputs<'a> {
     pub buildings: &'a BuildingGrid,
     pub net: &'a NetGraph,
     pub utilities: &'a UtilityGraph,
-    pub load: &'a SegmentLoad,
+    /// The 16 m pollution and noise, already stepped for this pass.
+    pub emissions: &'a Emissions,
     /// Service coverage and problems (T-146); `None` = no services in the land value.
     pub services: Option<(&'a ServiceCoverage, &'a ServiceState)>,
     /// The park areas and their cells (T-225); `None` = no park land value.
@@ -231,23 +229,12 @@ impl LandGrids {
             }
         }
 
-        for (_, b) in i.buildings.iter() {
-            let def = i.content.building(b.def);
-            // A unique building or a park is filed under Industrial for want of a better zone; it does not
-            // pollute.
-            if b.state != BuildingState::Active
-                || def.zone != ZoneType::Industrial
-                || def.unique.is_some()
-                || def.land_effect.is_some()
-            {
-                continue;
-            }
-            let strength = bal.pollution_per_level * f32::from(def.level);
-            let r = bal.pollution_radius_m;
-            cells_near(b.pos, r, |c, d| g.pollution[c] += strength * (1.0 - d / r));
-        }
+        let (pollution, noise) = i.emissions.downsample(SIDE);
+        g.pollution = pollution;
+        g.noise = noise;
 
-        // Specialised buildings (T-196) make noise and add land value around themselves.
+        // Specialised buildings (T-196) add land value around themselves (their noise is in
+        // `Emissions`).
         let mut spec_land = vec![0.0f32; SIDE * SIDE];
         for (_, b) in i.buildings.iter() {
             if b.state != BuildingState::Active {
@@ -261,12 +248,6 @@ impl LandGrids {
             else {
                 continue;
             };
-            if spec.noise_add > 0.0 {
-                let r = bal.noise_radius_m;
-                cells_near(b.pos, r, |c, d| {
-                    g.noise[c] = g.noise[c].max(spec.noise_add * (1.0 - d / r))
-                });
-            }
             if spec.land_value_add > 0.0 {
                 cells_near(b.pos, SPEC_LAND_RADIUS_M, |c, d| {
                     spec_land[c] += spec.land_value_add * (1.0 - d / SPEC_LAND_RADIUS_M)
@@ -276,10 +257,7 @@ impl LandGrids {
 
         let mut road_dist = vec![f32::INFINITY; SIDE * SIDE];
         let mut near_seg = vec![u32::MAX; SIDE * SIDE];
-        let r = bal.noise_radius_m;
         for (id, seg) in i.net.segments() {
-            let loud =
-                bal.noise_per_load * i.load.ema.get(id.index as usize).copied().unwrap_or(0.0);
             for p in samples(&seg.curve, seg.length) {
                 cells_near(p, ACCESS_REACH_M, |c, d| {
                     if d < road_dist[c] {
@@ -287,11 +265,6 @@ impl LandGrids {
                         near_seg[c] = id.index;
                     }
                 });
-                if loud > 0.0 {
-                    cells_near(p, r, |c, d| {
-                        g.noise[c] = g.noise[c].max(loud * (1.0 - d / r))
-                    });
-                }
             }
         }
 

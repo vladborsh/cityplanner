@@ -12,4 +12,6 @@ Building((
     styles: ["service_post_sorting_facility"],
     service: Some("post_sorting_facility"),
     icon: "post_sorting_facility",
+    // Pollution / noise (T-300, system-design §11.1).
+    emits: Some((noise: Some((strength: 30.0, radius_cells: 5)))),
 ))

@@ -179,6 +179,12 @@ fn a_landfill_takes_land_value_off_the_homes_near_it_by_distance() {
         .world_mut()
         .resource_mut::<BuildingGrid>()
         .remove(landfill);
+    // The landfill's ground pollution would stay for days (T-300); this test is about the
+    // nuisance, so the residue is taken away with it.
+    *dirty
+        .sim
+        .world_mut()
+        .resource_mut::<cp_economy::Emissions>() = cp_economy::Emissions::default();
     settle(&mut dirty.sim);
     let grids = dirty.sim.world().resource::<LandGrids>();
     assert!(grids.garbage.iter().all(|v| *v == 0.0));

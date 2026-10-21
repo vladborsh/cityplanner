@@ -45,7 +45,7 @@
 //! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `Goods`, `Intercity` (stops, lines, riders, line figures, buses, week's money, tourist visits, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
 //! | `ResourceDeposits` (ore and oil left per 64 m cell; a save from before v41 is filled from the map by `load_into_runner`) | yes |
 //! | `AreaMap`, `Areas`, `IndustryState` (stock and problems of the chain buildings), `IndustryLedger`, `WarehouseSettings`, `ParkState` (attractiveness, capacity, visitors and fee per park area), `LeisureTargets`, `ParkVisits` (who is inside, the walkers), `ParkLedger`, `CargoHubs` (cargo station stock and orders) | yes |
-//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
+//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Emissions` (the ground), `Decay`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
 //! | `SimLimits`, `RoutineSettings`, `AgentSettings`, `SimContent`, `SimTerrain` | configuration of the runner, not of the game |
@@ -67,7 +67,7 @@ use cp_citizen::{CitizenGrid, TripBook};
 use cp_content::{BuildingDefId, ContentDb, DefKind, RoadDefId};
 use cp_core::{CommandLog, CommandQueue, SimRng, SimSpeed, Tick, Treasury};
 use cp_district::{AreaMap, Areas, CityPolicies, DistrictMap, Districts};
-use cp_economy::{Decay, DemandAcc, EconomyState, LandGrids, WorkerShortage};
+use cp_economy::{Decay, DemandAcc, EconomyState, Emissions, LandGrids, WorkerShortage};
 use cp_net::NetGraph;
 use cp_sim::{SimCommand, SimRunner, SimTerrain};
 use cp_terrain::TileOwnership;
@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 58;
+pub const FORMAT_VERSION: u32 = 59;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -195,6 +195,8 @@ pub struct SaveData {
     pub demand_acc: DemandAcc,
     /// Pollution, noise and land value grids. Added in v16.
     pub land: LandGrids,
+    /// The 16 m ground pollution (T-300; its source and noise fields are rebuilt). Added in v59.
+    pub emissions: Emissions,
     /// Abandonment timers. Added in v16.
     pub decay: Decay,
     /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
@@ -311,6 +313,7 @@ impl SaveData {
             demand: *world.resource::<Demand>(),
             demand_acc: *world.resource::<DemandAcc>(),
             land: world.resource::<LandGrids>().clone(),
+            emissions: world.resource::<Emissions>().clone(),
             decay: world.resource::<Decay>().clone(),
             def_names: world
                 .get_resource::<cp_content::SimContent>()
@@ -375,6 +378,7 @@ impl SaveData {
         world.insert_resource(self.demand);
         world.insert_resource(self.demand_acc);
         world.insert_resource(self.land);
+        world.insert_resource(self.emissions);
         world.insert_resource(self.decay);
         world.insert_resource(self.district_map);
         world.insert_resource(self.districts);
@@ -831,6 +835,21 @@ mod tests {
     use cp_sim::run_headless;
 
     const HASH: u64 = 0xABCD;
+
+    /// T-300: the ground pollution goes into the save as its dirty cells only, and comes back
+    /// the same.
+    #[test]
+    fn the_ground_is_saved_as_its_dirty_cells() {
+        let mut e = Emissions::default();
+        for (i, g) in [(7usize, 30u16), (5_000, 10_000), (409_599, 1)] {
+            e.ground[i] = g;
+        }
+        let bytes = postcard::to_allocvec(&e).unwrap();
+        assert!(bytes.len() < 32, "{} bytes", bytes.len());
+        let back: Emissions = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(back, e);
+        assert_eq!(back.ground.len(), cp_economy::SIDE_E * cp_economy::SIDE_E);
+    }
 
     /// A sim that has run a while with queued and applied commands.
     fn busy_runner(seed: u64, ticks: u64) -> SimRunner {

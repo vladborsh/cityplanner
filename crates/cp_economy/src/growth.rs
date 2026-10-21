@@ -220,7 +220,7 @@ pub fn update_city(
     citizens: Res<CitizenGrid>,
     mut buildings: ResMut<BuildingGrid>,
     mut zones: ResMut<ZoneGrid>,
-    mut grids: ResMut<LandGrids>,
+    (mut grids, mut emissions): (ResMut<LandGrids>, ResMut<crate::Emissions>),
     mut decay: ResMut<Decay>,
     mut shortage: ResMut<WorkerShortage>,
     coverage: Option<Res<ServiceCoverage>>,
@@ -235,12 +235,19 @@ pub fn update_city(
     let Some(content) = content else { return };
     let db = &*content.0;
     let bal = db.balance();
+    // Pollution and noise first (T-300): the land value reads them.
+    emissions.update(&crate::EmissionInputs {
+        content: db,
+        buildings: &buildings,
+        net: &net,
+        load: &agents.load,
+    });
     *grids = LandGrids::compute(&LandInputs {
         content: db,
         buildings: &buildings,
         net: &net,
         utilities: &utilities,
-        load: &agents.load,
+        emissions: &emissions,
         services: coverage.as_deref().zip(services.as_deref()),
         parks: areas.as_deref().zip(area_map.as_deref()),
     });

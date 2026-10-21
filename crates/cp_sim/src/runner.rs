@@ -150,6 +150,7 @@ impl SimRunner {
         world.init_resource::<cp_economy::DemolitionRefunds>();
         world.init_resource::<cp_economy::DemandAcc>();
         world.init_resource::<cp_economy::LandGrids>();
+        world.init_resource::<cp_economy::Emissions>();
         world.init_resource::<cp_economy::Decay>();
         world.init_resource::<cp_economy::WorkerShortage>();
         world.init_resource::<crate::progress::Progress>();

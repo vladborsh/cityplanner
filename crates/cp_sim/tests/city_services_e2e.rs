@@ -48,10 +48,11 @@ fn a_city_with_sources_shows_a_surplus_and_a_city_without_a_hospital_a_shortage(
         "{water:?}"
     );
     assert!(water.balance() >= 0.0);
-    // Garbage: the landfill takes far more than the town makes.
+    // Garbage: the landfill takes more than the town makes (16 % more since T-300: the service
+    // buildings no longer pollute, so the homes stand higher and make more).
     let garbage = get(&rows, Sector::Garbage);
     assert!(
-        garbage.demand > 0.0 && garbage.balance() > 0.5,
+        garbage.demand > 0.0 && garbage.balance() > 0.1,
         "{garbage:?}"
     );
 

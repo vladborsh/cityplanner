@@ -15,4 +15,6 @@ Building((
     icon: "stadium",
     unique: Some((monument: false, unlock: [Population(8000)], tourists_per_day: 60.0)),
     land_effect: Some((add: 10.0, radius_m: 260.0)),
+    // Pollution / noise (T-300, system-design §11.1).
+    emits: Some((noise: Some((strength: 90.0, radius_cells: 8)))),
 ))

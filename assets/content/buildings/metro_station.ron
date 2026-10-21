@@ -13,4 +13,6 @@ Building((
     styles: ["service_metro_station"],
     service: Some("metro_station"),
     track: Some((road: "metro_track", length_m: 96.0, depth: 12.0)),
+    // Pollution / noise (T-300, system-design §11.1).
+    emits: Some((noise: Some((strength: 30.0, radius_cells: 5)))),
 ))

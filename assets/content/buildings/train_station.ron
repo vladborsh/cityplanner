@@ -14,4 +14,6 @@ Building((
     service: Some("train_station"),
     // The platform (rail_2t is 9 m wide) stands 6.5 m behind the building's back edge.
     track: Some((road: "rail_2t", length_m: 128.0, depth: 0.0, behind_m: Some(6.5))),
+    // Pollution / noise (T-300, system-design §11.1).
+    emits: Some((noise: Some((strength: 40.0, radius_cells: 6)))),
 ))

@@ -718,6 +718,7 @@ mod city {
         w.init_resource::<Agents>();
         w.init_resource::<ZoneGrid>();
         w.init_resource::<LandGrids>();
+        w.init_resource::<crate::Emissions>();
         w.init_resource::<Decay>();
         w.init_resource::<crate::WorkerShortage>();
         let mut s = Schedule::default();
@@ -725,16 +726,44 @@ mod city {
         (w, s, db)
     }
 
-    fn grids(w: &World, db: &ContentDb, load: &cp_traffic::SegmentLoad) -> LandGrids {
+    /// The emissions after `steps` passes of the city as it stands.
+    fn emissions(
+        w: &World,
+        db: &ContentDb,
+        load: &cp_traffic::SegmentLoad,
+        steps: u32,
+    ) -> crate::Emissions {
+        let mut e = crate::Emissions::default();
+        for _ in 0..steps {
+            e.update(&crate::EmissionInputs {
+                content: db,
+                buildings: w.resource::<BuildingGrid>(),
+                net: w.resource::<NetGraph>(),
+                load,
+            });
+        }
+        e
+    }
+
+    fn grids_after(
+        w: &World,
+        db: &ContentDb,
+        load: &cp_traffic::SegmentLoad,
+        steps: u32,
+    ) -> LandGrids {
         LandGrids::compute(&LandInputs {
             content: db,
             buildings: w.resource::<BuildingGrid>(),
             net: w.resource::<NetGraph>(),
             utilities: w.resource::<UtilityGraph>(),
-            load,
+            emissions: &emissions(w, db, load, steps),
             services: None,
             parks: None,
         })
+    }
+
+    fn grids(w: &World, db: &ContentDb, load: &cp_traffic::SegmentLoad) -> LandGrids {
+        grids_after(w, db, load, 1)
     }
 
     #[test]
@@ -749,7 +778,7 @@ mod city {
     #[test]
     fn industry_pollutes_its_surroundings_and_that_costs_land_value() {
         let (mut w, _, db) = world();
-        // A level-1 factory at x = 640 (cell 10): 40 at its own spot, fading to 0 at 150 m.
+        // A level-1 factory at x = 640: 50 at its own spot, fading to 0 at 64 m (T-300).
         at(&mut w, &db, "factory", BuildingState::Active, 640.0);
         // One still being built, and a house, pollute nothing.
         at(
@@ -760,28 +789,31 @@ mod city {
             3200.0,
         );
         at(&mut w, &db, "house", BuildingState::Active, 1280.0);
-        let g = grids(&w, &db, &cp_traffic::SegmentLoad::default());
+        // Three days: the ground has come up to the sources.
+        let days = (3 * cp_core::time::TICKS_PER_DAY / crate::CITY_PERIOD) as u32;
+        let g = grids_after(&w, &db, &cp_traffic::SegmentLoad::default(), days);
         let near = Vec2::new(640.0, 640.0);
-        let cell_centre = Vec2::new(10.5 * 64.0, 10.5 * 64.0);
-        let d = cell_centre.distance(near);
-        assert!((g.pollution_at(near) - 40.0 * (1.0 - d / 150.0)).abs() < 1e-3);
-        // 64 m away: a third of the way... still polluted, less than at the source.
-        let one_over = g.pollution_at(Vec2::new(640.0 + 64.0, 640.0));
-        assert!(one_over > 0.0 && one_over < g.pollution_at(near));
+        // The 64 m cell is the mean of its 16 m cells; the factory stands on its corner.
+        let p = g.pollution_at(near);
+        assert!(p > 2.0 && p < 50.0, "{p}");
+        let one_over = g.pollution_at(Vec2::new(640.0 - 64.0, 640.0 - 64.0));
+        assert!(one_over > 0.0, "the cell across the corner");
         assert_eq!(g.pollution_at(Vec2::new(640.0 + 256.0, 640.0)), 0.0);
         assert_eq!(
             g.pollution_at(Vec2::new(3200.0, 640.0)),
             0.0,
             "under construction"
         );
-        // Pollution weighs 0.6 on the land value: base 20 - 0.6 * pollution.
-        let p = g.pollution_at(near);
-        assert!((g.value_at(near) - (20.0 - 0.6 * p).max(0.0)).abs() < 1e-3);
+        // Pollution weighs 0.6 on the land value: base 20 - 0.6 * pollution (the factory's
+        // noise weighs too).
+        let n = g.noise_at(near);
+        assert!(n > 0.0);
+        assert!((g.value_at(near) - (20.0 - 0.6 * p - 0.4 * n).max(0.0)).abs() < 1e-3);
         assert_eq!(g.value_at(Vec2::new(1280.0, 640.0)), 20.0);
     }
 
     #[test]
-    fn roads_add_access_and_load_makes_noise() {
+    fn roads_add_access_and_a_loaded_street_makes_no_noise() {
         let (mut w, _, db) = world();
         let road = db.road_id("street").unwrap();
         let def = db.road(road).clone();
@@ -812,15 +844,10 @@ mod city {
             ema,
             ..Default::default()
         };
-        let loud = grids(&w, &db, &load);
-        let n = loud.noise_at(on);
-        assert!(n > 40.0 && n <= 60.0, "{n}");
-        assert!(loud.value_at(on) < quiet.value_at(on));
-        assert_eq!(
-            loud.noise_at(Vec2::new(960.0, 672.0 + 200.0)),
-            0.0,
-            "beyond 96 m"
-        );
+        // A street makes no noise however loaded (T-300: only highways do).
+        let loaded = grids(&w, &db, &load);
+        assert_eq!(loaded.noise_at(on), 0.0);
+        assert_eq!(loaded.value_at(on), quiet.value_at(on));
     }
 
     #[test]
@@ -1006,7 +1033,7 @@ mod city {
                 buildings: w.resource::<BuildingGrid>(),
                 net: w.resource::<NetGraph>(),
                 utilities: w.resource::<UtilityGraph>(),
-                load: &load,
+                emissions: &emissions(w, &db, &load, 1),
                 services: Some((cover, state)),
                 parks: None,
             })

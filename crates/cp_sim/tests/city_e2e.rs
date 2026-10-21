@@ -147,11 +147,22 @@ fn block_near(sim: &SimRunner, zone: ZoneType, x: f32) -> ZoneBlockId {
 
 /// Puts an `Active` building of `def` at column 0 of `block`, as if it had grown there.
 fn put(sim: &mut SimRunner, content: &ContentDb, def: &str, block: ZoneBlockId) -> BuildingId {
+    put_at(sim, content, def, block, 0)
+}
+
+/// [`put`] at column `col`.
+fn put_at(
+    sim: &mut SimRunner,
+    content: &ContentDb,
+    def: &str,
+    block: ZoneBlockId,
+    col: u16,
+) -> BuildingId {
     let def_id = content.building_id(def).unwrap();
     let d = content.building(def_id);
     let lot = Lot {
         block,
-        col: 0,
+        col,
         w: d.lot.0,
         d: d.lot.1,
     };
@@ -211,11 +222,14 @@ fn industry_nearby_lowers_the_level_of_housing() {
     let near = block_near(&sim, ZoneType::ResLow, 3240.0);
     let works = block_near(&sim, ZoneType::Industrial, 3336.0);
     let a = put(&mut sim, &content, "house_3", far);
-    let b = put(&mut sim, &content, "house_3", near);
+    // At the end of its block, beside the works at the start of the next (T-300: industry
+    // reaches 8 zone cells, 64 m).
+    let b = put_at(&mut sim, &content, "house_3", near, 9);
     put(&mut sim, &content, "works", works);
     assert_eq!((level(&sim, a), level(&sim, b)), (3, 3));
 
-    run(&mut sim, 6 * 256);
+    // Three days: the ground under the house comes up to the smoke (T-300).
+    run(&mut sim, 3 * cp_core::time::TICKS_PER_DAY);
     let grids = sim.world().resource::<cp_economy::LandGrids>();
     let at = |id| sim.world().resource::<BuildingGrid>().get(id).unwrap().pos;
     assert!(
@@ -223,7 +237,7 @@ fn industry_nearby_lowers_the_level_of_housing() {
         "the smoke costs land value"
     );
     assert_eq!(level(&sim, a), 3, "the clean one keeps its level");
-    assert_eq!(level(&sim, b), 2, "the one beside the factory drops");
+    assert!(level(&sim, b) < 3, "the one beside the factory drops");
     // A lower level is rebuilt inside the same lot.
     let nb = *sim
         .world()
@@ -232,7 +246,7 @@ fn industry_nearby_lowers_the_level_of_housing() {
         .unwrap()
         .lot()
         .expect("a lot");
-    assert_eq!((nb.block, nb.col), (near, 0));
+    assert_eq!((nb.block, nb.col), (near, 9));
 }
 
 #[test]

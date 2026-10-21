@@ -73,6 +73,7 @@ fn town(capacity: u32) -> Town {
     world.init_resource::<NetGraph>();
     world.init_resource::<BuildingGrid>();
     world.init_resource::<LandGrids>();
+    world.init_resource::<crate::Emissions>();
     world.init_resource::<CitizenGrid>();
     world.insert_resource(SimRng::from_seed([7; 32]));
     ServicePlugin::init(&mut world);
@@ -187,4 +188,37 @@ fn a_clinic_of_capacity_one_cures_one_of_three_a_day() {
     assert!(t.flagged(house));
     t.run(TICKS_PER_DAY - 1, 2 * TICKS_PER_DAY - 1);
     assert_eq!(t.sick_count(), 1);
+}
+
+/// T-300: a home on polluted ground (a residue, no source left) falls ill several times as often
+/// as a clean one; noise adds a little.
+#[test]
+fn a_home_on_polluted_ground_falls_ill_more_often() {
+    let mut t = town(1);
+    let clean = t.put("house", 0);
+    let dirty = t.put("house", 3);
+    let age = 30 * cp_citizen::DAYS_PER_YEAR;
+    {
+        let mut g = t.world.resource_mut::<CitizenGrid>();
+        g.ensure_derived();
+        for home in [clean, dirty] {
+            for _ in 0..100 {
+                g.add_household(home, 0, Tick(0), &[(age, 1, false); 4]);
+            }
+        }
+    }
+    let at = t.world.resource::<BuildingGrid>().get(dirty).unwrap().pos;
+    let cell = crate::emissions::cell_of(at);
+    t.world.resource_mut::<crate::Emissions>().ground[cell] = 6_000;
+    t.run(0, 6 * TICKS_PER_DAY);
+    let sick = |home| {
+        t.world
+            .resource::<CitizenGrid>()
+            .citizens()
+            .filter(|(_, c)| c.home == Some(home) && c.sick_since.is_some())
+            .count()
+    };
+    let (c, d) = (sick(clean), sick(dirty));
+    // Per day: 0.003 clean, 0.003 + 0.0003 × 60 = 0.021 on the residue (400 people, 6 days).
+    assert!(d > 3 * c + 10, "clean {c}, polluted {d}");
 }

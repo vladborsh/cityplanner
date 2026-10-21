@@ -71,6 +71,16 @@ pub struct Day {
     pub fire: u32,
     pub garbage: u32,
     pub sick: u32,
+    /// T-300: sick residents in all; homes on polluted ground (ground ≥ 10) and their sick.
+    pub sick_people: u32,
+    pub homes_dirty: u32,
+    pub sick_dirty: u32,
+    /// Residents of the homes on polluted ground, and of the others.
+    pub people_dirty: u32,
+    pub people_clean: u32,
+    /// Citizens who fell ill over the day: in homes on polluted ground, in the others.
+    pub new_sick_dirty: u32,
+    pub new_sick_clean: u32,
     pub dead: u32,
     pub abandoned: u32,
     /// Unemployed adults per adult, percent.
@@ -120,6 +130,8 @@ pub struct Player {
     stalled: [bool; 3],
     /// The demand's last complete cycle of sums.
     last_acc: cp_economy::DemandAcc,
+    /// New sick cases of the day so far: in homes on polluted ground, in the others (T-300).
+    new_sick: [u32; 2],
     last_money: f64,
     last_stuck: u64,
     last_why: [u64; 8],
@@ -165,6 +177,7 @@ impl Player {
             built: [0; 3],
             stalled: [false; 3],
             last_acc: cp_economy::DemandAcc::default(),
+            new_sick: [0; 2],
             last_money: money,
             last_stuck: 0,
             last_why: [0; 8],
@@ -629,6 +642,7 @@ impl Player {
         let start = self.sim.tick().0;
         while self.sim.tick().0 < start + TICKS_PER_DAY {
             self.sim.tick_once();
+            self.count_new_sick();
             let a = *self.sim.world().resource::<cp_economy::DemandAcc>();
             if a.seen == 64 {
                 self.last_acc = a;
@@ -646,6 +660,28 @@ impl Player {
         }
         self.day += 1;
         self.report()
+    }
+
+    /// The citizens who fell ill in the tick just run (the health system visits one bucket a
+    /// tick), counted by whether their home stands on polluted ground (T-300).
+    fn count_new_sick(&mut self) {
+        let w = self.sim.world();
+        let tick = cp_core::Tick(self.sim.tick().0 - 1);
+        let bucket = (tick.0 % u64::from(cp_citizen::system::CITIZEN_BUCKETS)) as u32;
+        let b = w.resource::<BuildingGrid>();
+        let e = w.resource::<cp_economy::Emissions>();
+        for (_, c) in w
+            .resource::<cp_citizen::CitizenGrid>()
+            .citizens_bucket(cp_citizen::system::CITIZEN_BUCKETS, bucket)
+        {
+            if c.sick_since == Some(tick) {
+                let dirty = c
+                    .home
+                    .and_then(|h| b.get(h))
+                    .is_some_and(|h| e.ground_at(h.pos) >= DIRTY_GROUND);
+                self.new_sick[usize::from(!dirty)] += 1;
+            }
+        }
     }
 
     fn report(&mut self) -> Day {
@@ -690,11 +726,37 @@ impl Player {
             refused: std::mem::take(&mut self.refused),
             ..Default::default()
         };
+        let db = &w.resource::<cp_content::SimContent>().0;
+        let emissions = w.resource::<cp_economy::Emissions>();
+        let dirty = |home: cp_building::BuildingId| {
+            b.get(home)
+                .is_some_and(|bl| emissions.ground_at(bl.pos) >= DIRTY_GROUND)
+        };
         for (_, c) in w.resource::<cp_citizen::CitizenGrid>().citizens() {
             if c.is_adult() && c.work.is_none() && c.age_days >= 65 * cp_citizen::DAYS_PER_YEAR {
                 d.unemployed_old += 1;
             }
+            if let Some(home) = c.home {
+                if dirty(home) {
+                    d.people_dirty += 1;
+                } else {
+                    d.people_clean += 1;
+                }
+            }
+            if c.sick_since.is_some() {
+                d.sick_people += 1;
+                d.sick_dirty += u32::from(c.home.is_some_and(dirty));
+            }
         }
+        [d.new_sick_dirty, d.new_sick_clean] = std::mem::take(&mut self.new_sick);
+        d.homes_dirty = b
+            .iter()
+            .filter(|(id, bl)| {
+                bl.state == BuildingState::Active
+                    && db.building(bl.def).households > 0
+                    && dirty(*id)
+            })
+            .count() as u32;
         for (id, bl) in b.iter() {
             if bl.state != BuildingState::Active {
                 continue;
@@ -912,6 +974,9 @@ impl Player {
 }
 
 /// Plays a new game until `target` residents or `max_days` days; `each` sees every day.
+/// Ground pollution from which a home counts as standing on polluted ground in the report.
+const DIRTY_GROUND: f32 = 10.0;
+
 pub fn play(target: u32, max_days: u32, mut each: impl FnMut(&Day)) -> Vec<Day> {
     let mut p = Player::new_game();
     let mut days = Vec::new();
