@@ -1,7 +1,8 @@
 //! T-293: a scripted new game played to Busy Town (5000 residents) through the real commands
 //! and tools (`cp_app::playtest`), one line per game day. Re-run after balance changes:
 //! `cargo test --release -p cp_app --test playtest -- --ignored --nocapture`
-//! (`PLAYTEST_DAYS`, default 80; `PLAYTEST_POP`, default 5000).
+//! (`PLAYTEST_DAYS`, default 80; `PLAYTEST_POP`, default 5000; `PLAYTEST_SEED`, the sim's seed,
+//! default 1).
 
 #[test]
 #[ignore = "T-293 playtest: prints a report"]

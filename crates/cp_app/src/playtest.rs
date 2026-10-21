@@ -119,6 +119,15 @@ impl Player {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps/flatlands");
         let t = cp_terrain::Terrain::load(&root).expect("flatlands");
         let mut sim = crate::build_sim(t, cp_core::SimLimits::desktop(), 7.0, false, None);
+        // `PLAYTEST_SEED=n`: another seed of the sim's RNG (1 otherwise), to tell a change's
+        // effect from the noise of one run (BUG-102).
+        if let Some(seed) = std::env::var("PLAYTEST_SEED")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            sim.world_mut()
+                .insert_resource(cp_core::SimRng::seed_from_u64(seed));
+        }
         // `PLAYTEST_CONTENT=dir`: the same game with another content set (a balance experiment
         // without editing the committed one).
         if let Ok(dir) = std::env::var("PLAYTEST_CONTENT") {
