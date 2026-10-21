@@ -221,7 +221,7 @@ fn vehicle_and_pedestrian_panels_equal_the_records_and_picking_finds_them() {
         .vehicles()
         .find(|(_, v)| v.spawned && book.get(v.trip).is_some())
         .unwrap();
-    let key = u64::from(vid.generation) << 32 | u64::from(vid.index);
+    let key = cp_traffic::agent_key(vid.index, vid.generation);
     let pose = view
         .agents
         .cur
@@ -265,7 +265,7 @@ fn vehicle_and_pedestrian_panels_equal_the_records_and_picking_finds_them() {
 
     // Pedestrians show their citizen.
     let (pid, p) = agents.pedestrians().next().unwrap();
-    let pkey = u64::from(pid.generation) << 32 | u64::from(pid.index);
+    let pkey = cp_traffic::agent_key(pid.index, pid.generation);
     let Some(Inspection::Citizen(info)) = sim.inspect(Selection::Pedestrian(pkey)) else {
         panic!()
     };

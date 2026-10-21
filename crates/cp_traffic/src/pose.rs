@@ -2,13 +2,15 @@
 //! built from `Agents` after a tick; interpolation between two snapshots is the client's job.
 
 use bevy_math::{Vec2, Vec3};
-use cp_core::curve::CubicBezier3;
-use cp_net::{JunctionGeometry, NetGraph};
+use cp_net::{JunctionGeometry, LaneConnection, LaneId, NetGraph};
 
 use crate::agents::{Agents, Vehicle};
-use crate::graph::PathGraph;
+use crate::graph::{LaneNode, PathGraph};
 
-/// Stable key of an agent: arena `(index, generation)`. Ascending by index within a frame.
+/// Stable key of an agent: arena `index << 32 | generation`. A frame lists its agents in arena
+/// order, which is ascending by key: clients match two frames by merging them (BUG-104: with the
+/// generation in the high bits a reused slot broke the order, and those cars were drawn without
+/// interpolation, jumping from tick to tick).
 pub type AgentKey = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -43,7 +45,7 @@ pub struct AgentFrame {
 
 /// The key of agent `index` / `generation` in an [`AgentFrame`].
 pub fn agent_key(index: u32, generation: u32) -> AgentKey {
-    u64::from(generation) << 32 | u64::from(index)
+    u64::from(index) << 32 | u64::from(generation)
 }
 
 fn yaw_of(d: Vec3) -> f32 {
@@ -51,6 +53,10 @@ fn yaw_of(d: Vec3) -> f32 {
 }
 
 /// Pose `(centre, yaw)` of a vehicle, or `None` for one not yet on the road / off the network.
+/// The centre is half the length behind the front bumper along the path the front has
+/// driven, back through the junction connection and the lane before it (BUG-104: clamped to
+/// the start of the current piece it stood still for half a length at every junction and then
+/// jumped ahead).
 pub(crate) fn vehicle_pose(
     v: &Vehicle,
     half_length: f32,
@@ -61,35 +67,111 @@ pub(crate) fn vehicle_pose(
     if !v.spawned {
         return None;
     }
-    if v.in_conn {
-        let (from, to) = v.path.steps.get(usize::from(v.hop)).copied()?;
-        let lane = net.lane(from)?;
-        let seg = net.segment(lane.segment)?;
-        let node = if graph.lane_forward(from)? {
-            seg.end
-        } else {
-            seg.start
-        };
-        let c = geo
-            .get(node)?
-            .links
-            .connections
-            .iter()
-            .find(|c| c.from == from && c.to == to)?;
-        let curve: &CubicBezier3 = &c.curve;
-        let t = if c.length > 1e-3 {
-            ((v.s - half_length) / c.length).clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
-        return Some((curve.point(t), yaw_of(curve.tangent(t))));
+    let (p, dir) = point_behind(v, half_length, graph, net, geo)?;
+    Some((p, yaw_of(dir)))
+}
+
+/// The connection `from → to` of the junction `from` runs into.
+fn connection<'a>(
+    from: LaneId,
+    to: LaneId,
+    graph: &PathGraph,
+    net: &'a NetGraph,
+    geo: &'a JunctionGeometry,
+) -> Option<&'a LaneConnection> {
+    let seg = net.segment(net.lane(from)?.segment)?;
+    let node = if graph.lane_forward(from)? {
+        seg.end
+    } else {
+        seg.start
+    };
+    geo.get(node)?
+        .links
+        .connections
+        .iter()
+        .find(|c| c.from == from && c.to == to)
+}
+
+/// Point `s` metres along a connection curve, by arc length (the curve's own parameter runs
+/// faster on the straighter end), and the direction there.
+fn connection_point(c: &LaneConnection, s: f32) -> (Vec3, Vec3) {
+    if c.length <= 1e-3 {
+        return (c.curve.p3, c.curve.tangent(1.0));
     }
-    let lane = graph.car_lane(v.lane())?;
-    let s = (v.s - half_length).max(0.0);
-    let p = lane.point3_at(s);
+    const CELLS: usize = 16;
+    let target = s.clamp(0.0, c.length) / c.length;
+    let mut chords = [0.0f32; CELLS];
+    let mut prev = c.curve.p0;
+    let mut total = 0.0;
+    for (i, chord) in chords.iter_mut().enumerate() {
+        let p = c.curve.point((i + 1) as f32 / CELLS as f32);
+        *chord = prev.distance(p);
+        total += *chord;
+        prev = p;
+    }
+    let mut left = target * total;
+    let mut t = 1.0;
+    for (i, chord) in chords.iter().enumerate() {
+        if left <= *chord {
+            t = (i as f32 + if *chord > 1e-6 { left / chord } else { 0.0 }) / CELLS as f32;
+            break;
+        }
+        left -= chord;
+    }
+    (c.curve.point(t), c.curve.tangent(t))
+}
+
+/// Point on a lane `s` metres along it, with the lane's direction there.
+fn lane_point(lane: &LaneNode, s: f32) -> (Vec3, Vec3) {
+    let s = s.max(0.0);
     let ahead = lane.point3_at(s + 1.0);
     let behind = lane.point3_at((s - 1.0).max(0.0));
-    Some((p, yaw_of(ahead - behind)))
+    (lane.point3_at(s), ahead - behind)
+}
+
+/// The point `back` metres behind the front bumper along the way the vehicle came, and the
+/// path's direction there. A car on the first lane of its path is placed on that lane's line.
+pub(crate) fn point_behind(
+    v: &Vehicle,
+    back: f32,
+    graph: &PathGraph,
+    net: &NetGraph,
+    geo: &JunctionGeometry,
+) -> Option<(Vec3, Vec3)> {
+    let mut hop = usize::from(v.hop);
+    let mut in_conn = v.in_conn;
+    let mut s = v.s;
+    let mut left = back.max(0.0);
+    // A few pieces back at most: a lane between two junctions is never that short.
+    for _ in 0..6 {
+        if in_conn {
+            let (from, to) = v.path.steps.get(hop).copied()?;
+            let c = connection(from, to, graph, net, geo)?;
+            if s >= left {
+                return Some(connection_point(c, s - left));
+            }
+            left -= s.max(0.0);
+            in_conn = false;
+            s = graph.car_lane(from)?.s_out;
+        } else {
+            let id = if hop == 0 {
+                v.path.start
+            } else {
+                v.path.steps.get(hop - 1)?.1
+            };
+            let lane = graph.car_lane(id)?;
+            if hop == 0 || s - left >= lane.s_in {
+                return Some(lane_point(lane, s - left));
+            }
+            left -= (s - lane.s_in).max(0.0);
+            hop -= 1;
+            in_conn = true;
+            let (from, to) = v.path.steps.get(hop).copied()?;
+            s = connection(from, to, graph, net, geo)?.length;
+        }
+    }
+    let lane = graph.car_lane(v.lane())?;
+    Some(lane_point(lane, v.s - back))
 }
 
 impl Agents {
