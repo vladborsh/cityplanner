@@ -97,11 +97,15 @@ fn a_game_saved_between_passes_keeps_the_noise_and_falls_ill_like_the_run_that_w
             .count()
     };
     let before = sick(&a);
-    for _ in 0..256 {
+    // T-301: the day is 2048 ticks, so the per-day sickness takes more ticks to show, and a
+    // clinic cures the sick as they fall ill: look at the most sick at any tick of the run.
+    let mut peak = before;
+    for _ in 0..512 {
         a.tick_once();
         b.tick_once();
+        peak = peak.max(sick(&a));
     }
-    assert!(sick(&a) > before, "the noise makes people ill");
+    assert!(peak > before, "the noise makes people ill");
     assert_eq!(sick(&a), sick(&b));
-    assert_eq!(a.checksum(), b.checksum(), "load + 256 ticks");
+    assert_eq!(a.checksum(), b.checksum(), "load + 512 ticks");
 }
