@@ -223,15 +223,17 @@ mod raw_tests {
     use super::*;
 
     /// BUG-076: 454 residents (~318 adults), shops and industry at their ratios, no free job:
-    /// R is empty because of the unemployed, so C and I must ask for the jobs.
+    /// R is empty because of the unemployed, so C and I must ask for the jobs. BUG-099: the
+    /// ratios are 0.3 shop jobs per resident and 0.8 industry jobs per shop job (were 0.2, 0.5):
+    /// 136 and 109 jobs (were 91, 45); the small town 50 residents, 15 and 12 (were 40, 8, 4).
     #[test]
     fn unemployed_adults_above_the_allowance_ask_for_shop_and_industry_jobs() {
         let b = Balance::default();
         let stalled = DemandAcc {
             seen: 64,
             citizens: 454,
-            commercial_jobs: 91,
-            industrial_jobs: 45,
+            commercial_jobs: 136,
+            industrial_jobs: 109,
             unemployed: 182,
             unemployed_educated: 182,
             ..DemandAcc::default()
@@ -245,9 +247,9 @@ mod raw_tests {
         assert!(i > 20.0, "I {i}");
         // Below the commuter allowance nobody asks (a small town's commuters).
         let small = DemandAcc {
-            citizens: 40,
-            commercial_jobs: 8,
-            industrial_jobs: 4,
+            citizens: 50,
+            commercial_jobs: 15,
+            industrial_jobs: 12,
             unemployed: 15,
             ..DemandAcc::default()
         };

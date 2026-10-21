@@ -451,32 +451,34 @@ mod demand {
     #[test]
     fn a_shortage_of_goods_raises_c_and_i() {
         let base = raw(DemandAcc::default());
-        // 100 residents support 20 shop jobs; there are none.
+        // 100 residents support 30 shop jobs (BUG-099: 0.3 per resident, was 0.2); there are none.
         let no_shops = raw(DemandAcc {
             citizens: 100,
             ..DemandAcc::default()
         });
-        assert_eq!(no_shops[1], base[1] + 20.0);
-        // With 15 of them the want is only the remaining 5.
+        // 0.3 is not exact in f32: compare within a hair.
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        assert!(near(no_shops[1], base[1] + 30.0), "{}", no_shops[1]);
+        // With 15 of them the want is only the remaining 15.
         let some_shops = raw(DemandAcc {
             citizens: 100,
             commercial_jobs: 15,
             ..DemandAcc::default()
         });
-        assert_eq!(some_shops[1], base[1] + 5.0);
-        // Shops need goods: 100 shop jobs want 50 industrial jobs.
+        assert!(near(some_shops[1], base[1] + 15.0), "{}", some_shops[1]);
+        // Shops need goods: 100 shop jobs want 80 industrial jobs (BUG-099: 0.8, was 0.5).
         let no_industry = raw(DemandAcc {
             commercial_jobs: 100,
             ..DemandAcc::default()
         });
-        assert_eq!(no_industry[2], base[2] + 50.0);
+        assert!(near(no_industry[2], base[2] + 80.0), "{}", no_industry[2]);
         // Enough industry for them: back to the base.
         let supplied = raw(DemandAcc {
             commercial_jobs: 100,
-            industrial_jobs: 50,
+            industrial_jobs: 80,
             ..DemandAcc::default()
         });
-        assert_eq!(supplied[2], base[2]);
+        assert!(near(supplied[2], base[2]), "{}", supplied[2]);
         // Jobless manual workers want industry; educated ones want offices.
         let workers = raw(DemandAcc {
             unemployed_manual: 7,
