@@ -291,13 +291,16 @@ fn building_night(
 /// the player must see where to carry on.
 pub const WATER_LAYER_BUILDING_ALPHA: f32 = 0.35;
 
+/// The parts of a building that cast a shadow: the chunks and the turning parts.
+type BuildingParts = Or<(With<BuildingChunk>, With<RotorSpin>)>;
+
 /// In the water layer the buildings (chunks and the turning parts) cast no shadow: the see-through
 /// shell would leave a dark ghost on the ground. The alpha itself is set by one owner,
 /// `underground::fade_surfaces`, with the Underground view.
 fn building_shadows(
     layers: Option<Res<PipeLayers>>,
     mut commands: Commands,
-    parts: Query<(Entity, Has<NotShadowCaster>), Or<(With<BuildingChunk>, With<RotorSpin>)>>,
+    parts: Query<(Entity, Has<NotShadowCaster>), BuildingParts>,
 ) {
     let on = layers.is_some_and(|l| l.visible);
     for (e, has) in &parts {
