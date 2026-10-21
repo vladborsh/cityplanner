@@ -63,19 +63,14 @@ impl AreaTool {
         self.stroke.clear();
     }
 
-    /// A brush stroke at `at` with no area chosen (BUG-108): an area of the kind being brushed
-    /// is chosen, else made. The kind is the park kind or the resource last picked in the panel,
-    /// else the richest resource under the cursor (`richness`), else farming. Returns the
-    /// `CreateArea` to send before the stroke's paint. The eraser needs none.
-    pub fn choose_or_create(
-        &mut self,
-        areas: &Areas,
-        richness: impl Fn(ResourceKind) -> f32,
-    ) -> Option<DistrictCommand> {
-        if self.selected.is_some() || self.kind == DistrictToolKind::Erase {
-            return None;
+    /// The kind of area a stroke paints: the chosen area's, else the park kind or the resource
+    /// picked last in the panel, else the richest resource under the cursor (`richness`), else
+    /// farming. The ghost shows its colour (BUG-108).
+    pub fn brushed_kind(&self, areas: &Areas, richness: impl Fn(ResourceKind) -> f32) -> AreaKind {
+        if let Some(a) = self.selected.and_then(|id| areas.get(id)) {
+            return a.kind;
         }
-        let kind = match (self.new_park, self.new_resource) {
+        match (self.new_park, self.new_resource) {
             (Some(k), _) => AreaKind::Park(k),
             (None, Some(r)) => AreaKind::Industry(r),
             (None, None) => {
@@ -88,7 +83,22 @@ impl AreaTool {
                 }
                 AreaKind::Industry(best.0)
             }
-        };
+        }
+    }
+
+    /// A brush stroke at `at` with no area chosen (BUG-108): an area of the kind being brushed
+    /// is chosen, else made. The kind is the park kind or the resource last picked in the panel,
+    /// else the richest resource under the cursor (`richness`), else farming. Returns the
+    /// `CreateArea` to send before the stroke's paint. The eraser needs none.
+    pub fn choose_or_create(
+        &mut self,
+        areas: &Areas,
+        richness: impl Fn(ResourceKind) -> f32,
+    ) -> Option<DistrictCommand> {
+        if self.selected.is_some() || self.kind == DistrictToolKind::Erase {
+            return None;
+        }
+        let kind = self.brushed_kind(areas, richness);
         if let Some((id, _)) = areas.iter().find(|(_, a)| a.kind == kind) {
             self.selected = Some(id);
             return None;

@@ -1275,6 +1275,9 @@ pub fn tool_hover(
     }
 }
 
+/// The ghost of the district and area erasers.
+const ERASE_COLOR: Color = Color::srgb(0.95, 0.3, 0.2);
+
 /// The district or area brush's ghost (BUG-108): a circle draped on the ground round the cell
 /// under the cursor, where the cells the brush takes reach.
 fn brush_circle(
@@ -1289,15 +1292,18 @@ fn brush_circle(
     };
     let r = kind.reach();
     let height = |p: Vec2| view.terrain.as_deref().map_or(0.0, |t| t.height(p)) + 0.8;
-    let n = 48;
-    gizmos.linestrip(
-        (0..=n).map(|i| {
-            let a = i as f32 / n as f32 * std::f32::consts::TAU;
-            let q = c + Vec2::new(a.cos(), a.sin()) * r;
-            Vec3::new(q.x, height(q), q.y)
-        }),
-        color,
-    );
+    let n = 64;
+    // Three rings a little apart read as one bold line from any zoom (a gizmo line is thin).
+    for dr in [-0.8, 0.0, 0.8] {
+        gizmos.linestrip(
+            (0..=n).map(|i| {
+                let a = i as f32 / n as f32 * std::f32::consts::TAU;
+                let q = c + Vec2::new(a.cos(), a.sin()) * (r + dr);
+                Vec3::new(q.x, height(q), q.y)
+            }),
+            color,
+        );
+    }
 }
 
 /// The stop within reach of `p` (the bulldozer's target; stops come before roads).
@@ -1736,15 +1742,13 @@ fn draw_ghost(
     if state.active == ActiveTool::District
         && let Some(view) = view.as_deref()
     {
-        let color = match (state.district.kind, state.district.selected) {
-            (crate::district::DistrictToolKind::Erase, _) | (_, None) => {
-                Color::srgb(0.95, 0.95, 0.95)
-            }
-            (_, Some(id)) => view.districts.get(id).map_or(Color::WHITE, |d| {
-                let c =
-                    cp_district::PALETTE_RGB[usize::from(d.color) % cp_district::PALETTE_RGB.len()];
-                Color::srgb_u8(c[0], c[1], c[2])
-            }),
+        // The colour of what a stroke paints, chosen or not (BUG-108); the eraser's own.
+        let color = if state.district.kind == crate::district::DistrictToolKind::Erase {
+            ERASE_COLOR
+        } else {
+            let k = usize::from(state.district.brush_color(&view.districts));
+            let c = cp_district::PALETTE_RGB[k % cp_district::PALETTE_RGB.len()];
+            Color::srgb_u8(c[0], c[1], c[2])
         };
         if let Some(p) = state.hover {
             brush_circle(&mut gizmos, view, p, state.district.kind, color);
@@ -1753,20 +1757,17 @@ fn draw_ghost(
     if state.active == ActiveTool::Area
         && let Some(view) = view.as_deref()
     {
-        let color = match (state.area.kind, state.area.selected) {
-            (crate::district::DistrictToolKind::Erase, _) | (_, None) => {
-                Color::srgb(0.95, 0.95, 0.95)
-            }
-            (_, Some(id)) => {
-                let kind = view.areas.get(id).map(|a| a.kind);
-                match kind {
-                    Some(cp_district::AreaKind::Industry(r)) => {
-                        let [r, g, b] = cp_render::resource_color(r);
-                        Color::srgb(r, g, b)
-                    }
-                    _ => Color::WHITE,
-                }
-            }
+        let color = if state.area.kind == crate::district::DistrictToolKind::Erase {
+            ERASE_COLOR
+        } else {
+            let res = view.terrain.as_deref().map(|t| t.resources());
+            let at = state.hover.unwrap_or_default();
+            let richness = |r| res.map_or(0.0, |m| m.richness_at(r, at));
+            let [r, g, b] = match state.area.brushed_kind(&view.areas, richness) {
+                cp_district::AreaKind::Industry(r) => cp_render::resource_color(r),
+                cp_district::AreaKind::Park(k) => cp_render::park_color(k),
+            };
+            Color::srgb(r, g, b)
         };
         if let Some(p) = state.hover {
             brush_circle(&mut gizmos, view, p, state.area.kind, color);
