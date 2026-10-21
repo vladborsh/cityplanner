@@ -199,6 +199,107 @@ pub fn build_trucks(sim: &mut SimRunner) -> usize {
     kinds.len()
 }
 
+/// Truck turn scene (BUG-105): `truck-turn:N` is a crossing of two `basic_2l` streets and a 12 m
+/// log truck on its way from a building on the west arm to one on the south arm, held (paused) `N`
+/// ticks after it set out: a sequence of `N` shows it turning. Look at it with
+/// `--cam at:-30,40,30,0,0,0` (metres from the crossing).
+pub fn parse_truck_turn(spec: &str) -> Option<u32> {
+    spec.strip_prefix("truck-turn:")?.parse().ok()
+}
+
+/// Builds the [`parse_truck_turn`] crossing and starts the truck's run; `false` if no truck
+/// took the road.
+pub fn build_truck_turn(sim: &mut SimRunner) -> bool {
+    use cp_building::{AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingState, Lot};
+    use cp_content::{CargoKind, VehicleKind};
+    use cp_traffic::{RunPoint, ServiceRuns};
+    let db = embedded_content();
+    let c = Vec2::splat(cp_terrain::MAP_SIZE / 2.0);
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    for d in [Vec2::NEG_X, Vec2::X, Vec2::NEG_Y, Vec2::Y] {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: basic,
+                path: RoadPath::Straight {
+                    from: c + d * 120.0,
+                    to: c,
+                },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+    }
+    sim.tick_once();
+    sim.tick_once();
+    // The arm whose middle lies `d` of the crossing, and a t on it `along` metres out.
+    let arm = |sim: &SimRunner, d: Vec2, along: f32| {
+        let net = sim.world().resource::<cp_net::NetGraph>();
+        net.segments()
+            .map(|(id, s)| {
+                let a = cp_core::curve::to_xz(s.curve.point(0.0));
+                let t = (along / s.length).clamp(0.0, 1.0);
+                // The arms were drawn from outside in: t = 0 is the outer end.
+                let t = if a.distance(c) > 1.0 { 1.0 - t } else { t };
+                (
+                    id,
+                    t,
+                    (cp_core::curve::to_xz(s.curve.point(0.5)) - c).dot(d),
+                )
+            })
+            .max_by(|a, b| a.2.total_cmp(&b.2))
+            .map(|(id, t, _)| (id, t))
+    };
+    let def = db.building_id("small_park").expect("small_park");
+    let d = db.building(def);
+    let stand = |sim: &mut SimRunner, dir: Vec2, side: Vec2| {
+        let (segment, t) = arm(sim, dir, 70.0)?;
+        Some(
+            sim.world_mut()
+                .resource_mut::<BuildingGrid>()
+                .insert(Building {
+                    def,
+                    footprint: cp_building::Footprint::Lot(Lot {
+                        block: cp_core::Id::new(0, 0),
+                        col: 0,
+                        w: d.lot.0,
+                        d: d.lot.1,
+                    }),
+                    level: d.level,
+                    state: BuildingState::Active,
+                    ready_at: cp_core::Tick(0),
+                    pos: c + dir * 70.0 + side * 30.0,
+                    rot: 0.0,
+                    access: Some(AccessPoint { segment, t }),
+                    flags: BuildingFlags::default(),
+                    level_progress: 0.0,
+                }),
+        )
+    };
+    let (Some(from), Some(to)) = (
+        stand(sim, Vec2::NEG_X, Vec2::NEG_Y),
+        stand(sim, Vec2::Y, Vec2::NEG_X),
+    ) else {
+        return false;
+    };
+    // Only a share of the trucks is drawn (`truck_visible_share`); the others run on a timer.
+    // Start runs until one drives.
+    for _ in 0..24 {
+        sim.world_mut().resource_mut::<ServiceRuns>().start_run(
+            VehicleKind::for_cargo(CargoKind::Logs),
+            RunPoint::Building(from),
+            RunPoint::Building(to),
+            true,
+        );
+        for _ in 0..40 {
+            sim.tick_once();
+            if sim.world().resource::<cp_traffic::Agents>().vehicle_count() > 0 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Post scene (T-248): a street with the post office and the sorting facility beside it and a
 /// mail van on its way from one to the other. Look at it with `--cam post`, `post-office`,
 /// `post-sorting` or `post-van`.

@@ -597,7 +597,7 @@ fn min_shared_lane_distance(rig: &Rig) -> Option<f32> {
     let geo = rig.sim.world.resource::<cp_net::JunctionGeometry>();
     let pos = |id: VehicleId| {
         let v = rig.veh.get(id)?;
-        crate::pose::vehicle_pose(v, rig.st.specs.of(v).length * 0.5, &rig.graph, net, geo)
+        crate::pose::vehicle_pose(v, rig.st.specs.of(v).length, &rig.graph, net, geo)
             .map(|(p, _)| p)
     };
     let mut best: Option<f32> = None;
@@ -916,4 +916,81 @@ fn cars_drive_round_the_tightest_curves_of_a_4_cell_road() {
         rig.stuck, rig.invalid
     );
     assert!(closest > 0.0, "bodies overlap by {closest}");
+}
+
+/// BUG-105: a 12 m truck turning right and left at an X sweeps round the corner. Drawn per tick
+/// (`vehicle_pose`), its rear axle stays on the path its front axle drove (a two-axle body, the
+/// rear following), and the heading turns only as the body moves: never on the spot.
+#[test]
+fn a_turning_truck_sweeps_round_the_corner_with_its_rear_following() {
+    use crate::pose::{FRONT_AXLE, REAR_AXLE};
+    use bevy_math::{Vec2, Vec3};
+    for (turn, to) in [("to the south arm", 3), ("to the north arm", 2)] {
+        let mut s = sim();
+        let arms = cross(&mut s, "basic_2l");
+        let mut rig = Rig::new(s);
+        rig.specs = mixed_specs();
+        let id = rig.add_kind(1, from_arm(arms[0], 20.0), to_arm(arms[to], 100.0));
+        let len = 12.0;
+        let mut poses: Vec<(Vec3, f32)> = Vec::new();
+        for t in 0..2000u64 {
+            rig.tick(t, None, STUCK_TICKS);
+            let Some(v) = rig.veh.get(id) else { break };
+            let net = rig.sim.world.resource::<cp_net::NetGraph>();
+            let geo = rig.sim.world.resource::<cp_net::JunctionGeometry>();
+            if let Some(p) = crate::pose::vehicle_pose(v, len, &rig.graph, net, geo) {
+                poses.push(p);
+            }
+        }
+        assert_eq!(rig.arrived, 1, "{turn}: the truck arrives");
+        let axle = |(c, yaw): (Vec3, f32), share: f32| {
+            let d = Vec2::new(yaw.sin(), yaw.cos());
+            Vec2::new(c.x, c.z) + d * len * (0.5 - share)
+        };
+        let fronts: Vec<Vec2> = poses.iter().map(|p| axle(*p, FRONT_AXLE)).collect();
+        let near_path = |q: Vec2| {
+            fronts
+                .windows(2)
+                .map(|w| {
+                    let (a, b) = (w[0], w[1]);
+                    let ab = b - a;
+                    let t = if ab.length_squared() > 1e-9 {
+                        ((q - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    q.distance(a + ab * t)
+                })
+                .fold(f32::MAX, f32::min)
+        };
+        let mut turned = 0.0f32;
+        for w in poses.windows(2) {
+            let ((c0, y0), (c1, y1)) = (w[0], w[1]);
+            let mut dy = (y1 - y0).abs() % std::f32::consts::TAU;
+            if dy > std::f32::consts::PI {
+                dy = std::f32::consts::TAU - dy;
+            }
+            turned += dy;
+            let moved = Vec2::new(c1.x - c0.x, c1.z - c0.z).length();
+            // A wheelbase of 7.2 m turns at most about 1 / 7 rad per metre on a tight curve.
+            assert!(
+                dy <= moved * 0.25 + 1e-3,
+                "{turn}: turned {dy} rad while moving {moved} m"
+            );
+        }
+        assert!(
+            (1.4..1.8).contains(&turned),
+            "{turn}: a quarter turn in all, got {turned}"
+        );
+        // Once the front has driven a wheelbase (before that the rear stands where it started).
+        let start = fronts[0];
+        for (p, f) in poses.iter().zip(&fronts) {
+            if f.distance(start) < len {
+                continue;
+            }
+            let rear = axle(*p, REAR_AXLE);
+            let off = near_path(rear);
+            assert!(off < 0.35, "{turn}: rear axle {off} m off the path");
+        }
+    }
 }

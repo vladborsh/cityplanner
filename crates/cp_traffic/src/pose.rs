@@ -52,14 +52,21 @@ fn yaw_of(d: Vec3) -> f32 {
     d.x.atan2(d.z)
 }
 
-/// Pose `(centre, yaw)` of a vehicle, or `None` for one not yet on the road / off the network.
-/// The centre is half the length behind the front bumper along the path the front has
-/// driven, back through the junction connection and the lane before it (BUG-104: clamped to
-/// the start of the current piece it stood still for half a length at every junction and then
-/// jumped ahead).
+/// Where a vehicle's axles sit, as shares of its length behind the front bumper: the body is
+/// drawn on the line from the rear axle to the front axle, both on the path the front drove.
+pub const FRONT_AXLE: f32 = 0.2;
+pub const REAR_AXLE: f32 = 0.8;
+
+/// Pose `(centre, yaw)` of a vehicle `length` metres long, or `None` for one not yet on the road
+/// / off the network. Points on the path are found half a length and more behind the front
+/// bumper, back through the junction connection and the lane before it (BUG-104: clamped to the
+/// start of the current piece the body stood still for half a length at every junction and then
+/// jumped ahead). The heading is the line from the rear axle to the front axle, a two-axle model
+/// (BUG-105): the rear follows the front into a turn and cuts its inside a little, so a long
+/// truck sweeps round a corner instead of turning on the spot.
 pub(crate) fn vehicle_pose(
     v: &Vehicle,
-    half_length: f32,
+    length: f32,
     graph: &PathGraph,
     net: &NetGraph,
     geo: &JunctionGeometry,
@@ -67,8 +74,20 @@ pub(crate) fn vehicle_pose(
     if !v.spawned {
         return None;
     }
-    let (p, dir) = point_behind(v, half_length, graph, net, geo)?;
-    Some((p, yaw_of(dir)))
+    let (front, dir) = point_behind(v, length * FRONT_AXLE, graph, net, geo)?;
+    let (rear, _) = point_behind(v, length * REAR_AXLE, graph, net, geo)?;
+    let axis = front - rear;
+    // On the first metres of its first lane both axles are clamped to the lane start.
+    let axis = if Vec2::new(axis.x, axis.z).length() > length * 0.25 {
+        axis.normalize()
+    } else {
+        return Some((
+            point_behind(v, length * 0.5, graph, net, geo)?.0,
+            yaw_of(dir),
+        ));
+    };
+    let centre = rear + axis * length * (0.5 - (1.0 - REAR_AXLE));
+    Some((centre, yaw_of(axis)))
 }
 
 /// The connection `from → to` of the junction `from` runs into.
@@ -180,7 +199,7 @@ impl Agents {
         let vehicles = self
             .vehicles()
             .filter_map(|(id, v)| {
-                let (pos, yaw) = vehicle_pose(v, self.specs().of(v).length * 0.5, graph, net, geo)?;
+                let (pos, yaw) = vehicle_pose(v, self.specs().of(v).length, graph, net, geo)?;
                 Some(VehiclePose {
                     key: agent_key(id.index, id.generation),
                     kind: v.kind_id(),

@@ -741,6 +741,22 @@ pub fn build_sim(
         sim.world_mut()
             .insert_resource(cp_core::time::SimSpeed::Pause);
         info!("scene trucks: {n} trucks");
+    } else if let Some(n) = scene.and_then(scene::parse_truck_turn) {
+        let ok = scene::build_truck_turn(&mut sim);
+        // Until the truck is on the road, then `n` ticks more; hold that moment.
+        for _ in 0..600 {
+            sim.tick_once();
+            let agents = sim.world().resource::<cp_traffic::Agents>();
+            if agents.vehicles().any(|(_, v)| v.spawned) {
+                break;
+            }
+        }
+        for _ in 0..n {
+            sim.tick_once();
+        }
+        sim.world_mut()
+            .insert_resource(cp_core::time::SimSpeed::Pause);
+        info!("scene truck-turn: run started {ok}, held {n} ticks after it set out");
     } else if scene == Some(scene::POST) {
         let n = scene::build_post(&mut sim);
         // Until the van has driven a little way down the street, then hold the moment.
