@@ -283,7 +283,8 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         metrics::metrics_window(ctx, &mut st.metrics_open, view);
         jobs::jobs_window(ctx, &mut st.jobs_open, view);
         services::services_window(ctx, &mut st.services_open, view, overlay);
-        services::overlay_services_panel(ctx, view, overlay.active, overlays_panel::width(st));
+        let context = services::context_overlay(view, st.category, tools, overlay.active);
+        services::overlay_services_panel(ctx, view, context, overlays_panel::width(st));
         lines::lines_window(ctx, &mut st.lines_open, view, &mut st.lines, outbox);
         policies::city_policies_window(ctx, &mut st.policies_open, view, outbox);
     }
