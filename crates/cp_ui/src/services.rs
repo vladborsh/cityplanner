@@ -182,18 +182,47 @@ pub fn services_contents(ui: &mut egui::Ui, rows: &[SectorBalance]) -> Option<Se
     clicked
 }
 
-/// The rows of the City services window that belong to `overlay` and are open: Education
-/// the three schools, a service its own row; others none. Power, water and sewage have their
-/// gauges in the top bar (T-279), so the Power and Water overlays show no panel.
+/// The rows of the City services window that belong to `overlay` and are open: Water the
+/// water and sewage gauges, Education the three schools, a service its own row; others none.
 pub fn overlay_rows(view: &SimView, overlay: Overlay) -> Vec<&SectorBalance> {
     view.city_services()
         .iter()
-        .filter(|r| {
-            !r.locked
-                && overlay_of(r.sector) == overlay
-                && !crate::gauges::SECTORS.contains(&r.sector)
-        })
+        .filter(|r| !r.locked && overlay_of(r.sector) == overlay)
         .collect()
+}
+
+/// What the context gauges (T-304) are about, as the overlay whose rows they show: the overlay
+/// that is on, else the open Water / Power menu, else the service building in hand. Nothing
+/// open: `Overlay::Off`, no gauges.
+pub fn context_overlay(
+    view: &SimView,
+    category: Option<crate::palette::Category>,
+    tools: &cp_tools::ToolState,
+    overlay: Overlay,
+) -> Overlay {
+    use crate::palette::Category;
+    if overlay != Overlay::Off {
+        return overlay;
+    }
+    match category {
+        Some(Category::Water) => return Overlay::Water,
+        Some(Category::Power) => return Overlay::Power,
+        _ => {}
+    }
+    let kind = (tools.active == cp_tools::ActiveTool::Place)
+        .then_some(tools.building.def)
+        .flatten()
+        .zip(view.content.as_deref())
+        .and_then(|(id, db)| {
+            let name = db.building(id).service.as_deref()?;
+            Some(db.service(db.service_id(name)?).kind)
+        });
+    match kind {
+        Some(cp_content::ServiceKind::Water | cp_content::ServiceKind::Sewage) => Overlay::Water,
+        Some(cp_content::ServiceKind::Power) => Overlay::Power,
+        Some(k) => Overlay::for_service(k).unwrap_or(Overlay::Off),
+        None => Overlay::Off,
+    }
 }
 
 /// Offset of the overlay panel from the top-right screen corner: right margin, and just
@@ -221,9 +250,11 @@ pub fn overlay_services_panel(ctx: &egui::Context, view: &SimView, overlay: Over
                     .show(ui, |ui| {
                         for row in rows {
                             icon_of(row.sector).show(ui, Sizes::ROW_ICON);
-                            ui.label(tr(row.sector.label()));
+                            ui.label(tr(row.sector.label()))
+                                .on_hover_ui(|ui| crate::gauges::sector_hover(ui, view, row));
                             bar(ui, row.balance());
-                            ui.label(numbers_text(row));
+                            ui.label(numbers_text(row))
+                                .on_hover_ui(|ui| crate::gauges::sector_hover(ui, view, row));
                             ui.label(percent_text(row.balance()));
                             ui.end_row();
                         }
@@ -327,8 +358,8 @@ mod tests {
     }
 
     /// T-241: an active service overlay shows its rows (Education the schools) in a compact
-    /// panel; no overlay, or one without a service, shows none; a locked row stays out. T-279:
-    /// power, water and sewage are the top bar's gauges, never in this panel.
+    /// panel; no overlay, or one without a service, shows none; a locked row stays out. T-304:
+    /// Water shows water and sewage, Power the electricity.
     #[test]
     fn the_overlay_panel_shows_the_rows_of_the_active_overlay_only() {
         let mut view = cp_sim::SimRunner::new(1).view();
@@ -351,8 +382,8 @@ mod tests {
             "the locked university stays out"
         );
         assert_eq!(sectors(Overlay::Garbage), [Sector::Garbage]);
-        assert!(sectors(Overlay::Water).is_empty(), "a gauge");
-        assert!(sectors(Overlay::Power).is_empty(), "a gauge");
+        assert_eq!(sectors(Overlay::Water), [Sector::Water, Sector::Sewage]);
+        assert_eq!(sectors(Overlay::Power), [Sector::Power]);
         assert!(sectors(Overlay::Off).is_empty());
 
         let drawn = |o| -> Vec<String> {
@@ -373,8 +404,78 @@ mod tests {
         assert!(on.contains(&"10 / 40 units/day".to_string()));
         assert!(!on.iter().any(|t| t.starts_with("50 / 50")));
         assert!(drawn(Overlay::Off).is_empty());
-        assert!(drawn(Overlay::Water).is_empty());
-        assert!(drawn(Overlay::Power).is_empty());
+        let water = drawn(Overlay::Water);
+        assert!(
+            water.contains(&"300 / 28 units/day".to_string()),
+            "{water:?}"
+        );
+        assert!(
+            water.contains(&"10 / 40 units/day".to_string()),
+            "{water:?}"
+        );
+        assert!(!water.iter().any(|t| t.starts_with("50 / 50")), "{water:?}");
+    }
+
+    /// T-304: the gauges follow the open menu or overlay; nothing open, no gauges.
+    #[test]
+    fn the_context_gauges_follow_the_menu_the_overlay_and_the_building_in_hand() {
+        use crate::palette::Category;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let db = std::sync::Arc::new(
+            cp_content::ContentDb::load_dir(root.join("assets/content")).unwrap(),
+        );
+        let mut sim = cp_sim::SimRunner::new(1);
+        sim.set_content(db.clone());
+        let mut view = sim.view();
+        let mut stats = (*view.city).clone();
+        stats.services = Sector::ALL.map(|s| row(s, 10.0, 20.0, false)).to_vec();
+        view.city = std::sync::Arc::new(stats);
+        let mut tools = cp_tools::ToolState::default();
+        let rows = |view: &SimView, cat: Option<Category>, tools: &cp_tools::ToolState, o| {
+            let o = context_overlay(view, cat, tools, o);
+            overlay_rows(view, o)
+                .iter()
+                .map(|r| r.sector)
+                .collect::<Vec<_>>()
+        };
+        let none = rows(&view, None, &tools, Overlay::Off);
+        assert!(none.is_empty(), "nothing open: {none:?}");
+        assert_eq!(
+            rows(&view, Some(Category::Water), &tools, Overlay::Off),
+            [Sector::Water, Sector::Sewage]
+        );
+        assert_eq!(
+            rows(&view, Some(Category::Power), &tools, Overlay::Off),
+            [Sector::Power]
+        );
+        assert!(rows(&view, Some(Category::Roads), &tools, Overlay::Off).is_empty());
+        // An overlay on wins over the menu.
+        assert_eq!(
+            rows(&view, Some(Category::Water), &tools, Overlay::Police),
+            [Sector::Police]
+        );
+        assert_eq!(
+            rows(&view, None, &tools, Overlay::Education),
+            [Sector::Elementary, Sector::HighSchool, Sector::University]
+        );
+        // A service building in hand, no overlay: its gauges.
+        for (def, want) in [
+            ("police_station", Sector::Police),
+            ("fire_station", Sector::Fire),
+        ] {
+            if let Some(id) = db.building_id(def) {
+                tools.select(cp_tools::ActiveTool::Place);
+                tools.building.def = Some(id);
+                assert_eq!(
+                    rows(&view, Some(Category::Buildings), &tools, Overlay::Off),
+                    [want],
+                    "{def}"
+                );
+            }
+        }
+        // Back to nothing in hand: the gauges are gone.
+        tools.select(cp_tools::ActiveTool::None);
+        assert!(rows(&view, Some(Category::Buildings), &tools, Overlay::Off).is_empty());
     }
 
     /// BUG-074: the overlay panel sits top-right under the top bar, clear of the palette and

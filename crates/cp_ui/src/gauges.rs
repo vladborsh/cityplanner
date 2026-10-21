@@ -305,19 +305,35 @@ pub fn overlay_hover(ui: &mut egui::Ui, view: &SimView, o: cp_render::Overlay) {
         else {
             continue;
         };
-        let report = match sector {
-            Sector::Power => Some(cached_report(ui.ctx(), view, UtilityLayer::Power)),
-            Sector::Water => Some(cached_report(ui.ctx(), view, UtilityLayer::Water)),
-            _ => None,
-        };
-        let missing = if report.is_none() {
-            without_sewage(view)
-        } else {
-            0
-        };
-        for line in tooltip_lines(row, report.as_deref(), missing) {
-            ui.label(line);
-        }
+        sector_hover(ui, view, row);
+    }
+}
+
+/// The tooltip of one context gauge row (T-304): the supply and demand of the sector, for the
+/// utilities with their networks.
+pub fn sector_hover(ui: &mut egui::Ui, view: &SimView, row: &SectorBalance) {
+    if !SECTORS.contains(&row.sector) {
+        ui.label(trf!(
+            "{sector}: {supply} / {demand} {unit} (supply / demand)",
+            sector = tr(row.sector.label()),
+            supply = format!("{:.0}", row.supply),
+            demand = format!("{:.0}", row.demand),
+            unit = tr(row.unit)
+        ));
+        return;
+    }
+    let report = match row.sector {
+        Sector::Power => Some(cached_report(ui.ctx(), view, UtilityLayer::Power)),
+        Sector::Water => Some(cached_report(ui.ctx(), view, UtilityLayer::Water)),
+        _ => None,
+    };
+    let missing = if report.is_none() && row.sector == Sector::Sewage {
+        without_sewage(view)
+    } else {
+        0
+    };
+    for line in tooltip_lines(row, report.as_deref(), missing) {
+        ui.label(line);
     }
 }
 
