@@ -37,7 +37,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy_math::{Vec2, Vec3};
 use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingId, BuildingState, build_ticks};
 use cp_content::{
-    BuildingDef, ContentDb, PLACEHOLDER_INDEX, Rgb, RoofKind, StyleDef, StyleDefId, ZoneType,
+    BuildingDef, ContentDb, Detail, PLACEHOLDER_INDEX, Rgb, RoofKind, StyleDef, StyleDefId,
+    ZoneType,
 };
 use cp_core::Tick;
 use cp_net::NetGraph;
@@ -1039,7 +1040,13 @@ pub fn build_building(
         && matches!(b.state, BuildingState::Active | BuildingState::Abandoned)
         && !silhouette
     {
-        let spots = shapes::garden_spots(w, d, (hu, hv, cv), sd);
+        let mut spots = shapes::garden_spots(w, d, (hu, hv, cv), sd);
+        // T-296: no plant in the pool, where the style has one.
+        if style_def.details.contains(&Detail::Pool)
+            && let Some(((pu, pv), (hpu, hpv))) = shapes::pool_rect(w, d, (hu, hv, cv))
+        {
+            spots.retain(|s| (s.u - pu).abs() > hpu + s.r || (s.v - pv).abs() > hpv + s.r);
+        }
         let ground = |lu: f32, lv: f32| terrain.height(f.c + f.u * lu + f.v * lv);
         shapes::garden(&mut pieces[0], &f, &spots, ground, true);
         shapes::garden(&mut pieces[1], &f, &spots, ground, false);

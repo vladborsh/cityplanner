@@ -1267,7 +1267,7 @@ fn low_density_homes_get_a_real_tree_and_bushes_inside_the_lot_and_off_the_house
                 garden_spots(w, d, (hu, hv, cv), seed),
                 "deterministic"
             );
-            assert!(spots.len() <= 4);
+            assert!(spots.len() <= 6);
             for s in &spots {
                 assert!(s.u - s.r >= -w / 2.0 - 1e-3 && s.u + s.r <= w / 2.0 + 1e-3);
                 assert!(s.v - s.r >= -d / 2.0 - 1e-3 && s.v + s.r <= d / 2.0 + 1e-3);

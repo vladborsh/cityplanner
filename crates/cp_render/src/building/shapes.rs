@@ -608,7 +608,88 @@ pub fn details(m: &mut MeshData, dc: &DetailCx, list: &[Detail]) {
                 run((hw, -hd), (hw, hd), f.dir(1.0, 0.0).normalize_or_zero());
                 run((-hw, hd), (-hw, -hd), f.dir(-1.0, 0.0).normalize_or_zero());
             }
+            Detail::Pool | Detail::Driveway => {
+                yard(m, dc, *d);
+            }
             _ => {}
+        }
+    }
+}
+
+/// Where the pool of a detached house goes (T-296): beside the house, in the wider of the two
+/// side margins when it is at least 7 m deep; `((u, v), (half u, half v))` in lot metres. A
+/// pure function of the lot (`w` by `d` m) and the house's half extents, so the garden can keep
+/// its plants off it.
+pub fn pool_rect(
+    w: f32,
+    d: f32,
+    (hu, hv, cv): (f32, f32, f32),
+) -> Option<((f32, f32), (f32, f32))> {
+    let margin = w * 0.5 - hu;
+    if margin < 7.0 || d < 12.0 {
+        return None;
+    }
+    let half_u = (margin * 0.5 - 1.5).min(3.2);
+    let half_v = (hv * 0.8).min(5.0).min(d * 0.5 - 2.0);
+    (half_u > 1.0 && half_v > 1.5).then_some(((hu + margin * 0.5, cv), (half_u, half_v)))
+}
+
+/// The yard of a detached house (T-296): a pool beside it or a drive in front. Laid out from
+/// the boxes of the house, so a bigger lot (a higher level) gets the bigger yard.
+fn yard(m: &mut MeshData, dc: &DetailCx, d: Detail) {
+    let f = dc.f;
+    let ld = dc.lot.1 * 0.5;
+    let (mut u0, mut u1, mut v0, mut v1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+    for v in dc.vols {
+        u0 = u0.min(v.cu - v.hu);
+        u1 = u1.max(v.cu + v.hu);
+        v0 = v0.min(v.cv - v.hv);
+        v1 = v1.max(v.cv + v.hv);
+    }
+    let y = dc.base;
+    match d {
+        Detail::Pool => {
+            let hu = u1.max(-u0);
+            if let Some(((cu, cv), (pu, pv))) =
+                pool_rect(dc.lot.0, dc.lot.1, (hu, (v1 - v0) * 0.5, (v0 + v1) * 0.5))
+            {
+                block(
+                    m,
+                    f,
+                    (cu, cv),
+                    (pu + 0.4, pv + 0.4),
+                    y,
+                    y + 0.25,
+                    [0.78, 0.78, 0.74, 1.0],
+                    [0.84, 0.84, 0.80, 1.0],
+                );
+                block(
+                    m,
+                    f,
+                    (cu, cv),
+                    (pu, pv),
+                    y,
+                    y + 0.3,
+                    [0.10, 0.38, 0.62, 1.0],
+                    [0.12, 0.45, 0.72, 1.0],
+                );
+            }
+        }
+        _ => {
+            // From the front edge to the house, beside the door.
+            let cu = (u0 + u1) * 0.5 + 0.2 * (u1 - u0);
+            let c = |u: f32, v: f32| f.at(u, v, y + 0.14);
+            flat_quad(
+                m,
+                [
+                    c(cu - 1.3, -ld),
+                    c(cu + 1.3, -ld),
+                    c(cu + 1.3, v0 + 0.5),
+                    c(cu - 1.3, v0 + 0.5),
+                ],
+                Vec3::Y,
+                [0.56, 0.55, 0.53, 1.0],
+            );
         }
     }
 }
@@ -4596,7 +4677,9 @@ pub fn garden_spots(w: f32, d: f32, (hu, hv, cv): (f32, f32, f32), seed: u32) ->
         x
     };
     let frac = |n: u32| (n % 1000) as f32 / 1000.0;
-    let want = 2 + next() % 3;
+    // A bigger plot takes more green: one more plant per 350 m2 of free ground, two at most.
+    let free = (w * d - 4.0 * hu * hv).max(0.0);
+    let want = 2 + next() % 3 + ((free / 350.0) as u32).min(2);
     let mut out: Vec<Spot> = Vec::new();
     // The tree first: a smaller one if the lot is tight.
     let kind = (next() % 2) as u8;
