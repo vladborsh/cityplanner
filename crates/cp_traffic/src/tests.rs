@@ -685,7 +685,7 @@ fn routes_keep_to_the_lanes_of_the_vehicle_class() {
     let b = s.seg_with("basic_2l", (400.0, 0.0), (600.0, 0.0));
     // A bus street beside them.
     let p = s.seg_with("basic_2l", (0.0, 300.0), (200.0, 300.0));
-    let u = s.seg_with("bus_2l", (200.0, 300.0), (400.0, 300.0));
+    let u = s.seg_with("transitway_2l", (200.0, 300.0), (400.0, 300.0));
     let q = s.seg_with("basic_2l", (400.0, 300.0), (600.0, 300.0));
     s.tick();
     fn class(s: &mut Sim, class: V, from: Access, to: Access) -> Result<CarPath, NoPath> {

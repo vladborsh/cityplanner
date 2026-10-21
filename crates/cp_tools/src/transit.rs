@@ -421,6 +421,36 @@ mod tests {
                 )
                 .unwrap();
         }
+        // T-302, station first: a bus depot so a line may be made.
+        let first_side = sim
+            .world()
+            .resource::<NetGraph>()
+            .segments()
+            .map(|(id, _)| id)
+            .min()
+            .unwrap();
+        sim.world_mut()
+            .resource_mut::<cp_building::BuildingGrid>()
+            .insert(cp_building::Building {
+                def: db.building_id("bus_depot").unwrap(),
+                footprint: cp_building::Footprint::Lot(cp_building::Lot {
+                    block: cp_core::Id::new(0, 0),
+                    col: 0,
+                    w: 1,
+                    d: 1,
+                }),
+                level: 1,
+                state: cp_building::BuildingState::Active,
+                ready_at: cp_core::Tick(0),
+                pos: Vec2::new(100.0, 8.0),
+                rot: 0.0,
+                access: Some(cp_building::AccessPoint {
+                    segment: first_side,
+                    t: 0.5,
+                }),
+                flags: cp_building::BuildingFlags(0),
+                level_progress: 0.0,
+            });
         sim.tick_once();
         sim
     }

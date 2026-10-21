@@ -1,7 +1,7 @@
 // T-302: bus lanes at the kerbs, cars in the middle. Profile of `medium_4l`; whole cells wide. Numbers: tune later.
 Road((
-    id: "medium_4l_bus",
-    name: "Collector with bus lanes (4 lanes)",
+    id: "transitway_4l",
+    name: "Bus-lane road (4 lanes)",
     class: Collector,
     width: 32.0,
     lanes: [
