@@ -64,6 +64,7 @@ perl -e 'alarm 120; exec @ARGV' -- target/release/cp_desktop --hidden --map flat
   `place_sweep` with `basic_2l` and the largest service lot placed at every spot (refusals are
   logged). Before/after proof for the road redesign (§6.8, T-262…T-268).
 * `--milestone N[,live]` (T-283): hold the city at milestone N (an index of `milestones.ron`); with `live` it reaches N a moment after the start, so the congratulation window shows (use with `--hidden --ui --speed 1`). Screenshots `docs/screenshots/t283-window-village.png`, `t283-window-busy-town.png`; the zoning panel before and after Busy Town (`--milestone 4|5 --category zones`): `t283-zones-before.png`, `t283-zones-after.png`.
+* `--cam road-over-high` (over `--scene road-over --ghost-demo basic_2l,5040,5060,5040,5140 --ui`) and `--cam city-high` (over `--scene city:10 --overlay water --ui`), 400 m high (T-294): the red tint of the houses a road would demolish, and the built pipes, at overview zoom. Screenshots `docs/screenshots/t294-before|after-demolish.png`, `t294-before|after-pipes.png` (`--cam street` for `...-pipes-street.png`). Pipes need `--ui` (the tools plugin turns them on).
 * `--screenshot` never saves a blank frame (BUG-012): blank captures are discarded and
   retried; if no real frame arrives within 20 s it exits with code **3**; a write error exits
   **4**.

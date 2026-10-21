@@ -153,11 +153,11 @@ pub fn ghost_graph(segments: &[[Vec3; 2]]) -> UtilityGraph {
 // Pipes (T-103)
 
 /// Radius of a pipe, metres.
-pub const PIPE_RADIUS: f32 = 0.6;
+pub const PIPE_RADIUS: f32 = 0.9;
 /// Height of the pipe axis above the rendered terrain, metres.
-pub const PIPE_LIFT: f32 = 0.7;
+pub const PIPE_LIFT: f32 = 1.2;
 /// Radius of the coupling at every node, metres.
-pub const SLEEVE_RADIUS: f32 = 0.8;
+pub const SLEEVE_RADIUS: f32 = 1.2;
 /// Length of a coupling along the pipe, metres.
 const SLEEVE_LENGTH: f32 = 1.0;
 /// Faces around a pipe.
@@ -168,8 +168,19 @@ pub const RING_STEP: f32 = 4.0;
 pub const BAND_LIFT: f32 = 0.2;
 /// Segments of a half-disc cap per 180 degrees.
 const CAP_STEPS: usize = 12;
-pub const PIPE_COLOR: [f32; 4] = [0.32, 0.50, 0.72, 1.0];
-pub const SLEEVE_COLOR: [f32; 4] = [0.22, 0.34, 0.52, 1.0];
+/// T-294: brighter (was 0.32, 0.50, 0.72 and 0.22, 0.34, 0.52) and a half wider: at overview zoom
+/// the muted blue pipe over the asphalt did not read.
+pub const PIPE_COLOR: [f32; 4] = [0.40, 0.85, 1.0, 1.0];
+pub const SLEEVE_COLOR: [f32; 4] = [0.25, 0.65, 0.95, 1.0];
+/// The bright strip drawn along the built pipes (T-294), its half width, metres, and colour.
+pub const STRIP_HALF_M: f32 = 1.4;
+/// Near white-cyan, over the blue ribbon the water overlay lays on the roads, which a blue pipe
+/// vanished in.
+pub const STRIP_COLOR: [f32; 4] = [0.85, 0.97, 1.0, 0.9];
+/// How far above the coverage band the strip is drawn, metres: the road surface is graded and
+/// stands up to a metre above the rendered terrain, and the overlay's own ribbons lie on it, so a
+/// strip draped 0.2–0.6 m over the terrain was hidden under the asphalt (T-294).
+pub const STRIP_RISE: f32 = 1.0;
 /// Coverage band of the built pipes.
 pub const BAND_COLOR: [f32; 4] = [0.35, 0.65, 0.95, 0.15];
 pub const GHOST_OK: [f32; 3] = [0.2, 0.9, 0.3];
@@ -187,7 +198,13 @@ fn ring_params(c: &CubicBezier3) -> Vec<f32> {
 
 /// A tube around `axis` points (already lifted), with smooth normals; appended to `m`.
 fn tube(m: &mut MeshData, rings: &[(Vec3, Vec3)], radius: f32, color: [f32; 4]) {
+    let from = m.indices.len();
     tube_faces(m, rings, radius, color, PIPE_FACES);
+    // [`tube_faces`] winds its triangles the other way round; a double-sided material then lights
+    // the pipe from inside and it came out near black (T-294): turn them to face outwards.
+    for t in m.indices[from..].chunks_exact_mut(3) {
+        t.swap(1, 2);
+    }
 }
 
 /// [`tube`] with `faces` around (tunnels are wider than pipes and want more).
@@ -386,10 +403,15 @@ pub fn built_pipe_meshes(
         .filter(|(_, l)| l.net == UtilityNet::Pipe)
         .map(|(_, l)| l.curve)
         .collect();
-    Some((
-        pipe_mesh(&curves, terrain),
-        coverage_band_mesh(&curves, reach, terrain, BAND_COLOR),
-    ))
+    let mut band = coverage_band_mesh(&curves, reach, terrain, BAND_COLOR);
+    // The strip over the band, a hair higher so it wins the depth test: the pipe itself is a
+    // thin tube, the strip is what shows at overview zoom (T-294).
+    let mut strip = coverage_band_mesh(&curves, STRIP_HALF_M, terrain, STRIP_COLOR);
+    for p in &mut strip.positions {
+        p[1] += STRIP_RISE;
+    }
+    band.append(strip);
+    Some((pipe_mesh(&curves, terrain), band))
 }
 
 /// What the tools want drawn of the pipe network (`cp_tools` writes it every frame).
@@ -428,7 +450,6 @@ struct PipeRender {
     shown: Option<PipeLayers>,
     built: Vec<Entity>,
     ghost: Vec<Entity>,
-    opaque: Option<Handle<VertexColorMaterial>>,
     blended: Option<Handle<VertexColorMaterial>>,
 }
 
@@ -483,10 +504,6 @@ fn sync_pipes(
     let Some(terrain) = view.terrain.as_deref() else {
         return;
     };
-    let opaque = state
-        .opaque
-        .get_or_insert_with(|| materials.add(VertexColorMaterial::opaque(0.6, 0.1)))
-        .clone();
     let blended = state
         .blended
         .get_or_insert_with(|| {
@@ -521,10 +538,12 @@ fn sync_pipes(
         st.graph = Some(Arc::clone(&view.utilities));
         st.terrain = tkey;
         if let Some((pipes, band)) = built_pipe_meshes(&view.utilities, terrain, true, reach) {
+            // The tube is wound inside out for a back-face culling material: the blended one
+            // (double sided) shows it, the opaque one never did (T-294).
             st.built.extend(spawn_mesh(
                 &mut commands,
                 &mut meshes,
-                opaque.clone(),
+                blended.clone(),
                 pipes,
                 "pipes",
             ));
@@ -928,6 +947,30 @@ mod tests {
         assert!(!pipes.indices.is_empty() && !band.indices.is_empty());
         let (p, b) = built_pipe_meshes(&UtilityGraph::new(), &t, true, BUILDING_REACH).unwrap();
         assert!(p.indices.is_empty() && b.indices.is_empty());
+    }
+
+    /// T-294: the built pipes carry a bright strip (readable at overview zoom) and are brighter
+    /// and wider than the muted blue they were.
+    #[test]
+    fn built_pipes_carry_a_bright_strip_and_are_bright() {
+        let t = slope();
+        let g = line_graph();
+        let (pipes, band) = built_pipe_meshes(&g, &t, true, BUILDING_REACH).unwrap();
+        assert!(band.colors.iter().any(|c| *c == STRIP_COLOR), "the strip");
+        assert!(
+            band.colors.iter().any(|c| *c == BAND_COLOR),
+            "the band stays"
+        );
+        assert!(
+            pipes
+                .colors
+                .iter()
+                .all(|c| *c == PIPE_COLOR || *c == SLEEVE_COLOR)
+        );
+        // Brighter than the old (0.32, 0.50, 0.72): more blue-green light in total.
+        assert!(PIPE_COLOR[1] > 0.85 && PIPE_COLOR[2] > 0.95);
+        assert!(STRIP_COLOR[3] >= 0.9 && STRIP_RISE > 0.3);
+        assert!(PIPE_RADIUS >= 0.9 && SLEEVE_RADIUS > PIPE_RADIUS);
     }
 
     #[test]

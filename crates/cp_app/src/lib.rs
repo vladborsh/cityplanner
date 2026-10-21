@@ -376,6 +376,13 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 20.0, 48.0, c + 20.0),
             Vec3::new(c + 20.0, 0.0, c - 40.0),
         ),
+        // T-294: overview height (400 m) over `--scene road-over` and over the water pipes of
+        // `--scene city:10`, to see the red tint and the pipes the way the player sees them.
+        "road-over-high" => (
+            Vec3::new(c - 10.0, 400.0, c + 330.0),
+            Vec3::new(c - 10.0, 0.0, c - 20.0),
+        ),
+        "city-high" => (Vec3::new(c, 420.0, c + 300.0), Vec3::new(c, 0.0, c)),
         "zones-big" => (
             Vec3::new(c + 20.0, 560.0, c + 330.0),
             Vec3::new(c + 20.0, 0.0, c + 20.0),
