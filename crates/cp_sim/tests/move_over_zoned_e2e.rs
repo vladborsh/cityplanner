@@ -223,8 +223,37 @@ fn moving_a_clinic_onto_a_school_never_demolishes_the_school() {
     place(&mut sim, "clinic", far).expect("a clinic");
     let clinic = clinic_id(&sim);
     let n = sim.world().resource::<BuildingGrid>().len();
-    // A service is no obstacle to clear: the move either stands beside the school or is refused.
-    let _ = mv(&mut sim, clinic, school_at);
+    // Dead centre on the school: a service is no obstacle to clear.
+    let centre = sim
+        .world()
+        .resource::<BuildingGrid>()
+        .iter()
+        .find(|(_, b)| b.def == school)
+        .unwrap()
+        .1
+        .pos;
+    // The placement snaps to the street frontage, so the clinic lands in the free slot beside
+    // the school (it cannot be refused by aiming at it); the school is never in the ghost's
+    // demolish list and stands untouched.
+    let shown = {
+        let w = sim.world();
+        cp_building::validate_move_over(
+            &w.resource::<cp_content::SimContent>().0,
+            w.resource::<ZoneGrid>(),
+            w.resource::<NetGraph>(),
+            w.resource::<BuildingGrid>(),
+            None,
+            w.get_resource::<cp_terrain::TileOwnership>(),
+            def(&sim, "clinic"),
+            centre,
+            0.0,
+            clinic,
+        )
+    };
+    if let Ok(c) = shown {
+        assert!(c.demolish.is_empty(), "no service in the ghost's demolish list");
+    }
+    mv(&mut sim, clinic, centre).expect("the clinic is set beside the school");
     let buildings = sim.world().resource::<BuildingGrid>();
     assert_eq!(buildings.len(), n, "nothing demolished");
     assert!(buildings.get(house).is_some());

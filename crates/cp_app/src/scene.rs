@@ -1590,6 +1590,30 @@ pub fn build_grown(sim: &mut SimRunner) {
     }
 }
 
+/// The [`GROWN`] scene with a clinic standing north of it on free ground (BUG-110 shots):
+/// `--cam grown --place-demo clinic,X,Z,move` holds the clinic's move ghost over the houses at
+/// (X, Z), which show red.
+pub const MOVE_OVER: &str = "move-over";
+
+/// Builds the [`MOVE_OVER`] scene.
+pub fn build_move_over(sim: &mut SimRunner) {
+    build_grown(sim);
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let def = db.building_id("clinic").expect("clinic");
+    sim.push_command(
+        SimCommand::Building(cp_building::BuildingCommand::Place {
+            def,
+            pos: Vec2::new(c + 20.0, c - 110.0),
+            rot: 0.0,
+        }),
+        sim.tick(),
+    );
+    sim.tick_once();
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+}
+
 /// The puffs a scene leaves for `--dust-demo` (T-288 shots), kept in the sim world.
 #[derive(bevy_ecs::prelude::Resource, Clone, Debug, Default)]
 pub struct DustPuffs(pub Vec<cp_render::dust::Puff>);
