@@ -8,7 +8,14 @@
 //! from an older save mid-cycle) is dropped. The sums are serialized with the save, so a
 //! save in the middle of a cycle resumes exactly.
 //!
-//! **Raw values** (clamped to ±100; `base[..]`, weights and factors are `Balance` knobs).
+//! **Raw values** (`base[..]`, weights and factors are `Balance` knobs). The sum of the count
+//! terms of each value (jobs, homes, people) is read against the city's scale as a percentage,
+//! `100 × Σ / max(demand_scale_min_jobs, demand_scale_per_citizen × citizens)`, then the base is
+//! added and the result clamped to ±100 (BUG-114: with the plain counts a 100-job gap was the
+//! full bar at any size, 5 % of the shops at 7000 residents, and every zoning step threw C and I
+//! from end to end; now the bar is the relative shortage, and under 1000 residents, where the
+//! scale is the 100-job floor, the numbers are the old ones). The sign is that of the sum, so the
+//! `> 0` gates of spawning and move-in do not depend on the scale.
 //! Buildings under construction count as already standing, so the city does not order
 //! housing, shops or jobs again while the first ones are still being built:
 //! * unemployed adults count against R and move-in only above the commuter allowance
@@ -78,26 +85,40 @@ impl DemandAcc {
         // the manual workers has no I term of its own, so it counts here too.
         let jobs_wanted = counted * b.demand_unemployed_job_weight;
         let educated_counted = (counted - f(self.unemployed_manual)).max(0.0);
+        // BUG-114: the counts as a percentage of the city's scale.
+        let scale = self.scale(b);
+        let value = |sum: f32, base: f32| clamp(sum * LIMIT / scale + base);
         [
-            clamp(
-                self.free_jobs_weighted - counted - f(self.vacant_homes) * b.demand_adults_per_home
-                    + b.demand_base[0],
+            value(
+                self.free_jobs_weighted - counted - f(self.vacant_homes) * b.demand_adults_per_home,
+                b.demand_base[0],
             ),
-            clamp(
+            value(
                 f(self.citizens) * b.demand_shop_jobs_per_citizen - f(self.commercial_jobs)
-                    + jobs_wanted
-                    + b.demand_base[1],
+                    + jobs_wanted,
+                b.demand_base[1],
             ),
-            clamp(
+            value(
                 f(self.commercial_jobs) * b.demand_industry_jobs_per_shop_job
                     - f(self.industrial_jobs)
                     + f(self.unemployed_manual) * b.demand_unemployed_industry_weight
-                    + educated_counted * b.demand_unemployed_job_weight
-                    + b.demand_base[2],
+                    + educated_counted * b.demand_unemployed_job_weight,
+                b.demand_base[2],
             ),
-            clamp(f(self.unemployed_educated) - f(self.free_office_jobs) + b.demand_base[3]),
-            clamp(self.free_jobs_weighted - counted + b.demand_base[0]),
+            value(
+                f(self.unemployed_educated) - f(self.free_office_jobs),
+                b.demand_base[3],
+            ),
+            value(self.free_jobs_weighted - counted, b.demand_base[0]),
         ]
+    }
+
+    /// The jobs that are the full bar (BUG-114): `max(demand_scale_min_jobs,
+    /// demand_scale_per_citizen × citizens)`, at least 1.
+    pub fn scale(&self, b: &Balance) -> f32 {
+        b.demand_scale_min_jobs
+            .max(b.demand_scale_per_citizen * self.citizens as f32)
+            .max(1.0)
     }
 }
 
@@ -208,7 +229,9 @@ pub fn update_demand(
     if bucket as u64 == DEMAND_PERIOD - 1 && u64::from(acc.seen) == DEMAND_PERIOD {
         let mut raw = acc.raw(bal);
         if let Some(db) = db {
-            raw[2] = (raw[2] + shortage_jobs(&buildings, db, bal)).clamp(-LIMIT, LIMIT);
+            // The goods shortage's jobs on the same scale as the other I terms (BUG-114).
+            let jobs = shortage_jobs(&buildings, db, bal) * LIMIT / acc.scale(bal);
+            raw[2] = (raw[2] + jobs).clamp(-LIMIT, LIMIT);
         }
         demand.r = smooth(demand.r, raw[0], bal.demand_ema);
         demand.c = smooth(demand.c, raw[1], bal.demand_ema);
@@ -255,5 +278,42 @@ mod raw_tests {
         };
         let [_, c, i, _, _] = small.raw(&b);
         assert!((c - b.demand_base[1]).abs() < 1e-3 && (i - b.demand_base[2]).abs() < 1e-3);
+    }
+
+    /// BUG-114: the same relative shortage reads the same at 700 and at 7000 residents. Seed 1
+    /// of the T-293 playtest at 4939 residents: shops 10 % short (151 jobs), industry 668 over
+    /// its ratio and 205-326 manual jobless (4-6 %); with the plain counts C was 100 and I flipped
+    /// between ±100 day to day. At 7000 the same shares are 210 jobs and 350 jobless, whose
+    /// weight 2 is 10 % of the citizens: I reads high but off the stop.
+    #[test]
+    fn a_big_city_reads_its_demand_as_the_relative_shortage() {
+        let b = Balance::default();
+        let city = |citizens: u32| {
+            let shops = (citizens as f32 * 0.3 * 0.9) as u32;
+            DemandAcc {
+                seen: 64,
+                citizens,
+                commercial_jobs: shops,
+                industrial_jobs: (shops as f32 * 0.8 * 1.1) as u32,
+                unemployed: citizens / 20,
+                unemployed_manual: citizens / 20,
+                ..DemandAcc::default()
+            }
+        };
+        let [_, c7, i7, _, _] = city(7000).raw(&b);
+        let [_, c70, i70, _, _] = city(70_000).raw(&b);
+        // A 10 % shop shortage is 3 % of the citizens: 30 on the bar plus the base, at any size.
+        assert!((c7 - 35.0).abs() < 2.0, "C at 7000: {c7}");
+        assert!((c70 - c7).abs() < 2.0, "C at 70000: {c70}");
+        assert!(i7 > 0.0 && i7 < 100.0, "I at 7000: {i7}");
+        assert!((i70 - i7).abs() < 2.0, "I at 70000: {i70}");
+        // A town under 1000 residents reads the plain counts, as before BUG-114.
+        let town = DemandAcc {
+            seen: 64,
+            citizens: 500,
+            commercial_jobs: 100,
+            ..DemandAcc::default()
+        };
+        assert!((town.raw(&b)[1] - (150.0 - 100.0 + b.demand_base[1])).abs() < 1e-3);
     }
 }

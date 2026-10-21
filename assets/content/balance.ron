@@ -40,6 +40,13 @@ Balance((
     // goods_per_job / goods_per_worker: at the ratio the town's industry makes the goods its shops
     // sell (BUG-095).
     demand_industry_jobs_per_shop_job: 0.8,
+    // BUG-114: the job/home/people terms of a demand are read as a percentage of the city's
+    // scale, max(demand_scale_min_jobs, demand_scale_per_citizen x citizens) jobs, so the bar is
+    // the relative shortage: a 10 % gap of shops reads ~30 at 5000 as at 7000 residents (with the
+    // absolute counts a 100-job gap, 5 % of the shops at 7000, pinned it at 100). Under 1000
+    // residents the scale is the 100-job floor and nothing changes.
+    demand_scale_per_citizen: 0.1,
+    demand_scale_min_jobs: 100.0,
 
     // --- Land value, pollution, noise (system-design §11), recomputed every 256 ticks ---
     // Pollution and noise of the buildings without `emits` of their own (T-300, §11.1): strength

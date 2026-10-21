@@ -235,6 +235,17 @@ pub struct Balance {
     /// Weight of a counted unemployed adult (above the commuter allowance) in commercial and
     /// in industrial demand: the jobless ask for jobs (BUG-076).
     pub demand_unemployed_job_weight: f32,
+    /// BUG-114: the sum of the job, home and people terms of a demand is read against the
+    /// city's scale, `max(demand_scale_min_jobs, demand_scale_per_citizen × citizens)` jobs,
+    /// as a percentage (then the base is added and the result clamped to ±100): the bar shows
+    /// the relative shortage, so the same 10 % gap reads the same at 500 and at 7000
+    /// residents instead of pinning the bar at 100 as soon as the city is big. Below
+    /// `min_jobs / per_citizen` residents the scale is `min_jobs` and the numbers are the old
+    /// absolute ones.
+    pub demand_scale_per_citizen: f32,
+    /// ... but the scale is never below this many jobs (100: a 100-job gap is the full bar in
+    /// a town under 1000 residents, as before BUG-114).
+    pub demand_scale_min_jobs: f32,
     /// Pollution and noise of the buildings without an `emits` of their own (T-300, §11.1):
     /// strength `0..=100` at the centre, radius in zone cells (8 m), falling off linearly. An
     /// industrial-zone building and a factory pollute `pollution_industry`; a chain building by
@@ -746,6 +757,8 @@ impl Default for Balance {
             demand_commuter_min: 20.0,
             demand_unemployed_industry_weight: 2.0,
             demand_unemployed_job_weight: 0.5,
+            demand_scale_per_citizen: 0.1,
+            demand_scale_min_jobs: 100.0,
             pollution_industry: 50.0,
             pollution_industry_res: [30.0, 30.0, 70.0, 80.0],
             pollution_radius_cells: 8.0,

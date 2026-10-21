@@ -931,6 +931,11 @@ impl ContentDb {
                     &[b.demand_unemployed_job_weight][..],
                     true,
                 ),
+                (
+                    "demand_scale",
+                    &[b.demand_scale_per_citizen, b.demand_scale_min_jobs][..],
+                    true,
+                ),
             ];
             for (name, values, non_negative) in knobs {
                 if !finite(values) || (non_negative && values.iter().any(|&v| v < 0.0)) {
@@ -1027,6 +1032,15 @@ impl ContentDb {
                     b.demand_unemployed_industry_weight,
                     b.demand_unemployed_job_weight,
                 ] {
+                    fnv1a(&mut hash, &v.to_bits().to_le_bytes());
+                }
+            }
+            // BUG-114: the demand scale, likewise only when it differs from the defaults.
+            if b.demand_scale_per_citizen != d0.demand_scale_per_citizen
+                || b.demand_scale_min_jobs != d0.demand_scale_min_jobs
+            {
+                fnv1a(&mut hash, b"demand_scale");
+                for v in [b.demand_scale_per_citizen, b.demand_scale_min_jobs] {
                     fnv1a(&mut hash, &v.to_bits().to_le_bytes());
                 }
             }
