@@ -256,6 +256,18 @@ impl Agents {
     pub fn stuck_reasons(&self) -> [u64; crate::drive::STUCK_WHY_N] {
         self.drive.stuck_why
     }
+
+    /// BUG-100 diagnostics: why the head `id` of its lane does not enter its junction at
+    /// sim tick `now` (see `drive::gate_report`).
+    pub fn gate_report(&self, pnet: &crate::PathNetwork, now: u64, id: VehicleId) -> String {
+        crate::drive::gate_report(
+            pnet.graph(),
+            &self.vehicles,
+            &self.drive,
+            signal_tick(now, 0),
+            id,
+        )
+    }
 }
 
 impl PartialEq for Agents {

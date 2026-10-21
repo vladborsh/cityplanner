@@ -1629,3 +1629,119 @@ fn drop_invalid(
         finished.invalid.push(v);
     }
 }
+
+/// BUG-100 diagnostics: why the head `id` of its lane may not enter its next connection, check
+/// by check (light, sibling, each conflict, room beyond). Not used by the sim.
+pub(crate) fn gate_report(
+    g: &PathGraph,
+    veh: &Arena<Vehicle>,
+    st: &DriveState,
+    signal: u64,
+    id: VehicleId,
+) -> String {
+    // Follows a full lane beyond to its own head, up to 12 lanes or a lane seen before.
+    let (mut out, mut id, mut seen) = (String::new(), id, Vec::new());
+    for _ in 0..12 {
+        let mut next = None;
+        out += &gate_report_one(g, veh, st, signal, id, &mut next);
+        let Some(slot) = next else { break };
+        if seen.contains(&slot) {
+            out += &format!(" => LOOP at lane {slot}");
+            break;
+        }
+        seen.push(slot);
+        let Some(&h) = st.lanes[slot as usize].first() else {
+            break;
+        };
+        let Some(o) = veh.get(h) else { break };
+        out += &format!(
+            " => lane {slot} ({} cars) head s {:.0} v {:.1} still {} spawned {} parked {}: ",
+            st.lanes[slot as usize].len(),
+            o.s,
+            o.speed,
+            o.stuck_timer >> 16,
+            o.spawned,
+            o.is_parked()
+        );
+        id = h;
+    }
+    out
+}
+
+fn gate_report_one(
+    g: &PathGraph,
+    veh: &Arena<Vehicle>,
+    st: &DriveState,
+    signal: u64,
+    id: VehicleId,
+    next: &mut Option<u32>,
+) -> String {
+    let Some(v) = veh.get(id) else {
+        return "gone".into();
+    };
+    let slot = v.lane().index as usize;
+    let (Some(node), Some((_, to))) = (
+        g.car.get(slot).and_then(|n| n.as_ref()),
+        v.path.steps.get(v.hop as usize).copied(),
+    ) else {
+        return "no node/next".into();
+    };
+    let Some(ex) = find_exit(g, node.id, to) else {
+        return format!("lane change to {}", to.index);
+    };
+    let mut out = format!(
+        "to {} open {}",
+        to.index,
+        gate_open(g, veh, st, signal, v, ex, node.s_out)
+    );
+    if ex.light != u32::MAX {
+        out += &format!(
+            " light {:?}",
+            g.lights[ex.light as usize].connection_signal(ex.index, signal)
+        );
+    }
+    if let Some(from_slot) = g.car_slot(v.lane()) {
+        out += &format!(
+            " leaving {}",
+            st.leaving.get(from_slot as usize).copied().unwrap_or(0)
+        );
+    }
+    for c in &ex.conflicts {
+        let inside = st
+            .conns
+            .get(&(c.from_slot, c.to.index))
+            .map_or(0, |l| l.len());
+        out += &format!(" | c {}->{} in {inside}", c.from_slot, c.to.index);
+        if c.higher {
+            out += " HIGHER";
+            if let Some(cn) = g.car[c.from_slot as usize].as_ref()
+                && let Some(&oid) = st.lanes[c.from_slot as usize].first()
+                && let Some(o) = veh.get(oid)
+            {
+                let next = o.path.steps.get(o.hop as usize).map(|s| s.1);
+                out += &format!(
+                    " head s {:.0}/{:.0} v {:.1} next {:?} enter {} still {}",
+                    o.s,
+                    cn.s_out,
+                    o.speed,
+                    next.map(|n| n.index),
+                    could_enter(g, veh, st, o, cn, c.to),
+                    o.stuck_timer >> 16
+                );
+            }
+        }
+    }
+    *next = Some(ex.to_slot);
+    let t = g.car[ex.to_slot as usize].as_ref();
+    let last = st.lanes[ex.to_slot as usize]
+        .last()
+        .and_then(|&o| veh.get(o));
+    out += &format!(
+        " | room {} (span {:.0} last s {:?} entering {})",
+        has_room(g, veh, st, v, ex.to_slot, 0),
+        t.map_or(0.0, |t| t.s_out - t.s_in),
+        last.map(|o| o.s),
+        st.entering[ex.to_slot as usize]
+    );
+    out
+}

@@ -134,6 +134,13 @@ fn cars_come_from_the_outside_node_visit_a_shop_and_drive_out_again() {
         let w = sim.world();
         let t = w.resource::<Tourists>();
         max_cars = max_cars.max(w.resource::<Agents>().vehicle_count());
+        // A visiting car waits off the street, never in its lane (BUG-100).
+        assert!(
+            w.resource::<Agents>()
+                .vehicles()
+                .all(|(_, v)| !v.is_parked()),
+            "a tourist's car parked in its lane"
+        );
         for (&id, v) in &t.visits {
             if v.phase == TouristPhase::Leaving && !left.contains(&id) {
                 left.push(id);

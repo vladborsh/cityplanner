@@ -3,10 +3,11 @@
 //! stands there for the visit, brings `tourism_income` when it arrives, and drives back out.
 //!
 //! The flow a day is `tourism_base + tourism_per_com × commercial buildings`; the number of cars
-//! at once is a share of the vehicle pool. With no `Outside` node (no entry highway) or no shop
-//! there are no visits. A visit is a keep run of `cp_traffic` plus a record here; the run does
-//! the driving, this system the decisions. Those who come by train walk from the station
-//! ([`bring_by_train`], T-167).
+//! at once is a share of the vehicle pool. The car leaves the road for the visit and a new one
+//! drives out from the building (BUG-100: one parked in its lane held up the street). With no
+//! `Outside` node (no entry highway) or no shop there are no visits. A visit is a keep run of
+//! `cp_traffic` plus a record here; the run does the driving, this system the decisions. Those
+//! who come by train walk from the station ([`bring_by_train`], T-167).
 
 use std::collections::BTreeMap;
 
@@ -120,6 +121,8 @@ pub fn run_tourists(
         }
         match t.phase {
             TouristPhase::Arriving => {
+                // The car waits off the street for the visit (BUG-100).
+                runs.park_off_road(id, &mut agents);
                 ledger.tourism += Cost::scaled(balance.tourism_income, 1.0);
                 *tourists.customers.entry(t.goal).or_default() += 1;
                 tourists.visits_week += 1;

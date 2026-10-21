@@ -337,6 +337,22 @@ impl ServiceRuns {
         self.runs.remove(&id).is_some()
     }
 
+    /// Takes the vehicle of a parked keep run off the road (BUG-100): it waits off the street,
+    /// not in its lane, where every car behind it would stand until it leaves. The run stands at
+    /// its goal abstractly ([`RunState::Arrived`]); [`Self::continue_run`] starts it over from
+    /// there. Returns whether the run was parked.
+    pub fn park_off_road(&mut self, id: RunId, agents: &mut Agents) -> bool {
+        let Some(run) = self.runs.get_mut(&id) else {
+            return false;
+        };
+        let RunState::Parked { since, .. } = run.state else {
+            return false;
+        };
+        agents.remove_run_vehicle(id);
+        run.state = RunState::Arrived { at: since };
+        true
+    }
+
     pub fn get(&self, id: RunId) -> Option<&ServiceRun> {
         self.runs.get(&id)
     }

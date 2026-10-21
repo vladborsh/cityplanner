@@ -664,6 +664,8 @@ impl Player {
         let w = self.sim.world();
         let agents = w.resource::<cp_traffic::Agents>();
         let net = w.resource::<cp_net::NetGraph>();
+        let pnet = w.resource::<cp_traffic::PathNetwork>();
+        let now = w.resource::<cp_core::Tick>().0;
         let mut by_lane: BTreeMap<cp_net::LaneId, (usize, u32, BTreeMap<String, usize>)> =
             BTreeMap::new();
         let mut driving: BTreeMap<cp_net::LaneId, usize> = BTreeMap::new();
@@ -687,7 +689,7 @@ impl Player {
             *e.2.entry(what).or_default() += 1;
         }
         let mut rows: Vec<_> = by_lane.into_iter().collect();
-        rows.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+        rows.sort_by_key(|r| std::cmp::Reverse(r.1.0));
         let mut out = format!("waiting {total} on {} lanes;", rows.len());
         // The fullest segments (cars on the road) with their mean speed: where a queue stands.
         let mut seg: BTreeMap<cp_net::SegmentId, (usize, f32)> = BTreeMap::new();
@@ -724,7 +726,7 @@ impl Player {
         // The cars at and in the town's first crossing (5120, 4428): lane end (s vs length),
         // speed, inside the junction or not, ticks standing.
         out += " crossing cars:";
-        for (_, v) in agents.vehicles().filter(|(_, v)| v.spawned) {
+        for (vid, v) in agents.vehicles().filter(|(_, v)| v.spawned) {
             let Some(l) = net.lane(v.lane()) else {
                 continue;
             };
@@ -736,9 +738,12 @@ impl Player {
             } else {
                 sg.curve.point(0.0)
             };
-            let at_end = (end.x - 5120.0).abs() < 2.0 && (end.z - 4428.0).abs() < 2.0;
+            let at = |p: bevy::math::Vec3| (p.x - 5120.0).abs() < 2.0 && (p.z - 4428.0).abs() < 2.0;
+            let at_end = at(end);
+            // A car inside the junction reports a lane of either end there (its way in or out).
+            let touches = at(sg.curve.point(0.0)) || at(sg.curve.point(1.0));
             let left = sg.length - v.s.min(sg.length);
-            if at_end && (v.in_conn || left < 12.0 || v.s < 12.0) {
+            if (v.in_conn && touches) || (at_end && left < 12.0) {
                 out += &format!(
                     " [seg {} {:?} s {:.0}/{:.0} v {:.1} {} still {}]",
                     l.segment.index,
@@ -749,6 +754,9 @@ impl Player {
                     if v.in_conn { "IN-JUNCTION" } else { "lane" },
                     v.stuck_timer >> 16
                 );
+                if !v.in_conn {
+                    out += &format!(" {{{}}}", agents.gate_report(pnet, now, vid));
+                }
             }
         }
         out += ";";
@@ -769,7 +777,7 @@ impl Player {
         }
         out += ";";
         let mut full: Vec<_> = seg.into_iter().collect();
-        full.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+        full.sort_by_key(|r| std::cmp::Reverse(r.1.0));
         out += " fullest segments:";
         for (id, (n, sum)) in full.into_iter().take(8) {
             if let Some(sg) = net.segment(id) {
