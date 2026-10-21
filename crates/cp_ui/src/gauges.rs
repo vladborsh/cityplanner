@@ -290,6 +290,37 @@ pub fn utility_gauges(
     rects
 }
 
+/// The tooltip of an overlay button (T-298: the gauges left the bottom panel, their figures
+/// show on hover of the Power and Water overlay buttons): the supply and demand of every
+/// utility the overlay shows, with its networks. Nothing for the other overlays.
+pub fn overlay_hover(ui: &mut egui::Ui, view: &SimView, o: cp_render::Overlay) {
+    for sector in SECTORS {
+        if crate::services::overlay_of(sector) != o {
+            continue;
+        }
+        let Some(row) = view
+            .city_services()
+            .iter()
+            .find(|r| r.sector == sector && !r.locked)
+        else {
+            continue;
+        };
+        let report = match sector {
+            Sector::Power => Some(cached_report(ui.ctx(), view, UtilityLayer::Power)),
+            Sector::Water => Some(cached_report(ui.ctx(), view, UtilityLayer::Water)),
+            _ => None,
+        };
+        let missing = if report.is_none() {
+            without_sewage(view)
+        } else {
+            0
+        };
+        for line in tooltip_lines(row, report.as_deref(), missing) {
+            ui.label(line);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,5 +409,31 @@ mod tests {
         assert!(lines.iter().any(|t| t == "Not enough power: 4"));
         let sewage = tooltip_lines(&row(Sector::Sewage, 10.0, 40.0), None, 3);
         assert_eq!(sewage[1], "Buildings without sewage: 3");
+    }
+
+    /// T-298: the figures of the gauges that left the bottom panel show on the Power and Water
+    /// overlay buttons; the other overlays show nothing of the kind.
+    #[test]
+    fn the_overlay_buttons_show_the_network_figures_on_hover() {
+        use crate::testutil::{frame_texts, input};
+        let mut view = cp_sim::SimRunner::new(1).view();
+        let mut stats = (*view.city).clone();
+        stats.services = vec![
+            row(Sector::Power, 340.0, 60.0),
+            row(Sector::Water, 100.0, 95.0),
+        ];
+        view.city = std::sync::Arc::new(stats);
+        let ctx = egui::Context::default();
+        let mut texts = |o| {
+            frame_texts(&ctx, input(0.1, vec![]), |ui| overlay_hover(ui, &view, o))
+                .into_iter()
+                .map(|(t, _)| t)
+                .collect::<Vec<_>>()
+        };
+        let power = texts(cp_render::Overlay::Power);
+        assert!(power.iter().any(|t| t.contains("340 / 60")), "{power:?}");
+        let water = texts(cp_render::Overlay::Water);
+        assert!(water.iter().any(|t| t.contains("100 / 95")), "{water:?}");
+        assert!(texts(cp_render::Overlay::Police).is_empty());
     }
 }

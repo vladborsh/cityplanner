@@ -96,6 +96,7 @@ pub fn overlays_panel(
     overlay: &mut OverlayState,
     lighting: &mut LightingSettings,
     files: &mut FileMenu,
+    view: Option<&cp_sim::SimView>,
 ) -> OverlayRects {
     let mut rects = OverlayRects::default();
     window_bar(ctx, state, files, &mut rects);
@@ -141,7 +142,12 @@ pub fn overlays_panel(
                                         Sizes::BUTTON_PAD,
                                         overlay.active == o,
                                     )
-                                    .on_hover_text(tr(o.label()));
+                                    .on_hover_ui(|ui| {
+                                        ui.strong(tr(o.label()));
+                                        if let Some(v) = view {
+                                            crate::gauges::overlay_hover(ui, v, o);
+                                        }
+                                    });
                                 rects.overlays.push((o, r.rect));
                                 if r.clicked() {
                                     overlay.open(o);
@@ -329,7 +335,7 @@ mod tests {
                 t,
             } = self;
             frame(ctx, input(*t, events), |ui| {
-                *rects = overlays_panel(ui.ctx(), state, overlay, lighting, files);
+                *rects = overlays_panel(ui.ctx(), state, overlay, lighting, files, None);
             });
         }
 
