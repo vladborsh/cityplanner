@@ -200,9 +200,20 @@ pub fn transit_panel(
                         tr("Click roads to place stops, click the first stop to close the line. Backspace takes the last stop away."),
                     )
                 };
-                if tool_tile(ui, TileIcon::Icon(icon), &name, on)
+                // T-302: station first — the button is grey with the reason until the
+                // mode's depot (and track) stand; the sim refuses the line too.
+                let ready = view
+                    .map(|v| cp_transit::prerequisites(content, &v.buildings, &v.net))
+                    .map(|r| r[section.mode.kind() as usize]);
+                let enabled = ready.is_none_or(|r| r.ok);
+                let hint = match ready {
+                    Some(r) if !r.ok => tr(r.missing),
+                    _ => hint,
+                };
+                if tool_tile_enabled(ui, TileIcon::Icon(icon), &name, on, enabled)
                     .on_hover_text(hint)
                     .clicked()
+                    && enabled
                 {
                     if on {
                         tools.select(ActiveTool::None);

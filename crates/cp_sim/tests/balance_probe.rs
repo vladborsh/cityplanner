@@ -131,6 +131,10 @@ fn add_bus_lines(sim: &mut SimRunner, c: &ContentDb, buses: u8) -> usize {
         .iter()
         .fold(Vec2::ZERO, |acc, (_, a, b, _)| acc + mid(*a, *b))
         / segs.len().max(1) as f32;
+    // T-302: station first — the depot before any line.
+    if !place_anywhere(sim, c, "bus_depot") {
+        println!("no lot for the bus depot");
+    }
     let mut made = 0;
     for horizontal in [true, false] {
         let along_across = |a: Vec2, b: Vec2| {
@@ -188,8 +192,8 @@ fn add_bus_lines(sim: &mut SimRunner, c: &ContentDb, buses: u8) -> usize {
         }
         made += 1;
     }
-    if made > 0 && !place_anywhere(sim, c, "bus_depot") {
-        println!("no lot for the bus depot");
+    if made == 0 {
+        println!("no bus line was made");
     }
     let lines: Vec<_> = sim
         .world()

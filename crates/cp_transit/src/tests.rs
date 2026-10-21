@@ -2,7 +2,7 @@
 
 use bevy_ecs::schedule::{IntoScheduleConfigs, Schedule};
 use bevy_ecs::world::World;
-use bevy_math::Vec3;
+use bevy_math::{Vec2, Vec3};
 use cp_content::{ContentDb, SimContent};
 use cp_core::curve::CubicBezier3;
 use cp_core::{Cost, Tick, Treasury};
@@ -231,4 +231,159 @@ fn cutting_a_segment_keeps_the_stop_on_the_new_piece() {
         "50 m on the old segment = 20 m on the piece, got {s}"
     );
     assert_eq!(t.only_line().1.state, LineState::Ok);
+}
+
+/// T-302, station first: without a bus depot the readiness says so and `CreateLine` is
+/// refused; with one standing (or being built) the line is made. Tram and trolleybus need a
+/// depot of their mode and a road with their lane; metro a station and a tunnel track.
+#[test]
+fn a_bus_line_needs_a_depot_first() {
+    use cp_building::{
+        AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingState, Footprint, Lot,
+    };
+    use cp_content::TransitKind;
+    let mut t = town();
+    t.world.init_resource::<BuildingGrid>();
+    let ready = {
+        let net = t.world.resource::<NetGraph>();
+        let b = t.world.resource::<BuildingGrid>();
+        crate::rules::prerequisites(&t.db, b, net)
+    };
+    assert!(ready.iter().all(|r| !r.ok), "{ready:?}");
+    assert_eq!(
+        ready[TransitKind::Bus as usize].missing,
+        "Build a bus depot first"
+    );
+    assert_eq!(
+        ready[TransitKind::Tram as usize].missing,
+        "Build a tram depot first"
+    );
+    let stops = vec![t.stop_at(0, 50.0), t.stop_at(1, 50.0), t.stop_at(2, 50.0)];
+    assert_eq!(
+        t.cmd(TransitCommand::CreateLine {
+            mode: TransitMode::Bus,
+            stops: stops.clone(),
+        }),
+        Err(TransitError::NotReady(TransitMode::Bus))
+    );
+    let depot = t.db.building_id("bus_depot").unwrap();
+    let side = t.sides[0];
+    t.world.resource_mut::<BuildingGrid>().insert(Building {
+        def: depot,
+        footprint: Footprint::Lot(Lot {
+            block: cp_core::Id::new(0, 0),
+            col: 0,
+            w: 1,
+            d: 1,
+        }),
+        level: 1,
+        state: BuildingState::UnderConstruction,
+        ready_at: Tick(0),
+        pos: Vec2::new(50.0, 8.0),
+        rot: 0.0,
+        access: Some(AccessPoint {
+            segment: side,
+            t: 0.5,
+        }),
+        flags: BuildingFlags(0),
+        level_progress: 0.0,
+    });
+    let ready = {
+        let net = t.world.resource::<NetGraph>();
+        let b = t.world.resource::<BuildingGrid>();
+        crate::rules::prerequisites(&t.db, b, net)
+    };
+    assert!(ready[TransitKind::Bus as usize].ok, "{ready:?}");
+    assert!(
+        !ready[TransitKind::Tram as usize].ok,
+        "no tram depot, no rails"
+    );
+    assert!(
+        t.cmd(TransitCommand::CreateLine {
+            mode: TransitMode::Bus,
+            stops,
+        })
+        .is_ok()
+    );
+}
+
+/// T-302: a stop needs a lane the line's vehicles may drive: a bus stop on a tram-only street
+/// is refused, one on a bus street is fine.
+#[test]
+fn a_bus_stop_needs_a_lane_a_bus_may_drive() {
+    let t = town();
+    let db = &t.db;
+    let mut g = NetGraph::new();
+    let tram = db.road_id("tram_2l").unwrap();
+    let bus = db.road_id("bus_2l").unwrap();
+    let a = g
+        .add_segment(
+            db.road(tram),
+            tram,
+            CubicBezier3::line(Vec3::new(0.0, 0.0, 0.0), Vec3::new(200.0, 0.0, 0.0)),
+            Elevation::Ground,
+        )
+        .unwrap();
+    let b = g
+        .add_segment(
+            db.road(bus),
+            bus,
+            CubicBezier3::line(Vec3::new(0.0, 0.0, 300.0), Vec3::new(200.0, 0.0, 300.0)),
+            Elevation::Ground,
+        )
+        .unwrap();
+    let stops = cp_core::Arena::default();
+    use cp_content::VehicleClass;
+    assert_eq!(
+        check_road_stop(
+            &g,
+            db,
+            &stops,
+            VehicleClass::Bus,
+            a,
+            100.0,
+            Side::Right,
+            None
+        ),
+        Err(StopError::NoLane)
+    );
+    assert!(
+        check_road_stop(
+            &g,
+            db,
+            &stops,
+            VehicleClass::Tram,
+            a,
+            100.0,
+            Side::Right,
+            None
+        )
+        .is_ok()
+    );
+    assert!(
+        check_road_stop(
+            &g,
+            db,
+            &stops,
+            VehicleClass::Bus,
+            b,
+            100.0,
+            Side::Right,
+            None
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        check_road_stop(
+            &g,
+            db,
+            &stops,
+            VehicleClass::Car,
+            b,
+            100.0,
+            Side::Right,
+            None
+        ),
+        Err(StopError::NoLane)
+    );
 }

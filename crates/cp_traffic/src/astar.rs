@@ -10,6 +10,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use bevy_math::Vec2;
+use cp_content::{VehicleClass, lane_allows};
 use cp_net::LaneId;
 use serde::{Deserialize, Serialize};
 
@@ -74,9 +75,35 @@ pub fn find_car_path(
     from: &Access,
     to: &Access,
 ) -> Result<CarPath, NoPath> {
-    let (start, s0) = graph.resolve_car(from).ok_or(NoPath)?;
-    let (goal, s1) = graph.resolve_car(to).ok_or(NoPath)?;
-    car_route(graph, cong, None, (start, s0), (goal, s1))
+    find_class_path(graph, cong, VehicleClass::Car, from, to)
+}
+
+/// [`find_car_path`] for a vehicle of `class` (T-302): the access points resolve to lanes the
+/// class may use and the route keeps to them (`cp_content::lane_allows`). A bus rides car and
+/// bus lanes, a tram its rails only, a trolleybus its wired lanes only.
+pub fn find_class_path(
+    graph: &PathGraph,
+    cong: &CongestionMap,
+    class: VehicleClass,
+    from: &Access,
+    to: &Access,
+) -> Result<CarPath, NoPath> {
+    let (start, s0) = graph.resolve_class(from, class).ok_or(NoPath)?;
+    let (goal, s1) = graph.resolve_class(to, class).ok_or(NoPath)?;
+    car_route(graph, cong, None, class, (start, s0), (goal, s1))
+}
+
+/// [`find_car_path_lanes`] for a vehicle of `class` (T-302).
+pub fn find_class_path_lanes(
+    graph: &PathGraph,
+    cong: &CongestionMap,
+    class: VehicleClass,
+    (from, from_s): (LaneId, f32),
+    (to, to_s): (LaneId, f32),
+) -> Result<CarPath, NoPath> {
+    let start = graph.car_slot(from).ok_or(NoPath)?;
+    let goal = graph.car_slot(to).ok_or(NoPath)?;
+    car_route(graph, cong, None, class, (start, from_s), (goal, to_s))
 }
 
 /// [`find_car_path`] for a truck (T-195): lanes in districts with the heavy traffic ban cost
@@ -90,7 +117,14 @@ pub fn find_truck_path(
 ) -> Result<CarPath, NoPath> {
     let (start, s0) = graph.resolve_car(from).ok_or(NoPath)?;
     let (goal, s1) = graph.resolve_car(to).ok_or(NoPath)?;
-    car_route(graph, cong, Some(heavy), (start, s0), (goal, s1))
+    car_route(
+        graph,
+        cong,
+        Some(heavy),
+        VehicleClass::Car,
+        (start, s0),
+        (goal, s1),
+    )
 }
 
 /// [`find_car_path_lanes`] for a truck, see [`find_truck_path`].
@@ -103,7 +137,14 @@ pub fn find_truck_path_lanes(
 ) -> Result<CarPath, NoPath> {
     let start = graph.car_slot(from).ok_or(NoPath)?;
     let goal = graph.car_slot(to).ok_or(NoPath)?;
-    car_route(graph, cong, Some(heavy), (start, from_s), (goal, to_s))
+    car_route(
+        graph,
+        cong,
+        Some(heavy),
+        VehicleClass::Car,
+        (start, from_s),
+        (goal, to_s),
+    )
 }
 
 /// Fastest route from lane `from` (at `from_s` lane-metres) to lane `to` (at `to_s`): the
@@ -116,7 +157,14 @@ pub fn find_car_path_lanes(
 ) -> Result<CarPath, NoPath> {
     let start = graph.car_slot(from).ok_or(NoPath)?;
     let goal = graph.car_slot(to).ok_or(NoPath)?;
-    car_route(graph, cong, None, (start, from_s), (goal, to_s))
+    car_route(
+        graph,
+        cong,
+        None,
+        VehicleClass::Car,
+        (start, from_s),
+        (goal, to_s),
+    )
 }
 
 /// Fastest route along the track between two access points (T-161). Trains do not slow each
@@ -130,6 +178,7 @@ pub fn find_rail_path(graph: &PathGraph, from: &Access, to: &Access) -> Result<C
         graph.max_rail_speed,
         &CongestionMap::default(),
         None,
+        VehicleClass::Rail,
         (start, s0),
         (goal, s1),
     )
@@ -139,6 +188,7 @@ fn car_route(
     graph: &PathGraph,
     cong: &CongestionMap,
     heavy: Option<&HeavyBan>,
+    class: VehicleClass,
     start: (u32, f32),
     goal: (u32, f32),
 ) -> Result<CarPath, NoPath> {
@@ -148,22 +198,31 @@ fn car_route(
         graph.max_car_speed,
         cong,
         heavy,
+        class,
         start,
         goal,
     )
 }
 
-/// A* over one lane graph (the road graph or the track graph).
+/// A* over one lane graph (the road graph or the track graph), on the lanes `class` may use
+/// (T-302): a lane the class is not allowed on is never entered, and a start or goal lane it
+/// is not allowed on is no path.
+#[allow(clippy::too_many_arguments)]
 fn route(
     lanes: &[Option<LaneNode>],
     edges: &[Vec<CarEdge>],
     max_speed: f32,
     cong: &CongestionMap,
     heavy: Option<&HeavyBan>,
+    class: VehicleClass,
     (start, s0): (u32, f32),
     (goal, s1): (u32, f32),
 ) -> Result<CarPath, NoPath> {
     let lane = |i: u32| lanes[i as usize].as_ref().expect("lane");
+    let allowed = |i: u32| lane_allows(lane(i).kind, class);
+    if !allowed(start) || !allowed(goal) {
+        return Err(NoPath);
+    }
     let c = |i: u32| cong.get(lane(i).segment);
     // A truck's lanes in a banned district cost more, unless it starts or ends there (T-195).
     let ends = heavy.map(|h| {
@@ -208,6 +267,9 @@ fn route(
         }
         for e in &edges[u as usize] {
             let v = e.to;
+            if !allowed(v) {
+                continue;
+            }
             if v == goal {
                 let tail = if e.lane_change { 0.0 } else { time(v, s1) };
                 let total = g[u as usize] + e.cost + tail;

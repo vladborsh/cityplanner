@@ -312,6 +312,7 @@ pub fn road_tile_scaled(painter: &egui::Painter, def: &RoadDef, rect: egui::Rect
             LaneKind::Car => ASPHALT,
             LaneKind::Bus => egui::Color32::from_rgb(150, 70, 60),
             LaneKind::Tram | LaneKind::Rail => egui::Color32::from_rgb(120, 120, 130),
+            LaneKind::Trolley => egui::Color32::from_rgb(150, 130, 60),
             LaneKind::Bike => egui::Color32::from_rgb(60, 140, 85),
             LaneKind::Pedestrian => egui::Color32::from_rgb(190, 182, 165),
         };

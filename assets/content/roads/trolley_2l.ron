@@ -1,0 +1,27 @@
+// T-302: only trolleybuses (under the wires), no cars. Profile of `basic_2l`; whole cells wide. Numbers: tune later.
+Road((
+    id: "trolley_2l",
+    name: "Trolleybus street (2 lanes)",
+    class: Local,
+    width: 16.0,
+    lanes: [
+        (kind: Pedestrian, dir: Forward, width: 4.5, offset: 5.75),
+        (kind: Trolley, dir: Backward, width: 3.5, offset: 1.75),
+        (kind: Trolley, dir: Forward, width: 3.5, offset: -1.75),
+        (kind: Pedestrian, dir: Forward, width: 4.5, offset: -5.75),
+    ],
+    median_width: 0.0,
+    speed_kmh: 40,
+    max_slope: 0.12,
+    cost_per_m: 5.0,
+    upkeep_per_m_week: 0.06,
+    // A transit-only road: no zoning (its homes would have no way for a car).
+    allows_zoning: false,
+    lamp_spacing_m: 26.0,
+    crosswalks: true,
+    rank: 2,
+    elevated: Some((cost_per_m: 15.0, upkeep_per_m_week: 0.120, mesh: "road/basic_2l_elevated")),
+    bridge: Some((cost_per_m: 30.0, upkeep_per_m_week: 0.180, mesh: "road/basic_2l_bridge")),
+    mesh: "road/basic_2l",
+    material: "road/asphalt",
+))

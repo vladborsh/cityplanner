@@ -105,7 +105,38 @@ impl Links {
 }
 
 fn is_vehicle(k: LaneKind) -> bool {
-    matches!(k, LaneKind::Car | LaneKind::Bus)
+    k.is_road_vehicle()
+}
+
+/// The lanes a vehicle entering from a lane of `from` kind may leave into, in order of
+/// preference (T-302): a bus keeps to bus lanes and joins the general traffic where they end;
+/// a car lane leads into bus lanes only where the arm has no car lane (a bus-only street: the
+/// bus on the car lane must get in, and the route search keeps cars out of it,
+/// `cp_content::lane_allows`); trams and trolleybuses never leave their lanes and nothing
+/// else enters them.
+pub(crate) fn exit_kinds(from: LaneKind) -> &'static [LaneKind] {
+    match from {
+        LaneKind::Bus => &[LaneKind::Bus, LaneKind::Car],
+        LaneKind::Car => &[LaneKind::Car, LaneKind::Bus],
+        LaneKind::Tram => &[LaneKind::Tram],
+        LaneKind::Trolley => &[LaneKind::Trolley],
+        LaneKind::Pedestrian | LaneKind::Bike | LaneKind::Rail => &[],
+    }
+}
+
+/// The outbound lanes of an arm a vehicle from a lane of `from` kind may take: the first kind
+/// of [`exit_kinds`] the arm has.
+fn exits_for(out: &[VLane], from: LaneKind) -> Vec<VLane> {
+    exit_kinds(from)
+        .iter()
+        .map(|&k| {
+            out.iter()
+                .filter(|l| l.kind == k)
+                .copied()
+                .collect::<Vec<_>>()
+        })
+        .find(|v| !v.is_empty())
+        .unwrap_or_default()
 }
 
 /// Lane point and travel tangent at segment parameter `t`.
@@ -135,8 +166,10 @@ fn ccw_pos(lane: &Lane, at_start: bool) -> f32 {
     if at_start { -lane.offset } else { lane.offset }
 }
 
+#[derive(Clone, Copy)]
 struct VLane {
     id: LaneId,
+    kind: LaneKind,
     rank_pos: f32,
     end: Vec3,
     tangent: Vec3,
@@ -160,6 +193,7 @@ fn arm_lanes(graph: &NetGraph, arm: &Arm) -> ArmLanes {
             let (end, tangent) = lane_at(l, arm.trim_t);
             let v = VLane {
                 id: lid,
+                kind: l.kind,
                 rank_pos: right_pos(l),
                 end,
                 tangent,
@@ -255,74 +289,97 @@ pub fn compute_links(graph: &NetGraph, arms: &[Arm]) -> Links {
     let lanes: Vec<ArmLanes> = arms.iter().map(|a| arm_lanes(graph, a)).collect();
     let mut connections: Vec<LaneConnection> = Vec::new();
 
+    // T-302: the inbound lanes of an arm connect by kind: each kind present among them is
+    // routed on its own (its lanes right to left) into the exits of its kind (see
+    // [`exit_kinds`]). A road of car lanes only goes through this loop once, as before.
+    let kinds_in = |arm: &ArmLanes| {
+        let mut ks: Vec<LaneKind> = arm.inbound.iter().map(|l| l.kind).collect();
+        ks.sort();
+        ks.dedup();
+        ks
+    };
     for i in 0..k {
-        let inb = &lanes[i].inbound;
-        if inb.is_empty() {
-            continue;
-        }
-        if k == 1 {
-            // Dead end: U-turn, innermost with innermost.
-            let out = &lanes[i].outbound;
-            if out.is_empty() {
+        for from_kind in kinds_in(&lanes[i]) {
+            let inb: Vec<VLane> = lanes[i]
+                .inbound
+                .iter()
+                .filter(|l| l.kind == from_kind)
+                .copied()
+                .collect();
+            let inb = &inb;
+            if inb.is_empty() {
                 continue;
             }
-            // Innermost = leftmost (the end of the right-to-left order).
-            for (t, from) in inb.iter().rev().enumerate() {
-                let to = &out[out.len() - 1 - t.min(out.len() - 1)];
-                connections.push(LaneConnection {
-                    from: from.id,
-                    to: to.id,
-                    turn: Turn::UTurn,
-                    curve: connection_curve(from, to, true),
-                    length: 0.0,
-                });
-            }
-            continue;
-        }
-        // Exits in counter-clockwise order starting after arm i.
-        let exits: Vec<(usize, Turn)> = (1..k)
-            .map(|d| (i + d) % k)
-            .filter(|&j| !lanes[j].outbound.is_empty())
-            .map(|j| (j, classify(lanes[i].dir, lanes[j].dir)))
-            .collect();
-        let has = [
-            exits.iter().any(|e| e.1 == Turn::Right),
-            exits.iter().any(|e| e.1 == Turn::Straight),
-            exits.iter().any(|e| e.1 == Turn::Left),
-        ];
-        let sets = lane_turns(inb.len(), has);
-        for (r, from) in inb.iter().enumerate() {
-            for &(j, turn) in &exits {
-                let slot = match turn {
-                    Turn::Right => 0,
-                    Turn::Straight => 1,
-                    _ => 2,
-                };
-                if !sets[r][slot] {
+            if k == 1 {
+                // Dead end: U-turn, innermost with innermost.
+                let out = exits_for(&lanes[i].outbound, from_kind);
+                let out = &out;
+                if out.is_empty() {
                     continue;
                 }
-                let out = &lanes[j].outbound;
-                let p = out.len();
-                let idx = match turn {
-                    Turn::Right => 0,
-                    Turn::Left => p - 1,
-                    _ => {
-                        let n = inb.len();
-                        if n == 1 {
-                            0
-                        } else {
-                            ((r as f32) * (p - 1) as f32 / (n - 1) as f32).round() as usize
-                        }
+                // Innermost = leftmost (the end of the right-to-left order).
+                for (t, from) in inb.iter().rev().enumerate() {
+                    let to = &out[out.len() - 1 - t.min(out.len() - 1)];
+                    connections.push(LaneConnection {
+                        from: from.id,
+                        to: to.id,
+                        turn: Turn::UTurn,
+                        curve: connection_curve(from, to, true),
+                        length: 0.0,
+                    });
+                }
+                continue;
+            }
+            // Exits in counter-clockwise order starting after arm i: the arms with an outbound
+            // lane this kind may take.
+            let outs: Vec<Vec<VLane>> = lanes
+                .iter()
+                .map(|a| exits_for(&a.outbound, from_kind))
+                .collect();
+            let exits: Vec<(usize, Turn)> = (1..k)
+                .map(|d| (i + d) % k)
+                .filter(|&j| !outs[j].is_empty())
+                .map(|j| (j, classify(lanes[i].dir, lanes[j].dir)))
+                .collect();
+            let has = [
+                exits.iter().any(|e| e.1 == Turn::Right),
+                exits.iter().any(|e| e.1 == Turn::Straight),
+                exits.iter().any(|e| e.1 == Turn::Left),
+            ];
+            let sets = lane_turns(inb.len(), has);
+            for (r, from) in inb.iter().enumerate() {
+                for &(j, turn) in &exits {
+                    let slot = match turn {
+                        Turn::Right => 0,
+                        Turn::Straight => 1,
+                        _ => 2,
+                    };
+                    if !sets[r][slot] {
+                        continue;
                     }
-                };
-                let to = &out[idx.min(p - 1)];
-                connections.push(LaneConnection {
-                    from: from.id,
-                    to: to.id,
-                    turn,
-                    curve: connection_curve(from, to, false),
-                    length: 0.0,
-                });
+                    let out = &outs[j];
+                    let p = out.len();
+                    let idx = match turn {
+                        Turn::Right => 0,
+                        Turn::Left => p - 1,
+                        _ => {
+                            let n = inb.len();
+                            if n == 1 {
+                                0
+                            } else {
+                                ((r as f32) * (p - 1) as f32 / (n - 1) as f32).round() as usize
+                            }
+                        }
+                    };
+                    let to = &out[idx.min(p - 1)];
+                    connections.push(LaneConnection {
+                        from: from.id,
+                        to: to.id,
+                        turn,
+                        curve: connection_curve(from, to, false),
+                        length: 0.0,
+                    });
+                }
             }
         }
     }

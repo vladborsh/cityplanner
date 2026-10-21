@@ -386,6 +386,29 @@ mod tests {
             })
             .collect();
         sim.tick_once();
+        // T-302: a bus line needs a depot first.
+        sim.world_mut()
+            .resource_mut::<cp_building::BuildingGrid>()
+            .insert(cp_building::Building {
+                def: db.building_id("bus_depot").unwrap(),
+                footprint: cp_building::Footprint::Lot(cp_building::Lot {
+                    block: cp_core::Id::new(0, 0),
+                    col: 0,
+                    w: 1,
+                    d: 1,
+                }),
+                level: 1,
+                state: cp_building::BuildingState::Active,
+                ready_at: cp_core::Tick(0),
+                pos: bevy::math::Vec2::new(100.0, 8.0),
+                rot: 0.0,
+                access: Some(cp_building::AccessPoint {
+                    segment: sides[0],
+                    t: 0.5,
+                }),
+                flags: cp_building::BuildingFlags(0),
+                level_progress: 0.0,
+            });
         let stops = sides
             .iter()
             .map(|&seg| StopRef::NewRoad {

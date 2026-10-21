@@ -113,6 +113,16 @@ pub fn road(d: &RoadDef) -> Problems {
             "a Rail lane belongs to a road of class Rail",
         );
     }
+    // T-302: a transit-only road (no `Car` lane) carries no zoning: its homes would have no
+    // way for a car to come or go.
+    let has_car = d.lanes.iter().any(|l| l.kind == LaneKind::Car);
+    let transit_only = !has_car
+        && d.lanes
+            .iter()
+            .any(|l| matches!(l.kind, LaneKind::Bus | LaneKind::Tram | LaneKind::Trolley));
+    if transit_only && d.allows_zoning {
+        c.bad("allows_zoning", "a transit-only road does not allow zoning");
+    }
     if d.class == RoadClass::Path {
         for (i, l) in d.lanes.iter().enumerate() {
             if l.kind != LaneKind::Pedestrian {

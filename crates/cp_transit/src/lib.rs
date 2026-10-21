@@ -41,7 +41,10 @@ pub use model::{
 };
 pub use plan::{Leg, LinePlan, LinePlans, PlanError, plan_line, plan_metro};
 pub use riders::{choose_transit, run_riders};
-pub use rules::{STOP_NODE_CLEARANCE, STOP_SNAP, STOP_SPACING, StopError, check_road_stop};
+pub use rules::{
+    Ready, STOP_NODE_CLEARANCE, STOP_SNAP, STOP_SPACING, StopError, check_road_stop, prerequisites,
+    segment_has_lane_for,
+};
 pub use run::run_lines;
 pub use station::{
     add_station, connected_station, platform_ends, platform_segment, remove_station,

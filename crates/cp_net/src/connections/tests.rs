@@ -45,8 +45,15 @@ fn check(g: &NetGraph, j: &Junction) {
     let l = &j.links;
     for (i, c) in l.connections.iter().enumerate() {
         let (from, to) = (g.lane(c.from).unwrap(), g.lane(c.to).unwrap());
-        assert!(matches!(from.kind, LaneKind::Car | LaneKind::Bus));
-        assert!(matches!(to.kind, LaneKind::Car | LaneKind::Bus));
+        assert!(from.kind.is_road_vehicle());
+        assert!(to.kind.is_road_vehicle());
+        // T-302: a connection joins compatible kinds only.
+        assert!(
+            exit_kinds(from.kind).contains(&to.kind),
+            "{:?} -> {:?}",
+            from.kind,
+            to.kind
+        );
         // From runs towards the node, to away from it.
         let fa = &j.arms[arm_of(g, j, c.from)];
         let ta = &j.arms[arm_of(g, j, c.to)];
@@ -468,4 +475,199 @@ fn turn_connections_are_smooth_bends() {
         }
         assert!(turns >= 8, "{road}: {turns} turns");
     }
+}
+
+/// The arm indices of `j` whose segment is road `name` (T-302 tests; arms are sorted by angle,
+/// not in the order `star` got them).
+fn arms_of_road(db: &ContentDb, g: &NetGraph, j: &Junction, name: &str) -> Vec<usize> {
+    let road = db.road_id(name).unwrap();
+    j.arms
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| g.segment(a.segment).is_some_and(|s| s.road == road))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// T-302: lanes connect by kind. On a T of a tram collector (through) and a local street: the
+/// tram lanes run straight on to the other tram lanes only, the cars of the collector turn into
+/// the street and go straight, the street's cars never enter a tram lane, and a tram's straight
+/// crossing conflicts with a car's left turn.
+#[test]
+fn tram_lanes_connect_to_tram_lanes_only_and_cross_the_cars() {
+    let db = content();
+    let (g, n, _) = star(
+        &db,
+        &[
+            (0.0, "medium_4l_tram"),
+            (180.0, "medium_4l_tram"),
+            (90.0, "basic_2l"),
+        ],
+    );
+    let j = junction(&g, n);
+    check(&g, &j);
+    let kind = |id: LaneId| g.lane(id).unwrap().kind;
+    let conns = &j.links.connections;
+    let tram: Vec<_> = conns
+        .iter()
+        .filter(|c| kind(c.from) == LaneKind::Tram)
+        .collect();
+    assert_eq!(tram.len(), 2, "one straight connection per tram lane");
+    assert!(
+        tram.iter()
+            .all(|c| kind(c.to) == LaneKind::Tram && c.turn == Turn::Straight)
+    );
+    assert!(
+        conns
+            .iter()
+            .all(|c| (kind(c.to) == LaneKind::Tram) == (kind(c.from) == LaneKind::Tram)),
+        "no car enters a tram lane and no tram leaves one"
+    );
+    // The street's cars reach both collector directions (right and left turns).
+    let street = arms_of_road(&db, &g, &j, "basic_2l")[0];
+    let street_turns: Vec<Turn> = conns
+        .iter()
+        .filter(|c| arm_of(&g, &j, c.from) == street)
+        .map(|c| c.turn)
+        .collect();
+    assert!(street_turns.contains(&Turn::Right) && street_turns.contains(&Turn::Left));
+    // A tram going straight conflicts with the street's left turn across it.
+    let (ti, _) = conns
+        .iter()
+        .enumerate()
+        .find(|(_, c)| kind(c.from) == LaneKind::Tram)
+        .unwrap();
+    let left = conns
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| arm_of(&g, &j, c.from) == street && c.turn == Turn::Left)
+        .map(|(i, _)| i as u16);
+    let mut crossed = false;
+    for li in left {
+        crossed |= j.links.in_conflict(ti as u16, li);
+    }
+    let (ti2, _) = conns
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| kind(c.from) == LaneKind::Tram)
+        .nth(1)
+        .unwrap();
+    let left2: Vec<u16> = conns
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| arm_of(&g, &j, c.from) == street && c.turn == Turn::Left)
+        .map(|(i, _)| i as u16)
+        .collect();
+    crossed |= left2.iter().any(|&li| j.links.in_conflict(ti2 as u16, li));
+    assert!(
+        crossed,
+        "a tram crossing conflicts with a left turn over it"
+    );
+}
+
+/// T-302: a bus lane joins the general traffic where it ends. On a T of a bus collector
+/// (through) and a local street: bus lanes go on to bus lanes straight ahead and to car lanes
+/// of the street; no car lane connects into a bus lane.
+#[test]
+fn bus_lanes_go_on_to_bus_lanes_or_cars_but_cars_never_enter_a_bus_lane() {
+    let db = content();
+    let (g, n, _) = star(
+        &db,
+        &[
+            (0.0, "medium_4l_bus"),
+            (180.0, "medium_4l_bus"),
+            (90.0, "basic_2l"),
+        ],
+    );
+    let j = junction(&g, n);
+    check(&g, &j);
+    let kind = |id: LaneId| g.lane(id).unwrap().kind;
+    let conns = &j.links.connections;
+    let from_bus: Vec<_> = conns
+        .iter()
+        .filter(|c| kind(c.from) == LaneKind::Bus)
+        .collect();
+    assert!(!from_bus.is_empty());
+    assert!(
+        from_bus
+            .iter()
+            .any(|c| kind(c.to) == LaneKind::Bus && c.turn == Turn::Straight),
+        "bus lane straight on to the next bus lane"
+    );
+    let street = arms_of_road(&db, &g, &j, "basic_2l")[0];
+    assert!(
+        from_bus
+            .iter()
+            .any(|c| kind(c.to) == LaneKind::Car && arm_of(&g, &j, c.to) == street),
+        "bus lane into the street's car lane"
+    );
+    assert!(
+        conns
+            .iter()
+            .all(|c| !(kind(c.from) == LaneKind::Car && kind(c.to) == LaneKind::Bus)),
+        "no car lane into a bus lane where the arm has car lanes"
+    );
+}
+
+/// T-302: into a bus-only street the car lanes do connect (the bus riding the car lane needs
+/// the way in; the route search keeps the cars out), and out of it the bus lanes join the
+/// street's car lanes.
+#[test]
+fn a_bus_only_street_is_entered_from_car_lanes() {
+    let db = content();
+    // A T, not a straight join: a two-arm node is a `Middle` where lanes just run on.
+    let (g, n, _) = star(
+        &db,
+        &[(0.0, "basic_2l"), (180.0, "bus_2l"), (90.0, "basic_2l")],
+    );
+    let j = junction(&g, n);
+    check(&g, &j);
+    let kind = |id: LaneId| g.lane(id).unwrap().kind;
+    let conns = &j.links.connections;
+    assert!(
+        conns
+            .iter()
+            .any(|c| kind(c.from) == LaneKind::Car && kind(c.to) == LaneKind::Bus)
+    );
+    assert!(
+        conns
+            .iter()
+            .any(|c| kind(c.from) == LaneKind::Bus && kind(c.to) == LaneKind::Car)
+    );
+}
+
+/// T-302: a transit-only street still turns at a crossing of ordinary streets (its lanes are
+/// carriageway for the junction), and the ordinary streets' cars never enter it.
+#[test]
+fn a_tram_street_crossing_a_local_street_keeps_cars_out_of_the_rails() {
+    let db = content();
+    let (g, n, _) = star(
+        &db,
+        &[
+            (0.0, "tram_2l"),
+            (180.0, "tram_2l"),
+            (90.0, "basic_2l"),
+            (270.0, "basic_2l"),
+        ],
+    );
+    let j = junction(&g, n);
+    check(&g, &j);
+    let kind = |id: LaneId| g.lane(id).unwrap().kind;
+    let conns = &j.links.connections;
+    assert!(conns.iter().any(|c| kind(c.from) == LaneKind::Tram));
+    assert!(
+        conns
+            .iter()
+            .all(|c| (kind(c.from) == LaneKind::Tram) == (kind(c.to) == LaneKind::Tram))
+    );
+    // The street's cars go straight across the rails and turn into the other street, never
+    // into the tram street.
+    let tram_arms = arms_of_road(&db, &g, &j, "tram_2l");
+    assert_eq!(tram_arms.len(), 2);
+    let car_to_tram_arm = conns
+        .iter()
+        .filter(|c| kind(c.from) == LaneKind::Car)
+        .filter(|c| tram_arms.contains(&arm_of(&g, &j, c.to)))
+        .count();
+    assert_eq!(car_to_tram_arm, 0, "no car into the tram street's arms");
 }

@@ -931,6 +931,105 @@ pub enum LaneKind {
     Bus = 4,
     /// Metro and rail track (T-161): only trains use it.
     Rail = 5,
+    /// Trolleybus lane under wires (T-302): only trolleybuses use it.
+    Trolley = 6,
+}
+
+/// What drives: the class a vehicle's [`VehicleKind`] belongs to for the lane permissions
+/// (T-302, `system-design.md` §16 M3 (F)). `Rail` is the trains' own graph.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[repr(u8)]
+pub enum VehicleClass {
+    /// Cars, trucks, service and cargo vehicles: `Car` lanes only.
+    #[default]
+    Car = 0,
+    /// Buses: `Car` and `Bus` lanes.
+    Bus = 1,
+    /// Trams: `Tram` lanes only.
+    Tram = 2,
+    /// Trolleybuses: `Trolley` lanes only (under the wires).
+    Trolley = 3,
+    /// Trains: `Rail` lanes only.
+    Rail = 4,
+}
+
+/// Whether a vehicle of `class` may drive on a lane of `kind` (T-302). Cars never enter a
+/// transit lane; a bus leaves its lane for the general traffic where it ends; a tram and a
+/// trolleybus never leave theirs.
+pub const fn lane_allows(kind: LaneKind, class: VehicleClass) -> bool {
+    matches!(
+        (kind, class),
+        (LaneKind::Car, VehicleClass::Car | VehicleClass::Bus)
+            | (LaneKind::Bus, VehicleClass::Bus)
+            | (LaneKind::Tram, VehicleClass::Tram)
+            | (LaneKind::Trolley, VehicleClass::Trolley)
+            | (LaneKind::Rail, VehicleClass::Rail)
+    )
+}
+
+impl LaneKind {
+    /// A lane some vehicle class drives on (not a sidewalk or a bike lane).
+    pub const fn is_vehicle(self) -> bool {
+        matches!(
+            self,
+            Self::Car | Self::Bus | Self::Tram | Self::Trolley | Self::Rail
+        )
+    }
+    /// A road vehicle lane: part of the road graph and the junction connections (`Rail` is
+    /// the trains' own graph).
+    pub const fn is_road_vehicle(self) -> bool {
+        matches!(self, Self::Car | Self::Bus | Self::Tram | Self::Trolley)
+    }
+    /// A lane the general traffic (cars) may use: the segment's capacity and load.
+    pub const fn is_general(self) -> bool {
+        matches!(self, Self::Car | Self::Bus)
+    }
+}
+
+/// The public transport mode a depot or a station serves (T-302, content side of
+/// `cp_transit::TransitMode`; same numbers, append only).
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[repr(u8)]
+pub enum TransitKind {
+    #[default]
+    Bus = 0,
+    Metro = 1,
+    Train = 2,
+    Tram = 3,
+    Trolley = 4,
+}
+
+impl TransitKind {
+    pub const ALL: [TransitKind; 5] = [
+        Self::Bus,
+        Self::Metro,
+        Self::Train,
+        Self::Tram,
+        Self::Trolley,
+    ];
+    /// The lane kind the mode's vehicles need on a road for a stop or a depot; `None` for the
+    /// modes with stations on their own track.
+    pub const fn road_lane(self) -> Option<LaneKind> {
+        match self {
+            Self::Bus => Some(LaneKind::Car),
+            Self::Tram => Some(LaneKind::Tram),
+            Self::Trolley => Some(LaneKind::Trolley),
+            Self::Metro | Self::Train => None,
+        }
+    }
+    /// The class of the mode's vehicles.
+    pub const fn class(self) -> VehicleClass {
+        match self {
+            Self::Bus => VehicleClass::Bus,
+            Self::Tram => VehicleClass::Tram,
+            Self::Trolley => VehicleClass::Trolley,
+            Self::Metro | Self::Train => VehicleClass::Rail,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -1043,10 +1142,11 @@ impl RoadDef {
     /// Every car lane is `Forward`: traffic runs one way, along the segment. A road without
     /// car lanes is not one-way.
     pub fn is_one_way(&self) -> bool {
+        // T-302: a transit-only street is two-way by its transit lanes.
         let mut cars = self
             .lanes
             .iter()
-            .filter(|l| l.kind == LaneKind::Car)
+            .filter(|l| l.kind.is_road_vehicle())
             .peekable();
         cars.peek().is_some() && cars.all(|l| l.dir == LaneDir::Forward)
     }
@@ -1473,6 +1573,9 @@ pub struct ServiceDef {
     /// What the building can hold (garbage, bodies); 0 = not a store (T-134). // tune later
     #[serde(default)]
     pub storage: u32,
+    /// The transit mode a `Transit` service (a depot) serves (T-302); `Bus` when absent.
+    #[serde(default)]
+    pub transit_mode: TransitKind,
     /// Education tier 1..=3 (elementary, high school, university); post tier 1 = post office,
     /// 2 = sorting facility (T-247); 0 for every other kind.
     #[serde(default)]
@@ -1506,13 +1609,17 @@ pub enum VehicleKind {
     CargoTrain = 12,
     /// A mail van of a post office (T-247).
     Mail = 13,
+    /// A tram (T-302): rides `Tram` lanes only.
+    Tram = 14,
+    /// A trolleybus (T-302): rides `Trolley` lanes only.
+    Trolley = 15,
 }
 
 impl VehicleKind {
     /// Every kind in number order: the tables indexed by `kind as usize` (`cp_traffic`'s specs,
     /// the render's looks) have this many entries. The match in [`Self::number`] has no
     /// wildcard, so a new variant does not compile until it is added here.
-    pub const ALL: [VehicleKind; 14] = [
+    pub const ALL: [VehicleKind; 16] = [
         Self::Car,
         Self::Truck,
         Self::Bus,
@@ -1527,8 +1634,30 @@ impl VehicleKind {
         Self::Ship,
         Self::CargoTrain,
         Self::Mail,
+        Self::Tram,
+        Self::Trolley,
     ];
     pub const COUNT: usize = Self::ALL.len();
+
+    /// The lane permissions class of the kind (T-302).
+    pub const fn class(self) -> VehicleClass {
+        match self {
+            Self::Bus => VehicleClass::Bus,
+            Self::Tram => VehicleClass::Tram,
+            Self::Trolley => VehicleClass::Trolley,
+            Self::Metro | Self::Train | Self::CargoTrain => VehicleClass::Rail,
+            Self::Car
+            | Self::Truck
+            | Self::Emergency
+            | Self::Cargo
+            | Self::CargoFarm
+            | Self::CargoLogs
+            | Self::CargoOre
+            | Self::CargoTanker
+            | Self::Ship
+            | Self::Mail => VehicleClass::Car,
+        }
+    }
 
     /// The truck that hauls a cargo (T-213b): the shop goods ride the plain `Cargo` truck, each
     /// chain its own.
@@ -1559,6 +1688,8 @@ impl VehicleKind {
             Self::Ship => 11,
             Self::CargoTrain => 12,
             Self::Mail => 13,
+            Self::Tram => 14,
+            Self::Trolley => 15,
         }
     }
 }
@@ -1623,4 +1754,35 @@ pub struct UtilityDef {
     /// `id` (filled in when the content is loaded).
     #[serde(default)]
     pub icon: String,
+}
+
+#[cfg(test)]
+mod lane_permission_tests {
+    use super::*;
+
+    /// T-302: the table of §16 M3 (F). Cars never enter a transit lane, a bus rides car and bus
+    /// lanes, a tram and a trolleybus their own lanes only, trains the rails.
+    #[test]
+    fn who_drives_where() {
+        use LaneKind as L;
+        use VehicleClass as V;
+        let allowed = |k: L| -> Vec<V> {
+            [V::Car, V::Bus, V::Tram, V::Trolley, V::Rail]
+                .into_iter()
+                .filter(|&c| lane_allows(k, c))
+                .collect()
+        };
+        assert_eq!(allowed(L::Car), [V::Car, V::Bus]);
+        assert_eq!(allowed(L::Bus), [V::Bus]);
+        assert_eq!(allowed(L::Tram), [V::Tram]);
+        assert_eq!(allowed(L::Trolley), [V::Trolley]);
+        assert_eq!(allowed(L::Rail), [V::Rail]);
+        assert!(allowed(L::Pedestrian).is_empty() && allowed(L::Bike).is_empty());
+        assert_eq!(VehicleKind::Bus.class(), V::Bus);
+        assert_eq!(VehicleKind::Tram.class(), V::Tram);
+        assert_eq!(VehicleKind::Trolley.class(), V::Trolley);
+        assert_eq!(VehicleKind::Cargo.class(), V::Car);
+        assert_eq!(VehicleKind::Metro.class(), V::Rail);
+        assert_eq!(TransitKind::Tram.class(), V::Tram);
+    }
 }

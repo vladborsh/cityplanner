@@ -159,7 +159,16 @@ pub fn target_at(view: &SimView, tool: &LineTool, p: Vec2) -> Target {
         Side::Right
     };
     let scratch = scratch_with(view, tool, tool.stops.len());
-    match check_road_stop(&view.net, db, &scratch, seg_id, s, side, None) {
+    match check_road_stop(
+        &view.net,
+        db,
+        &scratch,
+        tool.mode.class(),
+        seg_id,
+        s,
+        side,
+        None,
+    ) {
         Ok(pos) => Target::New(Placed {
             stop: StopRef::NewRoad {
                 seg: seg_id,
@@ -332,7 +341,7 @@ pub fn line_ghost(view: &SimView, tool: &LineTool, hover: Vec2) -> Option<LineGh
             let route = LineRoute::of_rail_plan(&view.transit.graph, &plan);
             (plan, route)
         } else {
-            let plan = plan_line(&view.transit.graph, &planned);
+            let plan = plan_line(&view.transit.graph, tool.mode.class(), &planned);
             let route = LineRoute::of_plan(&view.transit.graph, &plan);
             (plan, route)
         };

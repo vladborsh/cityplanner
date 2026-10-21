@@ -36,7 +36,7 @@
 //! fixed per-node value derived from the node id, so neighbouring lights are not in
 //! lock-step. Nothing about the signal is saved.
 
-use cp_content::{LaneKind, RoadDefId};
+use cp_content::RoadDefId;
 
 use crate::connections::{Links, PedLinkKind, Turn};
 use crate::graph::NetGraph;
@@ -133,7 +133,8 @@ fn vehicle_lanes(graph: &NetGraph, seg: SegmentId) -> usize {
         s.lanes
             .iter()
             .filter_map(|&l| graph.lane(l))
-            .filter(|l| matches!(l.kind, LaneKind::Car | LaneKind::Bus))
+            // T-302: tram and trolleybus lanes are carriageway too.
+            .filter(|l| l.kind.is_road_vehicle())
             .count()
     })
 }

@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use bevy_math::Vec2;
-use cp_content::{LaneDir, LaneKind};
+use cp_content::{LaneDir, LaneKind, VehicleClass, lane_allows};
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_net::{
     JunctionGeometry, Lane, LaneId, LightPlan, NetGraph, NodeId, Priority, SegmentId, Turn,
@@ -92,6 +92,8 @@ impl CongestionMap {
 pub(crate) struct LaneNode {
     pub id: LaneId,
     pub segment: SegmentId,
+    /// The lane's kind: which vehicle classes may use it (T-302, `lane_allows`).
+    pub kind: LaneKind,
     pub len: f32,
     pub speed: f32,
     pub forward: bool,
@@ -303,6 +305,7 @@ fn node_of(lane: &Lane, id: LaneId, net: &NetGraph, geo: &JunctionGeometry) -> O
     Some(LaneNode {
         id,
         segment: lane.segment,
+        kind: lane.kind,
         len,
         speed: lane.speed_limit.max(0.1),
         forward,
@@ -316,7 +319,7 @@ fn node_of(lane: &Lane, id: LaneId, net: &NetGraph, geo: &JunctionGeometry) -> O
 }
 
 fn is_vehicle(k: LaneKind) -> bool {
-    matches!(k, LaneKind::Car | LaneKind::Bus)
+    k.is_road_vehicle()
 }
 
 impl PathGraph {
@@ -343,11 +346,14 @@ impl PathGraph {
             };
             let sl = g.segments.entry(lane.segment).or_default();
             if is_vehicle(lane.kind) {
-                let si = lane.segment.index as usize;
-                if g.seg_capacity.len() <= si {
-                    g.seg_capacity.resize(si + 1, 0.0);
+                // T-302: a tram or trolleybus lane is no capacity for the general traffic.
+                if lane.kind.is_general() {
+                    let si = lane.segment.index as usize;
+                    if g.seg_capacity.len() <= si {
+                        g.seg_capacity.resize(si + 1, 0.0);
+                    }
+                    g.seg_capacity[si] += node.s_out - node.s_in;
                 }
-                g.seg_capacity[si] += node.s_out - node.s_in;
                 g.max_car_speed = g.max_car_speed.max(node.speed);
                 sl.car.push((id, lane.offset));
                 g.car[id.index as usize] = Some(node);
@@ -723,8 +729,24 @@ impl PathGraph {
     /// outermost one when the road has none on that side. Returns the lane and the position
     /// on it in lane metres.
     pub(crate) fn resolve_car(&self, a: &Access) -> Option<(u32, f32)> {
+        self.resolve_class(a, VehicleClass::Car)
+    }
+
+    /// Resolves an access point to the lane a vehicle of `class` may use on its segment
+    /// (T-302: a bus stop on a road with bus lanes resolves to the bus lane, a car never to a
+    /// transit lane) and the position on it (lane metres).
+    pub(crate) fn resolve_class(&self, a: &Access, class: VehicleClass) -> Option<(u32, f32)> {
         let sl = self.segments.get(&a.segment)?;
-        let pick = pick_lane(&sl.car, a.side)?;
+        let allowed: Vec<(LaneId, f32)> = sl
+            .car
+            .iter()
+            .filter(|&&(id, _)| {
+                self.car_lane(id)
+                    .is_some_and(|n| lane_allows(n.kind, class))
+            })
+            .copied()
+            .collect();
+        let pick = pick_lane(&allowed, a.side)?;
         let slot = self.car_slot(pick)?;
         let node = self.car[slot as usize].as_ref()?;
         Some((slot, node.lane_s(a.s)))
@@ -732,7 +754,16 @@ impl PathGraph {
 
     /// Like [`Self::resolve_car`], but gives the lane id.
     pub(crate) fn resolve_car_lane(&self, a: &Access) -> Option<(LaneId, f32)> {
-        let (slot, s) = self.resolve_car(a)?;
+        self.resolve_class_lane(a, VehicleClass::Car)
+    }
+
+    /// Like [`Self::resolve_class`], but gives the lane id.
+    pub(crate) fn resolve_class_lane(
+        &self,
+        a: &Access,
+        class: VehicleClass,
+    ) -> Option<(LaneId, f32)> {
+        let (slot, s) = self.resolve_class(a, class)?;
         Some((self.car[slot as usize].as_ref()?.id, s))
     }
 

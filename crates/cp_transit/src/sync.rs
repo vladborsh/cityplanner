@@ -139,8 +139,8 @@ pub fn replan_line(
         .collect();
     let plan = match (stops.len() == l.stops.len(), l.mode) {
         (true, crate::TransitMode::Metro) => crate::plan::plan_metro(graph, &stops),
-        (true, _) => plan_line(graph, &stops),
-        (false, _) => plan_line(graph, &[]),
+        (true, mode) => plan_line(graph, mode.class(), &stops),
+        (false, mode) => plan_line(graph, mode.class(), &[]),
     };
     if let Some(l) = transit.lines.get_mut(line) {
         l.state = match (plan.is_ok(), l.state) {

@@ -87,6 +87,8 @@ pub enum TransitError {
     WrongStopKind,
     /// That building has no station stop.
     NoStation(BuildingId),
+    /// The mode's depot (or station and track) is not built yet (T-302, station first).
+    NotReady(TransitMode),
     /// The mode has no lines yet (intercity trains come later).
     ModeNotAvailable(TransitMode),
     Stop(StopError),
@@ -109,6 +111,7 @@ impl fmt::Display for TransitError {
             Self::WrongStopKind => write!(f, "the stop does not fit the line's kind"),
             Self::NoStation(_) => write!(f, "that building is not a station"),
             Self::ModeNotAvailable(m) => write!(f, "no {m:?} lines yet"),
+            Self::NotReady(m) => write!(f, "{m:?} lines need their depot (and track) first"),
             Self::Stop(e) => write!(f, "{e}"),
             Self::Vehicles(n) => write!(f, "{n} vehicles: at most {MAX_LINE_VEHICLES}"),
             Self::Color(c) => write!(f, "colour {c}: the palette has {PALETTE_LEN}"),
@@ -195,15 +198,13 @@ fn resolve(
                 if mode != TransitMode::Bus {
                     return Err(TransitError::WrongStopKind);
                 }
-                let pos =
-                    check_road_stop(net, db, &scratch, seg, s, side, None).map_err(
-                        |e| match e {
-                            StopError::NearStop(id) if !transit.stops.contains(id) => {
-                                TransitError::NewStopsTooClose
-                            }
-                            e => e.into(),
-                        },
-                    )?;
+                let pos = check_road_stop(net, db, &scratch, mode.class(), seg, s, side, None)
+                    .map_err(|e| match e {
+                        StopError::NearStop(id) if !transit.stops.contains(id) => {
+                            TransitError::NewStopsTooClose
+                        }
+                        e => e.into(),
+                    })?;
                 scratch.insert(Stop {
                     pos,
                     side,
@@ -275,6 +276,12 @@ pub fn apply(world: &mut World, cmd: &TransitCommand) -> Result<Cost, TransitErr
             TransitCommand::CreateLine { mode, stops } => {
                 if *mode == TransitMode::Train {
                     return Err(TransitError::ModeNotAvailable(*mode));
+                }
+                // T-302: station first — the depot (and the track) before the line.
+                if let Some(buildings) = world.get_resource::<cp_building::BuildingGrid>()
+                    && !crate::rules::prerequisites(db, buildings, net)[mode.kind() as usize].ok
+                {
+                    return Err(TransitError::NotReady(*mode));
                 }
                 let (resolved, fresh) = resolve(net, db, &transit, *mode, stops)?;
                 let cost = price(db, fresh.len());

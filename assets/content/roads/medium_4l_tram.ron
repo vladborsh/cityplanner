@@ -1,0 +1,28 @@
+// T-302: tram tracks in the middle, cars at the kerbs. Profile of `medium_4l`; whole cells wide. Numbers: tune later.
+Road((
+    id: "medium_4l_tram",
+    name: "Collector with tram tracks (4 lanes)",
+    class: Collector,
+    width: 32.0,
+    lanes: [
+        (kind: Pedestrian, dir: Forward, width: 9.0, offset: 11.5),
+        (kind: Car, dir: Backward, width: 3.5, offset: 5.25),
+        (kind: Tram, dir: Backward, width: 3.5, offset: 1.75),
+        (kind: Tram, dir: Forward, width: 3.5, offset: -1.75),
+        (kind: Car, dir: Forward, width: 3.5, offset: -5.25),
+        (kind: Pedestrian, dir: Forward, width: 9.0, offset: -11.5),
+    ],
+    median_width: 0.0,
+    speed_kmh: 50,
+    max_slope: 0.12,
+    cost_per_m: 12.0,
+    upkeep_per_m_week: 0.12,
+    allows_zoning: true,
+    lamp_spacing_m: 26.0,
+    crosswalks: true,
+    rank: 2,
+    elevated: Some((cost_per_m: 36.0, upkeep_per_m_week: 0.240, mesh: "road/medium_4l_elevated")),
+    bridge: Some((cost_per_m: 72.0, upkeep_per_m_week: 0.360, mesh: "road/medium_4l_bridge")),
+    mesh: "road/medium_4l",
+    material: "road/asphalt",
+))

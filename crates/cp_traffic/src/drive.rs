@@ -47,7 +47,15 @@ use cp_core::time::{MOVE_SECONDS_PER_TICK, MOVE_SUBSTEPS};
 use cp_net::{LaneId, Signal};
 
 use crate::agents::{Vehicle, VehicleId};
-use crate::astar::{CarPath, find_car_path_lanes};
+use crate::astar::{CarPath, find_class_path_lanes};
+use cp_content::VehicleClass;
+
+/// The lane permissions class of a vehicle (T-302), from its kind byte.
+pub fn class_of(v: &Vehicle) -> VehicleClass {
+    cp_content::VehicleKind::ALL
+        .get(usize::from(v.kind_id()))
+        .map_or(VehicleClass::Car, |k| k.class())
+}
 use crate::graph::{CongestionMap, ExitConn, LaneNode, PathGraph};
 
 /// Seconds of movement per substep.
@@ -320,6 +328,7 @@ fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGrap
                         && head
                         && let Some(steps) = turn_from_here(
                             g,
+                            class_of(v),
                             &v.path,
                             usize::from(v.hop),
                             v.stuck_timer >> 16 > STUCK_TICKS / 2,
@@ -370,6 +379,7 @@ const TURN_WAIT_TICKS: u32 = STUCK_TICKS / 4;
 /// [`spawn_waiting`]).
 fn turn_from_here(
     g: &PathGraph,
+    class: VehicleClass,
     path: &CarPath,
     hop: usize,
     reroute: bool,
@@ -404,7 +414,9 @@ fn turn_from_here(
         .iter()
         .filter_map(|e| {
             let n = lane_node(g, e.to)?;
-            let p = find_car_path_lanes(g, &cong, (e.to, n.s_in), (path.goal, path.goal_s)).ok()?;
+            let p =
+                find_class_path_lanes(g, &cong, class, (e.to, n.s_in), (path.goal, path.goal_s))
+                    .ok()?;
             Some((e.length + p.cost, e.to.index, e, p))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))

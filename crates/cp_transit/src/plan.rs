@@ -4,7 +4,10 @@
 use std::collections::BTreeMap;
 
 use bevy_ecs::resource::Resource;
-use cp_traffic::{Access, CarPath, CongestionMap, PathGraph, Side, find_car_path, find_rail_path};
+use cp_content::VehicleClass;
+use cp_traffic::{
+    Access, CarPath, CongestionMap, PathGraph, Side, find_class_path, find_rail_path,
+};
 
 use crate::model::{LineId, StopId};
 
@@ -53,7 +56,7 @@ impl LinePlan {
 /// Routes the ring `stops[0] → stops[1] → … → stops[0]` on `graph`, one A* per leg, on an
 /// empty-road cost (no congestion). Synchronous: a line has a handful of legs and the plan
 /// is redone only when the network changes. The same function gives the tool's ghost.
-pub fn plan_line(graph: &PathGraph, stops: &[(StopId, Access)]) -> LinePlan {
+pub fn plan_line(graph: &PathGraph, class: VehicleClass, stops: &[(StopId, Access)]) -> LinePlan {
     let mut plan = LinePlan::default();
     if stops.len() < 2 {
         plan.errors.push(PlanError::TooFewStops);
@@ -66,7 +69,7 @@ pub fn plan_line(graph: &PathGraph, stops: &[(StopId, Access)]) -> LinePlan {
         .take(stops.len())
         .enumerate()
     {
-        match find_car_path(graph, &cong, a, b) {
+        match find_class_path(graph, &cong, class, a, b) {
             Ok(path) => {
                 let length_m = graph.car_path_length(&path);
                 plan.length_m += length_m;
