@@ -33,6 +33,9 @@ const DX: f32 = 20.0 * ZONE_CELL;
 const DY: f32 = 10.0 * ZONE_CELL;
 /// The highway's stub ends here; the town's first street junction is south of it.
 const STUB_END: Vec2 = Vec2::new(5120.0, 4348.0);
+/// The utility lane runs this far north of the top street: the utilities stand between the two,
+/// within reach of one or the other.
+const LANE_M: f32 = 110.0;
 /// Money the player keeps back for the running costs before building more.
 const RESERVE: f64 = 15_000.0;
 
@@ -148,7 +151,34 @@ impl Player {
         p.grow_east();
         p.grow_east();
         p.grow_south();
+        // The utility lane behind the town, joined to the top street at its west end.
+        let (a, b) = (p.o + p.at(0, 0), p.o + Vec2::new(0.0, -LANE_M));
+        p.links(a, b);
+        p.lane(0, p.c1);
         p
+    }
+
+    /// A power line and a pipe from `a` to `b` (world).
+    fn links(&mut self, a: Vec2, b: Vec2) {
+        for kind in [
+            cp_content::UtilityKind::Power,
+            cp_content::UtilityKind::Water,
+        ] {
+            self.command(SimCommand::Utility(cp_utility::UtilityCommand::BuildLink {
+                kind,
+                path: vec![a, b],
+            }));
+        }
+    }
+
+    /// The utility lane (a power line and a pipe [`LANE_M`] north of the top street) from column
+    /// line `i0` to `i1`, one link per block width.
+    fn lane(&mut self, i0: i32, i1: i32) {
+        for i in i0..i1 {
+            let y = Vec2::new(0.0, -LANE_M);
+            let (a, b) = (self.o + self.at(i, 0) + y, self.o + self.at(i + 1, 0) + y);
+            self.links(a, b);
+        }
     }
 
     fn at(&self, i: i32, j: i32) -> Vec2 {
@@ -212,6 +242,10 @@ impl Player {
             }
         }
         self.c1 += 1;
+        // The lane follows the town east (the first columns get it in `new_game`).
+        if self.c1 > 2 {
+            self.lane(i, i + 1);
+        }
         let blocks: Vec<(i32, i32)> = (0..self.r1).map(|j| (i, j)).collect();
         self.zone_blocks(&blocks);
         self.actions.push(format!("grew east (column {i})"));
@@ -226,6 +260,7 @@ impl Player {
             self.street(self.at(i, j), self.at(i + 1, j));
         }
         self.c0 = i;
+        self.lane(i, i + 1);
         let blocks: Vec<(i32, i32)> = (0..self.r1).map(|j| (i, j)).collect();
         self.zone_blocks(&blocks);
         self.actions.push(format!("grew west (column {i})"));
@@ -380,7 +415,18 @@ impl Player {
         let mut spots = Vec::new();
         // Within the top street's ends: a column added later must not run into them.
         let (x0, x1) = (self.c0 as f32 * DX + 20.0, self.c1 as f32 * DX - 20.0);
-        for back in [30.0, 75.0, 120.0, 165.0] {
+        // Utilities stand within reach of the top street's or the lane's pipe and line
+        // (pipe_reach_m 64): further off they would count as capacity and supply nobody.
+        let utility = matches!(
+            def,
+            "wind_turbine" | "water_tower" | "sewage_treatment_plant"
+        );
+        let rows: &[f32] = if utility {
+            &[30.0, 50.0, 70.0, 90.0, 140.0]
+        } else {
+            &[30.0, 75.0, 165.0, 210.0]
+        };
+        for &back in rows {
             let mut x = x0;
             while x <= x1 {
                 spots.push(Vec2::new(x, -back));

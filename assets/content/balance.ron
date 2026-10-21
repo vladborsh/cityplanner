@@ -26,10 +26,15 @@ Balance((
     demand_job_weight: (1.0, 1.0, 1.5, 2.0),
     // A vacant home counts this many adults against R.
     demand_adults_per_home: 2.0,
-    // Commercial job slots supported per resident (C).
-    demand_shop_jobs_per_citizen: 0.2,
-    // Industrial job slots needed per commercial job slot (I).
-    demand_industry_jobs_per_shop_job: 0.5,
+    // Commercial job slots supported per resident (C). BUG-099: 0.3 (was 0.2): with 0.2 and 0.5
+    // below a town had 0.3 jobs per resident against ~0.7 adults; the jobless within the commuter
+    // allowance asked for none, R waited for free jobs, and a new game stalled at ~2000 residents
+    // with 23 % unemployed (T-293 playtest).
+    demand_shop_jobs_per_citizen: 0.3,
+    // Industrial job slots needed per commercial job slot (I). BUG-099: 0.8 (was 0.5) =
+    // goods_per_job / goods_per_worker: at the ratio the town's industry makes the goods its shops
+    // sell (BUG-095).
+    demand_industry_jobs_per_shop_job: 0.8,
 
     // --- Land value, pollution, noise (system-design §11), recomputed every 256 ticks ---
     // Industrial pollution per building level and its reach.
