@@ -413,3 +413,59 @@ fn pedestrian_corner_ends_are_on_neighbouring_arms() {
         }
     }
 }
+
+/// BUG-105: a turn's connection is one smooth bend, the way a car drives it: it leaves and
+/// meets its lanes along them, bends one way only, and nowhere much sharper than on average
+/// (no corner). On the X junctions of every two-way town road.
+#[test]
+fn turn_connections_are_smooth_bends() {
+    let db = content();
+    for road in ["basic_2l", "medium_4l", "large_6l"] {
+        let arms: Vec<(f32, &str)> = [0.0, 90.0, 180.0, 270.0].map(|a| (a, road)).into();
+        let (g, n, _) = star(&db, &arms);
+        let j = junction(&g, n);
+        let mut turns = 0;
+        for c in &j.links.connections {
+            if !matches!(c.turn, Turn::Left | Turn::Right) {
+                continue;
+            }
+            turns += 1;
+            const N: usize = 48;
+            let pts: Vec<Vec2> = (0..=N)
+                .map(|i| to_xz(c.curve.point(i as f32 / N as f32)))
+                .collect();
+            // Heading change per metre between successive chords.
+            let bends: Vec<(f32, f32)> = pts
+                .windows(3)
+                .map(|w| {
+                    let (a, b) = (w[1] - w[0], w[2] - w[1]);
+                    (
+                        a.perp_dot(b).atan2(a.dot(b)),
+                        (a.length() + b.length()) * 0.5,
+                    )
+                })
+                .collect();
+            let total: f32 = bends.iter().map(|(d, _)| d).sum();
+            assert!(
+                (1.3..1.85).contains(&total.abs()),
+                "{road}: a quarter turn, got {total}"
+            );
+            assert!(
+                bends
+                    .iter()
+                    .all(|(d, _)| d.signum() == total.signum() || d.abs() < 1e-4),
+                "{road}: bends one way"
+            );
+            let mean = total.abs() / c.length;
+            let sharpest = bends
+                .iter()
+                .map(|(d, len)| d.abs() / len.max(1e-4))
+                .fold(0.0, f32::max);
+            assert!(
+                sharpest < 2.0 * mean,
+                "{road}: a corner: {sharpest} rad/m against {mean} on average"
+            );
+        }
+        assert!(turns >= 8, "{road}: {turns} turns");
+    }
+}
