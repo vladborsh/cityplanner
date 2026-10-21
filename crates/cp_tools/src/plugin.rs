@@ -395,6 +395,8 @@ pub struct BrushDemo {
     pub area: bool,
     pub kind: crate::district::DistrictToolKind,
     pub at: Vec2,
+    /// A stroke from `at` to here (BUG-112 shots), else one click at `at`.
+    pub to: Option<Vec2>,
     pub done: bool,
 }
 
@@ -429,14 +431,26 @@ pub fn brush_demo(
     }
     demo.done = true;
     let mut cmds = Vec::new();
+    // The stroke's steps, a cell apart.
+    let steps: Vec<Vec2> = match demo.to {
+        Some(to) => {
+            let n = ((to - p).length() / 8.0).ceil().max(1.0) as usize;
+            (0..=n).map(|i| p.lerp(to, i as f32 / n as f32)).collect()
+        }
+        None => vec![p],
+    };
     if demo.area {
         let res = view.terrain.as_deref().map(|t| t.resources());
         let richness = |r| res.map_or(0.0, |m| m.richness_at(r, p));
         cmds.extend(state.area.choose_or_create(&view.areas, richness));
-        cmds.extend(state.area.drag(&view.area_map, p));
+        for q in &steps {
+            cmds.extend(state.area.drag(&view.area_map, *q));
+        }
     } else {
         cmds.extend(state.district.choose_or_create(&view.districts));
-        cmds.extend(state.district.drag(&view.district_map, p));
+        for q in &steps {
+            cmds.extend(state.district.drag(&view.district_map, *q));
+        }
     }
     for c in cmds {
         outbox.push(SimCommand::District(c));

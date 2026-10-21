@@ -1,5 +1,6 @@
-//! The district overlay (T-133): every painted 32 m cell is tinted with its district's colour
-//! (alpha 0.25) and the contour of each district is a line. Shown with the "Districts" entry of
+//! The district overlay (T-133): the painted 32 m cells are tinted with their district's colour
+//! (alpha 0.25) as a soft-edged field and the contour of each district is a smooth line
+//! (BUG-112, [`super::blob`]). Shown with the "Districts" entry of
 //! the View menu and automatically while the district brush is active. Draped like the tile
 //! border and rebuilt only when the map, the records, the camera's 500 m cell or the line width
 //! step changes.
@@ -13,7 +14,7 @@ use cp_sim::SimView;
 use cp_terrain::Terrain;
 
 use super::tiles::border_width_step;
-use super::{Overlay, OverlayLayers, OverlayState, drape_height, push, ribbon_with, to_bevy_mesh};
+use super::{Overlay, OverlayLayers, OverlayState, drape_height, to_bevy_mesh};
 use crate::chunk::MeshData;
 
 /// Alpha of the cell tint.
@@ -42,7 +43,22 @@ fn color_of(districts: &Districts, id: cp_district::DistrictId, alpha: f32) -> [
     ]
 }
 
-/// The tint: one quad per painted cell, each corner on the terrain the camera at `cam` sees.
+/// The ids painted anywhere on the map, ascending.
+fn ids_of(map: &DistrictMap) -> Vec<cp_district::DistrictId> {
+    let mut ids: Vec<_> = (0..SIDE as u16)
+        .flat_map(|r| (0..SIDE as u16).filter_map(move |c| map.get((c, r))))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+fn cell_is(map: &DistrictMap, id: cp_district::DistrictId) -> impl Fn(i32, i32) -> bool + '_ {
+    move |c, r| c >= 0 && r >= 0 && map.get((c as u16, r as u16)) == Some(id)
+}
+
+/// The tint: a soft-edged fill per district (BUG-112), each corner on the terrain the camera
+/// at `cam` sees.
 pub fn fill_mesh(
     map: &DistrictMap,
     districts: &Districts,
@@ -50,23 +66,18 @@ pub fn fill_mesh(
     cam: Option<Vec3>,
 ) -> MeshData {
     let mut m = MeshData::default();
-    for r in 0..SIDE as u16 {
-        for c in 0..SIDE as u16 {
-            let Some(id) = map.get((c, r)) else { continue };
-            let color = color_of(districts, id, FILL_ALPHA);
-            let (x0, z0) = (f32::from(c) * CELL_M, f32::from(r) * CELL_M);
-            let ids = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)].map(|(i, j)| {
-                let p = Vec2::new(x0 + i * CELL_M, z0 + j * CELL_M);
-                push(
-                    &mut m,
-                    [p.x, drape_height(terrain, cam, p) + FILL_LIFT, p.y],
-                    color,
-                )
-            });
-            // (x, z) with z down: this winding faces up.
-            m.indices
-                .extend_from_slice(&[ids[0], ids[2], ids[1], ids[0], ids[3], ids[2]]);
-        }
+    let height = |q: Vec2| drape_height(terrain, cam, q) + FILL_LIFT;
+    for id in ids_of(map) {
+        let [r, g, b, _] = color_of(districts, id, FILL_ALPHA);
+        super::blob::soft_fill(
+            &mut m,
+            &cell_is(map, id),
+            SIDE,
+            CELL_M,
+            [r, g, b],
+            FILL_ALPHA,
+            &height,
+        );
     }
     m
 }
@@ -101,7 +112,8 @@ pub fn contour_edges(map: &DistrictMap) -> Vec<(cp_district::DistrictId, Vec2, V
     out
 }
 
-/// The contour lines: a ribbon of width `w` along every [`contour_edges`] side.
+/// The contour lines: a ribbon of width `w` along the smooth loop of every district
+/// (BUG-112: the cell sides linked into loops and rounded, see [`super::blob`]).
 pub fn contour_mesh(
     map: &DistrictMap,
     districts: &Districts,
@@ -111,12 +123,11 @@ pub fn contour_mesh(
 ) -> MeshData {
     let mut m = MeshData::default();
     let height = |q: Vec2| drape_height(terrain, cam, q) + LINE_LIFT;
-    for (id, a, b) in contour_edges(map) {
-        let d = (b - a).normalize_or_zero();
-        ribbon_with(
+    for id in ids_of(map) {
+        let loops = super::blob::smooth_loops(&cell_is(map, id), SIDE, CELL_M);
+        super::blob::contour_ribbons(
             &mut m,
-            a - d * (w * 0.5),
-            b + d * (w * 0.5),
+            &loops,
             w,
             color_of(districts, id, LINE_ALPHA),
             LINE_PIECE,

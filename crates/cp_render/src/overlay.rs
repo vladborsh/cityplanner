@@ -23,6 +23,7 @@ use cp_terrain::{MAP_SIZE, Terrain};
 use crate::chunk::{MeshData, select_lod, terrain_mesh_height};
 use crate::material::VertexColorMaterial;
 
+mod blob;
 mod coverage_ghost;
 mod districts;
 mod industry;
