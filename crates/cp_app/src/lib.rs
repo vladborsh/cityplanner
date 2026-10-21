@@ -8,6 +8,7 @@
 pub mod audio;
 pub mod grid_shots;
 mod map;
+pub mod playtest;
 pub mod road_scenes;
 pub mod saves;
 pub mod scene;
