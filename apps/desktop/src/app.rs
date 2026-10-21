@@ -55,8 +55,8 @@ pub struct Options {
     pub place_demo: Option<cp_tools::PlaceDemo>,
     /// `--upgrade-demo road,x,z[,whole]`: the upgrade tool held over (x, z) (BUG-103 shots).
     pub upgrade_demo: Option<cp_tools::UpgradeDemo>,
-    /// `--brush-demo district|area,small|large|erase,x,z`: one stroke of the district or area
-    /// brush at (x, z), then its ghost held there (BUG-108 shots).
+    /// `--brush-demo district|area,small|large|erase,x,z[,ghost]`: one stroke of the district or
+    /// area brush at (x, z), then its ghost held there; `ghost`: no stroke (BUG-108 shots).
     pub brush_demo: Option<cp_tools::BrushDemo>,
     /// `--grading exposure=0.1,contrast=1.1,...`: this run's colour grading (T-273).
     pub grading: Option<cp_render::GradingSettings>,
@@ -152,12 +152,14 @@ impl Options {
                     "erase" => cp_tools::DistrictToolKind::Erase,
                     _ => cp_tools::DistrictToolKind::BrushSmall,
                 };
-                let n: Vec<f32> = it.filter_map(|x| x.parse().ok()).collect();
+                let rest: Vec<&str> = it.collect();
+                let n: Vec<f32> = rest.iter().filter_map(|x| x.parse().ok()).collect();
+                // `ghost`: no stroke, only the ghost with nothing chosen.
                 (n.len() == 2).then(|| cp_tools::BrushDemo {
                     area,
                     kind,
                     at: bevy::math::Vec2::new(n[0], n[1]),
-                    done: false,
+                    done: rest.contains(&"ghost"),
                 })
             }),
             upgrade_demo: value("--upgrade-demo").and_then(|v| {

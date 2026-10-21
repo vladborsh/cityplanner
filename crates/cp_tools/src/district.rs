@@ -149,6 +149,18 @@ impl DistrictTool {
         })
     }
 
+    /// The palette colour (`cp_district::PALETTE_RGB` index) of what a stroke would paint: the
+    /// chosen district's, else the one [`Self::choose_or_create`] would take or make. The ghost
+    /// shows it, so the brush reads the same with or without a choice (BUG-108).
+    pub fn brush_color(&self, ds: &Districts) -> u8 {
+        let pick = self.selected.or_else(|| ds.iter().next().map(|(id, _)| id));
+        match pick.and_then(|id| ds.get(id)) {
+            Some(d) => d.color,
+            // A new district gets the colour of its slot (`cp_district`'s Create rule).
+            None => next_district(ds).map_or(0, |id| (id.0 - 1) % cp_district::PALETTE_LEN),
+        }
+    }
+
     /// The cells under the brush with the cursor at `hover` (the highlight).
     pub fn preview(&self, hover: Vec2) -> Vec<Cell> {
         brush_cells(hover, self.kind)
@@ -252,6 +264,29 @@ mod tests {
                 cells: vec![(16, 16)]
             })
         );
+    }
+
+    /// BUG-108: the ghost has the colour of what a stroke paints, chosen or not.
+    #[test]
+    fn the_brush_colour_is_the_district_a_stroke_paints() {
+        use cp_district::District;
+        let mut ds = Districts::default();
+        let mut t = tool(DistrictToolKind::BrushLarge);
+        t.selected = None;
+        assert_eq!(t.brush_color(&ds), 0, "a new first district");
+        let d = |color| {
+            Some(District {
+                name: "d".into(),
+                color,
+                tax: [None; 6],
+                policies: 0,
+                spec: [None; 6],
+            })
+        };
+        ds.list = vec![d(5), d(7)];
+        assert_eq!(t.brush_color(&ds), 5, "the first district");
+        t.selected = Some(DistrictId(2));
+        assert_eq!(t.brush_color(&ds), 7, "the chosen one");
     }
 
     #[test]
