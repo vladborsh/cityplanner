@@ -1205,6 +1205,30 @@ fn front_suspicious(
     }
 }
 
+/// The flags of the cars of one place, front to back, given the verdict on its head (`front`):
+/// a car behind a standing leader inherits the leader's reason.
+fn walk_flags(
+    veh: &Arena<Vehicle>,
+    list: &[VehicleId],
+    front: bool,
+    root: bool,
+    out: &mut Vec<(VehicleId, bool, bool)>,
+) {
+    let mut lead: Option<bool> = None;
+    for (i, &id) in list.iter().enumerate() {
+        let Some(v) = veh.get(id) else { continue };
+        let standing = v.speed < 0.1;
+        let sus = match (i, lead) {
+            (0, _) => standing && front,
+            (_, Some(l)) => standing && l,
+            (_, None) => false,
+        };
+        // Only the car at the head of the line is the cause; the ones behind it wait for it.
+        out.push((id, sus, i == 0 || root));
+        lead = standing.then_some(sus);
+    }
+}
+
 /// For every standing vehicle: is it standing for a suspicious reason? Front to back per place,
 /// one pass; a car behind a standing leader inherits the leader's reason.
 fn suspicious_flags(
@@ -1214,40 +1238,23 @@ fn suspicious_flags(
     signal: u64,
     pool: Option<&TaskPool>,
 ) -> Vec<(VehicleId, bool, bool)> {
-    let mut out = Vec::with_capacity(veh.len());
-    let mut walk = |list: &[VehicleId], front: Option<bool>, root: bool| {
-        let mut lead: Option<bool> = None;
-        for (i, &id) in list.iter().enumerate() {
-            let Some(v) = veh.get(id) else { continue };
-            let standing = v.speed < 0.1;
-            let sus = match (i, lead) {
-                (0, _) => standing && front.unwrap_or(false),
-                (_, Some(l)) => standing && l,
-                (_, None) => false,
-            };
-            // Only the car at the head of the line is the cause; the ones behind it wait for it.
-            out.push((id, sus, i == 0 || root));
-            lead = standing.then_some(sus);
-        }
-    };
-    // The verdicts on the lane heads are the costly part and only read: in parallel (T-259).
+    // Each lane on its own, only reading: the verdict on its head (the costly part, T-259) and
+    // the walk along it (T-292), in parallel; joined in lane order, as one pass made them.
     let slots: Vec<usize> = st.occ.iter().collect();
-    let fronts = par_map(pool, &slots, |&slot| {
-        let first = *st.lanes[slot].first()?;
-        Some(match (veh.get(first), g.car[slot].as_ref()) {
+    let mut out = par_flat_map(pool, &slots, |&slot, out| {
+        let list = &st.lanes[slot];
+        let Some(&first) = list.first() else { return };
+        let front = match (veh.get(first), g.car[slot].as_ref()) {
             (Some(v), Some(node)) if v.speed < 0.1 => {
                 front_suspicious(g, veh, st, signal, v, node, 0)
             }
             _ => false,
-        })
+        };
+        walk_flags(veh, list, front, false, out);
     });
-    for (slot, front) in slots.into_iter().zip(fronts) {
-        let Some(front) = front else { continue };
-        walk(&st.lanes[slot], Some(front), false);
-    }
     for list in st.conns.values() {
         // A car standing inside a junction waits for room beyond it.
-        walk(list, Some(true), true);
+        walk_flags(veh, list, true, true, &mut out);
     }
     for &id in &st.waiting {
         if veh.contains(id) {
@@ -1452,6 +1459,39 @@ fn par_map<T: Sync, R: Send + 'static>(
             }))
         }
         _ => items.iter().map(f).collect(),
+    }
+}
+
+/// What `f` appends for every item, in item order: on `pool` in fixed chunks of [`CHUNK`] items
+/// (one output per chunk, joined in chunk order) when there is one, else in sequence. `f` only
+/// reads, so the result is the same either way.
+fn par_flat_map<T: Sync, R: Send + 'static>(
+    pool: Option<&TaskPool>,
+    items: &[T],
+    f: impl Fn(&T, &mut Vec<R>) + Sync,
+) -> Vec<R> {
+    match pool {
+        Some(pool) if items.len() > CHUNK => {
+            let f = &f;
+            concat(pool.scope(|scope| {
+                for chunk in items.chunks(CHUNK) {
+                    scope.spawn(async move {
+                        let mut out = Vec::new();
+                        for item in chunk {
+                            f(item, &mut out);
+                        }
+                        out
+                    });
+                }
+            }))
+        }
+        _ => {
+            let mut out = Vec::new();
+            for item in items {
+                f(item, &mut out);
+            }
+            out
+        }
     }
 }
 
