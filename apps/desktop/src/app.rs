@@ -55,8 +55,9 @@ pub struct Options {
     pub place_demo: Option<cp_tools::PlaceDemo>,
     /// `--upgrade-demo road,x,z[,whole]`: the upgrade tool held over (x, z) (BUG-103 shots).
     pub upgrade_demo: Option<cp_tools::UpgradeDemo>,
-    /// `--brush-demo district|area,small|large|erase,x,z[,ghost]`: one stroke of the district or
-    /// area brush at (x, z), then its ghost held there; `ghost`: no stroke (BUG-108 shots).
+    /// `--brush-demo district|area,small|large|erase,x,z[,x1,z1][,ghost]`: one click of the
+    /// district or area brush at (x, z), or a stroke to (x1, z1), then its ghost held there;
+    /// `ghost`: no stroke (BUG-108 and BUG-112 shots).
     pub brush_demo: Option<cp_tools::BrushDemo>,
     /// `--grading exposure=0.1,contrast=1.1,...`: this run's colour grading (T-273).
     pub grading: Option<cp_render::GradingSettings>,
@@ -154,11 +155,13 @@ impl Options {
                 };
                 let rest: Vec<&str> = it.collect();
                 let n: Vec<f32> = rest.iter().filter_map(|x| x.parse().ok()).collect();
-                // `ghost`: no stroke, only the ghost with nothing chosen.
-                (n.len() == 2).then(|| cp_tools::BrushDemo {
+                // `ghost`: no stroke, only the ghost with nothing chosen; four numbers: a
+                // stroke from the first point to the second (BUG-112).
+                (n.len() == 2 || n.len() == 4).then(|| cp_tools::BrushDemo {
                     area,
                     kind,
                     at: bevy::math::Vec2::new(n[0], n[1]),
+                    to: (n.len() == 4).then(|| bevy::math::Vec2::new(n[2], n[3])),
                     done: rest.contains(&"ghost"),
                 })
             }),

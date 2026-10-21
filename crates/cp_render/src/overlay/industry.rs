@@ -15,7 +15,7 @@ use cp_sim::SimView;
 use cp_terrain::{RES_CELL, RES_GRID, ResourceDeposits, ResourceMap, Terrain};
 
 use super::tiles::border_width_step;
-use super::{Overlay, OverlayLayers, OverlayState, drape_height, push, ribbon_with, to_bevy_mesh};
+use super::{Overlay, OverlayLayers, OverlayState, drape_height, push, to_bevy_mesh};
 use crate::chunk::MeshData;
 
 /// Alpha of the area tint.
@@ -145,7 +145,22 @@ pub fn resources_mesh(
     m
 }
 
-/// The area tint: one quad per painted cell, in the colour of the area's resource.
+/// The ids of the areas of `family` painted anywhere on the map, ascending.
+fn area_ids_of(map: &AreaMap, areas: &Areas, family: AreaFamily) -> Vec<AreaId> {
+    let mut ids: Vec<_> = (0..SIDE as u16)
+        .flat_map(|r| (0..SIDE as u16).filter_map(move |c| map.get((c, r))))
+        .filter(|&id| in_family(areas, id, family))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+fn area_cell_is(map: &AreaMap, id: AreaId) -> impl Fn(i32, i32) -> bool + '_ {
+    move |c, r| c >= 0 && r >= 0 && map.get((c as u16, r as u16)) == Some(id)
+}
+
+/// The tint of the areas of `family`: a soft-edged fill per area (BUG-112).
 pub fn area_fill_mesh(
     map: &AreaMap,
     areas: &Areas,
@@ -154,24 +169,18 @@ pub fn area_fill_mesh(
     family: AreaFamily,
 ) -> MeshData {
     let mut m = MeshData::default();
-    for r in 0..SIDE as u16 {
-        for c in 0..SIDE as u16 {
-            let Some(id) = map.get((c, r)).filter(|&id| in_family(areas, id, family)) else {
-                continue;
-            };
-            let color = area_color(areas, id, FILL_ALPHA);
-            let (x0, z0) = (f32::from(c) * CELL_M, f32::from(r) * CELL_M);
-            let ids = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)].map(|(i, j)| {
-                let p = Vec2::new(x0 + i * CELL_M, z0 + j * CELL_M);
-                push(
-                    &mut m,
-                    [p.x, drape_height(terrain, cam, p) + FILL_LIFT, p.y],
-                    color,
-                )
-            });
-            m.indices
-                .extend_from_slice(&[ids[0], ids[2], ids[1], ids[0], ids[3], ids[2]]);
-        }
+    let height = |q: Vec2| drape_height(terrain, cam, q) + FILL_LIFT;
+    for id in area_ids_of(map, areas, family) {
+        let [r, g, b, _] = area_color(areas, id, FILL_ALPHA);
+        super::blob::soft_fill(
+            &mut m,
+            &area_cell_is(map, id),
+            SIDE,
+            CELL_M,
+            [r, g, b],
+            FILL_ALPHA,
+            &height,
+        );
     }
     m
 }
@@ -235,7 +244,8 @@ pub fn area_contour_edges(map: &AreaMap) -> Vec<(AreaId, Vec2, Vec2)> {
     out
 }
 
-/// The outline of the areas: a ribbon of width `w` along every contour side.
+/// The outline of the areas of `family`: a ribbon of width `w` along each area's smooth loop
+/// (BUG-112, [`super::blob`]).
 pub fn area_contour_mesh(
     map: &AreaMap,
     areas: &Areas,
@@ -246,15 +256,11 @@ pub fn area_contour_mesh(
 ) -> MeshData {
     let mut m = MeshData::default();
     let height = |q: Vec2| drape_height(terrain, cam, q) + LINE_LIFT;
-    for (id, a, b) in area_contour_edges(map) {
-        if !in_family(areas, id, family) {
-            continue;
-        }
-        let d = (b - a).normalize_or_zero();
-        ribbon_with(
+    for id in area_ids_of(map, areas, family) {
+        let loops = super::blob::smooth_loops(&area_cell_is(map, id), SIDE, CELL_M);
+        super::blob::contour_ribbons(
             &mut m,
-            a - d * (w * 0.5),
-            b + d * (w * 0.5),
+            &loops,
             w,
             area_color(areas, id, LINE_ALPHA),
             LINE_PIECE,
