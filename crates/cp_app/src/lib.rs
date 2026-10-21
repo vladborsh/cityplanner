@@ -1182,13 +1182,13 @@ mod pacing_tests {
     use cp_core::SimSpeed;
 
     /// The length of a game day in real time at each speed: BUG-061 set ×3 to 26 s; T-280 runs
-    /// ×1 at 20 ticks/s (cars half as fast on screen) and ×2 at 60.
+    /// ×1 at 20 ticks/s (cars half as fast on screen) and ×2 at 60; T-301: a day is 2048 ticks, half as long.
     #[test]
-    fn a_game_day_lasts_205_68_and_26_real_seconds() {
+    fn a_game_day_lasts_102_34_and_13_real_seconds() {
         let day = |s| real_seconds_per_day(s).unwrap();
-        assert!((day(SimSpeed::X1) - 204.8).abs() < 0.1);
-        assert!((day(SimSpeed::X2) - 68.3).abs() < 0.1);
-        assert!((day(SimSpeed::X3) - 25.6).abs() < 0.1);
+        assert!((day(SimSpeed::X1) - 102.4).abs() < 0.1);
+        assert!((day(SimSpeed::X2) - 34.13).abs() < 0.1);
+        assert!((day(SimSpeed::X3) - 12.8).abs() < 0.1);
         assert!((day(SimSpeed::X1) / day(SimSpeed::X3) - 8.0).abs() < 1e-6);
         assert_eq!(real_seconds_per_day(SimSpeed::Pause), None);
         // At 60 frames per second even ×3 needs under 3 ticks a frame (the sim runs at most 4).

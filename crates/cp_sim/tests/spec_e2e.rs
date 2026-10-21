@@ -318,7 +318,9 @@ fn a_specialised_shop_never_rises_while_an_ordinary_one_does() {
     *sim.world_mut().resource_mut::<Demand>() = Demand::fixed(0.0);
     let spec = put(&mut sim, &db, "spec_tourism_s", block, 0);
     let plain = put(&mut sim, &db, "shop_1", block, 4);
-    run(&mut sim, 12 * 256);
+    // T-301: under a day (2048 ticks): the daily respec would take the specialised shop (it
+    // stands outside a district) at the first day tick. 7 passes are 6 level checks and one more.
+    run(&mut sim, 7 * 256);
     let level = |id| {
         sim.world()
             .resource::<BuildingGrid>()

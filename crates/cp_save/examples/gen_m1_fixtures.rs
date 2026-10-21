@@ -1,7 +1,7 @@
 //! Generates `fixtures/saves/m1-small.sav` and `fixtures/saves/m1-traffic.sav` (T-046) with
 //! the current format, and prints the reference checksums the tests pin
 //! (`crates/cp_save/tests/m1_fixtures.rs`): the state after loading the file and running
-//! 4096 ticks. Run from the repo root: `cargo run -p cp_save --example gen_m1_fixtures`.
+//! 2048 ticks (T-301: a game day). Run from the repo root: `cargo run -p cp_save --example gen_m1_fixtures`.
 //! Old saves are not migrated during development (T-275): when the format changes, run it again
 //! and re-pin the checksums.
 //!
@@ -90,11 +90,11 @@ fn write(name: &str, sim: &SimRunner, hash: u64, terrain: &Arc<Terrain>, content
     fresh.set_content(Arc::clone(content));
     load_into_runner(&mut fresh, &bytes, hash).expect("load");
     let at_load = fresh.checksum();
-    for _ in 0..4096 {
+    for _ in 0..cp_core::time::TICKS_PER_DAY {
         fresh.tick_once();
     }
     println!(
-        "{name}: {} bytes, tick {}, citizens {}, checksum at load {at_load:016x}, after 4096 ticks {:016x}",
+        "{name}: {} bytes, tick {}, citizens {}, checksum at load {at_load:016x}, after a day {:016x}",
         bytes.len(),
         sim.tick().0,
         sim.world()
