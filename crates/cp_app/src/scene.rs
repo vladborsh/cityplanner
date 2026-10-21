@@ -2644,7 +2644,7 @@ pub fn build_power_town(sim: &mut SimRunner) {
         .insert_resource(cp_core::time::SimSpeed::Pause);
 }
 
-/// Low-density homes by level (T-296): two rows of detached houses, levels 1 to 5 left to right
+/// Low-density homes by level (T-296): three rows of detached houses, levels 1 to 5 left to right
 /// (the second row the `b` lots), each on its own lot, no roads. Look at it with
 /// `--cam low-houses` (`low-houses-close`).
 pub const LOW_HOUSES: &str = "low-houses";
@@ -2655,7 +2655,7 @@ pub fn build_low_houses(sim: &mut SimRunner) {
     let db = embedded_content();
     let c = cp_terrain::MAP_SIZE / 2.0;
     let cell = cp_building::FOOTPRINT_CELL_M;
-    let rows: [[&str; 5]; 2] = [
+    let rows: [[&str; 5]; 3] = [
         [
             "house_low_1",
             "house_low_2",
@@ -2669,6 +2669,14 @@ pub fn build_low_houses(sim: &mut SimRunner) {
             "house_low_3b",
             "house_low_4b",
             "house_low_5b",
+        ],
+        // The multi-unit lots (T-296b): townhouse row, long house, villa, duplex.
+        [
+            "house_low_6",
+            "house_low_7",
+            "house_low_8",
+            "house_low_9",
+            "house_low_9",
         ],
     ];
     for (r, row) in rows.into_iter().enumerate() {

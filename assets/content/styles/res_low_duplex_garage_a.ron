@@ -1,12 +1,12 @@
 Style((
     id: "res_low_duplex_garage_a",
-    massing: TwinBlocks,
-    roof: Shed,
+    massing: Detached,
+    roof: Gabled,
     floors: (1, 2),
-    footprint_fill: (0.70, 0.90),
+    footprint_fill: (0.45, 0.60),
     palette: (
         walls: [(0.78, 0.80, 0.84), (0.88, 0.80, 0.66)],
-        roof: [(0.36, 0.38, 0.40)],
+        roof: [(0.42, 0.24, 0.20)],
         trim: [(0.95, 0.95, 0.95)],
         glass: (0.18, 0.24, 0.30),
     ),

@@ -174,6 +174,43 @@ pub fn plan(massing: Massing, floors: u32, hu: f32, hv: f32, cv: f32) -> Plan {
                 front: 0,
             }
         }
+        Massing::Detached => {
+            // T-296b: a long lot holds 2-3 separate small houses, not one long block; the gaps
+            // between them become garden.
+            let along_v = hv >= hu;
+            let (long, short) = if along_v { (hv, hu) } else { (hu, hv) };
+            let n = (((long / short.max(1.0)) + 0.5) as u32).clamp(2, 3);
+            let slot = 2.0 * long / n as f32;
+            let half = slot * 0.41;
+            let vols = (0..n)
+                .map(|i| {
+                    let off = -long + slot * (i as f32 + 0.5);
+                    let v = if along_v {
+                        Vol {
+                            cv: cv + off,
+                            hv: half,
+                            ..one(RoofMode::Style)
+                        }
+                    } else {
+                        Vol {
+                            cu: off,
+                            hu: half,
+                            ..one(RoofMode::Style)
+                        }
+                    };
+                    Vol {
+                        floors: floors.min(2),
+                        front: i == 0,
+                        ..v
+                    }
+                })
+                .collect();
+            Plan {
+                vols,
+                top: 0,
+                front: 0,
+            }
+        }
         Massing::Sawtooth => single(RoofMode::Saw),
         // The service massings are T-114; they draw as a plain box until then.
         _ => single(RoofMode::Style),
