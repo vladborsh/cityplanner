@@ -844,6 +844,7 @@ impl ContentDb {
             vec![
                 ("car_visible_share", b.car_visible_share),
                 ("truck_visible_share", b.truck_visible_share),
+                ("tourist_visible_share", b.tourist_visible_share),
                 ("demolish_refund", b.demolish_refund),
             ]
         }) {

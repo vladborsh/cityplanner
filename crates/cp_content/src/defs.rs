@@ -201,6 +201,12 @@ pub struct Balance {
     /// The same for goods truck runs (the cargo kinds; T-280). Service vehicles (garbage, fire,
     /// police, ambulance, hearse, mail, buses) always drive: they are the player's feedback.
     pub truck_visible_share: f32,
+    /// The same for the tourists' cars (BUG-101): a hidden visit takes its route's travel time
+    /// both ways and still arrives, visits and pays as a driven one.
+    pub tourist_visible_share: f32,
+    /// Cars waiting to enter at one spawn lane of the map's entry (BUG-101): from this many on,
+    /// a new run from outside goes by its travel time instead of joining the queue.
+    pub spawn_queue_cap: u32,
     /// Share of what the player paid that bulldozing gives back, `0..=1` (BUG-097): placed
     /// buildings, road length, pipes and power lines, bus stops. Grown buildings give nothing.
     pub demolish_refund: f32,
@@ -689,6 +695,8 @@ impl Default for Balance {
             car_start_penalty_s: 90.0,
             car_visible_share: 0.15,
             truck_visible_share: 0.25,
+            tourist_visible_share: 0.15,
+            spawn_queue_cap: 40,
             demolish_refund: 0.7,
             spawn_one_in: 4,
             demand_ema: 0.25,

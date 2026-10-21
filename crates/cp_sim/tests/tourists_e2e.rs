@@ -31,31 +31,45 @@ const ROAD: &str = r#"Road((id: "street", name: "street", width: 12.0,
 const VISIT: Cost = Cost(1200);
 
 fn content() -> Arc<ContentDb> {
+    content_with(Vec::new())
+}
+
+/// [`content`] and `extra` sources (a `Balance` with other knobs).
+fn content_with(extra: Vec<(String, String)>) -> Arc<ContentDb> {
     Arc::new(
-        ContentDb::from_sources(vec![
-            ("r/street.ron".into(), ROAD.into()),
-            ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
-            (
-                "b/shop.ron".into(),
-                r#"Building((id: "shop", name: "shop", zone: ComLow, level: 1, lot: (1, 1),
+        ContentDb::from_sources(
+            extra
+                .into_iter()
+                .chain([
+                    ("r/street.ron".into(), ROAD.into()),
+                    ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
+                    (
+                        "b/shop.ron".into(),
+                        r#"Building((id: "shop", name: "shop", zone: ComLow, level: 1, lot: (1, 1),
                 styles: ["p"], service: None))"#
-                    .into(),
-            ),
-            cp_content::test_policy_source("TourismPromotion", 0.25),
-            (
-                "v/car.ron".into(),
-                r#"Vehicle((id: "car", name: "car", kind: Car, length: 4.5, width: 1.8,
+                            .into(),
+                    ),
+                    cp_content::test_policy_source("TourismPromotion", 0.25),
+                    (
+                        "v/car.ron".into(),
+                        r#"Vehicle((id: "car", name: "car", kind: Car, length: 4.5, width: 1.8,
                 max_speed_kmh: 60.0, accel: 2.0, decel: 4.0, min_gap: 2.0, mesh: "m"))"#
-                    .into(),
-            ),
-        ])
+                            .into(),
+                    ),
+                ])
+                .collect(),
+        )
         .unwrap_or_else(|e| panic!("{e}")),
     )
 }
 
 /// A 1 km street with ten shops along it; its west end is an `Outside` node if `highway`.
 fn town(highway: bool) -> SimRunner {
-    let db = content();
+    town_with(highway, content())
+}
+
+/// [`town`] with the content `db`.
+fn town_with(highway: bool, db: Arc<ContentDb>) -> SimRunner {
     let mut sim = SimRunner::new(7);
     sim.set_content(Arc::clone(&db));
     let road = db.road_id("street").unwrap();
@@ -231,5 +245,41 @@ fn tourism_promotion_brings_a_quarter_more_visits_in_the_same_days() {
     assert!(
         promoted * 100 >= plain * 115 && promoted * 100 <= plain * 140,
         "{plain} visits, {promoted} promoted"
+    );
+}
+
+/// BUG-101: with 15 % of the tourists in cars (the rest travel by their route's time) the city
+/// gets about as many visits and as much money in the same days as with every tourist driving.
+#[test]
+fn hidden_tourists_still_visit_and_pay_about_as_much() {
+    let run = |share: f32| {
+        let balance = format!("Balance((tourist_visible_share: {share:?}))");
+        let mut sim = town_with(true, content_with(vec![("balance.ron".into(), balance)]));
+        let mut most_cars = 0;
+        for _ in 0..4 * cp_core::time::TICKS_PER_DAY {
+            sim.tick_once();
+            most_cars = most_cars.max(sim.world().resource::<Agents>().vehicle_count());
+        }
+        let w = sim.world();
+        (
+            w.resource::<Tourists>().visits_week,
+            w.resource::<TransitLedger>().tourism,
+            most_cars,
+        )
+    };
+    let (all, all_money, all_cars) = run(1.0);
+    let (few, few_money, few_cars) = run(0.15);
+    assert!(all >= 40, "{all} visits");
+    assert!(
+        few * 100 >= all * 80 && few * 100 <= all * 120,
+        "{all} visits all driving, {few} with 15 % driving"
+    );
+    assert!(
+        few_money.0 * 100 >= all_money.0 * 80 && few_money.0 * 100 <= all_money.0 * 120,
+        "{all_money:?} vs {few_money:?}"
+    );
+    assert!(
+        few_cars * 2 < all_cars,
+        "fewer tourist cars on the road: {all_cars} vs {few_cars}"
     );
 }

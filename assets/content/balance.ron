@@ -11,6 +11,11 @@ Balance((
     // trucks; service vehicles always drive.
     car_visible_share: 0.15,
     truck_visible_share: 0.25,
+    // BUG-101: tourists too (919 tourist cars stood at one entry): the hidden ones travel by
+    // their route's time and still visit and pay. And at most this many cars wait to enter at
+    // one spawn lane of the entry; later runs from outside go by their travel time.
+    tourist_visible_share: 0.15,
+    spawn_queue_cap: 40,
     // BUG-097: bulldozing gives back this share of what the player paid (placed buildings, road
     // length, pipes and power lines, bus stops); grown buildings give nothing.
     demolish_refund: 0.7,

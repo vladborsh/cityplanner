@@ -43,6 +43,13 @@ pub const WALK_KIND: u8 = u8::MAX;
 
 /// Whether runs of this `ServiceRun::kind` are goods trucks (T-280): the cargo kinds, not the
 /// garbage `Truck` nor any other service vehicle.
+/// Whether `run` is a tourist's car (BUG-101): a car run that comes in from or goes out to an
+/// `Outside` node (`cp_transit::tourists`; citizens travel on trips, not runs).
+pub fn is_tourist_run(run: &ServiceRun) -> bool {
+    run.kind == VehicleKind::Car as u8
+        && (matches!(run.from, RunPoint::Outside(_)) || matches!(run.to, RunPoint::Outside(_)))
+}
+
 pub fn is_goods_kind(kind: u8) -> bool {
     [
         VehicleKind::Cargo,
@@ -552,8 +559,19 @@ pub fn receive_service_paths(
     content: Option<Res<cp_content::SimContent>>,
 ) {
     // T-280: most goods trucks run on a timer; service vehicles always drive. Without content
-    // (bare tests) every truck drives.
-    let truck_share = content.map_or(1.0, |c| c.0.balance().truck_visible_share);
+    // (bare tests) every truck drives. BUG-101: so do most tourists, and no more than
+    // `spawn_queue_cap` cars wait to enter at one lane of the entry.
+    let (truck_share, tourist_share, queue_cap) = content.map_or((1.0, 1.0, u32::MAX), |c| {
+        let b = c.0.balance();
+        (
+            b.truck_visible_share,
+            b.tourist_visible_share,
+            b.spawn_queue_cap,
+        )
+    });
+    // Cars not yet on the road, by the lane they start on; counted when a run from outside first
+    // needs it, and kept up as this pass adds cars.
+    let mut waiting: Option<BTreeMap<LaneId, u32>> = None;
     for outcome in &results.0 {
         let Some((id, run)) = runs
             .iter()
@@ -629,13 +647,32 @@ pub fn receive_service_paths(
                 },
             ),
             PathResult::Car(Ok(path)) => {
-                let shown = !is_goods_kind(run.kind)
-                    || crate::agents::car_visible(
-                        TripId::new(id, SERVICE_GEN),
-                        rng.seed(),
-                        truck_share,
-                    );
-                if !shown {
+                let share = if is_goods_kind(run.kind) {
+                    truck_share
+                } else if is_tourist_run(&run) {
+                    tourist_share
+                } else {
+                    1.0
+                };
+                let shown =
+                    crate::agents::car_visible(TripId::new(id, SERVICE_GEN), rng.seed(), share);
+                // Back-pressure at the entry: a full queue at the spawn lane takes no more.
+                let queued = |waiting: &mut Option<BTreeMap<LaneId, u32>>, agents: &Agents| {
+                    *waiting
+                        .get_or_insert_with(|| {
+                            let mut m = BTreeMap::new();
+                            for (_, v) in agents.vehicles().filter(|(_, v)| !v.spawned) {
+                                *m.entry(v.path.start).or_insert(0) += 1;
+                            }
+                            m
+                        })
+                        .get(&path.start)
+                        .unwrap_or(&0)
+                };
+                let crowded = shown
+                    && matches!(run.from, RunPoint::Outside(_))
+                    && queued(&mut waiting, &agents) >= queue_cap;
+                if !shown || crowded {
                     runs.set_state(
                         id,
                         RunState::Timer {
@@ -643,6 +680,9 @@ pub fn receive_service_paths(
                         },
                     );
                 } else if agents.vehicle_count() < limits.vehicles as usize {
+                    if let Some(m) = waiting.as_mut() {
+                        *m.entry(path.start).or_insert(0) += 1;
+                    }
                     agents.spawn_service_vehicle(Vehicle {
                         trip: TripId::new(id, SERVICE_GEN),
                         citizen: CitizenId::new(u32::MAX, u32::MAX),
@@ -754,5 +794,165 @@ mod index_tests {
             walk(&loaded, VehicleKind::Mail, b(1))
         );
         assert_eq!(loaded.find(VehicleKind::Truck, b(9)), None);
+    }
+}
+
+#[cfg(test)]
+mod entry_tests {
+    //! BUG-101: tourists flooded the entry (919 cars waiting at one spawn lane). A share of them
+    //! drive; the rest and every run from outside while the spawn lane's queue is full go by
+    //! their travel time.
+
+    use std::sync::Arc;
+
+    use bevy_ecs::system::RunSystemOnce;
+
+    use super::*;
+    use crate::astar::CarPath;
+    use crate::service::{PathOutcome, RequestId};
+
+    const LANE: LaneId = LaneId::new(7, 0);
+
+    fn content(share: f32, cap: u32) -> cp_content::SimContent {
+        let src = format!("Balance((tourist_visible_share: {share:?}, spawn_queue_cap: {cap}))");
+        cp_content::SimContent(Arc::new(
+            cp_content::ContentDb::from_sources(vec![("balance.ron".into(), src)])
+                .unwrap_or_else(|e| panic!("{e}")),
+        ))
+    }
+
+    fn path() -> CarPath {
+        CarPath {
+            start: LANE,
+            start_s: 0.0,
+            steps: Vec::new(),
+            goal: LANE,
+            goal_s: 50.0,
+            cost: 60.0,
+        }
+    }
+
+    /// `n` runs of `kind` from `from` get their route on [`LANE`], where `queued` cars already
+    /// wait to enter. Returns the world after `receive_service_paths`.
+    fn route(
+        share: f32,
+        cap: u32,
+        queued: usize,
+        n: u64,
+        kind: VehicleKind,
+        from: RunPoint,
+    ) -> World {
+        let mut world = World::new();
+        let mut agents = Agents::default();
+        for i in 0..queued {
+            agents.spawn_service_vehicle(Vehicle {
+                trip: TripId::new(10_000 + i as u32, SERVICE_GEN),
+                citizen: CitizenId::new(u32::MAX, u32::MAX),
+                path: path(),
+                kind: VehicleKind::Car as u8,
+                hop: 0,
+                in_conn: false,
+                spawned: false,
+                s: 0.0,
+                speed: 0.0,
+                stuck_timer: 0,
+                reroute: None,
+            });
+        }
+        let mut runs = ServiceRuns::default();
+        let mut outcomes = Vec::new();
+        for i in 0..n {
+            let id = runs.start_run(kind, from, RunPoint::Building(BuildingId::new(1, 0)), true);
+            runs.set_state(id, RunState::AwaitingPath { request: i });
+            outcomes.push(PathOutcome {
+                id: RequestId(i),
+                submitted: Tick(0),
+                result: PathResult::Car(Ok(path())),
+            });
+        }
+        world.insert_resource(Tick(100));
+        world.insert_resource(PathResults(outcomes));
+        world.insert_resource(SimLimits::desktop());
+        world.insert_resource(runs);
+        world.insert_resource(agents);
+        world.insert_resource(cp_core::SimRng::from_seed([3; 32]));
+        world.insert_resource(content(share, cap));
+        world.run_system_once(receive_service_paths).unwrap();
+        world
+    }
+
+    fn driving(world: &World) -> usize {
+        world
+            .resource::<ServiceRuns>()
+            .iter()
+            .filter(|(_, r)| r.state == RunState::Driving)
+            .count()
+    }
+
+    fn outside() -> RunPoint {
+        RunPoint::Outside(NodeId::new(1, 0))
+    }
+
+    #[test]
+    fn no_more_than_the_cap_wait_at_a_blocked_entry_the_rest_go_by_time() {
+        // 37 already wait at the entry lane, the cap is 40: 3 more cars, 97 timers.
+        let w = route(1.0, 40, 37, 100, VehicleKind::Car, outside());
+        assert_eq!(driving(&w), 3);
+        let waiting = w
+            .resource::<Agents>()
+            .vehicles()
+            .filter(|(_, v)| !v.spawned && v.path.start == LANE)
+            .count();
+        assert_eq!(waiting, 40);
+        let timers = w
+            .resource::<ServiceRuns>()
+            .iter()
+            .filter(
+                |(_, r)| matches!(r.state, RunState::Timer { arrive_at } if arrive_at > Tick(100)),
+            )
+            .count();
+        assert_eq!(timers, 97, "the others travel by their route's time");
+    }
+
+    #[test]
+    fn a_share_of_the_tourists_drive_and_the_same_ones_each_time() {
+        let a = route(0.15, u32::MAX, 0, 2000, VehicleKind::Car, outside());
+        let n = driving(&a);
+        assert!(
+            (240..=360).contains(&n),
+            "{n} of 2000 tourists drive (15 %)"
+        );
+        let b = route(0.15, u32::MAX, 0, 2000, VehicleKind::Car, outside());
+        let ids = |w: &World| -> Vec<RunId> {
+            w.resource::<ServiceRuns>()
+                .iter()
+                .filter(|(_, r)| r.state == RunState::Driving)
+                .map(|(id, _)| id)
+                .collect()
+        };
+        assert_eq!(
+            ids(&a),
+            ids(&b),
+            "the hash of the run decides, nothing else"
+        );
+        // Every tourist drives at share 1.
+        assert_eq!(
+            driving(&route(1.0, u32::MAX, 0, 50, VehicleKind::Car, outside())),
+            50
+        );
+    }
+
+    #[test]
+    fn the_cap_is_for_runs_from_outside_and_service_vehicles_always_drive() {
+        // A fire engine from its station drives whatever waits at the lane.
+        let w = route(
+            0.0,
+            5,
+            30,
+            10,
+            VehicleKind::Emergency,
+            RunPoint::Building(BuildingId::new(2, 0)),
+        );
+        assert_eq!(driving(&w), 10);
     }
 }
