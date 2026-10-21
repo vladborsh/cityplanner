@@ -1,0 +1,10 @@
+// T-308: four wind turbines in one (300 -> 1200), clean.
+Service((
+    id: "wind_farm",
+    name: "Wind farm",
+    kind: Power,
+    radius_m: 800.0,
+    capacity: 1200,
+    road_access: false,
+    vehicles: [],
+))

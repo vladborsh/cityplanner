@@ -1,0 +1,10 @@
+// T-308: three treatment plants in one (3000 -> 9000).
+Service((
+    id: "sewage_treatment_large",
+    name: "Large sewage treatment plant",
+    kind: Sewage,
+    radius_m: 800.0,
+    capacity: 9000,
+    site: Land,
+    vehicles: [],
+))

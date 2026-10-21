@@ -1,0 +1,16 @@
+// T-308: about 0.8 of five towers' cost and upkeep per unit of capacity (economy of scale).
+Building((
+    id: "water_reservoir",
+    name: "Water reservoir",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 4),
+    jobs: (0, 0, 0, 0),
+    consumption: {Power: 35.0},
+    tax_base: 0.0,
+    cost: 4000.0,
+    upkeep_week: 250.0,
+    styles: ["service_water_reservoir"],
+    service: Some("water_reservoir"),
+    icon: "water_reservoir",
+))

@@ -1,0 +1,16 @@
+// T-308: about 0.85 of four pumps' cost and upkeep per unit of capacity (economy of scale).
+Building((
+    id: "water_pump_large",
+    name: "Large water pumping station",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 3),
+    jobs: (4, 4, 0, 0),
+    consumption: {Power: 70.0},
+    tax_base: 0.0,
+    cost: 22000.0,
+    upkeep_week: 870.0,
+    styles: ["service_pump_house_large"],
+    service: Some("water_pump_large"),
+    icon: "water_pump_large",
+))

@@ -1,0 +1,15 @@
+// T-308: a bigger service building: the massing of the small one, drawn on the larger lot.
+Style((
+    id: "service_treatment_plant_large",
+    massing: TreatmentPlant,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.66, 0.74, 0.62), (0.62, 0.70, 0.58)],
+        roof: [(0.22, 0.34, 0.30)],
+        trim: [(0.86, 0.50, 0.20)],
+        glass: (0.20, 0.26, 0.32),
+    ),
+    facade: Industrial,
+))

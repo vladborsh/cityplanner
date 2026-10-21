@@ -1,0 +1,15 @@
+// T-308: a bigger service building: the massing of the small one, drawn on the larger lot.
+Style((
+    id: "service_water_reservoir",
+    massing: WaterTower,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.55, 0.72, 0.86), (0.60, 0.76, 0.88)],
+        roof: [(0.30, 0.36, 0.42)],
+        trim: [(0.90, 0.60, 0.22)],
+        glass: (0.20, 0.26, 0.32),
+    ),
+    facade: Industrial,
+))

@@ -424,6 +424,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 60.0, 135.0, c + 175.0),
             Vec3::new(c + 60.0, 0.0, c + 50.0),
         ),
+        // The small and the bigger utility buildings (`--scene big-utilities`, T-308).
+        "big-utilities" => (
+            Vec3::new(c + 40.0, 120.0, c + 140.0),
+            Vec3::new(c + 40.0, 0.0, c + 30.0),
+        ),
         "low-houses-close" => (
             Vec3::new(c + 96.0, 38.0, c + 70.0),
             Vec3::new(c + 96.0, 0.0, c + 14.0),
@@ -727,6 +732,9 @@ pub fn build_sim(
     } else if scene == Some(scene::LOW_HOUSES) {
         scene::build_low_houses(&mut sim);
         info!("scene low-houses");
+    } else if scene == Some(scene::BIG_UTILITIES) {
+        scene::build_big_utilities(&mut sim);
+        info!("scene big-utilities");
     } else if scene == Some(scene::POWER_TOWN) {
         scene::build_power_town(&mut sim);
         info!("scene power-town");

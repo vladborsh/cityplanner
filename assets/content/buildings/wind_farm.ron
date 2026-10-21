@@ -1,0 +1,18 @@
+// T-308: about 0.85 of four turbines' cost and upkeep per unit of capacity; clean.
+Building((
+    id: "wind_farm",
+    name: "Wind farm",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 4),
+    jobs: (0, 0, 0, 0),
+    consumption: {},
+    tax_base: 0.0,
+    cost: 4800.0,
+    upkeep_week: 116.0,
+    styles: ["service_wind_farm"],
+    service: Some("wind_farm"),
+    icon: "wind_farm",
+    // Pollution / noise (T-300, system-design §11.1): a bit louder than one turbine.
+    emits: Some((noise: Some((strength: 50.0, radius_cells: 6)))),
+))

@@ -1215,7 +1215,8 @@ pub fn service(m: &mut MeshData, massing: Massing, sc: &ServiceCx) {
                     m,
                     f,
                     (-0.62 * hu, cv - 0.6 * hv),
-                    0.24 * hu.min(hv) * 2.0,
+                    // T-308: 0.2 (was 0.24): the 4 x 4 gas plant's coal pile stays in its lot.
+                    0.2 * hu.min(hv) * 2.0,
                     (y, y + 4.5),
                     n,
                     mul(sc.roof, 1.4),

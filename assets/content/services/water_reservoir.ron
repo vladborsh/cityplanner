@@ -1,0 +1,11 @@
+// T-308: five water towers in one (400 -> 2000), on any land.
+Service((
+    id: "water_reservoir",
+    name: "Water reservoir",
+    kind: Water,
+    radius_m: 800.0,
+    capacity: 2000,
+    site: Land,
+    road_access: false,
+    vehicles: [],
+))

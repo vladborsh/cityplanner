@@ -1,0 +1,15 @@
+// T-308: a bigger service building: the massing of the small one, drawn on the larger lot.
+Style((
+    id: "service_pump_house_large",
+    massing: PumpHouse,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.42, 0.56, 0.66), (0.46, 0.60, 0.70)],
+        roof: [(0.22, 0.30, 0.38)],
+        trim: [(0.86, 0.80, 0.30)],
+        glass: (0.20, 0.26, 0.32),
+    ),
+    facade: Industrial,
+))

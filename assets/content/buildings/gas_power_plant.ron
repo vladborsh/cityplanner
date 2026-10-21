@@ -1,0 +1,19 @@
+// T-308: about 0.85 of three coal plants' cost and upkeep per unit of capacity; half the
+// pollution of a coal plant (90 -> 45) for three times the power.
+Building((
+    id: "gas_power_plant",
+    name: "Gas power plant",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 4),
+    jobs: (10, 10, 4, 0),
+    consumption: {},
+    tax_base: 0.0,
+    cost: 42000.0,
+    upkeep_week: 1960.0,
+    styles: ["service_gas_plant"],
+    service: Some("gas_plant"),
+    icon: "gas_power_plant",
+    // Pollution / noise (T-300, system-design §11.1).
+    emits: Some((pollution: Some((strength: 45.0, radius_cells: 8)))),
+))

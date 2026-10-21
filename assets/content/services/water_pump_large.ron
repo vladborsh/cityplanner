@@ -1,0 +1,10 @@
+// T-308: four pumps in one (3000 -> 12000), still on water.
+Service((
+    id: "water_pump_large",
+    name: "Large water pumping station",
+    kind: Water,
+    radius_m: 800.0,
+    capacity: 12000,
+    site: OnWater,
+    vehicles: [],
+))
