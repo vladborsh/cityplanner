@@ -26,7 +26,7 @@ use crate::road::{
     MarkerKind, RoadMarker, RoadTool, TOO_CLOSE, chevron_lines, preview_plan, resolve_cursor,
     road_is_one_way, road_markers, sample_curve,
 };
-use crate::upgrade::{upgrade_commands, upgrade_preview};
+use crate::upgrade::{piece_preview, upgrade_commands, upgrade_piece};
 use crate::utility::{
     LINK_PICK_RADIUS, UtilityTool, pick_link, plan_polylines, preview as utility_preview,
 };
@@ -368,6 +368,72 @@ pub fn place_demo(
     if state.place_ghost != ghost {
         state.place_ghost = ghost;
     }
+}
+
+/// The upgrade tool held over `at` without a cursor (`--upgrade-demo` of the desktop client, for
+/// the BUG-103 shots): the piece it would change to `road`; `whole`: as with Shift held.
+#[derive(Resource, Clone, Debug)]
+pub struct UpgradeDemo {
+    pub road: String,
+    pub at: Vec2,
+    pub whole: bool,
+}
+
+pub fn upgrade_demo(
+    demo: Option<Res<UpgradeDemo>>,
+    view: Option<Res<SimView>>,
+    mut state: ResMut<ToolState>,
+) {
+    let (Some(demo), Some(view)) = (demo, view) else {
+        return;
+    };
+    let Some(road) = view.content.as_deref().and_then(|c| c.road_id(&demo.road)) else {
+        return;
+    };
+    if state.active != ActiveTool::Upgrade {
+        state.select(ActiveTool::Upgrade);
+    }
+    state.road.road = Some(road);
+    state.shift = demo.whole;
+    state.hover = Some(demo.at);
+    upgrade_hover(&mut state, &view, demo.at);
+}
+
+/// The upgrade tool over `p`: the piece it would take, its preview and what it would demolish.
+pub fn upgrade_hover(state: &mut ToolState, view: &SimView, p: Vec2) {
+    // The piece between the nearest stops; Shift: the whole road run (BUG-103).
+    let piece = upgrade_piece(&view.net, p, PICK_RADIUS, state.shift);
+    let preview = match (state.road.road, view.content.as_deref()) {
+        (Some(target), Some(content)) if !piece.is_empty() => Some(piece_preview(
+            &view.net,
+            &view.tiles,
+            &view.zones,
+            content,
+            &piece,
+            target,
+        )),
+        _ => None,
+    };
+    state.highlight = preview.as_ref().map(|u| u.run.clone()).unwrap_or_default();
+    state.spans = preview
+        .as_ref()
+        .map(|u| u.spans.clone())
+        .unwrap_or_default();
+    state.highlight_outside = preview.as_ref().is_some_and(|u| {
+        u.errors
+            .iter()
+            .any(|e| *e == cp_locale::tr(crate::upgrade::OUTSIDE_LAND))
+    });
+    // What the upgrade would take down (BUG-096), only when the cursor's preview changed.
+    if state.upgrade_preview != preview {
+        state.upgrade_demolish = match (&preview, state.road.road) {
+            (Some(u), Some(target)) if u.errors.is_empty() => {
+                crate::under_road(view, &upgrade_commands(&view.net, u, target)).buildings
+            }
+            _ => Vec::new(),
+        };
+    }
+    state.upgrade_preview = preview;
 }
 
 /// A pipe or power-line tool held without a cursor (`--utility-demo` of the desktop client, for
@@ -751,13 +817,18 @@ impl Plugin for ToolsPlugin {
             .init_resource::<cp_render::CoverageGhost>()
             .add_systems(
                 Update,
-                (place_demo, sync_coverage_ghost).chain().after(tool_hover),
+                (place_demo, upgrade_demo, sync_coverage_ghost)
+                    .chain()
+                    .after(tool_hover),
             )
             .add_systems(Update, sync_coverage_count.after(sync_coverage_ghost))
             .init_resource::<cp_render::DemolishLayer>()
             .add_systems(
                 Update,
-                sync_demolish_layer.after(tool_hover).after(place_demo),
+                sync_demolish_layer
+                    .after(tool_hover)
+                    .after(place_demo)
+                    .after(upgrade_demo),
             )
             .add_systems(Update, warm_gizmos)
             .insert_gizmo_config(
@@ -1044,32 +1115,7 @@ pub fn tool_hover(
     let hover = state.hover;
     match (state.active, hover) {
         (ActiveTool::Bulldozer, Some(p)) => bulldozer_hover(&mut state, &view, p),
-        (ActiveTool::Upgrade, Some(p)) => {
-            let preview = match (state.road.road, view.content.as_deref()) {
-                (Some(target), Some(content)) => {
-                    pick_segment(&view.net, p, PICK_RADIUS).map(|seg| {
-                        upgrade_preview(&view.net, &view.tiles, &view.zones, content, seg, target)
-                    })
-                }
-                _ => None,
-            };
-            state.highlight = preview.as_ref().map(|u| u.run.clone()).unwrap_or_default();
-            state.highlight_outside = preview.as_ref().is_some_and(|u| {
-                u.errors
-                    .iter()
-                    .any(|e| *e == cp_locale::tr(crate::upgrade::OUTSIDE_LAND))
-            });
-            // What the upgrade would take down (BUG-096), only when the cursor's preview changed.
-            if state.upgrade_preview != preview {
-                state.upgrade_demolish = match (&preview, state.road.road) {
-                    (Some(u), Some(target)) if u.errors.is_empty() => {
-                        crate::under_road(&view, &upgrade_commands(u, target)).buildings
-                    }
-                    _ => Vec::new(),
-                };
-            }
-            state.upgrade_preview = preview;
-        }
+        (ActiveTool::Upgrade, Some(p)) => upgrade_hover(&mut state, &view, p),
         (ActiveTool::Flip, Some(p)) => {
             let preview = view.content.as_deref().and_then(|content| {
                 pick_segment(&view.net, p, PICK_RADIUS)
@@ -1515,8 +1561,12 @@ pub fn tool_click(
             }
         }
         ActiveTool::Upgrade => {
-            if let (Some(preview), Some(target)) = (state.upgrade_preview.take(), state.road.road) {
-                let commands = upgrade_commands(&preview, target);
+            if let (Some(preview), Some(target), Some(v)) = (
+                state.upgrade_preview.take(),
+                state.road.road,
+                view.as_deref(),
+            ) {
+                let commands = upgrade_commands(&v.net, &preview, target);
                 send_road(&mut state, view.as_deref(), &mut outbox, commands, None);
                 state.highlight.clear();
             }

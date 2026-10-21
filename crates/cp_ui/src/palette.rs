@@ -473,6 +473,7 @@ mod tests {
         assert!(rig.frame(vec![]).contains("Upgrade to"));
         rig.tools.upgrade_preview = Some(UpgradePreview {
             run: vec![],
+            spans: vec![],
             changes: vec![],
             cost: Cost(32_100),
             dropped_building_cells: 4,

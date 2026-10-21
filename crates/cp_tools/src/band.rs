@@ -114,9 +114,11 @@ pub fn sync_bands(
         .ghost
         .clone()
         .filter(|_| state.active == ActiveTool::Road);
-    let bulldozer = state.active == ActiveTool::Bulldozer && !state.spans.is_empty();
-    let run = if state.active == ActiveTool::Upgrade
-        || (state.active == ActiveTool::Bulldozer && !bulldozer)
+    // The bulldozer's and the upgrade's pieces are drawn as parts of segments (BUG-103).
+    let bulldozer = matches!(state.active, ActiveTool::Bulldozer | ActiveTool::Upgrade)
+        && !state.spans.is_empty();
+    let run = if (state.active == ActiveTool::Upgrade || state.active == ActiveTool::Bulldozer)
+        && !bulldozer
     {
         state.highlight.clone()
     } else {

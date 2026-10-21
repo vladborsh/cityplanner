@@ -53,6 +53,8 @@ pub struct Options {
     /// `--place-demo fire_station,x,z`: hold the placement tool's ghost of that building at
     /// (x, z) without a cursor (screenshots of the coverage preview, T-254).
     pub place_demo: Option<cp_tools::PlaceDemo>,
+    /// `--upgrade-demo road,x,z[,whole]`: the upgrade tool held over (x, z) (BUG-103 shots).
+    pub upgrade_demo: Option<cp_tools::UpgradeDemo>,
     /// `--grading exposure=0.1,contrast=1.1,...`: this run's colour grading (T-273).
     pub grading: Option<cp_render::GradingSettings>,
     /// `--grading-panel`: open the F8 colour grading panel at start.
@@ -137,6 +139,17 @@ impl Options {
                 (n.len() == 2).then(|| cp_tools::PlaceDemo {
                     def,
                     at: bevy::math::Vec2::new(n[0], n[1]),
+                })
+            }),
+            upgrade_demo: value("--upgrade-demo").and_then(|v| {
+                let mut it = v.split(',');
+                let road = it.next()?.to_string();
+                let rest: Vec<&str> = it.collect();
+                let n: Vec<f32> = rest.iter().filter_map(|x| x.parse().ok()).collect();
+                (n.len() == 2).then(|| cp_tools::UpgradeDemo {
+                    road,
+                    at: bevy::math::Vec2::new(n[0], n[1]),
+                    whole: rest.contains(&"whole"),
                 })
             }),
             grading: value("--grading").and_then(|v| match cp_render::GradingSettings::parse(&v) {
@@ -525,6 +538,12 @@ pub fn run(opts: Options) -> AppExit {
             );
     }
     if let Some(demo) = opts.place_demo {
+        if opts.hidden && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
+            app.add_plugins(cp_tools::ToolsPlugin);
+        }
+        app.insert_resource(demo);
+    }
+    if let Some(demo) = opts.upgrade_demo {
         if opts.hidden && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
             app.add_plugins(cp_tools::ToolsPlugin);
         }

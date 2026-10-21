@@ -65,7 +65,9 @@ impl SimCommand {
             SimCommand::Net(NetCommand::BuildRoad { road: r, .. })
             | SimCommand::Net(NetCommand::UpgradeSegment { road: r, .. })
             | SimCommand::NetDemolish(NetCommand::BuildRoad { road: r, .. })
-            | SimCommand::NetDemolish(NetCommand::UpgradeSegment { road: r, .. }) => *r = road(*r),
+            | SimCommand::NetDemolish(NetCommand::UpgradeSegment { road: r, .. })
+            | SimCommand::Net(NetCommand::UpgradePart { road: r, .. })
+            | SimCommand::NetDemolish(NetCommand::UpgradePart { road: r, .. }) => *r = road(*r),
             SimCommand::Net(NetCommand::BuildPlan { plan })
             | SimCommand::NetDemolish(NetCommand::BuildPlan { plan }) => {
                 plan.road = road(plan.road)
@@ -300,6 +302,7 @@ fn platform_target(c: &NetCommand) -> Option<cp_net::SegmentId> {
         NetCommand::RemoveSegment { seg }
         | NetCommand::RemovePart { seg, .. }
         | NetCommand::UpgradeSegment { seg, .. }
+        | NetCommand::UpgradePart { seg, .. }
         | NetCommand::FlipSegment { seg } => Some(*seg),
         NetCommand::BuildRoad { .. }
         | NetCommand::BuildPlan { .. }

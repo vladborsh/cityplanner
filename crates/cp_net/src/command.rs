@@ -61,6 +61,17 @@ pub enum NetCommand {
     /// Builds a road from a resolved plan (§6.8.3, T-262): the tool has made every snap, the
     /// command applies what it is given. Appended last: older logs replay as before.
     BuildPlan { plan: BuildPlan },
+    /// Changes the road type of the part of a segment between the arc lengths `s0 < s1` from its
+    /// `start` (BUG-103: the upgrade tool takes the piece between the nearest corner, junction or
+    /// section mark). The ends snap as `RemovePart`'s do; the segment is cut there and only the
+    /// middle changes, charged by its length. Both ends on the ends is `UpgradeSegment`.
+    /// Appended last: older logs read and replay as before.
+    UpgradePart {
+        seg: SegmentId,
+        s0: f32,
+        s1: f32,
+        road: RoadDefId,
+    },
 }
 
 /// A `RemovePart` end closer than this (metres) to an end of the segment moves onto that end.
@@ -72,6 +83,44 @@ pub fn part_range(len: f32, s0: f32, s1: f32) -> Option<(f32, f32)> {
     let s0 = if s0 < PART_SNAP { 0.0 } else { s0 };
     let s1 = if s1 > len - PART_SNAP { len } else { s1 };
     (s0 < s1).then_some((s0, s1))
+}
+
+/// Checks that `seg` may become `road` (owned, another type of the same kind, a variant for
+/// its elevation) and returns what a metre of it costs there.
+fn upgrade_price(
+    world: &World,
+    content: &cp_content::ContentDb,
+    seg: SegmentId,
+    road: RoadDefId,
+) -> Result<f32, NetError> {
+    if road.index() >= content.roads().count() {
+        return Err(NetError::UnknownRoad(road));
+    }
+    let def = content.road(road);
+    check_owned(world, seg)?;
+    let graph = world.resource::<NetGraph>();
+    let s = graph.segment(seg).ok_or(NetError::UnknownSegment(seg))?;
+    if s.road == road {
+        return Err(NetError::SameRoad);
+    }
+    let was_rail = content.road(s.road).class == RoadClass::Rail;
+    if was_rail != (def.class == RoadClass::Rail) {
+        return Err(NetError::WrongKind(road));
+    }
+    match s.elevation {
+        Elevation::Elevated => Ok(def
+            .elevated
+            .as_ref()
+            .ok_or(NetError::NoElevatedVariant(road))?
+            .cost_per_m),
+        Elevation::Tunnel => Ok(def
+            .tunnel
+            .as_ref()
+            .ok_or(NetError::NoTunnelVariant(road))?
+            .cost_per_m),
+        _ if !def.ground => Err(NetError::WrongKind(road)),
+        _ => Ok(def.cost_per_m),
+    }
 }
 
 /// What a metre of `def` costs to build at `elevation`: its elevated, bridge or tunnel variant's
@@ -252,40 +301,51 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
         NetCommand::BuildPlan { plan } => build_literal(world, plan),
         NetCommand::UpgradeSegment { seg, road } => {
             let content = content()?;
-            if road.index() >= content.roads().count() {
-                return Err(NetError::UnknownRoad(*road));
-            }
+            let cost_per_m = upgrade_price(world, &content, *seg, *road)?;
             let def = content.road(*road);
-            check_owned(world, *seg)?;
-            let graph = world.resource::<NetGraph>();
-            let s = graph.segment(*seg).ok_or(NetError::UnknownSegment(*seg))?;
-            if s.road == *road {
-                return Err(NetError::SameRoad);
-            }
-            let was_rail = content.road(s.road).class == RoadClass::Rail;
-            if was_rail != (def.class == RoadClass::Rail) {
-                return Err(NetError::WrongKind(*road));
-            }
-            let cost_per_m = match s.elevation {
-                Elevation::Elevated => {
-                    def.elevated
-                        .as_ref()
-                        .ok_or(NetError::NoElevatedVariant(*road))?
-                        .cost_per_m
-                }
-                Elevation::Tunnel => {
-                    def.tunnel
-                        .as_ref()
-                        .ok_or(NetError::NoTunnelVariant(*road))?
-                        .cost_per_m
-                }
-                _ if !def.ground => return Err(NetError::WrongKind(*road)),
-                _ => def.cost_per_m,
-            };
-            let cost = segment_cost(s.length, cost_per_m);
+            let len = world
+                .resource::<NetGraph>()
+                .segment(*seg)
+                .map_or(0.0, |s| s.length);
+            let cost = segment_cost(len, cost_per_m);
             check_funds(world, cost).map_err(NetError::Funds)?;
             let mut graph = world.resource_mut::<NetGraph>();
             graph.upgrade_segment(*seg, def, *road)?;
+            charge_funds(world, cost);
+            Ok(cost)
+        }
+        NetCommand::UpgradePart { seg, s0, s1, road } => {
+            if !(s0.is_finite() && s1.is_finite() && s0 < s1) {
+                return Err(NetError::BadPartRange);
+            }
+            let content = content()?;
+            let cost_per_m = upgrade_price(world, &content, *seg, *road)?;
+            let def = content.road(*road);
+            let s = world
+                .resource::<NetGraph>()
+                .segment(*seg)
+                .ok_or(NetError::UnknownSegment(*seg))?;
+            let (len, old, curve) = (s.length, s.road, s.curve);
+            let (s0, s1) = part_range(len, *s0, *s1).ok_or(NetError::BadPartRange)?;
+            let cost = segment_cost(s1 - s0, cost_per_m);
+            check_funds(world, cost).map_err(NetError::Funds)?;
+            // Cut only where the part does not reach the end (as `RemovePart`); a split checks
+            // all its pieces before it changes anything.
+            let table = curve.arc_table();
+            let mut ts = Vec::with_capacity(2);
+            if s0 > 0.0 {
+                ts.push(table.s_to_t(s0));
+            }
+            if s1 < len {
+                ts.push(table.s_to_t(s1));
+            }
+            let mut graph = world.resource_mut::<NetGraph>();
+            let middle = if ts.is_empty() {
+                *seg
+            } else {
+                graph.split_segments(content.road(old), *seg, &ts)?.segments[usize::from(s0 > 0.0)]
+            };
+            graph.upgrade_segment(middle, def, *road)?;
             charge_funds(world, cost);
             Ok(cost)
         }
@@ -461,6 +521,21 @@ pub fn command_strips(
                 if s.elevation == Elevation::Ground && road.index() < content.roads().count() =>
             {
                 vec![(s.curve, content.road(*road).width * 0.5)]
+            }
+            _ => Vec::new(),
+        },
+        NetCommand::UpgradePart { seg, s0, s1, road } => match graph.segment(*seg) {
+            Some(s)
+                if s.elevation == Elevation::Ground && road.index() < content.roads().count() =>
+            {
+                match part_range(s.length, *s0, *s1) {
+                    Some((a, b)) => {
+                        let table = s.curve.arc_table();
+                        let curve = s.curve.sub_curve(table.s_to_t(a), table.s_to_t(b));
+                        vec![(curve, content.road(*road).width * 0.5)]
+                    }
+                    None => Vec::new(),
+                }
             }
             _ => Vec::new(),
         },
@@ -931,6 +1006,63 @@ mod tests {
         let (mut w, road) = world(&[(tx, tz)]);
         let seg = add(&mut w, road, 100.0, 190.0);
         (w, seg)
+    }
+
+    #[test]
+    fn upgrade_part_changes_only_the_middle_and_charges_its_length() {
+        let (mut w, seg) = part_world();
+        let db = w.resource::<SimContent>().0.clone();
+        let (basic, medium) = (
+            db.road_id("basic_2l").unwrap(),
+            db.road_id("medium_4l").unwrap(),
+        );
+        let before = w.resource::<Treasury>().balance;
+        let cost = apply(
+            &mut w,
+            &NetCommand::UpgradePart {
+                seg,
+                s0: 20.0,
+                s1: 60.0,
+                road: medium,
+            },
+        )
+        .unwrap();
+        assert_eq!(cost, segment_cost(40.0, db.road(medium).cost_per_m));
+        assert_eq!(w.resource::<Treasury>().balance, Cost(before.0 - cost.0));
+        let g = w.resource::<NetGraph>();
+        let mut v: Vec<_> = g
+            .segments()
+            .map(|(_, s)| (s.curve.p0.x, s.length, s.road, s.lanes.len()))
+            .collect();
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        assert_eq!(v.len(), 3, "cut at both ends of the part");
+        assert_eq!([v[0].2, v[1].2, v[2].2], [basic, medium, basic]);
+        assert!((v[1].1 - 40.0).abs() < 0.01 && (v[1].0 - 120.0).abs() < 0.01);
+        assert!(
+            v[1].3 > v[0].3,
+            "the middle's lanes rebuilt for the new type"
+        );
+        // Joined, not cut: the remnants and the middle share their nodes.
+        assert_eq!(g.node_count(), 4);
+    }
+
+    #[test]
+    fn upgrade_part_near_both_ends_is_the_whole_segment() {
+        let (mut w, seg) = part_world();
+        let medium = w.resource::<SimContent>().0.road_id("medium_4l").unwrap();
+        apply(
+            &mut w,
+            &NetCommand::UpgradePart {
+                seg,
+                s0: 3.0,
+                s1: 86.0,
+                road: medium,
+            },
+        )
+        .unwrap();
+        let g = w.resource::<NetGraph>();
+        assert_eq!(g.segments().count(), 1);
+        assert_eq!(g.segment(seg).unwrap().road, medium);
     }
 
     #[test]
