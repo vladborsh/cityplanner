@@ -23,7 +23,7 @@ use crate::SimRunner;
 pub enum Selection {
     Building(BuildingId),
     Citizen(CitizenId),
-    /// `AgentKey` of the vehicle (`generation << 32 | index`).
+    /// `AgentKey` of the vehicle (`index << 32 | generation`).
     Vehicle(u64),
     Pedestrian(u64),
     Segment(SegmentId),
@@ -35,7 +35,7 @@ pub enum Selection {
 
 /// Splits an `AgentKey` into arena `(index, generation)`.
 pub fn key_parts(key: u64) -> (u32, u32) {
-    (key as u32, (key >> 32) as u32)
+    ((key >> 32) as u32, key as u32)
 }
 
 #[derive(Clone, Debug, PartialEq)]

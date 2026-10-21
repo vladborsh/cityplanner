@@ -917,6 +917,7 @@ fn step_sim(
     mut sounds: Option<ResMut<audio::SoundQueue>>,
     mut played: Option<ResMut<audio::AudioPrefsRes>>,
     mut frame_sim: ResMut<FrameSim>,
+    mut held: Local<Option<f32>>,
 ) {
     let (Some(mut sim), Some(mut view)) = (sim, view) else {
         return;
@@ -970,7 +971,40 @@ fn step_sim(
     if ticks > 0 {
         *phases = phase_times(&sim.0);
     }
-    fraction.0 = sim.0.tick_fraction();
+    fraction.0 = held_fraction(
+        &mut held,
+        fraction.0,
+        sim.0.tick_fraction(),
+        ticks,
+        sim.0.speed(),
+    );
+}
+
+/// The tick fraction to draw with (BUG-104). A pause drops the sim's accumulator, so its
+/// fraction falls to 0 and every car would jump back by up to a tick's travel; it keeps the last
+/// running fraction (`last`, the one drawn last frame) while paused, and after resuming until
+/// the new one passes it (the cars wait at most one tick instead of stepping back). `held`
+/// carries the kept value.
+pub fn held_fraction(
+    held: &mut Option<f32>,
+    last: f32,
+    fraction: f32,
+    ticks: u32,
+    speed: cp_core::SimSpeed,
+) -> f32 {
+    if ticks > 0 {
+        *held = None;
+    }
+    if speed == cp_core::SimSpeed::Pause {
+        return *held.get_or_insert(last);
+    }
+    match *held {
+        Some(h) if fraction < h => h,
+        _ => {
+            *held = None;
+            fraction
+        }
+    }
 }
 
 /// The system behind the save / load window: see [`handle_file_request`].
