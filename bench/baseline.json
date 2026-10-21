@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "fixtures": {
-    "bench-10k": { "pop": 10000, "seed": 1, "map": "flatlands", "checksum": "3150d2e1b971545f", "bytes": 1234558 },
+    "bench-10k": { "pop": 10000, "seed": 1, "map": "flatlands", "checksum": "c7e00c6596ab2f0a", "bytes": 1234256 },
     "bench-100k": { "pop": 100000, "seed": 1, "map": "flatlands", "checksum": "9fb726aceef4f09f", "bytes": 20877530 }
   },
   "scenario": "empty",
