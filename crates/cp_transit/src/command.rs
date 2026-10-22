@@ -291,6 +291,7 @@ pub fn apply(world: &mut World, cmd: &TransitCommand) -> Result<Cost, TransitErr
                         match mode {
                             TransitMode::Metro => "Metro",
                             TransitMode::Tram => "Tram",
+                            TransitMode::Trolley => "Trolleybus",
                             _ => "Bus",
                         }
                     ),

@@ -41,6 +41,7 @@ impl Section {
             TransitMode::Metro => "Metro",
             TransitMode::Train => "Train",
             TransitMode::Tram => "Tram",
+            TransitMode::Trolley => "Trolleybus",
         }
     }
 }
@@ -64,15 +65,24 @@ pub fn sections(content: &ContentDb) -> Vec<Section> {
             .as_ref()
             .is_some_and(|t| t.depth <= 0.0)
     });
-    // A depot serves the mode its service names (T-302b: the tram depot has its own section).
-    let (trams, depots): (Vec<Card>, Vec<Card>) = depots.into_iter().partition(|c| {
+    // A depot serves the mode its service names (T-302b, T-302c: the tram and the trolleybus
+    // depots have their own sections).
+    let mode_of = |c: &Card| {
         content
             .building(c.id)
             .service
             .as_deref()
             .and_then(|s| content.service_id(s))
-            .is_some_and(|s| content.service(s).transit_mode == cp_content::TransitKind::Tram)
-    });
+            .map_or(cp_content::TransitKind::Bus, |s| {
+                content.service(s).transit_mode
+            })
+    };
+    let (trams, depots): (Vec<Card>, Vec<Card>) = depots
+        .into_iter()
+        .partition(|c| mode_of(c) == cp_content::TransitKind::Tram);
+    let (trolleys, depots): (Vec<Card>, Vec<Card>) = depots
+        .into_iter()
+        .partition(|c| mode_of(c) == cp_content::TransitKind::Trolley);
     let mut out = Vec::new();
     if !depots.is_empty() || content.roads().next().is_some() {
         out.push(Section {
@@ -82,15 +92,17 @@ pub fn sections(content: &ContentDb) -> Vec<Section> {
             track: None,
         });
     }
-    // The rails are roads with tram lanes (Roads panel); the section has the depot and the line
-    // tool.
-    if !trams.is_empty() {
-        out.push(Section {
-            mode: TransitMode::Tram,
-            cards: trams,
-            line_tool: true,
-            track: None,
-        });
+    // The rails and the wires are roads with tram or trolleybus lanes (Roads panel); each
+    // section has the depot and the line tool.
+    for (mode, cards) in [(TransitMode::Tram, trams), (TransitMode::Trolley, trolleys)] {
+        if !cards.is_empty() {
+            out.push(Section {
+                mode,
+                cards,
+                line_tool: true,
+                track: None,
+            });
+        }
     }
     // The track of the first station that lays one under ground: its road, at its depth.
     let track_of = |cards: &[Card], tunnel: bool| {
@@ -162,6 +174,7 @@ pub fn transit_panel(
                 TransitMode::Metro => Icon::MetroTrack,
                 TransitMode::Train => Icon::RailTrack,
                 TransitMode::Tram => Icon::LineTram,
+                TransitMode::Trolley => Icon::LineTrolley,
                 _ => Icon::LineBus,
             };
             icon.show(ui, Sizes::SECTION_ICON);
@@ -219,6 +232,12 @@ pub fn transit_panel(
                         Icon::LineTram,
                         tr("Tram line"),
                         tr("Click roads with tram rails to place stops, click the first stop to close the line. Backspace takes the last stop away."),
+                    )
+                } else if section.mode == TransitMode::Trolley {
+                    (
+                        Icon::LineTrolley,
+                        tr("Trolleybus line"),
+                        tr("Click roads with trolleybus wires to place stops, click the first stop to close the line. Backspace takes the last stop away."),
                     )
                 } else {
                     (
@@ -372,6 +391,7 @@ mod tests {
             [
                 TransitMode::Bus,
                 TransitMode::Tram,
+                TransitMode::Trolley,
                 TransitMode::Metro,
                 TransitMode::Train
             ]
@@ -381,7 +401,12 @@ mod tests {
         assert!(tram.line_tool && tram.track.is_none());
         assert!(tram.cards.iter().any(|c| c.name == "Tram Depot"));
         assert!(!all[0].cards.iter().any(|c| c.name == "Tram Depot"));
-        let s = [&all[0], &all[2], &all[3]];
+        // T-302c: so has the trolleybus depot.
+        let trolley = &all[2];
+        assert!(trolley.line_tool && trolley.track.is_none());
+        assert!(trolley.cards.iter().any(|c| c.name == "Trolleybus Depot"));
+        assert!(!all[0].cards.iter().any(|c| c.name == "Trolleybus Depot"));
+        let s = [&all[0], &all[3], &all[4]];
         assert_eq!(s[0].mode, TransitMode::Bus);
         assert!(s[0].line_tool && s[0].track.is_none());
         assert!(s[0].cards.iter().any(|c| c.name == "Bus Depot"));
