@@ -1307,6 +1307,8 @@ mod tests {
         }
         adv.observe(&at_tick(sick, day(17)), 1700.0, false);
         assert_eq!(adv.current(1700.1).map(|a| a.id), Some("jobs"));
+    }
+
     /// T-300: homes with BAD_WATER give "Bad water in N homes"; its action opens the Pollution
     /// overlay (and moves the camera when a polluted source is known).
     #[test]
