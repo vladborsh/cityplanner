@@ -146,6 +146,10 @@ pub struct CitizenGrid {
     /// Who came, was born, left and died since the start of this run.
     #[serde(skip)]
     pub flow: PopFlow,
+    /// Citizens removed (died or left) since the last [`Self::take_departed`]: `cp_traffic`
+    /// cancels their trips and frees their agents in the same tick. Transient, not saved.
+    #[serde(skip)]
+    departed: Vec<CitizenId>,
 }
 
 impl PartialEq for CitizenGrid {
@@ -188,6 +192,7 @@ impl CitizenGrid {
             dead,
             derived: Derived::default(),
             flow: PopFlow::default(),
+            departed: Vec::new(),
         }
     }
 
@@ -417,6 +422,7 @@ impl CitizenGrid {
         for cid in h.members.into_iter().flatten() {
             if let Some(c) = self.citizens.remove(cid) {
                 self.flow.left += 1;
+                self.departed.push(cid);
                 if let Some(w) = c.work {
                     self.derived.remove_job(w, usize::from(c.work_level));
                 }
@@ -459,6 +465,7 @@ impl CitizenGrid {
     pub fn remove_citizen(&mut self, id: CitizenId) -> Option<Citizen> {
         let c = self.citizens.remove(id)?;
         self.flow.died += 1;
+        self.departed.push(id);
         if let Some(w) = c.work {
             self.derived.remove_job(w, usize::from(c.work_level));
         }
@@ -479,6 +486,11 @@ impl CitizenGrid {
             self.remove_household(c.household);
         }
         Some(c)
+    }
+
+    /// The citizens removed since the last call, in removal order; clears the list.
+    pub fn take_departed(&mut self) -> Vec<CitizenId> {
+        std::mem::take(&mut self.departed)
     }
 
     /// Adds a newborn (0 days, education 0) to a household with a free place, at home.

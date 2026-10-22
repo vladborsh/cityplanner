@@ -123,6 +123,12 @@ fn a_painted_district_reports_its_residents_and_tax() {
 fn a_mid_town_earns_between_five_and_twelve_times_its_upkeep() {
     let (mut sim, pop) = city(1_000);
     assert!(pop >= 1_000);
+    // Half the arrival rate (MOVE_IN_ONE_IN 4): when the town reaches its population many
+    // households are still on the way in and pay nothing yet (4.2 measured). A day later they
+    // live there (8.0 measured).
+    for _ in 0..cp_core::time::TICKS_PER_DAY {
+        sim.tick_once();
+    }
     let (income, upkeep) = week(&mut sim, 9);
     let ratio = income.0 as f64 / upkeep.0 as f64;
     assert!((5.0..12.0).contains(&ratio), "{ratio:.2}");

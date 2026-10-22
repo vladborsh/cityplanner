@@ -43,7 +43,8 @@ pub const CITIZEN_BUCKETS: u32 = 256;
 pub const BUILDING_BUCKETS: u32 = 64;
 pub const MOVE_IN_STREAM: u64 = 0xC171;
 /// A building with a free apartment receives a household with probability `1 / this` per visit.
-pub const MOVE_IN_ONE_IN: u32 = 2;
+/// User 2026-10-22: halved the arrival rate (was 2) — the game pace was too fast.
+pub const MOVE_IN_ONE_IN: u32 = 4;
 /// Arrival delay without a map, ticks (half a game day).
 pub const FALLBACK_DELAY: u64 = 2048;
 /// Fixed part of the arrival delay with a map, ticks.

@@ -18,7 +18,8 @@ pub mod service;
 pub use agents::{
     AgentSettings, AgentStats, Agents, KIND_KEEP, KIND_MASK, KIND_PARKED, PED_CHUNK, PED_STEP,
     Pedestrian, PedestrianId, SegmentLoad, Vehicle, VehicleId, crossing_of, move_agents,
-    purge_removed_buildings, receive_paths, route_trips, update_traffic_load,
+    purge_departed_citizens, purge_removed_buildings, receive_paths, route_trips,
+    update_traffic_load,
 };
 pub use astar::{
     CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_class_path,

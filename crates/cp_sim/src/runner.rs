@@ -339,6 +339,13 @@ impl SimRunner {
                 .in_set(SimPhase::Citizens)
                 .after(cp_citizen::update_citizens),
         );
+        // Whoever died or left this tick takes their trip and agent along.
+        schedule.add_systems(
+            cp_traffic::purge_departed_citizens
+                .in_set(SimPhase::Citizens)
+                .after(cp_citizen::update_lifecycle)
+                .before(cp_citizen::update_routine),
+        );
         // Path snapshot after the junction links it is built from; results are applied in
         // the Paths phase (system-design §2: requests from tick t land exactly at t + 8).
         schedule.add_systems(

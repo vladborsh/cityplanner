@@ -148,9 +148,11 @@ fn a_thousand_citizens_commute_with_morning_and_evening_peaks() {
     let evening = *hist[15..20].iter().max().unwrap() as f32;
     let night = hist[0..4].iter().sum::<u32>() as f32 / 4.0;
     assert!(
-        // 1.25: with the commuter allowance (BUG-057) more residents stay jobless, so the
-        // morning peak is a smaller share of the day's trips.
-        morning >= 1.25 * mean,
+        // 1.1: with the commuter allowance (BUG-057) more residents stay jobless, so the
+        // morning peak is a smaller share of the day's trips (was 1.25). Half the arrivals
+        // (MOVE_IN_ONE_IN 4) bring the town to 1000 later, with its jobs farther apart: the
+        // long walks leave before dawn and the morning peak is flatter (1.15 measured).
+        morning >= 1.1 * mean,
         "morning peak {morning} vs mean {mean}"
     );
     assert!(
@@ -445,6 +447,56 @@ fn demolishing_an_occupied_home_and_workplace_leaves_nothing_dangling() {
     assert!(a.world().resource::<TripBook>().cancelled > 0);
 }
 
+/// The citizens on agent trips in id order.
+fn walkers_and_drivers(sim: &SimRunner) -> Vec<cp_citizen::CitizenId> {
+    sim.world()
+        .resource::<TripBook>()
+        .iter()
+        .filter(|(_, t)| t.state == TripState::Agent)
+        .map(|(_, t)| t.citizen)
+        .collect()
+}
+
+/// Whether an agent of the pools still carries `citizen`.
+fn has_agent(sim: &SimRunner, citizen: cp_citizen::CitizenId) -> bool {
+    let a = sim.world().resource::<cp_traffic::Agents>();
+    a.vehicles().any(|(_, v)| v.citizen == citizen)
+        || a.pedestrians().any(|(_, p)| p.citizen == citizen)
+}
+
+/// A household that leaves the city and a citizen who dies take their trips and agents along
+/// in the same tick: no trip of a missing citizen is left until its agent arrives.
+#[test]
+fn a_citizen_who_dies_or_leaves_on_the_way_takes_the_trip_and_the_agent_along() {
+    let content = content();
+    let mut sim = grown(&content, 5, 5, 400);
+    let movers = loop {
+        let m = walkers_and_drivers(&sim);
+        if m.len() >= 2 {
+            break m;
+        }
+        sim.tick_once();
+        assert!(sim.tick().0 < 30 * TICKS_PER_DAY, "nobody on the road");
+    };
+    let (dies, leaves) = (movers[0], movers[1]);
+    {
+        let mut g = sim.world_mut().resource_mut::<CitizenGrid>();
+        g.remove_citizen(dies);
+        let household = g.citizen(leaves).map(|c| c.household);
+        if let Some(h) = household {
+            g.remove_household(h);
+        }
+    }
+    sim.tick_once();
+    let book = sim.world().resource::<TripBook>();
+    for c in [dies, leaves] {
+        assert!(book.active_of(c).is_none(), "trip of {c:?} left behind");
+        assert!(!has_agent(&sim, c), "agent of {c:?} left behind");
+    }
+    let g = sim.world().resource::<CitizenGrid>();
+    assert!(book.iter().all(|(_, t)| g.citizen(t.citizen).is_some()));
+}
+
 /// Cars and pedestrians on the road right now.
 fn on_the_road(sim: &SimRunner) -> (usize, usize) {
     let a = sim.world().resource::<cp_traffic::Agents>();
@@ -504,6 +556,7 @@ fn a_full_pool_sends_the_overflow_abstract_and_every_trip_finishes() {
     limits.pedestrians = 10;
     let sim = town_with(&content, SimRunner::with_limits(5, limits), 7);
     let mut sim = grown_from(sim, 1000);
+    // The tick by which each trip must be gone.
     let mut first_seen: BTreeMap<cp_citizen::TripId, u64> = BTreeMap::new();
     let (mut max_cars, mut max_peds) = (0, 0);
     for _ in 0..(2 * TICKS_PER_DAY) {
@@ -512,9 +565,15 @@ fn a_full_pool_sends_the_overflow_abstract_and_every_trip_finishes() {
         let (cars, peds) = on_the_road(&sim);
         (max_cars, max_peds) = (max_cars.max(cars), max_peds.max(peds));
         let book = sim.world().resource::<TripBook>();
-        for (tid, _) in book.iter() {
-            let first = *first_seen.entry(tid).or_insert(now);
-            assert!(now - first < TICKS_PER_DAY, "trip {tid:?} is stuck");
+        for (tid, trip) in book.iter() {
+            // A trip gets a day to start moving; an abstract one then runs to its own arrival
+            // tick. A carless worker walks to a far job (BUG-066: jobs anywhere in the town),
+            // and a 1.2 km walk takes longer than a game day (T-270: 0.4 s a tick).
+            let deadline = first_seen.entry(tid).or_insert(now + TICKS_PER_DAY);
+            if let TripState::InTransit { arrive_at } = trip.state {
+                *deadline = (*deadline).max(arrive_at.0 + 1);
+            }
+            assert!(now <= *deadline, "trip {tid:?} is stuck: {trip:?}");
         }
         first_seen.retain(|id, _| book.get(*id).is_some());
     }

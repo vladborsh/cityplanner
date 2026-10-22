@@ -472,6 +472,34 @@ pub fn purge_removed_buildings(
     agents.drop_trips(&cancelled);
 }
 
+/// `Citizens` phase, after the citizens and their lifecycle act: cancels the trips of the
+/// citizens who died or left the city this tick and frees their agents, so no trip or agent
+/// outlives its citizen.
+pub fn purge_departed_citizens(
+    mut grid: ResMut<CitizenGrid>,
+    mut book: ResMut<TripBook>,
+    mut agents: ResMut<Agents>,
+) {
+    let departed = grid.take_departed();
+    if departed.is_empty() {
+        return;
+    }
+    book.ensure_derived();
+    agents.ensure_derived(&book);
+    let mut cancelled = Vec::new();
+    for cid in departed {
+        if let Some(tid) = book.active_of(cid)
+            && book.remove(tid).is_some()
+        {
+            book.cancelled += 1;
+            cancelled.push(tid);
+        }
+    }
+    if !cancelled.is_empty() {
+        agents.drop_trips(&cancelled);
+    }
+}
+
 /// The access point of a building as the path service wants it.
 pub(crate) fn access_of(net: &NetGraph, b: &Building) -> Option<Access> {
     let access = b.access()?;
