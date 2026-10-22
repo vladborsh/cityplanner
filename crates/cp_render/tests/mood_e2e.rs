@@ -188,8 +188,17 @@ fn a_service_gladdens_the_houses_it_covers_and_saddens_them_when_it_goes() {
     let m = moods(&net, &grid, &with_police, &db);
     let (glad, sorry) = split(&m);
     let (up, _) = changed(&net, &grid, &with_police, &db, ServiceKind::Police);
-    assert_eq!(glad, up, "exactly the covered homes");
-    assert_eq!(glad.len(), n);
+    // Every covered home, and besides them only non-home buildings (T-287b).
+    assert!(
+        up.is_subset(&glad) && up.len() == n,
+        "exactly the covered homes"
+    );
+    let is_home = |id: &BuildingId| homes(&grid, &db).iter().any(|(h, _)| h == id);
+    assert!(
+        glad.iter()
+            .filter(|id| !up.contains(id))
+            .all(|id| !is_home(id))
+    );
     assert!(sorry.is_empty());
     // The wave runs out from the station: nearer homes first.
     assert!(m.windows(2).all(|w| w[0].delay <= w[1].delay));
@@ -197,7 +206,7 @@ fn a_service_gladdens_the_houses_it_covers_and_saddens_them_when_it_goes() {
     // Bulldozed: the same homes are sorry.
     let (glad, sorry) = split(&moods(&net, &with_police, &grid, &db));
     assert!(glad.is_empty());
-    assert_eq!(sorry, up);
+    assert!(up.is_subset(&sorry));
 }
 
 #[test]
@@ -271,4 +280,54 @@ fn many_services_at_once_are_a_load_not_an_action() {
         g = with(&g, &net, &db, "police_station", 10.0 + 20.0 * k as f32).0;
     }
     assert!(moods(&net, &grid, &g, &db).is_empty());
+}
+
+/// `grid` with an Active building `def` of a non-home zone at `x` along the street, 20 m
+/// north of it (the homes stand south).
+fn with_north(
+    grid: &BuildingGrid,
+    net: &NetGraph,
+    db: &ContentDb,
+    def: &str,
+    x: f32,
+) -> (BuildingGrid, BuildingId) {
+    let (mut g, id) = with(grid, net, db, def, x);
+    let pos = A + Vec2::new(x, -20.0);
+    g.get_mut(id).unwrap().pos = pos;
+    (g, id)
+}
+
+#[test]
+fn police_gladdens_shops_industry_and_offices_too_but_education_only_homes() {
+    let (net, grid, db) = town();
+    let (mut g, shop) = with_north(&grid, &net, &db, "com_low_2", 60.0);
+    let (g2, factory) = with_north(&g, &net, &db, "ind_1", 120.0);
+    let (g3, office) = with_north(&g2, &net, &db, "office_1", 180.0);
+    g = g3;
+    let others = [shop, factory, office];
+    // Police: homes and all three are glad; bulldozed, all sorry.
+    let (with_police, _) = with(&g, &net, &db, "police_station", 40.0);
+    let (glad, sorry) = split(&moods(&net, &g, &with_police, &db));
+    assert!(sorry.is_empty());
+    for id in others {
+        assert!(glad.contains(&id), "{id:?} should be glad");
+    }
+    assert!(glad.len() > others.len(), "the homes too");
+    let (glad, sorry) = split(&moods(&net, &with_police, &g, &db));
+    assert!(glad.is_empty());
+    for id in others {
+        assert!(sorry.contains(&id), "{id:?} should be sorry");
+    }
+    // Education: homes only.
+    let (with_school, _) = with(&g, &net, &db, "elementary_school", 40.0);
+    let (glad, _) = split(&moods(&net, &g, &with_school, &db));
+    assert!(!glad.is_empty());
+    for id in others {
+        assert!(!glad.contains(&id), "{id:?} must not react to a school");
+    }
+    // A park: homes and the shop, not the factory or the office.
+    let (with_park, _) = with(&g, &net, &db, "small_park", 60.0);
+    let (glad, _) = split(&moods(&net, &g, &with_park, &db));
+    assert!(glad.contains(&shop), "the shop likes the park");
+    assert!(!glad.contains(&factory) && !glad.contains(&office));
 }
