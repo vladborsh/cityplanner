@@ -117,7 +117,7 @@ pub fn target_at(view: &SimView, tool: &LineTool, p: Vec2) -> Target {
     let mut best: Option<(f32, StopId)> = None;
     for (id, st) in view.transit.net.stops.iter() {
         let d = st.pos.distance(p);
-        if matches!(st.kind, StopKind::Station { .. }) != (tool.mode != TransitMode::Bus) {
+        if matches!(st.kind, StopKind::Station { .. }) == tool.mode.on_road() {
             continue;
         }
         if d <= STOP_PICK_RADIUS && best.is_none_or(|(bd, _)| d < bd) {
@@ -135,7 +135,7 @@ pub fn target_at(view: &SimView, tool: &LineTool, p: Vec2) -> Target {
         };
     }
     // A metro line stops at stations only: a click on a road is nothing.
-    if tool.mode != TransitMode::Bus {
+    if !tool.mode.on_road() {
         return Target::Nothing;
     }
     let (Some(seg_id), Some(db)) = (

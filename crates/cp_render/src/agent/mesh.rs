@@ -13,6 +13,8 @@ const SKIN: [f32; 4] = [0.60, 0.42, 0.32, 0.0];
 const TINT: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const BUS_CREAM: [f32; 4] = [0.93, 0.90, 0.80, 0.0];
 const BUS_ROOF: [f32; 4] = [0.55, 0.58, 0.62, 0.0];
+/// The pantograph of a tram (T-302b): dark steel, no instance colour.
+const PANTOGRAPH: [f32; 4] = [0.22, 0.23, 0.25, 0.0];
 const MAIL_RED: [f32; 4] = [0.78, 0.10, 0.08, 0.0];
 const MAIL_ROOF: [f32; 4] = [0.93, 0.93, 0.90, 0.0];
 
@@ -308,6 +310,35 @@ pub fn vehicle_mesh(kind: usize, detail: usize) -> MeshData {
             push_box(&mut m, [-0.46, 0.6, -0.505], [0.46, 0.9, -0.495], GLASS);
             push_box(&mut m, [-0.45, 0.98, -0.45], [0.45, 1.0, 0.45], BUS_ROOF);
             wheels(&mut m, &[0.32, -0.32]);
+        }
+        14 => {
+            // Tram (T-302b): a long low-floor body in three sections, the lower half in the
+            // line's colour (the instance colour), a cream upper half with one long window band,
+            // dark joints between the sections, glass at both ends and a pantograph on the roof.
+            push_box(&mut m, [-0.5, 0.06, -0.5], [0.5, 0.42, 0.5], TINT);
+            push_box(&mut m, [-0.5, 0.42, -0.5], [0.5, 0.9, 0.5], BUS_CREAM);
+            push_box(&mut m, [-0.505, 0.48, -0.47], [0.505, 0.82, 0.47], GLASS);
+            push_box(&mut m, [-0.46, 0.45, 0.495], [0.46, 0.84, 0.505], GLASS);
+            push_box(&mut m, [-0.46, 0.45, -0.505], [0.46, 0.84, -0.495], GLASS);
+            for z in [-0.17, 0.17] {
+                push_box(
+                    &mut m,
+                    [-0.51, 0.06, z - 0.012],
+                    [0.51, 0.9, z + 0.012],
+                    [0.18, 0.19, 0.21, 0.0],
+                );
+            }
+            push_box(&mut m, [-0.44, 0.9, -0.48], [0.44, 0.93, 0.48], BUS_ROOF);
+            // Pantograph: a base, a raised arm and the bar on the wire.
+            push_box(&mut m, [-0.3, 0.93, -0.04], [0.3, 0.96, 0.04], PANTOGRAPH);
+            push_box(&mut m, [-0.04, 0.96, -0.02], [0.04, 1.14, 0.02], PANTOGRAPH);
+            push_box(
+                &mut m,
+                [-0.35, 1.14, -0.015],
+                [0.35, 1.16, 0.015],
+                PANTOGRAPH,
+            );
+            wheels(&mut m, &[0.4, 0.0, -0.4]);
         }
         _ => {
             // Car (and emergency vehicle): body, glass cabin, roof, wheels.

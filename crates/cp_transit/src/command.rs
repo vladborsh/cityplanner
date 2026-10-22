@@ -195,7 +195,7 @@ fn resolve(
                 out.push(Resolved::Old(id));
             }
             StopRef::NewRoad { seg, s, side } => {
-                if mode != TransitMode::Bus {
+                if !mode.on_road() {
                     return Err(TransitError::WrongStopKind);
                 }
                 let pos = check_road_stop(net, db, &scratch, mode.class(), seg, s, side, None)
@@ -221,14 +221,10 @@ fn resolve(
 }
 
 fn kind_fits(mode: TransitMode, kind: &StopKind) -> bool {
-    matches!(
-        (mode, kind),
-        (TransitMode::Bus, StopKind::Road { .. })
-            | (
-                TransitMode::Metro | TransitMode::Train,
-                StopKind::Station { .. }
-            )
-    )
+    match kind {
+        StopKind::Road { .. } => mode.on_road(),
+        StopKind::Station { .. } => matches!(mode, TransitMode::Metro | TransitMode::Train),
+    }
 }
 
 fn price(db: &cp_content::ContentDb, new_stops: usize) -> Cost {
@@ -294,6 +290,7 @@ pub fn apply(world: &mut World, cmd: &TransitCommand) -> Result<Cost, TransitErr
                         "{} {n}",
                         match mode {
                             TransitMode::Metro => "Metro",
+                            TransitMode::Tram => "Tram",
                             _ => "Bus",
                         }
                     ),

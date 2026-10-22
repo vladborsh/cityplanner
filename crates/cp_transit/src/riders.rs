@@ -426,11 +426,7 @@ pub fn run_riders(
         let Some(&stop) = line.stops.get(stop_idx) else {
             continue;
         };
-        let capacity = capacity_of(if metro {
-            VehicleKind::Metro
-        } else {
-            VehicleKind::Bus
-        });
+        let capacity = capacity_of(line.mode.vehicle_kind());
         // FreeTransit (T-194): no ticket for boarding in its area.
         let free_here = policies.is_some_and(|p| {
             transit

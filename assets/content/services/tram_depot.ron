@@ -1,0 +1,11 @@
+// Numbers: tune later. `capacity` is the number of trams assigned to the depot; its access
+// point must be on a road with tram lanes (T-302b) for the trams to get out.
+Service((
+    id: "tram_depot",
+    name: "Tram Depot",
+    kind: Transit,
+    radius_m: 100.0,
+    capacity: 10,
+    vehicles: [],
+    transit_mode: Tram,
+))

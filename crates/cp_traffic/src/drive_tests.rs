@@ -57,8 +57,16 @@ impl Rig {
     }
 
     fn add_kind(&mut self, kind: u8, from: Access, to: Access) -> VehicleId {
-        let path = find_car_path(&self.graph, &CongestionMap::default(), &from, &to)
-            .expect("a route exists");
+        // A bus, tram or trolleybus keeps to its lanes (T-302).
+        let class = cp_content::VehicleKind::ALL
+            .get(usize::from(kind))
+            .map_or(cp_content::VehicleClass::Car, |k| k.class());
+        let cong = CongestionMap::default();
+        let path = match class {
+            cp_content::VehicleClass::Car => find_car_path(&self.graph, &cong, &from, &to),
+            class => crate::astar::find_class_path(&self.graph, &cong, class, &from, &to),
+        }
+        .expect("a route exists");
         let s = path.start_s;
         let id = self.veh.insert(Vehicle {
             trip: TripId::new(0, 0),
@@ -255,11 +263,17 @@ fn nobody_enters_the_junction_on_red() {
 /// straight and one on the street turning across it, both standing well inside the priority
 /// zone. Returns the substep at which each enters the junction: `(road car, street car)`.
 /// `signs`: `Main` on the street, `Yield` on both road arms; `light`: the light stays on.
+/// The road (`road`, a 4-lane type) and a `basic_2l` street meet at a T; a vehicle of `kind` on
+/// the road and a car turning off the street cross each other. Gives when each entered.
 fn sign_race(signs: bool, light: bool) -> (u64, u64) {
+    sign_race_on("medium_4l", 0, signs, light)
+}
+
+fn sign_race_on(road: &str, kind: u8, signs: bool, light: bool) -> (u64, u64) {
     use cp_net::{NetGraph, Sign};
     let mut s = sim();
-    let w = s.seg_with("medium_4l", (880.0, 1000.0), (1000.0, 1000.0));
-    let e = s.seg_with("medium_4l", (1120.0, 1000.0), (1000.0, 1000.0));
+    let w = s.seg_with(road, (880.0, 1000.0), (1000.0, 1000.0));
+    let e = s.seg_with(road, (1120.0, 1000.0), (1000.0, 1000.0));
     let n = s.seg_with("basic_2l", (1000.0, 880.0), (1000.0, 1000.0));
     s.tick();
     {
@@ -277,7 +291,12 @@ fn sign_race(signs: bool, light: bool) -> (u64, u64) {
     }
     let mut rig = Rig::new(s);
     assert_eq!(rig.graph.lights.is_empty(), !light);
+    let class = cp_content::VehicleKind::ALL[usize::from(kind)].class();
     let path = |from: Access, to: Access| {
+        crate::astar::find_class_path(&rig.graph, &CongestionMap::default(), class, &from, &to)
+            .unwrap()
+    };
+    let car_path = |from: Access, to: Access| {
         find_car_path(&rig.graph, &CongestionMap::default(), &from, &to).unwrap()
     };
     let crosses = |a: &crate::CarPath, b: &crate::CarPath| {
@@ -298,11 +317,11 @@ fn sign_race(signs: bool, light: bool) -> (u64, u64) {
         .find(|&(f, t, turn)| {
             crosses(
                 &path(from_arm(f, 90.0), to_arm(t, 60.0)),
-                &path(from_arm(n, 90.0), to_arm(turn, 60.0)),
+                &car_path(from_arm(n, 90.0), to_arm(turn, 60.0)),
             )
         })
         .expect("a street turn crosses the road");
-    let a = rig.add(from_arm(from, 90.0), to_arm(to, 60.0));
+    let a = rig.add_kind(kind, from_arm(from, 90.0), to_arm(to, 60.0));
     let b = rig.add(from_arm(n, 90.0), to_arm(turn, 60.0));
     let mut entered: [Option<u64>; 2] = [None, None];
     let mut finished = Finished::default();
@@ -355,6 +374,21 @@ fn signs_make_the_road_give_way_to_the_street_and_a_light_overrides_them() {
     assert!(street < road, "signs: road {road}, street {street}");
     // With the light on the signs do nothing: both go by the signal, as without signs.
     assert_eq!(sign_race(true, true), sign_race(false, true));
+}
+
+/// T-302b: a tram on `tram_4l` obeys the signs and the light like a car (§6.5a).
+#[test]
+fn a_tram_gives_way_by_the_signs_and_never_enters_on_red() {
+    let tram = cp_content::VehicleKind::Tram as u8;
+    let (road, street) = sign_race_on("tram_4l", tram, false, false);
+    assert!(road < street, "rank rule: tram {road}, street {street}");
+    let (road, street) = sign_race_on("tram_4l", tram, true, false);
+    assert!(street < road, "signs: tram {road}, street {street}");
+    // On the light `sign_race_on` asserts that neither enters on red.
+    assert_eq!(
+        sign_race_on("tram_4l", tram, true, true),
+        sign_race_on("tram_4l", tram, false, true)
+    );
 }
 
 #[test]

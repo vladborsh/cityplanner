@@ -73,6 +73,8 @@ pub enum TransitMode {
     Bus = 0,
     Metro = 1,
     Train = 2,
+    /// Trams on `Tram` lanes, from a `tram_depot` (T-302b).
+    Tram = 3,
 }
 
 impl TransitMode {
@@ -82,6 +84,20 @@ impl TransitMode {
             Self::Bus => cp_content::TransitKind::Bus,
             Self::Metro => cp_content::TransitKind::Metro,
             Self::Train => cp_content::TransitKind::Train,
+            Self::Tram => cp_content::TransitKind::Tram,
+        }
+    }
+    /// Its stops are on the pavement of a road (`StopKind::Road`), not stations.
+    pub const fn on_road(self) -> bool {
+        matches!(self, Self::Bus | Self::Tram)
+    }
+    /// The vehicles the mode's depot sends out.
+    pub const fn vehicle_kind(self) -> cp_content::VehicleKind {
+        match self {
+            Self::Bus => cp_content::VehicleKind::Bus,
+            Self::Metro => cp_content::VehicleKind::Metro,
+            Self::Train => cp_content::VehicleKind::Train,
+            Self::Tram => cp_content::VehicleKind::Tram,
         }
     }
     /// The lane permissions class of the mode's vehicles (T-302).

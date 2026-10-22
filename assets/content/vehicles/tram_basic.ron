@@ -1,0 +1,13 @@
+Vehicle((
+    id: "tram_basic",
+    name: "Tram",
+    kind: Tram,
+    length: 30.0,
+    width: 2.6,
+    max_speed_kmh: 50.0, // tune later
+    accel: 1.0,
+    decel: 3.0,
+    min_gap: 3.0,
+    capacity: 150, // tune later
+    mesh: "vehicle/car_basic",
+))
