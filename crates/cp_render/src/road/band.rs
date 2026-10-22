@@ -28,6 +28,19 @@ pub fn band_polyline(
     lift: f32,
     colour: [f32; 4],
 ) -> MeshData {
+    strip_polyline(points, -half_width, half_width, terrain, lift, colour)
+}
+
+/// The strip between lateral offsets `lo` and `hi` (positive = left of travel, as lane
+/// offsets) of the polyline `points`: one lane of a road ghost (T-302d).
+pub fn strip_polyline(
+    points: &[Vec3],
+    lo: f32,
+    hi: f32,
+    terrain: Option<&Terrain>,
+    lift: f32,
+    colour: [f32; 4],
+) -> MeshData {
     let mut m = MeshData::default();
     if points.len() < 2 {
         return m;
@@ -44,8 +57,8 @@ pub fn band_polyline(
             let y = terrain.map_or(p.y, |t| t.height(q).max(p.y));
             Vec3::new(q.x, y + lift, q.y)
         };
-        let l = push_vertex(&mut m, at(c + left * half_width), Vec3::Y, colour);
-        let r = push_vertex(&mut m, at(c - left * half_width), Vec3::Y, colour);
+        let l = push_vertex(&mut m, at(c + left * hi), Vec3::Y, colour);
+        let r = push_vertex(&mut m, at(c + left * lo), Vec3::Y, colour);
         if let Some([pl, pr]) = prev {
             quad(&mut m, [pl, l, r, pr], Vec3::Y);
         }

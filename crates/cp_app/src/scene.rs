@@ -1680,6 +1680,37 @@ pub fn build_big_utilities(sim: &mut SimRunner) {
         .insert_resource(cp_core::time::SimSpeed::Pause);
 }
 
+/// Transit lanes (T-302d): a plain street along x and, across it, the three 4-lane transit
+/// roads one after the other (bus lanes at the kerbs, tram and trolley lanes in the middle).
+/// Look at it with `--cam transit-lanes` (or `--cam street`) and `--overlay transit`.
+pub const TRANSIT_LANES: &str = "transit-lanes";
+
+/// Builds the [`TRANSIT_LANES`] scene through the normal commands.
+pub fn build_transit_lanes(sim: &mut SimRunner) {
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let p = |dx: f32, dz: f32| Vec2::new(c + dx, c + dz);
+    for (road, from, to) in [
+        ("basic_2l", p(-150.0, 0.0), p(150.0, 0.0)),
+        ("transitway_4l", p(-90.0, -110.0), p(-90.0, 110.0)),
+        ("tram_4l", p(0.0, -110.0), p(0.0, 110.0)),
+        ("trolley_4l", p(90.0, -110.0), p(90.0, 110.0)),
+    ] {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: db.road_id(road).expect("road"),
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+}
+
 /// The puffs a scene leaves for `--dust-demo` (T-288 shots), kept in the sim world.
 #[derive(bevy_ecs::prelude::Resource, Clone, Debug, Default)]
 pub struct DustPuffs(pub Vec<cp_render::dust::Puff>);
@@ -2218,6 +2249,35 @@ mod tests {
         let v = sim.view();
         assert!(v.utilities.links().count() > 0, "no power line");
         assert!(!v.agents.cur.pedestrians.is_empty(), "no pedestrians");
+    }
+
+    /// T-302d: the transit-lanes scene builds the street, the three transit roads and their
+    /// crossings without a rejected command.
+    #[test]
+    fn transit_lanes_scene_builds_three_transit_roads_across_a_street() {
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps/flatlands");
+        let mut sim = SimRunner::new(1);
+        sim.set_terrain(Arc::new(Terrain::load(&dir).unwrap()));
+        sim.set_content(embedded_content());
+        build_transit_lanes(&mut sim);
+        let v = sim.view();
+        let db = embedded_content();
+        let names: std::collections::BTreeSet<&str> = v
+            .net
+            .segments()
+            .map(|(_, s)| db.road(s.road).id.as_str())
+            .collect();
+        for want in ["basic_2l", "transitway_4l", "tram_4l", "trolley_4l"] {
+            assert!(names.contains(want), "{want} missing: {names:?}");
+        }
+        // Each transit road crosses the street: a four-way junction apiece.
+        let crossings = v
+            .junctions
+            .iter()
+            .filter(|(_, j)| j.arms.len() == 4)
+            .count();
+        assert_eq!(crossings, 3);
     }
 
     #[test]

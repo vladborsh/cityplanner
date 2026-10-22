@@ -441,6 +441,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 40.0, 120.0, c + 140.0),
             Vec3::new(c + 40.0, 0.0, c + 30.0),
         ),
+        // Three 4-lane transit roads across a street (`--scene transit-lanes`, T-302d).
+        "transit-lanes" => (
+            Vec3::new(c - 40.0, 70.0, c + 150.0),
+            Vec3::new(c, 0.0, c + 10.0),
+        ),
         "low-houses-close" => (
             Vec3::new(c + 96.0, 38.0, c + 70.0),
             Vec3::new(c + 96.0, 0.0, c + 14.0),
@@ -750,6 +755,9 @@ pub fn build_sim(
     } else if scene == Some(scene::BIG_UTILITIES) {
         scene::build_big_utilities(&mut sim);
         info!("scene big-utilities");
+    } else if scene == Some(scene::TRANSIT_LANES) {
+        scene::build_transit_lanes(&mut sim);
+        info!("scene transit-lanes");
     } else if scene == Some(scene::POWER_TOWN) {
         scene::build_power_town(&mut sim);
         info!("scene power-town");
