@@ -825,12 +825,16 @@ pub fn emit_site(view: &SimView, state: &ToolState) -> Option<cp_render::EmitSit
     if pollution.is_none() && noise.is_none() {
         return None;
     }
-    let corners: Vec<Vec2> = ghost
-        .cells
-        .iter()
-        .filter_map(|&c| view.zones.cell_footprint(c))
-        .flat_map(|o| o.corners())
-        .collect();
+    // A free-standing building has its rectangle, a zoned one its lot cells.
+    let corners: Vec<Vec2> = match &ghost.free {
+        Some(f) => f.polygon.to_vec(),
+        None => ghost
+            .cells
+            .iter()
+            .filter_map(|&c| view.zones.cell_footprint(c))
+            .flat_map(|o| o.corners())
+            .collect(),
+    };
     if corners.is_empty() {
         return None;
     }
