@@ -90,6 +90,7 @@ icons! {
     MetroTrack => "metro_track",
     RailTrack => "rail_track",
     FlipRoad => "flip_road",
+    Junctions => "junctions",
     BusStop => "bus_stop",
     Building => "building",
     // Top bar (T-100): speeds, the view and settings menus, one icon per overlay.
@@ -116,6 +117,13 @@ icons! {
     OverlayLand => "overlay_land",
     OverlayTransit => "overlay_transit",
     OverlayUnderground => "overlay_underground",
+    OverlayJunctions => "overlay_junctions",
+    // Junction marks (T-303): square plates, one picture per state.
+    MarkLightOn => "mark_light_on",
+    MarkLightOff => "mark_light_off",
+    SignMain => "sign_main",
+    SignYield => "sign_yield",
+    SignNone => "sign_none",
     RemovePipe => "remove_pipe",
     RemoveLine => "remove_line",
     // Zone types (T-099): one silhouette each.
@@ -238,6 +246,7 @@ pub fn overlay_icon(overlay: cp_render::Overlay) -> Icon {
         O::IndustryAreas => Icon::OverlayIndustryAreas,
         O::Parks => Icon::OverlayParks,
         O::Underground => Icon::OverlayUnderground,
+        O::Junctions => Icon::OverlayJunctions,
     }
 }
 
