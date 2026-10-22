@@ -1,7 +1,7 @@
 //! Lane words (T-302d): "BUS" on bus lanes and "TROLLEY" on trolley lanes, every
 //! [`SPACING`] metres, as a 5x7 raster of vertex-coloured tiles baked into the lane surface
 //! (the lane's own strip is cut out under the word, nothing overlaps). Letters read "up":
-//! the first one is nearest to the driver (MUTCD 3B.20). Near mesh only.
+//! the first one is the farthest from the driver, so the word reads top to bottom as the driver sees it. Near mesh only.
 
 use cp_content::{LaneDir, LaneKind};
 
@@ -55,8 +55,9 @@ impl Decal {
 
     /// The five columns of row `j` as `(x0, x1, lit)`, in increasing lateral `x`.
     pub fn columns(&self, j: usize) -> [(f32, f32, bool); COLS] {
-        // Index along the driving direction: the first letter is nearest to the driver.
-        let u = if self.forward { j } else { self.rows() - 1 - j };
+        // Index counted from the far end, as the driver reads the word top to bottom: the
+        // first letter is the farthest, each letter's top row is its farthest one.
+        let u = if self.forward { self.rows() - 1 - j } else { j };
         let (letter, within) = (u / (ROWS + 1), u % (ROWS + 1));
         let rows = (within < ROWS)
             .then(|| glyph(self.text.as_bytes()[letter]))
@@ -65,7 +66,7 @@ impl Decal {
         std::array::from_fn(|i| {
             // Column `c` counts from the driver's left; the driver's left is +x going forward.
             let c = if self.forward { COLS - 1 - i } else { i };
-            let lit = rows.is_some_and(|g| g[ROWS - 1 - within].as_bytes()[c] == b'#');
+            let lit = rows.is_some_and(|g| g[within].as_bytes()[c] == b'#');
             let x = self.offset + (i as f32 - (COLS as f32 - 1.0) * 0.5) * pw;
             (x - pw * 0.5, x + pw * 0.5, lit)
         })
@@ -190,18 +191,19 @@ mod tests {
     }
 
     #[test]
-    fn the_first_letter_is_nearest_to_the_driver_in_both_directions() {
+    fn the_first_letter_is_the_farthest_from_the_driver_in_both_directions() {
         let word = |dir| plan(&[lane(LaneKind::Bus, dir)], 100.0, &[]).remove(0);
         let lit = |d: &Decal, j: usize| d.columns(j).iter().filter(|c| c.2).count();
-        // Forward: driving towards +s, the B (nearest) is at the low-s end, its bottom row
+        // Forward: driving towards +s, the B (farthest) is at the high-s end, its top row
         // (4 pixels of "####.") first.
         let f = word(LaneDir::Forward);
-        assert_eq!(lit(&f, 0), 4);
-        // Backward: the nearest end is the high-s one.
+        assert_eq!(lit(&f, f.rows() - 1), 4);
+        // Backward: the farthest end is the low-s one.
         let b = word(LaneDir::Backward);
-        assert_eq!(lit(&b, b.rows() - 1), 4);
-        // The gap row between two letters is blank.
-        assert_eq!(lit(&f, 7), 0);
+        assert_eq!(lit(&b, 0), 4);
+        // The gap row between two letters is blank; the U below the B starts with 5 pixels.
+        assert_eq!(lit(&f, f.rows() - 1 - 7), 0);
+        assert_eq!(lit(&f, f.rows() - 1 - 8), 2);
     }
 
     #[test]
