@@ -195,7 +195,7 @@ pub fn sync_overlay_dim(
 }
 
 /// How much the middle of a cloud's shadow darkens a lit surface (T-272: "not too dark").
-pub const CLOUD_SHADOW: f32 = 0.2;
+pub const CLOUD_SHADOW: f32 = 0.26;
 
 /// Sets the cloud shadow uniform of every scene material from the lighting settings:
 /// [`CLOUD_SHADOW`] when on, 0 when off. Overlay layers (depth-biased) never get one.
