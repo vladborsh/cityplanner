@@ -1,0 +1,11 @@
+// Numbers: tune later. `capacity` is the number of trolleybuses assigned to the depot; its
+// access point must be on a road with trolleybus lanes (T-302c) for them to get out.
+Service((
+    id: "trolley_depot",
+    name: "Trolleybus Depot",
+    kind: Transit,
+    radius_m: 100.0,
+    capacity: 10,
+    vehicles: [],
+    transit_mode: Trolley,
+))

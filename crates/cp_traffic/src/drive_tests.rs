@@ -376,19 +376,28 @@ fn signs_make_the_road_give_way_to_the_street_and_a_light_overrides_them() {
     assert_eq!(sign_race(true, true), sign_race(false, true));
 }
 
-/// T-302b: a tram on `tram_4l` obeys the signs and the light like a car (§6.5a).
+/// T-302b, T-302c: a tram on `tram_4l` and a trolleybus on `trolley_4l` obey the signs and the
+/// light like a car (§6.5a).
 #[test]
-fn a_tram_gives_way_by_the_signs_and_never_enters_on_red() {
-    let tram = cp_content::VehicleKind::Tram as u8;
-    let (road, street) = sign_race_on("tram_4l", tram, false, false);
-    assert!(road < street, "rank rule: tram {road}, street {street}");
-    let (road, street) = sign_race_on("tram_4l", tram, true, false);
-    assert!(street < road, "signs: tram {road}, street {street}");
-    // On the light `sign_race_on` asserts that neither enters on red.
-    assert_eq!(
-        sign_race_on("tram_4l", tram, true, true),
-        sign_race_on("tram_4l", tram, false, true)
-    );
+fn a_tram_and_a_trolleybus_give_way_by_the_signs_and_never_enter_on_red() {
+    for (road_id, kind) in [
+        ("tram_4l", cp_content::VehicleKind::Tram),
+        ("trolley_4l", cp_content::VehicleKind::Trolley),
+    ] {
+        let kind = kind as u8;
+        let (road, street) = sign_race_on(road_id, kind, false, false);
+        assert!(
+            road < street,
+            "{road_id} rank rule: {road}, street {street}"
+        );
+        let (road, street) = sign_race_on(road_id, kind, true, false);
+        assert!(street < road, "{road_id} signs: {road}, street {street}");
+        // On the light `sign_race_on` asserts that neither enters on red.
+        assert_eq!(
+            sign_race_on(road_id, kind, true, true),
+            sign_race_on(road_id, kind, false, true)
+        );
+    }
 }
 
 #[test]

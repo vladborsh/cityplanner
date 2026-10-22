@@ -16,7 +16,7 @@ const LEG: f32 = 2.0;
 const ARM: [f32; 4] = [1.0, 1.0, 1.0, 5.0];
 const BUS_CREAM: [f32; 4] = [0.93, 0.90, 0.80, 0.0];
 const BUS_ROOF: [f32; 4] = [0.55, 0.58, 0.62, 0.0];
-/// The pantograph of a tram (T-302b): dark steel, no instance colour.
+/// The pantograph of a tram (T-302b) and the poles of a trolleybus: dark steel, no instance colour.
 const PANTOGRAPH: [f32; 4] = [0.22, 0.23, 0.25, 0.0];
 const MAIL_RED: [f32; 4] = [0.78, 0.10, 0.08, 0.0];
 const MAIL_ROOF: [f32; 4] = [0.93, 0.93, 0.90, 0.0];
@@ -342,6 +342,32 @@ pub fn vehicle_mesh(kind: usize, detail: usize) -> MeshData {
                 PANTOGRAPH,
             );
             wheels(&mut m, &[0.4, 0.0, -0.4]);
+        }
+        15 => {
+            // Trolleybus (T-302c): the bus body, a roof equipment box and two trolley poles
+            // running forward from the rear to the wires.
+            push_box(&mut m, [-0.5, 0.1, -0.5], [0.5, 0.52, 0.5], TINT);
+            push_box(&mut m, [-0.5, 0.52, -0.5], [0.5, 0.98, 0.5], BUS_CREAM);
+            push_box(&mut m, [-0.505, 0.6, -0.46], [0.505, 0.88, 0.46], GLASS);
+            push_box(&mut m, [-0.46, 0.6, 0.495], [0.46, 0.9, 0.505], GLASS);
+            push_box(&mut m, [-0.46, 0.6, -0.505], [0.46, 0.9, -0.495], GLASS);
+            push_box(&mut m, [-0.45, 0.98, -0.45], [0.45, 1.0, 0.45], BUS_ROOF);
+            push_box(&mut m, [-0.3, 1.0, -0.1], [0.3, 1.06, 0.3], BUS_ROOF);
+            for x in [-0.14, 0.14] {
+                push_box(
+                    &mut m,
+                    [x - 0.03, 1.0, -0.44],
+                    [x + 0.03, 1.1, -0.38],
+                    PANTOGRAPH,
+                );
+                push_box(
+                    &mut m,
+                    [x - 0.015, 1.1, -0.44],
+                    [x + 0.015, 1.13, 0.35],
+                    PANTOGRAPH,
+                );
+            }
+            wheels(&mut m, &[0.32, -0.32]);
         }
         _ => {
             // Car (and emergency vehicle): body, glass cabin, roof, wheels.

@@ -1,0 +1,14 @@
+Building((
+    id: "trolley_depot",
+    name: "Trolleybus Depot",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 2),
+    jobs: (6, 0, 0, 0),
+    tax_base: 0.0,
+    cost: 30000.0,
+    upkeep_week: 700.0,
+    styles: ["service_bus_depot"],
+    service: Some("trolley_depot"),
+    icon: "trolley_depot",
+))

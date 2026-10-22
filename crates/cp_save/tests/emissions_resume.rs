@@ -96,16 +96,24 @@ fn a_game_saved_between_passes_keeps_the_noise_and_falls_ill_like_the_run_that_w
             .filter(|(_, c)| c.sick_since.is_some())
             .count()
     };
-    let before = sick(&a);
     // T-301: the day is 2048 ticks, so the per-day sickness takes more ticks to show, and a
-    // clinic cures the sick as they fall ill: look at the most sick at any tick of the run.
-    let mut peak = before;
+    // clinic cures the sick as they fall ill. T-302c: count who falls ill after the save (the
+    // regenerated m1-small has 10 sick at the save and its clinic keeps the count at 1..10, so
+    // the most sick at a tick no longer tops the start).
+    let saved_at = a.tick();
+    let mut fell_ill = std::collections::BTreeSet::new();
     for _ in 0..512 {
         a.tick_once();
         b.tick_once();
-        peak = peak.max(sick(&a));
+        fell_ill.extend(
+            a.world()
+                .resource::<CitizenGrid>()
+                .citizens()
+                .filter(|(_, c)| c.sick_since.is_some_and(|t| t >= saved_at))
+                .map(|(id, _)| id),
+        );
     }
-    assert!(peak > before, "the noise makes people ill");
+    assert!(!fell_ill.is_empty(), "the noise makes people ill");
     assert_eq!(sick(&a), sick(&b));
     assert_eq!(a.checksum(), b.checksum(), "load + 512 ticks");
 }

@@ -89,6 +89,7 @@ icons! {
     LineBus => "line_bus",
     LineMetro => "line_metro",
     LineTram => "line_tram",
+    LineTrolley => "line_trolley",
     MetroTrack => "metro_track",
     RailTrack => "rail_track",
     FlipRoad => "flip_road",

@@ -1,0 +1,13 @@
+Vehicle((
+    id: "trolleybus_basic",
+    name: "Trolleybus",
+    kind: Trolley,
+    length: 12.0,
+    width: 2.55,
+    max_speed_kmh: 55.0, // tune later
+    accel: 1.2,
+    decel: 3.0,
+    min_gap: 2.5,
+    capacity: 80, // tune later
+    mesh: "vehicle/car_basic",
+))
