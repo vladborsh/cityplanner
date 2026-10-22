@@ -5,7 +5,9 @@
 //! * A service with a coverage radius (education, police, fire, health, deathcare, parks,
 //!   landmarks, the post; never water, power, sewage, transit, industry or cargo): per kind it touched, the coverage the sim gives
 //!   ([`cp_service::kind_coverage`], the same fold) before and after on the current roads; a
-//!   residence whose access segment gained is happy, one that lost is sad. A move nets out: the
+//!   building that reacts to the kind (`reacts`: homes always; shops, industry and offices for
+//!   police, fire and health; shops for parks and landmarks) whose access segment gained is
+//!   happy, one that lost is sad. A move nets out: the
 //!   houses that keep the service show nothing.
 //! * Garbage (landfills, incinerators, recycling, depots) is never welcome: a residence within
 //!   [`GARBAGE_M`] of a new one's footprint is sad, of one that went happy (relief). Industry
@@ -67,6 +69,23 @@ fn felt(kind: ServiceKind) -> Option<bool> {
 fn service_of(db: &ContentDb, b: &Building) -> Option<ServiceKind> {
     let name = db.building(b.def).service.as_deref()?;
     Some(db.service(db.service_id(name)?).kind)
+}
+
+/// Whether a building of `zone` shows a reaction to the coverage of `kind` (T-287b): police,
+/// fire and health matter to every zone; parks and landmarks to homes and shops; education
+/// and the rest (deathcare, the post) to homes only.
+fn reacts(kind: ServiceKind, zone: ZoneType) -> bool {
+    use ServiceKind as K;
+    use ZoneType as Z;
+    match zone {
+        Z::ResLow | Z::ResHigh => true,
+        Z::ComLow | Z::ComHigh => matches!(
+            kind,
+            K::Police | K::Fire | K::Health | K::Park | K::Landmark
+        ),
+        Z::Industrial | Z::Office => matches!(kind, K::Police | K::Fire | K::Health),
+        Z::None => false,
+    }
 }
 
 fn residential(db: &ContentDb, b: &Building) -> bool {
@@ -151,7 +170,10 @@ pub fn moods_of(
         for kind in kinds {
             let before = kind_coverage(&g, old, db, kind);
             let after = kind_coverage(&g, new, db, kind);
-            for (id, b) in new.iter().filter(|(_, b)| residential(db, b)) {
+            let listens = |b: &Building| {
+                b.state == BuildingState::Active && reacts(kind, db.building(b.def).zone)
+            };
+            for (id, b) in new.iter().filter(|(_, b)| listens(b)) {
                 let Some(seg) = b.access().map(|a| a.segment.index as usize) else {
                     continue;
                 };
