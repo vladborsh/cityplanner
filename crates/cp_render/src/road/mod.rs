@@ -652,6 +652,18 @@ fn extrude(
     } else {
         Vec::new()
     };
+    let decals = if markings && !is_path(graph, seg) {
+        let lanes: Vec<_> = seg
+            .lanes
+            .iter()
+            .filter_map(|&l| graph.lane(l))
+            .map(|l| (l.kind, l.dir, l.offset, l.width))
+            .collect();
+        let clear: Vec<(f32, f32)> = zones.iter().map(|z| (z.0, z.1)).collect();
+        decal::plan(&lanes, length, &clear)
+    } else {
+        Vec::new()
+    };
     let mut chevrons = chevron.map_or_else(Vec::new, |_| chevron_rows(length));
     chevrons.retain(|&(a, b)| zones.iter().all(|z| b + 0.25 < z.0 || a - 0.25 > z.1));
     let mut base = ring_positions(length, is_straight(&curve), has_dashes, &chevrons);
@@ -670,6 +682,12 @@ fn extrude(
     if let Some(bays) = &bays {
         // Exact rings where the bays begin and end.
         base.extend([bays.a, bays.b]);
+        base.sort_by(f32::total_cmp);
+        base.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
+    }
+    if !decals.is_empty() {
+        // Exact rings on the row boundaries of every word.
+        base.extend(decals.iter().flat_map(|d| d.boundaries()));
         base.sort_by(f32::total_cmp);
         base.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
     }
@@ -706,6 +724,20 @@ fn extrude(
         let mid = (s_list[k - 1] + s_list[k]) * 0.5;
         zones.iter().find(|z| mid > z.0 && mid < z.1).map(|z| z.2)
     };
+    // The word, and its row, that band `b` is cut out for on ring pair `k - 1, k`.
+    let decal_of = |b: &Band, k: usize| {
+        if k == 0 || b.dashed || b.raise > 1e-3 {
+            return None;
+        }
+        decals.iter().find_map(|d| {
+            let on_lane = b.lo >= d.offset - d.width * 0.5 - 1e-3
+                && b.hi <= d.offset + d.width * 0.5 + 1e-3
+                && b.color == lane_color(d.kind).0;
+            let j = d.row_at(s_list[k - 1])?;
+            ((s_list[k] - (d.s0 + (j + 1) as f32 * d.pitch)).abs() < 1e-3 && on_lane)
+                .then_some((d, j))
+        })
+    };
     let up = Vec3::Y;
     let mut m = MeshData::default();
 
@@ -731,7 +763,10 @@ fn extrude(
         let level = b.raise < 1e-3;
         for (k, r) in rings.iter().enumerate() {
             let (lo, hi) = (r.at(b.lo, b.raise), r.at(b.hi, b.raise));
-            let skip = k > 0 && ((replaced && chevron_row(k)) || (level && zone_of(k).is_some()));
+            let skip = k > 0
+                && ((replaced && chevron_row(k))
+                    || (level && zone_of(k).is_some())
+                    || decal_of(b, k).is_some());
             if b.dashed {
                 if k == 0 || skip {
                     continue;
@@ -762,6 +797,13 @@ fn extrude(
     if let Some((lo, hi)) = chevron {
         for k in (1..rings.len()).filter(|&k| chevron_row(k)) {
             chevron_quads(&mut m, &rings[k - 1], &rings[k], lo, hi);
+        }
+    }
+    for b in &bands {
+        for k in 1..rings.len() {
+            if let Some((d, j)) = decal_of(b, k) {
+                decal_quads(&mut m, &rings[k - 1], &rings[k], b, &d.columns(j));
+            }
         }
     }
     if !zones.is_empty() {
@@ -898,6 +940,41 @@ fn extrude(
         piers(&mut m, terrain, seg);
     }
     Some(m)
+}
+
+/// Band `b` (a lane surface) between rings `a` and `c` under a word: its own colour, white
+/// where a lit pixel of `columns` covers it.
+fn decal_quads(m: &mut MeshData, a: &Ring, c: &Ring, b: &Band, columns: &[(f32, f32, bool)]) {
+    // Pieces `(x0, x1, colour)` across the band, equal neighbours merged.
+    let mut pieces: Vec<(f32, f32, [f32; 4])> = Vec::new();
+    let mut push = |x0: f32, x1: f32, color: [f32; 4]| {
+        if x1 - x0 < 1e-4 {
+            return;
+        }
+        match pieces.last_mut() {
+            Some(last) if last.2 == color => last.1 = x1,
+            _ => pieces.push((x0, x1, color)),
+        }
+    };
+    let mut at = b.lo;
+    for &(x0, x1, lit) in columns {
+        let (x0, x1) = (x0.max(b.lo), x1.min(b.hi));
+        if x1 - x0 < 1e-4 {
+            continue;
+        }
+        push(at, x0, b.color);
+        push(x0, x1, if lit { WHITE } else { b.color });
+        at = x1;
+    }
+    push(at, b.hi, b.color);
+    for (x0, x1, color) in pieces {
+        flat_quad(
+            m,
+            [a.at(x0, 0.0), a.at(x1, 0.0), c.at(x1, 0.0), c.at(x0, 0.0)],
+            Vec3::Y,
+            color,
+        );
+    }
 }
 
 /// Band `b` between rings `a` and `c` in a zone: its own surface without lane lines, white
@@ -1318,6 +1395,7 @@ impl RoadSet {
 }
 
 pub mod band;
+pub mod decal;
 pub mod furniture;
 mod ground;
 mod node;
