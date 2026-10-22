@@ -1,8 +1,9 @@
 // Instanced vehicles and pedestrians. One draw per (kind, detail): the mesh is the model,
 // the per-instance vertex buffer places it. WebGL2-safe (plain instance-stepped attributes).
 //
-// Pedestrians sway in this vertex shader: the head side-steps and the body bobs with the
-// per-instance gait phase, scaled by the instance's sway amplitude (0 = standing).
+// Pedestrians walk in this vertex shader (T-297): legs and arms swing about the hip and the
+// shoulder, the head side-steps and the body bobs, all with the per-instance gait phase (the
+// distance walked over the stride) scaled by the instance's sway amplitude (0 = standing).
 //
 // Shadows: agents receive the sun's cascaded shadows (BUG-063), and cast their own into the
 // same shadow maps (BUG-094): `vertex_depth` is a depth-only draw of the instances in each
@@ -28,10 +29,24 @@ struct VertexOutput {
 };
 
 fn world_of(v: Vertex) -> vec3<f32> {
-    var p = v.position * v.scale_phase.xyz;
-    // Gait: sideways sway grows with height, plus a small bob.
     let sway = v.color_sway.w;
     let phase = v.scale_phase.w;
+    var q = v.position;
+    // Limbs (alpha = tint + 2 * limb, 1 = leg, 2 = arm): swing about the hip / shoulder,
+    // opposite sides in opposite phase, arms against legs. Standing (sway 0): no swing.
+    let limb = floor(v.color.a * 0.5 + 0.01);
+    if (limb > 0.5 && sway > 0.0) {
+        let arm = limb > 1.5;
+        let pivot = select(0.8, 1.4, arm);
+        let side = select(-1.0, 1.0, (q.x > 0.0) == arm);
+        let ang = sin(phase) * 0.6 * side;
+        let dy = q.y - pivot;
+        let z = q.z * cos(ang) - dy * sin(ang);
+        q.y = pivot + dy * cos(ang) + q.z * sin(ang);
+        q.z = z;
+    }
+    var p = q * v.scale_phase.xyz;
+    // Gait: sideways sway grows with height, plus a small bob.
     p.x += sin(phase) * sway * (v.position.y / 1.8);
     p.y += abs(sin(phase)) * sway * 0.5;
 
@@ -68,7 +83,8 @@ fn vertex(v: Vertex) -> VertexOutput {
     var out: VertexOutput;
     out.clip_position = view.clip_from_world * vec4<f32>(world, 1.0);
     out.normal = n;
-    out.color = v.color.rgb * mix(vec3<f32>(1.0), v.color_sway.rgb, v.color.a);
+    let tint = v.color.a - 2.0 * floor(v.color.a * 0.5 + 0.01);
+    out.color = v.color.rgb * mix(vec3<f32>(1.0), v.color_sway.rgb, tint);
     out.world_position = world;
     return out;
 }

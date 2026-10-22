@@ -29,8 +29,9 @@ const TELEPORT: f32 = 60.0;
 /// Culling sphere radii, metres.
 const VEHICLE_RADIUS: f32 = 7.0;
 const PEDESTRIAN_RADIUS: f32 = 1.5;
-/// Pedestrian gait: sway cycles per second and per-instance phase spread.
-const GAIT_HZ: f32 = 1.8;
+/// Pedestrian gait: metres walked per full stride (two steps). The swing phase is the
+/// distance walked along the heading over this, so the feet do not slide (T-297).
+pub const STRIDE: f32 = 1.4;
 
 /// One drawn agent, as the instance vertex buffer holds it (48 bytes).
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -432,8 +433,15 @@ pub fn build_pedestrians(
             let pos = nudge(pos);
             let y = ground(pos.x, pos.y);
             let col = SHIRT_COLORS[(hash % SHIRT_COLORS.len() as u64) as usize];
-            let phase = cull.time * GAIT_HZ * std::f32::consts::TAU
-                + unit(hash, 16) * std::f32::consts::TAU;
+            // Stateless odometer: the position projected on the heading grows by exactly the
+            // distance walked, so the swing follows the interpolated motion (BUG-104).
+            let along = if moving {
+                let d = dir.normalize();
+                pos.x * d.x + pos.y * d.y
+            } else {
+                0.0
+            };
+            let phase = (along / STRIDE + unit(hash, 16)) * std::f32::consts::TAU;
             let height = 1.65 + 0.2 * unit(hash, 48);
             out.pedestrians[detail].push(InstanceData {
                 pos_yaw: [pos.x, y, pos.y, yaw],
