@@ -81,6 +81,11 @@ const KERB: [f32; 4] = [0.42, 0.42, 0.40, 1.0];
 const BIKE: [f32; 4] = [0.10, 0.30, 0.16, 1.0];
 const BUS: [f32; 4] = [0.30, 0.10, 0.10, 1.0];
 const TRAM: [f32; 4] = [0.20, 0.20, 0.21, 1.0];
+/// A tram rail (T-302d): bright steel on the dark tram bed.
+const STEEL: [f32; 4] = [0.66, 0.68, 0.72, 1.0];
+/// Rail gauge centre to centre, and the width of one rail head, metres.
+const RAIL_GAUGE: f32 = 1.435;
+const RAIL_WIDTH: f32 = 0.14;
 /// Trolleybus lane (T-302): a yellowish asphalt under the wires.
 const TROLLEY: [f32; 4] = [0.26, 0.22, 0.10, 1.0];
 const MEDIAN: [f32; 4] = [0.30, 0.34, 0.26, 1.0];
@@ -239,6 +244,7 @@ fn cross_section(graph: &NetGraph, seg: &Segment, markings: bool) -> Vec<Band> {
     }
     let mut bands: Vec<Band> = Vec::new();
     let path = is_path(graph, seg);
+    let rails = markings && !path;
     for (i, l) in lanes.iter().enumerate() {
         let (color, raise) = if path {
             (GRAVEL, 0.0)
@@ -273,25 +279,53 @@ fn cross_section(graph: &NetGraph, seg: &Segment, markings: bool) -> Vec<Band> {
                     raise: 0.0,
                     dashed,
                 });
-                bands.push(Band {
-                    lo: x + mw,
+                push_lane(
+                    &mut bands,
+                    l,
+                    x + mw,
                     hi,
-                    color: lane_color(l.kind).0,
+                    lane_color(l.kind).0,
                     raise,
-                    dashed: false,
-                });
+                    rails,
+                );
                 continue;
             }
         }
-        bands.push(Band {
-            lo,
-            hi,
-            color,
-            raise,
-            dashed: false,
-        });
+        push_lane(&mut bands, l, lo, hi, color, raise, rails);
     }
     bands
+}
+
+/// Pushes the surface band of lane `l` between `lo` and `hi`; a tram bed (near mesh) gets two
+/// steel rails.
+fn push_lane(
+    bands: &mut Vec<Band>,
+    l: &cp_net::Lane,
+    lo: f32,
+    hi: f32,
+    color: [f32; 4],
+    raise: f32,
+    rails: bool,
+) {
+    let band = |lo, hi, color| Band {
+        lo,
+        hi,
+        color,
+        raise,
+        dashed: false,
+    };
+    if !(rails && l.kind == LaneKind::Tram && hi - lo > RAIL_GAUGE + 0.5) {
+        bands.push(band(lo, hi, color));
+        return;
+    }
+    let mut at = lo;
+    for side in [-1.0f32, 1.0] {
+        let c = l.offset + side * RAIL_GAUGE * 0.5;
+        bands.push(band(at, c - RAIL_WIDTH * 0.5, color));
+        bands.push(band(c - RAIL_WIDTH * 0.5, c + RAIL_WIDTH * 0.5, STEEL));
+        at = c + RAIL_WIDTH * 0.5;
+    }
+    bands.push(band(at, hi, color));
 }
 
 // ---------------------------------------------------------------------------------------

@@ -1826,7 +1826,7 @@ fn trolley_lanes_carry_trolley_and_tram_lanes_no_word() {
     w.line("tram_4l", (X0, Z0 + 100.0), (X0 + 100.0, Z0 + 100.0));
     let v = w.view();
     let (set, _) = w.set(&v);
-    let (mut trolley, mut tram) = (0.0, 0.0);
+    let (mut trolley, mut tram, mut steel) = (0.0, 0.0, 0.0);
     for (id, seg) in v.net.segments() {
         let near = &set.piece(PieceKey::Segment(id)).unwrap().near;
         let name = w.content.road(seg.road).id.clone();
@@ -1837,11 +1837,17 @@ fn trolley_lanes_carry_trolley_and_tram_lanes_no_word() {
         let white = top_area_in(near, WHITE, a + 6.0, b - 6.0, Some(z));
         match name.as_str() {
             "trolley_4l" => trolley += white,
-            "tram_4l" => tram += white,
+            "tram_4l" => {
+                tram += white;
+                steel += top_area_in(near, STEEL, a + 6.0, b - 6.0, Some(z));
+            }
             other => panic!("{other}"),
         }
     }
     // 'TROLLEY' on both middle lanes of the long segment; the tram lanes have no word.
     assert!(trolley > 10.0, "{trolley}");
     assert!(tram < 1.0, "{tram}");
+    // Two rails of 0.14 m on each of the two tram lanes: about 0.56 m2 a metre of the road, in the near
+    // mesh only.
+    assert!(steel > 10.0, "{steel}");
 }
