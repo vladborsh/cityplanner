@@ -18,6 +18,12 @@
 //! at least a quarter of a load (BUG-058; a weak factory does not block imports) and no truck on
 //! its way gets a truck from the nearest `Outside` node, free for the treasury (it is traffic on the entry road). With
 //! no `Outside` node nothing is exported or imported, as before.
+//!
+//! **Traffic grows with industry (T-306).** Whatever shop stands near, `industry_export_share` of a
+//! factory's loads (part loads too) go out by the entry highway, and a working factory gets
+//! `industry_import_share` of its days a truck of raw materials from the outside, used up on
+//! arrival and counted as an import load; a hash of the factory, the day's bucket and the cargo
+//! ([`trade_roll`]) picks them, so more industry is more trucks through the entry both ways.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -212,9 +218,18 @@ pub fn run_goods(
                 }
                 match h.to {
                     Endpoint::Building(to) if buildings.get(to).is_some() => {
-                        let s = goods.stock.entry(to).or_default();
-                        *s = (*s + h.load).min(bal.goods_stock_cap);
-                        if matches!(h.from, Endpoint::Outside(_)) {
+                        let from_outside = matches!(h.from, Endpoint::Outside(_));
+                        // T-306: a factory's raw materials from the outside are used up on
+                        // arrival; only a shop's import is stock.
+                        let raw = from_outside
+                            && buildings
+                                .get(to)
+                                .is_some_and(|t| db.building(t.def).zone == ZoneType::Industrial);
+                        if !raw {
+                            let s = goods.stock.entry(to).or_default();
+                            *s = (*s + h.load).min(bal.goods_stock_cap);
+                        }
+                        if from_outside {
                             ledger.import_loads += 1;
                         }
                     }
@@ -289,6 +304,15 @@ pub fn run_goods(
     // the `industry_export_share` of its full loads that go out by the entry highway even with a
     // shop in reach (the same keys as `cp_industry`'s freight, so the two never disagree).
     let seed = rng.seed();
+    let imports_today = |id: BuildingId| {
+        trade_roll(
+            seed,
+            id,
+            now.0 / GOODS_BUCKET_TICKS,
+            CargoKind::Goods,
+            Way::In,
+        ) < bal.industry_import_share
+    };
     let exports_this_load = |id: BuildingId| {
         trade_roll(
             seed,
@@ -341,16 +365,18 @@ pub fn run_goods(
                 let lk = lookup.get_or_insert_with(|| Lookup::new(&buildings, db, &goods));
                 if (full || partial) && b.access().is_some() && !lk.from.contains(&id) {
                     let load = stock.min(bal.goods_truck_load);
+                    // Nobody to sell to nearby: the goods go out of the country. T-306: a share
+                    // of the loads, part loads too, goes out whatever shop stands near.
+                    let abroad = || exit_for(&exits, &sites, b.pos).map(|e| (e, point(e)));
+                    let exported = exports_this_load(id);
                     let to = if partial {
-                        pick_empty_shop(lk, &goods, b.pos, bal.freight_radius_m)
-                            .map(|shop| (Endpoint::Building(shop), RunPoint::Building(shop)))
+                        let empty = pick_empty_shop(lk, &goods, b.pos, bal.freight_radius_m)
+                            .map(|shop| (Endpoint::Building(shop), RunPoint::Building(shop)));
+                        if exported { abroad().or(empty) } else { empty }
                     } else {
                         let shop = pick_shop(lk, &goods, b.pos, bal.freight_radius_m)
                             .map(|shop| (Endpoint::Building(shop), RunPoint::Building(shop)));
-                        // Nobody to sell to nearby: the goods go out of the country. T-306: a
-                        // share of the full loads goes out whatever shop stands near.
-                        let abroad = || exit_for(&exits, &sites, b.pos).map(|e| (e, point(e)));
-                        if exports_this_load(id) {
+                        if exported {
                             abroad().or(shop)
                         } else {
                             shop.or_else(abroad)
@@ -373,6 +399,33 @@ pub fn run_goods(
                         lk.note(&haul);
                         goods.hauls.insert(run, haul);
                     }
+                }
+                // T-306: a working factory gets a share of its raw materials by truck from the
+                // outside: once a day (its bucket), when the roll says so and no raw truck is on
+                // its way, a `Cargo` run from the entry highway. The load is used up on arrival
+                // (no stock) and counted in `TransitLedger::import_loads`; free for the treasury,
+                // as a shop's import (T-170). The chains' factories import through `cp_industry`.
+                if db.building(b.def).industry.is_none()
+                    && filled(id) > 0.0
+                    && b.access().is_some()
+                    && !lk.to.contains(&id)
+                    && imports_today(id)
+                    && let Some(Endpoint::Outside(entry)) = exit_for(&entries, &sites, b.pos)
+                {
+                    let run = runs.start_run(
+                        VehicleKind::Cargo,
+                        RunPoint::Outside(entry),
+                        RunPoint::Building(id),
+                        false,
+                    );
+                    let haul = Haul {
+                        from: Endpoint::Outside(entry),
+                        to: Endpoint::Building(id),
+                        load: bal.goods_truck_load,
+                        cargo: CargoKind::Goods,
+                    };
+                    lk.note(&haul);
+                    goods.hauls.insert(run, haul);
                 }
             }
             ZoneType::ComLow | ZoneType::ComHigh => {

@@ -44,6 +44,11 @@ fn content() -> Arc<ContentDb> {
 
 /// [`content`] with `industry_export_share` at `export`.
 fn content_sharing(export: f32) -> Arc<ContentDb> {
+    content_trading(export, 0.0)
+}
+
+/// [`content`] with `industry_export_share` at `export` and `industry_import_share` at `import`.
+fn content_trading(export: f32, import: f32) -> Arc<ContentDb> {
     let mut src = vec![
         ("r/street.ron".into(), ROAD.into()),
         ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
@@ -60,7 +65,7 @@ fn content_sharing(export: f32) -> Arc<ContentDb> {
             format!(
                 "Balance((goods_per_worker: 10.0, goods_per_job: 1.0, goods_truck_load: 20.0, \
                  truck_visible_share: 1.0, entry_truck_visible_share: 1.0, \
-                 industry_export_share: {export:?}, industry_import_share: 0.0))"
+                 industry_export_share: {export:?}, industry_import_share: {import:?}))"
             ),
         ),
     ];
@@ -315,6 +320,42 @@ fn goods_trucks_are_cargo_trucks_not_garbage_trucks() {
 // T-170: exports and imports through the `Outside` node of the entry highway.
 
 use cp_transit::{Endpoint, TransitLedger};
+
+/// T-306: a working factory gets raw materials by truck from the outside at
+/// `industry_import_share`: at 1 a truck from the `Outside` node to the factory comes every day
+/// and is used up on arrival (no stock, an import load in the ledger); at 0 none comes.
+#[test]
+fn a_factory_gets_raw_materials_from_the_outside_at_the_import_share() {
+    let raw_trucks = |share: f32| {
+        let mut t = town_on(content_trading(0.0, share), &[600.0], 2, true, true);
+        let to = Endpoint::Building(t.factory);
+        let mut seen = 0;
+        let mut on_the_way = false;
+        for _ in 0..3 * cp_core::time::TICKS_PER_DAY {
+            t.sim.tick_once();
+            let g = t.sim.world().resource::<Goods>();
+            let now = g
+                .hauls
+                .values()
+                .any(|h| h.to == to && matches!(h.from, Endpoint::Outside(_)));
+            seen += u32::from(now && !on_the_way);
+            on_the_way = now;
+        }
+        let g = t.sim.world().resource::<Goods>();
+        let made = 10.0 * 2.0 * 3.0;
+        assert!(
+            g.stock_of(t.factory) <= made,
+            "the raw load is no stock: {} of {made} made",
+            g.stock_of(t.factory)
+        );
+        (seen, t.sim.world().resource::<TransitLedger>().import_loads)
+    };
+    let (trucks, loads) = raw_trucks(1.0);
+    assert!(trucks >= 2, "{trucks} raw trucks in three days");
+    assert!(loads >= 1, "{loads} import loads landed");
+    // The shop's own BUG-095 import may still come; no truck goes to the factory.
+    assert_eq!(raw_trucks(0.0).0, 0, "no raw truck at share 0");
+}
 
 /// T-306: traffic grows with industry. With `industry_export_share` 1 every full load leaves by
 /// the entry highway although a shop stands 500 m away; with 0 (the old rule) it goes to the
