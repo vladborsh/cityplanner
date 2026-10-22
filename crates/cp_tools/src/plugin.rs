@@ -813,6 +813,46 @@ fn sync_coverage_ghost(
     out.set_if_neq(cp_render::CoverageGhost { site });
 }
 
+/// What the placement ghost pollutes and how loud it is (T-300): the reach of each, from the one
+/// rule the sim uses, round the lot's centre. Nothing for a building that emits neither.
+pub fn emit_site(view: &SimView, state: &ToolState) -> Option<cp_render::EmitSite> {
+    if state.active != ActiveTool::Place {
+        return None;
+    }
+    let ghost = state.place_ghost.as_ref()?;
+    let db = view.content.as_deref()?;
+    let (pollution, noise) = cp_economy::emission_of(db.building(state.building.def?), db);
+    if pollution.is_none() && noise.is_none() {
+        return None;
+    }
+    let corners: Vec<Vec2> = ghost
+        .cells
+        .iter()
+        .filter_map(|&c| view.zones.cell_footprint(c))
+        .flat_map(|o| o.corners())
+        .collect();
+    if corners.is_empty() {
+        return None;
+    }
+    let centre = corners.iter().fold(Vec2::ZERO, |a, &p| a + p) / corners.len() as f32;
+    let metres = |e: cp_content::Emit| f32::from(e.radius_cells) * cp_economy::ZONE_CELL_M;
+    Some(cp_render::EmitSite {
+        centre,
+        pollution_m: pollution.map(metres),
+        noise_m: noise.map(metres),
+    })
+}
+
+/// Hands the reach of the placement ghost to the renderer.
+fn sync_emit_ghost(
+    view: Option<Res<SimView>>,
+    state: Res<ToolState>,
+    mut out: ResMut<cp_render::EmitGhost>,
+) {
+    let site = view.and_then(|v| emit_site(&v, &state));
+    out.set_if_neq(cp_render::EmitGhost { site });
+}
+
 /// Copies the renderer's count of the ghost's coverage into the tool state for the verdict.
 fn sync_coverage_count(
     summary: Res<cp_render::CoverageGhostSummary>,
@@ -995,6 +1035,7 @@ impl Plugin for ToolsPlugin {
                     sign_demo,
                     brush_demo,
                     sync_coverage_ghost,
+                    sync_emit_ghost,
                 )
                     .chain()
                     .after(tool_hover),
@@ -2407,5 +2448,60 @@ mod coverage_site_tests {
         state.place_ghost = place_preview(&view, &state.building, at);
         state.select(ActiveTool::None);
         assert!(coverage_site(&view, &state).is_none());
+    }
+
+    /// T-300: the ghost of a polluting or noisy building has circles of the sim's radii round
+    /// its lot; a school, which emits nothing, has none.
+    #[test]
+    fn a_ghost_of_an_emitting_building_has_the_reach_the_sim_uses() {
+        let c = Arc::new(
+            ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content"))
+                .unwrap(),
+        );
+        let road = c.road_id("basic_2l").unwrap();
+        let mut sim = SimRunner::new(1);
+        sim.set_content(Arc::clone(&c));
+        sim.world_mut().insert_resource(TileOwnership::only((1, 1)));
+        sim.world_mut()
+            .resource_mut::<NetGraph>()
+            .add_segment(
+                &c.road(road).clone(),
+                road,
+                CubicBezier3::line(
+                    Vec3::new(3000.0, 0.0, 3000.0),
+                    Vec3::new(3200.0, 0.0, 3000.0),
+                ),
+                Elevation::Ground,
+            )
+            .unwrap();
+        sim.tick_once();
+        let view = sim.view();
+        let at = Vec2::new(3100.0, 3012.0);
+        let mut state = ToolState::default();
+        state.select(ActiveTool::Place);
+        let mut site_of = |def: &str| {
+            state.building = crate::building::BuildingTool {
+                def: c.building_id(def),
+                ..Default::default()
+            };
+            state.place_ghost = place_preview(&view, &state.building, at);
+            let site = emit_site(&view, &state);
+            let want = cp_economy::emission_of(c.building(c.building_id(def).unwrap()), &c);
+            (site, want)
+        };
+        let (site, want) = site_of("coal_power_plant");
+        let (pollution, _) = want;
+        let site = site.expect("a coal plant pollutes");
+        assert_eq!(
+            site.pollution_m,
+            pollution.map(|e| f32::from(e.radius_cells) * cp_economy::ZONE_CELL_M)
+        );
+        assert!(site.pollution_m.is_some_and(|m| m > 0.0));
+        assert!(
+            site_of("fire_station").0.is_none(),
+            "a fire station is quiet"
+        );
+        state.select(ActiveTool::None);
+        assert!(emit_site(&view, &state).is_none());
     }
 }

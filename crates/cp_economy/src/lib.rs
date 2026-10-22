@@ -21,7 +21,7 @@ pub mod week;
 pub use command::{EconomyCommand, EconomyError, apply};
 pub use deathcare::update_deathcare;
 pub use demand::{DemandAcc, shortage_jobs, smooth, update_demand};
-pub use emissions::{CELL_E, EmissionInputs, Emissions, SIDE_E, emission_of};
+pub use emissions::{CELL_E, EmissionInputs, Emissions, SIDE_E, ZONE_CELL_M, emission_of};
 pub use flow::{DemolitionRefunds, FLOW_HOURS, Flow, MoneyFlow, SERVICE_KINDS, SERVICE_ORDER};
 pub use growth::{CITY_PERIOD, Decay, WorkerShortage, level_for, update_city};
 pub use health::{HEALTH_STREAM, update_health};

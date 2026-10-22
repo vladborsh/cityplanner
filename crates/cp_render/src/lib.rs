@@ -48,8 +48,8 @@ pub use grading::{GradingPlugin, GradingSettings};
 pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{
     AreaFamily, AreasMode, CoverageCount, CoverageGhost, CoverageGhostSummary, CoverageSite,
-    DistrictsMode, LINE_STEP, LineGhost, Overlay, OverlayPlugin, OverlayState, ZoningMode,
-    park_color, resource_color, ribbon_at,
+    DistrictsMode, EmitGhost, EmitSite, LINE_STEP, LineGhost, Overlay, OverlayPlugin, OverlayState,
+    ZoningMode, park_color, resource_color, ribbon_at,
 };
 pub use overlay::{
     BuildingStatus, NetworkStats, UtilityLayer, UtilityReport, network_color, utility_report,

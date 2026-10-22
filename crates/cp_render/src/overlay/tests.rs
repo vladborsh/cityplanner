@@ -350,6 +350,7 @@ fn switching_overlays_shows_that_layer_and_the_zone_grid_stays_on() {
         (Overlay::Traffic, true),
         (Overlay::LandValue, false),
         (Overlay::Pollution, false),
+        (Overlay::Noise, false),
         (Overlay::Water, false),
         (Overlay::Power, false),
     ] {

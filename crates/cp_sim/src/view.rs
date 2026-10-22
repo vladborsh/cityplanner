@@ -415,7 +415,7 @@ impl SimRunner {
                 road_load.insert(id, agents.load.inst(id));
             }
         }
-        let (land_value, pollution) = self.land_overlays();
+        let (land_value, pollution, noise) = self.land_overlays();
         OverlayData {
             zones: {
                 let preview = self.zones_now();
@@ -429,19 +429,31 @@ impl SimRunner {
             road_load: Arc::new(road_load),
             land_value,
             pollution,
+            noise,
         }
     }
 
     /// Land value and pollution as `0..=1` heat-map grids, rebuilt only when the grids were.
-    fn land_overlays(&self) -> (Option<Arc<ScalarGrid>>, Option<Arc<ScalarGrid>>) {
+    #[allow(clippy::type_complexity)]
+    fn land_overlays(
+        &self,
+    ) -> (
+        Option<Arc<ScalarGrid>>,
+        Option<Arc<ScalarGrid>>,
+        Option<Arc<ScalarGrid>>,
+    ) {
         let Some(g) = self.world().get_resource::<cp_economy::LandGrids>() else {
-            return (None, None);
+            return (None, None, None);
         };
         let mut cache = self.land_cache.lock().expect("land cache");
-        if let Some((rev, v, p)) = cache.as_ref()
+        if let Some((rev, [v, p, n])) = cache.as_ref()
             && *rev == g.revision()
         {
-            return (Some(Arc::clone(v)), Some(Arc::clone(p)));
+            return (
+                Some(Arc::clone(v)),
+                Some(Arc::clone(p)),
+                Some(Arc::clone(n)),
+            );
         }
         let norm = |vs: &[f32]| {
             Arc::new(ScalarGrid::new(
@@ -449,9 +461,12 @@ impl SimRunner {
                 vs.iter().map(|v| (v / 100.0).clamp(0.0, 1.0)).collect(),
             ))
         };
-        let (v, p) = (norm(&g.land_value), norm(&g.pollution));
-        *cache = Some((g.revision(), Arc::clone(&v), Arc::clone(&p)));
-        (Some(v), Some(p))
+        let (v, p, n) = (norm(&g.land_value), norm(&g.pollution), norm(&g.noise));
+        *cache = Some((
+            g.revision(),
+            [Arc::clone(&v), Arc::clone(&p), Arc::clone(&n)],
+        ));
+        (Some(v), Some(p), Some(n))
     }
 
     /// The coverage snapshot for `SimView::service`, cached while its generation is unchanged.
