@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use bevy_math::{Vec2, Vec3};
-use cp_content::ContentDb;
+use cp_content::{ContentDb, LaneDir, LaneKind};
 use cp_core::Tick;
 use cp_net::{ElevationMode, Junction, NetCommand, NodeClass, RoadPath};
 use cp_sim::{SimCommand, SimRunner, SimView};
@@ -1755,4 +1755,98 @@ fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
     assert!(x > hi, "nudged to {x}, beyond the bay's edge {hi}");
     let far = Vec2::new(X0 + 48.0, Z0 + 7.5);
     assert_eq!(index.nudge(far), far, "the outer sidewalk is left alone");
+}
+
+/// T-302d: the top area of the triangles of colour `c`.
+fn top_area(m: &MeshData, c: [f32; 4]) -> f32 {
+    top_area_in(m, c, f32::MIN, f32::MAX, None)
+}
+
+/// [`top_area`] of the lane paint whose first vertex has `x0 < x < x1`.
+fn top_area_in(m: &MeshData, c: [f32; 4], x0: f32, x1: f32, road_z: Option<f32>) -> f32 {
+    (0..m.triangle_count())
+        .filter(|&t| (0..3).all(|k| m.colors[m.indices[t * 3 + k] as usize] == c))
+        .filter(|&t| {
+            let p = m.positions[m.indices[t * 3] as usize];
+            let z = (0..3)
+                .map(|k| m.positions[m.indices[t * 3 + k] as usize][2])
+                .sum::<f32>()
+                / 3.0;
+            // With `road_z`: not the 0.12 m kerb lines at the edge of a road along +x.
+            p[0] > x0 && p[0] < x1 && road_z.is_none_or(|rz| (z - rz).abs() < 3.5)
+        })
+        .map(|t| {
+            let p = |k: usize| Vec3::from_array(m.positions[m.indices[t * 3 + k] as usize]);
+            (p(1) - p(0)).cross(p(2) - p(0)).length() * 0.5
+        })
+        .sum()
+}
+
+#[test]
+fn bus_lanes_carry_the_word_bus_in_the_near_mesh_only_and_lose_no_area() {
+    let mut w = world();
+    w.line("transitway_2l", (X0, Z0), (X0 + 100.0, Z0));
+    let v = w.view();
+    let (set, _) = w.set(&v);
+    let (id, _) = v.net.segments().next().unwrap();
+    let piece = set.piece(PieceKey::Segment(id)).unwrap();
+    let len = segment_length(&w, &v, id);
+    // "BUS" lights 20 + 15 + 15 pixels of 0.5 x 0.6 m: 15 m2 a word, two words on each of the
+    // two lanes of a 100 m segment.
+    let words = 2.0 * (len / 40.0).floor();
+    // The words: only the paint between their first and last row (the 0.12 m kerb lines and
+    // the zebras at the ends are white too).
+    let curve = v.junctions.trimmed_curve(&v.net, id).unwrap();
+    let words_at = decal::plan(
+        &[
+            (LaneKind::Bus, LaneDir::Forward, -1.75, 3.5),
+            (LaneKind::Bus, LaneDir::Backward, 1.75, 3.5),
+        ],
+        len,
+        &[],
+    );
+    let (s0, s1) = (words_at[0].s0, words_at[0].s0 + 23.0 * words_at[0].pitch);
+    let (x0, x1) = (curve.p0.x + s0 - 0.01, curve.p0.x + s1 - 0.01);
+    let white = top_area_in(&piece.near, WHITE, x0, x1, Some(Z0));
+    assert!(
+        (white - 15.0 * words).abs() < 0.5,
+        "{white} vs {}",
+        15.0 * words
+    );
+    assert_eq!(top_area_in(&piece.far, WHITE, x0, x1, Some(Z0)), 0.0);
+    // Under the words the lanes (7 m with the yellow line) are covered as without them.
+    let in_window = |c| top_area_in(&piece.near, c, x0, x1, Some(Z0));
+    let area = in_window(BUS) + in_window(WHITE) + in_window(YELLOW);
+    assert!(
+        (area - 7.0 * (s1 - s0)).abs() < 0.5,
+        "{area} vs {}",
+        7.0 * (s1 - s0)
+    );
+}
+
+#[test]
+fn trolley_lanes_carry_trolley_and_tram_lanes_no_word() {
+    let mut w = world();
+    w.line("trolley_4l", (X0, Z0), (X0 + 100.0, Z0));
+    w.line("tram_4l", (X0, Z0 + 100.0), (X0 + 100.0, Z0 + 100.0));
+    let v = w.view();
+    let (set, _) = w.set(&v);
+    let (mut trolley, mut tram) = (0.0, 0.0);
+    for (id, seg) in v.net.segments() {
+        let near = &set.piece(PieceKey::Segment(id)).unwrap().near;
+        let name = w.content.road(seg.road).id.clone();
+        let z = if name == "tram_4l" { Z0 + 100.0 } else { Z0 };
+        // Clear of the zebras at the ends of the segment.
+        let curve = v.junctions.trimmed_curve(&v.net, id).unwrap();
+        let (a, b) = (curve.p0.x.min(curve.p3.x), curve.p0.x.max(curve.p3.x));
+        let white = top_area_in(near, WHITE, a + 6.0, b - 6.0, Some(z));
+        match name.as_str() {
+            "trolley_4l" => trolley += white,
+            "tram_4l" => tram += white,
+            other => panic!("{other}"),
+        }
+    }
+    // 'TROLLEY' on both middle lanes of the long segment; the tram lanes have no word.
+    assert!(trolley > 10.0, "{trolley}");
+    assert!(tram < 1.0, "{tram}");
 }
