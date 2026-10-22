@@ -164,6 +164,16 @@ fn variant_at<'a>(
     (style, params)
 }
 
+/// Roof allowance above the top floor (gables, parapets, rooftop plant), metres.
+pub const ROOF_ALLOWANCE: f32 = 3.0;
+
+/// How tall the building drawn for `b` stands, metres: its floors times the floor height of its
+/// zone, plus [`ROOF_ALLOWANCE`] (BUG-111b: the cursor ray's pick box).
+pub fn building_height(db: &ContentDb, id: BuildingId, b: &Building, def: &BuildingDef) -> f32 {
+    let (_, vp) = variant_for(db, id, b, def);
+    f32::from(vp.floors.max(1)) * facade_style(def.zone, def.level).floor_h + ROOF_ALLOWANCE
+}
+
 /// Window pattern of a zone family and level (the "atlas", as parameters).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FacadeStyle {
