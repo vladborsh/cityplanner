@@ -1400,7 +1400,9 @@ pub mod furniture;
 mod ground;
 mod node;
 pub mod parking;
-pub use band::{BAND_LIFT, BAND_STEP, band_data, band_mesh, band_polyline, to_mesh};
+pub use band::{
+    BAND_LIFT, BAND_STEP, band_data, band_mesh, band_polyline, strip_polyline, to_mesh,
+};
 pub use ground::{CLEARANCE, lod_height, max_mesh_height};
 
 #[cfg(test)]

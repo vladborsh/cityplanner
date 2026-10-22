@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use cp_net::SegmentId;
 use cp_render::VertexColorMaterial;
 use cp_render::chunk::MeshData;
-use cp_render::road::{BAND_LIFT, band_polyline, to_mesh};
+use cp_render::road::{BAND_LIFT, band_polyline, strip_polyline, to_mesh};
 use cp_sim::SimView;
 
 use crate::plugin::{ActiveTool, Ghost, ToolState};
@@ -23,6 +23,18 @@ pub const GHOST_OK: [f32; 4] = [0.2, 0.9, 0.3, 0.45];
 pub const GHOST_BAD: [f32; 4] = [0.95, 0.2, 0.2, 0.5];
 /// Bulldozer run.
 pub const HIGHLIGHT: [f32; 4] = [1.0, 0.6, 0.1, 0.55];
+
+/// The ghost tint of a transit lane (the colours of the road surface, brighter), `None` for
+/// lanes that stay the plain band.
+pub fn lane_tint(kind: cp_content::LaneKind) -> Option<[f32; 4]> {
+    use cp_content::LaneKind;
+    match kind {
+        LaneKind::Bus => Some([0.95, 0.25, 0.25, 0.6]),
+        LaneKind::Tram => Some([0.55, 0.65, 0.95, 0.6]),
+        LaneKind::Trolley => Some([0.95, 0.8, 0.2, 0.6]),
+        _ => None,
+    }
+}
 
 /// The band geometry of the road ghost (when it has a width) and of the highlighted run.
 pub fn band_geometry(
@@ -51,6 +63,19 @@ pub fn band_geometry(
                 BAND_LIFT,
                 colour,
             ));
+            // The transit lanes keep their own colours over a valid ghost.
+            for &(lo, hi, kind) in g.lanes.iter().filter(|_| g.valid) {
+                if let Some(tint) = lane_tint(kind) {
+                    add(strip_polyline(
+                        line,
+                        lo,
+                        hi,
+                        terrain,
+                        BAND_LIFT + 0.02,
+                        tint,
+                    ));
+                }
+            }
         }
     }
     for &(id, s0, s1) in parts {
@@ -251,5 +276,46 @@ mod tests {
                 .indices
                 .is_empty()
         );
+    }
+
+    /// T-302d: a valid ghost of a road with a transit lane tints that lane; an invalid one and
+    /// a road without such lanes stay the plain band.
+    #[test]
+    fn the_ghost_tints_its_transit_lanes_when_valid() {
+        use cp_content::LaneKind;
+        let (sim, _, _) = sim();
+        let view = sim.view();
+        let ghost = |valid, lanes: Vec<(f32, f32, LaneKind)>| Ghost {
+            polylines: vec![vec![
+                Vec3::new(500.0, 0.0, 500.0),
+                Vec3::new(500.0, 0.0, 560.0),
+            ]],
+            valid,
+            half_width: 8.0,
+            lanes,
+            ..Default::default()
+        };
+        let bus = vec![(-3.5, 0.0, LaneKind::Bus), (0.0, 3.5, LaneKind::Trolley)];
+        let m = band_geometry(&view, Some(&ghost(true, bus.clone())), &[], &[], false);
+        let tint = |k| lane_tint(k).unwrap();
+        assert!(m.colors.contains(&tint(LaneKind::Bus)));
+        assert!(m.colors.contains(&tint(LaneKind::Trolley)));
+        assert!(m.colors.contains(&GHOST_OK));
+        // Lateral extent of the bus tint: the strip stays inside its lane.
+        let xs: Vec<f32> = m
+            .colors
+            .iter()
+            .zip(&m.positions)
+            .filter(|(c, _)| **c == tint(LaneKind::Bus))
+            .map(|(_, p)| p[0] - 500.0)
+            .collect();
+        assert!(
+            xs.iter().all(|x| (-3.5 - 1e-3..=1e-3).contains(x)),
+            "{xs:?}"
+        );
+        let bad = band_geometry(&view, Some(&ghost(false, bus)), &[], &[], false);
+        assert!(bad.colors.iter().all(|c| *c == GHOST_BAD));
+        let plain = band_geometry(&view, Some(&ghost(true, vec![])), &[], &[], false);
+        assert!(plain.colors.iter().all(|c| *c == GHOST_OK));
     }
 }

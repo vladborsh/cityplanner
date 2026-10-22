@@ -120,6 +120,9 @@ pub struct Ghost {
     pub errors: Vec<String>,
     /// Half the road width, metres: drawn as a band. `0.0` draws the polylines as lines.
     pub half_width: f32,
+    /// The transit lanes of the road (`lo`, `hi` lateral offsets and kind): tinted over the band
+    /// so the player sees which lanes are bus, tram or trolley lanes (T-302d).
+    pub lanes: Vec<(f32, f32, cp_content::LaneKind)>,
     /// What snapped the cursor point, with its guide line (road ghost only).
     pub snap: SnapReport,
     /// One player-facing line per one-way warning (§6.6); shown in yellow, never blocks.
@@ -1570,9 +1573,17 @@ pub fn compute_ghost_alt(
     let content = view.content.as_deref()?;
     let req = tool.request(path.clone())?;
     let half_width = content.road(req.road).width * 0.5;
+    let lanes = content
+        .road(req.road)
+        .lanes
+        .iter()
+        .filter(|l| crate::band::lane_tint(l.kind).is_some())
+        .map(|l| (l.offset - l.width * 0.5, l.offset + l.width * 0.5, l.kind))
+        .collect();
     let result = preview_plan(view, &plan)?;
     let mut ghost = Ghost {
         half_width,
+        lanes,
         snap: cursor.snap,
         block: cursor.block.clone(),
         hover: Some(hover),
