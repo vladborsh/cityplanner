@@ -11,6 +11,9 @@ const GLASS: [f32; 4] = [0.05, 0.07, 0.10, 0.0];
 const TYRE: [f32; 4] = [0.02, 0.02, 0.02, 0.0];
 const SKIN: [f32; 4] = [0.60, 0.42, 0.32, 0.0];
 const TINT: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+/// Limb markers in the colour alpha (T-297): `tint + 2 * limb`.
+const LEG: f32 = 2.0;
+const ARM: [f32; 4] = [1.0, 1.0, 1.0, 5.0];
 const BUS_CREAM: [f32; 4] = [0.93, 0.90, 0.80, 0.0];
 const BUS_ROOF: [f32; 4] = [0.55, 0.58, 0.62, 0.0];
 /// The pantograph of a tram (T-302b): dark steel, no instance colour.
@@ -366,13 +369,16 @@ pub fn pedestrian_mesh(detail: usize) -> MeshData {
         push_box(&mut m, [-0.2, 0.0, -0.12], [0.2, 1.7, 0.12], TINT);
         return m;
     }
-    push_box(
-        &mut m,
-        [-0.16, 0.0, -0.09],
-        [0.16, 0.8, 0.09],
-        [0.10, 0.12, 0.2, 0.0],
-    );
+    // Limbs swing in the vertex shader about the hip and the shoulder; their colour alpha
+    // carries `tint + 2 * limb` (1 = leg, 2 = arm), see `agent_render.wesl`.
+    let trousers = [0.10, 0.12, 0.2, LEG];
+    for (x0, x1) in [(-0.16, -0.01), (0.01, 0.16)] {
+        push_box(&mut m, [x0, 0.0, -0.09], [x1, 0.8, 0.09], trousers);
+    }
     push_box(&mut m, [-0.22, 0.8, -0.12], [0.22, 1.45, 0.12], TINT);
+    for (x0, x1) in [(-0.31, -0.22), (0.22, 0.31)] {
+        push_box(&mut m, [x0, 0.78, -0.07], [x1, 1.42, 0.07], ARM);
+    }
     push_box(&mut m, [-0.1, 1.45, -0.1], [0.1, 1.75, 0.1], SKIN);
     m
 }

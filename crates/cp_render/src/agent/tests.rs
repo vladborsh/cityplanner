@@ -282,3 +282,37 @@ fn a_pedestrian_that_stops_keeps_facing_the_way_it_walked() {
     assert_eq!(standing[0], walking[0], "keeps its heading when it stops");
     assert_eq!(still, standing, "the newcomer's random heading is kept too");
 }
+
+#[test]
+fn the_walk_phase_follows_the_distance_walked_not_the_clock() {
+    let phase = |from: f32, to: f32, time: f32, alpha: f32| {
+        let mut out = AgentInstances::default();
+        let c = Cull {
+            time,
+            ..cull(50.0, alpha)
+        };
+        build_pedestrians(
+            &[ped(1, from)],
+            &[ped(1, to)],
+            |_, _| 0.0,
+            |p| p,
+            &c,
+            &mut Headings::default(),
+            &mut out,
+        );
+        out.pedestrians[0][0].scale_phase[3]
+    };
+    // Half a 2 m step further along the same walk is 1 / STRIDE of a cycle more, whatever the time.
+    let d = phase(0.0, 2.0, 0.0, 0.75) - phase(0.0, 2.0, 7.0, 0.25);
+    let want = std::f32::consts::TAU / STRIDE;
+    assert!((d - want).abs() < 1e-3, "{d} vs {want}");
+}
+
+#[test]
+fn the_walking_mesh_has_two_legs_and_two_arms_and_the_far_one_stays_one_box() {
+    let m = mesh::pedestrian_mesh(0);
+    let alphas = |lo: f32, hi: f32| m.colors.iter().filter(|c| c[3] > lo && c[3] < hi).count() / 24;
+    assert_eq!(alphas(1.5, 2.5), 2, "legs");
+    assert_eq!(alphas(4.5, 5.5), 2, "arms");
+    assert!(mesh::pedestrian_mesh(1).colors.iter().all(|c| c[3] <= 1.0));
+}
