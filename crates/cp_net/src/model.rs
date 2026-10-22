@@ -75,6 +75,25 @@ pub struct Node {
     pub kind: NodeKind,
     pub control: JunctionControl,
     pub elevation: Elevation,
+    /// The player's priority signs (T-303, §6.5a), one per arm at most, ascending by segment.
+    /// They choose the main road only while the node has no light. Appended last (a save format bump).
+    pub signs: Vec<ArmSign>,
+}
+
+/// A priority sign on one arm of a junction (§6.5a). Enum variants are only appended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Sign {
+    /// This arm is on the main road.
+    Main,
+    /// Traffic from this arm gives way.
+    Yield,
+}
+
+/// The sign standing on the arm `segment` of a node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArmSign {
+    pub segment: SegmentId,
+    pub sign: Sign,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

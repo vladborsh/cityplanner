@@ -251,6 +251,112 @@ fn nobody_enters_the_junction_on_red() {
     assert!(waited > 0, "some cars really waited for the light");
 }
 
+/// T-303 (§6.5a): a T of a 4-lane road (W, E) and a street (N), one car on the road going
+/// straight and one on the street turning across it, both standing well inside the priority
+/// zone. Returns the substep at which each enters the junction: `(road car, street car)`.
+/// `signs`: `Main` on the street, `Yield` on both road arms; `light`: the light stays on.
+fn sign_race(signs: bool, light: bool) -> (u64, u64) {
+    use cp_net::{NetGraph, Sign};
+    let mut s = sim();
+    let w = s.seg_with("medium_4l", (880.0, 1000.0), (1000.0, 1000.0));
+    let e = s.seg_with("medium_4l", (1120.0, 1000.0), (1000.0, 1000.0));
+    let n = s.seg_with("basic_2l", (1000.0, 880.0), (1000.0, 1000.0));
+    s.tick();
+    {
+        let mut g = s.world.resource_mut::<NetGraph>();
+        let node = g.segment(n).unwrap().end;
+        assert!(g.node(node).unwrap().control.has_light(), "two big arms");
+        if !light {
+            g.toggle_traffic_light(node).unwrap();
+        }
+        if signs {
+            g.set_sign(node, n, Some(Sign::Main)).unwrap();
+            g.set_sign(node, w, Some(Sign::Yield)).unwrap();
+            g.set_sign(node, e, Some(Sign::Yield)).unwrap();
+        }
+    }
+    let mut rig = Rig::new(s);
+    assert_eq!(rig.graph.lights.is_empty(), !light);
+    let path = |from: Access, to: Access| {
+        find_car_path(&rig.graph, &CongestionMap::default(), &from, &to).unwrap()
+    };
+    let crosses = |a: &crate::CarPath, b: &crate::CarPath| {
+        a.steps.iter().any(|&(fa, ta)| {
+            find_exit(&rig.graph, fa, ta).is_some_and(|ex| {
+                ex.conflicts.iter().any(|c| {
+                    b.steps
+                        .iter()
+                        .any(|&(fb, tb)| rig.graph.car_slot(fb) == Some(c.from_slot) && c.to == tb)
+                })
+            })
+        })
+    };
+    // A direction of the road and a turn off the street that cross each other.
+    let (from, to, turn) = [(w, e), (e, w)]
+        .into_iter()
+        .flat_map(|(f, t)| [(f, t, e), (f, t, w)])
+        .find(|&(f, t, turn)| {
+            crosses(
+                &path(from_arm(f, 90.0), to_arm(t, 60.0)),
+                &path(from_arm(n, 90.0), to_arm(turn, 60.0)),
+            )
+        })
+        .expect("a street turn crosses the road");
+    let a = rig.add(from_arm(from, 90.0), to_arm(to, 60.0));
+    let b = rig.add(from_arm(n, 90.0), to_arm(turn, 60.0));
+    let mut entered: [Option<u64>; 2] = [None, None];
+    let mut finished = Finished::default();
+    let mut k = 0u64;
+    for tick in 0..3000u64 {
+        spawn_waiting(&mut rig.veh, &mut rig.st, &rig.graph, None, &mut finished);
+        for sub in 0..cp_core::time::MOVE_SUBSTEPS {
+            let signal = signal_tick(tick, sub);
+            substep(
+                &mut rig.veh,
+                &mut rig.st,
+                &rig.graph,
+                signal,
+                None,
+                &mut finished,
+            );
+            for (i, id) in [a, b].into_iter().enumerate() {
+                let Some(v) = rig.veh.get(id) else { continue };
+                if v.in_conn && entered[i].is_none() {
+                    entered[i] = Some(k);
+                    let (from, to) = v.path.steps[v.hop as usize];
+                    let ex = find_exit(&rig.graph, from, to).unwrap();
+                    if ex.light != u32::MAX {
+                        let sig =
+                            rig.graph.lights[ex.light as usize].connection_signal(ex.index, signal);
+                        assert_ne!(sig, Signal::Red, "entered on red");
+                    }
+                }
+            }
+            rig.check_invariants();
+            k += 1;
+        }
+        if entered.iter().all(Option::is_some) {
+            break;
+        }
+    }
+    (
+        entered[0].expect("the road car enters"),
+        entered[1].expect("the street car enters"),
+    )
+}
+
+#[test]
+fn signs_make_the_road_give_way_to_the_street_and_a_light_overrides_them() {
+    // No signs: the 4-lane road is the main road by rank, the street car waits.
+    let (road, street) = sign_race(false, false);
+    assert!(road < street, "rank rule: road {road}, street {street}");
+    // Main on the street, yield on the road: the mirror image.
+    let (road, street) = sign_race(true, false);
+    assert!(street < road, "signs: road {road}, street {street}");
+    // With the light on the signs do nothing: both go by the signal, as without signs.
+    assert_eq!(sign_race(true, true), sign_race(false, true));
+}
+
 #[test]
 fn a_queue_builds_at_the_light_and_clears_when_the_load_stops() {
     let mut s = sim();

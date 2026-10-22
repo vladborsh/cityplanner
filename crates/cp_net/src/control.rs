@@ -1,9 +1,9 @@
 //! Junction control (`system-design.md` §6.5): priority and traffic lights.
 //!
-//! **Saved state** is only [`Node::control`](crate::model::Node): the
-//! [`JunctionControl`] enum (`Priority`, then the appended `TrafficLight`,
-//! `ManualPriority`, `ManualTrafficLight`; appending enum variants needs no save version
-//! bump, §4). Everything here — priority, phases, signal timing — is **derived**, a pure
+//! **Saved state** is only [`Node::control`](crate::model::Node) and the player's
+//! [`Node::signs`](crate::model::Node) (T-303): the [`JunctionControl`] enum (`Priority`,
+//! then the appended `TrafficLight`, `ManualPriority`, `ManualTrafficLight`; appending enum
+//! variants needs no save version bump, §4) and the signs per arm. Everything here — priority, phases, signal timing — is **derived**, a pure
 //! function of the graph, the control value and the content ranks: it lives in
 //! [`Junction::control`](crate::junction::Junction), is never saved and never hashed, and
 //! is rebuilt by the `Network` phase like the rest of the junction.
@@ -16,7 +16,8 @@
 //! `ToggleTrafficLight` command flips between the two manual states.
 //!
 //! **Priority**: the *main road* is the pair of arms with the highest `RoadDef.rank`
-//! (ties: the wider road, then the lower `SegmentId`). A connection has [`Priority::Main`]
+//! (ties: the wider road, then the lower `SegmentId`), unless the player's signs on the node
+//! choose it ([`main_arms_by_signs`], §6.5a; saved in [`Node::signs`](crate::model::Node)). A connection has [`Priority::Main`]
 //! if it starts on a main arm, except a left turn that conflicts with a straight
 //! connection of the other main arm (it must yield to oncoming traffic). Every other
 //! connection yields to the connections it conflicts with ([`Links::conflicts`]); the
@@ -36,12 +37,14 @@
 //! fixed per-node value derived from the node id, so neighbouring lights are not in
 //! lock-step. Nothing about the signal is saved.
 
+use std::f32::consts::{PI, TAU};
+
 use cp_content::RoadDefId;
 
 use crate::connections::{Links, PedLinkKind, Turn};
 use crate::graph::NetGraph;
 use crate::junction::{Arm, Junction};
-use crate::model::{JunctionControl, NodeId, SegmentId};
+use crate::model::{ArmSign, JunctionControl, NodeId, SegmentId, Sign};
 
 /// Green time per phase: 20 s at 20 ticks/s.
 pub const GREEN_TICKS: u32 = 400;
@@ -128,7 +131,7 @@ pub struct ControlPlan {
     pub light: Option<LightPlan>,
 }
 
-fn vehicle_lanes(graph: &NetGraph, seg: SegmentId) -> usize {
+pub(crate) fn vehicle_lanes(graph: &NetGraph, seg: SegmentId) -> usize {
     graph.segment(seg).map_or(0, |s| {
         s.lanes
             .iter()
@@ -166,6 +169,68 @@ pub fn auto_control(graph: &NetGraph, junction: &Junction) -> Option<JunctionCon
     (!current.is_manual() && current != wanted).then_some(wanted)
 }
 
+/// The main road of a junction (§6.5a): the arms (indices into `arms`) the signs choose,
+/// at most two. `M` are the arms signed `Main`, `Y` those signed `Yield`:
+/// 1. two in `M`: those two;
+/// 2. one in `M`: it and the arm with vehicle lanes outside `Y` that points most nearly the
+///    opposite way (then rank, width, lower `SegmentId`); it alone if there is none;
+/// 3. none in `M`: the two best by rank, width and lower `SegmentId` among the arms outside
+///    `Y`, or among all arms if fewer than two are outside it (no signs: the §6.5 rule).
+pub fn main_arms_by_signs(
+    graph: &NetGraph,
+    arms: &[Arm],
+    signs: &[ArmSign],
+    rank_of: &dyn Fn(RoadDefId) -> u8,
+) -> Vec<usize> {
+    let sign = |a: &Arm| {
+        signs
+            .iter()
+            .find(|s| s.segment == a.segment)
+            .map(|s| s.sign)
+    };
+    let rank = |a: &Arm| graph.segment(a.segment).map_or(0, |s| rank_of(s.road));
+    // Higher rank, then wider, then the lower segment id first.
+    let better = |x: usize, y: usize| {
+        rank(&arms[y])
+            .cmp(&rank(&arms[x]))
+            .then(arms[y].width.total_cmp(&arms[x].width))
+            .then(arms[x].segment.cmp(&arms[y].segment))
+    };
+    let main: Vec<usize> = (0..arms.len())
+        .filter(|&i| sign(&arms[i]) == Some(Sign::Main))
+        .collect();
+    let not_yield: Vec<usize> = (0..arms.len())
+        .filter(|&i| sign(&arms[i]) != Some(Sign::Yield))
+        .collect();
+    match main[..] {
+        [m] => {
+            // How far from straight across, in milliradians: arms equally far off (a T's two
+            // square arms) tie in spite of rounding and go by rank.
+            let away = |i: usize| {
+                let d = (arms[i].angle - arms[m].angle - PI).rem_euclid(TAU);
+                (d.min(TAU - d) * 1000.0).round() as u32
+            };
+            let pair = not_yield
+                .iter()
+                .copied()
+                .filter(|&i| i != m && vehicle_lanes(graph, arms[i].segment) > 0)
+                .min_by(|&x, &y| away(x).cmp(&away(y)).then(better(x, y)));
+            std::iter::once(m).chain(pair).collect()
+        }
+        [_, _, ..] => main.into_iter().take(2).collect(),
+        [] => {
+            let mut pool = if not_yield.len() >= 2 {
+                not_yield
+            } else {
+                (0..arms.len()).collect()
+            };
+            pool.sort_by(|&x, &y| better(x, y));
+            pool.truncate(2);
+            pool
+        }
+    }
+}
+
 /// Builds the control plan. `rank_of` gives the `RoadDef.rank` of a road type.
 pub fn plan_control(
     graph: &NetGraph,
@@ -179,16 +244,8 @@ pub fn plan_control(
         .node(node)
         .map_or(JunctionControl::Priority, |n| n.control);
 
-    // Main road.
-    let mut order: Vec<usize> = (0..arms.len()).collect();
-    let rank = |a: &Arm| graph.segment(a.segment).map_or(0, |s| rank_of(s.road));
-    order.sort_by(|&x, &y| {
-        rank(&arms[y])
-            .cmp(&rank(&arms[x]))
-            .then(arms[y].width.total_cmp(&arms[x].width))
-            .then(arms[x].segment.cmp(&arms[y].segment))
-    });
-    let main_arms: Vec<usize> = order.into_iter().take(2).collect();
+    let signs = graph.node(node).map_or(&[][..], |n| &n.signs[..]);
+    let main_arms = main_arms_by_signs(graph, arms, signs, rank_of);
 
     let arm_of = |lane| {
         let seg = graph.lane(lane).map(|l| l.segment);

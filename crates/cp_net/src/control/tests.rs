@@ -186,10 +186,10 @@ fn rule_reapplies_to_automatic_nodes_but_keeps_the_players_choice() {
     sim.network();
     assert!(sim.junction().control.light.is_some());
 
-    // Manual light at a node the rule would not light.
+    // Manual light at a node the rule would not light (one big road: controllable, §6.5a).
     let mut sim = Sim::new(star(
         &db,
-        &[(0.0, "basic_2l"), (90.0, "basic_2l"), (180.0, "basic_2l")],
+        &[(0.0, "medium_4l"), (90.0, "basic_2l"), (180.0, "basic_2l")],
     ));
     assert!(!sim.control().has_light());
     let n = sim.centre();
@@ -225,6 +225,29 @@ fn toggle_rejects_non_junctions() {
     let first = sim.graph().segments().next().unwrap().0;
     sim.graph_mut().remove_segment(first).unwrap();
     assert!(sim.graph_mut().toggle_traffic_light(bend).is_err());
+}
+
+#[test]
+fn toggle_rejects_a_junction_of_two_lane_roads() {
+    let db = content();
+    let mut sim = Sim::new(star(
+        &db,
+        &[(0.0, "basic_2l"), (90.0, "basic_2l"), (180.0, "basic_2l")],
+    ));
+    let n = sim.centre();
+    assert!(!sim.graph().is_controllable(n));
+    assert_eq!(
+        sim.graph_mut().toggle_traffic_light(n),
+        Err(crate::NetOpError::NotControllable(n))
+    );
+    assert_eq!(sim.control(), JunctionControl::Priority);
+    // A footpath is no arm: two streets and a path stay automatic even beside a big road's
+    // width elsewhere.
+    let sim = Sim::new(star(
+        &db,
+        &[(0.0, "medium_4l"), (90.0, "basic_2l"), (180.0, "park_path")],
+    ));
+    assert!(!sim.graph().is_controllable(sim.centre()));
 }
 
 // ---------- priority ----------
@@ -498,4 +521,272 @@ fn plans_are_deterministic_and_offsets_differ_by_node() {
     let b = lit_junction(&db, &arms).2;
     assert_eq!(a, b);
     assert!(a.offset < a.cycle_ticks());
+}
+
+// ---------- the player's signs (§6.5a) ----------
+
+/// A 4-way of a 6-lane avenue end (0°) and three streets (90°, 180°, 270°): controllable,
+/// no automatic light. Returns the sim and the segments in that order.
+fn signed_cross(db: &ContentDb) -> (Sim, Vec<SegmentId>) {
+    let sim = Sim::new(star(
+        db,
+        &[
+            (0.0, "large_6l"),
+            (90.0, "basic_2l"),
+            (180.0, "basic_2l"),
+            (270.0, "basic_2l"),
+        ],
+    ));
+    let segs = sim.graph().segments().map(|(id, _)| id).collect();
+    (sim, segs)
+}
+
+impl Sim {
+    /// The main arms as indices into `segs`, ascending.
+    fn main_of(&self, segs: &[SegmentId]) -> Vec<usize> {
+        let j = self.junction();
+        let mut m: Vec<usize> = j
+            .control
+            .main_arms
+            .iter()
+            .map(|&a| segs.iter().position(|&s| s == j.arms[a].segment).unwrap())
+            .collect();
+        m.sort();
+        m
+    }
+    fn signs(&self) -> Vec<ArmSign> {
+        self.graph().node(self.centre()).unwrap().signs.clone()
+    }
+}
+
+#[test]
+fn signs_choose_the_main_road() {
+    let db = content();
+    use Sign::{Main, Yield};
+    type Case<'a> = (&'a [(usize, Sign)], &'a [usize], &'a str);
+    let cases: &[Case] = &[
+        (&[], &[0, 1], "no signs: rank, then the lower segment id"),
+        (&[(1, Main), (3, Main)], &[1, 3], "two main arms"),
+        (&[(1, Main)], &[1, 3], "one main arm takes the opposite one"),
+        (
+            &[(1, Main), (3, Yield)],
+            &[0, 1],
+            "the opposite yields: of the two square arms the higher rank",
+        ),
+        (
+            &[(0, Yield)],
+            &[1, 2],
+            "a yield on the avenue hands the main road to the next pair",
+        ),
+        (
+            &[(0, Yield), (1, Yield), (2, Yield), (3, Yield)],
+            &[0, 1],
+            "yield everywhere is no sign",
+        ),
+        (
+            &[(0, Main), (1, Yield), (2, Yield), (3, Yield)],
+            &[0],
+            "one main arm and nothing to pair it with",
+        ),
+    ];
+    for (signs, want, why) in cases {
+        let (mut sim, segs) = signed_cross(&db);
+        let n = sim.centre();
+        for &(i, sign) in *signs {
+            sim.graph_mut().set_sign(n, segs[i], Some(sign)).unwrap();
+        }
+        sim.network();
+        assert_eq!(sim.main_of(&segs), want.to_vec(), "{why}");
+        // The connections follow the main road: everything from a yield arm gives way.
+        let j = sim.junction();
+        for (c, conn) in j.links.connections.iter().enumerate() {
+            let seg = sim.graph().lane(conn.from).unwrap().segment;
+            let arm = j.arms.iter().position(|a| a.segment == seg).unwrap();
+            if !j.control.main_arms.contains(&arm) {
+                assert_eq!(j.control.priority[c], Priority::Yield, "{why}: {c}");
+            }
+        }
+    }
+}
+
+#[test]
+fn set_sign_refuses_and_changes_nothing() {
+    let db = content();
+    let (mut sim, segs) = signed_cross(&db);
+    let n = sim.centre();
+    let mut g = sim.graph_mut();
+    g.set_sign(n, segs[1], Some(Sign::Main)).unwrap();
+    g.set_sign(n, segs[2], Some(Sign::Main)).unwrap();
+    assert_eq!(
+        g.set_sign(n, segs[3], Some(Sign::Main)),
+        Err(crate::NetOpError::TooManyMain(n))
+    );
+    // Main again on a main arm, or yield on a third, is fine.
+    g.set_sign(n, segs[2], Some(Sign::Main)).unwrap();
+    g.set_sign(n, segs[3], Some(Sign::Yield)).unwrap();
+    // A segment of another node.
+    let far = g.segment(segs[0]).unwrap().end;
+    let at = g.node(far).unwrap().pos;
+    let road = db.road_id("basic_2l").unwrap();
+    let other = g
+        .add_segment(
+            db.road(road),
+            road,
+            CubicBezier3::line(at, at + Vec3::new(0.0, 0.0, 80.0)),
+            Elevation::Ground,
+        )
+        .unwrap();
+    assert_eq!(
+        g.set_sign(n, other, Some(Sign::Yield)),
+        Err(crate::NetOpError::NotAnArm(n, other))
+    );
+    // `far` is a bend now: no control.
+    assert_eq!(
+        g.set_sign(far, other, Some(Sign::Yield)),
+        Err(crate::NetOpError::NotControllable(far))
+    );
+    let signs = sim.signs();
+    assert_eq!(
+        signs,
+        vec![
+            ArmSign {
+                segment: segs[1],
+                sign: Sign::Main
+            },
+            ArmSign {
+                segment: segs[2],
+                sign: Sign::Main
+            },
+            ArmSign {
+                segment: segs[3],
+                sign: Sign::Yield
+            },
+        ]
+    );
+    // `None` takes the sign away.
+    sim.graph_mut().set_sign(n, segs[2], None).unwrap();
+    assert_eq!(sim.signs().len(), 2);
+
+    // Two-lane streets only.
+    let mut sim = Sim::new(star(
+        &db,
+        &[(0.0, "basic_2l"), (90.0, "basic_2l"), (180.0, "basic_2l")],
+    ));
+    let n = sim.centre();
+    let seg = sim.graph().segments().next().unwrap().0;
+    assert_eq!(
+        sim.graph_mut().set_sign(n, seg, Some(Sign::Main)),
+        Err(crate::NetOpError::NotControllable(n))
+    );
+    assert!(sim.signs().is_empty());
+}
+
+#[test]
+fn a_cut_or_a_merge_of_the_arm_keeps_its_sign() {
+    let db = content();
+    let (mut sim, segs) = signed_cross(&db);
+    let n = sim.centre();
+    let def = db.road(db.road_id("basic_2l").unwrap()).clone();
+    sim.graph_mut()
+        .set_sign(n, segs[1], Some(Sign::Main))
+        .unwrap();
+    let split = sim.graph_mut().split_segment(&def, segs[1], 0.5).unwrap();
+    // The piece at the junction is the first one (the star's segments start at the centre).
+    let near = split.segments[0];
+    assert_eq!(
+        sim.signs(),
+        vec![ArmSign {
+            segment: near,
+            sign: Sign::Main
+        }]
+    );
+    sim.network();
+    let mut segs2 = segs.clone();
+    segs2[1] = near;
+    assert_eq!(sim.main_of(&segs2), vec![1, 3]);
+    // Merged back into one: the sign moves onto the merged segment.
+    let merged = sim.graph_mut().merge_joint(&def, split.nodes[0]).unwrap();
+    assert_eq!(
+        sim.signs(),
+        vec![ArmSign {
+            segment: merged,
+            sign: Sign::Main
+        }]
+    );
+}
+
+#[test]
+fn removing_or_downgrading_an_arm_drops_its_sign_and_the_control_it_no_longer_has() {
+    let db = content();
+    let (mut sim, segs) = signed_cross(&db);
+    let n = sim.centre();
+    let mut g = sim.graph_mut();
+    g.set_sign(n, segs[1], Some(Sign::Main)).unwrap();
+    g.set_sign(n, segs[3], Some(Sign::Yield)).unwrap();
+    g.toggle_traffic_light(n).unwrap();
+    // A street with a sign goes: its sign goes, the rest stays (still controllable).
+    g.remove_segment(segs[3]).unwrap();
+    assert_eq!(
+        sim.signs(),
+        vec![ArmSign {
+            segment: segs[1],
+            sign: Sign::Main
+        }]
+    );
+    assert_eq!(sim.control(), JunctionControl::ManualTrafficLight);
+    // The avenue goes: two-lane streets only, back to automatic priority, no signs.
+    sim.graph_mut().remove_segment(segs[0]).unwrap();
+    assert!(sim.signs().is_empty());
+    assert_eq!(sim.control(), JunctionControl::Priority);
+
+    // An arm made a footpath loses its sign.
+    let (mut sim, segs) = signed_cross(&db);
+    let n = sim.centre();
+    let path = db.road_id("park_path").unwrap();
+    let basic = db.road_id("basic_2l").unwrap();
+    let mut g = sim.graph_mut();
+    g.set_sign(n, segs[1], Some(Sign::Yield)).unwrap();
+    g.set_sign(n, segs[2], Some(Sign::Main)).unwrap();
+    g.upgrade_segment(segs[1], db.road(path), path).unwrap();
+    assert_eq!(
+        sim.signs(),
+        vec![ArmSign {
+            segment: segs[2],
+            sign: Sign::Main
+        }]
+    );
+    // The avenue made a street: no big road, no control.
+    sim.graph_mut().toggle_traffic_light(n).unwrap();
+    sim.graph_mut()
+        .upgrade_segment(segs[0], db.road(basic), basic)
+        .unwrap();
+    assert!(sim.signs().is_empty());
+    assert_eq!(sim.control(), JunctionControl::Priority);
+}
+
+#[test]
+fn with_a_light_the_signs_still_give_the_main_arms() {
+    let db = content();
+    let mut sim = Sim::new(star(
+        &db,
+        &[
+            (0.0, "medium_4l"),
+            (90.0, "medium_4l"),
+            (180.0, "medium_4l"),
+            (270.0, "medium_4l"),
+        ],
+    ));
+    assert_eq!(sim.control(), JunctionControl::TrafficLight);
+    let segs: Vec<SegmentId> = sim.graph().segments().map(|(id, _)| id).collect();
+    let n = sim.centre();
+    sim.graph_mut()
+        .set_sign(n, segs[1], Some(Sign::Main))
+        .unwrap();
+    sim.graph_mut()
+        .set_sign(n, segs[3], Some(Sign::Main))
+        .unwrap();
+    sim.network();
+    assert_eq!(sim.control(), JunctionControl::TrafficLight);
+    assert!(sim.junction().control.light.is_some());
+    assert_eq!(sim.main_of(&segs), vec![1, 3]);
 }

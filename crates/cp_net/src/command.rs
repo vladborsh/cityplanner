@@ -29,7 +29,7 @@ use crate::build::{
     segment_cost, validate_build_plan, validate_road_path,
 };
 use crate::graph::{NetGraph, NetOpError};
-use crate::model::{Elevation, NodeId, SegmentId};
+use crate::model::{Elevation, NodeId, SegmentId, Sign};
 use crate::plan::{Anchor, BuildPlan};
 
 /// Commands handled by this crate.
@@ -71,6 +71,15 @@ pub enum NetCommand {
         s0: f32,
         s1: f32,
         road: RoadDefId,
+    },
+    /// Puts the priority sign `sign` on the arm `segment` of the junction `node`, or takes it
+    /// away (`None`) (T-303, §6.5a). Refused on a junction of two-lane roads only
+    /// (`NotControllable`), for a segment that does not meet the node (`NotAnArm`) and for a
+    /// third main arm (`TooManyMain`). Free. Appended last: older logs replay as before.
+    SetSign {
+        node: NodeId,
+        segment: SegmentId,
+        sign: Option<Sign>,
     },
 }
 
@@ -401,6 +410,16 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
             world
                 .resource_mut::<NetGraph>()
                 .toggle_traffic_light(*node)?;
+            Ok(Cost::ZERO)
+        }
+        NetCommand::SetSign {
+            node,
+            segment,
+            sign,
+        } => {
+            world
+                .resource_mut::<NetGraph>()
+                .set_sign(*node, *segment, *sign)?;
             Ok(Cost::ZERO)
         }
     }

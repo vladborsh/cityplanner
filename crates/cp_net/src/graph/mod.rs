@@ -36,6 +36,13 @@ pub enum NetOpError {
     /// A split parameter is not strictly inside `(0, 1)` / not strictly increasing, or a
     /// resulting piece would be shorter than [`MIN_SEGMENT_LENGTH`].
     BadSplit,
+    /// The junction cannot be controlled by the player (§6.5a): fewer than 3 arms with vehicle
+    /// lanes, or none of them with 4 or more (two-lane roads only).
+    NotControllable(NodeId),
+    /// The segment does not meet the node.
+    NotAnArm(NodeId, SegmentId),
+    /// The sign would make a third main arm.
+    TooManyMain(NodeId),
 }
 
 impl fmt::Display for NetOpError {
@@ -49,6 +56,14 @@ impl fmt::Display for NetOpError {
             Self::UnknownNode(n) => write!(f, "unknown node {n:?}"),
             Self::NotAJunction(n) => write!(f, "node {n:?} has fewer than 3 segments"),
             Self::BadSplit => write!(f, "invalid split position"),
+            Self::NotControllable(n) => {
+                write!(
+                    f,
+                    "node {n:?} joins two-lane roads only: control is automatic"
+                )
+            }
+            Self::NotAnArm(n, s) => write!(f, "segment {s:?} does not meet node {n:?}"),
+            Self::TooManyMain(n) => write!(f, "node {n:?} would have more than two main arms"),
         }
     }
 }
@@ -179,6 +194,7 @@ impl NetGraph {
             kind,
             control: JunctionControl::default(),
             elevation,
+            signs: Vec::new(),
         });
         self.dirty.insert(id);
         id
@@ -376,6 +392,7 @@ impl NetGraph {
         for n in [seg.start, seg.end] {
             self.dirty.insert(n);
             self.prune_node(n);
+            self.drop_control_if_uncontrollable(n);
         }
         Ok(())
     }
@@ -423,6 +440,7 @@ impl NetGraph {
             return Err(NetOpError::BadSplit);
         }
 
+        let signs = [self.sign_at(seg.start, id), self.sign_at(seg.end, id)];
         self.take_segment(id).expect("checked above");
         let mut nodes = Vec::with_capacity(ts.len());
         let mut chain = vec![seg.start];
@@ -444,6 +462,16 @@ impl NetGraph {
                 length,
                 seg.order,
             ));
+        }
+        // The end pieces take the old segment's signs at the old ends (§6.5a).
+        let ends = [
+            (seg.start, segments[0]),
+            (seg.end, segments[segments.len() - 1]),
+        ];
+        for ((node, piece), sign) in ends.into_iter().zip(signs) {
+            if let Some(sign) = sign {
+                self.put_sign(node, piece, sign);
+            }
         }
         self.dirty.insert(seg.start);
         self.dirty.insert(seg.end);
@@ -474,10 +502,10 @@ impl NetGraph {
         let (a, b) = (n.segments[0], n.segments[1]);
         let (sa, sb) = (self.segments.get(a)?, self.segments.get(b)?);
         // `first` ends in the joint and `second` starts there.
-        let (first, second) = if sa.end == node && sb.start == node {
-            (sa, sb)
+        let (first, second, first_id, second_id) = if sa.end == node && sb.start == node {
+            (sa, sb, a, b)
         } else if sb.end == node && sa.start == node {
-            (sb, sa)
+            (sb, sa, b, a)
         } else {
             return None;
         };
@@ -507,12 +535,20 @@ impl NetGraph {
         };
         let (start, end, road, elevation) = (first.start, second.end, first.road, first.elevation);
         let (order_a, order_b) = (first.order, second.order);
+        let signs = [self.sign_at(start, first_id), self.sign_at(end, second_id)];
         self.take_segment(a).ok()?;
         self.take_segment(b).ok()?;
         self.prune_node(node);
         let length = curve.arc_table().length();
         let order = order_a.min(order_b);
-        Some(self.insert_segment(def, road, curve, elevation, start, end, length, order))
+        let merged = self.insert_segment(def, road, curve, elevation, start, end, length, order);
+        // The far ends keep their signs on the merged segment (§6.5a).
+        for (n, sign) in [start, end].into_iter().zip(signs) {
+            if let Some(sign) = sign {
+                self.put_sign(n, merged, sign);
+            }
+        }
+        Some(merged)
     }
 
     /// Changes a segment's road type: same nodes and curve, lanes rebuilt from `def`.
@@ -535,8 +571,15 @@ impl NetGraph {
         let seg = self.segments.get_mut(id).expect("checked above");
         seg.road = road;
         seg.lanes = lanes;
-        self.dirty.insert(start);
-        self.dirty.insert(end);
+        // A footpath carries no sign; a node left with two-lane roads only loses its control.
+        let footpath = crate::control::vehicle_lanes(self, id) == 0;
+        for n in [start, end] {
+            if footpath && let Some(node) = self.nodes.get_mut(n) {
+                node.signs.retain(|a| a.segment != id);
+            }
+            self.drop_control_if_uncontrollable(n);
+            self.dirty.insert(n);
+        }
         Ok(())
     }
 
@@ -576,10 +619,14 @@ impl NetGraph {
     /// `ManualPriority`, any other `ManualTrafficLight`. Needs a junction (>= 3 segments).
     /// Marks the node dirty so the Network phase rebuilds its plan. Returns the new control.
     pub fn toggle_traffic_light(&mut self, id: NodeId) -> Result<JunctionControl, NetOpError> {
-        let node = self.nodes.get_mut(id).ok_or(NetOpError::UnknownNode(id))?;
+        let node = self.nodes.get(id).ok_or(NetOpError::UnknownNode(id))?;
         if node.segments.len() < 3 {
             return Err(NetOpError::NotAJunction(id));
         }
+        if !self.is_controllable(id) {
+            return Err(NetOpError::NotControllable(id));
+        }
+        let node = self.nodes.get_mut(id).expect("checked above");
         node.control = if node.control.has_light() {
             JunctionControl::ManualPriority
         } else {
@@ -588,6 +635,57 @@ impl NetGraph {
         let c = node.control;
         self.dirty.insert(id);
         Ok(c)
+    }
+
+    /// Whether the player may control the junction (§6.5a): at least 3 arms with vehicle
+    /// (`Car`/`Bus`) lanes, at least one of them with [`BIG_ROAD_LANES`] or more. A junction of
+    /// two-lane roads only keeps the automatic priority by rank.
+    ///
+    /// [`BIG_ROAD_LANES`]: crate::control::BIG_ROAD_LANES
+    pub fn is_controllable(&self, id: NodeId) -> bool {
+        let Some(node) = self.nodes.get(id) else {
+            return false;
+        };
+        let lanes: Vec<usize> = node
+            .segments
+            .iter()
+            .map(|&s| crate::control::vehicle_lanes(self, s))
+            .collect();
+        lanes.iter().filter(|&&l| l > 0).count() >= 3
+            && lanes.iter().any(|&l| l >= crate::control::BIG_ROAD_LANES)
+    }
+
+    /// The player's `SetSign` (§6.5a): puts `sign` on the arm `segment` of `id`, or takes the
+    /// arm's sign away (`None`). Refused, changing nothing, for a segment that does not meet
+    /// the node, an uncontrollable node and a third `Main`. Marks the node dirty.
+    pub fn set_sign(
+        &mut self,
+        id: NodeId,
+        segment: SegmentId,
+        sign: Option<Sign>,
+    ) -> Result<(), NetOpError> {
+        let node = self.nodes.get(id).ok_or(NetOpError::UnknownNode(id))?;
+        if !node.segments.contains(&segment) {
+            return Err(NetOpError::NotAnArm(id, segment));
+        }
+        if !self.is_controllable(id) {
+            return Err(NetOpError::NotControllable(id));
+        }
+        let mains = node
+            .signs
+            .iter()
+            .filter(|a| a.segment != segment && a.sign == Sign::Main)
+            .count();
+        if sign == Some(Sign::Main) && mains >= 2 {
+            return Err(NetOpError::TooManyMain(id));
+        }
+        let node = self.nodes.get_mut(id).expect("checked above");
+        node.signs.retain(|a| a.segment != segment);
+        if let Some(sign) = sign {
+            self.put_sign(id, segment, sign);
+        }
+        self.dirty.insert(id);
+        Ok(())
     }
 
     /// Sets an *automatic* control state (the §6.5 rule) without marking the node dirty.
@@ -681,9 +779,44 @@ impl NetGraph {
         for n in [seg.start, seg.end] {
             if let Some(node) = self.nodes.get_mut(n) {
                 node.segments.retain(|&s| s != id);
+                node.signs.retain(|a| a.segment != id);
             }
         }
         Ok(seg)
+    }
+
+    /// The sign on the arm `segment` of `node`.
+    fn sign_at(&self, node: NodeId, segment: SegmentId) -> Option<Sign> {
+        self.nodes
+            .get(node)?
+            .signs
+            .iter()
+            .find(|a| a.segment == segment)
+            .map(|a| a.sign)
+    }
+
+    /// Puts `sign` on the arm `segment` of `node`, keeping the signs sorted by segment.
+    fn put_sign(&mut self, node: NodeId, segment: SegmentId, sign: Sign) {
+        if let Some(n) = self.nodes.get_mut(node) {
+            match n.signs.binary_search_by_key(&segment, |a| a.segment) {
+                Ok(i) => n.signs[i].sign = sign,
+                Err(i) => n.signs.insert(i, ArmSign { segment, sign }),
+            }
+        }
+    }
+
+    /// A node the player can no longer control (§6.5a: an arm went or became a footpath)
+    /// loses its signs, and a manual control goes back to the automatic `Priority`.
+    fn drop_control_if_uncontrollable(&mut self, id: NodeId) {
+        if self.is_controllable(id) {
+            return;
+        }
+        if let Some(n) = self.nodes.get_mut(id) {
+            n.signs.clear();
+            if n.control.is_manual() {
+                n.control = JunctionControl::Priority;
+            }
+        }
     }
 
     fn prune_node(&mut self, id: NodeId) {

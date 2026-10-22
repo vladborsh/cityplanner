@@ -207,3 +207,141 @@ fn players_choice_survives_save_load_and_the_plan_is_rebuilt() {
             .control
     );
 }
+
+// ---------- T-303: the player's signs (§6.5a) ----------
+
+fn sign(n: NodeId, segment: cp_net::SegmentId, sign: Option<cp_net::Sign>) -> SimCommand {
+    SimCommand::Net(NetCommand::SetSign {
+        node: n,
+        segment,
+        sign,
+    })
+}
+
+fn signs(sim: &SimRunner, n: NodeId) -> Vec<cp_net::ArmSign> {
+    sim.world()
+        .resource::<NetGraph>()
+        .node(n)
+        .unwrap()
+        .signs
+        .clone()
+}
+
+#[test]
+fn signs_go_through_the_queue_survive_a_save_and_change_the_checksum() {
+    let db = content();
+    let mut sim = sim_with(&db);
+    let n = plus(&mut sim, &db, "medium_4l");
+    let segs = sim
+        .world()
+        .resource::<NetGraph>()
+        .node(n)
+        .unwrap()
+        .segments
+        .clone();
+    let before = sim.checksum();
+    let o = run(
+        &mut sim,
+        vec![
+            sign(n, segs[0], Some(cp_net::Sign::Main)),
+            sign(n, segs[1], Some(cp_net::Sign::Yield)),
+        ],
+    );
+    assert!(o.iter().all(|o| o.result.is_ok()), "{o:?}");
+    assert_eq!(signs(&sim, n).len(), 2);
+    let mut plain = sim_with(&db);
+    plus(&mut plain, &db, "medium_4l");
+    for _ in 0..3 {
+        plain.tick_once();
+    }
+    assert_eq!(plain.tick(), sim.tick());
+    assert_ne!(sim.checksum(), plain.checksum(), "a sign is game state");
+    assert_ne!(sim.checksum(), before);
+
+    let bytes = save_runner(&sim, HASH, "flatlands").unwrap();
+    let mut other = sim_with(&db);
+    load_into_runner(&mut other, &bytes, HASH).unwrap();
+    assert_eq!(signs(&other, n), signs(&sim, n));
+    assert_eq!(other.checksum(), sim.checksum());
+    other.tick_once();
+    sim.tick_once();
+    assert_eq!(
+        other
+            .world()
+            .resource::<JunctionGeometry>()
+            .get(n)
+            .unwrap()
+            .control,
+        sim.world()
+            .resource::<JunctionGeometry>()
+            .get(n)
+            .unwrap()
+            .control
+    );
+
+    // A third main arm is refused and changes nothing.
+    run(&mut sim, vec![sign(n, segs[2], Some(cp_net::Sign::Main))]);
+    let o = run(&mut sim, vec![sign(n, segs[3], Some(cp_net::Sign::Main))]);
+    assert!(matches!(
+        o[0].result,
+        Err(CommandError::Rejected { domain: "net", .. })
+    ));
+    assert_eq!(signs(&sim, n).len(), 3);
+}
+
+#[test]
+fn a_junction_of_two_lane_streets_takes_neither_a_light_nor_a_sign() {
+    let db = content();
+    let mut sim = sim_with(&db);
+    let n = plus(&mut sim, &db, "basic_2l");
+    let seg = sim.world().resource::<NetGraph>().node(n).unwrap().segments[0];
+    let before = sim.world().resource::<NetGraph>().clone();
+    let o = run(
+        &mut sim,
+        vec![
+            SimCommand::Net(NetCommand::ToggleTrafficLight { node: n }),
+            sign(n, seg, Some(cp_net::Sign::Main)),
+        ],
+    );
+    for o in &o {
+        assert!(
+            matches!(o.result, Err(CommandError::Rejected { domain: "net", .. })),
+            "{o:?}"
+        );
+    }
+    assert_eq!(sim.world().resource::<NetGraph>(), &before);
+}
+
+#[test]
+fn a_command_log_with_signs_replays_to_the_same_state() {
+    let db = content();
+    let replay = || {
+        let mut sim = sim_with(&db);
+        let n = plus(&mut sim, &db, "medium_4l");
+        let segs = sim
+            .world()
+            .resource::<NetGraph>()
+            .node(n)
+            .unwrap()
+            .segments
+            .clone();
+        run(
+            &mut sim,
+            vec![
+                SimCommand::Net(NetCommand::ToggleTrafficLight { node: n }),
+                sign(n, segs[1], Some(cp_net::Sign::Main)),
+                sign(n, segs[2], Some(cp_net::Sign::Yield)),
+                sign(n, segs[1], None),
+            ],
+        );
+        for _ in 0..200 {
+            sim.tick_once();
+        }
+        (sim.checksum(), signs(&sim, n))
+    };
+    let (a, sa) = replay();
+    let (b, sb) = replay();
+    assert_eq!(a, b);
+    assert_eq!(sa, sb);
+    assert_eq!(sa.len(), 1);
+}
