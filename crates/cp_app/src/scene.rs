@@ -1711,6 +1711,37 @@ pub fn build_transit_lanes(sim: &mut SimRunner) {
     }
 }
 
+/// A highway meeting city roads (BUG-118): a 2-lane one-way highway runs on into a 4-lane
+/// road (a transition) and a second one ends on the side of a street (a T). Look at it with
+/// `--cam highway-join`.
+pub const HIGHWAY_JOIN: &str = "highway-join";
+
+/// Builds the [`HIGHWAY_JOIN`] scene through the normal commands.
+pub fn build_highway_join(sim: &mut SimRunner) {
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let p = |dx: f32, dz: f32| Vec2::new(c + dx, c + dz);
+    for (road, from, to) in [
+        ("highway_1w_2l", p(-160.0, -40.0), p(-60.0, -40.0)),
+        ("medium_4l", p(-60.0, -40.0), p(40.0, -40.0)),
+        ("medium_4l", p(60.0, -100.0), p(60.0, 60.0)),
+        ("highway_1w_2l", p(160.0, 20.0), p(60.0, 20.0)),
+    ] {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: db.road_id(road).expect("road"),
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+}
+
 /// The puffs a scene leaves for `--dust-demo` (T-288 shots), kept in the sim world.
 #[derive(bevy_ecs::prelude::Resource, Clone, Debug, Default)]
 pub struct DustPuffs(pub Vec<cp_render::dust::Puff>);

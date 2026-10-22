@@ -1851,3 +1851,43 @@ fn trolley_lanes_carry_trolley_and_tram_lanes_no_word() {
     // mesh only.
     assert!(steel > 10.0, "{steel}");
 }
+
+/// BUG-118: a sidewalk that ends at a transition ends in a rounded nose: full width where it
+/// starts, never wider than the wedge it replaces plus a small bulge, nothing at the end where
+/// the other road has no sidewalk, and the same whichever end it is.
+#[test]
+fn a_sidewalk_ending_at_a_transition_has_a_rounded_nose() {
+    let n = 21;
+    let kerb: Vec<Vec2> = (0..n).map(|i| Vec2::new(i as f32, 0.0)).collect();
+    let wedge = |i: usize| 9.0 * (1.0 - i as f32 / (n - 1) as f32);
+    let outer: Vec<Vec2> = (0..n).map(|i| Vec2::new(i as f32, wedge(i))).collect();
+    let width = |p: &[Vec<Vec2>], i: usize| p[0][i].distance(p[1][i]);
+    let mut pts = vec![outer.clone(), kerb.clone()];
+    node::round_nose(&mut pts, 0, 1, 9.0, 0.0);
+    assert!((width(&pts, 0) - 9.0).abs() < 1e-4, "full at the start");
+    assert!(width(&pts, n - 1) < 1e-4, "nothing at the end");
+    for i in 0..n {
+        assert!(width(&pts, i) <= 9.0 + 1e-4);
+        // A bulge over the wedge, but a small one.
+        assert!(width(&pts, i) <= wedge(i) + 2.5, "point {i}");
+    }
+    // The nose is blunt: the width drops faster near the end than the wedge does.
+    assert!(width(&pts, n - 2) > wedge(n - 2));
+    assert!(
+        width(&pts, 4) - wedge(4) < 1e-4,
+        "the first part is the wedge"
+    );
+    // Mirrored: the sidewalk grows from nothing at the start.
+    let mut rev = vec![
+        outer.iter().rev().copied().collect::<Vec<_>>(),
+        kerb.iter().rev().copied().collect::<Vec<_>>(),
+    ];
+    node::round_nose(&mut rev, 0, 1, 0.0, 9.0);
+    for i in 0..n {
+        assert!((width(&rev, i) - width(&pts, n - 1 - i)).abs() < 1e-4);
+    }
+    // Sidewalks at both ends (or none) stay as they are.
+    let mut same = vec![outer.clone(), kerb.clone()];
+    node::round_nose(&mut same, 0, 1, 9.0, 4.0);
+    assert_eq!(same[0], outer);
+}

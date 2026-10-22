@@ -446,6 +446,15 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c - 40.0, 70.0, c + 150.0),
             Vec3::new(c, 0.0, c + 10.0),
         ),
+        // A highway running into city roads (`--scene highway-join`, BUG-118).
+        "highway-join" => (
+            Vec3::new(c - 20.0, 70.0, c + 60.0),
+            Vec3::new(c - 10.0, 0.0, c - 20.0),
+        ),
+        "highway-join-t" => (
+            Vec3::new(c + 110.0, 60.0, c + 70.0),
+            Vec3::new(c + 70.0, 0.0, c + 18.0),
+        ),
         "low-houses-close" => (
             Vec3::new(c + 96.0, 38.0, c + 70.0),
             Vec3::new(c + 96.0, 0.0, c + 14.0),
@@ -758,6 +767,9 @@ pub fn build_sim(
     } else if scene == Some(scene::TRANSIT_LANES) {
         scene::build_transit_lanes(&mut sim);
         info!("scene transit-lanes");
+    } else if scene == Some(scene::HIGHWAY_JOIN) {
+        scene::build_highway_join(&mut sim);
+        info!("scene highway-join");
     } else if scene == Some(scene::POWER_TOWN) {
         scene::build_power_town(&mut sim);
         info!("scene power-town");

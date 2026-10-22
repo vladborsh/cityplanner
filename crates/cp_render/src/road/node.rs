@@ -25,6 +25,8 @@ use super::*;
 /// of `cp_net` round the corner within it; the junction sweep allows it).
 #[cfg(test)]
 pub(super) const CURB_RADIUS: f32 = 3.0;
+/// Share of a transition's length the rounded nose of a sidewalk that ends there takes.
+const NOSE: f32 = 0.5;
 /// Spacing of the points of the lines across a node, metres.
 const SAMPLE: f32 = 1.0;
 
@@ -309,6 +311,48 @@ fn dash_len(lines: &[Vec<Vec2>]) -> f32 {
     lines.get(lines.len() / 2).map_or(0.0, |l| poly_len(l))
 }
 
+/// Where a sidewalk ends at a transition to a road without one (BUG-118): the straight wedge
+/// its outer line `outer` makes with the kerb line `kerb` is cut short by a rounded nose, a
+/// quarter ellipse that leaves the wedge at `NOSE` of the way and meets the road's end square.
+/// `wa` and `wb` are the sidewalk's widths at the two ends; the nose is at the one that is zero.
+pub(super) fn round_nose(pts: &mut [Vec<Vec2>], outer: usize, kerb: usize, wa: f32, wb: f32) {
+    let flip = match (wa > 0.0, wb > 0.0) {
+        (true, false) => false,
+        (false, true) => true,
+        _ => return,
+    };
+    let n = pts[kerb].len();
+    if n < 3 || pts[outer].len() != n {
+        return;
+    }
+    // Arc length along the kerb line from the end where the sidewalk is full.
+    let mut s = vec![0.0f32; n];
+    for i in 1..n {
+        s[i] = s[i - 1] + pts[kerb][i - 1].distance(pts[kerb][i]);
+    }
+    let total = s[n - 1];
+    if total < 1e-3 {
+        return;
+    }
+    let start = total * (1.0 - NOSE);
+    let dist = |i: usize| if flip { total - s[i] } else { s[i] };
+    let width = |pts: &[Vec<Vec2>], i: usize| pts[outer][i].distance(pts[kerb][i]);
+    // The wedge's width where the nose leaves it.
+    let h = (0..n)
+        .filter(|&i| dist(i) <= start)
+        .map(|i| (dist(i), width(pts, i)))
+        .fold((-1.0, 0.0), |m, c| if c.0 > m.0 { c } else { m })
+        .1;
+    for i in 0..n {
+        if dist(i) <= start {
+            continue;
+        }
+        let u = ((dist(i) - start) / (total - start)).clamp(0.0, 1.0);
+        let dir = (pts[outer][i] - pts[kerb][i]).normalize_or_zero();
+        pts[outer][i] = pts[kerb][i] + dir * h * (1.0 - u * u).sqrt();
+    }
+}
+
 /// The piece of a bend or a transition.
 fn joint(
     graph: &NetGraph,
@@ -371,6 +415,10 @@ fn joint(
     let mut pts = align(&lines);
     if j.class == NodeClass::Bend {
         round_inner_kerb(&lines, &bands, &mut pts);
+    } else {
+        // Lines 0-1 and 2-3 bound the sidewalks; their widths at `a` and at `b`.
+        round_nose(&mut pts, 0, 1, a.walk[1], b.walk[0]);
+        round_nose(&mut pts, 3, 2, a.walk[0], b.walk[1]);
     }
     let (ya, yb) = (a.y(), b.y());
     let length = dash_len(&pts);
