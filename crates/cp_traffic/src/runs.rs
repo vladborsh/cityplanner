@@ -408,20 +408,22 @@ pub fn walk_run_of(p: &crate::agents::Pedestrian) -> Option<RunId> {
 
 /// The vehicle lane and lane metre a run point stands for: `origin` for the start of a run (an
 /// `Outside` node is where the entry road's cars appear), otherwise for its goal (the lane
-/// that reaches the node).
+/// that reaches the node). A building or access point resolves to a lane `class` may use
+/// (T-302b: a tram's next stop is on the tram lane).
 fn point_lane(
     net: &NetGraph,
     g: &PathGraph,
     buildings: &BuildingGrid,
     p: RunPoint,
     origin: bool,
+    class: VehicleClass,
 ) -> Option<(LaneId, f32)> {
     match p {
         RunPoint::Building(b) => {
             let access = access_of(net, buildings.get(b)?)?;
-            g.resolve_car_lane(&access)
+            g.resolve_class_lane(&access, class)
         }
-        RunPoint::Access(a) => g.resolve_car_lane(&a),
+        RunPoint::Access(a) => g.resolve_class_lane(&a, class),
         RunPoint::Lane { lane, s } => g.car_slot(lane).map(|_| (lane, s)),
         RunPoint::Outside(node) => {
             let n = net.node(node).filter(|n| n.kind == NodeKind::Outside)?;
@@ -497,11 +499,12 @@ fn run_request(
             to: b,
         });
     }
+    let lane_class = class.unwrap_or(VehicleClass::Car);
     let (from, from_s) = match from_lane {
         Some(f) => f,
-        None => point_lane(net, g, buildings, run.from, true)?,
+        None => point_lane(net, g, buildings, run.from, true, lane_class)?,
     };
-    let (to, to_s) = point_lane(net, g, buildings, run.to, false)?;
+    let (to, to_s) = point_lane(net, g, buildings, run.to, false, lane_class)?;
     let at = |s| Access {
         segment: cp_core::Id::new(u32::MAX, 0),
         s,

@@ -40,6 +40,7 @@ impl Section {
             TransitMode::Bus => "Bus",
             TransitMode::Metro => "Metro",
             TransitMode::Train => "Train",
+            TransitMode::Tram => "Tram",
         }
     }
 }
@@ -63,11 +64,30 @@ pub fn sections(content: &ContentDb) -> Vec<Section> {
             .as_ref()
             .is_some_and(|t| t.depth <= 0.0)
     });
+    // A depot serves the mode its service names (T-302b: the tram depot has its own section).
+    let (trams, depots): (Vec<Card>, Vec<Card>) = depots.into_iter().partition(|c| {
+        content
+            .building(c.id)
+            .service
+            .as_deref()
+            .and_then(|s| content.service_id(s))
+            .is_some_and(|s| content.service(s).transit_mode == cp_content::TransitKind::Tram)
+    });
     let mut out = Vec::new();
     if !depots.is_empty() || content.roads().next().is_some() {
         out.push(Section {
             mode: TransitMode::Bus,
             cards: depots,
+            line_tool: true,
+            track: None,
+        });
+    }
+    // The rails are roads with tram lanes (Roads panel); the section has the depot and the line
+    // tool.
+    if !trams.is_empty() {
+        out.push(Section {
+            mode: TransitMode::Tram,
+            cards: trams,
             line_tool: true,
             track: None,
         });
@@ -141,6 +161,7 @@ pub fn transit_panel(
             let icon = match section.mode {
                 TransitMode::Metro => Icon::MetroTrack,
                 TransitMode::Train => Icon::RailTrack,
+                TransitMode::Tram => Icon::LineTram,
                 _ => Icon::LineBus,
             };
             icon.show(ui, Sizes::SECTION_ICON);
@@ -192,6 +213,12 @@ pub fn transit_panel(
                         Icon::LineMetro,
                         tr("Metro line"),
                         tr("Click stations to set the stops, click the first station to close the line: trains ride there and back. Backspace takes the last stop away."),
+                    )
+                } else if section.mode == TransitMode::Tram {
+                    (
+                        Icon::LineTram,
+                        tr("Tram line"),
+                        tr("Click roads with tram rails to place stops, click the first stop to close the line. Backspace takes the last stop away."),
                     )
                 } else {
                     (
@@ -253,7 +280,7 @@ pub fn transit_panel(
                 .clicked()
                 {
                     select(tools, card.id);
-                    if section.mode == TransitMode::Bus {
+                    if section.mode.on_road() {
                         overlay.open_auto(Overlay::Transit);
                     }
                 }
@@ -338,8 +365,23 @@ mod tests {
     #[test]
     fn the_bus_section_has_the_line_tool_and_the_depot_and_the_metro_one_the_track_and_stations() {
         let c = content();
-        let s = sections(&c);
-        assert_eq!(s.len(), 3, "bus, metro and train");
+        let all = sections(&c);
+        let modes: Vec<TransitMode> = all.iter().map(|s| s.mode).collect();
+        assert_eq!(
+            modes,
+            [
+                TransitMode::Bus,
+                TransitMode::Tram,
+                TransitMode::Metro,
+                TransitMode::Train
+            ]
+        );
+        // T-302b: the tram depot has its own section with the line tool; the rails are roads.
+        let tram = &all[1];
+        assert!(tram.line_tool && tram.track.is_none());
+        assert!(tram.cards.iter().any(|c| c.name == "Tram Depot"));
+        assert!(!all[0].cards.iter().any(|c| c.name == "Tram Depot"));
+        let s = [&all[0], &all[2], &all[3]];
         assert_eq!(s[0].mode, TransitMode::Bus);
         assert!(s[0].line_tool && s[0].track.is_none());
         assert!(s[0].cards.iter().any(|c| c.name == "Bus Depot"));
@@ -369,7 +411,11 @@ mod tests {
     #[test]
     fn selecting_the_track_puts_the_road_tool_in_a_tunnel() {
         let c = content();
-        let track = sections(&c)[1].track.clone().unwrap();
+        let track = sections(&c)
+            .into_iter()
+            .find(|s| s.mode == TransitMode::Metro)
+            .and_then(|s| s.track)
+            .unwrap();
         let mut tools = ToolState::default();
         tools.select(ActiveTool::Road);
         select_track(&mut tools, &track);

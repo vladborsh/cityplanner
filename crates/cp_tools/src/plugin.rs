@@ -895,7 +895,10 @@ fn sync_underground_auto(
 ) {
     let want = match state.active {
         ActiveTool::Road => state.road.tunnel_depth.is_some(),
-        ActiveTool::Line => state.line.mode != cp_transit::TransitMode::Bus,
+        ActiveTool::Line => matches!(
+            state.line.mode,
+            cp_transit::TransitMode::Metro | cp_transit::TransitMode::Train
+        ),
         ActiveTool::Place => state
             .building
             .def

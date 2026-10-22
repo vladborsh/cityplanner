@@ -209,6 +209,7 @@ fn transport_section(view: &SimView) -> Section {
         title: "Transport and goods",
         rows: vec![
             row("Bus riders (week)", riders(TransitMode::Bus)),
+            row("Tram riders (week)", riders(TransitMode::Tram)),
             row("Metro riders (week)", riders(TransitMode::Metro)),
             row("Train riders (week)", riders(TransitMode::Train)),
             row("Tourists now", f.tourists_now),

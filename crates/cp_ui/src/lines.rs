@@ -30,6 +30,7 @@ pub fn mode_name(mode: TransitMode) -> &'static str {
         TransitMode::Bus => "Bus",
         TransitMode::Metro => "Metro",
         TransitMode::Train => "Train",
+        TransitMode::Tram => "Tram",
     }
 }
 

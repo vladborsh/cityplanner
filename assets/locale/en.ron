@@ -1077,4 +1077,9 @@
     "medium": "medium",
     "high": "high",
     "Bad water in {n} homes — polluted ground at a pump": ["Bad water in {n} home — polluted ground at a pump", "Bad water in {n} homes — polluted ground at a pump"],
+    "Tram": "Tram",
+    "Tram Depot": "Tram Depot",
+    "Tram line": "Tram line",
+    "Click roads with tram rails to place stops, click the first stop to close the line. Backspace takes the last stop away.": "Click roads with tram rails to place stops, click the first stop to close the line. Backspace takes the last stop away.",
+    "Tram riders (week)": "Tram riders (week)",
 }

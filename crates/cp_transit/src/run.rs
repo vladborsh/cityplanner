@@ -18,7 +18,7 @@ fn ticks_of(seconds: f32) -> u64 {
     ((seconds / MOVE_SECONDS_PER_TICK).ceil() as u64).max(1)
 }
 
-/// The depot nearest by road to `stop` that has a place left for a bus.
+/// The depot of `mode` nearest by road to `stop` that has a place left for a vehicle.
 fn find_depot(
     net: &NetGraph,
     buildings: &BuildingGrid,
@@ -26,6 +26,7 @@ fn find_depot(
     fleet: &TransitFleet,
     stop: StopId,
     transit: &TransitNet,
+    mode: TransitMode,
 ) -> Option<BuildingId> {
     let st = transit.stops.get(stop)?;
     let seg = net.segment(st.kind.segment())?;
@@ -41,8 +42,8 @@ fn find_depot(
             continue;
         }
         let Some(to) = b.access() else { continue };
-        let Some(svc) = db
-            .building(b.def)
+        let def = db.building(b.def);
+        let Some(svc) = def
             .service
             .as_deref()
             .and_then(|s| db.service_id(s))
@@ -50,7 +51,11 @@ fn find_depot(
         else {
             continue;
         };
-        if svc.kind != ServiceKind::Transit {
+        // A station (with a track) is not a depot.
+        if svc.kind != ServiceKind::Transit
+            || svc.transit_mode != mode.kind()
+            || def.track.is_some()
+        {
             continue;
         }
         let assigned = fleet
@@ -206,7 +211,8 @@ pub fn run_lines(
             continue;
         }
         let first = line.stops[0];
-        let Some(depot) = find_depot(&net, &buildings, db, &fleet, first, &transit) else {
+        let mode = line.mode;
+        let Some(depot) = find_depot(&net, &buildings, db, &fleet, first, &transit, mode) else {
             set_line_state(&mut transit, line_id, LineState::NoDepot);
             continue;
         };
@@ -226,7 +232,7 @@ pub fn run_lines(
             continue;
         };
         let run = runs.start_run(
-            VehicleKind::Bus,
+            mode.vehicle_kind(),
             RunPoint::Building(depot),
             RunPoint::Access(access),
             true,
