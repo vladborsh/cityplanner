@@ -406,8 +406,15 @@ pub fn walk_run_of(p: &crate::agents::Pedestrian) -> Option<RunId> {
     (p.trip.generation == SERVICE_GEN).then_some(p.trip.index)
 }
 
-/// The vehicle lane and lane metre a run point stands for: `origin` for the start of a run (an
-/// `Outside` node is where the entry road's cars appear), otherwise for its goal (the lane
+/// Which end of a run a point is resolved for (BUG-117): the start, with the cars waiting on
+/// each entry lane, or the goal, with the run's id to spread the exits.
+enum End<'a> {
+    Origin(&'a mut BTreeMap<LaneId, u32>),
+    Goal(u32),
+}
+
+/// The vehicle lane and lane metre a run point stands for: `End::Origin` for the start of a run
+/// (an `Outside` node is where the entry road's cars appear), `End::Goal` for its goal (the lane
 /// that reaches the node). A building or access point resolves to a lane `class` may use
 /// (T-302b: a tram's next stop is on the tram lane).
 fn point_lane(
@@ -415,9 +422,10 @@ fn point_lane(
     g: &PathGraph,
     buildings: &BuildingGrid,
     p: RunPoint,
-    origin: bool,
+    end: End<'_>,
     class: VehicleClass,
 ) -> Option<(LaneId, f32)> {
+    let origin = matches!(end, End::Origin(_));
     match p {
         RunPoint::Building(b) => {
             let access = access_of(net, buildings.get(b)?)?;
@@ -430,7 +438,21 @@ fn point_lane(
             let segment = *n.segments.first()?;
             let from_start = net.segment(segment)?.start == node;
             // Leaving the node: forwards from the start node; reaching it: the other way.
-            let (lane, s_in) = g.entry_lane(segment, from_start == origin)?;
+            // BUG-117: not always the first lane. A run coming in takes the lane with the
+            // fewest cars waiting to get on the road (the lower id on a tie) and counts itself;
+            // a run going out takes the lanes in turn by its id, so the carriageway is used
+            // across its width.
+            let lanes = g.entry_lanes(segment, from_start == origin);
+            let (lane, s_in) = match end {
+                End::Origin(load) => {
+                    let pick = *lanes
+                        .iter()
+                        .min_by_key(|(id, _)| (load.get(id).copied().unwrap_or(0), *id))?;
+                    *load.entry(pick.0).or_insert(0) += 1;
+                    pick
+                }
+                End::Goal(salt) => *lanes.get(salt as usize % lanes.len().max(1))?,
+            };
             let s = if origin {
                 s_in
             } else {
@@ -439,6 +461,16 @@ fn point_lane(
             Some((lane, s))
         }
     }
+}
+
+/// Cars not yet on the road by the lane they start on (BUG-117): the load an entry lane carries
+/// before a run from outside picks one.
+pub(crate) fn waiting_by_start(agents: &Agents) -> BTreeMap<LaneId, u32> {
+    let mut m = BTreeMap::new();
+    for (_, v) in agents.vehicles().filter(|(_, v)| !v.spawned) {
+        *m.entry(v.path.start).or_insert(0) += 1;
+    }
+    m
 }
 
 /// The path request of a run: between building or access points an ordinary car request, else
@@ -450,6 +482,8 @@ fn run_request(
     buildings: &BuildingGrid,
     run: &ServiceRun,
     from_lane: Option<(LaneId, f32)>,
+    load: &mut BTreeMap<LaneId, u32>,
+    salt: u32,
 ) -> Option<PathRequest> {
     if run.kind == WALK_KIND {
         let pave = |p: RunPoint| match p {
@@ -502,9 +536,9 @@ fn run_request(
     let lane_class = class.unwrap_or(VehicleClass::Car);
     let (from, from_s) = match from_lane {
         Some(f) => f,
-        None => point_lane(net, g, buildings, run.from, true, lane_class)?,
+        None => point_lane(net, g, buildings, run.from, End::Origin(load), lane_class)?,
     };
-    let (to, to_s) = point_lane(net, g, buildings, run.to, false, lane_class)?;
+    let (to, to_s) = point_lane(net, g, buildings, run.to, End::Goal(salt), lane_class)?;
     let at = |s| Access {
         segment: cp_core::Id::new(u32::MAX, 0),
         s,
@@ -542,6 +576,8 @@ pub fn route_service_runs(
         })
         .map(|(id, _)| id)
         .collect();
+    // BUG-117: the entry lanes' queues, so a run from outside takes the shortest.
+    let mut load = waiting_by_start(&agents);
     for id in waiting {
         let Some(run) = runs.get(id).copied() else {
             continue;
@@ -558,7 +594,15 @@ pub fn route_service_runs(
             }
             _ => (None, None),
         };
-        match run_request(&net, pnet.graph(), &buildings, &run, from_lane) {
+        match run_request(
+            &net,
+            pnet.graph(),
+            &buildings,
+            &run,
+            from_lane,
+            &mut load,
+            id,
+        ) {
             Some(request) => {
                 let r = service.submit(&pnet, *tick, request).0;
                 let state = match vehicle {

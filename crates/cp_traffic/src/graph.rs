@@ -107,6 +107,9 @@ pub(crate) struct LaneNode {
     /// ends of the pedestrian links (corners, crossings) that start there.
     pub at_in: f32,
     pub at_out: f32,
+    /// The lane leaves an `Outside` node (BUG-117): cars appear on it coming in from the
+    /// highway, at speed.
+    pub from_outside: bool,
 }
 
 impl LaneNode {
@@ -315,6 +318,9 @@ fn node_of(lane: &Lane, id: LaneId, net: &NetGraph, geo: &JunctionGeometry) -> O
         s_out,
         at_in,
         at_out,
+        from_outside: net
+            .node(if forward { seg.start } else { seg.end })
+            .is_some_and(|n| n.kind == cp_net::NodeKind::Outside),
     })
 }
 
@@ -771,13 +777,25 @@ impl PathGraph {
     /// end, with the lane metre where cars enter it: where a move-in car appears at an
     /// `Outside` node (T-118).
     pub(crate) fn entry_lane(&self, segment: SegmentId, from_start: bool) -> Option<(LaneId, f32)> {
-        let sl = self.segments.get(&segment)?;
-        sl.car
+        self.entry_lanes(segment, from_start).into_iter().next()
+    }
+
+    /// Every car lane of `segment` leaving its start node (`from_start`) or its end node, with
+    /// the lane metre where it leaves the junction, ascending by lane id (BUG-117: a run from an
+    /// `Outside` node picks the least loaded of them, not always the first).
+    pub(crate) fn entry_lanes(&self, segment: SegmentId, from_start: bool) -> Vec<(LaneId, f32)> {
+        let Some(sl) = self.segments.get(&segment) else {
+            return Vec::new();
+        };
+        let mut lanes: Vec<(LaneId, f32)> = sl
+            .car
             .iter()
             .filter_map(|&(id, _)| self.car_lane(id))
             .filter(|l| l.forward == from_start)
-            .min_by_key(|l| l.id)
             .map(|l| (l.id, l.s_in))
+            .collect();
+        lanes.sort_by_key(|(id, _)| *id);
+        lanes
     }
 
     /// Resolves an access point to a sidewalk lane and the position on it (lane metres).

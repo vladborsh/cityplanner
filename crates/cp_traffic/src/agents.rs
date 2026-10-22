@@ -541,7 +541,12 @@ pub(crate) fn access_of(net: &NetGraph, b: &Building) -> Option<Access> {
 
 /// The path request of a move-in car (T-118): from the lane leaving the `Outside` node nearest
 /// to `home` that has one to the lane of the home's access point.
-fn move_in_request(net: &NetGraph, pnet: &PathNetwork, home: &Building) -> Option<PathRequest> {
+fn move_in_request(
+    net: &NetGraph,
+    pnet: &PathNetwork,
+    home: &Building,
+    load: &mut BTreeMap<LaneId, u32>,
+) -> Option<PathRequest> {
     let g = pnet.graph();
     // Only a node a car can leave by (BUG-095: the outbound carriageway's end has no lane into
     // the city, and the homes nearest it got no move-in car).
@@ -559,7 +564,13 @@ fn move_in_request(net: &NetGraph, pnet: &PathNetwork, home: &Building) -> Optio
         })
         .map(|(id, seg, _)| (id, seg))?;
     let from_start = net.segment(segment)?.start == node;
-    let (from, from_s) = g.entry_lane(segment, from_start)?;
+    // BUG-117: the entry lane with the fewest cars waiting to get on the road (the lower id on
+    // a tie), counted at once for the next request of this pass.
+    let (from, from_s) = *g
+        .entry_lanes(segment, from_start)
+        .iter()
+        .min_by_key(|(id, _)| (load.get(id).copied().unwrap_or(0), *id))?;
+    *load.entry(from).or_insert(0) += 1;
     let (to, to_s) = g.resolve_car_lane(&access_of(net, home)?)?;
     let lane_access = |segment, s| Access {
         segment,
@@ -593,6 +604,8 @@ pub fn route_trips(
 ) {
     book.ensure_derived();
     agents.ensure_derived(&book);
+    // BUG-117: the entry lanes' queues, so a move-in car takes the shortest.
+    let mut entry_load = crate::runs::waiting_by_start(&agents);
     for tid in book.planned() {
         let Some(trip) = book.get(tid).cloned() else {
             continue;
@@ -604,7 +617,7 @@ pub fn route_trips(
             }
             let request = buildings
                 .get(trip.to)
-                .and_then(|home| move_in_request(&net, &pnet, home));
+                .and_then(|home| move_in_request(&net, &pnet, home, &mut entry_load));
             match request {
                 Some(request) => {
                     let RequestId(id) = service.submit(&pnet, *tick, request);

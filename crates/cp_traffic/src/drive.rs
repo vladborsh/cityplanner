@@ -1077,6 +1077,10 @@ fn start_in_the_lane_it_needs(g: &PathGraph, v: &mut Vehicle) {
     }
 }
 
+/// Time headway (seconds) a car entering from the outside at speed keeps to the car ahead, on
+/// top of the standstill gap and the braking-distance difference (BUG-117).
+pub const ENTRY_HEADWAY_S: f32 = 1.5;
+
 /// Puts waiting vehicles on the road where there is room. Returns those that cannot ever
 /// start (their start lane is gone).
 pub(crate) fn spawn_waiting(
@@ -1106,10 +1110,27 @@ pub(crate) fn spawn_waiting(
         // Index of the first vehicle behind `s`.
         let at = list.partition_point(|&o| vehicles.get(o).is_some_and(|o| o.s > s));
         let mine = *st.specs.of(v);
-        let ahead_ok = at == 0
-            || vehicles
-                .get(list[at - 1])
-                .is_some_and(|o| o.s - st.specs.of(o).length - mine.min_gap >= s);
+        // BUG-117: a car coming in from the outside enters at the road's speed (the leader's
+        // when that is slower) behind a safe gap, not from standstill behind a bumper gap: at
+        // the map's edge the queue is the highway, not a car park. Anywhere else a car pulls
+        // out from standing.
+        let entry = node.from_outside && v.path.start_s <= node.s_in + 0.5;
+        let leader = (at > 0)
+            .then(|| vehicles.get(list[at - 1]))
+            .flatten()
+            .map(|o| (o.s - st.specs.of(o).length, o.speed));
+        let speed = if entry {
+            let limit = mine.max_speed.min(node.speed);
+            leader.map_or(limit, |(_, v)| v.min(limit))
+        } else {
+            0.0
+        };
+        let gap = leader.map_or(mine.min_gap, |(_, lead)| {
+            mine.min_gap
+                + speed * ENTRY_HEADWAY_S
+                + ((speed * speed - lead * lead) / (2.0 * mine.decel.max(0.1))).max(0.0)
+        });
+        let ahead_ok = leader.is_none_or(|(rear, _)| rear - gap >= s);
         let behind_ok = at == list.len()
             || vehicles
                 .get(list[at])
@@ -1125,7 +1146,7 @@ pub(crate) fn spawn_waiting(
             let v = vehicles.get_mut(id).expect("vehicle");
             v.spawned = true;
             v.s = s;
-            v.speed = 0.0;
+            v.speed = speed;
             v.stuck_timer = 0;
         } else {
             st.waiting.push(id);
