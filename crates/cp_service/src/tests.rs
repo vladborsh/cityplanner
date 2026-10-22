@@ -176,13 +176,9 @@ fn reach_is_the_metres_of_a_street_and_less_along_a_faster_road() {
             t: 0.0,
         };
         let dist = g.node_distances(origin, f32::INFINITY);
-        for k in 0..=4 {
+        for (k, d) in dist.iter().enumerate().take(5) {
             let want = k as f32 * 100.0 * factor;
-            assert!(
-                (dist[k] - want).abs() < 1e-3,
-                "{road}: node {k} {}",
-                dist[k]
-            );
+            assert!((d - want).abs() < 1e-3, "{road}: node {k} {d}");
         }
         // The same unit between two access points on one segment and across segments.
         let to = AccessPoint {
