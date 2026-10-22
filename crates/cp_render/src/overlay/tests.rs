@@ -269,6 +269,7 @@ fn layer_app() -> (App, Vec<(Overlay, Entity)>, Entity) {
         Overlay::Zones,
         Overlay::LandValue,
         Overlay::Pollution,
+        Overlay::Noise,
         Overlay::Water,
         Overlay::Power,
         Overlay::Garbage,
