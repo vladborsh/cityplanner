@@ -1757,12 +1757,7 @@ fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
     assert_eq!(index.nudge(far), far, "the outer sidewalk is left alone");
 }
 
-/// T-302d: the top area of the triangles of colour `c`.
-fn top_area(m: &MeshData, c: [f32; 4]) -> f32 {
-    top_area_in(m, c, f32::MIN, f32::MAX, None)
-}
-
-/// [`top_area`] of the lane paint whose first vertex has `x0 < x < x1`.
+/// T-302d: the top area of the triangles of colour `c` whose first vertex has `x0 < x < x1`.
 fn top_area_in(m: &MeshData, c: [f32; 4], x0: f32, x1: f32, road_z: Option<f32>) -> f32 {
     (0..m.triangle_count())
         .filter(|&t| (0..3).all(|k| m.colors[m.indices[t * 3 + k] as usize] == c))
