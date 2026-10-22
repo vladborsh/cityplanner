@@ -219,8 +219,59 @@ pub fn shelters_mesh(t: &TransitView, net: &cp_net::NetGraph, terrain: &Terrain)
             m.colors.push([c[0], c[1], c[2], 1.0]);
         }
         m.indices.extend(proto.indices.iter().map(|i| base + i));
+        // A stop served by a lane in the middle of the road gets a platform island on it.
+        let centre = cp_core::curve::to_xz(seg.curve.point(tt));
+        let lat = (stop.pos - centre).dot(out);
+        let lanes: Vec<_> = seg
+            .lanes
+            .iter()
+            .filter_map(|&l| net.lane(l))
+            .map(|l| (l.kind, l.offset, l.width))
+            .collect();
+        if let Some((z0, z1)) = island_slab(&lanes, lat) {
+            let mut slab = MeshData::default();
+            crate::agent::mesh::push_box(
+                &mut slab,
+                [-ISLAND_HALF_LENGTH, 0.0, z0],
+                [ISLAND_HALF_LENGTH, ISLAND_HEIGHT, z1],
+                ISLAND_COLOR,
+            );
+            let base = m.positions.len() as u32;
+            for i in 0..slab.positions.len() {
+                m.positions.push(map(slab.positions[i]));
+                m.normals.push(rot(slab.normals[i]));
+                let c = slab.colors[i];
+                m.colors.push([c[0], c[1], c[2], 1.0]);
+            }
+            m.indices.extend(slab.indices.iter().map(|i| base + i));
+        }
     }
     m
+}
+
+/// Platform island (T-302d): a raised concrete slab along the stop, on the flank of the
+/// tram or trolley lane that faces the stop's pavement.
+const ISLAND_HALF_LENGTH: f32 = 6.0;
+const ISLAND_WIDTH: f32 = 1.2;
+const ISLAND_HEIGHT: f32 = 0.16;
+const ISLAND_COLOR: [f32; 4] = [0.55, 0.55, 0.52, 0.0];
+
+/// The island of a stop whose pavement lies `lat` metres from the centre line (positive on
+/// the stop's own side): `(z0, z1)` across the road in the stop's local frame (z grows away
+/// from the road, so both are negative). `lanes` are `(kind, offset, width)`. Only a tram or
+/// trolley lane on the stop's side (not the kerb lane of a bus) gets one.
+fn island_slab(lanes: &[(cp_content::LaneKind, f32, f32)], lat: f32) -> Option<(f32, f32)> {
+    use cp_content::LaneKind;
+    let sign = lat.signum();
+    lanes
+        .iter()
+        .filter(|(k, o, _)| matches!(k, LaneKind::Tram | LaneKind::Trolley) && o * sign > 0.0)
+        // The lane nearest to the pavement.
+        .max_by(|a, b| (a.1 * sign).total_cmp(&(b.1 * sign)))
+        .map(|&(_, o, w)| {
+            let edge = o.abs() + w * 0.5;
+            (edge - ISLAND_WIDTH - lat.abs(), edge - lat.abs())
+        })
 }
 
 #[derive(Component)]
@@ -439,6 +490,26 @@ mod tests {
             }
             assert!(m.indices.iter().all(|&i| (i as usize) < m.positions.len()));
         }
+    }
+
+    #[test]
+    fn a_tram_stop_gets_an_island_on_the_lane_flank_facing_its_pavement_and_a_bus_stop_none() {
+        use cp_content::LaneKind::{Bus, Car, Tram};
+        // tram_4l: car lanes at +-5.25, tram lanes at +-1.75, pavement at +-12 (lat 12).
+        let lanes = [
+            (Car, -5.25, 3.5),
+            (Tram, -1.75, 3.5),
+            (Tram, 1.75, 3.5),
+            (Car, 5.25, 3.5),
+        ];
+        let (z0, z1) = island_slab(&lanes, 12.0).expect("island");
+        assert!((z1 - (3.5 - 12.0)).abs() < 1e-4 && (z1 - z0 - ISLAND_WIDTH).abs() < 1e-4);
+        // The other side mirrors it; a bus lane at the kerb has no island.
+        assert_eq!(island_slab(&lanes, -12.0), Some((z0, z1)));
+        assert_eq!(
+            island_slab(&[(Bus, 1.75, 3.5), (Car, -1.75, 3.5)], 8.0),
+            None
+        );
     }
 
     #[test]
