@@ -320,12 +320,12 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 160.0, 12.0, c - 90.0),
             Vec3::new(c - 100.0, 6.0, c + 50.0),
         ),
-        // The same grid from four headings, 40 m up and 90 m out, looking at its centre: the
+        // The same grid from four headings, the `street` view turned by 90 degrees each, looking at its centre: the
         // sheen of the asphalt must read from each of them, not only into the sun (BUG-107).
-        "glint-n" => (Vec3::new(c, 40.0, c + 90.0), Vec3::new(c, 0.0, c)),
-        "glint-e" => (Vec3::new(c - 90.0, 40.0, c), Vec3::new(c, 0.0, c)),
-        "glint-s" => (Vec3::new(c, 40.0, c - 90.0), Vec3::new(c, 0.0, c)),
-        "glint-w" => (Vec3::new(c + 90.0, 40.0, c), Vec3::new(c, 0.0, c)),
+        "glint-n" => (Vec3::new(c - 140.0, 35.0, c + 60.0), Vec3::new(c, 0.0, c)),
+        "glint-e" => (Vec3::new(c - 60.0, 35.0, c - 140.0), Vec3::new(c, 0.0, c)),
+        "glint-s" => (Vec3::new(c + 140.0, 35.0, c - 60.0), Vec3::new(c, 0.0, c)),
+        "glint-w" => (Vec3::new(c + 60.0, 35.0, c + 140.0), Vec3::new(c, 0.0, c)),
         // Over the stations of the metro scene (`--scene metro --overlay underground`).
         "metro" => (
             Vec3::new(c - 60.0, 330.0, c + 330.0),
