@@ -597,14 +597,34 @@ fn edge_preview(
     }
 }
 
-/// How tall a building's pick box is, metres (BUG-111): a water tower's tank stands 13 m up.
+/// The least a pick box is tall, metres (BUG-111): a water tower's tank stands 13 m up. Lot
+/// buildings (houses, shops, offices) are only as tall as they are drawn; a free-standing one
+/// (utilities, services) keeps this as its floor, as its shape is not a stack of floors.
 pub const PICK_BOX_H: f32 = 16.0;
+/// The tallest pick box, metres.
+const PICK_BOX_MAX: f32 = 120.0;
+
+/// The height of the cursor pick box of building `b` (BUG-111b): the drawn height of a lot
+/// building, at least [`PICK_BOX_H`] for any other, at most [`PICK_BOX_MAX`]. Without content,
+/// the old uniform box.
+pub fn pick_box_height(view: &SimView, id: BuildingId, b: &cp_building::Building) -> f32 {
+    let Some(db) = view.content.as_deref() else {
+        return PICK_BOX_H;
+    };
+    let real = cp_render::building::building_height(db, id, b, db.building(b.def));
+    if b.lot().is_some() {
+        real.clamp(3.0, PICK_BOX_MAX)
+    } else {
+        real.clamp(PICK_BOX_H, PICK_BOX_MAX)
+    }
+}
 
 /// The building the cursor ray `(origin, direction)` passes through (BUG-111): the nearest along
-/// the ray whose footprint, extruded to [`PICK_BOX_H`], holds a point of it. A click on a water
-/// tower's tank meets the ground behind the tower; the ray still meets the tower first. The
-/// tools try this last, after what stands at the ground point (a lot, a stop, a road, a pipe):
-/// a 16 m box must not beat a road 10 m behind a house.
+/// the ray whose footprint, extruded to its [`pick_box_height`], holds a point of it. A click on
+/// a water tower's tank meets the ground behind the tower; the ray still meets the tower first,
+/// and a click on the lot behind a low house meets the lot, not the house (BUG-111b). The tools
+/// try this last, after what stands at the ground point (a lot, a stop, a road, a pipe): a tall
+/// box must not beat a road 10 m behind a house.
 pub fn pick_building_along_ray(
     view: &SimView,
     ray: (bevy_math::Vec3, bevy_math::Vec3),
@@ -619,12 +639,17 @@ pub fn pick_building_along_ray(
     let near = Vec2::new(hit.x, hit.z);
     let mut best: Option<(f32, BuildingId)> = None;
     for (id, b) in view.buildings.iter() {
-        if b.pos.distance(near) > PICK_REACH + PICK_BOX_H * 8.0 {
+        // Coarse: the tallest box leans over the ground point by no more than 8x its height.
+        if b.pos.distance(near) > PICK_REACH + PICK_BOX_MAX * 8.0 {
+            continue;
+        }
+        let h = pick_box_height(view, id, b);
+        if b.pos.distance(near) > PICK_REACH + h * 8.0 {
             continue;
         }
         let base = ground(b.pos);
         for k in 0..=8 {
-            let y = base + PICK_BOX_H * k as f32 / 8.0;
+            let y = base + h * k as f32 / 8.0;
             let t = (y - o.y) / d.y;
             if t <= 0.0 {
                 continue;
@@ -1074,6 +1099,64 @@ mod tests {
                 Vec2::ZERO
             )
             .is_some()
+        );
+    }
+
+    /// BUG-111b: a click on the lot behind a low house picks that building, not the house in
+    /// front; a click on the house itself still picks the house, and a free-standing building
+    /// keeps its 16 m box.
+    #[test]
+    fn a_low_house_does_not_hide_the_lot_behind_it() {
+        use bevy_math::Vec3;
+        use cp_building::{Building, BuildingGrid, Footprint, Lot};
+        use cp_core::Tick;
+        let (mut sim, c) = sim();
+        let def = c.building_id("house_low_1").expect("house_low_1");
+        let lot = |block: u32| {
+            Footprint::Lot(Lot {
+                block: cp_zone::ZoneBlockId::new(block, 0),
+                col: 0,
+                w: 2,
+                d: 2,
+            })
+        };
+        let at = |footprint, z: f32| Building {
+            def,
+            footprint,
+            level: 1,
+            state: cp_building::BuildingState::Active,
+            ready_at: Tick(0),
+            pos: Vec2::new(3100.0, z),
+            rot: 0.0,
+            access: None,
+            flags: Default::default(),
+            level_progress: 0.0,
+        };
+        let (front, behind) = {
+            let mut grid = sim.world_mut().resource_mut::<BuildingGrid>();
+            (
+                grid.insert(at(lot(0), 3040.0)),
+                grid.insert(at(lot(1), 3090.0)),
+            )
+        };
+        sim.tick_once();
+        let view = sim.view();
+        let front_b = view.buildings.get(front).expect("front").clone();
+        let h = pick_box_height(&view, front, &front_b);
+        assert!((3.0..13.0).contains(&h), "a low house is {h} m");
+        // The ray from 30 m up at z 3000 to the far lot's centre crosses the front house's
+        // far half at about 13 m: over its roof, inside the old 16 m box.
+        let from = Vec3::new(3100.0, 30.0, 3000.0);
+        let to = Vec3::new(3100.0, 0.0, 3090.0);
+        assert_eq!(
+            pick_building_along_ray(&view, (from, (to - from).normalize())),
+            Some(behind)
+        );
+        // Aimed at the front house itself it is picked.
+        let to = Vec3::new(3100.0, 0.0, 3040.0);
+        assert_eq!(
+            pick_building_along_ray(&view, (from, (to - from).normalize())),
+            Some(front)
         );
     }
 }
