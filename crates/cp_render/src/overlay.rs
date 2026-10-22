@@ -103,7 +103,7 @@ pub enum Overlay {
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 22] = [
+    pub const ALL: [Overlay; 23] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
