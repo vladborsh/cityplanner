@@ -343,6 +343,7 @@ pub(super) fn round_nose(pts: &mut [Vec<Vec2>], outer: usize, kerb: usize, wa: f
         .map(|i| (dist(i), width(pts, i)))
         .fold((-1.0, 0.0), |m, c| if c.0 > m.0 { c } else { m })
         .1;
+    #[allow(clippy::needless_range_loop)] // `outer` and `kerb` are two lines of one slice
     for i in 0..n {
         if dist(i) <= start {
             continue;
