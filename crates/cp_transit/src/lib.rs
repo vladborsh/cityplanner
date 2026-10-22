@@ -28,7 +28,8 @@ pub mod view;
 pub use command::{MAX_LINE_NAME, StopRef, TransitCommand, TransitError, apply};
 pub use fleet::{Bus, BusId, BusPhase, TransitFleet, TransitLedger};
 pub use goods::{
-    CargoArrival, CargoArrivals, Endpoint, GOODS_BUCKET_TICKS, Goods, Haul, run_goods,
+    CargoArrival, CargoArrivals, Endpoint, GOODS_BUCKET_TICKS, Goods, Haul, Way, run_goods,
+    trade_roll,
 };
 pub use hubs::{
     CargoHubs, Hub, HubTrain, SAIL_M, ShipPhase, ShipPose, ShipVisit, exit_for, hub_sites,

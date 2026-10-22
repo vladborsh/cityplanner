@@ -588,15 +588,18 @@ pub fn receive_service_paths(
 ) {
     // T-280: most goods trucks run on a timer; service vehicles always drive. Without content
     // (bare tests) every truck drives. BUG-101: so do most tourists, and no more than
-    // `spawn_queue_cap` cars wait to enter at one lane of the entry.
-    let (truck_share, tourist_share, queue_cap) = content.map_or((1.0, 1.0, u32::MAX), |c| {
-        let b = c.0.balance();
-        (
-            b.truck_visible_share,
-            b.tourist_visible_share,
-            b.spawn_queue_cap,
-        )
-    });
+    // `spawn_queue_cap` cars wait to enter at one lane of the entry. T-306: a truck whose run
+    // crosses the map's edge drives at `entry_truck_visible_share`.
+    let (truck_share, entry_truck_share, tourist_share, queue_cap) =
+        content.map_or((1.0, 1.0, 1.0, u32::MAX), |c| {
+            let b = c.0.balance();
+            (
+                b.truck_visible_share,
+                b.entry_truck_visible_share,
+                b.tourist_visible_share,
+                b.spawn_queue_cap,
+            )
+        });
     // Cars not yet on the road, by the lane they start on; counted when a run from outside first
     // needs it, and kept up as this pass adds cars.
     let mut waiting: Option<BTreeMap<LaneId, u32>> = None;
@@ -675,8 +678,14 @@ pub fn receive_service_paths(
                 },
             ),
             PathResult::Car(Ok(path)) => {
+                let from_outside = matches!(run.from, RunPoint::Outside(_));
+                let to_outside = matches!(run.to, RunPoint::Outside(_));
                 let share = if is_goods_kind(run.kind) {
-                    truck_share
+                    if from_outside || to_outside {
+                        entry_truck_share
+                    } else {
+                        truck_share
+                    }
                 } else if is_tourist_run(&run) {
                     tourist_share
                 } else {
@@ -710,6 +719,13 @@ pub fn receive_service_paths(
                 } else if agents.vehicle_count() < limits.vehicles as usize {
                     if let Some(m) = waiting.as_mut() {
                         *m.entry(path.start).or_insert(0) += 1;
+                    }
+                    // T-306: what crosses the entry, for the playtest and the debug window.
+                    if is_goods_kind(run.kind) {
+                        agents.entry.trucks_in += u64::from(from_outside);
+                        agents.entry.trucks_out += u64::from(to_outside);
+                    } else if is_tourist_run(&run) {
+                        agents.entry.tourist_cars += u64::from(from_outside);
                     }
                     agents.spawn_service_vehicle(Vehicle {
                         trip: TripId::new(id, SERVICE_GEN),
@@ -842,9 +858,14 @@ mod entry_tests {
     const LANE: LaneId = LaneId::new(7, 0);
 
     fn content(share: f32, cap: u32) -> cp_content::SimContent {
-        let src = format!("Balance((tourist_visible_share: {share:?}, spawn_queue_cap: {cap}))");
+        content_src(&format!(
+            "Balance((tourist_visible_share: {share:?}, spawn_queue_cap: {cap}))"
+        ))
+    }
+
+    fn content_src(src: &str) -> cp_content::SimContent {
         cp_content::SimContent(Arc::new(
-            cp_content::ContentDb::from_sources(vec![("balance.ron".into(), src)])
+            cp_content::ContentDb::from_sources(vec![("balance.ron".into(), src.into())])
                 .unwrap_or_else(|e| panic!("{e}")),
         ))
     }
@@ -870,6 +891,25 @@ mod entry_tests {
         kind: VehicleKind,
         from: RunPoint,
     ) -> World {
+        route_with(
+            content(share, cap),
+            queued,
+            n,
+            kind,
+            from,
+            RunPoint::Building(BuildingId::new(1, 0)),
+        )
+    }
+
+    /// [`route`] with the content given and the runs going from `from` to `to`.
+    fn route_with(
+        content: cp_content::SimContent,
+        queued: usize,
+        n: u64,
+        kind: VehicleKind,
+        from: RunPoint,
+        to: RunPoint,
+    ) -> World {
         let mut world = World::new();
         let mut agents = Agents::default();
         for i in 0..queued {
@@ -890,7 +930,7 @@ mod entry_tests {
         let mut runs = ServiceRuns::default();
         let mut outcomes = Vec::new();
         for i in 0..n {
-            let id = runs.start_run(kind, from, RunPoint::Building(BuildingId::new(1, 0)), true);
+            let id = runs.start_run(kind, from, to, true);
             runs.set_state(id, RunState::AwaitingPath { request: i });
             outcomes.push(PathOutcome {
                 id: RequestId(i),
@@ -904,9 +944,43 @@ mod entry_tests {
         world.insert_resource(runs);
         world.insert_resource(agents);
         world.insert_resource(cp_core::SimRng::from_seed([3; 32]));
-        world.insert_resource(content(share, cap));
+        world.insert_resource(content);
         world.run_system_once(receive_service_paths).unwrap();
         world
+    }
+
+    /// T-306: a goods truck whose run crosses the map's edge drives at
+    /// `entry_truck_visible_share`, a city-internal one at `truck_visible_share`, and the entry
+    /// counts what it put on the road.
+    #[test]
+    fn trucks_through_the_entry_drive_at_their_own_share_and_are_counted() {
+        use crate::agents::EntryTraffic;
+        let c =
+            || content_src("Balance((truck_visible_share: 0.0, entry_truck_visible_share: 1.0))");
+        let inside = RunPoint::Building(BuildingId::new(2, 0));
+        let w = route_with(c(), 0, 20, VehicleKind::Cargo, outside(), inside);
+        assert_eq!(driving(&w), 20, "imports drive");
+        assert_eq!(w.resource::<Agents>().entry.trucks_in, 20);
+        let w = route_with(c(), 0, 20, VehicleKind::CargoLogs, inside, outside());
+        assert_eq!(driving(&w), 20, "exports drive");
+        assert_eq!(w.resource::<Agents>().entry.trucks_out, 20);
+        let w = route_with(
+            c(),
+            0,
+            20,
+            VehicleKind::Cargo,
+            inside,
+            RunPoint::Building(BuildingId::new(3, 0)),
+        );
+        assert_eq!(driving(&w), 0, "city-internal trucks keep the truck share");
+        assert_eq!(w.resource::<Agents>().entry, EntryTraffic::default());
+        // The other way round: the city's trucks drive, the entry's go by their time.
+        let c = content_src("Balance((truck_visible_share: 1.0, entry_truck_visible_share: 0.0))");
+        let w = route_with(c, 0, 20, VehicleKind::Cargo, outside(), inside);
+        assert_eq!(driving(&w), 0);
+        // Tourists are counted too.
+        let w = route(1.0, u32::MAX, 0, 7, VehicleKind::Car, outside());
+        assert_eq!(w.resource::<Agents>().entry.tourist_cars, 7);
     }
 
     fn driving(world: &World) -> usize {

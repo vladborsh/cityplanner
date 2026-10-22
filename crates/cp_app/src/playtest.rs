@@ -92,6 +92,12 @@ pub struct Day {
     /// The same by reason over the day (cp_traffic `StuckWhy` order: waiting, in junction, lane
     /// change, conflict stands, full beyond, front other, hard cap, hard cap head).
     pub stuck_why: [u64; 8],
+    /// T-306: the visible traffic through the entry over the day (cars put on the road): goods
+    /// trucks in and out, tourists' cars, households' move-in cars.
+    pub entry: cp_traffic::EntryTraffic,
+    /// Filled jobs in industry (the `Industrial` zone and the chains), which the entry's trucks
+    /// should grow with (T-306).
+    pub industry_jobs: u32,
     pub demand: [f32; 3],
     /// The move-in demand (households moving into homes that stand).
     pub move_in: f32,
@@ -135,6 +141,7 @@ pub struct Player {
     last_money: f64,
     last_stuck: u64,
     last_why: [u64; 8],
+    last_entry: cp_traffic::EntryTraffic,
     day: u32,
     actions: Vec<String>,
     refused: Vec<String>,
@@ -181,6 +188,7 @@ impl Player {
             last_money: money,
             last_stuck: 0,
             last_why: [0; 8],
+            last_entry: Default::default(),
             day: 0,
             actions: Vec::new(),
             refused: Vec::new(),
@@ -735,10 +743,17 @@ impl Player {
             b.get(home)
                 .is_some_and(|bl| emissions.ground_at(bl.pos) >= DIRTY_GROUND)
         };
+        let industrial = |work: cp_building::BuildingId| {
+            b.get(work).is_some_and(|bl| {
+                let def = db.building(bl.def);
+                def.zone == ZoneType::Industrial || def.industry.is_some()
+            })
+        };
         for (_, c) in w.resource::<cp_citizen::CitizenGrid>().citizens() {
             if c.is_adult() && c.work.is_none() && c.age_days >= 65 * cp_citizen::DAYS_PER_YEAR {
                 d.unemployed_old += 1;
             }
+            d.industry_jobs += u32::from(c.work.is_some_and(industrial));
             if let Some(home) = c.home {
                 if dirty(home) {
                     d.people_dirty += 1;
@@ -779,15 +794,20 @@ impl Player {
             self.free_cells(ZoneType::ComLow),
             self.free_cells(ZoneType::Industrial),
         ];
-        let why = self
-            .sim
-            .world()
-            .resource::<cp_traffic::Agents>()
-            .stuck_reasons();
+        let agents = self.sim.world().resource::<cp_traffic::Agents>();
+        let why = agents.stuck_reasons();
         for (k, w) in why.iter().enumerate() {
             d.stuck_why[k] = w - self.last_why[k];
         }
         self.last_why = why;
+        let (e, l) = (agents.entry, self.last_entry);
+        d.entry = cp_traffic::EntryTraffic {
+            trucks_in: e.trucks_in - l.trucks_in,
+            trucks_out: e.trucks_out - l.trucks_out,
+            tourist_cars: e.tourist_cars - l.tourist_cars,
+            move_in_cars: e.move_in_cars - l.move_in_cars,
+        };
+        self.last_entry = e;
         self.last_money = money;
         self.last_stuck = s.traffic.despawned_stuck;
         let _ = ServiceKind::Police;

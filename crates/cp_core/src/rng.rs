@@ -80,6 +80,20 @@ impl SimRng {
     }
 }
 
+/// A uniform `[0, 1)` from the sim seed and two keys (a splitmix64 step), for the deterministic
+/// choices a system makes by id without a draw (T-306: which loads of a building cross the
+/// map's edge). The same for any thread count and call order; it does not touch the RNG.
+pub fn hash_unit(seed: [u8; 32], a: u64, b: u64) -> f32 {
+    let mut s = [0u8; 8];
+    s.copy_from_slice(&seed[..8]);
+    let mut z = u64::from_le_bytes(s)
+        ^ a.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ b.rotate_left(32).wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    ((z ^ (z >> 31)) >> 40) as f32 / (1u64 << 24) as f32
+}
+
 /// Equal when seed and stream position are equal (i.e. they will draw the same numbers).
 impl PartialEq for SimRng {
     fn eq(&self, other: &Self) -> bool {

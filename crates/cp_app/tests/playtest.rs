@@ -59,6 +59,14 @@ fn a_new_game_played_to_busy_town() {
             d.new_sick_clean,
             d.people_clean
         );
+        eprintln!(
+            "      entry (T-306): trucks in {} out {} | tourist cars {} | move-in cars {} | industry jobs {}",
+            d.entry.trucks_in,
+            d.entry.trucks_out,
+            d.entry.tourist_cars,
+            d.entry.move_in_cars,
+            d.industry_jobs
+        );
         if std::env::var("PLAYTEST_ACC").is_ok() {
             let a = d.acc;
             eprintln!(

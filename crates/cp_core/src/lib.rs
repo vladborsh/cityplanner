@@ -14,7 +14,7 @@ pub use command::{
     CommandError, CommandId, CommandLog, CommandOutcome, CommandQueue, Cost, LogEntry,
 };
 pub use limits::{MAX_COORD, SimLimits, sane_coord, sane_point};
-pub use rng::SimRng;
+pub use rng::{SimRng, hash_unit};
 pub use time::{GameTime, SimSpeed, Tick};
 pub use treasury::{InsufficientFunds, Treasury};
 

@@ -438,9 +438,29 @@ impl ContentDb {
         self.content_hash
     }
 
+    /// Loads every `**/*.ron` under `root`, with `patch` applied to the text of `balance.ron`
+    /// (T-306): a test that watches one knob of the shipped content sets it without editing the
+    /// committed file.
+    pub fn load_dir_with_balance(
+        root: impl AsRef<Path>,
+        patch: impl Fn(&str) -> String,
+    ) -> Result<Self, ContentErrors> {
+        let mut sources = Self::read_dir(root.as_ref())?;
+        for (path, text) in &mut sources {
+            if path.ends_with("balance.ron") {
+                *text = patch(text);
+            }
+        }
+        Self::from_sources(sources)
+    }
+
     /// Loads every `**/*.ron` under `root`.
     pub fn load_dir(root: impl AsRef<Path>) -> Result<Self, ContentErrors> {
-        let root = root.as_ref();
+        Self::from_sources(Self::read_dir(root.as_ref())?)
+    }
+
+    /// The `(display path, RON text)` pairs of every `**/*.ron` under `root`.
+    fn read_dir(root: &Path) -> Result<Vec<(String, String)>, ContentErrors> {
         let shown_root = root.to_string_lossy().replace('\\', "/");
         let mut files = Vec::new();
         collect(root, "", &mut files).map_err(|e| {
@@ -463,7 +483,7 @@ impl ContentDb {
         if !errors.is_empty() {
             return Err(ContentErrors(errors));
         }
-        Self::from_sources(sources)
+        Ok(sources)
     }
 
     /// Builds the set from `(display path, RON text)` pairs. Order of the input does not
@@ -860,6 +880,10 @@ impl ContentDb {
                 ("car_visible_share", b.car_visible_share),
                 ("truck_visible_share", b.truck_visible_share),
                 ("tourist_visible_share", b.tourist_visible_share),
+                ("entry_truck_visible_share", b.entry_truck_visible_share),
+                ("move_in_car_share", b.move_in_car_share),
+                ("industry_export_share", b.industry_export_share),
+                ("industry_import_share", b.industry_import_share),
                 ("demolish_refund", b.demolish_refund),
             ]
         }) {

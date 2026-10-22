@@ -10,9 +10,16 @@
 //! booked when it sets out). Trucks are the `Cargo` runs of `cp_traffic`; with the vehicle pool
 //! full a run arrives abstractly, as in M3. Distance is the straight line, as for the goods.
 //! `cp_economy` books the ledger at the end of the week.
+//!
+//! **Traffic grows with industry (T-306).** Whatever stands near, `industry_export_share` of a
+//! building's outgoing loads (an extractor's, a processor's, a warehouse's that may give) go out
+//! by the entry highway, and `industry_import_share` of a processor's or factory's input loads
+//! are ordered from the outside: a hash of the building, the day's bucket and the cargo
+//! ([`cp_transit::trade_roll`]) picks them. More industry, more trucks through the entry both
+//! ways; the playtest prints them against the industrial job count.
 
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::{Res, ResMut};
+use bevy_ecs::system::{Res, ResMut, SystemParam};
 use cp_building::{BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::CitizenGrid;
 use cp_content::{CargoKind, IndustryRole, SimContent};
@@ -21,10 +28,12 @@ use cp_core::Tick;
 use cp_district::{AreaMap, Areas, area_at};
 use cp_net::NetGraph;
 use cp_traffic::ServiceRuns;
-use cp_transit::{CargoArrivals, CargoHubs, Endpoint, Goods, exit_for, hub_sites, is_hub_def};
+use cp_transit::{
+    CargoArrivals, CargoHubs, Endpoint, Goods, Way, exit_for, hub_sites, is_hub_def, trade_roll,
+};
 use serde::{Deserialize, Serialize};
 
-use crate::warehouse::WarehouseSettings;
+use crate::warehouse::{WarehouseMode, WarehouseSettings};
 use crate::{INDUSTRY_BUCKET_TICKS, IndustryState, storage_cap};
 
 /// The money of the cargo trade: this week's sums and what the last settled week booked.
@@ -59,6 +68,16 @@ impl IndustryLedger {
     }
 }
 
+/// The ways in and out of the city and the sim seed (T-306), bundled so [`run_freight`] stays
+/// within `bevy_ecs`'s system parameter count.
+#[derive(SystemParam)]
+pub struct Via<'w> {
+    rng: Res<'w, cp_core::SimRng>,
+    transit: Res<'w, cp_transit::TransitNet>,
+    rail: Res<'w, cp_net::RailReach>,
+    hubs: ResMut<'w, CargoHubs>,
+}
+
 /// Unloads the trucks that arrived and sends the loads of this tick's bucket.
 #[allow(clippy::too_many_arguments)]
 pub fn run_freight(
@@ -75,10 +94,15 @@ pub fn run_freight(
     mut state: ResMut<IndustryState>,
     mut ledger: ResMut<IndustryLedger>,
     mut settings: ResMut<WarehouseSettings>,
-    transit: Res<cp_transit::TransitNet>,
-    rail: Res<cp_net::RailReach>,
-    mut hubs: ResMut<CargoHubs>,
+    mut via: Via,
 ) {
+    let Via {
+        rng,
+        transit,
+        rail,
+        hubs,
+    } = &mut via;
+    let (transit, rail, rng) = (&**transit, &**rail, &**rng);
     let Some(content) = content else { return };
     let db = &*content.0;
     let bal = db.balance();
@@ -127,7 +151,17 @@ pub fn run_freight(
     let (entries, exits) = cp_net::outside_ways(&net, db);
     // The working cargo stations: exports and imports go through the nearest of them and the
     // entry highways (T-216).
-    let sites = hub_sites(db, &transit, &rail, &buildings);
+    let sites = hub_sites(db, transit, rail, &buildings);
+    // T-306: traffic grows with industry. A hash of the building, the bucket and the cargo picks
+    // the `industry_export_share` of a building's outgoing loads that go out by the entry
+    // highway whatever stands near, and the `industry_import_share` of a processor's or
+    // factory's input loads that come in from the outside whatever stands near.
+    let seed = rng.seed();
+    let roll = |id: BuildingId, cargo: CargoKind, way: Way| {
+        trade_roll(seed, id, tick.0 / INDUSTRY_BUCKET_TICKS, cargo, way)
+    };
+    let goes_abroad = |id, cargo| roll(id, cargo, Way::Out) < bal.industry_export_share;
+    let comes_from_abroad = |id, cargo| roll(id, cargo, Way::In) < bal.industry_import_share;
 
     // Cargo already on the way to a building, by building and cargo.
     let inbound = |goods: &Goods, to: BuildingId, cargo: CargoKind| -> f32 {
@@ -207,10 +241,12 @@ pub fn run_freight(
                         _ => {}
                     }
                 }
-                let to = best
-                    .or(shelf)
-                    .map(|(_, t)| Endpoint::Building(t))
-                    .or_else(|| exit_for(&exits, &sites, b.pos));
+                let near = best.or(shelf).map(|(_, t)| Endpoint::Building(t));
+                let to = if goes_abroad(id, cargo) {
+                    exit_for(&exits, &sites, b.pos).or(near)
+                } else {
+                    near.or_else(|| exit_for(&exits, &sites, b.pos))
+                };
                 if let Some(to) = to {
                     state.add(id, cargo, -load);
                     goods.start_cargo_haul(&mut runs, cargo, Endpoint::Building(id), to, load);
@@ -255,11 +291,17 @@ pub fn run_freight(
                         best = Some((held, tid));
                     }
                 }
-                let to = best.map(|(_, t)| Endpoint::Building(t)).or_else(|| {
-                    (set.mode == crate::warehouse::WarehouseMode::Empty)
-                        .then(|| exit_for(&exits, &sites, b.pos))
-                        .flatten()
-                });
+                // T-306: a warehouse that may give (not `Fill`) sends its share abroad too.
+                let near = best.map(|(_, t)| Endpoint::Building(t));
+                let to = if set.mode != WarehouseMode::Fill && goes_abroad(id, cargo) {
+                    exit_for(&exits, &sites, b.pos).or(near)
+                } else {
+                    near.or_else(|| {
+                        (set.mode == WarehouseMode::Empty)
+                            .then(|| exit_for(&exits, &sites, b.pos))
+                            .flatten()
+                    })
+                };
                 if let Some(to) = to {
                     state.add(id, cargo, -load);
                     goods.start_cargo_haul(&mut runs, cargo, Endpoint::Building(id), to, load);
@@ -306,7 +348,8 @@ pub fn run_freight(
                                 }
                             })
                     });
-                if supplied {
+                // T-306: a share of the input loads comes from abroad even with a supplier near.
+                if supplied && !comes_from_abroad(id, cargo) {
                     continue;
                 }
                 if let Some(via) = exit_for(&entries, &sites, b.pos) {

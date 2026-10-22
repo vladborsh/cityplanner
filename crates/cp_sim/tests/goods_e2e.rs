@@ -36,7 +36,14 @@ fn building(zone: &str, id: &str) -> (String, String) {
     )
 }
 
+/// The test content with T-306's trade shares at 0: the tests of the BUG-095 rules (trade only
+/// when nobody near can take or give).
 fn content() -> Arc<ContentDb> {
+    content_sharing(0.0)
+}
+
+/// [`content`] with `industry_export_share` at `export`.
+fn content_sharing(export: f32) -> Arc<ContentDb> {
     let mut src = vec![
         ("r/street.ron".into(), ROAD.into()),
         ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
@@ -50,9 +57,11 @@ fn content() -> Arc<ContentDb> {
             "balance.ron".into(),
             // Every goods run drives (T-280's truck_visible_share hides 3 in 4 in the game):
             // these tests watch the trucks on the road.
-            "Balance((goods_per_worker: 10.0, goods_per_job: 1.0, goods_truck_load: 20.0, \
-             truck_visible_share: 1.0))"
-                .into(),
+            format!(
+                "Balance((goods_per_worker: 10.0, goods_per_job: 1.0, goods_truck_load: 20.0, \
+                 truck_visible_share: 1.0, entry_truck_visible_share: 1.0, \
+                 industry_export_share: {export:?}, industry_import_share: 0.0))"
+            ),
         ),
     ];
     src.extend([
@@ -77,7 +86,17 @@ fn town(shops_at: &[f32], workers: usize) -> Town {
 /// [`town`] with an `Outside` node at the west end if `outside`, and the factory only if
 /// `with_factory` (workers or not).
 fn town_with(shops_at: &[f32], workers: usize, outside: bool, with_factory: bool) -> Town {
-    let db = content();
+    town_on(content(), shops_at, workers, outside, with_factory)
+}
+
+/// [`town_with`] on the content given.
+fn town_on(
+    db: Arc<ContentDb>,
+    shops_at: &[f32],
+    workers: usize,
+    outside: bool,
+    with_factory: bool,
+) -> Town {
     let mut sim = SimRunner::new(3);
     sim.set_content(Arc::clone(&db));
     let road = db.road_id("street").unwrap();
@@ -296,6 +315,33 @@ fn goods_trucks_are_cargo_trucks_not_garbage_trucks() {
 // T-170: exports and imports through the `Outside` node of the entry highway.
 
 use cp_transit::{Endpoint, TransitLedger};
+
+/// T-306: traffic grows with industry. With `industry_export_share` 1 every full load leaves by
+/// the entry highway although a shop stands 500 m away; with 0 (the old rule) it goes to the
+/// shop.
+#[test]
+fn the_export_share_sends_loads_abroad_past_a_shop_in_reach() {
+    let first_haul = |share: f32| {
+        let mut t = town_on(content_sharing(share), &[600.0], 2, true, true);
+        for _ in 0..4096 * 4 {
+            t.sim.tick_once();
+            // The shop imports first (its stock is 0, the factory's too): the factory's own haul.
+            let from = Endpoint::Building(t.factory);
+            let g = t.sim.world().resource::<Goods>();
+            if let Some(h) = g.hauls.values().find(|h| h.from == from) {
+                return (h.to, t.shops[0], h.load);
+            }
+        }
+        panic!("no truck set out");
+    };
+    let abroad = first_haul(1.0);
+    assert!(
+        matches!(abroad.0, Endpoint::Outside(_)),
+        "the load goes abroad: {abroad:?}"
+    );
+    let (to, shop, _) = first_haul(0.0);
+    assert_eq!(to, Endpoint::Building(shop), "the load goes to the shop");
+}
 
 #[test]
 fn a_factory_with_no_shop_sends_its_trucks_out_and_the_week_report_has_exports() {

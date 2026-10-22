@@ -14,8 +14,15 @@ Balance((
     // BUG-101: tourists too (919 tourist cars stood at one entry): the hidden ones travel by
     // their route's time and still visit and pay. And at most this many cars wait to enter at
     // one spawn lane of the entry; later runs from outside go by their travel time.
-    tourist_visible_share: 0.15,
+    tourist_visible_share: 0.4,
     spawn_queue_cap: 40,
+    // T-306: the entry is where the player watches the traffic. Trucks whose run crosses the
+    // map's edge (imports, exports, the chains' raw materials) drive at this share instead of
+    // truck_visible_share; tourists went 0.15 -> 0.4 above. Households moving into a finished
+    // home drive in at this share (the rest arrive abstractly, or by train, move_in_by_train);
+    // car_visible_share no longer applies to them.
+    entry_truck_visible_share: 0.6,
+    move_in_car_share: 0.5,
     // BUG-097: bulldozing gives back this share of what the player paid (placed buildings, road
     // length, pipes and power lines, bus stops); grown buildings give nothing.
     demolish_refund: 0.7,
@@ -293,6 +300,13 @@ Balance((
     // Area levels (T-209) // tune later: xp for levels 2 to 5, storage share per level above 1.
     industry_levels: (2000, 8000, 25000, 60000),
     industry_storage_per_level: 0.1,
+    // T-306: traffic grows with industry // tune later: the share of a chain building's or a
+    // goods factory's loads that go out by the entry highway even with a buyer in reach, and the
+    // share of a processor's or factory's input loads ordered from the outside (import_price)
+    // even with a supplier near. Decided by a hash of building, day bucket and cargo; 0 = the old
+    // rule (trade only when nobody near), 1 = every load crosses the edge. Shops keep BUG-095.
+    industry_export_share: 0.25,
+    industry_import_share: 0.25,
 
     // --- Work and education reminder (T-307): the advisor mentions the Jobs & education window when
     // unemployment is above jobs_unemployment_warn of the adults, free slots above jobs_shortage_share,

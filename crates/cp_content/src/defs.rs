@@ -207,6 +207,16 @@ pub struct Balance {
     /// Cars waiting to enter at one spawn lane of the map's entry (BUG-101): from this many on,
     /// a new run from outside goes by its travel time instead of joining the queue.
     pub spawn_queue_cap: u32,
+    /// The share of the goods trucks that drive when the run comes in from or goes out to an
+    /// `Outside` node, `0..=1` (T-306): imports, exports and the raw-material trucks of the
+    /// chains. The entry is where the player watches the traffic, so more of it is drawn than of
+    /// the city-internal runs (`truck_visible_share`); `spawn_queue_cap` still holds.
+    pub entry_truck_visible_share: f32,
+    /// Share of the households moving into a finished home that drive in from the entry in a
+    /// car, `0..=1` (T-306); the others arrive abstractly, or by train when a station is joined
+    /// to the railway (`move_in_by_train`). Takes the place of `car_visible_share` for the
+    /// move-in trips; the car disappears at the home.
+    pub move_in_car_share: f32,
     /// Share of what the player paid that bulldozing gives back, `0..=1` (BUG-097): placed
     /// buildings, road length, pipes and power lines, bus stops. Grown buildings give nothing.
     pub demolish_refund: f32,
@@ -474,6 +484,16 @@ pub struct Balance {
     /// above the first adds. // tune later
     pub industry_levels: [u32; 4],
     pub industry_storage_per_level: f32,
+    /// T-306: traffic grows with industry. The share of the loads a chain building (extractor,
+    /// processor, a warehouse that gives) or a goods factory sends out of the city by the entry
+    /// highway even when a buyer stands within `freight_radius_m`, and the share of a
+    /// processor's or factory's input loads it orders from the outside (at `import_price`) even
+    /// when a supplier stands near. `0..=1`, decided by a hash of the building, the day's bucket
+    /// and the cargo: `0` is the old rule (trade only when nobody near can take or give), `1`
+    /// sends every load across the map's edge. Shops keep the BUG-095 rule: they import when
+    /// the local goods are short. // tune later
+    pub industry_export_share: f32,
+    pub industry_import_share: f32,
     /// The factor on `export_price` for goods that left a unique factory (T-215). // tune later
     pub factory_export_mul: f32,
     /// Hours between two cargo trains at a cargo station (T-216). // tune later
@@ -736,6 +756,10 @@ impl Balance {
             self.land_mail,
             self.land_mail_work,
             self.industry_storage_per_level,
+            self.entry_truck_visible_share,
+            self.move_in_car_share,
+            self.industry_export_share,
+            self.industry_import_share,
         ]);
         v.extend(self.industry_levels.map(|l| l as f32));
         v.extend(self.park_levels.map(|l| l as f32));
@@ -753,8 +777,10 @@ impl Default for Balance {
             car_start_penalty_s: 90.0,
             car_visible_share: 0.15,
             truck_visible_share: 0.25,
-            tourist_visible_share: 0.15,
+            tourist_visible_share: 0.4,
             spawn_queue_cap: 40,
+            entry_truck_visible_share: 0.6,
+            move_in_car_share: 0.5,
             demolish_refund: 0.7,
             spawn_one_in: 4,
             demand_ema: 0.25,
@@ -914,6 +940,8 @@ impl Default for Balance {
             land_mail_work: 4.0,
             industry_levels: [2_000, 8_000, 25_000, 60_000],
             industry_storage_per_level: 0.1,
+            industry_export_share: 0.25,
+            industry_import_share: 0.25,
             networks: Networks::default(),
         }
     }

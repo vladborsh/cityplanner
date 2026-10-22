@@ -38,6 +38,31 @@ use serde::{Deserialize, Serialize};
 /// A factory may send a part load of at least this share of `goods_truck_load` to an empty shop.
 const PARTIAL_LOAD_SHARE: f32 = 0.25;
 
+/// Which way a load would cross the map's edge (T-306).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Way {
+    /// An export: out by the entry highway.
+    Out,
+    /// An import: in from the outside.
+    In,
+}
+
+/// T-306: a uniform `[0, 1)` for the load `building` would send (`Way::Out`) or order
+/// (`Way::In`) of `cargo` in the day's `bucket` (`tick / GOODS_BUCKET_TICKS`), against
+/// `Balance::industry_export_share` / `industry_import_share`. A hash of the sim seed and the
+/// keys, no RNG draw: the same for any call order, and a building's loads spread over the days.
+pub fn trade_roll(
+    seed: [u8; 32],
+    building: BuildingId,
+    bucket: u64,
+    cargo: CargoKind,
+    way: Way,
+) -> f32 {
+    let a = (u64::from(building.index) << 1) | u64::from(way == Way::In);
+    let b = (bucket << 8) | cargo as u64;
+    cp_core::hash_unit(seed, a, b)
+}
+
 /// Ticks between two buckets: a day in 64 parts.
 pub const GOODS_BUCKET_TICKS: u64 = TICKS_PER_DAY / 64;
 
@@ -131,6 +156,7 @@ impl Goods {
 #[allow(clippy::too_many_arguments)]
 pub fn run_goods(
     tick: Res<Tick>,
+    rng: Res<cp_core::SimRng>,
     content: Option<Res<SimContent>>,
     net: Res<NetGraph>,
     citizens: Res<CitizenGrid>,
@@ -259,6 +285,19 @@ pub fn run_goods(
         Endpoint::Building(b) => RunPoint::Building(b),
         Endpoint::Outside(n) => RunPoint::Outside(n),
     };
+    // T-306: traffic grows with industry. A hash of the factory, the bucket and the cargo picks
+    // the `industry_export_share` of its full loads that go out by the entry highway even with a
+    // shop in reach (the same keys as `cp_industry`'s freight, so the two never disagree).
+    let seed = rng.seed();
+    let exports_this_load = |id: BuildingId| {
+        trade_roll(
+            seed,
+            id,
+            now.0 / GOODS_BUCKET_TICKS,
+            CargoKind::Goods,
+            Way::Out,
+        ) < bal.industry_export_share
+    };
 
     let mine: Vec<BuildingId> = buildings
         .iter()
@@ -306,12 +345,15 @@ pub fn run_goods(
                         pick_empty_shop(lk, &goods, b.pos, bal.freight_radius_m)
                             .map(|shop| (Endpoint::Building(shop), RunPoint::Building(shop)))
                     } else {
-                        match pick_shop(lk, &goods, b.pos, bal.freight_radius_m) {
-                            Some(shop) => {
-                                Some((Endpoint::Building(shop), RunPoint::Building(shop)))
-                            }
-                            // Nobody to sell to nearby: the goods go out of the country.
-                            None => exit_for(&exits, &sites, b.pos).map(|e| (e, point(e))),
+                        let shop = pick_shop(lk, &goods, b.pos, bal.freight_radius_m)
+                            .map(|shop| (Endpoint::Building(shop), RunPoint::Building(shop)));
+                        // Nobody to sell to nearby: the goods go out of the country. T-306: a
+                        // share of the full loads goes out whatever shop stands near.
+                        let abroad = || exit_for(&exits, &sites, b.pos).map(|e| (e, point(e)));
+                        if exports_this_load(id) {
+                            abroad().or(shop)
+                        } else {
+                            shop.or_else(abroad)
                         }
                     };
                     if let Some((to, point)) = to {

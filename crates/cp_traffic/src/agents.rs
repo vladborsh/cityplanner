@@ -230,6 +230,21 @@ impl Default for AgentSettings {
     }
 }
 
+/// Cars put on the road through the map's entry (T-306), for the playtest and the debug window:
+/// how much of the visible traffic comes in and goes out. Counted when the vehicle is spawned,
+/// not saved (a loaded game starts at zero).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EntryTraffic {
+    /// Goods trucks from an `Outside` node (imports, the chains' raw materials).
+    pub trucks_in: u64,
+    /// Goods trucks to an `Outside` node (exports).
+    pub trucks_out: u64,
+    /// Tourists' cars from an `Outside` node.
+    pub tourist_cars: u64,
+    /// Households' move-in cars from the entry to their home.
+    pub move_in_cars: u64,
+}
+
 /// The agent pools.
 #[derive(Resource, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Agents {
@@ -237,6 +252,9 @@ pub struct Agents {
     vehicles: Arena<Vehicle>,
     pub stats: AgentStats,
     pub load: SegmentLoad,
+    /// The visible traffic through the entry (T-306); not saved.
+    #[serde(skip)]
+    pub entry: EntryTraffic,
     /// Lane/connection occupancy; derived from the vehicles, rebuilt lazily.
     #[serde(skip)]
     drive: DriveState,
@@ -774,8 +792,12 @@ pub fn receive_paths(
     book.ensure_derived();
     agents.ensure_derived(&book);
     let now = tick.0;
-    // Without content (bare tests) every car trip keeps its car.
-    let visible_share = content.map_or(1.0, |c| c.0.balance().car_visible_share);
+    // Without content (bare tests) every car trip keeps its car. T-306: a move-in car (from
+    // the entry to a finished home) drives at its own share.
+    let (visible_share, move_in_share) = content.map_or((1.0, 1.0), |c| {
+        let b = c.0.balance();
+        (b.car_visible_share, b.move_in_car_share)
+    });
     for outcome in &results.0 {
         if let Some(vid) = agents.reroutes.remove(&outcome.id.0) {
             let live = agents
@@ -913,8 +935,15 @@ pub fn receive_paths(
             }
             PathResult::Car(Ok(path)) if trip.mode == TripMode::Car => {
                 // T-280: most car trips run abstractly; only `car_visible_share` take a car.
-                // (`abstract_trips` keeps counting the pool-full ones only.)
-                if !car_visible(tid, rng.seed(), visible_share) {
+                // (`abstract_trips` keeps counting the pool-full ones only.) T-306: a household
+                // driving in from the entry takes `move_in_car_share`.
+                let move_in = trip.purpose == TripPurpose::MoveIn && trip.from == trip.to;
+                let share = if move_in {
+                    move_in_share
+                } else {
+                    visible_share
+                };
+                if !car_visible(tid, rng.seed(), share) {
                     book.set_state(
                         tid,
                         TripState::InTransit {
@@ -936,6 +965,7 @@ pub fn receive_paths(
                         reroute: None,
                     });
                     agents.drive.waiting.push(id);
+                    agents.entry.move_in_cars += u64::from(move_in);
                     book.set_state(tid, TripState::Agent);
                 } else {
                     agents.stats.abstract_trips += 1;

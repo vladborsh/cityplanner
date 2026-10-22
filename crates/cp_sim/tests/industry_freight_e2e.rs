@@ -18,10 +18,34 @@ use cp_sim::SimRunner;
 use cp_terrain::{GRID, MapMeta, RES_GRID, ResourceMap, Terrain};
 use cp_transit::{Endpoint, Goods};
 
+/// The shipped content with T-306's trade shares at 0: these tests are about the rules of
+/// T-210 (trade only when nobody near can take or give).
 fn content() -> Arc<ContentDb> {
-    Arc::new(
-        ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content")).unwrap(),
-    )
+    content_sharing(0.0, 0.0)
+}
+
+/// The shipped content with `industry_export_share` and `industry_import_share` set.
+fn content_sharing(export: f32, import: f32) -> Arc<ContentDb> {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content");
+    let db = ContentDb::load_dir_with_balance(root, |text| {
+        text.lines()
+            .map(|l| {
+                let t = l.trim_start();
+                if t.starts_with("industry_export_share:") {
+                    format!("    industry_export_share: {export:?},")
+                } else if t.starts_with("industry_import_share:") {
+                    format!("    industry_import_share: {import:?},")
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
+    .unwrap();
+    assert_eq!(db.balance().industry_export_share, export);
+    assert_eq!(db.balance().industry_import_share, import);
+    Arc::new(db)
 }
 
 struct Town {
@@ -33,7 +57,11 @@ struct Town {
 /// A 1 km street along z = 5 (an `Outside` node at x = 0 when `outside`), a forestry area over
 /// it with its Main building at x = 40, and forest under the whole street.
 fn town(outside: bool) -> Town {
-    let db = content();
+    town_on(content(), outside)
+}
+
+/// [`town`] on the content given.
+fn town_on(db: Arc<ContentDb>, outside: bool) -> Town {
     let mut sim = SimRunner::new(3);
     sim.set_content(Arc::clone(&db));
     let meta = MapMeta {
@@ -219,6 +247,48 @@ fn without_a_processor_the_cargo_is_exported_and_paid_for() {
     t.ticks(cp_core::time::TICKS_PER_WEEK);
     let l = *t.sim.world().resource::<IndustryLedger>();
     assert!(l.last_exports > Cost::ZERO, "{l:?}");
+}
+
+/// T-306: traffic grows with industry. With the trade shares at 1 a sawmill's logs go out by the
+/// entry highway although the processor stands 400 m away, and the processor orders its logs
+/// from the outside although the sawmill stands near; at 0 (the old rule) the sawmill's first
+/// load goes to the processor and it imports nothing (later loads may still go out once the
+/// processor's store is full, as before).
+#[test]
+fn the_trade_shares_send_loads_abroad_and_order_them_in_past_a_neighbour() {
+    let run = |share: f32| {
+        let mut t = town_on(content_sharing(share, share), true);
+        let saw = t.put("forest_extractor_s", 100.0);
+        let mill = t.put("forest_processor_a", 500.0);
+        t.staff(saw, 8);
+        t.staff(mill, 4);
+        t.seed(saw, CargoKind::Logs, 40.0);
+        let mut first_to: Option<Endpoint> = None;
+        for _ in 0..4 * TICKS_PER_DAY {
+            t.sim.tick_once();
+            t.staff(saw, 8);
+            t.staff(mill, 4);
+            if first_to.is_none() {
+                let g = t.sim.world().resource::<Goods>();
+                first_to = g
+                    .hauls
+                    .values()
+                    .find(|h| h.from == Endpoint::Building(saw))
+                    .map(|h| h.to);
+            }
+        }
+        (
+            first_to.expect("the sawmill sent a load"),
+            *t.sim.world().resource::<IndustryLedger>(),
+            mill,
+        )
+    };
+    let (to, all, _) = run(1.0);
+    assert!(matches!(to, Endpoint::Outside(_)), "past the mill: {to:?}");
+    assert!(all.import_loads > 0, "imports past the sawmill: {all:?}");
+    let (to, none, mill) = run(0.0);
+    assert_eq!(to, Endpoint::Building(mill), "the old rule: to the mill");
+    assert_eq!(none.import_loads, 0, "the old rule: {none:?}");
 }
 
 #[test]

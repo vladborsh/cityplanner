@@ -294,9 +294,9 @@ fn residents_arrive_only_when_the_street_is_connected_to_the_entry_highway() {
     assert!(sim.view().city.connected_to_highway);
 }
 
-/// T-118: a connected new game's households drive in from the Outside node along the highway.
-#[test]
-fn move_in_cars_drive_from_the_outside_node_and_the_household_arrives_with_them() {
+/// A connected new game on flatlands with a zoned street off the entry stub, run for three
+/// days on `db`: `(checksum, most move-in cars on the road at once, citizens at home)`.
+fn move_in_town(db: Arc<ContentDb>) -> (u64, usize, usize) {
     use bevy_math::Vec3;
     use cp_citizen::{Location, TripBook, TripPurpose};
     use cp_content::ZoneType;
@@ -305,11 +305,12 @@ fn move_in_cars_drive_from_the_outside_node_and_the_household_arrives_with_them(
     use cp_net::Elevation;
     use cp_zone::{ZoneCellRef, ZoneGrid};
 
-    let run = || {
-        let db = content();
+    {
         let terrain = map("flatlands");
         let e = terrain.meta().entry_road.clone().unwrap();
-        let mut sim = sim_on(Arc::clone(&terrain));
+        let mut sim = SimRunner::new(1);
+        sim.set_terrain(Arc::clone(&terrain));
+        sim.set_content(db.clone());
         sim.new_game().unwrap();
         *sim.world_mut().resource_mut::<cp_building::Demand>() = cp_building::Demand::fixed(1.0);
         *sim.world_mut().resource_mut::<cp_economy::Decay>() = cp_economy::Decay::disabled();
@@ -373,17 +374,60 @@ fn move_in_cars_drive_from_the_outside_node_and_the_household_arrives_with_them(
                 .collect();
             max_cars = max_cars.max(cars.len());
         }
-        assert!(max_cars > 0, "move-in cars were on the road");
         let grid = sim.world().resource::<cp_citizen::CitizenGrid>();
         assert!(grid.household_count() > 0);
         let home = grid
             .citizens()
             .filter(|(_, c)| c.location == Location::Home)
             .count();
+        (sim.checksum(), max_cars, home)
+    }
+}
+
+/// T-118: a connected new game's households drive in from the Outside node along the highway.
+#[test]
+fn move_in_cars_drive_from_the_outside_node_and_the_household_arrives_with_them() {
+    let run = || {
+        let (checksum, max_cars, home) = move_in_town(content());
+        assert!(max_cars > 0, "move-in cars were on the road");
         assert!(home > 0, "households arrived");
-        (sim.checksum(), max_cars)
+        (checksum, max_cars)
     };
     assert_eq!(run(), run(), "two runs differ");
+}
+
+/// T-306: `move_in_car_share` says which households drive in; the others arrive abstractly, and
+/// `car_visible_share` has no say. At 0 no move-in car is on the road and the households still
+/// arrive; at 1 every household's car is.
+#[test]
+fn the_move_in_car_share_decides_who_drives_in_and_everyone_arrives() {
+    let sharing = |move_in: f32, car: f32| {
+        let root = Path::new(ROOT).join("../../assets/content");
+        let db = ContentDb::load_dir_with_balance(root, |text| {
+            text.lines()
+                .map(|l| {
+                    let t = l.trim_start();
+                    if t.starts_with("move_in_car_share:") {
+                        format!("    move_in_car_share: {move_in:?},")
+                    } else if t.starts_with("car_visible_share:") {
+                        format!("    car_visible_share: {car:?},")
+                    } else {
+                        l.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap();
+        assert_eq!(db.balance().move_in_car_share, move_in);
+        Arc::new(db)
+    };
+    let (_, none, home) = move_in_town(sharing(0.0, 1.0));
+    assert_eq!(none, 0, "no move-in car with the share at 0");
+    assert!(home > 0, "the households arrive all the same");
+    let (_, all, home_all) = move_in_town(sharing(1.0, 0.0));
+    assert!(all > 0, "move-in cars with the share at 1");
+    assert!(home_all > 0);
 }
 
 /// T-180: on river_valley the start tile is open ground: from the end of the entry stub a
