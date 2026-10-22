@@ -26,6 +26,7 @@ use crate::material::VertexColorMaterial;
 mod blob;
 mod coverage_ghost;
 mod districts;
+mod emit_ghost;
 mod industry;
 mod land;
 mod live_coverage;
@@ -41,6 +42,7 @@ pub use coverage_ghost::{
 pub use districts::{
     DistrictLayer, DistrictLayers, DistrictsMode, contour_edges, contour_mesh, fill_mesh,
 };
+pub use emit_ghost::{EmitGhost, EmitGhostCircles, EmitSite, emit_ghost_mesh};
 pub use industry::{
     AreaFamily, AreaLayer, AreasMode, IndustryLayers, ResourceLayer, area_contour_edges,
     area_contour_mesh, area_fill_mesh, park_color, resource_cell_color, resource_color,
@@ -65,6 +67,8 @@ pub enum Overlay {
     Zones,
     LandValue,
     Pollution,
+    /// Noise of the loud buildings and the loaded highways (T-300).
+    Noise,
     /// Pipes (underground), their reach and the water / sewage state of buildings.
     Water,
     /// Power lines, their reach and the power state of buildings.
@@ -105,6 +109,7 @@ impl Overlay {
         Overlay::Zones,
         Overlay::LandValue,
         Overlay::Pollution,
+        Overlay::Noise,
         Overlay::Water,
         Overlay::Power,
         Overlay::Districts,
@@ -169,6 +174,7 @@ impl Overlay {
             Overlay::Zones => "Zones",
             Overlay::LandValue => "Land value",
             Overlay::Pollution => "Pollution",
+            Overlay::Noise => "Noise",
             Overlay::Water => "Water",
             Overlay::Power => "Power",
             Overlay::Districts => "Districts",
@@ -269,6 +275,18 @@ pub fn pollution_color(v: f32) -> [f32; 4] {
             [0.30, 0.70, 0.30, 0.25],
             [0.65, 0.50, 0.15, 0.5],
             [0.40, 0.08, 0.35, 0.7],
+        ],
+    )
+}
+
+/// Noise: faint violet → strong violet → deep purple.
+pub fn noise_color(v: f32) -> [f32; 4] {
+    ramp(
+        v,
+        &[
+            [0.55, 0.40, 0.85, 0.20],
+            [0.54, 0.36, 0.84, 0.50],
+            [0.30, 0.10, 0.55, 0.75],
         ],
     )
 }
@@ -679,6 +697,8 @@ impl Plugin for OverlayPlugin {
             .init_resource::<CoverageGhost>()
             .init_resource::<LiveCoverage>()
             .init_resource::<CoverageGhostSummary>()
+            .init_resource::<EmitGhost>()
+            .init_resource::<emit_ghost::EmitGhostLayer>()
             .init_resource::<coverage_ghost::CoverageGhostLayer>()
             .init_resource::<transit::TransitLayer>()
             .init_resource::<transit::ShelterLayer>()
@@ -694,6 +714,7 @@ impl Plugin for OverlayPlugin {
                     transit::sync_transit_layer,
                     transit::sync_shelters,
                     coverage_ghost::sync_coverage_ghost,
+                    emit_ghost::sync_emit_ghost,
                     apply_overlay_visibility,
                 )
                     .chain(),
@@ -710,7 +731,7 @@ pub struct ZoneOutlines;
 pub fn zone_fill_visible(active: Overlay) -> bool {
     !matches!(
         active,
-        Overlay::LandValue | Overlay::Pollution | Overlay::Water | Overlay::Power
+        Overlay::LandValue | Overlay::Pollution | Overlay::Noise | Overlay::Water | Overlay::Power
     )
 }
 
@@ -736,6 +757,7 @@ struct OverlayLayers {
     zone_entities: Vec<[Option<Entity>; 2]>,
     land: LayerSource,
     pollution: LayerSource,
+    noise: LayerSource,
     water: LayerSource,
     power: LayerSource,
     /// One layer per M2 service kind, in [`SERVICE_OVERLAYS`] order.
@@ -906,6 +928,17 @@ fn sync_overlay_meshes(
         opt_ptr(&o.pollution),
         Overlay::Pollution,
         || heat_mesh(o.pollution.as_deref(), pollution_color, terrain),
+        &material,
+        &mut commands,
+        &mut meshes,
+        terrain_changed,
+        false,
+    );
+    upsert(
+        &mut l.noise,
+        opt_ptr(&o.noise),
+        Overlay::Noise,
+        || heat_mesh(o.noise.as_deref(), noise_color, terrain),
         &material,
         &mut commands,
         &mut meshes,

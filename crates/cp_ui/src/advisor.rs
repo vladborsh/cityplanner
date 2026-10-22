@@ -82,6 +82,8 @@ pub enum Action {
     Policies,
     /// Opens a window of the top bar (T-307).
     Window(crate::panels::UiWindow),
+    /// The Pollution overlay and the camera over the dirtiest water source (T-300).
+    PollutedSource(Vec2),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -513,12 +515,64 @@ fn mail_advice(view: &SimView, out: &mut Vec<Advice>) {
     }
 }
 
+/// "Bad water in N homes" (T-300): homes drinking from a polluted pool. "Show" opens the
+/// Pollution overlay and moves the camera to the dirtiest water source.
+fn bad_water_advice(view: &SimView, out: &mut Vec<Advice>) {
+    let n = view.service_state.summary().counts[6];
+    if n == 0 {
+        return;
+    }
+    out.push(Advice {
+        id: "bad_water",
+        severity: if n >= 10 {
+            Severity::Critical
+        } else {
+            Severity::Warn
+        },
+        text: trn(
+            "Bad water in {n} homes — polluted ground at a pump",
+            i64::from(n),
+        ),
+        count: n,
+        icon: Icon::ProblemBadWater,
+        action: Some(
+            dirtiest_water_source(view)
+                .map_or(Action::Overlay(Overlay::Pollution), Action::PollutedSource),
+        ),
+    });
+}
+
+/// The water source (pump or tower) standing on the most polluted ground.
+fn dirtiest_water_source(view: &SimView) -> Option<Vec2> {
+    let db = view.content.as_deref()?;
+    let grid = view.overlays.pollution.as_deref()?;
+    let cell = cp_terrain::MAP_SIZE / grid.side as f32;
+    let at = |p: Vec2| {
+        let c = |v: f32| ((v / cell).floor().max(0.0) as usize).min(grid.side - 1);
+        grid.values[c(p.y) * grid.side + c(p.x)]
+    };
+    view.buildings
+        .iter()
+        .filter(|(_, b)| {
+            db.building(b.def)
+                .service
+                .as_deref()
+                .and_then(|s| db.service_id(s))
+                .is_some_and(|s| db.service(s).kind == cp_content::ServiceKind::Water)
+        })
+        .map(|(_, b)| (at(b.pos), b.pos))
+        .filter(|(dirt, _)| *dirt > 0.0)
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, p)| p)
+}
+
 /// All the advice the view gives now, unordered.
 pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
     let mut out = unique_advice(view, seen);
     industry_advice(view, &mut out);
     park_advice(view, &mut out);
     mail_advice(view, &mut out);
+    bad_water_advice(view, &mut out);
     let city = &*view.city;
     let st = &city.buildings;
     let sev = |n: u32| {
@@ -925,6 +979,10 @@ fn run(action: Action, state: &mut UiState, overlay: &mut cp_render::OverlayStat
         Action::Budget => state.budget_open = true,
         Action::Policies => state.policies_open = true,
         Action::Window(w) => state.open_window(w),
+        Action::PollutedSource(at) => {
+            overlay.open(Overlay::Pollution);
+            state.camera_goal = Some(at);
+        }
     }
 }
 
@@ -1249,6 +1307,35 @@ mod tests {
         }
         adv.observe(&at_tick(sick, day(17)), 1700.0, false);
         assert_eq!(adv.current(1700.1).map(|a| a.id), Some("jobs"));
+    /// T-300: homes with BAD_WATER give "Bad water in N homes"; its action opens the Pollution
+    /// overlay (and moves the camera when a polluted source is known).
+    #[test]
+    fn bad_water_homes_give_an_advice_that_opens_the_pollution_overlay() {
+        use cp_service::{BuildingServices, ServiceProblems, ServiceState};
+        let mut v = no_water(0);
+        assert!(collect(&v, &mut None).iter().all(|a| a.id != "bad_water"));
+        let bad = BuildingServices {
+            problems: ServiceProblems(ServiceProblems::BAD_WATER),
+            ..BuildingServices::default()
+        };
+        v.service_state = std::sync::Arc::new(ServiceState::from_parts(
+            vec![bad, bad, bad],
+            Default::default(),
+        ));
+        let all = collect(&v, &mut None);
+        let a = all.iter().find(|a| a.id == "bad_water").expect("advice");
+        assert_eq!(a.count, 3);
+        assert_eq!(a.icon, Icon::ProblemBadWater);
+        assert_eq!(a.action, Some(Action::Overlay(Overlay::Pollution)));
+        let mut state = UiState::default();
+        let mut overlay = cp_render::OverlayState::default();
+        run(
+            Action::PollutedSource(Vec2::new(5.0, 6.0)),
+            &mut state,
+            &mut overlay,
+        );
+        assert_eq!(overlay.active, Overlay::Pollution);
+        assert_eq!(state.camera_goal, Some(Vec2::new(5.0, 6.0)));
     }
 
     /// BUG-115: a problem notifies after half a day, the same one is quiet for three days unless

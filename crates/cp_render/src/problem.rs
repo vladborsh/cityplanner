@@ -43,6 +43,8 @@ pub enum Problem {
     NoPower,
     /// `NO_WATER` and `NO_SEWAGE`: for the player both are "the pipe" (T-101), one icon.
     NoWater,
+    /// `ServiceProblems::BAD_WATER` (T-300): the water the home drinks comes from polluted ground.
+    BadWater,
     /// `ServiceProblems::DEAD`: bodies in the building.
     Dead,
     /// `ServiceProblems::SICK`: sick residents.
@@ -67,11 +69,12 @@ pub enum Problem {
 }
 
 impl Problem {
-    pub const ALL: [Problem; 15] = [
+    pub const ALL: [Problem; 16] = [
         Problem::Fire,
         Problem::NoRoad,
         Problem::NoPower,
         Problem::NoWater,
+        Problem::BadWater,
         Problem::Dead,
         Problem::Sick,
         Problem::Garbage,
@@ -113,6 +116,7 @@ impl Problems {
         };
         set |= svc(ServiceProblems::FIRE, Problem::Fire)
             | svc(ServiceProblems::DEAD, Problem::Dead)
+            | svc(ServiceProblems::BAD_WATER, Problem::BadWater)
             | svc(ServiceProblems::SICK, Problem::Sick)
             | svc(ServiceProblems::GARBAGE, Problem::Garbage)
             | svc(ServiceProblems::CRIME, Problem::Crime);
@@ -367,6 +371,7 @@ fn plate(p: Problem) -> [f32; 4] {
         Problem::NoRoad => [0.80, 0.18, 0.14, 1.0],
         Problem::NoPower => [0.95, 0.74, 0.12, 1.0],
         Problem::NoWater => [0.16, 0.50, 0.85, 1.0],
+        Problem::BadWater => [0.42, 0.44, 0.18, 1.0],
         Problem::Abandoned => [0.48, 0.50, 0.54, 1.0],
         Problem::Fire => [0.86, 0.34, 0.07, 1.0],
         Problem::Dead => [0.52, 0.48, 0.64, 1.0],
@@ -646,6 +651,28 @@ fn glyph(p: Problem) -> (&'static [Shape], [f32; 4]) {
                 (&[[-0.38, -0.30], [0.38, -0.30], [0.0, 0.34]], WHITE),
                 (
                     &[[-0.14, -0.30], [0.14, -0.30], [0.08, -0.04], [-0.08, -0.04]],
+                    DARK,
+                ),
+            ],
+            plate_color,
+        ),
+        // A drop with a dark smear in it: dirty water.
+        Problem::BadWater => (
+            &[
+                (&[[0.0, 0.38], [-0.20, -0.04], [0.20, -0.04]], WHITE),
+                (
+                    &[
+                        [-0.20, -0.04],
+                        [-0.14, -0.26],
+                        [0.0, -0.34],
+                        [0.14, -0.26],
+                        [0.20, -0.04],
+                        [0.0, 0.0],
+                    ],
+                    WHITE,
+                ),
+                (
+                    &[[-0.12, -0.20], [0.12, -0.20], [0.10, -0.12], [-0.10, -0.12]],
                     DARK,
                 ),
             ],

@@ -49,10 +49,12 @@ pub struct OverlayData {
     pub road_load: Arc<BTreeMap<SegmentId, f32>>,
     pub land_value: Option<Arc<ScalarGrid>>,
     pub pollution: Option<Arc<ScalarGrid>>,
+    /// Noise (T-300), `0..=1`.
+    pub noise: Option<Arc<ScalarGrid>>,
 }
 
-/// `(land grids revision, land value, pollution)` of the last snapshot.
-pub(crate) type LandCache = Option<(u64, Arc<ScalarGrid>, Arc<ScalarGrid>)>;
+/// `(land grids revision, land value, pollution, noise)` of the last snapshot.
+pub(crate) type LandCache = Option<(u64, [Arc<ScalarGrid>; 3])>;
 
 /// `(zone grid revision, overlay)` of the last snapshot.
 pub(crate) type ZoneCache = Option<(u64, Arc<ZoneOverlay>)>;

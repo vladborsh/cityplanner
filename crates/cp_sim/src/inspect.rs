@@ -18,6 +18,22 @@ use cp_traffic::{Agents, PedestrianId, VehicleId};
 
 use crate::SimRunner;
 
+/// Pollution or noise (`0..=100`) below which the inspector says "low" (T-300).
+pub const LEVEL_LOW: f32 = 15.0;
+/// ... and below which "medium"; from here "high".
+pub const LEVEL_MEDIUM: f32 = 40.0;
+
+/// The word the inspector shows for a pollution or noise value.
+pub fn level_word(v: f32) -> &'static str {
+    if v < LEVEL_LOW {
+        "low"
+    } else if v < LEVEL_MEDIUM {
+        "medium"
+    } else {
+        "high"
+    }
+}
+
 /// What the player clicked on. Pedestrians stand for their citizen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Selection {
@@ -690,8 +706,8 @@ impl Inspection {
                 if b.near_garbage {
                     r.push(row("Nuisance", "Near a landfill".to_string()));
                 }
-                r.push(row("Pollution", format!("{:.0}", b.pollution)));
-                r.push(row("Noise", format!("{:.0}", b.noise)));
+                r.push(row("Pollution", level_word(b.pollution).to_string()));
+                r.push(row("Noise", level_word(b.noise).to_string()));
                 if b.polluted_water {
                     r.push(row("Water", "Polluted water".to_string()));
                 }
@@ -825,5 +841,25 @@ fn mail_info(
             van_coming: runs.is_some_and(|r| r.find(cp_content::VehicleKind::Mail, id).is_some()),
             post: None,
         }),
+    }
+}
+
+#[cfg(test)]
+mod level_word_tests {
+    use super::*;
+
+    /// T-300: the home's pollution and noise rows are words, from the thresholds.
+    #[test]
+    fn pollution_and_noise_show_as_low_medium_or_high() {
+        for (v, word) in [
+            (0.0, "low"),
+            (14.9, "low"),
+            (15.0, "medium"),
+            (39.9, "medium"),
+            (40.0, "high"),
+            (100.0, "high"),
+        ] {
+            assert_eq!(level_word(v), word, "{v}");
+        }
     }
 }
