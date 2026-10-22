@@ -109,7 +109,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     // of the ground per tick, so the day after the load runs differently.
     assert_eq!(
         after_a_day(&mut sim),
-        0xbda760a646dccb6b, // T-311: re-recorded (was 0x474144ecf293bb70), half the arrivals (MOVE_IN_ONE_IN 4) and the trips of the departed cancelled at once. T-302b: re-recorded (was 0x3525f19247d6d612), format 63, the tram content. T-305: re-recorded (was 0x1172029647ed4c94), 70 km/h avenues and reach by time. T-303a: re-recorded (was 0x952c338864d38fa6), format 62. T-300b: re-recorded (was 0x46c86fe1c3fd6e4d), the water dirt. T-301: re-recorded, the day is 2048 ticks and the test runs a day (was 0x68f162061e8c655). T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
+        0xf3b290b7e23c1445, // BUG-113: re-recorded (was 0xbda760a646dccb6b), garbage trucks go for half a problem and book the landfill's day. T-311: re-recorded (was 0x474144ecf293bb70), half the arrivals (MOVE_IN_ONE_IN 4) and the trips of the departed cancelled at once. T-302b: re-recorded (was 0x3525f19247d6d612), format 63, the tram content. T-305: re-recorded (was 0x1172029647ed4c94), 70 km/h avenues and reach by time. T-303a: re-recorded (was 0x952c338864d38fa6), format 62. T-300b: re-recorded (was 0x46c86fe1c3fd6e4d), the water dirt. T-301: re-recorded, the day is 2048 ticks and the test runs a day (was 0x68f162061e8c655). T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
         "load + a day"
     );
 }
@@ -163,7 +163,8 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // T-303a: re-recorded (was 0xecaa77b6c0c32b93), format 62.
     // T-305: re-recorded (was 0x559a6ce3e0faabbd), 70 km/h avenues and reach by time.
     // T-302b: re-recorded (was 0xbb80f8c8a501fac8), format 63, the tram content.
-    assert_eq!(sim.checksum(), 0xabf544df409b48f7, "load + a day");
+    // BUG-113: re-recorded (was 0xabf544df409b48f7), garbage trucks go for half a problem and book the landfill's day.
+    assert_eq!(sim.checksum(), 0xfa28152f0738ac4f, "load + a day");
     // T-290: the trips of the saved jam arrive (completed grows by hundreds); the number in flight
     // no longer falls, the routine plans new ones all day (most of them abstract, T-280).
     let done_after = sim.world().resource::<TripBook>().completed;
