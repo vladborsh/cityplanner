@@ -283,8 +283,10 @@ fn cloud_cover(p: vec2<f32>) -> f32 {
     let q2 = turn37(q) * 2.1 + vec2<f32>(7.3, 1.9);
     let q3 = turn37(q2) * 2.2 + vec2<f32>(2.2, 9.4);
     let n = 0.6 * cloud_noise(q) + 0.28 * cloud_noise(q2) + 0.12 * cloud_noise(q3);
-    // Soft edges: a cloud's shadow fades in over tens of metres.
-    return smoothstep(0.44, 0.72, n);
+    // Soft edges: a cloud's shadow fades in over tens of metres. The three octaves average
+    // out near 0.5 and seldom pass 0.7, so the full shadow sits at 0.60 (BUG-106: with 0.72 it
+    // hardly ever came, and the city showed none).
+    return smoothstep(0.45, 0.60, n);
 }
 
 @fragment
