@@ -171,7 +171,7 @@ fn committed_content_loads_with_eleven_road_types_nine_roads_and_two_tracks() {
     // T-172: one-way streets with sidewalks and zoning on both sides.
     for (id, class, cars, speed) in [
         ("basic_1w_2l", RoadClass::Local, 2, 40.0),
-        ("medium_1w_3l", RoadClass::Collector, 3, 50.0),
+        ("medium_1w_3l", RoadClass::Collector, 3, 70.0), // T-305: 4-lane class, 70 km/h
     ] {
         let r = db.road(db.road_id(id).unwrap());
         assert_eq!((r.class, r.speed_kmh), (class, speed), "{id}");
