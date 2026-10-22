@@ -60,6 +60,9 @@ pub enum ActiveTool {
     Line,
     /// Turning a one-way road round (T-091).
     Flip,
+    /// Traffic lights and priority signs at the junctions (T-303): the clicks are on the screen
+    /// marks drawn by `cp_ui::junction_marks`.
+    Junctions,
 }
 
 /// What the bulldozer may take (T-286, §13.5 v7.1): everything, or only one utility layer —
@@ -488,6 +491,86 @@ pub fn upgrade_demo(
     upgrade_hover(&mut state, &view, demo.at);
 }
 
+/// Signs set without a cursor (`--sign-demo` of the desktop client, for the T-303 shots): each
+/// `(at, sign)` puts `sign` on the road arm nearest to `at` (metres from the map centre) of the
+/// controllable junction nearest to it (`None`: toggles that junction's light instead), once, as
+/// soon as the junctions are there.
+#[derive(Resource, Clone, Debug)]
+pub struct SignDemo {
+    pub signs: Vec<(Vec2, Option<cp_net::Sign>)>,
+    pub sent: bool,
+}
+
+impl SignDemo {
+    /// `x,z,main|yield|light[,x,z,main|yield|light...]`.
+    pub fn parse(v: &str) -> Option<Self> {
+        let parts: Vec<&str> = v.split(',').collect();
+        let signs = parts
+            .chunks(3)
+            .map(|c| {
+                let sign = match *c.get(2)? {
+                    "main" => Some(cp_net::Sign::Main),
+                    "yield" => Some(cp_net::Sign::Yield),
+                    "light" => None,
+                    _ => return None,
+                };
+                Some((Vec2::new(c[0].parse().ok()?, c[1].parse().ok()?), sign))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        (!signs.is_empty()).then_some(Self { signs, sent: false })
+    }
+}
+
+pub fn sign_demo(
+    demo: Option<ResMut<SignDemo>>,
+    view: Option<Res<SimView>>,
+    mut outbox: ResMut<CommandOutbox>,
+) {
+    let (Some(mut demo), Some(view)) = (demo, view) else {
+        return;
+    };
+    if demo.sent {
+        return;
+    }
+    let centre = Vec2::splat(cp_terrain::MAP_SIZE / 2.0);
+    let mut cmds = Vec::new();
+    for &(at, sign) in &demo.signs {
+        let at = centre + at;
+        let flat = |p: Vec3| Vec2::new(p.x, p.z);
+        let Some((&node, j)) = view
+            .junctions
+            .iter()
+            .filter(|(id, _)| view.net.is_controllable(**id))
+            .min_by(|a, b| {
+                let d = |j: &cp_net::Junction| flat(j.pos).distance(at);
+                d(a.1).total_cmp(&d(b.1))
+            })
+        else {
+            return;
+        };
+        let cut = |a: &cp_net::Arm| flat(j.pos) + Vec2::from_angle(a.angle) * a.setback;
+        let Some(arm) = j
+            .arms
+            .iter()
+            .min_by(|a, b| cut(a).distance(at).total_cmp(&cut(b).distance(at)))
+        else {
+            return;
+        };
+        cmds.push(match sign {
+            Some(sign) => NetCommand::SetSign {
+                node,
+                segment: arm.segment,
+                sign: Some(sign),
+            },
+            None => NetCommand::ToggleTrafficLight { node },
+        });
+    }
+    for c in cmds {
+        outbox.push(SimCommand::Net(c));
+    }
+    demo.sent = true;
+}
+
 /// The upgrade tool over `p`: the piece it would take, its preview and what it would demolish.
 pub fn upgrade_hover(state: &mut ToolState, view: &SimView, p: Vec2) {
     // The piece between the nearest stops; Shift: the whole road run (BUG-103).
@@ -906,7 +989,13 @@ impl Plugin for ToolsPlugin {
             .init_resource::<cp_render::CoverageGhost>()
             .add_systems(
                 Update,
-                (place_demo, upgrade_demo, brush_demo, sync_coverage_ghost)
+                (
+                    place_demo,
+                    upgrade_demo,
+                    sign_demo,
+                    brush_demo,
+                    sync_coverage_ghost,
+                )
                     .chain()
                     .after(tool_hover),
             )
@@ -1773,7 +1862,11 @@ pub fn tool_click(
             }
             state.line_key = None;
         }
-        ActiveTool::None | ActiveTool::Zone | ActiveTool::District | ActiveTool::Area => {}
+        ActiveTool::None
+        | ActiveTool::Zone
+        | ActiveTool::District
+        | ActiveTool::Area
+        | ActiveTool::Junctions => {}
     }
 }
 

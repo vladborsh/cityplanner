@@ -471,6 +471,11 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ));
             }
         },
+        (Category::Roads, ActiveTool::Junctions) => {
+            ui.weak(tr(
+                "Click a traffic light to switch it, a sign to step it: main, yield, none. Esc leaves the tool.",
+            ));
+        }
         (Category::Roads, ActiveTool::Upgrade) => match &tools.upgrade_preview {
             Some(u) if !u.errors.is_empty() => bad(ui, &u.errors, &tr("cannot upgrade")),
             Some(u) if u.is_noop() => {

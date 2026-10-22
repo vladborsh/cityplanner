@@ -93,10 +93,13 @@ pub enum Overlay {
     /// The ground, roads and buildings see-through, with the tunnels, the metro lines and the
     /// trains (T-164). Drawn by [`crate::underground`], not by the overlay layers.
     Underground,
+    /// The traffic lights and priority signs of the controllable junctions (T-303). Drawn as
+    /// screen marks by `cp_ui::junction_marks`, not by the overlay layers.
+    Junctions,
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 21] = [
+    pub const ALL: [Overlay; 22] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
@@ -118,6 +121,7 @@ impl Overlay {
         Overlay::IndustryAreas,
         Overlay::Parks,
         Overlay::Underground,
+        Overlay::Junctions,
     ];
 
     /// The overlay of an M2 service kind; `None` for the utility kinds (their own overlays).
@@ -181,6 +185,7 @@ impl Overlay {
             Overlay::IndustryAreas => "Industry areas",
             Overlay::Parks => "Parks",
             Overlay::Underground => "Underground",
+            Overlay::Junctions => "Traffic lights",
         }
     }
 }

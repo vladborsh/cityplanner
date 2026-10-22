@@ -29,6 +29,7 @@ pub mod icons;
 pub mod industry;
 pub mod info;
 pub mod jobs;
+pub mod junction_marks;
 pub mod land;
 pub mod lines;
 pub mod menus;
@@ -102,6 +103,7 @@ impl Plugin for UiPlugin {
                     utility_legend::source_captions,
                     parks::draw_labels,
                     service_marks::draw_service_marks,
+                    junction_marks::draw_junction_marks,
                 )
                     .chain(),
             );

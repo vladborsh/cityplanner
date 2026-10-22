@@ -55,6 +55,7 @@ pub struct Options {
     pub place_demo: Option<cp_tools::PlaceDemo>,
     /// `--upgrade-demo road,x,z[,whole]`: the upgrade tool held over (x, z) (BUG-103 shots).
     pub upgrade_demo: Option<cp_tools::UpgradeDemo>,
+    pub sign_demo: Option<cp_tools::SignDemo>,
     /// `--brush-demo district|area,small|large|erase,x,z[,x1,z1][,ghost]`: one click of the
     /// district or area brush at (x, z), or a stroke to (x1, z1), then its ghost held there;
     /// `ghost`: no stroke (BUG-108 and BUG-112 shots).
@@ -181,6 +182,7 @@ impl Options {
                     whole: rest.contains(&"whole"),
                 })
             }),
+            sign_demo: value("--sign-demo").and_then(|v| cp_tools::SignDemo::parse(&v)),
             grading: value("--grading").and_then(|v| match cp_render::GradingSettings::parse(&v) {
                 Ok(g) => Some(g),
                 Err(e) => {
@@ -582,6 +584,12 @@ pub fn run(opts: Options) -> AppExit {
         app.insert_resource(demo);
     }
     if let Some(demo) = opts.upgrade_demo {
+        if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
+            app.add_plugins(cp_tools::ToolsPlugin);
+        }
+        app.insert_resource(demo);
+    }
+    if let Some(demo) = opts.sign_demo {
         if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
             app.add_plugins(cp_tools::ToolsPlugin);
         }

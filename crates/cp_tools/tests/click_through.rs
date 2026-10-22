@@ -216,6 +216,7 @@ fn no_tool_reacts_to_a_click_over_the_ui() {
         ActiveTool::Place,
         ActiveTool::Utility,
         ActiveTool::Line,
+        ActiveTool::Junctions,
     ];
     for tool in tools {
         let mut app = app();

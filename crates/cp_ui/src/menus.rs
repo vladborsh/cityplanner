@@ -27,9 +27,11 @@ impl Remembered {
     /// The build tool `tools` has in hand, if it is one a menu remembers.
     fn of(tools: &ToolState) -> Option<Self> {
         match tools.active {
-            ActiveTool::Road | ActiveTool::Upgrade | ActiveTool::Flip | ActiveTool::Zone => {
-                Some(Self::Tool(tools.active))
-            }
+            ActiveTool::Road
+            | ActiveTool::Upgrade
+            | ActiveTool::Flip
+            | ActiveTool::Junctions
+            | ActiveTool::Zone => Some(Self::Tool(tools.active)),
             ActiveTool::Place => tools.building.def.map(Self::Place),
             ActiveTool::Utility => Some(Self::Utility(tools.utility.kind)),
             _ => None,
@@ -164,7 +166,10 @@ fn layer_of_def(content: Option<&ContentDb>, def: BuildingDefId) -> BulldozeLaye
 fn belongs(c: Category, r: Remembered, content: Option<&ContentDb>) -> bool {
     match (c, r) {
         (Category::Roads, Remembered::Tool(t)) => {
-            matches!(t, ActiveTool::Road | ActiveTool::Upgrade | ActiveTool::Flip)
+            matches!(
+                t,
+                ActiveTool::Road | ActiveTool::Upgrade | ActiveTool::Flip | ActiveTool::Junctions
+            )
         }
         (Category::Zones, Remembered::Tool(t)) => t == ActiveTool::Zone,
         (Category::Power, Remembered::Utility(k)) => k == UtilityKind::Power,
