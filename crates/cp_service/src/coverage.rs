@@ -1,10 +1,17 @@
 //! Coverage of a service along the roads (§16 M2 D "Покрытие").
 //!
 //! Per service kind, every segment gets `max over Active buildings of the kind of
-//! 1 − d / radius_m`, clamped at 0, where `d` is the road distance from the building's access
+//! 1 − d / radius_m`, clamped at 0, where `d` is the road **reach** from the building's access
 //! point to the nearest point of the segment: 0 on the access segment itself, otherwise the
 //! shorter way to one of its ends. Roads are walked without regard to direction (Dijkstra over
-//! the segment graph by length); the access point sits `t × length` along its segment.
+//! the segment graph); the access point sits `t × length` along its segment.
+//!
+//! **Reach is free-flow travel time, in metres of a [`REACH_BASE_KMH`] street** (T-305): a
+//! segment counts `length × (REACH_BASE_KMH / its car speed limit)`, so a 2-lane street at
+//! 40 km/h counts its metres exactly (every radius in content keeps its meaning there), a
+//! 6-lane arterial at 90 km/h counts 4/9 of them and a service reaches farther along it. No
+//! congestion: the reach is a property of the roads, not of today's traffic. A segment without a
+//! car lane (a park path, rails) counts its metres.
 //!
 //! The values are recomputed when `tick % 64 == 0`. Since save v22 (T-135) they are **saved
 //! and hashed**: between two boundaries the sim reads the values of the last boundary, and a
@@ -18,7 +25,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Local, Res, ResMut};
 use bevy_ecs::world::World;
 use cp_building::{AccessPoint, Building, BuildingGrid, BuildingState};
-use cp_content::{ContentDb, ServiceKind, SimContent};
+use cp_content::{ContentDb, LaneKind, ServiceKind, SimContent};
 use cp_core::Tick;
 use cp_net::{NetGraph, SegmentId};
 use serde::{Deserialize, Serialize};
@@ -116,14 +123,36 @@ impl ServiceCoverage {
     }
 }
 
-/// The road network as a graph of nodes joined by segments, for distances along the roads.
+/// The street speed the reach is measured against, km/h: a road at this speed counts its metres.
+pub const REACH_BASE_KMH: f32 = 40.0;
+
+/// The reach of a segment (see the module doc): its metres scaled by `REACH_BASE_KMH / the
+/// fastest car lane`, or its metres when it has no car lane. Exactly the metres at the base
+/// speed (the factor is `1.0`: both speeds come from the same `kmh / 3.6`).
+fn segment_reach(net: &NetGraph, s: &cp_net::Segment) -> f32 {
+    let car = s
+        .lanes
+        .iter()
+        .filter_map(|&l| net.lane(l))
+        .filter(|l| l.kind == LaneKind::Car)
+        .map(|l| l.speed_limit)
+        .fold(0.0f32, f32::max);
+    if car > 0.0 {
+        s.length * (REACH_BASE_KMH / 3.6 / car)
+    } else {
+        s.length
+    }
+}
+
+/// The road network as a graph of nodes joined by segments, for reaches along the roads
+/// (free-flow travel time in metres of a [`REACH_BASE_KMH`] street, see the module doc).
 /// Owns its data (no borrow of the [`NetGraph`]), so a client can keep one per net revision.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RoadGraph {
     adj: Vec<Vec<(usize, f32)>>,
     /// Segments in id order with their end node indices.
     segs: Vec<(SegmentId, usize, usize)>,
-    /// Per segment index: the live id, its end node indices and its length.
+    /// Per segment index: the live id, its end node indices and its reach.
     ends: Vec<Option<(SegmentId, usize, usize, f32)>>,
     /// Per node: the arena indices of the segments that end there.
     inc: Vec<Vec<u32>>,
@@ -146,12 +175,13 @@ impl RoadGraph {
         let mut inc: Vec<Vec<u32>> = vec![Vec::new(); nodes];
         for (id, s) in net.segments() {
             let (a, b) = (s.start.index as usize, s.end.index as usize);
-            adj[a].push((b, s.length));
-            adj[b].push((a, s.length));
+            let reach = segment_reach(net, s);
+            adj[a].push((b, reach));
+            adj[b].push((a, reach));
             inc[a].push(id.index);
             inc[b].push(id.index);
             segs.push((id, a, b));
-            ends[id.index as usize] = Some((id, a, b, s.length));
+            ends[id.index as usize] = Some((id, a, b, reach));
         }
         Self {
             adj,
@@ -167,7 +197,7 @@ impl RoadGraph {
         self.seg_slots
     }
 
-    /// End node indices and length of a live segment.
+    /// End node indices and reach of a live segment.
     fn seg(&self, id: SegmentId) -> Option<(usize, usize, f32)> {
         match self.ends.get(id.index as usize) {
             Some(&Some((live, a, b, len))) if live == id => Some((a, b, len)),
@@ -175,13 +205,13 @@ impl RoadGraph {
         }
     }
 
-    /// Metres along segment `seg` at curve parameter `t`.
+    /// Reach along segment `seg` at curve parameter `t`.
     fn offset(&self, seg: SegmentId, t: f32) -> Option<f32> {
         let (_, _, len) = self.seg(seg)?;
         Some((t * len).clamp(0.0, len))
     }
 
-    /// Road distance from the access point to every node; unreached nodes and nodes beyond
+    /// Road reach from the access point to every node; unreached nodes and nodes beyond
     /// `limit` stay infinite. Roads are walked without regard to direction.
     pub fn node_distances(&self, from: AccessPoint, limit: f32) -> Vec<f32> {
         self.search(from, limit, |_, _| f32::INFINITY)
@@ -245,7 +275,7 @@ impl RoadGraph {
         }
     }
 
-    /// Lowers `tail[n]` for the ends of the segment of `to` to the metres from `to` to them.
+    /// Lowers `tail[n]` for the ends of the segment of `to` to the reach from `to` to them.
     pub(crate) fn add_tail(&self, tail: &mut [f32], touched: &mut Vec<usize>, to: AccessPoint) {
         let (Some((a, b, len)), Some(s2)) = (self.seg(to.segment), self.offset(to.segment, to.t))
         else {
@@ -259,7 +289,7 @@ impl RoadGraph {
         }
     }
 
-    /// Distance along one segment between two access points on it.
+    /// Reach along one segment between two access points on it.
     pub(crate) fn same_segment(&self, a: AccessPoint, b: AccessPoint) -> f32 {
         match (self.offset(a.segment, a.t), self.offset(b.segment, b.t)) {
             (Some(x), Some(y)) => (x - y).abs(),
@@ -267,7 +297,7 @@ impl RoadGraph {
         }
     }
 
-    /// Road distance from `from` (whose [`Self::node_distances`] are `dist`) to the access
+    /// Road reach from `from` (whose [`Self::node_distances`] are `dist`) to the access
     /// point `to`; infinite when unreachable.
     pub fn distance_to(&self, dist: &[f32], from: AccessPoint, to: AccessPoint) -> f32 {
         let (Some((a, b, len)), Some(s2)) = (self.seg(to.segment), self.offset(to.segment, to.t))

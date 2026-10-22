@@ -24,6 +24,30 @@ const ROAD: &str = r#"Road((id: "street", name: "street", width: 12.0,
     upkeep_per_m_week: 0.5, allows_zoning: true, rank: 1, elevated: None, bridge: None,
     mesh: "m", material: "m"))"#;
 
+/// A 6-lane arterial at 90 km/h (T-305): 100 m of it count 100 × 40 / 90 of reach.
+const ARTERIAL: &str = r#"Road((id: "arterial", name: "arterial", width: 24.0,
+    lanes: [
+        (kind: Car, dir: Backward, width: 3.5, offset: 8.75),
+        (kind: Car, dir: Backward, width: 3.5, offset: 5.25),
+        (kind: Car, dir: Backward, width: 3.5, offset: 1.75),
+        (kind: Car, dir: Forward, width: 3.5, offset: -1.75),
+        (kind: Car, dir: Forward, width: 3.5, offset: -5.25),
+        (kind: Car, dir: Forward, width: 3.5, offset: -8.75),
+    ],
+    median_width: 0.0, speed_kmh: 90, max_slope: 0.12, cost_per_m: 10.0,
+    upkeep_per_m_week: 0.5, allows_zoning: true, rank: 3, elevated: None, bridge: None,
+    mesh: "m", material: "m"))"#;
+
+/// A path without a car lane (T-305): it counts its metres whatever its speed.
+const PATH: &str = r#"Road((id: "path", name: "path", width: 3.0,
+    lanes: [
+        (kind: Pedestrian, dir: Forward, width: 1.5, offset: 0.75),
+        (kind: Pedestrian, dir: Backward, width: 1.5, offset: -0.75),
+    ],
+    median_width: 0.0, speed_kmh: 5, max_slope: 0.12, cost_per_m: 10.0,
+    upkeep_per_m_week: 0.5, allows_zoning: false, rank: 0, elevated: None, bridge: None,
+    mesh: "m", material: "m"))"#;
+
 fn content() -> Arc<ContentDb> {
     let building = r#"Building((id: "clinic", name: "clinic", zone: Industrial, level: 1, lot: (1, 1),
         styles: ["p"], service: Some("clinic")))"#;
@@ -33,6 +57,8 @@ fn content() -> Arc<ContentDb> {
     Arc::new(
         ContentDb::from_sources(vec![
             ("r/street.ron".into(), ROAD.into()),
+            ("r/arterial.ron".into(), ARTERIAL.into()),
+            ("r/path.ron".into(), PATH.into()),
             ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
             ("b/clinic.ron".into(), building.into()),
             (
@@ -49,6 +75,11 @@ fn content() -> Arc<ContentDb> {
 
 /// A straight street of four 100 m segments, and a clinic at the start of the first.
 fn town() -> (World, Schedule, BuildingId, Vec<SegmentId>) {
+    town_on("street")
+}
+
+/// [`town`] on four 100 m segments of the road `road_id`.
+fn town_on(road_id: &str) -> (World, Schedule, BuildingId, Vec<SegmentId>) {
     let db = content();
     let mut world = World::new();
     world.insert_resource(Tick(0));
@@ -56,7 +87,7 @@ fn town() -> (World, Schedule, BuildingId, Vec<SegmentId>) {
     world.init_resource::<NetGraph>();
     world.init_resource::<BuildingGrid>();
     ServicePlugin::init(&mut world);
-    let road = db.road_id("street").unwrap();
+    let road = db.road_id(road_id).unwrap();
     let def = db.road(road).clone();
     let mut segs = Vec::new();
     for k in 0..4 {
@@ -118,6 +149,91 @@ fn coverage_falls_off_along_the_street_and_ends_at_the_radius() {
     assert_eq!(cov.on_segment(ServiceKind::Fire, segs[0]), 0.0);
     let b = world.resource::<BuildingGrid>().get(clinic).unwrap();
     assert_eq!(cov.coverage_of(ServiceKind::Health, b), 1.0);
+}
+
+/// T-305: the reach is free-flow travel time in metres of a 40 km/h street: a 40 km/h street
+/// counts its metres exactly, an arterial at 90 km/h counts 4/9 of them, a path without a car
+/// lane counts its metres.
+#[test]
+fn reach_is_the_metres_of_a_street_and_less_along_a_faster_road() {
+    let (world, _, _, segs) = town();
+    let g = RoadGraph::new(world.resource::<NetGraph>());
+    let origin = AccessPoint {
+        segment: segs[0],
+        t: 0.0,
+    };
+    let dist = g.node_distances(origin, f32::INFINITY);
+    // Node k sits k × 100 m along; exactly, not within an epsilon (every radius in content keeps
+    // its meaning on a 2-lane street).
+    let along: Vec<f32> = (0..=4).map(|k| dist[k]).collect();
+    assert_eq!(along, [0.0, 100.0, 200.0, 300.0, 400.0]);
+
+    for (road, factor) in [("arterial", 40.0 / 90.0), ("path", 1.0)] {
+        let (world, _, _, segs) = town_on(road);
+        let g = RoadGraph::new(world.resource::<NetGraph>());
+        let origin = AccessPoint {
+            segment: segs[0],
+            t: 0.0,
+        };
+        let dist = g.node_distances(origin, f32::INFINITY);
+        for k in 0..=4 {
+            let want = k as f32 * 100.0 * factor;
+            assert!(
+                (dist[k] - want).abs() < 1e-3,
+                "{road}: node {k} {}",
+                dist[k]
+            );
+        }
+        // The same unit between two access points on one segment and across segments.
+        let to = AccessPoint {
+            segment: segs[2],
+            t: 0.5,
+        };
+        let want = 250.0 * factor;
+        assert!((g.distance_to(&dist, origin, to) - want).abs() < 1e-3);
+    }
+}
+
+/// T-305: a clinic on a 6-lane arterial reaches farther along it than on a 2-lane street (the
+/// same 300 m radius covers 675 m of arterial), and the finder's reach is in the same unit.
+#[test]
+fn a_clinic_on_an_arterial_reaches_farther_than_on_a_street() {
+    let (mut world, mut schedule, _, segs) = town_on("arterial");
+    run_at(&mut world, &mut schedule, 64);
+    let cov = world.resource::<ServiceCoverage>();
+    let at: Vec<f32> = segs
+        .iter()
+        .map(|&s| cov.on_segment(ServiceKind::Health, s))
+        .collect();
+    // The segments start 0, 100, 200 and 300 m along, 0, 44.4, 88.9 and 133.3 of reach: all four
+    // are covered (on a street the last one is not).
+    for (k, got) in at.iter().enumerate() {
+        let want = 1.0 - k as f32 * 100.0 * (40.0 / 90.0) / 300.0;
+        assert!((got - want).abs() < 1e-3, "{at:?}");
+    }
+    let (street_world, mut street_schedule, _, street_segs) = town();
+    let mut street_world = street_world;
+    run_at(&mut street_world, &mut street_schedule, 64);
+    let street = street_world.resource::<ServiceCoverage>();
+    for (a, s) in segs.iter().zip(&street_segs).skip(1) {
+        assert!(
+            cov.on_segment(ServiceKind::Health, *a) > street.on_segment(ServiceKind::Health, *s)
+        );
+    }
+    // A house 250 m along the arterial is 111 of reach from the clinic.
+    let house = put(&mut world, "house", segs[2], 0.5);
+    let db = world.resource::<SimContent>().0.clone();
+    let (_, reach) = nearest_facility_with(
+        world.resource::<NetGraph>(),
+        world.resource::<BuildingGrid>(),
+        &db,
+        world.resource::<ServiceState>(),
+        ServiceKind::Health,
+        house,
+        |_, _| true,
+    )
+    .unwrap();
+    assert!((reach - 250.0 * 40.0 / 90.0).abs() < 1e-3, "{reach}");
 }
 
 #[test]

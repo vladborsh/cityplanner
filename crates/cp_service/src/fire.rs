@@ -61,6 +61,8 @@ fn dispatch(
     ) else {
         return false;
     };
+    // `metres` is the road reach (T-305: metres of a 40 km/h street, free-flow time); the
+    // estimate treats the engine as doing its own km/h over that.
     let speed = (bal.fire_engine_kmh / 3.6).max(0.1);
     let travel = (metres / speed / MOVE_SECONDS_PER_TICK).ceil() as u64;
     let work = (bal.fire_extinguish_hours * TICKS_PER_HOUR).round() as u64;

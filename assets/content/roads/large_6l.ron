@@ -15,7 +15,7 @@ Road((
         (kind: Pedestrian, dir: Forward, width: 4.5, offset: -13.75),
     ],
     median_width: 2.0,
-    speed_kmh: 60,
+    speed_kmh: 90,
     max_slope: 0.12,
     cost_per_m: 15.6,
     upkeep_per_m_week: 0.156,

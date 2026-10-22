@@ -11,7 +11,8 @@ use cp_net::NetGraph;
 use crate::coverage::{RoadGraph, Scratch};
 use crate::state::{Facility, ServiceState};
 
-/// The nearest Active building of `kind` by road from building `from` that still has room:
+/// The nearest Active building of `kind` by road reach (free-flow travel time, see
+/// [`crate::coverage`]) from building `from` that still has room:
 /// fewer than `capacity` served today and, when the definition has a `storage`, less than that
 /// stored. A building without power (`NO_POWER`) does not work and is skipped. Ties go to the smaller id. `None` when `from` has no access point or nothing
 /// reachable has room.
@@ -30,7 +31,8 @@ pub fn nearest_facility(
 }
 
 /// [`nearest_facility`] with the "has room" test given by the caller, which also gets the
-/// road distance (metres) back. Fire stations count engines out in `Facility::stored`.
+/// road reach back (metres of a 40 km/h street, the unit of `radius_m`). Fire stations count
+/// engines out in `Facility::stored`.
 pub fn nearest_facility_with(
     net: &NetGraph,
     buildings: &BuildingGrid,

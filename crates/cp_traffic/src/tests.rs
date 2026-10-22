@@ -672,6 +672,40 @@ fn congestion_makes_the_drive_slower_than_a_walk_of_the_same_route() {
     let _ = TripMode::Car;
 }
 
+/// T-305: the route is by free-flow time, so a longer way over a 90 km/h arterial beats the
+/// straight 40 km/h street: 800 m of arterial plus 2 × 100 m of street (32 + 18 s) against 800 m
+/// of street (72 s). The trip starts and ends on stubs, so neither way needs a U-turn.
+#[test]
+fn a_route_takes_the_arterial_when_it_is_faster_than_the_straight_street() {
+    let mut s = sim();
+    let from = s.seg((-100.0, 0.0), (0.0, 0.0));
+    // The straight street: two 400 m segments.
+    s.seg((0.0, 0.0), (400.0, 0.0));
+    s.seg((400.0, 0.0), (800.0, 0.0));
+    let to = s.seg((800.0, 0.0), (900.0, 0.0));
+    // The detour: up 100 m, 800 m of arterial, down 100 m.
+    s.seg((0.0, 0.0), (0.0, 100.0));
+    let art = s.seg_with("large_6l", (0.0, 100.0), (800.0, 100.0));
+    s.seg((800.0, 100.0), (800.0, 0.0));
+    s.tick();
+    let path = car_path(s.solve(car(
+        acc(from, 50.0, Side::Right),
+        acc(to, 50.0, Side::Right),
+    )))
+    .expect("a route");
+    let g = std::sync::Arc::clone(s.world.resource::<crate::service::PathNetwork>().graph());
+    assert!(
+        path.lanes()
+            .any(|l| g.car_lane(l).is_some_and(|n| n.segment == art)),
+        "the route takes the arterial: {path:?}"
+    );
+    assert!(
+        path.cost < 72.0,
+        "{} s, the street alone takes 72",
+        path.cost
+    );
+}
+
 /// T-302: a route keeps to the lanes its vehicle class may use. A car cannot cross a tram-only
 /// street, a tram cannot leave the rails, a bus rides a bus street and a car street alike, a
 /// trolleybus only its wired street.

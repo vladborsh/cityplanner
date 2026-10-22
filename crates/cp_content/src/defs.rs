@@ -1582,7 +1582,8 @@ pub struct ServiceDef {
     pub id: String,
     pub name: String,
     pub kind: ServiceKind,
-    /// Coverage radius along roads, metres.
+    /// Coverage reach along roads: free-flow travel time in metres of a 40 km/h street (T-305,
+    /// `cp_service::REACH_BASE_KMH`): exactly metres on a 2-lane street, farther along fast roads.
     pub radius_m: f32,
     /// Supply per game day for utility services (same unit as `BuildingDef.consumption`).
     pub capacity: u32,
