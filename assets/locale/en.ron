@@ -1076,4 +1076,5 @@
     "low": "low",
     "medium": "medium",
     "high": "high",
+    "Bad water in {n} homes — polluted ground at a pump": ["Bad water in {n} home — polluted ground at a pump", "Bad water in {n} homes — polluted ground at a pump"],
 }
