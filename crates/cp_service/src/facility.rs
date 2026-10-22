@@ -100,12 +100,25 @@ impl<'a> FacilityFinder<'a> {
         from: BuildingId,
         has_room: impl Fn(&Facility, &ServiceDef) -> bool,
     ) -> Option<(BuildingId, f32)> {
+        self.nearest_with_id(state, from, |_, used, svc| has_room(used, svc))
+    }
+
+    /// [`Self::nearest_with`] where the "has room" test also gets the facility's id (garbage
+    /// trucks in flight count against a facility's room, BUG-113).
+    pub fn nearest_with_id(
+        &mut self,
+        state: &ServiceState,
+        from: BuildingId,
+        has_room: impl Fn(BuildingId, &Facility, &ServiceDef) -> bool,
+    ) -> Option<(BuildingId, f32)> {
         let origin = self.buildings.get(from)?.access()?;
         let g = self.graph;
         let open: Vec<(BuildingId, AccessPoint)> = self
             .cands
             .iter()
-            .filter(|(id, _, svc)| has_room(&state.facility(*id).copied().unwrap_or_default(), svc))
+            .filter(|(id, _, svc)| {
+                has_room(*id, &state.facility(*id).copied().unwrap_or_default(), svc)
+            })
             .map(|&(id, to, _)| (id, to))
             .collect();
         if open.is_empty() {

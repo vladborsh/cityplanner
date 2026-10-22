@@ -278,3 +278,66 @@ fn recycling_cuts_the_garbage_of_the_buildings_in_its_district_only() {
     assert_eq!(t.garbage(outside), 50);
     assert_eq!(t.garbage(inside), 36);
 }
+
+/// BUG-113: the trucks on their way count against the landfill's day, and the last quarter of
+/// it is kept for the buildings near the problem.
+fn trucks_to(t: &Town) -> Vec<BuildingId> {
+    use cp_traffic::{RunPoint, ServiceRuns};
+    t.world
+        .resource::<ServiceRuns>()
+        .iter()
+        .filter_map(|(_, r)| match r.to {
+            RunPoint::Building(b) => Some(b),
+            _ => None,
+        })
+        .collect()
+}
+
+fn pile(t: &mut Town, id: BuildingId, garbage: u16) {
+    t.world.resource_mut::<ServiceState>().get_mut(id).garbage = garbage;
+}
+
+#[test]
+fn trucks_on_their_way_use_up_the_landfills_day_so_no_more_are_sent() {
+    let mut t = town(400, 20000);
+    t.world.init_resource::<cp_traffic::ServiceRuns>();
+    let houses: Vec<_> = (0..10).map(|k| t.put("house", k % 3, 0)).collect();
+    let _dump = t.put("dump", 3, 0);
+    for &h in &houses {
+        // Above the trigger (half the problem level, 50), below the urgent level (75).
+        pile(&mut t, h, 60);
+    }
+    t.run(0, 64);
+    // 400 a day, 100 of it kept: a truck goes while more than 100 is unbooked (240 booked
+    // after four, so a fifth goes; 300 after it, and the sixth would eat the reserve).
+    assert_eq!(trucks_to(&t).len(), 5, "{:?}", trucks_to(&t));
+}
+
+#[test]
+fn a_building_near_the_problem_gets_the_reserved_part_of_the_day() {
+    let mut t = town(400, 20000);
+    t.world.init_resource::<cp_traffic::ServiceRuns>();
+    let houses: Vec<_> = (0..10).map(|k| t.put("house", k % 3, 0)).collect();
+    let _dump = t.put("dump", 3, 0);
+    for &h in &houses[..9] {
+        pile(&mut t, h, 60);
+    }
+    // The last house is the one with the problem coming (>= 75), and the highest id, so it
+    // asks after the others have taken the open part of the day.
+    pile(&mut t, houses[9], 90);
+    t.run(0, 64);
+    let to = trucks_to(&t);
+    assert!(to.contains(&houses[9]), "{to:?}");
+    assert_eq!(to.len(), 6, "five ordinary ones and the urgent one: {to:?}");
+}
+
+#[test]
+fn a_house_below_the_trigger_gets_no_truck() {
+    let mut t = town(400, 20000);
+    t.world.init_resource::<cp_traffic::ServiceRuns>();
+    let house = t.put("house", 0, 0);
+    let _dump = t.put("dump", 3, 0);
+    pile(&mut t, house, 40);
+    t.run(0, 64);
+    assert!(trucks_to(&t).is_empty());
+}

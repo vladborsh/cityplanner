@@ -7,18 +7,39 @@
 //! arrives — by driving, or abstractly when the agent pool is full. A failed run takes it at
 //! once, as without runs. Without `ServiceRuns` every pass hands the garbage over at once.
 
+use std::collections::BTreeMap;
+
 use bevy_ecs::system::{Res, ResMut};
-use cp_building::{BuildingGrid, BuildingState};
+use cp_building::{BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::CitizenGrid;
 use cp_content::{PolicyKind, ServiceKind, ServiceUnlocks, SimContent, VehicleKind};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_district::PolicyParams;
-use cp_traffic::{RunState, ServiceRuns};
+use cp_traffic::{RunPoint, RunState, ServiceRuns};
 
 use crate::coverage::{COVERAGE_PERIOD, ServiceCoverage};
 use crate::facility::FacilityFinder;
 use crate::state::{ServiceProblems, ServiceState};
+
+/// A building holding this share of the problem level may use a facility's reserved last
+/// quarter of the day (BUG-113).
+const URGENT: f32 = 0.75;
+
+/// The garbage the trucks on their way will bring to each facility: what the buildings they
+/// go to hold now.
+fn booked_by_trucks(runs: &ServiceRuns, state: &ServiceState) -> BTreeMap<BuildingId, u64> {
+    let mut out = BTreeMap::new();
+    for (_, r) in runs.iter() {
+        if r.kind != VehicleKind::Truck as u8 {
+            continue;
+        }
+        if let (RunPoint::Building(from), RunPoint::Building(to)) = (r.from, r.to) {
+            *out.entry(from).or_default() += u64::from(state.get(to).map_or(0, |s| s.garbage));
+        }
+    }
+    out
+}
 
 /// Passes a building gets per game day (one every [`COVERAGE_PERIOD`] ticks).
 const PASSES_PER_DAY: u64 = TICKS_PER_DAY / COVERAGE_PERIOD;
@@ -48,6 +69,7 @@ pub fn update_garbage(
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
     let roads = net.graph();
     let mut finder = None;
+    let mut booked: Option<BTreeMap<BuildingId, u64>> = None;
     // Only this pass's bucket, in id order (T-256: the whole grid was walked to find it).
     for (id, b) in buildings.iter_bucket(COVERAGE_PERIOD as u32, bucket as u32) {
         // No garbage service is open yet: no garbage piles up (BUG-051).
@@ -94,15 +116,32 @@ pub fn update_garbage(
             }
             (Some(_), Some(_)) => false,
             (Some(r), None) => {
-                if garbage as f32 >= balance.garbage_truck_min
-                    && coverage.coverage_of(ServiceKind::Garbage, b) > 0.0
-                    && let Some(facility) = finder
-                        .get_or_insert_with(|| {
-                            FacilityFinder::new(&roads, &buildings, db, ServiceKind::Garbage)
-                        })
-                        .nearest(&state, id)
+                // BUG-113: a truck is worth the trip with half a problem's worth on board,
+                // and only to a facility whose day is not already spoken for by the trucks on
+                // their way. The last quarter of its day is for buildings near the problem.
+                let trigger = balance.garbage_truck_min.max(balance.garbage_problem * 0.5);
+                if garbage as f32 >= trigger && coverage.coverage_of(ServiceKind::Garbage, b) > 0.0
                 {
-                    r.start(VehicleKind::Truck, facility, id);
+                    let booked = booked.get_or_insert_with(|| booked_by_trucks(r, &state));
+                    let urgent = garbage as f32 >= balance.garbage_problem * URGENT;
+                    let finder = finder.get_or_insert_with(|| {
+                        FacilityFinder::new(&roads, &buildings, db, ServiceKind::Garbage)
+                    });
+                    let found = finder.nearest_with_id(&state, id, |f, used, svc| {
+                        let committed =
+                            u64::from(used.used_today) + booked.get(&f).copied().unwrap_or(0);
+                        let free = u64::from(svc.capacity).saturating_sub(committed);
+                        let kept = if urgent {
+                            0
+                        } else {
+                            u64::from(svc.capacity) / 4
+                        };
+                        free > kept && (svc.storage == 0 || used.stored < svc.storage)
+                    });
+                    if let Some((facility, _)) = found {
+                        r.start(VehicleKind::Truck, facility, id);
+                        *booked.entry(facility).or_default() += garbage;
+                    }
                 }
                 false
             }
