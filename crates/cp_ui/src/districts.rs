@@ -182,24 +182,9 @@ pub fn districts_panel(
     tools: &mut ToolState,
     outbox: &mut CommandOutbox,
 ) {
-    section(ui, &tr("Tool"), |ui| {
+    section(ui, &tr("Districts"), |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
-            for kind in DistrictToolKind::ALL {
-                let selected = tools.active == ActiveTool::District && tools.district.kind == kind;
-                let tile = tool_tile(
-                    ui,
-                    TileIcon::Icon(kind_icon(kind)),
-                    &tr(kind.label()),
-                    selected,
-                );
-                if tile.clicked() {
-                    if tools.active != ActiveTool::District {
-                        tools.select(ActiveTool::District);
-                    }
-                    tools.district.set_kind(kind);
-                }
-            }
             let next = view.and_then(next_id);
             if tool_tile_enabled(
                 ui,
@@ -217,48 +202,9 @@ pub fn districts_panel(
                     tools.select(ActiveTool::District);
                 }
             }
-            if tool_tile_enabled(
-                ui,
-                TileIcon::Icon(Icon::Remove),
-                &tr("Off"),
-                false,
-                tools.active == ActiveTool::District,
-            )
-            .clicked()
-            {
-                tools.select(ActiveTool::None);
-            }
         });
     });
     let Some(view) = view else { return };
-    // What a stroke paints (BUG-108: with nothing chosen it painted nothing, without a word).
-    if tools.active == ActiveTool::District && tools.district.kind != DistrictToolKind::Erase {
-        match tools
-            .district
-            .selected
-            .and_then(|id| view.districts.get(id))
-        {
-            Some(d) => {
-                ui.label(trf!("Painting: {name}", name = d.name));
-            }
-            None => {
-                ui.colored_label(
-                    egui::Color32::YELLOW,
-                    tr("No district chosen: a stroke makes a new one, or choose one below."),
-                );
-            }
-        }
-    }
-    section(ui, &tr("Districts"), |ui| {
-        if view.districts.iter().next().is_none() {
-            ui.weak(tr(
-                "No districts yet: press New district, then paint with a brush.",
-            ));
-        }
-        for (id, d) in view.districts.iter() {
-            district_row(ui, view, tools, outbox, id, d);
-        }
-    });
     if let Some(id) = tools.district.selected
         && let Some(d) = view.districts.get(id)
     {
@@ -288,6 +234,61 @@ pub fn districts_panel(
                 DistrictTab::Stats => stats_tab(ui, view, id),
             }
         }
+    }
+}
+
+/// The options strip of the Districts tray: the brush, Off, the list and what is painted.
+pub fn districts_options(
+    ui: &mut egui::Ui,
+    view: Option<&SimView>,
+    tools: &mut ToolState,
+    list_open: &mut bool,
+) {
+    for kind in DistrictToolKind::ALL {
+        let selected = tools.active == ActiveTool::District && tools.district.kind == kind;
+        if ui.selectable_label(selected, tr(kind.label())).clicked() {
+            if tools.active != ActiveTool::District {
+                tools.select(ActiveTool::District);
+            }
+            tools.district.set_kind(kind);
+        }
+    }
+    if ui
+        .add_enabled(
+            tools.active == ActiveTool::District,
+            egui::Button::new(tr("Off")),
+        )
+        .clicked()
+    {
+        tools.select(ActiveTool::None);
+    }
+    ui.separator();
+    if ui.selectable_label(*list_open, tr("List ▸")).clicked() {
+        *list_open = !*list_open;
+    }
+    if tools.active == ActiveTool::District
+        && tools.district.kind != DistrictToolKind::Erase
+        && let Some(d) =
+            view.and_then(|v| tools.district.selected.and_then(|id| v.districts.get(id)))
+    {
+        ui.label(trf!("Painting: {name}", name = d.name));
+    }
+}
+
+/// The list of the districts (their own small window).
+pub fn district_list(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    tools: &mut ToolState,
+    outbox: &mut CommandOutbox,
+) {
+    if view.districts.iter().next().is_none() {
+        ui.weak(tr(
+            "No districts yet: press New district, then paint with a brush.",
+        ));
+    }
+    for (id, d) in view.districts.iter() {
+        district_row(ui, view, tools, outbox, id, d);
     }
 }
 

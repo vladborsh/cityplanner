@@ -13,7 +13,7 @@ use cp_sim::SimView;
 use cp_tools::{CommandOutbox, ToolState};
 
 use crate::icons::Icon;
-use crate::panels::{UiState, roads_panel, services_panel, verdict, zones_panel};
+use crate::panels::{UiState, roads_panel, services_panel, zones_panel};
 use crate::style::Sizes;
 use cp_tools::{ActiveTool, BulldozeLayer};
 
@@ -262,7 +262,6 @@ pub fn tabs(category: Category, view: Option<&SimView>) -> Vec<(String, Option<I
             }
         }
         Category::Districts => {
-            out.push((tr("Tool"), Some(Icon::DistrictNew)));
             out.push((tr("Districts"), Some(Icon::Districts)));
             if view.is_some() {
                 out.push((tr("District"), Some(Icon::DistrictTabPolicies)));
@@ -274,8 +273,6 @@ pub fn tabs(category: Category, view: Option<&SimView>) -> Vec<(String, Option<I
             }
         }
         Category::Industry => {
-            out.push((tr("Tool"), Some(Icon::DistrictNew)));
-            out.push((tr("New area"), Some(Icon::DistrictNew)));
             out.push((tr("Areas"), Some(Icon::Industry)));
             for (res, _) in content
                 .map(crate::industry::chain_sections)
@@ -288,8 +285,6 @@ pub fn tabs(category: Category, view: Option<&SimView>) -> Vec<(String, Option<I
             }
         }
         Category::Parks => {
-            out.push((tr("Tool"), Some(Icon::DistrictNew)));
-            out.push((tr("New area"), Some(Icon::DistrictNew)));
             out.push((tr("Areas"), Some(Icon::CategoryParks)));
             if let Some(content) = content {
                 for kind in cp_content::ParkKind::ALL {
@@ -338,20 +333,25 @@ pub fn tray(
         .exact_size(Sizes::TRAY_H)
         .resizable(false)
         .show(root, |ui| {
-            ui.horizontal(|ui| {
-                category.icon().show(ui, Sizes::TRAY_TAB_H - 2.0);
-                ui.strong(tr(category.label()));
-                ui.separator();
-                for (n, (label, _)) in tabs.iter().enumerate() {
-                    if tabs.len() < 2 {
-                        break;
-                    }
-                    let r = ui.selectable_label(n == at, label);
-                    if r.clicked() {
-                        at = n;
-                    }
-                }
-            });
+            egui::ScrollArea::horizontal()
+                .id_salt("tray_tabs")
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        category.icon().show(ui, Sizes::TRAY_TAB_H - 2.0);
+                        ui.strong(tr(category.label()));
+                        ui.separator();
+                        for (n, (label, _)) in tabs.iter().enumerate() {
+                            if tabs.len() < 2 {
+                                break;
+                            }
+                            let r = ui.selectable_label(n == at, label);
+                            if r.clicked() {
+                                at = n;
+                            }
+                        }
+                    });
+                });
             ui.separator();
             crate::tray::enter(ui.ctx(), &key);
             // The pinned strip goes first so that the tiles above leave room for it.
@@ -359,10 +359,7 @@ pub fn tray(
                 .resizable(false)
                 .show_separator_line(false)
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        options(ui, category, state, view, tools);
-                        verdict_line(ui, category, tools);
-                    });
+                    ui.horizontal(|ui| options(ui, category, state, view, tools, overlay));
                 });
             egui::ScrollArea::both()
                 .auto_shrink([false, false])
@@ -421,21 +418,70 @@ fn options(
     state: &mut UiState,
     view: Option<&SimView>,
     tools: &mut ToolState,
+    overlay: &mut OverlayState,
 ) {
     match category {
         Category::Roads => crate::roads::road_options(ui, tools),
-        Category::Zones => {
-            let _ = (state, view);
+        Category::Districts => {
+            crate::districts::districts_options(ui, view, tools, &mut state.areas_open)
+        }
+        Category::Industry => {
+            crate::industry::industry_options(ui, view, tools, overlay, &mut state.areas_open)
+        }
+        Category::Parks => {
+            crate::parks::parks_options(ui, view, tools, overlay, &mut state.areas_open)
         }
         _ => {}
     }
 }
 
-/// The verdict of the tool in hand, on the options row.
-fn verdict_line(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        ui.horizontal_wrapped(|ui| verdict(ui, category, tools));
-    });
+/// The list of districts or areas of the open category, in a small window of its own (opened by
+/// the "List" button of the options strip). Returns whether it was drawn.
+pub fn list_window(
+    ctx: &egui::Context,
+    state: &mut UiState,
+    view: Option<&SimView>,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+    outbox: &mut CommandOutbox,
+) {
+    let (Some(category), Some(view)) = (state.category, view) else {
+        return;
+    };
+    if !state.areas_open
+        || !matches!(
+            category,
+            Category::Districts | Category::Industry | Category::Parks
+        )
+    {
+        return;
+    }
+    let title = match category {
+        Category::Districts => tr("Districts"),
+        _ => tr("Areas"),
+    };
+    let mut open = true;
+    egui::Window::new(title)
+        .id(egui::Id::new("tray_list"))
+        .open(&mut open)
+        .anchor(
+            egui::Align2::LEFT_BOTTOM,
+            egui::vec2(8.0, -(Sizes::DEMAND_H + Sizes::TRAY_H + 8.0)),
+        )
+        .default_width(300.0)
+        .resizable(false)
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(260.0)
+                .show(ui, |ui| match category {
+                    Category::Districts => crate::districts::district_list(ui, view, tools, outbox),
+                    Category::Industry => {
+                        crate::industry::area_list(ui, view, tools, overlay, outbox)
+                    }
+                    _ => crate::parks::area_list(ui, view, tools, overlay, outbox),
+                });
+        });
+    state.areas_open = open;
 }
 
 #[cfg(test)]
@@ -488,7 +534,8 @@ mod tests {
                 panel: None,
                 screen: egui::vec2(1280.0, 720.0),
             };
-            rig.frame(vec![]);
+            // The pointer rests over the map: the tool hint stands beside it.
+            rig.frame(vec![egui::Event::PointerMoved(egui::pos2(640.0, 200.0))]);
             rig.frame(vec![]);
             rig
         }
@@ -523,6 +570,7 @@ mod tests {
                 *pal = crate::demand_panel::demand_panel(&mut root, view, state, tools).categories;
                 crate::menus::apply(state, tools, overlay, Some(view));
                 *panel = tray(&mut root, state, Some(view), tools, overlay, outbox);
+                crate::hint::cursor_hint(ui.ctx(), state, tools);
                 crate::menus::remember(state, tools, view.content.as_deref());
                 crate::panels::release_auto_overlay(state, tools, overlay);
             })
@@ -898,6 +946,59 @@ mod tests {
         assert!(text.contains("Large"), "{text}");
     }
 
+    /// T-317: the hint is one short line beside the pointer while a tool is in hand, and nothing
+    /// without one.
+    #[test]
+    fn the_hint_stands_beside_the_pointer_only_with_a_tool_in_hand() {
+        let mut rig = Rig::new();
+        rig.click_category(Category::Roads);
+        rig.tools.select(ActiveTool::None);
+        let idle = rig.frame_texts(vec![]);
+        assert!(
+            !idle
+                .iter()
+                .any(|(t, _)| t.contains("Click to start a road"))
+        );
+        rig.tools.select(ActiveTool::Road);
+        let texts = rig.frame_texts(vec![]);
+        let (_, at) = texts
+            .iter()
+            .find(|(t, _)| t.contains("Click to start a road"))
+            .expect("the hint");
+        assert!(
+            (at.x - 640.0).abs() < 60.0 && (at.y - 200.0).abs() < 100.0,
+            "beside the pointer: {at:?}"
+        );
+    }
+
+    /// T-317: the list of areas is its own window, opened by the "List" button of the strip.
+    #[test]
+    fn the_list_button_opens_the_area_list_window() {
+        let mut rig = Rig::new();
+        rig.click_category(Category::Industry);
+        assert!(!rig.state.areas_open);
+        rig.click_label("List ▸");
+        assert!(rig.state.areas_open);
+        rig.t += 0.1;
+        let Rig {
+            ctx,
+            state,
+            tools,
+            overlay,
+            outbox,
+            view,
+            t,
+            ..
+        } = &mut rig;
+        let texts = frame_texts(ctx, input(*t, vec![]), |ui| {
+            list_window(ui.ctx(), state, Some(view), tools, overlay, outbox);
+        });
+        assert!(
+            texts.iter().any(|(t, _)| t.contains("No areas yet")),
+            "{texts:?}"
+        );
+    }
+
     #[test]
     fn the_top_bar_is_44_high() {
         let ctx = egui::Context::default();
@@ -1025,65 +1126,6 @@ mod tests {
             assert!(all.contains(&want), "{want:?} missing from {all:?}");
         }
         assert!(all.iter().any(|t| t.contains("can build")));
-    }
-
-    #[test]
-    fn the_verdict_is_pinned_below_the_content() {
-        let mut rig = Rig::new();
-        rig.click_category(Category::Roads);
-        rig.tools.select(ActiveTool::Road);
-        rig.tools.ghost = Some(Ghost {
-            polylines: vec![],
-            valid: false,
-            cost: None,
-            errors: vec!["PINNED-VERDICT".into()],
-            half_width: 6.0,
-            snap: Default::default(),
-            warnings: Vec::new(),
-            chevrons: Vec::new(),
-            zone: Default::default(),
-            block: None,
-            ..Default::default()
-        });
-        rig.frame(vec![]);
-        // The verdict is in the tray, near the bottom of the screen.
-        let mut at = None;
-        rig.t += 0.1;
-        let Rig {
-            ctx,
-            state,
-            tools,
-            overlay,
-            view,
-            t,
-            ..
-        } = &mut rig;
-        let mut out = ctx.run_ui(input(*t, vec![]), |ui| {
-            let mut root = crate::panels::root_ui(ui.ctx());
-            tray(
-                &mut root,
-                state,
-                Some(view),
-                tools,
-                overlay,
-                &mut CommandOutbox::default(),
-            );
-        });
-        out.textures_delta.clear();
-        fn walk(s: &egui::epaint::Shape, at: &mut Option<f32>) {
-            match s {
-                egui::epaint::Shape::Text(t) if t.galley.text().contains("PINNED-VERDICT") => {
-                    *at = Some(t.pos.y);
-                }
-                egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| walk(s, at)),
-                _ => {}
-            }
-        }
-        for c in &out.shapes {
-            walk(&c.shape, &mut at);
-        }
-        let y = at.expect("verdict text painted");
-        assert!(y > 720.0 * 0.7, "verdict at y={y} is near the bottom");
     }
 
     #[test]

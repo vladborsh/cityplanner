@@ -428,51 +428,8 @@ pub fn industry_panel(
     overlay: &mut OverlayState,
     outbox: &mut CommandOutbox,
 ) {
-    section(ui, &tr("Tool"), |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
-            for kind in DistrictToolKind::ALL {
-                let selected = tools.active == ActiveTool::Area && tools.area.kind == kind;
-                if tool_tile(
-                    ui,
-                    TileIcon::Icon(kind_icon(kind)),
-                    &tr(kind.label()),
-                    selected,
-                )
-                .clicked()
-                {
-                    if tools.active != ActiveTool::Area {
-                        tools.select(ActiveTool::Area);
-                    }
-                    tools.area.set_kind(kind);
-                    // A brush with no area under it paints nothing (BUG-062): take the first.
-                    if let Some(view) = view
-                        && tools
-                            .area
-                            .selected
-                            .is_none_or(|a| view.areas.get(a).is_none())
-                    {
-                        tools.area.selected = view.areas.iter().next().map(|(id, _)| id);
-                    }
-                    show_overlays(overlay);
-                }
-            }
-            if tool_tile_enabled(
-                ui,
-                TileIcon::Icon(Icon::Remove),
-                &tr("Off"),
-                false,
-                tools.active == ActiveTool::Area,
-            )
-            .clicked()
-            {
-                tools.select(ActiveTool::None);
-            }
-        });
-    });
     let Some(view) = view else { return };
-    section(ui, &tr("New area"), |ui| {
-        ui.weak(tr("Choose what the area works, then press New area."));
+    section(ui, &tr("Areas"), |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             for kind in ResourceKind::ALL {
@@ -520,101 +477,136 @@ pub fn industry_panel(
             }
         });
     });
-    // An area that was deleted is not the brush's area any more.
-    if tools.active == ActiveTool::Area && crate::tray::is_active(ui.ctx(), &tr("New area")) {
-        // (A just-made area is chosen before the view shows it: no hint for that frame.)
-        match tools.area.selected {
-            Some(id) => {
-                if let Some(a) = view.areas.get(id) {
-                    ui.label(trf!("Painting: {name}", name = a.name));
-                }
-            }
-            None => {
-                ui.colored_label(
-                    egui::Color32::YELLOW,
-                    tr(
-                        "No area chosen: a stroke makes an area of the richest resource under the brush, or pick a resource above or an area below.",
-                    ),
-                );
-            }
-        }
-    }
-    section(ui, &tr("Areas"), |ui| {
-        if view.areas.iter().next().is_none() {
-            ui.weak(tr(
-                "No areas yet: pick a resource, press New area, then paint with a brush.",
-            ));
-        }
-        for (id, a) in view.areas.iter() {
-            let AreaKind::Industry(kind) = a.kind else {
-                continue;
-            };
-            let selected = tools.area.selected == Some(id);
-            ui.horizontal(|ui| {
-                let (rect, resp) =
-                    ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
-                ui.painter().rect_filled(rect, 3.0, swatch(kind));
-                if selected {
-                    ui.painter().rect_stroke(
-                        rect,
-                        3.0,
-                        egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
-                        egui::StrokeKind::Outside,
-                    );
-                }
-                if resp.on_hover_text(tr("Choose this area")).clicked() {
-                    tools.area.selected = Some(id);
-                    if tools.active != ActiveTool::Area {
-                        tools.select(ActiveTool::Area);
-                    }
-                    show_overlays(overlay);
-                }
-                let key = egui::Id::new(("area_name", id.0));
-                let mut buf: String = ui
-                    .data(|m| m.get_temp(key))
-                    .unwrap_or_else(|| a.name.clone());
-                if !ui.memory(|m| m.has_focus(key)) {
-                    buf = a.name.clone();
-                }
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut buf)
-                        .id(key)
-                        .desired_width(130.0)
-                        .char_limit(NAME_MAX),
-                );
-                if r.lost_focus() && buf.trim() != a.name && !buf.trim().is_empty() {
-                    send(
-                        outbox,
-                        DistrictCommand::RenameArea {
-                            area: id,
-                            name: buf.trim().to_string(),
-                        },
-                    );
-                }
-                ui.data_mut(|m| m.insert_temp(key, buf));
-                ui.label(trf!("L{level}", level = a.level));
-                if ui.small_button(tr("Delete")).clicked() {
-                    send(outbox, DistrictCommand::DeleteArea { area: id });
-                    if selected {
-                        tools.area.selected = None;
-                    }
-                }
-            });
-            ui.weak(format!(
-                "    {}",
-                trf!(
-                    plural "{resource} · {n} cells",
-                    n = view.area_map.cell_count(id),
-                    resource = tr(resource_name(kind))
-                )
-            ));
-        }
-    });
-    if let Some(id) = tools.area.selected {
-        area_panel(ui, view, id);
-    }
     if let Some(db) = view.content.as_deref() {
         chain_panel(ui, view, db, tools, overlay);
+    }
+}
+
+/// The options strip of the Industry tray: the brush, Off, the list of areas and what is painted.
+pub fn industry_options(
+    ui: &mut egui::Ui,
+    view: Option<&SimView>,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+    areas_open: &mut bool,
+) {
+    for kind in DistrictToolKind::ALL {
+        let selected = tools.active == ActiveTool::Area && tools.area.kind == kind;
+        if ui.selectable_label(selected, tr(kind.label())).clicked() {
+            if tools.active != ActiveTool::Area {
+                tools.select(ActiveTool::Area);
+            }
+            tools.area.set_kind(kind);
+            // A brush with no area under it paints nothing (BUG-062): take the first.
+            if let Some(view) = view
+                && tools
+                    .area
+                    .selected
+                    .is_none_or(|a| view.areas.get(a).is_none())
+            {
+                tools.area.selected = view.areas.iter().next().map(|(id, _)| id);
+            }
+            show_overlays(overlay);
+        }
+    }
+    if ui
+        .add_enabled(
+            tools.active == ActiveTool::Area,
+            egui::Button::new(tr("Off")),
+        )
+        .clicked()
+    {
+        tools.select(ActiveTool::None);
+    }
+    ui.separator();
+    if ui.selectable_label(*areas_open, tr("List ▸")).clicked() {
+        *areas_open = !*areas_open;
+    }
+    if tools.active == ActiveTool::Area
+        && let Some(a) = view.and_then(|v| tools.area.selected.and_then(|id| v.areas.get(id)))
+    {
+        ui.label(trf!("Painting: {name}", name = a.name));
+    }
+}
+
+/// The list of the industry areas and the summary of the chosen one (its own small window).
+pub fn area_list(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+    outbox: &mut CommandOutbox,
+) {
+    if view.areas.iter().next().is_none() {
+        ui.weak(tr(
+            "No areas yet: pick a resource, press New area, then paint with a brush.",
+        ));
+    }
+    for (id, a) in view.areas.iter() {
+        let AreaKind::Industry(kind) = a.kind else {
+            continue;
+        };
+        let selected = tools.area.selected == Some(id);
+        ui.horizontal(|ui| {
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+            ui.painter().rect_filled(rect, 3.0, swatch(kind));
+            if selected {
+                ui.painter().rect_stroke(
+                    rect,
+                    3.0,
+                    egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
+                    egui::StrokeKind::Outside,
+                );
+            }
+            if resp.on_hover_text(tr("Choose this area")).clicked() {
+                tools.area.selected = Some(id);
+                if tools.active != ActiveTool::Area {
+                    tools.select(ActiveTool::Area);
+                }
+                show_overlays(overlay);
+            }
+            let key = egui::Id::new(("area_name", id.0));
+            let mut buf: String = ui
+                .data(|m| m.get_temp(key))
+                .unwrap_or_else(|| a.name.clone());
+            if !ui.memory(|m| m.has_focus(key)) {
+                buf = a.name.clone();
+            }
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut buf)
+                    .id(key)
+                    .desired_width(130.0)
+                    .char_limit(NAME_MAX),
+            );
+            if r.lost_focus() && buf.trim() != a.name && !buf.trim().is_empty() {
+                send(
+                    outbox,
+                    DistrictCommand::RenameArea {
+                        area: id,
+                        name: buf.trim().to_string(),
+                    },
+                );
+            }
+            ui.data_mut(|m| m.insert_temp(key, buf));
+            ui.label(trf!("L{level}", level = a.level));
+            if ui.small_button(tr("Delete")).clicked() {
+                send(outbox, DistrictCommand::DeleteArea { area: id });
+                if selected {
+                    tools.area.selected = None;
+                }
+            }
+        });
+        ui.weak(format!(
+            "    {}",
+            trf!(
+                plural "{resource} · {n} cells",
+                n = view.area_map.cell_count(id),
+                resource = tr(resource_name(kind))
+            )
+        ));
+    }
+    if let Some(id) = tools.area.selected {
+        area_panel(ui, view, id);
     }
 }
 
@@ -670,35 +662,52 @@ pub(crate) mod tests {
         draw(ctx, view, tools, overlay, outbox, up);
     }
 
-    /// BUG-062: a brush chosen before any area exists paints nothing, and the panel says so; with
-    /// an area in the view it takes that area.
+    /// One frame of the options strip; every text with where it starts.
+    fn options_frame(
+        ctx: &egui::Context,
+        view: &SimView,
+        tools: &mut ToolState,
+        overlay: &mut OverlayState,
+        events: Vec<egui::Event>,
+    ) -> Vec<(String, egui::Pos2)> {
+        let mut open = false;
+        crate::testutil::frame_texts(ctx, input(0.0, events), |ui| {
+            ui.horizontal(|ui| industry_options(ui, Some(view), tools, overlay, &mut open));
+        })
+    }
+
+    fn press_label(
+        ctx: &egui::Context,
+        view: &SimView,
+        tools: &mut ToolState,
+        overlay: &mut OverlayState,
+        label: &str,
+    ) {
+        let texts = options_frame(ctx, view, tools, overlay, vec![]);
+        let (_, at) = texts
+            .iter()
+            .find(|(t, _)| t == label)
+            .unwrap_or_else(|| panic!("no {label:?} in {texts:?}"));
+        let [down, up] = click(*at + egui::vec2(4.0, 4.0));
+        options_frame(ctx, view, tools, overlay, down);
+        options_frame(ctx, view, tools, overlay, up);
+    }
+
+    /// BUG-062: a brush chosen before any area exists paints nothing; with an area in the view it
+    /// takes that area. T-317: the brushes are buttons of the options strip.
     #[test]
-    fn a_brush_with_no_area_gets_the_first_area_and_the_panel_says_what_to_do() {
+    fn a_brush_with_no_area_gets_the_first_area() {
         let ctx = egui::Context::default();
-        let (mut tools, mut overlay, mut outbox) = (
-            ToolState::default(),
-            OverlayState::default(),
-            CommandOutbox::default(),
-        );
+        let (mut tools, mut overlay) = (ToolState::default(), OverlayState::default());
         let empty = view();
-        let tiles = draw(&ctx, &empty, &mut tools, &mut overlay, &mut outbox, vec![]);
-        press(
-            &ctx,
-            &empty,
-            &mut tools,
-            &mut overlay,
-            &mut outbox,
-            tiles[0].center(),
-        );
+        press_label(&ctx, &empty, &mut tools, &mut overlay, "Brush S");
         assert_eq!(tools.active, ActiveTool::Area);
         assert_eq!(tools.area.selected, None);
-        let texts = crate::testutil::frame_texts(&ctx, input(9.0, vec![]), |ui| {
-            industry_panel(ui, Some(&empty), &mut tools, &mut overlay, &mut outbox)
-        });
-        assert!(
-            texts.iter().any(|(t, _)| t.starts_with("No area chosen")),
-            "{texts:?}"
-        );
+        let (sim, _, _) = world_with_areas(1);
+        let view = sim.view();
+        press_label(&ctx, &view, &mut tools, &mut overlay, "Brush L");
+        assert_eq!(tools.area.kind, DistrictToolKind::BrushLarge);
+        assert!(tools.area.selected.is_some(), "the first area");
     }
 
     /// Tiles: Brush S, Brush L, Erase, Off | four resources, New area.
@@ -714,8 +723,8 @@ pub(crate) mod tests {
         let tiles = draw(&ctx, &view, &mut tools, &mut overlay, &mut outbox, vec![]);
         assert_eq!(
             tiles.len(),
-            4 + 4 + 1 + 24,
-            "tools, resources, New area, then the chain tiles"
+            4 + 1 + 24,
+            "resources, New area, then the chain tiles"
         );
         // New area is dead until a resource is chosen.
         press(
@@ -724,7 +733,7 @@ pub(crate) mod tests {
             &mut tools,
             &mut overlay,
             &mut outbox,
-            tiles[8].center(),
+            tiles[4].center(),
         );
         assert_eq!(outbox.iter().count(), 0);
         // Forestry is the second resource tile.
@@ -734,7 +743,7 @@ pub(crate) mod tests {
             &mut tools,
             &mut overlay,
             &mut outbox,
-            tiles[5].center(),
+            tiles[1].center(),
         );
         assert_eq!(tools.area.new_resource, Some(ResourceKind::Forestry));
         // BUG-062: picking a resource with no area of it makes one and switches the brush on.
@@ -753,7 +762,7 @@ pub(crate) mod tests {
             &mut tools,
             &mut overlay,
             &mut outbox,
-            tiles[8].center(),
+            tiles[4].center(),
         );
         let sent: Vec<SimCommand> = outbox.iter().cloned().collect();
         assert_eq!(
@@ -766,16 +775,6 @@ pub(crate) mod tests {
         assert_eq!(tools.area.selected, Some(AreaId(1)));
         assert_eq!(tools.active, ActiveTool::Area);
         assert_eq!(overlay.active, Overlay::Resources);
-        // A brush tile switches the brush kind.
-        press(
-            &ctx,
-            &view,
-            &mut tools,
-            &mut overlay,
-            &mut outbox,
-            tiles[1].center(),
-        );
-        assert_eq!(tools.area.kind, DistrictToolKind::BrushLarge);
     }
 
     /// A world with a Forestry area and a Farming area, painted over two spots.

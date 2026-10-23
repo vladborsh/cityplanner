@@ -26,6 +26,7 @@ pub mod frame;
 pub mod gauges;
 mod glyphs;
 pub mod grading;
+pub mod hint;
 pub mod icons;
 pub mod industry;
 pub mod info;
@@ -269,14 +270,22 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         ctx.set_zoom_factor(state.prefs.ui_scale);
     }
     // The bottom bar first (it is the lowest panel), the tray above it.
-    let bar = demand_panel::demand_panel(&mut root, view, state, tools);
+    demand_panel::demand_panel(&mut root, view, state, tools);
     menus::apply(state, tools, overlay, Some(view));
     tray(&mut root, state, Some(view), tools, overlay, outbox);
-    let _ = bar;
+    palette::list_window(ctx, state, Some(view), tools, overlay, outbox);
     overlays_panel::overlays_panel(ctx, state, overlay, lighting, files, Some(view));
     remember_map_rect(ctx, &root);
-    bulldozer_bar::bulldozer_bar(ctx, tools);
+    // The stripe stands on top of the bar and the open tray (T-317).
+    let lift = style::Sizes::DEMAND_H
+        + if state.category.is_some() {
+            style::Sizes::TRAY_H
+        } else {
+            0.0
+        };
+    bulldozer_bar::bulldozer_bar(ctx, tools, lift);
     cursor_label::cursor_label(ctx, tools);
+    hint::cursor_hint(ctx, state, tools);
     {
         let st = &mut *state;
         budget::budget_window(ctx, &mut st.budget_open, view, &mut st.budget, outbox);

@@ -176,7 +176,16 @@ fn notice(ctx: &egui::Context, view: &SimView, state: &mut UiState, rects: &mut 
     egui::Area::new("not_connected".into())
         .anchor(
             egui::Align2::LEFT_BOTTOM,
-            egui::vec2(8.0, -(Sizes::DEMAND_H + 8.0)),
+            egui::vec2(
+                8.0,
+                -(Sizes::DEMAND_H
+                    + if state.category.is_some() {
+                        Sizes::TRAY_H
+                    } else {
+                        0.0
+                    }
+                    + 8.0),
+            ),
         )
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {

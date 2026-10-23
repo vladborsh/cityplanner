@@ -228,57 +228,11 @@ pub fn parks_panel(
             .get(id)
             .is_some_and(|a| a.kind == AreaKind::Park(kind))
     };
-    section(ui, &tr("Tool"), |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
-            for kind in DistrictToolKind::ALL {
-                let selected = tools.active == ActiveTool::Area && tools.area.kind == kind;
-                if tool_tile(
-                    ui,
-                    TileIcon::Icon(kind_tool_icon(kind)),
-                    &tr(kind.label()),
-                    selected,
-                )
-                .clicked()
-                {
-                    if tools.active != ActiveTool::Area {
-                        tools.select(ActiveTool::Area);
-                    }
-                    tools.area.set_kind(kind);
-                    // A brush with no park area under it paints nothing: take the first.
-                    if let Some(view) = view
-                        && tools.area.selected.is_none_or(|a| {
-                            !matches!(view.areas.get(a).map(|a| a.kind), Some(AreaKind::Park(_)))
-                        })
-                    {
-                        tools.area.selected = view
-                            .areas
-                            .iter()
-                            .find(|(_, a)| matches!(a.kind, AreaKind::Park(_)))
-                            .map(|(id, _)| id);
-                    }
-                    show_overlay(overlay);
-                }
-            }
-            if tool_tile_enabled(
-                ui,
-                TileIcon::Icon(Icon::Remove),
-                &tr("Off"),
-                false,
-                tools.active == ActiveTool::Area,
-            )
-            .clicked()
-            {
-                tools.select(ActiveTool::None);
-            }
-        });
-    });
     let Some(view) = view else { return };
     let Some(db) = view.content.as_deref() else {
         return;
     };
-    section(ui, &tr("New area"), |ui| {
-        ui.weak(tr("Choose the kind of park, then press New area."));
+    section(ui, &tr("Areas"), |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             for kind in ParkKind::ALL {
@@ -354,85 +308,6 @@ pub fn parks_panel(
             }
         });
     });
-    if tools.active == ActiveTool::Area
-        && crate::tray::is_active(ui.ctx(), &tr("New area"))
-        && let Some(id) = tools.area.selected
-        && let Some(a) = view.areas.get(id)
-    {
-        ui.label(trf!("Painting: {name}", name = a.name));
-    }
-    section(ui, &tr("Areas"), |ui| {
-        if !view
-            .areas
-            .iter()
-            .any(|(_, a)| matches!(a.kind, AreaKind::Park(_)))
-        {
-            ui.weak(tr(
-                "No park areas yet: pick a kind, press New area, then paint with a brush.",
-            ));
-        }
-        for (id, a) in view.areas.iter() {
-            let AreaKind::Park(kind) = a.kind else {
-                continue;
-            };
-            let selected = tools.area.selected == Some(id);
-            ui.horizontal(|ui| {
-                let (rect, resp) =
-                    ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
-                ui.painter().rect_filled(rect, 3.0, swatch(kind));
-                if selected {
-                    ui.painter().rect_stroke(
-                        rect,
-                        3.0,
-                        egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
-                        egui::StrokeKind::Outside,
-                    );
-                }
-                if resp.on_hover_text(tr("Choose this area")).clicked() {
-                    tools.area.selected = Some(id);
-                    if tools.active != ActiveTool::Area {
-                        tools.select(ActiveTool::Area);
-                    }
-                    show_overlay(overlay);
-                }
-                let key = egui::Id::new(("park_area_name", id.0));
-                let mut buf: String = ui
-                    .data(|m| m.get_temp(key))
-                    .unwrap_or_else(|| a.name.clone());
-                if !ui.memory(|m| m.has_focus(key)) {
-                    buf = a.name.clone();
-                }
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut buf)
-                        .id(key)
-                        .desired_width(130.0)
-                        .char_limit(NAME_MAX),
-                );
-                if r.lost_focus() && buf.trim() != a.name && !buf.trim().is_empty() {
-                    send(
-                        outbox,
-                        DistrictCommand::RenameArea {
-                            area: id,
-                            name: buf.trim().to_string(),
-                        },
-                    );
-                }
-                ui.data_mut(|m| m.insert_temp(key, buf));
-                ui.label(trf!("L{n}", n = a.level));
-                if ui.small_button(tr("Delete")).clicked() {
-                    send(outbox, DistrictCommand::DeleteArea { area: id });
-                    if selected {
-                        tools.area.selected = None;
-                    }
-                }
-            });
-            ui.weak(format!(
-                "    {} · {}",
-                tr(kind_name(kind)),
-                trn("{n} cells", view.area_map.cell_count(id) as i64)
-            ));
-        }
-    });
     for kind in ParkKind::ALL {
         let cards = section_cards(db, Some(kind));
         if cards.is_empty() {
@@ -467,6 +342,136 @@ pub fn parks_panel(
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             crate::roads::path_tile(ui, db, tools);
         });
+    }
+}
+
+/// The options strip of the Parks tray: the brush, Off, the list of park areas and what is
+/// painted.
+pub fn parks_options(
+    ui: &mut egui::Ui,
+    view: Option<&SimView>,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+    areas_open: &mut bool,
+) {
+    for kind in DistrictToolKind::ALL {
+        let selected = tools.active == ActiveTool::Area && tools.area.kind == kind;
+        if ui.selectable_label(selected, tr(kind.label())).clicked() {
+            if tools.active != ActiveTool::Area {
+                tools.select(ActiveTool::Area);
+            }
+            tools.area.set_kind(kind);
+            // A brush with no park area under it paints nothing: take the first.
+            if let Some(view) = view
+                && tools.area.selected.is_none_or(|a| {
+                    !matches!(view.areas.get(a).map(|a| a.kind), Some(AreaKind::Park(_)))
+                })
+            {
+                tools.area.selected = view
+                    .areas
+                    .iter()
+                    .find(|(_, a)| matches!(a.kind, AreaKind::Park(_)))
+                    .map(|(id, _)| id);
+            }
+            show_overlay(overlay);
+        }
+    }
+    if ui
+        .add_enabled(
+            tools.active == ActiveTool::Area,
+            egui::Button::new(tr("Off")),
+        )
+        .clicked()
+    {
+        tools.select(ActiveTool::None);
+    }
+    ui.separator();
+    if ui.selectable_label(*areas_open, tr("List ▸")).clicked() {
+        *areas_open = !*areas_open;
+    }
+    if tools.active == ActiveTool::Area
+        && let Some(a) = view.and_then(|v| tools.area.selected.and_then(|id| v.areas.get(id)))
+    {
+        ui.label(trf!("Painting: {name}", name = a.name));
+    }
+}
+
+/// The list of the park areas (their own small window).
+pub fn area_list(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+    outbox: &mut CommandOutbox,
+) {
+    if !view
+        .areas
+        .iter()
+        .any(|(_, a)| matches!(a.kind, AreaKind::Park(_)))
+    {
+        ui.weak(tr(
+            "No park areas yet: pick a kind, press New area, then paint with a brush.",
+        ));
+    }
+    for (id, a) in view.areas.iter() {
+        let AreaKind::Park(kind) = a.kind else {
+            continue;
+        };
+        let selected = tools.area.selected == Some(id);
+        ui.horizontal(|ui| {
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+            ui.painter().rect_filled(rect, 3.0, swatch(kind));
+            if selected {
+                ui.painter().rect_stroke(
+                    rect,
+                    3.0,
+                    egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
+                    egui::StrokeKind::Outside,
+                );
+            }
+            if resp.on_hover_text(tr("Choose this area")).clicked() {
+                tools.area.selected = Some(id);
+                if tools.active != ActiveTool::Area {
+                    tools.select(ActiveTool::Area);
+                }
+                show_overlay(overlay);
+            }
+            let key = egui::Id::new(("park_area_name", id.0));
+            let mut buf: String = ui
+                .data(|m| m.get_temp(key))
+                .unwrap_or_else(|| a.name.clone());
+            if !ui.memory(|m| m.has_focus(key)) {
+                buf = a.name.clone();
+            }
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut buf)
+                    .id(key)
+                    .desired_width(130.0)
+                    .char_limit(NAME_MAX),
+            );
+            if r.lost_focus() && buf.trim() != a.name && !buf.trim().is_empty() {
+                send(
+                    outbox,
+                    DistrictCommand::RenameArea {
+                        area: id,
+                        name: buf.trim().to_string(),
+                    },
+                );
+            }
+            ui.data_mut(|m| m.insert_temp(key, buf));
+            ui.label(trf!("L{n}", n = a.level));
+            if ui.small_button(tr("Delete")).clicked() {
+                send(outbox, DistrictCommand::DeleteArea { area: id });
+                if selected {
+                    tools.area.selected = None;
+                }
+            }
+        });
+        ui.weak(format!(
+            "    {} · {}",
+            tr(kind_name(kind)),
+            trn("{n} cells", view.area_map.cell_count(id) as i64)
+        ));
     }
 }
 
@@ -736,14 +741,14 @@ mod tests {
             CommandOutbox::default(),
         );
         let tiles = draw(&ctx, &view, &mut tools, &mut overlay, &mut outbox, vec![]);
-        assert_eq!(tiles.len(), 4 + 4 + 1 + 20 + 6 + 1, "{}", tiles.len());
+        assert_eq!(tiles.len(), 4 + 1 + 20 + 6 + 1, "{}", tiles.len());
         press(
             &ctx,
             &view,
             &mut tools,
             &mut overlay,
             &mut outbox,
-            tiles[6].center(),
+            tiles[2].center(),
         );
         assert_eq!(tools.area.new_park, Some(ParkKind::Zoo));
         assert_eq!(

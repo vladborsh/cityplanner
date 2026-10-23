@@ -10,12 +10,16 @@ const STRIPE_W: f32 = 18.0;
 
 /// Draws the bar over everything else at the bottom edge; the rect it covers, or `None` when
 /// the bulldozer is not active. Not interactive: clicks reach whatever lies beneath.
-pub fn bulldozer_bar(ctx: &egui::Context, tools: &ToolState) -> Option<egui::Rect> {
+pub fn bulldozer_bar(ctx: &egui::Context, tools: &ToolState, lift: f32) -> Option<egui::Rect> {
     if tools.active != ActiveTool::Bulldozer {
         return None;
     }
     let screen = ctx.viewport_rect();
-    let rect = egui::Rect::from_min_max(egui::pos2(screen.min.x, screen.max.y - BAR_H), screen.max);
+    let bottom = screen.max.y - lift;
+    let rect = egui::Rect::from_min_max(
+        egui::pos2(screen.min.x, bottom - BAR_H),
+        egui::pos2(screen.max.x, bottom),
+    );
     egui::Area::new(egui::Id::new("bulldozer_bar"))
         .order(egui::Order::Foreground)
         .fixed_pos(rect.min)
@@ -75,7 +79,7 @@ mod tests {
             ..Default::default()
         };
         let mut out = None;
-        crate::testutil::frame(&ctx, input, |_| out = bulldozer_bar(&ctx, tools));
+        crate::testutil::frame(&ctx, input, |_| out = bulldozer_bar(&ctx, tools, 0.0));
         out
     }
 

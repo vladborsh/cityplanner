@@ -98,6 +98,8 @@ pub struct UiState {
     pub policies_open: bool,
     /// Name drafts of the Lines window.
     pub lines: crate::lines::LinesDraft,
+    /// The list of districts or areas of the open tray category is open (T-317).
+    pub areas_open: bool,
     /// The tab each category's tray was left on (T-317; not saved).
     pub tray_tab: Vec<(Category, String)>,
     /// Where the "show" button of the not-connected notice wants the camera (XZ, metres);
