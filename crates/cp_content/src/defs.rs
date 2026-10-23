@@ -562,6 +562,75 @@ pub struct Balance {
     pub park_land_radius_m: f32,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
+    /// The contentment of homes (T-318, §19): factor weights, penalties and thresholds.
+    pub contentment: ContentmentKnobs,
+}
+
+/// The contentment of homes (`balance.ron` `contentment`, T-318, `system-design.md` §19.2).
+/// // tune later
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ContentmentKnobs {
+    /// Weight of each factor in the index, in factor order: services, environment, home
+    /// problems, work, commute, leisure, tax, trust.
+    pub weights: [u8; 8],
+    /// A pass closes `1 / step_div` of the gap to the target (at least one point).
+    pub step_div: u8,
+    /// A factor scoring below this gives a complaint.
+    pub complain_below: u8,
+    /// Environment: `100 - pollution_w x ground - noise_w x noise` at the home.
+    pub env_pollution_w: f32,
+    pub env_noise_w: f32,
+    /// Home problems: points each one takes, in order: no road (or path), no water (or
+    /// sewage), no power, garbage, crime, bad water, bodies, sick.
+    pub problem_penalty: [u8; 8],
+    /// Leisure: a leisure target (park gate, city park, landmark) this close (straight line)
+    /// adds half the score; the parks' green adds the rest.
+    pub leisure_near_m: f32,
+    /// Tax: full score at or below `tax_neutral` percent, `tax_step` points less per percent
+    /// above.
+    pub tax_neutral: u8,
+    pub tax_step: u8,
+    /// The trust in the mayor until the corruption state exists (T-324), `0..=100`.
+    pub trust_default: u8,
+}
+
+impl ContentmentKnobs {
+    /// Every knob as a float, in declaration order: for validation and the content hash.
+    pub fn knobs(&self) -> Vec<f32> {
+        let mut v: Vec<f32> = self.weights.iter().map(|&w| f32::from(w)).collect();
+        v.extend([
+            f32::from(self.step_div),
+            f32::from(self.complain_below),
+            self.env_pollution_w,
+            self.env_noise_w,
+        ]);
+        v.extend(self.problem_penalty.iter().map(|&p| f32::from(p)));
+        v.extend([
+            self.leisure_near_m,
+            f32::from(self.tax_neutral),
+            f32::from(self.tax_step),
+            f32::from(self.trust_default),
+        ]);
+        v
+    }
+}
+
+impl Default for ContentmentKnobs {
+    fn default() -> Self {
+        Self {
+            weights: [25, 15, 20, 15, 10, 10, 5, 10],
+            step_div: 8,
+            complain_below: 50,
+            env_pollution_w: 1.0,
+            env_noise_w: 0.6,
+            problem_penalty: [50, 40, 40, 25, 25, 20, 15, 10],
+            leisure_near_m: 600.0,
+            tax_neutral: 9,
+            tax_step: 10,
+            trust_default: 60,
+        }
+    }
 }
 
 /// Distances of the pipe and power networks, metres (`balance.ron` `networks`, T-181). Tune later.
@@ -952,6 +1021,7 @@ impl Default for Balance {
             industry_export_share: 0.25,
             industry_import_share: 0.25,
             networks: Networks::default(),
+            contentment: ContentmentKnobs::default(),
         }
     }
 }

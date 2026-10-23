@@ -277,6 +277,8 @@ pub fn open_services(progress: &Progress, db: &ContentDb) -> cp_content::Service
         ServiceKind::Fire,
         ServiceKind::Police,
         ServiceKind::Post,
+        // T-318: homes expect a school only once one can be built.
+        ServiceKind::Education,
     ] {
         let mut any = false;
         let mut open = false;

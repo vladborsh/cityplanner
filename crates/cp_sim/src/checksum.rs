@@ -124,6 +124,13 @@ pub(crate) fn economy_part(world: &World, h: &mut Fnv1a) {
     if !shortage.since.is_empty() {
         h.write_serialized(shortage);
     }
+    // The contentment of the homes and its roll-ups (T-318); absent while no home was scored,
+    // so states without homes keep their checksum.
+    let homes = world.resource::<cp_building::HomeContentment>();
+    if *homes != cp_building::HomeContentment::default() {
+        h.write_serialized(homes);
+        h.write_serialized(world.resource::<cp_economy::CityContentment>());
+    }
     // Absent while nothing is locked (the default), so such states keep their checksum.
     let progress = world.resource::<crate::Progress>();
     if *progress != crate::Progress::ALL {

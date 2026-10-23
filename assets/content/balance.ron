@@ -326,6 +326,27 @@ Balance((
     jobs_persist_days: 5,
     jobs_repeat_days: 5,
 
+    // --- Contentment of homes (T-318, system-design §19.2): all // tune later ---
+    // Index 0..100 = weighted mean of eight factor scores (weights in order: services,
+    // environment, home problems, work, commute, leisure, tax, trust); a pass closes 1/step_div
+    // of the gap; a factor below complain_below gives a complaint. Environment = 100 -
+    // env_pollution_w x ground - env_noise_w x noise. Problem points: no road, no water, no
+    // power, garbage, crime, bad water, bodies, sick. Leisure: a target within leisure_near_m
+    // gives half. Tax: full up to tax_neutral %, tax_step less per % above. trust_default stands
+    // in for the corruption trust until T-324.
+    contentment: (
+        weights: (25, 15, 20, 15, 10, 10, 5, 10),
+        step_div: 8,
+        complain_below: 50,
+        env_pollution_w: 1.0,
+        env_noise_w: 0.6,
+        problem_penalty: (50, 40, 40, 25, 25, 20, 15, 10),
+        leisure_near_m: 600.0,
+        tax_neutral: 9,
+        tax_step: 10,
+        trust_default: 60,
+    ),
+
     // --- Networks (T-181): distances of water, sewage and power // tune later ---
     // power_gap_m: largest gap between the footprint edges of two buildings over which one
     //   passes power on to the other. line_reach_m / pipe_reach_m: how far a building's edge may

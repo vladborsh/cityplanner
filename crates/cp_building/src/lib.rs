@@ -2,6 +2,7 @@
 //! `architecture/system-design.md` §8.
 
 pub mod command;
+pub mod contentment;
 pub mod edge;
 pub mod free;
 pub mod grid;
@@ -20,6 +21,7 @@ pub use command::{
     platform_request_behind, platform_shift, validate_move_over, validate_placement,
     validate_placement_except, validate_placement_for, validate_placement_over,
 };
+pub use contentment::{COMPLAINTS_MAX, Complaint, HomeContentment, HomeSlot, NEUTRAL_INDEX};
 pub use edge::{
     EDGE_REACH_M, EdgeBlocked, SLIDE_M, edge_search, is_edge_placed, validate_edge_placement,
 };

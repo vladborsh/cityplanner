@@ -7,6 +7,7 @@
 //! and [`settle_week`] (hourly since BUG-040).
 
 pub mod command;
+pub mod contentment;
 pub mod deathcare;
 pub mod demand;
 pub mod emissions;
@@ -19,6 +20,9 @@ pub mod state;
 pub mod week;
 
 pub use command::{EconomyCommand, EconomyError, apply};
+pub use contentment::{
+    CityContentment, DistrictContentment, FACTORS, HomeFacts, Scored, update_contentment,
+};
 pub use deathcare::update_deathcare;
 pub use demand::{DemandAcc, shortage_jobs, smooth, update_demand};
 pub use emissions::{CELL_E, EmissionInputs, Emissions, SIDE_E, ZONE_CELL_M, emission_of};
@@ -39,6 +43,8 @@ pub use week::{
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_economy";
 
+#[cfg(test)]
+mod contentment_tests;
 #[cfg(test)]
 mod deathcare_tests;
 #[cfg(test)]

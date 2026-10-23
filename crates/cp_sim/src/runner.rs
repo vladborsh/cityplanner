@@ -56,6 +56,9 @@ pub struct SimRunner {
     pub(crate) area_cache: std::sync::Mutex<crate::view::AreaCache>,
     /// `SimView::industry` cache.
     pub(crate) industry_cache: std::sync::Mutex<Option<std::sync::Arc<cp_industry::IndustryState>>>,
+    /// The published home contentment (T-318) and the revision it was cloned at.
+    pub(crate) homes_cache:
+        std::sync::Mutex<Option<(u64, std::sync::Arc<cp_building::HomeContentment>)>>,
     /// `SimView::deposits` cache, kept while the deposits are unchanged.
     pub(crate) deposits_cache:
         std::sync::Mutex<Option<std::sync::Arc<cp_terrain::ResourceDeposits>>>,
@@ -154,6 +157,8 @@ impl SimRunner {
         world.init_resource::<cp_economy::Emissions>();
         world.init_resource::<cp_economy::Decay>();
         world.init_resource::<cp_economy::WorkerShortage>();
+        world.init_resource::<cp_building::HomeContentment>();
+        world.init_resource::<cp_economy::CityContentment>();
         world.init_resource::<crate::progress::Progress>();
         world.init_resource::<cp_content::ServiceUnlocks>();
         world.init_resource::<cp_terrain::ResourceDeposits>();
@@ -333,6 +338,12 @@ impl SimRunner {
                 .in_set(SimPhase::Economy)
                 .after(cp_economy::update_health),
         );
+        // Contentment (T-318) reads the problems the service passes above have just set.
+        schedule.add_systems(
+            cp_economy::update_contentment
+                .in_set(SimPhase::Economy)
+                .after(cp_economy::update_deathcare),
+        );
         schedule.add_systems(cp_citizen::update_citizens.in_set(SimPhase::Citizens));
         schedule.add_systems(
             cp_citizen::update_lifecycle
@@ -447,6 +458,7 @@ impl SimRunner {
             district_cache: Default::default(),
             deposits_cache: Default::default(),
             industry_cache: Default::default(),
+            homes_cache: Default::default(),
             area_cache: Default::default(),
             zone_grid_cache: Default::default(),
             utilities_cache: Default::default(),

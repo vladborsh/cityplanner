@@ -1014,6 +1014,19 @@ impl ContentDb {
                     format!("power_gap_m, line_reach_m and pipe_reach_m must be in 0..={} (exclusive of 0)", Networks::MAX_M),
                 ));
             }
+            let c = &b.contentment;
+            if c.knobs().iter().any(|v| !v.is_finite() || *v < 0.0)
+                || c.weights.iter().all(|&w| w == 0)
+                || c.step_div == 0
+                || c.complain_below > 100
+                || c.trust_default > 100
+            {
+                errors.push(ContentError::new(
+                    path,
+                    Some("contentment"),
+                    "finite and >= 0, some weight > 0, step_div >= 1, complain_below and trust_default <= 100".to_string(),
+                ));
+            }
             if b.level_checks == 0 {
                 errors.push(ContentError::new(
                     path,
@@ -1090,6 +1103,13 @@ impl ContentDb {
             if b.networks != defaults.networks {
                 fnv1a(&mut hash, b"networks");
                 for v in b.networks.knobs() {
+                    fnv1a(&mut hash, &v.to_bits().to_le_bytes());
+                }
+            }
+            // T-318: the same way (content that does not touch them keeps its hash).
+            if b.contentment != defaults.contentment {
+                fnv1a(&mut hash, b"contentment");
+                for v in b.contentment.knobs() {
                     fnv1a(&mut hash, &v.to_bits().to_le_bytes());
                 }
             }

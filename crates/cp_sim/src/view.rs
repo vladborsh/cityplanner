@@ -130,6 +130,10 @@ pub struct SimView {
     pub agents: Arc<AgentSnapshot>,
     /// Smoothed demand (R, C, I, O) for the demand bars (§11), read-only.
     pub demand: cp_building::Demand,
+    /// The contentment of every home (T-318), shared: re-cloned only when a record changed.
+    pub home_contentment: Arc<cp_building::HomeContentment>,
+    /// The city's and the districts' contentment and complaints as of the last pass (T-318).
+    pub city_contentment: cp_economy::CityContentment,
     /// The city's money (cents), read-only, for the top bar and the budget window.
     pub treasury: cp_core::Treasury,
     /// What the last daily settlement booked (T-179): the top bar's trend and pop-up.
@@ -569,6 +573,21 @@ impl SimRunner {
         snap
     }
 
+    fn homes_snapshot(&self) -> Arc<cp_building::HomeContentment> {
+        let Some(now) = self.world().get_resource::<cp_building::HomeContentment>() else {
+            return Arc::default();
+        };
+        let mut cache = self.homes_cache.lock().expect("homes cache");
+        if let Some((rev, snap)) = cache.as_ref()
+            && *rev == now.revision()
+        {
+            return Arc::clone(snap);
+        }
+        let snap = Arc::new(now.clone());
+        *cache = Some((now.revision(), Arc::clone(&snap)));
+        snap
+    }
+
     fn deposits_snapshot(&self) -> Arc<cp_terrain::ResourceDeposits> {
         let now = self.world().get_resource::<cp_terrain::ResourceDeposits>();
         let mut cache = self.deposits_cache.lock().expect("deposits cache");
@@ -898,6 +917,12 @@ impl SimRunner {
             overlays: self.overlay_data(),
             agents: self.agent_snapshot(tick),
             demand: *self.world().resource::<cp_building::Demand>(),
+            home_contentment: self.homes_snapshot(),
+            city_contentment: self
+                .world()
+                .get_resource::<cp_economy::CityContentment>()
+                .cloned()
+                .unwrap_or_default(),
             treasury: *self.world().resource::<cp_core::Treasury>(),
             flow: self.world().resource::<cp_economy::MoneyFlow>().clone(),
             progress: self.world().resource::<crate::Progress>().clone(),
