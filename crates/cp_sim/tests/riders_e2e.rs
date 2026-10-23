@@ -490,15 +490,12 @@ fn free_transit_takes_no_fares_and_still_carries_the_riders() {
 
 #[test]
 fn free_transit_wins_car_owners_the_paid_line_does_not() {
-    // Car owners compare the bus with `car_bias ×` the car (here a slow, jammed car estimate): at
-    // some distances the paid line loses and the same line with halved waiting and penalty
-    // wins; never the other way round.
-    let slow = content_edited(
-        "slow",
-        "balance.ron",
-        "car_speed_est: 9.0",
-        "car_speed_est: 4.0",
-    );
+    // Car owners compare the bus with `car_bias ×` the car (here a car that counts 1.5 times, a
+    // slow car): at some distances the paid line loses and the same line with halved waiting and
+    // penalty wins; never the other way round. T-315: the drive is the real route on measured lane
+    // delays; the old load formula (× 31 at full load) made the stopped bus slow the car down, so
+    // `car_speed_est` 4 (the straight-line fallback) was enough before.
+    let slow = content_edited("slow", "balance.ron", "car_bias: 1.0", "car_bias: 1.5");
     let (mut flipped, mut worse) = (0, 0);
     for side in (400..=2000).step_by(100) {
         let by_bus = |free: bool| {
