@@ -960,7 +960,8 @@ mod tests {
                 .any(|(t, _)| t.contains("Click to start a road"))
         );
         rig.tools.select(ActiveTool::Road);
-        let texts = rig.frame_texts(vec![]);
+        // The click left the pointer on the bar: back to the map.
+        let texts = rig.frame_texts(vec![egui::Event::PointerMoved(egui::pos2(640.0, 200.0))]);
         let (_, at) = texts
             .iter()
             .find(|(t, _)| t.contains("Click to start a road"))
