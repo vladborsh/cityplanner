@@ -327,7 +327,7 @@ pub fn draw_junction_marks(
     cameras: bevy::prelude::Query<(&bevy::prelude::Camera, &bevy::prelude::GlobalTransform)>,
 ) {
     let Some(view) = view else { return };
-    if !shown(&overlay, &tools) {
+    if !shown(&overlay, &tools) || (tools.active == ActiveTool::Junctions && tools.lane_mode) {
         return;
     }
     let Ok(ctx) = contexts.ctx_mut() else { return };

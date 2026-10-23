@@ -236,6 +236,18 @@ fn classify(dir_in_arm: Vec2, dir_out_arm: Vec2) -> Turn {
     }
 }
 
+/// The turn a vehicle coming in on arm `from` makes to leave by arm `to` (T-313: the lane
+/// editor turns "right" into the arms that are right turns). The same arm is a U-turn.
+pub fn turn_of_arms(from: &Arm, to: &Arm) -> Turn {
+    if from.segment == to.segment && from.at_start == to.at_start {
+        return Turn::UTurn;
+    }
+    classify(
+        Vec2::new(from.angle.cos(), from.angle.sin()),
+        Vec2::new(to.angle.cos(), to.angle.sin()),
+    )
+}
+
 fn connection_curve(from: &VLane, to: &VLane, uturn: bool) -> CubicBezier3 {
     let dist = from.end.distance(to.end);
     let h = if uturn {

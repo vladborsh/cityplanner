@@ -471,6 +471,11 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ));
             }
         },
+        (Category::Roads, ActiveTool::Junctions) if tools.lane_mode => {
+            ui.weak(tr(
+                "Click a road arm to set which turns each of its lanes may take. Esc leaves the tool.",
+            ));
+        }
         (Category::Roads, ActiveTool::Junctions) => {
             ui.weak(tr(
                 "Click a traffic light to switch it, a sign to step it: main, yield, none. Esc leaves the tool.",

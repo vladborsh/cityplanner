@@ -455,6 +455,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 110.0, 60.0, c + 70.0),
             Vec3::new(c + 70.0, 0.0, c + 18.0),
         ),
+        // Lane arrows at a four-way, one arm with lane rules (`--scene lane-arrows`, T-313).
+        "lane-arrows" => (
+            Vec3::new(c - 44.0, 26.0, c + 24.0),
+            Vec3::new(c - 14.0, 0.0, c + 4.0),
+        ),
         "low-houses-close" => (
             Vec3::new(c + 96.0, 38.0, c + 70.0),
             Vec3::new(c + 96.0, 0.0, c + 14.0),
@@ -770,6 +775,9 @@ pub fn build_sim(
     } else if scene == Some(scene::HIGHWAY_JOIN) {
         scene::build_highway_join(&mut sim);
         info!("scene highway-join");
+    } else if scene == Some(scene::LANE_ARROWS) {
+        scene::build_lane_arrows(&mut sim);
+        info!("scene lane-arrows");
     } else if scene == Some(scene::POWER_TOWN) {
         scene::build_power_town(&mut sim);
         info!("scene power-town");

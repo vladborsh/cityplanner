@@ -174,6 +174,10 @@ pub struct ToolState {
     pub alt: bool,
     /// The "snaps" button is off: the same as holding `Alt` (§6.8.3 item 9).
     pub snaps_off: bool,
+    /// The Junctions tool edits lane rules instead of lights and signs (T-313, §18.2).
+    pub lane_mode: bool,
+    /// The arm whose lanes the lane panel shows: its node and segment.
+    pub lane_arm: Option<(cp_net::NodeId, cp_net::SegmentId)>,
     /// Control points of the roads around the cursor (and the 8 m ticks of the one it is next
     /// to) while the road tool is active (§6.7).
     pub markers: Vec<RoadMarker>,
@@ -289,6 +293,7 @@ impl ToolState {
             };
         }
         self.active = tool;
+        self.lane_arm = None;
         self.road.cancel();
         self.ghost = None;
         self.highlight.clear();
@@ -522,6 +527,64 @@ impl SignDemo {
             .collect::<Option<Vec<_>>>()?;
         (!signs.is_empty()).then_some(Self { signs, sent: false })
     }
+}
+
+/// The Lanes mode of the Junctions tool with an arm chosen, without a cursor (`--lane-demo x,z`
+/// of the desktop client, for the T-313 shots): the arm nearest to `at` (metres from the map
+/// centre) of the junction nearest to it.
+#[derive(Resource, Clone, Debug)]
+pub struct LaneDemo {
+    pub at: Vec2,
+    pub done: bool,
+}
+
+impl LaneDemo {
+    /// `x,z`.
+    pub fn parse(v: &str) -> Option<Self> {
+        let (x, z) = v.split_once(',')?;
+        Some(Self {
+            at: Vec2::new(x.parse().ok()?, z.parse().ok()?),
+            done: false,
+        })
+    }
+}
+
+pub fn lane_demo(
+    demo: Option<ResMut<LaneDemo>>,
+    view: Option<Res<SimView>>,
+    mut tools: ResMut<ToolState>,
+) {
+    let (Some(mut demo), Some(view)) = (demo, view) else {
+        return;
+    };
+    if demo.done {
+        return;
+    }
+    let at = Vec2::splat(cp_terrain::MAP_SIZE / 2.0) + demo.at;
+    let flat = |p: Vec3| Vec2::new(p.x, p.z);
+    let Some((&node, j)) = view
+        .junctions
+        .iter()
+        .filter(|(_, j)| j.arms.len() >= 3)
+        .min_by(|a, b| {
+            let d = |j: &cp_net::Junction| flat(j.pos).distance(at);
+            d(a.1).total_cmp(&d(b.1))
+        })
+    else {
+        return;
+    };
+    let cut = |a: &cp_net::Arm| flat(j.pos) + Vec2::from_angle(a.angle) * a.setback;
+    let Some(arm) = j
+        .arms
+        .iter()
+        .min_by(|a, b| cut(a).distance(at).total_cmp(&cut(b).distance(at)))
+    else {
+        return;
+    };
+    tools.select(ActiveTool::Junctions);
+    tools.lane_mode = true;
+    tools.lane_arm = Some((node, arm.segment));
+    demo.done = true;
 }
 
 pub fn sign_demo(
@@ -1043,6 +1106,7 @@ impl Plugin for ToolsPlugin {
                     place_demo,
                     upgrade_demo,
                     sign_demo,
+                    lane_demo,
                     brush_demo,
                     sync_coverage_ghost,
                     sync_emit_ghost,

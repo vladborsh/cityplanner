@@ -1199,7 +1199,8 @@ fn cars_follow_the_lane_rules_of_a_junction() {
     {
         let mut g = s.world.resource_mut::<NetGraph>();
         // Both lanes of W may turn right; then the right lane only goes straight.
-        g.set_lane_rule(node, arms[0], left_lane, Some(all)).unwrap();
+        g.set_lane_rule(node, arms[0], left_lane, Some(all))
+            .unwrap();
         g.set_lane_rule(
             node,
             arms[0],
@@ -1222,7 +1223,10 @@ fn cars_follow_the_lane_rules_of_a_junction() {
         for (a, b) in &path.steps {
             assert!(
                 after.connections.iter().any(|c| c.from == *a && c.to == *b)
-                    || before.connections.iter().all(|c| !(c.from == *a && c.to == *b)),
+                    || before
+                        .connections
+                        .iter()
+                        .all(|c| !(c.from == *a && c.to == *b)),
                 "a step the rules removed"
             );
             assert!(

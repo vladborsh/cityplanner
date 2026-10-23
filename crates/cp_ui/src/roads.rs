@@ -206,6 +206,23 @@ pub fn roads_panel(
             tools.toggle_bulldozer();
         }
     });
+    if tools.active == ActiveTool::Junctions {
+        ui.add_space(4.0);
+        ui.weak(tr("Mode"));
+        ui.horizontal_wrapped(|ui| {
+            for (lanes, icon, label) in [
+                (false, Icon::Junctions, "Lights and signs"),
+                (true, Icon::LanesMode, "Lanes"),
+            ] {
+                if crate::panels::tool_button(ui, icon, &tr(label), tools.lane_mode == lanes)
+                    .clicked()
+                {
+                    tools.lane_mode = lanes;
+                    tools.lane_arm = None;
+                }
+            }
+        });
+    }
     let building = tools.active == ActiveTool::Road;
     if building {
         ui.add_space(4.0);

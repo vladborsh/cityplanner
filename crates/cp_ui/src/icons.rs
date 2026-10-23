@@ -128,6 +128,13 @@ icons! {
     SignMain => "sign_main",
     SignYield => "sign_yield",
     SignNone => "sign_none",
+    // Lane rules (T-313): the Lanes mode of the Junctions tool.
+    LanesMode => "lanes_mode",
+    LaneStraight => "lane_straight",
+    LaneRight => "lane_right",
+    LaneLeft => "lane_left",
+    LaneUturn => "lane_uturn",
+    LaneReset => "lane_reset",
     RemovePipe => "remove_pipe",
     RemoveLine => "remove_line",
     // Zone types (T-099): one silhouette each.

@@ -31,6 +31,7 @@ pub mod info;
 pub mod jobs;
 pub mod junction_marks;
 pub mod land;
+pub mod lane_rules;
 pub mod lines;
 pub mod menus;
 pub mod metrics;
@@ -102,6 +103,7 @@ impl Plugin for UiPlugin {
                     parks::draw_labels,
                     service_marks::draw_service_marks,
                     junction_marks::draw_junction_marks,
+                    lane_rules::draw_lane_editor,
                 )
                     .chain(),
             );

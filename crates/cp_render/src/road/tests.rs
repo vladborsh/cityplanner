@@ -233,16 +233,17 @@ fn four_way_junction_is_one_flat_polygon_facing_up() {
     assert!(j.polygon.len() >= 4, "{:?}", j.polygon);
     // The upward triangles (carriageway and corner sidewalks) tile the polygon's area; the
     // rest are kerbs and skirts.
-    let area_of = |t: usize| {
-        let p = |k: usize| {
-            Vec3::from_array(piece.near.positions[piece.near.indices[t * 3 + k] as usize])
-        };
-        (p(1) - p(0)).cross(p(2) - p(0)).length() / 2.0
+    let up_area_of = |m: &MeshData| -> f32 {
+        (0..m.triangle_count())
+            .filter(|&t| tri_normal(m, t).y > 0.99)
+            .map(|t| {
+                let p = |k: usize| Vec3::from_array(m.positions[m.indices[t * 3 + k] as usize]);
+                (p(1) - p(0)).cross(p(2) - p(0)).length() / 2.0
+            })
+            .sum()
     };
-    let up_area: f32 = (0..piece.near.triangle_count())
-        .filter(|&t| tri_normal(&piece.near, t).y > 0.99)
-        .map(area_of)
-        .sum();
+    // The lane arrows (T-313) lie on top of it.
+    let up_area = up_area_of(&piece.near) - up_area_of(&arrows::build(&v.net, j));
     let n = j.polygon.len();
     let poly_area: f32 = (0..n)
         .map(|i| j.polygon[i].perp_dot(j.polygon[(i + 1) % n]))
