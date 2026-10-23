@@ -226,6 +226,7 @@ fn nobody_enters_the_junction_on_red() {
                 &mut rig.st,
                 &rig.graph,
                 signal,
+                sub,
                 None,
                 &mut finished,
             );
@@ -335,6 +336,7 @@ fn sign_race_on(road: &str, kind: u8, signs: bool, light: bool) -> (u64, u64) {
                 &mut rig.st,
                 &rig.graph,
                 signal,
+                sub,
                 None,
                 &mut finished,
             );
@@ -1142,4 +1144,57 @@ fn a_turning_truck_sweeps_round_the_corner_with_its_rear_following() {
             assert!(off < 0.35, "{turn}: rear axle {off} m off the path");
         }
     }
+}
+
+#[test]
+fn a_free_car_moves_exactly_as_its_four_substeps_and_most_of_a_lone_trip_is_free() {
+    let mut s = sim();
+    let a = s.seg((1000.0, 1000.0), (1450.0, 1000.0));
+    let b = s.seg((1450.0, 1000.0), (1900.0, 1000.0));
+    let mut rig = Rig::new(s);
+    let car = rig.add(from_arm(a, 5.0), from_arm(b, 440.0));
+    let limit = rig
+        .graph
+        .car
+        .iter()
+        .flatten()
+        .map(|l| l.speed)
+        .fold(0.0, f32::max);
+    let spec = *rig.specs.of_kind(0);
+    let (mut driven, mut free) = (0, 0);
+    for t in 0..ticks(120.0) {
+        let before = rig
+            .veh
+            .get(car)
+            .map(|v| (v.s, v.speed, v.hop, v.in_conn, v.spawned));
+        rig.tick(t, None, STUCK_TICKS);
+        rig.check_invariants();
+        let Some(v) = rig.veh.get(car) else { break };
+        let Some((s0, v0, hop, in_conn, spawned)) = before else {
+            continue;
+        };
+        if !spawned {
+            continue;
+        }
+        driven += 1;
+        if !rig.st.free.get(car.index as usize) {
+            continue;
+        }
+        free += 1;
+        assert!(
+            !in_conn && !v.in_conn && v.hop == hop,
+            "a free car stays on its lane"
+        );
+        let (mut s1, mut v1) = (s0, v0);
+        for _ in 0..cp_core::time::MOVE_SUBSTEPS {
+            (s1, v1) = follow_at(s1, v1, &spec, limit, None);
+        }
+        assert_eq!(
+            (v.s.to_bits(), v.speed.to_bits()),
+            (s1.to_bits(), v1.to_bits()),
+            "tick {t}"
+        );
+    }
+    assert_eq!(rig.arrived, 1);
+    assert!(free * 2 > driven, "{free} of {driven} ticks free");
 }

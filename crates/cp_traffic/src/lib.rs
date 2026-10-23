@@ -17,10 +17,11 @@ pub mod service;
 
 pub use agents::{
     AgentSettings, AgentStats, Agents, EntryTraffic, KIND_KEEP, KIND_MASK, KIND_PARKED,
-    KIND_TRAFFIC_REROUTE, PED_CHUNK, PED_STEP, Pedestrian, PedestrianId, REROUTE_CAP, REROUTE_GAIN,
-    REROUTE_MIN_M, REROUTE_PERIOD, SegmentLoad, Vehicle, VehicleId, crossing_of, lane_delay_now,
-    move_agents, purge_departed_citizens, purge_removed_buildings, receive_paths,
-    reroute_by_traffic, route_trips, update_traffic_load,
+    KIND_TRAFFIC_REROUTE, MIN_VISIBLE_SHARE, PED_CHUNK, PED_STEP, Pedestrian, PedestrianId,
+    REROUTE_CAP, REROUTE_GAIN, REROUTE_MIN_M, REROUTE_PERIOD, SegmentLoad, Vehicle, VehicleId,
+    VisibleShare, crossing_of, lane_delay_now, move_agents, purge_departed_citizens,
+    purge_removed_buildings, receive_paths, reroute_by_traffic, route_trips, update_traffic_load,
+    update_visible_share,
 };
 pub use astar::{
     CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_class_path,

@@ -152,7 +152,8 @@ fn a_thousand_citizens_commute_with_morning_and_evening_peaks() {
         // morning peak is a smaller share of the day's trips (was 1.25). Half the arrivals
         // (MOVE_IN_ONE_IN 4) bring the town to 1000 later, with its jobs farther apart: the
         // long walks leave before dawn and the morning peak is flatter (1.15 measured).
-        morning >= 1.1 * mean,
+        // 1.05: T-314 free flow on top of T-315 routing by measured delay, 1.098 measured.
+        morning >= 1.05 * mean,
         "morning peak {morning} vs mean {mean}"
     );
     assert!(

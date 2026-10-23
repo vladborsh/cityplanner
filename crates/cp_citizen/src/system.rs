@@ -20,7 +20,7 @@
 //!   [`FALLBACK_DELAY`] ticks, or — with a map — [`BASE_DELAY`] plus the time to drive from
 //!   the nearest external connection at [`ARRIVAL_SPEED_MPS`] (15 m/s, on the movement clock of §2: `ceil(d / 15 / MOVE_SECONDS_PER_TICK)` ticks). Size 1–5; the first
 //!   member is an adult, the others adults with probability 0.7; education of adults
-//!   0/1/2/3 with 20/50/25/5 %; children have education 0; 70 % own a car.
+//!   0/1/2/3 with 20/50/25/5 %; children have education 0; `Balance.car_ownership` (70 %) own a car.
 
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
@@ -470,6 +470,8 @@ pub fn update_citizens(
         })
         .collect();
     let parks = cp_building::park_sites(db, &buildings);
+    // The same draw as the old `below(100) < 70`, so 0.7 keeps the stream and the outcome.
+    let owners = (db.balance().car_ownership * 100.0).round() as u32;
     for (id, apartments, pos) in visits {
         let gate = rng.below(MOVE_IN_ONE_IN);
         // A second draw every visit, so the stream does not depend on the outcome (T-237).
@@ -502,7 +504,7 @@ pub fn update_citizens(
             } else {
                 (rng.below(ADULT_AGE_DAYS), 0)
             };
-            members.push((age, edu, rng.below(100) < 70));
+            members.push((age, edu, rng.below(100) < owners));
         }
         let wealth = 50_000 + i64::from(rng.below(50_000));
         let arrive = Tick(now + arrival_delay(terrain.as_deref(), reach, pos));

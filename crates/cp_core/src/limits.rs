@@ -28,6 +28,9 @@ pub struct SimLimits {
     pub vehicles: u32,
     /// Pedestrian agent pool.
     pub pedestrians: u32,
+    /// Cars on the road the automatic visible share aims at (§18.4 item 4, T-314): above it
+    /// fewer car trips put a car on the road. A setting, not a pool size.
+    pub vehicle_budget: u32,
     pub zone_blocks: u32,
 }
 
@@ -42,6 +45,7 @@ impl SimLimits {
             households: 262_144,
             vehicles: 16_384,
             pedestrians: 65_536,
+            vehicle_budget: 6_000,
             zone_blocks: 49_152,
         }
     }
@@ -56,6 +60,7 @@ impl SimLimits {
             households: 32_768,
             vehicles: 2_048,
             pedestrians: 4_096,
+            vehicle_budget: 1_000,
             zone_blocks: 12_288,
         }
     }
@@ -78,10 +83,11 @@ mod tests {
                 d.households,
                 d.vehicles,
                 d.pedestrians,
+                d.vehicle_budget,
                 d.zone_blocks
             ],
             [
-                32_768, 36_864, 262_144, 49_152, 1_048_576, 262_144, 16_384, 65_536, 49_152
+                32_768, 36_864, 262_144, 49_152, 1_048_576, 262_144, 16_384, 65_536, 6_000, 49_152
             ]
         );
         let w = SimLimits::wasm();
@@ -95,10 +101,11 @@ mod tests {
                 w.households,
                 w.vehicles,
                 w.pedestrians,
+                w.vehicle_budget,
                 w.zone_blocks
             ],
             [
-                8_192, 9_216, 65_536, 12_288, 131_072, 32_768, 2_048, 4_096, 12_288
+                8_192, 9_216, 65_536, 12_288, 131_072, 32_768, 2_048, 4_096, 1_000, 12_288
             ]
         );
     }

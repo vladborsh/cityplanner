@@ -405,6 +405,14 @@ impl SimRunner {
                 .in_set(SimPhase::Agents),
         );
         schedule.add_systems(cp_traffic::update_traffic_load.in_set(SimPhase::Stats));
+        // The automatic car share (T-314), read by the next routing pass; before the city
+        // summary, which reads the same `Agents`.
+        schedule.add_systems(
+            cp_traffic::update_visible_share
+                .in_set(SimPhase::Stats)
+                .after(cp_traffic::update_traffic_load)
+                .before(crate::stats::update_city_stats),
+        );
         // Derived summary for the UI: after the load statistics it reads, never read by the sim.
         world.init_resource::<crate::stats::CityStats>();
         schedule.add_systems(

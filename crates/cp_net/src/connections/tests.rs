@@ -671,3 +671,50 @@ fn a_tram_street_crossing_a_local_street_keeps_cars_out_of_the_rails() {
         .count();
     assert_eq!(car_to_tram_arm, 0, "no car into the tram street's arms");
 }
+
+/// BUG-120: on an X of two tram roads every tram lane goes on to every other arm's tram lanes
+/// (straight and both turns), and a `tram_4l` runs on into a `tram_2l`.
+#[test]
+fn tram_lanes_go_every_way_at_an_x_of_tram_roads_and_into_a_narrower_tram_road() {
+    let db = content();
+    let kind = |g: &NetGraph, id: LaneId| g.lane(id).unwrap().kind;
+    let (g, n, _) = star(
+        &db,
+        &[
+            (0.0, "tram_4l"),
+            (90.0, "tram_4l"),
+            (180.0, "tram_4l"),
+            (270.0, "tram_4l"),
+        ],
+    );
+    let j = junction(&g, n);
+    check(&g, &j);
+    for i in 0..4 {
+        for k in (0..4).filter(|&k| k != i) {
+            assert!(
+                j.links
+                    .connections
+                    .iter()
+                    .any(|c| kind(&g, c.from) == LaneKind::Tram
+                        && kind(&g, c.to) == LaneKind::Tram
+                        && arm_of(&g, &j, c.from) == i
+                        && arm_of(&g, &j, c.to) == k),
+                "no rails from arm {i} to arm {k}"
+            );
+        }
+    }
+    let (g, n, _) = star(&db, &[(0.0, "tram_4l"), (180.0, "tram_2l")]);
+    let j = junction(&g, n);
+    check(&g, &j);
+    for i in 0..2 {
+        assert!(
+            j.links
+                .connections
+                .iter()
+                .any(|c| kind(&g, c.from) == LaneKind::Tram
+                    && kind(&g, c.to) == LaneKind::Tram
+                    && arm_of(&g, &j, c.from) == i),
+            "arm {i}: no rails on"
+        );
+    }
+}

@@ -209,6 +209,16 @@ fn run(o: &Opts) -> Result<Report, String> {
         }
     }
     let checksum = sim.checksum();
+    // T-314: how many car-ticks took the one-step free flow (stderr: the JSON stays as it is).
+    if let Some(agents) = sim.world().get_resource::<cp_traffic::Agents>() {
+        let [all, free] = agents.free_ticks();
+        if all > 0 {
+            eprintln!(
+                "car-ticks {all}, free {free} ({:.1} %)",
+                100.0 * free as f64 / all as f64
+            );
+        }
+    }
     let clock = sim.world().resource::<PhaseClock>();
     let samples: Vec<_> = clock.samples.iter().skip(o.warmup as usize).collect();
     let phases = (0..PHASES)

@@ -158,7 +158,12 @@ impl VehicleSpecs {
 
     /// The spec of `v`'s kind.
     pub fn of(&self, v: &Vehicle) -> &VehicleSpec {
-        let kind = usize::from(v.kind_id());
+        self.of_kind(v.kind_id())
+    }
+
+    /// The spec of kind number `kind` (`Vehicle::kind_id`).
+    pub fn of_kind(&self, kind: u8) -> &VehicleSpec {
+        let kind = usize::from(kind);
         debug_assert!(kind < VEHICLE_KINDS, "vehicle kind {kind} has no spec");
         &self.by_kind[kind.min(VEHICLE_KINDS - 1)]
     }
@@ -334,7 +339,9 @@ fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGrap
                             v.stuck_timer >> 16 > STUCK_TICKS / 2,
                         )
                     {
-                        vehicles.get_mut(id).expect("vehicle").path.steps = steps;
+                        let v = vehicles.get_mut(id).expect("vehicle");
+                        v.path.steps = steps;
+                        st.sync(g, id, v);
                         continue;
                     }
                     break;
@@ -349,6 +356,7 @@ fn lane_changes(vehicles: &mut Arena<Vehicle>, st: &mut DriveState, g: &PathGrap
                 if pending_hop(g, v) {
                     st.hop_lanes.set(ts as usize, true);
                 }
+                st.sync(g, id, v);
             }
         }
         // Still a car waiting for room to hop? Then the lane stays on the list.
@@ -447,6 +455,23 @@ impl OccBits {
         }
     }
 
+    /// Sets bit `i`, growing the set as needed.
+    fn set_grow(&mut self, i: usize) {
+        if i / 64 >= self.0.len() {
+            self.0.resize(i / 64 + 1, 0);
+        }
+        self.set(i, true);
+    }
+
+    pub(crate) fn get(&self, i: usize) -> bool {
+        self.0.get(i / 64).is_some_and(|w| w & (1 << (i % 64)) != 0)
+    }
+
+    /// Clears every bit (keeps the length).
+    fn clear(&mut self) {
+        self.0.fill(0);
+    }
+
     /// The first set slot `>= from`.
     fn next_from(&self, from: usize) -> Option<usize> {
         let mut w = from / 64;
@@ -477,6 +502,59 @@ impl OccBits {
     }
 }
 
+/// The fields of a car the lane step reads every substep, by vehicle arena slot (SoA, §18.4
+/// item 5, T-314): the step of a car that is not at the front of its lane reads 16 bytes here
+/// instead of the vehicle and its route on the heap. A mirror of the [`Vehicle`]: refreshed
+/// for every car at the start of a tick and by every write to a car during one
+/// ([`DriveState::sync`]); `debug_assert`ed equal before each substep.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Hot {
+    pub s: f32,
+    pub speed: f32,
+    /// `path.goal_s`.
+    pub goal: f32,
+    /// `Vehicle::kind_id`.
+    pub kind: u8,
+    /// `H_*` bits.
+    pub flags: u8,
+}
+
+const H_PARKED: u8 = 1;
+const H_KEEP: u8 = 2;
+const H_REROUTE: u8 = 4;
+/// The path has a step after the current lane.
+const H_NEXT: u8 = 8;
+/// That step is a lateral hop.
+const H_HOP: u8 = 16;
+
+impl Hot {
+    fn of(g: &PathGraph, v: &Vehicle) -> Self {
+        let mut flags = 0;
+        if v.is_parked() {
+            flags |= H_PARKED;
+        }
+        if v.is_keep() {
+            flags |= H_KEEP;
+        }
+        if v.reroute.is_some() {
+            flags |= H_REROUTE;
+        }
+        if let Some(&(from, to)) = v.path.steps.get(usize::from(v.hop)) {
+            flags |= H_NEXT;
+            if !v.in_conn && is_lane_change(g, from, to) {
+                flags |= H_HOP;
+            }
+        }
+        Self {
+            s: v.s,
+            speed: v.speed,
+            goal: v.path.goal_s,
+            kind: v.kind_id(),
+            flags,
+        }
+    }
+}
+
 /// Derived occupancy of lanes and connections.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DriveState {
@@ -498,12 +576,20 @@ pub(crate) struct DriveState {
     pub leaving: Vec<u16>,
     /// Vehicles not yet on the road (waiting for room at their start), in id order.
     pub waiting: Vec<VehicleId>,
+    /// Cars (by arena slot) that moved the whole current tick in its first substep (T-314); they
+    /// sit out the others. Cleared at the start of every tick.
+    pub free: OccBits,
+    /// The cars' hot fields by arena slot (T-314).
+    pub hot: Vec<Hot>,
     pub ready: bool,
     pub generation: u64,
     /// Vehicle dimensions and dynamics of the current tick (set by [`drive_tick`]).
     pub specs: VehicleSpecs,
     /// Why the stuck cars were removed, by [`StuckWhy`] (diagnostics; not saved).
     pub stuck_why: [u64; STUCK_WHY_N],
+    /// Car-ticks driven and those of them moved in one free step (T-314; diagnostics, not
+    /// saved).
+    pub free_ticks: [u64; 2],
 }
 
 /// Number of [`StuckWhy`] reasons.
@@ -539,6 +625,9 @@ enum Ev {
     /// A keep vehicle reached its goal: it stays there (T-154).
     Park,
     Invalid,
+    /// A free-flowing car moved the whole tick at once (T-314): applied as `Stay`, and the car
+    /// sits out the tick's other substeps ([`free_tick`]).
+    Free,
 }
 
 struct Upd {
@@ -551,7 +640,7 @@ struct Upd {
 /// Adds `u` for `v`, unless it is a plain move to exactly where `v` already is at the speed it
 /// already has (a standing car): applying it would change nothing, and the sequential apply
 /// is bound by the writes to the vehicles (T-259).
-fn push_upd(out: &mut Vec<Upd>, v: &Vehicle, u: Upd) {
+fn push_upd(out: &mut Vec<Upd>, v: &Hot, u: Upd) {
     if u.ev == Ev::Stay && u.s.to_bits() == v.s.to_bits() && u.v.to_bits() == v.speed.to_bits() {
         return;
     }
@@ -579,6 +668,8 @@ struct Ctx<'a> {
     veh: &'a Arena<Vehicle>,
     st: &'a DriveState,
     signal: u64,
+    /// Substep of the tick, `0..MOVE_SUBSTEPS`.
+    sub: u32,
 }
 
 pub(crate) fn lane_node(g: &PathGraph, id: LaneId) -> Option<&LaneNode> {
@@ -594,6 +685,22 @@ pub(crate) fn find_exit(g: &PathGraph, from: LaneId, to: LaneId) -> Option<&Exit
 }
 
 impl DriveState {
+    /// Copies `v`'s hot fields (T-314) after a write to it.
+    fn sync(&mut self, g: &PathGraph, id: VehicleId, v: &Vehicle) {
+        let i = id.index as usize;
+        if i >= self.hot.len() {
+            self.hot.resize(i + 1, Hot::default());
+        }
+        self.hot[i] = Hot::of(g, v);
+    }
+
+    /// The hot fields of every car (start of a tick).
+    fn sync_all(&mut self, g: &PathGraph, vehicles: &Arena<Vehicle>) {
+        for (id, v) in vehicles.iter() {
+            self.sync(g, id, v);
+        }
+    }
+
     fn lane_push(&mut self, slot: u32, id: VehicleId) {
         self.lanes[slot as usize].push(id);
         self.occ.set(slot as usize, true);
@@ -703,24 +810,62 @@ impl DriveState {
 type Leader = (f32, f32, f32);
 
 fn follow(v: &Vehicle, spec: &VehicleSpec, limit: f32, leader: Option<Leader>) -> (f32, f32) {
+    follow_at(v.s, v.speed, spec, limit, leader)
+}
+
+/// [`follow`] from position `s` at `speed`.
+pub(crate) fn follow_at(
+    s: f32,
+    speed: f32,
+    spec: &VehicleSpec,
+    limit: f32,
+    leader: Option<Leader>,
+) -> (f32, f32) {
     let (accel, decel) = (spec.accel, spec.decel);
-    let mut vt = (v.speed + accel * DT).min(limit.min(spec.max_speed));
+    let mut vt = (speed + accel * DT).min(limit.min(spec.max_speed));
     if let Some((rear, vl, g0)) = leader {
-        let gap = (rear - v.s - g0).max(0.0);
+        let gap = (rear - s - g0).max(0.0);
         let bt = decel * REACTION;
         let safe = -bt + (bt * bt + vl * vl + 2.0 * decel * gap).sqrt();
         vt = vt.min(safe);
     }
-    vt = vt.max(v.speed - decel * DT).max(0.0);
-    let mut ds = 0.5 * (v.speed + vt) * DT;
+    vt = vt.max(speed - decel * DT).max(0.0);
+    let mut ds = 0.5 * (speed + vt) * DT;
     if let Some((rear, _, _)) = leader {
-        let room = (rear - HARD_GAP - v.s).max(0.0);
+        let room = (rear - HARD_GAP - s).max(0.0);
         if ds > room {
             ds = room;
             vt = ds / DT;
         }
     }
-    (v.s + ds, vt)
+    (s + ds, vt)
+}
+
+/// Free flow (§18.4 item 5, T-314): where a car on a lane ends the tick and at what speed if
+/// nothing ahead can hold it during the whole tick, else `None`. `room` is the distance to the
+/// nearest thing that could stop it (its leader with the standstill gap, the stop line, its
+/// goal) at the start of the tick. The tick's [`MOVE_SUBSTEPS`] free substeps are integrated at
+/// once; it is free when, after them, the room left still keeps the Krauss safe speed of
+/// [`follow`] at or above every speed reached even behind a standing obstacle
+/// (`gap >= v * REACTION + v^2 / (2 decel)`), so neither the safe speed nor the hard clamp would
+/// have bound in any substep: the car itself moves exactly as the four substeps would move it.
+/// What changes is that the cars behind it see its end-of-tick position from the first
+/// substep on (they get a little more room), so the checksums move.
+fn free_tick(
+    s0: f32,
+    speed0: f32,
+    spec: &VehicleSpec,
+    limit: f32,
+    room: f32,
+) -> Option<(f32, f32)> {
+    let (mut s, mut speed) = (s0, speed0);
+    let mut top = speed;
+    for _ in 0..MOVE_SUBSTEPS {
+        (s, speed) = follow_at(s, speed, spec, limit, None);
+        top = top.max(speed);
+    }
+    let left = room - (s - s0);
+    (left >= top * REACTION + top * top / (2.0 * spec.decel)).then_some((s, speed))
 }
 
 /// Room for one more car at the start of lane `slot`, given cars already inside junctions
@@ -844,95 +989,126 @@ fn step_lane(ctx: &Ctx, slot: u32, out: &mut Vec<Upd>) {
     let Some(node) = ctx.g.car[slot as usize].as_ref() else {
         return;
     };
-    let mut prev: Option<&Vehicle> = None;
+    let specs = &ctx.st.specs;
+    // The car ahead: `(rear bumper, speed)`.
+    let mut prev: Option<(f32, f32)> = None;
     for &id in list {
-        let Some(v) = ctx.veh.get(id) else { continue };
-        if v.is_parked() {
+        // SoA (T-314): every car but the lane's front one is stepped from its hot record alone.
+        let h = ctx.st.hot[id.index as usize];
+        let spec = specs.of_kind(h.kind);
+        let me = Some((h.s - spec.length, h.speed));
+        if ctx.sub > 0 && ctx.st.free.get(id.index as usize) {
+            // Moved the whole tick in the first substep (T-314).
+            prev = me;
+            continue;
+        }
+        if h.flags & H_PARKED != 0 {
             // Stands at its goal until a run continues it; it still holds its place.
             push_upd(
                 out,
-                v,
+                &h,
                 Upd {
                     id,
-                    s: v.s,
+                    s: h.s,
                     v: 0.0,
                     ev: Ev::Stay,
                 },
             );
-            prev = Some(v);
+            prev = me;
             continue;
         }
         let mut ev = Ev::Stay;
         let mut open = false;
         let leader: Option<Leader> = match prev {
-            Some(l) => Some((
-                l.s - spec_of(ctx, l).length,
-                l.speed,
-                spec_of(ctx, v).min_gap,
-            )),
-            None => match v.path.steps.get(v.hop as usize).copied() {
-                None => None,
-                Some((_, to)) => match find_exit(ctx.g, node.id, to) {
-                    None if is_lane_change(ctx.g, node.id, to) => {
-                        // Waiting for a gap in the next lane: stop at the stop line.
-                        Some((node.s_out + HARD_GAP, 0.0, HARD_GAP))
-                    }
-                    // The connection is gone but a new route is on its way: wait at the stop
-                    // line (T-066).
-                    None if v.reroute.is_some() => Some((node.s_out + HARD_GAP, 0.0, HARD_GAP)),
-                    None => {
-                        out.push(Upd {
-                            id,
-                            s: v.s,
-                            v: 0.0,
-                            ev: Ev::Invalid,
-                        });
-                        prev = Some(v);
-                        continue;
-                    }
-                    Some(ex) => {
-                        open = gate_open(ctx.g, ctx.veh, ctx.st, ctx.signal, v, ex, node.s_out);
-                        if open {
-                            ahead_of_stop_line(ctx, v, node, ex)
-                        } else {
+            Some((rear, speed)) => Some((rear, speed, spec.min_gap)),
+            None => {
+                let Some(v) = ctx.veh.get(id) else { continue };
+                let leader = match v.path.steps.get(v.hop as usize).copied() {
+                    None => None,
+                    Some((_, to)) => match find_exit(ctx.g, node.id, to) {
+                        None if is_lane_change(ctx.g, node.id, to) => {
+                            // Waiting for a gap in the next lane: stop at the stop line.
                             Some((node.s_out + HARD_GAP, 0.0, HARD_GAP))
                         }
-                    }
-                },
-            },
+                        // The connection is gone but a new route is on its way: wait at the
+                        // stop line (T-066).
+                        None if v.reroute.is_some() => Some((node.s_out + HARD_GAP, 0.0, HARD_GAP)),
+                        None => {
+                            out.push(Upd {
+                                id,
+                                s: v.s,
+                                v: 0.0,
+                                ev: Ev::Invalid,
+                            });
+                            prev = me;
+                            continue;
+                        }
+                        Some(ex) => {
+                            open = gate_open(ctx.g, ctx.veh, ctx.st, ctx.signal, v, ex, node.s_out);
+                            if open {
+                                ahead_of_stop_line(ctx, v, node, ex)
+                            } else {
+                                Some((node.s_out + HARD_GAP, 0.0, HARD_GAP))
+                            }
+                        }
+                    },
+                };
+                // The front car also keeps clear of cars that left the lane into a connection,
+                // whichever one: a long vehicle still covers the stop line while its front is
+                // already inside.
+                match conn_leader(ctx, v, slot, node) {
+                    Some(c) if leader.is_none_or(|l| c.0 < l.0) => Some(c),
+                    _ => leader,
+                }
+            }
         };
-        // The front car also keeps clear of cars that left the lane into a connection, whichever
-        // one: a long vehicle still covers the stop line while its front is already inside.
-        let leader = match (prev, conn_leader(ctx, v, slot, node)) {
-            (None, Some(c)) if leader.is_none_or(|l| c.0 < l.0) => Some(c),
-            _ => leader,
-        };
-        let next = v.path.steps.get(v.hop as usize);
+        let next = h.flags & H_NEXT != 0;
+        let keep = h.flags & H_KEEP != 0;
         // A keep vehicle brakes for its goal as for a standing leader and stops on it.
-        let goal = v.path.goal_s.clamp(node.s_in, node.s_out);
-        let leader = if next.is_none() && v.is_keep() {
+        let goal = h.goal.clamp(node.s_in, node.s_out);
+        let leader = if !next && keep {
             let stop = (goal, 0.0, KEEP_STOP_GAP);
             Some(leader.map_or(stop, |l| if l.0 < stop.0 { l } else { stop }))
         } else {
             leader
         };
-        let (mut s, nv) = follow(v, spec_of(ctx, v), node.speed, leader);
-        match next {
-            Some(_) if open && s >= node.s_out => ev = Ev::Cross,
-            Some(_) => s = s.min(node.s_out),
-            None if v.is_keep() => {
+        // Free flow (T-314): a car that nothing can hold this tick moves it all at once.
+        if ctx.sub == 0 && !keep && h.flags & H_REROUTE == 0 {
+            let to_leader = leader.map_or(f32::INFINITY, |(rear, _, g0)| rear - h.s - g0);
+            let to_end = match (next, h.flags & H_HOP != 0) {
+                (true, false) => node.s_out - h.s,
+                (true, true) => -1.0,
+                (false, _) => goal - h.s,
+            };
+            if let Some((s, nv)) = free_tick(h.s, h.speed, spec, node.speed, to_leader.min(to_end))
+            {
+                out.push(Upd {
+                    id,
+                    s,
+                    v: nv,
+                    ev: Ev::Free,
+                });
+                prev = me;
+                continue;
+            }
+        }
+        let (mut s, nv) = follow_at(h.s, h.speed, spec, node.speed, leader);
+        match (next, keep) {
+            (true, _) if open && s >= node.s_out => ev = Ev::Cross,
+            (true, _) => s = s.min(node.s_out),
+            (false, true) => {
                 if goal - s <= KEEP_STOP_GAP + 0.5 && nv < 0.3 {
                     ev = Ev::Park;
                 }
             }
-            None => {
+            (false, false) => {
                 if s >= goal {
                     ev = Ev::Arrive;
                 }
             }
         }
-        push_upd(out, v, Upd { id, s, v: nv, ev });
-        prev = Some(v);
+        push_upd(out, &h, Upd { id, s, v: nv, ev });
+        prev = me;
     }
 }
 
@@ -1028,7 +1204,7 @@ fn step_conn(ctx: &Ctx, key: (u32, u32), out: &mut Vec<Upd>) {
         };
         push_upd(
             out,
-            v,
+            &ctx.st.hot[id.index as usize],
             Upd {
                 id,
                 s: if prev.is_some() { s.min(ex.length) } else { s },
@@ -1313,8 +1489,22 @@ pub(crate) fn drive_tick(
     // The drive's parallel parts use the pool from the same size on as the substeps.
     let pool = pool.filter(|_| vehicles.len() >= PARALLEL_MIN);
     spawn_waiting(vehicles, st, g, pool, &mut finished);
-    for sub in 0..MOVE_SUBSTEPS {
-        substep(vehicles, st, g, signal_tick(tick, sub), pool, &mut finished);
+    st.free_ticks[0] += vehicles.len() as u64;
+    match pool {
+        Some(pool) => substeps_in_one_scope(vehicles, st, g, tick, pool, &mut finished),
+        None => {
+            for sub in 0..MOVE_SUBSTEPS {
+                substep(
+                    vehicles,
+                    st,
+                    g,
+                    signal_tick(tick, sub),
+                    sub,
+                    None,
+                    &mut finished,
+                );
+            }
+        }
     }
     // Stuck timers (§9.4 v1.1): only a standstill for a suspicious reason counts.
     let flags = suspicious_flags(vehicles, st, g, signal_tick(tick, MOVE_SUBSTEPS - 1), pool);
@@ -1419,10 +1609,52 @@ pub(crate) fn substep(
     st: &mut DriveState,
     g: &PathGraph,
     signal: u64,
+    sub: u32,
     pool: Option<&TaskPool>,
     finished: &mut Finished,
 ) {
+    let places = prepare(vehicles, st, g, sub);
+    let ctx = Ctx {
+        g,
+        veh: vehicles,
+        st,
+        signal,
+        sub,
+    };
+    let updates: Vec<Upd> = match pool {
+        Some(pool) if vehicles.len() >= PARALLEL_MIN => {
+            let chunks: Vec<Vec<Upd>> = pool.scope(|scope| {
+                for chunk in places.chunks(CHUNK) {
+                    let ctx = &ctx;
+                    scope.spawn(async move { step_chunk(ctx, chunk) });
+                }
+            });
+            concat(chunks)
+        }
+        _ => step_chunk(&ctx, &places),
+    };
+    apply(vehicles, st, g, signal, updates, finished);
+}
+
+/// The sequential start of substep `sub`: the lateral hops, then the places to step (busy
+/// lanes in slot order, then busy connections in key order).
+fn prepare(
+    vehicles: &mut Arena<Vehicle>,
+    st: &mut DriveState,
+    g: &PathGraph,
+    sub: u32,
+) -> Vec<Place> {
+    if sub == 0 {
+        st.free.clear();
+        st.sync_all(g, vehicles);
+    }
     lane_changes(vehicles, st, g);
+    debug_assert!(
+        vehicles
+            .iter()
+            .all(|(id, v)| !v.spawned || st.hot.get(id.index as usize) == Some(&Hot::of(g, v))),
+        "the hot fields follow the vehicles"
+    );
     let mut places: Vec<Place> = Vec::new();
     for slot in st.occ.iter() {
         places.push(Place::Lane(slot as u32));
@@ -1432,37 +1664,135 @@ pub(crate) fn substep(
             places.push(Place::Conn(a, b));
         }
     }
-    let ctx = Ctx {
-        g,
-        veh: vehicles,
+    places
+}
+
+fn step_chunk(ctx: &Ctx, chunk: &[Place]) -> Vec<Upd> {
+    let mut out = Vec::new();
+    for &p in chunk {
+        step_place(ctx, p, &mut out);
+    }
+    out
+}
+
+/// What the workers of [`substeps_in_one_scope`] share: read while they step, written by the
+/// one that applies.
+struct TickShared<'a> {
+    vehicles: &'a mut Arena<Vehicle>,
+    st: &'a mut DriveState,
+    finished: &'a mut Finished,
+    places: Vec<Place>,
+}
+
+/// All [`MOVE_SUBSTEPS`] substeps of `tick` in one task scope (§18.4 item 5, T-314): instead of
+/// waking the pool and joining it four times a tick, one worker per pool thread steps the
+/// chunks of every substep, and a barrier separates the parallel step from the sequential
+/// part (apply, then the next substep's [`prepare`]), done by the barrier's leader under the
+/// write lock. Workers take chunks by an atomic counter, and the leader applies their updates
+/// in chunk order, so the result is that of [`substep`] for any thread count. One worker per
+/// thread, and nothing else in the sim blocks on a pool thread, so every worker gets a thread
+/// and the barrier is always reached. A panic in a worker is kept until the scope ends (the
+/// others still pass every barrier) and then resumed.
+fn substeps_in_one_scope(
+    vehicles: &mut Arena<Vehicle>,
+    st: &mut DriveState,
+    g: &PathGraph,
+    tick: u64,
+    pool: &TaskPool,
+    finished: &mut Finished,
+) {
+    use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
+    use std::sync::{Barrier, Mutex, PoisonError, RwLock};
+
+    // A worker per PARALLEL_MIN cars: every worker waits at the barrier twice a substep, so a few
+    // hundred cars on twelve threads cost more in wake-ups than they save. The updates are applied
+    // in chunk order, so the count changes nothing in the result.
+    let workers = pool
+        .thread_num()
+        .min(vehicles.len().div_ceil(PARALLEL_MIN))
+        .max(1);
+    let places = prepare(vehicles, st, g, 0);
+    let shared = RwLock::new(TickShared {
+        vehicles,
         st,
-        signal,
+        finished,
+        places,
+    });
+    let next = AtomicUsize::new(0);
+    let done: Mutex<Vec<(usize, Vec<Upd>)>> = Mutex::new(Vec::new());
+    let barrier = Barrier::new(workers);
+    let failed = AtomicBool::new(false);
+    let panic: Mutex<Option<Box<dyn std::any::Any + Send>>> = Mutex::new(None);
+    let guard = |f: &mut dyn FnMut()| {
+        if failed.load(Relaxed) {
+            return;
+        }
+        if let Err(e) = catch_unwind(AssertUnwindSafe(f)) {
+            failed.store(true, Relaxed);
+            panic
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get_or_insert(e);
+        }
     };
-    let updates: Vec<Upd> = match pool {
-        Some(pool) if vehicles.len() >= PARALLEL_MIN => {
-            let chunks: Vec<Vec<Upd>> = pool.scope(|scope| {
-                for chunk in places.chunks(CHUNK) {
-                    let ctx = &ctx;
-                    scope.spawn(async move {
-                        let mut out = Vec::new();
-                        for &p in chunk {
-                            step_place(ctx, p, &mut out);
+    pool.scope(|scope| {
+        for _ in 0..workers {
+            let (shared, next, done, barrier, guard) = (&shared, &next, &done, &barrier, &guard);
+            scope.spawn(async move {
+                for sub in 0..MOVE_SUBSTEPS {
+                    let signal = signal_tick(tick, sub);
+                    guard(&mut || {
+                        let r = shared.read().unwrap_or_else(PoisonError::into_inner);
+                        let ctx = Ctx {
+                            g,
+                            veh: r.vehicles,
+                            st: r.st,
+                            signal,
+                            sub,
+                        };
+                        let n = r.places.len().div_ceil(CHUNK);
+                        loop {
+                            let c = next.fetch_add(1, Relaxed);
+                            if c >= n {
+                                break;
+                            }
+                            let end = (c * CHUNK + CHUNK).min(r.places.len());
+                            let out = step_chunk(&ctx, &r.places[c * CHUNK..end]);
+                            done.lock()
+                                .unwrap_or_else(PoisonError::into_inner)
+                                .push((c, out));
                         }
-                        out
                     });
+                    if barrier.wait().is_leader() {
+                        guard(&mut || {
+                            let mut w = shared.write().unwrap_or_else(PoisonError::into_inner);
+                            let TickShared {
+                                vehicles,
+                                st,
+                                finished,
+                                places,
+                            } = &mut *w;
+                            let mut chunks = std::mem::take(
+                                &mut *done.lock().unwrap_or_else(PoisonError::into_inner),
+                            );
+                            chunks.sort_unstable_by_key(|c| c.0);
+                            let updates = concat(chunks.into_iter().map(|c| c.1).collect());
+                            apply(vehicles, st, g, signal, updates, finished);
+                            if sub + 1 < MOVE_SUBSTEPS {
+                                *places = prepare(vehicles, st, g, sub + 1);
+                            }
+                        });
+                        next.store(0, Relaxed);
+                    }
+                    barrier.wait();
                 }
             });
-            concat(chunks)
         }
-        _ => {
-            let mut out = Vec::new();
-            for &p in &places {
-                step_place(&ctx, p, &mut out);
-            }
-            out
-        }
-    };
-    apply(vehicles, st, g, signal, updates, finished);
+    });
+    if let Some(e) = panic.into_inner().unwrap_or_else(PoisonError::into_inner) {
+        resume_unwind(e);
+    }
 }
 
 /// The chunk results in chunk order, copied in bulk (T-259: a `flatten().collect()` moved them
@@ -1538,10 +1868,23 @@ fn apply(
 ) {
     for u in updates {
         // Most updates are plain moves: one lookup.
+        if u.ev == Ev::Free {
+            if let Some(v) = vehicles.get_mut(u.id) {
+                v.s = u.s;
+                v.speed = u.v;
+                st.free.set_grow(u.id.index as usize);
+                st.free_ticks[1] += 1;
+                let h = &mut st.hot[u.id.index as usize];
+                (h.s, h.speed) = (u.s, u.v);
+            }
+            continue;
+        }
         if u.ev == Ev::Stay {
             if let Some(v) = vehicles.get_mut(u.id) {
                 v.s = u.s;
                 v.speed = u.v;
+                let h = &mut st.hot[u.id.index as usize];
+                (h.s, h.speed) = (u.s, u.v);
             }
             continue;
         }
@@ -1549,11 +1892,7 @@ fn apply(
             continue;
         };
         match u.ev {
-            Ev::Stay => {
-                let v = vehicles.get_mut(u.id).expect("vehicle");
-                v.s = u.s;
-                v.speed = u.v;
-            }
+            Ev::Stay | Ev::Free => unreachable!("plain moves are applied above"),
             Ev::Arrive => {
                 if let Some(v) = vehicles.remove(u.id) {
                     st.remove(&v, u.id);
@@ -1576,6 +1915,7 @@ fn apply(
                 v.speed = 0.0;
                 v.stuck_timer = 0;
                 v.kind |= crate::agents::KIND_PARKED;
+                st.sync(g, u.id, v);
                 finished.parked.push(u.id);
             }
             Ev::Invalid => {
@@ -1598,12 +1938,14 @@ fn apply(
                 if !open {
                     v.s = (node.s_out - 0.01).max(v.s.min(node.s_out - 0.01));
                     v.speed = 0.0;
+                    st.sync(g, u.id, v);
                     continue;
                 }
                 let over = (u.s - node.s_out).clamp(0.0, ex.length);
                 v.s = over;
                 v.speed = u.v;
                 v.in_conn = true;
+                st.sync(g, u.id, v);
                 st.lane_remove(fs, u.id);
                 st.conns.entry((fs, ex.to_slot)).or_default().push(u.id);
                 st.entering[ex.to_slot as usize] += 1;
@@ -1626,12 +1968,14 @@ fn apply(
                 if !clear {
                     v.s = (ex.length - 0.01).max(0.0);
                     v.speed = 0.0;
+                    st.sync(g, u.id, v);
                     continue;
                 }
                 v.s = s_new;
                 v.speed = u.v;
                 v.in_conn = false;
                 v.hop += 1;
+                st.sync(g, u.id, v);
                 if pending_hop(g, v) {
                     st.hop_lanes.set(ex.to_slot as usize, true);
                 }

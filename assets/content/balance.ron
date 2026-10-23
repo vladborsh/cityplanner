@@ -10,6 +10,14 @@ Balance((
     // emptier roads turn walks into drives, 0.15 gives ~4x fewer cars. The same for goods
     // trucks; service vehicles always drive.
     car_visible_share: 0.15,
+    // T-314 (§18.4 item 4): the sim picks the car share itself, clamp(vehicle budget / cars
+    // expected on the road, 0.1, 1.0): every car in a small town, the budget (desktop 6000) in
+    // a big one. car_visible_share above is then not read. Off for now (TL, 2026-10-23): at
+    // car_ownership 0.7 every car trip on the road jams the towns; the user turns it on together
+    // with a lower car_ownership when rebalancing.
+    visible_share_auto: false,
+    // Share of the adults moving in who own a car (was a hardcoded 70 %).
+    car_ownership: 0.7,
     truck_visible_share: 0.25,
     // BUG-101: tourists too (919 tourist cars stood at one entry): the hidden ones travel by
     // their route's time and still visit and pay. And at most this many cars wait to enter at

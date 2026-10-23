@@ -198,6 +198,13 @@ pub struct Balance {
     /// abstractly: they take their route's travel time and occupy no lane, as a trip does when
     /// the vehicle pool is full. Which ones is a hash of the trip id and the seed.
     pub car_visible_share: f32,
+    /// Let the sim pick the car share itself (§18.4 item 4, T-314): `clamp(vehicle_budget /
+    /// expected_cars, 0.1, 1.0)` from the cars seen on the road over the last game hour, so a
+    /// small town shows every car and a big one stays within `SimLimits::vehicle_budget`.
+    /// `car_visible_share` is then not read. Off by default until the rebalancing (TL 2026-10-23).
+    pub visible_share_auto: bool,
+    /// Share of the adults moving in who own a car, `0..=1` (§18.4 item 1; the roll at move-in).
+    pub car_ownership: f32,
     /// The same for goods truck runs (the cargo kinds; T-280). Service vehicles (garbage, fire,
     /// police, ambulance, hearse, mail, buses) always drive: they are the player's feedback.
     pub truck_visible_share: f32,
@@ -776,6 +783,8 @@ impl Default for Balance {
             walk_limit_m: 400.0,
             car_start_penalty_s: 90.0,
             car_visible_share: 0.15,
+            visible_share_auto: false,
+            car_ownership: 0.7,
             truck_visible_share: 0.25,
             tourist_visible_share: 0.4,
             spawn_queue_cap: 40,

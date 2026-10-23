@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 65;
+pub const FORMAT_VERSION: u32 = 66;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -184,7 +184,7 @@ pub struct SaveData {
     pub trips: TripBook,
     /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
     /// agents carry the segment load since v12; vehicles carry their re-route request id
-    /// since v17.
+    /// since v17; the automatic car share (T-314) since v66.
     pub agents: cp_traffic::Agents,
     /// The city's money. Added in v14.
     pub treasury: Treasury,

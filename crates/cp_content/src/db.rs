@@ -878,6 +878,7 @@ impl ContentDb {
         for (field, v) in balances.first().map_or(vec![], |(_, b)| {
             vec![
                 ("car_visible_share", b.car_visible_share),
+                ("car_ownership", b.car_ownership),
                 ("truck_visible_share", b.truck_visible_share),
                 ("tourist_visible_share", b.tourist_visible_share),
                 ("entry_truck_visible_share", b.entry_truck_visible_share),

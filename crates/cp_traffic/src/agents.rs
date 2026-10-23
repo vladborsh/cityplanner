@@ -225,6 +225,45 @@ impl SegmentLoad {
     }
 }
 
+/// The automatic share of car trips that put a car on the road (§18.4 item 4, T-314). Saved:
+/// the next recomputation reads `expected_cars`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VisibleShare {
+    /// Share of the car trips routed now that get a car, `0.1..=1`.
+    pub share: f32,
+    /// Cars there would be on the road if every car trip drove one, averaged over about a game
+    /// hour: the citizens' cars over `share`, plus the runs (trucks, services, tourists), which
+    /// keep their own shares.
+    pub expected_cars: f32,
+}
+
+impl Default for VisibleShare {
+    fn default() -> Self {
+        Self {
+            share: 1.0,
+            expected_cars: 0.0,
+        }
+    }
+}
+
+/// Floor of the automatic car share: a big city still shows one car trip in ten.
+pub const MIN_VISIBLE_SHARE: f32 = 0.1;
+
+impl VisibleShare {
+    /// Folds in the cars on the road now (`private` citizens' cars driven at `self.share`,
+    /// `other` vehicles of runs) and picks the share for `budget` cars.
+    pub fn update(&mut self, private: usize, other: usize, budget: u32) {
+        let sample = other as f32 + private as f32 / self.share;
+        let alpha = (LOAD_PUSH_TICKS as f32 / cp_core::time::TICKS_PER_HOUR).min(1.0);
+        self.expected_cars += (sample - self.expected_cars) * alpha;
+        self.share = if self.expected_cars > budget as f32 {
+            (budget as f32 / self.expected_cars).clamp(MIN_VISIBLE_SHARE, 1.0)
+        } else {
+            1.0
+        };
+    }
+}
+
 /// Knobs (not saved).
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct AgentSettings {
@@ -269,6 +308,8 @@ pub struct Agents {
     vehicles: Arena<Vehicle>,
     pub stats: AgentStats,
     pub load: SegmentLoad,
+    /// The automatic car share (T-314).
+    pub visible: VisibleShare,
     /// The visible traffic through the entry (T-306); not saved.
     #[serde(skip)]
     pub entry: EntryTraffic,
@@ -292,6 +333,12 @@ impl Agents {
         self.drive.stuck_why
     }
 
+    /// Car-ticks driven and those moved in one free step (T-314), since the start or the load
+    /// (diagnostics, not saved).
+    pub fn free_ticks(&self) -> [u64; 2] {
+        self.drive.free_ticks
+    }
+
     /// BUG-100 diagnostics: why the head `id` of its lane does not enter its junction at
     /// sim tick `now` (see `drive::gate_report`).
     pub fn gate_report(&self, pnet: &crate::PathNetwork, now: u64, id: VehicleId) -> String {
@@ -311,6 +358,7 @@ impl PartialEq for Agents {
             && self.vehicles == other.vehicles
             && self.stats == other.stats
             && self.load == other.load
+            && self.visible == other.visible
     }
 }
 
@@ -326,12 +374,14 @@ impl Agents {
         vehicles: Arena<Vehicle>,
         stats: AgentStats,
         load: SegmentLoad,
+        visible: VisibleShare,
     ) -> Self {
         Self {
             pedestrians,
             vehicles,
             stats,
             load,
+            visible,
             ..Self::default()
         }
     }
@@ -837,10 +887,16 @@ pub fn receive_paths(
     agents.ensure_derived(&book);
     let now = tick.0;
     // Without content (bare tests) every car trip keeps its car. T-306: a move-in car (from
-    // the entry to a finished home) drives at its own share.
+    // the entry to a finished home) drives at its own share. T-314: the automatic share.
+    let auto = agents.visible.share;
     let (visible_share, move_in_share) = content.map_or((1.0, 1.0), |c| {
         let b = c.0.balance();
-        (b.car_visible_share, b.move_in_car_share)
+        let share = if b.visible_share_auto {
+            auto
+        } else {
+            b.car_visible_share
+        };
+        (share, b.move_in_car_share)
     });
     for outcome in &results.0 {
         if let Some(vid) = agents.reroutes.remove(&outcome.id.0) {
@@ -1577,6 +1633,24 @@ pub fn lane_delay_now<'a>(cars: impl Iterator<Item = &'a Vehicle>, speed: f32) -
     (slow as f32 * DISCHARGE_S + front_standing).min(MAX_DELAY_S)
 }
 
+/// `Stats` phase (T-314): every [`LOAD_PUSH_TICKS`] ticks, the automatic car share from the
+/// cars on the road ([`VisibleShare::update`]); the citizens' cars are the vehicles that are not
+/// a run's. Read by [`receive_paths`] only when `Balance.visible_share_auto` is on.
+pub fn update_visible_share(tick: Res<Tick>, limits: Res<SimLimits>, mut agents: ResMut<Agents>) {
+    if !tick.0.is_multiple_of(LOAD_PUSH_TICKS) {
+        return;
+    }
+    let (mut private, mut other) = (0, 0);
+    for (_, v) in agents.vehicles.iter() {
+        if crate::runs::run_of(v).is_some() {
+            other += 1;
+        } else {
+            private += 1;
+        }
+    }
+    agents.visible.update(private, other, limits.vehicle_budget);
+}
+
 /// Averaging window of the segment load: 120 ticks of movement (since T-301 about 1.4 game hours; the traffic clock is not the day clock).
 const EMA_TICKS: f32 = 120.0;
 /// How often the pathfinder's congestion map is refreshed.
@@ -1710,5 +1784,32 @@ mod visible_tests {
         assert_ne!(a, shown(seed(2), 0.25), "the seed picks others");
         assert!(shown(seed(1), 1.0).iter().all(|v| *v));
         assert!(!shown(seed(1), 0.0).iter().any(|v| *v));
+    }
+
+    /// T-314: below the budget every car trip drives; above it the share is budget / expected cars,
+    /// never below a tenth; the estimate of the expected cars does not drift with the share.
+    #[test]
+    fn the_visible_share_keeps_the_cars_at_the_budget() {
+        let mut v = VisibleShare::default();
+        for _ in 0..50 {
+            v.update(800, 200, 6000);
+        }
+        assert_eq!(v.share, 1.0, "a small town shows every car trip");
+        assert!((v.expected_cars - 1000.0).abs() < 1.0, "{v:?}");
+        // 20k cars would drive (1000 of them runs, which keep their own shares): the share is
+        // budget / expected, so the citizens' cars on the road are about 6000 less the runs.
+        let mut v = VisibleShare::default();
+        for _ in 0..200 {
+            let private = (19_000.0 * v.share) as usize;
+            v.update(private, 1000, 6000);
+        }
+        assert!((v.expected_cars - 20_000.0).abs() < 200.0, "{v:?}");
+        assert!((v.share - 0.3).abs() < 0.01, "{v:?}");
+        // A huge city still shows one car trip in ten.
+        for _ in 0..200 {
+            let private = (500_000.0 * v.share) as usize;
+            v.update(private, 0, 6000);
+        }
+        assert_eq!(v.share, MIN_VISIBLE_SHARE);
     }
 }
