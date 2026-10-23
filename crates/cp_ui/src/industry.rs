@@ -40,14 +40,6 @@ pub fn swatch(kind: ResourceKind) -> egui::Color32 {
     egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
 
-fn kind_icon(kind: DistrictToolKind) -> Icon {
-    match kind {
-        DistrictToolKind::BrushSmall => Icon::DistrictBrushSmall,
-        DistrictToolKind::BrushLarge => Icon::DistrictBrushLarge,
-        DistrictToolKind::Erase => Icon::DistrictErase,
-    }
-}
-
 /// The id the next `CreateArea` will get: the lowest free slot (the rule of `cp_district`).
 pub fn next_id(view: &SimView) -> Option<AreaId> {
     cp_tools::area::next_area(&view.areas)

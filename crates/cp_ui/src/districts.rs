@@ -13,14 +13,6 @@ use crate::panels::section;
 use crate::style::Sizes;
 use crate::tile::{TileIcon, tool_tile, tool_tile_enabled};
 
-fn kind_icon(kind: DistrictToolKind) -> Icon {
-    match kind {
-        DistrictToolKind::BrushSmall => Icon::DistrictBrushSmall,
-        DistrictToolKind::BrushLarge => Icon::DistrictBrushLarge,
-        DistrictToolKind::Erase => Icon::DistrictErase,
-    }
-}
-
 /// The colour of a palette index.
 pub fn swatch(color: u8) -> egui::Color32 {
     let [r, g, b] = PALETTE_RGB[usize::from(color) % PALETTE_RGB.len()];

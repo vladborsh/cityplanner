@@ -43,14 +43,6 @@ pub fn new_name(kind: ParkKind, id: AreaId) -> String {
     cp_tools::area::new_area_name(AreaKind::Park(kind), id)
 }
 
-fn kind_tool_icon(kind: DistrictToolKind) -> Icon {
-    match kind {
-        DistrictToolKind::BrushSmall => Icon::DistrictBrushSmall,
-        DistrictToolKind::BrushLarge => Icon::DistrictBrushLarge,
-        DistrictToolKind::Erase => Icon::DistrictErase,
-    }
-}
-
 fn send(outbox: &mut CommandOutbox, cmd: DistrictCommand) {
     outbox.push(SimCommand::District(cmd));
 }
