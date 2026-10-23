@@ -19,7 +19,7 @@ const WINDOW_ICON: f32 = 24.0;
 const WINDOW_BAR_H: f32 = WINDOW_ICON + 2.0 * 4.0;
 const OVERLAY_COLUMNS: usize = 3;
 /// Width of one overlay cell (icon and short name).
-const CELL_W: f32 = 150.0;
+const CELL_W: f32 = 138.0;
 
 /// The groups of the panel (T-317): a header and its overlays. Every overlay but `Off` is in
 /// exactly one.
