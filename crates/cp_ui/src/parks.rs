@@ -355,6 +355,7 @@ pub fn parks_panel(
         });
     });
     if tools.active == ActiveTool::Area
+        && crate::tray::is_active(ui.ctx(), &tr("New area"))
         && let Some(id) = tools.area.selected
         && let Some(a) = view.areas.get(id)
     {
@@ -437,25 +438,36 @@ pub fn parks_panel(
         if cards.is_empty() {
             continue;
         }
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            kind_icon(kind).show(ui, Sizes::SECTION_ICON);
-            ui.strong(tr(kind_name(kind)));
-        });
+        if !crate::tray::is_active(ui.ctx(), &tr(kind_name(kind))) {
+            continue;
+        }
+        if !crate::tray::in_tray(ui.ctx()) {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                kind_icon(kind).show(ui, Sizes::SECTION_ICON);
+                ui.strong(tr(kind_name(kind)));
+            });
+        }
         card_row(ui, view, db, &cards, tools, overlay);
     }
     let props = section_cards(db, None);
-    if !props.is_empty() {
-        ui.add_space(4.0);
-        ui.strong(tr("Props"));
+    if !props.is_empty() && crate::tray::is_active(ui.ctx(), &tr("Props")) {
+        if !crate::tray::in_tray(ui.ctx()) {
+            ui.add_space(4.0);
+            ui.strong(tr("Props"));
+        }
         card_row(ui, view, db, &props, tools, overlay);
     }
-    ui.add_space(4.0);
-    ui.strong(tr("Path"));
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
-        crate::roads::path_tile(ui, db, tools);
-    });
+    if crate::tray::is_active(ui.ctx(), &tr("Path")) {
+        if !crate::tray::in_tray(ui.ctx()) {
+            ui.add_space(4.0);
+            ui.strong(tr("Path"));
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
+            crate::roads::path_tile(ui, db, tools);
+        });
+    }
 }
 
 /// The numbers of the park panel (T-229), read from the view.

@@ -1088,4 +1088,8 @@
     "Click roads with trolleybus wires to place stops, click the first stop to close the line. Backspace takes the last stop away.": "Click roads with trolleybus wires to place stops, click the first stop to close the line. Backspace takes the last stop away.",
     "Trolleybus riders (week)": "Trolleybus riders (week)",
     "Below {n}: no colour": "Below {n}: no colour",
+    "Small": "Small",
+    "Medium": "Medium",
+    "Large": "Large",
+    "District": "District",
 }

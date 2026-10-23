@@ -10,7 +10,7 @@ use cp_tools::{
     ActiveTool, ELEVATION_STEP, MAX_ELEVATION_LEVEL, RoadMode, ToolState, format_money,
 };
 
-use crate::icons::{self, Icon};
+use crate::icons;
 use crate::style::Sizes;
 use crate::tile::{TileIcon, tool_tile};
 
@@ -159,106 +159,28 @@ pub fn path_tile(ui: &mut egui::Ui, content: &ContentDb, tools: &mut ToolState) 
     }
 }
 
-/// The Roads category panel.
-pub fn roads_panel(
-    ui: &mut egui::Ui,
-    content: Option<&ContentDb>,
-    tools: &mut ToolState,
-    types_folded: &mut bool,
-) {
-    ui.add_space(4.0);
-    ui.weak(tr("Tools"));
-    ui.horizontal_wrapped(|ui| {
-        let on = tools.active == ActiveTool::Road;
-        if crate::panels::tool_button(ui, Icon::Road, &tr("Build"), on).clicked() {
-            tools.select(if on {
-                ActiveTool::None
-            } else {
-                ActiveTool::Road
-            });
-        }
-        let on = tools.active == ActiveTool::Upgrade;
-        if crate::panels::tool_button(ui, Icon::Roads, &tr("Upgrade"), on).clicked() {
-            tools.select(if on {
-                ActiveTool::None
-            } else {
-                ActiveTool::Upgrade
-            });
-        }
-        let on = tools.active == ActiveTool::Junctions;
-        if crate::panels::tool_button(ui, Icon::Junctions, &tr("Junctions"), on).clicked() {
-            tools.select(if on {
-                ActiveTool::None
-            } else {
-                ActiveTool::Junctions
-            });
-        }
-        let on = tools.active == ActiveTool::Flip;
-        if crate::panels::tool_button(ui, Icon::FlipRoad, &tr("Flip"), on).clicked() {
-            tools.select(if on {
-                ActiveTool::None
-            } else {
-                ActiveTool::Flip
-            });
-        }
-        let on = tools.active == ActiveTool::Bulldozer;
-        if crate::panels::tool_button(ui, Icon::Bulldozer, &tr("Bulldozer"), on).clicked() {
-            tools.toggle_bulldozer();
-        }
-    });
-    let building = tools.active == ActiveTool::Road;
-    if building {
-        ui.add_space(4.0);
-        ui.weak(tr("Mode"));
-        ui.horizontal_wrapped(|ui| {
-            for (mode, icon, label) in [
-                (RoadMode::Straight, Icon::Road, "Straight"),
-                (RoadMode::Curve, Icon::Curve, "Curve"),
-                (RoadMode::Free, Icon::FreeRoad, "Free"),
-            ] {
-                if crate::panels::tool_button(ui, icon, &tr(label), tools.road.mode == mode)
-                    .clicked()
-                {
-                    tools.road.set_mode(mode);
-                }
-            }
-        });
-        ui.add_space(4.0);
-        // Snaps (§6.8.3 item 9): off is the same as holding Alt.
-        let mut snaps = !tools.snaps_off;
-        if ui
-            .checkbox(&mut snaps, tr("Snaps"))
-            .on_hover_text(tr(
-                "Nodes, guides, angles and the 8 m step. Hold Alt for free placement.",
-            ))
-            .changed()
-        {
-            tools.snaps_off = !snaps;
-        }
-        ui.add_space(4.0);
-        ui.weak(tr("Elevation (PgUp / PgDn)"));
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    tools.road.level > 0 || !tools.road.underground,
-                    egui::Button::new("−"),
-                )
-                .clicked()
-            {
-                tools.road.lower();
-            }
-            ui.label(road_height_text(&tools.road));
-            if ui
-                .add_enabled(
-                    tools.road.underground || tools.road.level < MAX_ELEVATION_LEVEL,
-                    egui::Button::new("+"),
-                )
-                .clicked()
-            {
-                tools.road.raise();
-            }
-        });
-    }
+/// The road classes that have a tile, in order: the tabs of the Roads tray.
+pub fn tab_classes(content: &ContentDb) -> Vec<RoadClass> {
+    let mut classes: Vec<RoadClass> = cards(content).iter().map(|c| c.class).collect();
+    classes.dedup();
+    classes
+}
+
+/// The tab of a road class (T-317: Small / Medium / Large / Highway, and the footpaths).
+pub fn tab_label(class: RoadClass) -> String {
+    tr(match class {
+        RoadClass::Local => "Small",
+        RoadClass::Collector => "Medium",
+        RoadClass::Arterial => "Large",
+        RoadClass::Highway => "Highway",
+        RoadClass::Rail => "Rail",
+        RoadClass::Path => "Paths",
+    })
+}
+
+/// The Roads tray: the road types of the active tab as one row of tiles, the most used first.
+/// A tile picks the road type; with no road tool in hand it also takes the road tool.
+pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut ToolState) {
     let Some(content) = content else {
         return;
     };
@@ -270,25 +192,16 @@ pub fn roads_panel(
     if tools.road.road.is_none() {
         tools.road.road = cards.first().map(|c| c.id);
     }
-    ui.add_space(4.0);
     let upgrading = tools.active == ActiveTool::Upgrade;
-    let title = tr(if upgrading { "Upgrade to" } else { "Road type" });
-    // BUG-044: the section is open until the player folds it, whatever the tool.
-    if ui
-        .button(format!("{} {title}", if *types_folded { "▸" } else { "▾" }))
-        .clicked()
-    {
-        *types_folded = !*types_folded;
-    }
-    if *types_folded {
-        return;
-    }
+    let building = tools.active == ActiveTool::Road;
     let widest = content.roads().map(|(_, d)| d.width).fold(0.0, f32::max);
-    // One row of tiles per class, three to a row.
-    let mut classes: Vec<RoadClass> = cards.iter().map(|c| c.class).collect();
-    classes.dedup();
-    for class in classes {
-        ui.strong(tr(class_label(class)));
+    for class in tab_classes(content) {
+        if !crate::tray::is_active(ui.ctx(), &tab_label(class)) {
+            continue;
+        }
+        if !crate::tray::in_tray(ui.ctx()) {
+            ui.strong(tr(class_label(class)));
+        }
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             for c in cards.iter().filter(|c| c.class == class) {
@@ -301,6 +214,63 @@ pub fn roads_panel(
                 }
             }
         });
+    }
+}
+
+/// The options strip of the Roads tray: mode, snaps and elevation of the road tool; a word for
+/// the upgrade tool (the tiles are what it upgrades to).
+pub fn road_options(ui: &mut egui::Ui, tools: &mut ToolState) {
+    if tools.active == ActiveTool::Upgrade {
+        ui.label(tr("Upgrade to"));
+        return;
+    }
+    if tools.active != ActiveTool::Road {
+        return;
+    }
+    for (mode, label) in [
+        (RoadMode::Straight, "Straight"),
+        (RoadMode::Curve, "Curve"),
+        (RoadMode::Free, "Free"),
+    ] {
+        if ui
+            .selectable_label(tools.road.mode == mode, tr(label))
+            .clicked()
+        {
+            tools.road.set_mode(mode);
+        }
+    }
+    ui.separator();
+    // Snaps (§6.8.3 item 9): off is the same as holding Alt.
+    let mut snaps = !tools.snaps_off;
+    if ui
+        .checkbox(&mut snaps, tr("Snaps"))
+        .on_hover_text(tr(
+            "Nodes, guides, angles and the 8 m step. Hold Alt for free placement.",
+        ))
+        .changed()
+    {
+        tools.snaps_off = !snaps;
+    }
+    ui.separator();
+    ui.label(tr("Elevation (PgUp / PgDn)"));
+    if ui
+        .add_enabled(
+            tools.road.level > 0 || !tools.road.underground,
+            egui::Button::new("−"),
+        )
+        .clicked()
+    {
+        tools.road.lower();
+    }
+    ui.label(road_height_text(&tools.road));
+    if ui
+        .add_enabled(
+            tools.road.underground || tools.road.level < MAX_ELEVATION_LEVEL,
+            egui::Button::new("+"),
+        )
+        .clicked()
+    {
+        tools.road.raise();
     }
 }
 
@@ -330,10 +300,8 @@ mod tests {
         frame_texts(ctx, raw, |ui| {
             let mut root = crate::panels::root_ui(ui.ctx());
             egui::Panel::left("p")
-                .exact_size(Sizes::TOOL_PANEL_W)
-                .show(&mut root, |ui| {
-                    roads_panel(ui, Some(content), tools, &mut false)
-                });
+                .exact_size(300.0)
+                .show(&mut root, |ui| roads_panel(ui, Some(content), tools));
         })
     }
 
@@ -482,49 +450,5 @@ mod tests {
             seen.push((def.id.clone(), picture));
         }
         assert!(seen.iter().any(|(id, _)| id == "basic_1w_2l"));
-    }
-
-    /// BUG-044: the road types are listed whatever the tool; only the header folds them.
-    #[test]
-    fn the_type_section_is_open_for_every_tool_and_folds_only_on_its_header() {
-        let content = content();
-        let cards = cards(&content);
-        let ctx = egui::Context::default();
-        let mut tools = ToolState::default();
-        let mut folded = false;
-        let mut t = 0.0;
-        let mut shows_types =
-            |tools: &mut ToolState, folded: &mut bool, events: Vec<egui::Event>| {
-                t += 0.1;
-                let mut raw = input(t, events);
-                raw.screen_rect = Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1280.0, 3000.0),
-                ));
-                let texts = frame_texts(&ctx, raw, |ui| {
-                    let mut root = crate::panels::root_ui(ui.ctx());
-                    egui::Panel::left("p")
-                        .exact_size(Sizes::TOOL_PANEL_W)
-                        .show(&mut root, |ui| {
-                            roads_panel(ui, Some(&content), tools, folded)
-                        });
-                });
-                texts.iter().any(|(s, _)| s == &cards[0].name)
-            };
-        // Just opened, no tool: open.
-        assert!(shows_types(&mut tools, &mut folded, vec![]));
-        // Into the bulldozer and out again (B, Esc): still open.
-        tools.select(ActiveTool::Bulldozer);
-        assert!(shows_types(&mut tools, &mut folded, vec![]));
-        tools.select(ActiveTool::None);
-        assert!(shows_types(&mut tools, &mut folded, vec![]));
-        // The player folds it by the header; a tool change leaves it folded.
-        folded = true;
-        tools.select(ActiveTool::Bulldozer);
-        assert!(!shows_types(&mut tools, &mut folded, vec![]));
-        tools.select(ActiveTool::None);
-        assert!(!shows_types(&mut tools, &mut folded, vec![]));
-        tools.select(ActiveTool::Road);
-        assert!(!shows_types(&mut tools, &mut folded, vec![]));
     }
 }

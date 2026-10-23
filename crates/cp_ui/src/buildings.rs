@@ -76,7 +76,7 @@ fn kind_label(kind: ServiceKind) -> String {
     }
 }
 
-fn kind_icon(kind: ServiceKind) -> Icon {
+pub fn kind_icon(kind: ServiceKind) -> Icon {
     match kind {
         ServiceKind::Water => Icon::Water,
         ServiceKind::Power => Icon::Power,
@@ -477,11 +477,16 @@ pub fn buildings_panel(
         .into_iter()
         .filter(|s| in_scope(s.kind, scope))
     {
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            kind_icon(section.kind).show(ui, Sizes::SECTION_ICON);
-            ui.strong(section.title());
-        });
+        if !crate::tray::is_active(ui.ctx(), &section.title()) {
+            continue;
+        }
+        if !crate::tray::in_tray(ui.ctx()) {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                kind_icon(section.kind).show(ui, Sizes::SECTION_ICON);
+                ui.strong(section.title());
+            });
+        }
         let net = section.net.map(net_parts);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
@@ -574,11 +579,16 @@ pub fn buildings_panel(
     }
     if let Some(view) = view.filter(|_| scope == Scope::Buildings) {
         for (monument, cards) in unique_sections(content) {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                Icon::Buildings.show(ui, Sizes::SECTION_ICON);
-                ui.strong(tr(unique_title(monument)));
-            });
+            if !crate::tray::is_active(ui.ctx(), &tr(unique_title(monument))) {
+                continue;
+            }
+            if !crate::tray::in_tray(ui.ctx()) {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    Icon::Buildings.show(ui, Sizes::SECTION_ICON);
+                    ui.strong(tr(unique_title(monument)));
+                });
+            }
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
                 for card in &cards {
@@ -602,7 +612,8 @@ pub fn buildings_panel(
         }
         if tools.active == ActiveTool::Place
             && let Some(def) = tools.building.def
-            && content.building(def).unique.is_some()
+            && let Some(u) = content.building(def).unique.as_ref()
+            && crate::tray::is_active(ui.ctx(), &tr(unique_title(u.monument)))
         {
             ui.colored_label(
                 egui::Color32::from_rgb(150, 190, 240),

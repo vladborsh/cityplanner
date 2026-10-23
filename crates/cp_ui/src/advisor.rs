@@ -55,7 +55,7 @@ const BUILDING_COUNTS: [&str; 10] = [
 /// Demand (±100) from which the city "wants" a zone type.
 const HIGH_DEMAND: f32 = 30.0;
 /// Side of the snackbar's square icon.
-const ICON: f32 = Sizes::DEMAND_ICON;
+const ICON: f32 = Sizes::VIEW_MENU_ICON;
 
 /// Sent when a snackbar appears (a chime plays on it).
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
@@ -1011,11 +1011,12 @@ pub fn advisor_snackbar(
     let Some(advice) = advisor.current(now).cloned() else {
         return;
     };
-    let lift = if state.demand_collapsed {
-        Sizes::DEMAND_COLLAPSED_H
-    } else {
-        Sizes::DEMAND_H
-    };
+    let lift = Sizes::DEMAND_H
+        + if state.category.is_some() {
+            Sizes::TRAY_H
+        } else {
+            0.0
+        };
     let (mut show, mut close) = (false, false);
     egui::Area::new("advisor".into())
         .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -(lift + 16.0)))

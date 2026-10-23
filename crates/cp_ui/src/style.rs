@@ -7,12 +7,13 @@ use bevy_egui::egui;
 pub struct Sizes;
 
 impl Sizes {
-    /// Width of the palette column.
-    pub const PALETTE_W: f32 = 72.0;
-    /// Icon of a palette category.
-    pub const PALETTE_ICON: f32 = 52.0;
-    /// Width of the tool panel beside the palette.
-    pub const TOOL_PANEL_W: f32 = 300.0;
+    /// Icon of a category in the bottom bar (T-317).
+    pub const PALETTE_ICON: f32 = 44.0;
+    /// Height of the tool tray above the bottom bar: the tab row, one row of tiles (with the
+    /// scroll bar) and the options strip.
+    pub const TRAY_H: f32 = 196.0;
+    /// Height of the tab row of the tray.
+    pub const TRAY_TAB_H: f32 = 26.0;
     /// The one tile of every construction tool: its width...
     pub const TILE: f32 = 88.0;
     /// ...and its height: the icon frame and two rows of the name below it (T-274 follow-up:
@@ -26,12 +27,12 @@ impl Sizes {
     pub const TILE_ROUNDING: f32 = 6.0;
     /// Gap between tiles of a grid.
     pub const TILE_GAP: f32 = 4.0;
-    /// The bottom demand panel: height, collapsed height, zone icon, bar and column width.
-    pub const DEMAND_H: f32 = 120.0;
-    pub const DEMAND_COLLAPSED_H: f32 = 28.0;
-    pub const DEMAND_ICON: f32 = 40.0;
+    /// The slim bottom bar (T-317): height, and of its demand block the zone icon, bar and
+    /// column width.
+    pub const DEMAND_H: f32 = 64.0;
+    pub const DEMAND_ICON: f32 = 20.0;
     pub const DEMAND_BAR_H: f32 = 36.0;
-    pub const DEMAND_COL_W: f32 = 64.0;
+    pub const DEMAND_COL_W: f32 = 44.0;
     /// Width of the middle group of the top bar (clock and speeds).
     pub const TOP_CENTER_W: f32 = 360.0;
     /// Icons of the view menu.

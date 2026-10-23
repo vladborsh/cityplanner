@@ -11,7 +11,7 @@ use bevy_egui::egui;
 use cp_content::ZoneType;
 use cp_locale::tr;
 use cp_sim::SimView;
-use cp_tools::{ActiveTool, BulldozeLayer, ToolState};
+use cp_tools::{ActiveTool, ToolState};
 
 use crate::budget::demand_fraction;
 use crate::icons::zone_icon;
@@ -60,31 +60,38 @@ pub struct Column {
     pub level_y: f32,
 }
 
-/// Where the parts of the panel were drawn (tests click them).
+/// Where the parts of the bar were drawn (tests click them).
 #[derive(Clone, Debug, Default)]
 pub struct DemandRects {
     pub panel: Option<egui::Rect>,
     pub columns: Vec<Column>,
-    /// The fold / unfold button.
-    pub fold: Option<egui::Rect>,
     /// The button that opens the window "Demand by zone".
     pub details: Option<egui::Rect>,
     /// The "show" button of the not-connected notice, when the notice is visible.
     pub show_stub: Option<egui::Rect>,
     /// The notice is on screen.
     pub notice: bool,
-    /// The balance (a click opens the budget) and the population (T-289: moved here from the
-    /// top bar).
+    /// The balance (a click opens the budget) and the population.
     pub money: Option<egui::Rect>,
     pub population: Option<egui::Rect>,
-    /// The bulldozer button, right of the demand columns (T-289).
-    pub bulldozer: Option<egui::Rect>,
+    /// The category buttons.
+    pub categories: Vec<(Category, egui::Rect)>,
+    /// The tools of every category, right of the categories.
+    pub globals: Vec<(ActiveTool, egui::Rect)>,
 }
 
-/// Width of the block of money and population at the left of the panel.
-const STATS_W: f32 = 330.0;
-/// Icon of the bulldozer button.
-const BULLDOZER_ICON: f32 = 48.0;
+impl DemandRects {
+    /// The bulldozer button.
+    pub fn bulldozer(&self) -> Option<egui::Rect> {
+        self.globals
+            .iter()
+            .find(|(t, _)| *t == ActiveTool::Bulldozer)
+            .map(|(_, r)| *r)
+    }
+}
+
+/// Width of the block of money and population at the left of the bar.
+const STATS_W: f32 = 200.0;
 
 /// The balance with its income (a click opens the budget).
 fn money_row(ui: &mut egui::Ui, view: &SimView, state: &mut UiState, rects: &mut DemandRects) {
@@ -109,47 +116,9 @@ fn population_row(ui: &mut egui::Ui, view: &SimView, rects: &mut DemandRects) {
     crate::budget::population_trend_label(ui, view);
 }
 
-/// Money, income, population and its change (T-289; T-298: the utility gauges are gone, the
-/// overlays show the networks): the city's status block at the left of the bottom panel. In the folded strip they stand in one row.
-fn stats(
-    ui: &mut egui::Ui,
-    view: &SimView,
-    state: &mut UiState,
-    rects: &mut DemandRects,
-    one_row: bool,
-) {
-    if one_row {
-        money_row(ui, view, state, rects);
-        population_row(ui, view, rects);
-        return;
-    }
-    ui.vertical(|ui| {
-        ui.set_width(STATS_W);
-        ui.horizontal(|ui| money_row(ui, view, state, rects));
-        ui.horizontal(|ui| population_row(ui, view, rects));
-    });
-}
-
-/// The bulldozer button (T-289): the tool of the open menu's layer — Power and Water take only
-/// their own buildings and links (T-286) — on and off; B does the same.
-fn bulldozer_button(ui: &mut egui::Ui, tools: &mut ToolState, size: f32) -> egui::Rect {
-    let on = tools.active == ActiveTool::Bulldozer;
-    let hover = match tools.menu_layer {
-        BulldozeLayer::All => tr("Bulldozer (B)"),
-        BulldozeLayer::Power => tr("Bulldozer (B) — power lines and buildings only"),
-        BulldozeLayer::Water => tr("Bulldozer (B) — pipes and water buildings only"),
-    };
-    let r = crate::icons::Icon::Bulldozer
-        .button(ui, size, Sizes::BUTTON_PAD, on)
-        .on_hover_text(hover);
-    if r.clicked() {
-        tools.toggle_bulldozer();
-    }
-    r.rect
-}
-
-/// Draws the panel into `root` (after the left panels, so it takes the rest of the width): the
-/// status block, the demand columns, the bulldozer button.
+/// The slim bottom bar (T-317), one row: money, income, population at the left; the demand
+/// bars (smaller, a click on a bar takes its zone tool); the category buttons; the tools that
+/// work from any category (bulldozer, upgrade, flip, junctions) at the right end.
 pub fn demand_panel(
     root: &mut egui::Ui,
     view: &SimView,
@@ -157,53 +126,24 @@ pub fn demand_panel(
     tools: &mut ToolState,
 ) -> DemandRects {
     let mut rects = DemandRects::default();
-    let height = if state.demand_collapsed {
-        Sizes::DEMAND_COLLAPSED_H
-    } else {
-        Sizes::DEMAND_H
-    };
     let out = egui::Panel::bottom("demand")
-        .exact_size(height)
+        .exact_size(Sizes::DEMAND_H)
         .resizable(false)
         .show(root, |ui| {
-            if state.demand_collapsed {
-                ui.horizontal_centered(|ui| {
-                    stats(ui, view, state, &mut rects, true);
-                    ui.separator();
-                    let r = ui.small_button("▴").on_hover_text(tr("Show demand"));
-                    rects.fold = Some(r.rect);
-                    if r.clicked() {
-                        state.demand_collapsed = false;
-                    }
-                    ui.label(tr("Demand"));
-                    rects.bulldozer = Some(bulldozer_button(ui, tools, 20.0));
-                    if unconnected_stub(view).is_some() {
-                        rects.notice = true;
-                        ui.colored_label(egui::Color32::YELLOW, format!("⚠ {}", tr(NOT_CONNECTED)));
-                    }
-                });
-                return;
-            }
-            ui.horizontal(|ui| {
-                stats(ui, view, state, &mut rects, false);
-                ui.separator();
-                // The controls, left of the columns.
+            ui.horizontal_centered(|ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(Sizes::DEMAND_COL_W);
-                    ui.strong(tr("Demand"));
-                    let r = ui.small_button("▾").on_hover_text(tr("Fold the panel"));
-                    rects.fold = Some(r.rect);
-                    if r.clicked() {
-                        state.demand_collapsed = true;
-                    }
-                    let r = ui
-                        .small_button("▸")
-                        .on_hover_text(tr("Demand by zone (window)"));
-                    rects.details = Some(r.rect);
-                    if r.clicked() {
-                        state.demand_open = true;
-                    }
+                    ui.set_width(STATS_W);
+                    ui.horizontal(|ui| money_row(ui, view, state, &mut rects));
+                    ui.horizontal(|ui| population_row(ui, view, &mut rects));
                 });
+                ui.separator();
+                let r = ui
+                    .small_button("▸")
+                    .on_hover_text(tr("Demand by zone (window)"));
+                rects.details = Some(r.rect);
+                if r.clicked() {
+                    state.demand_open = true;
+                }
                 for zone in COLUMNS {
                     let col = column(ui, view, zone);
                     if col.1.clicked() && crate::windows::zone_lock(view, zone).is_none() {
@@ -216,41 +156,57 @@ pub fn demand_panel(
                     rects.columns.push(col.0);
                 }
                 ui.separator();
-                rects.bulldozer = Some(bulldozer_button(ui, tools, BULLDOZER_ICON));
-                if let Some(stub) = unconnected_stub(view) {
-                    rects.notice = true;
-                    ui.vertical(|ui| {
-                        ui.add_space(8.0);
-                        ui.set_max_width(260.0);
-                        ui.colored_label(egui::Color32::YELLOW, format!("⚠ {}", tr(NOT_CONNECTED)));
-                        let r = ui
-                            .button(tr("Show"))
-                            .on_hover_text(tr("Centre the camera on the dead end"));
-                        rects.show_stub = Some(r.rect);
-                        if r.clicked() {
-                            state.camera_goal = Some(stub);
-                        }
-                    });
-                }
+                rects.categories = crate::palette::palette(ui, state, view.content.as_deref());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    rects.globals = crate::palette::global_tools(ui, state, tools);
+                });
             });
         });
     rects.panel = Some(out.response.rect);
+    notice(root.ctx(), view, state, &mut rects);
     rects
 }
 
-/// One column: the icon over the bar, sensitive to clicks, with the tooltip.
+/// The notice of §5.1 above the bar's left end while the city is not connected.
+fn notice(ctx: &egui::Context, view: &SimView, state: &mut UiState, rects: &mut DemandRects) {
+    let Some(stub) = unconnected_stub(view) else {
+        return;
+    };
+    rects.notice = true;
+    egui::Area::new("not_connected".into())
+        .anchor(
+            egui::Align2::LEFT_BOTTOM,
+            egui::vec2(8.0, -(Sizes::DEMAND_H + 8.0)),
+        )
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.colored_label(egui::Color32::YELLOW, format!("⚠ {}", tr(NOT_CONNECTED)));
+                    let r = ui
+                        .button(tr("Show"))
+                        .on_hover_text(tr("Centre the camera on the dead end"));
+                    rects.show_stub = Some(r.rect);
+                    if r.clicked() {
+                        state.camera_goal = Some(stub);
+                    }
+                });
+            });
+        });
+}
+
+/// One column: the icon beside a thin bar, sensitive to clicks, with the tooltip.
 fn column(ui: &mut egui::Ui, view: &SimView, zone: ZoneType) -> (Column, egui::Response) {
-    let size = egui::vec2(
-        Sizes::DEMAND_COL_W,
-        Sizes::DEMAND_ICON + 4.0 + Sizes::DEMAND_BAR_H,
-    );
+    let size = egui::vec2(Sizes::DEMAND_COL_W, Sizes::DEMAND_BAR_H);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let painter = ui.painter();
     if response.hovered() {
         painter.rect_filled(rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
     }
     let icon = egui::Rect::from_center_size(
-        egui::pos2(rect.center().x, rect.top() + Sizes::DEMAND_ICON * 0.5),
+        egui::pos2(
+            rect.left() + 4.0 + Sizes::DEMAND_ICON * 0.5,
+            rect.center().y,
+        ),
         egui::vec2(Sizes::DEMAND_ICON, Sizes::DEMAND_ICON),
     );
     let locked = crate::windows::zone_lock(view, zone).is_some();
@@ -263,8 +219,8 @@ fn column(ui: &mut egui::Ui, view: &SimView, zone: ZoneType) -> (Column, egui::R
         crate::buildings::badge(ui, icon, crate::buildings::UniqueState::Locked);
     }
     let track = egui::Rect::from_center_size(
-        egui::pos2(rect.center().x, rect.bottom() - Sizes::DEMAND_BAR_H * 0.5),
-        egui::vec2(14.0, Sizes::DEMAND_BAR_H),
+        egui::pos2(rect.right() - 8.0, rect.center().y),
+        egui::vec2(8.0, Sizes::DEMAND_BAR_H - 4.0),
     );
     let (_, value) = zone_group_demand(zone, &view.demand);
     let level_y = track.bottom() - demand_fraction(value) * track.height();
@@ -412,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn the_panel_is_120_high_and_sits_under_the_view() {
+    fn the_bar_is_slim_and_sits_under_the_view() {
         let rig = Rig::new(view_with(0.0, 0.0, 0.0, 0.0));
         let panel = rig.rects.panel.unwrap();
         assert_eq!(panel.height(), Sizes::DEMAND_H);
@@ -534,10 +490,14 @@ mod tests {
         let mut rig = Rig::new(SimRunner::new(1).view());
         rig.frame(vec![]);
         let panel = rig.rects.panel.unwrap();
-        let bull = rig.rects.bulldozer.unwrap();
+        let bull = rig.rects.bulldozer().unwrap();
         assert!(panel.contains_rect(bull), "{bull:?} not in {panel:?}");
-        // Palette (72) and an open tool panel (300) leave 908: the bulldozer must still be in.
-        assert!(bull.right() <= 1280.0 - 72.0 - 300.0, "{lang:?}: {bull:?}");
+        assert!(bull.right() <= 1280.0, "{lang:?}: {bull:?}");
+        let last = rig.rects.categories.last().unwrap().1;
+        assert!(
+            last.right() <= bull.left(),
+            "{lang:?}: categories and tools overlap"
+        );
         assert!(
             bull.left() > rig.rects.columns[3].rect.right(),
             "right of the demand"
@@ -551,13 +511,13 @@ mod tests {
         use cp_tools::BulldozeLayer;
         let mut rig = Rig::new(SimRunner::new(1).view());
         assert_eq!(rig.tools.active, ActiveTool::None);
-        rig.click(rig.rects.bulldozer.unwrap().center());
+        rig.click(rig.rects.bulldozer().unwrap().center());
         assert_eq!(rig.tools.active, ActiveTool::Bulldozer);
         assert_eq!(rig.tools.bulldoze_layer, BulldozeLayer::All);
-        rig.click(rig.rects.bulldozer.unwrap().center());
+        rig.click(rig.rects.bulldozer().unwrap().center());
         assert_eq!(rig.tools.active, ActiveTool::None);
         rig.tools.menu_layer = BulldozeLayer::Power;
-        rig.click(rig.rects.bulldozer.unwrap().center());
+        rig.click(rig.rects.bulldozer().unwrap().center());
         assert_eq!(rig.tools.active, ActiveTool::Bulldozer);
         assert_eq!(rig.tools.bulldoze_layer, BulldozeLayer::Power);
     }
@@ -571,18 +531,39 @@ mod tests {
         assert!(rig.state.demand_open);
     }
 
+    /// T-317: the categories and the global tools are in the bar; a click on a category opens
+    /// its tray, a global tool works from any category.
     #[test]
-    fn it_folds_to_a_28_strip_and_unfolds() {
-        let mut rig = Rig::new(view_with(0.0, 0.0, 0.0, 0.0));
-        let at = rig.rects.fold.unwrap().center();
-        rig.click(at);
-        assert!(rig.state.demand_collapsed);
-        assert_eq!(rig.rects.panel.unwrap().height(), Sizes::DEMAND_COLLAPSED_H);
-        assert!(rig.rects.columns.is_empty());
-        let at = rig.rects.fold.unwrap().center();
-        rig.click(at);
-        assert!(!rig.state.demand_collapsed);
-        assert_eq!(rig.rects.panel.unwrap().height(), Sizes::DEMAND_H);
+    fn the_bar_holds_the_categories_and_the_global_tools() {
+        let mut rig = Rig::new(SimRunner::new(1).view());
+        // Without content: Zones and Districts only.
+        assert_eq!(rig.rects.categories.len(), 2);
+        let globals: Vec<_> = rig.rects.globals.iter().map(|(t, _)| *t).collect();
+        assert_eq!(globals.len(), 4);
+        for tool in [ActiveTool::Upgrade, ActiveTool::Flip, ActiveTool::Junctions] {
+            assert!(globals.contains(&tool), "{tool:?}");
+            let at = rig
+                .rects
+                .globals
+                .iter()
+                .find(|(t, _)| *t == tool)
+                .unwrap()
+                .1;
+            rig.click(at.center());
+            assert_eq!(rig.tools.active, tool);
+            let at = rig
+                .rects
+                .globals
+                .iter()
+                .find(|(t, _)| *t == tool)
+                .unwrap()
+                .1;
+            rig.click(at.center());
+            assert_eq!(rig.tools.active, ActiveTool::None, "{tool:?} toggles");
+        }
+        let districts = rig.rects.categories[1];
+        rig.click(districts.1.center());
+        assert_eq!(rig.state.category, Some(districts.0));
     }
 
     #[test]

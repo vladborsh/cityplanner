@@ -157,6 +157,17 @@ pub fn waiting_at(view: &SimView, stop: cp_transit::StopId) -> u32 {
         .count() as u32
 }
 
+/// The icon of a mode's section and tab.
+pub fn section_icon(mode: TransitMode) -> Icon {
+    match mode {
+        TransitMode::Metro => Icon::MetroTrack,
+        TransitMode::Train => Icon::RailTrack,
+        TransitMode::Tram => Icon::LineTram,
+        TransitMode::Trolley => Icon::LineTrolley,
+        _ => Icon::LineBus,
+    }
+}
+
 pub fn transit_panel(
     ui: &mut egui::Ui,
     view: Option<&SimView>,
@@ -168,18 +179,16 @@ pub fn transit_panel(
         return;
     };
     for section in sections(content) {
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let icon = match section.mode {
-                TransitMode::Metro => Icon::MetroTrack,
-                TransitMode::Train => Icon::RailTrack,
-                TransitMode::Tram => Icon::LineTram,
-                TransitMode::Trolley => Icon::LineTrolley,
-                _ => Icon::LineBus,
-            };
-            icon.show(ui, Sizes::SECTION_ICON);
-            ui.strong(tr(section.title()));
-        });
+        if !crate::tray::is_active(ui.ctx(), &tr(section.title())) {
+            continue;
+        }
+        if !crate::tray::in_tray(ui.ctx()) {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                section_icon(section.mode).show(ui, Sizes::SECTION_ICON);
+                ui.strong(tr(section.title()));
+            });
+        }
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             if let Some(track) = &section.track {

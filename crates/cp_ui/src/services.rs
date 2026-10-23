@@ -507,10 +507,9 @@ mod tests {
             assert!(r.top() >= Sizes::TOP_BAR_H, "{w}: {r:?}");
             assert!(r.right() <= w, "{w}: {r:?}");
             assert!(
-                r.left() >= Sizes::PALETTE_W + Sizes::TOOL_PANEL_W,
+                r.bottom() <= h - Sizes::DEMAND_H - Sizes::TRAY_H,
                 "{w}: {r:?}"
             );
-            assert!(r.bottom() <= h - Sizes::DEMAND_H, "{w}: {r:?}");
         }
     }
 }

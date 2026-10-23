@@ -49,13 +49,14 @@ pub mod style;
 pub mod tile;
 pub mod tiles;
 pub mod transit;
+pub mod tray;
 pub mod windows;
 
 pub use debug::{DebugData, PhaseTimes, TickRate};
 pub use files::{FileMenu, FileRequest, SaveEntry, file_window};
 pub use icons::Icon;
 pub use info::{InfoRects, info_panel};
-pub use palette::{Category, palette, tool_panel};
+pub use palette::{Category, palette, tray};
 pub use panels::{
     AudioPrefs, Prefs, TopRects, UI_SCALE_RANGE, UiState, UiWindow, root_ui, top_bar,
 };
@@ -267,10 +268,11 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     if (ctx.zoom_factor() - state.prefs.ui_scale).abs() > f32::EPSILON {
         ctx.set_zoom_factor(state.prefs.ui_scale);
     }
-    palette(&mut root, state, view.content.as_deref());
+    // The bottom bar first (it is the lowest panel), the tray above it.
+    let bar = demand_panel::demand_panel(&mut root, view, state, tools);
     menus::apply(state, tools, overlay, Some(view));
-    tool_panel(&mut root, state, Some(view), tools, overlay, outbox);
-    demand_panel::demand_panel(&mut root, view, state, tools);
+    tray(&mut root, state, Some(view), tools, overlay, outbox);
+    let _ = bar;
     overlays_panel::overlays_panel(ctx, state, overlay, lighting, files, Some(view));
     remember_map_rect(ctx, &root);
     bulldozer_bar::bulldozer_bar(ctx, tools);
@@ -661,17 +663,15 @@ mod capture_tests {
         // T-289: the palette, and the overlays panel at the top right (two points of the grid).
         assert_eq!(
             row(&base, 328),
-            2, // T-298: the panel lost the window buttons row, it no longer reaches this row
-            "the palette and the overlays panel are owned in the middle row"
+            1, // the overlays panel at the right; T-317: no palette column any more
+            "only the overlays panel is owned in the middle row"
         );
         assert_eq!(row(&base, 710), 16, "bottom bar");
-        // The palette on the left.
-        assert!(base.iter().any(|p| p.0 == 8 && p.1 == 328), "palette");
         // The middle of the map is the map's.
         assert!(
             !base
                 .iter()
-                .any(|p| (408..=808).contains(&p.0) && (168..=568).contains(&p.1))
+                .any(|p| (408..=808).contains(&p.0) && (168..=388).contains(&p.1))
         );
         // The tool panel of an open category adds to what the UI owns.
         rig.state.category = Some(Category::Roads);
@@ -694,7 +694,7 @@ mod capture_tests {
             let owned = rig.owned();
             let mid: Vec<_> = owned
                 .iter()
-                .filter(|p| (408..=808).contains(&p.0) && (168..=568).contains(&p.1))
+                .filter(|p| (408..=808).contains(&p.0) && (168..=388).contains(&p.1))
                 .collect();
             assert!(mid.is_empty(), "{c:?}: the UI owns {mid:?}");
         }
@@ -766,19 +766,6 @@ mod capture_tests {
         // The clock and the speeds are all the top bar holds.
         assert!(all.iter().any(|(t, at)| at.y < 44.0 && t.contains("day")));
         assert!(!all.iter().any(|(t, at)| at.y < 44.0 && t.starts_with("💰")));
-    }
-
-    #[test]
-    fn the_collapsed_demand_bar_still_owns_the_bottom_strip() {
-        let mut rig = Rig::new();
-        rig.state.demand_collapsed = true;
-        let owned = rig.owned();
-        assert_eq!(row(&owned, 710), 16);
-        assert_eq!(
-            row(&owned, 648),
-            1,
-            "the strip is thin: the map is free above it"
-        );
     }
 }
 

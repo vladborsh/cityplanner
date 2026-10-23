@@ -98,10 +98,8 @@ pub struct UiState {
     pub policies_open: bool,
     /// Name drafts of the Lines window.
     pub lines: crate::lines::LinesDraft,
-    /// The bottom demand panel is folded into its 28 px strip (T-099; not saved).
-    pub demand_collapsed: bool,
-    /// The player folded the road-type section of the Roads panel (BUG-044; not saved).
-    pub road_types_folded: bool,
+    /// The tab each category's tray was left on (T-317; not saved).
+    pub tray_tab: Vec<(Category, String)>,
     /// Where the "show" button of the not-connected notice wants the camera (XZ, metres);
     /// taken by `apply_camera_goal` (T-117; not saved).
     pub camera_goal: Option<bevy::math::Vec2>,
@@ -386,9 +384,16 @@ pub fn tool_button(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -
 
 /// A titled section of a tool panel.
 pub(crate) fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
-    ui.add_space(4.0);
-    ui.weak(title);
-    add(ui);
+    if !crate::tray::is_active(ui.ctx(), title) {
+        return;
+    }
+    if crate::tray::in_tray(ui.ctx()) {
+        ui.vertical(add);
+    } else {
+        ui.add_space(4.0);
+        ui.weak(title);
+        add(ui);
+    }
 }
 
 /// Length of the planned road, metres.
@@ -454,7 +459,7 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ui.weak(tr("Click to start a road. Esc cancels."));
             }
         },
-        (Category::Roads, ActiveTool::Flip) => match &tools.flip_preview {
+        (_, ActiveTool::Flip) => match &tools.flip_preview {
             Some(f) if !f.errors.is_empty() => bad(ui, &f.errors, &tr("cannot flip")),
             Some(f) => {
                 let n = f.run.len();
@@ -471,12 +476,12 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ));
             }
         },
-        (Category::Roads, ActiveTool::Junctions) => {
+        (_, ActiveTool::Junctions) => {
             ui.weak(tr(
                 "Click a traffic light to switch it, a sign to step it: main, yield, none. Esc leaves the tool.",
             ));
         }
-        (Category::Roads, ActiveTool::Upgrade) => match &tools.upgrade_preview {
+        (_, ActiveTool::Upgrade) => match &tools.upgrade_preview {
             Some(u) if !u.errors.is_empty() => bad(ui, &u.errors, &tr("cannot upgrade")),
             Some(u) if u.is_noop() => {
                 ui.weak(tr("This run already has the chosen road type."));
@@ -743,12 +748,7 @@ fn zone_kind_icon(kind: ZoneToolKind) -> Icon {
 
 /// The Zones category: tool kinds and the zone palette. Picking either activates the zoning
 /// tool (which shows the zone grid); "Off" leaves it.
-pub fn zones_panel(
-    ui: &mut egui::Ui,
-    view: Option<&SimView>,
-    tools: &mut ToolState,
-    state: &mut UiState,
-) {
+pub fn zones_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
     section(ui, &tr("Tool"), |ui| {
         ui.horizontal_wrapped(|ui| {
             for kind in ZoneToolKind::ALL {
@@ -789,7 +789,13 @@ pub fn zones_panel(
                 .unwrap_or(0);
             rows.entry(row).or_default().push(zone);
         }
-        for zones in rows.values() {
+        // The tray keeps every zone type in one row.
+        let groups: Vec<Vec<cp_content::ZoneType>> = if crate::tray::in_tray(ui.ctx()) {
+            vec![rows.into_values().flatten().collect()]
+        } else {
+            rows.into_values().collect()
+        };
+        for zones in &groups {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
                 for &zone in zones {
@@ -814,9 +820,6 @@ pub fn zones_panel(
             });
         }
     });
-    if ui.button(tr("Demand by zone ▸")).clicked() {
-        state.demand_open = true;
-    }
 }
 
 /// The demand group a zone type belongs to: the letter and its value (R for `ResLow`/`ResHigh`,
@@ -832,14 +835,9 @@ pub fn zone_group_demand(zone: cp_content::ZoneType, d: &Demand) -> (&'static st
 }
 
 /// The Roads category: tools, mode, elevation and the road types as cards (see [`crate::roads`]).
-pub fn roads_panel(
-    ui: &mut egui::Ui,
-    view: Option<&SimView>,
-    tools: &mut ToolState,
-    state: &mut UiState,
-) {
+pub fn roads_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
     let content = view.and_then(|v| v.content.as_deref());
-    crate::roads::roads_panel(ui, content, tools, &mut state.road_types_folded);
+    crate::roads::roads_panel(ui, content, tools);
 }
 
 #[cfg(test)]
@@ -967,7 +965,7 @@ mod tests {
         let mut ui_state = UiState::default();
         let mut draw = |tools: &mut ToolState| {
             crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
-                roads_panel(ui, Some(&view), tools, &mut ui_state);
+                roads_panel(ui, Some(&view), tools);
             });
         };
         draw(&mut tools);
@@ -1119,7 +1117,7 @@ mod tests {
         let mut state = UiState::default();
         let mut draw = |tools: &mut ToolState| {
             crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
-                zones_panel(ui, None, tools, &mut state);
+                zones_panel(ui, None, tools);
             });
         };
         draw(&mut tools);
@@ -1160,7 +1158,7 @@ mod tests {
             let mut state = UiState::default();
             crate::tile::take_rects(&ctx);
             crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
-                zones_panel(ui, Some(&view), &mut tools, &mut state);
+                zones_panel(ui, Some(&view), &mut tools);
             });
             let rects = crate::tile::take_rects(&ctx).0;
             let mut tops: Vec<i32> = rects.iter().map(|(t, _)| t.top() as i32).collect();

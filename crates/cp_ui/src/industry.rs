@@ -334,7 +334,12 @@ fn area_panel(ui: &mut egui::Ui, view: &SimView, id: AreaId) {
     let Some(s) = area_summary(view, id) else {
         return;
     };
-    section(ui, &s.name, |ui| {
+    // The summary of the chosen area stands under the list of areas (its tab).
+    if !crate::tray::is_active(ui.ctx(), &tr("Areas")) {
+        return;
+    }
+    ui.group(|ui| {
+        ui.strong(&s.name);
         ui.label(trf!(
             "{resource} · level {level}",
             resource = tr(resource_name(s.resource)),
@@ -372,11 +377,16 @@ fn chain_panel(
     overlay: &mut OverlayState,
 ) {
     for (res, cards) in chain_sections(db) {
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            resource_icon(res).show(ui, Sizes::SECTION_ICON);
-            ui.strong(tr(resource_name(res)));
-        });
+        if !crate::tray::is_active(ui.ctx(), &tr(resource_name(res))) {
+            continue;
+        }
+        if !crate::tray::in_tray(ui.ctx()) {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                resource_icon(res).show(ui, Sizes::SECTION_ICON);
+                ui.strong(tr(resource_name(res)));
+            });
+        }
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             for card in &cards {
@@ -511,7 +521,7 @@ pub fn industry_panel(
         });
     });
     // An area that was deleted is not the brush's area any more.
-    if tools.active == ActiveTool::Area {
+    if tools.active == ActiveTool::Area && crate::tray::is_active(ui.ctx(), &tr("New area")) {
         // (A just-made area is chosen before the view shows it: no hint for that frame.)
         match tools.area.selected {
             Some(id) => {

@@ -263,7 +263,12 @@ pub fn districts_panel(
         && let Some(d) = view.districts.get(id)
     {
         let tab = current_tab(ui.ctx());
-        section(ui, &d.name, |ui| {
+        let tray = crate::tray::in_tray(ui.ctx());
+        if crate::tray::is_active(ui.ctx(), &tr("District")) {
+            if !tray {
+                ui.add_space(4.0);
+                ui.weak(&d.name);
+            }
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
                 for t in DistrictTab::ALL {
@@ -282,7 +287,7 @@ pub fn districts_panel(
                 }
                 DistrictTab::Stats => stats_tab(ui, view, id),
             }
-        });
+        }
     }
 }
 

@@ -15,6 +15,7 @@ use cp_tools::{CommandOutbox, ToolState};
 use crate::icons::Icon;
 use crate::panels::{UiState, roads_panel, services_panel, verdict, zones_panel};
 use crate::style::Sizes;
+use cp_tools::{ActiveTool, BulldozeLayer};
 
 /// Build-menu categories. A category without tools is not drawn ([`Category::available`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,36 +104,69 @@ impl Category {
     }
 }
 
-/// The palette column. Returns each icon's rectangle (tests click them). A click toggles
-/// `state.category`.
+/// The category buttons of the bottom bar (T-317): one square icon each. Returns each icon's
+/// rectangle (tests click them). A click toggles `state.category`.
 pub fn palette(
-    root: &mut egui::Ui,
+    ui: &mut egui::Ui,
     state: &mut UiState,
     content: Option<&ContentDb>,
 ) -> Vec<(Category, egui::Rect)> {
     let mut rects = Vec::new();
-    egui::Panel::left("palette")
-        .exact_size(Sizes::PALETTE_W)
-        .resizable(false)
-        .show(root, |ui| {
-            ui.vertical_centered(|ui| {
-                for (n, c) in Category::available(content).into_iter().enumerate() {
-                    let selected = state.category == Some(c);
-                    let r = c
-                        .icon()
-                        .button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, selected)
-                        .on_hover_text(trf!(
-                            "{category} (Shift+{key})",
-                            category = tr(c.label()),
-                            key = n + 1
-                        ));
-                    rects.push((c, r.rect));
-                    if r.clicked() {
-                        toggle(state, c);
-                    }
+    for (n, c) in Category::available(content).into_iter().enumerate() {
+        let selected = state.category == Some(c);
+        let r = c
+            .icon()
+            .button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, selected)
+            .on_hover_text(trf!(
+                "{category} (Shift+{key})",
+                category = tr(c.label()),
+                key = n + 1
+            ));
+        rects.push((c, r.rect));
+        if r.clicked() {
+            toggle(state, c);
+        }
+    }
+    rects
+}
+
+/// The tools that work from any category, at the right end of the bottom bar: the bulldozer
+/// (the layer of the open menu, T-286), upgrade, flip and junctions. Returns their rectangles.
+pub fn global_tools(
+    ui: &mut egui::Ui,
+    state: &mut UiState,
+    tools: &mut ToolState,
+) -> Vec<(ActiveTool, egui::Rect)> {
+    let mut rects = Vec::new();
+    // Right to left: the bulldozer ends the row.
+    let bulldozer_hover = match tools.menu_layer {
+        BulldozeLayer::All => tr("Bulldozer (B)"),
+        BulldozeLayer::Power => tr("Bulldozer (B) — power lines and buildings only"),
+        BulldozeLayer::Water => tr("Bulldozer (B) — pipes and water buildings only"),
+    };
+    for (tool, icon, hover) in [
+        (ActiveTool::Bulldozer, Icon::Bulldozer, bulldozer_hover),
+        (ActiveTool::Flip, Icon::FlipRoad, tr("Flip")),
+        (ActiveTool::Junctions, Icon::Junctions, tr("Junctions")),
+        (ActiveTool::Upgrade, Icon::Roads, tr("Upgrade")),
+    ] {
+        let on = tools.active == tool;
+        let r = icon
+            .button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, on)
+            .on_hover_text(hover);
+        rects.push((tool, r.rect));
+        if r.clicked() {
+            if tool == ActiveTool::Bulldozer {
+                tools.toggle_bulldozer();
+            } else {
+                tools.select(if on { ActiveTool::None } else { tool });
+                // Upgrade works with the road types: show them.
+                if tool == ActiveTool::Upgrade && !on && state.category != Some(Category::Roads) {
+                    state.category = Some(Category::Roads);
                 }
-            });
-        });
+            }
+        }
+    }
     rects
 }
 
@@ -189,8 +223,106 @@ pub fn hotkey(ctx: &egui::Context, available: &[Category]) -> Option<Category> {
     })
 }
 
-/// The tool panel of the open category (nothing when none is open). Returns its rectangle.
-pub fn tool_panel(
+/// The tabs of `category`'s tray: the keys the panel functions draw their sections under, with
+/// the tab's icon.
+pub fn tabs(category: Category, view: Option<&SimView>) -> Vec<(String, Option<Icon>)> {
+    let content = view.and_then(|v| v.content.as_deref());
+    let mut out: Vec<(String, Option<Icon>)> = Vec::new();
+    match category {
+        Category::Roads => {
+            for class in content.map(crate::roads::tab_classes).unwrap_or_default() {
+                out.push((crate::roads::tab_label(class), None));
+            }
+        }
+        Category::Zones => {
+            out.push((tr("Zone"), Some(Icon::Zones)));
+            out.push((tr("Tool"), Some(Icon::ZoneBrushSmall)));
+        }
+        Category::Buildings | Category::Power | Category::Water => {
+            let scope = match category {
+                Category::Power => crate::buildings::Scope::Power,
+                Category::Water => crate::buildings::Scope::Water,
+                _ => crate::buildings::Scope::Buildings,
+            };
+            if let Some(content) = content {
+                for s in crate::buildings::sections(content)
+                    .into_iter()
+                    .filter(|s| crate::buildings::in_scope(s.kind, scope))
+                {
+                    out.push((s.title(), Some(crate::buildings::kind_icon(s.kind))));
+                }
+                if scope == crate::buildings::Scope::Buildings && view.is_some() {
+                    for (monument, _) in crate::buildings::unique_sections(content) {
+                        out.push((
+                            tr(crate::buildings::unique_title(monument)),
+                            Some(Icon::Buildings),
+                        ));
+                    }
+                }
+            }
+        }
+        Category::Districts => {
+            out.push((tr("Tool"), Some(Icon::DistrictNew)));
+            out.push((tr("Districts"), Some(Icon::Districts)));
+            if view.is_some() {
+                out.push((tr("District"), Some(Icon::DistrictTabPolicies)));
+            }
+        }
+        Category::Transit => {
+            for s in content.map(crate::transit::sections).unwrap_or_default() {
+                out.push((tr(s.title()), Some(crate::transit::section_icon(s.mode))));
+            }
+        }
+        Category::Industry => {
+            out.push((tr("Tool"), Some(Icon::DistrictNew)));
+            out.push((tr("New area"), Some(Icon::DistrictNew)));
+            out.push((tr("Areas"), Some(Icon::Industry)));
+            for (res, _) in content
+                .map(crate::industry::chain_sections)
+                .unwrap_or_default()
+            {
+                out.push((
+                    tr(crate::industry::resource_name(res)),
+                    Some(crate::industry::resource_icon(res)),
+                ));
+            }
+        }
+        Category::Parks => {
+            out.push((tr("Tool"), Some(Icon::DistrictNew)));
+            out.push((tr("New area"), Some(Icon::DistrictNew)));
+            out.push((tr("Areas"), Some(Icon::CategoryParks)));
+            if let Some(content) = content {
+                for kind in cp_content::ParkKind::ALL {
+                    if !crate::parks::section_cards(content, Some(kind)).is_empty() {
+                        out.push((
+                            tr(crate::parks::kind_name(kind)),
+                            Some(crate::parks::kind_icon(kind)),
+                        ));
+                    }
+                }
+                if !crate::parks::section_cards(content, None).is_empty() {
+                    out.push((tr("Props"), None));
+                }
+                out.push((tr("Path"), None));
+            }
+        }
+    }
+    out
+}
+
+/// The tab of `category` the tray is on: the remembered one while it exists, else the first.
+fn active_tab(state: &UiState, category: Category, tabs: &[(String, Option<Icon>)]) -> usize {
+    state
+        .tray_tab
+        .iter()
+        .find(|(c, _)| *c == category)
+        .and_then(|(_, key)| tabs.iter().position(|(t, _)| t == key))
+        .unwrap_or(0)
+}
+
+/// The tool tray of the open category (nothing when none is open), above the bottom bar: the
+/// tab row, one row of tiles, the options strip and the verdict. Returns its rectangle.
+pub fn tray(
     root: &mut egui::Ui,
     state: &mut UiState,
     view: Option<&SimView>,
@@ -199,51 +331,111 @@ pub fn tool_panel(
     outbox: &mut CommandOutbox,
 ) -> Option<egui::Rect> {
     let category = state.category?;
-    let out = egui::Panel::left("tool_panel")
-        .exact_size(Sizes::TOOL_PANEL_W)
+    let tabs = tabs(category, view);
+    let mut at = active_tab(state, category, &tabs);
+    let key = tabs.get(at).map(|(k, _)| k.clone()).unwrap_or_default();
+    let out = egui::Panel::bottom("tray")
+        .exact_size(Sizes::TRAY_H)
         .resizable(false)
         .show(root, |ui| {
             ui.horizontal(|ui| {
-                category.icon().show(ui, Sizes::PANEL_HEADER_ICON);
-                ui.heading(tr(category.label()));
+                category.icon().show(ui, Sizes::TRAY_TAB_H - 2.0);
+                ui.strong(tr(category.label()));
+                ui.separator();
+                for (n, (label, _)) in tabs.iter().enumerate() {
+                    if tabs.len() < 2 {
+                        break;
+                    }
+                    let r = ui.selectable_label(n == at, label);
+                    if r.clicked() {
+                        at = n;
+                    }
+                }
             });
             ui.separator();
-            // The pinned block goes first so that the content above leaves room for it.
-            egui::Panel::bottom("tool_verdict")
+            crate::tray::enter(ui.ctx(), &key);
+            // The pinned strip goes first so that the tiles above leave room for it.
+            egui::Panel::bottom("tray_options")
                 .resizable(false)
+                .show_separator_line(false)
                 .show(ui, |ui| {
-                    ui.add_space(2.0);
-                    verdict(ui, category, tools);
+                    ui.horizontal(|ui| {
+                        options(ui, category, state, view, tools);
+                        verdict_line(ui, category, tools);
+                    });
                 });
-            egui::ScrollArea::vertical().show(ui, |ui| match category {
-                Category::Roads => roads_panel(ui, view, tools, state),
-                Category::Zones => zones_panel(ui, view, tools, state),
-                Category::Buildings => services_panel(ui, view, tools, overlay),
-                Category::Power => crate::buildings::buildings_panel(
-                    ui,
-                    view,
-                    tools,
-                    overlay,
-                    crate::buildings::Scope::Power,
-                ),
-                Category::Water => crate::buildings::buildings_panel(
-                    ui,
-                    view,
-                    tools,
-                    overlay,
-                    crate::buildings::Scope::Water,
-                ),
-                Category::Districts => crate::districts::districts_panel(ui, view, tools, outbox),
-                Category::Transit => {
-                    crate::transit::transit_panel(ui, view, tools, overlay, &mut state.lines_open)
-                }
-                Category::Industry => {
-                    crate::industry::industry_panel(ui, view, tools, overlay, outbox)
-                }
-                Category::Parks => crate::parks::parks_panel(ui, view, tools, overlay, outbox),
-            });
+            egui::ScrollArea::both()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| match category {
+                        Category::Roads => roads_panel(ui, view, tools),
+                        Category::Zones => zones_panel(ui, view, tools),
+                        Category::Buildings => services_panel(ui, view, tools, overlay),
+                        Category::Power => crate::buildings::buildings_panel(
+                            ui,
+                            view,
+                            tools,
+                            overlay,
+                            crate::buildings::Scope::Power,
+                        ),
+                        Category::Water => crate::buildings::buildings_panel(
+                            ui,
+                            view,
+                            tools,
+                            overlay,
+                            crate::buildings::Scope::Water,
+                        ),
+                        Category::Districts => {
+                            crate::districts::districts_panel(ui, view, tools, outbox)
+                        }
+                        Category::Transit => crate::transit::transit_panel(
+                            ui,
+                            view,
+                            tools,
+                            overlay,
+                            &mut state.lines_open,
+                        ),
+                        Category::Industry => {
+                            crate::industry::industry_panel(ui, view, tools, overlay, outbox)
+                        }
+                        Category::Parks => {
+                            crate::parks::parks_panel(ui, view, tools, overlay, outbox)
+                        }
+                    });
+                });
+            crate::tray::leave(ui.ctx());
         });
+    if let Some((k, _)) = tabs.get(at) {
+        match state.tray_tab.iter_mut().find(|(c, _)| *c == category) {
+            Some(slot) => slot.1 = k.clone(),
+            None => state.tray_tab.push((category, k.clone())),
+        }
+    }
     Some(out.response.rect)
+}
+
+/// The options strip of the tray: what the open category's tool needs besides its tiles.
+fn options(
+    ui: &mut egui::Ui,
+    category: Category,
+    state: &mut UiState,
+    view: Option<&SimView>,
+    tools: &mut ToolState,
+) {
+    match category {
+        Category::Roads => crate::roads::road_options(ui, tools),
+        Category::Zones => {
+            let _ = (state, view);
+        }
+        _ => {}
+    }
+}
+
+/// The verdict of the tool in hand, on the options row.
+fn verdict_line(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.horizontal_wrapped(|ui| verdict(ui, category, tools));
+    });
 }
 
 #[cfg(test)]
@@ -328,9 +520,9 @@ mod tests {
             raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, *screen));
             frame_texts(ctx, raw, |ui| {
                 let mut root = crate::panels::root_ui(ui.ctx());
-                *pal = palette(&mut root, state, view.content.as_deref());
+                *pal = crate::demand_panel::demand_panel(&mut root, view, state, tools).categories;
                 crate::menus::apply(state, tools, overlay, Some(view));
-                *panel = tool_panel(&mut root, state, Some(view), tools, overlay, outbox);
+                *panel = tray(&mut root, state, Some(view), tools, overlay, outbox);
                 crate::menus::remember(state, tools, view.content.as_deref());
                 crate::panels::release_auto_overlay(state, tools, overlay);
             })
@@ -419,6 +611,7 @@ mod tests {
         use cp_tools::ZoneToolKind;
         let mut rig = Rig::new();
         rig.click_category(Category::Zones);
+        rig.click_label("Tool");
         for (label, kind) in [
             ("Rectangle", ZoneToolKind::Rectangle),
             ("Eraser", ZoneToolKind::Eraser),
@@ -427,6 +620,7 @@ mod tests {
             assert_eq!(rig.tools.active, ActiveTool::Zone);
             assert_eq!(rig.tools.zone.kind, kind);
         }
+        rig.click_label("Zone");
         rig.click_label("Office");
         assert_eq!(rig.tools.zone.zone, ZoneType::Office);
         rig.click_label("Industrial");
@@ -462,13 +656,6 @@ mod tests {
         ] {
             assert_eq!(crate::panels::zone_group_demand(zone, &d), want);
         }
-        let mut rig = Rig::new();
-        rig.click_category(Category::Zones);
-        let text = rig.frame(vec![]);
-        assert!(text.contains("Demand by zone"), "{text}");
-        assert!(!rig.state.demand_open);
-        rig.click_label("Demand by zone ▸");
-        assert!(rig.state.demand_open);
     }
 
     #[test]
@@ -507,7 +694,8 @@ mod tests {
         use cp_tools::UpgradePreview;
         let mut rig = Rig::new();
         rig.click_category(Category::Roads);
-        rig.click_label("Upgrade");
+        rig.tools.select(ActiveTool::Upgrade);
+        rig.frame(vec![]);
         assert_eq!(rig.tools.active, ActiveTool::Upgrade);
         assert!(rig.frame(vec![]).contains("Upgrade to"));
         rig.tools.upgrade_preview = Some(UpgradePreview {
@@ -537,7 +725,7 @@ mod tests {
         rig.frame(vec![]);
         assert!(rig.frame(vec![]).contains("no elevated variant"));
         // Build and Upgrade are exclusive; the cards stay for both.
-        rig.click_label("Build");
+        rig.tools.select(ActiveTool::Road);
         assert_eq!(rig.tools.active, ActiveTool::Road);
         assert!(rig.tools.upgrade_preview.is_none());
     }
@@ -602,24 +790,26 @@ mod tests {
         assert!(text.contains("crosses water"), "{text}");
     }
 
+    /// T-317: the categories are square icons in the bar; an open tray is TRAY_H high, sits
+    /// right above the bar and every tile of its tab is reachable without scrolling down.
     #[test]
-    fn the_palette_is_72_wide_with_52_icons_and_the_tool_panel_300() {
+    fn the_category_icons_are_square_and_the_tray_sits_above_the_bar() {
         let mut rig = Rig::new();
         for (c, r) in &rig.palette {
             assert!(
                 r.width() >= Sizes::PALETTE_ICON && r.height() >= Sizes::PALETTE_ICON,
                 "{c:?}: {r:?}"
             );
-            assert!(r.width() <= Sizes::PALETTE_W, "{c:?}: {r:?}");
+            assert_eq!(r.width(), r.height(), "{c:?}");
+            assert!(r.bottom() <= 720.0 && r.top() >= 720.0 - Sizes::DEMAND_H);
         }
         rig.click_category(Category::Roads);
         let panel = rig.panel.unwrap();
-        assert_eq!(panel.width(), Sizes::TOOL_PANEL_W);
-        // (The panel's rectangle starts half a stroke inside its outer edge.)
+        assert_eq!(panel.height(), Sizes::TRAY_H);
         assert!(
-            (panel.min.x - Sizes::PALETTE_W).abs() <= 1.0,
-            "the panel sits right of the palette: {}",
-            panel.min.x
+            (panel.max.y - (720.0 - Sizes::DEMAND_H)).abs() <= 1.0,
+            "the tray sits on the bar: {}",
+            panel.max.y
         );
     }
 
@@ -661,6 +851,51 @@ mod tests {
                 assert_eq!(icon.width(), icon.height());
             }
         }
+    }
+
+    /// T-317: at 1280x720 every tile of every tab of every tray is inside the tray, in one row:
+    /// nothing needs a vertical scroll.
+    #[test]
+    fn every_tab_of_every_tray_shows_its_tiles_in_one_row_inside_the_tray() {
+        for category in Category::ALL {
+            let mut rig = Rig::new();
+            rig.click_category(category);
+            let tray = rig.panel.unwrap();
+            for (label, _) in tabs(category, Some(&rig.view)) {
+                rig.click_label(&label);
+                let found = tiles(&mut rig);
+                let mut tops: Vec<i32> = found.iter().map(|(t, _)| t.top() as i32).collect();
+                tops.dedup();
+                assert!(tops.len() <= 1, "{category:?}/{label}: rows at {tops:?}");
+                for (tile, _) in found {
+                    assert!(
+                        tile.top() >= tray.top() && tile.bottom() <= tray.bottom(),
+                        "{category:?}/{label}: {tile:?} outside {tray:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// T-317: a category's tray comes back on the tab it was left on.
+    #[test]
+    fn the_last_tab_of_a_category_is_remembered() {
+        let mut rig = Rig::new();
+        rig.click_category(Category::Roads);
+        rig.click_label("Large");
+        rig.click_category(Category::Zones);
+        rig.click_label("Tool");
+        rig.click_category(Category::Roads);
+        assert_eq!(
+            rig.state
+                .tray_tab
+                .iter()
+                .find(|(c, _)| *c == Category::Roads)
+                .map(|(_, k)| k.as_str()),
+            Some("Large")
+        );
+        let text = rig.frame(vec![]);
+        assert!(text.contains("Large"), "{text}");
     }
 
     #[test]
@@ -781,13 +1016,10 @@ mod tests {
         let all: Vec<&str> = texts.iter().map(|(t, _)| t.as_str()).collect();
         for want in [
             "Roads",
-            "Tools",
-            "Build",
-            "Mode",
+            "Small",
             "Straight",
             "Curve",
             "Free",
-            "▾ Road type",
             "Elevation (PgUp / PgDn)",
         ] {
             assert!(all.contains(&want), "{want:?} missing from {all:?}");
@@ -814,7 +1046,7 @@ mod tests {
             ..Default::default()
         });
         rig.frame(vec![]);
-        // The panel fills the height under the top bar; the verdict is in its lower part.
+        // The verdict is in the tray, near the bottom of the screen.
         let mut at = None;
         rig.t += 0.1;
         let Rig {
@@ -828,7 +1060,7 @@ mod tests {
         } = &mut rig;
         let mut out = ctx.run_ui(input(*t, vec![]), |ui| {
             let mut root = crate::panels::root_ui(ui.ctx());
-            tool_panel(
+            tray(
                 &mut root,
                 state,
                 Some(view),
@@ -977,28 +1209,33 @@ mod tests {
                 })
                 .count()
         };
-        let names = |rig: &mut Rig| -> Vec<String> {
-            rig.frame_texts(vec![])
-                .into_iter()
-                .map(|(t, _)| t)
-                .collect()
+        // Every tab of the open tray: its tile count and the texts it paints.
+        let all = |rig: &mut Rig| -> (usize, Vec<String>) {
+            let c = rig.state.category.unwrap();
+            let (mut n, mut names) = (0, Vec::new());
+            for (label, _) in tabs(c, Some(&rig.view)) {
+                rig.click_label(&label);
+                n += tiles(rig).len();
+                names.extend(rig.frame_texts(vec![]).into_iter().map(|(t, _)| t));
+            }
+            (n, names)
         };
         // Water: the pipe and every Water and Sewage service building (T-289: no Remove tile, the
         // bulldozer is its own button).
         rig.click_category(Category::Water);
+        let (count, n) = all(&mut rig);
         assert_eq!(
-            tiles(&mut rig).len(),
+            count,
             service(&[ServiceKind::Water, ServiceKind::Sewage]) + 1
         );
-        let n = names(&mut rig);
         for want in ["Pipe", "Water pump", "Water tower", "Sewage outflow"] {
             assert!(n.iter().any(|t| t == want), "{want:?} missing from {n:?}");
         }
         assert!(!n.iter().any(|t| t == "Power line" || t == "Wind turbine"));
         // Power likewise.
         rig.click_category(Category::Power);
-        assert_eq!(tiles(&mut rig).len(), service(&[ServiceKind::Power]) + 1);
-        let n = names(&mut rig);
+        let (count, n) = all(&mut rig);
+        assert_eq!(count, service(&[ServiceKind::Power]) + 1);
         for want in ["Power line", "Coal power plant", "Wind turbine"] {
             assert!(n.iter().any(|t| t == want), "{want:?} missing from {n:?}");
         }
@@ -1014,8 +1251,8 @@ mod tests {
                 .iter()
                 .map(|(_, c)| c.len())
                 .sum::<usize>();
-        assert_eq!(tiles(&mut rig).len(), expect);
-        let n = names(&mut rig);
+        let (count, n) = all(&mut rig);
+        assert_eq!(count, expect);
         for gone in [
             "Pipe",
             "Water pump",
@@ -1044,12 +1281,17 @@ mod tests {
             !sections[0].0 && sections[1].0,
             "unique buildings, then monuments"
         );
-        let texts = rig.frame_texts(vec![]);
-        let names: Vec<&str> = texts.iter().map(|(t, _)| t.as_str()).collect();
-        for want in ["Unique buildings", "Monuments", "City plaza", "Golden arch"] {
+        for (tab, want) in [
+            ("Unique buildings", "City plaza"),
+            ("Monuments", "Golden arch"),
+        ] {
+            rig.click_label(tab);
+            let texts = rig.frame_texts(vec![]);
+            let names: Vec<&str> = texts.iter().map(|(t, _)| t.as_str()).collect();
             assert!(names.contains(&want), "{want:?} missing from {names:?}");
         }
         // Everything open (a world without milestones): a click picks the building.
+        rig.click_label("Unique buildings");
         rig.click_label("City plaza");
         assert_eq!(rig.tools.active, ActiveTool::Place);
         assert_eq!(rig.tools.building.def, Some(id("city_plaza")));
@@ -1181,8 +1423,10 @@ mod tests {
         let mut rig = Rig::new();
         rig.screen = egui::vec2(1280.0, 3000.0);
         rig.click_category(Category::Buildings);
+        rig.click_label("Fire");
         rig.click_label("Fire Station");
         assert_eq!(rig.overlay.active, Overlay::Fire);
+        rig.click_label("Police");
         rig.click_label("Police Station");
         assert_eq!(rig.overlay.active, Overlay::Police);
         // Staying with the same tool changes nothing.
@@ -1281,7 +1525,7 @@ mod tests {
         rig.view = sim.view();
         rig.click_category(Category::Districts);
         rig.tools.district.selected = Some(DistrictId(1));
-        rig.frame(vec![]);
+        rig.click_label("District");
         rig
     }
 
