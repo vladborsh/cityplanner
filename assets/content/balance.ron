@@ -332,8 +332,8 @@ Balance((
     // of the gap; a factor below complain_below gives a complaint. Environment = 100 -
     // env_pollution_w x ground - env_noise_w x noise. Problem points: no road, no water, no
     // power, garbage, crime, bad water, bodies, sick. Leisure: a target within leisure_near_m
-    // gives half. Tax: full up to tax_neutral %, tax_step less per % above. trust_default stands
-    // in for the corruption trust until T-324.
+    // gives half. Tax: full up to tax_neutral %, tax_step less per % above. Trust is the corruption
+    // state's (T-324); trust_default only stands in for a world without it.
     contentment: (
         weights: (25, 15, 20, 15, 10, 10, 5, 10),
         step_div: 8,
@@ -345,6 +345,22 @@ Balance((
         tax_neutral: 9,
         tax_step: 10,
         trust_default: 60,
+    ),
+
+    // --- Corruption, institutions, trust (T-324, architecture/corruption.md): all // tune later ---
+    // Points of 0..100. Trust starts at trust_start and climbs trust_recover_day a day to its
+    // ceiling (trust_ceiling_clan on the clan edge, C - I > edge). Corruption falls
+    // corruption_decay_day a day. Below tax_trust_full trust the city collects up to tax_loss_max
+    // less tax, linearly. Move-in goes through the contentment trust factor, not here.
+    corruption: (
+        trust_start: 60.0,
+        trust_recover_day: 0.2,
+        trust_ceiling: 100.0,
+        trust_ceiling_clan: 60.0,
+        corruption_decay_day: 0.1,
+        edge: 40.0,
+        tax_trust_full: 50.0,
+        tax_loss_max: 0.2,
     ),
 
     // --- Networks (T-181): distances of water, sewage and power // tune later ---

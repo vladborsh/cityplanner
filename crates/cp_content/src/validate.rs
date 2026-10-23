@@ -1,8 +1,8 @@
 //! Per-definition range checks. Each returns `(field, message)` pairs.
 
 use crate::defs::{
-    BuildingDef, CargoDef, LaneKind, MilestonesDef, PolicyDef, RoadClass, RoadDef, RoadVariant,
-    ServiceDef, SpecDef, StyleDef, TunnelVariant, UtilityDef, VehicleDef,
+    BuildingDef, CargoDef, DealDef, LaneKind, MilestonesDef, PolicyDef, RoadClass, RoadDef,
+    RoadVariant, ServiceDef, SpecDef, StyleDef, TunnelVariant, UtilityDef, VehicleDef,
 };
 use crate::error::ContentError;
 use crate::kinds::ZoneType;
@@ -368,6 +368,21 @@ pub fn spec(d: &SpecDef) -> Problems {
     c.non_negative("noise_add", d.noise_add);
     c.non_negative("land_value_add", d.land_value_add);
     c.non_negative("goods_mul", d.goods_mul);
+    c.0
+}
+
+pub fn deal(d: &DealDef) -> Problems {
+    let mut c = Check(Vec::new());
+    c.not_empty("name", &d.name);
+    c.not_empty("text", &d.text);
+    c.non_negative("corruption", d.corruption);
+    if d.corruption > 100.0 {
+        c.bad("corruption", "must be <= 100");
+    }
+    c.non_negative("evidence", d.evidence);
+    if d.answer_days == 0 {
+        c.bad("answer_days", "must be >= 1");
+    }
     c.0
 }
 

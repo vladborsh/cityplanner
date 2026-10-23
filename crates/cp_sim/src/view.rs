@@ -134,6 +134,8 @@ pub struct SimView {
     pub home_contentment: Arc<cp_building::HomeContentment>,
     /// The city's and the districts' contentment and complaints as of the last pass (T-318).
     pub city_contentment: cp_economy::CityContentment,
+    /// Corruption, institutions, trust and the inbox (T-324).
+    pub corruption: cp_economy::CorruptionState,
     /// The city's money (cents), read-only, for the top bar and the budget window.
     pub treasury: cp_core::Treasury,
     /// What the last daily settlement booked (T-179): the top bar's trend and pop-up.
@@ -921,6 +923,11 @@ impl SimRunner {
             city_contentment: self
                 .world()
                 .get_resource::<cp_economy::CityContentment>()
+                .cloned()
+                .unwrap_or_default(),
+            corruption: self
+                .world()
+                .get_resource::<cp_economy::CorruptionState>()
                 .cloned()
                 .unwrap_or_default(),
             treasury: *self.world().resource::<cp_core::Treasury>(),

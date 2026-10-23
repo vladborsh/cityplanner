@@ -17,7 +17,8 @@
 //! 4. **work** and 5. **commute** — 100 for now (T-318b);
 //! 6. **leisure** — the parks' green (T-237) plus half for a leisure target within reach;
 //! 7. **tax** — the residential rate at the home (district override, else the city);
-//! 8. **trust** — `trust_default` until the corruption state (T-324).
+//! 8. **trust** — the trust in the mayor of the corruption state (T-324), `trust_default`
+//!    in a world without it.
 //!
 //! Integer index, homes in arena order, no RNG, no map iteration: deterministic.
 
@@ -37,7 +38,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::growth::CITY_PERIOD;
 use crate::land::SERVICE_KINDS;
-use crate::{EconomyState, Emissions};
+use crate::{CorruptionState, EconomyState, Emissions};
 
 /// Number of factors.
 pub const FACTORS: usize = 8;
@@ -385,7 +386,7 @@ pub fn update_contentment(
     coverage: Option<Res<ServiceCoverage>>,
     services: Option<Res<ServiceState>>,
     unlocks: Option<Res<ServiceUnlocks>>,
-    leisure: Option<Res<LeisureTargets>>,
+    (leisure, corruption): (Option<Res<LeisureTargets>>, Option<Res<CorruptionState>>),
     mut homes: ResMut<HomeContentment>,
     mut city: ResMut<CityContentment>,
 ) {
@@ -398,6 +399,9 @@ pub fn update_contentment(
     let k = &bal.contentment;
     let unlocks = unlocks.as_deref().copied().unwrap_or_default();
     let expected = SERVICE_KINDS.map(|kind| unlocks.open(kind));
+    let trust = corruption.as_deref().map_or(k.trust_default, |c| {
+        c.trust_now(&bal.corruption).round().clamp(0.0, 100.0) as u8
+    });
     let parks = park_sites(db, &buildings);
     let slots = buildings.iter().map(|(id, _)| id.index as usize + 1).max();
     let residents = residents_by_home(&citizens, slots.unwrap_or(0));
@@ -451,7 +455,7 @@ pub fn update_contentment(
             green: green_at(&parks, b.pos),
             leisure_near: leisure_near(leisure.as_deref(), b.pos, k.leisure_near_m),
             tax_pct,
-            trust: k.trust_default,
+            trust,
         };
         let scored = score(&facts, k, bal.res_service_cover);
         let t = target(&scored.scores, &k.weights);

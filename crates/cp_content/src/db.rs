@@ -232,6 +232,8 @@ pub struct ContentDb {
     specs: Vec<SpecDef>,
     /// The cargo definitions, one per kind at most, in kind order (T-208).
     cargos: Vec<CargoDef>,
+    /// The grey deals, in id order (T-324).
+    deals: Table<DealDef>,
     content_hash: u64,
     /// The service of each building def, its `service` name resolved once at load (T-291: the
     /// services looked it up by name for every building every tick). Derived from the tables.
@@ -388,6 +390,16 @@ impl ContentDb {
         self.cargos.iter().find(|c| c.kind == kind)
     }
 
+    /// The grey deals in id order (T-324).
+    pub fn deals(&self) -> &[DealDef] {
+        &self.deals.defs
+    }
+
+    /// The deal with id `id`, if the content has one.
+    pub fn deal(&self, id: &str) -> Option<&DealDef> {
+        self.deals.get_id(id).map(|i| &self.deals.defs[i as usize])
+    }
+
     /// The definition of the specialisation `kind`, if the content has one.
     pub fn spec(&self, kind: SpecKind) -> Option<&SpecDef> {
         self.specs.iter().find(|s| s.kind == kind)
@@ -502,6 +514,7 @@ impl ContentDb {
         let mut policy_files: Vec<(String, PolicyDef)> = Vec::new();
         let mut spec_files: Vec<(String, SpecDef)> = Vec::new();
         let mut cargo_files: Vec<(String, CargoDef)> = Vec::new();
+        let mut deals: Vec<(String, DealDef)> = Vec::new();
         for (path, text) in sources {
             match ron::from_str::<ContentFile>(&text) {
                 Ok(ContentFile::Road(d)) => roads.push((path, d)),
@@ -515,6 +528,7 @@ impl ContentDb {
                 Ok(ContentFile::Policy(d)) => policy_files.push((path, d)),
                 Ok(ContentFile::Spec(d)) => spec_files.push((path, d)),
                 Ok(ContentFile::Cargo(d)) => cargo_files.push((path, d)),
+                Ok(ContentFile::Deal(d)) => deals.push((path, d)),
                 Err(e) => errors.push(ContentError::new(&path, None, format!("parse error: {e}"))),
             }
         }
@@ -524,6 +538,7 @@ impl ContentDb {
         let vehicles = table(vehicles, |d| &d.id, validate::vehicle, &mut errors);
         let utilities = table(utilities, |d| &d.id, validate::utility, &mut errors);
         let styles = table(styles, |d| &d.id, validate::style, &mut errors);
+        let deals = table(deals, |d| &d.id, validate::deal, &mut errors);
         let (mut buildings, mut utilities) = (buildings, utilities);
         // The icon of a def is data; a def without one uses the icon named like itself.
         for d in &mut buildings.defs {
@@ -1027,6 +1042,25 @@ impl ContentDb {
                     "finite and >= 0, some weight > 0, step_div >= 1, complain_below and trust_default <= 100".to_string(),
                 ));
             }
+            let k = &b.corruption;
+            if k.knobs().iter().any(|v| !v.is_finite() || *v < 0.0)
+                || [
+                    k.trust_start,
+                    k.trust_ceiling,
+                    k.trust_ceiling_clan,
+                    k.edge,
+                    k.tax_trust_full,
+                ]
+                .iter()
+                .any(|&v| v > 100.0)
+                || k.tax_loss_max > 1.0
+            {
+                errors.push(ContentError::new(
+                    path,
+                    Some("corruption"),
+                    "finite and >= 0, points <= 100, tax_loss_max <= 1".to_string(),
+                ));
+            }
             if b.level_checks == 0 {
                 errors.push(ContentError::new(
                     path,
@@ -1046,6 +1080,7 @@ impl ContentDb {
         hash_table(&mut hash, "vehicle", &vehicles.defs, |d| &d.id);
         hash_table(&mut hash, "utility", &utilities.defs, |d| &d.id);
         hash_table(&mut hash, "style", &styles.defs, |d| &d.id);
+        hash_table(&mut hash, "deal", &deals.defs, |d| &d.id);
         // Absent file = defaults = no contribution, so content sets without one keep their hash.
         let balance = balances.into_iter().next().map(|(_, b)| b);
         if let Some(b) = &balance {
@@ -1110,6 +1145,12 @@ impl ContentDb {
             if b.contentment != defaults.contentment {
                 fnv1a(&mut hash, b"contentment");
                 for v in b.contentment.knobs() {
+                    fnv1a(&mut hash, &v.to_bits().to_le_bytes());
+                }
+            }
+            if b.corruption != defaults.corruption {
+                fnv1a(&mut hash, b"corruption");
+                for v in b.corruption.knobs() {
                     fnv1a(&mut hash, &v.to_bits().to_le_bytes());
                 }
             }
@@ -1179,6 +1220,7 @@ impl ContentDb {
             policies,
             specs,
             cargos,
+            deals: deals.strip(),
             content_hash: hash,
             building_services,
         })

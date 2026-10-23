@@ -95,6 +95,9 @@ pub struct WeekInputs<'a> {
     pub districts: &'a Districts,
     /// The policies on for the whole city (T-190).
     pub city_policies: &'a CityPolicies,
+    /// The share of the tax the city collects, from the trust in the mayor (T-324,
+    /// [`CorruptionState::tax_collection`](crate::CorruptionState::tax_collection)); 1 for all.
+    pub tax_collection: f64,
 }
 
 /// What week `week` books. See the module docs for each line.
@@ -159,6 +162,9 @@ pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost
             // A specialised building's tax is scaled by its specialisation (T-196).
             if let Some(s) = def.spec.and_then(|k| i.content.spec(k)) {
                 tax = Cost((tax.0 as f64 * f64::from(s.tax_mul)).round() as i64);
+            }
+            if i.tax_collection != 1.0 {
+                tax = Cost((tax.0 as f64 * i.tax_collection).round() as i64);
             }
             r.income_by_zone[zone_slot] += tax;
             *by_district.entry(district).or_insert(Cost::ZERO) += tax;
@@ -245,7 +251,7 @@ pub fn settle_week(
     mut treasury: ResMut<Treasury>,
     mut district_income: ResMut<DistrictIncome>,
     mut flow: ResMut<MoneyFlow>,
-    district_map: Res<DistrictMap>,
+    (district_map, corruption): (Res<DistrictMap>, Option<Res<crate::CorruptionState>>),
     districts: Res<Districts>,
     city_policies: Res<CityPolicies>,
     ledger: Option<ResMut<TransitLedger>>,
@@ -276,6 +282,9 @@ pub fn settle_week(
             district_map: &district_map,
             districts: &districts,
             city_policies: &city_policies,
+            tax_collection: corruption
+                .as_deref()
+                .map_or(1.0, |c| c.tax_collection(&content.0.balance().corruption)),
         },
         hour.div_ceil(HOURS_PER_WEEK),
     );

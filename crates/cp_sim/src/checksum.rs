@@ -126,6 +126,11 @@ pub(crate) fn economy_part(world: &World, h: &mut Fnv1a) {
     }
     // The contentment of the homes and its roll-ups (T-318); absent while no home was scored,
     // so states without homes keep their checksum.
+    // The corruption state (T-324); absent until its first day, so tick-0 states keep theirs.
+    let corruption = world.resource::<cp_economy::CorruptionState>();
+    if *corruption != cp_economy::CorruptionState::default() {
+        h.write_serialized(corruption);
+    }
     let homes = world.resource::<cp_building::HomeContentment>();
     if *homes != cp_building::HomeContentment::default() {
         h.write_serialized(homes);

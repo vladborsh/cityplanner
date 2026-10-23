@@ -159,6 +159,7 @@ impl SimRunner {
         world.init_resource::<cp_economy::WorkerShortage>();
         world.init_resource::<cp_building::HomeContentment>();
         world.init_resource::<cp_economy::CityContentment>();
+        world.init_resource::<cp_economy::CorruptionState>();
         world.init_resource::<crate::progress::Progress>();
         world.init_resource::<cp_content::ServiceUnlocks>();
         world.init_resource::<cp_terrain::ResourceDeposits>();
@@ -307,6 +308,12 @@ impl SimRunner {
         );
         // The week is settled on what the last tick left, before this tick's demand and city
         // statistics are derived; all of them touch the citizen and building grids (T-257).
+        // The day's trust (T-324) before the hour's tax is booked.
+        schedule.add_systems(
+            cp_economy::update_corruption
+                .in_set(SimPhase::Economy)
+                .before(cp_economy::settle_week),
+        );
         schedule.add_systems(cp_economy::settle_week.in_set(SimPhase::Economy));
         schedule.add_systems(
             cp_economy::update_demand

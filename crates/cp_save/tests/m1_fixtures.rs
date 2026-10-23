@@ -104,7 +104,8 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     // T-315: re-recorded (was 0x3af4471b47254980), format 65, routes by measured lane delay.
     // T-314: re-recorded (was 0x7ff4e347d060a49f), format 66 (the automatic car share, off).
     // T-318a: re-recorded (was 0xc240e8eb90227496), format 67, the homes' contentment is saved.
-    assert_eq!(sim.checksum(), 0xe1466aa8b57adf30, "state at load"); // T-303a: re-recorded (was 0xf1dee787e8fe8b5f), format 62, the signs on the nodes. T-308: re-recorded, the new utility content changes the content hash.
+    // T-324: re-recorded (was 0xe1466aa8b57adf30), format 68, the corruption state is saved.
+    assert_eq!(sim.checksum(), 0x843f183090b1d8f7, "state at load"); // T-303a: re-recorded (was 0xf1dee787e8fe8b5f), format 62, the signs on the nodes. T-308: re-recorded, the new utility content changes the content hash.
     // T-280: re-recorded (was 0xa0961668822b2784 since T-282): only 15 % of car trips and
     // 25 % of goods trucks take a vehicle, the rest run abstractly, so the day after the load
     // has other cars on the road.
@@ -113,7 +114,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     // of the ground per tick, so the day after the load runs differently.
     assert_eq!(
         after_a_day(&mut sim),
-        0x2217973baef189aa, // T-318a: re-recorded (was 0x5a953b38964f73b5), format 67, the contentment pass. T-314: re-recorded (was 0x6aa91e835db6a43d), format 66, free-flowing cars take one step a tick. T-315: re-recorded (was 0xa2e6dc91e00d114c), format 65, routes by measured lane delay and traffic re-routes. T-302c: re-recorded (was 0xf3b290b7e23c1445), format 64, the trolleybus content, the fixture regenerated on T-311/T-306. BUG-113: re-recorded (was 0xbda760a646dccb6b), garbage trucks go for half a problem and book the landfill's day. T-311: re-recorded (was 0x474144ecf293bb70), half the arrivals (MOVE_IN_ONE_IN 4) and the trips of the departed cancelled at once. T-302b: re-recorded (was 0x3525f19247d6d612), format 63, the tram content. T-305: re-recorded (was 0x1172029647ed4c94), 70 km/h avenues and reach by time. T-303a: re-recorded (was 0x952c338864d38fa6), format 62. T-300b: re-recorded (was 0x46c86fe1c3fd6e4d), the water dirt. T-301: re-recorded, the day is 2048 ticks and the test runs a day (was 0x68f162061e8c655). T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
+        0x69a2707ad7c5ea29, // T-324: re-recorded (was 0x2217973baef189aa), format 68, trust and the daily corruption update. T-318a: re-recorded (was 0x5a953b38964f73b5), format 67, the contentment pass. T-314: re-recorded (was 0x6aa91e835db6a43d), format 66, free-flowing cars take one step a tick. T-315: re-recorded (was 0xa2e6dc91e00d114c), format 65, routes by measured lane delay and traffic re-routes. T-302c: re-recorded (was 0xf3b290b7e23c1445), format 64, the trolleybus content, the fixture regenerated on T-311/T-306. BUG-113: re-recorded (was 0xbda760a646dccb6b), garbage trucks go for half a problem and book the landfill's day. T-311: re-recorded (was 0x474144ecf293bb70), half the arrivals (MOVE_IN_ONE_IN 4) and the trips of the departed cancelled at once. T-302b: re-recorded (was 0x3525f19247d6d612), format 63, the tram content. T-305: re-recorded (was 0x1172029647ed4c94), 70 km/h avenues and reach by time. T-303a: re-recorded (was 0x952c338864d38fa6), format 62. T-300b: re-recorded (was 0x46c86fe1c3fd6e4d), the water dirt. T-301: re-recorded, the day is 2048 ticks and the test runs a day (was 0x68f162061e8c655). T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
         "load + a day"
     );
     // T-314: a town of 2.5k residents stays under the car budget: with visible_share_auto on
@@ -157,7 +158,8 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // T-315: re-recorded (was 0x9ea3605c8fbfffd3), format 65, routes by measured lane delay.
     // T-314: re-recorded (was 0x99a8a4566e60d889), format 66 (the automatic car share, off).
     // T-318a: re-recorded (was 0x45b2f780da9f32c7), format 67, the homes' contentment is saved.
-    assert_eq!(sim.checksum(), 0x7abb7a47e5410231, "state at load");
+    // T-324: re-recorded (was 0x7abb7a47e5410231), format 68, the corruption state is saved.
+    assert_eq!(sim.checksum(), 0x8cd3703ea0980231, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -181,7 +183,8 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // T-315: re-recorded (was 0x67bbfe3cc3121206), format 65, routes by measured lane delay and traffic re-routes.
     // T-314: re-recorded (was 0xa4e6eef5d8efd9eb), format 66, free-flowing cars take one step a tick.
     // T-318a: re-recorded (was 0x1e1dfb34abf3b58e), format 67, the contentment pass.
-    assert_eq!(sim.checksum(), 0xbaa59b6954cdbd4f, "load + a day");
+    // T-324: re-recorded (was 0xbaa59b6954cdbd4f), format 68, trust and the daily update.
+    assert_eq!(sim.checksum(), 0x707b52d54d029dfa, "load + a day");
     // T-290: the trips of the saved jam arrive (completed grows by hundreds); the number in flight
     // no longer falls, the routine plans new ones all day (most of them abstract, T-280).
     let done_after = sim.world().resource::<TripBook>().completed;

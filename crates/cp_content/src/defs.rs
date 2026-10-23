@@ -70,6 +70,26 @@ pub enum ContentFile {
     Spec(SpecDef),
     /// Appended in T-208.
     Cargo(CargoDef),
+    /// Appended in T-324 (`architecture/corruption.md` §4).
+    Deal(DealDef),
+}
+
+/// A grey deal the city is offered (`assets/content/deals/*.ron`, `architecture/corruption.md`
+/// §4). T-324 holds only what the corruption state needs (the corruption it adds, the evidence
+/// it leaves, how long an offer stands); the effects come with T-325. // tune later
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DealDef {
+    pub id: String,
+    pub name: String,
+    /// The offer as the inbox card shows it.
+    pub text: String,
+    /// Corruption `C` it adds when accepted, points of `0..=100`.
+    pub corruption: f32,
+    /// Weight of the evidence an accepted deal leaves (0: none).
+    pub evidence: f32,
+    /// Game days to answer; an offer left that long is declined.
+    pub answer_days: u16,
 }
 
 /// A cargo of the industrial chains (T-208): how it is shown and what it is worth outside the
@@ -564,6 +584,61 @@ pub struct Balance {
     pub networks: Networks,
     /// The contentment of homes (T-318, §19): factor weights, penalties and thresholds.
     pub contentment: ContentmentKnobs,
+    /// Corruption, institutions and trust (T-324, `architecture/corruption.md`).
+    pub corruption: CorruptionKnobs,
+}
+
+/// Corruption, institutions and trust (`balance.ron` `corruption`, T-324,
+/// `architecture/corruption.md` §2-3). Points are of `0..=100`. // tune later
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct CorruptionKnobs {
+    /// Trust in the mayor a new city starts with.
+    pub trust_start: f32,
+    /// Trust climbs this much a game day towards its ceiling.
+    pub trust_recover_day: f32,
+    /// The ceiling of trust; on the clan edge of the axis the lower one.
+    pub trust_ceiling: f32,
+    pub trust_ceiling_clan: f32,
+    /// Corruption falls this much a game day by itself.
+    pub corruption_decay_day: f32,
+    /// The edges of the axis `C - I`: above `edge` the clan edge, below `-edge` the rule of law.
+    pub edge: f32,
+    /// Below `tax_trust_full` trust the city collects less tax, linearly down to
+    /// `1 - tax_loss_max` at no trust.
+    pub tax_trust_full: f32,
+    pub tax_loss_max: f32,
+}
+
+impl CorruptionKnobs {
+    /// Every knob, in declaration order: for validation and the content hash.
+    pub fn knobs(&self) -> [f32; 8] {
+        [
+            self.trust_start,
+            self.trust_recover_day,
+            self.trust_ceiling,
+            self.trust_ceiling_clan,
+            self.corruption_decay_day,
+            self.edge,
+            self.tax_trust_full,
+            self.tax_loss_max,
+        ]
+    }
+}
+
+impl Default for CorruptionKnobs {
+    fn default() -> Self {
+        Self {
+            trust_start: 60.0,
+            trust_recover_day: 0.2,
+            trust_ceiling: 100.0,
+            trust_ceiling_clan: 60.0,
+            corruption_decay_day: 0.1,
+            edge: 40.0,
+            tax_trust_full: 50.0,
+            tax_loss_max: 0.2,
+        }
+    }
 }
 
 /// The contentment of homes (`balance.ron` `contentment`, T-318, `system-design.md` §19.2).
@@ -591,7 +666,7 @@ pub struct ContentmentKnobs {
     /// above.
     pub tax_neutral: u8,
     pub tax_step: u8,
-    /// The trust in the mayor until the corruption state exists (T-324), `0..=100`.
+    /// The trust in the mayor of a world without the corruption state (T-324), `0..=100`.
     pub trust_default: u8,
 }
 
@@ -1022,6 +1097,7 @@ impl Default for Balance {
             industry_import_share: 0.25,
             networks: Networks::default(),
             contentment: ContentmentKnobs::default(),
+            corruption: CorruptionKnobs::default(),
         }
     }
 }

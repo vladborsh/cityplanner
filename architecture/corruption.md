@@ -145,4 +145,11 @@
 | T-327 | 4 института, вклад в `I`, края оси и их эффекты, видимость (слухи/точно) | headless: аудит раскрывает прикорм; край оси меняет налог/частоту сделок |
 | T-328 | Подсказки трёх слоёв, экран оси, отметки в профиле + сброс | UI-тест триггеров (без плейтеста) |
 
+**Сделано в T-324 (2026-10-23):** `cp_economy::corruption::CorruptionState` (поля §2 + `started`: в первый
+день `trust` берётся из `trust_start`), дневной апдейт `update_corruption` (до `settle_week`): `C −=
+corruption_decay_day`, `trust` идёт к потолку на `trust_recover_day` в день (выше потолка — опускается к нему
+тем же шагом), собираемость налогов через `WeekInputs::tax_collection`, фактор «Власть» читает `trust_now`.
+Ручки — `balance.ron` `corruption`; сделки — `ContentFile::Deal` (`DealDef`: id, name, text, corruption,
+evidence, answer_days), пока одна `deals/kickback.ron`. Сейв: формат 68 (или следующий свободный при посадке).
+
 Порядок: T-324 → T-325 → T-326 → T-327 → T-328 (T-328 можно начать после T-325).
