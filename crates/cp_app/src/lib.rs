@@ -716,6 +716,9 @@ pub fn build_sim(
     } else if scene == Some(scene::CORNERS_WIDE) {
         scene::build_corners_wide(&mut sim);
         info!("scene corners-wide");
+    } else if scene == Some(scene::TRAMS) {
+        scene::build_trams(&mut sim);
+        info!("scene trams");
     } else if scene == Some(scene::DUST) {
         scene::build_dust(&mut sim);
         info!("scene dust");

@@ -847,8 +847,13 @@ fn extrude(
         let stripes = zebra_stripes(lo, hi);
         for k in 1..rings.len() {
             let Some(zone) = zone_of(k) else { continue };
-            let paint: &[(f32, f32)] = if zone == Zone::Zebra { &stripes } else { &[] };
             for b in &level {
+                // Tram rails run on through the crossing (BUG-120).
+                let paint: &[(f32, f32)] = if zone == Zone::Zebra && b.color != STEEL {
+                    &stripes
+                } else {
+                    &[]
+                };
                 zone_quads(&mut m, &rings[k - 1], &rings[k], b, paint);
             }
         }

@@ -644,6 +644,58 @@ fn junction(
     m
 }
 
+/// Height of the rails through a node above its carriageway, metres: clear of the floor so
+/// they do not z-fight with it, low enough to read as flush.
+const RAIL_RAISE: f32 = 0.02;
+
+/// The steel rails of every tram-to-tram lane connection through the node (BUG-120): the two
+/// rails of the gauge along the connection curve, which starts and ends on the tram lanes'
+/// centres at the cuts, so they run on from the segments' rails. Heights run from the inbound
+/// arm's end to the outbound arm's, as the carriageway does. Rails of crossing connections
+/// overlap at one height in one colour.
+fn tram_rails(m: &mut MeshData, graph: &NetGraph, j: &Junction, arms: &[ArmEnd]) {
+    let tram = |l| graph.lane(l).is_some_and(|l| l.kind == LaneKind::Tram);
+    // The height of the arm end nearest `p` on the lane's segment.
+    let level = |l, p: Vec2| {
+        let seg = graph.lane(l).map(|l| l.segment);
+        arms.iter()
+            .filter(|a| Some(a.arm.segment) == seg)
+            .min_by(|a, b| {
+                let d = |e: &ArmEnd| e.ring.xz(0.0).distance_squared(p);
+                d(a).total_cmp(&d(b))
+            })
+            .map(|a| a.y())
+    };
+    for c in &j.links.connections {
+        if !(tram(c.from) && tram(c.to)) {
+            continue;
+        }
+        let (p0, p3) = (to_xz(c.curve.p0), to_xz(c.curve.p3));
+        let (Some(ya), Some(yb)) = (level(c.from, p0), level(c.to, p3)) else {
+            continue;
+        };
+        let n = ((c.length / SAMPLE).ceil() as usize).max(2);
+        let mut sides: [Vec<Vec3>; 4] = Default::default();
+        for i in 0..=n {
+            let t = i as f32 / n as f32;
+            let p = to_xz(c.curve.point(t));
+            let d = to_xz(c.curve.tangent(t)).normalize_or_zero();
+            let left = Vec2::new(d.y, -d.x);
+            let y = ya + (yb - ya) * t + RAIL_RAISE;
+            for (k, x) in [-1.0f32, 1.0]
+                .into_iter()
+                .flat_map(|s| [-1.0f32, 1.0].map(|w| s * RAIL_GAUGE * 0.5 + w * RAIL_WIDTH * 0.5))
+                .enumerate()
+            {
+                let q = p + left * x;
+                sides[k].push(Vec3::new(q.x, y, q.y));
+            }
+        }
+        strip(m, &sides[0], &sides[1], |_| STEEL);
+        strip(m, &sides[2], &sides[3], |_| STEEL);
+    }
+}
+
 /// Keeps every upward face of a ground node piece [`LIFT`] above the terrain: its heights come
 /// from the arms' ends, and a wide node (T-275: 4-cell roads are 32 m) spans enough
 /// uneven ground for its middle to dip under it (BUG-025).
@@ -791,6 +843,11 @@ pub(super) fn build(
         }
         _ => junction(graph, terrain, j, &arms, markings, raised),
     };
+    // A bend carries its rails in its bands; a junction or a transition along its tram
+    // connections (BUG-120).
+    if markings && matches!(j.class, NodeClass::Junction | NodeClass::Transition) {
+        tram_rails(&mut m, graph, j, &arms);
+    }
     if !raised {
         above_ground(&mut m, terrain);
     }

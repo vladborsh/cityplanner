@@ -1891,3 +1891,104 @@ fn a_sidewalk_ending_at_a_transition_has_a_rounded_nose() {
     node::round_nose(&mut same, 0, 1, 9.0, 4.0);
     assert_eq!(same[0], outer);
 }
+
+/// BUG-120: tram rails run on through junctions (X, T) and transitions (tram_4l to tram_2l):
+/// the node piece's near mesh has two steel rails along every tram connection, the far mesh
+/// none, and the segments keep their rails through the zebra crossing at the mouth.
+#[test]
+fn tram_rails_run_on_through_junctions_and_transitions() {
+    type Layout = &'static [(&'static str, (f32, f32), (f32, f32))];
+    let layouts: [(&str, Layout); 3] = [
+        (
+            "X",
+            &[
+                ("tram_4l", (X0, Z0 + 100.0), (X0 + 200.0, Z0 + 100.0)),
+                ("tram_4l", (X0 + 100.0, Z0), (X0 + 100.0, Z0 + 200.0)),
+            ],
+        ),
+        (
+            "T",
+            &[
+                ("tram_4l", (X0, Z0 + 100.0), (X0 + 200.0, Z0 + 100.0)),
+                (
+                    "tram_2l",
+                    (X0 + 100.0, Z0 + 100.0),
+                    (X0 + 100.0, Z0 + 200.0),
+                ),
+            ],
+        ),
+        (
+            "4l->2l",
+            &[
+                ("tram_4l", (X0, Z0 + 100.0), (X0 + 100.0, Z0 + 100.0)),
+                (
+                    "tram_2l",
+                    (X0 + 100.0, Z0 + 100.0),
+                    (X0 + 200.0, Z0 + 100.0),
+                ),
+            ],
+        ),
+    ];
+    let mid = Vec2::new(X0 + 100.0, Z0 + 100.0);
+    for (name, layout) in layouts {
+        let mut w = world();
+        for &(road, a, b) in layout {
+            w.line(road, a, b);
+        }
+        let v = w.view();
+        let (set, _) = w.set(&v);
+        let (node, j) = v
+            .junctions
+            .iter()
+            .min_by(|a, b| {
+                let d = |j: &Junction| to_xz(j.pos).distance(mid);
+                d(a.1).total_cmp(&d(b.1))
+            })
+            .unwrap();
+        let tram = |l| v.net.lane(l).unwrap().kind == LaneKind::Tram;
+        let length: f32 = j
+            .links
+            .connections
+            .iter()
+            .filter(|c| tram(c.from) && tram(c.to))
+            .map(|c| c.length)
+            .sum();
+        assert!(length > 10.0, "{name}: tram connections {length}");
+        let piece = set.piece(PieceKey::Junction(*node)).unwrap();
+        let steel = |m: &MeshData| top_area_in(m, STEEL, f32::MIN, f32::MAX, None);
+        // Two rails of 0.14 m along every connection.
+        let want = 2.0 * RAIL_WIDTH * length;
+        let near = steel(&piece.near);
+        assert!((near - want).abs() < 0.1 * want, "{name}: {near} vs {want}");
+        assert_eq!(steel(&piece.far), 0.0, "{name}");
+        // The arms of a junction keep their rails through the zebras at their mouths.
+        for arm in j.arms.iter().filter(|_| j.arms.len() >= 3) {
+            let seg = &set.piece(PieceKey::Segment(arm.segment)).unwrap().near;
+            let curve = v.junctions.trimmed_curve(&v.net, arm.segment).unwrap();
+            let (cut, inner) = if arm.at_start {
+                (to_xz(curve.p0), to_xz(curve.p3))
+            } else {
+                (to_xz(curve.p3), to_xz(curve.p0))
+            };
+            let along = (inner - cut).normalize();
+            // Steel triangles wholly within the zebra crossing.
+            let mouth = (0..seg.triangle_count())
+                .filter(|&t| {
+                    (0..3).all(|k| {
+                        let i = seg.indices[t * 3 + k] as usize;
+                        let p = seg.positions[i];
+                        let s = (Vec2::new(p[0], p[2]) - cut).dot(along);
+                        seg.colors[i] == STEEL
+                            && s > ZEBRA_GAP - 1e-3
+                            && s < ZEBRA_GAP + ZEBRA_DEPTH + 1e-3
+                    })
+                })
+                .count();
+            assert!(
+                mouth > 0,
+                "{name}: no rails at the mouth of {:?}",
+                arm.segment
+            );
+        }
+    }
+}

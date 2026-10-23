@@ -2064,6 +2064,47 @@ pub fn build_corners_wide(sim: &mut SimRunner) {
     }
 }
 
+/// Tram scene (BUG-120): along the map's middle, 200 m apart from x = -600 (from the map
+/// centre): a straight join of two `tram_4l`, a T and an X of `tram_4l`, a corner, and
+/// `tram_4l` narrowing to `tram_2l`. Look at feature `i` with `--cam at:...` over
+/// `-600 + 200 i, 0`.
+pub const TRAMS: &str = "trams";
+
+/// Builds the [`TRAMS`] scene through the normal commands.
+pub fn build_trams(sim: &mut SimRunner) {
+    let db = embedded_content();
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let (wide, narrow) = (
+        db.road_id("tram_4l").expect("tram_4l"),
+        db.road_id("tram_2l").expect("tram_2l"),
+    );
+    let mut legs = Vec::new();
+    for (i, f) in ["join", "t", "x", "corner", "narrow"].iter().enumerate() {
+        let o = wide_feature_centre(i);
+        let (w, e) = (o - Vec2::X * 80.0, o + Vec2::X * 80.0);
+        match *f {
+            "join" => legs.extend([(wide, w, o), (wide, o, e)]),
+            "t" => legs.extend([(wide, w, e), (wide, o + Vec2::Y * 70.0, o)]),
+            "x" => legs.extend([(wide, w, e), (wide, o - Vec2::Y * 70.0, o + Vec2::Y * 70.0)]),
+            "corner" => legs.extend([(wide, w, o), (wide, o, o + Vec2::Y * 70.0)]),
+            _ => legs.extend([(wide, w, o), (narrow, o, e)]),
+        }
+    }
+    for (road, from, to) in legs {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road,
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+}
+
 /// Metro scene (T-164): a street, three metro stations beside it, the tunnels between the
 /// platforms and a metro line with two trains. Look at it with `--overlay underground`
 /// and `--cam metro`.
