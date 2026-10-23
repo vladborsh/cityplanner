@@ -962,8 +962,7 @@ mod tests {
         let mut tools = ToolState::default();
         tools.select(ActiveTool::Road);
         assert!(tools.road.road.is_none());
-        let mut ui_state = UiState::default();
-        let mut draw = |tools: &mut ToolState| {
+        let draw = |tools: &mut ToolState| {
             crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
                 roads_panel(ui, Some(&view), tools);
             });
@@ -1114,8 +1113,7 @@ mod tests {
     fn zones_panel_activates_the_zoning_tool_and_shows_the_state() {
         let ctx = egui::Context::default();
         let mut tools = ToolState::default();
-        let mut state = UiState::default();
-        let mut draw = |tools: &mut ToolState| {
+        let draw = |tools: &mut ToolState| {
             crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
                 zones_panel(ui, None, tools);
             });
@@ -1155,7 +1153,6 @@ mod tests {
             let view = sim.view();
             let ctx = egui::Context::default();
             let mut tools = ToolState::default();
-            let mut state = UiState::default();
             crate::tile::take_rects(&ctx);
             crate::testutil::frame(&ctx, input(0.0, vec![]), |ui| {
                 zones_panel(ui, Some(&view), &mut tools);
