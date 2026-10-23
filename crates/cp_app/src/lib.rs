@@ -381,6 +381,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 20.0, 230.0, c + 190.0),
             Vec3::new(c + 20.0, 0.0, c + 40.0),
         ),
+        // The whole `--scene noise`: the blocks, the stadium east and the highways north (BUG-119).
+        "noise" => (
+            Vec3::new(c + 40.0, 420.0, c + 330.0),
+            Vec3::new(c + 40.0, 0.0, c - 20.0),
+        ),
         // Close over the north street of `--scene pipes`, the pipe under it (T-286).
         "pipes" => (
             Vec3::new(c - 20.0, 45.0, c - 5.0),
@@ -726,6 +731,9 @@ pub fn build_sim(
     } else if scene == Some(scene::GROWN_HIGH) {
         scene::build_grown_high(&mut sim);
         info!("scene grown-high");
+    } else if scene == Some(scene::NOISE) {
+        scene::build_noise(&mut sim);
+        info!("scene noise");
     } else if scene == Some(scene::GROWN) {
         scene::build_grown(&mut sim);
         info!("scene grown");

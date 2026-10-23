@@ -72,7 +72,7 @@ fn faces_up(m: &MeshData) -> bool {
 
 #[test]
 fn ramps_hit_their_end_stops_clamp_and_ignore_nan() {
-    for f in [traffic_color, land_value_color, pollution_color] {
+    for f in [traffic_color, land_value_color] {
         assert_eq!(f(-3.0), f(0.0));
         assert_eq!(f(7.0), f(1.0));
         assert_eq!(f(f32::NAN), f(0.0));
@@ -254,9 +254,9 @@ fn heat_layer_drapes_a_grid_and_a_missing_grid_draws_the_placeholder() {
     let max_x = m.positions.iter().map(|p| p[0]).fold(0.0, f32::max);
     assert!((max_x - MAP_SIZE).abs() < 1.0);
 
-    let p = heat_mesh(None, pollution_color, &t);
+    let p = heat_mesh(None, land_value_color, &t);
     assert_eq!(p.triangle_count(), PLACEHOLDER_SIDE * PLACEHOLDER_SIDE * 2);
-    assert!(p.colors.iter().all(|c| *c == pollution_color(0.0)));
+    assert!(p.colors.iter().all(|c| *c == land_value_color(0.0)));
 }
 
 /// An app with the visibility system, one hidden entity per layer and the zone outlines.
@@ -1333,4 +1333,76 @@ fn zone_outlines_hide_under_a_service_ghosts_preview() {
     app.world_mut().resource_mut::<CoverageGhost>().site = None;
     app.update();
     assert_eq!(vis(&app), Visibility::Visible);
+}
+
+/// BUG-119: the noise and pollution bands start where the inspector stops saying "low" (below
+/// is quiet, no band) and step every 15 points to 60; NaN is quiet, and the bands get stronger
+/// (alpha) to the loud end.
+#[test]
+fn band_thresholds_map_to_the_inspector_levels_and_quiet_is_untinted() {
+    use bands::{NOISE, POLLUTION};
+    for b in [NOISE, POLLUTION] {
+        assert_eq!(b.of(0.0), None);
+        assert_eq!(b.of(0.149), None, "low is untinted");
+        assert_eq!(b.of(f32::NAN), None);
+        assert_eq!(b.of(0.15), Some(0), "the first band from LEVEL_LOW");
+        assert_eq!(b.of(0.299), Some(0));
+        assert_eq!(b.of(0.30), Some(1));
+        assert_eq!(b.of(0.45), Some(2));
+        assert_eq!(b.of(0.60), Some(3), "the hot core");
+        assert_eq!(b.of(1.0), Some(3));
+        assert_eq!(b.of(7.0), Some(3));
+        assert!(
+            b.colors.windows(2).all(|w| w[1][3] > w[0][3]),
+            "alpha rises"
+        );
+        for (i, c) in b.colors.iter().enumerate() {
+            assert!(b.colors[i + 1..].iter().all(|d| d != c), "distinct bands");
+        }
+    }
+    assert!(
+        (NOISE.edges[0] * 100.0 - cp_sim::inspect::LEVEL_LOW).abs() < 1e-3,
+        "the overlay and the inspector agree"
+    );
+}
+
+/// BUG-119: a quiet map draws nothing; one loud cell is a core inside rings of quieter bands,
+/// every fine cell outside the rings is left untinted, and contour lines stand on the edges.
+#[test]
+fn a_loud_spot_is_a_banded_core_with_contours_and_quiet_cells_stay_clear() {
+    use bands::{NOISE, SUB, band_mesh, fine_bands};
+    let t = terrain();
+    let quiet = ScalarGrid::new(16, vec![0.0; 256]);
+    assert_eq!(band_mesh(Some(&quiet), &NOISE, &t).triangle_count(), 0);
+    assert_eq!(band_mesh(None, &NOISE, &t).triangle_count(), 0);
+
+    // A source of 3 x 3 land cells (a single 64 m cell peaks at 0.77 between its fine samples).
+    let mut v = vec![0.0; 256];
+    for z in 7..10 {
+        for x in 7..10 {
+            v[z * 16 + x] = 1.0;
+        }
+    }
+    let loud = ScalarGrid::new(16, v);
+    let cells = fine_bands(&loud, &NOISE);
+    let side = 16 * SUB;
+    let core = cells[(8 * SUB + SUB / 2) * side + 8 * SUB + SUB / 2];
+    assert_eq!(core, Some(3), "the source is the hot core");
+    for b in 0..3 {
+        assert!(cells.contains(&Some(b)), "band {b} rings the core");
+    }
+    // Far from the spot nothing is tinted.
+    assert_eq!(cells[0], None);
+    assert!(cells.iter().filter(|c| c.is_none()).count() > side * side * 9 / 10);
+    let m = band_mesh(Some(&loud), &NOISE, &t);
+    assert!(faces_up(&m));
+    let fills = cells.iter().filter(|c| c.is_some()).count();
+    assert!(
+        m.triangle_count() > fills * 2,
+        "contour lines on top of the fills"
+    );
+    for b in 0..4 {
+        assert!(m.colors.contains(&NOISE.colors[b]));
+    }
+    assert!(m.colors.contains(&NOISE.line_color(3)));
 }

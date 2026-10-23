@@ -23,6 +23,7 @@ use cp_terrain::{MAP_SIZE, Terrain};
 use crate::chunk::{MeshData, select_lod, terrain_mesh_height};
 use crate::material::VertexColorMaterial;
 
+pub mod bands;
 mod blob;
 mod coverage_ghost;
 mod districts;
@@ -263,30 +264,6 @@ pub fn land_value_color(v: f32) -> [f32; 4] {
             [0.15, 0.25, 0.70, 0.45],
             [0.30, 0.75, 0.55, 0.45],
             [0.95, 0.80, 0.20, 0.45],
-        ],
-    )
-}
-
-/// Pollution: transparent-looking green → brown → dark purple.
-pub fn pollution_color(v: f32) -> [f32; 4] {
-    ramp(
-        v,
-        &[
-            [0.30, 0.70, 0.30, 0.25],
-            [0.65, 0.50, 0.15, 0.5],
-            [0.40, 0.08, 0.35, 0.7],
-        ],
-    )
-}
-
-/// Noise: faint violet → strong violet → deep purple.
-pub fn noise_color(v: f32) -> [f32; 4] {
-    ramp(
-        v,
-        &[
-            [0.55, 0.40, 0.85, 0.20],
-            [0.54, 0.36, 0.84, 0.50],
-            [0.30, 0.10, 0.55, 0.75],
         ],
     )
 }
@@ -744,6 +721,9 @@ struct LayerSource {
     /// Pointer of the `Arc` the mesh was last built from.
     key: usize,
     entity: Option<Entity>,
+    /// Built from `key` at least once (an empty mesh spawns no entity, BUG-119: a quiet map
+    /// must not be rebuilt every frame).
+    built: bool,
 }
 
 #[derive(Resource, Default)]
@@ -798,13 +778,14 @@ fn upsert(
     force: bool,
     outlines: bool,
 ) {
-    if src.entity.is_some() && src.key == key && !force {
+    if src.built && src.key == key && !force {
         return;
     }
     if let Some(e) = src.entity.take() {
         commands.entity(e).despawn();
     }
     src.key = key;
+    src.built = true;
     src.entity = spawn_layer(commands, meshes, material, which, mesh(), outlines);
 }
 
@@ -927,7 +908,7 @@ fn sync_overlay_meshes(
         &mut l.pollution,
         opt_ptr(&o.pollution),
         Overlay::Pollution,
-        || heat_mesh(o.pollution.as_deref(), pollution_color, terrain),
+        || bands::band_mesh(o.pollution.as_deref(), &bands::POLLUTION, terrain),
         &material,
         &mut commands,
         &mut meshes,
@@ -938,7 +919,7 @@ fn sync_overlay_meshes(
         &mut l.noise,
         opt_ptr(&o.noise),
         Overlay::Noise,
-        || heat_mesh(o.noise.as_deref(), noise_color, terrain),
+        || bands::band_mesh(o.noise.as_deref(), &bands::NOISE, terrain),
         &material,
         &mut commands,
         &mut meshes,

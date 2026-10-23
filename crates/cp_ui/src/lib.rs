@@ -12,6 +12,7 @@ use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, ToolState, UiCapture};
 
 pub mod advisor;
+pub mod band_legend;
 pub mod budget;
 pub mod buildings;
 pub mod bulldozer_bar;
@@ -283,6 +284,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         services::services_window(ctx, &mut st.services_open, view, overlay);
         let context = services::context_overlay(view, st.category, tools, overlay.active);
         services::overlay_services_panel(ctx, view, context, overlays_panel::width(st));
+        band_legend::band_legend(ctx, overlay.active, overlays_panel::width(st));
         lines::lines_window(ctx, &mut st.lines_open, view, &mut st.lines, outbox);
         policies::city_policies_window(ctx, &mut st.policies_open, view, outbox);
     }

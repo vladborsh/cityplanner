@@ -1611,6 +1611,59 @@ fn build_grown_zones(sim: &mut SimRunner, top: cp_content::ZoneType, bottom: cp_
     }
 }
 
+/// The [`GROWN`] blocks (homes and industry) with a stadium east of them and a pair of one-way
+/// highways north of them (BUG-119 shots of the Noise and Pollution overlays): `--scene noise
+/// --cam noise --overlay noise`. The highways are loud by their load, so with no traffic on them
+/// they stay quiet.
+pub const NOISE: &str = "noise";
+
+/// Builds the [`NOISE`] scene.
+pub fn build_noise(sim: &mut SimRunner) {
+    use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingState, Footprint};
+    build_grown(sim);
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let p = |dx: f32, dz: f32| Vec2::new(c + dx, c + dz);
+    for (from, to) in [
+        (p(-260.0, -130.0), p(260.0, -130.0)),
+        (p(260.0, -150.0), p(-260.0, -150.0)),
+    ] {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: db.road_id("highway_1w_2l").expect("highway"),
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    // The stadium is a unique (unlocked at 8000 residents): stood in directly, like the
+    // utility row of `big-utilities`.
+    let id = db.building_id("stadium").expect("stadium");
+    let (w, d) = db.building(id).lot;
+    sim.world_mut()
+        .resource_mut::<BuildingGrid>()
+        .insert(Building {
+            def: id,
+            footprint: Footprint::Free { w, d },
+            level: 1,
+            state: BuildingState::Active,
+            ready_at: Tick(0),
+            pos: p(200.0, 20.0),
+            rot: 0.0,
+            access: None,
+            flags: BuildingFlags::default(),
+            level_progress: 0.0,
+        });
+    // Two emission passes so the grids hold the stadium.
+    for _ in 0..600 {
+        sim.tick_once();
+    }
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+}
+
 /// The [`GROWN`] scene with a clinic standing north of it on free ground (BUG-110 shots):
 /// `--cam grown --place-demo clinic,X,Z,move` holds the clinic's move ghost over the houses at
 /// (X, Z), which show red.
