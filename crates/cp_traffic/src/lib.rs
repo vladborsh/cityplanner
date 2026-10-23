@@ -16,18 +16,18 @@ pub mod runs;
 pub mod service;
 
 pub use agents::{
-    AgentSettings, AgentStats, Agents, EntryTraffic, KIND_KEEP, KIND_MASK, KIND_PARKED, PED_CHUNK,
-    PED_STEP, Pedestrian, PedestrianId, SegmentLoad, Vehicle, VehicleId, crossing_of, move_agents,
-    purge_departed_citizens, purge_removed_buildings, receive_paths, route_trips,
-    update_traffic_load,
+    AgentSettings, AgentStats, Agents, EntryTraffic, KIND_KEEP, KIND_MASK, KIND_PARKED,
+    KIND_TRAFFIC_REROUTE, PED_CHUNK, PED_STEP, Pedestrian, PedestrianId, REROUTE_CAP, REROUTE_GAIN,
+    REROUTE_MIN_M, REROUTE_PERIOD, SegmentLoad, Vehicle, VehicleId, crossing_of, lane_delay_now,
+    move_agents, purge_departed_citizens, purge_removed_buildings, receive_paths,
+    reroute_by_traffic, route_trips, update_traffic_load,
 };
 pub use astar::{
     CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_class_path,
     find_class_path_lanes, find_ped_path, find_rail_path, find_truck_path, find_truck_path_lanes,
 };
 pub use graph::{
-    Access, CONGESTION_K, CongestionMap, LEFT_TURN_PENALTY, PED_SPEED, PathGraph, SegEnd, Side,
-    U_TURN_PENALTY,
+    Access, CongestionMap, LEFT_TURN_PENALTY, PED_SPEED, PathGraph, SegEnd, Side, U_TURN_PENALTY,
 };
 pub use heavy::HeavyBan;
 pub use mode::{ALWAYS_WALK_M, TripTimes, mode_by_time, track_trip_times, way_times};

@@ -397,6 +397,8 @@ impl SimRunner {
                 cp_transit::run_intercity,
                 cp_traffic::route_trips,
                 cp_traffic::route_service_runs,
+                // Cars ask for a quicker route through the traffic (T-315).
+                cp_traffic::reroute_by_traffic,
                 cp_traffic::track_trip_times,
             )
                 .chain()

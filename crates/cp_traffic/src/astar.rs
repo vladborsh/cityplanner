@@ -1,9 +1,9 @@
 //! A* over [`PathGraph`] (`architecture/system-design.md` §9.3).
 //!
-//! Cost = `length / speed × (1 + k × congestion)` per lane, plus connection travel time and
-//! turn penalties (left +4 s, U-turn +15 s). Heuristic: straight-line distance to the goal
-//! divided by the fastest speed in the graph (admissible: no lane is faster, congestion
-//! and penalties only add). Ties are broken by state index, so a search is a pure,
+//! Cost = `length / speed + delay × length / lane length` per lane (T-315: `delay` is the
+//! lane's measured delay, [`CongestionMap`]), plus connection travel time and turn penalties
+//! (left +4 s, U-turn +15 s). Heuristic: straight-line distance to the goal divided by the
+//! fastest speed in the graph (admissible: no lane is faster, delays and penalties only add). Ties are broken by state index, so a search is a pure,
 //! deterministic function of `(graph, congestion, request)`.
 
 use std::cmp::Reverse;
@@ -14,9 +14,7 @@ use cp_content::{VehicleClass, lane_allows};
 use cp_net::LaneId;
 use serde::{Deserialize, Serialize};
 
-use crate::graph::{
-    Access, CONGESTION_K, CarEdge, CongestionMap, LaneNode, PED_SPEED, PathGraph, SegEnd,
-};
+use crate::graph::{Access, CarEdge, CongestionMap, LaneNode, PED_SPEED, PathGraph, SegEnd};
 use crate::heavy::HeavyBan;
 
 /// No route exists (or an endpoint is not on a usable lane).
@@ -64,8 +62,10 @@ fn key(f: f32, node: u32) -> Reverse<(u32, u32)> {
     Reverse((f.max(0.0).to_bits(), node))
 }
 
-fn lane_time(len: f32, speed: f32, congestion: f32) -> f32 {
-    len / speed * (1.0 + CONGESTION_K * congestion)
+/// Seconds to drive `len` metres of a lane of `lane_len` metres at `speed`, with `delay` seconds
+/// lost on the whole lane (spread along it).
+fn lane_time(len: f32, speed: f32, lane_len: f32, delay: f32) -> f32 {
+    len / speed + delay * (len / lane_len.max(1.0)).min(1.0)
 }
 
 /// Fastest route for a vehicle between two access points.
@@ -223,7 +223,7 @@ fn route(
     if !allowed(start) || !allowed(goal) {
         return Err(NoPath);
     }
-    let c = |i: u32| cong.get(lane(i).segment);
+    let c = |i: u32| cong.delay(i);
     // A truck's lanes in a banned district cost more, unless it starts or ends there (T-195).
     let ends = heavy.map(|h| {
         (
@@ -233,7 +233,7 @@ fn route(
     });
     let time = |i: u32, len: f32| {
         let l = lane(i);
-        let t = lane_time(len, l.speed, c(i));
+        let t = lane_time(len, l.speed, l.len, c(i));
         match (heavy, ends) {
             (Some(h), Some(e)) => t * h.factor(l.segment, e),
             _ => t,
@@ -320,6 +320,42 @@ fn route(
         goal_s: s1,
         cost,
     })
+}
+
+/// What the rest of `v`'s route costs from where it is, on `cong` (T-315): the same lane times,
+/// connection costs and turn penalties as the search, so two routes of one car compare fairly.
+/// `None` when a lane or connection of the route is not in `g`.
+pub(crate) fn cost_ahead(g: &PathGraph, cong: &CongestionMap, v: &crate::Vehicle) -> Option<f32> {
+    let lanes: Vec<LaneId> = v.path.lanes().collect();
+    let last = lanes.len() - 1;
+    let here = usize::from(v.hop);
+    let node = |s: u32| g.car.get(s as usize).and_then(Option::as_ref);
+    let time =
+        |s: u32, len: f32| node(s).map(|n| lane_time(len.max(0.0), n.speed, n.len, cong.delay(s)));
+    let mut t = 0.0;
+    if !v.in_conn {
+        let s0 = g.car_slot(*lanes.get(here)?)?;
+        let end = if here == last {
+            v.path.goal_s
+        } else {
+            node(s0)?.len
+        };
+        t += time(s0, end - v.s)?;
+    }
+    for k in here..v.path.steps.len() {
+        let (a, b) = v.path.steps[k];
+        let (sa, sb) = (g.car_slot(a)?, g.car_slot(b)?);
+        let e = g.car_edges.get(sa as usize)?.iter().find(|e| e.to == sb)?;
+        let body = if e.lane_change {
+            0.0
+        } else if k + 1 == last {
+            time(sb, v.path.goal_s)?
+        } else {
+            time(sb, node(sb)?.len)?
+        };
+        t += e.cost + body;
+    }
+    Some(t)
 }
 
 /// Fastest walking route between two access points over sidewalks and junction links.

@@ -32,8 +32,6 @@ pub const LEFT_TURN_PENALTY: f32 = 4.0;
 pub const U_TURN_PENALTY: f32 = 15.0;
 /// Extra seconds for a lateral hop to the neighbouring lane of the same direction.
 pub const LANE_CHANGE_COST: f32 = 2.0;
-/// Congestion weight `k` in `length / speed × (1 + k × congestion)`.
-pub const CONGESTION_K: f32 = 30.0;
 
 /// Speed through a left or right turn, m/s (about 22 km/h).
 pub const TURN_SPEED: f32 = 6.0;
@@ -78,13 +76,17 @@ pub struct Access {
     pub side: Side,
 }
 
-/// Per-segment congestion (smoothed load, `0` = empty), indexed by segment arena slot.
+/// Measured delay per vehicle lane (T-315, §18.6): seconds of movement a car loses on the lane
+/// over its free-flow time (the queue at its stop line, the standing front car), smoothed
+/// over ~1.4 game hours. Indexed by lane arena slot; a lane past the end, or never measured, has
+/// no delay. A route's lane time is `len / speed + delay × len / lane length`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CongestionMap(pub Vec<f32>);
 
 impl CongestionMap {
-    pub fn get(&self, segment: SegmentId) -> f32 {
-        self.0.get(segment.index as usize).copied().unwrap_or(0.0)
+    /// Seconds of delay on the lane in arena slot `slot`.
+    pub fn delay(&self, slot: u32) -> f32 {
+        self.0.get(slot as usize).copied().unwrap_or(0.0)
     }
 }
 

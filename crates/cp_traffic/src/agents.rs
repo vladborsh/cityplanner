@@ -134,6 +134,10 @@ pub const KIND_MASK: u8 = 0x0F;
 pub const KIND_KEEP: u8 = 0x80;
 /// A keep vehicle that has reached its goal and stands there.
 pub const KIND_PARKED: u8 = 0x40;
+/// The re-route request in flight (`Vehicle::reroute`) was asked for because of the traffic
+/// (T-315), not because the road changed: the new route is taken only if it is quicker by
+/// [`REROUTE_GAIN`], and no answer keeps the old route.
+pub const KIND_TRAFFIC_REROUTE: u8 = 0x20;
 
 impl Vehicle {
     /// The `cp_content::VehicleKind` number, without the flag bits.
@@ -185,18 +189,31 @@ pub struct AgentStats {
     pub rerouted: u64,
     /// Cars that asked for a new route and were told there is none (trip completed abstractly).
     pub reroute_failed: u64,
+    /// Cars that asked for a quicker route because of the traffic and took it (T-315).
+    pub traffic_rerouted: u64,
+    /// Traffic re-routes that kept the old route (not quicker by [`REROUTE_GAIN`], no route, or
+    /// the car had moved past it).
+    pub traffic_kept: u64,
 }
 
 /// Load of every road segment, indexed by segment arena slot: the length of cars over the
 /// length of vehicle lanes, `0..=1`. `inst` is the last tick's value (overlay), `ema` the
-/// average over ~2 game hours (path costs, `CongestionMap`). Saved with the agents.
+/// average over ~1.4 game hours (overlay, stats). The pathfinder reads the measured delay per
+/// lane instead (T-315, `lane_delay`). Saved with the agents.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SegmentLoad {
     pub inst: Vec<f32>,
     pub ema: Vec<f32>,
-    /// The `ema` last handed to the pathfinder (refreshed every [`LOAD_PUSH_TICKS`] ticks);
-    /// kept so a load restores the exact congestion map the continuous run is using.
-    pub published: Vec<f32>,
+    /// Per vehicle-lane arena slot: seconds a car loses on the lane over its free-flow time,
+    /// averaged like `ema` (T-315, [`lane_delay_now`]).
+    pub lane_delay: Vec<f32>,
+    /// The `lane_delay` last handed to the pathfinder as its [`CongestionMap`] (refreshed every
+    /// [`LOAD_PUSH_TICKS`] ticks); kept so a load restores the exact map the continuous run uses.
+    pub lane_published: Vec<f32>,
+    /// Lane slots whose delay jumped at the last refresh (more than doubled and by
+    /// [`HOT_MIN_S`]), ascending: the cars that still have to drive them ask for a quicker route
+    /// in the next `Agents` phase, which empties the list (T-315).
+    pub hot: Vec<u32>,
 }
 
 impl SegmentLoad {
@@ -681,6 +698,18 @@ fn submit_reroute(
     now: Tick,
     v: &Vehicle,
 ) -> Option<u64> {
+    submit_reroute_as(service, pnet, now, v, false)
+}
+
+/// [`submit_reroute`], as a truck (`TruckLanes`: avoiding the heavy traffic ban, T-195) when
+/// `truck`.
+fn submit_reroute_as(
+    service: &mut PathService,
+    pnet: &PathNetwork,
+    now: Tick,
+    v: &Vehicle,
+    truck: bool,
+) -> Option<u64> {
     let g = pnet.graph();
     let (from, from_s) = if v.in_conn {
         let to = v.path.steps.get(usize::from(v.hop))?.1;
@@ -695,10 +724,12 @@ fn submit_reroute(
         s,
         side: Side::Right,
     };
+    let to = v.path.goal;
     let request = PathRequest {
-        mode: Mode::CarLanes {
-            from,
-            to: v.path.goal,
+        mode: if truck {
+            Mode::TruckLanes { from, to }
+        } else {
+            Mode::CarLanes { from, to }
         },
         from: access(from_s),
         to: access(v.path.goal_s),
@@ -818,6 +849,71 @@ pub fn receive_paths(
                 .get(vid)
                 .is_some_and(|v| v.reroute == Some(outcome.id.0));
             if !live {
+                continue;
+            }
+            // T-315: a re-route for the traffic. The new route is taken only when it is quicker
+            // from where the car is now by REROUTE_GAIN on the current delays; otherwise (no
+            // route, stale, or the car has moved past it) the car keeps its route — unless the
+            // road changed under that route meanwhile, then it asks again as T-066 does.
+            if agents
+                .vehicles
+                .get(vid)
+                .is_some_and(|v| v.kind & KIND_TRAFFIC_REROUTE != 0)
+            {
+                let graph = pnet.graph();
+                let cong = pnet.congestion();
+                let quicker = match &outcome.result {
+                    PathResult::Car(Ok(p)) => {
+                        let v = agents.vehicles.get(vid).expect("live vehicle");
+                        let mut alt = v.clone();
+                        adopt_route(&mut alt, p.clone())
+                            .then(|| {
+                                let old = crate::astar::cost_ahead(graph, cong, v)?;
+                                let new = crate::astar::cost_ahead(graph, cong, &alt)?;
+                                (new < old * (1.0 - REROUTE_GAIN)).then_some(alt)
+                            })
+                            .flatten()
+                    }
+                    _ => None,
+                };
+                let taken = quicker.is_some();
+                let v = agents.vehicles.get_mut(vid).expect("live vehicle");
+                if let Some(alt) = quicker {
+                    *v = alt;
+                }
+                v.kind &= !KIND_TRAFFIC_REROUTE;
+                v.reroute = None;
+                let broken = !path_ok(graph, v);
+                if taken {
+                    agents.stats.traffic_rerouted += 1;
+                } else {
+                    agents.stats.traffic_kept += 1;
+                }
+                if broken {
+                    let again = agents
+                        .vehicles
+                        .get(vid)
+                        .and_then(|v| submit_reroute(&mut service, &pnet, *tick, v));
+                    match again {
+                        Some(r) => {
+                            agents.vehicles.get_mut(vid).expect("vehicle").reroute = Some(r);
+                            agents.reroutes.insert(r, vid);
+                        }
+                        None => {
+                            agents.stats.reroute_failed += 1;
+                            drop_vehicle(
+                                &mut agents,
+                                vid,
+                                &mut grid,
+                                &mut book,
+                                &buildings,
+                                &rng,
+                                now,
+                                &mut runs,
+                            );
+                        }
+                    }
+                }
                 continue;
             }
             // A route: adopt it if it passes through where the car is. No route: the trip
@@ -1432,16 +1528,161 @@ pub fn update_traffic_load(
         load.inst[i] = x;
         load.ema[i] += (x - load.ema[i]) * alpha;
     }
-    if tick.0.is_multiple_of(LOAD_PUSH_TICKS) {
-        load.published = load.ema.clone();
-        pnet.set_congestion(CongestionMap(load.published.clone()));
+    // T-315: the measured delay of every vehicle lane, averaged the same way (an empty lane
+    // decays towards its free-flow time).
+    let lanes = graph.car.len();
+    load.lane_delay.resize(lanes, 0.0);
+    let mut now_delay = vec![0.0f32; lanes];
+    for slot in drive.occ.iter() {
+        if let Some(node) = graph.car.get(slot).and_then(Option::as_ref) {
+            let cars = drive.lanes[slot].iter().filter_map(|&id| vehicles.get(id));
+            now_delay[slot] = lane_delay_now(cars, node.speed);
+        }
     }
+    for (d, x) in load.lane_delay.iter_mut().zip(&now_delay) {
+        *d += (x - *d) * alpha;
+    }
+    if tick.0.is_multiple_of(LOAD_PUSH_TICKS) {
+        load.hot = load
+            .lane_delay
+            .iter()
+            .enumerate()
+            .filter(|&(i, &d)| {
+                let was = load.lane_published.get(i).copied().unwrap_or(0.0);
+                d > 2.0 * was && d > was + HOT_MIN_S
+            })
+            .map(|(i, _)| i as u32)
+            .collect();
+        load.lane_published = load.lane_delay.clone();
+        pnet.set_congestion(CongestionMap(load.lane_published.clone()));
+    }
+}
+
+/// The delay a car meets on a lane now, seconds (T-315): every car on it slower than
+/// [`SLOW_FRACTION`] of the lane's speed is a car to wait behind ([`DISCHARGE_S`] each, the time
+/// a queue takes to let one car go), plus the time the front car has been standing (a red light,
+/// a full junction, a gridlock: the arriving car waits that long at least). Capped at
+/// [`MAX_DELAY_S`]. `cars` front first.
+pub fn lane_delay_now<'a>(cars: impl Iterator<Item = &'a Vehicle>, speed: f32) -> f32 {
+    let mut slow = 0u32;
+    let mut front_standing = 0.0;
+    for (i, v) in cars.enumerate() {
+        if v.speed < SLOW_FRACTION * speed {
+            slow += 1;
+        }
+        if i == 0 && v.speed < 0.1 {
+            front_standing = (v.stuck_timer >> 16) as f32 * cp_core::time::MOVE_SECONDS_PER_TICK;
+        }
+    }
+    (slow as f32 * DISCHARGE_S + front_standing).min(MAX_DELAY_S)
 }
 
 /// Averaging window of the segment load: 120 ticks of movement (since T-301 about 1.4 game hours; the traffic clock is not the day clock).
 const EMA_TICKS: f32 = 120.0;
 /// How often the pathfinder's congestion map is refreshed.
 const LOAD_PUSH_TICKS: u64 = 32;
+/// A car slower than this share of the lane's speed is queueing (T-315).
+pub const SLOW_FRACTION: f32 = 0.3;
+/// Seconds a queue needs to let one car go (T-315).
+pub const DISCHARGE_S: f32 = 2.0;
+/// Highest delay one lane is given, seconds (T-315).
+pub const MAX_DELAY_S: f32 = 600.0;
+/// A lane is "hot" (event re-route) when its delay more than doubled at a refresh and grew by
+/// at least this many seconds (T-315).
+pub const HOT_MIN_S: f32 = 20.0;
+/// Ticks between two traffic re-routes of the same car: car `id` asks in the ticks where
+/// `tick % REROUTE_PERIOD == id.index % REROUTE_PERIOD` (T-315; ~1.5 game hours).
+pub const REROUTE_PERIOD: u64 = 128;
+/// Only a car with at least this much road still ahead asks (T-315).
+pub const REROUTE_MIN_M: f32 = 800.0;
+/// At most this many traffic re-route requests a tick (T-315); hot-lane cars go first, then
+/// the periodic ones, each in vehicle-arena order.
+pub const REROUTE_CAP: usize = 48;
+/// A traffic re-route is taken only if the new route is this much quicker (T-315).
+pub const REROUTE_GAIN: f32 = 0.10;
+
+/// Metres of road still ahead of `v` on its route.
+fn road_ahead(g: &PathGraph, v: &Vehicle) -> f32 {
+    let len = |l: LaneId| lane_node(g, l).map_or(0.0, |n| n.len);
+    let here = usize::from(v.hop);
+    let rest: f32 = v.path.lanes().skip(here + 1).map(len).sum();
+    let goal_short = len(v.path.goal) - v.path.goal_s;
+    let current = if v.in_conn { 0.0 } else { len(v.lane()) - v.s };
+    (current + rest - goal_short).max(0.0)
+}
+
+/// Whether `v` still has to drive a lane in `hot` (ascending slots).
+fn drives_a_hot_lane(g: &PathGraph, v: &Vehicle, hot: &[u32]) -> bool {
+    v.path
+        .lanes()
+        .skip(usize::from(v.hop) + 1)
+        .filter_map(|l| g.car_slot(l))
+        .any(|s| hot.binary_search(&s).is_ok())
+}
+
+/// `Agents` phase, after the trips and runs asked for their routes (T-315, §18.6): cars ask for
+/// a quicker route from where they are. A car asks when a lane still ahead of it became hot at
+/// the last refresh of the delays, or in its turn every [`REROUTE_PERIOD`] ticks; only cars and
+/// trucks on the road (not buses, trams, trains, a parked keep vehicle or one already waiting
+/// for a route) with [`REROUTE_MIN_M`] still ahead, at most [`REROUTE_CAP`] a tick. The answer
+/// is applied in `receive_paths`.
+pub fn reroute_by_traffic(
+    tick: Res<Tick>,
+    pnet: Res<PathNetwork>,
+    mut service: ResMut<PathService>,
+    mut agents: ResMut<Agents>,
+) {
+    let now = tick.0;
+    let hot = std::mem::take(&mut agents.load.hot);
+    let g = pnet.graph();
+    let eligible = |v: &Vehicle| {
+        v.spawned
+            && v.reroute.is_none()
+            && !v.is_parked()
+            && crate::drive::class_of(v) == cp_content::VehicleClass::Car
+            && road_ahead(g, v) >= REROUTE_MIN_M
+    };
+    let mut chosen: Vec<VehicleId> = Vec::new();
+    if !hot.is_empty() {
+        chosen.extend(
+            agents
+                .vehicles
+                .iter()
+                .filter(|(_, v)| eligible(v) && drives_a_hot_lane(g, v, &hot))
+                .map(|(id, _)| id)
+                .take(REROUTE_CAP),
+        );
+    }
+    if chosen.len() < REROUTE_CAP {
+        let turn = now % REROUTE_PERIOD;
+        let periodic: Vec<VehicleId> = agents
+            .vehicles
+            .iter()
+            .filter(|(id, v)| {
+                u64::from(id.index) % REROUTE_PERIOD == turn && !chosen.contains(id) && eligible(v)
+            })
+            .map(|(id, _)| id)
+            .take(REROUTE_CAP - chosen.len())
+            .collect();
+        chosen.extend(periodic);
+    }
+    for id in chosen {
+        let truck = agents
+            .vehicles
+            .get(id)
+            .is_some_and(|v| v.kind_id() == cp_content::VehicleKind::Truck as u8);
+        let request = agents
+            .vehicles
+            .get(id)
+            .and_then(|v| submit_reroute_as(&mut service, &pnet, *tick, v, truck));
+        if let Some(r) = request {
+            let v = agents.vehicles.get_mut(id).expect("vehicle");
+            v.reroute = Some(r);
+            v.kind |= KIND_TRAFFIC_REROUTE;
+            agents.reroutes.insert(r, id);
+        }
+    }
+}
 
 #[cfg(test)]
 mod visible_tests {

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bevy_ecs::schedule::{IntoScheduleConfigs, Schedule};
 use bevy_ecs::world::World;
 use bevy_math::Vec3;
@@ -93,15 +95,17 @@ impl Sim {
         panic!("no outcome");
     }
 
+    /// Gives every vehicle lane of each segment `delay` seconds (T-315: delays are per lane).
     fn set_congestion(&mut self, segs: &[(SegmentId, f32)]) {
-        let slots = segs
-            .iter()
-            .map(|(s, _)| s.index as usize + 1)
-            .max()
-            .unwrap_or(0);
-        let mut v = vec![0.0; slots];
-        for (s, c) in segs {
-            v[s.index as usize] = *c;
+        self.tick(); // the snapshot knows the lanes
+        let graph = Arc::clone(self.world.resource::<PathNetwork>().graph());
+        let mut v = vec![0.0; graph.car.len()];
+        for (slot, node) in graph.car.iter().enumerate() {
+            if let Some(n) = node
+                && let Some((_, d)) = segs.iter().find(|(s, _)| *s == n.segment)
+            {
+                v[slot] = *d;
+            }
         }
         self.world
             .resource_mut::<PathNetwork>()
@@ -666,7 +670,9 @@ fn congestion_makes_the_drive_slower_than_a_walk_of_the_same_route() {
     let (free, jam) = {
         let net = s.world.resource::<PathNetwork>();
         let cost = |c: &CongestionMap| find_car_path(net.graph(), c, &from, &to).unwrap().cost;
-        (cost(net.congestion()), cost(&CongestionMap(vec![1.0; 2])))
+        // T-315: half a minute lost on every lane.
+        let jam = CongestionMap(vec![30.0; net.graph().car.len()]);
+        (cost(net.congestion()), cost(&jam))
     };
     assert!(jam > free * 1.5, "{jam} against {free}");
     let _ = TripMode::Car;

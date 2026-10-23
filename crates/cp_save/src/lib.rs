@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 64;
+pub const FORMAT_VERSION: u32 = 65;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -418,8 +418,8 @@ impl SaveData {
             .map_or(0, |c| c.generation)
             + 1;
         world.insert_resource(coverage);
-        // The pathfinder reads the segment load last published to it (saved with the agents).
-        let published = cp_traffic::CongestionMap(self.agents.load.published.clone());
+        // The pathfinder reads the lane delays last published to it (saved with the agents, T-315).
+        let published = cp_traffic::CongestionMap(self.agents.load.lane_published.clone());
         world.insert_resource(self.agents);
         // Requests in flight continue after the load: re-launched on the snapshot rebuilt from
         // the restored net, which only counts as a network change if the net differs.

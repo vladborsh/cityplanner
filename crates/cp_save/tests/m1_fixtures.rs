@@ -101,7 +101,8 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     // T-305: re-recorded (was 0x422e143067e61039), 70 km/h avenues and reach by time.
     // T-302b: re-recorded (was 0x50e9581a7e49d1a5), format 63, the tram content.
     // T-302c: re-recorded (was 0x09461c008868d8df), format 64, the trolleybus content; regenerated on T-311/T-306.
-    assert_eq!(sim.checksum(), 0x3af4471b47254980, "state at load"); // T-303a: re-recorded (was 0xf1dee787e8fe8b5f), format 62, the signs on the nodes. T-308: re-recorded, the new utility content changes the content hash.
+    // T-315: re-recorded (was 0x3af4471b47254980), format 65, routes by measured lane delay.
+    assert_eq!(sim.checksum(), 0x7ff4e347d060a49f, "state at load"); // T-303a: re-recorded (was 0xf1dee787e8fe8b5f), format 62, the signs on the nodes. T-308: re-recorded, the new utility content changes the content hash.
     // T-280: re-recorded (was 0xa0961668822b2784 since T-282): only 15 % of car trips and
     // 25 % of goods trucks take a vehicle, the rest run abstractly, so the day after the load
     // has other cars on the road.
@@ -110,7 +111,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     // of the ground per tick, so the day after the load runs differently.
     assert_eq!(
         after_a_day(&mut sim),
-        0xa2e6dc91e00d114c, // T-302c: re-recorded (was 0xf3b290b7e23c1445), format 64, the trolleybus content, the fixture regenerated on T-311/T-306. BUG-113: re-recorded (was 0xbda760a646dccb6b), garbage trucks go for half a problem and book the landfill's day. T-311: re-recorded (was 0x474144ecf293bb70), half the arrivals (MOVE_IN_ONE_IN 4) and the trips of the departed cancelled at once. T-302b: re-recorded (was 0x3525f19247d6d612), format 63, the tram content. T-305: re-recorded (was 0x1172029647ed4c94), 70 km/h avenues and reach by time. T-303a: re-recorded (was 0x952c338864d38fa6), format 62. T-300b: re-recorded (was 0x46c86fe1c3fd6e4d), the water dirt. T-301: re-recorded, the day is 2048 ticks and the test runs a day (was 0x68f162061e8c655). T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
+        0x6aa91e835db6a43d, // T-315: re-recorded (was 0xa2e6dc91e00d114c), format 65, routes by measured lane delay and traffic re-routes. T-302c: re-recorded (was 0xf3b290b7e23c1445), format 64, the trolleybus content, the fixture regenerated on T-311/T-306. BUG-113: re-recorded (was 0xbda760a646dccb6b), garbage trucks go for half a problem and book the landfill's day. T-311: re-recorded (was 0x474144ecf293bb70), half the arrivals (MOVE_IN_ONE_IN 4) and the trips of the departed cancelled at once. T-302b: re-recorded (was 0x3525f19247d6d612), format 63, the tram content. T-305: re-recorded (was 0x1172029647ed4c94), 70 km/h avenues and reach by time. T-303a: re-recorded (was 0x952c338864d38fa6), format 62. T-300b: re-recorded (was 0x46c86fe1c3fd6e4d), the water dirt. T-301: re-recorded, the day is 2048 ticks and the test runs a day (was 0x68f162061e8c655). T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
         "load + a day"
     );
 }
@@ -146,7 +147,8 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // T-305: re-recorded (was 0x7651f529a497cfac), 70 km/h avenues and reach by time.
     // T-302b: re-recorded (was 0x10c365bdd165fb4e), format 63, the tram content.
     // T-302c: re-recorded (was 0x3b0205fb9fe1ffc7), format 64, regenerated on T-311/T-306.
-    assert_eq!(sim.checksum(), 0x9ea3605c8fbfffd3, "state at load");
+    // T-315: re-recorded (was 0x9ea3605c8fbfffd3), format 65, routes by measured lane delay.
+    assert_eq!(sim.checksum(), 0x99a8a4566e60d889, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -167,7 +169,8 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // T-302b: re-recorded (was 0xbb80f8c8a501fac8), format 63, the tram content.
     // BUG-113: re-recorded (was 0xabf544df409b48f7), garbage trucks go for half a problem and book the landfill's day.
     // T-302c: re-recorded (was 0xfa28152f0738ac4f), format 64, regenerated on T-311/T-306.
-    assert_eq!(sim.checksum(), 0x67bbfe3cc3121206, "load + a day");
+    // T-315: re-recorded (was 0x67bbfe3cc3121206), format 65, routes by measured lane delay and traffic re-routes.
+    assert_eq!(sim.checksum(), 0xa4e6eef5d8efd9eb, "load + a day");
     // T-290: the trips of the saved jam arrive (completed grows by hundreds); the number in flight
     // no longer falls, the routine plans new ones all day (most of them abstract, T-280).
     let done_after = sim.world().resource::<TripBook>().completed;
@@ -212,4 +215,40 @@ fn a_save_with_sick_citizens_resumes_like_the_continuous_run() {
             .count()
     };
     assert_eq!(sick(&a), sick(&b));
+}
+
+/// T-315: the lane delays the pathfinder reads, the hot lanes and a traffic re-route in flight
+/// (the request, and the car's flag that says how to take the answer) are saved: a save taken
+/// while cars wait for quicker routes loads and runs on to the state of the run that never
+/// stopped.
+#[test]
+fn a_save_with_traffic_reroutes_in_flight_resumes_like_the_continuous_run() {
+    let (_, content) = env();
+    let mut a = loaded(&fixture("m1-traffic.sav"));
+    let in_flight = |s: &SimRunner| {
+        s.world()
+            .resource::<Agents>()
+            .vehicles()
+            .filter(|(_, v)| v.kind & cp_traffic::KIND_TRAFFIC_REROUTE != 0)
+            .count()
+    };
+    let mut found = false;
+    for _ in 0..3000 {
+        a.tick_once();
+        if in_flight(&a) > 0 {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "a traffic re-route was asked for");
+    let bytes = save_runner(&a, content.content_hash(), "flatlands").unwrap();
+    let mut b = loaded(&bytes);
+    assert_eq!(a.checksum(), b.checksum(), "state at load");
+    for _ in 0..256 {
+        a.tick_once();
+        b.tick_once();
+    }
+    assert_eq!(a.checksum(), b.checksum(), "load + 256 ticks");
+    let st = &a.world().resource::<Agents>().stats;
+    assert!(st.traffic_rerouted + st.traffic_kept > 0, "{st:?}");
 }
