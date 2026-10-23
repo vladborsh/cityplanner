@@ -78,6 +78,8 @@ pub struct GamePlugin {
     pub open_windows: Vec<cp_ui::UiWindow>,
     /// Open this palette category at start (`--category`, for screenshots).
     pub category: Option<cp_ui::Category>,
+    /// Hold the pointer here (screen points) for the cursor hint in a hidden shot (`--pointer`).
+    pub pointer: Option<(f32, f32)>,
     /// No cloud shadows in this run (`--no-clouds`, T-272: shots without them).
     pub no_clouds: bool,
     /// No parked cars in this run (`--no-parked`, T-276: shots without them).
@@ -176,6 +178,7 @@ impl Plugin for GamePlugin {
                 grading_open: self.grading_panel,
                 overlays_collapsed: self.fold_overlays,
                 category: self.category,
+                demo_pointer: self.pointer,
                 // T-289: a menu started open takes up its tool and shows its overlay, as a click would.
                 entered: self.category,
                 ..default()

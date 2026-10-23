@@ -68,6 +68,8 @@ pub struct Options {
     pub fold_overlays: bool,
     /// `--open jobs,metrics`: windows that start open (screenshots).
     pub open_windows: Vec<cp_ui::UiWindow>,
+    /// `--pointer x,y`: hold the pointer there in a hidden shot, so the cursor hint shows.
+    pub pointer: Option<(f32, f32)>,
     /// `--ui`: keep the egui UI in a `--hidden` run, so screenshots show the panels.
     pub hidden_ui: bool,
     /// `--category roads|zones|...`: open that palette category at start (screenshots).
@@ -196,6 +198,10 @@ impl Options {
                 .map(|v| v.split(',').filter_map(cp_ui::UiWindow::parse).collect())
                 .unwrap_or_default(),
             hidden_ui: args.iter().any(|a| a == "--ui"),
+            pointer: value("--pointer").and_then(|v| {
+                let (x, y) = v.split_once(',')?;
+                Some((x.parse().ok()?, y.parse().ok()?))
+            }),
             no_clouds: args.iter().any(|a| a == "--no-clouds"),
             no_parked: args.iter().any(|a| a == "--no-parked"),
             lang: value("--lang").and_then(|v| cp_locale::Lang::from_code(&v)),
@@ -619,6 +625,7 @@ pub fn run(opts: Options) -> AppExit {
             fold_overlays: opts.fold_overlays,
             open_windows: opts.open_windows.clone(),
             category: opts.category,
+            pointer: opts.pointer,
             no_clouds: opts.no_clouds,
             no_parked: opts.no_parked,
             lang: opts.lang,

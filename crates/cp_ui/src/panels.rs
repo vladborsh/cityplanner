@@ -75,6 +75,8 @@ pub struct UiState {
     pub prefs: Prefs,
     /// The category whose tool panel is open.
     pub category: Option<Category>,
+    /// Where a hidden screenshot run holds the pointer, for the cursor hint (`--pointer`).
+    pub demo_pointer: Option<(f32, f32)>,
     /// A menu was opened this frame and has not taken up its tool yet (T-289).
     pub entered: Option<Category>,
     /// The last build tool used in each menu this session (T-289; not saved).

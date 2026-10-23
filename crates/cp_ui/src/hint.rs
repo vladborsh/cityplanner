@@ -28,7 +28,10 @@ pub fn cursor_hint(ctx: &egui::Context, state: &UiState, tools: &ToolState) {
     if tools.active == ActiveTool::None {
         return;
     }
-    let Some(pos) = ctx.pointer_latest_pos() else {
+    let Some(pos) = ctx
+        .pointer_latest_pos()
+        .or(state.demo_pointer.map(|(x, y)| egui::pos2(x, y)))
+    else {
         return;
     };
     if ctx.is_pointer_over_egui() || crate::pointer_over_panels(ctx) {
