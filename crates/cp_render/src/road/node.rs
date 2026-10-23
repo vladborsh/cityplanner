@@ -851,5 +851,16 @@ pub(super) fn build(
     if !raised {
         above_ground(&mut m, terrain);
     }
+    if markings {
+        // The lane arrows (T-313) stand a little above the surface the junction sits on.
+        let mut a = super::arrows::build(graph, j);
+        if !raised {
+            above_ground(&mut a, terrain);
+        }
+        for p in &mut a.positions {
+            p[1] += super::arrows::RAISE;
+        }
+        append(&mut m, &a);
+    }
     Some(m)
 }

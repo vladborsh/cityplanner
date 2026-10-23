@@ -164,6 +164,13 @@ pub fn global_tools(
             } else {
                 tools.select(if on { ActiveTool::None } else { tool });
                 // Upgrade works with the road types: show them.
+                // The Junctions tool has its mode (lights and signs / lane turns) in the options strip.
+                if matches!(tool, ActiveTool::Upgrade | ActiveTool::Junctions)
+                    && !on
+                    && state.category.is_none()
+                {
+                    state.category = Some(Category::Roads);
+                }
                 if tool == ActiveTool::Upgrade && !on && state.category != Some(Category::Roads) {
                     state.category = Some(Category::Roads);
                 }
@@ -442,6 +449,10 @@ fn options(
     tools: &mut ToolState,
     overlay: &mut OverlayState,
 ) {
+    if tools.active == ActiveTool::Junctions {
+        crate::lane_rules::mode_buttons(ui, tools);
+        return;
+    }
     match category {
         Category::Roads => crate::roads::road_options(ui, tools),
         Category::Districts => {

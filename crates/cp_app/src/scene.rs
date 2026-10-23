@@ -1795,6 +1795,128 @@ pub fn build_highway_join(sim: &mut SimRunner) {
     }
 }
 
+/// Lane arrows and lane rules (T-313): a four-way of 4-lane streets. On the west arm the right
+/// lane is set to straight only (the left lane takes the turns), on the south arm the lanes keep
+/// the default. Look at it with `--cam lane-arrows`.
+pub const LANE_ARROWS: &str = "lane-arrows";
+
+/// Builds the [`LANE_ARROWS`] scene through the normal commands.
+pub fn build_lane_arrows(sim: &mut SimRunner) {
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let p = |dx: f32, dz: f32| Vec2::new(c + dx, c + dz);
+    for (from, to) in [
+        (p(-150.0, 0.0), p(150.0, 0.0)),
+        (p(0.0, -150.0), p(0.0, 150.0)),
+    ] {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: db.road_id("medium_4l").expect("road"),
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    sim.tick_once();
+    // The west arm: its right lane goes straight only, its left lane takes everything else.
+    let graph = sim.world().resource::<cp_net::NetGraph>();
+    let node = graph
+        .find_node(bevy_math::Vec3::new(c, graph_height(sim, c), c))
+        .or_else(|| {
+            graph
+                .nodes()
+                .find(|(_, n)| (n.pos.x - c).abs() < 1.0 && (n.pos.z - c).abs() < 1.0)
+                .map(|(id, _)| id)
+        })
+        .expect("the crossing");
+    let n = graph.node(node).expect("node");
+    let arms: Vec<(cp_net::SegmentId, cp_net::Segment)> = n
+        .segments
+        .iter()
+        .filter_map(|&s| graph.segment(s).map(|g| (s, g.clone())))
+        .collect();
+    // The arm whose far end lies to the west.
+    let far = |s: &cp_net::Segment| {
+        let other = if s.end == node { s.start } else { s.end };
+        graph.node(other).map(|o| o.pos)
+    };
+    let west = arms
+        .iter()
+        .find(|(_, s)| far(s).is_some_and(|f| f.x < c - 10.0))
+        .expect("west arm");
+    let inbound = |seg: &cp_net::Segment| {
+        let mut v: Vec<(u8, f32)> = seg
+            .lanes
+            .iter()
+            .filter_map(|&l| graph.lane(l))
+            .filter(|l| {
+                l.kind.is_road_vehicle()
+                    && ((seg.end == node) == (l.dir == cp_content::LaneDir::Forward))
+            })
+            .map(|l| {
+                let right = if l.dir == cp_content::LaneDir::Forward {
+                    -l.offset
+                } else {
+                    l.offset
+                };
+                (l.index, right)
+            })
+            .collect();
+        v.sort_by(|a, b| b.1.total_cmp(&a.1));
+        v.into_iter().map(|e| e.0).collect::<Vec<u8>>()
+    };
+    let lanes = inbound(&west.1);
+    let (right, left) = (lanes[0], lanes[lanes.len() - 1]);
+    let straight = arms
+        .iter()
+        .find(|(_, s)| far(s).is_some_and(|f| f.x > c + 10.0))
+        .expect("east arm")
+        .0;
+    let others: Vec<cp_net::Exit> = arms
+        .iter()
+        .filter(|(id, _)| *id != west.0)
+        .map(|(id, _)| cp_net::Exit {
+            arm: *id,
+            lane: None,
+        })
+        .collect();
+    let (west_id, tick) = (west.0, sim.tick());
+    sim.push_command(
+        SimCommand::Net(NetCommand::SetLaneRule {
+            node,
+            segment: west_id,
+            lane: left,
+            exits: Some(others),
+        }),
+        tick,
+    );
+    sim.tick_once();
+    sim.push_command(
+        SimCommand::Net(NetCommand::SetLaneRule {
+            node,
+            segment: west_id,
+            lane: right,
+            exits: Some(vec![cp_net::Exit {
+                arm: straight,
+                lane: None,
+            }]),
+        }),
+        sim.tick(),
+    );
+    sim.tick_once();
+}
+
+fn graph_height(sim: &SimRunner, c: f32) -> f32 {
+    sim.world()
+        .get_resource::<cp_terrain::SimTerrain>()
+        .map_or(0.0, |t| t.0.height(Vec2::new(c, c)))
+}
+
 /// The puffs a scene leaves for `--dust-demo` (T-288 shots), kept in the sim world.
 #[derive(bevy_ecs::prelude::Resource, Clone, Debug, Default)]
 pub struct DustPuffs(pub Vec<cp_render::dust::Puff>);

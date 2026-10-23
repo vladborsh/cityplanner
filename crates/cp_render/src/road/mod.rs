@@ -1433,6 +1433,7 @@ impl RoadSet {
     }
 }
 
+pub mod arrows;
 pub mod band;
 pub mod decal;
 pub mod furniture;
