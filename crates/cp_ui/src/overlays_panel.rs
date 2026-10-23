@@ -17,7 +17,51 @@ const OVERLAY_ICON: f32 = 28.0;
 const WINDOW_ICON: f32 = 24.0;
 /// Height of the button row in the top bar.
 const WINDOW_BAR_H: f32 = WINDOW_ICON + 2.0 * 4.0;
-const OVERLAY_COLUMNS: usize = 2;
+const OVERLAY_COLUMNS: usize = 3;
+/// Width of one overlay cell (icon and short name).
+const CELL_W: f32 = 112.0;
+
+/// The groups of the panel (T-317): a header and its overlays. Every overlay but `Off` is in
+/// exactly one.
+pub const GROUPS: [(&str, &[Overlay]); 5] = [
+    ("Utilities", &[Overlay::Power, Overlay::Water]),
+    (
+        "Services",
+        &[
+            Overlay::Health,
+            Overlay::Police,
+            Overlay::Fire,
+            Overlay::Education,
+            Overlay::Garbage,
+            Overlay::Deathcare,
+            Overlay::Mail,
+        ],
+    ),
+    (
+        "Environment",
+        &[
+            Overlay::Pollution,
+            Overlay::Noise,
+            Overlay::LandValue,
+            Overlay::Resources,
+        ],
+    ),
+    (
+        "Traffic",
+        &[Overlay::Traffic, Overlay::Transit, Overlay::Junctions],
+    ),
+    (
+        "City",
+        &[
+            Overlay::Zones,
+            Overlay::Districts,
+            Overlay::IndustryAreas,
+            Overlay::Parks,
+            Overlay::Land,
+            Overlay::Underground,
+        ],
+    ),
+];
 /// Width of the folded strip, and of the open panel.
 const STRIP_W: f32 = 22.0;
 /// Margin from the screen's right edge.
@@ -58,8 +102,7 @@ pub fn width(state: &UiState) -> f32 {
         + if state.overlays_collapsed {
             STRIP_W + 8.0
         } else {
-            let cell = OVERLAY_ICON + 2.0 * Sizes::BUTTON_PAD + Sizes::TILE_GAP;
-            OVERLAY_COLUMNS as f32 * cell + 24.0
+            OVERLAY_COLUMNS as f32 * (CELL_W + Sizes::TILE_GAP) + 24.0
         }
 }
 
@@ -133,33 +176,46 @@ pub fn overlays_panel(
                         return;
                     }
                     ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
-                    // The overlays, two to a row.
-                    egui::Grid::new("overlays_grid")
-                        .spacing(egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP))
-                        .show(ui, |ui| {
-                            for (n, o) in Overlay::ALL.into_iter().enumerate() {
-                                let r = overlay_icon(o)
-                                    .button(
-                                        ui,
-                                        OVERLAY_ICON,
-                                        Sizes::BUTTON_PAD,
-                                        overlay.active == o,
-                                    )
-                                    .on_hover_ui(|ui| {
-                                        ui.strong(tr(o.label()));
-                                        if let Some(v) = view {
-                                            crate::gauges::overlay_hover(ui, v, o);
-                                        }
-                                    });
-                                rects.overlays.push((o, r.rect));
-                                if r.clicked() {
-                                    overlay.open(o);
-                                }
-                                if n % OVERLAY_COLUMNS == OVERLAY_COLUMNS - 1 {
-                                    ui.end_row();
-                                }
+                    // "No overlay", then the groups with their headers, three cells to a row.
+                    let mut cell = |ui: &mut egui::Ui, o: Overlay| {
+                        let on = overlay.active == o;
+                        let r = ui
+                            .horizontal(|ui| {
+                                ui.set_width(CELL_W);
+                                let b =
+                                    overlay_icon(o).button(ui, OVERLAY_ICON, Sizes::BUTTON_PAD, on);
+                                let name = ui.add(
+                                    egui::Label::new(egui::RichText::new(tr(o.label())).small())
+                                        .truncate()
+                                        .sense(egui::Sense::click()),
+                                );
+                                (b, name)
+                            })
+                            .inner;
+                        let hover = |ui: &mut egui::Ui| {
+                            ui.strong(tr(o.label()));
+                            if let Some(v) = view {
+                                crate::gauges::overlay_hover(ui, v, o);
                             }
-                        });
+                        };
+                        let (icon, name) = (r.0.on_hover_ui(hover), r.1);
+                        rects.overlays.push((o, icon.rect));
+                        if icon.clicked() || name.clicked() {
+                            overlay.open(o);
+                        }
+                    };
+                    cell(ui, Overlay::Off);
+                    for (title, members) in GROUPS {
+                        ui.add_space(2.0);
+                        ui.weak(tr(title));
+                        for row in members.chunks(OVERLAY_COLUMNS) {
+                            ui.horizontal(|ui| {
+                                for &o in row {
+                                    cell(ui, o);
+                                }
+                            });
+                        }
+                    }
                 });
         });
     rects.panel = Some(area.response.rect);
@@ -351,23 +407,26 @@ mod tests {
     }
 
     #[test]
-    fn every_overlay_is_an_icon_two_to_a_row_and_a_click_selects_it_and_the_panel_stays() {
+    fn every_overlay_is_a_labelled_cell_in_a_group_and_a_click_selects_it_and_the_panel_stays() {
         let mut rig = Rig::new();
         assert_eq!(rig.rects.overlays.len(), Overlay::ALL.len());
-        let rows: std::collections::BTreeSet<i32> = rig
-            .rects
-            .overlays
-            .iter()
-            .map(|(_, r)| r.top().round() as i32)
+        // Every overlay but "No overlay" is in exactly one group.
+        let mut grouped: Vec<Overlay> =
+            GROUPS.iter().flat_map(|(_, m)| m.iter().copied()).collect();
+        grouped.sort_by_key(|o| Overlay::ALL.iter().position(|a| a == o));
+        let mut want: Vec<Overlay> = Overlay::ALL
+            .into_iter()
+            .filter(|o| *o != Overlay::Off)
             .collect();
-        assert_eq!(rows.len(), Overlay::ALL.len().div_ceil(2), "two columns");
+        want.sort_by_key(|o| Overlay::ALL.iter().position(|a| a == o));
+        assert_eq!(grouped, want);
         let cols: std::collections::BTreeSet<i32> = rig
             .rects
             .overlays
             .iter()
             .map(|(_, r)| r.left().round() as i32)
             .collect();
-        assert_eq!(cols.len(), 2);
+        assert_eq!(cols.len(), OVERLAY_COLUMNS);
         // Top right, under the top bar.
         let panel = rig.rects.panel.unwrap();
         assert!(panel.right() > 1200.0 && panel.top() >= Sizes::TOP_BAR_H);

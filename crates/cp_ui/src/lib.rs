@@ -33,6 +33,7 @@ pub mod info;
 pub mod jobs;
 pub mod junction_marks;
 pub mod land;
+pub mod legend;
 pub mod lines;
 pub mod menus;
 pub mod metrics;
@@ -286,6 +287,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     bulldozer_bar::bulldozer_bar(ctx, tools, lift);
     cursor_label::cursor_label(ctx, tools);
     hint::cursor_hint(ctx, state, tools);
+    legend::legend(ctx, state, overlay.active);
     {
         let st = &mut *state;
         budget::budget_window(ctx, &mut st.budget_open, view, &mut st.budget, outbox);
@@ -672,7 +674,7 @@ mod capture_tests {
         // T-289: the palette, and the overlays panel at the top right (two points of the grid).
         assert_eq!(
             row(&base, 328),
-            1, // the overlays panel at the right; T-317: no palette column any more
+            4, // the overlays panel at the right (T-317: grouped, wider; no palette column)
             "only the overlays panel is owned in the middle row"
         );
         assert_eq!(row(&base, 710), 16, "bottom bar");
@@ -711,7 +713,13 @@ mod capture_tests {
 
     #[test]
     fn every_window_and_menu_owns_the_pointer_where_it_is_drawn() {
-        let base = Rig::new().owned().len();
+        // The overlays panel folded, so a window drawn under it still adds to what is owned.
+        let folded = || {
+            let mut rig = Rig::new();
+            rig.state.overlays_collapsed = true;
+            rig
+        };
+        let base = folded().owned().len();
         type Open = fn(&mut Rig);
         let surfaces: [(&str, Open); 10] = [
             ("budget", |r| r.state.budget_open = true),
@@ -726,7 +734,7 @@ mod capture_tests {
             ("settings", |r| r.state.settings_open = true),
         ];
         for (name, open) in surfaces {
-            let mut rig = Rig::new();
+            let mut rig = folded();
             open(&mut rig);
             let n = rig.owned().len();
             assert!(n > base, "{name} owns no pointer area ({n} vs {base})");
