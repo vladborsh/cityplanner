@@ -51,7 +51,7 @@ use cp_core::curve::CubicBezier3;
 
 use crate::graph::NetGraph;
 use crate::junction::Arm;
-use crate::model::{LANE_CURVE_PIECES, Lane, LaneId};
+use crate::model::{LANE_CURVE_PIECES, Lane, LaneId, LaneRule};
 
 /// Turn angle (degrees) separating straight from left/right.
 pub const STRAIGHT_BAND_DEG: f32 = 30.0;
@@ -169,6 +169,8 @@ fn ccw_pos(lane: &Lane, at_start: bool) -> f32 {
 #[derive(Clone, Copy)]
 struct VLane {
     id: LaneId,
+    /// Index in the segment's road profile (the key of a lane rule).
+    index: u8,
     kind: LaneKind,
     rank_pos: f32,
     end: Vec3,
@@ -193,6 +195,7 @@ fn arm_lanes(graph: &NetGraph, arm: &Arm) -> ArmLanes {
             let (end, tangent) = lane_at(l, arm.trim_t);
             let v = VLane {
                 id: lid,
+                index: l.index,
                 kind: l.kind,
                 rank_pos: right_pos(l),
                 end,
@@ -282,9 +285,27 @@ fn lane_turns(n: usize, has: [bool; 3]) -> Vec<[bool; 3]> {
     sets
 }
 
+/// The outbound lane (`p` of them, right to left) a turn lands on from inbound rank `r` of `n`:
+/// a right turn on the rightmost, a left turn and a U-turn on the leftmost, straight by rank.
+fn default_exit(turn: Turn, p: usize, r: usize, n: usize) -> usize {
+    let idx = match turn {
+        Turn::Right => 0,
+        Turn::Left | Turn::UTurn => p - 1,
+        Turn::Straight => {
+            if n == 1 {
+                0
+            } else {
+                ((r as f32) * (p - 1) as f32 / (n - 1) as f32).round() as usize
+            }
+        }
+    };
+    idx.min(p - 1)
+}
+
 /// Computes the junction's connections, conflicts and pedestrian links from its `arms`
-/// (counter-clockwise order, as produced by `compute_junction`).
-pub fn compute_links(graph: &NetGraph, arms: &[Arm]) -> Links {
+/// (counter-clockwise order, as produced by `compute_junction`). A lane with an entry in `rules`
+/// (T-313, §18.2: the node's [`LaneRule`]s) connects as the rule says, the others by the default.
+pub fn compute_links(graph: &NetGraph, arms: &[Arm], rules: &[LaneRule]) -> Links {
     let k = arms.len();
     let lanes: Vec<ArmLanes> = arms.iter().map(|a| arm_lanes(graph, a)).collect();
     let mut connections: Vec<LaneConnection> = Vec::new();
@@ -348,6 +369,38 @@ pub fn compute_links(graph: &NetGraph, arms: &[Arm]) -> Links {
             ];
             let sets = lane_turns(inb.len(), has);
             for (r, from) in inb.iter().enumerate() {
+                if let Some(rule) = rules
+                    .iter()
+                    .find(|q| q.segment == arms[i].segment && q.lane == from.index)
+                {
+                    for e in &rule.exits {
+                        let Some(j) = arms.iter().position(|a| a.segment == e.arm) else {
+                            continue;
+                        };
+                        let out = &outs[j];
+                        if out.is_empty() {
+                            continue;
+                        }
+                        let turn = if j == i {
+                            Turn::UTurn
+                        } else {
+                            classify(lanes[i].dir, lanes[j].dir)
+                        };
+                        let to = match e.lane {
+                            Some(k) => out.iter().find(|l| l.index == k),
+                            None => Some(&out[default_exit(turn, out.len(), r, inb.len())]),
+                        };
+                        let Some(to) = to else { continue };
+                        connections.push(LaneConnection {
+                            from: from.id,
+                            to: to.id,
+                            turn,
+                            curve: connection_curve(from, to, j == i),
+                            length: 0.0,
+                        });
+                    }
+                    continue;
+                }
                 for &(j, turn) in &exits {
                     let slot = match turn {
                         Turn::Right => 0,
@@ -358,20 +411,7 @@ pub fn compute_links(graph: &NetGraph, arms: &[Arm]) -> Links {
                         continue;
                     }
                     let out = &outs[j];
-                    let p = out.len();
-                    let idx = match turn {
-                        Turn::Right => 0,
-                        Turn::Left => p - 1,
-                        _ => {
-                            let n = inb.len();
-                            if n == 1 {
-                                0
-                            } else {
-                                ((r as f32) * (p - 1) as f32 / (n - 1) as f32).round() as usize
-                            }
-                        }
-                    };
-                    let to = &out[idx.min(p - 1)];
+                    let to = &out[default_exit(turn, out.len(), r, inb.len())];
                     connections.push(LaneConnection {
                         from: from.id,
                         to: to.id,

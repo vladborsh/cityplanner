@@ -78,6 +78,28 @@ pub struct Node {
     /// The player's priority signs (T-303, §6.5a), one per arm at most, ascending by segment.
     /// They choose the main road only while the node has no light. Appended last (a save format bump).
     pub signs: Vec<ArmSign>,
+    /// The player's lane rules (T-313, §18.2), sorted by `(segment, lane)`, one per lane at
+    /// most. A lane without a rule connects by the default of §6.4. Appended last (a save
+    /// format bump).
+    pub lane_rules: Vec<LaneRule>,
+}
+
+/// Where a lane may go at a node: the arm, and the lane of that arm when it is fixed (a
+/// connector); `None` leaves the lane to the turn rule of §6.4. The arm of the lane itself is a
+/// U-turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Exit {
+    pub arm: SegmentId,
+    pub lane: Option<u8>,
+}
+
+/// The exits of one inbound lane (`lane` is its index in the segment) at a node (§18.2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneRule {
+    pub segment: SegmentId,
+    pub lane: u8,
+    /// Sorted, without repeats, never empty.
+    pub exits: Vec<Exit>,
 }
 
 /// A priority sign on one arm of a junction (§6.5a). Enum variants are only appended.

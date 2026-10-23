@@ -1197,4 +1197,96 @@ fn a_free_car_moves_exactly_as_its_four_substeps_and_most_of_a_lone_trip_is_free
     }
     assert_eq!(rig.arrived, 1);
     assert!(free * 2 > driven, "{free} of {driven} ticks free");
+/// T-313 (§18.2): a car plans only through the connections the lane rules leave, and drives them.
+#[test]
+fn cars_follow_the_lane_rules_of_a_junction() {
+    use cp_net::{Exit, JunctionGeometry, NetGraph, Turn};
+    let mut s = sim();
+    let arms = cross(&mut s, "medium_4l");
+    s.tick();
+    let node = {
+        let g = s.world.resource::<NetGraph>();
+        let seg = g.segment(arms[0]).unwrap();
+        seg.end
+    };
+    let links = |s: &Sim| {
+        s.world
+            .resource::<JunctionGeometry>()
+            .get(node)
+            .unwrap()
+            .links
+            .clone()
+    };
+    let lane_of = |s: &Sim, l: cp_net::LaneId| {
+        let g = s.world.resource::<NetGraph>();
+        let l = g.lane(l).unwrap();
+        (l.segment, l.index)
+    };
+    let before = links(&s);
+    // The arm W's lane that turns right, the arm it turns into, and W's other inbound lane.
+    let c = before
+        .connections
+        .iter()
+        .find(|c| c.turn == Turn::Right && lane_of(&s, c.from).0 == arms[0])
+        .unwrap()
+        .clone();
+    let (right_lane, right_arm) = (lane_of(&s, c.from).1, lane_of(&s, c.to).0);
+    let straight_arm = before
+        .connections
+        .iter()
+        .find(|k| k.turn == Turn::Straight && lane_of(&s, k.from) == (arms[0], right_lane))
+        .map(|k| lane_of(&s, k.to).0)
+        .unwrap();
+    let left_lane = before
+        .connections
+        .iter()
+        .map(|k| lane_of(&s, k.from))
+        .find(|&(seg, i)| seg == arms[0] && i != right_lane)
+        .unwrap()
+        .1;
+    let all: Vec<Exit> = arms
+        .iter()
+        .map(|&arm| Exit { arm, lane: None })
+        .filter(|e| e.arm != arms[0])
+        .collect();
+    {
+        let mut g = s.world.resource_mut::<NetGraph>();
+        // Both lanes of W may turn right; then the right lane only goes straight.
+        g.set_lane_rule(node, arms[0], left_lane, Some(all)).unwrap();
+        g.set_lane_rule(
+            node,
+            arms[0],
+            right_lane,
+            Some(vec![Exit {
+                arm: straight_arm,
+                lane: None,
+            }]),
+        )
+        .unwrap();
+    }
+    s.tick();
+    let after = links(&s);
+    assert!(after != before);
+    let mut rig = Rig::new(s);
+    let (from, to) = (from_arm(arms[0], 5.0), to_arm(right_arm, 60.0));
+    for k in 0..6 {
+        let id = rig.add(from_arm(arms[0], 5.0 + k as f32 * 9.0), to);
+        let path = rig.veh.get(id).unwrap().path.clone();
+        for (a, b) in &path.steps {
+            assert!(
+                after.connections.iter().any(|c| c.from == *a && c.to == *b)
+                    || before.connections.iter().all(|c| !(c.from == *a && c.to == *b)),
+                "a step the rules removed"
+            );
+            assert!(
+                !(lane_of(&rig.sim, *a) == (arms[0], right_lane)
+                    && lane_of(&rig.sim, *b).0 == right_arm),
+                "the right lane no longer turns right"
+            );
+        }
+    }
+    let _ = from;
+    let used = rig.run_dry(800, None);
+    assert!(used < 800, "everybody gets through");
+    assert_eq!((rig.arrived, rig.invalid, rig.stuck), (6, 0, 0));
 }
