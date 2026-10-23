@@ -720,6 +720,8 @@ fn tram_lanes_go_every_way_at_an_x_of_tram_roads_and_into_a_narrower_tram_road()
             "arm {i}: no rails on"
         );
     }
+}
+
 // ---------- the player's lane rules (T-313, §18.2) ----------
 
 use crate::model::Exit;

@@ -1197,6 +1197,8 @@ fn a_free_car_moves_exactly_as_its_four_substeps_and_most_of_a_lone_trip_is_free
     }
     assert_eq!(rig.arrived, 1);
     assert!(free * 2 > driven, "{free} of {driven} ticks free");
+}
+
 /// T-313 (§18.2): a car plans only through the connections the lane rules leave, and drives them.
 #[test]
 fn cars_follow_the_lane_rules_of_a_junction() {
