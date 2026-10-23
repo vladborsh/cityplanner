@@ -95,7 +95,10 @@ fn check(g: &NetGraph, j: &Junction) {
         }
     }
     // Determinism.
-    assert_eq!(compute_links(g, &j.arms), j.links);
+    assert_eq!(
+        compute_links(g, &j.arms, &g.node(j.node).unwrap().lane_rules),
+        j.links
+    );
 }
 
 /// Every arm with inbound lanes reaches every other arm that has outbound lanes.
@@ -670,4 +673,286 @@ fn a_tram_street_crossing_a_local_street_keeps_cars_out_of_the_rails() {
         .filter(|c| tram_arms.contains(&arm_of(&g, &j, c.to)))
         .count();
     assert_eq!(car_to_tram_arm, 0, "no car into the tram street's arms");
+}
+
+// ---------- the player's lane rules (T-313, §18.2) ----------
+
+use crate::model::Exit;
+
+/// A 4-way of 4-lane streets at 0, 90, 180 and 270 degrees.
+fn cross4(db: &ContentDb) -> (NetGraph, NodeId, Vec<SegmentId>) {
+    star(
+        db,
+        &[
+            (0.0, "medium_4l"),
+            (90.0, "medium_4l"),
+            (180.0, "medium_4l"),
+            (270.0, "medium_4l"),
+        ],
+    )
+}
+
+/// The index of the lane of `seg` (inbound at the node) whose connections include a `turn`.
+fn lane_with(g: &NetGraph, j: &Junction, seg: SegmentId, turn: Turn) -> u8 {
+    j.links
+        .connections
+        .iter()
+        .find(|c| c.turn == turn && g.lane(c.from).unwrap().segment == seg)
+        .map(|c| g.lane(c.from).unwrap().index)
+        .expect("a lane with that turn")
+}
+
+/// The arms `seg`'s lane `index` leads to, with the turn.
+fn exits_of(g: &NetGraph, j: &Junction, seg: SegmentId, index: u8) -> Vec<(SegmentId, Turn)> {
+    j.links
+        .connections
+        .iter()
+        .filter(|c| {
+            let l = g.lane(c.from).unwrap();
+            l.segment == seg && l.index == index
+        })
+        .map(|c| (g.lane(c.to).unwrap().segment, c.turn))
+        .collect()
+}
+
+#[test]
+fn straight_only_on_the_right_lane_drops_its_right_turn_and_conflicts() {
+    let db = content();
+    let (mut g, n, segs) = star(
+        &db,
+        &[
+            (0.0, "large_6l"),
+            (90.0, "large_6l"),
+            (180.0, "large_6l"),
+            (270.0, "large_6l"),
+        ],
+    );
+    let j = junction(&g, n);
+    let right = lane_with(&g, &j, segs[0], Turn::Right);
+    let right_exits = exits_of(&g, &j, segs[0], right);
+    let arm = |t: Turn| right_exits.iter().find(|e| e.1 == t).unwrap().0;
+    let exit = |arm: SegmentId| Exit { arm, lane: None };
+    // A middle lane (straight only by default) takes the right turn too, so that no arm is
+    // left without a lane when the right lane stops turning.
+    let middle = (1..=6u8)
+        .find(|&k| {
+            k != right
+                && j.links.connections.iter().any(|c| {
+                    g.lane(c.from).unwrap().segment == segs[0] && g.lane(c.from).unwrap().index == k
+                })
+                && exits_of(&g, &j, segs[0], k)
+                    .iter()
+                    .all(|e| e.1 == Turn::Straight)
+        })
+        .expect("a middle lane");
+    g.set_lane_rule(
+        n,
+        segs[0],
+        middle,
+        Some(vec![exit(arm(Turn::Right)), exit(arm(Turn::Straight))]),
+    )
+    .unwrap();
+    let mid = junction(&g, n);
+    g.set_lane_rule(n, segs[0], right, Some(vec![exit(arm(Turn::Straight))]))
+        .unwrap();
+    let after = junction(&g, n);
+    check(&g, &after);
+    assert_eq!(
+        exits_of(&g, &after, segs[0], right),
+        vec![(arm(Turn::Straight), Turn::Straight)]
+    );
+    assert!(after.links.connections.len() < mid.links.connections.len());
+    assert!(after.links.conflicts.len() < mid.links.conflicts.len());
+    assert!(g.is_dirty(n));
+    // Taking the rules away restores the default.
+    g.set_lane_rule(n, segs[0], right, None).unwrap();
+    g.set_lane_rule(n, segs[0], middle, None).unwrap();
+    assert_eq!(junction(&g, n).links, j.links);
+    assert!(g.node(n).unwrap().lane_rules.is_empty());
+}
+
+#[test]
+fn rules_that_strand_an_arm_or_a_lane_are_refused_and_change_nothing() {
+    let db = content();
+    let (mut g, n, segs) = cross4(&db);
+    let j = junction(&g, n);
+    let lanes: Vec<u8> = (0..2)
+        .map(|k| {
+            let mut v: Vec<u8> = j
+                .links
+                .connections
+                .iter()
+                .map(|c| g.lane(c.from).unwrap())
+                .filter(|l| l.segment == segs[0])
+                .map(|l| l.index)
+                .collect();
+            v.sort();
+            v.dedup();
+            v[k]
+        })
+        .collect();
+    let by_default: Vec<SegmentId> = exits_of(&g, &j, segs[0], lanes[0])
+        .into_iter()
+        .map(|e| e.0)
+        .collect();
+    let only = Exit {
+        arm: by_default[0],
+        lane: None,
+    };
+    // Every lane of the arm to the same one arm: the other two arms are no longer reached.
+    let first: Vec<Exit> = by_default
+        .iter()
+        .map(|&arm| Exit { arm, lane: None })
+        .collect();
+    g.set_lane_rule(n, segs[0], lanes[0], Some(first)).unwrap();
+    let err = g.set_lane_rule(n, segs[0], lanes[1], Some(vec![only]));
+    assert!(
+        matches!(err, Err(crate::NetOpError::ArmUnreachable(..))),
+        "{err:?}"
+    );
+    assert_eq!(g.node(n).unwrap().lane_rules.len(), 1, "state unchanged");
+    // No exits: a dead lane.
+    assert_eq!(
+        g.set_lane_rule(n, segs[0], lanes[1], Some(vec![])),
+        Err(crate::NetOpError::DeadLane(n, segs[0], lanes[1]))
+    );
+    // A lane that is not an inbound lane of the arm (the footpath, index 0).
+    assert_eq!(
+        g.set_lane_rule(n, segs[0], 0, Some(vec![only])),
+        Err(crate::NetOpError::NoSuchLane(n, segs[0], 0))
+    );
+    // A fixed exit lane that does not exist.
+    let bad = Exit {
+        arm: by_default[0],
+        lane: Some(200),
+    };
+    assert_eq!(
+        g.set_lane_rule(n, segs[0], lanes[1], Some(vec![bad])),
+        Err(crate::NetOpError::NoSuchLane(n, by_default[0], 200))
+    );
+    // Not an arm of the node.
+    assert_eq!(
+        g.set_lane_rule(n, SegmentId::new(9999, 0), 1, Some(vec![only])),
+        Err(crate::NetOpError::NotAnArm(n, SegmentId::new(9999, 0)))
+    );
+}
+
+#[test]
+fn a_connector_fixes_the_outbound_lane_and_a_u_turn_needs_its_own_entry() {
+    let db = content();
+    let (mut g, n, segs) = cross4(&db);
+    let j = junction(&g, n);
+    let right = lane_with(&g, &j, segs[0], Turn::Right);
+    let all: Vec<Exit> = j
+        .arms
+        .iter()
+        .map(|a| Exit {
+            arm: a.segment,
+            lane: None,
+        })
+        .collect();
+    // Straight ahead from the right lane onto the left outbound lane of the opposite arm.
+    let straight_arm = exits_of(&g, &j, segs[0], right)
+        .into_iter()
+        .find(|e| e.1 == Turn::Straight)
+        .unwrap()
+        .0;
+    let out_lanes: Vec<u8> = {
+        let s = g.segment(straight_arm).unwrap();
+        s.lanes
+            .iter()
+            .map(|&l| g.lane(l).unwrap())
+            .filter(|l| l.kind.is_road_vehicle() && l.dir == cp_content::LaneDir::Forward)
+            .map(|l| l.index)
+            .collect()
+    };
+    let mut exits = all.clone();
+    for e in &mut exits {
+        if e.arm == straight_arm {
+            e.lane = Some(*out_lanes.iter().max().unwrap());
+        }
+    }
+    g.set_lane_rule(n, segs[0], right, Some(exits)).unwrap();
+    let after = junction(&g, n);
+    check(&g, &after);
+    let hits: Vec<_> = after
+        .links
+        .connections
+        .iter()
+        .filter(|c| {
+            let l = g.lane(c.from).unwrap();
+            l.segment == segs[0] && l.index == right
+        })
+        .collect();
+    // Right, straight, left and the U-turn of the arm itself (it was among the exits).
+    assert!(hits.iter().any(|c| c.turn == Turn::UTurn));
+    assert!(hits.iter().any(|c| c.turn == Turn::Right));
+    let s = hits.iter().find(|c| c.turn == Turn::Straight).unwrap();
+    assert_eq!(
+        g.lane(s.to).unwrap().index,
+        *out_lanes.iter().max().unwrap()
+    );
+    // No entry for the arm itself: no U-turn.
+    assert!(
+        junction(&g, n)
+            .links
+            .connections
+            .iter()
+            .filter(|c| c.turn == Turn::UTurn)
+            .all(|c| g.lane(c.from).unwrap().index == right)
+    );
+}
+
+#[test]
+fn a_cut_keeps_the_rule_and_an_upgrade_drops_the_lanes_the_road_lacks() {
+    let db = content();
+    let (mut g, n, segs) = cross4(&db);
+    let j = junction(&g, n);
+    let right = lane_with(&g, &j, segs[0], Turn::Right);
+    let straight_arm = exits_of(&g, &j, segs[0], right)
+        .into_iter()
+        .find(|e| e.1 == Turn::Straight)
+        .unwrap()
+        .0;
+    let rule = Some(
+        exits_of(&g, &j, segs[0], right)
+            .into_iter()
+            .map(|e| Exit {
+                arm: e.0,
+                lane: None,
+            })
+            .collect(),
+    );
+    g.set_lane_rule(n, segs[0], right, rule).unwrap();
+    // The arm opposite is cut in two: the exit follows its piece at the node.
+    let road = db.road_id("medium_4l").unwrap();
+    let cut = g.split_segment(db.road(road), straight_arm, 0.5).unwrap();
+    let rules = &g.node(n).unwrap().lane_rules;
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].segment, segs[0]);
+    assert_eq!(rules[0].exits[0].arm, cut.segments[0]);
+    // The arm with the rule is cut: the rule goes to the piece at the node.
+    let cut2 = g.split_segment(db.road(road), segs[0], 0.5).unwrap();
+    let rules = &g.node(n).unwrap().lane_rules;
+    assert_eq!(rules[0].segment, cut2.segments[0]);
+    // Merged back: the rule is on the whole segment again.
+    let merged = g.merge_joint(db.road(road), cut2.nodes[0]).unwrap();
+    assert_eq!(g.node(n).unwrap().lane_rules[0].segment, merged);
+    // A narrower road has no lane of that index: the rule goes.
+    let two = db.road_id("basic_2l").unwrap();
+    let keep = g.node(n).unwrap().lane_rules[0].lane;
+    g.upgrade_segment(merged, db.road(two), two).unwrap();
+    let left = g.node(n).unwrap().lane_rules.len();
+    let inbound = g
+        .segment(merged)
+        .unwrap()
+        .lanes
+        .iter()
+        .filter_map(|&l| g.lane(l))
+        .any(|l| l.index == keep && l.kind.is_road_vehicle());
+    assert_eq!(left, usize::from(inbound));
+    // Removing the arm clears the rules of a node that is no junction any more.
+    g.remove_segment(segs[1]).unwrap();
+    g.remove_segment(cut.segments[0]).unwrap();
+    assert!(g.node(n).unwrap().lane_rules.is_empty());
 }

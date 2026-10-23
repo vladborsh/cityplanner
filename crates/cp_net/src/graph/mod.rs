@@ -4,7 +4,7 @@
 //! segment set or incident geometry changes is put in the **dirty set**, which a later
 //! system (junction recompute) drains with [`NetGraph::take_dirty`].
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use bevy_ecs::resource::Resource;
@@ -43,6 +43,14 @@ pub enum NetOpError {
     NotAnArm(NodeId, SegmentId),
     /// The sign would make a third main arm.
     TooManyMain(NodeId),
+    /// A lane rule names a lane the arm does not have (or one that does not run that way, or
+    /// that the inbound lane may not enter) (T-313, §18.2).
+    NoSuchLane(NodeId, SegmentId, u8),
+    /// A lane rule without an exit, or one that leaves a lane with no connection.
+    DeadLane(NodeId, SegmentId, u8),
+    /// The rules would leave an outgoing arm unreachable from an arm it can be reached from by
+    /// default.
+    ArmUnreachable(NodeId, SegmentId),
 }
 
 impl fmt::Display for NetOpError {
@@ -64,6 +72,21 @@ impl fmt::Display for NetOpError {
             }
             Self::NotAnArm(n, s) => write!(f, "segment {s:?} does not meet node {n:?}"),
             Self::TooManyMain(n) => write!(f, "node {n:?} would have more than two main arms"),
+            Self::NoSuchLane(n, s, l) => {
+                write!(f, "node {n:?}: segment {s:?} has no lane {l} there")
+            }
+            Self::DeadLane(n, s, l) => {
+                write!(
+                    f,
+                    "node {n:?}: lane {l} of segment {s:?} would lead nowhere"
+                )
+            }
+            Self::ArmUnreachable(n, s) => {
+                write!(
+                    f,
+                    "node {n:?}: no lane would lead to segment {s:?} any more"
+                )
+            }
         }
     }
 }
@@ -195,6 +218,7 @@ impl NetGraph {
             control: JunctionControl::default(),
             elevation,
             signs: Vec::new(),
+            lane_rules: Vec::new(),
         });
         self.dirty.insert(id);
         id
@@ -393,6 +417,7 @@ impl NetGraph {
             self.dirty.insert(n);
             self.prune_node(n);
             self.drop_control_if_uncontrollable(n);
+            self.tidy_lane_rules(n);
         }
         Ok(())
     }
@@ -441,6 +466,7 @@ impl NetGraph {
         }
 
         let signs = [self.sign_at(seg.start, id), self.sign_at(seg.end, id)];
+        let rules = [self.rules_at(seg.start), self.rules_at(seg.end)];
         self.take_segment(id).expect("checked above");
         let mut nodes = Vec::with_capacity(ts.len());
         let mut chain = vec![seg.start];
@@ -468,10 +494,13 @@ impl NetGraph {
             (seg.start, segments[0]),
             (seg.end, segments[segments.len() - 1]),
         ];
-        for ((node, piece), sign) in ends.into_iter().zip(signs) {
+        for (((node, piece), sign), rules) in ends.into_iter().zip(signs).zip(rules) {
             if let Some(sign) = sign {
                 self.put_sign(node, piece, sign);
             }
+            // The lane rules of the end nodes follow the end pieces, and so do the exits to them
+            // (§18.2).
+            self.retarget_lane_rules(node, rules, id, piece);
         }
         self.dirty.insert(seg.start);
         self.dirty.insert(seg.end);
@@ -536,6 +565,7 @@ impl NetGraph {
         let (start, end, road, elevation) = (first.start, second.end, first.road, first.elevation);
         let (order_a, order_b) = (first.order, second.order);
         let signs = [self.sign_at(start, first_id), self.sign_at(end, second_id)];
+        let rules = [self.rules_at(start), self.rules_at(end)];
         self.take_segment(a).ok()?;
         self.take_segment(b).ok()?;
         self.prune_node(node);
@@ -543,10 +573,12 @@ impl NetGraph {
         let order = order_a.min(order_b);
         let merged = self.insert_segment(def, road, curve, elevation, start, end, length, order);
         // The far ends keep their signs on the merged segment (§6.5a).
-        for (n, sign) in [start, end].into_iter().zip(signs) {
+        for ((n, sign), rules) in [start, end].into_iter().zip(signs).zip(rules) {
             if let Some(sign) = sign {
                 self.put_sign(n, merged, sign);
             }
+            let old = if n == start { first_id } else { second_id };
+            self.retarget_lane_rules(n, rules, old, merged);
         }
         Some(merged)
     }
@@ -578,6 +610,8 @@ impl NetGraph {
                 node.signs.retain(|a| a.segment != id);
             }
             self.drop_control_if_uncontrollable(n);
+            // The lane indices stay; the ones the new road lacks go (§18.2).
+            self.tidy_lane_rules(n);
             self.dirty.insert(n);
         }
         Ok(())
@@ -610,6 +644,16 @@ impl NetGraph {
         seg.start = end;
         seg.end = start;
         seg.lanes = lanes;
+        // Its lanes run the other way now: the rules that name it, and the exits to it, go.
+        for n in [start, end] {
+            if let Some(node) = self.nodes.get_mut(n) {
+                node.lane_rules.retain(|r| r.segment != id);
+                for r in &mut node.lane_rules {
+                    r.exits.retain(|e| e.arm != id);
+                }
+                node.lane_rules.retain(|r| !r.exits.is_empty());
+            }
+        }
         self.dirty.insert(start);
         self.dirty.insert(end);
         Ok(())
@@ -686,6 +730,219 @@ impl NetGraph {
         }
         self.dirty.insert(id);
         Ok(())
+    }
+
+    /// The player's `SetLaneRule` (T-313, §18.2): sets the exits of the inbound lane `lane` (its
+    /// index in the segment) of the arm `segment` of `id`, or takes the lane's rule away (`None`).
+    /// Refused, changing nothing, for a node of fewer than 3 arms, a segment that does not meet
+    /// it, a lane or exit that does not exist, a lane left without a connection, and rules that
+    /// would leave an arm unreachable from an arm it could be reached from by default. Marks the
+    /// node dirty.
+    pub fn set_lane_rule(
+        &mut self,
+        id: NodeId,
+        segment: SegmentId,
+        lane: u8,
+        exits: Option<Vec<Exit>>,
+    ) -> Result<(), NetOpError> {
+        let node = self.nodes.get(id).ok_or(NetOpError::UnknownNode(id))?;
+        if node.segments.len() < 3 {
+            return Err(NetOpError::NotAJunction(id));
+        }
+        if !node.segments.contains(&segment) {
+            return Err(NetOpError::NotAnArm(id, segment));
+        }
+        let old = node.lane_rules.clone();
+        let mut rules = old.clone();
+        rules.retain(|r| !(r.segment == segment && r.lane == lane));
+        if let Some(mut exits) = exits {
+            let Some(inbound) = self.inbound_lane(id, segment, lane) else {
+                return Err(NetOpError::NoSuchLane(id, segment, lane));
+            };
+            if exits.is_empty() {
+                return Err(NetOpError::DeadLane(id, segment, lane));
+            }
+            let from_kind = inbound.kind;
+            for e in &exits {
+                let arm_ok = self
+                    .nodes
+                    .get(id)
+                    .is_some_and(|n| n.segments.contains(&e.arm));
+                if !arm_ok {
+                    return Err(NetOpError::NotAnArm(id, e.arm));
+                }
+                if let Some(k) = e.lane {
+                    let ok = self.outbound_lane(id, e.arm, k).is_some_and(|l| {
+                        crate::connections::exit_kinds(from_kind).contains(&l.kind)
+                    });
+                    if !ok {
+                        return Err(NetOpError::NoSuchLane(id, e.arm, k));
+                    }
+                }
+            }
+            exits.sort();
+            exits.dedup();
+            let at = rules.partition_point(|r| (r.segment, r.lane) < (segment, lane));
+            rules.insert(
+                at,
+                LaneRule {
+                    segment,
+                    lane,
+                    exits,
+                },
+            );
+        }
+        if rules == old {
+            return Ok(());
+        }
+        self.nodes.get_mut(id).expect("checked above").lane_rules = Vec::new();
+        let before = self.arm_reach(id);
+        self.nodes.get_mut(id).expect("checked above").lane_rules = rules;
+        let verdict = self.check_lane_rules(id, &before);
+        if let Err(e) = verdict {
+            self.nodes.get_mut(id).expect("checked above").lane_rules = old;
+            return Err(e);
+        }
+        self.dirty.insert(id);
+        Ok(())
+    }
+
+    /// Which arms each arm's inbound lanes reach through the node (U-turns left out), with the
+    /// node's lane rules as they stand.
+    fn arm_reach(&self, id: NodeId) -> BTreeMap<SegmentId, BTreeSet<SegmentId>> {
+        let mut reach: BTreeMap<SegmentId, BTreeSet<SegmentId>> = BTreeMap::new();
+        let Some(j) = crate::junction::compute_junction(self, id, 0) else {
+            return reach;
+        };
+        for c in &j.links.connections {
+            let (Some(a), Some(b)) = (self.lane(c.from), self.lane(c.to)) else {
+                continue;
+            };
+            if a.segment != b.segment {
+                reach.entry(a.segment).or_default().insert(b.segment);
+            }
+        }
+        reach
+    }
+
+    /// The invariants of the node's rules (§18.2): every ruled lane leads somewhere, and every
+    /// arm in `before` (what the default reached) is still reached from the same arms.
+    fn check_lane_rules(
+        &self,
+        id: NodeId,
+        before: &BTreeMap<SegmentId, BTreeSet<SegmentId>>,
+    ) -> Result<(), NetOpError> {
+        let Some(j) = crate::junction::compute_junction(self, id, 0) else {
+            return Ok(());
+        };
+        let rules = self.nodes.get(id).map_or(&[][..], |n| &n.lane_rules[..]);
+        for r in rules {
+            let lane = self
+                .segment(r.segment)
+                .and_then(|s| s.lanes.get(usize::from(r.lane)).copied());
+            if !lane.is_some_and(|l| j.links.connections.iter().any(|c| c.from == l)) {
+                return Err(NetOpError::DeadLane(id, r.segment, r.lane));
+            }
+        }
+        let after = self.arm_reach(id);
+        for (from, arms) in before {
+            for &to in arms {
+                if !after.get(from).is_some_and(|s| s.contains(&to)) {
+                    return Err(NetOpError::ArmUnreachable(id, to));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The inbound vehicle lane `index` of `segment` at `node`.
+    fn inbound_lane(&self, node: NodeId, segment: SegmentId, index: u8) -> Option<&Lane> {
+        let s = self.segments.get(segment)?;
+        let l = self.lanes.get(*s.lanes.get(usize::from(index))?)?;
+        let towards = if s.end == node {
+            l.dir == LaneDir::Forward
+        } else {
+            s.start == node && l.dir == LaneDir::Backward
+        };
+        (towards && l.kind.is_road_vehicle()).then_some(l)
+    }
+
+    /// The outbound vehicle lane `index` of `segment` at `node`.
+    fn outbound_lane(&self, node: NodeId, segment: SegmentId, index: u8) -> Option<&Lane> {
+        let s = self.segments.get(segment)?;
+        let l = self.lanes.get(*s.lanes.get(usize::from(index))?)?;
+        let away = if s.start == node {
+            l.dir == LaneDir::Forward
+        } else {
+            s.end == node && l.dir == LaneDir::Backward
+        };
+        (away && l.kind.is_road_vehicle()).then_some(l)
+    }
+
+    fn rules_at(&self, node: NodeId) -> Vec<LaneRule> {
+        self.nodes
+            .get(node)
+            .map_or_else(Vec::new, |n| n.lane_rules.clone())
+    }
+
+    /// Puts back the lane `rules` of `node` with the arm `old` renamed `new`, then tidies them.
+    fn retarget_lane_rules(
+        &mut self,
+        node: NodeId,
+        mut rules: Vec<LaneRule>,
+        old: SegmentId,
+        new: SegmentId,
+    ) {
+        for r in &mut rules {
+            if r.segment == old {
+                r.segment = new;
+            }
+            for e in &mut r.exits {
+                if e.arm == old {
+                    e.arm = new;
+                }
+            }
+        }
+        if let Some(n) = self.nodes.get_mut(node) {
+            n.lane_rules = rules;
+        }
+        self.tidy_lane_rules(node);
+    }
+
+    /// Drops what the node's lane rules name that is no longer there (§18.2): all of them when
+    /// fewer than 3 arms are left, a rule of a gone arm or lane, an exit to a gone arm, and a
+    /// fixed exit lane that is gone becomes a free one.
+    fn tidy_lane_rules(&mut self, node: NodeId) {
+        let Some(n) = self.nodes.get(node) else {
+            return;
+        };
+        if n.lane_rules.is_empty() {
+            return;
+        }
+        let mut rules = n.lane_rules.clone();
+        if n.segments.len() < 3 {
+            rules.clear();
+        } else {
+            rules.retain(|r| n.segments.contains(&r.segment));
+            rules.retain(|r| self.inbound_lane(node, r.segment, r.lane).is_some());
+            for r in &mut rules {
+                r.exits.retain(|e| n.segments.contains(&e.arm));
+                for e in &mut r.exits {
+                    if let Some(k) = e.lane
+                        && self.outbound_lane(node, e.arm, k).is_none()
+                    {
+                        e.lane = None;
+                    }
+                }
+                r.exits.sort();
+                r.exits.dedup();
+            }
+            rules.retain(|r| !r.exits.is_empty());
+            rules.sort_by_key(|r| (r.segment, r.lane));
+        }
+        if let Some(n) = self.nodes.get_mut(node) {
+            n.lane_rules = rules;
+        }
     }
 
     /// Sets an *automatic* control state (the §6.5 rule) without marking the node dirty.
@@ -780,6 +1037,11 @@ impl NetGraph {
             if let Some(node) = self.nodes.get_mut(n) {
                 node.segments.retain(|&s| s != id);
                 node.signs.retain(|a| a.segment != id);
+                node.lane_rules.retain(|r| r.segment != id);
+                for r in &mut node.lane_rules {
+                    r.exits.retain(|e| e.arm != id);
+                }
+                node.lane_rules.retain(|r| !r.exits.is_empty());
             }
         }
         Ok(seg)

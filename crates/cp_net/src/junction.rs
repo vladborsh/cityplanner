@@ -458,7 +458,7 @@ pub fn compute_junction(graph: &NetGraph, node: NodeId, revision: u64) -> Option
             .then(a.segment.cmp(&b.segment))
             .then(b.at_start.cmp(&a.at_start))
     });
-    let links = compute_links(graph, &arms);
+    let links = compute_links(graph, &arms, &n.lane_rules);
     Some(Junction {
         node,
         pos: n.pos,

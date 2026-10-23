@@ -29,7 +29,7 @@ use crate::build::{
     segment_cost, validate_build_plan, validate_road_path,
 };
 use crate::graph::{NetGraph, NetOpError};
-use crate::model::{Elevation, NodeId, SegmentId, Sign};
+use crate::model::{Elevation, Exit, NodeId, SegmentId, Sign};
 use crate::plan::{Anchor, BuildPlan};
 
 /// Commands handled by this crate.
@@ -80,6 +80,15 @@ pub enum NetCommand {
         node: NodeId,
         segment: SegmentId,
         sign: Option<Sign>,
+    },
+    /// Sets where the inbound lane `lane` (its index in the segment) of the arm `segment` of the
+    /// junction `node` may go, or takes its rule away (`None`) (T-313, §18.2). Refused as
+    /// `NetGraph::set_lane_rule` says. Free. Appended last: older logs replay as before.
+    SetLaneRule {
+        node: NodeId,
+        segment: SegmentId,
+        lane: u8,
+        exits: Option<Vec<Exit>>,
     },
 }
 
@@ -420,6 +429,20 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
             world
                 .resource_mut::<NetGraph>()
                 .set_sign(*node, *segment, *sign)?;
+            Ok(Cost::ZERO)
+        }
+        NetCommand::SetLaneRule {
+            node,
+            segment,
+            lane,
+            exits,
+        } => {
+            world.resource_mut::<NetGraph>().set_lane_rule(
+                *node,
+                *segment,
+                *lane,
+                exits.clone(),
+            )?;
             Ok(Cost::ZERO)
         }
     }
