@@ -991,9 +991,13 @@ mod tests {
             t,
             ..
         } = &mut rig;
-        let texts = frame_texts(ctx, input(*t, vec![]), |ui| {
-            list_window(ui.ctx(), state, Some(view), tools, overlay, outbox);
-        });
+        // A window needs a frame or two to size itself before it paints.
+        let mut texts = Vec::new();
+        for n in 0..4 {
+            texts = frame_texts(ctx, input(*t + 0.1 * f64::from(n), vec![]), |ui| {
+                list_window(ui.ctx(), state, Some(view), tools, overlay, outbox);
+            });
+        }
         assert!(
             texts.iter().any(|(t, _)| t.contains("No areas yet")),
             "{texts:?}"
