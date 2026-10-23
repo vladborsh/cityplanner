@@ -1126,7 +1126,7 @@ mod tests {
             "Straight",
             "Curve",
             "Free",
-            "Elevation (PgUp / PgDn)",
+            "Elevation (PgUp / PgDn, Ctrl+Up / Down)",
         ] {
             assert!(all.contains(&want), "{want:?} missing from {all:?}");
         }

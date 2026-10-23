@@ -252,7 +252,7 @@ pub fn road_options(ui: &mut egui::Ui, tools: &mut ToolState) {
         tools.snaps_off = !snaps;
     }
     ui.separator();
-    ui.label(tr("Elevation (PgUp / PgDn)"));
+    ui.label(tr("Elevation (PgUp / PgDn, Ctrl+Up / Down)"));
     if ui
         .add_enabled(
             tools.road.level > 0 || !tools.road.underground,

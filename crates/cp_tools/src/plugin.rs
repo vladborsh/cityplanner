@@ -1228,10 +1228,13 @@ pub fn tool_hotkeys(
         state.toggle_bulldozer();
     }
     if state.active == ActiveTool::Road {
-        if keys.just_pressed(KeyCode::PageUp) {
+        // BUG-121: a laptop has no PageUp/PageDown, so Ctrl+Up/Down do the same.
+        let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+        if keys.just_pressed(KeyCode::PageUp) || (ctrl && keys.just_pressed(KeyCode::ArrowUp)) {
             state.road.raise();
         }
-        if keys.just_pressed(KeyCode::PageDown) {
+        if keys.just_pressed(KeyCode::PageDown) || (ctrl && keys.just_pressed(KeyCode::ArrowDown))
+        {
             state.road.lower();
         }
     }
