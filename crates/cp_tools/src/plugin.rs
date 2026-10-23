@@ -345,6 +345,10 @@ pub struct GhostDemo {
     pub road: String,
     pub from: Vec2,
     pub to: Vec2,
+    /// The road level the tool is at: `n > 0` raised by `n` keys, `-1` underground (BUG-121).
+    pub level: i8,
+    /// Send the plan once the ghost is valid and drop the tool: the built road in a shot.
+    pub build: bool,
 }
 
 /// A placement ghost held in place without a cursor (`--place-demo` of the desktop client, for
@@ -687,10 +691,15 @@ fn ghost_demo(
     demo: Option<Res<GhostDemo>>,
     view: Option<Res<SimView>>,
     mut state: ResMut<ToolState>,
+    mut outbox: ResMut<CommandOutbox>,
+    mut built: Local<bool>,
 ) {
     let (Some(demo), Some(view)) = (demo, view) else {
         return;
     };
+    if *built {
+        return;
+    }
     let Some(road) = view.content.as_deref().and_then(|c| c.road_id(&demo.road)) else {
         return;
     };
@@ -699,10 +708,31 @@ fn ghost_demo(
     }
     state.active = ActiveTool::Road;
     state.road.road = Some(road);
+    state.road.level = 0;
+    state.road.underground = false;
+    match demo.level {
+        1.. => (0..demo.level).for_each(|_| state.road.raise()),
+        ..=-1 => state.road.lower(),
+        0 => {}
+    }
     state.road.points = vec![demo.from];
     state.hover = Some(demo.to);
     let (road_tool, to) = (state.road.clone(), demo.to);
     state.ghost = compute_ghost_alt(&view, &road_tool, to, false);
+    if demo.build
+        && let Some(plan) = state
+            .ghost
+            .as_ref()
+            .filter(|g| g.valid)
+            .and_then(|g| g.plan.clone())
+    {
+        outbox.push(build_command(plan));
+        *built = true;
+        state.active = ActiveTool::None;
+        state.ghost = None;
+        state.road.points.clear();
+        return;
+    }
     // Over a protected building the held ghost also holds the click's question (BUG-096 shots).
     if let Some(plan) = state
         .ghost
@@ -1233,8 +1263,7 @@ pub fn tool_hotkeys(
         if keys.just_pressed(KeyCode::PageUp) || (ctrl && keys.just_pressed(KeyCode::ArrowUp)) {
             state.road.raise();
         }
-        if keys.just_pressed(KeyCode::PageDown) || (ctrl && keys.just_pressed(KeyCode::ArrowDown))
-        {
+        if keys.just_pressed(KeyCode::PageDown) || (ctrl && keys.just_pressed(KeyCode::ArrowDown)) {
             state.road.lower();
         }
     }

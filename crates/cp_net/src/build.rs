@@ -1760,7 +1760,10 @@ fn validate_inner(
             let mut at_s = vec![0.0f32];
             for sg in &segments {
                 nodes.push(sg.end);
-                at_s.push(at_s.last().copied().unwrap_or(0.0) + sg.length);
+                // The run of a piece as the slope check measures it (chord in the plane): a
+                // piece whose arc is longer than its chord must not get a steeper ramp (BUG-121).
+                let run = to_xz(b.node_pos(sg.start)).distance(to_xz(b.node_pos(sg.end)));
+                at_s.push(at_s.last().copied().unwrap_or(0.0) + run);
             }
             let last = nodes.len() - 1;
             let target: Vec<f32> = nodes.iter().map(|&n| b.node_pos(n).y).collect();

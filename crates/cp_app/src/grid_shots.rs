@@ -242,6 +242,8 @@ pub fn ghost(view: &SimView, cursors: &GridShotCursors, n: usize) -> Option<Ghos
         road: ROAD.to_string(),
         from,
         to,
+        level: 0,
+        build: false,
     })
 }
 

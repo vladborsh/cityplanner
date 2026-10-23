@@ -37,8 +37,9 @@ pub struct Options {
     pub day_night: bool,
     /// `--overlay zones|traffic|...`: start with that map overlay on (for screenshots).
     pub overlay: Option<cp_render::Overlay>,
-    /// `--ghost-demo basic_2l,x1,z1,x2,z2`: hold the road tool's ghost from (x1, z1) to the
-    /// cursor at (x2, z2) without a cursor (screenshots of the zone strip, T-185).
+    /// `--ghost-demo basic_2l,x1,z1,x2,z2[,level][,build]`: hold the road tool's ghost from
+    /// (x1, z1) to the cursor at (x2, z2) without a cursor (screenshots of the zone strip,
+    /// T-185); `level` 1..4 raised, -1 underground (BUG-121); `build`: build it, show the road.
     pub ghost_demo: Option<cp_tools::GhostDemo>,
     /// `--utility-demo water,x1,z1,...,x,z` (or `power`): hold the pipe / line tool with the
     /// points clicked and the cursor at the last (x, z); `water-bulldoze,x,z`: the bulldozer in
@@ -131,11 +132,15 @@ impl Options {
             ghost_demo: value("--ghost-demo").and_then(|v| {
                 let mut it = v.split(',');
                 let road = it.next()?.to_string();
-                let n: Vec<f32> = it.filter_map(|x| x.parse().ok()).collect();
-                (n.len() == 4).then(|| cp_tools::GhostDemo {
+                let rest: Vec<&str> = it.collect();
+                let build = rest.contains(&"build");
+                let n: Vec<f32> = rest.iter().filter_map(|x| x.parse().ok()).collect();
+                (n.len() == 4 || n.len() == 5).then(|| cp_tools::GhostDemo {
                     road,
                     from: bevy::math::Vec2::new(n[0], n[1]),
                     to: bevy::math::Vec2::new(n[2], n[3]),
+                    level: n.get(4).map_or(0, |l| *l as i8),
+                    build,
                 })
             }),
             utility_demo: value("--utility-demo").and_then(|v| cp_tools::UtilityDemo::parse(&v)),
