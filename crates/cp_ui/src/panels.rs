@@ -751,79 +751,117 @@ fn zone_kind_icon(kind: ZoneToolKind) -> Icon {
 }
 
 /// The Zones category: tool kinds and the zone palette. Picking either activates the zoning
-/// tool (which shows the zone grid); "Off" leaves it.
+/// tool (which shows the zone grid); "Off" leaves it. In the tray (T-317f) both are one row,
+/// the tool kinds first; the right mouse button erases, so the Eraser tile is left out there.
 pub fn zones_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolState) {
-    section(ui, &tr("Tool"), |ui| {
-        ui.horizontal_wrapped(|ui| {
-            for kind in ZoneToolKind::ALL {
-                let selected = tools.active == ActiveTool::Zone && tools.zone.kind == kind;
-                if tool_button(ui, zone_kind_icon(kind), &tr(kind.label()), selected).clicked() {
-                    if tools.active != ActiveTool::Zone {
-                        tools.select(ActiveTool::Zone);
-                    }
-                    tools.zone.set_kind(kind);
-                }
-            }
-            if tool_tile_enabled(
-                ui,
-                TileIcon::Icon(Icon::Remove),
-                &tr("Off"),
-                false,
-                tools.active == ActiveTool::Zone,
-            )
-            .clicked()
-            {
-                tools.select(ActiveTool::None);
-            }
+    if crate::tray::in_tray(ui.ctx()) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
+            zone_tool_tiles(ui, tools, true);
+            ui.separator();
+            zone_type_tiles(ui, view, tools, &visible_zones(view));
         });
+        return;
+    }
+    section(ui, &tr("Tool"), |ui| {
+        ui.horizontal_wrapped(|ui| zone_tool_tiles(ui, tools, false));
     });
     section(ui, &tr("Zone"), |ui| {
         // A zone type that waits for a milestone is hidden; once open it comes as its own row,
         // one row per milestone that opened zones (T-283).
         let mut rows: std::collections::BTreeMap<usize, Vec<cp_content::ZoneType>> =
             Default::default();
-        for zone in PALETTE {
-            let locked = view.is_some_and(|v| crate::windows::zone_lock(v, zone).is_some());
-            if locked {
-                continue;
-            }
+        for zone in visible_zones(view) {
             let row = view
                 .and_then(|v| v.content.as_deref())
                 .and_then(|db| db.zone_unlock_milestone(zone))
                 .unwrap_or(0);
             rows.entry(row).or_default().push(zone);
         }
-        // The tray keeps every zone type in one row.
-        let groups: Vec<Vec<cp_content::ZoneType>> = if crate::tray::in_tray(ui.ctx()) {
-            vec![rows.into_values().flatten().collect()]
-        } else {
-            rows.into_values().collect()
-        };
-        for zones in &groups {
+        for zones in rows.values() {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
-                for &zone in zones {
-                    let tile = tool_tile_enabled(
-                        ui,
-                        TileIcon::Icon(crate::icons::zone_icon(zone)),
-                        &tr(zone_name(zone)),
-                        tools.zone.zone == zone,
-                        true,
-                    );
-                    let tile = match view {
-                        Some(view) => tile.on_hover_text(crate::windows::zone_tooltip(view, zone)),
-                        None => tile,
-                    };
-                    if tile.clicked() {
-                        tools.zone.zone = zone;
-                        if tools.active != ActiveTool::Zone {
-                            tools.select(ActiveTool::Zone);
-                        }
-                    }
-                }
+                zone_type_tiles(ui, view, tools, zones);
             });
         }
     });
+}
+
+/// The zone types of the palette that no milestone holds back.
+fn visible_zones(view: Option<&SimView>) -> Vec<cp_content::ZoneType> {
+    PALETTE
+        .into_iter()
+        .filter(|&zone| !view.is_some_and(|v| crate::windows::zone_lock(v, zone).is_some()))
+        .collect()
+}
+
+/// The tiles of the zone tool kinds and "Off"; `rmb_erases`: no Eraser tile, the right mouse
+/// button erases (the tray, T-317f).
+fn zone_tool_tiles(ui: &mut egui::Ui, tools: &mut ToolState, rmb_erases: bool) {
+    for kind in ZoneToolKind::ALL {
+        if rmb_erases && kind == ZoneToolKind::Eraser {
+            continue;
+        }
+        let selected = tools.active == ActiveTool::Zone && tools.zone.kind == kind;
+        let r = tool_button(ui, zone_kind_icon(kind), &tr(kind.label()), selected);
+        let r = if rmb_erases {
+            r.on_hover_text(trf!(
+                "{tool} (right mouse button: erase)",
+                tool = tr(kind.label())
+            ))
+        } else {
+            r
+        };
+        if r.clicked() {
+            if tools.active != ActiveTool::Zone {
+                tools.select(ActiveTool::Zone);
+            }
+            tools.zone.set_kind(kind);
+        }
+    }
+    if tool_tile_enabled(
+        ui,
+        TileIcon::Icon(Icon::Remove),
+        &tr("Off"),
+        false,
+        tools.active == ActiveTool::Zone,
+    )
+    .clicked()
+    {
+        tools.select(ActiveTool::None);
+    }
+}
+
+/// The tiles of `zones`: a click picks the type (and takes the zone tool up).
+fn zone_type_tiles(
+    ui: &mut egui::Ui,
+    view: Option<&SimView>,
+    tools: &mut ToolState,
+    zones: &[cp_content::ZoneType],
+) {
+    for &zone in zones {
+        let tile = tool_tile_enabled(
+            ui,
+            TileIcon::Icon(crate::icons::zone_icon(zone)),
+            &tr(zone_name(zone)),
+            tools.zone.zone == zone,
+            true,
+        );
+        let tile = match view {
+            Some(view) => tile.on_hover_text(crate::windows::zone_tooltip(view, zone)),
+            None => tile,
+        };
+        if tile.clicked() {
+            tools.zone.zone = zone;
+            // Picking a type leaves the Eraser (it has no tile in the tray).
+            if tools.zone.kind == ZoneToolKind::Eraser && crate::tray::in_tray(ui.ctx()) {
+                tools.zone.set_kind(ZoneToolKind::default());
+            }
+            if tools.active != ActiveTool::Zone {
+                tools.select(ActiveTool::Zone);
+            }
+        }
+    }
 }
 
 /// The demand group a zone type belongs to: the letter and its value (R for `ResLow`/`ResHigh`,

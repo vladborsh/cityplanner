@@ -1775,6 +1775,10 @@ pub fn tool_click(
         state.select(ActiveTool::None);
         return;
     }
+    if buttons.just_released(MouseButton::Right) && state.zone.erasing {
+        state.zone.end_stroke();
+        state.zone.erasing = false;
+    }
     if buttons.just_released(MouseButton::Left) {
         state.zone.end_stroke();
         state.district.end_stroke();
@@ -1812,9 +1816,16 @@ pub fn tool_click(
         && !capture.pointer_blocked()
         && let (Some(view), Some(p)) = (view.as_deref(), state.hover)
     {
+        // The right button erases with the same tool (T-317f).
         let painted = if buttons.just_pressed(MouseButton::Left) {
+            state.zone.erasing = false;
             state.zone.click(&view.zones, p)
         } else if buttons.pressed(MouseButton::Left) {
+            state.zone.drag(&view.zones, p)
+        } else if buttons.just_pressed(MouseButton::Right) {
+            state.zone.erasing = true;
+            state.zone.click(&view.zones, p)
+        } else if buttons.pressed(MouseButton::Right) && state.zone.erasing {
             state.zone.drag(&view.zones, p)
         } else {
             None

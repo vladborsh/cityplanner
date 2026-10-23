@@ -78,6 +78,9 @@ pub struct GamePlugin {
     pub open_windows: Vec<cp_ui::UiWindow>,
     /// Open this palette category at start (`--category`, for screenshots).
     pub category: Option<cp_ui::Category>,
+    /// The tab (its English name) of that category's tray at start (`--tray-tab`, T-317f
+    /// screenshots of the Roads filter).
+    pub tray_tab: Option<String>,
     /// Hold the pointer here (screen points) for the cursor hint in a hidden shot (`--pointer`).
     pub pointer: Option<(f32, f32)>,
     /// No cloud shadows in this run (`--no-clouds`, T-272: shots without them).
@@ -181,6 +184,12 @@ impl Plugin for GamePlugin {
                 demo_pointer: self.pointer,
                 // T-289: a menu started open takes up its tool and shows its overlay, as a click would.
                 entered: self.category,
+                tray_tab: self
+                    .category
+                    .zip(self.tray_tab.as_deref())
+                    .map(|(c, t)| (c, cp_locale::tr(t)))
+                    .into_iter()
+                    .collect(),
                 ..default()
             };
             for &w in &self.open_windows {

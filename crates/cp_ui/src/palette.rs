@@ -130,25 +130,28 @@ pub fn palette(
     rects
 }
 
-/// The tools that work from any category, at the right end of the bottom bar: the bulldozer
-/// (the layer of the open menu, T-286), upgrade, flip and junctions. Returns their rectangles.
+/// How many buttons [`global_tools`] draws.
+pub const GLOBAL_TOOLS: usize = 3;
+
+/// The tools that work from any category, right of the categories in the bottom bar: upgrade,
+/// flip and the bulldozer (the layer of the open menu, T-286). The Junctions tool is in the
+/// overlay panel (T-317f). Returns their rectangles.
 pub fn global_tools(
     ui: &mut egui::Ui,
     state: &mut UiState,
     tools: &mut ToolState,
 ) -> Vec<(ActiveTool, egui::Rect)> {
     let mut rects = Vec::new();
-    // Right to left: the bulldozer ends the row.
+    // The bulldozer ends the row.
     let bulldozer_hover = match tools.menu_layer {
         BulldozeLayer::All => tr("Bulldozer (B)"),
         BulldozeLayer::Power => tr("Bulldozer (B) — power lines and buildings only"),
         BulldozeLayer::Water => tr("Bulldozer (B) — pipes and water buildings only"),
     };
     for (tool, icon, hover) in [
-        (ActiveTool::Bulldozer, Icon::Bulldozer, bulldozer_hover),
-        (ActiveTool::Flip, Icon::FlipRoad, tr("Flip")),
-        (ActiveTool::Junctions, Icon::Junctions, tr("Junctions")),
         (ActiveTool::Upgrade, Icon::Roads, tr("Upgrade")),
+        (ActiveTool::Flip, Icon::FlipRoad, tr("Flip")),
+        (ActiveTool::Bulldozer, Icon::Bulldozer, bulldozer_hover),
     ] {
         let on = tools.active == tool;
         let r = icon
@@ -234,10 +237,8 @@ pub fn tabs(category: Category, view: Option<&SimView>) -> Vec<(String, Option<I
                 out.push((crate::roads::tab_label(class), None));
             }
         }
-        Category::Zones => {
-            out.push((tr("Zone"), Some(Icon::Zones)));
-            out.push((tr("Tool"), Some(Icon::ZoneBrushSmall)));
-        }
+        // The tool kinds and the zone types are one row (T-317f): no tabs.
+        Category::Zones => {}
         Category::Buildings | Category::Power | Category::Water => {
             let scope = match category {
                 Category::Power => crate::buildings::Scope::Power,
@@ -305,18 +306,33 @@ pub fn tabs(category: Category, view: Option<&SimView>) -> Vec<(String, Option<I
     out
 }
 
-/// The tab of `category` the tray is on: the remembered one while it exists, else the first.
-fn active_tab(state: &UiState, category: Category, tabs: &[(String, Option<Icon>)]) -> usize {
-    state
+/// Whether `category`'s tabs are filters (T-317f): a click shows only that tab, a second click
+/// shows every tab again; none is chosen at first.
+fn filters(category: Category) -> bool {
+    category == Category::Roads
+}
+
+/// The tab of `category` the tray is on: the remembered one while it exists, else the first;
+/// for a category of [`filters`] no tab (every tab shows) unless one was chosen.
+fn active_tab(
+    state: &UiState,
+    category: Category,
+    tabs: &[(String, Option<Icon>)],
+) -> Option<usize> {
+    let remembered = state
         .tray_tab
         .iter()
         .find(|(c, _)| *c == category)
-        .and_then(|(_, key)| tabs.iter().position(|(t, _)| t == key))
-        .unwrap_or(0)
+        .and_then(|(_, key)| tabs.iter().position(|(t, _)| t == key));
+    if filters(category) {
+        remembered
+    } else {
+        Some(remembered.unwrap_or(0))
+    }
 }
 
 /// The tool tray of the open category (nothing when none is open), above the bottom bar: the
-/// tab row, one row of tiles, the options strip and the verdict. Returns its rectangle.
+/// tab row with the options strip at its end, then one row of tiles. Returns its rectangle.
 pub fn tray(
     root: &mut egui::Ui,
     state: &mut UiState,
@@ -328,11 +344,16 @@ pub fn tray(
     let category = state.category?;
     let tabs = tabs(category, view);
     let mut at = active_tab(state, category, &tabs);
-    let key = tabs.get(at).map(|(k, _)| k.clone()).unwrap_or_default();
+    let key = at
+        .and_then(|n| tabs.get(n))
+        .map(|(k, _)| k.clone())
+        .unwrap_or_default();
     let out = egui::Panel::bottom("tray")
         .exact_size(Sizes::TRAY_H)
         .resizable(false)
         .show(root, |ui| {
+            crate::tray::enter(ui.ctx(), &key);
+            // One row (T-317f: the tray a third lower): the tabs, then the options strip.
             egui::ScrollArea::horizontal()
                 .id_salt("tray_tabs")
                 .auto_shrink([false, true])
@@ -345,21 +366,21 @@ pub fn tray(
                             if tabs.len() < 2 {
                                 break;
                             }
-                            let r = ui.selectable_label(n == at, label);
+                            let on = at == Some(n);
+                            let r = ui.selectable_label(on, label);
                             if r.clicked() {
-                                at = n;
+                                at = if on && filters(category) {
+                                    None
+                                } else {
+                                    Some(n)
+                                };
                             }
                         }
+                        if tabs.len() >= 2 {
+                            ui.separator();
+                        }
+                        options(ui, category, state, view, tools, overlay);
                     });
-                });
-            ui.separator();
-            crate::tray::enter(ui.ctx(), &key);
-            // The pinned strip goes first so that the tiles above leave room for it.
-            egui::Panel::bottom("tray_options")
-                .resizable(false)
-                .show_separator_line(false)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| options(ui, category, state, view, tools, overlay));
                 });
             egui::ScrollArea::both()
                 .auto_shrink([false, false])
@@ -402,11 +423,12 @@ pub fn tray(
                 });
             crate::tray::leave(ui.ctx());
         });
-    if let Some((k, _)) = tabs.get(at) {
-        match state.tray_tab.iter_mut().find(|(c, _)| *c == category) {
+    match at.and_then(|n| tabs.get(n)) {
+        Some((k, _)) => match state.tray_tab.iter_mut().find(|(c, _)| *c == category) {
             Some(slot) => slot.1 = k.clone(),
             None => state.tray_tab.push((category, k.clone())),
-        }
+        },
+        None => state.tray_tab.retain(|(c, _)| *c != category),
     }
     Some(out.response.rect)
 }
@@ -659,16 +681,29 @@ mod tests {
         use cp_tools::ZoneToolKind;
         let mut rig = Rig::new();
         rig.click_category(Category::Zones);
-        rig.click_label("Tool");
+        // T-317f: tool kinds and zone types in one row, the tools first; no Eraser tile (the
+        // right mouse button erases).
+        let texts = rig.frame_texts(vec![]);
+        let at = |label: &str| {
+            texts
+                .iter()
+                .find(|(t, p)| t == label && p.y > 30.0)
+                .map(|x| x.1)
+        };
+        let (rect, office) = (at("Rectangle").unwrap(), at("Office").unwrap());
+        assert!(
+            rect.x < office.x && (rect.y - office.y).abs() < 1.0,
+            "{rect:?} {office:?}"
+        );
+        assert!(at("Eraser").is_none());
         for (label, kind) in [
             ("Rectangle", ZoneToolKind::Rectangle),
-            ("Eraser", ZoneToolKind::Eraser),
+            ("Brush L", ZoneToolKind::BrushLarge),
         ] {
             rig.click_label(label);
             assert_eq!(rig.tools.active, ActiveTool::Zone);
             assert_eq!(rig.tools.zone.kind, kind);
         }
-        rig.click_label("Zone");
         rig.click_label("Office");
         assert_eq!(rig.tools.zone.zone, ZoneType::Office);
         rig.click_label("Industrial");
@@ -870,8 +905,8 @@ mod tests {
 
     /// §13.7: every tile of every construction panel is one size, with a square icon frame.
     #[test]
-    fn every_tile_of_the_roads_zones_buildings_power_and_water_panels_is_88_with_a_64_square_icon()
-    {
+    fn every_tile_of_the_roads_zones_buildings_power_and_water_panels_is_one_size_with_a_square_icon()
+     {
         for (category, tool) in [
             (Category::Roads, ActiveTool::Road),
             (Category::Roads, ActiveTool::Upgrade),
@@ -931,8 +966,8 @@ mod tests {
         let mut rig = Rig::new();
         rig.click_category(Category::Roads);
         rig.click_label("Large");
-        rig.click_category(Category::Zones);
-        rig.click_label("Tool");
+        rig.click_category(Category::Districts);
+        rig.click_label("District");
         rig.click_category(Category::Roads);
         assert_eq!(
             rig.state
@@ -944,6 +979,28 @@ mod tests {
         );
         let text = rig.frame(vec![]);
         assert!(text.contains("Large"), "{text}");
+    }
+
+    /// T-317f: the Roads tabs are filters: every road type shows at first, a tab shows only
+    /// its types, a second click on it shows every type again.
+    #[test]
+    fn the_roads_tabs_filter_the_tiles_and_a_second_click_shows_all() {
+        let mut rig = Rig::new();
+        let db = content();
+        let all = crate::roads::cards(&db).len();
+        rig.click_category(Category::Roads);
+        assert_eq!(tiles(&mut rig).len(), all);
+        rig.click_label("Large");
+        let large = tiles(&mut rig).len();
+        assert!(large > 0 && large < all, "{large} of {all}");
+        rig.click_label("Large");
+        assert_eq!(tiles(&mut rig).len(), all);
+        assert!(
+            !rig.state
+                .tray_tab
+                .iter()
+                .any(|(c, _)| *c == Category::Roads)
+        );
     }
 
     /// T-317: the hint is one short line beside the pointer while a tool is in hand, and nothing

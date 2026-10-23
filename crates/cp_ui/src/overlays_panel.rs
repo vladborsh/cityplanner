@@ -1,11 +1,13 @@
-//! The permanent panel at the top right of the map (T-289): every map overlay as an icon, two to
-//! a row, the active one lit, a tooltip with its name. A small arrow folds the panel to a thin strip (O does the
-//! same). T-298: the buttons for the windows and the settings are one row at the right end of
+//! The permanent panel at the top right of the map (T-289): every map overlay as an icon in a
+//! compact grid under its group's header, the active one lit, its name as the tooltip (T-317f).
+//! The Junctions section holds the Junctions tool beside its overlay. A small arrow folds the
+//! panel to a thin strip (O does the same). T-298: the buttons for the windows and the settings are one row at the right end of
 //! the top bar ([`window_bar`]).
 
 use bevy_egui::egui;
 use cp_locale::tr;
 use cp_render::{LightingSettings, Overlay, OverlayState};
+use cp_tools::{ActiveTool, ToolState};
 
 use crate::files::{FileMenu, toggle_saves};
 use crate::icons::{Icon, overlay_icon};
@@ -13,17 +15,17 @@ use crate::panels::{UI_SCALE_RANGE, UiState, UiWindow};
 use crate::style::Sizes;
 
 /// Icon of an overlay button and of a window button.
-const OVERLAY_ICON: f32 = 28.0;
+const OVERLAY_ICON: f32 = 24.0;
 const WINDOW_ICON: f32 = 24.0;
 /// Height of the button row in the top bar.
 const WINDOW_BAR_H: f32 = WINDOW_ICON + 2.0 * 4.0;
-const OVERLAY_COLUMNS: usize = 3;
-/// Width of one overlay cell (icon and short name).
-const CELL_W: f32 = 138.0;
+const OVERLAY_COLUMNS: usize = 4;
+/// Side of one overlay cell: the icon button.
+const CELL_W: f32 = OVERLAY_ICON + 2.0 * Sizes::BUTTON_PAD;
 
 /// The groups of the panel (T-317): a header and its overlays. Every overlay but `Off` is in
-/// exactly one.
-pub const GROUPS: [(&str, &[Overlay]); 5] = [
+/// exactly one. The last, Junctions, also holds the Junctions tool (T-317f).
+pub const GROUPS: [(&str, &[Overlay]); 6] = [
     ("Utilities", &[Overlay::Power, Overlay::Water]),
     (
         "Services",
@@ -46,10 +48,7 @@ pub const GROUPS: [(&str, &[Overlay]); 5] = [
             Overlay::Resources,
         ],
     ),
-    (
-        "Traffic",
-        &[Overlay::Traffic, Overlay::Transit, Overlay::Junctions],
-    ),
+    ("Traffic", &[Overlay::Traffic, Overlay::Transit]),
     (
         "City",
         &[
@@ -61,6 +60,7 @@ pub const GROUPS: [(&str, &[Overlay]); 5] = [
             Overlay::Underground,
         ],
     ),
+    ("Junctions", &[Overlay::Junctions]),
 ];
 /// Width of the folded strip, and of the open panel.
 const STRIP_W: f32 = 22.0;
@@ -76,6 +76,8 @@ pub struct OverlayRects {
     /// The window switches; the budget's too.
     pub windows: Vec<(UiWindow, egui::Rect)>,
     pub overlays: Vec<(Overlay, egui::Rect)>,
+    /// The Junctions tool of the Junctions section.
+    pub junctions_tool: Option<egui::Rect>,
     /// The settings button and (while its menu is open) the always-day switch.
     pub settings: Option<egui::Rect>,
     pub always_day: Option<egui::Rect>,
@@ -102,7 +104,7 @@ pub fn width(state: &UiState) -> f32 {
         + if state.overlays_collapsed {
             STRIP_W + 8.0
         } else {
-            OVERLAY_COLUMNS as f32 * (CELL_W + Sizes::TILE_GAP) + 24.0
+            OVERLAY_COLUMNS as f32 * (CELL_W + Sizes::TILE_GAP) + 12.0
         }
 }
 
@@ -140,6 +142,7 @@ pub fn overlays_panel(
     ctx: &egui::Context,
     state: &mut UiState,
     overlay: &mut OverlayState,
+    tools: &mut ToolState,
     lighting: &mut LightingSettings,
     files: &mut FileMenu,
     view: Option<&cp_sim::SimView>,
@@ -155,63 +158,77 @@ pub fn overlays_panel(
             egui::Frame::popup(ui.style())
                 .inner_margin(egui::Margin::same(6))
                 .show(ui, |ui| {
-                    // The fold arrow, always there.
-                    let arrow = if state.overlays_collapsed {
-                        "◂"
-                    } else {
-                        "▸"
-                    };
-                    let r = ui
-                        .small_button(arrow)
-                        .on_hover_text(if state.overlays_collapsed {
-                            tr("Show the overlays (O)")
+                    // The fold arrow, always there; "No overlay" beside it (T-317f: one row).
+                    ui.horizontal(|ui| {
+                        let arrow = if state.overlays_collapsed {
+                            "◂"
                         } else {
-                            tr("Fold the panel (O)")
-                        });
-                    rects.fold = Some(r.rect);
-                    if r.clicked() {
-                        state.overlays_collapsed = !state.overlays_collapsed;
-                    }
+                            "▸"
+                        };
+                        let r = ui
+                            .small_button(arrow)
+                            .on_hover_text(if state.overlays_collapsed {
+                                tr("Show the overlays (O)")
+                            } else {
+                                tr("Fold the panel (O)")
+                            });
+                        rects.fold = Some(r.rect);
+                        if r.clicked() {
+                            state.overlays_collapsed = !state.overlays_collapsed;
+                        }
+                        if state.overlays_collapsed {
+                            return;
+                        }
+                        let off = Overlay::Off;
+                        let r = overlay_icon(off)
+                            .button(ui, OVERLAY_ICON, Sizes::BUTTON_PAD, overlay.active == off)
+                            .on_hover_text(tr(off.label()));
+                        rects.overlays.push((off, r.rect));
+                        if r.clicked() {
+                            overlay.open(off);
+                        }
+                    });
                     if state.overlays_collapsed {
                         return;
                     }
                     ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
-                    // "No overlay", then the groups with their headers, three cells to a row.
+                    // The groups with their headers, icons only.
                     let mut cell = |ui: &mut egui::Ui, o: Overlay| {
                         let on = overlay.active == o;
-                        let r = ui
-                            .horizontal(|ui| {
-                                ui.set_width(CELL_W);
-                                let b =
-                                    overlay_icon(o).button(ui, OVERLAY_ICON, Sizes::BUTTON_PAD, on);
-                                let name = ui.add(
-                                    egui::Label::new(egui::RichText::new(tr(o.label())).small())
-                                        .truncate()
-                                        .sense(egui::Sense::click()),
-                                );
-                                (b, name)
-                            })
-                            .inner;
-                        let hover = |ui: &mut egui::Ui| {
-                            ui.strong(tr(o.label()));
-                            if let Some(v) = view {
-                                crate::gauges::overlay_hover(ui, v, o);
-                            }
-                        };
-                        let (icon, name) = (r.0.on_hover_ui(hover), r.1);
-                        rects.overlays.push((o, icon.rect));
-                        if icon.clicked() || name.clicked() {
+                        let r = overlay_icon(o)
+                            .button(ui, OVERLAY_ICON, Sizes::BUTTON_PAD, on)
+                            .on_hover_ui(|ui| {
+                                ui.strong(tr(o.label()));
+                                if let Some(v) = view {
+                                    crate::gauges::overlay_hover(ui, v, o);
+                                }
+                            });
+                        rects.overlays.push((o, r.rect));
+                        if r.clicked() {
                             overlay.open(o);
                         }
                     };
-                    cell(ui, Overlay::Off);
                     for (title, members) in GROUPS {
-                        ui.add_space(2.0);
                         ui.weak(tr(title));
+                        let junctions = members == [Overlay::Junctions];
                         for row in members.chunks(OVERLAY_COLUMNS) {
                             ui.horizontal(|ui| {
                                 for &o in row {
                                     cell(ui, o);
+                                }
+                                if junctions {
+                                    let on = tools.active == ActiveTool::Junctions;
+                                    let r = Icon::Junctions
+                                        .button(ui, OVERLAY_ICON, Sizes::BUTTON_PAD, on)
+                                        .on_hover_text(tr("Junctions tool"));
+                                    rects.junctions_tool = Some(r.rect);
+                                    if r.clicked() {
+                                        tools.select(if on {
+                                            ActiveTool::None
+                                        } else {
+                                            ActiveTool::Junctions
+                                        });
+                                    }
                                 }
                             });
                         }
@@ -358,6 +375,7 @@ mod tests {
         ctx: egui::Context,
         state: UiState,
         overlay: OverlayState,
+        tools: ToolState,
         lighting: LightingSettings,
         files: FileMenu,
         rects: OverlayRects,
@@ -370,6 +388,7 @@ mod tests {
                 ctx: egui::Context::default(),
                 state: UiState::default(),
                 overlay: OverlayState::default(),
+                tools: ToolState::default(),
                 lighting: LightingSettings::default(),
                 files: FileMenu::default(),
                 rects: OverlayRects::default(),
@@ -388,13 +407,14 @@ mod tests {
                 ctx,
                 state,
                 overlay,
+                tools,
                 lighting,
                 files,
                 rects,
                 t,
             } = self;
             frame(ctx, input(*t, events), |ui| {
-                *rects = overlays_panel(ui.ctx(), state, overlay, lighting, files, None);
+                *rects = overlays_panel(ui.ctx(), state, overlay, tools, lighting, files, None);
             });
         }
 
@@ -407,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn every_overlay_is_a_labelled_cell_in_a_group_and_a_click_selects_it_and_the_panel_stays() {
+    fn every_overlay_is_an_icon_in_a_group_and_a_click_selects_it_and_the_panel_stays() {
         let mut rig = Rig::new();
         assert_eq!(rig.rects.overlays.len(), Overlay::ALL.len());
         // Every overlay but "No overlay" is in exactly one group.
@@ -424,9 +444,18 @@ mod tests {
             .rects
             .overlays
             .iter()
+            .filter(|(o, _)| *o != Overlay::Off)
             .map(|(_, r)| r.left().round() as i32)
             .collect();
         assert_eq!(cols.len(), OVERLAY_COLUMNS);
+        // T-317f: "No overlay" is in the row of the fold arrow.
+        let off = rig.rects.overlays.iter().find(|(o, _)| *o == Overlay::Off);
+        let fold = rig.rects.fold.unwrap();
+        let off = off.unwrap().1;
+        assert!(
+            off.left() > fold.right() && off.top() < fold.bottom(),
+            "{off:?} {fold:?}"
+        );
         // Top right, under the top bar.
         let panel = rig.rects.panel.unwrap();
         assert!(panel.right() > 1200.0 && panel.top() >= Sizes::TOP_BAR_H);
@@ -453,6 +482,24 @@ mod tests {
             .center();
         rig.click(off);
         assert_eq!(rig.overlay.active, Overlay::Off);
+    }
+
+    #[test]
+    fn the_junctions_section_holds_the_tool_beside_its_overlay() {
+        let mut rig = Rig::new();
+        let tool = rig.rects.junctions_tool.unwrap();
+        let lights = rig
+            .rects
+            .overlays
+            .iter()
+            .find(|(o, _)| *o == Overlay::Junctions)
+            .unwrap()
+            .1;
+        assert!((tool.center().y - lights.center().y).abs() < 1.0, "one row");
+        rig.click(tool.center());
+        assert_eq!(rig.tools.active, ActiveTool::Junctions);
+        rig.click(tool.center());
+        assert_eq!(rig.tools.active, ActiveTool::None);
     }
 
     #[test]

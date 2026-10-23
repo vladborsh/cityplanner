@@ -1107,4 +1107,6 @@
     "Poor": "Poor",
     "Fair": "Fair",
     "Full": "Full",
+    "Junctions tool": "Junctions tool",
+    "{tool} (right mouse button: erase)": "{tool} (right mouse button: erase)",
 }

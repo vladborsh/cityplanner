@@ -90,9 +90,6 @@ impl DemandRects {
     }
 }
 
-/// Width of the block of money and population at the left of the bar.
-const STATS_W: f32 = 200.0;
-
 /// The balance with its income (a click opens the budget).
 fn money_row(ui: &mut egui::Ui, view: &SimView, state: &mut UiState, rects: &mut DemandRects) {
     let money = crate::budget::money_label(ui, view);
@@ -116,9 +113,10 @@ fn population_row(ui: &mut egui::Ui, view: &SimView, rects: &mut DemandRects) {
     crate::budget::population_trend_label(ui, view);
 }
 
-/// The slim bottom bar (T-317), one row: money, income, population at the left; the demand
-/// bars (smaller, a click on a bar takes its zone tool); the category buttons; the tools that
-/// work from any category (bulldozer, upgrade, flip, junctions) at the right end.
+/// The slim bottom bar (T-317), one row: money, income, population and the demand bars (a
+/// click on a bar takes its zone tool) at the left; the category buttons and the tools that
+/// work from any category (upgrade, flip, bulldozer) as one group in the middle of the screen
+/// (T-317f), pushed right only when the left block would overlap it.
 pub fn demand_panel(
     root: &mut egui::Ui,
     view: &SimView,
@@ -131,11 +129,9 @@ pub fn demand_panel(
         .resizable(false)
         .show(root, |ui| {
             ui.horizontal_centered(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(STATS_W);
-                    ui.horizontal(|ui| money_row(ui, view, state, &mut rects));
-                    ui.horizontal(|ui| population_row(ui, view, &mut rects));
-                });
+                money_row(ui, view, state, &mut rects);
+                ui.add_space(8.0);
+                population_row(ui, view, &mut rects);
                 ui.separator();
                 let r = ui
                     .small_button("▸")
@@ -155,11 +151,17 @@ pub fn demand_panel(
                     }
                     rects.columns.push(col.0);
                 }
+                let content = view.content.as_deref();
+                let buttons = Category::available(content).len() + crate::palette::GLOBAL_TOOLS;
+                let gap = ui.spacing().item_spacing.x;
+                let side = Sizes::PALETTE_ICON + 2.0 * Sizes::BUTTON_PAD;
+                // The buttons, their gaps and the separator between the two kinds.
+                let group = buttons as f32 * (side + gap) + 2.0 * gap + 1.0;
+                let start = (ui.max_rect().center().x - group * 0.5).max(ui.cursor().left());
+                ui.add_space(start - ui.cursor().left());
+                rects.categories = crate::palette::palette(ui, state, content);
                 ui.separator();
-                rects.categories = crate::palette::palette(ui, state, view.content.as_deref());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    rects.globals = crate::palette::global_tools(ui, state, tools);
-                });
+                rects.globals = crate::palette::global_tools(ui, state, tools);
             });
         });
     rects.panel = Some(out.response.rect);
@@ -548,8 +550,20 @@ mod tests {
         // Without content: Zones and Districts only.
         assert_eq!(rig.rects.categories.len(), 2);
         let globals: Vec<_> = rig.rects.globals.iter().map(|(t, _)| *t).collect();
-        assert_eq!(globals.len(), 4);
-        for tool in [ActiveTool::Upgrade, ActiveTool::Flip, ActiveTool::Junctions] {
+        assert_eq!(globals.len(), 3);
+        assert!(
+            !globals.contains(&ActiveTool::Junctions),
+            "in the overlay panel"
+        );
+        // T-317f: categories and global tools are one group in the middle of the bar.
+        let left = rig.rects.categories[0].1.left();
+        let right = rig.rects.globals.last().unwrap().1.right();
+        let mid = rig.rects.panel.unwrap().center().x;
+        assert!(
+            ((left + right) * 0.5 - mid).abs() < 6.0,
+            "{left}..{right} vs {mid}"
+        );
+        for tool in [ActiveTool::Upgrade, ActiveTool::Flip] {
             assert!(globals.contains(&tool), "{tool:?}");
             let at = rig
                 .rects

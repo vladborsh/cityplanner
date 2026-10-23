@@ -51,6 +51,7 @@ pub fn run() {
                 fold_overlays: false,
                 open_windows: Vec::new(),
                 category: None,
+                tray_tab: None,
                 pointer: None,
                 no_clouds: false,
                 no_parked: false,

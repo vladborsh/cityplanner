@@ -195,14 +195,19 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
     let upgrading = tools.active == ActiveTool::Upgrade;
     let building = tools.active == ActiveTool::Road;
     let widest = content.roads().map(|(_, d)| d.width).fold(0.0, f32::max);
+    let in_tray = crate::tray::in_tray(ui.ctx());
+    let mut first = true;
     for class in tab_classes(content) {
         if !crate::tray::is_active(ui.ctx(), &tab_label(class)) {
             continue;
         }
-        if !crate::tray::in_tray(ui.ctx()) {
+        if !in_tray {
             ui.strong(tr(class_label(class)));
+        } else if !std::mem::take(&mut first) {
+            // No filter (T-317f): every class in the one row, a line between them.
+            ui.separator();
         }
-        ui.horizontal_wrapped(|ui| {
+        let tiles = |ui: &mut egui::Ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
             for c in cards.iter().filter(|c| c.class == class) {
                 if road_tile_widget(ui, content, widest, c, tools.road.road == Some(c.id)).clicked()
@@ -213,7 +218,12 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
                     }
                 }
             }
-        });
+        };
+        if in_tray {
+            ui.horizontal(tiles);
+        } else {
+            ui.horizontal_wrapped(tiles);
+        }
     }
 }
 

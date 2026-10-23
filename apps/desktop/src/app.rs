@@ -75,6 +75,8 @@ pub struct Options {
     pub hidden_ui: bool,
     /// `--category roads|zones|...`: open that palette category at start (screenshots).
     pub category: Option<cp_ui::Category>,
+    /// `--tray-tab Large`: the tab (English name) of that category's tray at start (T-317f).
+    pub tray_tab: Option<String>,
     /// `--no-clouds`: no cloud shadows in this run (T-272).
     pub no_clouds: bool,
     /// `--no-parked`: no parked cars in this run (T-276).
@@ -243,6 +245,7 @@ impl Options {
                     .into_iter()
                     .find(|c| c.label().eq_ignore_ascii_case(&n))
             }),
+            tray_tab: value("--tray-tab"),
             always_day: args.iter().any(|a| a == "--always-day"),
             net_debug: args.iter().any(|a| a == "--net-debug"),
             day_night: args.iter().any(|a| a == "--day-night") || value("--hour").is_some(),
@@ -630,6 +633,7 @@ pub fn run(opts: Options) -> AppExit {
             fold_overlays: opts.fold_overlays,
             open_windows: opts.open_windows.clone(),
             category: opts.category,
+            tray_tab: opts.tray_tab.clone(),
             pointer: opts.pointer,
             no_clouds: opts.no_clouds,
             no_parked: opts.no_parked,

@@ -185,7 +185,7 @@ mod tests {
     use crate::testutil::{frame, input};
 
     #[test]
-    fn a_tile_is_88_by_104_with_a_64_square_icon_frame_centred_below_a_4_pad() {
+    fn a_tile_is_88_by_78_with_a_40_square_icon_frame_centred_below_a_4_pad() {
         let ctx = egui::Context::default();
         take_rects(&ctx);
         frame(&ctx, input(0.0, vec![]), |ui| {

@@ -129,6 +129,7 @@ fn rts_camera(
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     capture: Res<UiCapture>,
+    zoning: Option<Res<crate::ZoningMode>>,
     mut drag_from_map: Local<(bool, bool)>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut cams: Query<(&Camera, &GlobalTransform, &mut Transform, &mut RtsCamera)>,
@@ -154,9 +155,12 @@ fn rts_camera(
             *from_map = false;
         }
     }
+    // With the zone tool in hand the right button erases zones (T-317f), it does not turn the
+    // camera (Q / E still do).
+    let zoning = zoning.is_some_and(|z| z.0);
     let (middle_drag, right_drag) = (
         *drag_mid && buttons.pressed(MouseButton::Middle),
-        *drag_right && buttons.pressed(MouseButton::Right),
+        *drag_right && buttons.pressed(MouseButton::Right) && !zoning,
     );
 
     for (camera, global, mut tf, mut rts) in &mut cams {

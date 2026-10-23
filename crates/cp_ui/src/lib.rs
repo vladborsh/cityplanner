@@ -275,7 +275,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     menus::apply(state, tools, overlay, Some(view));
     tray(&mut root, state, Some(view), tools, overlay, outbox);
     palette::list_window(ctx, state, Some(view), tools, overlay, outbox);
-    overlays_panel::overlays_panel(ctx, state, overlay, lighting, files, Some(view));
+    overlays_panel::overlays_panel(ctx, state, overlay, tools, lighting, files, Some(view));
     remember_map_rect(ctx, &root);
     // The stripe stands on top of the bar and the open tray (T-317).
     let lift = style::Sizes::DEMAND_H
@@ -673,7 +673,7 @@ mod capture_tests {
         // T-289: the palette, and the overlays panel at the top right (two points of the grid).
         assert_eq!(
             row(&base, 328),
-            5, // the overlays panel at the right (T-317d: grouped, full names, wider)
+            1, // the overlays panel at the right (T-317f: icons only, compact)
             "only the overlays panel is owned in the middle row"
         );
         assert_eq!(row(&base, 710), 16, "bottom bar");

@@ -144,6 +144,8 @@ pub struct ZoneTool {
     pub corner: Option<Vec2>,
     /// Cells already painted in the current brush stroke.
     pub stroke: BTreeSet<ZoneCellRef>,
+    /// The right mouse button is held: every kind erases (T-317f).
+    pub erasing: bool,
 }
 
 impl Default for ZoneTool {
@@ -153,6 +155,7 @@ impl Default for ZoneTool {
             zone: ZoneType::ResLow,
             corner: None,
             stroke: BTreeSet::new(),
+            erasing: false,
         }
     }
 }
@@ -160,7 +163,7 @@ impl Default for ZoneTool {
 impl ZoneTool {
     /// What this tool paints.
     pub fn paint_type(&self) -> ZoneType {
-        if self.kind == ZoneToolKind::Eraser {
+        if self.kind == ZoneToolKind::Eraser || self.erasing {
             ZoneType::None
         } else {
             self.zone
@@ -427,6 +430,22 @@ mod tests {
         let (cells, zone) = t.click(&z, p).unwrap();
         assert_eq!(zone, ZoneType::None);
         assert_eq!(cells, vec![c]);
+    }
+
+    /// T-317f: with the right button held every kind erases with its own shape.
+    #[test]
+    fn erasing_with_a_brush_paints_none() {
+        let mut z = grid();
+        let (c, p) = right_cell(&z, 5, 0);
+        paint(&mut z, &[c], ZoneType::ResHigh).unwrap();
+        let mut t = ZoneTool {
+            kind: ZoneToolKind::BrushSmall,
+            erasing: true,
+            ..Default::default()
+        };
+        let (cells, zone) = t.click(&z, p).unwrap();
+        assert_eq!(zone, ZoneType::None);
+        assert!(cells.contains(&c));
     }
 
     #[test]
