@@ -49,8 +49,8 @@ pub use material::{VertexColorMaterial, VertexColorMaterialPlugin};
 pub use overlay::{
     AreaFamily, AreasMode, CoverageCount, CoverageGhost, CoverageGhostSummary, CoverageSite,
     DistrictsMode, EmitGhost, EmitSite, LINE_STEP, LineGhost, Overlay, OverlayPlugin, OverlayState,
-    ZoningMode, coverage_color, land_value_color, noise_color, park_color, pollution_color,
-    resource_color, ribbon_at, traffic_color, zone_color,
+    ZoningMode, coverage_color, land_value_color, park_color, resource_color, ribbon_at,
+    traffic_color, zone_color,
 };
 pub use overlay::{
     BuildingStatus, NetworkStats, UtilityLayer, UtilityReport, network_color, utility_report,

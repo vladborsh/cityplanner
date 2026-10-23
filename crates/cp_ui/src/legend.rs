@@ -42,8 +42,7 @@ pub fn rows(overlay: Overlay) -> Vec<Row> {
             cp_render::land_value_color,
             ["Cheap", "Average", "Expensive"],
         ),
-        Overlay::Pollution => ramp(cp_render::pollution_color, ["Clean", "Polluted", "Heavy"]),
-        Overlay::Noise => ramp(cp_render::noise_color, ["Quiet", "Loud", "Very loud"]),
+        // Noise and pollution are banded: `band_legend` draws their legend.
         Overlay::Garbage
         | Overlay::Health
         | Overlay::Deathcare
@@ -79,6 +78,9 @@ pub fn rows(overlay: Overlay) -> Vec<Row> {
 
 /// Draws the legend at the bottom right of the map, above the bottom bar and the open tray.
 pub fn legend(ctx: &egui::Context, state: &UiState, overlay: Overlay) -> Option<egui::Rect> {
+    if crate::band_legend::bands_of(overlay).is_some() {
+        return crate::band_legend::band_legend(ctx, overlay, crate::overlays_panel::width(state));
+    }
     let rows = rows(overlay);
     if rows.is_empty() {
         return None;
@@ -119,8 +121,6 @@ mod tests {
             match o {
                 Overlay::Traffic
                 | Overlay::LandValue
-                | Overlay::Pollution
-                | Overlay::Noise
                 | Overlay::Garbage
                 | Overlay::Health
                 | Overlay::Deathcare
@@ -128,6 +128,7 @@ mod tests {
                 | Overlay::Police
                 | Overlay::Education
                 | Overlay::Mail => assert_eq!(n, 3, "{o:?}"),
+                Overlay::Pollution | Overlay::Noise => assert_eq!(n, 0, "{o:?}: band legend"),
                 Overlay::Zones => assert_eq!(n, 4),
                 Overlay::Resources | Overlay::IndustryAreas => {
                     assert_eq!(n, ResourceKind::ALL.len(), "{o:?}")
