@@ -643,8 +643,7 @@ pub fn build_parked(sim: &mut SimRunner, homes: usize) -> usize {
     use cp_traffic::{Agents, ParkedCar, ParkingIndex};
     let n = build_gardens(sim, homes);
     // The index is built on the next Agents phase.
-    sim.world_mut()
-        .insert_resource(cp_core::time::SimSpeed::X1);
+    sim.world_mut().insert_resource(cp_core::time::SimSpeed::X1);
     sim.tick_once();
     sim.world_mut()
         .insert_resource(cp_core::time::SimSpeed::Pause);
