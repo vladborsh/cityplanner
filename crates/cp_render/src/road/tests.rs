@@ -2066,3 +2066,25 @@ fn a_driveway_runs_from_the_yard_gate_over_the_sidewalk_to_the_kerb() {
         }
     }
 }
+
+/// T-323: a tree row stands along a street and along a highway without sidewalks, both sides, and
+/// the planted flag alone changes the furniture.
+#[test]
+fn street_trees_stand_along_streets_and_highways_when_planted() {
+    for road in ["basic_2l", "highway_1w_2l"] {
+        let mut w = world();
+        w.line(road, (X0, Z0), (X0 + 90.0, Z0));
+        let v = w.view();
+        let id = v.net.segments().next().unwrap().0;
+        let mut net: NetGraph = (*v.net).clone();
+        let count = |net: &NetGraph| {
+            furniture::build_segment_furniture(net, &v.junctions, &w.terrain, &w.content, id)
+                .map_or(0, |f| f.trees)
+        };
+        assert_eq!(count(&net), 0, "{road}");
+        net.set_trees(id, true).unwrap();
+        // 90 m, 12 m apart over both sides, inside the margins.
+        let n = count(&net);
+        assert!((5..=8).contains(&n), "{road}: {n} trees");
+    }
+}

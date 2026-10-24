@@ -489,6 +489,21 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ));
             }
         },
+        (_, ActiveTool::Trees) => match &tools.trees_preview {
+            Some(t) if !t.errors.is_empty() => bad(ui, &t.errors, &tr("cannot plant")),
+            Some(t) if t.plant => ok(
+                ui,
+                &tr("can plant"),
+                None,
+                format!(" · +{}", cp_tools::road::format_money(t.cost)),
+            ),
+            Some(_) => ok(ui, &tr("can clear"), None, format!(" · {}", tr("free"))),
+            None => {
+                ui.weak(tr(
+                    "Click a street to plant or clear its tree row; Shift: the whole stretch. Esc leaves the tool.",
+                ));
+            }
+        },
         (_, ActiveTool::Junctions) if tools.lane_mode => {
             ui.weak(tr(
                 "Click a road arm to set which turns each of its lanes may take. Esc leaves the tool.",

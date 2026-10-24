@@ -10,6 +10,7 @@ use cp_tools::{
     ActiveTool, ELEVATION_STEP, MAX_ELEVATION_LEVEL, RoadMode, ToolState, format_money,
 };
 
+use crate::Icon;
 use crate::icons;
 use crate::style::Sizes;
 use crate::tile::{TileIcon, tool_tile};
@@ -225,6 +226,20 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
             ui.horizontal_wrapped(tiles);
         }
     }
+    // Decoration (T-323): the street trees tool.
+    ui.separator();
+    let on = tools.active == ActiveTool::Trees;
+    if Icon::StreetTrees
+        .button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, on)
+        .on_hover_text(tr("Street trees"))
+        .clicked()
+    {
+        tools.select(if on {
+            ActiveTool::None
+        } else {
+            ActiveTool::Trees
+        });
+    }
 }
 
 /// The options strip of the Roads tray: mode, snaps and elevation of the road tool; a word for
@@ -232,6 +247,10 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
 pub fn road_options(ui: &mut egui::Ui, tools: &mut ToolState) {
     if tools.active == ActiveTool::Upgrade {
         ui.label(tr("Upgrade to"));
+        return;
+    }
+    if tools.active == ActiveTool::Trees {
+        ui.label(tr("Street trees"));
         return;
     }
     if tools.active != ActiveTool::Road {
@@ -261,6 +280,8 @@ pub fn road_options(ui: &mut egui::Ui, tools: &mut ToolState) {
     {
         tools.snaps_off = !snaps;
     }
+    // T-323 (§24.2): the plan plants a tree row on its ground segments.
+    ui.checkbox(&mut tools.road.with_trees, tr("With trees"));
     ui.separator();
     ui.label(tr("Elevation (PgUp / PgDn, Ctrl+Up / Down)"));
     if ui

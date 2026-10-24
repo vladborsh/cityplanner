@@ -7,6 +7,9 @@
 //! glows at night) and `pools` (a soft warm disc of light on the road under each head, drawn
 //! additively by night only). Junction areas are skipped: the trimmed curve ends where the
 //! junction polygon begins, and a margin is kept from each end.
+//!
+//! Street trees (T-323, §24.2) are a third series in the `posts` mesh: a tree every
+//! [`TREE_SPACING_M`] metres, in a chessboard over the two sides, half a step off the lamps.
 
 use super::*;
 use crate::chunk::MeshData;
@@ -23,6 +26,10 @@ const POOL: [f32; 3] = [1.0, 0.80, 0.42];
 const LAMP_H: f32 = 6.0;
 const ARM: f32 = 1.2;
 const POLE_H: f32 = 8.0;
+/// Distance between street trees along a street, both sides together, metres (§24.2).
+pub const TREE_SPACING_M: f32 = 12.0;
+const TRUNK: [f32; 4] = [0.42, 0.28, 0.16, 1.0];
+const CROWN: [f32; 4] = [0.20, 0.50, 0.24, 1.0];
 /// Radius of a light pool, metres.
 pub const POOL_R: f32 = 6.0;
 
@@ -37,6 +44,8 @@ pub struct Furniture {
     /// Lamp heads in the piece.
     pub lamps: usize,
     pub poles: usize,
+    /// Street trees in the piece.
+    pub trees: usize,
 }
 
 impl Furniture {
@@ -122,6 +131,55 @@ fn stations(length: f32, spacing: f32, phase: f32, (m0, m1): (f32, f32)) -> Vec<
         .collect()
 }
 
+/// The street trees of a segment of `length`: `(s, side)` with side 0 the right-hand one,
+/// every [`TREE_SPACING_M`] along the street in a chessboard, a quarter of a step off the lamps.
+pub fn tree_stations(length: f32, margins: (f32, f32)) -> Vec<(f32, usize)> {
+    let mut v: Vec<(f32, usize)> = Vec::new();
+    for (side, phase) in [(0, 0.25), (1, 0.75)] {
+        v.extend(
+            stations(length, TREE_SPACING_M * 2.0, phase, margins)
+                .into_iter()
+                .map(|s| (s, side)),
+        );
+    }
+    v.sort_by(|a, b| a.0.total_cmp(&b.0));
+    v
+}
+
+/// One street tree: a trunk and a cone of leaves, `h` tall (6 to 8 m).
+fn tree(m: &mut MeshData, foot: Vec3, h: f32) {
+    let ax = [Vec3::X, Vec3::Y, Vec3::Z];
+    obox(
+        m,
+        foot + Vec3::Y * (h * 0.2),
+        ax,
+        Vec3::new(0.15, h * 0.2, 0.15),
+        TRUNK,
+    );
+    const SIDES: usize = 8;
+    let (y0, r) = (h * 0.3, 1.7);
+    let ring: Vec<u32> = (0..SIDES)
+        .map(|k| {
+            let t = k as f32 / SIDES as f32 * std::f32::consts::TAU;
+            let d = Vec3::new(t.cos(), 0.0, t.sin());
+            let n = (d * h + Vec3::Y * r).normalize();
+            push_vertex(m, foot + Vec3::Y * y0 + d * r, n, CROWN)
+        })
+        .collect();
+    let apex = push_vertex(m, foot + Vec3::Y * h, Vec3::Y, CROWN);
+    let centre = push_vertex(m, foot + Vec3::Y * y0, -Vec3::Y, CROWN);
+    for k in 0..SIDES {
+        let k1 = (k + 1) % SIDES;
+        let mid = (m_pos(m, ring[k]) + m_pos(m, ring[k1])) * 0.5 - foot;
+        tri(m, ring[k], ring[k1], apex, Vec3::new(mid.x, 0.3, mid.z));
+        tri(m, ring[k], ring[k1], centre, -Vec3::Y);
+    }
+}
+
+fn m_pos(m: &MeshData, i: u32) -> Vec3 {
+    Vec3::from_array(m.positions[i as usize])
+}
+
 /// The margin at the end of `seg` at `node`: a real junction (three arms or more) keeps its
 /// corner clear, the joint of two segments of one street only a little.
 fn margin_at(geo: &JunctionGeometry, node: NodeId) -> f32 {
@@ -145,7 +203,7 @@ pub fn build_segment_furniture(
         return None;
     }
     let def = db.road(seg.road);
-    if def.lamp_spacing_m <= 0.0 && def.pole_spacing_m <= 0.0 {
+    if def.lamp_spacing_m <= 0.0 && def.pole_spacing_m <= 0.0 && !seg.trees {
         return None;
     }
     let curve = geo.trimmed_curve(graph, id)?;
@@ -168,7 +226,7 @@ pub fn build_segment_furniture(
         .collect();
     sides.sort_by(|a, b| a.2.total_cmp(&b.2));
     let margins = (margin_at(geo, seg.start), margin_at(geo, seg.end));
-    if sides.is_empty() || length < margins.0 + margins.1 {
+    if length < margins.0 + margins.1 || (sides.is_empty() && !seg.trees) {
         return None;
     }
     // Lamps on every sidewalk (the second one staggered), poles on the right-hand side.
@@ -180,11 +238,33 @@ pub fn build_segment_furniture(
         }
     }
     let pole_side = 0; // sides[0] is the most negative offset: the right
-    let pole_s = stations(length, def.pole_spacing_m, 0.25, margins);
-    for &s in &pole_s {
-        items.push((s, pole_side, true));
+    if !sides.is_empty() {
+        for s in stations(length, def.pole_spacing_m, 0.25, margins) {
+            items.push((s, pole_side, true));
+        }
     }
-    if items.is_empty() {
+    // Street trees: on the outer edge of the sidewalk minus a metre; with no sidewalk, a metre and
+    // a half outside the carriageway.
+    let mut rows: Vec<(f32, f32)> = Vec::new(); // (lateral offset, sign), right side first
+    let mut trees: Vec<(f32, usize)> = Vec::new();
+    if seg.trees {
+        for sign in [-1.0f32, 1.0] {
+            let x = match sides.iter().find(|s| s.2 == sign) {
+                Some(s) => s.0 - sign,
+                None => {
+                    seg.lanes
+                        .iter()
+                        .filter_map(|&l| graph.lane(l))
+                        .map(|l| (l.offset.abs() + l.width * 0.5) * sign)
+                        .fold(0.0f32, |a, b| if b.abs() > a.abs() { b } else { a })
+                        + sign * 1.5
+                }
+            };
+            rows.push((x, sign));
+        }
+        trees = tree_stations(length, margins);
+    }
+    if items.is_empty() && trees.is_empty() {
         return None;
     }
     let frame = Frame {
@@ -197,6 +277,7 @@ pub fn build_segment_furniture(
     };
     let mut base: Vec<f32> = vec![0.0, length];
     base.extend(items.iter().map(|i| i.0));
+    base.extend(trees.iter().map(|t| t.0));
     base.sort_by(f32::total_cmp);
     base.dedup();
     let (s_list, rings) = ground::rings(&frame, graph, geo, terrain, id, seg, base);
@@ -265,6 +346,18 @@ pub fn build_segment_furniture(
             pool(&mut f.pools, c);
             f.lamps += 1;
         }
+    }
+    for (s, side) in trees {
+        let Some(r) = ring_at(s) else { continue };
+        let (x, _) = rows[side];
+        // 6 to 8 m by a hash of the place, no RNG.
+        let h = 6.0
+            + 2.0
+                * ((s * 7.31 + side as f32 * 3.7 + id.index as f32 * 1.13)
+                    .sin()
+                    .abs());
+        tree(&mut f.posts, r.at(x, CURB), h);
+        f.trees += 1;
     }
     for pair in pole_tops.windows(2) {
         for k in 0..2 {
@@ -364,7 +457,10 @@ impl FurnitureSet {
         }
         let ids: Vec<SegmentId> = graph.segments().map(|(id, _)| id).collect();
         for id in ids {
-            let stamp = segment_fingerprint(graph, geo, id);
+            // The trees are part of the furniture only, not of the road mesh's fingerprint.
+            let trees = graph.segment(id).is_some_and(|s| s.trees);
+            let stamp =
+                segment_fingerprint(graph, geo, id) ^ (u64::from(trees) * 0x9e37_79b9_7f4a_7c15);
             let known = self.pieces.get(&id).map(|e| e.stamp);
             if known == Some(stamp) {
                 continue;
@@ -445,6 +541,18 @@ impl FurnitureSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trees_stand_every_12_m_in_a_chessboard_off_the_lamps() {
+        let m = (END_MARGIN, END_MARGIN);
+        let t = tree_stations(100.0, m);
+        // Both sides together are 12 m apart, the sides alternate.
+        assert!(t.len() >= 7, "{t:?}");
+        assert!(t.windows(2).all(|w| (w[1].0 - w[0].0 - 12.0).abs() < 1e-3));
+        assert!(t.windows(2).all(|w| w[0].1 != w[1].1));
+        assert!(t.iter().all(|&(s, _)| (END_MARGIN..=95.0).contains(&s)));
+        assert!(tree_stations(8.0, m).is_empty());
+    }
 
     #[test]
     fn stations_are_centred_spaced_and_inside_the_margins() {

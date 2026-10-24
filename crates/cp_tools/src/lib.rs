@@ -25,6 +25,7 @@ pub mod plugin;
 pub mod road;
 pub mod snap;
 pub mod transit;
+pub mod trees;
 pub mod under_road;
 pub mod upgrade;
 pub mod utility;
@@ -62,6 +63,7 @@ pub use transit::{
     Click, LineGhostInfo, LineTool, ROAD_PICK_RADIUS, STOP_PICK_RADIUS, Target, line_ghost,
     route_summary,
 };
+pub use trees::{NOT_ON_BRIDGES, NOT_ON_RAILS, TreesPreview, trees_commands, trees_preview};
 pub use under_road::{ConfirmDemolish, UnderRoad, road_click, under_road};
 pub use upgrade::{
     UpgradePreview, piece_preview, upgrade_commands, upgrade_piece, upgrade_preview,

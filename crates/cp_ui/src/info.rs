@@ -356,6 +356,8 @@ mod tests {
             speed_kmh: 40.0,
             load: 0.25,
             load_avg: 0.5,
+            trees: false,
+            trees_upkeep: cp_core::Cost::ZERO,
             line: vec![],
         })
     }

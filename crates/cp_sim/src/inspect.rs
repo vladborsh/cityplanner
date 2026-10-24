@@ -265,6 +265,9 @@ pub struct SegmentInfo {
     /// Current load and the 2-hour average, `0..=1` of the capacity.
     pub load: f32,
     pub load_avg: f32,
+    /// A street-tree row stands along it (T-323) and what it costs a week at the Roads budget.
+    pub trees: bool,
+    pub trees_upkeep: cp_core::Cost,
     /// Centre line, for the highlight.
     pub line: Vec<Vec3>,
 }
@@ -649,6 +652,20 @@ impl SimRunner {
                         .get(id.index as usize)
                         .copied()
                         .unwrap_or(0.0),
+                    trees: s.trees,
+                    trees_upkeep: if s.trees {
+                        let pct = w
+                            .get_resource::<cp_content::Budgets>()
+                            .copied()
+                            .unwrap_or_default()
+                            .get(cp_content::ServiceKind::Roads);
+                        cp_core::Cost::scaled(
+                            db.balance().trees_upkeep_per_m_week,
+                            f64::from(s.length) * cp_content::budget::cost_factor(pct),
+                        )
+                    } else {
+                        cp_core::Cost::ZERO
+                    },
                     line,
                 }))
             }
@@ -880,6 +897,14 @@ impl Inspection {
                 row("Speed limit", format!("{:.0} km/h", s.speed_kmh)),
                 row("Load", format!("{:.0}%", s.load * 100.0)),
                 row("Load (2 h average)", format!("{:.0}%", s.load_avg * 100.0)),
+                row(
+                    "Trees",
+                    if s.trees {
+                        format!("yes · −${:.2}/week", s.trees_upkeep.0 as f64 / 100.0)
+                    } else {
+                        "no".to_string()
+                    },
+                ),
             ],
         }
     }

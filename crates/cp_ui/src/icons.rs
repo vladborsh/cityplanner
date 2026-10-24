@@ -93,6 +93,7 @@ icons! {
     MetroTrack => "metro_track",
     RailTrack => "rail_track",
     FlipRoad => "flip_road",
+    StreetTrees => "street_trees",
     Junctions => "junctions",
     BusStop => "bus_stop",
     Building => "building",

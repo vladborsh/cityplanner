@@ -46,6 +46,8 @@ pub struct RoadTool {
     pub underground: bool,
     /// Points clicked so far in the current drawing.
     pub points: Vec<Vec2>,
+    /// The "With trees" checkbox (T-323, §24.2): the plan plants a row on its ground segments.
+    pub with_trees: bool,
 }
 
 impl RoadTool {
@@ -229,7 +231,10 @@ pub fn chain_commit(
             plan_from_anchors(&req, &anchors_free(&req))
         }
     };
-    Some(plan)
+    Some(BuildPlan {
+        trees: tool.with_trees,
+        ..plan
+    })
 }
 
 /// Where an anchor of a plan stands in the plane: the node, the point of the street, the free

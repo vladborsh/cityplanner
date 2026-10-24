@@ -30,6 +30,7 @@ impl Remembered {
             ActiveTool::Road
             | ActiveTool::Upgrade
             | ActiveTool::Flip
+            | ActiveTool::Trees
             | ActiveTool::Junctions
             | ActiveTool::Zone => Some(Self::Tool(tools.active)),
             ActiveTool::Place => tools.building.def.map(Self::Place),
@@ -168,7 +169,11 @@ fn belongs(c: Category, r: Remembered, content: Option<&ContentDb>) -> bool {
         (Category::Roads, Remembered::Tool(t)) => {
             matches!(
                 t,
-                ActiveTool::Road | ActiveTool::Upgrade | ActiveTool::Flip | ActiveTool::Junctions
+                ActiveTool::Road
+                    | ActiveTool::Upgrade
+                    | ActiveTool::Flip
+                    | ActiveTool::Trees
+                    | ActiveTool::Junctions
             )
         }
         (Category::Zones, Remembered::Tool(t)) => t == ActiveTool::Zone,

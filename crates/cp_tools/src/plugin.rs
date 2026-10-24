@@ -60,6 +60,8 @@ pub enum ActiveTool {
     Line,
     /// Turning a one-way road round (T-091).
     Flip,
+    /// Planting and clearing street trees along a segment (T-323).
+    Trees,
     /// Traffic lights and priority signs at the junctions (T-303): the clicks are on the screen
     /// marks drawn by `cp_ui::junction_marks`.
     Junctions,
@@ -197,6 +199,8 @@ pub struct ToolState {
     pub confirm: Option<crate::ConfirmDemolish>,
     /// What the flip tool would do to the run under the cursor (T-091).
     pub flip_preview: Option<crate::flip::FlipPreview>,
+    /// What the Trees tool would do to the segment under the cursor (T-323).
+    pub trees_preview: Option<crate::trees::TreesPreview>,
     pub zone: ZoneTool,
     pub district: crate::district::DistrictTool,
     /// Cells the district brush would change at the cursor (the highlight).
@@ -301,6 +305,7 @@ impl ToolState {
         self.spans.clear();
         self.upgrade_preview = None;
         self.flip_preview = None;
+        self.trees_preview = None;
         self.ghost_key = None;
         self.zone.cancel();
         self.zone_preview.clear();
@@ -1480,6 +1485,23 @@ pub fn tool_hover(
             });
             state.flip_preview = preview;
         }
+        (ActiveTool::Trees, Some(p)) => {
+            let preview = view.content.as_deref().and_then(|content| {
+                pick_segment(&view.net, p, PICK_RADIUS).map(|seg| {
+                    crate::trees::trees_preview(&view.net, &view.tiles, content, seg, state.shift)
+                })
+            });
+            state.highlight = preview
+                .as_ref()
+                .map(|t| t.shown.clone())
+                .unwrap_or_default();
+            state.highlight_outside = preview.as_ref().is_some_and(|t| {
+                t.errors
+                    .iter()
+                    .any(|e| *e == cp_locale::tr(crate::upgrade::OUTSIDE_LAND))
+            });
+            state.trees_preview = preview;
+        }
         (ActiveTool::Line, Some(p)) => {
             let key = LineGhostKey {
                 hover: (p.x.round() as i32, p.y.round() as i32),
@@ -1549,6 +1571,7 @@ pub fn tool_hover(
             state.spans.clear();
             state.upgrade_preview = None;
             state.flip_preview = None;
+            state.trees_preview = None;
             state.building_highlight = None;
             state.stop_highlight = None;
             if state.active != ActiveTool::Line {
@@ -1669,6 +1692,10 @@ pub fn compute_ghost_alt(
 ) -> Option<Ghost> {
     let cursor = resolve_cursor(view, tool, hover, free)?;
     let (path, plan) = (cursor.path.clone()?, cursor.plan.clone()?);
+    let plan = cp_net::BuildPlan {
+        trees: tool.with_trees,
+        ..plan
+    };
     let content = view.content.as_deref()?;
     let req = tool.request(path.clone())?;
     let half_width = content.road(req.road).width * 0.5;
@@ -1713,7 +1740,24 @@ pub fn compute_ghost_alt(
                 .map(|s| sample_curve(&s.curve, 3.0))
                 .collect();
             ghost.valid = true;
-            ghost.cost = Some(built.cost);
+            // The trees of a "with trees" plan are part of the price (§24.2).
+            let tree_cost = if plan.trees {
+                built
+                    .segments
+                    .iter()
+                    .filter(|s| cp_net::trees_allowed(content.road(built.road), s.elevation))
+                    .map(|s| {
+                        cp_net::segment_cost(
+                            s.curve.arc_table().length(),
+                            content.balance().trees_cost_per_m,
+                        )
+                        .0
+                    })
+                    .sum()
+            } else {
+                0
+            };
+            ghost.cost = Some(Cost(built.cost.0 + tree_cost));
             ghost.warnings = one_way_report(&view.net, content, &built)
                 .iter()
                 .map(|w| cp_locale::tr(&w.to_string()))
@@ -1964,6 +2008,14 @@ pub fn tool_click(
         ActiveTool::Flip => {
             if let Some(preview) = state.flip_preview.take() {
                 for command in crate::flip::flip_commands(&preview) {
+                    outbox.push(command);
+                }
+                state.highlight.clear();
+            }
+        }
+        ActiveTool::Trees => {
+            if let Some(preview) = state.trees_preview.take() {
+                for command in crate::trees::trees_commands(&preview) {
                     outbox.push(command);
                 }
                 state.highlight.clear();
