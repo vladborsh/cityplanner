@@ -1720,13 +1720,28 @@ fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
 
     // Busy houses along the left side, a fire station in their middle.
     let mut grid = cp_building::BuildingGrid::new();
-    for k in 1..10 {
-        front(&v, db, &mut grid, "apt_high_3", id, k as f32 / 10.0, 1.0, 3);
-    }
+    let houses: Vec<_> = [0.1, 0.3, 0.7, 0.9]
+        .into_iter()
+        .map(|t| front(&v, db, &mut grid, "apt_high_3", id, t, 1.0, 3))
+        .collect();
     let station = 0.5;
     front(&v, db, &mut grid, "fire_station", id, station, 1.0, 1);
     let (cars, index) = crate::parked::parked_cars(&v.net, &v.junctions, db, &grid);
-    assert!(cars.len() >= 4, "{} cars by busy houses", cars.len());
+    assert!(cars.len() >= 2, "{} cars by busy houses", cars.len());
+    // §25.1: no place within a place's length of a yard gate.
+    let gates: Vec<f32> = houses
+        .iter()
+        .map(|&h| lateral(&v, id, grid.get(h).unwrap().portals(&v.net).unwrap().drive).1)
+        .collect();
+    for c in &cars {
+        let s = lateral(&v, id, Vec2::new(c.pos.x, c.pos.z)).1;
+        for g in &gates {
+            assert!(
+                (s - g).abs() >= parking::SLOT_LEN - 1e-3,
+                "a car at {s}, a gate at {g}"
+            );
+        }
+    }
     let b = parking::bays(&v.net, &v.junctions, id).unwrap();
     let side = b.sides.iter().find(|s| s.sign > 0.0).unwrap();
     let (lo, hi) = side.range();

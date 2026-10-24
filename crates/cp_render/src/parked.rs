@@ -63,8 +63,8 @@ fn hash(seg: SegmentId, side: usize, slot: usize) -> u64 {
 }
 
 /// What a bay side of a segment sees of its buildings: `(arc length on the trimmed curve,
-/// occupancy, is a service building)`, ascending by arc length.
-type Fronts = Vec<(f32, f32, bool)>;
+/// occupancy, is a service building, arc length of its yard gate)`, ascending by arc length.
+type Fronts = Vec<(f32, f32, bool, Option<f32>)>;
 
 /// The buildings of each (segment, side), by their access point, on the trimmed curves.
 fn fronts(
@@ -89,9 +89,14 @@ fn fronts(
         let left = Vec2::new(tangent.y, -tangent.x);
         let side = if (b.pos - at).dot(left) >= 0.0 { 1 } else { -1 };
         let service = db.building(b.def).service.is_some();
+        // The yard gate (§25.1): cars pull out there, so no place is kept in front of it.
+        let gate = b.portals(graph).map(|p| {
+            let (t, _) = curve.nearest_xz(p.drive);
+            curve.arc_table().t_to_s(t)
+        });
         out.entry((access.segment, side))
             .or_default()
-            .push((s, occupancy(db, b), service));
+            .push((s, occupancy(db, b), service, gate));
     }
     for v in out.values_mut() {
         v.sort_by(|a, c| a.0.total_cmp(&c.0));
@@ -273,14 +278,21 @@ pub fn parked_cars(
                     .collect(),
                 side: *side,
             });
-            let near: &[(f32, f32, bool)] = fronts
+            let near: &[(f32, f32, bool, Option<f32>)] = fronts
                 .get(&(id, side.sign as i8))
                 .map_or(&[], |v| v.as_slice());
             for (slot, s) in bay.slots().into_iter().enumerate() {
                 // In front of a service building's access the place stays free.
                 if near
                     .iter()
-                    .any(|&(fs, _, service)| service && (fs - s).abs() < SLOT_LEN)
+                    .any(|&(fs, _, service, _)| service && (fs - s).abs() < SLOT_LEN)
+                {
+                    continue;
+                }
+                // Nor in front of any yard gate: a gap of a place's length either side (§25.1).
+                if near
+                    .iter()
+                    .any(|&(.., gate)| gate.is_some_and(|g| (g - s).abs() < SLOT_LEN))
                 {
                     continue;
                 }

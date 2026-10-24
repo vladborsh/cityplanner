@@ -830,7 +830,11 @@ impl SimRunner {
                 let buildings = world
                     .get_resource::<BuildingGrid>()
                     .unwrap_or(&no_buildings);
-                let mut frame = agents.frame(pnet.graph(), net, geo, trips, buildings);
+                let no_runs = cp_traffic::ServiceRuns::default();
+                let runs = world
+                    .get_resource::<cp_traffic::ServiceRuns>()
+                    .unwrap_or(&no_runs);
+                let mut frame = agents.frame(pnet.graph(), net, geo, trips, runs, buildings);
                 tint_buses(world, agents, &mut frame);
                 Arc::new(frame)
             }

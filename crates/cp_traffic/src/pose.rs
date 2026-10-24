@@ -8,6 +8,7 @@ use cp_net::{JunctionGeometry, LaneConnection, LaneId, NetGraph};
 
 use crate::agents::{Agents, Pedestrian, Vehicle, access_of};
 use crate::graph::{LaneNode, PathGraph};
+use crate::runs::{RunPoint, ServiceRuns, run_of};
 
 /// Stable key of an agent: arena `index << 32 | generation`. A frame lists its agents in arena
 /// order, which is ascending by key: clients match two frames by merging them (BUG-104: with the
@@ -29,6 +30,9 @@ pub struct VehiclePose {
     /// Colour the vehicle is drawn in, when it has one of its own: the colour of the line of a
     /// bus (`cp_sim` fills it in, T-163). `None` = the kind's colour.
     pub tint: Option<[u8; 3]>,
+    /// The building it pulls out of or into, near either end of its route; a car still
+    /// waiting to pull out stands at progress 0 (§25.2).
+    pub portal: Option<Portal>,
 }
 
 /// An agent near the building it set off from or is heading into (§25.2): the client draws it
@@ -36,9 +40,10 @@ pub struct VehiclePose {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Portal {
     pub building: BuildingId,
-    /// `0` at the portal, `1` where the drawn agent meets the sim position.
+    /// Leaving: `0` at the portal, `1` where the drawn agent meets the sim position. Entering:
+    /// `0` where it leaves the sim position, `1` at the portal.
     pub progress: f32,
-    /// Leaving the building (`progress` grows), else entering it (`progress` grows too).
+    /// Leaving the building, else entering it (`progress` grows either way).
     pub leaving: bool,
 }
 
@@ -316,28 +321,141 @@ fn ped_room(p: &Pedestrian, net: &NetGraph) -> f32 {
     })
 }
 
+/// Metres of the drive at either end of a route that a car spends between its yard and the
+/// street (§25.2).
+pub const PULL_M: f32 = 16.0;
+
+/// Whether the car route end `(lane, s)` is on the lane side of building `b`'s access: the
+/// same segment, within a couple of metres along it (any lane there: a car may have moved to
+/// the lane it needs before pulling out).
+fn at_car_access(
+    b: BuildingId,
+    lane: LaneId,
+    s: f32,
+    graph: &PathGraph,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+) -> bool {
+    let (Some(a), Some(node)) = (
+        buildings.get(b).and_then(|b| access_of(net, b)),
+        graph.car_lane(lane),
+    ) else {
+        return false;
+    };
+    node.segment == a.segment && (node.lane_s(a.s) - s).abs() < 2.0
+}
+
+/// The buildings a vehicle's route starts and ends at: its trip's, or a service run's
+/// `RunPoint::Building` ends.
+fn route_buildings(
+    v: &Vehicle,
+    trips: &TripBook,
+    runs: &ServiceRuns,
+) -> (Option<BuildingId>, Option<BuildingId>) {
+    if let Some(run) = run_of(v) {
+        let at = |p: RunPoint| match p {
+            RunPoint::Building(b) => Some(b),
+            _ => None,
+        };
+        return runs
+            .get(run)
+            .map_or((None, None), |r| (at(r.from), at(r.to)));
+    }
+    trips
+        .get(v.trip)
+        .map_or((None, None), |t| (Some(t.from), Some(t.to)))
+}
+
+/// The yard portal of a vehicle (§25.2): waiting to pull out (progress 0), within [`PULL_M`] of
+/// the start of its first lane or of the goal on its last, when that route end is its
+/// building's access. Parked cars, routes from the map's edge, stops and lane points have none.
+fn car_portal(
+    v: &Vehicle,
+    trips: &TripBook,
+    runs: &ServiceRuns,
+    graph: &PathGraph,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+) -> Option<Portal> {
+    if v.is_parked() || v.in_conn {
+        return None;
+    }
+    let first = v.hop == 0;
+    let last = usize::from(v.hop) == v.path.steps.len();
+    if !v.spawned || first {
+        let from_edge = graph.car_lane(v.path.start).is_none_or(|l| l.from_outside);
+        let gone = (v.s - v.path.start_s).max(0.0);
+        if !from_edge
+            && (!v.spawned || gone < PULL_M)
+            && let (Some(b), _) = route_buildings(v, trips, runs)
+            && at_car_access(b, v.path.start, v.path.start_s, graph, net, buildings)
+        {
+            return Some(Portal {
+                building: b,
+                progress: if v.spawned { gone / PULL_M } else { 0.0 },
+                leaving: true,
+            });
+        }
+    }
+    let left = v.path.goal_s - v.s;
+    if v.spawned
+        && last
+        && left < PULL_M
+        && let (_, Some(b)) = route_buildings(v, trips, runs)
+        && at_car_access(b, v.path.goal, v.path.goal_s, graph, net, buildings)
+    {
+        return Some(Portal {
+            building: b,
+            progress: (1.0 - left.max(0.0) / PULL_M).clamp(0.0, 1.0),
+            leaving: false,
+        });
+    }
+    None
+}
+
+/// Where a car that has not pulled out yet stands for the frame: on its start lane at its start,
+/// facing along it (the client draws it in the yard).
+fn waiting_pose(v: &Vehicle, length: f32, graph: &PathGraph) -> Option<(Vec3, f32)> {
+    let lane = graph.car_lane(v.path.start)?;
+    let s = v.path.start_s.clamp(lane.s_in, lane.s_out) - length * 0.5;
+    let (pos, dir) = lane_point(lane, s);
+    Some((pos, yaw_of(dir)))
+}
+
 impl Agents {
-    /// Poses of every agent that is on the road / walking. `trips` and `buildings` give the
-    /// portals of agents near their building (§25.2).
+    /// Poses of every agent that is on the road / walking, and of the cars waiting in a yard to
+    /// pull out. `trips`, `runs` and `buildings` give the portals of agents near their building
+    /// (§25.2).
+    #[allow(clippy::too_many_arguments)]
     pub fn frame(
         &self,
         graph: &PathGraph,
         net: &NetGraph,
         geo: &JunctionGeometry,
         trips: &TripBook,
+        runs: &ServiceRuns,
         buildings: &BuildingGrid,
     ) -> AgentFrame {
         let vehicles = self
             .vehicles()
             .filter_map(|(id, v)| {
-                let (pos, yaw) = vehicle_pose(v, self.specs().of(v).length, graph, net, geo)?;
+                let length = self.specs().of(v).length;
+                let portal = car_portal(v, trips, runs, graph, net, buildings);
+                let (pos, yaw) = if v.spawned {
+                    vehicle_pose(v, length, graph, net, geo)?
+                } else {
+                    // A waiting car is in the frame only when it has a yard to stand in.
+                    portal?;
+                    waiting_pose(v, length, graph)?
+                };
                 Some(VehiclePose {
                     key: agent_key(id.index, id.generation),
                     kind: v.kind_id(),
                     pos,
                     yaw,
-                    speed: v.speed,
+                    speed: if v.spawned { v.speed } else { 0.0 },
                     tint: None,
+                    portal,
                 })
             })
             .collect();

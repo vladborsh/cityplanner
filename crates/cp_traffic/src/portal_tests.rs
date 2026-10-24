@@ -11,7 +11,9 @@ use cp_net::{JunctionGeometry, NetGraph, SegmentId};
 
 use super::*;
 use crate::tests::{acc, sim};
-use crate::{CROSSING_ROOM_M, PathNetwork, PedestrianPose, Portal, find_ped_path};
+use crate::{
+    CROSSING_ROOM_M, PathNetwork, PedestrianPose, Portal, ServiceRuns, VehiclePose, find_ped_path,
+};
 
 /// A free-standing 1×1 building right of the +x road `seg`, its access at curve `t`.
 fn building(grid: &mut BuildingGrid, seg: SegmentId, t: f32, pos: Vec2) -> BuildingId {
@@ -103,7 +105,14 @@ fn town() -> Town {
 fn pose(t: &Town, p: Pedestrian) -> PedestrianPose {
     let mut agents = Agents::new();
     agents.insert_demo_pedestrian(p);
-    let f = agents.frame(&t.graph, &t.net, &t.geo, &t.trips, &t.buildings);
+    let f = agents.frame(
+        &t.graph,
+        &t.net,
+        &t.geo,
+        &t.trips,
+        &ServiceRuns::default(),
+        &t.buildings,
+    );
     f.pedestrians[0]
 }
 
@@ -135,7 +144,14 @@ fn a_walker_leaves_its_door_and_enters_the_next_within_ten_metres() {
     waiting.started = false;
     let mut agents = Agents::new();
     agents.insert_demo_pedestrian(waiting);
-    let f = agents.frame(&t.graph, &t.net, &t.geo, &t.trips, &t.buildings);
+    let f = agents.frame(
+        &t.graph,
+        &t.net,
+        &t.geo,
+        &t.trips,
+        &ServiceRuns::default(),
+        &t.buildings,
+    );
     assert!(f.pedestrians.is_empty());
 }
 
@@ -270,4 +286,115 @@ fn walking_speeds_spread_by_citizen() {
         ped_speed_factor(Id::new(7, 3)),
         ped_speed_factor(Id::new(7, 3))
     );
+}
+
+fn car(trip: TripId, path: CarPath, hop: u16, s: f32, spawned: bool) -> Vehicle {
+    Vehicle {
+        trip,
+        citizen: Id::new(0, 0),
+        path,
+        kind: 0,
+        hop,
+        in_conn: false,
+        spawned,
+        s,
+        speed: 5.0,
+        stuck_timer: 0,
+        reroute: None,
+    }
+}
+
+fn car_route(t: &Town) -> CarPath {
+    let access = |b: BuildingId| access_of(&t.net, t.buildings.get(b).unwrap()).unwrap();
+    crate::find_car_path(
+        &t.graph,
+        &crate::CongestionMap::default(),
+        &access(t.home),
+        &access(t.work),
+    )
+    .unwrap()
+}
+
+fn car_pose(t: &Town, runs: &ServiceRuns, v: Vehicle) -> Option<VehiclePose> {
+    let mut agents = Agents::new();
+    agents.insert_demo_vehicle(v);
+    let f = agents.frame(&t.graph, &t.net, &t.geo, &t.trips, runs, &t.buildings);
+    f.vehicles.first().copied()
+}
+
+/// §25.5 item 1 (cars): a car waiting to pull out is in the frame at its yard (progress 0), one
+/// 8 m into its first lane is half way out, one 4 m before its goal is 0.75 in, one mid-route has
+/// no yard.
+#[test]
+fn a_car_pulls_out_of_its_yard_and_into_the_next() {
+    let t = town();
+    let path = car_route(&t);
+    let n = path.steps.len() as u16;
+    let runs = ServiceRuns::default();
+    let at = |hop, s, spawned| {
+        car_pose(&t, &runs, car(t.trip, path.clone(), hop, s, spawned)).map(|v| v.portal)
+    };
+    let waiting = car_pose(&t, &runs, car(t.trip, path.clone(), 0, 0.0, false)).unwrap();
+    assert_eq!(
+        waiting.portal,
+        Some(Portal {
+            building: t.home,
+            progress: 0.0,
+            leaving: true
+        })
+    );
+    assert_eq!(waiting.speed, 0.0);
+    let out = at(0, path.start_s + 8.0, true).unwrap().unwrap();
+    assert_eq!((out.building, out.leaving), (t.home, true));
+    assert!((out.progress - 0.5).abs() < 1e-5, "{out:?}");
+    let last_s = path.goal_s - 4.0;
+    let inn = at(n, last_s, true).unwrap().unwrap();
+    assert_eq!((inn.building, inn.leaving), (t.work, false));
+    assert!((inn.progress - 0.75).abs() < 1e-5, "{inn:?}");
+    assert_eq!(at(0, path.start_s + 30.0, true).unwrap(), None);
+    if n > 1 {
+        assert_eq!(at(1, 5.0, true).unwrap(), None);
+    }
+}
+
+/// A run ends at a building's yard only when that end is a building; a waiting car without a
+/// yard (to a stop, or a trip that is gone) stays out of the frame as before.
+#[test]
+fn runs_have_yards_only_at_buildings() {
+    let t = town();
+    let path = car_route(&t);
+    let mut runs = ServiceRuns::default();
+    let run = runs.start(cp_content::VehicleKind::Car, t.home, t.work);
+    let trip = TripId::new(run, crate::SERVICE_GEN);
+    let v = car_pose(
+        &t,
+        &runs,
+        car(trip, path.clone(), 0, path.start_s + 4.0, true),
+    )
+    .unwrap();
+    assert_eq!(
+        v.portal.map(|p| (p.building, p.leaving)),
+        Some((t.home, true))
+    );
+    // An unknown run: no yard; waiting, not drawn.
+    let lost = TripId::new(run + 1, crate::SERVICE_GEN);
+    assert_eq!(
+        car_pose(
+            &t,
+            &runs,
+            car(lost, path.clone(), 0, path.start_s + 4.0, true)
+        )
+        .unwrap()
+        .portal,
+        None
+    );
+    assert_eq!(
+        car_pose(&t, &runs, car(lost, path.clone(), 0, 0.0, false)),
+        None
+    );
+    // A parked car has none.
+    let mut parked = car(t.trip, path, 0, 0.0, true);
+    parked.kind |= KIND_PARKED;
+    let p = car_pose(&t, &runs, parked);
+    assert!(p.is_none_or(|p| p.portal.is_none()));
 }

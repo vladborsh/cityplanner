@@ -24,6 +24,7 @@ fn veh(key: u64, x: f32, yaw: f32) -> VehiclePose {
         yaw,
         speed: 10.0,
         tint: None,
+        portal: None,
     }
 }
 
@@ -462,4 +463,31 @@ fn a_walker_leaving_its_door_faces_the_way_it_is_drawn() {
         "still in the front yard: {:?}",
         i.pos_yaw
     );
+}
+
+/// T-330a: a car still waiting in its yard (portal progress 0) is in the frame but not drawn or
+/// picked until T-330b draws the yard; one already pulling out is.
+#[test]
+fn a_car_waiting_in_its_yard_is_not_drawn_yet() {
+    let yard = |progress: f32| VehiclePose {
+        portal: Some(cp_sim::Portal {
+            building: cp_core::Id::new(1, 0),
+            progress,
+            leaving: true,
+        }),
+        ..veh(1, 0.0, 0.0)
+    };
+    for (progress, shown) in [(0.0, 0), (0.25, 1)] {
+        let cur = [yard(progress)];
+        let mut out = AgentInstances::default();
+        build_vehicles(
+            &cur,
+            &cur,
+            &VehicleLooks::default(),
+            &cull(50.0, 0.5),
+            &mut out,
+        );
+        assert_eq!(out.vehicle_count(), shown, "progress {progress}");
+        assert_eq!(vehicle_positions(&cur, &cur, 0.5).len(), shown);
+    }
 }

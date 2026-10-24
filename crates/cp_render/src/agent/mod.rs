@@ -258,6 +258,12 @@ pub fn pedestrian_position(
     }
 }
 
+/// A car still in its yard, waiting to pull out (portal progress 0): not drawn until the yard
+/// is (T-330b).
+fn in_yard(v: &VehiclePose) -> bool {
+    v.portal.is_some_and(|p| p.leaving && p.progress <= 0.0)
+}
+
 /// Every vehicle `(key, drawn position)` of the snapshot pair at `alpha`.
 pub fn vehicle_positions(
     prev: &[VehiclePose],
@@ -270,7 +276,9 @@ pub fn vehicle_positions(
         cur,
         |v| v.key,
         |c, p| {
-            out.push((c.key, vehicle_position(p, c, alpha)));
+            if !in_yard(c) {
+                out.push((c.key, vehicle_position(p, c, alpha)));
+            }
         },
     );
     out
@@ -314,6 +322,9 @@ pub fn build_vehicles(
         cur,
         |v| v.key,
         |c, p| {
+            if in_yard(c) {
+                return;
+            }
             let (pos, yaw) = match p {
                 Some(p) if p.pos.distance_squared(c.pos) < TELEPORT * TELEPORT => {
                     (p.pos.lerp(c.pos, a), lerp_angle(p.yaw, c.yaw, a))

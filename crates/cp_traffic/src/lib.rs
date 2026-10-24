@@ -33,8 +33,8 @@ pub use graph::{
 pub use heavy::HeavyBan;
 pub use mode::{ALWAYS_WALK_M, TripTimes, mode_by_time, track_trip_times, way_times};
 pub use pose::{
-    AgentFrame, AgentKey, CROSSING_ROOM_M, DOOR_WALK_M, PedestrianPose, Portal, VehiclePose,
-    agent_key,
+    AgentFrame, AgentKey, CROSSING_ROOM_M, DOOR_WALK_M, PULL_M, PedestrianPose, Portal,
+    VehiclePose, agent_key,
 };
 pub use runs::{
     RunError, RunId, RunPoint, RunState, SERVICE_GEN, ServiceRun, ServiceRuns, WALK_KIND,
