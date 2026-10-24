@@ -51,6 +51,17 @@ pub struct IndustryLedger {
     /// The last settled week.
     pub last_exports: Cost,
     pub last_imports: Cost,
+    /// Units sold to and bought from the outside this week per cargo, in [`CargoKind`] order
+    /// (§21.2: the Trade table), and the last settled week's.
+    pub by_cargo: [CargoUnits; 13],
+    pub last_by_cargo: [CargoUnits; 13],
+}
+
+/// Units of one cargo that went out of and came into the city.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CargoUnits {
+    pub export: u32,
+    pub import: u32,
 }
 
 impl IndustryLedger {
@@ -64,9 +75,17 @@ impl IndustryLedger {
         *self = Self {
             last_exports: self.exports,
             last_imports: self.imports,
+            last_by_cargo: self.by_cargo,
             ..Self::default()
         };
         booked
+    }
+
+    /// Counts `export` units of `cargo` out and `import` in (rounded).
+    pub fn count(&mut self, cargo: CargoKind, export: f32, import: f32) {
+        let u = &mut self.by_cargo[cargo as usize];
+        u.export = u.export.saturating_add(export.round().max(0.0) as u32);
+        u.import = u.import.saturating_add(import.round().max(0.0) as u32);
     }
 }
 
@@ -133,6 +152,7 @@ pub struct Via<'w> {
     transit: Res<'w, cp_transit::TransitNet>,
     rail: Res<'w, cp_net::RailReach>,
     hubs: ResMut<'w, CargoHubs>,
+    market: Option<Res<'w, cp_content::Market>>,
 }
 
 /// Unloads the trucks that arrived and sends the loads of this tick's bucket.
@@ -159,8 +179,11 @@ pub fn run_freight(
         transit,
         rail,
         hubs,
+        market,
     } = &mut via;
     let (transit, rail, rng) = (&**transit, &**rail, &**rng);
+    let fallback = cp_content::Market::default();
+    let market = market.as_deref().unwrap_or(&fallback);
     let Some(content) = content else { return };
     let db = &*content.0;
     let bal = db.balance();
@@ -190,10 +213,11 @@ pub fn run_freight(
             }
             Endpoint::Building(_) => {}
             Endpoint::Outside(_) => {
-                let price = db.cargo(a.cargo).map_or(0.0, |c| c.export_price);
+                let price = market.export_price(db, a.cargo, *tick);
                 let pay = Cost::scaled(price, f64::from(a.load));
                 ledger.exports += pay;
                 ledger.export_loads += 1;
+                ledger.count(a.cargo, a.load, 0.0);
                 if let Endpoint::Building(from) = a.from
                     && let Some(area) = buildings.get(from).and_then(|b| area_at(&area_map, b.pos))
                 {
@@ -418,7 +442,7 @@ pub fn run_freight(
                     continue;
                 }
                 if let Some(via) = exit_for(&entries, &sites, b.pos) {
-                    let price = db.cargo(cargo).map_or(0.0, |c| c.import_price);
+                    let price = market.import_price(db, cargo, *tick);
                     let cost = Cost::scaled(price, f64::from(load))
                         + Cost::scaled(bal.import_transport_fee, 1.0);
                     ledger.imports += cost;
@@ -426,6 +450,7 @@ pub fn run_freight(
                         books.book(area.0).imports += cost;
                     }
                     ledger.import_loads += 1;
+                    ledger.count(cargo, 0.0, load);
                     match via {
                         // By rail: ordered at the station, the train brings it (T-216).
                         Endpoint::Building(hub) => {

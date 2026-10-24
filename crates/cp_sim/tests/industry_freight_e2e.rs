@@ -64,6 +64,8 @@ fn town(outside: bool) -> Town {
 fn town_on(db: Arc<ContentDb>, outside: bool) -> Town {
     let mut sim = SimRunner::new(3);
     sim.set_content(Arc::clone(&db));
+    // Content prices: the market (§21) stays at its normal level.
+    sim.world_mut().insert_resource(cp_content::MarketFrozen);
     let meta = MapMeta {
         name: "flat".into(),
         sea_level: 0.0,
@@ -221,9 +223,19 @@ fn logs_reach_the_processor_600_m_away_and_its_input_store_grows() {
     assert!(t.stock(saw, CargoKind::Logs) < 60.0 + 40.0);
 }
 
+/// §21.6 item 2 (T-320a): the market of `cargo` held at `index` % (it stays frozen).
+fn market_at(sim: &mut SimRunner, cargo: CargoKind, index: u16) {
+    sim.world_mut()
+        .resource_mut::<cp_content::Market>()
+        .get_mut(cargo)
+        .index = index;
+}
+
 #[test]
 fn without_a_processor_the_cargo_is_exported_and_paid_for() {
     let mut t = town(true);
+    // T-320a: at a market level of 150 % a load brings exactly 1.5 x the content price.
+    market_at(&mut t.sim, CargoKind::Logs, 150);
     let saw = t.put("forest_extractor_s", 100.0);
     t.staff(saw, 8);
     t.seed(saw, CargoKind::Logs, 40.0);
@@ -235,8 +247,8 @@ fn without_a_processor_the_cargo_is_exported_and_paid_for() {
     }
     let l = *t.sim.world().resource::<IndustryLedger>();
     assert!(l.export_loads > 0, "{l:?}");
-    // 20 units a load at the Logs export price.
-    let price = t.db.cargo(CargoKind::Logs).unwrap().export_price;
+    // 20 units a load at the Logs export price, x1.5.
+    let price = t.db.cargo(CargoKind::Logs).unwrap().export_price * 1.5;
     assert_eq!(
         l.exports,
         Cost::scaled(price, 20.0 * f64::from(l.export_loads))
@@ -294,6 +306,7 @@ fn the_trade_shares_send_loads_abroad_and_order_them_in_past_a_neighbour() {
 #[test]
 fn a_processor_without_a_source_imports_and_pays() {
     let mut t = town(true);
+    market_at(&mut t.sim, CargoKind::Logs, 150);
     let mill = t.put("forest_processor_a", 500.0);
     t.staff(mill, 4);
     for _ in 0..4 * TICKS_PER_DAY {
@@ -305,8 +318,12 @@ fn a_processor_without_a_source_imports_and_pays() {
     }
     let l = *t.sim.world().resource::<IndustryLedger>();
     assert!(l.import_loads > 0, "{l:?}");
-    let price = t.db.cargo(CargoKind::Logs).unwrap().import_price;
-    assert!(l.imports >= Cost::scaled(price, 20.0));
+    // T-320a: 1.5 x the content price a unit at a level of 150 %.
+    let price = t.db.cargo(CargoKind::Logs).unwrap().import_price * 1.5;
+    assert_eq!(
+        l.imports,
+        Cost::scaled(price, 20.0 * f64::from(l.import_loads))
+    );
     assert!(t.stock(mill, CargoKind::Logs) >= 20.0 || t.stock(mill, CargoKind::Planks) > 0.0);
 }
 
@@ -607,6 +624,7 @@ fn the_goods_of_a_factory_reach_a_shop() {
 #[test]
 fn without_shops_the_factorys_goods_are_exported_at_four_times_the_price() {
     let (mut t, f) = factory_town(true);
+    market_at(&mut t.sim, CargoKind::Goods, 150);
     for _ in 0..4 * TICKS_PER_DAY {
         t.sim.tick_once();
         t.staff(f, 10);
@@ -625,7 +643,7 @@ fn without_shops_the_factorys_goods_are_exported_at_four_times_the_price() {
     assert_eq!(
         l.exports,
         Cost::scaled(
-            bal.export_price * bal.factory_export_mul,
+            t.db.cargo(CargoKind::Goods).unwrap().export_price * bal.factory_export_mul * 1.5,
             20.0 * f64::from(l.export_loads)
         )
     );

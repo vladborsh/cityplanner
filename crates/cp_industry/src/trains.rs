@@ -11,7 +11,7 @@
 
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingId};
-use cp_content::{CargoKind, ContentDb, SimContent, VehicleKind};
+use cp_content::{CargoKind, ContentDb, Market, SimContent, VehicleKind};
 use cp_core::time::TICKS_PER_HOUR;
 use cp_core::{Cost, Tick};
 use cp_traffic::{PathNetwork, RunPoint, RunState, ServiceRuns};
@@ -41,11 +41,18 @@ pub fn run_cargo_trains(
     mut runs: ResMut<ServiceRuns>,
     mut agents: ResMut<cp_traffic::Agents>,
     mut ledger: ResMut<IndustryLedger>,
+    market: Option<Res<Market>>,
 ) {
     let Some(content) = content else { return };
     let db = &*content.0;
     let bal = db.balance();
     let now = *tick;
+    let fallback = Market::default();
+    let prices = Prices {
+        db,
+        market: market.as_deref().unwrap_or(&fallback),
+        now,
+    };
 
     // A station that is gone takes its stock (and its train) with it.
     let gone: Vec<_> = hubs
@@ -76,7 +83,7 @@ pub fn run_cargo_trains(
         let ok = working.contains(&id);
         if port {
             ship_cycle(
-                db,
+                prices,
                 hub,
                 id,
                 ok,
@@ -112,7 +119,7 @@ pub fn run_cargo_trains(
                         });
                     }
                     TrainPhase::Dwell { until } if now >= until => {
-                        load_and_pay(db, hub, bal.cargo_train_capacity, &mut ledger);
+                        load_and_pay(prices, hub, bal.cargo_train_capacity, &mut ledger);
                         let out = edge_access(&net).map(|e| e.1);
                         let sent = out.is_some_and(|out| {
                             runs.continue_run_reversed(train.run, RunPoint::Access(out))
@@ -165,7 +172,7 @@ pub fn run_cargo_trains(
         } else {
             // No ride to draw: the exchange happens at once.
             hub.trains += 1;
-            load_and_pay(db, hub, bal.cargo_train_capacity, &mut ledger);
+            load_and_pay(prices, hub, bal.cargo_train_capacity, &mut ledger);
             unload(&buildings, &mut goods, &mut runs, hub, id);
         }
     }
@@ -174,7 +181,7 @@ pub fn run_cargo_trains(
 /// A port's ship: sails in when something waits, stands at the berth and sails out.
 #[allow(clippy::too_many_arguments)]
 fn ship_cycle(
-    db: &ContentDb,
+    prices: Prices,
     hub: &mut Hub,
     id: BuildingId,
     ok: bool,
@@ -185,7 +192,7 @@ fn ship_cycle(
     runs: &mut ServiceRuns,
     ledger: &mut IndustryLedger,
 ) {
-    let bal = db.balance();
+    let bal = prices.db.balance();
     let sail = ticks_of_hours(bal.ship_sail_h);
     let Some(visit) = hub.ship else {
         if ok && now >= hub.next_at && !(hub.out.is_empty() && hub.orders.is_empty()) {
@@ -208,7 +215,7 @@ fn ship_cycle(
             });
         }
         ShipPhase::Docked => {
-            load_and_pay(db, hub, bal.ship_capacity, ledger);
+            load_and_pay(prices, hub, bal.ship_capacity, ledger);
             hub.ship = Some(ShipVisit {
                 phase: ShipPhase::Leaving,
                 until: Tick(now.0 + sail),
@@ -222,15 +229,28 @@ fn ship_cycle(
     }
 }
 
-/// The exports go on board, as many as `capacity` allows, and are paid for.
-fn load_and_pay(db: &ContentDb, hub: &mut Hub, capacity: f32, ledger: &mut IndustryLedger) {
-    let bal = db.balance();
+/// The day's export prices (§21): the market at `now`.
+#[derive(Clone, Copy)]
+struct Prices<'a> {
+    db: &'a ContentDb,
+    market: &'a Market,
+    now: Tick,
+}
+
+impl Prices<'_> {
+    fn export(&self, cargo: CargoKind) -> f32 {
+        self.market.export_price(self.db, cargo, self.now)
+    }
+}
+
+/// The exports go on board, as many as `capacity` allows, and are paid for at the day's price.
+fn load_and_pay(prices: Prices, hub: &mut Hub, capacity: f32, ledger: &mut IndustryLedger) {
     let mut room = capacity;
     let mut left = Vec::new();
     for (cargo, amount) in std::mem::take(&mut hub.out) {
         let take = amount.min(room.max(0.0));
         if take > 0.0 {
-            let price = db.cargo(cargo).map_or(bal.export_price, |c| c.export_price);
+            let price = prices.export(cargo);
             let mut pay = Cost::scaled(price, f64::from(take));
             if cargo == CargoKind::Goods && amount > 0.0 {
                 // The premium of the unique factories' goods goes with its share.
@@ -240,6 +260,7 @@ fn load_and_pay(db: &ContentDb, hub: &mut Hub, capacity: f32, ledger: &mut Indus
             }
             ledger.exports += pay;
             ledger.export_loads += 1;
+            ledger.count(cargo, take, 0.0);
             room -= take;
         }
         if amount - take > 1e-3 {
@@ -281,9 +302,13 @@ mod tests {
     fn the_goods_premium_is_paid_pro_rata_with_the_load_that_goes() {
         let db = ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content"))
             .unwrap();
-        let price = db
-            .cargo(CargoKind::Goods)
-            .map_or(db.balance().export_price, |c| c.export_price);
+        let market = Market::default();
+        let prices = Prices {
+            db: &db,
+            market: &market,
+            now: Tick(0),
+        };
+        let price = prices.export(CargoKind::Goods);
         let mut hub = Hub {
             out: vec![(CargoKind::Goods, 100.0)],
             premium: 300.0,
@@ -291,10 +316,10 @@ mod tests {
         };
         let mut ledger = IndustryLedger::default();
         // A vehicle that takes half: half the load and half the premium (x4 of 50 units).
-        load_and_pay(&db, &mut hub, 50.0, &mut ledger);
+        load_and_pay(prices, &mut hub, 50.0, &mut ledger);
         assert_eq!(ledger.exports, Cost::scaled(price, 200.0));
         assert_eq!(hub.premium, 150.0);
-        load_and_pay(&db, &mut hub, 50.0, &mut ledger);
+        load_and_pay(prices, &mut hub, 50.0, &mut ledger);
         assert_eq!(ledger.exports, Cost::scaled(price, 400.0));
         assert_eq!(hub.premium, 0.0);
     }

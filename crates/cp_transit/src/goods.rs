@@ -173,6 +173,7 @@ pub fn run_goods(
     mut agents: ResMut<Agents>,
     mut arrivals: ResMut<CargoArrivals>,
     transit: Res<crate::model::TransitNet>,
+    market: Option<Res<cp_content::Market>>,
     rail: Res<cp_net::RailReach>,
     mut hubs: ResMut<crate::hubs::CargoHubs>,
 ) {
@@ -181,6 +182,8 @@ pub fn run_goods(
     let db = &*content.0;
     let bal = db.balance();
     let now = *tick;
+    let fallback = cp_content::Market::default();
+    let market = market.as_deref().unwrap_or(&fallback);
 
     // 1. Trucks: arrived (unload), failed or lost (the load is gone).
     let ids: Vec<RunId> = goods.hauls.keys().copied().collect();
@@ -249,7 +252,8 @@ pub fn run_goods(
                             }
                             _ => 1.0,
                         };
-                        ledger.exports += Cost::scaled(bal.export_price * mul, f64::from(h.load));
+                        let price = market.export_price(db, CargoKind::Goods, now);
+                        ledger.exports += Cost::scaled(price * mul, f64::from(h.load));
                         ledger.export_loads += 1;
                     }
                 }

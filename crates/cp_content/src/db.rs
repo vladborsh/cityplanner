@@ -1065,6 +1065,20 @@ impl ContentDb {
                     "finite and >= 0, some weight > 0, step_div >= 1, complain_below, trust_default, move_in_min_index and leave_below <= 100, commute_bad_min > commute_good_min, leave_chance <= 1".to_string(),
                 ));
             }
+            let m = &b.market;
+            if m.knobs().iter().any(|v| !v.is_finite() || *v < 0.0)
+                || m.index_min > m.index_max
+                || m.index_min == 0
+                || m.revert_div < 1
+                || m.event_days.0 > m.event_days.1
+                || m.event_chance > 1.0
+            {
+                errors.push(ContentError::new(
+                    path,
+                    Some("market"),
+                    "finite and >= 0, 0 < index_min <= index_max, revert_div >= 1, event_days min <= max, event_chance <= 1".to_string(),
+                ));
+            }
             let k = &b.corruption;
             if k.knobs().iter().any(|v| !v.is_finite() || *v < 0.0)
                 || [
@@ -1182,6 +1196,13 @@ impl ContentDb {
             if b.contentment != defaults.contentment {
                 fnv1a(&mut hash, b"contentment");
                 for v in b.contentment.knobs() {
+                    fnv1a(&mut hash, &v.to_bits().to_le_bytes());
+                }
+            }
+            // T-320: the same way.
+            if b.market != defaults.market {
+                fnv1a(&mut hash, b"market");
+                for v in b.market.knobs() {
                     fnv1a(&mut hash, &v.to_bits().to_le_bytes());
                 }
             }

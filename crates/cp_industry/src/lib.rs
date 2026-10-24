@@ -17,6 +17,7 @@
 //! every building's storage. Cargo leaves in trucks (T-210, [`freight`]).
 
 pub mod freight;
+pub mod market;
 pub mod trains;
 pub mod warehouse;
 
@@ -331,6 +332,7 @@ fn take_from_lot(
 }
 
 pub use freight::{AreaBook, AreaBooks, IndustryLedger, run_freight};
+pub use market::{MARKET_STREAM, update_market};
 pub use trains::run_cargo_trains;
 pub use warehouse::{
     IndustryCommand, IndustryError, WarehouseMode, WarehouseSetting, WarehouseSettings, apply,

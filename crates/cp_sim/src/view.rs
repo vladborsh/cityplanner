@@ -150,6 +150,8 @@ pub struct SimView {
     pub economy: cp_economy::EconomyState,
     /// The service budgets (§20.2), read-only: the budget tab, the coverage overlay and ghost.
     pub budgets: cp_content::Budgets,
+    /// The intercity market (§21): price levels, events, history.
+    pub market: cp_content::Market,
     /// Service coverage of the roads by kind, for the overlays (T-134). Shared: re-cloned
     /// only when it was recomputed.
     pub service: Arc<cp_service::ServiceCoverage>,
@@ -985,6 +987,7 @@ impl SimRunner {
             uniques: Arc::new(self.unique_statuses()),
             economy: self.world().resource::<cp_economy::EconomyState>().clone(),
             budgets: *self.world().resource::<cp_content::Budgets>(),
+            market: *self.world().resource::<cp_content::Market>(),
             lines: self.line_views(),
             transit_ledger: *self.world().resource::<cp_transit::TransitLedger>(),
             freight: self.freight_view(),

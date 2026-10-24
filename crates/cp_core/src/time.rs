@@ -22,6 +22,32 @@ pub const MOVE_SECONDS_PER_TICK: f32 = 0.4;
 pub const MOVE_SUBSTEPS: u32 = 4;
 pub const DAYS_PER_WEEK: u64 = 7;
 pub const TICKS_PER_WEEK: u64 = TICKS_PER_DAY * DAYS_PER_WEEK;
+/// Days of one season (§21.1): four seasons of a week, a citizen's year of 28 days.
+pub const SEASON_DAYS: u64 = 7;
+
+/// The season of the game calendar (§21.1, T-320): `(day / SEASON_DAYS) % 4`, from spring.
+/// The market's seasonal prices and the tourists (T-321) read it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum Season {
+    Spring = 0,
+    Summer = 1,
+    Autumn = 2,
+    Winter = 3,
+}
+
+impl Season {
+    pub const ALL: [Season; 4] = [
+        Season::Spring,
+        Season::Summer,
+        Season::Autumn,
+        Season::Winter,
+    ];
+}
+
+/// The season `tick` falls in.
+pub fn season(tick: Tick) -> Season {
+    Season::ALL[((tick.0 / TICKS_PER_DAY / SEASON_DAYS) % 4) as usize]
+}
 
 /// Game speed. Which one is active is sim state (a resource set by `SetSpeed`).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -131,5 +157,23 @@ mod tests {
         assert_eq!(t, Tick(1));
         let bytes = postcard::to_stdvec(&Tick(123_456)).unwrap();
         assert_eq!(postcard::from_bytes::<Tick>(&bytes).unwrap(), Tick(123_456));
+    }
+}
+
+#[cfg(test)]
+mod season_tests {
+    use super::*;
+
+    /// §21.6 item 4: the season changes every 7 days, spring to winter and round again.
+    #[test]
+    fn the_season_changes_every_week() {
+        let day = |d: u64| season(Tick(d * TICKS_PER_DAY));
+        assert_eq!(day(0), Season::Spring);
+        assert_eq!(day(6), Season::Spring);
+        assert_eq!(season(Tick(7 * TICKS_PER_DAY - 1)), Season::Spring);
+        assert_eq!(day(7), Season::Summer);
+        assert_eq!(day(14), Season::Autumn);
+        assert_eq!(day(21), Season::Winter);
+        assert_eq!(day(28), Season::Spring);
     }
 }

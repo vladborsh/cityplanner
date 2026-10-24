@@ -153,6 +153,7 @@ impl SimRunner {
         world.init_resource::<cp_transit::Intercity>();
         world.init_resource::<cp_economy::EconomyState>();
         world.init_resource::<cp_content::Budgets>();
+        world.init_resource::<cp_content::Market>();
         world.init_resource::<cp_economy::DistrictIncome>();
         world.init_resource::<cp_economy::MoneyFlow>();
         world.init_resource::<cp_economy::DemolitionRefunds>();
@@ -411,6 +412,8 @@ impl SimRunner {
                 cp_transit::run_riders,
                 // Tourists drive in from the entry highway and out again (T-168).
                 cp_transit::run_tourists,
+                // The market's day: prices drift, shortages and gluts (T-320), before any trade.
+                cp_industry::update_market,
                 // Factories make goods, shops sell them, trucks carry them (T-169).
                 cp_transit::run_goods,
                 // What the chain buildings of the industrial areas make (T-209).

@@ -73,6 +73,19 @@ fn content_trading(export: f32, import: f32) -> Arc<ContentDb> {
         building("Industrial", "factory"),
         building("ComLow", "shop"),
     ]);
+    // T-320a: the goods sell at their cargo price through the market (all cargo or none).
+    let mut cargo: Vec<_> = std::fs::read_dir(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/content/cargo"
+    ))
+    .unwrap()
+    .map(|e| e.unwrap().path())
+    .collect();
+    cargo.sort();
+    for path in cargo {
+        let name = format!("c/{}", path.file_name().unwrap().to_string_lossy());
+        src.push((name, std::fs::read_to_string(path).unwrap()));
+    }
     Arc::new(ContentDb::from_sources(src).unwrap_or_else(|e| panic!("{e}")))
 }
 
@@ -104,6 +117,8 @@ fn town_on(
 ) -> Town {
     let mut sim = SimRunner::new(3);
     sim.set_content(Arc::clone(&db));
+    // Content prices: the market (§21) stays at its normal level.
+    sim.world_mut().insert_resource(cp_content::MarketFrozen);
     let road = db.road_id("street").unwrap();
     let def = db.road(road).clone();
     if outside {
@@ -387,6 +402,12 @@ fn the_export_share_sends_loads_abroad_past_a_shop_in_reach() {
 #[test]
 fn a_factory_with_no_shop_sends_its_trucks_out_and_the_week_report_has_exports() {
     let mut t = town_with(&[], 2, true, true);
+    // T-320a: goods sell at the market's level, 150 % here.
+    t.sim
+        .world_mut()
+        .resource_mut::<cp_content::Market>()
+        .get_mut(cp_content::CargoKind::Goods)
+        .index = 150;
     let mut seen_export = false;
     for _ in 0..4096 * 5 {
         t.sim.tick_once();
@@ -403,8 +424,8 @@ fn a_factory_with_no_shop_sends_its_trucks_out_and_the_week_report_has_exports()
     assert!(seen_export, "a truck set out for the Outside node");
     let ledger = *t.sim.world().resource::<TransitLedger>();
     assert!(ledger.exports > cp_core::Cost::ZERO && ledger.export_loads > 0);
-    // 20 units a load at 10.00 a unit.
-    assert_eq!(ledger.exports.0 % 20_000, 0);
+    // 20 units a load at 10.00 a unit x 1.5.
+    assert_eq!(ledger.exports.0 % 30_000, 0);
     assert!(t.sim.world().resource::<ServiceRuns>().len() <= 1);
     // The week's settlement books it.
     for _ in 0..cp_core::time::TICKS_PER_WEEK {

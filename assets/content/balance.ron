@@ -243,9 +243,8 @@ Balance((
     goods_stock_cap: 100.0,
     goods_truck_load: 20.0,
     freight_radius_m: 1500.0,
-    // Outside trade (T-170) // tune later: money per exported unit; a shop with no factory in
-    // reach imports a truck when its stock is below this.
-    export_price: 10.0,
+    // Outside trade (T-170) // tune later: a shop with no factory in reach imports a truck
+    // when its stock is below this (the goods' price is goods.ron's, through the market, §21).
     goods_import_threshold: 5.0,
     goods_empty_days: 2.0,
     goods_decay: false,
@@ -379,6 +378,31 @@ Balance((
         leave_chance: 0.3,
     ),
 
+    // The intercity market (T-320, §21.1) // tune later: the price level per cargo stays within
+    // index_min..=index_max %, moves (100 - index) / revert_div back a day plus a whole noise of
+    // -noise..=noise; a cargo without an event gets a shortage or glut (even odds) with
+    // event_chance a day for event_days (uniform), at most events_max at once; a shortage pays
+    // exports x shortage_export_mul and makes imports cost x shortage_import_mul, a glut the
+    // glut_* ones; season: price x per season (spring, summer, autumn, winter), others 1.
+    market: (
+        index_min: 60,
+        index_max: 160,
+        revert_div: 16,
+        noise: 4,
+        event_chance: 0.008333334,
+        event_days: (7, 14),
+        events_max: 2,
+        shortage_export_mul: 1.5,
+        glut_export_mul: 0.5,
+        shortage_import_mul: 2.0,
+        glut_import_mul: 0.8,
+        season: [
+            (Crops, (1.0, 0.9, 0.8, 1.2)),
+            (AnimalProducts, (1.0, 0.9, 0.8, 1.2)),
+            (Oil, (1.0, 0.9, 1.0, 1.2)),
+            (Petroleum, (1.0, 0.9, 1.0, 1.2)),
+        ],
+    ),
     // --- Corruption, institutions, trust (T-324, architecture/corruption.md): all // tune later ---
     // Points of 0..100. Trust starts at trust_start and climbs trust_recover_day a day to its
     // ceiling (trust_ceiling_clan on the clan edge, C - I > edge). Corruption falls

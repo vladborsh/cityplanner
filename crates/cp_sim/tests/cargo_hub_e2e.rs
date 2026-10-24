@@ -38,6 +38,8 @@ fn town(outside: bool) -> Town {
     let db = content();
     let mut sim = SimRunner::new(3);
     sim.set_content(Arc::clone(&db));
+    // Content prices: the market (§21) stays at its normal level.
+    sim.world_mut().insert_resource(cp_content::MarketFrozen);
     let meta = MapMeta {
         name: "flat".into(),
         sea_level: 0.0,
@@ -232,6 +234,12 @@ fn exports_go_to_a_station_joined_to_the_railway_and_are_paid_when_the_train_lea
     assert!(at_station, "the export waits at the station");
     assert_eq!(t.ledger().export_loads, 0, "nothing sold before the train");
     let before = t.hub_stock(station);
+    // T-320a: the train pays the day's price, 1.5 x at a level of 150 %.
+    t.sim
+        .world_mut()
+        .resource_mut::<cp_content::Market>()
+        .get_mut(CargoKind::Logs)
+        .index = 150;
     // The train comes every cargo_train_interval_h (12 h).
     for _ in 0..TICKS_PER_DAY {
         t.sim.tick_once();
@@ -241,7 +249,7 @@ fn exports_go_to_a_station_joined_to_the_railway_and_are_paid_when_the_train_lea
     }
     let l = t.ledger();
     assert!(l.export_loads > 0, "{l:?}");
-    let price = t.db.cargo(CargoKind::Logs).unwrap().export_price;
+    let price = t.db.cargo(CargoKind::Logs).unwrap().export_price * 1.5;
     assert!(l.exports >= Cost::scaled(price, f64::from(before)), "{l:?}");
     assert!(t.hub_stock(station) < before);
 }

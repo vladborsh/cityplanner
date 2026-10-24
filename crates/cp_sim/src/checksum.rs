@@ -115,6 +115,7 @@ pub(crate) fn economy_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_economy::EconomyState>());
     // The service budgets (§20.2), a resource of their own since T-319a.
     h.write_serialized(world.resource::<cp_content::Budgets>());
+    h.write_serialized(world.resource::<cp_content::Market>());
     h.write_serialized(world.resource::<cp_building::Demand>());
     h.write_serialized(world.resource::<cp_economy::DemandAcc>());
     h.write_serialized(world.resource::<cp_economy::LandGrids>());

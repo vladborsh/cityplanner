@@ -549,9 +549,8 @@ pub struct Balance {
     pub goods_truck_load: f32,
     /// Metres within which a factory looks for a shop to supply (T-169). // tune later
     pub freight_radius_m: f32,
-    /// Money one unit of exported goods brings, currency units, and the stock below which a shop
-    /// with no factory in reach gets an import truck (T-170). // tune later
-    pub export_price: f32,
+    /// The stock below which a shop with no factory in reach gets an import truck (T-170); the
+    /// goods' price is `goods.ron`'s through the market (§21). // tune later
     pub goods_import_threshold: f32,
     /// Days a shop may stand without stock before `NO_GOODS` (T-169). // tune later
     pub goods_empty_days: f32,
@@ -675,6 +674,8 @@ pub struct Balance {
     pub contentment: ContentmentKnobs,
     /// Corruption, institutions and trust (T-324, `architecture/corruption.md`).
     pub corruption: CorruptionKnobs,
+    /// The intercity market (T-320, §21): price drift, shortages and gluts, seasons.
+    pub market: crate::MarketKnobs,
 }
 
 /// Corruption, institutions and trust (`balance.ron` `corruption`, T-324,
@@ -1143,7 +1144,6 @@ impl Balance {
             self.goods_stock_cap,
             self.goods_truck_load,
             self.freight_radius_m,
-            self.export_price,
             self.goods_import_threshold,
             self.goods_empty_days,
             f32::from(u8::from(self.goods_decay)),
@@ -1335,7 +1335,6 @@ impl Default for Balance {
             goods_stock_cap: 100.0,
             goods_truck_load: 20.0,
             freight_radius_m: 1500.0,
-            export_price: 10.0,
             goods_import_threshold: 5.0,
             goods_empty_days: 2.0,
             goods_decay: false,
@@ -1401,6 +1400,7 @@ impl Default for Balance {
             networks: Networks::default(),
             contentment: ContentmentKnobs::default(),
             corruption: CorruptionKnobs::default(),
+            market: crate::MarketKnobs::default(),
         }
     }
 }
