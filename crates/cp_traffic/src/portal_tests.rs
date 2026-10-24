@@ -256,8 +256,8 @@ fn walking_speeds_spread_by_citizen() {
     let (lo, hi) = secs
         .iter()
         .fold((f32::MAX, f32::MIN), |(lo, hi), &s| (lo.min(s), hi.max(s)));
-    assert!(lo >= 200.0 / 1.61 - 1.0 && lo < 200.0 / 1.58, "{lo}");
-    assert!(hi <= 200.0 / 1.19 + 1.0 && hi > 200.0 / 1.22, "{hi}");
+    assert!((200.0 / 1.61 - 1.0..200.0 / 1.58).contains(&lo), "{lo}");
+    assert!((200.0 / 1.22..=200.0 / 1.19 + 1.0).contains(&hi), "{hi}");
     // Spread, not two clusters: every fifth of the speed range holds 10 % or more.
     let mut bins = [0u32; 5];
     for i in 0..1000u32 {
