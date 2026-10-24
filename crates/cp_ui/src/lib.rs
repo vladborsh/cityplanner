@@ -55,6 +55,7 @@ pub mod specs;
 pub mod style;
 pub mod tile;
 pub mod tiles;
+pub mod trade;
 pub mod transit;
 pub mod tray;
 pub mod windows;

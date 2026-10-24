@@ -283,6 +283,7 @@ pub fn industry_rows(view: &SimView, id: cp_building::BuildingId) -> Vec<(String
     if let Some(t) = problem_text(view.industry.problem_of(id)) {
         out.push((tr("Problem"), tr(t)));
     }
+    out.extend(crate::trade::price_rows(view, id));
     out
 }
 
@@ -326,7 +327,7 @@ pub fn warehouse_controls(
             (
                 WarehouseMode::Fill,
                 "Fill",
-                "Takes cargo in, never gives it out",
+                "Takes cargo in; gives it out only in a shortage",
             ),
             (
                 WarehouseMode::Empty,
@@ -343,6 +344,9 @@ pub fn warehouse_controls(
             }
         }
     });
+    if let Some(hint) = crate::trade::warehouse_hint(view, id) {
+        ui.weak(hint);
+    }
     ui.horizontal_wrapped(|ui| {
         let options = std::iter::once((None, "All cargo".to_string())).chain(
             cp_industry::chain_cargo(db, spec.resource)
@@ -553,6 +557,10 @@ pub fn industry_panel(
     if let Some(db) = view.content.as_deref() {
         chain_panel(ui, view, db, tools, overlay);
     }
+    // §21.3: the Trade table, the same as the Metrics window's.
+    section(ui, &tr("Trade"), |ui| {
+        crate::trade::trade_tray(ui, view, Sizes::TRAY_H - 40.0);
+    });
 }
 
 /// The options strip of the Industry tray: the brush, Off, the list of areas and what is painted.

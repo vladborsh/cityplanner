@@ -592,6 +592,10 @@ pub fn metrics_contents(ui: &mut egui::Ui, view: &SimView) {
             sparkline(ui, values, egui::vec2(240.0, 28.0));
         }
     }
+    // §21.3: the market of every cargo.
+    ui.add_space(4.0);
+    ui.strong(tr("Trade"));
+    crate::trade::trade_contents(ui, view);
 }
 
 /// The window itself, shown while `*open`.

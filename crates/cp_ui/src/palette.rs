@@ -284,6 +284,8 @@ pub fn tabs(category: Category, view: Option<&SimView>) -> Vec<(String, Option<I
                     Some(crate::industry::resource_icon(res)),
                 ));
             }
+            // §21.3: the market of every cargo.
+            out.push((tr("Trade"), Some(Icon::Metrics)));
         }
         Category::Parks => {
             out.push((tr("Areas"), Some(Icon::CategoryParks)));

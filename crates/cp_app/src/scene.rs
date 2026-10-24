@@ -102,6 +102,39 @@ pub fn build_chains(sim: &mut SimRunner) -> usize {
     })
 }
 
+/// The market scene (T-320c): the [`CHAINS`] scene with the market frozen in a state worth a
+/// screenshot: a shortage of Logs, a glut of Crops, Planks and Ore off their price and a month of
+/// history behind them. Open the Trade table with `--open metrics` or the Industry tray.
+pub const MARKET: &str = "market";
+
+/// Builds the [`MARKET`] scene; returns how many buildings stand.
+pub fn build_market(sim: &mut SimRunner) -> usize {
+    use cp_content::{CargoKind, Market, MarketEvent, MarketEventKind, MarketFrozen};
+    let n = build_chains(sim);
+    let w = sim.world_mut();
+    w.insert_resource(MarketFrozen);
+    let mut m = w.resource_mut::<Market>();
+    for day in 0..30u16 {
+        let wave = |amp: f32, period: f32| (amp * (f32::from(day) / period).sin()) as i32;
+        for (cargo, base, amp, period) in [
+            (CargoKind::Planks, 120, 18.0, 5.0),
+            (CargoKind::Ore, 85, 12.0, 4.0),
+            (CargoKind::Logs, 110, 20.0, 6.0),
+            (CargoKind::Crops, 95, 10.0, 3.0),
+        ] {
+            m.get_mut(cargo).index = (base + wave(amp, period)).clamp(60, 160) as u16;
+        }
+        m.record_day();
+    }
+    for (cargo, kind) in [
+        (CargoKind::Logs, MarketEventKind::Shortage),
+        (CargoKind::Crops, MarketEventKind::Glut),
+    ] {
+        m.get_mut(cargo).event = Some(MarketEvent { kind, until_day: 6 });
+    }
+    n
+}
+
 /// Chain trucks scene (T-213b): the four cargo trucks and the goods truck in a row on a straight
 /// street, each parked at its run's end. Look at it with `--cam trucks`.
 pub const TRUCKS: &str = "trucks";

@@ -808,6 +808,9 @@ pub fn build_sim(
     } else if scene == Some(scene::INDUSTRY_BOOKS) {
         let at = scene::build_industry_books(&mut sim);
         info!("scene industry-books: areas at {at:?}");
+    } else if scene == Some(scene::MARKET) {
+        let n = scene::build_market(&mut sim);
+        info!("scene market: {n} buildings");
     } else if scene == Some(scene::CHAINS) {
         let n = scene::build_chains(&mut sim);
         info!("scene chains: {n} buildings");

@@ -386,6 +386,8 @@ pub fn top_bar(root: &mut egui::Ui, view: &SimView, outbox: &mut CommandOutbox) 
                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
             );
             centre.label(format_time(view));
+            // §21.3: the season by the date.
+            crate::trade::season_icon(&mut centre, view.tick, Sizes::TOP_BAR_ICON * 0.7);
             for (speed, label) in SPEEDS {
                 let r = crate::icons::speed_icon(speed)
                     .button(
