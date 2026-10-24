@@ -318,11 +318,13 @@ fn a_processor_without_a_source_imports_and_pays() {
     }
     let l = *t.sim.world().resource::<IndustryLedger>();
     assert!(l.import_loads > 0, "{l:?}");
-    // T-320a: 1.5 x the content price a unit at a level of 150 %.
+    // T-320a: 1.5 x the content price a unit at a level of 150 %, plus the T-316 truck fee.
     let price = t.db.cargo(CargoKind::Logs).unwrap().import_price * 1.5;
+    let fee = t.db.balance().import_transport_fee;
     assert_eq!(
         l.imports,
         Cost::scaled(price, 20.0 * f64::from(l.import_loads))
+            + Cost::scaled(fee, f64::from(l.import_loads))
     );
     assert!(t.stock(mill, CargoKind::Logs) >= 20.0 || t.stock(mill, CargoKind::Planks) > 0.0);
 }
@@ -391,11 +393,13 @@ fn a_shortage_fails_imports_doubles_their_price_and_a_stocked_warehouse_rides_it
         short_days > normal_days,
         "NoInput {short_days} > {normal_days}"
     );
-    // The orders that went through cost twice the content price.
+    // The orders that went through cost twice the content price (and the T-316 truck fee).
     let price = t.db.cargo(CargoKind::Logs).unwrap().import_price * 2.0;
+    let fee = t.db.balance().import_transport_fee;
     assert_eq!(
         short.imports,
         Cost::scaled(price, 20.0 * f64::from(short.import_loads))
+            + Cost::scaled(fee, f64::from(short.import_loads))
     );
     // A shortage pays exports x1.5.
     let m = *t.sim.world().resource::<cp_content::Market>();
