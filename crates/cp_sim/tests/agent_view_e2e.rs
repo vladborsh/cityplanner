@@ -203,7 +203,8 @@ fn pedestrians_are_drawn_smoothly_over_uneven_frames() {
                     moved += 1;
                 }
                 assert!(
-                    d <= cp_traffic::PED_STEP * dtime.max(0.0) * 1.02 + 1e-3,
+                    // The fastest walker steps 1.15 × `PED_STEP` (§25.3).
+                    d <= cp_traffic::PED_STEP * 1.15 * dtime.max(0.0) * 1.02 + 1e-3,
                     "frame {frame}: pedestrian {} jumped {d} m in {dtime} ticks",
                     p.key
                 );

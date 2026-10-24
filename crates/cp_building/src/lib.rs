@@ -11,6 +11,7 @@ pub mod level;
 pub mod model;
 pub mod park;
 pub mod park_site;
+pub mod portal;
 pub mod respec;
 pub mod spawn;
 pub mod under_road;
@@ -45,6 +46,7 @@ pub use model::{
 };
 pub use park::{GREEN_SICK_CUT, ParkSite, green_at, park_sites, sick_chance};
 pub use park_site::{ParkWorld, validate_park_site};
+pub use portal::{DOOR_INSET_M, Portals, portals_towards};
 pub use respec::{SPEC_STREAM, respec};
 pub use spawn::{
     BLOCK_BUCKETS, DEMAND_PERIOD, Demand, SPAWN_STREAM, pick_def, place, spawnable, unfit_cells,

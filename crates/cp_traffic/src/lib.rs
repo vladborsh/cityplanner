@@ -19,9 +19,9 @@ pub use agents::{
     AgentSettings, AgentStats, Agents, EntryTraffic, KIND_KEEP, KIND_MASK, KIND_PARKED,
     KIND_TRAFFIC_REROUTE, MIN_VISIBLE_SHARE, PED_CHUNK, PED_STEP, Pedestrian, PedestrianId,
     REROUTE_CAP, REROUTE_GAIN, REROUTE_MIN_M, REROUTE_PERIOD, SegmentLoad, Vehicle, VehicleId,
-    VisibleShare, crossing_of, lane_delay_now, move_agents, purge_departed_citizens,
-    purge_removed_buildings, receive_paths, reroute_by_traffic, route_trips, update_traffic_load,
-    update_visible_share,
+    VisibleShare, crossing_of, lane_delay_now, move_agents, ped_speed_factor,
+    purge_departed_citizens, purge_removed_buildings, receive_paths, reroute_by_traffic,
+    route_trips, update_traffic_load, update_visible_share,
 };
 pub use astar::{
     CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_class_path,
@@ -32,7 +32,10 @@ pub use graph::{
 };
 pub use heavy::HeavyBan;
 pub use mode::{ALWAYS_WALK_M, TripTimes, mode_by_time, track_trip_times, way_times};
-pub use pose::{AgentFrame, AgentKey, PedestrianPose, VehiclePose, agent_key};
+pub use pose::{
+    AgentFrame, AgentKey, CROSSING_ROOM_M, DOOR_WALK_M, PedestrianPose, Portal, VehiclePose,
+    agent_key,
+};
 pub use runs::{
     RunError, RunId, RunPoint, RunState, SERVICE_GEN, ServiceRun, ServiceRuns, WALK_KIND,
     advance_service_runs, is_rail_kind, receive_service_paths, route_service_runs, run_of,

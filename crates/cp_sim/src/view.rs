@@ -11,6 +11,7 @@ use std::sync::Arc;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use cp_building::BuildingGrid;
+use cp_citizen::TripBook;
 use cp_content::{ContentDb, SimContent};
 use cp_core::{CommandLog, CommandQueue, GameTime, SimSpeed, Tick};
 use cp_net::{JunctionGeometry, NetGraph};
@@ -824,7 +825,12 @@ impl SimRunner {
             world.get_resource::<JunctionGeometry>(),
         ) {
             (Some(agents), Some(pnet), Some(net), Some(geo)) => {
-                let mut frame = agents.frame(pnet.graph(), net, geo);
+                let (no_trips, no_buildings) = (TripBook::default(), BuildingGrid::default());
+                let trips = world.get_resource::<TripBook>().unwrap_or(&no_trips);
+                let buildings = world
+                    .get_resource::<BuildingGrid>()
+                    .unwrap_or(&no_buildings);
+                let mut frame = agents.frame(pnet.graph(), net, geo, trips, buildings);
                 tint_buses(world, agents, &mut frame);
                 Arc::new(frame)
             }

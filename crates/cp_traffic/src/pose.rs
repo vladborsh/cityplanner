@@ -2,9 +2,11 @@
 //! built from `Agents` after a tick; interpolation between two snapshots is the client's job.
 
 use bevy_math::{Vec2, Vec3};
+use cp_building::{BuildingGrid, BuildingId};
+use cp_citizen::TripBook;
 use cp_net::{JunctionGeometry, LaneConnection, LaneId, NetGraph};
 
-use crate::agents::{Agents, Vehicle};
+use crate::agents::{Agents, Pedestrian, Vehicle, access_of};
 use crate::graph::{LaneNode, PathGraph};
 
 /// Stable key of an agent: arena `index << 32 | generation`. A frame lists its agents in arena
@@ -29,11 +31,37 @@ pub struct VehiclePose {
     pub tint: Option<[u8; 3]>,
 }
 
+/// An agent near the building it set off from or is heading into (§25.2): the client draws it
+/// on its way between the building's portal and the sim position.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Portal {
+    pub building: BuildingId,
+    /// `0` at the portal, `1` where the drawn agent meets the sim position.
+    pub progress: f32,
+    /// Leaving the building (`progress` grows), else entering it (`progress` grows too).
+    pub leaving: bool,
+}
+
+/// Metres of the walk at either end of a route that a pedestrian spends on the way between
+/// the door and the sidewalk (§25.2).
+pub const DOOR_WALK_M: f32 = 10.0;
+
+/// Free half-width a pedestrian may stray from its lane's centre line on a crossing or corner,
+/// metres (§25.2).
+pub const CROSSING_ROOM_M: f32 = 0.3;
+
+/// Width of a sidewalk kept clear of the drawn spread, metres: half a body at either edge.
+const SIDEWALK_MARGIN_M: f32 = 1.2;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PedestrianPose {
     pub key: AgentKey,
     /// Position on the ground plane (x, z).
     pub pos: Vec2,
+    /// The door it walks out of or into, near either end of its route.
+    pub portal: Option<Portal>,
+    /// How far either side of the lane's centre line it may be drawn, metres.
+    pub room: f32,
 }
 
 /// Poses of all live agents after one tick, each list ascending by `key`.
@@ -193,9 +221,112 @@ pub(crate) fn point_behind(
     Some(lane_point(lane, v.s - back))
 }
 
+/// Whether the walking route end `(lane, s)` is the sidewalk point of building `b`'s access.
+fn at_access(
+    b: BuildingId,
+    lane: LaneId,
+    s: f32,
+    graph: &PathGraph,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+) -> bool {
+    buildings
+        .get(b)
+        .and_then(|b| access_of(net, b))
+        .and_then(|a| graph.resolve_ped(&a))
+        .and_then(|(slot, at)| Some((graph.ped.get(slot as usize)?.as_ref()?.id, at)))
+        .is_some_and(|(l, at)| l == lane && (at - s).abs() < 1e-2)
+}
+
+/// The door portal of a pedestrian within [`DOOR_WALK_M`] of the start of its first leg or the
+/// end of its last, when that route end is the access of its trip's building (a walk to or
+/// from a stop has no door at the stop end).
+fn ped_portal(
+    p: &Pedestrian,
+    trips: &TripBook,
+    graph: &PathGraph,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+) -> Option<Portal> {
+    if !p.started {
+        return None;
+    }
+    let n = p.route.states.len();
+    let first = p.leg == 0;
+    let last = p.leg as usize == n;
+    if !first && !last {
+        return None;
+    }
+    // A leg that is both first and last splits between its two doors; a short end leg ends
+    // its door walk where it ends.
+    let window = if first && last {
+        DOOR_WALK_M.min(p.leg_len * 0.5)
+    } else {
+        DOOR_WALK_M.min(p.leg_len)
+    };
+    if window <= 1e-3 {
+        return None;
+    }
+    let left = p.leg_len - p.s;
+    let trip = trips.get(p.trip)?;
+    if first
+        && p.s < window
+        && (!last || p.s <= left)
+        && at_access(
+            trip.from,
+            p.route.start,
+            p.route.start_s,
+            graph,
+            net,
+            buildings,
+        )
+    {
+        return Some(Portal {
+            building: trip.from,
+            progress: p.s / window,
+            leaving: true,
+        });
+    }
+    if last
+        && left < window
+        && at_access(trip.to, p.route.goal, p.route.goal_s, graph, net, buildings)
+    {
+        return Some(Portal {
+            building: trip.to,
+            progress: 1.0 - left / window,
+            leaving: false,
+        });
+    }
+    None
+}
+
+/// Half the free width of the pedestrian's current leg: of its sidewalk less a margin, or
+/// [`CROSSING_ROOM_M`] on a crossing or corner.
+fn ped_room(p: &Pedestrian, net: &NetGraph) -> f32 {
+    let (i, states) = (p.leg as usize, &p.route.states);
+    let lane = if i == 0 {
+        Some(p.route.start)
+    } else if i >= states.len() {
+        Some(p.route.goal)
+    } else {
+        (states[i - 1].0 == states[i].0).then_some(states[i].0)
+    };
+    lane.and_then(|l| net.lane(l)).map_or(CROSSING_ROOM_M, |l| {
+        ((l.width - SIDEWALK_MARGIN_M) * 0.5).max(0.0)
+    })
+}
+
 impl Agents {
-    /// Poses of every agent that is on the road / walking.
-    pub fn frame(&self, graph: &PathGraph, net: &NetGraph, geo: &JunctionGeometry) -> AgentFrame {
+    /// Poses of every agent that is on the road / walking. `trips` and `buildings` give the
+    /// portals of agents near their building (§25.2).
+    pub fn frame(
+        &self,
+        graph: &PathGraph,
+        net: &NetGraph,
+        geo: &JunctionGeometry,
+        trips: &TripBook,
+        buildings: &BuildingGrid,
+    ) -> AgentFrame {
         let vehicles = self
             .vehicles()
             .filter_map(|(id, v)| {
@@ -218,6 +349,8 @@ impl Agents {
             .map(|(id, p)| PedestrianPose {
                 key: agent_key(id.index, id.generation),
                 pos: p.pos,
+                portal: ped_portal(p, trips, graph, net, buildings),
+                room: ped_room(p, net),
             })
             .collect();
         AgentFrame {

@@ -207,6 +207,8 @@ mod tests {
         PedestrianPose {
             key,
             pos: Vec2::new(x, z),
+            portal: None,
+            room: 0.0,
         }
     }
 

@@ -62,6 +62,15 @@ pub type VehicleId = Id<Vehicle>;
 
 /// Metres a pedestrian walks per tick (1.4 m/s on the movement clock).
 pub const PED_STEP: f32 = PED_SPEED * MOVE_SECONDS_PER_TICK;
+
+/// How much faster or slower than [`PED_SPEED`] a citizen walks: `0.85 + 0.3 × unit(hash)` of
+/// the citizen's index, 1.19–1.61 m/s (§25.3). A hash, not a draw: nothing is saved and the
+/// estimates stay on the mean.
+pub fn ped_speed_factor(citizen: CitizenId) -> f32 {
+    /// Salt of the walking-speed hash.
+    const SALT: u64 = 0x7065_6473_7065_6564;
+    0.85 + 0.3 * cp_core::rng::hash_unit([0; 32], u64::from(citizen.index), SALT)
+}
 /// Pedestrians per parallel chunk (fixed, so results never depend on the thread count).
 pub const PED_CHUNK: usize = 256;
 
@@ -1290,7 +1299,7 @@ enum Step {
 
 /// One tick of walking for one pedestrian.
 fn step_pedestrian(p: &mut Pedestrian, ctx: &Ctx) -> Step {
-    let mut budget = PED_STEP;
+    let mut budget = PED_STEP * ped_speed_factor(p.citizen);
     loop {
         let leg = match p.cache.0 {
             Some((g, i, leg)) if g == ctx.generation && i == p.leg => leg,
@@ -1813,3 +1822,7 @@ mod visible_tests {
         assert_eq!(v.share, MIN_VISIBLE_SHARE);
     }
 }
+
+#[cfg(test)]
+#[path = "portal_tests.rs"]
+mod portal_tests;

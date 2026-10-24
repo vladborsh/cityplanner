@@ -31,6 +31,8 @@ fn ped(key: u64, x: f32) -> PedestrianPose {
     PedestrianPose {
         key,
         pos: Vec2::new(x, 5.0),
+        portal: None,
+        room: 0.0,
     }
 }
 
