@@ -417,7 +417,7 @@ fn the_owner_walks_to_the_parked_car_before_driving_home() {
     assert!(fetching, "the trip starts with a walk to the car");
     let agents = sim.world().resource::<Agents>();
     assert!(
-        agents.stats.walked >= walked + 1,
+        agents.stats.walked > walked,
         "the walk to the car was walked"
     );
     // The car left the street spot and parks again at home.

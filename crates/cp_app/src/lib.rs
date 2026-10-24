@@ -519,7 +519,7 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             Vec3::new(c + 38.0, 1.8, c),
         ),
         // The low-density homes with their gardens (`--scene gardens`).
-        "gardens" => (
+        "gardens" | "parked" => (
             Vec3::new(c - 30.0, 14.0, c + 55.0),
             Vec3::new(c - 30.0, 2.0, c),
         ),
@@ -843,6 +843,9 @@ pub fn build_sim(
     } else if scene == Some(scene::GARDENS) {
         let n = scene::build_gardens(&mut sim, 14);
         info!("scene gardens: {n} buildings");
+    } else if scene == Some(scene::PARKED) {
+        let n = scene::build_parked(&mut sim, 14);
+        info!("scene parked: {n} buildings");
     } else if scene == Some(scene::CONSTRUCTION) {
         let n = scene::build_construction(&mut sim, "apt_high_2");
         info!("scene construction: {n} buildings");

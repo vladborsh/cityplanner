@@ -630,6 +630,69 @@ pub fn build_gardens(sim: &mut SimRunner, homes: usize) -> usize {
     sim.world().resource::<BuildingGrid>().len()
 }
 
+/// Parked cars scene (T-331b2): the [`GARDENS`] street with the cars of its residents standing in
+/// the yards and along the kerb, put into `Agents::parked` through the parking index as the sim
+/// would. Look at it with `--cam gardens` (or `gardens-close`).
+pub const PARKED: &str = "parked";
+
+/// Builds the [`PARKED`] scene: a car in every yard place of each home, the kerb places of the
+/// street filled to about two thirds.
+pub fn build_parked(sim: &mut SimRunner, homes: usize) -> usize {
+    use cp_building::BuildingGrid;
+    use cp_citizen::ParkPlace;
+    use cp_traffic::{Agents, ParkedCar, ParkingIndex};
+    let n = build_gardens(sim, homes);
+    // The index is built on the next Agents phase.
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::X1);
+    sim.tick_once();
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+    let mut places: Vec<ParkPlace> = Vec::new();
+    {
+        let ids: Vec<_> = sim
+            .world()
+            .resource::<BuildingGrid>()
+            .iter()
+            .map(|(id, _)| id)
+            .collect();
+        let mut index = sim.world_mut().resource_mut::<ParkingIndex>();
+        for id in ids {
+            while let Some(p) = index.take_building(id) {
+                places.push(p);
+            }
+        }
+        let segs: Vec<_> = sim
+            .world()
+            .resource::<cp_net::NetGraph>()
+            .segments()
+            .map(|(id, _)| id)
+            .collect();
+        let mut index = sim.world_mut().resource_mut::<ParkingIndex>();
+        for seg in segs {
+            for side in 0..2 {
+                let cap = index.kerb(seg, side).cap;
+                for _ in 0..(cap * 2 / 3) {
+                    if let Some(p) = index.take_kerb(seg, side) {
+                        places.push(p);
+                    }
+                }
+            }
+        }
+    }
+    let mut agents = sim.world_mut().resource_mut::<Agents>();
+    for (k, place) in places.iter().enumerate() {
+        agents.parked.park(
+            cp_citizen::CitizenId::new(k as u32, 0),
+            ParkedCar {
+                place: *place,
+                since: cp_core::Tick(0),
+            },
+        );
+    }
+    n
+}
+
 /// Street scene (T-233): a straight avenue and a local street with homes between them, to see
 /// the lamps and utility poles. Look at it with `--cam lamps` (add `--hour 22 --day-night` for
 /// the night).
