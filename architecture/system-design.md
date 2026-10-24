@@ -1578,6 +1578,13 @@ pub struct HomeSlot { generation: u32, pub index: u8, pub complaints: [Complaint
 - Советник: `complaint_advice` — главная жалоба города, если её называют не меньше `MIN_BUILDINGS` домов и `MIN_SHARE_PERCENT` от всех домов; `Warn`, выдержка/кулдаун — общие правила BUG-115; ид `complaint_<code>`, действие — как у строки инспектора.
 - Тесты: `contentment_e2e::the_inspector_shows_a_homes_happiness_and_its_residents_thoughts` (п. 7), `cp_ui::happiness` (у каждой жалобы есть действие и оба ключа в en/ru; полосы настроения), `advisor::the_main_complaint_is_advice_once_enough_homes_share_it`, `overlay::tests::the_happiness_layer_tints_the_scored_homes_by_their_index`.
 
+**Как сделано (T-318d, 2026-10-24).**
+- Чистая часть — `cp_render::thought`: `glyph_of` (11 глифов; для жалоб с иконкой проблемы — `None`), `thought_of` (первая жалоба дома с глифом — у дома без воды облачко про парк), `hour_hash` (FNV-1a индекса дома и игрового часа), `pick_thoughts` (дома ниже `complain_below` в кадре, по хешу, не больше `THOUGHTS_MAX` = 24), `thought_mesh` (облако из трёх долей с ободком и двумя точками к крыше, глиф из выпуклых многоугольников; покачивание, `LIFE_S` = 6 с, волна за `WAVE_S` = 1,5 с).
+- Bevy — `cp_render::thought_render::ThoughtPlugin` (после `EventFxSet`): раз в игровой час выбор по домам в кадре (до 800 м, в конусе камеры); дом, над которым ждёт или висит смайлик T-287 (`MoodFx::has`), не берётся, а уже показанное облачко на время смайлика прячется. `ShownThoughts` — центры и радиусы показанных облачков: `cp_tools::tool_pick` сначала проверяет луч курсора через них и выбирает дом.
+- Облачко выбранного гражданина: `cp_tools::selected_thought` кладёт в `SelectedThought` позицию выбранного пешехода и `CitizenInfo.thinks`; болезнь (иконки над пешеходом нет) — крест. Только пешеход: у выбранной машины в инспекции водителя нет `thinks` — не делалось.
+- `--thought-demo AGE` (desktop): облачки часа сразу, над любым домом с жалобой (молодой город стоит около черты 50), время держится на `AGE`.
+- Тесты: `thought::tests` (набор часа детерминирован, другой в следующий час, ≤ 24, только несчастные в кадре; нет облачка для жалоб с иконкой; жизнь облачка), `cp_tools::plugin::thought_pick_tests` (луч через облачко выбирает дом, ближнее побеждает).
+
 ### 19.8 Задачи (по одной — дев берёт целиком)
 
 | Id | Что | Крейты | Тест | Оценка |

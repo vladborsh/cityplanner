@@ -48,6 +48,9 @@ pub struct Options {
     /// `--mood-demo elementary_school,0.3`: the houses' emoji wave of that building as if it had
     /// just opened, held 0.3 s in (T-287 shots).
     pub mood_demo: Option<cp_render::MoodDemo>,
+    /// `--thought-demo 2.0`: the hour's thought bubbles over the unhappy homes in view start at
+    /// once and are held 2 s in (T-318d shots; `--scene town:N`).
+    pub thought_demo: Option<f32>,
     /// `--dust-demo 0.4`: the dust the scene leaves (`--scene school`, `--scene dust`), held
     /// 0.4 s in (T-288 shots).
     pub dust_demo: Option<f32>,
@@ -152,6 +155,7 @@ impl Options {
             }),
             utility_demo: value("--utility-demo").and_then(|v| cp_tools::UtilityDemo::parse(&v)),
             mood_demo: value("--mood-demo").and_then(|v| cp_render::MoodDemo::parse(&v)),
+            thought_demo: value("--thought-demo").and_then(|v| v.parse().ok()),
             dust_demo: value("--dust-demo").and_then(|v| v.parse().ok()),
             place_demo: value("--place-demo").and_then(|v| {
                 let mut it = v.split(',');
@@ -582,6 +586,9 @@ pub fn run(opts: Options) -> AppExit {
     }
     if let Some(demo) = opts.mood_demo {
         app.insert_resource(demo);
+    }
+    if let Some(age) = opts.thought_demo {
+        app.insert_resource(cp_render::ThoughtDemo { age });
     }
     if let Some(age) = opts.dust_demo {
         app.insert_resource(cp_render::DustDemo { age, puffs: None });

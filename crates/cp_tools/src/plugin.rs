@@ -1174,7 +1174,9 @@ impl Plugin for ToolsPlugin {
             .init_resource::<crate::Inspected>()
             .add_systems(
                 Update,
-                (tool_pick, draw_selection).chain().after(tool_hover),
+                (tool_pick, draw_selection, selected_thought)
+                    .chain()
+                    .after(tool_hover),
             )
             .add_systems(
                 Update,
@@ -2365,6 +2367,7 @@ fn tool_pick(
     fraction: Option<Res<cp_render::TickFraction>>,
     camera: Query<&GlobalTransform, With<RtsCamera>>,
     overlay: Res<cp_render::OverlayState>,
+    thoughts: Option<Res<cp_render::ShownThoughts>>,
     mut picked: ResMut<crate::Picked>,
 ) {
     if state.active != ActiveTool::None {
@@ -2386,7 +2389,64 @@ fn tool_pick(
     let height = cam.translation().y - ground;
     let alpha = view.agents.blend(fraction.map_or(1.0, |f| f.0));
     let lines = overlay.active == cp_render::Overlay::Transit;
+    // A thought bubble over a roof stands for its home (T-318d).
+    if let (Some(t), Some(ray)) = (thoughts, state.cursor_ray)
+        && let Some(home) = bubble_under(&t.0, ray)
+    {
+        picked.0 = Some(cp_sim::Selection::Building(home));
+        return;
+    }
     picked.0 = crate::pick::pick_with_ray(&view, alpha, p, height, lines, state.cursor_ray);
+}
+
+/// The nearest bubble the ray `(origin, direction)` passes through, by its home.
+fn bubble_under(
+    bubbles: &[(cp_building::BuildingId, Vec3, f32)],
+    (origin, dir): (Vec3, Vec3),
+) -> Option<cp_building::BuildingId> {
+    let dir = dir.normalize_or_zero();
+    bubbles
+        .iter()
+        .filter_map(|&(id, c, r)| {
+            let t = (c - origin).dot(dir);
+            (t > 0.0 && (origin + dir * t).distance(c) <= r).then_some((t, id))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, id)| id)
+}
+
+/// The selected walker's thought over them (T-318d): what [`cp_sim::CitizenInfo::thinks`] says,
+/// at the pedestrian's drawn position. Nothing for any other selection.
+fn selected_thought(
+    picked: Res<crate::Picked>,
+    inspected: Res<crate::Inspected>,
+    view: Option<Res<SimView>>,
+    fraction: Option<Res<cp_render::TickFraction>>,
+    thought: Option<ResMut<cp_render::SelectedThought>>,
+) {
+    let Some(mut thought) = thought else { return };
+    let next = (|| {
+        let view = view.as_deref()?;
+        let cp_sim::Selection::Pedestrian(key) = picked.0? else {
+            return None;
+        };
+        let cp_sim::Inspection::Citizen(c) = inspected.0.as_ref()? else {
+            return None;
+        };
+        let alpha = view.agents.blend(fraction.map_or(1.0, |f| f.0));
+        let (_, p) = cp_render::agent::pedestrian_positions(
+            &view.agents.prev.pedestrians,
+            &view.agents.cur.pedestrians,
+            alpha,
+        )
+        .into_iter()
+        .find(|(k, _)| *k == key)?;
+        let y = view.terrain.as_deref().map_or(0.0, |t| t.height(p));
+        Some((Vec3::new(p.x, y + 2.0, p.y), c.thinks?))
+    })();
+    if thought.0 != next {
+        thought.0 = next;
+    }
 }
 
 /// Outlines the selection: a building's lot, a citizen's home and workplace (or the pedestrian
@@ -2628,5 +2688,30 @@ mod coverage_site_tests {
         );
         state.select(ActiveTool::None);
         assert!(emit_site(&view, &state).is_none());
+    }
+}
+
+#[cfg(test)]
+mod thought_pick_tests {
+    use super::*;
+
+    /// T-318d: a click through a bubble picks its home; the nearer bubble wins; a miss is none.
+    #[test]
+    fn a_ray_through_a_bubble_picks_its_home() {
+        let (a, b) = (
+            cp_building::BuildingId::new(1, 0),
+            cp_building::BuildingId::new(2, 0),
+        );
+        let bubbles = [
+            (a, Vec3::new(0.0, 10.0, -50.0), 2.0),
+            (b, Vec3::new(0.0, 10.0, -20.0), 2.0),
+        ];
+        let ray = (Vec3::new(0.0, 10.0, 0.0), Vec3::NEG_Z);
+        assert_eq!(bubble_under(&bubbles, ray), Some(b));
+        assert_eq!(bubble_under(&bubbles[..1], ray), Some(a));
+        let miss = (Vec3::new(5.0, 10.0, 0.0), Vec3::NEG_Z);
+        assert_eq!(bubble_under(&bubbles, miss), None);
+        let behind = (Vec3::new(0.0, 10.0, -100.0), Vec3::NEG_Z);
+        assert_eq!(bubble_under(&bubbles, behind), None);
     }
 }

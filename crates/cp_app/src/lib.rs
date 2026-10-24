@@ -162,6 +162,7 @@ impl Plugin for GamePlugin {
             cp_render::GradingPlugin,
             cp_render::PipelineWarmUpPlugin,
             cp_render::EventFxPlugin,
+            cp_render::ThoughtPlugin,
         ))
         .add_systems(PreUpdate, step_sim);
         if self.ui {

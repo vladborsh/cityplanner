@@ -42,10 +42,15 @@ impl Plugin for EventFxPlugin {
                     draw_dust,
                 )
                     .chain()
+                    .in_set(EventFxSet)
                     .after(BuildingSync),
             );
     }
 }
+
+/// The emoji and dust systems (the thought bubbles run after them, T-318d).
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct EventFxSet;
 
 /// What changed in the city this frame (empty when nothing did), for the effects that react.
 #[derive(Resource, Default, Debug)]
@@ -169,6 +174,17 @@ fn mood_demo(
     fx.frozen = Some(demo.age);
 }
 
+impl MoodFx {
+    /// Whether an emoji of `id` waits or shows at render time `now` (a thought bubble yields to
+    /// it, T-318d).
+    pub(crate) fn has(&self, id: cp_building::BuildingId, now: f32) -> bool {
+        let now = self.frozen.unwrap_or(now);
+        self.live
+            .iter()
+            .any(|l| l.mood.building == id && now - l.at < LIFE_S)
+    }
+}
+
 /// A mood waiting for its turn in the wave, or showing.
 #[derive(Clone, Copy, Debug)]
 struct Live {
@@ -180,7 +196,7 @@ struct Live {
 }
 
 #[derive(Resource, Default)]
-struct MoodFx {
+pub(crate) struct MoodFx {
     live: Vec<Live>,
     /// [`MoodDemo`]: render time stands at this many seconds after the wave started.
     frozen: Option<f32>,
