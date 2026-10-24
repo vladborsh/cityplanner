@@ -39,8 +39,8 @@ use bevy_math::Vec2;
 use bevy_tasks::{ComputeTaskPool, TaskPool};
 use cp_building::{Building, BuildingFlags, BuildingGrid};
 use cp_citizen::{
-    CitizenGrid, CitizenId, Trip, TripBook, TripId, TripMode, TripPurpose, TripState, cancel_trip,
-    complete_trip,
+    CitizenGrid, CitizenId, ParkPlace, Trip, TripBook, TripId, TripMode, TripPark, TripPurpose,
+    TripState, cancel_trip, complete_trip,
 };
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_core::time::MOVE_SECONDS_PER_TICK;
@@ -53,6 +53,7 @@ use crate::drive::{
     DriveState, STUCK_TICKS, VehicleSpecs, drive_tick, lane_node, path_ok, signal_tick,
 };
 use crate::graph::{Access, CongestionMap, PED_SPEED, PathGraph, SegEnd, Side};
+use crate::parking::{PARK_RETRIES, ParkingIndex, choose_place, place_access};
 use crate::service::{
     Mode, PathNetwork, PathRequest, PathResult, PathResults, PathService, RequestId,
 };
@@ -203,6 +204,11 @@ pub struct AgentStats {
     /// Traffic re-routes that kept the old route (not quicker by [`REROUTE_GAIN`], no route, or
     /// the car had moved past it).
     pub traffic_kept: u64,
+    /// Cars that found no place within reach of the goal and disappeared at the door (T-331b,
+    /// §18.3).
+    pub parked_abstract: u64,
+    /// Cars parked in a place.
+    pub parked: u64,
 }
 
 /// Load of every road segment, indexed by segment arena slot: the length of cars over the
@@ -315,6 +321,8 @@ pub struct EntryTraffic {
 pub struct Agents {
     pedestrians: Arena<Pedestrian>,
     vehicles: Arena<Vehicle>,
+    /// The cars that stand in a place while their owners are on foot (T-331b).
+    pub parked: crate::parking::ParkedCars,
     pub stats: AgentStats,
     pub load: SegmentLoad,
     /// The automatic car share (T-314).
@@ -660,6 +668,21 @@ fn move_in_request(
     })
 }
 
+/// Metres in a straight line from an access point to a building.
+fn place_distance(
+    _parking: &ParkingIndex,
+    net: &NetGraph,
+    buildings: &BuildingGrid,
+    at: &Access,
+    goal: cp_building::BuildingId,
+) -> f32 {
+    let (Some(seg), Some(b)) = (net.segment(at.segment), buildings.get(goal)) else {
+        return 0.0;
+    };
+    let t = seg.curve.arc_table().s_to_t(at.s);
+    to_xz(seg.curve.point(t)).distance(b.pos)
+}
+
 pub(crate) fn travel_ticks(cost_s: f32) -> u64 {
     ((cost_s / MOVE_SECONDS_PER_TICK).ceil() as u64).max(1)
 }
@@ -672,7 +695,8 @@ pub fn route_trips(
     settings: Option<Res<AgentSettings>>,
     net: Res<NetGraph>,
     pnet: Res<PathNetwork>,
-    buildings: Res<BuildingGrid>,
+    mut buildings: ResMut<BuildingGrid>,
+    mut parking: ResMut<ParkingIndex>,
     mut service: ResMut<PathService>,
     mut book: ResMut<TripBook>,
     mut grid: ResMut<CitizenGrid>,
@@ -709,6 +733,44 @@ pub fn route_trips(
         if trip.mode == TripMode::Transit {
             continue;
         }
+        // The car is parked: the citizen walks on from its place to the goal (T-331b).
+        if trip.park.parked {
+            let goal = buildings.get(trip.to).and_then(|b| access_of(&net, b));
+            let Some(to) = goal else {
+                agents.stats.no_path += 1;
+                cancel_trip(&mut grid, &mut book, tid);
+                continue;
+            };
+            // A place that is gone since: the walk starts at the goal (a step).
+            let from = trip
+                .park
+                .place
+                .and_then(|p| place_access(&parking, &net, &buildings, p))
+                .unwrap_or(to);
+            let RequestId(request) = service.submit(
+                &pnet,
+                *tick,
+                PathRequest {
+                    mode: Mode::Pedestrian,
+                    from,
+                    to,
+                },
+            );
+            agents.requests.insert(request, tid);
+            book.set_state(tid, TripState::AwaitingPath { request });
+            continue;
+        }
+        // A trip routed again (the network changed under its request) gives its place back.
+        if let Some(place) = trip.park.place {
+            parking.release(place);
+            book.set_park(
+                tid,
+                TripPark {
+                    place: None,
+                    ..trip.park
+                },
+            );
+        }
         let access = buildings
             .get(trip.from)
             .zip(buildings.get(trip.to))
@@ -726,7 +788,7 @@ pub fn route_trips(
                 grid.citizen(trip.citizen).is_some_and(|c| c.has_car)
                     && c.0.balance().car_start_penalty_s >= 0.0
             });
-        let mode = match trip.mode {
+        let mut mode = match trip.mode {
             TripMode::Walk | TripMode::Car
                 if by_time
                     && let Some(content) = content.as_deref()
@@ -737,13 +799,64 @@ pub fn route_trips(
                 Mode::ByTime {
                     car_start_penalty_bits: content.0.balance().car_start_penalty_s.to_bits(),
                     fallback_car: trip.mode == TripMode::Car,
+                    drive_to: None,
+                    walk_tail_bits: 0,
                 }
             }
             TripMode::Walk => Mode::Pedestrian,
             TripMode::Car => Mode::Car,
             TripMode::Transit => continue,
         };
-        let RequestId(request) = service.submit(&pnet, *tick, PathRequest { mode, from, to });
+        // A car goes to a parking place near the goal (T-331b, §18.3), reserved now. Without
+        // one within reach it drives to the goal and parks abstractly (counted on arrival).
+        let mut drive_to = to;
+        if matches!(mode, Mode::Car | Mode::ByTime { .. })
+            && content.is_some()
+            && trip.park.tries < PARK_RETRIES
+        {
+            let place = choose_place(&mut parking, &net, &buildings, trip.to);
+            let access = place.and_then(|p| place_access(&parking, &net, &buildings, p));
+            match (place, access) {
+                (Some(p), Some(a)) => {
+                    drive_to = a;
+                    book.set_park(
+                        tid,
+                        TripPark {
+                            place: Some(p),
+                            ..trip.park
+                        },
+                    );
+                    buildings.set_flag(trip.to, BuildingFlags::NO_PARKING, false);
+                }
+                (Some(p), None) => parking.release(p),
+                (None, _) => {
+                    buildings.set_flag(trip.to, BuildingFlags::NO_PARKING, true);
+                }
+            }
+        }
+        let mut request_to = to;
+        match &mut mode {
+            Mode::ByTime {
+                drive_to: slot,
+                walk_tail_bits,
+                ..
+            } if drive_to != to => {
+                *slot = Some(drive_to);
+                let tail = place_distance(&parking, &net, &buildings, &drive_to, trip.to);
+                *walk_tail_bits = (tail / PED_SPEED).to_bits();
+            }
+            Mode::Car => request_to = drive_to,
+            _ => {}
+        }
+        let RequestId(request) = service.submit(
+            &pnet,
+            *tick,
+            PathRequest {
+                mode,
+                from,
+                to: request_to,
+            },
+        );
         agents.requests.insert(request, tid);
         book.set_state(tid, TripState::AwaitingPath { request });
     }
@@ -886,6 +999,7 @@ pub fn receive_paths(
     rng: Res<SimRng>,
     mut service: ResMut<PathService>,
     mut buildings: ResMut<BuildingGrid>,
+    mut parking: ResMut<ParkingIndex>,
     mut book: ResMut<TripBook>,
     mut grid: ResMut<CitizenGrid>,
     mut agents: ResMut<Agents>,
@@ -1070,9 +1184,41 @@ pub fn receive_paths(
             }
             _ => trip,
         };
+        // The place reserved for the car, until the car is on the road.
+        let reserved = trip.park.place.filter(|_| !trip.park.parked);
+        let give_back = |parking: &mut ParkingIndex, book: &mut TripBook| {
+            if let Some(place) = reserved {
+                parking.release(place);
+                book.set_park(
+                    tid,
+                    TripPark {
+                        place: None,
+                        ..trip.park
+                    },
+                );
+            }
+        };
         match &outcome.result {
             PathResult::Stale => book.set_state(tid, TripState::Planned),
+            // No route to the place (a one-way detour, a cut-off street): ask again for another,
+            // then drive to the goal (T-331b).
+            PathResult::Car(Err(NoPath))
+                if reserved.is_some_and(|p| p != ParkPlace::Building(trip.to))
+                    && trip.park.tries < PARK_RETRIES =>
+            {
+                give_back(&mut parking, &mut book);
+                book.set_park(
+                    tid,
+                    TripPark {
+                        place: None,
+                        tries: trip.park.tries + 1,
+                        ..trip.park
+                    },
+                );
+                book.set_state(tid, TripState::Planned);
+            }
             PathResult::Pedestrian(Err(NoPath)) | PathResult::Car(Err(NoPath)) => {
+                give_back(&mut parking, &mut book);
                 agents.stats.no_path += 1;
                 // Either end may be the cut-off one; a later successful trip clears the other.
                 if trip.purpose != TripPurpose::MoveIn {
@@ -1083,6 +1229,8 @@ pub fn receive_paths(
                 cancel_trip(&mut grid, &mut book, tid);
             }
             PathResult::Pedestrian(Ok(path)) if trip.mode == TripMode::Walk => {
+                // (Walking won the walk-or-drive choice: the reserved place goes back.)
+                give_back(&mut parking, &mut book);
                 if agents.pedestrians.len() < limits.pedestrians as usize {
                     agents.pedestrians.insert(Pedestrian {
                         trip: tid,
@@ -1118,6 +1266,11 @@ pub fn receive_paths(
                     visible_share
                 };
                 if !car_visible(tid, rng.seed(), share) {
+                    // An abstract trip parks nowhere, and its owner's parked car drives off.
+                    give_back(&mut parking, &mut book);
+                    if let Some(old) = agents.parked.take(trip.citizen) {
+                        parking.release(old.place);
+                    }
                     book.set_state(
                         tid,
                         TripState::InTransit {
@@ -1125,6 +1278,10 @@ pub fn receive_paths(
                         },
                     );
                 } else if agents.vehicles.len() < limits.vehicles as usize {
+                    // The owner takes the car they left standing (the walk to it is T-331c).
+                    if let Some(old) = agents.parked.take(trip.citizen) {
+                        parking.release(old.place);
+                    }
                     let id = agents.vehicles.insert(Vehicle {
                         trip: tid,
                         citizen: trip.citizen,
@@ -1142,6 +1299,7 @@ pub fn receive_paths(
                     agents.entry.move_in_cars += u64::from(move_in);
                     book.set_state(tid, TripState::Agent);
                 } else {
+                    give_back(&mut parking, &mut book);
                     agents.stats.abstract_trips += 1;
                     book.set_state(
                         tid,
@@ -1377,6 +1535,7 @@ pub fn move_agents(
     pnet: Res<PathNetwork>,
     mut service: ResMut<PathService>,
     buildings: Res<BuildingGrid>,
+    mut parking: ResMut<ParkingIndex>,
     rng: Res<SimRng>,
     settings: Option<Res<AgentSettings>>,
     content: Option<Res<cp_content::SimContent>>,
@@ -1464,6 +1623,7 @@ pub fn move_agents(
         drive,
         stats,
         reroutes,
+        parked,
         ..
     } = &mut *agents;
     let mut gone: Vec<Vehicle> = Vec::new();
@@ -1547,8 +1707,82 @@ pub fn move_agents(
             }
             continue;
         }
+        if ok && park_arrived(parked, stats, &mut parking, &mut book, &grid, now, &v) {
+            continue;
+        }
         complete_trip(&mut grid, &mut book, &buildings, &rng, now, v.trip);
     }
+}
+
+/// A car of a citizen's trip reached its destination lane: it takes its reserved place (T-331b,
+/// §18.3) and the citizen walks on from it, which is `true`; the trip is left in `Planned` for
+/// `route_trips` to route the walk. `false` when the trip ends here: the place is the goal's own
+/// yard (the walk is the door), or there is none — no place within reach, the arena full or the
+/// place gone — and the car disappears at the door, counted in `parked_abstract`.
+fn park_arrived(
+    parked: &mut crate::parking::ParkedCars,
+    stats: &mut AgentStats,
+    parking: &mut ParkingIndex,
+    book: &mut TripBook,
+    grid: &CitizenGrid,
+    now: u64,
+    v: &Vehicle,
+) -> bool {
+    let Some(trip) = book.get(v.trip).cloned() else {
+        return false;
+    };
+    let reserved = trip.park.place.filter(|_| !trip.park.parked);
+    let Some(place) = reserved else {
+        if trip.mode == TripMode::Car && trip.purpose != TripPurpose::MoveIn {
+            stats.parked_abstract += 1;
+        }
+        return false;
+    };
+    let lost = |parking: &mut ParkingIndex, book: &mut TripBook, stats: &mut AgentStats| {
+        parking.release(place);
+        book.set_park(
+            v.trip,
+            TripPark {
+                place: None,
+                ..trip.park
+            },
+        );
+        stats.parked_abstract += 1;
+    };
+    if grid.citizen(trip.citizen).is_none() {
+        parking.release(place);
+        return false;
+    }
+    if !parking.exists(place) {
+        lost(parking, book, stats);
+        return false;
+    }
+    if let Some(old) = parked.take(trip.citizen) {
+        parking.release(old.place);
+    }
+    let car = crate::parking::ParkedCar {
+        place,
+        since: Tick(now),
+    };
+    if !parked.park(trip.citizen, car) {
+        lost(parking, book, stats);
+        return false;
+    }
+    stats.parked += 1;
+    book.set_park(
+        v.trip,
+        TripPark {
+            place: Some(place),
+            parked: true,
+            ..trip.park
+        },
+    );
+    if place == ParkPlace::Building(trip.to) {
+        return false;
+    }
+    book.set_mode(v.trip, TripMode::Walk);
+    book.set_state(v.trip, TripState::Planned);
+    true
 }
 
 /// `Stats` phase: segment load (instantaneous and EMA over ~2 game hours) from the lane

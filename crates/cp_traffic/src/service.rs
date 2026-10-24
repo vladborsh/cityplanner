@@ -51,7 +51,7 @@ pub const PATH_DELAY_TICKS: u64 = 8;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RequestId(pub u64);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
     Car,
     Pedestrian,
@@ -80,6 +80,10 @@ pub enum Mode {
     ByTime {
         car_start_penalty_bits: u32,
         fallback_car: bool,
+        /// Where the car goes instead of `to` (T-331b: its parking place), and the seconds the
+        /// walk from there to `to` takes (`f32` bits), which the drive pays on top.
+        drive_to: Option<crate::graph::Access>,
+        walk_tail_bits: u32,
     },
     /// A route for a vehicle of `class` between two access points (T-302: a bus, tram or
     /// trolleybus keeps to the lanes it may use). Appended.
@@ -223,10 +227,13 @@ fn compute(
         Mode::ByTime {
             car_start_penalty_bits,
             fallback_car,
+            drive_to,
+            walk_tail_bits,
         } => {
             let walk = find_ped_path(graph, &req.from, &req.to).ok();
-            let drive = find_car_path(graph, cong, &req.from, &req.to).ok();
-            let penalty = f32::from_bits(car_start_penalty_bits);
+            let drive =
+                find_car_path(graph, cong, &req.from, drive_to.as_ref().unwrap_or(&req.to)).ok();
+            let penalty = f32::from_bits(car_start_penalty_bits) + f32::from_bits(walk_tail_bits);
             match (walk, drive) {
                 (Some(w), Some(d)) if w.cost <= d.cost + penalty => PathResult::Pedestrian(Ok(w)),
                 (_, Some(d)) => PathResult::Car(Ok(d)),

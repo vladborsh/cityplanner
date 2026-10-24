@@ -268,6 +268,7 @@ fn residents_between_the_first_and_the_last_station_ride_the_metro() {
             mode: TripMode::Walk,
             state: TripState::Scheduled { depart_at: Tick(0) },
             started: Tick(0),
+            park: Default::default(),
         });
     }
     // Trains first, riders next: the metro must run before a trip can choose it.

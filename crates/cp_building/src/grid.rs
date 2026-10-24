@@ -162,7 +162,7 @@ impl BuildingGrid {
 
     /// Sets or clears flag bit(s) `bit` of a building; counts as a change only when the flags
     /// really differ. Returns whether they did.
-    pub fn set_flag(&mut self, id: BuildingId, bit: u8, on: bool) -> bool {
+    pub fn set_flag(&mut self, id: BuildingId, bit: u16, on: bool) -> bool {
         let Some(b) = self.buildings.get(id) else {
             return false;
         };

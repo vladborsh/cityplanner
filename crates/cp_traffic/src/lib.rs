@@ -34,7 +34,8 @@ pub use graph::{
 pub use heavy::HeavyBan;
 pub use mode::{ALWAYS_WALK_M, TripTimes, mode_by_time, track_trip_times, way_times};
 pub use parking::{
-    Front, PARKING_PERIOD, ParkingIndex, Place, building_places, kerb_fronts, side_index,
+    Front, PARK_RETRIES, PARK_SEARCH_M, PARKED_CAP, PARKING_PERIOD, ParkedCar, ParkedCars,
+    ParkingIndex, Place, building_places, choose_place, kerb_fronts, place_access, side_index,
     slot_blocked, update_parking_index,
 };
 pub use pose::{

@@ -271,6 +271,7 @@ pub fn complete_trip(
                         depart_at: Tick(now + dwell),
                     },
                     started: Tick(now + dwell),
+                    park: Default::default(),
                 });
             }
         }
@@ -298,6 +299,7 @@ pub fn complete_trip(
                         depart_at: Tick(now + dwell),
                     },
                     started: Tick(now + dwell),
+                    park: Default::default(),
                 });
             }
         }
@@ -361,6 +363,7 @@ pub fn update_routine(
                     mode,
                     state: TripState::Planned,
                     started: Tick(now),
+                    park: Default::default(),
                     ..trip
                 });
             }
@@ -464,6 +467,7 @@ fn decide(
                     // pool or a missing agent makes it run abstractly (§9.4).
                     state: TripState::Planned,
                     started: Tick(now),
+                    park: Default::default(),
                 })
                 .is_some();
             if ok {

@@ -102,6 +102,8 @@ pub(crate) fn utility_part(world: &World, h: &mut Fnv1a) {
 /// Checksum part of the agent pools (`cp_traffic::Agents`).
 pub(crate) fn agent_part(world: &World, h: &mut Fnv1a) {
     h.write_serialized(world.resource::<cp_traffic::Agents>());
+    // The places and the cars counted in them (T-331b).
+    h.write_serialized(world.resource::<cp_traffic::ParkingIndex>());
     // Absent while no service run has ever started, so such states keep their checksum.
     let runs = world.resource::<cp_traffic::ServiceRuns>();
     if *runs != cp_traffic::ServiceRuns::default() {

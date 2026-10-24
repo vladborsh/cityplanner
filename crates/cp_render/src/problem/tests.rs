@@ -13,7 +13,7 @@ fn id(i: u32) -> BuildingId {
     Id::new(i, 0)
 }
 
-fn building(state: BuildingState, flags: u8) -> Building {
+fn building(state: BuildingState, flags: u16) -> Building {
     Building {
         def: BuildingDefId(0),
         footprint: Footprint::Lot(Lot {
@@ -33,12 +33,12 @@ fn building(state: BuildingState, flags: u8) -> Building {
     }
 }
 
-fn marked_one(flags: u8, state: BuildingState) -> Vec<Marked> {
+fn marked_one(flags: u16, state: BuildingState) -> Vec<Marked> {
     marked_with(flags, 0, state)
 }
 
 /// A building with building `flags` and `ServiceProblems` bits `service`.
-fn marked_with(flags: u8, service: u16, state: BuildingState) -> Vec<Marked> {
+fn marked_with(flags: u16, service: u16, state: BuildingState) -> Vec<Marked> {
     let b = building(state, flags);
     let mut st = cp_service::ServiceState::default();
     st.get_mut(id(1)).problems = cp_service::ServiceProblems(service);

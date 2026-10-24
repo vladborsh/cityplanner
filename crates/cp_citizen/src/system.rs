@@ -524,6 +524,7 @@ pub fn update_citizens(
                     mode: TripMode::Car,
                     state: TripState::Planned,
                     started: Tick(now),
+                    park: Default::default(),
                 });
             }
         }

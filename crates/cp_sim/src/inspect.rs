@@ -321,6 +321,7 @@ pub fn flag_names(flags: BuildingFlags) -> Vec<&'static str> {
         (BuildingFlags::NO_SEWAGE, "no sewage"),
         (BuildingFlags::NO_ROAD, "no road"),
         (BuildingFlags::NO_PATH, "no path"),
+        (BuildingFlags::NO_PARKING, "no parking"),
     ]
     .into_iter()
     .filter(|(bit, _)| flags.has(*bit))

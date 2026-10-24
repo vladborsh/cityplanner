@@ -86,6 +86,7 @@ fn town() -> Town {
             mode: TripMode::Walk,
             state: TripState::Agent,
             started: Tick(0),
+            park: Default::default(),
         })
         .unwrap();
     Town {
@@ -188,6 +189,7 @@ fn a_short_walk_between_two_doors_splits_at_half_way() {
             mode: TripMode::Walk,
             state: TripState::Agent,
             started: Tick(0),
+            park: Default::default(),
         })
         .unwrap();
     let at = |s: f32| {

@@ -114,7 +114,7 @@ fn town(office: u32, vans: u32, sorting: u32) -> Town {
 }
 
 impl Town {
-    fn put(&mut self, def: &str, seg: usize, flags: u8) -> BuildingId {
+    fn put(&mut self, def: &str, seg: usize, flags: u16) -> BuildingId {
         let db = self.world.resource::<SimContent>().0.clone();
         let id = self.world.resource_mut::<BuildingGrid>().insert(Building {
             def: db.building_id(def).unwrap(),

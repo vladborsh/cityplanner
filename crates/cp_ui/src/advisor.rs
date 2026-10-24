@@ -140,7 +140,7 @@ fn service_text(id: &str, n: u32, policy: Option<&str>) -> String {
 }
 
 /// Counts and first position of the active buildings with a problem flag.
-fn flagged(view: &SimView, bit: u8) -> (u32, Option<Vec2>) {
+fn flagged(view: &SimView, bit: u16) -> (u32, Option<Vec2>) {
     let mut n = 0;
     let mut first = None;
     for (_, b) in view.buildings.iter() {

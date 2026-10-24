@@ -629,7 +629,7 @@ mod tests {
         sim.tick_once();
         let centre = cp_district::DistrictMap::cell_center(cell);
         let house = db.building_id("house_low_1").unwrap();
-        let put = |sim: &mut SimRunner, at: bevy::math::Vec2, flags: u8| {
+        let put = |sim: &mut SimRunner, at: bevy::math::Vec2, flags: u16| {
             sim.world_mut()
                 .resource_mut::<cp_building::BuildingGrid>()
                 .insert(Building {

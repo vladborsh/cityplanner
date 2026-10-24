@@ -98,7 +98,7 @@ fn line(g: &mut UtilityGraph, net: UtilityNet, x0: f32, x1: f32) {
     g.add_link(a, b, CubicBezier3::line(p(x0), p(x1))).unwrap();
 }
 
-fn bits(m: &std::collections::BTreeMap<BuildingId, u8>, id: BuildingId) -> u8 {
+fn bits(m: &std::collections::BTreeMap<BuildingId, u16>, id: BuildingId) -> u16 {
     m.get(&id).copied().unwrap_or(0)
 }
 
@@ -544,7 +544,7 @@ fn power_saving_lets_the_same_plant_carry_more_houses() {
     let houses: Vec<_> = (0..4)
         .map(|i| add(&mut b, &db, "house", 20.0 + 30.0 * i as f32, 15.0))
         .collect();
-    let powered = |m: &[u8]| {
+    let powered = |m: &[u16]| {
         houses
             .iter()
             .filter(|h| m[h.index as usize] & BuildingFlags::NO_POWER == 0)

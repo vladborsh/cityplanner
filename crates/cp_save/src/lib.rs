@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 84;
+pub const FORMAT_VERSION: u32 = 85;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -272,6 +272,9 @@ pub struct SaveData {
     pub hubs: cp_transit::CargoHubs,
     /// The mail waiting in the buildings and the sorting backlog (T-247). Added in v53.
     pub mail: cp_service::MailState,
+    /// The parking places and the cars counted in them (T-331b, §18.3). Added in v87; the parked
+    /// cars themselves are in `agents`, the places reserved by the trips in `trips`.
+    pub parking: cp_traffic::ParkingIndex,
 }
 
 impl SaveData {
@@ -363,6 +366,7 @@ impl SaveData {
             park_ledger: *world.resource::<cp_park::ParkLedger>(),
             hubs: world.resource::<cp_transit::CargoHubs>().clone(),
             mail: world.resource::<cp_service::MailState>().clone(),
+            parking: world.resource::<cp_traffic::ParkingIndex>().clone(),
         }
     }
 
@@ -431,6 +435,7 @@ impl SaveData {
         world.insert_resource(self.park_ledger);
         world.insert_resource(self.hubs);
         world.insert_resource(self.mail);
+        world.insert_resource(self.parking);
         // The routes are derived: the first Network phase after the load attaches the stops
         // and plans every line again.
         world.insert_resource(cp_transit::LinePlans::default());

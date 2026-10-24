@@ -219,6 +219,7 @@ impl World {
                 mode: TripMode::Walk,
                 state: TripState::Scheduled { depart_at: Tick(0) },
                 started: Tick(0),
+                park: Default::default(),
             });
         }
     }

@@ -186,6 +186,7 @@ fn a_trip_into_an_isolated_network_flags_no_path_until_it_is_connected() {
                     mode: TripMode::Car,
                     state: TripState::Planned,
                     started: cp_core::Tick(0),
+                    park: Default::default(),
                 })
                 .expect("trip");
                 w.resource_mut::<CitizenGrid>()

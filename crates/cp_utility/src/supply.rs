@@ -481,7 +481,7 @@ pub fn compute_supply(
     db: &ContentDb,
     buildings: &BuildingGrid,
     graph: &UtilityGraph,
-) -> BTreeMap<BuildingId, u8> {
+) -> BTreeMap<BuildingId, u16> {
     let missing = compute_supply_cached(db, buildings, graph, &mut AttachCache::default());
     buildings
         .iter()
@@ -499,7 +499,7 @@ pub fn compute_supply_cached(
     buildings: &BuildingGrid,
     graph: &UtilityGraph,
     cache: &mut AttachCache,
-) -> Vec<u8> {
+) -> Vec<u16> {
     compute_supply_with(db, buildings, graph, cache, None, &Budgets::default())
 }
 
@@ -513,7 +513,7 @@ pub fn compute_supply_with(
     cache: &mut AttachCache,
     policies: Option<&Policies>,
     budgets: &Budgets,
-) -> Vec<u8> {
+) -> Vec<u16> {
     compute_supply_pools(db, buildings, graph, cache, policies, budgets).0
 }
 
@@ -578,7 +578,7 @@ pub fn compute_supply_pools(
     cache: &mut AttachCache,
     policies: Option<&Policies>,
     budgets: &Budgets,
-) -> (Vec<u8>, PowerPools, WaterPools) {
+) -> (Vec<u16>, PowerPools, WaterPools) {
     let nets = &db.balance().networks;
     let power_gap = nets.power_gap_m;
     // Needs and source of each building def, once.
@@ -618,7 +618,7 @@ pub fn compute_supply_pools(
             }
         })
         .collect();
-    let mut missing: Vec<u8> = vec![
+    let mut missing: Vec<u16> = vec![
         0;
         sites
             .iter()
@@ -627,7 +627,7 @@ pub fn compute_supply_pools(
             .unwrap_or(0)
     ];
     let slots = missing.len();
-    let mut flag = |id: BuildingId, bit: u8| {
+    let mut flag = |id: BuildingId, bit: u16| {
         missing[id.index as usize] |= bit;
     };
 
@@ -975,7 +975,7 @@ pub fn update_supply(
     if *water != found_water {
         *water = found_water;
     }
-    let changes: Vec<(BuildingId, u8)> = buildings
+    let changes: Vec<(BuildingId, u16)> = buildings
         .iter()
         .filter(|(_, b)| b.state == BuildingState::Active)
         .filter_map(|(id, b)| {

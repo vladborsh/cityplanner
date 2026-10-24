@@ -145,24 +145,27 @@ pub struct AccessPoint {
 
 /// Problem flags (`§8`): the abandonment counter reads them. Bits are append-only.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BuildingFlags(pub u8);
+pub struct BuildingFlags(pub u16);
 
 impl BuildingFlags {
-    pub const NO_WATER: u8 = 1;
-    pub const NO_POWER: u8 = 2;
-    pub const NO_WORKERS: u8 = 4;
-    pub const NO_CUSTOMERS: u8 = 8;
-    pub const NO_GOODS: u8 = 16;
+    pub const NO_WATER: u16 = 1;
+    pub const NO_POWER: u16 = 2;
+    pub const NO_WORKERS: u16 = 4;
+    pub const NO_CUSTOMERS: u16 = 8;
+    pub const NO_GOODS: u16 = 16;
     /// Appended in T-038.
-    pub const NO_SEWAGE: u8 = 32;
+    pub const NO_SEWAGE: u16 = 32;
     /// Appended in T-061: the road the access point stood on is gone and no other is near.
-    pub const NO_ROAD: u8 = 64;
+    pub const NO_ROAD: u16 = 64;
     /// Appended in T-061: `cp_traffic` found no route from/to the building (last trip result).
-    pub const NO_PATH: u8 = 128;
+    pub const NO_PATH: u16 = 128;
+    /// Appended in T-331b: a car bound here found no parking place within reach and
+    /// disappeared at the door. Not a decay problem; the advisor and the overlay read it.
+    pub const NO_PARKING: u16 = 256;
     /// The utility bits (water, power, sewage), which `cp_utility` recomputes every 64 ticks.
-    pub const UTILITY_MASK: u8 = Self::NO_WATER | Self::NO_POWER | Self::NO_SEWAGE;
+    pub const UTILITY_MASK: u16 = Self::NO_WATER | Self::NO_POWER | Self::NO_SEWAGE;
 
-    pub fn has(self, bit: u8) -> bool {
+    pub fn has(self, bit: u16) -> bool {
         self.0 & bit != 0
     }
 }

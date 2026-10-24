@@ -584,6 +584,7 @@ pub fn send_citizens(
                     mode: mode(i),
                     state: TripState::Planned,
                     started: now,
+                    park: Default::default(),
                 };
                 if book.add(trip).is_some() {
                     grid.set_location(citizen, Location::Moving);

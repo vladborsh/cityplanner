@@ -67,6 +67,31 @@ pub enum TripState {
     Transit,
 }
 
+/// A parking place (§18.3): a slot of a kerb bay or the yard of a building (its own, or a lot or
+/// a garage). `slot` indexes the places of the side as `cp_traffic::ParkingIndex` lists them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ParkPlace {
+    Kerb {
+        segment: cp_net::SegmentId,
+        /// `0` right of the street's direction, `1` left.
+        side: u8,
+        slot: u16,
+    },
+    Building(BuildingId),
+}
+
+/// Where a car trip stands with its parking place (T-331b).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TripPark {
+    /// The place reserved for the car, or, once `parked`, the one it stands in.
+    pub place: Option<ParkPlace>,
+    /// The car is parked and the citizen walks on from it to `to`.
+    pub parked: bool,
+    /// Places given up (no route to one): at `PARK_RETRIES` the trip drives to the goal and
+    /// parks abstractly.
+    pub tries: u8,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Trip {
     pub citizen: CitizenId,
@@ -78,6 +103,8 @@ pub struct Trip {
     /// When the trip set off (T-318b: the minutes to work); a scheduled trip is re-stamped at
     /// its departure. Saved since format 71.
     pub started: Tick,
+    /// The parking place of a car trip and the walk from it (T-331b).
+    pub park: TripPark,
 }
 
 impl Trip {
@@ -244,6 +271,13 @@ impl TripBook {
     pub fn set_mode(&mut self, id: TripId, mode: TripMode) {
         if let Some(t) = self.trips.get_mut(id) {
             t.mode = mode;
+        }
+    }
+
+    /// Sets the parking state of a trip (T-331b).
+    pub fn set_park(&mut self, id: TripId, park: TripPark) {
+        if let Some(t) = self.trips.get_mut(id) {
+            t.park = park;
         }
     }
 
