@@ -1,11 +1,13 @@
-//! T-318a (§19.7 items 1, 2, 6): the contentment pass on a real city. Every active home gets a
-//! record and nothing else does; the roll-ups add up; a home misses a service only once the
-//! milestone has opened it; two runs are identical.
+//! T-318a/b (§19.7 items 1, 2, 3, 5, 6): the contentment pass on a real city. Every active home
+//! gets a record and nothing else does; the roll-ups add up; a home misses a service only once
+//! the milestone has opened it; the trips to work fill the homes' commute and the citizens'
+//! wellbeing; happier homes take more households; two runs are identical.
 
 use std::path::Path;
 use std::sync::Arc;
 
-use cp_building::{BuildingGrid, BuildingState, Complaint, HomeContentment};
+use cp_building::{BuildingGrid, BuildingId, BuildingState, Complaint, HomeContentment};
+use cp_citizen::CitizenGrid;
 use cp_content::{ContentDb, ZoneType};
 use cp_economy::CityContentment;
 use cp_sim::scenario::{GridCityConfig, grid_city};
@@ -48,6 +50,11 @@ const SERVICE_COMPLAINTS: [Complaint; 4] = [
 ];
 
 fn active_homes(sim: &SimRunner) -> usize {
+    homes_at(sim).len()
+}
+
+/// The active homes and where they stand, in id order.
+fn homes_at(sim: &SimRunner) -> Vec<(BuildingId, f32)> {
     let db = sim.world().resource::<cp_content::SimContent>().0.clone();
     sim.world()
         .resource::<BuildingGrid>()
@@ -59,7 +66,8 @@ fn active_homes(sim: &SimRunner) -> usize {
                     ZoneType::ResLow | ZoneType::ResHigh
                 )
         })
-        .count()
+        .map(|(id, b)| (id, b.pos.x))
+        .collect()
 }
 
 #[test]
@@ -182,4 +190,95 @@ fn two_runs_score_the_same() {
         )
     };
     assert_eq!(go(), go());
+}
+
+#[test]
+fn trips_to_work_fill_the_commute_and_the_citizens_wellbeing() {
+    let mut sim = city();
+    run(&mut sim, 2 * cp_core::time::TICKS_PER_DAY, &Progress::ALL);
+    let w = sim.world();
+    let homes = w.resource::<HomeContentment>();
+    let commutes: Vec<u8> = homes
+        .homes()
+        .map(|(_, s)| s.commute_min)
+        .filter(|&m| m > 0)
+        .collect();
+    assert!(
+        commutes.len() * 2 >= homes.len(),
+        "most homes have someone who went to work: {} of {}",
+        commutes.len(),
+        homes.len()
+    );
+    // A town of a few hundred metres: nobody is an hour away.
+    assert!(commutes.iter().all(|&m| m < 60), "{commutes:?}");
+    let city = w.resource::<CityContentment>();
+    assert!(
+        city.factors[cp_economy::contentment::F_COMMUTE] > 50,
+        "{:?}",
+        city.factors
+    );
+    // Wellbeing follows the home: no longer the 50 every citizen was born with.
+    let grid = w.resource::<CitizenGrid>();
+    let off = grid.citizens().filter(|(_, c)| c.wellbeing != 50).count();
+    assert!(
+        off * 2 > grid.citizen_count(),
+        "{off} of {}",
+        grid.citizen_count()
+    );
+    for (_, c) in grid.citizens() {
+        let home = homes.index_of(c.home.unwrap());
+        assert!(c.wellbeing <= home, "{} > {home}", c.wellbeing);
+    }
+}
+
+/// §19.7 item 3: every other home (by id) held at 90, the rest at 30, side by side on the same
+/// streets: the happy ones take clearly more households for each tick they have room. (Per tick
+/// with room: in a grown town the free apartments, not the chance, bound the plain count.)
+#[test]
+fn happier_homes_take_more_households() {
+    let mut sim = city();
+    run(&mut sim, cp_economy::CITY_PERIOD, &Progress::ALL);
+    let db = sim.world().resource::<cp_content::SimContent>().0.clone();
+    let happy = |id: BuildingId| id.index % 2 == 0;
+    // Per group (happy, unhappy): households now, and homes with a free apartment.
+    let count = |sim: &SimRunner| {
+        let grid = sim.world().resource::<CitizenGrid>();
+        let buildings = sim.world().resource::<BuildingGrid>();
+        let mut out = [(0u32, 0u32); 2];
+        for (id, _) in homes_at(sim) {
+            let n = grid.households_in(id);
+            let cap = db.building(buildings.get(id).unwrap().def).households;
+            let g = &mut out[usize::from(!happy(id))];
+            g.0 += u32::from(n);
+            g.1 += u32::from(n < cap);
+        }
+        out
+    };
+    let (mut arrived, mut room) = ([0u32; 2], [0u32; 2]);
+    for _ in 0..(2 * cp_core::time::TICKS_PER_DAY) {
+        let all = homes_at(&sim);
+        {
+            let mut h = sim.world_mut().resource_mut::<HomeContentment>();
+            for (id, _) in all {
+                h.set(id, if happy(id) { 90 } else { 30 }, [Complaint::None; 3]);
+            }
+        }
+        let before = count(&sim);
+        run(&mut sim, 1, &Progress::ALL);
+        let after = count(&sim);
+        for g in 0..2 {
+            arrived[g] += after[g].0.saturating_sub(before[g].0);
+            room[g] += before[g].1;
+        }
+    }
+    assert!(
+        arrived[1] > 0 && room.iter().all(|&r| r > 0),
+        "{arrived:?} {room:?}"
+    );
+    let rate = |g: usize| arrived[g] as f32 / room[g] as f32;
+    // Expected 1.4 / 0.8 = 1.75.
+    assert!(
+        rate(0) >= 1.5 * rate(1),
+        "held at 90 against held at 30: {arrived:?} arrivals in {room:?} home-ticks with room"
+    );
 }

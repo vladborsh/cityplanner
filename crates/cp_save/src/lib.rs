@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 69;
+pub const FORMAT_VERSION: u32 = 70;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -180,7 +180,8 @@ pub struct SaveData {
     pub paths: SavedPaths,
     /// Pipe and power-line networks. Added in v9.
     pub utilities: UtilityGraph,
-    /// Trips in flight and the routine's counters. Added in v10.
+    /// Trips in flight and the routine's counters. Added in v10; since v70 (T-318b) each trip
+    /// has its start tick and the book the trips to work since the last contentment pass.
     pub trips: TripBook,
     /// Pedestrians and vehicles in the agent pools (v11); vehicles have lane state and the
     /// agents carry the segment load since v12; vehicles carry their re-route request id

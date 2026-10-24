@@ -75,6 +75,9 @@ pub struct Trip {
     pub purpose: TripPurpose,
     pub mode: TripMode,
     pub state: TripState,
+    /// When the trip set off (T-318b: the minutes to work); a scheduled trip is re-stamped at
+    /// its departure. Saved since format 70.
+    pub started: Tick,
 }
 
 impl Trip {
@@ -102,6 +105,9 @@ pub struct TripBook {
     pub cancelled: u64,
     /// Game day of each household's last shopping trip (missing = day 0).
     last_shop_day: BTreeMap<HouseholdId, u32>,
+    /// Finished trips to work since the last contentment pass: the home and the minutes on the
+    /// way, in completion order (T-318b). Saved: the pass that folds them in runs every 256 ticks.
+    pub commutes: Vec<(BuildingId, u16)>,
     /// `(event tick, id)`; derived from the trips, rebuilt lazily after a load.
     #[serde(skip)]
     events: BTreeSet<(u64, TripId)>,
@@ -137,6 +143,7 @@ impl PartialEq for TripBook {
             && self.completed == other.completed
             && self.cancelled == other.cancelled
             && self.last_shop_day == other.last_shop_day
+            && self.commutes == other.commutes
     }
 }
 

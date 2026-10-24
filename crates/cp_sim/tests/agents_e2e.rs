@@ -187,6 +187,7 @@ fn inject(sim: &mut SimRunner, count: usize, mode: impl Fn(usize) -> TripMode) -
                         purpose: TripPurpose::Work,
                         mode: mode(i),
                         state: TripState::Planned,
+                        started: cp_core::Tick(0),
                     })
                     .is_some();
                 if ok {

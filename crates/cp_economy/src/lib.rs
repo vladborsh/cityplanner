@@ -22,7 +22,8 @@ pub mod week;
 
 pub use command::{EconomyCommand, EconomyError, apply};
 pub use contentment::{
-    CityContentment, DistrictContentment, FACTORS, HomeFacts, Scored, update_contentment,
+    CONTENTMENT_STREAM, CityContentment, DistrictContentment, FACTORS, HomeFacts, Scored,
+    contentment_daily, update_contentment,
 };
 pub use corruption::{CorruptionState, DealTarget, Edge, Evidence, Offer, update_corruption};
 pub use deathcare::update_deathcare;

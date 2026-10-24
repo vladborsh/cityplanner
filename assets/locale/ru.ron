@@ -1024,7 +1024,7 @@
     "{resource} · {n} cells": ["{resource} · {n} клетка", "{resource} · {n} клетки", "{resource} · {n} клеток"],
     "{resource}: the colour of its area and the overlay": "{resource}: цвет зоны и слоя",
     "{sector}: {supply} / {demand} {unit} (supply / demand)": "{sector}: {supply} / {demand} {unit} (предложение / спрос)",
-    "{sick} % fewer sick, {move_in} % likelier to move in, within {radius} m": "на {sick} % меньше больных, на {move_in} % охотнее заселяются, в радиусе {radius} м",
+    "{sick} % fewer sick, happier homes, within {radius} m": "на {sick} % меньше больных, дома счастливее, в радиусе {radius} м",
     "{speed} km/h": "{speed} км/ч",
     "{today} today · {week} this week": "{today} сегодня · {week} за неделю",
     "{today} today, {week} this week": "{today} сегодня, {week} за неделю",

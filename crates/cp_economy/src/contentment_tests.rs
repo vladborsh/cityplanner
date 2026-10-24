@@ -1,4 +1,5 @@
-//! Contentment (T-318a, §19.7 items 1 and 2): the factors, the complaints and the pass.
+//! Contentment (T-318a/b, §19.7 items 1, 2, 4, 5): the factors, the complaints, the pass, the
+//! move-out and the wellbeing.
 
 use std::sync::Arc;
 
@@ -9,19 +10,21 @@ use cp_building::{
     AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingId, BuildingState, Complaint,
     Footprint, HomeContentment, Lot,
 };
-use cp_citizen::CitizenGrid;
+use cp_citizen::{CitizenGrid, TripBook};
 use cp_content::{ContentDb, ContentmentKnobs, ServiceKind, ServiceUnlocks, SimContent};
 use cp_core::curve::CubicBezier3;
-use cp_core::{Id, Tick};
+use cp_core::time::TICKS_PER_DAY;
+use cp_core::{Id, SimRng, Tick};
 use cp_district::{DistrictMap, Districts};
 use cp_net::{Elevation, NetGraph, SegmentId};
 use cp_service::{ServicePlugin, ServiceProblems, update_coverage};
 
 use crate::contentment::{
-    CityContentment, F_ENVIRONMENT, F_LEISURE, F_PROBLEMS, F_SERVICES, F_TAX, HomeFacts,
-    complaints, home_problems, score, step, target, update_contentment,
+    CityContentment, F_COMMUTE, F_ENVIRONMENT, F_LEISURE, F_PROBLEMS, F_SERVICES, F_TAX, F_WORK,
+    HomeFacts, complaints, contentment_daily, home_problems, score, step, target,
+    update_contentment,
 };
-use crate::{CITY_PERIOD, EconomyState, Emissions};
+use crate::{CITY_PERIOD, Decay, EconomyState, Emissions};
 
 fn knobs() -> ContentmentKnobs {
     ContentmentKnobs::default()
@@ -284,6 +287,9 @@ fn town() -> Town {
     world.init_resource::<Districts>();
     world.init_resource::<HomeContentment>();
     world.init_resource::<CityContentment>();
+    world.init_resource::<TripBook>();
+    world.init_resource::<Decay>();
+    world.insert_resource(SimRng::from_seed([7; 32]));
     let mut unlocks = ServiceUnlocks { open_mask: 0 };
     unlocks.set(ServiceKind::Health, true);
     world.insert_resource(unlocks);
@@ -302,7 +308,7 @@ fn town() -> Town {
         );
     }
     let mut schedule = Schedule::default();
-    schedule.add_systems((update_coverage, update_contentment).chain());
+    schedule.add_systems((update_coverage, update_contentment, contentment_daily).chain());
     Town {
         world,
         schedule,
@@ -441,4 +447,167 @@ fn the_pass_runs_only_on_city_ticks() {
     assert!(t.world.resource::<HomeContentment>().is_empty());
     t.passes(1);
     assert_eq!(t.world.resource::<HomeContentment>().len(), 1);
+}
+
+/// An adult household (`n` members) moving into `home` at tick 0.
+fn household(t: &mut Town, home: BuildingId, n: usize) -> cp_citizen::HouseholdId {
+    let mut grid = t.world.resource_mut::<CitizenGrid>();
+    grid.ensure_derived();
+    grid.add_household(home, 0, Tick(0), &vec![(30 * 365, 1, false); n])
+}
+
+#[test]
+fn work_and_commute_come_from_the_households_and_the_trips_to_work() {
+    let mut t = town();
+    t.put("clinic", 0);
+    let home = t.put("house", 0);
+    let a = household(&mut t, home, 1);
+    household(&mut t, home, 1);
+    // One of the two households jobless from the start; it counts once it has minded long
+    // enough (3 days).
+    t.world
+        .resource_mut::<CitizenGrid>()
+        .set_jobless_since(a, Some(Tick(0)));
+    t.passes(1);
+    let city = t.world.resource::<CityContentment>();
+    assert_eq!(city.factors[F_WORK], 100);
+    assert_eq!(city.factors[F_COMMUTE], 100, "no trip to work seen yet");
+    // Trips to work of 70 minutes and more: the average is past the bad line.
+    t.world
+        .resource_mut::<TripBook>()
+        .commutes
+        .extend([(home, 70), (home, 80)]);
+    let days3 = 3 * TICKS_PER_DAY / CITY_PERIOD;
+    t.passes(days3 + 1);
+    assert!(
+        t.world.resource::<TripBook>().commutes.is_empty(),
+        "folded in"
+    );
+    let slot = *t.world.resource::<HomeContentment>().get(home).unwrap();
+    assert_eq!(slot.commute_min, 71);
+    let city = t.world.resource::<CityContentment>();
+    assert_eq!(city.factors[F_WORK], 50);
+    assert_eq!(city.factors[F_COMMUTE], 0);
+    assert!(
+        slot.complaints.contains(&Complaint::LongCommute),
+        "{:?}",
+        slot.complaints
+    );
+    // Short trips bring it back down.
+    t.world
+        .resource_mut::<TripBook>()
+        .commutes
+        .extend(std::iter::repeat_n((home, 6u16), 40));
+    t.passes(days3 + 2);
+    let slot = *t.world.resource::<HomeContentment>().get(home).unwrap();
+    assert!(slot.commute_min <= 15, "{}", slot.commute_min);
+    assert!(!slot.complaints.contains(&Complaint::LongCommute));
+}
+
+#[test]
+fn a_home_below_the_line_gets_a_timer_that_goes_when_it_recovers() {
+    let mut t = town();
+    t.put("clinic", 0);
+    let home = t.put("house", 0);
+    t.passes(1);
+    // Forced miserable: the pass moves it an eighth of the way up, still below 20.
+    t.world
+        .resource_mut::<HomeContentment>()
+        .set(home, 2, [Complaint::None; 3]);
+    t.world.insert_resource(Tick(2 * CITY_PERIOD));
+    t.schedule.run(&mut t.world);
+    let h = t.world.resource::<HomeContentment>();
+    assert!(h.index_of(home) < 20);
+    assert_eq!(h.unhappy_since.get(&home), Some(&Tick(2 * CITY_PERIOD)));
+    // The timer keeps its start while the home stays below, and goes once it is above.
+    let mut pass = 3;
+    while t.world.resource::<HomeContentment>().index_of(home) < 20 {
+        t.world.insert_resource(Tick(pass * CITY_PERIOD));
+        t.schedule.run(&mut t.world);
+        let h = t.world.resource::<HomeContentment>();
+        if h.index_of(home) < 20 {
+            assert_eq!(h.unhappy_since.get(&home), Some(&Tick(2 * CITY_PERIOD)));
+        }
+        pass += 1;
+    }
+    assert!(
+        t.world
+            .resource::<HomeContentment>()
+            .unhappy_since
+            .is_empty()
+    );
+}
+
+/// Runs only the daily system on days `1..=days`, the home held below the line since tick 0.
+fn unhappy_days(decay: bool, days: u64) -> (u16, u16) {
+    let mut t = town();
+    let home = t.put("house", 0);
+    let other = t.put("house", 1);
+    for _ in 0..6 {
+        household(&mut t, home, 2);
+        household(&mut t, other, 2);
+    }
+    {
+        let mut h = t.world.resource_mut::<HomeContentment>();
+        h.set(home, 10, [Complaint::None; 3]);
+        h.set(other, 70, [Complaint::None; 3]);
+        h.unhappy_since.insert(home, Tick(0));
+    }
+    if !decay {
+        t.world.insert_resource(Decay::disabled());
+    }
+    let mut daily = Schedule::default();
+    daily.add_systems(contentment_daily);
+    for d in 1..=days {
+        t.world.insert_resource(Tick(d * TICKS_PER_DAY));
+        daily.run(&mut t.world);
+    }
+    let grid = t.world.resource::<CitizenGrid>();
+    (grid.households_in(home), grid.households_in(other))
+}
+
+#[test]
+fn an_unhappy_home_loses_households_after_its_days_and_never_in_the_test_mode() {
+    // Not before `leave_days` (10).
+    assert_eq!(unhappy_days(true, 9), (6, 6));
+    let (left, other) = unhappy_days(true, 30);
+    // 21 draws (days 10..=30) at a 0.3 chance, one household each.
+    assert!(left < 6, "{left}");
+    assert_eq!(other, 6, "the content home keeps its households");
+    assert_eq!(unhappy_days(false, 30), (6, 6));
+    assert_eq!(unhappy_days(true, 30), (left, other), "deterministic");
+}
+
+#[test]
+fn wellbeing_is_the_home_index_less_the_personal_troubles() {
+    let mut t = town();
+    let home = t.put("house", 0);
+    let well = household(&mut t, home, 1);
+    let ill = household(&mut t, home, 1);
+    let idle = household(&mut t, home, 1);
+    t.world
+        .resource_mut::<HomeContentment>()
+        .set(home, 64, [Complaint::None; 3]);
+    let member = |t: &Town, h| {
+        t.world
+            .resource::<CitizenGrid>()
+            .household(h)
+            .unwrap()
+            .member_ids()
+            .next()
+            .unwrap()
+    };
+    let (w, i, j) = (member(&t, well), member(&t, ill), member(&t, idle));
+    {
+        let mut grid = t.world.resource_mut::<CitizenGrid>();
+        grid.set_sick(i, Some(Tick(0)));
+        grid.set_jobless_since(idle, Some(Tick(0)));
+    }
+    let mut daily = Schedule::default();
+    daily.add_systems(contentment_daily);
+    t.world.insert_resource(Tick(4 * TICKS_PER_DAY));
+    daily.run(&mut t.world);
+    let grid = t.world.resource::<CitizenGrid>();
+    let wb = |c| grid.citizen(c).unwrap().wellbeing;
+    assert_eq!((wb(w), wb(i), wb(j)), (64, 49, 44));
 }

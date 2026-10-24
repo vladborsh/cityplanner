@@ -351,6 +351,12 @@ impl SimRunner {
                 .in_set(SimPhase::Economy)
                 .after(cp_economy::update_deathcare),
         );
+        // Move-out and wellbeing (T-318b), once a day, on the index of that tick's pass.
+        schedule.add_systems(
+            cp_economy::contentment_daily
+                .in_set(SimPhase::Economy)
+                .after(cp_economy::update_contentment),
+        );
         schedule.add_systems(cp_citizen::update_citizens.in_set(SimPhase::Citizens));
         schedule.add_systems(
             cp_citizen::update_lifecycle

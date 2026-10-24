@@ -352,13 +352,13 @@ pub fn unique_rows(content: &ContentDb, def: &str) -> Vec<(String, String)> {
             ),
         ));
         if e.green > 0.0 {
-            // T-237: what the neighbours get besides the price of their land.
+            // T-237: what the neighbours get besides the price of their land; the move-in
+            // follows from the homes' happiness since T-318b.
             out.push((
                 tr("Wellbeing"),
                 trf!(
-                    "{sick} % fewer sick, {move_in} % likelier to move in, within {radius} m",
+                    "{sick} % fewer sick, happier homes, within {radius} m",
                     sick = format!("{:.0}", e.green * cp_building::GREEN_SICK_CUT * 100.0),
-                    move_in = format!("{:.0}", e.green * cp_building::GREEN_MOVE_IN_BONUS * 100.0),
                     radius = format!("{:.0}", e.radius_m)
                 ),
             ));

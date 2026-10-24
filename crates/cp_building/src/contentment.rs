@@ -1,8 +1,8 @@
 //! How content the residents of each home are (T-318, `architecture/system-design.md` §19).
 //!
 //! The types live here, below `cp_citizen` and `cp_economy`, for the same reason as
-//! [`Demand`](crate::Demand): `cp_economy` fills them in its 256-tick pass and the citizens' move-in and
-//! move-out (T-318b) read them every tick in between. That is also why the table is **saved and
+//! [`Demand`](crate::Demand): `cp_economy` fills them in its 256-tick pass and the citizens' move-in
+//! reads them every tick in between (the move-out once a day). That is also why the table is **saved and
 //! checksummed**: a load in the middle of a cycle must see the values of the last pass.
 //!
 //! Save stability: serialised with postcard; enum variants are only appended.
@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bevy_ecs::resource::Resource;
+use cp_content::ContentmentKnobs;
 use cp_core::Tick;
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +79,24 @@ impl Complaint {
     ];
 }
 
+/// How much likelier than plain a household moves into a home of contentment `index` (§19.4):
+/// linear from `move_in_mul_at_0` to `move_in_mul_at_100`, nothing below `move_in_min_index`.
+pub fn move_in_mul(index: u8, k: &ContentmentKnobs) -> f32 {
+    if index < k.move_in_min_index {
+        return 0.0;
+    }
+    let t = f32::from(index.min(100)) / 100.0;
+    (k.move_in_mul_at_0 + (k.move_in_mul_at_100 - k.move_in_mul_at_0) * t).max(0.0)
+}
+
+/// Whether a visited home takes a household this time: `gate` is the plain draw in
+/// `0..one_in` (only `0` passes when the multiplier is 1), `bonus` a second uniform draw in
+/// `0..100`; together they are one draw in `0..one_in x 100`, which passes below
+/// `move_in_mul(index) x 100`, so the chance is `move_in_mul / one_in`.
+pub fn move_in_passes(gate: u32, bonus: u32, index: u8, k: &ContentmentKnobs) -> bool {
+    ((gate * 100 + bonus.min(99)) as f32) < move_in_mul(index, k) * 100.0
+}
+
 /// The record of one home.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HomeSlot {
@@ -87,7 +106,8 @@ pub struct HomeSlot {
     pub index: u8,
     /// The worst factors' complaints, worst first; `Complaint::None` fills the rest.
     pub complaints: [Complaint; COMPLAINTS_MAX],
-    /// Running average of the residents' minutes to work (T-318b fills it; `0` until then).
+    /// Running average of the residents' minutes to work ([`HomeContentment::note_commute`]);
+    /// `0` until a trip to work was seen.
     pub commute_min: u8,
 }
 
@@ -114,7 +134,8 @@ fn next_revision() -> u64 {
 #[derive(Resource, Clone, Debug, Serialize, Deserialize)]
 pub struct HomeContentment {
     slots: Vec<HomeSlot>,
-    /// Since when each home stands below the move-out line (T-318b fills it), by id.
+    /// Since when each home stands below the move-out line (`leave_below`), by id: set and
+    /// cleared by the contentment pass, read by the daily move-out.
     pub unhappy_since: BTreeMap<BuildingId, Tick>,
     /// Changes whenever a record does and at every load: the cache key of the published
     /// snapshot. Not sim state: neither saved nor compared nor hashed.
@@ -179,6 +200,26 @@ impl HomeContentment {
         if slot.index != index || slot.complaints != complaints {
             slot.index = index;
             slot.complaints = complaints;
+            self.revision = next_revision();
+        }
+    }
+
+    /// Folds one finished trip to work of `minutes` into the commute average of `id`
+    /// (`c += (m - c) / 8`, the first trip sets it). A home without a record is skipped: its
+    /// record starts at the next pass.
+    pub fn note_commute(&mut self, id: BuildingId, minutes: u16) {
+        let Some(slot) = self
+            .slots
+            .get_mut(id.index as usize)
+            .filter(|s| s.generation == id.generation)
+        else {
+            return;
+        };
+        let m = i32::from(minutes.min(u16::from(u8::MAX)));
+        let c = i32::from(slot.commute_min);
+        let next = if c == 0 { m } else { c + (m - c) / 8 } as u8;
+        if next != slot.commute_min {
+            slot.commute_min = next;
             self.revision = next_revision();
         }
     }
@@ -254,6 +295,43 @@ mod tests {
         let back: HomeContentment = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(back, h);
         assert_ne!(back.revision(), h.revision());
+    }
+
+    #[test]
+    fn move_in_grows_with_the_index_and_stops_below_the_line() {
+        let k = ContentmentKnobs::default();
+        // Every (gate, bonus) pair of one_in = 4 once: the share that passes is the chance.
+        let passes = |index| {
+            (0..4u32)
+                .flat_map(|g| (0..100u32).map(move |b| (g, b)))
+                .filter(|&(g, b)| move_in_passes(g, b, index, &k))
+                .count()
+        };
+        // Neutral = the plain 1 in 4, the same draws as before the multiplier.
+        assert_eq!(passes(NEUTRAL_INDEX), 100);
+        assert!((0..100).all(|b| move_in_passes(0, b, NEUTRAL_INDEX, &k)));
+        assert_eq!(passes(100), 150);
+        assert_eq!(passes(20), 70);
+        assert_eq!(passes(19), 0);
+        assert!(passes(90) as f32 >= 1.5 * passes(30) as f32);
+    }
+
+    #[test]
+    fn the_commute_average_follows_the_trips_of_a_recorded_home() {
+        let mut h = HomeContentment::default();
+        h.note_commute(id(2, 0), 40);
+        assert!(h.get(id(2, 0)).is_none(), "no record, no average");
+        h.set(id(2, 0), 60, [Complaint::None; COMPLAINTS_MAX]);
+        h.note_commute(id(2, 0), 40);
+        assert_eq!(h.get(id(2, 0)).unwrap().commute_min, 40);
+        h.note_commute(id(2, 0), 8);
+        assert_eq!(h.get(id(2, 0)).unwrap().commute_min, 36);
+        let r = h.revision();
+        for _ in 0..60 {
+            h.note_commute(id(2, 0), 8);
+        }
+        assert!(h.get(id(2, 0)).unwrap().commute_min <= 15);
+        assert_ne!(h.revision(), r);
     }
 
     #[test]

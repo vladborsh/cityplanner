@@ -122,10 +122,11 @@ fn a_park_stands_ready_lifts_the_land_value_inside_its_radius_only_and_does_not_
     assert_eq!(poll_with, poll_without);
 }
 
-/// T-237: the parks differ clearly and their effect is real: land value, fewer sick, more move-ins.
+/// T-237: the parks differ clearly and their effect is real: land value, fewer sick (the
+/// move-in follows from the leisure factor of contentment since T-318b).
 #[test]
 fn the_four_parks_differ_and_help_their_neighbours() {
-    use cp_building::{GREEN_MOVE_IN_BONUS, ParkSite, green_at, move_in_passes, sick_chance};
+    use cp_building::{ParkSite, green_at, sick_chance};
     let db = content();
     let get = |id: &str| {
         db.building(db.building_id(id).unwrap())
@@ -161,19 +162,9 @@ fn the_four_parks_differ_and_help_their_neighbours() {
     let many = [park(here, play), park(here, sports), park(here, small)];
     assert_eq!(green_at(&many, here), 1.0);
 
-    // Fewer fall ill beside a park, more households move in.
+    // Fewer fall ill beside a park.
     let (base, poll) = (0.003, 0.002);
     assert!(sick_chance(base, poll, 0.8) < 0.6 * sick_chance(base, poll, 0.0));
-    let (mut near, mut far) = (0, 0);
-    for k in 0..20_000u32 {
-        let (gate, bonus) = (k % 2, (k / 2) % 100);
-        near += u32::from(move_in_passes(gate, bonus, 2, 0.8));
-        far += u32::from(move_in_passes(gate, bonus, 2, 0.0));
-    }
-    assert!(
-        near as f32 >= far as f32 * (1.0 + 0.5 * GREEN_MOVE_IN_BONUS * 0.8),
-        "{near} against {far}"
-    );
 }
 
 /// T-237: a home beside a plaza stands on land worth enough for a higher level than the same

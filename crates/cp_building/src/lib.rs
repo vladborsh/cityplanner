@@ -21,7 +21,10 @@ pub use command::{
     platform_request_behind, platform_shift, validate_move_over, validate_placement,
     validate_placement_except, validate_placement_for, validate_placement_over,
 };
-pub use contentment::{COMPLAINTS_MAX, Complaint, HomeContentment, HomeSlot, NEUTRAL_INDEX};
+pub use contentment::{
+    COMPLAINTS_MAX, Complaint, HomeContentment, HomeSlot, NEUTRAL_INDEX, move_in_mul,
+    move_in_passes,
+};
 pub use edge::{
     EDGE_REACH_M, EdgeBlocked, SLIDE_M, edge_search, is_edge_placed, validate_edge_placement,
 };
@@ -40,10 +43,7 @@ pub use model::{
     AccessPoint, Building, BuildingFlags, BuildingId, BuildingState, FOOTPRINT_CELL_M, Footprint,
     Lot, build_ticks, footprint_quad,
 };
-pub use park::{
-    GREEN_MOVE_IN_BONUS, GREEN_SICK_CUT, ParkSite, green_at, move_in_passes, park_sites,
-    sick_chance,
-};
+pub use park::{GREEN_SICK_CUT, ParkSite, green_at, park_sites, sick_chance};
 pub use park_site::{ParkWorld, validate_park_site};
 pub use respec::{SPEC_STREAM, respec};
 pub use spawn::{

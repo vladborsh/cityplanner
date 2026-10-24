@@ -14,31 +14,42 @@
 //!    mean over the kinds the reached milestone has opened (`ServiceUnlocks`); 100 while none is;
 //! 2. **environment** — ground pollution and noise at the home (T-300);
 //! 3. **home problems** — points per problem bit;
-//! 4. **work** and 5. **commute** — 100 for now (T-318b);
+//! 4. **work** — the share of the home's households jobless for `jobless_complain_days`;
+//! 5. **commute** — the home's average minutes to work ([`HomeSlot::commute_min`], folded in
+//!    here from the trips to work that finished since the last pass, `TripBook::commutes`);
 //! 6. **leisure** — the parks' green (T-237) plus half for a leisure target within reach;
 //! 7. **tax** — the residential rate at the home (district override, else the city);
 //! 8. **trust** — the trust in the mayor of the corruption state (T-324), `trust_default`
 //!    in a world without it.
 //!
-//! Integer index, homes in arena order, no RNG, no map iteration: deterministic.
+//! A home below `leave_below` gets a move-out timer (`HomeContentment::unhappy_since`); once a
+//! day [`contentment_daily`] lets the homes whose timer is older than `leave_days` lose a
+//! household with `leave_chance`, and sets every citizen's `wellbeing` (§19.4).
+//!
+//! Integer index, homes in arena order, RNG only in the move-out (`CONTENTMENT_STREAM` by
+//! tick), no map iteration but over `BTreeMap`s: deterministic.
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Res, ResMut};
 use bevy_math::Vec2;
 use cp_building::{
     BuildingFlags, BuildingGrid, BuildingId, BuildingState, COMPLAINTS_MAX, Complaint,
-    HomeContentment, green_at, park_sites,
+    HomeContentment, HomeSlot, green_at, park_sites,
 };
-use cp_citizen::{CitizenGrid, LeisureTargets};
+use cp_citizen::{CitizenGrid, HouseholdId, LeisureTargets, TripBook};
 use cp_content::{ContentmentKnobs, ServiceUnlocks, SimContent, ZoneType};
-use cp_core::Tick;
+use cp_core::time::TICKS_PER_DAY;
+use cp_core::{SimRng, Tick};
 use cp_district::{DistrictId, DistrictMap, Districts, district_at};
 use cp_service::{ServiceCoverage, ServiceProblems, ServiceState};
 use serde::{Deserialize, Serialize};
 
-use crate::growth::CITY_PERIOD;
+use crate::growth::{CITY_PERIOD, Decay};
 use crate::land::SERVICE_KINDS;
 use crate::{CorruptionState, EconomyState, Emissions};
+
+/// RNG sub-stream of the move-out (§19.4).
+pub const CONTENTMENT_STREAM: u64 = 0xC047_E47D;
 
 /// Number of factors.
 pub const FACTORS: usize = 8;
@@ -82,10 +93,10 @@ pub struct HomeFacts {
     pub noise: f32,
     /// Which problems the home has, in `problem_penalty` order.
     pub problems: [bool; 8],
-    /// Share `0..=1` of the households without work long enough to mind; `None` = not known
-    /// (scores 100, T-318b fills it).
+    /// Share `0..=1` of the households without work long enough to mind; `None` = nobody
+    /// lives there (scores 100).
     pub jobless: Option<f32>,
-    /// Minutes to work; `None` = not known or nobody works (scores 100).
+    /// Minutes to work; `None` = no trip to work seen yet (scores 100).
     pub commute_min: Option<f32>,
     /// The parks' green at the home, `0..=1`.
     pub green: f32,
@@ -176,10 +187,10 @@ pub fn score(f: &HomeFacts, k: &ContentmentKnobs, cover: f32) -> Scored {
     }
     codes[F_WORK] = Complaint::Jobless;
 
-    // 5. Commute: full at `COMMUTE_GOOD_MIN`, nothing at `COMMUTE_BAD_MIN` (T-318b moves the
-    // limits to the balance with the rest of the factor).
+    // 5. Commute: full at `commute_good_min`, nothing at `commute_bad_min`.
     if let Some(m) = f.commute_min {
-        let t = ((m - COMMUTE_GOOD_MIN) / (COMMUTE_BAD_MIN - COMMUTE_GOOD_MIN)).clamp(0.0, 1.0);
+        let span = (k.commute_bad_min - k.commute_good_min).max(1e-6);
+        let t = ((m - k.commute_good_min) / span).clamp(0.0, 1.0);
         scores[F_COMMUTE] = pct(100.0 * (1.0 - t));
     }
     codes[F_COMMUTE] = Complaint::LongCommute;
@@ -200,10 +211,6 @@ pub fn score(f: &HomeFacts, k: &ContentmentKnobs, cover: f32) -> Scored {
 
     Scored { scores, codes }
 }
-
-/// Minutes to work that cost nothing, and from which the factor is 0 (§19.2 row 5).
-pub const COMMUTE_GOOD_MIN: f32 = 15.0;
-pub const COMMUTE_BAD_MIN: f32 = 60.0;
 
 /// The weighted mean of the scores, rounded: the index a home moves towards.
 pub fn target(scores: &[u8; FACTORS], weights: &[u8; FACTORS]) -> u8 {
@@ -337,26 +344,51 @@ impl Roll {
     }
 }
 
-/// Residents per home, dense by `BuildingId.index` with the generation they were counted for.
-fn residents_by_home(citizens: &CitizenGrid, slots: usize) -> Vec<(u32, u32)> {
-    let mut out = vec![(u32::MAX, 0u32); slots];
+/// Who lives in one home: residents, households, and households jobless long enough to mind.
+#[derive(Clone, Copy, Debug, Default)]
+struct Occupants {
+    residents: u32,
+    households: u16,
+    jobless: u16,
+}
+
+/// The occupants of each home, dense by `BuildingId.index` with the generation they were
+/// counted for. A household is jobless from `jobless_ticks` without work.
+fn occupants_by_home(
+    citizens: &CitizenGrid,
+    slots: usize,
+    now: u64,
+    jobless_ticks: u64,
+) -> Vec<(u32, Occupants)> {
+    let mut out = vec![(u32::MAX, Occupants::default()); slots];
     for (_, h) in citizens.households() {
         let Some(slot) = out.get_mut(h.home.index as usize) else {
             continue;
         };
         if slot.0 != h.home.generation {
-            *slot = (h.home.generation, 0);
+            *slot = (h.home.generation, Occupants::default());
         }
-        slot.1 += h.member_ids().count() as u32;
+        let o = &mut slot.1;
+        o.residents += h.member_ids().count() as u32;
+        o.households += 1;
+        if h.jobless_since
+            .is_some_and(|s| now.saturating_sub(s.0) >= jobless_ticks)
+        {
+            o.jobless += 1;
+        }
     }
     out
 }
 
-fn residents_of(table: &[(u32, u32)], id: BuildingId) -> u32 {
+fn occupants_of(table: &[(u32, Occupants)], id: BuildingId) -> Occupants {
     table
         .get(id.index as usize)
         .filter(|(g, _)| *g == id.generation)
-        .map_or(0, |(_, n)| *n)
+        .map_or_else(Occupants::default, |(_, o)| *o)
+}
+
+fn days_to_ticks(days: f32) -> u64 {
+    (days.max(0.0) * TICKS_PER_DAY as f32).round() as u64
 }
 
 fn is_home(zone: ZoneType) -> bool {
@@ -386,7 +418,11 @@ pub fn update_contentment(
     coverage: Option<Res<ServiceCoverage>>,
     services: Option<Res<ServiceState>>,
     unlocks: Option<Res<ServiceUnlocks>>,
-    (leisure, corruption): (Option<Res<LeisureTargets>>, Option<Res<CorruptionState>>),
+    (leisure, corruption, trips): (
+        Option<Res<LeisureTargets>>,
+        Option<Res<CorruptionState>>,
+        Option<ResMut<TripBook>>,
+    ),
     mut homes: ResMut<HomeContentment>,
     mut city: ResMut<CityContentment>,
 ) {
@@ -404,7 +440,12 @@ pub fn update_contentment(
     });
     let parks = park_sites(db, &buildings);
     let slots = buildings.iter().map(|(id, _)| id.index as usize + 1).max();
-    let residents = residents_by_home(&citizens, slots.unwrap_or(0));
+    let occupants = occupants_by_home(
+        &citizens,
+        slots.unwrap_or(0),
+        tick.0,
+        days_to_ticks(k.jobless_complain_days),
+    );
 
     // Records of buildings that are no active home any more.
     let gone: Vec<BuildingId> = homes
@@ -419,6 +460,12 @@ pub fn update_contentment(
     for id in gone {
         homes.remove(id);
     }
+    // The trips to work since the last pass, in the order they finished.
+    if let Some(mut trips) = trips {
+        for (home, minutes) in std::mem::take(&mut trips.commutes) {
+            homes.note_commute(home, minutes);
+        }
+    }
 
     let mut all = Roll::default();
     // Keyed by district id, the homes in no district last.
@@ -431,6 +478,7 @@ pub fn update_contentment(
         if !is_home(def.zone) {
             continue;
         }
+        let occ = occupants_of(&occupants, id);
         let service_problems = services
             .as_deref()
             .map_or_else(ServiceProblems::default, |s| s.problems_of(id));
@@ -450,8 +498,13 @@ pub fn update_contentment(
             ground: emissions.ground_at(b.pos),
             noise: emissions.noise_at(b.pos),
             problems: home_problems(b.flags, service_problems),
-            jobless: None,
-            commute_min: None,
+            jobless: (occ.households > 0)
+                .then(|| f32::from(occ.jobless) / f32::from(occ.households)),
+            commute_min: homes
+                .get(id)
+                .map(|s| s.commute_min)
+                .filter(|&m| m > 0)
+                .map(f32::from),
             green: green_at(&parks, b.pos),
             leisure_near: leisure_near(leisure.as_deref(), b.pos, k.leisure_near_m),
             tax_pct,
@@ -462,7 +515,12 @@ pub fn update_contentment(
         let index = homes.get(id).map_or(t, |s| step(s.index, t, k.step_div));
         let named = complaints(&scored, k);
         homes.set(id, index, named);
-        let n = residents_of(&residents, id);
+        if index < k.leave_below {
+            homes.unhappy_since.entry(id).or_insert(*tick);
+        } else {
+            homes.unhappy_since.remove(&id);
+        }
+        let n = occ.residents;
         all.add(index, &scored, &named, n);
         by_district
             .entry(district.map_or(u16::MAX, |d| u16::from(d.0)))
@@ -489,5 +547,81 @@ pub fn update_contentment(
     };
     if *city != next {
         *city = next;
+    }
+}
+
+/// `Economy`-phase system on the first tick of each game day (after [`update_contentment`],
+/// whose pass falls on the same tick), see the module docs: the move-out of the homes unhappy
+/// for `leave_days`, then every citizen's wellbeing (§19.4).
+#[allow(clippy::too_many_arguments)]
+pub fn contentment_daily(
+    tick: Res<Tick>,
+    content: Option<Res<SimContent>>,
+    rng: Res<SimRng>,
+    decay: Option<Res<Decay>>,
+    homes: Res<HomeContentment>,
+    mut citizens: ResMut<CitizenGrid>,
+) {
+    if tick.0 == 0 || !tick.0.is_multiple_of(TICKS_PER_DAY) {
+        return;
+    }
+    let Some(content) = content else { return };
+    let k = &content.0.balance().contentment;
+    let now = tick.0;
+
+    // Move-out: one draw per home past its time, in id order; the leaving household is the
+    // home's first in arena order. Not in the test mode without decay.
+    if decay.is_none_or(|d| d.enabled) {
+        let mut r = rng.fork(CONTENTMENT_STREAM, *tick);
+        let after = days_to_ticks(k.leave_days);
+        let leaving: Vec<BuildingId> = homes
+            .unhappy_since
+            .iter()
+            .filter(|(_, since)| now.saturating_sub(since.0) >= after)
+            .filter_map(|(&id, _)| (r.next_f32() < k.leave_chance).then_some(id))
+            .collect();
+        if !leaving.is_empty() {
+            let mut first: Vec<(BuildingId, HouseholdId)> = Vec::new();
+            for (hid, h) in citizens.households() {
+                if leaving.binary_search(&h.home).is_ok()
+                    && !first.iter().any(|(b, _)| *b == h.home)
+                {
+                    first.push((h.home, hid));
+                }
+            }
+            for (_, hid) in first {
+                citizens.remove_household(hid);
+            }
+        }
+    }
+
+    // Wellbeing: the home's index less the personal troubles.
+    let jobless_ticks = days_to_ticks(k.jobless_complain_days);
+    let bad_commute = k.commute_bad_min;
+    let rows: Vec<(cp_citizen::CitizenId, u8)> = citizens
+        .households()
+        .flat_map(|(_, h)| {
+            let slot: Option<&HomeSlot> = homes.get(h.home);
+            let index = slot.map_or(cp_building::NEUTRAL_INDEX, |s| s.index);
+            let long_way = slot.is_some_and(|s| f32::from(s.commute_min) >= bad_commute);
+            let jobless_home = h
+                .jobless_since
+                .is_some_and(|s| now.saturating_sub(s.0) >= jobless_ticks);
+            let grid = &*citizens;
+            h.member_ids().filter_map(move |cid| {
+                let c = grid.citizen(cid)?;
+                let jobless =
+                    jobless_home && c.is_adult() && c.work.is_none() && c.school.is_none();
+                let w = i32::from(index)
+                    - 20 * i32::from(jobless)
+                    - 15 * i32::from(c.sick_since.is_some())
+                    - 10 * i32::from(long_way);
+                let w = w.clamp(0, 100) as u8;
+                (w != c.wellbeing).then_some((cid, w))
+            })
+        })
+        .collect();
+    for (cid, w) in rows {
+        citizens.set_wellbeing(cid, w);
     }
 }

@@ -199,6 +199,7 @@ impl Town {
                 mode: if car { TripMode::Car } else { TripMode::Walk },
                 // Due at once: the routine turns it into a planned trip and picks its mode.
                 state: TripState::Scheduled { depart_at: Tick(0) },
+                started: Tick(0),
             });
             if added.is_some() {
                 n += 1;

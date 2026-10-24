@@ -668,6 +668,21 @@ pub struct ContentmentKnobs {
     pub tax_step: u8,
     /// The trust in the mayor of a world without the corruption state (T-324), `0..=100`.
     pub trust_default: u8,
+    /// Work: a household without work this many days counts as jobless (T-318b).
+    pub jobless_complain_days: f32,
+    /// Commute: full score at or below `commute_good_min` minutes, none from `commute_bad_min`.
+    pub commute_good_min: f32,
+    pub commute_bad_min: f32,
+    /// Move-in: the chance is multiplied by `move_in_mul_at_0` at index 0 up to
+    /// `move_in_mul_at_100` at 100 (linear); below `move_in_min_index` nobody moves in.
+    pub move_in_mul_at_0: f32,
+    pub move_in_mul_at_100: f32,
+    pub move_in_min_index: u8,
+    /// Move-out: a home below `leave_below` for `leave_days` loses a household with
+    /// `leave_chance` at each day boundary.
+    pub leave_below: u8,
+    pub leave_days: f32,
+    pub leave_chance: f32,
 }
 
 impl ContentmentKnobs {
@@ -686,6 +701,15 @@ impl ContentmentKnobs {
             f32::from(self.tax_neutral),
             f32::from(self.tax_step),
             f32::from(self.trust_default),
+            self.jobless_complain_days,
+            self.commute_good_min,
+            self.commute_bad_min,
+            self.move_in_mul_at_0,
+            self.move_in_mul_at_100,
+            f32::from(self.move_in_min_index),
+            f32::from(self.leave_below),
+            self.leave_days,
+            self.leave_chance,
         ]);
         v
     }
@@ -704,6 +728,15 @@ impl Default for ContentmentKnobs {
             tax_neutral: 9,
             tax_step: 10,
             trust_default: 60,
+            jobless_complain_days: 3.0,
+            commute_good_min: 15.0,
+            commute_bad_min: 60.0,
+            move_in_mul_at_0: 0.5,
+            move_in_mul_at_100: 1.5,
+            move_in_min_index: 20,
+            leave_below: 20,
+            leave_days: 10.0,
+            leave_chance: 0.3,
         }
     }
 }

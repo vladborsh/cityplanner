@@ -1024,7 +1024,7 @@
     "{resource} · {n} cells": ["{resource} · {n} cells", "{resource} · {n} cells"],
     "{resource}: the colour of its area and the overlay": "{resource}: the colour of its area and the overlay",
     "{sector}: {supply} / {demand} {unit} (supply / demand)": "{sector}: {supply} / {demand} {unit} (supply / demand)",
-    "{sick} % fewer sick, {move_in} % likelier to move in, within {radius} m": "{sick} % fewer sick, {move_in} % likelier to move in, within {radius} m",
+    "{sick} % fewer sick, happier homes, within {radius} m": "{sick} % fewer sick, happier homes, within {radius} m",
     "{speed} km/h": "{speed} km/h",
     "{today} today · {week} this week": "{today} today · {week} this week",
     "{today} today, {week} this week": "{today} today, {week} this week",

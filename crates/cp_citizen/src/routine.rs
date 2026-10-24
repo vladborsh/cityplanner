@@ -241,7 +241,15 @@ pub fn complete_trip(
     book.remove(tid);
     book.completed += 1;
     match trip.purpose {
-        TripPurpose::Work => set_location(grid, trip.citizen, Location::Work),
+        TripPurpose::Work => {
+            set_location(grid, trip.citizen, Location::Work);
+            // T-318b: the minutes on the way, for the home's commute average.
+            if let Some(home) = grid.citizen(trip.citizen).and_then(|c| c.home) {
+                let secs = now.saturating_sub(trip.started.0) as f32 * MOVE_SECONDS_PER_TICK;
+                book.commutes
+                    .push((home, (secs / 60.0).round().min(f32::from(u16::MAX)) as u16));
+            }
+        }
         TripPurpose::Home => set_location(grid, trip.citizen, Location::Home),
         TripPurpose::MoveIn => grid.household_arrived(trip.citizen, now),
         TripPurpose::Shop => {
@@ -262,6 +270,7 @@ pub fn complete_trip(
                     state: TripState::Scheduled {
                         depart_at: Tick(now + dwell),
                     },
+                    started: Tick(now + dwell),
                 });
             }
         }
@@ -288,6 +297,7 @@ pub fn complete_trip(
                     state: TripState::Scheduled {
                         depart_at: Tick(now + dwell),
                     },
+                    started: Tick(now + dwell),
                 });
             }
         }
@@ -350,6 +360,7 @@ pub fn update_routine(
                 book.add(Trip {
                     mode,
                     state: TripState::Planned,
+                    started: Tick(now),
                     ..trip
                 });
             }
@@ -452,6 +463,7 @@ fn decide(
                     // `cp_traffic` routes it and takes an agent from the pool; only a full
                     // pool or a missing agent makes it run abstractly (§9.4).
                     state: TripState::Planned,
+                    started: Tick(now),
                 })
                 .is_some();
             if ok {

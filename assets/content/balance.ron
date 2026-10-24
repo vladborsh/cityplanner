@@ -334,6 +334,10 @@ Balance((
     // power, garbage, crime, bad water, bodies, sick. Leisure: a target within leisure_near_m
     // gives half. Tax: full up to tax_neutral %, tax_step less per % above. Trust is the corruption
     // state's (T-324); trust_default only stands in for a world without it.
+    // T-318b: work counts a household jobless after jobless_complain_days; commute full up to
+    // commute_good_min, none from commute_bad_min minutes. Move-in chance x
+    // move_in_mul_at_0..move_in_mul_at_100 by index, none below move_in_min_index; a home below
+    // leave_below for leave_days loses a household with leave_chance per day.
     contentment: (
         weights: (25, 15, 20, 15, 10, 10, 5, 10),
         step_div: 8,
@@ -345,6 +349,15 @@ Balance((
         tax_neutral: 9,
         tax_step: 10,
         trust_default: 60,
+        jobless_complain_days: 3.0,
+        commute_good_min: 15.0,
+        commute_bad_min: 60.0,
+        move_in_mul_at_0: 0.5,
+        move_in_mul_at_100: 1.5,
+        move_in_min_index: 20,
+        leave_below: 20,
+        leave_days: 10.0,
+        leave_chance: 0.3,
     ),
 
     // --- Corruption, institutions, trust (T-324, architecture/corruption.md): all // tune later ---

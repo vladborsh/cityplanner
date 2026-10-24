@@ -569,6 +569,7 @@ pub fn send_citizens(
     sim.world_mut()
         .resource_scope(|w, mut book: bevy_ecs::change_detection::Mut<TripBook>| {
             book.ensure_derived();
+            let now = *w.resource::<Tick>();
             let mut grid = w.resource_mut::<CitizenGrid>();
             for (i, (citizen, home)) in movers.into_iter().enumerate() {
                 let mut to = destinations[i % destinations.len()];
@@ -582,6 +583,7 @@ pub fn send_citizens(
                     purpose: TripPurpose::Work,
                     mode: mode(i),
                     state: TripState::Planned,
+                    started: now,
                 };
                 if book.add(trip).is_some() {
                     grid.set_location(citizen, Location::Moving);

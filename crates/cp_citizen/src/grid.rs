@@ -543,6 +543,21 @@ impl CitizenGrid {
         }
     }
 
+    /// Sets since when a household has had no work (tests and scenarios; the citizens' pass
+    /// keeps it otherwise).
+    pub fn set_jobless_since(&mut self, id: HouseholdId, since: Option<Tick>) {
+        if let Some(h) = self.households.get_mut(id) {
+            h.jobless_since = since;
+        }
+    }
+
+    /// Sets a citizen's wellbeing (T-318b: the contentment pass, once a day).
+    pub fn set_wellbeing(&mut self, id: CitizenId, wellbeing: u8) {
+        if let Some(c) = self.citizens.get_mut(id) {
+            c.wellbeing = wellbeing;
+        }
+    }
+
     pub(crate) fn citizen_mut(&mut self, id: CitizenId) -> Option<&mut Citizen> {
         self.citizens.get_mut(id)
     }

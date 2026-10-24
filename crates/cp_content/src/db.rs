@@ -1035,11 +1035,15 @@ impl ContentDb {
                 || c.step_div == 0
                 || c.complain_below > 100
                 || c.trust_default > 100
+                || c.commute_bad_min <= c.commute_good_min
+                || c.move_in_min_index > 100
+                || c.leave_below > 100
+                || c.leave_chance > 1.0
             {
                 errors.push(ContentError::new(
                     path,
                     Some("contentment"),
-                    "finite and >= 0, some weight > 0, step_div >= 1, complain_below and trust_default <= 100".to_string(),
+                    "finite and >= 0, some weight > 0, step_div >= 1, complain_below, trust_default, move_in_min_index and leave_below <= 100, commute_bad_min > commute_good_min, leave_chance <= 1".to_string(),
                 ));
             }
             let k = &b.corruption;
