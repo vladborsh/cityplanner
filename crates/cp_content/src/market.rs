@@ -84,6 +84,8 @@ pub struct MarketKnobs {
     pub glut_export_mul: f32,
     pub shortage_import_mul: f32,
     pub glut_import_mul: f32,
+    /// The share of import orders that fail during a shortage (§21.1 item 3).
+    pub shortage_fail: f32,
     /// The seasonal price multiplier of a cargo, spring to winter; cargo not listed: 1.
     pub season: Vec<(CargoKind, [f32; 4])>,
 }
@@ -102,6 +104,7 @@ impl Default for MarketKnobs {
             glut_export_mul: 0.5,
             shortage_import_mul: 2.0,
             glut_import_mul: 0.8,
+            shortage_fail: 0.5,
             season: vec![
                 (CargoKind::Crops, [1.0, 0.9, 0.8, 1.2]),
                 (CargoKind::AnimalProducts, [1.0, 0.9, 0.8, 1.2]),
@@ -128,6 +131,7 @@ impl MarketKnobs {
             self.glut_export_mul,
             self.shortage_import_mul,
             self.glut_import_mul,
+            self.shortage_fail,
         ];
         for (c, m) in &self.season {
             v.push(*c as u8 as f32);
@@ -174,6 +178,23 @@ impl Market {
             None => 1.0,
         };
         f32::from(m.index) / 100.0 * k.season_mul(cargo, season(tick)) * event
+    }
+
+    /// Whether the import order of `cargo` that building `who` (its index) places on game day
+    /// `day` fails (§21.1 item 3): only during a shortage, for `shortage_fail` of the orders. A
+    /// hash of the sim seed and the keys, no RNG draw, like `cp_transit::trade_roll`: the same
+    /// in any order, and a building that failed retries on its next pass (the same all day).
+    pub fn import_fails(
+        &self,
+        k: &MarketKnobs,
+        seed: [u8; 32],
+        who: u32,
+        cargo: CargoKind,
+        day: u64,
+    ) -> bool {
+        self.get(cargo).event.map(|e| e.kind) == Some(MarketEventKind::Shortage)
+            && cp_core::hash_unit(seed, u64::from(who) | 1 << 40, (day << 8) | cargo as u64)
+                < k.shortage_fail
     }
 
     /// Money one unit of `cargo` sold to the outside brings at `tick` (0 for a cargo without a
@@ -229,6 +250,31 @@ mod tests {
         });
         assert_eq!(m.export_factor(&k, CargoKind::Logs, spring), 2.25);
         assert_eq!(m.import_factor(&k, CargoKind::Logs, spring), 3.0);
+    }
+
+    #[test]
+    fn a_shortage_fails_about_half_of_the_import_orders_and_nothing_else_does() {
+        let k = MarketKnobs::default();
+        let mut m = Market::default();
+        let seed = [7; 32];
+        let orders = |m: &Market| {
+            (0..4u32)
+                .flat_map(|who| (0..10u64).map(move |day| (who, day)))
+                .filter(|&(who, day)| m.import_fails(&k, seed, who, CargoKind::Metals, day))
+                .count()
+        };
+        assert_eq!(orders(&m), 0);
+        m.get_mut(CargoKind::Metals).event = Some(MarketEvent {
+            kind: MarketEventKind::Glut,
+            until_day: 10,
+        });
+        assert_eq!(orders(&m), 0);
+        m.get_mut(CargoKind::Metals).event = Some(MarketEvent {
+            kind: MarketEventKind::Shortage,
+            until_day: 10,
+        });
+        let failed = orders(&m);
+        assert!((14..=26).contains(&failed), "{failed} of 40 failed");
     }
 
     #[test]

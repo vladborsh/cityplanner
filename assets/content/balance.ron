@@ -383,7 +383,8 @@ Balance((
     // -noise..=noise; a cargo without an event gets a shortage or glut (even odds) with
     // event_chance a day for event_days (uniform), at most events_max at once; a shortage pays
     // exports x shortage_export_mul and makes imports cost x shortage_import_mul, a glut the
-    // glut_* ones; season: price x per season (spring, summer, autumn, winter), others 1.
+    // glut_* ones; shortage_fail of the import orders fail during a shortage (hash, retried the
+    // next pass); season: price x per season (spring, summer, autumn, winter), others 1.
     market: (
         index_min: 60,
         index_max: 160,
@@ -396,6 +397,7 @@ Balance((
         glut_export_mul: 0.5,
         shortage_import_mul: 2.0,
         glut_import_mul: 0.8,
+        shortage_fail: 0.5,
         season: [
             (Crops, (1.0, 0.9, 0.8, 1.2)),
             (AnimalProducts, (1.0, 0.9, 0.8, 1.2)),

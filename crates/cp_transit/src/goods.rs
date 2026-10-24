@@ -317,6 +317,17 @@ pub fn run_goods(
             Way::In,
         ) < bal.industry_import_share
     };
+    // §21.1 item 3: in a shortage of Goods a share of the import orders fails, free; the shop
+    // or factory orders again on its next pass.
+    let import_fails = |id: BuildingId| {
+        market.import_fails(
+            &bal.market,
+            seed,
+            id.index,
+            CargoKind::Goods,
+            now.0 / TICKS_PER_DAY,
+        )
+    };
     let exports_this_load = |id: BuildingId| {
         trade_roll(
             seed,
@@ -414,6 +425,7 @@ pub fn run_goods(
                     && b.access().is_some()
                     && !lk.to.contains(&id)
                     && imports_today(id)
+                    && !import_fails(id)
                     && let Some(Endpoint::Outside(entry)) = exit_for(&entries, &sites, b.pos)
                 {
                     let run = runs.start_run(
@@ -451,6 +463,7 @@ pub fn run_goods(
                     && !lk.to.contains(&id)
                     && !hubs.pending(id, CargoKind::Goods)
                     && !has_stocked_supplier(lk, &goods, b.pos, bal)
+                    && !import_fails(id)
                     && let Some(via) = exit_for(&entries, &sites, b.pos)
                 {
                     match via {

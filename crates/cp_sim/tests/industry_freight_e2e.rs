@@ -327,6 +327,99 @@ fn a_processor_without_a_source_imports_and_pays() {
     assert!(t.stock(mill, CargoKind::Logs) >= 20.0 || t.stock(mill, CargoKind::Planks) > 0.0);
 }
 
+/// §21.6 item 3 (T-320b): `cargo` in a shortage until game day `until` (the market stays frozen).
+fn shortage_of(sim: &mut SimRunner, cargo: CargoKind, until: u32) {
+    sim.world_mut()
+        .resource_mut::<cp_content::Market>()
+        .get_mut(cargo)
+        .event = Some(cp_content::MarketEvent {
+        kind: cp_content::MarketEventKind::Shortage,
+        until_day: until,
+    });
+}
+
+/// A processor without a source for 10 days, in a shortage of Logs or not, with a warehouse
+/// that gives or not: the ledger and the days it said `NoInput`.
+fn ten_days_of_logs(shortage: bool, warehouse: bool) -> (IndustryLedger, u32, Town, BuildingId) {
+    let mut t = town(true);
+    if shortage {
+        shortage_of(&mut t.sim, CargoKind::Logs, 10);
+    }
+    let mill = t.put("forest_processor_a", 500.0);
+    if warehouse {
+        let store = t.put("forest_warehouse", 800.0);
+        t.seed(store, CargoKind::Logs, 1400.0);
+    }
+    t.staff(mill, 4);
+    let mut no_input_days = 0;
+    for _ in 0..10 {
+        let mut said = false;
+        for _ in 0..TICKS_PER_DAY {
+            t.sim.tick_once();
+            t.staff(mill, 4);
+            said |= t.sim.world().resource::<IndustryState>().problem_of(mill)
+                == cp_industry::IndustryProblem::NoInput;
+        }
+        no_input_days += u32::from(said);
+    }
+    (
+        *t.sim.world().resource::<IndustryLedger>(),
+        no_input_days,
+        t,
+        mill,
+    )
+}
+
+#[test]
+fn a_shortage_fails_imports_doubles_their_price_and_a_stocked_warehouse_rides_it_out() {
+    let (normal, normal_days, ..) = ten_days_of_logs(false, false);
+    let (short, short_days, mut t, mill) = ten_days_of_logs(true, false);
+    // Logs units ordered in over both weeks of the ten days.
+    let logs = |l: &IndustryLedger| {
+        let i = CargoKind::Logs as usize;
+        l.by_cargo[i].import + l.last_by_cargo[i].import
+    };
+    assert!(short.import_loads > 0, "{short:?}");
+    assert!(
+        logs(&short) < logs(&normal),
+        "orders failed: {} < {}",
+        logs(&short),
+        logs(&normal)
+    );
+    assert!(
+        short_days > normal_days,
+        "NoInput {short_days} > {normal_days}"
+    );
+    // The orders that went through cost twice the content price.
+    let price = t.db.cargo(CargoKind::Logs).unwrap().import_price * 2.0;
+    assert_eq!(
+        short.imports,
+        Cost::scaled(price, 20.0 * f64::from(short.import_loads))
+    );
+    // A shortage pays exports x1.5.
+    let m = *t.sim.world().resource::<cp_content::Market>();
+    assert_eq!(m.export_price(&t.db, CargoKind::Logs, t.sim.tick()), {
+        t.db.cargo(CargoKind::Logs).unwrap().export_price * 1.5
+    });
+    // Over: no order fails any more.
+    t.sim
+        .world_mut()
+        .resource_mut::<cp_content::Market>()
+        .get_mut(CargoKind::Logs)
+        .event = None;
+    let before = t.sim.world().resource::<IndustryLedger>().import_loads;
+    for _ in 0..3 * TICKS_PER_DAY {
+        t.sim.tick_once();
+        t.staff(mill, 4);
+    }
+    assert!(t.sim.world().resource::<IndustryLedger>().import_loads > before);
+
+    // A warehouse that holds Logs feeds the processor through the shortage.
+    let (stored, stored_days, ..) = ten_days_of_logs(true, true);
+    assert_eq!(stored.import_loads, 0, "{stored:?}");
+    assert!(stored_days <= normal_days, "NoInput {stored_days}");
+}
+
 #[test]
 fn demolishing_the_target_with_a_truck_on_the_road_fails_the_run_without_a_panic() {
     let mut t = town(false);

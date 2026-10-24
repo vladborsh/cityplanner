@@ -656,9 +656,151 @@ fn budget_advice(view: &SimView, out: &mut Vec<Advice>) {
     }
 }
 
+/// The ids of the market advice per cargo, in [`cp_content::CargoKind::ALL`] order:
+/// `(shortage, glut, peak)` (§21.3).
+const MARKET_ADVICE: [(&str, &str, &str); 13] = [
+    (
+        "market_shortage_goods",
+        "market_glut_goods",
+        "market_peak_goods",
+    ),
+    (
+        "market_shortage_crops",
+        "market_glut_crops",
+        "market_peak_crops",
+    ),
+    (
+        "market_shortage_logs",
+        "market_glut_logs",
+        "market_peak_logs",
+    ),
+    ("market_shortage_ore", "market_glut_ore", "market_peak_ore"),
+    ("market_shortage_oil", "market_glut_oil", "market_peak_oil"),
+    (
+        "market_shortage_animal_products",
+        "market_glut_animal_products",
+        "market_peak_animal_products",
+    ),
+    (
+        "market_shortage_flour",
+        "market_glut_flour",
+        "market_peak_flour",
+    ),
+    (
+        "market_shortage_planks",
+        "market_glut_planks",
+        "market_peak_planks",
+    ),
+    (
+        "market_shortage_paper",
+        "market_glut_paper",
+        "market_peak_paper",
+    ),
+    (
+        "market_shortage_metals",
+        "market_glut_metals",
+        "market_peak_metals",
+    ),
+    (
+        "market_shortage_glass",
+        "market_glut_glass",
+        "market_peak_glass",
+    ),
+    (
+        "market_shortage_petroleum",
+        "market_glut_petroleum",
+        "market_peak_petroleum",
+    ),
+    (
+        "market_shortage_plastics",
+        "market_glut_plastics",
+        "market_peak_plastics",
+    ),
+];
+/// A cargo whose export pays this many times its content price is "dear" (§21.3).
+pub const MARKET_PEAK: f32 = 1.3;
+
+/// §21.3: a shortage of a cargo the city imported last week ("fill your warehouses"), a glut of
+/// one it exported, and a dear cargo held by a warehouse in `Fill` ("switch it to Empty"; Show
+/// goes to the warehouse that holds the most). [`Advisor::observe`] shows at most one a day.
+fn market_advice(view: &SimView, out: &mut Vec<Advice>) {
+    use cp_content::{CargoKind, MarketEventKind};
+    use cp_industry::WarehouseMode;
+    let Some(db) = view.content.as_deref() else {
+        return;
+    };
+    let k = &db.balance().market;
+    let day = view.tick.0 / TICKS_PER_DAY;
+    let last = &view.industry_ledger.last_by_cargo;
+    for (cargo, (shortage, glut, peak)) in CargoKind::ALL.into_iter().zip(MARKET_ADVICE) {
+        let i = cargo as usize;
+        let name = tr(&format!("{cargo:?}"));
+        let m = view.market.get(cargo);
+        // Goods come in to the shops through the transit ledger (M3), the chains' cargo through
+        // the industry ledger.
+        let imported = last[i].import > 0
+            || (cargo == CargoKind::Goods && view.transit_ledger.import_loads > 0);
+        match m.event {
+            Some(e) if e.kind == MarketEventKind::Shortage && imported => {
+                let n = u64::from(e.until_day).saturating_sub(day).max(1) as u32;
+                out.push(Advice {
+                    id: shortage,
+                    severity: Severity::Warn,
+                    text: trf!(plural
+                        "Shortage of {cargo}: imports fail half the time and cost x2 for {n} days — fill your warehouses",
+                        n = n,
+                        cargo = name
+                    ),
+                    count: 1,
+                    icon: Icon::Industry,
+                    action: Some(Action::Window(crate::panels::UiWindow::Metrics)),
+                });
+                continue;
+            }
+            Some(e) if e.kind == MarketEventKind::Glut && last[i].export > 0 => {
+                out.push(Advice {
+                    id: glut,
+                    severity: Severity::Info,
+                    text: trf!("{cargo} sells for half this week", cargo = name),
+                    count: 1,
+                    icon: Icon::Industry,
+                    action: Some(Action::Window(crate::panels::UiWindow::Metrics)),
+                });
+                continue;
+            }
+            _ => {}
+        }
+        if view.market.export_factor(k, cargo, view.tick) < MARKET_PEAK {
+            continue;
+        }
+        let fullest = view
+            .warehouses
+            .list
+            .iter()
+            .filter(|(_, s)| s.mode == WarehouseMode::Fill && s.handles(cargo))
+            .map(|(&id, _)| (id, view.industry.stock_of(id, cargo)))
+            .filter(|&(_, held)| held > 0.0)
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some(pos) = fullest.and_then(|(id, _)| view.buildings.get(id).map(|b| b.pos)) {
+            out.push(Advice {
+                id: peak,
+                severity: Severity::Info,
+                text: trf!(
+                    "{cargo} is dear: switch the warehouse to Empty",
+                    cargo = name
+                ),
+                count: 1,
+                icon: Icon::Industry,
+                action: Some(Action::Jump(pos)),
+            });
+        }
+    }
+}
+
 pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
     let mut out = unique_advice(view, seen);
     budget_advice(view, &mut out);
+    market_advice(view, &mut out);
     industry_advice(view, &mut out);
     park_advice(view, &mut out);
     mail_advice(view, &mut out);
@@ -921,6 +1063,8 @@ pub struct Advisor {
     jobs_last: Option<u64>,
     /// The game hour of the last problem notification.
     last_problem_hour: Option<u64>,
+    /// The game day of the last market advice (§21.3: at most one a day).
+    last_market_day: Option<u64>,
     /// Severity of the snackbar that appeared in the last frame (taken by `draw_ui`).
     pub just_shown: Option<Severity>,
 }
@@ -989,6 +1133,9 @@ impl Advisor {
         {
             all.retain(|a| !problem(a));
         }
+        if self.last_market_day == Some(day) {
+            all.retain(|a| !a.id.starts_with("market_"));
+        }
         all.retain(|a| on_screen.is_none_or(|s| a.severity > s));
         // Most urgent first; the biggest problem of a severity, then the id, for a stable pick.
         all.sort_by(|a, b| {
@@ -1035,6 +1182,9 @@ impl Advisor {
             }
             if problem(&advice) {
                 self.last_problem_hour = Some(hour);
+            }
+            if advice.id.starts_with("market_") {
+                self.last_market_day = Some(day);
             }
             self.just_shown = Some(advice.severity);
             self.shown = Some(Shown { advice, at: now });
@@ -1804,6 +1954,83 @@ mod tests {
         run(action, &mut state, &mut overlay);
         assert_eq!(overlay.active, Overlay::Noise);
         assert_eq!(state.tool_goal, Some(cp_tools::ActiveTool::Trees));
+    }
+
+    /// §21.6 item 6 (T-320b): a shortage is advised only for a cargo the city imported last
+    /// week, a glut only for one it exported, a dear cargo only when a warehouse in `Fill`
+    /// holds it; and at most one market advice a game day.
+    #[test]
+    fn market_advice_is_for_the_cargo_the_city_trades_and_comes_once_a_day() {
+        use crate::industry::tests::{put, world_with_areas};
+        use cp_content::{CargoKind, Market, MarketEvent, MarketEventKind, MarketFrozen};
+        use cp_industry::{
+            IndustryLedger, IndustryState, WarehouseMode, WarehouseSetting, WarehouseSettings,
+        };
+        let (mut sim, db, at) = world_with_areas(1);
+        sim.world_mut().insert_resource(MarketFrozen);
+        let ids = |sim: &cp_sim::SimRunner| -> Vec<&'static str> {
+            collect(&sim.view(), &mut None)
+                .iter()
+                .map(|a| a.id)
+                .filter(|id| id.starts_with("market_"))
+                .collect()
+        };
+        {
+            let mut m = sim.world_mut().resource_mut::<Market>();
+            for (c, kind) in [
+                (CargoKind::Metals, MarketEventKind::Shortage),
+                (CargoKind::Logs, MarketEventKind::Shortage),
+                (CargoKind::Planks, MarketEventKind::Glut),
+            ] {
+                m.get_mut(c).event = Some(MarketEvent { kind, until_day: 9 });
+            }
+            m.get_mut(CargoKind::Paper).index = 160;
+        }
+        assert_eq!(
+            ids(&sim),
+            Vec::<&str>::new(),
+            "nothing traded, nothing advised"
+        );
+        {
+            let mut l = sim.world_mut().resource_mut::<IndustryLedger>();
+            l.last_by_cargo[CargoKind::Logs as usize].import = 20;
+            l.last_by_cargo[CargoKind::Planks as usize].export = 20;
+            // Exported, not imported: a shortage of it is no worry.
+            l.last_by_cargo[CargoKind::Metals as usize].export = 20;
+        }
+        assert_eq!(ids(&sim), ["market_shortage_logs", "market_glut_planks"]);
+        let store = put(&mut sim, &db, "forest_warehouse", at[0]);
+        sim.world_mut()
+            .resource_mut::<WarehouseSettings>()
+            .list
+            .insert(
+                store,
+                WarehouseSetting {
+                    cargo: None,
+                    mode: WarehouseMode::Fill,
+                },
+            );
+        assert!(!ids(&sim).contains(&"market_peak_paper"), "it holds none");
+        sim.world_mut()
+            .resource_mut::<IndustryState>()
+            .stock
+            .insert(store, vec![(CargoKind::Paper, 100.0)]);
+        let all = collect(&sim.view(), &mut None);
+        let peak = all.iter().find(|a| a.id == "market_peak_paper").unwrap();
+        assert_eq!(peak.action, Some(Action::Jump(at[0])));
+
+        // Once a day: the glut and the peak are info and wait for nothing, yet only one shows.
+        let v = sim.view();
+        let mut adv = Advisor::default();
+        let mut shown = vec![];
+        for h in 1..24 {
+            adv.observe(&at_tick(v.clone(), hour_tick(h)), h as f64 * 100.0, false);
+            if let Some(a) = adv.current(h as f64 * 100.0) {
+                shown.push(a.id);
+            }
+        }
+        let market = shown.iter().filter(|id| id.starts_with("market_")).count();
+        assert_eq!(market, 1, "{shown:?}");
     }
 
     /// T-219: an area with chain buildings and no Main building gives `industry_no_main`; a

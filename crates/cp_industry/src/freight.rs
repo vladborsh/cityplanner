@@ -27,6 +27,7 @@ use cp_citizen::CitizenGrid;
 use cp_content::{CargoKind, IndustryRole, SimContent};
 use cp_core::Cost;
 use cp_core::Tick;
+use cp_core::time::TICKS_PER_DAY;
 use cp_district::{AreaMap, Areas, area_at};
 use cp_net::NetGraph;
 use cp_traffic::ServiceRuns;
@@ -439,6 +440,11 @@ pub fn run_freight(
                     });
                 // T-306: a share of the input loads comes from abroad even with a supplier near.
                 if supplied && !comes_from_abroad(id, cargo) {
+                    continue;
+                }
+                // §21.1 item 3: in a shortage a share of the orders fails, free; the building
+                // orders again on its next pass.
+                if market.import_fails(&bal.market, seed, id.index, cargo, tick.0 / TICKS_PER_DAY) {
                     continue;
                 }
                 if let Some(via) = exit_for(&entries, &sites, b.pos) {

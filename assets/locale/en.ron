@@ -1297,4 +1297,7 @@
     "Transparent tenders on: institutions +{i}, building +{pct}%, no kickbacks": "Transparent tenders on: institutions +{i}, building +{pct}%, no kickbacks",
     "{name} can be built. {now}. {later}. {risk}.": "{name} can be built. {now}. {later}. {risk}.",
     "About {n} more deal and the city slides to clan rule: more offers, less trust": ["About {n} more deal and the city slides to clan rule: more offers, less trust", "About {n} more deals and the city slides to clan rule: more offers, less trust"],
+    "Shortage of {cargo}: imports fail half the time and cost x2 for {n} days — fill your warehouses": ["Shortage of {cargo}: imports fail half the time and cost x2 for {n} day — fill your warehouses", "Shortage of {cargo}: imports fail half the time and cost x2 for {n} days — fill your warehouses"],
+    "{cargo} sells for half this week": "{cargo} sells for half this week",
+    "{cargo} is dear: switch the warehouse to Empty": "{cargo} is dear: switch the warehouse to Empty",
 }

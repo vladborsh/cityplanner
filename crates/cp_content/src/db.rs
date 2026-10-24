@@ -1072,11 +1072,12 @@ impl ContentDb {
                 || m.revert_div < 1
                 || m.event_days.0 > m.event_days.1
                 || m.event_chance > 1.0
+                || m.shortage_fail > 1.0
             {
                 errors.push(ContentError::new(
                     path,
                     Some("market"),
-                    "finite and >= 0, 0 < index_min <= index_max, revert_div >= 1, event_days min <= max, event_chance <= 1".to_string(),
+                    "finite and >= 0, 0 < index_min <= index_max, revert_div >= 1, event_days min <= max, event_chance and shortage_fail <= 1".to_string(),
                 ));
             }
             let k = &b.corruption;

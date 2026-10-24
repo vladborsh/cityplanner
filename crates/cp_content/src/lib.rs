@@ -20,4 +20,4 @@ pub use kinds::{
     CargoKind, IndustryRole, InstitutionKind, ParkKind, ParkRole, PolicyKind, PolicyScope,
     ResourceKind, ServiceKind, ServiceSite, SpecKind, UtilityKind, ZoneType,
 };
-pub use market::{Market, MarketFrozen, MarketKnobs};
+pub use market::{Market, MarketEvent, MarketEventKind, MarketFrozen, MarketKnobs};

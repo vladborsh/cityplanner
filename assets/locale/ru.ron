@@ -1297,4 +1297,7 @@
     "Transparent tenders on: institutions +{i}, building +{pct}%, no kickbacks": "Прозрачные тендеры включены: институты +{i}, стройка +{pct}%, без откатов",
     "{name} can be built. {now}. {later}. {risk}.": "Можно построить: {name}. {now}. {later}. {risk}.",
     "About {n} more deal and the city slides to clan rule: more offers, less trust": ["Ещё около {n} сделки — и городом начнут править кланы: больше предложений, меньше доверия", "Ещё около {n} сделок — и городом начнут править кланы: больше предложений, меньше доверия", "Ещё около {n} сделок — и городом начнут править кланы: больше предложений, меньше доверия"],
+    "Shortage of {cargo}: imports fail half the time and cost x2 for {n} days — fill your warehouses": ["Дефицит: {cargo} — импорт срывается через раз и стоит x2 ещё {n} день, заполните склады", "Дефицит: {cargo} — импорт срывается через раз и стоит x2 ещё {n} дня, заполните склады", "Дефицит: {cargo} — импорт срывается через раз и стоит x2 ещё {n} дней, заполните склады"],
+    "{cargo} sells for half this week": "{cargo}: на этой неделе продаётся за полцены",
+    "{cargo} is dear: switch the warehouse to Empty": "{cargo} в цене: переключите склад на «Опустошать»",
 }
