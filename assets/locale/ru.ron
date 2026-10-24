@@ -83,6 +83,8 @@
     "Build a metro station first": "Сначала постройте станцию метро",
     "Buses on the road: {n} of {m} assigned": "Автобусов на линиях: {n} из {m} назначенных",
     "Click a street to plant or clear its tree row; Shift: the whole stretch. Esc leaves the tool.": "Щёлкните по улице, чтобы посадить или убрать ряд деревьев; Shift: весь участок. Esc выходит из инструмента.",
+    "Connectors": "Соединения",
+    "Drag from a lane going in to a lane going out; click a line to cut it": "Тяните от входящей полосы к исходящей; щёлкните по линии, чтобы убрать",
     "Lay a metro track first": "Сначала проложите путь метро",
     "Build a railway station first": "Сначала постройте вокзал",
     "Lay a railway first": "Сначала проложите железную дорогу",

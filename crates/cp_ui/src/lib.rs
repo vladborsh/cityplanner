@@ -16,6 +16,7 @@ pub mod band_legend;
 pub mod budget;
 pub mod buildings;
 pub mod bulldozer_bar;
+pub mod connectors;
 pub mod cursor_label;
 pub mod debug;
 pub mod demand_panel;

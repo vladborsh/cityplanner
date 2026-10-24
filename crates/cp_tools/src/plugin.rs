@@ -180,6 +180,8 @@ pub struct ToolState {
     pub lane_mode: bool,
     /// The arm whose lanes the lane panel shows: its node and segment.
     pub lane_arm: Option<(cp_net::NodeId, cp_net::SegmentId)>,
+    /// The Connectors window of the chosen junction is open (T-313b).
+    pub lane_connectors: bool,
     /// Control points of the roads around the cursor (and the 8 m ticks of the one it is next
     /// to) while the road tool is active (§6.7).
     pub markers: Vec<RoadMarker>,
@@ -577,15 +579,19 @@ impl SignDemo {
 pub struct LaneDemo {
     pub at: Vec2,
     pub done: bool,
+    /// Also open the Connectors window.
+    pub connectors: bool,
 }
 
 impl LaneDemo {
-    /// `x,z`.
+    /// `x,z[,connectors]`.
     pub fn parse(v: &str) -> Option<Self> {
-        let (x, z) = v.split_once(',')?;
+        let mut it = v.split(',');
+        let (x, z) = (it.next()?, it.next()?);
         Some(Self {
             at: Vec2::new(x.parse().ok()?, z.parse().ok()?),
             done: false,
+            connectors: it.next() == Some("connectors"),
         })
     }
 }
@@ -625,6 +631,7 @@ pub fn lane_demo(
     tools.select(ActiveTool::Junctions);
     tools.lane_mode = true;
     tools.lane_arm = Some((node, arm.segment));
+    tools.lane_connectors = demo.connectors;
     demo.done = true;
 }
 

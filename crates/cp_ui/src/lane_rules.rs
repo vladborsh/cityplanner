@@ -323,6 +323,7 @@ pub fn lane_ui(
     };
     let can = available_turns(&view.net, j, segment);
     let mut open = true;
+    let mut conn = tools.lane_connectors;
     egui::Window::new(tr("Lanes of this approach"))
         .id(egui::Id::new("lane_panel"))
         .anchor(
@@ -376,7 +377,12 @@ pub fn lane_ui(
                     outbox.push(SimCommand::Net(c));
                 }
             }
+            ui.toggle_value(&mut conn, tr("Connectors"));
         });
+    if conn && open {
+        crate::connectors::connectors_window(ctx, view, tools, outbox, &mut conn);
+    }
+    tools.lane_connectors = conn;
     if !open {
         tools.lane_arm = None;
     }
