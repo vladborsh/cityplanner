@@ -1564,6 +1564,46 @@ pub fn build_zone_grid(sim: &mut SimRunner) {
         .insert_resource(cp_core::time::SimSpeed::Pause);
 }
 
+/// Bike lanes (T-322, §23.6 item 5): a 6 x 6 lattice of 96 m local streets whose four middle
+/// streets each way have bike lanes (`basic_2l_bike`); the rest are plain `basic_2l`. Zone it
+/// dense and compare with `--scene zone-grid`-like plain streets for the A/B.
+pub const BIKE_LANES: &str = "bike-lanes";
+
+/// Builds the [`BIKE_LANES`] scene through the normal commands; returns its south-west corner.
+pub fn build_bike_lanes(sim: &mut SimRunner) -> Vec2 {
+    let db = embedded_content();
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let plain = db.road_id("basic_2l").expect("basic_2l");
+    let lanes = db.road_id("basic_2l_bike").expect("basic_2l_bike");
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let o = Vec2::new(c - 240.0, c - 240.0);
+    let at = |x: usize, y: usize| o + Vec2::new(x as f32 * 96.0, y as f32 * 96.0);
+    let mut legs = Vec::new();
+    for line in 0..6 {
+        let middle = (1..5).contains(&line);
+        for piece in 0..5 {
+            legs.push((at(piece, line), at(piece + 1, line), middle));
+            legs.push((at(line, piece), at(line, piece + 1), middle));
+        }
+    }
+    for (from, to, middle) in legs {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road: if middle { lanes } else { plain },
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    sim.world_mut()
+        .insert_resource(cp_core::time::SimSpeed::Pause);
+    o
+}
+
 /// Big zone blocks (BUG-056): a grid of 3 x 3 blocks of 96 and 112 m (and 100 m, a tie of the
 /// cell fit) between the road edges, every cell painted residential. Look at it with
 /// `--cam zones-big --overlay zones`.

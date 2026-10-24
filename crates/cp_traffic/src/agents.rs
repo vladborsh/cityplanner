@@ -92,6 +92,8 @@ pub struct Pedestrian {
     pub waited: u32,
     /// World position (XZ), kept for rendering.
     pub pos: Vec2,
+    /// A cyclist (T-322, §23.1): rides its legs at the speed of their lane's kind.
+    pub bike: bool,
     /// The resolved current leg, so it is not looked up again every tick. Derived, not saved
     /// and not compared: it refills on the first tick after a load.
     #[serde(skip)]
@@ -209,6 +211,8 @@ pub struct AgentStats {
     pub parked_abstract: u64,
     /// Cars parked in a place.
     pub parked: u64,
+    /// Rides that arrived (T-322); `walked` counts them too.
+    pub ridden: u64,
 }
 
 /// Load of every road segment, indexed by segment arena slot: the length of cars over the
@@ -845,38 +849,65 @@ pub fn route_trips(
         // Trip mode by need (T-242): a citizen with a car takes the quicker of walking the real
         // route and driving it (congestion and the start penalty included). Both routes are
         // searched by the path service on its workers (T-256); the mode is set on delivery.
-        let by_time = !fetched
-            && settings.as_deref().is_none_or(|s| s.mode_by_time)
-            && content.as_deref().is_some_and(|c| {
+        // T-322: a citizen with a bike (a hash) weighs the ride too. Having fetched the car,
+        // the drive is decided.
+        let by_mode = !fetched && settings.as_deref().is_none_or(|s| s.mode_by_time);
+        let bal = content.as_deref().map(|c| c.0.balance());
+        let car = by_mode
+            && bal.is_some_and(|b| {
                 grid.citizen(trip.citizen).is_some_and(|c| c.has_car)
-                    && c.0.balance().car_start_penalty_s >= 0.0
+                    && b.car_start_penalty_s >= 0.0
+            });
+        let bike = by_mode
+            && bal.is_some_and(|b| {
+                b.bike_start_penalty_s >= 0.0 && crate::mode::has_bike(trip.citizen, b.bike_share)
             });
         let mut mode = match trip.mode {
-            TripMode::Walk | TripMode::Car
-                if by_time
-                    && let Some(content) = content.as_deref()
+            TripMode::Walk | TripMode::Car | TripMode::Bike
+                if (car || bike)
+                    && let Some(bal) = bal
                     && let (Some(a), Some(b)) =
                         (buildings.get(trip.from), buildings.get(trip.to))
                     && a.pos.distance(b.pos) >= crate::mode::ALWAYS_WALK_M =>
             {
-                Mode::ByTime {
-                    car_start_penalty_bits: content.0.balance().car_start_penalty_s.to_bits(),
-                    fallback_car: trip.mode == TripMode::Car,
-                    drive_to: None,
-                    walk_tail_bits: 0,
+                if bike {
+                    Mode::ByTimeBike {
+                        car_start_penalty_bits: if car {
+                            bal.car_start_penalty_s.to_bits()
+                        } else {
+                            u32::MAX
+                        },
+                        bike: crate::service::BikeChoice::of_balance(bal, 1.0),
+                        fallback_car: trip.mode == TripMode::Car,
+                        drive_to: None,
+                        walk_tail_bits: 0,
+                    }
+                } else {
+                    Mode::ByTime {
+                        car_start_penalty_bits: bal.car_start_penalty_s.to_bits(),
+                        fallback_car: trip.mode == TripMode::Car,
+                        drive_to: None,
+                        walk_tail_bits: 0,
+                    }
                 }
             }
-            TripMode::Walk => Mode::Pedestrian,
+            TripMode::Walk | TripMode::Bike => Mode::Pedestrian,
             TripMode::Car => Mode::Car,
             TripMode::Transit => continue,
         };
         // A car goes to a parking place near the goal (T-331b, §18.3), reserved now. Without
         // one within reach it drives to the goal and parks abstractly (counted on arrival).
         let mut drive_to = to;
-        if matches!(mode, Mode::Car | Mode::ByTime { .. })
-            && content.is_some()
-            && trip.park.tries < PARK_RETRIES
-        {
+        // T-322: a rider without a car (`u32::MAX`) reserves nothing.
+        let may_drive = match mode {
+            Mode::Car | Mode::ByTime { .. } => true,
+            Mode::ByTimeBike {
+                car_start_penalty_bits,
+                ..
+            } => car_start_penalty_bits != u32::MAX,
+            _ => false,
+        };
+        if may_drive && content.is_some() && trip.park.tries < PARK_RETRIES {
             let place = choose_place(&mut parking, &net, &buildings, trip.to);
             let access = place.and_then(|p| place_access(&parking, &net, &buildings, p));
             match (place, access) {
@@ -900,6 +931,11 @@ pub fn route_trips(
         let mut request_to = to;
         match &mut mode {
             Mode::ByTime {
+                drive_to: slot,
+                walk_tail_bits,
+                ..
+            }
+            | Mode::ByTimeBike {
                 drive_to: slot,
                 walk_tail_bits,
                 ..
@@ -1221,7 +1257,7 @@ pub fn receive_paths(
         }
         if matches!(
             outcome.result,
-            PathResult::Pedestrian(Ok(_)) | PathResult::Car(Ok(_))
+            PathResult::Pedestrian(Ok(_)) | PathResult::Car(Ok(_)) | PathResult::Bike(Ok(_))
         ) && trip.purpose != TripPurpose::MoveIn
         {
             for b in [trip.from, trip.to] {
@@ -1230,22 +1266,18 @@ pub fn receive_paths(
         }
         // A walk-or-drive request (T-242, decided on the worker since T-256) answers with the
         // quicker mode's route: the trip takes that mode now.
-        let trip = match (&outcome.result, trip.mode) {
-            (PathResult::Pedestrian(Ok(_)), TripMode::Car) => {
-                book.set_mode(tid, TripMode::Walk);
-                Trip {
-                    mode: TripMode::Walk,
-                    ..trip
-                }
+        let took = match (&outcome.result, trip.mode) {
+            (PathResult::Pedestrian(Ok(_)), TripMode::Car | TripMode::Bike) => Some(TripMode::Walk),
+            (PathResult::Car(Ok(_)), TripMode::Walk | TripMode::Bike) => Some(TripMode::Car),
+            (PathResult::Bike(Ok(_)), TripMode::Walk | TripMode::Car) => Some(TripMode::Bike),
+            _ => None,
+        };
+        let trip = match took {
+            Some(mode) => {
+                book.set_mode(tid, mode);
+                Trip { mode, ..trip }
             }
-            (PathResult::Car(Ok(_)), TripMode::Walk) => {
-                book.set_mode(tid, TripMode::Car);
-                Trip {
-                    mode: TripMode::Car,
-                    ..trip
-                }
-            }
-            _ => trip,
+            None => trip,
         };
         // The place reserved for the car, until the car is on the road.
         let reserved = trip.park.place.filter(|_| !trip.park.parked);
@@ -1284,7 +1316,9 @@ pub fn receive_paths(
                 );
                 book.set_state(tid, TripState::Planned);
             }
-            PathResult::Pedestrian(Err(NoPath)) | PathResult::Car(Err(NoPath)) => {
+            PathResult::Pedestrian(Err(NoPath))
+            | PathResult::Car(Err(NoPath))
+            | PathResult::Bike(Err(NoPath)) => {
                 give_back(&mut parking, &mut book);
                 agents.stats.no_path += 1;
                 // Either end may be the cut-off one; a later successful trip clears the other.
@@ -1301,8 +1335,10 @@ pub fn receive_paths(
             {
                 take_fetched(&mut agents, &mut parking, &mut book, tid, &trip);
             }
-            PathResult::Pedestrian(Ok(path)) if trip.mode == TripMode::Walk => {
-                // (Walking won the walk-or-drive choice: the reserved place goes back.)
+            PathResult::Pedestrian(Ok(path)) | PathResult::Bike(Ok(path))
+                if matches!(trip.mode, TripMode::Walk | TripMode::Bike) =>
+            {
+                // (Walking or riding won the choice: the reserved place goes back.)
                 give_back(&mut parking, &mut book);
                 if agents.pedestrians.len() < limits.pedestrians as usize {
                     agents.pedestrians.insert(Pedestrian {
@@ -1315,6 +1351,7 @@ pub fn receive_paths(
                         started: false,
                         waited: 0,
                         pos: Vec2::ZERO,
+                        bike: trip.mode == TripMode::Bike,
                         cache: LegCache::default(),
                     });
                     book.set_state(tid, TripState::Agent);
@@ -1430,9 +1467,34 @@ struct Ctx<'a> {
     tick: u64,
     /// Generation of the path graph: a cached leg is valid for one generation.
     generation: u64,
+    /// A cyclist's speeds (T-322).
+    bike: crate::astar::BikeSpeeds,
 }
 
 impl Ctx<'_> {
+    /// A cyclist's speed on `leg`, m/s: along a lane by its kind, over a junction's bike link
+    /// at bike-lane speed, round a corner or over a crossing on foot.
+    fn ride_speed(&self, leg: &Leg) -> f32 {
+        match leg {
+            Leg::Walk { lane, .. } => self
+                .graph
+                .ped_lane(*lane)
+                .map_or(PED_SPEED, |l| self.bike.along(l.kind, l.footpath)),
+            Leg::Cross { node, link, .. } => {
+                let ride = self
+                    .geo
+                    .get(*node)
+                    .and_then(|j| j.links.pedestrian.get(usize::from(*link)))
+                    .is_some_and(|l| l.kind == cp_net::PedLinkKind::Ride);
+                if ride {
+                    self.bike.along(cp_content::LaneKind::Bike, false)
+                } else {
+                    PED_SPEED
+                }
+            }
+        }
+    }
+
     /// Leg `i` of `route`, resolved against the current network.
     fn leg(&self, route: &PedPath, i: usize) -> Option<Leg> {
         let n = route.states.len();
@@ -1549,7 +1611,13 @@ enum Step {
 
 /// One tick of walking for one pedestrian.
 fn step_pedestrian(p: &mut Pedestrian, ctx: &Ctx) -> Step {
-    let mut budget = PED_STEP * ped_speed_factor(p.citizen);
+    // A walker's budget is metres; a cyclist's is seconds, spent at each leg's speed
+    // (`v` stays 1 for a walker, so its step is the same to the bit).
+    let mut budget = if p.bike {
+        MOVE_SECONDS_PER_TICK
+    } else {
+        PED_STEP * ped_speed_factor(p.citizen)
+    };
     loop {
         let leg = match p.cache.0 {
             Some((g, i, leg)) if g == ctx.generation && i == p.leg => leg,
@@ -1574,12 +1642,13 @@ fn step_pedestrian(p: &mut Pedestrian, ctx: &Ctx) -> Step {
             p.started = true;
         }
         let room = p.leg_len - p.s;
-        if budget < room {
-            p.s += budget;
+        let v = if p.bike { ctx.ride_speed(&leg) } else { 1.0 };
+        if budget * v < room {
+            p.s += budget * v;
             p.pos = ctx.position(&leg, p.s, p.leg_len);
             return Step::Moving;
         }
-        budget -= room.max(0.0);
+        budget -= room.max(0.0) / v;
         p.pos = ctx.position(&leg, p.leg_len, p.leg_len);
         if p.leg as usize >= p.route.states.len() {
             return Step::Arrived;
@@ -1611,6 +1680,7 @@ pub fn crossing_of(
         geo,
         tick: 0,
         generation: 0,
+        bike: crate::astar::BikeSpeeds::of_balance(&cp_content::Balance::default()),
     };
     match ctx.leg(&p.route, p.leg as usize)? {
         Leg::Cross { node, link, .. } => Some((node, link)),
@@ -1646,6 +1716,11 @@ pub fn move_agents(
         // Plan time on the movement clock (§2, three clocks).
         tick: signal_tick(now, 0),
         generation: pnet.generation(),
+        bike: crate::astar::BikeSpeeds::of_balance(
+            content
+                .as_deref()
+                .map_or(&cp_content::Balance::default(), |c| c.0.balance()),
+        ),
     };
     let (parallel, stuck_ticks) =
         settings.map_or((true, STUCK_TICKS), |s| (s.parallel, s.stuck_ticks));
@@ -1682,6 +1757,7 @@ pub fn move_agents(
                 if let Some(p) = agents.pedestrians.remove(id) {
                     red += u64::from(p.waited);
                     agents.stats.walked += 1;
+                    agents.stats.ridden += u64::from(p.bike);
                     if let Some(run) = crate::runs::walk_run_of(&p) {
                         // A walking run reports to its owner; the trip is not the walker's.
                         if let Some(runs) = runs.as_deref_mut() {

@@ -460,6 +460,7 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         }
         // From the south over the user's two rows of blocks of `--scene zone-grid` (BUG-098).
         "zone-grid" => (Vec3::new(c, 330.0, c + 380.0), Vec3::new(c, 0.0, c - 10.0)),
+        "bike-lanes" => (Vec3::new(c, 420.0, c + 480.0), Vec3::new(c, 0.0, c)),
         "zones" => (
             Vec3::new(c - 10.0, 420.0, c + 330.0),
             Vec3::new(c - 10.0, 0.0, c + 150.0),
@@ -811,6 +812,9 @@ pub fn build_sim(
     } else if scene == Some(scene::MARKET) {
         let n = scene::build_market(&mut sim);
         info!("scene market: {n} buildings");
+    } else if scene == Some(scene::BIKE_LANES) {
+        let o = scene::build_bike_lanes(&mut sim);
+        info!("scene bike-lanes at {o:?}");
     } else if scene == Some(scene::CHAINS) {
         let n = scene::build_chains(&mut sim);
         info!("scene chains: {n} buildings");

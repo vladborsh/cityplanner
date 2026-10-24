@@ -306,8 +306,10 @@ fn pedestrians_wait_for_the_walk_signal_before_crossing() {
             let c = crossing_of(p, net, &graph, geo);
             if let Some((node, link)) = c {
                 now_crossing.insert(id, Some((node, link)));
-                let entered = was_crossing.get(&id).copied().flatten() != Some((node, link))
-                    || p.s <= PED_STEP * 1.15 + 1e-3;
+                // The tick it is first seen on this crossing (T-322: not "within a step of its
+                // start", which a walker that stepped on with a sliver of the last green tick
+                // still is one tick later, on red).
+                let entered = was_crossing.get(&id).copied().flatten() != Some((node, link));
                 if entered && p.s <= PED_STEP * 1.15 + 1e-3 {
                     entries += 1;
                     let j = geo.get(node).unwrap();

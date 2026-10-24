@@ -56,7 +56,8 @@ fn mutate(file: &str, from: &str, to: &str) -> Vec<(String, String)> {
 #[test]
 fn committed_content_loads_with_eleven_road_types_nine_roads_and_two_tracks() {
     let db = ContentDb::load_dir(root()).unwrap();
-    assert_eq!(db.roads().count(), 18); // + the park path (T-222), six transit roads (T-302)
+    // + the park path (T-222), six transit roads (T-302), three bike roads (T-322)
+    assert_eq!(db.roads().count(), 21);
     let want = [
         ("basic_2l", RoadClass::Local, "Local street", false),
         (
@@ -142,14 +143,16 @@ fn committed_content_loads_with_eleven_road_types_nine_roads_and_two_tracks() {
     assert!((cost("highway_1w_2l") - 2.0 * cost("highway_1w_1l")).abs() < 1e-3);
     assert!((cost("highway_1w_3l") - 3.0 * cost("highway_1w_1l")).abs() < 1e-3);
     assert!((cost("highway_1w_4l") - 4.0 * cost("highway_1w_1l")).abs() < 1e-3);
-    // The existing ids keep their names; the new ones sort between them, and the two Rail types
-    // (T-161) sort after every road, so no saved road index moves.
+    // The existing ids keep their names; the new ones sort between them. The bike roads (T-322)
+    // move the dense indices of the roads after them: saves map them by name (`DefNames`).
     let ids: Vec<&str> = db.roads().map(|(_, r)| r.id.as_str()).collect();
     assert_eq!(
         ids,
         [
             "basic_1w_2l",
             "basic_2l",
+            "basic_2l_bike",
+            "bike_path",
             "highway_1w_1l",
             "highway_1w_2l",
             "highway_1w_3l",
@@ -157,6 +160,7 @@ fn committed_content_loads_with_eleven_road_types_nine_roads_and_two_tracks() {
             "large_6l",
             "medium_1w_3l",
             "medium_4l",
+            "medium_4l_bike",
             "metro_track",
             "park_path",
             "rail_2t",
@@ -306,7 +310,7 @@ fn highway_rules_are_enforced_with_file_and_field() {
 
 #[test]
 fn invalid_content_is_rejected_with_file_and_field() {
-    let e = errs(mutate("basic_2l", "width: 16.0,", "width: -16.0,"));
+    let e = errs(mutate("basic_2l.ron", "width: 16.0,", "width: -16.0,"));
     assert!(e.contains("basic_2l") && e.contains("width"), "{e}");
 
     let e = errs(mutate(
@@ -325,13 +329,17 @@ fn invalid_content_is_rejected_with_file_and_field() {
         "bad enum: {e}"
     );
 
-    let e = errs(mutate("basic_2l", "id: \"basic_2l\"", "id: \"medium_4l\""));
+    let e = errs(mutate(
+        "basic_2l.ron",
+        "id: \"basic_2l\"",
+        "id: \"medium_4l\"",
+    ));
     assert!(
         e.contains("duplicate") && e.contains("medium_4l"),
         "dup id: {e}"
     );
 
-    let e = errs(mutate("basic_2l", "offset: 5.75", "offset: 40.0"));
+    let e = errs(mutate("basic_2l.ron", "offset: 5.75", "offset: 40.0"));
     assert!(e.contains("lanes[0].offset"), "lane outside road: {e}");
 
     let e = errs(mutate(
@@ -341,7 +349,7 @@ fn invalid_content_is_rejected_with_file_and_field() {
     ));
     assert!(e.contains("nope"), "bad vehicle ref: {e}");
 
-    let e = errs(mutate("basic_2l", "width: 16.0,", "width: 0.0,"));
+    let e = errs(mutate("basic_2l.ron", "width: 16.0,", "width: 0.0,"));
     assert!(e.contains("width"), "zero width: {e}");
 
     let mut s = sources();
@@ -351,7 +359,7 @@ fn invalid_content_is_rejected_with_file_and_field() {
 
 #[test]
 fn all_problems_are_reported_together() {
-    let mut s = mutate("basic_2l", "width: 16.0,", "width: -1.0,");
+    let mut s = mutate("basic_2l.ron", "width: 16.0,", "width: -1.0,");
     for (p, t) in &mut s {
         if p.contains("car_basic") {
             *t = t.replace("accel:", "bogus: 1, accel:");
@@ -365,11 +373,12 @@ fn all_problems_are_reported_together() {
 fn hash_is_independent_of_number_spelling_but_distinguishes_negative_zero() {
     let base = ContentDb::from_sources(sources()).unwrap().content_hash();
     // Same numbers, different spelling.
-    let alt = ContentDb::from_sources(mutate("basic_2l", "width: 16.0,", "width: 16,")).ok();
+    let alt = ContentDb::from_sources(mutate("basic_2l.ron", "width: 16.0,", "width: 16,")).ok();
     if let Some(db) = alt {
         assert_eq!(base, db.content_hash(), "16 vs 16.0");
     }
-    let alt = ContentDb::from_sources(mutate("basic_2l", "width: 16.0,", "width: 1.6e1,")).unwrap();
+    let alt =
+        ContentDb::from_sources(mutate("basic_2l.ron", "width: 16.0,", "width: 1.6e1,")).unwrap();
     assert_eq!(base, alt.content_hash(), "1.6e1 vs 16.0");
     // Known gap: -0.0 is a different bit pattern. Harmless as long as it only yields a
     // content-hash warning on load; assert both stay valid and report the behaviour.

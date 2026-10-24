@@ -1,0 +1,28 @@
+// Local street with bike lanes (T-322, §23.2): the parking strip of the sidewalks becomes a bike
+// lane each side. Ground only; meshes as basic_2l until T-322b. Numbers: tune later.
+Road((
+    id: "basic_2l_bike",
+    name: "Bike street",
+    class: Local,
+    width: 16.0,
+    lanes: [
+        (kind: Pedestrian, dir: Forward, width: 3.0, offset: 6.5),
+        (kind: Bike, dir: Backward, width: 1.5, offset: 4.25),
+        (kind: Car, dir: Backward, width: 3.5, offset: 1.75),
+        (kind: Car, dir: Forward, width: 3.5, offset: -1.75),
+        (kind: Bike, dir: Forward, width: 1.5, offset: -4.25),
+        (kind: Pedestrian, dir: Forward, width: 3.0, offset: -6.5),
+    ],
+    median_width: 0.0,
+    speed_kmh: 40,
+    max_slope: 0.12,
+    cost_per_m: 5.0,
+    upkeep_per_m_week: 0.07,
+    allows_zoning: true,
+    lamp_spacing_m: 28.0,
+    crosswalks: true,
+    pole_spacing_m: 40.0,
+    rank: 1,
+    mesh: "road/basic_2l",
+    material: "road/asphalt",
+))

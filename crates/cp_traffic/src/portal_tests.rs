@@ -42,6 +42,7 @@ fn walker(trip: TripId, route: PedPath, leg: u32, s: f32, leg_len: f32) -> Pedes
         started: true,
         waited: 0,
         pos: Vec2::ZERO,
+        bike: false,
         cache: LegCache::default(),
     }
 }
@@ -248,6 +249,7 @@ fn walking_speeds_spread_by_citizen() {
         geo: &geo,
         tick: 0,
         generation: pnet.generation(),
+        bike: crate::astar::BikeSpeeds::of_balance(&cp_content::Balance::default()),
     };
     let mut secs = Vec::new();
     for i in 0..1000u32 {

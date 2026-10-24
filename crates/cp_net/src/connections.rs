@@ -78,6 +78,9 @@ pub struct LaneConnection {
 pub enum PedLinkKind {
     Corner,
     Crossing,
+    /// A bike lane end to another arm's bike lane or to the nearest sidewalk (T-322, §23.1):
+    /// only cyclists use it. Appended after the walkers' links of the junction.
+    Ride,
 }
 
 /// An undirected pedestrian path between two sidewalk lane ends.
@@ -469,11 +472,16 @@ struct Ped {
 }
 
 fn ped_lanes(graph: &NetGraph, arm: &Arm) -> Vec<Ped> {
+    lanes_of_kind(graph, arm, LaneKind::Pedestrian)
+}
+
+/// The lanes of `kind` of an arm, sorted counter-clockwise, their ends at the node.
+fn lanes_of_kind(graph: &NetGraph, arm: &Arm, kind: LaneKind) -> Vec<Ped> {
     let mut v = Vec::new();
     if let Some(seg) = graph.segment(arm.segment) {
         for &lid in &seg.lanes {
             let Some(l) = graph.lane(lid) else { continue };
-            if l.kind != LaneKind::Pedestrian {
+            if l.kind != kind {
                 continue;
             }
             // Walk towards the node.
@@ -565,6 +573,39 @@ fn pedestrian_links(graph: &NetGraph, arms: &[Arm]) -> Vec<PedLink> {
             b: b.id,
             curve: CubicBezier3::line(a.end, b.end),
         });
+    }
+    // T-322: a bike lane rides on to every other arm's bike lanes, and gets off onto the
+    // nearest sidewalk end of the junction (where the bike lane ends, or to cross on foot).
+    // After the walkers' links, so their indices stay as they were.
+    let bikes: Vec<Vec<Ped>> = arms
+        .iter()
+        .map(|a| lanes_of_kind(graph, a, LaneKind::Bike))
+        .collect();
+    for i in 0..k {
+        for a in &bikes[i] {
+            for b in bikes.iter().skip(i + 1).flatten() {
+                out.push(PedLink {
+                    kind: PedLinkKind::Ride,
+                    a: a.id,
+                    b: b.id,
+                    curve: ped_curve(a, b),
+                });
+            }
+            let off = peds.iter().flatten().min_by(|x, y| {
+                x.end
+                    .distance_squared(a.end)
+                    .total_cmp(&y.end.distance_squared(a.end))
+                    .then(x.id.cmp(&y.id))
+            });
+            if let Some(b) = off {
+                out.push(PedLink {
+                    kind: PedLinkKind::Ride,
+                    a: a.id,
+                    b: b.id,
+                    curve: CubicBezier3::line(a.end, b.end),
+                });
+            }
+        }
     }
     out
 }

@@ -142,12 +142,17 @@ fn road_tile_widget(
 }
 
 /// The footpath tile for the Parks category (T-226): the same tool and tile as the Paths row of
-/// the Roads panel. Does nothing without a path road type.
+/// the Roads panel (the walkers' path, not the bike path of T-322). Does nothing without a path
+/// road type.
 pub fn path_tile(ui: &mut egui::Ui, content: &ContentDb, tools: &mut ToolState) {
-    let Some(c) = cards(content)
-        .into_iter()
-        .find(|c| c.class == RoadClass::Path)
-    else {
+    let Some(c) = cards(content).into_iter().find(|c| {
+        c.class == RoadClass::Path
+            && content
+                .road(c.id)
+                .lanes
+                .iter()
+                .all(|l| l.kind == cp_content::LaneKind::Pedestrian)
+    }) else {
         return;
     };
     let widest = content.roads().map(|(_, d)| d.width).fold(0.0, f32::max);

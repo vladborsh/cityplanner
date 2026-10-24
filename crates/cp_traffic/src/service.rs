@@ -39,8 +39,9 @@ use cp_net::{JunctionGeometry, NetGraph};
 use serde::{Deserialize, Serialize};
 
 use crate::astar::{
-    CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_class_path,
-    find_class_path_lanes, find_ped_path, find_rail_path, find_truck_path, find_truck_path_lanes,
+    BikeSpeeds, CarPath, NoPath, PedPath, WalkClass, find_car_path, find_car_path_lanes,
+    find_class_path, find_class_path_lanes, find_ped_path, find_rail_path, find_truck_path,
+    find_truck_path_lanes, find_walk_path,
 };
 use crate::graph::{Access, CongestionMap, PathGraph};
 use crate::heavy::HeavyBan;
@@ -96,6 +97,43 @@ pub enum Mode {
         from: cp_net::LaneId,
         to: cp_net::LaneId,
     },
+    /// T-322 (§23.1): [`Mode::ByTime`] for a citizen who owns a bike: the quickest of walking,
+    /// riding ([`BikeChoice`]) and, with a car (`car_start_penalty_bits` not `u32::MAX`),
+    /// driving plus its start penalty; a tie goes to walking, then the bike. A `Pedestrian`,
+    /// `Bike` or `Car` result; no route at all: the error of `fallback_car`'s mode. Appended.
+    /// The drive goes to `drive_to` and pays `walk_tail_bits` like [`Mode::ByTime`] (T-331b).
+    ByTimeBike {
+        car_start_penalty_bits: u32,
+        bike: BikeChoice,
+        fallback_car: bool,
+        drive_to: Option<crate::graph::Access>,
+        walk_tail_bits: u32,
+    },
+}
+
+/// What a ride costs and may cost (T-322): the cyclist's speeds, the seconds before it moves
+/// (`f32` bits) and the longest ride taken, seconds (`f32` bits).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BikeChoice {
+    pub speeds: BikeSpeeds,
+    pub start_penalty_bits: u32,
+    pub max_s_bits: u32,
+}
+
+impl BikeChoice {
+    pub fn of_balance(b: &cp_content::Balance, start_penalty_mul: f32) -> Self {
+        Self {
+            speeds: BikeSpeeds::of_balance(b),
+            start_penalty_bits: (b.bike_start_penalty_s * start_penalty_mul).to_bits(),
+            max_s_bits: (b.bike_max_min * 60.0).to_bits(),
+        }
+    }
+
+    /// The ride's time with the start penalty, if it is no longer than the longest ride.
+    pub fn ride_s(&self, route_s: f32) -> Option<f32> {
+        let t = route_s + f32::from_bits(self.start_penalty_bits);
+        (t <= f32::from_bits(self.max_s_bits)).then_some(t)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -113,6 +151,9 @@ pub enum PathResult {
     Rail(Result<CarPath, NoPath>),
     /// The network changed while the request was in flight; ask again.
     Stale,
+    /// A ride over the walking graph and the bike lanes (T-322); `cost` is the ride's seconds
+    /// without the start penalty.
+    Bike(Result<PedPath, NoPath>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -240,6 +281,39 @@ fn compute(
                 (Some(w), None) => PathResult::Pedestrian(Ok(w)),
                 (None, None) if fallback_car => PathResult::Car(Err(NoPath)),
                 (None, None) => PathResult::Pedestrian(Err(NoPath)),
+            }
+        }
+        Mode::ByTimeBike {
+            car_start_penalty_bits,
+            bike,
+            fallback_car,
+            drive_to,
+            walk_tail_bits,
+        } => {
+            let walk = find_ped_path(graph, &req.from, &req.to).ok();
+            let ride = find_walk_path(graph, &req.from, &req.to, WalkClass::Bike(bike.speeds))
+                .ok()
+                .and_then(|r| Some((bike.ride_s(r.cost)?, r)));
+            let drive = (car_start_penalty_bits != u32::MAX)
+                .then(|| {
+                    find_car_path(graph, cong, &req.from, drive_to.as_ref().unwrap_or(&req.to)).ok()
+                })
+                .flatten()
+                .map(|d| {
+                    let penalty =
+                        f32::from_bits(car_start_penalty_bits) + f32::from_bits(walk_tail_bits);
+                    (d.cost + penalty, d)
+                });
+            // The quickest; walking, then riding, wins a tie.
+            let w = walk.as_ref().map_or(f32::INFINITY, |w| w.cost);
+            let b = ride.as_ref().map_or(f32::INFINITY, |r| r.0);
+            let d = drive.as_ref().map_or(f32::INFINITY, |d| d.0);
+            match (walk, ride, drive) {
+                (Some(w_path), _, _) if w <= b && w <= d => PathResult::Pedestrian(Ok(w_path)),
+                (_, Some((_, r)), _) if b <= d => PathResult::Bike(Ok(r)),
+                (_, _, Some((_, d_path))) => PathResult::Car(Ok(d_path)),
+                _ if fallback_car => PathResult::Car(Err(NoPath)),
+                _ => PathResult::Pedestrian(Err(NoPath)),
             }
         }
         Mode::CarLanes { from, to } => PathResult::Car(find_car_path_lanes(

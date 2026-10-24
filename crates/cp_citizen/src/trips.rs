@@ -48,6 +48,10 @@ pub enum TripMode {
     /// By bus (or later metro/train): owned by `cp_transit` from the moment `choose_transit`
     /// picks it (T-159). Appended in save format 31.
     Transit,
+    /// By bicycle over the walking graph and the bike lanes (T-322, §23.1): a walk of
+    /// `cp_traffic` with a cyclist, set when the path service finds the ride the quickest.
+    /// Appended.
+    Bike,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

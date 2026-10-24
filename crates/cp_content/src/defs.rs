@@ -277,6 +277,17 @@ pub struct Balance {
     /// with a car drives when the drive plus this is shorter than walking the real route.
     /// // tune later
     pub car_start_penalty_s: f32,
+    /// Bicycles (T-322, §23): a cyclist rides `bike_speed` m/s on a bike lane,
+    /// `bike_sidewalk_speed` on a sidewalk and `bike_path_speed` on a footpath (junction links at
+    /// walking speed); a ride costs `bike_start_penalty_s` before it moves and is not taken past
+    /// `bike_max_min` minutes; `bike_share` of the citizens own a bike (a hash, no field).
+    /// // tune later
+    pub bike_speed: f32,
+    pub bike_sidewalk_speed: f32,
+    pub bike_path_speed: f32,
+    pub bike_start_penalty_s: f32,
+    pub bike_max_min: f32,
+    pub bike_share: f32,
     /// Share of car trips that put a car on the road, `0..=1` (T-280); the others run
     /// abstractly: they take their route's travel time and occupy no lane, as a trip does when
     /// the vehicle pool is full. Which ones is a hash of the trip id and the seed.
@@ -1087,6 +1098,14 @@ impl Balance {
         v.push(self.start_money);
         v.push(self.car_start_penalty_s);
         v.extend([
+            self.bike_speed,
+            self.bike_sidewalk_speed,
+            self.bike_path_speed,
+            self.bike_start_penalty_s,
+            self.bike_max_min,
+            self.bike_share,
+        ]);
+        v.extend([
             self.garbage_household,
             self.garbage_job,
             self.garbage_problem,
@@ -1216,6 +1235,12 @@ impl Default for Balance {
         Self {
             walk_limit_m: 400.0,
             car_start_penalty_s: 90.0,
+            bike_speed: 5.5,
+            bike_sidewalk_speed: 2.5,
+            bike_path_speed: 4.0,
+            bike_start_penalty_s: 20.0,
+            bike_max_min: 40.0,
+            bike_share: 0.5,
             car_visible_share: 0.15,
             visible_share_auto: false,
             car_ownership: 0.7,

@@ -1323,4 +1323,7 @@
     "{season}, {n} days left": ["{season}, {n} day left", "{season}, {n} days left"],
     "Shortage · {n} days left": ["Shortage · {n} day left", "Shortage · {n} days left"],
     "Glut · {n} days left": ["Glut · {n} day left", "Glut · {n} days left"],
+    "Bike street": "Bike street",
+    "Bike collector": "Bike collector",
+    "Bike path": "Bike path",
 }

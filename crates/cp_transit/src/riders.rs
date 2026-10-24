@@ -180,7 +180,7 @@ pub fn choose_transit(
         let crude = match trip.mode {
             TripMode::Walk => dist / WALK_SPEED_MPS,
             TripMode::Car => balance.car_bias * dist * 1.3 / balance.car_speed_est.max(0.1),
-            TripMode::Transit => continue,
+            TripMode::Transit | TripMode::Bike => continue,
         };
         // The lines with a stop within reach of each end, nearest first, at most
         // `transit_lines_cap` of them.
@@ -305,26 +305,30 @@ pub fn choose_transit(
         // routes cannot be had, the straight-line estimate stands. Only asked for trips that
         // have an offer, so most trips cost no search.
         let has_car = grid.citizen(trip.citizen).is_some_and(|c| c.has_car);
+        // T-322: a citizen with a bike may ride instead.
+        let bike = (balance.bike_start_penalty_s >= 0.0
+            && cp_traffic::has_bike(trip.citizen, balance.bike_share))
+        .then(|| cp_traffic::BikeChoice::of_balance(balance, 1.0));
         let by_time = settings.as_deref().is_none_or(|s| s.mode_by_time)
             && dist >= cp_traffic::ALWAYS_WALK_M
             && balance.car_start_penalty_s >= 0.0;
         let baseline = match (by_time, a_b(&buildings, trip.from, trip.to)) {
             (true, Some((x, y))) => {
-                let (walk, drive) = way_times(
+                let (walk, drive, ride) = way_times(
                     &net,
                     pnet.graph(),
                     pnet.congestion(),
                     x,
                     y,
                     balance.car_start_penalty_s,
+                    bike,
                 );
                 let drive = drive.filter(|_| has_car).map(|d| d * balance.car_bias);
-                match (walk, drive) {
-                    (Some(w), Some(d)) => w.min(d),
-                    (Some(w), None) => w,
-                    (None, Some(d)) => d,
-                    (None, None) => crude,
-                }
+                [walk, drive, ride]
+                    .into_iter()
+                    .flatten()
+                    .reduce(f32::min)
+                    .unwrap_or(crude)
             }
             _ => crude,
         };

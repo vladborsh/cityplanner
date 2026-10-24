@@ -1,0 +1,29 @@
+// Collector with bike lanes (T-322, §23.2): a bike lane each side between the cars and the
+// sidewalk. Ground only; meshes as medium_4l until T-322b. Numbers: tune later.
+Road((
+    id: "medium_4l_bike",
+    name: "Bike collector",
+    class: Collector,
+    width: 32.0,
+    lanes: [
+        (kind: Pedestrian, dir: Forward, width: 7.0, offset: 12.5),
+        (kind: Bike, dir: Backward, width: 2.0, offset: 8.0),
+        (kind: Car, dir: Backward, width: 3.5, offset: 5.25),
+        (kind: Car, dir: Backward, width: 3.5, offset: 1.75),
+        (kind: Car, dir: Forward, width: 3.5, offset: -1.75),
+        (kind: Car, dir: Forward, width: 3.5, offset: -5.25),
+        (kind: Bike, dir: Forward, width: 2.0, offset: -8.0),
+        (kind: Pedestrian, dir: Forward, width: 7.0, offset: -12.5),
+    ],
+    median_width: 0.0,
+    speed_kmh: 70,
+    max_slope: 0.12,
+    cost_per_m: 10.6,
+    upkeep_per_m_week: 0.106,
+    allows_zoning: true,
+    lamp_spacing_m: 26.0,
+    crosswalks: true,
+    rank: 2,
+    mesh: "road/medium_4l",
+    material: "road/asphalt",
+))

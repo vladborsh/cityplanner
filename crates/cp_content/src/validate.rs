@@ -125,10 +125,10 @@ pub fn road(d: &RoadDef) -> Problems {
     }
     if d.class == RoadClass::Path {
         for (i, l) in d.lanes.iter().enumerate() {
-            if l.kind != LaneKind::Pedestrian {
+            if !matches!(l.kind, LaneKind::Pedestrian | LaneKind::Bike) {
                 c.bad(
                     format!("lanes[{i}].kind"),
-                    "a Path has Pedestrian lanes only",
+                    "a Path has Pedestrian and Bike lanes only",
                 );
             }
         }

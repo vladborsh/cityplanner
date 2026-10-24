@@ -103,10 +103,11 @@ pub struct TrafficStats {
     pub pedestrians: u32,
     /// Trips under way (not waiting for their departure).
     pub trips_in_transit: u32,
-    /// Trips under way by mode: on foot, by car, by transit (T-242).
-    pub trips_by_mode: [u32; 3],
-    /// Average trip time in game minutes, on foot and by car (BUG-070); 0 until one ended.
-    pub trip_minutes: [f32; 2],
+    /// Trips under way by mode: on foot, by car, by transit (T-242), by bike (T-322).
+    pub trips_by_mode: [u32; 4],
+    /// Average trip time in game minutes, on foot, by car and by bike (BUG-070, T-322); 0
+    /// until one ended.
+    pub trip_minutes: [f32; 3],
     /// Mean 2-hour load of all segments, `0..=1`.
     pub avg_load: f32,
     pub max_load: f32,
@@ -505,6 +506,7 @@ fn stage_citizens_traffic_land(
                 cp_citizen::TripMode::Walk => 0,
                 cp_citizen::TripMode::Car => 1,
                 cp_citizen::TripMode::Transit => 2,
+                cp_citizen::TripMode::Bike => 3,
             }] += 1;
         }
     }

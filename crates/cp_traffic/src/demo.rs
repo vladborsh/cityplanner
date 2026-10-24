@@ -86,6 +86,7 @@ pub fn top_up(
                 started: false,
                 waited: 0,
                 pos: bevy_math::Vec2::ZERO,
+                bike: false,
                 cache: Default::default(),
             });
             ped_added += 1;

@@ -96,7 +96,7 @@ impl Sim {
     }
 
     /// Gives every vehicle lane of each segment `delay` seconds (T-315: delays are per lane).
-    fn set_congestion(&mut self, segs: &[(SegmentId, f32)]) {
+    pub(crate) fn set_congestion(&mut self, segs: &[(SegmentId, f32)]) {
         self.tick(); // the snapshot knows the lanes
         let graph = Arc::clone(self.world.resource::<PathNetwork>().graph());
         let mut v = vec![0.0; graph.car.len()];

@@ -112,6 +112,8 @@ pub(crate) struct LaneNode {
     /// The lane leaves an `Outside` node (BUG-117): cars appear on it coming in from the
     /// highway, at speed.
     pub from_outside: bool,
+    /// A lane of a footpath or bike path (T-322: a cyclist's speed there).
+    pub footpath: bool,
 }
 
 impl LaneNode {
@@ -211,6 +213,9 @@ pub(crate) struct CarEdge {
 pub(crate) struct PedEdge {
     pub to: u32,
     pub cost: f32,
+    /// A junction link only cyclists use (`PedLinkKind::Ride`, T-322): ridden at bike-lane
+    /// speed.
+    pub ride: bool,
 }
 
 /// Candidate lanes of a segment for resolving an [`Access`].
@@ -323,6 +328,8 @@ fn node_of(lane: &Lane, id: LaneId, net: &NetGraph, geo: &JunctionGeometry) -> O
         from_outside: net
             .node(if forward { seg.start } else { seg.end })
             .is_some_and(|n| n.kind == cp_net::NodeKind::Outside),
+        footpath: matches!(lane.kind, LaneKind::Pedestrian | LaneKind::Bike)
+            && cp_net::junction::is_path_segment(net, lane.segment),
     })
 }
 
@@ -367,6 +374,10 @@ impl PathGraph {
                 g.car[id.index as usize] = Some(node);
             } else if lane.kind == LaneKind::Pedestrian {
                 sl.ped.push((id, lane.offset));
+                g.ped[id.index as usize] = Some(node);
+            } else if lane.kind == LaneKind::Bike {
+                // T-322: a bike lane is a state of the walking graph only cyclists enter
+                // (`WalkClass::Bike`); no access resolves to it.
                 g.ped[id.index as usize] = Some(node);
             } else if lane.kind == LaneKind::Rail {
                 g.max_rail_speed = g.max_rail_speed.max(node.speed);
@@ -457,8 +468,9 @@ impl PathGraph {
                     continue;
                 };
                 let cost = path_len(std::slice::from_ref(&link.curve)) / PED_SPEED;
-                g.ped_edges[a as usize].push(PedEdge { to: b, cost });
-                g.ped_edges[b as usize].push(PedEdge { to: a, cost });
+                let ride = link.kind == cp_net::PedLinkKind::Ride;
+                g.ped_edges[a as usize].push(PedEdge { to: b, cost, ride });
+                g.ped_edges[b as usize].push(PedEdge { to: a, cost, ride });
             }
         }
         // Lane changes: neighbouring vehicle lanes of one direction on a segment, both ways.
@@ -491,10 +503,12 @@ impl PathGraph {
                 g.ped_edges[slot * 2].push(PedEdge {
                     to: slot as u32 * 2 + 1,
                     cost,
+                    ride: false,
                 });
                 g.ped_edges[slot * 2 + 1].push(PedEdge {
                     to: slot as u32 * 2,
                     cost,
+                    ride: false,
                 });
             }
         }

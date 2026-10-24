@@ -901,6 +901,7 @@ impl ContentDb {
                 ("industry_export_share", b.industry_export_share),
                 ("industry_import_share", b.industry_import_share),
                 ("demolish_refund", b.demolish_refund),
+                ("bike_share", b.bike_share),
             ]
         }) {
             if !(0.0..=1.0).contains(&v) {
@@ -910,6 +911,17 @@ impl ContentDb {
                     "must be in 0..=1".to_string(),
                 ));
             }
+        }
+        if let Some((path, b)) = balances.first()
+            && [b.bike_speed, b.bike_sidewalk_speed, b.bike_path_speed]
+                .iter()
+                .any(|&v| !(v.is_finite() && v > 0.0))
+        {
+            errors.push(ContentError::new(
+                path,
+                Some("bike_speed"),
+                "the bike speeds must be finite and > 0".to_string(),
+            ));
         }
         if let Some((path, b)) = balances.first()
             && !(b.walk_limit_m.is_finite() && b.walk_limit_m >= 0.0)
@@ -1462,7 +1474,7 @@ mod tests {
     #[test]
     fn loads_shipped_content() {
         let db = real();
-        assert_eq!(db.roads().count(), 18); // T-302: + six transit roads
+        assert_eq!(db.roads().count(), 21); // T-302: + six transit roads; T-322: + three bike roads
         // T-190: the policies, one per kind, in kind order (T-327: nine).
         let kinds: Vec<_> = db.policies().iter().map(|p| p.kind).collect();
         assert_eq!(kinds, PolicyKind::ALL);
@@ -1477,6 +1489,8 @@ mod tests {
             [
                 "basic_1w_2l",
                 "basic_2l",
+                "basic_2l_bike",
+                "bike_path",
                 "highway_1w_1l",
                 "highway_1w_2l",
                 "highway_1w_3l",
@@ -1484,6 +1498,7 @@ mod tests {
                 "large_6l",
                 "medium_1w_3l",
                 "medium_4l",
+                "medium_4l_bike",
                 "metro_track",
                 "park_path",
                 "rail_2t",

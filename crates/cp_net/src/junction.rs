@@ -164,13 +164,20 @@ impl JunctionGeometry {
     }
 }
 
-/// A footpath (T-222): every lane of the segment is a `Pedestrian` one.
+/// A footpath (T-222): every lane of the segment is a `Pedestrian` or (a bike path, T-322) a
+/// `Bike` one.
 pub fn is_path_segment(graph: &NetGraph, segment: SegmentId) -> bool {
     let Some(seg) = graph.segment(segment) else {
         return false;
     };
     let mut lanes = seg.lanes.iter().filter_map(|&l| graph.lane(l)).peekable();
-    lanes.peek().is_some() && lanes.all(|l| l.kind == cp_content::LaneKind::Pedestrian)
+    lanes.peek().is_some()
+        && lanes.all(|l| {
+            matches!(
+                l.kind,
+                cp_content::LaneKind::Pedestrian | cp_content::LaneKind::Bike
+            )
+        })
 }
 
 fn rot_ccw(v: Vec2) -> Vec2 {

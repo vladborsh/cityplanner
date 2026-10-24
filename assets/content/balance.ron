@@ -5,6 +5,15 @@ Balance((
     // T-242: seconds before a car trip moves (to the car, parking); a citizen with a car walks when
     // the real walking route takes less than the drive plus this. // tune later
     car_start_penalty_s: 90.0,
+    // T-322 (bicycles, §23): m/s on a bike lane, on a sidewalk, on a footpath; seconds before a
+    // ride moves; no ride longer than bike_max_min minutes; share of citizens owning a bike.
+    // // tune later
+    bike_speed: 5.5,
+    bike_sidewalk_speed: 2.5,
+    bike_path_speed: 4.0,
+    bike_start_penalty_s: 20.0,
+    bike_max_min: 40.0,
+    bike_share: 0.5,
     // T-280: share of car trips that put a car on the road; the rest run abstractly (their
     // route's travel time, no lane taken), as a trip with the vehicle pool full. 0.15, not 0.25:
     // emptier roads turn walks into drives, 0.15 gives ~4x fewer cars. The same for goods

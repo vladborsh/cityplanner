@@ -25,15 +25,16 @@ pub use agents::{
     route_trips, update_traffic_load, update_visible_share,
 };
 pub use astar::{
-    CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_class_path,
-    find_class_path_lanes, find_ped_path, find_rail_path, find_truck_path, find_truck_path_lanes,
+    BikeSpeeds, CarPath, NoPath, PedPath, WalkClass, find_car_path, find_car_path_lanes,
+    find_class_path, find_class_path_lanes, find_ped_path, find_rail_path, find_truck_path,
+    find_truck_path_lanes, find_walk_path,
 };
 pub use cp_citizen::ParkPlace;
 pub use graph::{
     Access, CongestionMap, LEFT_TURN_PENALTY, PED_SPEED, PathGraph, SegEnd, Side, U_TURN_PENALTY,
 };
 pub use heavy::HeavyBan;
-pub use mode::{ALWAYS_WALK_M, TripTimes, mode_by_time, track_trip_times, way_times};
+pub use mode::{ALWAYS_WALK_M, TripTimes, has_bike, mode_by_time, track_trip_times, way_times};
 pub use parking::{
     Front, PARK_RETRIES, PARK_SEARCH_M, PARKED_CAP, PARKING_PERIOD, ParkedCar, ParkedCars,
     ParkedView, ParkingIndex, Place, building_places, choose_place, kerb_fronts, place_access,
@@ -49,13 +50,16 @@ pub use runs::{
     walk_run_of,
 };
 pub use service::{
-    Mode, PATH_DELAY_TICKS, PathNetwork, PathOutcome, PathRequest, PathResult, PathResults,
-    PathService, RequestId, SavedPaths, SavedRequest, deliver_paths, update_path_network,
+    BikeChoice, Mode, PATH_DELAY_TICKS, PathNetwork, PathOutcome, PathRequest, PathResult,
+    PathResults, PathService, RequestId, SavedPaths, SavedRequest, deliver_paths,
+    update_path_network,
 };
 
 /// Crate name, used by the skeleton smoke test.
 pub const CRATE: &str = "cp_traffic";
 
+#[cfg(test)]
+mod bike_tests;
 #[cfg(test)]
 mod drive_tests;
 #[cfg(test)]

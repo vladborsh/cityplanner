@@ -64,6 +64,9 @@ impl Default for RoutineSettings {
 pub const WALK_SPEED_MPS: f32 = 1.4;
 /// Driving speed, m/s: 50 km/h placeholder until agents and paths exist.
 pub const CAR_SPEED_MPS: f32 = 13.9;
+/// Riding speed of the abstract estimate, m/s (T-322: about the bike lanes' 5.5 and the
+/// sidewalks' 2.5).
+pub const BIKE_SPEED_MPS: f32 = 4.5;
 /// Shopping window, hours of the day.
 pub const SHOP_FROM: f32 = 16.0;
 pub const SHOP_TO: f32 = 21.0;
@@ -130,6 +133,7 @@ pub fn travel_ticks(distance_m: f32, mode: TripMode) -> u64 {
     let speed = match mode {
         TripMode::Walk | TripMode::Transit => WALK_SPEED_MPS,
         TripMode::Car => CAR_SPEED_MPS,
+        TripMode::Bike => BIKE_SPEED_MPS,
     };
     ((distance_m / speed / MOVE_SECONDS_PER_TICK).ceil() as u64).max(1)
 }

@@ -360,9 +360,87 @@ pub(crate) fn cost_ahead(g: &PathGraph, cong: &CongestionMap, v: &crate::Vehicle
 
 /// Fastest walking route between two access points over sidewalks and junction links.
 pub fn find_ped_path(graph: &PathGraph, from: &Access, to: &Access) -> Result<PedPath, NoPath> {
+    find_walk_path(graph, from, to, WalkClass::Walk)
+}
+
+/// The class of a route over the walking graph (T-322, §23.1): a walker keeps to the sidewalks
+/// and footpaths at [`PED_SPEED`]; a cyclist also rides the bike lanes, along each lane at the
+/// speed of its kind, from bike lane to bike lane through a junction at bike-lane speed, and
+/// round corners and over crossings on foot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WalkClass {
+    Walk,
+    Bike(BikeSpeeds),
+}
+
+/// A cyclist's speeds (`f32` bits, so a request stays `Eq`), m/s: on a bike lane, on a
+/// sidewalk, on a footpath or bike path (`Balance::bike_*`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BikeSpeeds {
+    lane: u32,
+    sidewalk: u32,
+    path: u32,
+}
+
+impl BikeSpeeds {
+    pub fn new(lane: f32, sidewalk: f32, path: f32) -> Self {
+        Self {
+            lane: lane.to_bits(),
+            sidewalk: sidewalk.to_bits(),
+            path: path.to_bits(),
+        }
+    }
+
+    pub fn of_balance(b: &cp_content::Balance) -> Self {
+        Self::new(b.bike_speed, b.bike_sidewalk_speed, b.bike_path_speed)
+    }
+
+    /// The speed along a lane of `kind` (a bike path's lanes are bike lanes; a park path's
+    /// are a footpath's when `footpath`).
+    pub fn along(&self, kind: cp_content::LaneKind, footpath: bool) -> f32 {
+        f32::from_bits(if kind == cp_content::LaneKind::Bike {
+            self.lane
+        } else if footpath {
+            self.path
+        } else {
+            self.sidewalk
+        })
+    }
+
+    fn max(&self) -> f32 {
+        [self.lane, self.sidewalk, self.path]
+            .into_iter()
+            .map(f32::from_bits)
+            .fold(PED_SPEED, f32::max)
+    }
+}
+
+impl WalkClass {
+    /// The speed along `l` (walkers: [`PED_SPEED`] everywhere).
+    pub(crate) fn speed(&self, l: &LaneNode) -> f32 {
+        match self {
+            WalkClass::Walk => PED_SPEED,
+            WalkClass::Bike(s) => s.along(l.kind, l.footpath),
+        }
+    }
+}
+
+/// Fastest route of `class` between two access points over the walking graph: the walker's
+/// route of T-104 for [`WalkClass::Walk`] (bike lanes are no state of it).
+pub fn find_walk_path(
+    graph: &PathGraph,
+    from: &Access,
+    to: &Access,
+    class: WalkClass,
+) -> Result<PedPath, NoPath> {
     let (start, s0) = graph.resolve_ped(from).ok_or(NoPath)?;
     let (goal, s1) = graph.resolve_ped(to).ok_or(NoPath)?;
     let lane = |i: u32| graph.ped[i as usize].as_ref().expect("ped lane");
+    let walk = class == WalkClass::Walk;
+    let top = match class {
+        WalkClass::Walk => PED_SPEED,
+        WalkClass::Bike(s) => s.max(),
+    };
     let state_pos = |st: u32| {
         let end = if st.is_multiple_of(2) {
             SegEnd::Start
@@ -372,7 +450,7 @@ pub fn find_ped_path(graph: &PathGraph, from: &Access, to: &Access) -> Result<Pe
         lane(st / 2).end_point(end)
     };
     let goal_pos: Vec2 = lane(goal).point_at(s1);
-    let h = |st: u32| state_pos(st).distance(goal_pos) / PED_SPEED;
+    let h = |st: u32| state_pos(st).distance(goal_pos) / top;
     // Distance along a lane from the start/end to a position (lane metres).
     let to_end = |l: u32, s: f32, end: SegEnd| {
         let ln = lane(l);
@@ -389,11 +467,11 @@ pub fn find_ped_path(graph: &PathGraph, from: &Access, to: &Access) -> Result<Pe
 
     let mut best: Option<(f32, u32)> = None; // (cost, final state or NONE = same lane)
     if start == goal {
-        best = Some(((s1 - s0).abs() / PED_SPEED, NONE));
+        best = Some(((s1 - s0).abs() / class.speed(lane(start)), NONE));
     }
     for end in [SegEnd::Start, SegEnd::End] {
         let st = start * 2 + if end == SegEnd::Start { 0 } else { 1 };
-        g[st as usize] = to_end(start, s0, end).max(0.0) / PED_SPEED;
+        g[st as usize] = to_end(start, s0, end).max(0.0) / class.speed(lane(start));
         heap.push(key(g[st as usize] + h(st), st));
     }
     // Candidate completions are evaluated when a state is closed.
@@ -410,7 +488,7 @@ pub fn find_ped_path(graph: &PathGraph, from: &Access, to: &Access) -> Result<Pe
             } else {
                 SegEnd::End
             };
-            let total = g[u as usize] + to_end(goal, s1, end).max(0.0) / PED_SPEED;
+            let total = g[u as usize] + to_end(goal, s1, end).max(0.0) / class.speed(lane(goal));
             if best.is_none_or(|(b, _)| total < b) {
                 best = Some((total, u));
             }
@@ -420,7 +498,21 @@ pub fn find_ped_path(graph: &PathGraph, from: &Access, to: &Access) -> Result<Pe
             if closed[v as usize] {
                 continue;
             }
-            let ng = g[u as usize] + e.cost;
+            // A walker never sets foot on a bike lane; a cyclist rides along a lane at its
+            // kind's speed (the edge's cost is the walker's) and through junctions on foot.
+            let cost = if walk {
+                if lane(v / 2).kind == cp_content::LaneKind::Bike {
+                    continue;
+                }
+                e.cost
+            } else if v / 2 == u / 2 {
+                lane(u / 2).len / class.speed(lane(u / 2))
+            } else if let (true, WalkClass::Bike(s)) = (e.ride, class) {
+                e.cost * PED_SPEED / s.along(cp_content::LaneKind::Bike, false)
+            } else {
+                e.cost
+            };
+            let ng = g[u as usize] + cost;
             if ng < g[v as usize] {
                 g[v as usize] = ng;
                 parent[v as usize] = u;

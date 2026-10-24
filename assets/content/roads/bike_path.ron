@@ -1,0 +1,21 @@
+// Bike path (T-322, §23.2): one Bike lane each way, no cars, no walkers, no zoning, ground only;
+// built like park_path and may share a node with a road. Numbers: tune later.
+Road((
+    id: "bike_path",
+    name: "Bike path",
+    class: Path,
+    width: 3.0,
+    lanes: [
+        (kind: Bike, dir: Forward, width: 1.5, offset: 0.75),
+        (kind: Bike, dir: Backward, width: 1.5, offset: -0.75),
+    ],
+    median_width: 0.0,
+    speed_kmh: 20,
+    max_slope: 0.12,
+    cost_per_m: 1.6,
+    upkeep_per_m_week: 0.02,
+    allows_zoning: false,
+    rank: 0,
+    mesh: "road/park_path",
+    material: "road/asphalt",
+))

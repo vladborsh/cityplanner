@@ -17,8 +17,8 @@ pub use model::{
     Location,
 };
 pub use routine::{
-    CAR_SPEED_MPS, ROUTINE_STREAM, RoutineSettings, Shift, WALK_SPEED_MPS, cancel_trip,
-    choose_mode, complete_trip, hour_of_day, purge_buildings, shift_for, travel_ticks,
+    BIKE_SPEED_MPS, CAR_SPEED_MPS, ROUTINE_STREAM, RoutineSettings, Shift, WALK_SPEED_MPS,
+    cancel_trip, choose_mode, complete_trip, hour_of_day, purge_buildings, shift_for, travel_ticks,
     update_routine,
 };
 pub use system::{

@@ -184,7 +184,8 @@ fn count_day(sim: &mut cp_sim::SimRunner) -> (usize, usize, usize) {
                     car_ticks += now - *since;
                     car_n += 1;
                 }
-                TripMode::Transit => {}
+                // A ride is decided after the path was asked for (T-322); never seen here.
+                TripMode::Transit | TripMode::Bike => {}
             }
             false
         });
@@ -199,6 +200,7 @@ fn count_day(sim: &mut cp_sim::SimRunner) -> (usize, usize, usize) {
                     TripMode::Walk => walk += 1,
                     TripMode::Car => car += 1,
                     TripMode::Transit => transit += 1,
+                    TripMode::Bike => {}
                 }
             }
         }

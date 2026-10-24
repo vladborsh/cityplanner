@@ -695,6 +695,7 @@ pub fn receive_service_paths(
                             started: false,
                             waited: 0,
                             pos: bevy_math::Vec2::ZERO,
+                            bike: false,
                             cache: Default::default(),
                         });
                         runs.set_state(id, RunState::Driving);
