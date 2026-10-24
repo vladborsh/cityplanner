@@ -28,7 +28,7 @@ pub use connections::{LaneConnection, Links, PedLink, PedLinkKind, Turn, turn_of
 pub use control::{ControlPlan, LightPlan, Phase, Priority, Signal};
 pub use graph::{
     MAX_LEN, MIN_LEN, MIN_SEGMENT_LENGTH, NODE_REUSE_EPS, NetGraph, NetOpError, SplitResult,
-    Violation,
+    Violation, trees_allowed,
 };
 pub use junction::{
     Arm, ArmPath, FLAT_GAP_DEG, Junction, JunctionGeometry, MIDDLE_DEG, NodeClass, SideLine,

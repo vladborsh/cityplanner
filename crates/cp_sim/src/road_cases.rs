@@ -460,6 +460,7 @@ pub fn build_roads_plan(sim: &mut SimRunner, at: Vec2, roads: &[CaseRoad]) -> Ve
                 road: id,
                 elevation: ElevationMode::Ground,
                 pieces,
+                trees: false,
             },
         };
         if let Some(e) = send(sim, command) {

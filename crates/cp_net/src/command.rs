@@ -28,7 +28,7 @@ use crate::build::{
     ElevationMode, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest, SnapOptions,
     segment_cost, validate_build_plan, validate_road_path,
 };
-use crate::graph::{NetGraph, NetOpError};
+use crate::graph::{NetGraph, NetOpError, trees_allowed};
 use crate::model::{Elevation, Exit, NodeId, SegmentId, Sign};
 use crate::plan::{Anchor, BuildPlan};
 
@@ -90,6 +90,11 @@ pub enum NetCommand {
         lane: u8,
         exits: Option<Vec<Exit>>,
     },
+    /// Plants (`true`) or removes (`false`) the street-tree row of a segment (T-323, §24.1).
+    /// Planting costs `trees_cost_per_m` per metre, removing is free; refused with
+    /// `TreesNotHere` off the ground and on paths and railways. Appended last: older logs replay
+    /// as before.
+    SetTrees { seg: SegmentId, trees: bool },
 }
 
 /// A `RemovePart` end closer than this (metres) to an end of the segment moves onto that end.
@@ -198,6 +203,9 @@ pub enum NetError {
     SameRoad,
     /// `FlipSegment` on a road that has lanes both ways.
     NotOneWay(SegmentId),
+    /// `SetTrees` on a segment that takes no trees: elevated, a bridge, a tunnel, a path or a
+    /// railway.
+    TreesNotHere(SegmentId),
     /// The segment is elevated but the new road type has no elevated variant.
     NoElevatedVariant(RoadDefId),
     /// The segment is underground but the new road type has no tunnel variant.
@@ -248,6 +256,7 @@ impl fmt::Display for NetError {
             Self::UnknownRoad(r) => write!(f, "unknown road type {r:?}"),
             Self::SameRoad => write!(f, "segment already has this road type"),
             Self::NotOneWay(_) => write!(f, "only a one-way road can be turned round"),
+            Self::TreesNotHere(_) => write!(f, "no trees on bridges, paths and rails"),
             Self::NoElevatedVariant(r) => write!(f, "road type {r:?} has no elevated variant"),
             Self::NoTunnelVariant(r) => write!(f, "road type {r:?} has no tunnel variant"),
             Self::WrongKind(r) => write!(f, "road type {r:?} does not fit this segment"),
@@ -431,6 +440,28 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
                 .set_sign(*node, *segment, *sign)?;
             Ok(Cost::ZERO)
         }
+        NetCommand::SetTrees { seg, trees } => {
+            let content = content()?;
+            let s = world
+                .resource::<NetGraph>()
+                .segment(*seg)
+                .ok_or(NetError::UnknownSegment(*seg))?;
+            if s.trees == *trees {
+                return Ok(Cost::ZERO);
+            }
+            let cost = if *trees {
+                if !trees_allowed(content.road(s.road), s.elevation) {
+                    return Err(NetError::TreesNotHere(*seg));
+                }
+                segment_cost(s.length, content.balance().trees_cost_per_m)
+            } else {
+                Cost::ZERO
+            };
+            check_funds(world, cost).map_err(NetError::Funds)?;
+            world.resource_mut::<NetGraph>().set_trees(*seg, *trees)?;
+            charge_funds(world, cost);
+            Ok(cost)
+        }
         NetCommand::SetLaneRule {
             node,
             segment,
@@ -491,12 +522,40 @@ fn build_literal(world: &mut World, plan: &BuildPlan) -> Result<Cost, NetError> 
         |world, mut graph: bevy_ecs::change_detection::Mut<NetGraph>| {
             let built = validate_build_plan(&graph, &terrain, &tiles, &content, plan)
                 .map_err(NetError::Build)?;
-            check_funds(world, built.cost).map_err(NetError::Funds)?;
+            // T-323: the trees of a "with trees" plan, priced on the segments it lays.
+            let per_m = content.balance().trees_cost_per_m;
+            let tree_cost = if plan.trees {
+                built
+                    .segments
+                    .iter()
+                    .filter(|s| trees_allowed(content.road(built.road), s.elevation))
+                    .map(|s| segment_cost(s.curve.arc_table().length(), per_m))
+                    .fold(Cost::ZERO, |a, c| Cost(a.0 + c.0))
+            } else {
+                Cost::ZERO
+            };
+            check_funds(world, Cost(built.cost.0 + tree_cost.0)).map_err(NetError::Funds)?;
             check_plan(&graph, &content, &built).map_err(NetError::from)?;
             #[cfg(debug_assertions)]
             let (backup, before) = (graph.clone(), graph.check_basic_invariants().len());
+            let first_new = graph.next_order();
             match apply_plan_with(&mut graph, &content, &built, false) {
                 Ok(()) => {
+                    let mut cost = built.cost;
+                    if plan.trees {
+                        let ids: Vec<_> = graph
+                            .segments()
+                            .filter(|(_, s)| s.order >= first_new)
+                            .map(|(id, _)| id)
+                            .collect();
+                        for id in ids {
+                            let s = graph.segment(id).expect("listed above");
+                            if trees_allowed(content.road(s.road), s.elevation) {
+                                cost = Cost(cost.0 + segment_cost(s.length, per_m).0);
+                                graph.set_trees(id, true).expect("listed above");
+                            }
+                        }
+                    }
                     #[cfg(debug_assertions)]
                     {
                         let after = graph.check_basic_invariants();
@@ -506,7 +565,7 @@ fn build_literal(world: &mut World, plan: &BuildPlan) -> Result<Cost, NetError> 
                         );
                         let _ = backup;
                     }
-                    Ok(built.cost)
+                    Ok(cost)
                 }
                 Err(e) => {
                     #[cfg(debug_assertions)]

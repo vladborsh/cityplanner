@@ -40,6 +40,9 @@ pub struct BuildPlan {
     pub road: RoadDefId,
     pub elevation: ElevationMode,
     pub pieces: Vec<PlanPiece>,
+    /// Plant street trees on the new ground segments (T-323, §24.2): the price is added to the
+    /// plan's. Last field: the command log replays exactly.
+    pub trees: bool,
 }
 
 impl PlanPiece {

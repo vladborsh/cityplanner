@@ -355,6 +355,19 @@ impl LandGrids {
             }
         }
 
+        // Street trees (T-323, §24.1): the largest bonus among the rows near a cell, not the sum.
+        let mut tree = vec![0.0f32; SIDE * SIDE];
+        let r = bal.tree_land_radius_m;
+        if r > 0.0 && bal.tree_land > 0.0 {
+            for (_, seg) in i.net.segments().filter(|(_, s)| s.trees) {
+                for p in samples(&seg.curve, seg.length) {
+                    cells_near(p, r, |c, d| {
+                        tree[c] = tree[c].max(bal.tree_land * (1.0 - d / r))
+                    });
+                }
+            }
+        }
+
         for c in 0..SIDE * SIDE {
             g.pollution[c] = g.pollution[c].min(100.0);
             g.noise[c] = g.noise[c].min(100.0);
@@ -374,6 +387,7 @@ impl LandGrids {
                 + service[c]
                 + effect[c]
                 + park[c]
+                + tree[c]
                 + spec_land[c];
             // The garbage nuisance (T-290) is taken off the clamped value, and what it took is
             // kept, so that adding it back gives exactly the land without the facility.

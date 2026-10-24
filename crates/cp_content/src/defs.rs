@@ -583,6 +583,20 @@ pub struct Balance {
     /// T-316: what the trucks that bring an order from the outside cost on top of `import_price`,
     /// currency units per load (delivery and transport). // tune later
     pub import_transport_fee: f32,
+    /// T-323 (§24): planting street trees costs this per metre of segment; removing is free.
+    pub trees_cost_per_m: f32,
+    /// Weekly upkeep of a tree row per metre (added to the road upkeep, scaled by the Roads budget).
+    pub trees_upkeep_per_m_week: f32,
+    /// Largest noise cut of a tree row, `0..=1`, at the row; falls to 0 at the radius.
+    pub tree_noise_cut: f32,
+    /// Largest cut of the pollution source, `0..=1`.
+    pub tree_pollution_cut: f32,
+    /// Reach of the noise and pollution cut, in 8 m cells.
+    pub tree_radius_cells: f32,
+    /// Land value a tree row adds at the row (maximum over rows, not a sum).
+    pub tree_land: f32,
+    /// Reach of the land value bonus, metres.
+    pub tree_land_radius_m: f32,
     /// The factor on `export_price` for goods that left a unique factory (T-215). // tune later
     pub factory_export_mul: f32,
     /// Hours between two cargo trains at a cargo station (T-216). // tune later
@@ -1089,6 +1103,13 @@ impl Balance {
             self.industry_export_share,
             self.industry_import_share,
             self.import_transport_fee,
+            self.trees_cost_per_m,
+            self.trees_upkeep_per_m_week,
+            self.tree_noise_cut,
+            self.tree_pollution_cut,
+            self.tree_radius_cells,
+            self.tree_land,
+            self.tree_land_radius_m,
         ]);
         v.extend(self.industry_levels.map(|l| l as f32));
         v.extend(self.park_levels.map(|l| l as f32));
@@ -1276,6 +1297,13 @@ impl Default for Balance {
             industry_export_share: 0.25,
             industry_import_share: 0.25,
             import_transport_fee: 20.0,
+            trees_cost_per_m: 3.0,
+            trees_upkeep_per_m_week: 0.02,
+            tree_noise_cut: 0.4,
+            tree_pollution_cut: 0.25,
+            tree_radius_cells: 4.0,
+            tree_land: 6.0,
+            tree_land_radius_m: 48.0,
             networks: Networks::default(),
             contentment: ContentmentKnobs::default(),
             corruption: CorruptionKnobs::default(),

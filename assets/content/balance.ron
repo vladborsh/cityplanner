@@ -320,6 +320,16 @@ Balance((
     industry_import_share: 0.25,
     // T-316: delivery and transport of one ordered load, money, on top of the cargo's import_price // tune later
     import_transport_fee: 20.0,
+    // Street trees (T-323, §24): plant cost and weekly upkeep per metre of segment; the noise and
+    // pollution cut at the row (fraction, falls to 0 at tree_radius_cells of 8 m); land value
+    // bonus at the row and its reach in metres. // tune later
+    trees_cost_per_m: 3.0,
+    trees_upkeep_per_m_week: 0.02,
+    tree_noise_cut: 0.4,
+    tree_pollution_cut: 0.25,
+    tree_radius_cells: 4.0,
+    tree_land: 6.0,
+    tree_land_radius_m: 48.0,
 
     // --- Work and education reminder (T-307): the advisor mentions the Jobs & education window when
     // unemployment is above jobs_unemployment_warn of the adults, free slots above jobs_shortage_share,

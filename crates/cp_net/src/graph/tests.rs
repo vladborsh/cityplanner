@@ -491,3 +491,45 @@ fn check_build_agrees_with_applying_and_leaves_the_graph_alone() {
         }
     }
 }
+
+#[test]
+fn street_trees_follow_the_pieces_of_a_segment() {
+    let db = content();
+    let (id, def) = road(&db, "basic_2l");
+    let (big_id, big) = road(&db, "medium_4l");
+    let (path_id, path) = road(&db, "park_path");
+    let mut g = NetGraph::new();
+    let a = g
+        .add_segment(
+            &def,
+            id,
+            CubicBezier3::line(Vec3::ZERO, Vec3::new(90.0, 0.0, 0.0)),
+            G,
+        )
+        .unwrap();
+    g.set_trees(a, true).unwrap();
+    // A cut: both halves keep the row.
+    let cut = g.split_segment(&def, a, 0.5).unwrap();
+    let (first, second) = (cut.segments[0], cut.segments[1]);
+    assert!(g.segment(first).unwrap().trees && g.segment(second).unwrap().trees);
+    // Merged again: a row on both halves is a row.
+    let merged = g.merge_joint(&def, cut.nodes[0]).unwrap();
+    assert!(g.segment(merged).unwrap().trees);
+    // A row on one half only is no row on the whole.
+    let cut = g.split_segment(&def, merged, 0.5).unwrap();
+    g.set_trees(cut.segments[1], false).unwrap();
+    let merged = g.merge_joint(&def, cut.nodes[0]).unwrap();
+    assert!(!g.segment(merged).unwrap().trees);
+    // An upgrade to a wider street keeps the row.
+    g.set_trees(merged, true).unwrap();
+    g.upgrade_segment(merged, &big, big_id).unwrap();
+    assert!(g.segment(merged).unwrap().trees);
+    // An upgrade to a road that takes none (a path) drops it.
+    g.upgrade_segment(merged, &path, path_id).unwrap();
+    assert!(!g.segment(merged).unwrap().trees);
+    // Which roads take trees: the ground only, no path, no railway.
+    assert!(trees_allowed(&def, Elevation::Ground));
+    assert!(!trees_allowed(&def, Elevation::Elevated));
+    assert!(!trees_allowed(&def, Elevation::Bridge));
+    assert!(!trees_allowed(&path, Elevation::Ground));
+}

@@ -329,6 +329,30 @@ impl Emissions {
                 }
             }
         }
+        // Street trees (T-323, §24.1): the largest cut among the rows near a cell, not a product, so
+        // the order of the segments does not matter.
+        let r = bal.tree_radius_cells * ZONE_CELL_M;
+        if r > 0.0 && i.net.segments().any(|(_, s)| s.trees) {
+            let mut cut_n = vec![0.0f32; SIDE_E * SIDE_E];
+            let mut cut_p = vec![0.0f32; SIDE_E * SIDE_E];
+            for (_, seg) in i.net.segments().filter(|(_, s)| s.trees) {
+                let n = (seg.length / SAMPLE_M).ceil().max(1.0) as usize;
+                for k in 0..=n {
+                    let p = seg.curve.point(k as f32 / n as f32);
+                    cells_near(Vec2::new(p.x, p.z), r, |c, d| {
+                        let f = 1.0 - d / r;
+                        cut_n[c] = cut_n[c].max(bal.tree_noise_cut * f);
+                        cut_p[c] = cut_p[c].max(bal.tree_pollution_cut * f);
+                    });
+                }
+            }
+            for (c, v) in noise.iter_mut().enumerate() {
+                *v *= 1.0 - cut_n[c].min(1.0);
+            }
+            for (c, v) in src.iter_mut().enumerate() {
+                *v *= 1.0 - cut_p[c].min(1.0);
+            }
+        }
         for s in &mut src {
             *s = s.min(100.0);
         }

@@ -431,3 +431,32 @@ fn a_path_whose_second_piece_crosses_water_leaves_everything_untouched() {
     }
     assert!(tried > 0, "no path into the river found on the map");
 }
+
+/// T-323: the street-tree rows are in the save, and the checksum sees them.
+#[test]
+fn street_trees_survive_a_save_round_trip() {
+    let content = content();
+    let mut sim = full_scenario(&content);
+    let planted = graph(&sim)
+        .segments()
+        .take(3)
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>();
+    let bare = sim.checksum();
+    let cmds = planted
+        .iter()
+        .map(|&seg| SimCommand::Net(NetCommand::SetTrees { seg, trees: true }))
+        .collect();
+    let out = run(&mut sim, cmds);
+    assert!(out.iter().all(|o| o.result.is_ok()), "{out:?}");
+    assert_ne!(sim.checksum(), bare);
+    let hash = content.content_hash();
+    let bytes = save_runner(&sim, hash, "flatlands").unwrap();
+    let mut loaded = sim_with(&content);
+    load_into_runner(&mut loaded, &bytes, hash).unwrap();
+    for &seg in &planted {
+        assert!(graph(&loaded).segment(seg).unwrap().trees);
+    }
+    assert_eq!(graph(&loaded), graph(&sim));
+    assert_eq!(loaded.checksum(), sim.checksum());
+}

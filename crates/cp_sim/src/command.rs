@@ -81,12 +81,14 @@ impl SimCommand {
             | SimCommand::Net(NetCommand::FlipSegment { .. })
             | SimCommand::Net(NetCommand::ToggleTrafficLight { .. })
             | SimCommand::Net(NetCommand::SetSign { .. })
+            | SimCommand::Net(NetCommand::SetTrees { .. })
             | SimCommand::Net(NetCommand::SetLaneRule { .. })
             | SimCommand::NetDemolish(NetCommand::RemoveSegment { .. })
             | SimCommand::NetDemolish(NetCommand::RemovePart { .. })
             | SimCommand::NetDemolish(NetCommand::FlipSegment { .. })
             | SimCommand::NetDemolish(NetCommand::ToggleTrafficLight { .. })
             | SimCommand::NetDemolish(NetCommand::SetSign { .. })
+            | SimCommand::NetDemolish(NetCommand::SetTrees { .. })
             | SimCommand::NetDemolish(NetCommand::SetLaneRule { .. })
             | SimCommand::Building(BuildingCommand::Demolish { .. })
             | SimCommand::Building(BuildingCommand::Move { .. })
@@ -341,6 +343,7 @@ fn platform_target(c: &NetCommand) -> Option<cp_net::SegmentId> {
         | NetCommand::BuildPlan { .. }
         | NetCommand::ToggleTrafficLight { .. }
         | NetCommand::SetSign { .. }
+        | NetCommand::SetTrees { .. }
         | NetCommand::SetLaneRule { .. } => None,
     }
 }

@@ -197,3 +197,150 @@ fn a_grey_deal_makes_its_factory_pollute_more() {
     let src = e.pollution_src[cell_of(at_cell(0.0))];
     assert!((src - 75.0).abs() < 1e-3, "50 × 1.5: {src}");
 }
+
+/// A loaded highway along `z = 6000` and the segment's id; `trees` set on it by the caller.
+fn loud_highway(db: &ContentDb, trees: bool) -> (NetGraph, SegmentLoad) {
+    let mut net = NetGraph::default();
+    let id = db.road_id("highway_1w_2l").unwrap();
+    let seg = net
+        .add_segment(
+            db.road(id),
+            id,
+            CubicBezier3::line(
+                Vec3::new(4850.0, 0.0, 6000.0),
+                Vec3::new(5150.0, 0.0, 6000.0),
+            ),
+            Elevation::Ground,
+        )
+        .unwrap();
+    net.set_trees(seg, trees).unwrap();
+    let mut ema = vec![0.0; seg.index as usize + 1];
+    ema[seg.index as usize] = 1.0;
+    (
+        net,
+        SegmentLoad {
+            ema,
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn a_tree_row_cuts_the_noise_of_a_highway_near_it_and_not_beyond_its_reach() {
+    let db = db();
+    let (bare, load) = loud_highway(&db, false);
+    let (green, _) = loud_highway(&db, true);
+    let at = |dz: f32| Vec2::new(5000.0, 6000.0 + dz);
+    let mut a = Emissions::default();
+    let mut b = Emissions::default();
+    step(&mut a, &db, &BuildingGrid::default(), &bare, &load, 1);
+    step(&mut b, &db, &BuildingGrid::default(), &green, &load, 1);
+    // 8 m from the row (a sample point of it, every 32 m): 0.7 of the bare value (§24.4 item 1).
+    let (n0, n1) = (a.noise_at(at(8.0)), b.noise_at(at(8.0)));
+    assert!(
+        n0 > 0.0 && (0.55..0.75).contains(&(n1 / n0)),
+        "{n0} -> {n1}"
+    );
+    // 48 m away: the row's reach (32 m) is over, the noise is as it was.
+    assert_eq!(a.noise_at(at(48.0)), b.noise_at(at(48.0)));
+    // The row taken away (the bare net again): the next pass gives the bare value back.
+    step(&mut b, &db, &BuildingGrid::default(), &bare, &load, 1);
+    assert_eq!(b.noise_at(at(8.0)), n0);
+}
+
+#[test]
+fn a_tree_row_cuts_the_pollution_source_and_the_ground_follows_slowly() {
+    let db = db();
+    let id = db.road_id("basic_2l").unwrap();
+    let mut grid = BuildingGrid::default();
+    let pos = at_cell(0.0);
+    place(&mut grid, &db, "ind_1", pos);
+    let mut net = NetGraph::default();
+    let seg = net
+        .add_segment(
+            db.road(id),
+            id,
+            CubicBezier3::line(
+                Vec3::new(pos.x, 0.0, pos.y),
+                Vec3::new(pos.x + 200.0, 0.0, pos.y),
+            ),
+            Elevation::Ground,
+        )
+        .unwrap();
+    let load = SegmentLoad::default();
+    let here = cell_of(pos);
+    let mut e = Emissions::default();
+    step(&mut e, &db, &grid, &net, &load, 3 * DAY);
+    let before = e.pollution_src[here];
+    let ground = e.ground[here];
+    assert!(before > 0.0 && ground > 0);
+    net.set_trees(seg, true).unwrap();
+    e.rebuild_fields(&EmissionInputs {
+        content: &db,
+        buildings: &grid,
+        net: &net,
+        load: &load,
+        boost: &[],
+    });
+    // On the row the source is cut by the full 25 %; the ground has not moved yet.
+    let cut = e.pollution_src[here];
+    assert!((cut - before * 0.75).abs() < 1e-3, "{before} -> {cut}");
+    assert_eq!(e.ground[here], ground);
+    step(&mut e, &db, &grid, &net, &load, 1);
+    assert!(e.ground[here] < ground && f32::from(e.ground[here]) > cut * 100.0);
+}
+
+/// Land value of a ground road along `z` for each `(z, trees)`, read at `at`.
+fn land_at(db: &ContentDb, rows: &[(f32, bool)], at: Vec2) -> f32 {
+    let id = db.road_id("basic_2l").unwrap();
+    let mut net = NetGraph::default();
+    for &(z, trees) in rows {
+        let seg = net
+            .add_segment(
+                db.road(id),
+                id,
+                CubicBezier3::line(Vec3::new(1000.0, 0.0, z), Vec3::new(1300.0, 0.0, z)),
+                Elevation::Ground,
+            )
+            .unwrap();
+        net.set_trees(seg, trees).unwrap();
+    }
+    let grid = BuildingGrid::default();
+    let mut ema = Emissions::default();
+    ema.update(&EmissionInputs {
+        content: db,
+        buildings: &grid,
+        net: &net,
+        load: &SegmentLoad::default(),
+        boost: &[],
+    });
+    crate::LandGrids::compute(&crate::LandInputs {
+        content: db,
+        buildings: &grid,
+        net: &net,
+        utilities: &cp_utility::UtilityGraph::default(),
+        emissions: &ema,
+        services: None,
+        parks: None,
+    })
+    .value_at(at)
+}
+
+#[test]
+fn a_tree_row_lifts_the_land_beside_it_and_two_rows_do_not_add() {
+    let db = db();
+    // A cell centre (64 m cells) on the road line.
+    let on = Vec2::new(1184.0, 1056.0);
+    let bare = land_at(&db, &[(1056.0, false)], on);
+    let one = land_at(&db, &[(1056.0, true)], on);
+    let tree_land = db.balance().tree_land;
+    // The sample points of the row are a few metres from the cell centre: nearly all of +6.
+    assert!(
+        one - bare > 0.8 * tree_land && one - bare <= tree_land + 1e-3,
+        "+6 on the row: {bare} -> {one}"
+    );
+    // A second row 40 m off: the maximum counts, not the sum.
+    let two = land_at(&db, &[(1056.0, true), (1096.0, true)], on);
+    assert!(two - bare < tree_land + 1e-3, "{bare} -> {two}");
+    assert!(two >= one - 1e-3);
+}

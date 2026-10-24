@@ -972,6 +972,17 @@ impl ContentDb {
                     true,
                 ),
                 ("import_transport_fee", &[b.import_transport_fee][..], true),
+                ("trees_cost_per_m", &[b.trees_cost_per_m][..], true),
+                (
+                    "trees_upkeep_per_m_week",
+                    &[b.trees_upkeep_per_m_week][..],
+                    true,
+                ),
+                ("tree_noise_cut", &[b.tree_noise_cut][..], true),
+                ("tree_pollution_cut", &[b.tree_pollution_cut][..], true),
+                ("tree_radius_cells", &[b.tree_radius_cells][..], true),
+                ("tree_land", &[b.tree_land][..], true),
+                ("tree_land_radius_m", &[b.tree_land_radius_m][..], true),
             ];
             for (name, values, non_negative) in knobs {
                 if !finite(values) || (non_negative && values.iter().any(|&v| v < 0.0)) {

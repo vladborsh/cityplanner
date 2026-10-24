@@ -9,7 +9,7 @@ use std::fmt;
 
 use bevy_ecs::resource::Resource;
 use bevy_math::{Vec2, Vec3};
-use cp_content::{LaneDir, RoadDef, RoadDefId};
+use cp_content::{LaneDir, LaneKind, RoadClass, RoadDef, RoadDefId};
 use cp_core::Arena;
 use cp_core::curve::CubicBezier3;
 use serde::{Deserialize, Serialize};
@@ -478,7 +478,7 @@ impl NetGraph {
         chain.push(seg.end);
         let mut segments = Vec::with_capacity(pieces.len());
         for (i, (piece, length)) in pieces.into_iter().zip(lengths).enumerate() {
-            segments.push(self.insert_segment(
+            let id = self.insert_segment(
                 def,
                 seg.road,
                 piece,
@@ -487,7 +487,9 @@ impl NetGraph {
                 chain[i + 1],
                 length,
                 seg.order,
-            ));
+            );
+            self.segments.get_mut(id).expect("just inserted").trees = seg.trees;
+            segments.push(id);
         }
         // The end pieces take the old segment's signs at the old ends (§6.5a).
         let ends = [
@@ -564,6 +566,7 @@ impl NetGraph {
         };
         let (start, end, road, elevation) = (first.start, second.end, first.road, first.elevation);
         let (order_a, order_b) = (first.order, second.order);
+        let trees = first.trees && second.trees;
         let signs = [self.sign_at(start, first_id), self.sign_at(end, second_id)];
         let rules = [self.rules_at(start), self.rules_at(end)];
         self.take_segment(a).ok()?;
@@ -572,6 +575,7 @@ impl NetGraph {
         let length = curve.arc_table().length();
         let order = order_a.min(order_b);
         let merged = self.insert_segment(def, road, curve, elevation, start, end, length, order);
+        self.segments.get_mut(merged).expect("just inserted").trees = trees;
         // The far ends keep their signs on the merged segment (§6.5a).
         for ((n, sign), rules) in [start, end].into_iter().zip(signs).zip(rules) {
             if let Some(sign) = sign {
@@ -603,6 +607,8 @@ impl NetGraph {
         let seg = self.segments.get_mut(id).expect("checked above");
         seg.road = road;
         seg.lanes = lanes;
+        // A road that takes no trees (a path, a railway) loses the row (§24.1).
+        seg.trees &= trees_allowed(def, seg.elevation);
         // A footpath carries no sign; a node left with two-lane roads only loses its control.
         let footpath = crate::control::vehicle_lanes(self, id) == 0;
         for n in [start, end] {
@@ -614,6 +620,16 @@ impl NetGraph {
             self.tidy_lane_rules(n);
             self.dirty.insert(n);
         }
+        Ok(())
+    }
+
+    /// Sets the street-tree flag of a segment (`SetTrees`, §24). The caller has checked
+    /// [`trees_allowed`].
+    pub fn set_trees(&mut self, id: SegmentId, trees: bool) -> Result<(), NetOpError> {
+        self.segments
+            .get_mut(id)
+            .ok_or(NetOpError::UnknownSegment(id))?
+            .trees = trees;
         Ok(())
     }
 
@@ -979,6 +995,7 @@ impl NetGraph {
             lanes: Vec::new(),
             length,
             order,
+            trees: false,
         });
         let lanes = self.build_lanes(id, def, &curve);
         self.segments.get_mut(id).expect("just inserted").lanes = lanes;
@@ -1168,4 +1185,12 @@ pub fn unsplit(f: &CubicBezier3, g: &CubicBezier3) -> Option<CubicBezier3> {
     let (sf, sg) = c.split(tau);
     let close = |x: [Vec2; 4], y: [Vec2; 4]| x.iter().zip(y).all(|(p, q)| p.distance(q) < 0.05);
     (c.is_finite() && close(sf.xz(), fx) && close(sg.xz(), gx)).then_some(c)
+}
+
+/// Whether a segment of road `def` at `elevation` may carry street trees (§24.1): on the ground,
+/// not a path (parks have their own props) and not a railway.
+pub fn trees_allowed(def: &RoadDef, elevation: Elevation) -> bool {
+    elevation == Elevation::Ground
+        && !matches!(def.class, RoadClass::Path | RoadClass::Rail)
+        && def.lanes.iter().all(|l| l.kind != LaneKind::Rail)
 }

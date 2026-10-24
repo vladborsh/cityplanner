@@ -133,6 +133,10 @@ pub struct Segment {
     /// tie-break of the zone layout instead of the arena slot (which is reused). A piece cut from
     /// a segment keeps its order; a segment made of two takes the older one.
     pub order: u32,
+    /// A row of street trees along both sides (T-323, §24, save v79). Only on ground segments
+    /// of a road that is not a path or a railway. A piece cut from a segment keeps the flag; a
+    /// segment made of two has it when both had it.
+    pub trees: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

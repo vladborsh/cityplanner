@@ -65,6 +65,7 @@ fn plan(road: cp_content::RoadDefId, pieces: Vec<PlanPiece>) -> NetCommand {
             road,
             elevation: ElevationMode::Ground,
             pieces,
+            trees: false,
         },
     }
 }

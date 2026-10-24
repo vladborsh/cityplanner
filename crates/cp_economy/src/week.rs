@@ -40,14 +40,18 @@ fn percent(pct: u8) -> f64 {
 }
 
 /// Weekly upkeep of one road segment at `budget_pct`.
-pub fn segment_upkeep(def: &RoadDef, seg: &Segment, budget_pct: u8) -> Cost {
+///
+/// `tree_per_m` is the weekly upkeep per metre of a tree row (T-323), added for a segment with
+/// trees; the Roads budget scales it with the rest.
+pub fn segment_upkeep(def: &RoadDef, seg: &Segment, budget_pct: u8, tree_per_m: f32) -> Cost {
     let per_m = match seg.elevation {
         Elevation::Elevated => def.elevated.as_ref().map(|v| v.upkeep_per_m_week),
         Elevation::Bridge => def.bridge.as_ref().map(|v| v.upkeep_per_m_week),
         Elevation::Tunnel => def.tunnel.as_ref().map(|v| v.upkeep_per_m_week),
         Elevation::Ground => None,
     }
-    .unwrap_or(def.upkeep_per_m_week);
+    .unwrap_or(def.upkeep_per_m_week)
+        + if seg.trees { tree_per_m } else { 0.0 };
     Cost::scaled(per_m, f64::from(seg.length) * percent(budget_pct))
 }
 
@@ -217,7 +221,12 @@ pub fn week_core(i: &WeekInputs, week: u64, areas: Option<&cp_district::AreaMap>
     let roads = i.budgets.get(ServiceKind::Roads);
     let entry = entry_segments(i.net, i.content);
     for (_, seg) in i.net.segments().filter(|(id, _)| !entry.contains(id)) {
-        r.road_upkeep += segment_upkeep(i.content.road(seg.road), seg, roads);
+        r.road_upkeep += segment_upkeep(
+            i.content.road(seg.road),
+            seg,
+            roads,
+            i.content.balance().trees_upkeep_per_m_week,
+        );
     }
 
     for (_, link) in i.utilities.links() {

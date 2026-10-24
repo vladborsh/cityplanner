@@ -537,7 +537,12 @@ fn stage_citizens_traffic_land(
         g.segments += 1;
         g.meters += seg.length;
         if !entry.contains(&id) {
-            g.upkeep_week += segment_upkeep(db.road(seg.road), seg, roads_budget);
+            g.upkeep_week += segment_upkeep(
+                db.road(seg.road),
+                seg,
+                roads_budget,
+                db.balance().trees_upkeep_per_m_week,
+            );
         }
     }
     s.traffic.avg_load = if segs > 0 {

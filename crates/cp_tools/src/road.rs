@@ -302,6 +302,7 @@ fn plan_from_anchors(req: &RoadPathRequest, anchors: &[(Anchor, Vec2)]) -> Build
         road: req.road,
         elevation: req.elevation,
         pieces,
+        trees: false,
     }
 }
 
