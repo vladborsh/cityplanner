@@ -76,7 +76,7 @@ pub struct Trip {
     pub mode: TripMode,
     pub state: TripState,
     /// When the trip set off (T-318b: the minutes to work); a scheduled trip is re-stamped at
-    /// its departure. Saved since format 70.
+    /// its departure. Saved since format 71.
     pub started: Tick,
 }
 
