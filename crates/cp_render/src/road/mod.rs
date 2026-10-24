@@ -213,7 +213,7 @@ fn lane_color(kind: LaneKind) -> ([f32; 4], f32) {
     }
 }
 
-fn is_vehicle(kind: LaneKind) -> bool {
+pub(crate) fn is_vehicle(kind: LaneKind) -> bool {
     kind.is_road_vehicle()
 }
 
@@ -652,6 +652,55 @@ fn extrude(
     id: SegmentId,
     markings: bool,
 ) -> Option<MeshData> {
+    match extrude_or_rings(graph, geo, terrain, db, id, markings, false)? {
+        Extruded::Mesh(m) => Some(m),
+        Extruded::Rings(..) => None,
+    }
+}
+
+/// What [`extrude_or_rings`] gives: the mesh, or only where its rings are and how high.
+enum Extruded {
+    Mesh(MeshData),
+    Rings(Vec<f32>, Vec<Ring>),
+}
+
+/// Height of the deck of segment `id` (the near mesh, without the kerb) where it passes `p`:
+/// what sits on the road is drawn above it (a driveway, T-330b). `None` for a tunnel or an
+/// unknown segment.
+pub fn deck_height(
+    graph: &NetGraph,
+    geo: &JunctionGeometry,
+    terrain: &Terrain,
+    db: &ContentDb,
+    id: SegmentId,
+    p: Vec2,
+) -> Option<f32> {
+    let Extruded::Rings(s_list, rings) = extrude_or_rings(graph, geo, terrain, db, id, true, true)?
+    else {
+        return None;
+    };
+    let curve = geo.trimmed_curve(graph, id)?;
+    let s = curve.arc_table().t_to_s(curve.nearest_xz(p).0);
+    let k = s_list.partition_point(|&x| x < s);
+    let y = |k: usize| rings[k.min(rings.len() - 1)].center.y;
+    if k == 0 || k >= s_list.len() {
+        return Some(y(k));
+    }
+    let (a, b) = (s_list[k - 1], s_list[k]);
+    let f = ((s - a) / (b - a).max(1e-4)).clamp(0.0, 1.0);
+    Some(y(k - 1) + (y(k) - y(k - 1)) * f)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn extrude_or_rings(
+    graph: &NetGraph,
+    geo: &JunctionGeometry,
+    terrain: &Terrain,
+    db: &ContentDb,
+    id: SegmentId,
+    markings: bool,
+    rings_only: bool,
+) -> Option<Extruded> {
     let seg = graph.segment(id)?;
     if seg.elevation == Elevation::Tunnel {
         return None;
@@ -660,7 +709,7 @@ fn extrude(
     let table = curve.arc_table();
     let length = table.length();
     if length < 0.05 {
-        return Some(MeshData::default());
+        return Some(Extruded::Mesh(MeshData::default()));
     }
     let frame = Frame {
         curve,
@@ -726,6 +775,9 @@ fn extrude(
         base.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
     }
     let (s_list, rings) = ground::rings(&frame, graph, geo, terrain, id, seg, base);
+    if rings_only {
+        return Some(Extruded::Rings(s_list, rings));
+    }
     // Whether ring pair `k - 1, k` lies along the bays (their bands are lowered there).
     let in_bay = |k: usize| {
         k > 0
@@ -978,7 +1030,7 @@ fn extrude(
         }
         piers(&mut m, terrain, seg);
     }
-    Some(m)
+    Some(Extruded::Mesh(m))
 }
 
 /// Band `b` (a lane surface) between rings `a` and `c` under a word: its own colour, white

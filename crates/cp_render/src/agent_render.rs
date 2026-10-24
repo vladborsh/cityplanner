@@ -266,6 +266,7 @@ fn build_agent_instances(
         &snap.prev.vehicles,
         &snap.cur.vehicles,
         &looks.looks,
+        |id| view.buildings.get(id)?.portals(&view.net),
         &cull,
         out,
     );

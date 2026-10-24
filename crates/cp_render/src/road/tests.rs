@@ -1728,7 +1728,7 @@ fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
     front(&v, db, &mut grid, "fire_station", id, station, 1.0, 1);
     let (cars, index) = crate::parked::parked_cars(&v.net, &v.junctions, db, &grid);
     assert!(cars.len() >= 2, "{} cars by busy houses", cars.len());
-    // §25.1: no place within a place's length of a yard gate.
+    // §25.1: no place overlaps a yard gate's driveway.
     let gates: Vec<f32> = houses
         .iter()
         .map(|&h| lateral(&v, id, grid.get(h).unwrap().portals(&v.net).unwrap().drive).1)
@@ -1737,7 +1737,7 @@ fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
         let s = lateral(&v, id, Vec2::new(c.pos.x, c.pos.z)).1;
         for g in &gates {
             assert!(
-                (s - g).abs() >= parking::SLOT_LEN - 1e-3,
+                (s - g).abs() >= (parking::SLOT_LEN + crate::parked::DRIVEWAY_W) * 0.5 - 1e-3,
                 "a car at {s}, a gate at {g}"
             );
         }
@@ -2017,6 +2017,52 @@ fn tram_rails_run_on_through_junctions_and_transitions() {
                 "{name}: no rails at the mouth of {:?}",
                 arm.segment
             );
+        }
+    }
+}
+
+/// §25.4: a lot two cells wide gets a driveway from its yard gate straight out to the kerb, on
+/// top of the sidewalk it crosses.
+#[test]
+fn a_driveway_runs_from_the_yard_gate_over_the_sidewalk_to_the_kerb() {
+    let mut w = world();
+    w.line("basic_2l", (X0, Z0), (X0 + 96.0, Z0));
+    let v = w.view();
+    let db = &*w.content;
+    let id = v.net.segments().next().unwrap().0;
+    let mut grid = cp_building::BuildingGrid::new();
+    for side in [1.0, -1.0] {
+        let h = front(&v, db, &mut grid, "apt_high_3", id, 0.5, side, 1);
+        let b = grid.get(h).unwrap();
+        let p = b.portals(&v.net).unwrap();
+        let slabs = crate::building::driveway(b, &v.net, &v.junctions, &w.terrain, db);
+        let (first, slab) = (slabs[0], *slabs.last().expect("a driveway"));
+        let gate = (first[0] + first[1]) * 0.5;
+        let kerb = (slab[2] + slab[3]) * 0.5;
+        assert!(Vec2::new(gate.x, gate.z).distance(p.drive) < 1e-3);
+        assert!((slab[0].distance(slab[1]) - crate::parked::DRIVEWAY_W).abs() < 1e-3);
+        let b = parking::bays(&v.net, &v.junctions, id).unwrap();
+        let bay = b.sides.iter().find(|s| s.sign == side).unwrap();
+        let (lat, _) = lateral(&v, id, Vec2::new(kerb.x, kerb.z));
+        assert!(
+            (lat - bay.kerb).abs() < 0.05,
+            "kerb at {lat}, not {}",
+            bay.kerb
+        );
+        // No part of the road mesh under the slab is above it.
+        let piece = build_segment_piece(&v.net, &v.junctions, &w.terrain, db, id).unwrap();
+        let (u, along) = (slab[1] - slab[0], slab[3] - slab[0]);
+        for q in &piece.near.positions {
+            let q = Vec3::from(*q);
+            let d = q - slab[0];
+            let (a, c) = (
+                d.dot(u) / u.length_squared(),
+                d.dot(along) / along.length_squared(),
+            );
+            if (0.0..=1.0).contains(&a) && (0.0..=1.0).contains(&c) {
+                let top = slab[0].y + (slab[3].y - slab[0].y) * c;
+                assert!(q.y < top, "road at {q} over the slab top {top}");
+            }
         }
     }
 }

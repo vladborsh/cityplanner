@@ -97,6 +97,8 @@ pub struct Options {
     /// `--door-demo N`: aim the camera at a walker stepping out of (or into) its door once one
     /// shows up, and take the screenshot N frames later (T-329b shots).
     pub door_demo: Option<u32>,
+    /// `--yard-demo N`: the same with a car pulling out of (or into) its yard (T-330b shots).
+    pub yard_demo: Option<u32>,
     /// `--speed 1|2|3`: run the game at that speed from the start (T-281 benches).
     pub speed: Option<cp_core::SimSpeed>,
     /// `--no-qos`: leave the game's threads at the default quality of service (T-281: to
@@ -228,6 +230,7 @@ impl Options {
             inspect: args.iter().any(|a| a == "--inspect"),
             inspect_home: args.iter().any(|a| a == "--inspect-home"),
             door_demo: value("--door-demo").and_then(|v| v.parse().ok()),
+            yard_demo: value("--yard-demo").and_then(|v| v.parse().ok()),
             pan: args.iter().any(|a| a == "--pan"),
             zoning: args.iter().position(|a| a == "--zoning").map(|i| {
                 let n: Vec<f32> = args
@@ -534,6 +537,60 @@ fn door_demo(
     demo.aimed = Some(0);
 }
 
+/// `--yard-demo`: a car about a third of the way out of its yard, seen low from across the
+/// street. Once one is found the game is paused, so the shot `N` frames later still has it
+/// there. Shares [`DoorDemo`].
+fn yard_demo(
+    mut demo: ResMut<DoorDemo>,
+    mut frame: Local<u32>,
+    view: Option<Res<SimView>>,
+    sim: Option<ResMut<cp_app::Sim>>,
+    mut cams: Query<&mut cp_render::RtsCamera>,
+) {
+    *frame += 1;
+    if let Some(n) = demo.aimed.as_mut() {
+        *n += 1;
+        return;
+    }
+    let (Some(view), Some(mut sim)) = (view, sim) else {
+        return;
+    };
+    let cars = &view.agents.cur.vehicles;
+    if frame.is_multiple_of(120) {
+        let near = cars.iter().filter(|v| v.portal.is_some()).count();
+        eprintln!("yard demo: {} cars, {near} by a yard", cars.len());
+    }
+    let Some((v, yard)) = cars
+        .iter()
+        .filter_map(|v| {
+            let pt = v
+                .portal
+                .filter(|p| p.leaving && (0.25..0.45).contains(&p.progress))?;
+            let b = view.buildings.get(pt.building)?;
+            (b.size().0 >= 2).then_some((v, b.portals(&view.net)?))
+        })
+        .next()
+    else {
+        return;
+    };
+    sim.0.world_mut().insert_resource(cp_core::SimSpeed::Pause);
+    let look = yard.drive + yard.out * 3.0;
+    let side = bevy::math::Vec2::new(-yard.out.y, yard.out.x);
+    let eye = look + yard.out * 16.0 + side * 8.0;
+    let y = view.terrain.as_ref().map_or(0.0, |t| t.height(look));
+    for mut cam in &mut cams {
+        *cam = cp_render::RtsCamera::from_pose(
+            Vec3::new(eye.x, y + 9.0, eye.y),
+            Vec3::new(look.x, y, look.y),
+        );
+    }
+    eprintln!(
+        "yard demo: paused on car {} by its yard {}",
+        v.key, yard.drive
+    );
+    demo.aimed = Some(0);
+}
+
 /// Where `--zoning x,z` holds the cursor (world metres), if anywhere.
 #[derive(Resource)]
 struct ZoningDemo(Option<Vec2>);
@@ -681,6 +738,10 @@ pub fn run(opts: Options) -> AppExit {
     if let Some(wait) = opts.door_demo {
         app.insert_resource(DoorDemo { aimed: None, wait })
             .add_systems(Update, door_demo);
+    }
+    if let Some(wait) = opts.yard_demo {
+        app.insert_resource(DoorDemo { aimed: None, wait })
+            .add_systems(Update, yard_demo);
     }
     if let Some(hover) = opts.zoning {
         if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {

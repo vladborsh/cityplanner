@@ -46,6 +46,7 @@ fn vehicles_interpolate_between_snapshots() {
         &prev,
         &cur,
         &VehicleLooks::default(),
+        no_yard,
         &cull(100.0, 0.25),
         &mut out,
     );
@@ -64,6 +65,7 @@ fn heading_takes_the_short_way_round() {
         &prev,
         &cur,
         &VehicleLooks::default(),
+        no_yard,
         &cull(100.0, 0.5),
         &mut out,
     );
@@ -80,6 +82,7 @@ fn teleports_are_not_interpolated() {
         &prev,
         &cur,
         &VehicleLooks::default(),
+        no_yard,
         &cull(100.0, 0.5),
         &mut out,
     );
@@ -93,7 +96,7 @@ fn camera_height_gates_each_kind() {
     let looks = VehicleLooks::default();
     let count = |y: f32| {
         let mut out = AgentInstances::default();
-        build_vehicles(&v, &v, &looks, &cull(y, 0.0), &mut out);
+        build_vehicles(&v, &v, &looks, no_yard, &cull(y, 0.0), &mut out);
         build_pedestrians(
             &p,
             &p,
@@ -115,13 +118,21 @@ fn camera_height_gates_each_kind() {
 fn detail_level_follows_camera_height() {
     let v = [veh(1, 0.0, 0.0)];
     let mut out = AgentInstances::default();
-    build_vehicles(&v, &v, &VehicleLooks::default(), &cull(50.0, 0.0), &mut out);
+    build_vehicles(
+        &v,
+        &v,
+        &VehicleLooks::default(),
+        no_yard,
+        &cull(50.0, 0.0),
+        &mut out,
+    );
     assert_eq!((out.vehicles[0][0].len(), out.vehicles[0][1].len()), (1, 0));
     out.clear();
     build_vehicles(
         &v,
         &v,
         &VehicleLooks::default(),
+        no_yard,
         &cull(400.0, 0.0),
         &mut out,
     );
@@ -139,7 +150,7 @@ fn frustum_culls_agents_outside_it() {
     };
     let v = [veh(1, 50.0, 0.0), veh(2, -50.0, 0.0)];
     let mut out = AgentInstances::default();
-    build_vehicles(&v, &v, &VehicleLooks::default(), &c, &mut out);
+    build_vehicles(&v, &v, &VehicleLooks::default(), no_yard, &c, &mut out);
     assert_eq!(out.vehicle_count(), 1);
 }
 
@@ -241,7 +252,7 @@ fn budget_scene_builds_every_instance() {
     for _ in 0..5 {
         out.clear();
         let t = std::time::Instant::now();
-        build_vehicles(&cars_prev, &cars, &looks, &c, &mut out);
+        build_vehicles(&cars_prev, &cars, &looks, no_yard, &c, &mut out);
         build_pedestrians(
             &peds_prev,
             &peds,
@@ -465,29 +476,86 @@ fn a_walker_leaving_its_door_faces_the_way_it_is_drawn() {
     );
 }
 
-/// T-330a: a car still waiting in its yard (portal progress 0) is in the frame but not drawn or
-/// picked until T-330b draws the yard; one already pulling out is.
-#[test]
-fn a_car_waiting_in_its_yard_is_not_drawn_yet() {
-    let yard = |progress: f32| VehiclePose {
+fn no_yard(_: cp_building::BuildingId) -> Option<cp_building::Portals> {
+    None
+}
+
+/// The yard of building 1 opens at the origin towards +z (the road).
+fn one_yard(id: cp_building::BuildingId) -> Option<cp_building::Portals> {
+    (id == cp_core::Id::new(1, 0)).then_some(cp_building::Portals {
+        door: Vec2::new(3.0, -1.0),
+        drive: Vec2::ZERO,
+        out: Vec2::Y,
+    })
+}
+
+/// A car of building 1 on the lane 8 m out, heading +x.
+fn yard_car(key: u64, progress: f32, leaving: bool) -> VehiclePose {
+    VehiclePose {
+        key,
+        pos: Vec3::new(10.0, 0.0, 8.0),
+        yaw: std::f32::consts::FRAC_PI_2,
         portal: Some(cp_sim::Portal {
             building: cp_core::Id::new(1, 0),
             progress,
-            leaving: true,
+            leaving,
         }),
-        ..veh(1, 0.0, 0.0)
-    };
-    for (progress, shown) in [(0.0, 0), (0.25, 1)] {
-        let cur = [yard(progress)];
-        let mut out = AgentInstances::default();
-        build_vehicles(
-            &cur,
-            &cur,
-            &VehicleLooks::default(),
-            &cull(50.0, 0.5),
-            &mut out,
-        );
-        assert_eq!(out.vehicle_count(), shown, "progress {progress}");
-        assert_eq!(vehicle_positions(&cur, &cur, 0.5).len(), shown);
+        ..veh(key, 0.0, 0.0)
     }
+}
+
+/// §25.5 (5), cars: progress 0 of the way out is in the yard, 1 is exactly the sim pose, and the
+/// drawn car moves away from the yard all the way; the way in mirrors it.
+#[test]
+fn a_car_pulls_out_of_its_yard_onto_the_sim_pose() {
+    let len = VehicleLooks::default().sizes[0].z;
+    let yard = Vec3::new(0.0, 0.0, -(len / 2.0 + 1.0));
+    let (at, _) = vehicle_drawn(&yard_car(1, 0.0, true), len, 0, &one_yard);
+    assert!(at.distance(yard) < 0.1, "{at}");
+    let c = yard_car(1, 1.0, true);
+    assert_eq!(vehicle_drawn(&c, len, 0, &one_yard), (c.pos, c.yaw));
+    let mut last = 0.0;
+    for i in 0..=20 {
+        let (p, yaw) = vehicle_drawn(&yard_car(1, i as f32 / 20.0, true), len, 0, &one_yard);
+        let d = p.distance(yard);
+        assert!(d >= last - 1e-4, "step {i}: {d} < {last}");
+        assert!(yaw.is_finite());
+        last = d;
+    }
+    let c = yard_car(1, 0.0, false);
+    assert_eq!(vehicle_drawn(&c, len, 0, &one_yard), (c.pos, c.yaw));
+    let (at, _) = vehicle_drawn(&yard_car(1, 1.0, false), len, 0, &one_yard);
+    assert!(at.distance(yard) < 0.1, "{at}");
+    // Without a yard (the building is gone) the sim pose.
+    let c = yard_car(1, 0.0, true);
+    assert_eq!(vehicle_drawn(&c, len, 0, &no_yard), (c.pos, c.yaw));
+}
+
+/// §25.5 (5): cars waiting in one yard queue by key, each `len + 1` deeper; the fourth is not
+/// drawn or picked. A car pulling out does not take a place in the queue.
+#[test]
+fn cars_waiting_in_a_yard_queue_three_deep() {
+    let looks = VehicleLooks::default();
+    let len = looks.sizes[0].z;
+    let cur = [
+        yard_car(1, 0.0, true),
+        yard_car(2, 0.4, true),
+        yard_car(3, 0.0, true),
+        yard_car(4, 0.0, true),
+        yard_car(5, 0.0, true),
+    ];
+    let at = vehicle_positions(&cur, &cur, 0.5, &looks, one_yard);
+    let keys: Vec<u64> = at.iter().map(|(k, _)| *k).collect();
+    assert_eq!(keys, [1, 2, 3, 4]);
+    let z = |k: u64| at.iter().find(|(key, _)| *key == k).unwrap().1.z;
+    assert!((z(1) + len / 2.0 + 1.0).abs() < 0.1);
+    assert!((z(1) - z(3) - (len + 1.0)).abs() < 1e-4);
+    assert!((z(3) - z(4) - (len + 1.0)).abs() < 1e-4);
+    let mut out = AgentInstances::default();
+    build_vehicles(&cur, &cur, &looks, one_yard, &cull(50.0, 0.5), &mut out);
+    assert_eq!(out.vehicle_count(), 4);
+    // The queue moves up: the car slides forward between the snapshots, not jumps.
+    let next = [yard_car(3, 0.0, true), yard_car(4, 0.0, true)];
+    let mid = vehicle_positions(&cur, &next, 0.5, &looks, one_yard);
+    assert!((mid[0].1.z - (z(1) + z(3)) / 2.0).abs() < 1e-4);
 }

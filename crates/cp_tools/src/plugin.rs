@@ -2458,7 +2458,7 @@ fn draw_selection(
     fraction: Option<Res<cp_render::TickFraction>>,
     mut gizmos: Gizmos,
 ) {
-    use cp_render::agent::{pedestrian_positions, vehicle_positions};
+    use cp_render::agent::{pedestrian_positions, view_vehicle_positions};
     use cp_sim::{Inspection, Selection};
     let (Some(view), Some(sel), Some(info)) = (view.as_deref(), picked.0, inspected.0.as_ref())
     else {
@@ -2508,10 +2508,9 @@ fn draw_selection(
             for lane in &v.route {
                 gizmos.linestrip(lane.iter().map(|p| *p + Vec3::Y * 0.9), cyan);
             }
-            if let Some((_, pos)) =
-                vehicle_positions(&view.agents.prev.vehicles, &view.agents.cur.vehicles, alpha)
-                    .into_iter()
-                    .find(|(k, _)| *k == v.key)
+            if let Some((_, pos)) = view_vehicle_positions(view, alpha)
+                .into_iter()
+                .find(|(k, _)| *k == v.key)
             {
                 ring(&mut gizmos, Vec2::new(pos.x, pos.z), 4.0);
             }

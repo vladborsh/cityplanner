@@ -10,7 +10,7 @@
 use bevy::prelude::*;
 use bevy_math::Vec2;
 use cp_render::agent::{
-    PEDESTRIAN_MAX_HEIGHT, VEHICLE_MAX_HEIGHT, pedestrian_positions, vehicle_positions,
+    PEDESTRIAN_MAX_HEIGHT, VEHICLE_MAX_HEIGHT, pedestrian_positions, view_vehicle_positions,
 };
 use cp_sim::{Selection, SimView};
 
@@ -98,9 +98,7 @@ pub fn pick_with_ray(
     };
     if camera_height <= VEHICLE_MAX_HEIGHT {
         let reach = VEHICLE_REACH + grow;
-        for (key, pos) in
-            vehicle_positions(&view.agents.prev.vehicles, &view.agents.cur.vehicles, alpha)
-        {
+        for (key, pos) in view_vehicle_positions(view, alpha) {
             consider(
                 Vec2::new(pos.x, pos.z).distance(p) / reach,
                 Selection::Vehicle(key),

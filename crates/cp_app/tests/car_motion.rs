@@ -110,13 +110,9 @@ impl Frames {
                     sim.speed(),
                 );
                 let snap = &self.view.agents;
-                cp_render::agent::vehicle_positions(
-                    &snap.prev.vehicles,
-                    &snap.cur.vehicles,
-                    snap.blend(self.last),
-                )
-                .into_iter()
-                .collect()
+                cp_render::agent::view_vehicle_positions(&self.view, snap.blend(self.last))
+                    .into_iter()
+                    .collect()
             })
             .collect()
     }

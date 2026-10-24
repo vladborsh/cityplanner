@@ -21,6 +21,11 @@ const FULLEST: f32 = 0.85;
 const NEAR_M: f32 = 24.0;
 /// Pedestrians are drawn this far beyond a bay's outer edge, metres.
 const NUDGE_CLEAR: f32 = 0.35;
+/// A parking place whose centre is closer than this to a yard gate overlaps the 3 m driveway
+/// (half a place plus half the driveway), metres.
+const GATE_CLEAR: f32 = SLOT_LEN * 0.5 + DRIVEWAY_W * 0.5;
+/// Width of a driveway across the sidewalk, metres.
+pub const DRIVEWAY_W: f32 = 3.0;
 /// Cell of the [`BayIndex`] grid, metres.
 const INDEX_CELL: f32 = 32.0;
 
@@ -289,10 +294,11 @@ pub fn parked_cars(
                 {
                     continue;
                 }
-                // Nor in front of any yard gate: a gap of a place's length either side (§25.1).
+                // Nor across a yard gate: a place that overlaps its driveway is left free
+                // (§25.1; TL 2026-10-24: only the overlap, so streets keep their cars).
                 if near
                     .iter()
-                    .any(|&(.., gate)| gate.is_some_and(|g| (g - s).abs() < SLOT_LEN))
+                    .any(|&(.., gate)| gate.is_some_and(|g| (g - s).abs() < GATE_CLEAR))
                 {
                     continue;
                 }

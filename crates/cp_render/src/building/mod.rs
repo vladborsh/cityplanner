@@ -41,7 +41,7 @@ use cp_content::{
     ZoneType,
 };
 use cp_core::Tick;
-use cp_net::NetGraph;
+use cp_net::{JunctionGeometry, NetGraph};
 use cp_terrain::Terrain;
 use cp_zone::CELL_SIZE;
 
@@ -779,6 +779,83 @@ fn dull(c: [f32; 4], k: f32) -> [f32; 4] {
 }
 
 /// Builds all three detail levels of one building. `tick` selects the construction stage.
+/// Concrete of a driveway (linear rgba).
+const DRIVEWAY_COLOR: [f32; 4] = [0.58, 0.57, 0.54, 1.0];
+/// A driveway lies this far above the sidewalk (or the ground at the gate), metres.
+const DRIVEWAY_LIFT: f32 = 0.02;
+
+/// The driveway of a lot at least two cells wide (§25.4): a [`crate::parked::DRIVEWAY_W`] wide
+/// slab from its yard gate (`Building::portals` drive) straight out to the kerb of its street,
+/// the outer edge of the car lanes on the lot's side. One quad on the ground up to the road's
+/// edge (none when the gate is on that edge), one on the sidewalk from there to the kerb. Empty
+/// for a narrower lot, a lot without a gate or a street without car lanes.
+pub fn driveway(
+    b: &Building,
+    net: &NetGraph,
+    geo: &JunctionGeometry,
+    terrain: &Terrain,
+    db: &ContentDb,
+) -> Vec<[Vec3; 4]> {
+    let mut out = Vec::new();
+    if b.size().0 < 2 {
+        return out;
+    }
+    let Some((p, (seg_id, seg))) = b.portals(net).zip(
+        b.access()
+            .and_then(|a| Some((a.segment, net.segment(a.segment)?))),
+    ) else {
+        return out;
+    };
+    let (t, _) = seg.curve.nearest_xz(p.drive);
+    let c2 = cp_core::curve::to_xz(seg.curve.point(t));
+    let tangent = cp_core::curve::to_xz(seg.curve.tangent(t)).normalize_or_zero();
+    let left = Vec2::new(tangent.y, -tangent.x);
+    let sign = if (p.drive - c2).dot(left) >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+    // Lateral extents on the lot's side, as distances from the axis.
+    let lanes: Vec<_> = seg.lanes.iter().filter_map(|&l| net.lane(l)).collect();
+    let reach = |l: &&cp_net::Lane| (l.offset * sign + l.width * 0.5).max(0.0);
+    let Some(kerb) = lanes
+        .iter()
+        .filter(|l| crate::road::is_vehicle(l.kind))
+        .map(reach)
+        .reduce(f32::max)
+    else {
+        return out;
+    };
+    let edge = lanes.iter().map(reach).fold(kerb, f32::max);
+    // Distance of the gate from the axis, along `out` (which points at the road).
+    let gate = (p.drive - c2).dot(-p.out);
+    if !(kerb + 0.5..=kerb + 30.0).contains(&gate) {
+        return out;
+    }
+    let half = Vec2::new(p.out.y, -p.out.x) * crate::parked::DRIVEWAY_W * 0.5;
+    let to = |d: f32| p.drive + p.out * (gate - d);
+    let quad = |a: Vec2, b: Vec2, ya: f32, yb: f32| {
+        [
+            Vec3::new((a - half).x, ya, (a - half).y),
+            Vec3::new((a + half).x, ya, (a + half).y),
+            Vec3::new((b + half).x, yb, (b + half).y),
+            Vec3::new((b - half).x, yb, (b - half).y),
+        ]
+    };
+    let side = edge.min(gate);
+    if gate > side + 0.05 {
+        let ground = |q: Vec2| terrain.height(q) + DRIVEWAY_LIFT;
+        out.push(quad(p.drive, to(side), ground(p.drive), ground(to(side))));
+    }
+    // The sidewalk: on the road's deck there, plus the kerb.
+    let Some(deck) = crate::road::deck_height(net, geo, terrain, db, seg_id, p.drive) else {
+        return out;
+    };
+    let walk = deck + crate::road::CURB + DRIVEWAY_LIFT;
+    out.push(quad(to(side), to(kerb), walk, walk));
+    out
+}
+
 pub fn build_building(
     id: BuildingId,
     b: &Building,
@@ -1179,13 +1256,15 @@ impl BuildingSet {
         self.pieces.get(&id).map(|e| &e.piece)
     }
 
-    /// Rebuilds buildings whose stamp changed, drops vanished ones.
+    /// Rebuilds buildings whose stamp changed, drops vanished ones. With the junction geometry
+    /// a building gets its driveway ([`driveway`]).
     pub fn update(
         &mut self,
         grid: &BuildingGrid,
         net: &NetGraph,
         db: &ContentDb,
         terrain: &Terrain,
+        geo: Option<&JunctionGeometry>,
         tick: Tick,
     ) -> Update {
         let mut up = Update::default();
@@ -1207,7 +1286,17 @@ impl BuildingSet {
             if self.pieces.get(&id).is_some_and(|e| e.stamp == stamp) {
                 continue;
             }
-            let piece = build_building(id, b, db.building(b.def), net, terrain, db, tick);
+            let mut piece = build_building(id, b, db.building(b.def), net, terrain, db, tick);
+            // The concrete driveway from the yard gate across the sidewalk (§25.4).
+            for slab in geo.map_or_else(Vec::new, |g| driveway(b, net, g, terrain, db)) {
+                for m in [&mut piece.near, &mut piece.mid] {
+                    quad_up(m, slab, DRIVEWAY_COLOR);
+                }
+                for q in slab {
+                    piece.min = piece.min.min(q);
+                    piece.max = piece.max.max(q);
+                }
+            }
             self.remove(id, &mut up);
             let chunk = (
                 chunk_of(piece.center()),

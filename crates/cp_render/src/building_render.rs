@@ -137,9 +137,14 @@ fn sync_buildings(
         return;
     }
     let start = bevy::platform::time::Instant::now();
-    let up = state
-        .set
-        .update(&view.buildings, &view.net, db, terrain, Tick(view.tick.0));
+    let up = state.set.update(
+        &view.buildings,
+        &view.net,
+        db,
+        terrain,
+        Some(&view.junctions),
+        Tick(view.tick.0),
+    );
     state.last = Some(Arc::clone(&view.buildings));
     state.last_bucket = bucket;
     let material = state

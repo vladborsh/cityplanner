@@ -332,20 +332,20 @@ fn set_rebuilds_only_changed_buildings_and_batches_by_chunk() {
         ids.push(grid.insert(b));
     }
     let mut set = BuildingSet::default();
-    let first = set.update(&grid, &e.net, &e.db, &e.terrain, Tick(0));
+    let first = set.update(&grid, &e.net, &e.db, &e.terrain, None, Tick(0));
     assert_eq!(first.rebuilt, 40);
     assert_eq!(set.count(), 40);
     assert!(set.chunks().count() >= 2 && set.chunks().count() <= 6);
-    let idle = set.update(&grid, &e.net, &e.db, &e.terrain, Tick(0));
+    let idle = set.update(&grid, &e.net, &e.db, &e.terrain, None, Tick(0));
     assert_eq!((idle.rebuilt, idle.removed), (0, 0));
 
     grid.get_mut(ids[3]).unwrap().state = BuildingState::Burned;
-    let up = set.update(&grid, &e.net, &e.db, &e.terrain, Tick(0));
+    let up = set.update(&grid, &e.net, &e.db, &e.terrain, None, Tick(0));
     assert_eq!(up.rebuilt, 1);
     assert_eq!(up.dirty_chunks.len(), 1);
 
     grid.remove(ids[5]);
-    let up = set.update(&grid, &e.net, &e.db, &e.terrain, Tick(0));
+    let up = set.update(&grid, &e.net, &e.db, &e.terrain, None, Tick(0));
     assert_eq!((up.rebuilt, up.removed), (0, 1));
     assert_eq!(set.count(), 39);
 
@@ -373,14 +373,14 @@ fn construction_stage_changes_trigger_a_rebuild_only_at_stage_boundaries() {
     ));
     let mut set = BuildingSet::default();
     assert_eq!(
-        set.update(&grid, &e.net, &e.db, &e.terrain, Tick(0))
+        set.update(&grid, &e.net, &e.db, &e.terrain, None, Tick(0))
             .rebuilt,
         1
     );
     assert_eq!(set.constructing(), 1);
     // Same stage: nothing to do.
     assert_eq!(
-        set.update(&grid, &e.net, &e.db, &e.terrain, Tick(1))
+        set.update(&grid, &e.net, &e.db, &e.terrain, None, Tick(1))
             .rebuilt,
         0
     );
@@ -391,6 +391,7 @@ fn construction_stage_changes_trigger_a_rebuild_only_at_stage_boundaries() {
             &e.net,
             &e.db,
             &e.terrain,
+            None,
             Tick(build_ticks(e.db.building(def)) / u64::from(STAGES) + 1)
         )
         .rebuilt,
@@ -1187,14 +1188,14 @@ fn construction_refresh_cost() {
         }
         let mut set = BuildingSet::default();
         let t = std::time::Instant::now();
-        set.update(&grid, &e.net, &e.db, &e.terrain, Tick(5000));
+        set.update(&grid, &e.net, &e.db, &e.terrain, None, Tick(5000));
         let first = t.elapsed().as_secs_f64() * 1000.0;
         let (mut worst_ms, mut sum_ms, mut rebuilt, mut chunks) = (0.0f64, 0.0f64, 0usize, 0usize);
         let mut upd_ms = 0.0f64;
         let steps = 100u64;
         for k in 1..=steps {
             let t = std::time::Instant::now();
-            let up = set.update(&grid, &e.net, &e.db, &e.terrain, Tick(5000 + k * 32));
+            let up = set.update(&grid, &e.net, &e.db, &e.terrain, None, Tick(5000 + k * 32));
             upd_ms += t.elapsed().as_secs_f64() * 1000.0;
             for c in &up.dirty_chunks {
                 for l in 0..3 {
@@ -1234,7 +1235,7 @@ fn buildings_under_construction_have_their_own_batch_so_a_stage_never_remerges_t
         total,
     ));
     let mut set = BuildingSet::default();
-    set.update(&grid, &e.net, &e.db, &e.terrain, Tick(0));
+    set.update(&grid, &e.net, &e.db, &e.terrain, None, Tick(0));
     let keys: Vec<_> = set.chunks().copied().collect();
     assert_eq!(
         keys.len(),
@@ -1243,7 +1244,7 @@ fn buildings_under_construction_have_their_own_batch_so_a_stage_never_remerges_t
     );
     assert!(keys.iter().any(|k| k.1) && keys.iter().any(|k| !k.1));
     // The next stage dirties the construction batch only.
-    let up = set.update(&grid, &e.net, &e.db, &e.terrain, Tick(total / 16 + 1));
+    let up = set.update(&grid, &e.net, &e.db, &e.terrain, None, Tick(total / 16 + 1));
     assert_eq!(up.rebuilt, 1);
     assert!(up.dirty_chunks.iter().all(|k| k.1), "{:?}", up.dirty_chunks);
 }

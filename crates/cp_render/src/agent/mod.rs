@@ -258,30 +258,131 @@ pub fn pedestrian_position(
     }
 }
 
-/// A car still in its yard, waiting to pull out (portal progress 0): not drawn until the yard
-/// is (T-330b).
-fn in_yard(v: &VehiclePose) -> bool {
+/// Cars waiting in one yard that are drawn there, one behind the other; the rest wait unseen
+/// (§25.4).
+pub const YARD_QUEUE: u32 = 3;
+
+/// A car still in its yard, waiting to pull out (portal progress 0).
+fn waiting(v: &VehiclePose) -> bool {
     v.portal.is_some_and(|p| p.leaving && p.progress <= 0.0)
 }
 
-/// Every vehicle `(key, drawn position)` of the snapshot pair at `alpha`.
+/// Place of every car of `list` in the queue of its yard, by key order (`0` for the cars not
+/// waiting).
+fn queue_ranks(list: &[VehiclePose]) -> Vec<u32> {
+    let mut count = std::collections::BTreeMap::<cp_building::BuildingId, u32>::new();
+    list.iter()
+        .map(|v| match v.portal {
+            Some(p) if waiting(v) => {
+                let k = count.entry(p.building).or_insert(0);
+                *k += 1;
+                *k - 1
+            }
+            _ => 0,
+        })
+        .collect()
+}
+
+/// Where vehicle `c` is drawn and its heading (§25.4): near the yard of its building
+/// (`yard(building)`) it is drawn on its way between the yard and the sim pose, `len` metres
+/// long; `rank` is its place in the queue of cars waiting there (`k` stands `k × (len + 1)`
+/// deeper in the yard).
+pub fn vehicle_drawn(
+    c: &VehiclePose,
+    len: f32,
+    rank: u32,
+    yard: &impl Fn(cp_building::BuildingId) -> Option<cp_building::Portals>,
+) -> (Vec3, f32) {
+    let Some((pt, g)) = c.portal.and_then(|pt| Some((pt, yard(pt.building)?))) else {
+        return (c.pos, c.yaw);
+    };
+    let deep = len / 2.0 + 1.0 + rank as f32 * (len + 1.0);
+    let y = g.drive - g.out * deep;
+    let at = Vec3::new(y.x, c.pos.y, y.y);
+    let sim = bevy_math::Vec2::new(c.pos.x, c.pos.z);
+    let lane = bevy_math::Vec2::new(c.yaw.sin(), c.yaw.cos());
+    let s = smoothstep(pt.progress);
+    let (pos, dir) = if pt.leaving {
+        let d = (sim - y).try_normalize().unwrap_or(g.out);
+        (at.lerp(c.pos, s), d.lerp(lane, s))
+    } else {
+        let d = (y - sim).try_normalize().unwrap_or(-g.out);
+        (c.pos.lerp(at, s), lane.lerp(d, s))
+    };
+    let yaw = if dir.length_squared() > 1e-6 {
+        dir.x.atan2(dir.y)
+    } else {
+        c.yaw
+    };
+    (pos, yaw)
+}
+
+/// Walks the snapshot pair like [`zip_by_key`], with each car drawn by [`vehicle_drawn`] in
+/// both snapshots and interpolated by `alpha` (a sim jump of 60 m or more is a teleport and not
+/// interpolated): `f(cur, drawn position, heading)`. Cars waiting beyond the first
+/// [`YARD_QUEUE`] of their yard are skipped.
+fn zip_drawn(
+    prev: &[VehiclePose],
+    cur: &[VehiclePose],
+    alpha: f32,
+    looks: &VehicleLooks,
+    yard: &impl Fn(cp_building::BuildingId) -> Option<cp_building::Portals>,
+    mut f: impl FnMut(&VehiclePose, Vec3, f32),
+) {
+    let a = alpha.clamp(0.0, 1.0);
+    let len = |v: &VehiclePose| looks.sizes[usize::from(v.kind).min(VEHICLE_KINDS - 1)].z;
+    let prev_rank = queue_ranks(prev);
+    let cur_rank = queue_ranks(cur);
+    let mut j = 0;
+    for (i, c) in cur.iter().enumerate() {
+        while j < prev.len() && prev[j].key < c.key {
+            j += 1;
+        }
+        if cur_rank[i] >= YARD_QUEUE {
+            continue;
+        }
+        let now = vehicle_drawn(c, len(c), cur_rank[i], yard);
+        let (pos, yaw) = match prev.get(j).filter(|p| p.key == c.key) {
+            Some(p) if p.pos.distance_squared(c.pos) < TELEPORT * TELEPORT => {
+                let before = vehicle_drawn(p, len(p), prev_rank[j], yard);
+                (before.0.lerp(now.0, a), lerp_angle(before.1, now.1, a))
+            }
+            _ => now,
+        };
+        f(c, pos, yaw);
+    }
+}
+
+/// Every vehicle `(key, drawn position)` of the snapshot pair at `alpha`, where
+/// [`build_vehicles`] draws it (picking uses it so the player clicks what is on screen).
 pub fn vehicle_positions(
     prev: &[VehiclePose],
     cur: &[VehiclePose],
     alpha: f32,
+    looks: &VehicleLooks,
+    yard: impl Fn(cp_building::BuildingId) -> Option<cp_building::Portals>,
 ) -> Vec<(u64, Vec3)> {
     let mut out = Vec::with_capacity(cur.len());
-    zip_by_key(
-        prev,
-        cur,
-        |v| v.key,
-        |c, p| {
-            if !in_yard(c) {
-                out.push((c.key, vehicle_position(p, c, alpha)));
-            }
-        },
-    );
+    zip_drawn(prev, cur, alpha, looks, &yard, |c, pos, _| {
+        out.push((c.key, pos))
+    });
     out
+}
+
+/// [`vehicle_positions`] of the view's snapshot pair, with the looks from its content and the
+/// yards of its buildings.
+pub fn view_vehicle_positions(view: &cp_sim::SimView, alpha: f32) -> Vec<(u64, Vec3)> {
+    let looks = view
+        .content
+        .as_deref()
+        .map_or_else(VehicleLooks::default, VehicleLooks::from_content);
+    vehicle_positions(
+        &view.agents.prev.vehicles,
+        &view.agents.cur.vehicles,
+        alpha,
+        &looks,
+        |id| view.buildings.get(id)?.portals(&view.net),
+    )
 }
 
 /// Every pedestrian `(key, drawn position)` of the snapshot pair at `alpha`.
@@ -302,12 +403,14 @@ pub fn pedestrian_positions(
     out
 }
 
-/// Fills `out.vehicles` with the interpolated, culled vehicles. Nothing is drawn when the
+/// Fills `out.vehicles` with the interpolated, culled vehicles, drawn where
+/// [`vehicle_drawn`] has them (`yard` gives a building's yard). Nothing is drawn when the
 /// camera is above [`VEHICLE_MAX_HEIGHT`].
 pub fn build_vehicles(
     prev: &[VehiclePose],
     cur: &[VehiclePose],
     looks: &VehicleLooks,
+    yard: impl Fn(cp_building::BuildingId) -> Option<cp_building::Portals>,
     cull: &Cull,
     out: &mut AgentInstances,
 ) {
@@ -316,43 +419,28 @@ pub fn build_vehicles(
         return;
     }
     let detail = usize::from(h > VEHICLE_DETAIL_HEIGHT);
-    let a = cull.alpha.clamp(0.0, 1.0);
-    zip_by_key(
-        prev,
-        cur,
-        |v| v.key,
-        |c, p| {
-            if in_yard(c) {
-                return;
-            }
-            let (pos, yaw) = match p {
-                Some(p) if p.pos.distance_squared(c.pos) < TELEPORT * TELEPORT => {
-                    (p.pos.lerp(c.pos, a), lerp_angle(p.yaw, c.yaw, a))
-                }
-                _ => (c.pos, c.yaw),
-            };
-            if !cull.sees(pos, VEHICLE_RADIUS) {
-                return;
-            }
-            debug_assert!(
-                usize::from(c.kind) < VEHICLE_KINDS,
-                "vehicle kind {} has no look",
-                c.kind
-            );
-            let kind = usize::from(c.kind).min(VEHICLE_KINDS - 1);
-            let hash = mix(c.key);
-            let size = looks.sizes[kind];
-            let col = c
-                .tint
-                .map(|t| t.map(|v| f32::from(v) / 255.0))
-                .unwrap_or_else(|| vehicle_color(kind, hash));
-            out.vehicles[kind][detail].push(InstanceData {
-                pos_yaw: [pos.x, pos.y, pos.z, yaw],
-                scale_phase: [size.x, size.y, size.z, 0.0],
-                color_sway: [col[0], col[1], col[2], 0.0],
-            });
-        },
-    );
+    zip_drawn(prev, cur, cull.alpha, looks, &yard, |c, pos, yaw| {
+        if !cull.sees(pos, VEHICLE_RADIUS) {
+            return;
+        }
+        debug_assert!(
+            usize::from(c.kind) < VEHICLE_KINDS,
+            "vehicle kind {} has no look",
+            c.kind
+        );
+        let kind = usize::from(c.kind).min(VEHICLE_KINDS - 1);
+        let hash = mix(c.key);
+        let size = looks.sizes[kind];
+        let col = c
+            .tint
+            .map(|t| t.map(|v| f32::from(v) / 255.0))
+            .unwrap_or_else(|| vehicle_color(kind, hash));
+        out.vehicles[kind][detail].push(InstanceData {
+            pos_yaw: [pos.x, pos.y, pos.z, yaw],
+            scale_phase: [size.x, size.y, size.z, 0.0],
+            color_sway: [col[0], col[1], col[2], 0.0],
+        });
+    });
 }
 
 /// Fills `out.vehicles` (cars, kind 0) with the parked cars of the bays (T-276), culled like
