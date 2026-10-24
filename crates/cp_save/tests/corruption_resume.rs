@@ -68,6 +68,8 @@ fn the_corruption_state_survives_a_save_and_runs_on_alike() {
             fine: 20000,
             undone: false,
         }],
+        present: 0b101,
+        tenders: true,
     };
     a.world_mut()
         .resource_mut::<cp_transit::Tourists>()

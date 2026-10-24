@@ -97,6 +97,8 @@ pub struct LandInputs<'a> {
     pub services: Option<(&'a ServiceCoverage, &'a ServiceState)>,
     /// The park areas and their cells (T-225); `None` = no park land value.
     pub parks: Option<(&'a cp_district::Areas, &'a cp_district::AreaMap)>,
+    /// Land is worth this many times as much (T-327: the rule of law); 1 for all.
+    pub factor: f32,
 }
 
 /// The kinds whose coverage raises land value and housing levels, in `land_service` order.
@@ -389,6 +391,7 @@ impl LandGrids {
                 + park[c]
                 + tree[c]
                 + spec_land[c];
+            let v = if i.factor == 1.0 { v } else { v * i.factor };
             // The garbage nuisance (T-290) is taken off the clamped value, and what it took is
             // kept, so that adding it back gives exactly the land without the facility.
             let without = v.clamp(0.0, 100.0);

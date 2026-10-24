@@ -130,7 +130,8 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
     let refund = refund_of(world, cmd);
     let mut cost = apply_command(world, cmd)?;
     // A grey deal's build discount (T-325, `architecture/corruption.md` §4): the share off
-    // what building charged goes back to the treasury.
+    // what building charged goes back to the treasury; Transparent tenders (T-327) charge a
+    // share more.
     if cost.0 > 0
         && matches!(
             cmd,
@@ -146,8 +147,10 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
             world.get_resource::<cp_content::SimContent>(),
         )
     {
-        let off = Cost((cost.0 as f64 * f64::from(c.build_discount(&content.0))).round() as i64);
-        if off.0 > 0 {
+        let share = f64::from(c.build_discount(&content.0))
+            - f64::from(c.build_surcharge(&content.0.balance().corruption));
+        let off = Cost((cost.0 as f64 * share).round() as i64);
+        if off.0 != 0 {
             cp_core::treasury::charge_funds(world, Cost(-off.0));
             cost = Cost(cost.0 - off.0);
         }

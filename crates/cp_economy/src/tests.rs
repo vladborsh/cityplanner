@@ -765,6 +765,7 @@ mod city {
             emissions: &emissions(w, db, load, steps),
             services: None,
             parks: None,
+            factor: 1.0,
         })
     }
 
@@ -1042,6 +1043,7 @@ mod city {
                 emissions: &emissions(w, &db, &load, 1),
                 services: Some((cover, state)),
                 parks: None,
+                factor: 1.0,
             })
         };
         let bare = grids(&w, &db, &load);

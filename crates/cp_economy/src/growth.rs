@@ -240,7 +240,9 @@ pub fn update_city(
     let db = &*content.0;
     let bal = db.balance();
     // Pollution and noise first (T-300): the land value reads them.
-    let boost = corruption.map_or_else(Vec::new, |c| c.pollution_boost(db));
+    let boost = corruption
+        .as_deref()
+        .map_or_else(Vec::new, |c| c.pollution_boost(db));
     emissions.update(&crate::EmissionInputs {
         content: db,
         buildings: &buildings,
@@ -261,6 +263,9 @@ pub fn update_city(
         emissions: &emissions,
         services: coverage.as_deref().zip(services.as_deref()),
         parks: areas.as_deref().zip(area_map.as_deref()),
+        factor: corruption
+            .as_deref()
+            .map_or(1.0, |c| c.land_factor(&bal.corruption)),
     });
 
     let workers = worker_education(&citizens);

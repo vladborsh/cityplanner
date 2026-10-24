@@ -1,0 +1,15 @@
+// Silhouette of an institution (T-327): the massing is drawn by cp_render::building::shapes.
+Style((
+    id: "service_free_press",
+    massing: PostOffice,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (1.0, 1.0),
+    palette: (
+        walls: [(0.46, 0.52, 0.62), (0.42, 0.48, 0.58)],
+        roof: [(0.30, 0.32, 0.36)],
+        trim: [(0.92, 0.90, 0.84)],
+        glass: (0.34, 0.52, 0.70),
+    ),
+    facade: Punched,
+))

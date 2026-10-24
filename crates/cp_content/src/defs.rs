@@ -123,6 +123,10 @@ pub struct DealDef {
     /// How long the lasting effects run, game days; 0: for good.
     #[serde(default)]
     pub days: u16,
+    /// A deal over a building contract (T-327): Transparent tenders stop it coming and the
+    /// corruption it brings.
+    #[serde(default)]
+    pub contract: bool,
 }
 
 impl DealDef {
@@ -731,11 +735,46 @@ pub struct CorruptionKnobs {
     /// With institutions `I` at least this, a scandal also undoes its deal (its effects stop,
     /// a lifted district policy comes back).
     pub scandal_undo_i: f32,
+    /// Institutions `I` each institution stands for (T-327, §7); `I` moves to their sum by
+    /// `i_follow_day` a game day.
+    pub i_audit: f32,
+    pub i_tenders: f32,
+    pub i_press: f32,
+    pub i_court: f32,
+    pub i_follow_day: f32,
+    /// Exposure each institution adds to `scandal_exposure`.
+    pub exposure_audit: f32,
+    pub exposure_press: f32,
+    pub exposure_court: f32,
+    /// The free press: trust recovers this many times faster, a declined deal earns
+    /// `press_decline_trust`, and every game day costs `press_problem_trust` × the share of
+    /// buildings with a garbage, fire or crime problem.
+    pub press_trust_recover: f32,
+    pub press_decline_trust: f32,
+    pub press_problem_trust: f32,
+    /// The court: `C` falls `court_decay_day` more a day, crime grows `court_police` less, and a
+    /// captured station is freed with `court_free_day` a day.
+    pub court_decay_day: f32,
+    pub court_police: f32,
+    pub court_free_day: f32,
+    /// Transparent tenders: building costs this share more.
+    pub tenders_build: f32,
+    /// The clan edge (§8): offers come `clan_offers` times as often, deals pay `clan_money`
+    /// times as much, crime grows `clan_crime` more.
+    pub clan_offers: f32,
+    pub clan_money: f32,
+    pub clan_crime: f32,
+    /// The rule of law: the tax take is `law_tax` larger, land worth `law_land` more, offers come
+    /// `law_offers` times as often, institutions cost `law_upkeep` more upkeep.
+    pub law_tax: f32,
+    pub law_land: f32,
+    pub law_offers: f32,
+    pub law_upkeep: f32,
 }
 
 impl CorruptionKnobs {
     /// Every knob, in declaration order: for validation and the content hash.
-    pub fn knobs(&self) -> [f32; 27] {
+    pub fn knobs(&self) -> [f32; 49] {
         [
             self.trust_start,
             self.trust_recover_day,
@@ -764,6 +803,28 @@ impl CorruptionKnobs {
             self.scandal_fine,
             self.scandal_pause,
             self.scandal_undo_i,
+            self.i_audit,
+            self.i_tenders,
+            self.i_press,
+            self.i_court,
+            self.i_follow_day,
+            self.exposure_audit,
+            self.exposure_press,
+            self.exposure_court,
+            self.press_trust_recover,
+            self.press_decline_trust,
+            self.press_problem_trust,
+            self.court_decay_day,
+            self.court_police,
+            self.court_free_day,
+            self.tenders_build,
+            self.clan_offers,
+            self.clan_money,
+            self.clan_crime,
+            self.law_tax,
+            self.law_land,
+            self.law_offers,
+            self.law_upkeep,
         ]
     }
 }
@@ -798,6 +859,28 @@ impl Default for CorruptionKnobs {
             scandal_fine: 5000.0,
             scandal_pause: 10.0,
             scandal_undo_i: 50.0,
+            i_audit: 15.0,
+            i_tenders: 10.0,
+            i_press: 20.0,
+            i_court: 30.0,
+            i_follow_day: 1.0,
+            exposure_audit: 0.5,
+            exposure_press: 0.5,
+            exposure_court: 0.5,
+            press_trust_recover: 2.0,
+            press_decline_trust: 1.0,
+            press_problem_trust: 2.0,
+            court_decay_day: 0.2,
+            court_police: 0.2,
+            court_free_day: 0.05,
+            tenders_build: 0.1,
+            clan_offers: 2.0,
+            clan_money: 1.5,
+            clan_crime: 0.2,
+            law_tax: 0.1,
+            law_land: 0.05,
+            law_offers: 0.1,
+            law_upkeep: 0.2,
         }
     }
 }
@@ -1826,6 +1909,9 @@ pub struct BuildingDef {
     /// Set for a unique building or monument (T-200): one per city, unlocked by conditions.
     #[serde(default)]
     pub unique: Option<UniqueSpec>,
+    /// Set for an institution (T-327): a unique building that raises institutions `I`.
+    #[serde(default)]
+    pub institution: Option<crate::kinds::InstitutionKind>,
     /// Land value this building adds around it (T-200), shared by M4 to M6 buildings.
     #[serde(default)]
     pub land_effect: Option<LandEffect>,

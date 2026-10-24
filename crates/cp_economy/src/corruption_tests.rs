@@ -316,3 +316,134 @@ fn stations_get_captured_more_with_corruption_and_a_low_police_budget() {
     );
     assert!(!s.is_captured(gone));
 }
+
+#[test]
+fn institutions_raise_i_and_each_does_its_part() {
+    use cp_content::InstitutionKind as K;
+    let k = k();
+    let mut s = CorruptionState {
+        corruption: 30.0,
+        trust: 50.0,
+        started: true,
+        ..CorruptionState::default()
+    };
+    let all = K::Audit.bit() | K::Press.bit() | K::Court.bit();
+    s.institutions_day(&k, all, true, 0.0);
+    assert_eq!(s.institutions_target(&k), 75.0);
+    assert_eq!(s.institutions, k.i_follow_day);
+    for _ in 0..100 {
+        s.institutions_day(&k, all, true, 0.0);
+    }
+    assert_eq!(s.institutions, 75.0);
+    // Exposure: base 0.5 + 3 × 0.5 → four times the scandal chance of a city without them.
+    let mut bare = s.clone();
+    bare.present = 0;
+    s.evidence.push(crate::Evidence {
+        deal: "land".into(),
+        accepted_day: 0,
+        weight: 4.0,
+    });
+    bare.evidence = s.evidence.clone();
+    assert!((s.scandal_chance(&k) - 4.0 * bare.scandal_chance(&k)).abs() < 1e-6);
+    // The court: C falls faster, crime grows less; the press: trust recovers twice as fast.
+    let (c, t) = (s.corruption, s.trust);
+    s.day(&k);
+    assert!((c - s.corruption - (k.corruption_decay_day + k.court_decay_day)).abs() < 1e-5);
+    assert!((s.trust - t - k.trust_recover_day * k.press_trust_recover).abs() < 1e-5);
+    assert!(s.crime_factor(&k) < 1.0);
+    // The press reports the city's problems and praises a declined deal.
+    let t = s.trust;
+    s.institutions_day(&k, all, true, 0.5);
+    assert!((t - s.trust - k.press_problem_trust * 0.5).abs() < 1e-5);
+    let t = s.trust;
+    s.declined(&k);
+    assert_eq!(s.trust, t + k.press_decline_trust);
+    // Tenders make building dearer.
+    assert_eq!(s.build_surcharge(&k), k.tenders_build);
+}
+
+#[test]
+fn the_court_frees_captured_stations() {
+    let k = CorruptionKnobs {
+        court_free_day: 0.5,
+        ..k()
+    };
+    let stations: Vec<_> = (0..20)
+        .map(|i| cp_core::Id::<cp_building::Building>::new(i, 0))
+        .collect();
+    let mut s = CorruptionState {
+        captured: stations.clone(),
+        present: cp_content::InstitutionKind::Court.bit(),
+        ..CorruptionState::default()
+    };
+    let rng = cp_core::SimRng::seed_from_u64(9);
+    s.capture_day(
+        &k,
+        &stations,
+        100,
+        &rng,
+        cp_core::Tick(cp_core::time::TICKS_PER_DAY),
+    );
+    assert!(
+        !s.captured.is_empty() && s.captured.len() < 20,
+        "{}",
+        s.captured.len()
+    );
+}
+
+#[test]
+fn the_edges_change_offers_money_tax_crime_land_and_upkeep() {
+    let k = k();
+    let clan = CorruptionState {
+        corruption: 80.0,
+        trust: 100.0,
+        started: true,
+        ..CorruptionState::default()
+    };
+    let law = CorruptionState {
+        institutions: 80.0,
+        trust: 100.0,
+        started: true,
+        ..CorruptionState::default()
+    };
+    let middle = CorruptionState {
+        trust: 100.0,
+        started: true,
+        ..CorruptionState::default()
+    };
+    assert_eq!(clan.offer_factor(&k), k.clan_offers);
+    assert_eq!(law.offer_factor(&k), k.law_offers);
+    assert_eq!(middle.offer_factor(&k), 1.0);
+    assert_eq!(clan.money_factor(&k), k.clan_money);
+    assert_eq!(clan.crime_factor(&k), 1.0 + k.clan_crime);
+    assert_eq!(middle.tax_collection(&k), 1.0);
+    assert!((law.tax_collection(&k) - (1.0 + f64::from(k.law_tax))).abs() < 1e-9);
+    assert_eq!(law.land_factor(&k), 1.0 + k.law_land);
+    assert!((law.institution_upkeep(&k) - (1.0 + f64::from(k.law_upkeep))).abs() < 1e-9);
+    assert_eq!(middle.land_factor(&k), 1.0);
+}
+
+#[test]
+fn transparent_tenders_stop_the_kickback_and_its_corruption() {
+    let db = content();
+    let mut s = CorruptionState {
+        tenders: true,
+        ..CorruptionState::default()
+    };
+    let buildings = cp_building::BuildingGrid::default();
+    let rng = cp_core::SimRng::seed_from_u64(1);
+    for day in 1..200u64 {
+        s.inbox.clear();
+        s.next_offer_day = 0;
+        s.deals_day(&crate::corruption::DayInputs {
+            db: &db,
+            tick: cp_core::Tick(day * cp_core::time::TICKS_PER_DAY),
+            rng: &rng,
+            population: 5000,
+            land: 50.0,
+            buildings: &buildings,
+            districts: None,
+        });
+        assert!(s.inbox.iter().all(|o| o.deal != "kickback"), "day {day}");
+    }
+}

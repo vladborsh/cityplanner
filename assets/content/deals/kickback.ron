@@ -8,4 +8,5 @@ Deal((
     answer_days: 5,
     build_discount: 0.2,
     days: 30,
+    contract: true,
 ))

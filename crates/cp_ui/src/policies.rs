@@ -35,6 +35,10 @@ pub fn effect_text(kind: PolicyKind, value: f32) -> String {
             pct = pct
         ),
         PolicyKind::TourismPromotion => trf!("{pct}% more tourists", pct = pct),
+        PolicyKind::TransparentTenders => trf!(
+            "Building costs {pct}% more; contract deals stop and bring no corruption",
+            pct = pct
+        ),
     }
 }
 
@@ -277,10 +281,10 @@ mod tests {
                 on: true
             })]
         );
-        // The city shows all eight, and a click on the last (tourism) sends None.
+        // The city shows all nine (T-327: Transparent tenders), and a click on tourism sends None.
         let mut outbox = CommandOutbox::default();
         let tiles = draw(&ctx, &view, &mut outbox, None, vec![]);
-        assert_eq!(tiles.len(), 8);
+        assert_eq!(tiles.len(), 9);
         let [down, up] = click(tiles[7].center());
         draw(&ctx, &view, &mut outbox, None, down);
         draw(&ctx, &view, &mut outbox, None, up);

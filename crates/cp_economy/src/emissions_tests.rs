@@ -322,6 +322,7 @@ fn land_at(db: &ContentDb, rows: &[(f32, bool)], at: Vec2) -> f32 {
         emissions: &ema,
         services: None,
         parks: None,
+        factor: 1.0,
     })
     .value_at(at)
 }

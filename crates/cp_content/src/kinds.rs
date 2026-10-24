@@ -100,11 +100,14 @@ pub enum PolicyKind {
     FreeTransit = 6,
     /// More tourists (city only).
     TourismPromotion = 7,
+    /// Contracts go to open tenders (T-327, `architecture/corruption.md` §7, city only):
+    /// building costs more, contract deals bring no corruption and the kickback offer stops.
+    TransparentTenders = 8,
 }
 
 impl PolicyKind {
     /// Every policy in bit order.
-    pub const ALL: [PolicyKind; 8] = [
+    pub const ALL: [PolicyKind; 9] = [
         PolicyKind::Recycling,
         PolicyKind::SmokeDetectors,
         PolicyKind::NeighborhoodWatch,
@@ -113,10 +116,40 @@ impl PolicyKind {
         PolicyKind::HeavyTrafficBan,
         PolicyKind::FreeTransit,
         PolicyKind::TourismPromotion,
+        PolicyKind::TransparentTenders,
     ];
 
     /// The bit of this policy in a policy mask.
     pub const fn bit(self) -> u32 {
+        1 << (self as u8)
+    }
+}
+
+/// An institution of the city (T-327, `architecture/corruption.md` §7): a unique building that
+/// raises institutions `I`. The order is the bit in `CorruptionState::present`, so it is
+/// **append-only**.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum InstitutionKind {
+    /// The audit chamber: exact numbers of `C`, captured stations shown; scandals come out more.
+    Audit = 0,
+    /// The free press: trust recovers faster and a declined deal earns trust; scandals come out
+    /// more, the city's visible problems cost trust.
+    Press = 1,
+    /// The prosecutor's office and the court: `C` falls faster, the police are stronger,
+    /// captured stations are freed; scandals come out more.
+    Court = 2,
+}
+
+impl InstitutionKind {
+    pub const ALL: [InstitutionKind; 3] = [
+        InstitutionKind::Audit,
+        InstitutionKind::Press,
+        InstitutionKind::Court,
+    ];
+
+    /// The bit of this institution in a mask.
+    pub const fn bit(self) -> u8 {
         1 << (self as u8)
     }
 }

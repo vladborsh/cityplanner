@@ -2,12 +2,13 @@
 //! card per offer says what it brings now, what it costs in corruption and evidence, what it is
 //! about and how long it waits; Accept and Decline send `SimCommand::Corruption`. The window
 //! button in the top bar shows how many wait. Below them, the scandals that broke (T-326, §6),
-//! newest first.
+//! newest first. Above them, what the mayor knows (T-327, §9): trust and institutions always,
+//! corruption and the captured stations exactly with the audit chamber, else as rumours.
 
 use bevy_egui::egui;
 use cp_content::{ContentDb, DealDef};
 use cp_core::Cost;
-use cp_economy::{CorruptionCommand, DealTarget, Offer, Scandal};
+use cp_economy::{CorruptionCommand, CorruptionState, DealTarget, Offer, Scandal};
 use cp_locale::{tr, trf, trn};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, format_money};
@@ -125,6 +126,9 @@ pub fn offers_window(
             "Trust in the mayor: {n}",
             n = format!("{:.0}", c.trust_now(k))
         ));
+        for line in standing(c) {
+            ui.label(line);
+        }
         if c.inbox.is_empty() {
             ui.weak(trf!(
                 "No offers. Grey deals start to come at {n} residents; the game does not pause for them.",
@@ -170,6 +174,39 @@ pub fn offers_window(
             }
         }
     });
+}
+
+/// What the mayor knows of the city's corruption (§9): institutions always, corruption and the
+/// captured stations exactly with the audit, as rumours without.
+pub fn standing(c: &CorruptionState) -> Vec<String> {
+    let mut out = vec![trf!(
+        "Institutions: {n}",
+        n = format!("{:.0}", c.institutions)
+    )];
+    if c.sees_exactly() {
+        out.push(trf!("Corruption: {n}", n = format!("{:.0}", c.corruption)));
+        out.push(trf!(
+            "Police stations on the take: {n}",
+            n = c.visible_captured().len().to_string()
+        ));
+    } else {
+        out.push(rumour(c.corruption));
+        out.push(tr("An audit chamber would give the exact numbers."));
+    }
+    out
+}
+
+/// Corruption `c` as the street tells it.
+pub fn rumour(c: f32) -> String {
+    if c < 10.0 {
+        tr("Nobody talks of bribes.")
+    } else if c < 30.0 {
+        tr("There is talk of bribes.")
+    } else if c < 60.0 {
+        tr("Rumours of bribes are everywhere.")
+    } else {
+        tr("Everyone says the city is bought.")
+    }
 }
 
 /// Scandals listed in the window, newest first.
@@ -221,6 +258,34 @@ mod tests {
         assert!(
             kickback.contains(&"For 30 days".to_string()),
             "{kickback:?}"
+        );
+    }
+
+    #[test]
+    fn the_audit_turns_rumours_into_numbers() {
+        let mut c = CorruptionState {
+            corruption: 42.0,
+            institutions: 15.0,
+            captured: vec![cp_core::Id::new(3, 0)],
+            ..CorruptionState::default()
+        };
+        let blind = standing(&c);
+        assert_eq!(
+            blind,
+            [
+                "Institutions: 15",
+                "Rumours of bribes are everywhere.",
+                "An audit chamber would give the exact numbers."
+            ]
+        );
+        c.present = cp_content::InstitutionKind::Audit.bit();
+        assert_eq!(
+            standing(&c),
+            [
+                "Institutions: 15",
+                "Corruption: 42",
+                "Police stations on the take: 1"
+            ]
         );
     }
 

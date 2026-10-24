@@ -104,6 +104,8 @@ pub struct WeekInputs<'a> {
     /// The share of the tax the city collects, from the trust in the mayor (T-324,
     /// [`CorruptionState::tax_collection`](crate::CorruptionState::tax_collection)); 1 for all.
     pub tax_collection: f64,
+    /// The upkeep of the institutions, times (T-327: more under the rule of law); 1 for all.
+    pub institution_upkeep: f64,
 }
 
 /// What week `week` books. See the module docs for each line.
@@ -204,7 +206,11 @@ pub fn week_core(i: &WeekInputs, week: u64, areas: Option<&cp_district::AreaMap>
         }
         if let Some(service) = i.content.building_service(b.def) {
             let kind = i.content.service(service).kind;
-            let upkeep = Cost::scaled(def.upkeep_week, percent(i.budgets.get(kind)));
+            let mut pct = percent(i.budgets.get(kind));
+            if def.institution.is_some() {
+                pct *= i.institution_upkeep;
+            }
+            let upkeep = Cost::scaled(def.upkeep_week, pct);
             r.building_upkeep += upkeep;
             if let Some(map) = areas
                 && def.industry.is_some()
@@ -330,6 +336,9 @@ pub fn settle_week(
             tax_collection: corruption
                 .as_deref()
                 .map_or(1.0, |c| c.tax_collection(&content.0.balance().corruption)),
+            institution_upkeep: corruption.as_deref().map_or(1.0, |c| {
+                c.institution_upkeep(&content.0.balance().corruption)
+            }),
         },
         hour.div_ceil(HOURS_PER_WEEK),
         area_map.as_deref(),

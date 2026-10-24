@@ -1,0 +1,19 @@
+// An institution (T-327, architecture/corruption.md §7): one per city, raises institutions I.
+// Numbers: tune later.
+Building((
+    id: "free_press",
+    name: "Free press",
+    zone: Industrial,
+    level: 1,
+    lot: (2, 2),
+    jobs: (0, 0, 0, 0),
+    consumption: {Power: 10.0},
+    tax_base: 0.0,
+    cost: 50000.0,
+    upkeep_week: 500.0,
+    styles: ["service_free_press"],
+    service: Some("landmark"),
+    icon: "free_press",
+    unique: Some((monument: false, unlock: [Population(5000)], tourists_per_day: 0.0)),
+    institution: Some(Press),
+))

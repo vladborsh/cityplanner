@@ -45,6 +45,7 @@ fn week(sim: &mut SimRunner, pct: u8) -> (Cost, Cost) {
             districts: w.resource::<cp_district::Districts>(),
             city_policies: w.resource::<cp_district::CityPolicies>(),
             tax_collection: 1.0,
+            institution_upkeep: 1.0,
         },
         1,
     );
@@ -164,6 +165,7 @@ fn upkeep_lines_are_linear_in_the_budgets() {
                 districts: w.resource::<cp_district::Districts>(),
                 city_policies: w.resource::<cp_district::CityPolicies>(),
                 tax_collection: 1.0,
+                institution_upkeep: 1.0,
             },
             1,
         );

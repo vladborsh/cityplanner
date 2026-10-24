@@ -1,0 +1,19 @@
+// An institution (T-327, architecture/corruption.md §7): one per city, raises institutions I.
+// Numbers: tune later.
+Building((
+    id: "court",
+    name: "Prosecutor's office and court",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 3),
+    jobs: (0, 0, 0, 0),
+    consumption: {Power: 10.0},
+    tax_base: 0.0,
+    cost: 100000.0,
+    upkeep_week: 900.0,
+    styles: ["service_court"],
+    service: Some("landmark"),
+    icon: "court",
+    unique: Some((monument: false, unlock: [Population(10000)], tourists_per_day: 0.0)),
+    institution: Some(Court),
+))

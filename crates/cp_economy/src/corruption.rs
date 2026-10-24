@@ -30,6 +30,17 @@
 //!   stations cover it. One deal comes out (the heavier the likelier): trust falls, the city
 //!   pays a fine, the evidence goes, and with strong institutions the deal is undone. Recorded
 //!   in [`CorruptionState::scandals`].
+//! * **Institutions** (T-327, §7): every day [`CorruptionState::present`] takes the built
+//!   institutions (unique buildings with `institution`) and `tenders` the Transparent tenders
+//!   policy; `I` follows the sum of their `i_*` by `i_follow_day` a day. Each of audit, press and
+//!   court adds exposure. The audit shows the exact `C` and the captured stations
+//!   ([`CorruptionState::sees_exactly`], otherwise the UI tells rumours, §9). The press: trust
+//!   recovers faster, a declined deal earns trust, the city's visible problems cost trust. The
+//!   court: `C` falls faster, crime grows less, captured stations are freed. Tenders: building
+//!   costs more (the command dispatcher), contract deals neither come nor add `C`.
+//! * **Edges** (§8): on the clan edge offers come more often, deals pay more and crime grows
+//!   more; under the rule of law the tax take and land are worth more, offers hardly come and
+//!   the institutions cost more upkeep.
 //!
 //! Saved whole; points are `f32` (same binary and platform determinism, AGENTS.md).
 
@@ -42,7 +53,8 @@ use bevy_math::Vec2;
 use cp_building::{BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::CitizenGrid;
 use cp_content::{
-    ContentDb, CorruptionKnobs, DealDef, DealWants, ServiceKind, SimContent, ZoneType,
+    ContentDb, CorruptionKnobs, DealDef, DealWants, InstitutionKind, PolicyKind, ServiceKind,
+    SimContent, ZoneType,
 };
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{Cost, SimRng, Tick, Treasury};
@@ -57,6 +69,8 @@ pub const CORRUPTION_STREAM: u64 = 0xC022_0F7E;
 pub const CAPTURE_STREAM: u64 = 0xC022_CA97;
 /// Sub-stream of the daily scandal roll (T-326).
 pub const SCANDAL_STREAM: u64 = 0xC022_5CA4;
+/// Sub-stream of the court freeing captured stations (T-327).
+pub const COURT_STREAM: u64 = 0xC022_C0A7;
 
 /// An accepted deal nobody has found out about yet (§2): it stays until a scandal reveals it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -158,6 +172,10 @@ pub struct CorruptionState {
     pub active: Vec<ActiveDeal>,
     /// The scandals that broke, oldest first (T-326).
     pub scandals: Vec<Scandal>,
+    /// The institutions built, bits of `InstitutionKind` (T-327), as of the last game day.
+    pub present: u8,
+    /// Whether the Transparent tenders policy was on, as of the last game day (T-327).
+    pub tenders: bool,
 }
 
 impl Default for CorruptionState {
@@ -174,6 +192,8 @@ impl Default for CorruptionState {
             scandal_cooldown_until: 0,
             active: Vec::new(),
             scandals: Vec::new(),
+            present: 0,
+            tenders: false,
         }
     }
 }
@@ -223,14 +243,107 @@ impl CorruptionState {
         }
     }
 
-    /// The share of the tax the city collects (§3), `1 - tax_loss_max ..= 1`.
+    /// The share of the tax the city collects (§3), `1 - tax_loss_max ..= 1`, and
+    /// `law_tax` more under the rule of law (§8).
     pub fn tax_collection(&self, k: &CorruptionKnobs) -> f64 {
+        let law = if self.edge(k) == Edge::Law {
+            1.0 + f64::from(k.law_tax)
+        } else {
+            1.0
+        };
         let full = k.tax_trust_full;
         if full <= 0.0 {
-            return 1.0;
+            return law;
         }
         let short = ((full - self.trust_now(k)) / full).clamp(0.0, 1.0);
-        1.0 - f64::from(short * k.tax_loss_max)
+        (1.0 - f64::from(short * k.tax_loss_max)) * law
+    }
+
+    /// Whether institution `kind` stands in the city (T-327).
+    pub fn has(&self, kind: InstitutionKind) -> bool {
+        self.present & kind.bit() != 0
+    }
+
+    /// Whether the player sees the exact `C` and the captured stations: the audit (§9).
+    pub fn sees_exactly(&self) -> bool {
+        self.has(InstitutionKind::Audit)
+    }
+
+    /// The captured stations as the player sees them: all of them with the audit, none without.
+    pub fn visible_captured(&self) -> &[BuildingId] {
+        if self.sees_exactly() {
+            &self.captured
+        } else {
+            &[]
+        }
+    }
+
+    /// The `I` the institutions stand for (§7).
+    pub fn institutions_target(&self, k: &CorruptionKnobs) -> f32 {
+        let mut i = if self.tenders { k.i_tenders } else { 0.0 };
+        for (kind, v) in [
+            (InstitutionKind::Audit, k.i_audit),
+            (InstitutionKind::Press, k.i_press),
+            (InstitutionKind::Court, k.i_court),
+        ] {
+            if self.has(kind) {
+                i += v;
+            }
+        }
+        i.clamp(0.0, 100.0)
+    }
+
+    /// How much faster the crime grows (§7-8): more on the clan edge, less with a court.
+    pub fn crime_factor(&self, k: &CorruptionKnobs) -> f32 {
+        let mut f = 1.0;
+        if self.edge(k) == Edge::Clan {
+            f *= 1.0 + k.clan_crime;
+        }
+        if self.has(InstitutionKind::Court) {
+            f *= 1.0 - k.court_police;
+        }
+        f
+    }
+
+    /// How many times as often offers come (§8).
+    pub fn offer_factor(&self, k: &CorruptionKnobs) -> f32 {
+        match self.edge(k) {
+            Edge::Clan => k.clan_offers,
+            Edge::Law => k.law_offers,
+            Edge::Middle => 1.0,
+        }
+    }
+
+    /// How many times its money a deal pays (§8): more on the clan edge.
+    pub fn money_factor(&self, k: &CorruptionKnobs) -> f32 {
+        if self.edge(k) == Edge::Clan {
+            k.clan_money
+        } else {
+            1.0
+        }
+    }
+
+    /// The upkeep of an institution building, times (§8): more under the rule of law.
+    pub fn institution_upkeep(&self, k: &CorruptionKnobs) -> f64 {
+        if self.edge(k) == Edge::Law {
+            1.0 + f64::from(k.law_upkeep)
+        } else {
+            1.0
+        }
+    }
+
+    /// The land value, times (§8): more under the rule of law.
+    pub fn land_factor(&self, k: &CorruptionKnobs) -> f32 {
+        if self.edge(k) == Edge::Law {
+            1.0 + k.law_land
+        } else {
+            1.0
+        }
+    }
+
+    /// The share more building costs: Transparent tenders (§7).
+    pub fn build_surcharge(&self, k: &CorruptionKnobs) -> f32 {
+        if self.tenders { k.tenders_build } else { 0.0 }
     }
 
     /// The share off the cost of building the running deals give, `0..=1`.
@@ -294,7 +407,17 @@ impl CorruptionState {
     /// Chance of a scandal today, cooldown aside (§6).
     pub fn scandal_chance(&self, k: &CorruptionKnobs) -> f32 {
         let weight: f32 = self.evidence.iter().map(|e| e.weight).sum();
-        let exposure = k.scandal_exposure * (1.0 - k.scandal_c_damp * self.corruption / 100.0);
+        let mut base = k.scandal_exposure;
+        for (kind, v) in [
+            (InstitutionKind::Audit, k.exposure_audit),
+            (InstitutionKind::Press, k.exposure_press),
+            (InstitutionKind::Court, k.exposure_court),
+        ] {
+            if self.has(kind) {
+                base += v;
+            }
+        }
+        let exposure = base * (1.0 - k.scandal_c_damp * self.corruption / 100.0);
         (k.scandal_day * weight * exposure.max(0.0) * (1.0 - self.roof(k))).clamp(0.0, 1.0)
     }
 
@@ -317,6 +440,11 @@ impl CorruptionState {
         tick: Tick,
     ) {
         self.captured.retain(|b| stations.contains(b));
+        // The court frees captured stations (T-327) before today's capture rolls.
+        if self.has(InstitutionKind::Court) && k.court_free_day > 0.0 {
+            let mut r = rng.fork(COURT_STREAM, tick);
+            self.captured.retain(|_| r.next_f32() >= k.court_free_day);
+        }
         let chance = self.capture_chance(k, budget);
         if chance <= 0.0 {
             return;
@@ -383,10 +511,39 @@ impl CorruptionState {
         Some((Cost::from_units(fine as f32), deal))
     }
 
-    /// What a declined (or lapsed) offer does: on the clan edge it costs trust.
-    fn declined(&mut self, k: &CorruptionKnobs) {
+    /// What a declined (or lapsed) offer does: on the clan edge it costs trust; with the free
+    /// press it earns trust (T-327).
+    pub(crate) fn declined(&mut self, k: &CorruptionKnobs) {
         if self.edge(k) == Edge::Clan {
             self.trust = (self.trust - k.decline_trust).clamp(0.0, 100.0);
+        }
+        if self.has(InstitutionKind::Press) {
+            self.trust = (self.trust_now(k) + k.press_decline_trust).clamp(0.0, 100.0);
+            self.started = true;
+        }
+    }
+
+    /// The institutions of the day (T-327): which stand, and `I` a step towards their sum.
+    /// `problems` is the share of buildings with a visible problem, which the press reports.
+    pub fn institutions_day(
+        &mut self,
+        k: &CorruptionKnobs,
+        present: u8,
+        tenders: bool,
+        problems: f32,
+    ) {
+        self.present = present;
+        self.tenders = tenders;
+        let target = self.institutions_target(k);
+        self.institutions = if self.institutions < target {
+            (self.institutions + k.i_follow_day).min(target)
+        } else {
+            (self.institutions - k.i_follow_day).max(target)
+        };
+        if self.has(InstitutionKind::Press) && problems > 0.0 {
+            self.trust =
+                (self.trust_now(k) - k.press_problem_trust * problems.min(1.0)).clamp(0.0, 100.0);
+            self.started = true;
         }
     }
 
@@ -396,11 +553,21 @@ impl CorruptionState {
             self.trust = k.trust_start;
             self.started = true;
         }
-        self.corruption = (self.corruption - k.corruption_decay_day).clamp(0.0, 100.0);
+        let court = if self.has(InstitutionKind::Court) {
+            k.court_decay_day
+        } else {
+            0.0
+        };
+        self.corruption = (self.corruption - k.corruption_decay_day - court).clamp(0.0, 100.0);
         let ceiling = self.trust_ceiling(k);
+        let recover = if self.has(InstitutionKind::Press) {
+            k.trust_recover_day * k.press_trust_recover
+        } else {
+            k.trust_recover_day
+        };
         // Above the ceiling (the city slid to the clan edge) trust sinks to it at the same pace.
         self.trust = if self.trust < ceiling {
-            (self.trust + k.trust_recover_day).min(ceiling)
+            (self.trust + recover).min(ceiling)
         } else {
             (self.trust - k.trust_recover_day).max(ceiling)
         }
@@ -513,14 +680,15 @@ impl CorruptionState {
                 && today > a.accepted_day
                 && (today - a.accepted_day).is_multiple_of(7)
             {
-                paid += Cost::from_units(d.weekly as f32);
+                paid += Cost::from_units(d.weekly as f32 * self.money_factor(k));
             }
         }
         if i.population as f32 >= k.deals_population
             && today >= self.next_offer_day
             && (self.inbox.len() as f32) < k.inbox_max
         {
-            self.next_offer_day = today + offer_interval(k, i.population, i.land);
+            let days = offer_interval(k, i.population, i.land) as f32 / self.offer_factor(k);
+            self.next_offer_day = today + (days.ceil() as u32).max(1);
             self.offer(i, today);
         }
         paid
@@ -534,13 +702,16 @@ impl CorruptionState {
             .filter_map(|a| a.target)
             .chain(self.inbox.iter().filter_map(|o| o.target))
             .collect();
-        let busy = |id: &str| {
-            self.inbox.iter().any(|o| o.deal == id) || self.active.iter().any(|a| a.deal == id)
+        // Transparent tenders keep the contract deals away (T-327).
+        let busy = |d: &DealDef| {
+            (self.tenders && d.contract)
+                || self.inbox.iter().any(|o| o.deal == d.id)
+                || self.active.iter().any(|a| a.deal == d.id)
         };
         let choices: Vec<(&DealDef, Vec<Option<DealTarget>>)> =
             i.db.deals()
                 .iter()
-                .filter(|d| !busy(&d.id))
+                .filter(|d| !busy(d))
                 .map(|d| (d, targets(d.target, i.db, i.buildings, i.districts, &taken)))
                 .filter(|(_, t)| !t.is_empty())
                 .collect();
@@ -586,7 +757,11 @@ pub fn apply(world: &mut World, cmd: &CorruptionCommand) -> Result<Cost, Corrupt
         state.declined(k);
         return Ok(Cost::ZERO);
     }
-    state.corruption = (state.corruption + def.corruption).clamp(0.0, 100.0);
+    // Under Transparent tenders a contract deal brings no corruption (T-327).
+    if !(state.tenders && def.contract) {
+        state.corruption = (state.corruption + def.corruption).clamp(0.0, 100.0);
+    }
+    let money = def.money as f32 * state.money_factor(k);
     if def.evidence > 0.0 {
         state.evidence.push(Evidence {
             deal: def.id.clone(),
@@ -620,7 +795,7 @@ pub fn apply(world: &mut World, cmd: &CorruptionCommand) -> Result<Cost, Corrupt
     if def.money != 0
         && let Some(mut t) = world.get_resource_mut::<Treasury>()
     {
-        t.balance += Cost::from_units(def.money as f32);
+        t.balance += Cost::from_units(money);
     }
     Ok(Cost::ZERO)
 }
@@ -637,6 +812,10 @@ pub fn update_corruption(
     land: Res<LandGrids>,
     mut districts: Option<ResMut<Districts>>,
     budgets: Option<Res<crate::Budgets>>,
+    (city_policies, services): (
+        Option<Res<cp_district::CityPolicies>>,
+        Option<Res<cp_service::ServiceState>>,
+    ),
     (mut state, mut treasury, tourists): (
         ResMut<CorruptionState>,
         ResMut<Treasury>,
@@ -648,14 +827,43 @@ pub fn update_corruption(
     }
     let Some(content) = content else { return };
     let db = &*content.0;
-    state.day(&db.balance().corruption);
     let (mut sum, mut n) = (0.0f64, 0u32);
-    for (_, b) in buildings.iter() {
-        if b.state == BuildingState::Active && cp_building::is_growable(db.building(b.def)) {
+    let (mut present, mut troubled, mut active) = (0u8, 0u32, 0u32);
+    // The problems the press writes about (T-327).
+    const VISIBLE: u16 = cp_service::ServiceProblems::GARBAGE
+        | cp_service::ServiceProblems::FIRE
+        | cp_service::ServiceProblems::CRIME;
+    for (id, b) in buildings.iter() {
+        if b.state != BuildingState::Active {
+            continue;
+        }
+        let def = db.building(b.def);
+        active += 1;
+        if let Some(kind) = def.institution {
+            present |= kind.bit();
+        }
+        if services
+            .as_deref()
+            .is_some_and(|s| s.problems_of(id).0 & VISIBLE != 0)
+        {
+            troubled += 1;
+        }
+        if cp_building::is_growable(def) {
             sum += f64::from(land.value_at(b.pos));
             n += 1;
         }
     }
+    let tenders = db.policy(PolicyKind::TransparentTenders).is_some()
+        && city_policies
+            .as_deref()
+            .is_some_and(|p| p.has(PolicyKind::TransparentTenders));
+    let problems = if active == 0 {
+        0.0
+    } else {
+        troubled as f32 / active as f32
+    };
+    state.institutions_day(&db.balance().corruption, present, tenders, problems);
+    state.day(&db.balance().corruption);
     let paid = state.deals_day(&DayInputs {
         db,
         tick: *tick,

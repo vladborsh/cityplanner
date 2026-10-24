@@ -42,6 +42,10 @@ pub fn update_police(
     let deals = corruption
         .as_deref()
         .map_or_else(Vec::new, |c| c.crime_areas(db, &buildings));
+    // The clan edge raises, the court lowers the crime that grows (T-327).
+    let axis = corruption
+        .as_deref()
+        .map_or(1.0, |c| c.crime_factor(&bal.corruption));
     for (id, b) in buildings.iter_bucket(COVERAGE_PERIOD as u32, bucket as u32) {
         if b.state != BuildingState::Active {
             continue;
@@ -75,6 +79,7 @@ pub fn update_police(
             * (1.0 - bal.police_cover * cover)
             * (1.0 + bal.crime_poor * cheap)
             * watch
+            * axis
             * deals
                 .iter()
                 .filter(|&&(p, r, _)| p.distance_squared(b.pos) <= r * r)

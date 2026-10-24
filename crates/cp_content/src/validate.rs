@@ -177,6 +177,12 @@ pub fn building(d: &BuildingDef) -> Problems {
     if d.styles.is_empty() {
         c.bad("styles", "needs at least one style");
     }
+    if d.institution.is_some() && d.unique.is_none() {
+        c.bad(
+            "institution",
+            "an institution must be unique (one per city)",
+        );
+    }
     for (k, s) in d.styles.iter().enumerate() {
         c.not_empty(&format!("styles[{k}]"), s);
     }

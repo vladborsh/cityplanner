@@ -290,8 +290,9 @@ fn a_running_deal_pays_weekly_and_boosts_the_tourists_until_it_ends() {
     assert_eq!(sim.world().resource::<cp_transit::Tourists>().boost_pct, 0);
 }
 
-/// The money a straight road of 200 m costs, with `active` deals running.
-fn road_cost(active: Vec<ActiveDeal>) -> i64 {
+/// The money a straight road of 200 m costs, with `active` deals running and Transparent
+/// tenders on or not.
+fn road_cost(active: Vec<ActiveDeal>, tenders: bool) -> i64 {
     let content =
         Arc::new(ContentDb::load_dir(Path::new(ROOT).join("../../assets/content")).unwrap());
     let terrain =
@@ -300,6 +301,7 @@ fn road_cost(active: Vec<ActiveDeal>) -> i64 {
     sim.set_terrain(terrain);
     sim.set_content(Arc::clone(&content));
     sim.world_mut().resource_mut::<CorruptionState>().active = active;
+    sim.world_mut().resource_mut::<CorruptionState>().tenders = tenders;
     let before = sim.world().resource::<Treasury>().balance.0;
     let t = sim.tick();
     sim.push_command(
@@ -319,17 +321,117 @@ fn road_cost(active: Vec<ActiveDeal>) -> i64 {
 
 #[test]
 fn the_kickback_makes_building_cheaper_while_it_runs() {
-    let full = road_cost(Vec::new());
-    let cheap = road_cost(vec![ActiveDeal {
-        deal: "kickback".into(),
-        target: None,
-        accepted_day: 0,
-        until_day: 30,
-    }]);
+    let full = road_cost(Vec::new(), false);
+    let cheap = road_cost(
+        vec![ActiveDeal {
+            deal: "kickback".into(),
+            target: None,
+            accepted_day: 0,
+            until_day: 30,
+        }],
+        false,
+    );
     assert!(full > 0);
     assert_eq!(
         cheap,
         full - (full as f64 * 0.2).round() as i64,
         "{cheap} of {full}"
     );
+}
+
+#[test]
+fn transparent_tenders_make_building_dearer() {
+    let full = road_cost(Vec::new(), false);
+    let dear = road_cost(Vec::new(), true);
+    assert_eq!(
+        dear,
+        full + (full as f64 * 0.1).round() as i64,
+        "{dear} of {full}"
+    );
+}
+
+/// Puts a copy of the city's first building down as `def`.
+fn put(sim: &mut SimRunner, def: &str) -> cp_building::BuildingId {
+    let id = sim
+        .world()
+        .resource::<cp_content::SimContent>()
+        .0
+        .building_id(def)
+        .unwrap();
+    let mut grid = sim.world_mut().resource_mut::<cp_building::BuildingGrid>();
+    let mut b = grid.iter().next().unwrap().1.clone();
+    b.def = id;
+    b.state = cp_building::BuildingState::Active;
+    grid.insert(b)
+}
+
+/// Runs through the start of the next game day.
+fn next_day(sim: &mut SimRunner) {
+    let to_day = TICKS_PER_DAY - sim.tick().0 % TICKS_PER_DAY;
+    run(sim, to_day + 1);
+}
+
+#[test]
+fn the_audit_chamber_raises_institutions_and_reveals_the_captured_stations() {
+    let mut sim = with_trust(60.0);
+    let station = {
+        let db = sim.world().resource::<cp_content::SimContent>().0.clone();
+        sim.world()
+            .resource::<cp_building::BuildingGrid>()
+            .iter()
+            .find(|(_, b)| {
+                db.building_service(b.def)
+                    .is_some_and(|s| db.service(s).kind == cp_content::ServiceKind::Police)
+            })
+            .map(|(id, _)| id)
+            .expect("the grid city has a police station")
+    };
+    sim.world_mut().resource_mut::<CorruptionState>().captured = vec![station];
+    next_day(&mut sim);
+    let s = sim.world().resource::<CorruptionState>().clone();
+    assert!(!s.sees_exactly());
+    assert!(s.visible_captured().is_empty(), "no audit, rumours only");
+    assert_eq!(s.institutions, 0.0);
+
+    put(&mut sim, "audit_chamber");
+    next_day(&mut sim);
+    let s = sim.world().resource::<CorruptionState>().clone();
+    assert!(s.has(cp_content::InstitutionKind::Audit));
+    assert_eq!(s.visible_captured(), [station]);
+    assert_eq!(
+        s.institutions, 1.0,
+        "I follows the audit's 15 a point a day"
+    );
+    for _ in 0..20 {
+        next_day(&mut sim);
+    }
+    assert_eq!(sim.world().resource::<CorruptionState>().institutions, 15.0);
+}
+
+#[test]
+fn the_rule_of_law_collects_more_tax() {
+    let n = 3 * cp_economy::CITY_PERIOD;
+    let mut middle = with_trust(100.0);
+    let mut law = with_trust(100.0);
+    // Far past the edge: the daily drift back to no institutions keeps it there.
+    law.world_mut()
+        .resource_mut::<CorruptionState>()
+        .institutions = 80.0;
+    let hour = cp_economy::game_hour(middle.tick().0);
+    run(&mut middle, n);
+    run(&mut law, n);
+    assert_eq!(
+        law.world().resource::<CorruptionState>().edge(
+            &law.world()
+                .resource::<cp_content::SimContent>()
+                .0
+                .balance()
+                .corruption
+        ),
+        cp_economy::Edge::Law
+    );
+    let (tm, tl) = (tax_since(&middle, hour), tax_since(&law, hour));
+    let ratio = tl as f64 / tm as f64;
+    // law_tax 0.1, and land worth 5% more on top; the cities drift apart a little.
+    assert!((1.05..1.25).contains(&ratio), "{tl} / {tm} = {ratio}");
 }

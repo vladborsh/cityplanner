@@ -1,0 +1,11 @@
+Policy((
+    id: "transparent_tenders",
+    name: "Transparent tenders",
+    kind: TransparentTenders,
+    icon: "policy_transparent_tenders",
+    scope: City,
+    // T-327: building costs `value` more; contract deals neither come nor add corruption. The
+    // cost per building per week is the tender office. // tune later
+    cost_per_building_week: 0.5,
+    value: 0.1,
+))

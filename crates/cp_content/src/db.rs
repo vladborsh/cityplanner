@@ -1083,6 +1083,8 @@ impl ContentDb {
                     k.captured_cut,
                     k.roof_max,
                     k.scandal_c_damp,
+                    k.court_police,
+                    k.court_free_day,
                 ]
                 .iter()
                 .any(|&v| v > 1.0)
@@ -1093,7 +1095,7 @@ impl ContentDb {
                 errors.push(ContentError::new(
                     path,
                     Some("corruption"),
-                    "finite and >= 0, points <= 100, tax_loss_max, capture_day, captured_cut, roof_max and scandal_c_damp <= 1, 1 <= offer_days_min <= offer_days, offer_pop_step >= 1".to_string(),
+                    "finite and >= 0, points <= 100, tax_loss_max, capture_day, captured_cut, roof_max, scandal_c_damp, court_police and court_free_day <= 1, 1 <= offer_days_min <= offer_days, offer_pop_step >= 1".to_string(),
                 ));
             }
             if b.level_checks == 0 {
@@ -1439,7 +1441,7 @@ mod tests {
     fn loads_shipped_content() {
         let db = real();
         assert_eq!(db.roads().count(), 18); // T-302: + six transit roads
-        // T-190: the eight policies, one per kind, in kind order.
+        // T-190: the policies, one per kind, in kind order (T-327: nine).
         let kinds: Vec<_> = db.policies().iter().map(|p| p.kind).collect();
         assert_eq!(kinds, PolicyKind::ALL);
         assert!(
