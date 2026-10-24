@@ -34,7 +34,9 @@ pub use graph::{
     Access, CongestionMap, LEFT_TURN_PENALTY, PED_SPEED, PathGraph, SegEnd, Side, U_TURN_PENALTY,
 };
 pub use heavy::HeavyBan;
-pub use mode::{ALWAYS_WALK_M, TripTimes, has_bike, mode_by_time, track_trip_times, way_times};
+pub use mode::{
+    ALWAYS_WALK_M, TripTimes, bike_terms, has_bike, mode_by_time, track_trip_times, way_times,
+};
 pub use parking::{
     Front, PARK_RETRIES, PARK_SEARCH_M, PARKED_CAP, PARKING_PERIOD, ParkedCar, ParkedCars,
     ParkedView, ParkingIndex, Place, building_places, choose_place, kerb_fronts, place_access,

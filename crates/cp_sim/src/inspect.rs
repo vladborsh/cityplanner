@@ -566,7 +566,24 @@ impl SimRunner {
                     wellbeing: c.wellbeing,
                     thinks,
                     has_car: c.has_car,
-                    has_bike: cp_traffic::has_bike(id, db.balance().bike_share),
+                    has_bike: {
+                        let policies = w
+                            .get_resource::<cp_district::DistrictMap>()
+                            .zip(w.get_resource::<cp_district::Districts>())
+                            .zip(w.get_resource::<cp_district::CityPolicies>())
+                            .map(|((map, districts), city)| cp_district::Policies {
+                                map,
+                                districts,
+                                city,
+                            });
+                        let home = c
+                            .home
+                            .and_then(|h| w.resource::<cp_building::BuildingGrid>().get(h));
+                        let share = home.map_or(db.balance().bike_share, |h| {
+                            cp_traffic::bike_terms(policies, db, h.pos).0
+                        });
+                        cp_traffic::has_bike(id, share)
+                    },
                     location: c.location,
                     household_size,
                     home: c.home.and_then(|h| Some((h, building_name(h)?))),

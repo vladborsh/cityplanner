@@ -38,6 +38,11 @@ pub const PROBLEM_GAP_HOURS: u64 = 24;
 /// active buildings, is not worth a notification.
 pub const MIN_BUILDINGS: u32 = 5;
 pub const MIN_SHARE_PERCENT: u32 = 3;
+/// The bike lanes hint (T-322c): its id, the population and the overloaded segments it needs.
+const BIKE_HINT: &str = "bike_lanes";
+const BIKE_HINT_POP: u32 = 1_500;
+const BIKE_HINT_OVERLOADED: u32 = 10;
+
 /// BUG-115: this many problems at once become one "N problems" entry.
 pub const MERGE_FROM: usize = 3;
 /// The advice ids that count buildings (the small-count rule applies to these).
@@ -89,6 +94,8 @@ pub enum Action {
     PollutedSource(Vec2),
     /// The Noise overlay and the Trees tool in hand (T-323, §24.2): trees along the road cut noise.
     Trees,
+    /// The Roads tray on one tab (T-322c).
+    RoadTab(crate::roads::RoadTab),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1065,6 +1072,8 @@ pub struct Advisor {
     last_problem_hour: Option<u64>,
     /// The game day of the last market advice (§21.3: at most one a day).
     last_market_day: Option<u64>,
+    /// The bike lanes hint (T-322c) was shown in this session.
+    bike_hint_shown: bool,
     /// Severity of the snackbar that appeared in the last frame (taken by `draw_ui`).
     pub just_shown: Option<Severity>,
 }
@@ -1105,6 +1114,7 @@ impl Advisor {
         let mut all = collect(view, &mut self.unique_seen);
         all.extend(level_advice(view, &mut self.level_seen));
         all.extend(self.jobs_advice(view, day));
+        all.extend(self.bike_lanes_hint(view));
         all.extend(complaint_advice(view));
         all.retain(|a| !(problems_only && a.severity == Severity::Info));
         // BUG-115: a few buildings are not a crisis.
@@ -1180,6 +1190,9 @@ impl Advisor {
             if advice.id == "jobs" {
                 self.jobs_last = Some(day);
             }
+            if advice.id == BIKE_HINT {
+                self.bike_hint_shown = true;
+            }
             if problem(&advice) {
                 self.last_problem_hour = Some(hour);
             }
@@ -1213,6 +1226,33 @@ impl Advisor {
             count: 1,
             icon: Icon::Jobs,
             action: Some(Action::Window(crate::panels::UiWindow::Jobs)),
+        })
+    }
+
+    /// T-322c (§23.6): once a session, a town of [`BIKE_HINT_POP`] people with
+    /// [`BIKE_HINT_OVERLOADED`] jammed roads and no bike lane anywhere hears that bike lanes help;
+    /// the action opens the Bike tab of Roads.
+    fn bike_lanes_hint(&self, view: &SimView) -> Option<Advice> {
+        let db = view.content.as_ref()?;
+        let any_bike_lane = || {
+            view.net.segments().any(|(_, seg)| {
+                db.road(seg.road)
+                    .lanes
+                    .iter()
+                    .any(|l| l.kind == cp_content::LaneKind::Bike)
+            })
+        };
+        (!self.bike_hint_shown
+            && view.city.population >= BIKE_HINT_POP
+            && view.city.traffic.overloaded >= BIKE_HINT_OVERLOADED
+            && !any_bike_lane())
+        .then(|| Advice {
+            id: BIKE_HINT,
+            severity: Severity::Info,
+            text: tr("Roads are jammed: bike lanes take short trips off them"),
+            count: 1,
+            icon: Icon::OverlayTraffic,
+            action: Some(Action::RoadTab(crate::roads::RoadTab::Bike)),
         })
     }
 
@@ -1304,6 +1344,12 @@ pub fn run(action: Action, state: &mut UiState, overlay: &mut cp_render::Overlay
         Action::PollutedSource(at) => {
             overlay.open(Overlay::Pollution);
             state.camera_goal = Some(at);
+        }
+        Action::RoadTab(tab) => {
+            state.category = Some(Category::Roads);
+            let key = crate::roads::tab_label(tab);
+            state.tray_tab.retain(|(c, _)| *c != Category::Roads);
+            state.tray_tab.push((Category::Roads, key));
         }
     }
 }
@@ -1667,6 +1713,54 @@ mod tests {
         let mut plain = Advisor::default();
         plain.observe(&at_tick(v, hour_tick(1)), 0.0, false);
         assert!(plain.current(0.1).is_none());
+    }
+
+    /// T-322c: a town of 1 500 with ten jammed roads and no bike lane hears about bike lanes,
+    /// once a session; the action opens the Bike tab of Roads; a bike lane anywhere silences it.
+    #[test]
+    fn the_bike_lanes_hint_comes_once_and_opens_the_bike_tab() {
+        let jammed = |v: &mut SimView| {
+            let city = std::sync::Arc::make_mut(&mut v.city);
+            city.population = 1_500;
+            city.traffic.overloaded = 10;
+        };
+        let mut v = view_with(|_| {});
+        jammed(&mut v);
+        let mut adv = Advisor::default();
+        let a = adv.bike_lanes_hint(&v).expect("the hint");
+        assert_eq!(a.action, Some(Action::RoadTab(crate::roads::RoadTab::Bike)));
+        let mut state = UiState::default();
+        let mut overlay = cp_render::OverlayState::default();
+        run(a.action.unwrap(), &mut state, &mut overlay);
+        assert_eq!(state.category, Some(Category::Roads));
+        assert_eq!(
+            state.tray_tab,
+            [(
+                Category::Roads,
+                crate::roads::tab_label(crate::roads::RoadTab::Bike)
+            )]
+        );
+        adv.bike_hint_shown = true;
+        assert!(adv.bike_lanes_hint(&v).is_none(), "once a session");
+        let mut lanes = view_with(|sim| {
+            let db = std::sync::Arc::clone(&sim.world().resource::<cp_content::SimContent>().0);
+            let road = db.road_id("basic_2l_bike").unwrap();
+            let mut g = sim.world_mut().resource_mut::<cp_net::NetGraph>();
+            let (a, b) = (
+                bevy::math::Vec3::new(100.0, 0.0, 100.0),
+                bevy::math::Vec3::new(200.0, 0.0, 100.0),
+            );
+            g.add_segment(
+                db.road(road),
+                road,
+                cp_core::curve::CubicBezier3::line(a, b),
+                cp_net::Elevation::Ground,
+            )
+            .unwrap();
+            sim.tick_once();
+        });
+        jammed(&mut lanes);
+        assert!(Advisor::default().bike_lanes_hint(&lanes).is_none());
     }
 
     #[test]

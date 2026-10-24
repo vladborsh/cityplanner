@@ -1,0 +1,11 @@
+Policy((
+    id: "encourage_biking",
+    name: "Encourage biking",
+    kind: EncourageBiking,
+    icon: "policy_encourage_biking",
+    scope: Both,
+    // Per building under the policy per week. // tune later
+    cost_per_building_week: 1.5,
+    // The bike share counts `1 + value` times; the start of a ride costs half.
+    value: 0.5,
+))

@@ -39,6 +39,10 @@ pub fn effect_text(kind: PolicyKind, value: f32) -> String {
             "Building costs {pct}% more; contract deals stop and bring no corruption",
             pct = pct
         ),
+        PolicyKind::EncourageBiking => trf!(
+            "{pct}% more citizens own a bike; a ride starts twice as quickly",
+            pct = pct
+        ),
     }
 }
 
@@ -260,9 +264,9 @@ mod tests {
         let view = view_with_district();
         let ctx = egui::Context::default();
         let mut outbox = CommandOutbox::default();
-        // A district shows the seven that allow districts, no tourism promotion (city only).
+        // A district shows the eight that allow districts, no tourism promotion (city only).
         let tiles = draw(&ctx, &view, &mut outbox, Some(DistrictId(1)), vec![]);
-        assert_eq!(tiles.len(), 7);
+        assert_eq!(tiles.len(), 8);
         let db = view.content.as_deref().unwrap();
         assert!(
             shown(db, Some(DistrictId(1)))
@@ -281,10 +285,11 @@ mod tests {
                 on: true
             })]
         );
-        // The city shows all nine (T-327: Transparent tenders), and a click on tourism sends None.
+        // The city shows all ten (T-327: Transparent tenders, T-322c: Encourage biking), and a
+        // click on tourism (the eighth) sends None.
         let mut outbox = CommandOutbox::default();
         let tiles = draw(&ctx, &view, &mut outbox, None, vec![]);
-        assert_eq!(tiles.len(), 9);
+        assert_eq!(tiles.len(), 10);
         let [down, up] = click(tiles[7].center());
         draw(&ctx, &view, &mut outbox, None, down);
         draw(&ctx, &view, &mut outbox, None, up);

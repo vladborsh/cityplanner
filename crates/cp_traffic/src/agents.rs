@@ -732,7 +732,9 @@ pub fn route_trips(
     mut book: ResMut<TripBook>,
     mut grid: ResMut<CitizenGrid>,
     mut agents: ResMut<Agents>,
+    policies: cp_district::PolicyParams,
 ) {
+    let policies = policies.get();
     book.ensure_derived();
     agents.ensure_derived(&book);
     // BUG-117: the entry lanes' queues, so a move-in car takes the shortest.
@@ -858,9 +860,18 @@ pub fn route_trips(
                 grid.citizen(trip.citizen).is_some_and(|c| c.has_car)
                     && b.car_start_penalty_s >= 0.0
             });
+        // T-322c: EncourageBiking at home raises the share and shortens the start.
+        let home = grid
+            .citizen(trip.citizen)
+            .and_then(|c| buildings.get(c.home?));
+        let (bike_share, bike_start_mul) = match (&content, home) {
+            (Some(c), Some(h)) => crate::mode::bike_terms(policies, &c.0, h.pos),
+            (Some(c), None) => (c.0.balance().bike_share, 1.0),
+            _ => (0.0, 1.0),
+        };
         let bike = by_mode
             && bal.is_some_and(|b| {
-                b.bike_start_penalty_s >= 0.0 && crate::mode::has_bike(trip.citizen, b.bike_share)
+                b.bike_start_penalty_s >= 0.0 && crate::mode::has_bike(trip.citizen, bike_share)
             });
         let mut mode = match trip.mode {
             TripMode::Walk | TripMode::Car | TripMode::Bike
@@ -877,7 +888,7 @@ pub fn route_trips(
                         } else {
                             u32::MAX
                         },
-                        bike: crate::service::BikeChoice::of_balance(bal, 1.0),
+                        bike: crate::service::BikeChoice::of_balance(bal, bike_start_mul),
                         fallback_car: trip.mode == TripMode::Car,
                         drive_to: None,
                         walk_tail_bits: 0,

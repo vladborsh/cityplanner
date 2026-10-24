@@ -103,11 +103,13 @@ pub enum PolicyKind {
     /// Contracts go to open tenders (T-327, `architecture/corruption.md` §7, city only):
     /// building costs more, contract deals bring no corruption and the kickback offer stops.
     TransparentTenders = 8,
+    /// More citizens own a bike and a ride starts quicker (T-322c).
+    EncourageBiking = 9,
 }
 
 impl PolicyKind {
     /// Every policy in bit order.
-    pub const ALL: [PolicyKind; 9] = [
+    pub const ALL: [PolicyKind; 10] = [
         PolicyKind::Recycling,
         PolicyKind::SmokeDetectors,
         PolicyKind::NeighborhoodWatch,
@@ -117,6 +119,7 @@ impl PolicyKind {
         PolicyKind::FreeTransit,
         PolicyKind::TourismPromotion,
         PolicyKind::TransparentTenders,
+        PolicyKind::EncourageBiking,
     ];
 
     /// The bit of this policy in a policy mask.

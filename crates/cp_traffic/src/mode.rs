@@ -19,6 +19,24 @@ pub fn has_bike(citizen: cp_citizen::CitizenId, share: f32) -> bool {
     share > 0.0 && cp_core::rng::hash_unit([0; 32], u64::from(citizen.index), BIKE_SALT) < share
 }
 
+/// The bike share and the start-penalty factor of a citizen living at `pos` (T-322c, §23.6):
+/// EncourageBiking at home makes the share `1 + value` times larger (at most everyone) and halves
+/// the start penalty; elsewhere `(bike_share, 1)`.
+pub fn bike_terms(
+    policies: Option<cp_district::Policies>,
+    db: &cp_content::ContentDb,
+    pos: bevy_math::Vec2,
+) -> (f32, f32) {
+    let share = db.balance().bike_share;
+    let kind = cp_content::PolicyKind::EncourageBiking;
+    match db.policy(kind) {
+        Some(p) if policies.is_some_and(|ps| ps.at(pos, kind)) => {
+            ((share * (1.0 + p.value)).min(1.0), 0.5)
+        }
+        _ => (share, 1.0),
+    }
+}
+
 /// Walk or drive between two access points: the shorter of the walking time and the driving time
 /// plus `car_start_penalty_s`. A route that does not exist for one mode leaves the other; `None`
 /// when neither exists (the caller keeps the mode it had).

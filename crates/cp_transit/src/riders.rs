@@ -306,9 +306,14 @@ pub fn choose_transit(
         // have an offer, so most trips cost no search.
         let has_car = grid.citizen(trip.citizen).is_some_and(|c| c.has_car);
         // T-322: a citizen with a bike may ride instead.
+        let home = grid
+            .citizen(trip.citizen)
+            .and_then(|c| buildings.get(c.home?))
+            .map_or(pa, |h| h.pos);
+        let (bike_share, bike_start_mul) = cp_traffic::bike_terms(policies, &content.0, home);
         let bike = (balance.bike_start_penalty_s >= 0.0
-            && cp_traffic::has_bike(trip.citizen, balance.bike_share))
-        .then(|| cp_traffic::BikeChoice::of_balance(balance, 1.0));
+            && cp_traffic::has_bike(trip.citizen, bike_share))
+        .then(|| cp_traffic::BikeChoice::of_balance(balance, bike_start_mul));
         let by_time = settings.as_deref().is_none_or(|s| s.mode_by_time)
             && dist >= cp_traffic::ALWAYS_WALK_M
             && balance.car_start_penalty_s >= 0.0;

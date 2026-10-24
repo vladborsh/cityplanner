@@ -1,6 +1,7 @@
 //! T-322a acceptance (§23.6 items 3 and 5): cyclists ride the bike lanes of a grown town and
 //! arrive; with the pedestrian pool full their rides run abstractly and still end; a town whose
-//! streets have bike lanes drives less than the same town without them.
+//! streets have bike lanes drives less than the same town without them. T-322c (item 4): the
+//! EncourageBiking district rides more.
 
 use std::sync::Arc;
 
@@ -237,5 +238,83 @@ fn bike_lanes_take_car_trips_off_the_streets() {
     assert!(
         cars_lanes * 5 <= cars_plain * 4,
         "car trips {cars_lanes} vs {cars_plain}"
+    );
+}
+
+/// Trips and rides of `days` days of the routine, by the half of the town the citizen lives in
+/// (`[west, east]`, split at `split_x`): `(trips, rides)` each.
+fn rides_by_half(sim: &mut SimRunner, days: u64, split_x: f32) -> [(u64, u64); 2] {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = [(0, 0); 2];
+    for _ in 0..days * TICKS_PER_DAY {
+        sim.tick_once();
+        let w = sim.world();
+        let (book, grid, buildings) = (
+            w.resource::<TripBook>(),
+            w.resource::<CitizenGrid>(),
+            w.resource::<BuildingGrid>(),
+        );
+        for (id, t) in book.iter() {
+            if !matches!(t.state, TripState::Agent | TripState::InTransit { .. })
+                || !seen.insert((id, t.started))
+            {
+                continue;
+            }
+            let Some(home) = grid.citizen(t.citizen).and_then(|c| buildings.get(c.home?)) else {
+                continue;
+            };
+            let half = &mut out[usize::from(home.pos.x >= split_x)];
+            half.0 += 1;
+            half.1 += u64::from(t.mode == TripMode::Bike);
+        }
+    }
+    out
+}
+
+/// §23.6 item 4 (T-322c): EncourageBiking on the western district of a town with bike lanes:
+/// a larger share of rides from its homes than from the same homes without the policy, and
+/// than from the eastern half beside it.
+#[test]
+fn encourage_biking_raises_the_share_of_rides_in_its_district() {
+    use cp_district::{DistrictCommand, DistrictId};
+    let content = content();
+    let split_x = 2000.0 + 225.0;
+    let run = |policy: bool| {
+        let mut sim = grown(&content, 11, 6, "basic_2l_bike", 1200);
+        let cells: Vec<cp_district::Cell> = (50..(split_x / cp_district::CELL_M) as u16)
+            .flat_map(|x| (50..90).map(move |z| (x, z)))
+            .collect();
+        let cmds = [
+            DistrictCommand::Create {
+                name: "West".into(),
+            },
+            DistrictCommand::Paint {
+                cells,
+                district: DistrictId(1),
+            },
+            DistrictCommand::SetPolicy {
+                district: Some(DistrictId(1)),
+                policy: cp_content::PolicyKind::EncourageBiking,
+                on: policy,
+            },
+        ];
+        for c in cmds {
+            sim.push_command(cp_sim::SimCommand::District(c), sim.tick());
+            sim.tick_once();
+        }
+        rides_by_half(&mut sim, 2, split_x)
+    };
+    let share = |(trips, rides): (u64, u64)| rides as f64 / trips.max(1) as f64;
+    let [west_off, _] = run(false);
+    let [west_on, east_on] = run(true);
+    eprintln!("west off {west_off:?}, west on {west_on:?}, east on {east_on:?}");
+    assert!(west_on.0 > 100 && east_on.0 > 100, "enough trips");
+    assert!(
+        share(west_on) > share(west_off),
+        "{west_on:?} vs {west_off:?}"
+    );
+    assert!(
+        share(west_on) > share(east_on),
+        "{west_on:?} vs {east_on:?}"
     );
 }
