@@ -277,6 +277,7 @@ pub fn lane_ui(
     cam: Vec2,
     to_screen: impl Fn(Vec2) -> Option<Vec2>,
     outbox: &mut CommandOutbox,
+    right_gap: f32,
 ) {
     let marks = arm_marks(&view.net, &view.junctions, cam, MARK_RANGE_M);
     let points: Vec<(Vec2, ArmMark)> = marks
@@ -324,7 +325,10 @@ pub fn lane_ui(
     let mut open = true;
     egui::Window::new(tr("Lanes of this approach"))
         .id(egui::Id::new("lane_panel"))
-        .anchor(egui::Align2::RIGHT_CENTER, egui::vec2(-12.0, 0.0))
+        .anchor(
+            egui::Align2::RIGHT_CENTER,
+            egui::vec2(-(right_gap + 12.0), 0.0),
+        )
         .resizable(false)
         .collapsible(false)
         .open(&mut open)
@@ -384,6 +388,7 @@ pub fn draw_lane_editor(
     view: Option<bevy::prelude::Res<SimView>>,
     mut tools: bevy::prelude::ResMut<ToolState>,
     mut outbox: bevy::prelude::ResMut<CommandOutbox>,
+    state: bevy::prelude::Res<crate::panels::UiState>,
     cameras: bevy::prelude::Query<(&bevy::prelude::Camera, &bevy::prelude::GlobalTransform)>,
 ) {
     let Some(view) = view else { return };
@@ -409,6 +414,8 @@ pub fn draw_lane_editor(
         Vec2::new(cam.x, cam.z),
         to_screen,
         &mut outbox,
+        // The overlay panel (with the mode switch) stays visible beside the window.
+        crate::overlays_panel::width(&state),
     );
 }
 
