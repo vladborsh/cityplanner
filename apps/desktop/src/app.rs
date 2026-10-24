@@ -74,6 +74,8 @@ pub struct Options {
     pub fold_overlays: bool,
     /// `--open jobs,metrics`: windows that start open (screenshots).
     pub open_windows: Vec<cp_ui::UiWindow>,
+    /// `--budget-tab budgets`: the economy window's tab at start (screenshots).
+    pub budget_tab: Option<cp_ui::budget::BudgetTab>,
     /// `--pointer x,y`: hold the pointer there in a hidden shot, so the cursor hint shows.
     pub pointer: Option<(f32, f32)>,
     /// `--ui`: keep the egui UI in a `--hidden` run, so screenshots show the panels.
@@ -264,6 +266,7 @@ impl Options {
                     .find(|c| c.label().eq_ignore_ascii_case(&n))
             }),
             tray_tab: value("--tray-tab"),
+            budget_tab: value("--budget-tab").and_then(|v| cp_ui::budget::BudgetTab::parse(&v)),
             always_day: args.iter().any(|a| a == "--always-day"),
             net_debug: args.iter().any(|a| a == "--net-debug"),
             day_night: args.iter().any(|a| a == "--day-night") || value("--hour").is_some(),
@@ -809,6 +812,7 @@ pub fn run(opts: Options) -> AppExit {
             grading_panel: opts.grading_panel,
             fold_overlays: opts.fold_overlays,
             open_windows: opts.open_windows.clone(),
+            budget_tab: opts.budget_tab,
             category: opts.category,
             tray_tab: opts.tray_tab.clone(),
             pointer: opts.pointer,

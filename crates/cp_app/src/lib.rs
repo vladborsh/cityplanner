@@ -76,6 +76,8 @@ pub struct GamePlugin {
     pub fold_overlays: bool,
     /// Windows that start open (`--open`, for screenshots).
     pub open_windows: Vec<cp_ui::UiWindow>,
+    /// The tab the economy window starts on (`--budget-tab`, for screenshots).
+    pub budget_tab: Option<cp_ui::budget::BudgetTab>,
     /// Open this palette category at start (`--category`, for screenshots).
     pub category: Option<cp_ui::Category>,
     /// The tab (its English name) of that category's tray at start (`--tray-tab`, T-317f
@@ -195,6 +197,9 @@ impl Plugin for GamePlugin {
             };
             for &w in &self.open_windows {
                 ui_state.open_window(w);
+            }
+            if let Some(tab) = self.budget_tab {
+                ui_state.budget.tab = tab;
             }
             app.insert_resource(ui_state)
                 .insert_resource(settings::SettingsSaver::new(settings, hidden))

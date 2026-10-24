@@ -113,9 +113,16 @@ fn to_footprint(b: &Building, p: Vec2) -> f32 {
 }
 
 /// The reactions to the change from `old` to `new` (the roads of `net`), nearest a source
-/// first, at most [`MAX_REACTIONS`], each with its place in the wave.
-pub fn moods(net: &NetGraph, old: &BuildingGrid, new: &BuildingGrid, db: &ContentDb) -> Vec<Mood> {
-    moods_of(net, old, new, db, &building_events(old, new))
+/// first, at most [`MAX_REACTIONS`], each with its place in the wave. Coverage is folded at
+/// the service `budgets` (§20.3), as the sim does.
+pub fn moods(
+    net: &NetGraph,
+    old: &BuildingGrid,
+    new: &BuildingGrid,
+    db: &ContentDb,
+    budgets: &cp_content::Budgets,
+) -> Vec<Mood> {
+    moods_of(net, old, new, db, budgets, &building_events(old, new))
 }
 
 /// [`moods`] for changes already diffed.
@@ -124,6 +131,7 @@ pub fn moods_of(
     old: &BuildingGrid,
     new: &BuildingGrid,
     db: &ContentDb,
+    budgets: &cp_content::Budgets,
     changes: &[BuildingChange],
 ) -> Vec<Mood> {
     // The service buildings that came (Active) or went, with their kind.
@@ -167,11 +175,9 @@ pub fn moods_of(
     kinds.dedup();
     if !kinds.is_empty() {
         let g = RoadGraph::new(net);
-        // At 100 %: the budgets reach the moods with T-319c.
-        let budgets = cp_content::Budgets::default();
         for kind in kinds {
-            let before = kind_coverage(&g, old, db, &budgets, kind);
-            let after = kind_coverage(&g, new, db, &budgets, kind);
+            let before = kind_coverage(&g, old, db, budgets, kind);
+            let after = kind_coverage(&g, new, db, budgets, kind);
             let listens = |b: &Building| {
                 b.state == BuildingState::Active && reacts(kind, db.building(b.def).zone)
             };

@@ -50,6 +50,7 @@ pub fn run() {
                 grading_panel: false,
                 fold_overlays: false,
                 open_windows: Vec::new(),
+                budget_tab: None,
                 category: None,
                 tray_tab: None,
                 pointer: None,

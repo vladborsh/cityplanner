@@ -20,7 +20,7 @@ use cp_building::{
     AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingId, BuildingState, Demand,
     Footprint,
 };
-use cp_content::{ContentDb, ServiceKind, ZoneType};
+use cp_content::{Budgets, ContentDb, ServiceKind, ZoneType};
 use cp_core::{Cost, Tick, Treasury};
 use cp_net::{ElevationMode, NetCommand, NetGraph, RoadPath, SegmentId};
 use cp_render::mood::{GARBAGE_M, LOAD_EVENTS, moods};
@@ -185,7 +185,7 @@ fn a_service_gladdens_the_houses_it_covers_and_saddens_them_when_it_goes() {
     assert!(n >= 20, "{n} homes");
     // A police station (850 m): every home is newly covered.
     let (with_police, _) = with(&grid, &net, &db, "police_station", 40.0);
-    let m = moods(&net, &grid, &with_police, &db);
+    let m = moods(&net, &grid, &with_police, &db, &Budgets::default());
     let (glad, sorry) = split(&m);
     let (up, _) = changed(&net, &grid, &with_police, &db, ServiceKind::Police);
     // Every covered home, and besides them only non-home buildings (T-287b).
@@ -204,7 +204,7 @@ fn a_service_gladdens_the_houses_it_covers_and_saddens_them_when_it_goes() {
     assert!(m.windows(2).all(|w| w[0].delay <= w[1].delay));
     assert!(m.first().unwrap().delay < m.last().unwrap().delay);
     // Bulldozed: the same homes are sorry.
-    let (glad, sorry) = split(&moods(&net, &with_police, &grid, &db));
+    let (glad, sorry) = split(&moods(&net, &with_police, &grid, &db, &Budgets::default()));
     assert!(glad.is_empty());
     assert!(up.is_subset(&sorry));
 }
@@ -213,7 +213,7 @@ fn a_service_gladdens_the_houses_it_covers_and_saddens_them_when_it_goes() {
 fn a_park_reaches_only_its_neighbours_and_a_move_saddens_the_old_ones() {
     let (net, grid, db) = town();
     let (at_start, park) = with(&grid, &net, &db, "small_park", 20.0);
-    let (glad, _) = split(&moods(&net, &grid, &at_start, &db));
+    let (glad, _) = split(&moods(&net, &grid, &at_start, &db, &Budgets::default()));
     let (up, _) = changed(&net, &grid, &at_start, &db, ServiceKind::Park);
     assert_eq!(glad, up);
     assert!(
@@ -230,7 +230,7 @@ fn a_park_reaches_only_its_neighbours_and_a_move_saddens_the_old_ones() {
         b.pos = pos;
         b.access = Some(AccessPoint { segment: seg, t });
     }
-    let (glad, sorry) = split(&moods(&net, &at_start, &moved, &db));
+    let (glad, sorry) = split(&moods(&net, &at_start, &moved, &db, &Budgets::default()));
     let (up, down) = changed(&net, &at_start, &moved, &db, ServiceKind::Park);
     assert_eq!((glad.clone(), sorry.clone()), (up, down));
     assert!(!glad.is_empty() && !sorry.is_empty());
@@ -241,14 +241,14 @@ fn a_park_reaches_only_its_neighbours_and_a_move_saddens_the_old_ones() {
 fn a_water_pump_moves_nobody() {
     let (net, grid, db) = town();
     let (pumped, _) = with(&grid, &net, &db, "water_pump_station", 40.0);
-    assert!(moods(&net, &grid, &pumped, &db).is_empty());
+    assert!(moods(&net, &grid, &pumped, &db, &Budgets::default()).is_empty());
 }
 
 #[test]
 fn a_landfill_among_homes_saddens_its_neighbours_and_its_removal_relieves_them() {
     let (net, grid, db) = town();
     let (dump, id) = with(&grid, &net, &db, "landfill", 160.0);
-    let (glad, sorry) = split(&moods(&net, &grid, &dump, &db));
+    let (glad, sorry) = split(&moods(&net, &grid, &dump, &db, &Budgets::default()));
     assert!(glad.is_empty(), "garbage is never welcome");
     let fill = dump.get(id).unwrap();
     let q = fill.footprint_polygon();
@@ -267,7 +267,7 @@ fn a_landfill_among_homes_saddens_its_neighbours_and_its_removal_relieves_them()
         .collect();
     assert!(!near.is_empty());
     assert_eq!(sorry, near);
-    let (glad, sorry) = split(&moods(&net, &dump, &grid, &db));
+    let (glad, sorry) = split(&moods(&net, &dump, &grid, &db, &Budgets::default()));
     assert!(sorry.is_empty());
     assert_eq!(glad, near, "relief when it goes");
 }
@@ -279,7 +279,7 @@ fn many_services_at_once_are_a_load_not_an_action() {
     for k in 0..=LOAD_EVENTS {
         g = with(&g, &net, &db, "police_station", 10.0 + 20.0 * k as f32).0;
     }
-    assert!(moods(&net, &grid, &g, &db).is_empty());
+    assert!(moods(&net, &grid, &g, &db, &Budgets::default()).is_empty());
 }
 
 /// `grid` with an Active building `def` of a non-home zone at `x` along the street, 20 m
@@ -307,27 +307,27 @@ fn police_gladdens_shops_industry_and_offices_too_but_education_only_homes() {
     let others = [shop, factory, office];
     // Police: homes and all three are glad; bulldozed, all sorry.
     let (with_police, _) = with(&g, &net, &db, "police_station", 40.0);
-    let (glad, sorry) = split(&moods(&net, &g, &with_police, &db));
+    let (glad, sorry) = split(&moods(&net, &g, &with_police, &db, &Budgets::default()));
     assert!(sorry.is_empty());
     for id in others {
         assert!(glad.contains(&id), "{id:?} should be glad");
     }
     assert!(glad.len() > others.len(), "the homes too");
-    let (glad, sorry) = split(&moods(&net, &with_police, &g, &db));
+    let (glad, sorry) = split(&moods(&net, &with_police, &g, &db, &Budgets::default()));
     assert!(glad.is_empty());
     for id in others {
         assert!(sorry.contains(&id), "{id:?} should be sorry");
     }
     // Education: homes only.
     let (with_school, _) = with(&g, &net, &db, "elementary_school", 40.0);
-    let (glad, _) = split(&moods(&net, &g, &with_school, &db));
+    let (glad, _) = split(&moods(&net, &g, &with_school, &db, &Budgets::default()));
     assert!(!glad.is_empty());
     for id in others {
         assert!(!glad.contains(&id), "{id:?} must not react to a school");
     }
     // A park: homes and the shop, not the factory or the office.
     let (with_park, _) = with(&g, &net, &db, "small_park", 60.0);
-    let (glad, _) = split(&moods(&net, &g, &with_park, &db));
+    let (glad, _) = split(&moods(&net, &g, &with_park, &db, &Budgets::default()));
     assert!(glad.contains(&shop), "the shop likes the park");
     assert!(!glad.contains(&factory) && !glad.contains(&office));
 }

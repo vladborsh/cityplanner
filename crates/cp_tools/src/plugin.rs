@@ -889,8 +889,9 @@ pub fn coverage_site(view: &SimView, state: &ToolState) -> Option<cp_render::Cov
     (on_roads && def.radius_m > 0.0).then_some(cp_render::CoverageSite {
         kind: def.kind,
         access,
-        radius_m: def.radius_m,
-        capacity: def.capacity,
+        // §20.3: what the building gives at its kind's budget, as the sim will run it.
+        radius_m: view.budgets.radius(def, db.balance()),
+        capacity: view.budgets.capacity(def, db.balance()),
         lot: ghost
             .cells
             .iter()

@@ -280,22 +280,30 @@ pub fn open_services(progress: &Progress, db: &ContentDb) -> cp_content::Service
         // T-318: homes expect a school only once one can be built.
         ServiceKind::Education,
     ] {
-        let mut any = false;
-        let mut open = false;
-        for (id, d) in db.buildings() {
-            let is_kind = d
-                .service
-                .as_deref()
-                .and_then(|s| db.service_id(s))
-                .is_some_and(|s| db.service(s).kind == kind);
-            if is_kind {
-                any = true;
-                open |= progress.locked_by(db, id).is_none();
-            }
-        }
-        unlocks.set(kind, open || !any);
+        unlocks.set(kind, kind_open(progress, db, kind));
     }
     unlocks
+}
+
+/// Whether any building def of service `kind` is not locked by a milestone; a kind without a
+/// building def is open. What [`open_services`] decides by, and what the budget tab shows a
+/// row by (§20.3, also for Transit and Park, whose needs are not gated).
+pub fn kind_open(progress: &Progress, db: &ContentDb, kind: ServiceKind) -> bool {
+    let mut any = false;
+    for (id, d) in db.buildings() {
+        let is_kind = d
+            .service
+            .as_deref()
+            .and_then(|s| db.service_id(s))
+            .is_some_and(|s| db.service(s).kind == kind);
+        if is_kind {
+            any = true;
+            if progress.locked_by(db, id).is_none() {
+                return true;
+            }
+        }
+    }
+    !any
 }
 
 /// Recomputes [`cp_content::ServiceUnlocks`] from the progress (a new game, a load, and every

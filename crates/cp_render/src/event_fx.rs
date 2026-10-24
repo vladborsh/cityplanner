@@ -96,9 +96,14 @@ fn diff_city(view: Option<Res<SimView>>, mut snap: ResMut<Snapshot>, mut out: Re
             _ => (Vec::new(), Vec::new()),
         };
         let moods = match &view.content {
-            Some(db) if !buildings.is_empty() => {
-                moods_of(&view.net, old_b, &view.buildings, db, &buildings)
-            }
+            Some(db) if !buildings.is_empty() => moods_of(
+                &view.net,
+                old_b,
+                &view.buildings,
+                db,
+                &view.budgets,
+                &buildings,
+            ),
             _ => Vec::new(),
         };
         *out = CityChange {
@@ -160,7 +165,7 @@ fn mood_demo(
     }
     let mut old = (*view.buildings).clone();
     old.remove(id);
-    for m in crate::mood::moods(&view.net, &old, &view.buildings, db) {
+    for m in crate::mood::moods(&view.net, &old, &view.buildings, db, &view.budgets) {
         let roof = buildings.set.piece(m.building).map_or_else(
             || Vec3::new(m.pos.x, 6.0, m.pos.y),
             |p| Vec3::new(m.pos.x, p.max.y, m.pos.y),

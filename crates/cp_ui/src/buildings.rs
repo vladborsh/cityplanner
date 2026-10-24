@@ -69,7 +69,7 @@ pub fn groups(content: &ContentDb) -> Vec<Group> {
     out
 }
 
-fn kind_label(kind: ServiceKind) -> String {
+pub(crate) fn kind_label(kind: ServiceKind) -> String {
     match kind {
         ServiceKind::Park => "Parks".to_string(),
         _ => format!("{kind:?}"),

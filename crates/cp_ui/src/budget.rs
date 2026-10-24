@@ -8,13 +8,16 @@
 
 use std::ops::RangeInclusive;
 
+use crate::style::Sizes;
 use bevy_egui::egui;
+use cp_content::budget::{power_factor, reach_factor};
 use cp_content::{ServiceKind, ZoneType};
 use cp_core::Cost;
 use cp_core::treasury::DEBT_FLOOR;
 use cp_economy::state::{BUDGET_MAX, BUDGET_MIN, BUDGETED, TAX_MAX, TAX_MIN, TAXED_ZONES};
 use cp_economy::{EconomyCommand, Flow, Loan, SERVICE_ORDER, WeekReport};
 use cp_locale::{tr, trf};
+use cp_sim::city_services::Sector;
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, format_money, zone_name};
 
@@ -365,6 +368,17 @@ impl BudgetTab {
         BudgetTab::Loans,
     ];
 
+    /// The tab named `name` (`overview`, `taxes`, `budgets`, `loans`), for `--budget-tab`.
+    pub fn parse(name: &str) -> Option<BudgetTab> {
+        Some(match name {
+            "overview" => BudgetTab::Overview,
+            "taxes" => BudgetTab::Taxes,
+            "budgets" => BudgetTab::Budgets,
+            "loans" => BudgetTab::Loans,
+            _ => return None,
+        })
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             BudgetTab::Overview => "Overview",
@@ -381,6 +395,8 @@ pub struct BudgetDraft {
     pub tab: BudgetTab,
     taxes: [Option<Draft>; 6],
     budgets: [Option<Draft>; BUDGETED.len()],
+    /// The budget row an advice pointed at (§20.3): drawn highlighted.
+    pub highlight: Option<ServiceKind>,
     /// The tile the land section asks to confirm buying (T-150).
     pub buy_tile: Option<(u8, u8)>,
 }
@@ -752,7 +768,103 @@ fn taxes_tab(
     });
 }
 
-/// The Service budgets tab: one slider per budgeted service (T-045).
+/// The budget rows the tab shows (§20.3): the [`BUDGETED`] kinds a milestone has opened
+/// ([`cp_sim::kind_open`]); before the content is in, the four of the start.
+pub fn budget_rows(view: &SimView) -> Vec<ServiceKind> {
+    BUDGETED
+        .into_iter()
+        .filter(|&k| match view.content.as_deref() {
+            Some(db) => cp_sim::kind_open(&view.progress, db, k),
+            None => matches!(
+                k,
+                ServiceKind::Water | ServiceKind::Sewage | ServiceKind::Power | ServiceKind::Roads
+            ),
+        })
+        .collect()
+}
+
+/// The sectors behind a budget row's balance bar: its own; Education the three school levels,
+/// Post collecting and sorting; none for Roads, Transit and Park.
+pub fn budget_sectors(kind: ServiceKind) -> &'static [Sector] {
+    match kind {
+        ServiceKind::Water => &[Sector::Water],
+        ServiceKind::Sewage => &[Sector::Sewage],
+        ServiceKind::Power => &[Sector::Power],
+        ServiceKind::Garbage => &[Sector::Garbage],
+        ServiceKind::Health => &[Sector::Health],
+        ServiceKind::Deathcare => &[Sector::Deathcare],
+        ServiceKind::Police => &[Sector::Police],
+        ServiceKind::Fire => &[Sector::Fire],
+        ServiceKind::Education => &[Sector::Elementary, Sector::HighSchool, Sector::University],
+        ServiceKind::Post => &[Sector::Mail, Sector::Sorting],
+        _ => &[],
+    }
+}
+
+/// The balance (`-1..=1`) a budget row's bar shows: the worst of its open sectors, `None`
+/// without one.
+pub fn budget_balance(view: &SimView, kind: ServiceKind) -> Option<f32> {
+    let sectors = budget_sectors(kind);
+    view.city
+        .services
+        .iter()
+        .filter(|r| !r.locked && sectors.contains(&r.sector))
+        .map(|r| r.balance())
+        .reduce(f32::min)
+}
+
+/// What `kind` cost over the last day, as a week (×7): its buildings' upkeep, and the roads
+/// for Roads, the buses for Transit. `None` before the first hour was booked.
+pub fn week_cost(view: &SimView, kind: ServiceKind) -> Option<Cost> {
+    let day = view.flow.last_day(&view.economy)?;
+    let i = SERVICE_ORDER.iter().position(|&k| k == kind)?;
+    let mut c = day.services[i];
+    match kind {
+        ServiceKind::Roads => c += day.road_upkeep,
+        ServiceKind::Transit => c += day.transit_upkeep,
+        _ => {}
+    }
+    Some(Cost(c.0 * 7))
+}
+
+/// A week's cost at budget `old` restated at `new`: upkeep is linear in the budget (§20.1).
+pub fn cost_at(cost: Cost, old: u8, new: u8) -> Cost {
+    Cost((cost.0 as f64 * f64::from(new) / f64::from(old.max(1))).round() as i64)
+}
+
+/// The effect of `pct` on `kind` in words: "capacity ×0.75 · reach ×0.87" (the sim's factors);
+/// Roads "Upkeep only".
+pub fn effect_text(kind: ServiceKind, pct: u8, bal: &cp_content::Balance) -> String {
+    let f = format!("{:.2}", power_factor(pct, bal));
+    let r = format!("{:.2}", reach_factor(pct, bal));
+    match kind {
+        ServiceKind::Roads => tr("Upkeep only"),
+        ServiceKind::Water | ServiceKind::Sewage | ServiceKind::Power => {
+            trf!("capacity ×{f}", f = f)
+        }
+        ServiceKind::Transit => trf!("buses ×{f}", f = f),
+        ServiceKind::Park => trf!("attractiveness ×{f}", f = f),
+        _ => trf!("capacity ×{f} · reach ×{r}", f = f, r = r),
+    }
+}
+
+/// The Transit row's hint at budget `pct`: the buses the lines run of those assigned.
+pub fn transit_hint(view: &SimView, pct: u8, bal: &cp_content::Balance) -> String {
+    let (mut running, mut assigned) = (0usize, 0usize);
+    for l in &view.lines {
+        assigned += usize::from(l.vehicles);
+        running += cp_content::budget::budgeted(u32::from(l.vehicles), pct, bal) as usize;
+    }
+    trf!(
+        "Buses on the road: {n} of {m} assigned",
+        n = running,
+        m = assigned
+    )
+}
+
+/// The Service budgets tab (§20.3): a row per open budgeted service: its icon and name, the
+/// slider with 50 / 100 / 150 buttons, the week's cost at the slider's value, the effect and
+/// the sector's balance bar.
 fn budgets_tab(
     ui: &mut egui::Ui,
     view: &SimView,
@@ -760,24 +872,82 @@ fn budgets_tab(
     outbox: &mut CommandOutbox,
 ) {
     ui.strong(tr("Service budgets"));
-    for (i, kind) in BUDGETED.into_iter().enumerate() {
-        let current = view.budgets.get(kind);
-        let name = match kind {
-            ServiceKind::Water => "Water",
-            ServiceKind::Power => "Power",
-            ServiceKind::Roads => "Roads",
-            ServiceKind::Sewage => "Sewage",
-            _ => continue,
+    let fallback = cp_content::Balance::default();
+    let bal = view.content.as_deref().map_or(&fallback, |db| db.balance());
+    // Thirteen rows do not fit a small screen: they scroll, clear of the bottom bar.
+    let max = (ui.ctx().content_rect().height() * 0.6).max(240.0);
+    egui::ScrollArea::vertical()
+        .id_salt("budget_rows")
+        .max_height(max)
+        .show(ui, |ui| budget_rows_ui(ui, view, draft, outbox, bal));
+}
+
+/// The rows of [`budgets_tab`].
+fn budget_rows_ui(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    draft: &mut BudgetDraft,
+    outbox: &mut CommandOutbox,
+    bal: &cp_content::Balance,
+) {
+    for kind in budget_rows(view) {
+        let Some(i) = BUDGETED.iter().position(|&k| k == kind) else {
+            continue;
         };
-        if let Some(pct) = pct_slider(
-            ui,
-            &tr(name),
-            current,
-            &mut draft.budgets[i],
-            BUDGET_MIN..=BUDGET_MAX,
-        ) {
-            outbox.push(budget_command(kind, pct));
+        let current = view.budgets.get(kind);
+        let mut frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(4, 2));
+        if draft.highlight == Some(kind) {
+            frame = frame
+                .fill(ui.visuals().selection.bg_fill.gamma_multiply(0.35))
+                .corner_radius(4.0);
         }
+        frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                crate::buildings::kind_icon(kind).show(ui, Sizes::SECTION_ICON);
+                let name = tr(crate::buildings::kind_label(kind).as_str());
+                if let Some(pct) = pct_slider(
+                    ui,
+                    &name,
+                    current,
+                    &mut draft.budgets[i],
+                    BUDGET_MIN..=BUDGET_MAX,
+                ) {
+                    outbox.push(budget_command(kind, pct));
+                }
+                for mark in [BUDGET_MIN, 100, BUDGET_MAX] {
+                    if ui
+                        .small_button(format!("{mark}"))
+                        .on_hover_text(trf!("Set to {pct}%", pct = mark))
+                        .clicked()
+                        && mark != current
+                    {
+                        draft.budgets[i] = Some(Draft {
+                            value: mark,
+                            sent: true,
+                        });
+                        outbox.push(budget_command(kind, mark));
+                    }
+                }
+            });
+            let shown = draft.budgets[i].map_or(current, |d| d.value);
+            ui.horizontal(|ui| {
+                ui.add_space(Sizes::SECTION_ICON + 4.0);
+                if let Some(c) = week_cost(view, kind).filter(|c| c.0 != 0) {
+                    let c = cost_at(c, current, shown);
+                    ui.label(trf!("-{money} / week", money = format_money(c)));
+                }
+                ui.weak(effect_text(kind, shown, bal));
+                if let Some(b) = budget_balance(view, kind) {
+                    crate::services::bar(ui, b);
+                }
+            });
+            if kind == ServiceKind::Transit {
+                ui.horizontal(|ui| {
+                    ui.add_space(Sizes::SECTION_ICON + 4.0);
+                    ui.weak(transit_hint(view, shown, bal));
+                });
+            }
+        });
     }
 }
 
@@ -1418,6 +1588,62 @@ mod tests {
             crate::cursor_label::refund_text(&tools),
             None,
             "nothing back"
+        );
+    }
+
+    /// §20.6 item 8: the budget tab shows the rows a milestone has opened: at Hamlet Water,
+    /// Sewage, Power, Roads and Park (the small park opens there); Village adds Garbage,
+    /// Health, Fire, Police; Roads says "Upkeep only".
+    #[test]
+    fn the_budget_tab_shows_the_rows_the_milestone_opened() {
+        use std::sync::Arc;
+        let db = Arc::new(
+            cp_content::ContentDb::load_dir(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/content"
+            ))
+            .unwrap(),
+        );
+        let mut sim = SimRunner::new(1);
+        sim.set_content(db);
+        let mut view = sim.view();
+        use ServiceKind::*;
+        view.progress = cp_sim::Progress::at(0);
+        assert_eq!(budget_rows(&view), [Water, Sewage, Power, Roads, Park]);
+        let text = painted(&view, &mut BudgetDraft::on(BudgetTab::Budgets));
+        assert!(text.iter().any(|t| t == "Upkeep only"), "{text:?}");
+        assert!(!text.iter().any(|t| t == "Health"), "{text:?}");
+        view.progress = cp_sim::Progress::at(1);
+        assert_eq!(
+            budget_rows(&view),
+            [
+                Water, Sewage, Power, Roads, Garbage, Health, Fire, Police, Park
+            ]
+        );
+        let text = painted(&view, &mut BudgetDraft::on(BudgetTab::Budgets));
+        assert!(text.iter().any(|t| t == "Health"), "{text:?}");
+        // Everything open: all 13.
+        view.progress = cp_sim::Progress::ALL;
+        assert_eq!(budget_rows(&view).len(), BUDGETED.len());
+    }
+
+    /// The tab's figures come from the sim's factors: the effect words and the cost restated at
+    /// the slider's value (linear).
+    #[test]
+    fn the_effect_and_the_cost_follow_the_budget() {
+        let bal = cp_content::Balance::default();
+        assert_eq!(
+            effect_text(ServiceKind::Health, 75, &bal),
+            "capacity ×0.75 · reach ×0.87"
+        );
+        assert_eq!(effect_text(ServiceKind::Water, 150, &bal), "capacity ×1.25");
+        assert_eq!(effect_text(ServiceKind::Roads, 50, &bal), "Upkeep only");
+        assert_eq!(cost_at(Cost(124_000), 100, 50), Cost(62_000));
+        assert_eq!(cost_at(Cost(62_000), 50, 150), Cost(186_000));
+        assert_eq!(budget_sectors(ServiceKind::Roads), &[] as &[Sector]);
+        assert_eq!(
+            budget_sectors(ServiceKind::Post),
+            &[Sector::Mail, Sector::Sorting]
         );
     }
 }

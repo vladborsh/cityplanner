@@ -89,7 +89,7 @@ const YELLOW: egui::Color32 = egui::Color32::from_rgb(235, 195, 60);
 const GREEN: egui::Color32 = egui::Color32::from_rgb(85, 180, 90);
 
 /// The bar with its three zones and the marker.
-fn bar(ui: &mut egui::Ui, balance: f32) {
+pub(crate) fn bar(ui: &mut egui::Ui, balance: f32) {
     let (rect, _) = ui.allocate_exact_size(BAR, egui::Sense::hover());
     let p = ui.painter();
     let at = |t: f32| rect.left() + rect.width() * t;

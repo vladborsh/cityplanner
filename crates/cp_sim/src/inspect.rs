@@ -45,6 +45,35 @@ pub fn buses_row(l: &crate::view::LineView) -> String {
     }
 }
 
+/// The inspector's budget row of a service building off a 100 % budget (§20.3):
+/// "75 % — capacity 135 of 180 · reach 1 030 m" (an em dash: the fonts have it); `None` at 100 %.
+pub fn budget_row(sv: &ServiceInfo) -> Option<String> {
+    if sv.budget == cp_content::budget::BUDGET_DEFAULT {
+        return None;
+    }
+    let mut out = format!(
+        "{} % — capacity {} of {}",
+        sv.budget, sv.capacity, sv.base_capacity
+    );
+    if sv.radius_m > 0 {
+        out.push_str(&format!(" · reach {} m", thousands(u64::from(sv.radius_m))));
+    }
+    Some(out)
+}
+
+/// `1030` as "1 030".
+fn thousands(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push(' ');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// What the player clicked on. Pedestrians stand for their citizen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Selection {
@@ -162,10 +191,16 @@ pub struct GoodsInfo {
 pub struct ServiceInfo {
     pub kind: cp_content::ServiceKind,
     pub used_today: u32,
+    /// The daily capacity at the kind's budget, and as it would be at 100 %.
     pub capacity: u32,
+    pub base_capacity: u32,
     pub stored: u32,
     /// 0 when the building keeps no stock.
     pub storage: u32,
+    /// The kind's budget, % (§20).
+    pub budget: u8,
+    /// The coverage radius at the budget, whole metres (0 without coverage).
+    pub radius_m: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -368,12 +403,20 @@ impl SimRunner {
                             .and_then(|st| st.facility(id))
                             .copied()
                             .unwrap_or_default();
+                        let budgets = w
+                            .get_resource::<cp_content::Budgets>()
+                            .copied()
+                            .unwrap_or_default();
+                        let run = budgets.def(s, db.balance());
                         ServiceInfo {
                             kind: s.kind,
                             used_today: f.used_today,
-                            capacity: s.capacity,
+                            capacity: run.capacity,
+                            base_capacity: s.capacity,
                             stored: f.stored,
-                            storage: s.storage,
+                            storage: run.storage,
+                            budget: budgets.get(s.kind),
+                            radius_m: run.radius_m.max(0.0).round() as u32,
                         }
                     });
                 let mut problems = flag_names(b.flags);
@@ -693,6 +736,9 @@ impl Inspection {
                     ));
                     if sv.storage > 0 {
                         r.push(row("Stored", format!("{} of {}", sv.stored, sv.storage)));
+                    }
+                    if let Some(b) = budget_row(&sv) {
+                        r.push(row("Budget", b));
                     }
                 }
                 if let Some(g) = &b.goods {

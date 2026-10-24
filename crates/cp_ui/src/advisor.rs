@@ -12,6 +12,7 @@ use bevy::ecs::message::Message;
 use bevy::math::Vec2;
 use bevy_egui::egui;
 use cp_building::{BuildingFlags, BuildingState};
+use cp_content::ServiceKind;
 use cp_core::time::TICKS_PER_DAY;
 use cp_locale::{tr, trf, trn};
 use cp_render::Overlay;
@@ -78,6 +79,8 @@ pub enum Action {
     Jump(Vec2),
     Panel(Category),
     Budget,
+    /// The Service budgets tab with the row of a kind highlighted (§20.3).
+    BudgetRow(ServiceKind),
     /// The City policies window (T-193).
     Policies,
     /// Opens a window of the top bar (T-307).
@@ -567,8 +570,93 @@ fn dirtiest_water_source(view: &SimView) -> Option<Vec2> {
 }
 
 /// All the advice the view gives now, unordered.
+/// The ids of the budget advice per budgeted kind with a sector: `(kind, low, waste)`.
+const BUDGET_ADVICE: [(ServiceKind, &str, &str); 10] = [
+    (ServiceKind::Water, "budget_low_water", "budget_waste_water"),
+    (
+        ServiceKind::Sewage,
+        "budget_low_sewage",
+        "budget_waste_sewage",
+    ),
+    (ServiceKind::Power, "budget_low_power", "budget_waste_power"),
+    (
+        ServiceKind::Garbage,
+        "budget_low_garbage",
+        "budget_waste_garbage",
+    ),
+    (
+        ServiceKind::Health,
+        "budget_low_health",
+        "budget_waste_health",
+    ),
+    (
+        ServiceKind::Deathcare,
+        "budget_low_deathcare",
+        "budget_waste_deathcare",
+    ),
+    (
+        ServiceKind::Police,
+        "budget_low_police",
+        "budget_waste_police",
+    ),
+    (ServiceKind::Fire, "budget_low_fire", "budget_waste_fire"),
+    (
+        ServiceKind::Education,
+        "budget_low_education",
+        "budget_waste_education",
+    ),
+    (ServiceKind::Post, "budget_low_post", "budget_waste_post"),
+];
+/// A sector this far below its demand (balance) with its budget under 100 % asks for more.
+pub const BUDGET_LOW_BALANCE: f32 = -0.2;
+/// ... this far above it with the budget over 100 % may be cut.
+pub const BUDGET_WASTE_BALANCE: f32 = 0.5;
+
+/// §20.3: "Water is short: raise its budget (now 60 %)" when a sector falls short and its
+/// budget is under 100 % (a warning, so it waits [`PERSIST_HOURS`] like the others); "You can
+/// cut the Police budget" when it has plenty over 100 %. Short at 100 % or more stays the
+/// "build more" advice. "Show" opens the budget tab on the row.
+fn budget_advice(view: &SimView, out: &mut Vec<Advice>) {
+    let open = crate::budget::budget_rows(view);
+    for (kind, low, waste) in BUDGET_ADVICE {
+        if !open.contains(&kind) {
+            continue;
+        }
+        let Some(balance) = crate::budget::budget_balance(view, kind) else {
+            continue;
+        };
+        let pct = view.budgets.get(kind);
+        let name = tr(crate::buildings::kind_label(kind).as_str());
+        let icon = crate::buildings::kind_icon(kind);
+        if balance < BUDGET_LOW_BALANCE && pct < 100 {
+            out.push(Advice {
+                id: low,
+                severity: Severity::Warn,
+                text: trf!(
+                    "{name} is short: raise its budget (now {pct}%)",
+                    name = name,
+                    pct = pct
+                ),
+                count: (-balance * 100.0) as u32,
+                icon,
+                action: Some(Action::BudgetRow(kind)),
+            });
+        } else if balance > BUDGET_WASTE_BALANCE && pct > 100 {
+            out.push(Advice {
+                id: waste,
+                severity: Severity::Info,
+                text: trf!("You can cut the {name} budget", name = name),
+                count: 1,
+                icon,
+                action: Some(Action::BudgetRow(kind)),
+            });
+        }
+    }
+}
+
 pub fn collect(view: &SimView, seen: &mut UniqueSeen) -> Vec<Advice> {
     let mut out = unique_advice(view, seen);
+    budget_advice(view, &mut out);
     industry_advice(view, &mut out);
     park_advice(view, &mut out);
     mail_advice(view, &mut out);
@@ -1025,6 +1113,11 @@ pub fn run(action: Action, state: &mut UiState, overlay: &mut cp_render::Overlay
         Action::Jump(at) => state.camera_goal = Some(at),
         Action::Panel(c) => state.category = Some(c),
         Action::Budget => state.budget_open = true,
+        Action::BudgetRow(kind) => {
+            state.budget_open = true;
+            state.budget.tab = crate::budget::BudgetTab::Budgets;
+            state.budget.highlight = Some(kind);
+        }
         Action::Policies => state.policies_open = true,
         Action::Window(w) => state.open_window(w),
         Action::PollutedSource(at) => {
@@ -1107,6 +1200,51 @@ mod tests {
         sim.set_content(content);
         f(&mut sim);
         sim.view()
+    }
+
+    /// §20.3: a short sector with its budget under 100 % asks to raise it and opens the tab on
+    /// the row; at 100 % it does not; plenty over 100 % says it can be cut.
+    #[test]
+    fn a_short_sector_under_a_low_budget_asks_to_raise_it() {
+        use cp_sim::city_services::{Sector, SectorBalance};
+        let with = |pct: u8, supply: f32| {
+            let mut v = view_with(|sim| {
+                sim.world_mut()
+                    .resource_mut::<cp_content::Budgets>()
+                    .set(ServiceKind::Water, pct);
+            });
+            std::sync::Arc::make_mut(&mut v.city).services = vec![SectorBalance {
+                sector: Sector::Water,
+                supply,
+                demand: 100.0,
+                unit: "units",
+                locked: false,
+            }];
+            let mut out = Vec::new();
+            budget_advice(&v, &mut out);
+            out
+        };
+        let low = with(60, 50.0);
+        assert_eq!(low.len(), 1, "{low:?}");
+        assert_eq!(low[0].id, "budget_low_water");
+        assert_eq!(low[0].severity, Severity::Warn);
+        assert_eq!(low[0].text, "Water is short: raise its budget (now 60%)");
+        assert_eq!(low[0].action, Some(Action::BudgetRow(ServiceKind::Water)));
+        assert!(with(100, 50.0).is_empty());
+        let waste = with(140, 200.0);
+        assert_eq!(waste[0].id, "budget_waste_water");
+        assert_eq!(waste[0].text, "You can cut the Water budget");
+
+        let mut state = UiState::default();
+        let mut overlay = cp_render::OverlayState::default();
+        run(
+            Action::BudgetRow(ServiceKind::Water),
+            &mut state,
+            &mut overlay,
+        );
+        assert!(state.budget_open);
+        assert_eq!(state.budget.tab, crate::budget::BudgetTab::Budgets);
+        assert_eq!(state.budget.highlight, Some(ServiceKind::Water));
     }
 
     /// T-318c: the main complaint becomes advice only from MIN_BUILDINGS homes and
