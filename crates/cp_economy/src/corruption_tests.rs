@@ -72,3 +72,92 @@ fn low_trust_loses_tax_linearly() {
     // A new city (trust_start 60) collects everything.
     assert_eq!(CorruptionState::default().tax_collection(&k), 1.0);
 }
+
+fn content() -> cp_content::ContentDb {
+    cp_content::ContentDb::load_dir(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"),
+    )
+    .unwrap()
+}
+
+#[test]
+fn offers_come_from_the_population_threshold_sooner_in_a_bigger_city_and_lapse() {
+    use crate::corruption::{DayInputs, offer_interval};
+    use cp_core::time::TICKS_PER_DAY;
+    let db = content();
+    let k = db.balance().corruption.clone();
+    assert_eq!(offer_interval(&k, 1000, 0.0), 12);
+    assert!(offer_interval(&k, 20_000, 50.0) < offer_interval(&k, 2000, 50.0));
+    assert_eq!(
+        offer_interval(&k, 1_000_000, 100.0),
+        3,
+        "never below offer_days_min"
+    );
+    let buildings = cp_building::BuildingGrid::default();
+    let rng = cp_core::SimRng::seed_from_u64(7);
+    let at = |day: u64, population: u32| DayInputs {
+        db: &db,
+        tick: cp_core::Tick(day * TICKS_PER_DAY),
+        rng: &rng,
+        population,
+        land: 0.0,
+        buildings: &buildings,
+        districts: None,
+    };
+    let mut s = CorruptionState {
+        trust: 60.0,
+        started: true,
+        ..CorruptionState::default()
+    };
+    s.deals_day(&at(1, 999));
+    assert!(s.inbox.is_empty(), "too small a city");
+    s.deals_day(&at(2, 1000));
+    assert_eq!(s.inbox.len(), 1);
+    let o = s.inbox[0].clone();
+    // Only the deals that need no building or district can come to an empty city.
+    assert!(
+        ["kickback", "land", "sponsor"].contains(&o.deal.as_str()),
+        "{o:?}"
+    );
+    assert_eq!(o.target, None);
+    assert_eq!(s.next_offer_day, 2 + 12);
+    s.deals_day(&at(3, 1000));
+    assert_eq!(s.inbox.len(), 1, "the next one waits its interval");
+    // The same day and seed draw the same offer.
+    let mut again = CorruptionState {
+        trust: 60.0,
+        started: true,
+        ..CorruptionState::default()
+    };
+    again.deals_day(&at(2, 1000));
+    assert_eq!(again.inbox, vec![o.clone()]);
+    // Unanswered, it lapses on its day (and the next one comes when due).
+    s.deals_day(&at(u64::from(o.expires_day), 1000));
+    assert!(s.inbox.iter().all(|x| x != &o));
+    for d in 4..40 {
+        s.deals_day(&at(d, 1000));
+    }
+    assert!(s.inbox.len() <= 3 && !s.inbox.is_empty());
+    let mut ids: Vec<&str> = s.inbox.iter().map(|o| o.deal.as_str()).collect();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), s.inbox.len(), "one offer of a deal at a time");
+}
+
+#[test]
+fn the_contents_six_deals_load() {
+    let db = content();
+    let mut ids: Vec<&str> = db.deals().iter().map(|d| d.id.as_str()).collect();
+    ids.sort();
+    assert_eq!(
+        ids,
+        [
+            "casino",
+            "developer",
+            "factory_emissions",
+            "kickback",
+            "land",
+            "sponsor"
+        ]
+    );
+}

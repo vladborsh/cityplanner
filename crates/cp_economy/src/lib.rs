@@ -25,7 +25,10 @@ pub use contentment::{
     CONTENTMENT_STREAM, CityContentment, DistrictContentment, FACTORS, HomeFacts, Scored, Troubles,
     contentment_daily, update_contentment,
 };
-pub use corruption::{CorruptionState, DealTarget, Edge, Evidence, Offer, update_corruption};
+pub use corruption::{
+    ActiveDeal, CorruptionCommand, CorruptionError, CorruptionState, DealTarget, Edge, Evidence,
+    Offer, update_corruption,
+};
 pub use deathcare::update_deathcare;
 pub use demand::{DemandAcc, shortage_jobs, smooth, update_demand};
 pub use emissions::{CELL_E, EmissionInputs, Emissions, SIDE_E, ZONE_CELL_M, emission_of};

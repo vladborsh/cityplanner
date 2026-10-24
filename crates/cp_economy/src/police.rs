@@ -26,6 +26,7 @@ pub fn update_police(
     mut state: ResMut<ServiceState>,
     policies: cp_district::PolicyParams,
     unlocks: Option<Res<ServiceUnlocks>>,
+    corruption: Option<Res<crate::CorruptionState>>,
 ) {
     let Some(content) = content else { return };
     // Worlds built without the resource have every service open.
@@ -36,6 +37,8 @@ pub fn update_police(
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
     let roads = net.graph();
     let mut finder = None;
+    // Grey deals that raise the crime around their target (T-325).
+    let deals = corruption.map_or_else(Vec::new, |c| c.crime_areas(db, &buildings));
     for (id, b) in buildings.iter_bucket(COVERAGE_PERIOD as u32, bucket as u32) {
         if b.state != BuildingState::Active {
             continue;
@@ -68,7 +71,12 @@ pub fn update_police(
         let per_day = bal.crime_base
             * (1.0 - bal.police_cover * cover)
             * (1.0 + bal.crime_poor * cheap)
-            * watch;
+            * watch
+            * deals
+                .iter()
+                .filter(|&&(p, r, _)| p.distance_squared(b.pos) <= r * r)
+                .map(|&(_, _, extra)| 1.0 + extra)
+                .product::<f32>();
         // The day's total spread over its 64 passes without losing the remainder.
         let upto = |p: u64| (per_day * p as f32 / PASSES_PER_DAY as f32).round() as i64;
         let made = (upto(pass + 1) - upto(pass)).max(0) as u64;

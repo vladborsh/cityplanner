@@ -740,6 +740,7 @@ mod city {
                 buildings: w.resource::<BuildingGrid>(),
                 net: w.resource::<NetGraph>(),
                 load,
+                boost: &[],
             });
         }
         e

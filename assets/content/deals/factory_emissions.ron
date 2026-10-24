@@ -1,0 +1,12 @@
+// Grey deals (architecture/corruption.md §4, T-325). Numbers: tune later.
+Deal((
+    id: "factory_emissions",
+    name: "Factory: turn a blind eye",
+    text: "A factory pays every week if the inspectors stop measuring its smoke. It will pollute half as much again.",
+    corruption: 4.0,
+    evidence: 1.5,
+    answer_days: 5,
+    target: Industry,
+    weekly: 3000,
+    pollution: 0.5,
+))

@@ -225,7 +225,7 @@ pub fn update_city(
         ResMut<crate::Emissions>,
         Option<Res<cp_utility::WaterPools>>,
     ),
-    mut decay: ResMut<Decay>,
+    (mut decay, corruption): (ResMut<Decay>, Option<Res<crate::CorruptionState>>),
     mut shortage: ResMut<WorkerShortage>,
     coverage: Option<Res<ServiceCoverage>>,
     services: Option<Res<ServiceState>>,
@@ -240,11 +240,13 @@ pub fn update_city(
     let db = &*content.0;
     let bal = db.balance();
     // Pollution and noise first (T-300): the land value reads them.
+    let boost = corruption.map_or_else(Vec::new, |c| c.pollution_boost(db));
     emissions.update(&crate::EmissionInputs {
         content: db,
         buildings: &buildings,
         net: &net,
         load: &agents.load,
+        boost: &boost,
     });
     // The dirt of the water each home drinks (T-300 step 2): the supply pass of this tick (every
     // 64 ticks, Utilities before Economy) has just rewritten the pools.

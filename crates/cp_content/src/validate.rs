@@ -383,6 +383,31 @@ pub fn deal(d: &DealDef) -> Problems {
     if d.answer_days == 0 {
         c.bad("answer_days", "must be >= 1");
     }
+    c.non_negative("build_discount", d.build_discount);
+    if d.build_discount > 1.0 {
+        c.bad("build_discount", "must be <= 1");
+    }
+    c.non_negative("pollution", d.pollution);
+    c.non_negative("crime", d.crime);
+    c.non_negative("radius_m", d.radius_m);
+    c.non_negative("tourists", d.tourists);
+    if !d.trust.is_finite() || d.trust.abs() > 100.0 {
+        c.bad("trust", "must be within -100..=100");
+    }
+    if d.lift_policy && !matches!(d.target, crate::DealWants::DistrictWith(_)) {
+        c.bad("lift_policy", "needs a DistrictWith target");
+    }
+    if (d.pollution > 0.0 || d.crime > 0.0)
+        && !matches!(
+            d.target,
+            crate::DealWants::Industry | crate::DealWants::Commercial
+        )
+    {
+        c.bad("target", "pollution and crime need a building target");
+    }
+    if d.crime > 0.0 && d.radius_m <= 0.0 {
+        c.bad("radius_m", "crime needs a radius");
+    }
     c.0
 }
 

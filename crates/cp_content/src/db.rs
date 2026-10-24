@@ -1058,11 +1058,14 @@ impl ContentDb {
                 .iter()
                 .any(|&v| v > 100.0)
                 || k.tax_loss_max > 1.0
+                || k.offer_days_min < 1.0
+                || k.offer_days < k.offer_days_min
+                || k.offer_pop_step < 1.0
             {
                 errors.push(ContentError::new(
                     path,
                     Some("corruption"),
-                    "finite and >= 0, points <= 100, tax_loss_max <= 1".to_string(),
+                    "finite and >= 0, points <= 100, tax_loss_max <= 1, 1 <= offer_days_min <= offer_days, offer_pop_step >= 1".to_string(),
                 ));
             }
             if b.level_checks == 0 {

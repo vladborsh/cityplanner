@@ -1,0 +1,13 @@
+// Grey deals (architecture/corruption.md §4, T-325). Numbers: tune later.
+Deal((
+    id: "developer",
+    name: "Developer: lift the high-rise ban",
+    text: "A developer pays to have the high-rise ban in this district lifted. The neighbours will not like it.",
+    corruption: 5.0,
+    evidence: 2.0,
+    answer_days: 6,
+    target: DistrictWith(HighRiseBan),
+    money: 25000,
+    trust: -2.0,
+    lift_policy: true,
+))

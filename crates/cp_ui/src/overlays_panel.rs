@@ -86,13 +86,14 @@ pub struct OverlayRects {
 
 /// The windows of the row, in order (one row in the top bar): money, charts, services, lines; policies,
 /// saves, debug; then the settings button follows.
-const ROW: [UiWindow; 9] = [
+const ROW: [UiWindow; 10] = [
     UiWindow::Budget,
     UiWindow::Metrics,
     UiWindow::Jobs,
     UiWindow::Services,
     UiWindow::Lines,
     UiWindow::Policies,
+    UiWindow::Offers,
     UiWindow::Saves,
     UiWindow::Demand,
     UiWindow::Debug,
@@ -118,6 +119,7 @@ fn window_on(state: &UiState, files: &FileMenu, w: UiWindow) -> bool {
         UiWindow::Services => state.services_open,
         UiWindow::Lines => state.lines_open,
         UiWindow::Policies => state.policies_open,
+        UiWindow::Offers => state.offers_open,
         UiWindow::Saves => files.open,
         UiWindow::Debug => state.debug_open,
     }
@@ -133,6 +135,7 @@ fn toggle_window(state: &mut UiState, files: &mut FileMenu, w: UiWindow) {
         UiWindow::Services => state.services_open = !on,
         UiWindow::Lines => state.lines_open = !on,
         UiWindow::Policies => state.policies_open = !on,
+        UiWindow::Offers => state.offers_open = !on,
         UiWindow::Saves => toggle_saves(files),
         UiWindow::Debug => state.debug_open = !on,
     }
@@ -149,7 +152,8 @@ pub fn overlays_panel(
     view: Option<&cp_sim::SimView>,
 ) -> OverlayRects {
     let mut rects = OverlayRects::default();
-    window_bar(ctx, state, files, &mut rects);
+    let offers = view.map_or(0, |v| v.corruption.inbox.len());
+    window_bar(ctx, state, files, offers, &mut rects);
     let area = egui::Area::new(egui::Id::new("overlays_panel"))
         .anchor(
             egui::Align2::RIGHT_TOP,
@@ -259,6 +263,7 @@ fn window_bar(
     ctx: &egui::Context,
     state: &mut UiState,
     files: &mut FileMenu,
+    offers: usize,
     rects: &mut OverlayRects,
 ) {
     egui::Area::new(egui::Id::new("window_bar"))
@@ -275,6 +280,19 @@ fn window_bar(
                         .icon()
                         .button(ui, WINDOW_ICON, Sizes::BUTTON_PAD, on)
                         .on_hover_text(tr(w.label()));
+                    // The offers waiting, a number in the corner of their button (T-325).
+                    if w == UiWindow::Offers && offers > 0 {
+                        let at = r.rect.right_top() + egui::vec2(-5.0, 5.0);
+                        let p = ui.painter();
+                        p.circle_filled(at, 7.0, egui::Color32::from_rgb(200, 60, 50));
+                        p.text(
+                            at,
+                            egui::Align2::CENTER_CENTER,
+                            offers.to_string(),
+                            egui::FontId::proportional(10.0),
+                            egui::Color32::WHITE,
+                        );
+                    }
                     rects.windows.push((w, r.rect));
                     if r.clicked() {
                         toggle_window(state, files, w);

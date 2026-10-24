@@ -1,10 +1,11 @@
-// T-324 skeleton of the grey deals (architecture/corruption.md §4); T-325 adds the other five
-// and the effects. Numbers: tune later.
+// Grey deals (architecture/corruption.md §4, T-325). Numbers: tune later.
 Deal((
     id: "kickback",
     name: "Contract kickback",
-    text: "A builder offers a cut of the next contracts: construction 20% cheaper for a while.",
+    text: "A builder offers a cut of the next contracts: everything you build is 20% cheaper for 30 days.",
     corruption: 4.0,
     evidence: 2.0,
     answer_days: 5,
+    build_discount: 0.2,
+    days: 30,
 ))

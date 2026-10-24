@@ -1,0 +1,10 @@
+// Grey deals (architecture/corruption.md §4, T-325). Numbers: tune later.
+Deal((
+    id: "land",
+    name: "Land for friends",
+    text: "City land sold cheap to the right people. Good money now, but a lot of it to explain later.",
+    corruption: 12.0,
+    evidence: 4.0,
+    answer_days: 5,
+    money: 40000,
+))

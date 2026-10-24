@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use cp_content::ContentDb;
 use cp_core::SimLimits;
-use cp_economy::{CorruptionState, DealTarget, Evidence, Offer};
+use cp_economy::{ActiveDeal, CorruptionState, DealTarget, Evidence, Offer};
 use cp_save::{load_into_runner, save_runner};
 use cp_sim::SimRunner;
 use cp_terrain::Terrain;
@@ -54,7 +54,16 @@ fn the_corruption_state_survives_a_save_and_runs_on_alike() {
         captured: vec![station],
         next_offer_day: 12,
         scandal_cooldown_until: 4,
+        active: vec![ActiveDeal {
+            deal: "factory_emissions".into(),
+            target: Some(DealTarget::Building(station)),
+            accepted_day: 1,
+            until_day: 0,
+        }],
     };
+    a.world_mut()
+        .resource_mut::<cp_transit::Tourists>()
+        .boost_pct = 15;
     a.tick_once();
     let bytes = save_runner(&a, content.content_hash(), "flatlands").unwrap();
     let mut b = runner(&content, &bytes);

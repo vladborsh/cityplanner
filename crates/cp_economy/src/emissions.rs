@@ -195,6 +195,9 @@ pub struct EmissionInputs<'a> {
     pub buildings: &'a BuildingGrid,
     pub net: &'a NetGraph,
     pub load: &'a SegmentLoad,
+    /// Extra pollution share of the buildings a grey deal targets, sorted by id (T-325,
+    /// `CorruptionState::pollution_boost`).
+    pub boost: &'a [(BuildingId, f32)],
 }
 
 /// Calls `f(cell, distance from its centre to p)` for every cell whose centre is within
@@ -270,7 +273,7 @@ impl Emissions {
             grid.clear();
             grid.resize(SIDE_E * SIDE_E, 0.0);
         }
-        for (_, b) in i.buildings.iter() {
+        for (id, b) in i.buildings.iter() {
             if b.state != BuildingState::Active {
                 continue;
             }
@@ -278,7 +281,12 @@ impl Emissions {
             let (pollution, loud) = emission_of(def, db);
             if let Some(e) = pollution {
                 let r = f32::from(e.radius_cells) * ZONE_CELL_M;
-                cells_near(b.pos, r, |c, d| src[c] += e.strength * (1.0 - d / r));
+                let boost = i
+                    .boost
+                    .binary_search_by_key(&id, |&(b, _)| b)
+                    .map_or(1.0, |k| 1.0 + i.boost[k].1);
+                let s = e.strength * boost;
+                cells_near(b.pos, r, |c, d| src[c] += s * (1.0 - d / r));
             }
             // A specialised building adds its own noise (T-196), the louder counting.
             let spec = def

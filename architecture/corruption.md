@@ -152,4 +152,19 @@ corruption_decay_day`, `trust` идёт к потолку на `trust_recover_da
 Ручки — `balance.ron` `corruption`; сделки — `ContentFile::Deal` (`DealDef`: id, name, text, corruption,
 evidence, answer_days), пока одна `deals/kickback.ron`. Сейв: формат 68 (или следующий свободный при посадке).
 
+**Сделано в T-325 (2026-10-24):** 6 сделок в `assets/content/deals/` (`kickback`, `developer`, `factory_emissions`,
+`land`, `casino`, `sponsor`); `DealDef` получил цель `target: DealWants::{City, DistrictWith(policy), Industry,
+Commercial}` и эффекты `money`, `weekly`, `trust`, `lift_policy`, `build_discount`, `pollution`, `crime` + `radius_m`,
+`tourists`, `days` (0 — навсегда). Входящие: с `deals_population` (1000; ручка в `balance.ron`, а не веха
+`milestones.ron` — вехи несут разблокировки), раз в `offer_days / (1 + доп. жители / offer_pop_step + offer_land ×
+средняя стоимость земли / 100)` дней (не реже `offer_days_min`), не больше `inbox_max`, одна сделка одного вида за
+раз, цель и сделка — из подпотока сим-RNG `CORRUPTION_STREAM`. `SimCommand::Corruption(CorruptionCommand::{Accept,
+Decline} { deal })` (по id сделки). Принять: `C`, улика, деньги, доверие, снятие политики района, `ActiveDeal` в
+`CorruptionState::active` на `days`. Эффекты: еженедельная выплата (каждый 7-й день от принятия), скидка на стройку
+(диспетчер команд возвращает долю стоимости Net/Zone/Building/Utility/Transit), загрязнение цели
+(`EmissionInputs::boost`), криминал в радиусе цели (`update_police`), туристы (`Tourists::boost_pct`). Отказ/истёк —
+`trust −= decline_trust` на краю «Клановая власть» (бонус от Прессы — T-327). UI: окно «Предложения» (кнопка в
+верхнем ряду со счётчиком), карточка «Сейчас / Потом / Риск». Не сделано: подсветка цели на карте; сделки ×2 / ≈0 на
+краях оси — T-327. Сейв: формат 72.
+
 Порядок: T-324 → T-325 → T-326 → T-327 → T-328 (T-328 можно начать после T-325).

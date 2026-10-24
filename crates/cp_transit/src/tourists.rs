@@ -56,6 +56,9 @@ pub struct Tourists {
     pub customers: BTreeMap<BuildingId, u32>,
     /// Visits that arrived since the week began.
     pub visits_week: u32,
+    /// Percent more tourists the running grey deals bring (a casino, `architecture/corruption.md`
+    /// §4); set by `cp_economy::update_corruption` once a day.
+    pub boost_pct: u16,
     /// Arrivals at a building and the tick the visit ends, since `cp_park` last looked (T-224);
     /// transient, drained every tick.
     #[serde(skip)]
@@ -64,7 +67,10 @@ pub struct Tourists {
 
 impl Tourists {
     pub fn is_empty(&self) -> bool {
-        self.visits.is_empty() && self.customers.is_empty() && self.visits_week == 0
+        self.visits.is_empty()
+            && self.customers.is_empty()
+            && self.visits_week == 0
+            && self.boost_pct == 0
     }
 }
 
@@ -215,7 +221,7 @@ pub fn run_tourists(
             1.0 + p.value
         }
         _ => 1.0,
-    };
+    } + f32::from(tourists.boost_pct) / 100.0;
     let per_tick =
         (balance.tourism_base + balance.tourism_per_com * shop_count as f32 + unique_per_day)
             * promotion

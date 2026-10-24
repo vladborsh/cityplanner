@@ -60,6 +60,7 @@ fn step(
             buildings: grid,
             net,
             load,
+            boost: &[],
         });
     }
 }
@@ -178,4 +179,21 @@ fn a_loaded_highway_is_loud_and_a_loaded_street_is_not() {
     step(&mut e, &db, &BuildingGrid::default(), &net, &load, 1);
     assert_eq!(e.noise_at(Vec2::new(5000.0, 4000.0)), 0.0);
     assert!(e.noise_at(Vec2::new(5000.0, 6000.0)) > 30.0);
+}
+
+#[test]
+fn a_grey_deal_makes_its_factory_pollute_more() {
+    let db = db();
+    let mut grid = BuildingGrid::default();
+    let id = place(&mut grid, &db, "ind_1", at_cell(0.0));
+    let mut e = Emissions::default();
+    e.update(&EmissionInputs {
+        content: &db,
+        buildings: &grid,
+        net: &NetGraph::default(),
+        load: &SegmentLoad::default(),
+        boost: &[(id, 0.5)],
+    });
+    let src = e.pollution_src[cell_of(at_cell(0.0))];
+    assert!((src - 75.0).abs() < 1e-3, "50 × 1.5: {src}");
 }

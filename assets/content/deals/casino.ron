@@ -1,0 +1,14 @@
+// Grey deals (architecture/corruption.md §4, T-325). Numbers: tune later.
+Deal((
+    id: "casino",
+    name: "Casino",
+    text: "A casino opens in the back of this shop: a weekly cut and more tourists, and more crime around it.",
+    corruption: 6.0,
+    evidence: 2.0,
+    answer_days: 6,
+    target: Commercial,
+    weekly: 2000,
+    crime: 0.5,
+    radius_m: 200.0,
+    tourists: 0.15,
+))

@@ -40,6 +40,7 @@ pub mod lines;
 pub mod menus;
 pub mod metrics;
 pub mod milestone;
+pub mod offers;
 pub mod overlays_panel;
 pub mod palette;
 pub mod panels;
@@ -302,6 +303,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         services::overlay_services_panel(ctx, view, context, overlays_panel::width(st));
         lines::lines_window(ctx, &mut st.lines_open, view, &mut st.lines, outbox);
         policies::city_policies_window(ctx, &mut st.policies_open, view, outbox);
+        offers::offers_window(ctx, &mut st.offers_open, view, outbox);
     }
     if state.debug_open {
         debug::debug_window(

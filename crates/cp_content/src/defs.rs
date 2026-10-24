@@ -75,8 +75,9 @@ pub enum ContentFile {
 }
 
 /// A grey deal the city is offered (`assets/content/deals/*.ron`, `architecture/corruption.md`
-/// §4). T-324 holds only what the corruption state needs (the corruption it adds, the evidence
-/// it leaves, how long an offer stands); the effects come with T-325. // tune later
+/// §4). Accepting it pays off now (`money`, `trust`, a lifted policy) and for `days` after
+/// (`weekly`, `build_discount`, `pollution`, `crime`, `tourists`), adds `corruption` and leaves
+/// `evidence`. Money is in whole currency units. // tune later
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DealDef {
@@ -90,6 +91,64 @@ pub struct DealDef {
     pub evidence: f32,
     /// Game days to answer; an offer left that long is declined.
     pub answer_days: u16,
+    /// What the offer is about; an offer that finds no such target does not come.
+    #[serde(default)]
+    pub target: DealWants,
+    /// Paid into the treasury on accepting.
+    #[serde(default)]
+    pub money: i64,
+    /// Paid every 7 game days while the deal runs.
+    #[serde(default)]
+    pub weekly: i64,
+    /// Trust points on accepting (negative: lost).
+    #[serde(default)]
+    pub trust: f32,
+    /// Switches the target district's policy (`DealWants::DistrictWith`) off.
+    #[serde(default)]
+    pub lift_policy: bool,
+    /// Share off the cost of building while the deal runs.
+    #[serde(default)]
+    pub build_discount: f32,
+    /// Extra share of the pollution the target building gives off (0.5: ×1.5).
+    #[serde(default)]
+    pub pollution: f32,
+    /// Extra share of the crime that grows within `radius_m` of the target building.
+    #[serde(default)]
+    pub crime: f32,
+    #[serde(default)]
+    pub radius_m: f32,
+    /// Extra share of the tourist flow while the deal runs.
+    #[serde(default)]
+    pub tourists: f32,
+    /// How long the lasting effects run, game days; 0: for good.
+    #[serde(default)]
+    pub days: u16,
+}
+
+impl DealDef {
+    /// Whether accepting leaves something that runs on (an active deal).
+    pub fn lasts(&self) -> bool {
+        self.weekly != 0
+            || self.lift_policy
+            || self.build_discount > 0.0
+            || self.pollution > 0.0
+            || self.crime > 0.0
+            || self.tourists > 0.0
+    }
+}
+
+/// What a deal is about (§4). Append-only.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DealWants {
+    /// The whole city.
+    #[default]
+    City,
+    /// A district that has this policy switched on.
+    DistrictWith(PolicyKind),
+    /// An active industrial building.
+    Industry,
+    /// An active commercial building.
+    Commercial,
 }
 
 /// A cargo of the industrial chains (T-208): how it is shown and what it is worth outside the
@@ -608,11 +667,24 @@ pub struct CorruptionKnobs {
     /// `1 - tax_loss_max` at no trust.
     pub tax_trust_full: f32,
     pub tax_loss_max: f32,
+    /// Offers start coming once the city has this many residents (T-325, §4).
+    pub deals_population: f32,
+    /// Game days between two offers at `deals_population`; more residents and dearer land
+    /// make it shorter: `offer_days / (1 + extra residents / offer_pop_step + offer_land ×
+    /// mean land value / 100)`, never below `offer_days_min`.
+    pub offer_days: f32,
+    pub offer_days_min: f32,
+    pub offer_pop_step: f32,
+    pub offer_land: f32,
+    /// Offers waiting in the inbox at most.
+    pub inbox_max: f32,
+    /// Trust a declined (or lapsed) offer costs on the clan edge.
+    pub decline_trust: f32,
 }
 
 impl CorruptionKnobs {
     /// Every knob, in declaration order: for validation and the content hash.
-    pub fn knobs(&self) -> [f32; 8] {
+    pub fn knobs(&self) -> [f32; 15] {
         [
             self.trust_start,
             self.trust_recover_day,
@@ -622,6 +694,13 @@ impl CorruptionKnobs {
             self.edge,
             self.tax_trust_full,
             self.tax_loss_max,
+            self.deals_population,
+            self.offer_days,
+            self.offer_days_min,
+            self.offer_pop_step,
+            self.offer_land,
+            self.inbox_max,
+            self.decline_trust,
         ]
     }
 }
@@ -637,6 +716,13 @@ impl Default for CorruptionKnobs {
             edge: 40.0,
             tax_trust_full: 50.0,
             tax_loss_max: 0.2,
+            deals_population: 1000.0,
+            offer_days: 12.0,
+            offer_days_min: 3.0,
+            offer_pop_step: 5000.0,
+            offer_land: 1.0,
+            inbox_max: 3.0,
+            decline_trust: 1.0,
         }
     }
 }

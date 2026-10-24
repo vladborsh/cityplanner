@@ -1,0 +1,10 @@
+// Grey deals (architecture/corruption.md §4, T-325). Numbers: tune later.
+Deal((
+    id: "sponsor",
+    name: "Campaign sponsor",
+    text: "A sponsor pays for a campaign that makes the city love its mayor. The money trail is long.",
+    corruption: 5.0,
+    evidence: 4.0,
+    answer_days: 5,
+    trust: 8.0,
+))

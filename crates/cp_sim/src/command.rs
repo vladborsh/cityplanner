@@ -38,6 +38,8 @@ pub enum SimCommand {
     /// unique building, a park): those under the new road are demolished with the grown ones.
     /// Plain [`SimCommand::Net`] demolishes only grown buildings and refuses over a protected one.
     NetDemolish(NetCommand),
+    /// T-325: the answer to a grey deal in the inbox (`architecture/corruption.md` §4).
+    Corruption(cp_economy::CorruptionCommand),
     // M3+: ...
 }
 
@@ -96,6 +98,7 @@ impl SimCommand {
             | SimCommand::Transit(_)
             | SimCommand::Industry(_)
             | SimCommand::Park(_)
+            | SimCommand::Corruption(_)
             | SimCommand::Debug(_) => {}
         }
     }
@@ -123,7 +126,30 @@ fn rejected_or_funds(
 /// only if it succeeds. The cost returned is what the command charged minus the refund.
 fn apply(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandError> {
     let refund = refund_of(world, cmd);
-    let cost = apply_command(world, cmd)?;
+    let mut cost = apply_command(world, cmd)?;
+    // A grey deal's build discount (T-325, `architecture/corruption.md` §4): the share off
+    // what building charged goes back to the treasury.
+    if cost.0 > 0
+        && matches!(
+            cmd,
+            SimCommand::Net(_)
+                | SimCommand::NetDemolish(_)
+                | SimCommand::Zone(_)
+                | SimCommand::Building(_)
+                | SimCommand::Utility(_)
+                | SimCommand::Transit(_)
+        )
+        && let (Some(c), Some(content)) = (
+            world.get_resource::<cp_economy::CorruptionState>(),
+            world.get_resource::<cp_content::SimContent>(),
+        )
+    {
+        let off = Cost((cost.0 as f64 * f64::from(c.build_discount(&content.0))).round() as i64);
+        if off.0 > 0 {
+            cp_core::treasury::charge_funds(world, Cost(-off.0));
+            cost = Cost(cost.0 - off.0);
+        }
+    }
     if refund.0 > 0 {
         cp_core::treasury::charge_funds(world, Cost(-refund.0));
         if let Some(mut booked) = world.get_resource_mut::<cp_economy::DemolitionRefunds>() {
@@ -238,6 +264,9 @@ fn apply_command(world: &mut World, cmd: &SimCommand) -> Result<Cost, CommandErr
         }
         SimCommand::Park(c) => cp_park::apply(world, c).map_err(|e| rejected("park", e)),
         SimCommand::Debug(c) => apply_debug(world, c),
+        SimCommand::Corruption(c) => {
+            cp_economy::corruption::apply(world, c).map_err(|e| rejected("corruption", e))
+        }
     }
 }
 

@@ -111,6 +111,11 @@ fn content_keys() -> BTreeSet<String> {
     keys.extend(db.roads().map(|(_, d)| d.name.clone()));
     keys.extend(db.policies().iter().map(|d| d.name.clone()));
     keys.extend(db.milestones().iter().map(|d| d.name.clone()));
+    keys.extend(
+        db.deals()
+            .iter()
+            .flat_map(|d| [d.name.clone(), d.text.clone()]),
+    );
     // Labels of enums the UI shows through `tr(x.label())`.
     keys.extend(
         cp_render::Overlay::ALL
