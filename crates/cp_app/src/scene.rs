@@ -987,8 +987,8 @@ pub fn build_industry_books(sim: &mut SimRunner) -> Vec<Vec2> {
     use cp_content::CargoKind;
     use cp_core::Cost;
     let at = build_industry(sim);
-    let mut books = sim.world_mut().resource_mut::<cp_industry::AreaBooks>();
-    let mut last = cp_industry::AreaBook::default();
+    let mut books = sim.world_mut().resource_mut::<cp_sim::AreaBooks>();
+    let mut last = cp_sim::AreaBook::default();
     last.produced.insert(CargoKind::Crops, 140.0);
     last.produced.insert(CargoKind::Flour, 90.0);
     last.exports = Cost::scaled(1260.0, 1.0);

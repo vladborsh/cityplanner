@@ -24,7 +24,6 @@ cp_utility.workspace = true
 cp_save.workspace = true
 cp_zone.workspace = true
 cp_district.workspace = true
-cp_industry.workspace = true
 cp_content.workspace = true
 cp_service.workspace = true
 serde.workspace = true
