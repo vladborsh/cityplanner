@@ -1,0 +1,15 @@
+// Silhouette of a parking building (T-331): a plain massing until the lot gets its own shape.
+Style((
+    id: "service_parking_lot",
+    massing: Box,
+    roof: Flat,
+    floors: (1, 1),
+    footprint_fill: (0.92, 0.92),
+    palette: (
+        walls: [(0.34, 0.35, 0.38), (0.30, 0.31, 0.34)],
+        roof: [(0.28, 0.29, 0.32)],
+        trim: [(0.20, 0.50, 0.85)],
+        glass: (0.30, 0.34, 0.40),
+    ),
+    facade: Industrial,
+))

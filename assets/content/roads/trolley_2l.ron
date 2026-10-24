@@ -17,6 +17,7 @@ Road((
     upkeep_per_m_week: 0.06,
     // A transit-only road: no zoning (its homes would have no way for a car).
     allows_zoning: false,
+    kerb_parking: true,
     lamp_spacing_m: 26.0,
     crosswalks: true,
     rank: 2,

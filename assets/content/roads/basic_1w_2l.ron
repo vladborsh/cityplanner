@@ -16,6 +16,7 @@ Road((
     cost_per_m: 6.0,
     upkeep_per_m_week: 0.06,
     allows_zoning: true,
+    kerb_parking: true,
     lamp_spacing_m: 28.0,
     crosswalks: true,
     pole_spacing_m: 40.0,

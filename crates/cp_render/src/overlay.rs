@@ -153,6 +153,7 @@ impl Overlay {
             | ServiceKind::Landmark
             | ServiceKind::Industry
             | ServiceKind::Park
+            | ServiceKind::Parking
             | ServiceKind::Cargo => {
                 return None;
             }

@@ -94,6 +94,7 @@ icons! {
     RailTrack => "rail_track",
     FlipRoad => "flip_road",
     StreetTrees => "street_trees",
+    Parking => "parking",
     Junctions => "junctions",
     BusStop => "bus_stop",
     Building => "building",

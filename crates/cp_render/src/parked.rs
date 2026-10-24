@@ -13,7 +13,8 @@ use cp_content::ContentDb;
 use cp_core::curve::to_xz;
 use cp_net::{JunctionGeometry, NetGraph, SegmentId};
 
-use crate::road::parking::{BaySide, Bays, SLOT_LEN, bays};
+pub use crate::road::parking::DRIVEWAY_W;
+use crate::road::parking::{BaySide, Bays, bays};
 
 /// At most this share of the places of a busy street holds a car.
 const FULLEST: f32 = 0.85;
@@ -21,11 +22,6 @@ const FULLEST: f32 = 0.85;
 const NEAR_M: f32 = 24.0;
 /// Pedestrians are drawn this far beyond a bay's outer edge, metres.
 const NUDGE_CLEAR: f32 = 0.35;
-/// A parking place whose centre is closer than this to a yard gate overlaps the 3 m driveway
-/// (half a place plus half the driveway), metres.
-const GATE_CLEAR: f32 = SLOT_LEN * 0.5 + DRIVEWAY_W * 0.5;
-/// Width of a driveway across the sidewalk, metres.
-pub const DRIVEWAY_W: f32 = 3.0;
 /// Cell of the [`BayIndex`] grid, metres.
 const INDEX_CELL: f32 = 32.0;
 
@@ -65,48 +61,6 @@ fn hash(seg: SegmentId, side: usize, slot: usize) -> u64 {
     x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     x ^ (x >> 31)
-}
-
-/// What a bay side of a segment sees of its buildings: `(arc length on the trimmed curve,
-/// occupancy, is a service building, arc length of its yard gate)`, ascending by arc length.
-type Fronts = Vec<(f32, f32, bool, Option<f32>)>;
-
-/// The buildings of each (segment, side), by their access point, on the trimmed curves.
-fn fronts(
-    graph: &NetGraph,
-    geo: &JunctionGeometry,
-    db: &ContentDb,
-    buildings: &BuildingGrid,
-) -> std::collections::BTreeMap<(SegmentId, i8), Fronts> {
-    let mut out: std::collections::BTreeMap<(SegmentId, i8), Fronts> = Default::default();
-    for (_, b) in buildings.iter() {
-        let Some(access) = b.access() else { continue };
-        let (Some(seg), Some(curve)) = (
-            graph.segment(access.segment),
-            geo.trimmed_curve(graph, access.segment),
-        ) else {
-            continue;
-        };
-        let at = to_xz(seg.curve.point(access.t.clamp(0.0, 1.0)));
-        let (t, _) = curve.nearest_xz(at);
-        let s = curve.arc_table().t_to_s(t);
-        let tangent = to_xz(curve.tangent(t)).normalize_or_zero();
-        let left = Vec2::new(tangent.y, -tangent.x);
-        let side = if (b.pos - at).dot(left) >= 0.0 { 1 } else { -1 };
-        let service = db.building(b.def).service.is_some();
-        // The yard gate (§25.1): cars pull out there, so no place is kept in front of it.
-        let gate = b.portals(graph).map(|p| {
-            let (t, _) = curve.nearest_xz(p.drive);
-            curve.arc_table().t_to_s(t)
-        });
-        out.entry((access.segment, side))
-            .or_default()
-            .push((s, occupancy(db, b), service, gate));
-    }
-    for v in out.values_mut() {
-        v.sort_by(|a, c| a.0.total_cmp(&c.0));
-    }
-    out
 }
 
 /// One bay side of a segment, sampled for [`BayIndex`]: points of the street's axis along the
@@ -251,11 +205,12 @@ pub fn parked_cars(
     db: &ContentDb,
     buildings: &BuildingGrid,
 ) -> (Vec<ParkedCar>, BayIndex) {
-    let fronts = fronts(graph, geo, db, buildings);
+    // The same fronts and the same blocked places as the sim's kerb places (T-331).
+    let fronts = cp_traffic::kerb_fronts(graph, geo, db, buildings);
     let mut cars = Vec::new();
     let mut index = BayIndex::default();
     for (id, _) in graph.segments() {
-        let Some(Bays { sides, a, b }) = bays(graph, geo, id) else {
+        let Some(Bays { sides, a, b }) = bays(graph, geo, db, id) else {
             continue;
         };
         let Some(curve) = geo.trimmed_curve(graph, id) else {
@@ -283,29 +238,20 @@ pub fn parked_cars(
                     .collect(),
                 side: *side,
             });
-            let near: &[(f32, f32, bool, Option<f32>)] = fronts
+            let near: &[cp_traffic::Front] = fronts
                 .get(&(id, side.sign as i8))
                 .map_or(&[], |v| v.as_slice());
+            // How busy each front is (render only).
+            let busy_of =
+                |f: &cp_traffic::Front| buildings.get(f.building).map_or(0.0, |b| occupancy(db, b));
             for (slot, s) in bay.slots().into_iter().enumerate() {
-                // In front of a service building's access the place stays free.
-                if near
-                    .iter()
-                    .any(|&(fs, _, service, _)| service && (fs - s).abs() < SLOT_LEN)
-                {
-                    continue;
-                }
-                // Nor across a yard gate: a place that overlaps its driveway is left free
-                // (§25.1; TL 2026-10-24: only the overlap, so streets keep their cars).
-                if near
-                    .iter()
-                    .any(|&(.., gate)| gate.is_some_and(|g| (g - s).abs() < GATE_CLEAR))
-                {
+                if cp_traffic::slot_blocked(near, s) {
                     continue;
                 }
                 let busy = near
                     .iter()
-                    .filter(|f| (f.0 - s).abs() <= NEAR_M)
-                    .map(|f| f.1)
+                    .filter(|f| (f.s - s).abs() <= NEAR_M)
+                    .map(&busy_of)
                     .fold(0.0f32, f32::max);
                 let h = hash(id, k, slot);
                 let roll = (h & 0xFFFF) as f32 / 65535.0;

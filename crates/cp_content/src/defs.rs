@@ -585,6 +585,11 @@ pub struct Balance {
     pub import_transport_fee: f32,
     /// T-323 (§24): planting street trees costs this per metre of segment; removing is free.
     pub trees_cost_per_m: f32,
+    /// Parking places a home brings (T-331, §18.3): per household of a low-density building and
+    /// of a high-density one; and per job of a workplace. Rounded up per building. // tune later
+    pub parking_per_home_low: f32,
+    pub parking_per_home_high: f32,
+    pub parking_per_job: f32,
     /// Weekly upkeep of a tree row per metre (added to the road upkeep, scaled by the Roads budget).
     pub trees_upkeep_per_m_week: f32,
     /// Largest noise cut of a tree row, `0..=1`, at the row; falls to 0 at the radius.
@@ -1104,6 +1109,9 @@ impl Balance {
             self.industry_import_share,
             self.import_transport_fee,
             self.trees_cost_per_m,
+            self.parking_per_home_low,
+            self.parking_per_home_high,
+            self.parking_per_job,
             self.trees_upkeep_per_m_week,
             self.tree_noise_cut,
             self.tree_pollution_cut,
@@ -1298,6 +1306,9 @@ impl Default for Balance {
             industry_import_share: 0.25,
             import_transport_fee: 20.0,
             trees_cost_per_m: 3.0,
+            parking_per_home_low: 1.0,
+            parking_per_home_high: 0.3,
+            parking_per_job: 0.15,
             trees_upkeep_per_m_week: 0.02,
             tree_noise_cut: 0.4,
             tree_pollution_cut: 0.25,
@@ -1530,6 +1541,10 @@ pub struct RoadDef {
     pub cost_per_m: f32,
     pub upkeep_per_m_week: f32,
     pub allows_zoning: bool,
+    /// Cars may park along the kerb (T-331, §18.3): the kerb-side bay of the sidewalk, places
+    /// `SLOT_LEN` apart (`cp_net::kerb`). Not a lane.
+    #[serde(default)]
+    pub kerb_parking: bool,
     /// Street lamps on both sidewalks every this many metres (T-233, render only); 0 = none.
     #[serde(default)]
     pub lamp_spacing_m: f32,
@@ -1824,6 +1839,10 @@ pub struct BuildingDef {
     /// The role in a park (T-223); `None` for every other building.
     #[serde(default)]
     pub park: Option<ParkSpec>,
+    /// Parking places of this building (T-331, §18.3): a yard, a lot, a garage. `0` takes the
+    /// rule of the balance from `households` and `jobs` (`cp_traffic::building_places`).
+    #[serde(default)]
+    pub parking: u16,
     /// The pollution and noise this building makes (T-300, §11.1), when they are its own;
     /// `None` takes the zone or industry rule of the balance (`cp_economy::emission_of`), and
     /// `Some` with both empty silences the building.

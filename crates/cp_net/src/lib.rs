@@ -6,6 +6,7 @@ pub mod connections;
 pub mod control;
 pub mod graph;
 pub mod junction;
+pub mod kerb;
 pub mod model;
 pub mod plan;
 pub mod reach;

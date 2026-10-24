@@ -719,7 +719,7 @@ fn extrude_or_rings(
         start: arm_of(geo, seg.start, id, true),
         end: arm_of(geo, seg.end, id, false),
     };
-    let bays = parking::bays(graph, geo, id);
+    let bays = parking::bays(graph, geo, db, id);
     let (bands, parts) = with_bays(cross_section(graph, seg, markings), bays.as_ref());
     let has_dashes = bands.iter().any(|b| b.dashed);
     // Chevrons (near mesh, one-way roads): `(lo, hi)` is the carriageway they replace.

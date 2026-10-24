@@ -130,6 +130,7 @@ impl SimRunner {
         world.init_resource::<cp_citizen::TripBook>();
         world.init_resource::<cp_citizen::RoutineSettings>();
         world.init_resource::<cp_traffic::Agents>();
+        world.init_resource::<cp_traffic::ParkingIndex>();
         world.init_resource::<cp_traffic::TripTimes>();
         world.init_resource::<cp_transit::CargoHubs>();
         world.init_resource::<cp_traffic::ServiceRuns>();
@@ -400,6 +401,7 @@ impl SimRunner {
         // Agents move first, then freshly planned trips ask for routes.
         schedule.add_systems(
             (
+                cp_traffic::update_parking_index,
                 cp_traffic::move_agents,
                 cp_traffic::advance_service_runs,
                 // Buses: stops reached, next legs and new departures (T-156).

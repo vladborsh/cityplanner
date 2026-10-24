@@ -55,6 +55,8 @@ pub enum ServiceKind {
     Cargo = 14,
     /// Appended in T-247 (M7): post offices and the sorting facility.
     Post = 15,
+    /// Appended in T-331 (§18.3): parking lots and garages.
+    Parking = 16,
 }
 
 /// Where a service building may stand (checked by `cp_building::validate_placement`).

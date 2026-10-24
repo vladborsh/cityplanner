@@ -94,6 +94,7 @@ pub fn kind_icon(kind: ServiceKind) -> Icon {
         ServiceKind::Park => Icon::Parks,
         ServiceKind::Cargo => Icon::Buildings,
         ServiceKind::Post => Icon::CategoryPost,
+        ServiceKind::Parking => Icon::Parking,
     }
 }
 

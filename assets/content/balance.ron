@@ -324,6 +324,10 @@ Balance((
     // pollution cut at the row (fraction, falls to 0 at tree_radius_cells of 8 m); land value
     // bonus at the row and its reach in metres. // tune later
     trees_cost_per_m: 3.0,
+    // Parking (T-331, §18.3): places per household (low / high density) and per job. // tune later
+    parking_per_home_low: 1.0,
+    parking_per_home_high: 0.3,
+    parking_per_job: 0.15,
     trees_upkeep_per_m_week: 0.02,
     tree_noise_cut: 0.4,
     tree_pollution_cut: 0.25,

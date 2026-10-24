@@ -1,0 +1,16 @@
+// T-331 (§18.3). Numbers: tune later.
+Building((
+    id: "parking_lot",
+    name: "Parking lot",
+    zone: Industrial,
+    level: 1,
+    lot: (3, 3),
+    jobs: (1, 0, 0, 0),
+    tax_base: 0.0,
+    cost: 6000.0,
+    upkeep_week: 120.0,
+    styles: ["service_parking_lot"],
+    service: Some("parking_lot"),
+    icon: "parking_lot",
+    parking: 60,
+))

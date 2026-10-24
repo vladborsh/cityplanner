@@ -139,8 +139,9 @@ fn dashes_appear_only_between_same_direction_lanes() {
             .near
             .triangle_count()
     };
-    // The 4-lane road has dashed dividers on top of the common structure.
-    assert!(tris("medium_4l") > 2 * tris("basic_2l"));
+    // The 4-lane road has dashed dividers on top of the common structure (the basic street has
+    // the kerb bays, the avenue none, T-331).
+    assert!(tris("medium_4l") > tris("basic_2l"));
 }
 
 #[test]
@@ -1616,7 +1617,8 @@ fn bays_line_local_streets_a_cell_clear_of_junctions_and_not_wide_roads() {
     let v = w.view();
     let mut seen = 0;
     for (id, seg) in v.net.segments() {
-        let b = parking::bays(&v.net, &v.junctions, id).expect("a local street has bays");
+        let b =
+            parking::bays(&v.net, &v.junctions, &w.content, id).expect("a local street has bays");
         assert_eq!(b.sides.len(), 2, "both sidewalks");
         let length = v
             .junctions
@@ -1639,7 +1641,7 @@ fn bays_line_local_streets_a_cell_clear_of_junctions_and_not_wide_roads() {
         assert!(
             v.net
                 .segments()
-                .all(|(id, _)| parking::bays(&v.net, &v.junctions, id).is_none()),
+                .all(|(id, _)| parking::bays(&v.net, &v.junctions, &w.content, id).is_none()),
             "{road}: no bays"
         );
     }
@@ -1651,7 +1653,7 @@ fn lamps_and_poles_stand_beside_the_bays_not_in_them() {
     cross(&mut w, "basic_2l");
     let v = w.view();
     for (id, _) in v.net.segments() {
-        let b = parking::bays(&v.net, &v.junctions, id).unwrap();
+        let b = parking::bays(&v.net, &v.junctions, &w.content, id).unwrap();
         let f =
             furniture::build_segment_furniture(&v.net, &v.junctions, &w.terrain, &w.content, id)
                 .expect("lamps");
@@ -1742,7 +1744,7 @@ fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
             );
         }
     }
-    let b = parking::bays(&v.net, &v.junctions, id).unwrap();
+    let b = parking::bays(&v.net, &v.junctions, &w.content, id).unwrap();
     let side = b.sides.iter().find(|s| s.sign > 0.0).unwrap();
     let (lo, hi) = side.range();
     let st = lateral(
@@ -1760,6 +1762,16 @@ fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
             "a car before the fire station"
         );
     }
+    // T-331: a car is drawn only in a place the sim counts (same bays, same blocked places).
+    let mut places = cp_traffic::ParkingIndex::default();
+    places.rebuild(&v.net, &v.junctions, db, &grid);
+    let left = places.kerb(id, cp_traffic::side_index(1.0)).cap as usize;
+    assert!(
+        cars.len() <= left,
+        "{} cars drawn, {left} places counted",
+        cars.len()
+    );
+    assert!(places.kerb(id, cp_traffic::side_index(-1.0)).cap > 0);
     // The same city, the same cars; a pedestrian walking the bay is drawn beyond it.
     assert_eq!(
         crate::parked::parked_cars(&v.net, &v.junctions, db, &grid).0,
@@ -2041,7 +2053,7 @@ fn a_driveway_runs_from_the_yard_gate_over_the_sidewalk_to_the_kerb() {
         let kerb = (slab[2] + slab[3]) * 0.5;
         assert!(Vec2::new(gate.x, gate.z).distance(p.drive) < 1e-3);
         assert!((slab[0].distance(slab[1]) - crate::parked::DRIVEWAY_W).abs() < 1e-3);
-        let b = parking::bays(&v.net, &v.junctions, id).unwrap();
+        let b = parking::bays(&v.net, &v.junctions, &w.content, id).unwrap();
         let bay = b.sides.iter().find(|s| s.sign == side).unwrap();
         let (lat, _) = lateral(&v, id, Vec2::new(kerb.x, kerb.z));
         assert!(

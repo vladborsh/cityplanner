@@ -973,6 +973,13 @@ impl ContentDb {
                 ),
                 ("import_transport_fee", &[b.import_transport_fee][..], true),
                 ("trees_cost_per_m", &[b.trees_cost_per_m][..], true),
+                ("parking_per_home_low", &[b.parking_per_home_low][..], true),
+                (
+                    "parking_per_home_high",
+                    &[b.parking_per_home_high][..],
+                    true,
+                ),
+                ("parking_per_job", &[b.parking_per_job][..], true),
                 (
                     "trees_upkeep_per_m_week",
                     &[b.trees_upkeep_per_m_week][..],
@@ -1402,8 +1409,9 @@ mod tests {
     /// Re-pinned for T-078: `RoadDef.class` is part of the hashed encoding (it was
     /// 4353786976156915245 before); and for T-161: `RoadDef.tunnel` and `RoadDef.ground` are
     /// (it was 3543843456772795126 before); and for T-240: `RoadDef.crosswalks` is (it was
-    /// 13796235179118518103 before).
-    const PINNED_SINGLE_ROAD_HASH: u64 = 6551891125851038056;
+    /// 13796235179118518103 before); and for T-331: `RoadDef.kerb_parking` is (it was
+    /// 6551891125851038056 before).
+    const PINNED_SINGLE_ROAD_HASH: u64 = 17473560746154753205;
 
     const ROAD: &str = r#"Road((id: "r", name: "R", width: 10.0,
         lanes: [(kind: Car, dir: Forward, width: 3.0, offset: 0.0)],

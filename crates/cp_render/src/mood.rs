@@ -62,7 +62,14 @@ fn felt(kind: ServiceKind) -> Option<bool> {
         | K::Park
         | K::Post => Some(true),
         K::Garbage => Some(false),
-        K::Water | K::Power | K::Roads | K::Sewage | K::Transit | K::Industry | K::Cargo => None,
+        K::Water
+        | K::Power
+        | K::Roads
+        | K::Sewage
+        | K::Transit
+        | K::Industry
+        | K::Cargo
+        | K::Parking => None,
     }
 }
 

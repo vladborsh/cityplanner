@@ -11,6 +11,7 @@ pub mod drive;
 pub mod graph;
 pub mod heavy;
 pub mod mode;
+pub mod parking;
 pub mod pose;
 pub mod runs;
 pub mod service;
@@ -32,6 +33,10 @@ pub use graph::{
 };
 pub use heavy::HeavyBan;
 pub use mode::{ALWAYS_WALK_M, TripTimes, mode_by_time, track_trip_times, way_times};
+pub use parking::{
+    Front, PARKING_PERIOD, ParkingIndex, Place, building_places, kerb_fronts, side_index,
+    slot_blocked, update_parking_index,
+};
 pub use pose::{
     AgentFrame, AgentKey, CROSSING_ROOM_M, DOOR_WALK_M, PULL_M, PedestrianPose, Portal,
     VehiclePose, agent_key,
