@@ -12,6 +12,7 @@ use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, ToolState, UiCapture};
 
 pub mod advisor;
+pub mod axis;
 pub mod band_legend;
 pub mod budget;
 pub mod buildings;
@@ -305,6 +306,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         lines::lines_window(ctx, &mut st.lines_open, view, &mut st.lines, outbox);
         policies::city_policies_window(ctx, &mut st.policies_open, view, outbox);
         offers::offers_window(ctx, &mut st.offers_open, view, outbox);
+        axis::axis_window(ctx, &mut st.axis_open, view);
     }
     if state.debug_open {
         debug::debug_window(

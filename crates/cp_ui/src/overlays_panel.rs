@@ -82,11 +82,13 @@ pub struct OverlayRects {
     /// The settings button and (while its menu is open) the always-day switch.
     pub settings: Option<egui::Rect>,
     pub always_day: Option<egui::Rect>,
+    /// The "Reset hints" button of the settings menu (T-328).
+    pub reset_hints: Option<egui::Rect>,
 }
 
 /// The windows of the row, in order (one row in the top bar): money, charts, services, lines; policies,
 /// saves, debug; then the settings button follows.
-const ROW: [UiWindow; 10] = [
+const ROW: [UiWindow; 11] = [
     UiWindow::Budget,
     UiWindow::Metrics,
     UiWindow::Jobs,
@@ -94,6 +96,7 @@ const ROW: [UiWindow; 10] = [
     UiWindow::Lines,
     UiWindow::Policies,
     UiWindow::Offers,
+    UiWindow::Axis,
     UiWindow::Saves,
     UiWindow::Demand,
     UiWindow::Debug,
@@ -120,6 +123,7 @@ fn window_on(state: &UiState, files: &FileMenu, w: UiWindow) -> bool {
         UiWindow::Lines => state.lines_open,
         UiWindow::Policies => state.policies_open,
         UiWindow::Offers => state.offers_open,
+        UiWindow::Axis => state.axis_open,
         UiWindow::Saves => files.open,
         UiWindow::Debug => state.debug_open,
     }
@@ -136,6 +140,7 @@ fn toggle_window(state: &mut UiState, files: &mut FileMenu, w: UiWindow) {
         UiWindow::Lines => state.lines_open = !on,
         UiWindow::Policies => state.policies_open = !on,
         UiWindow::Offers => state.offers_open = !on,
+        UiWindow::Axis => state.axis_open = !on,
         UiWindow::Saves => toggle_saves(files),
         UiWindow::Debug => state.debug_open = !on,
     }
@@ -381,6 +386,15 @@ fn settings_popup(
                     prefs.advisor,
                     egui::Checkbox::new(&mut prefs.advisor_problems_only, tr("Only problems")),
                 );
+                // T-328: the one-time hints come again.
+                let reset = ui.add_enabled(
+                    !prefs.hints_seen.is_empty(),
+                    egui::Button::new(tr("Reset hints")),
+                );
+                rects.reset_hints = Some(reset.rect);
+                if reset.clicked() {
+                    prefs.hints_seen.clear();
+                }
             });
         });
     let rect = area.response.rect;
@@ -564,6 +578,25 @@ mod tests {
         assert!(!rig.state.jobs_open);
         rig.click(rect.center());
         assert!(rig.state.jobs_open);
+    }
+
+    /// T-328: the axis button opens the corruption axis; "Reset hints" empties the seen hints.
+    #[test]
+    fn the_axis_button_opens_its_window_and_the_settings_reset_the_hints() {
+        let mut rig = Rig::new();
+        let (_, rect) = *rig
+            .rects
+            .windows
+            .iter()
+            .find(|(w, _)| *w == UiWindow::Axis)
+            .expect("an axis button");
+        rig.click(rect.center());
+        assert!(rig.state.axis_open);
+        rig.state.prefs.hints_seen.insert("hint_deals".into());
+        rig.click(rig.rects.settings.unwrap().center());
+        rig.frame(vec![]);
+        rig.click(rig.rects.reset_hints.unwrap().center());
+        assert!(rig.state.prefs.hints_seen.is_empty());
     }
 
     #[test]

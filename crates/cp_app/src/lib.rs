@@ -180,6 +180,7 @@ impl Plugin for GamePlugin {
                         mute: settings.audio.mute,
                     },
                     lang,
+                    hints_seen: settings.hints_seen.clone(),
                 },
                 grading_open: self.grading_panel,
                 overlays_collapsed: self.fold_overlays,

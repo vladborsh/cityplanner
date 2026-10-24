@@ -120,6 +120,9 @@ pub struct Settings {
     pub grading: GradingPrefs,
     /// The language of the UI, `"en"` or `"ru"` (T-284); English until the user decides.
     pub language: String,
+    /// The one-time hints of the corruption axis already shown (T-328): the player's, not the
+    /// city's.
+    pub hints_seen: std::collections::BTreeSet<String>,
 }
 
 impl Default for Settings {
@@ -137,6 +140,7 @@ impl Default for Settings {
             audio: crate::audio::AudioSettings::default(),
             grading: GradingPrefs::default(),
             language: cp_locale::Lang::En.code().to_string(),
+            hints_seen: Default::default(),
         }
     }
 }
@@ -252,6 +256,7 @@ impl Settings {
             },
             grading: GradingPrefs::from(*grading),
             language: ui.prefs.lang.code().to_string(),
+            hints_seen: ui.prefs.hints_seen.clone(),
         }
     }
 }
@@ -331,6 +336,7 @@ mod tests {
                 mute: true,
             },
             language: "ru".to_string(),
+            hints_seen: ["hint_deals".to_string()].into(),
             grading: GradingPrefs {
                 contrast: 1.2,
                 temperature: -0.1,

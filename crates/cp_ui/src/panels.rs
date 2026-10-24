@@ -51,6 +51,9 @@ pub struct Prefs {
     pub audio: AudioPrefs,
     /// The language of the UI (T-284); [`cp_locale::set_lang`] follows it.
     pub lang: cp_locale::Lang,
+    /// The one-time hints the player has seen (T-328, `architecture/corruption.md` §10): kept in
+    /// the player's settings, not in the save; "Reset hints" empties it.
+    pub hints_seen: std::collections::BTreeSet<String>,
 }
 
 impl Default for Prefs {
@@ -62,6 +65,7 @@ impl Default for Prefs {
             advisor_problems_only: false,
             audio: AudioPrefs::default(),
             lang: cp_locale::Lang::En,
+            hints_seen: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -100,6 +104,8 @@ pub struct UiState {
     pub policies_open: bool,
     /// The grey deals' inbox (T-325).
     pub offers_open: bool,
+    /// The corruption axis (T-328).
+    pub axis_open: bool,
     /// Name drafts of the Lines window.
     pub lines: crate::lines::LinesDraft,
     /// The list of districts or areas of the open tray category is open (T-317).
@@ -197,6 +203,8 @@ pub enum UiWindow {
     /// The grey deals' inbox (T-325); appended.
     Offers,
     Debug,
+    /// The corruption axis (T-328); appended.
+    Axis,
 }
 
 impl UiState {
@@ -212,13 +220,14 @@ impl UiState {
             UiWindow::Policies => self.policies_open = true,
             UiWindow::Offers => self.offers_open = true,
             UiWindow::Debug => self.debug_open = true,
+            UiWindow::Axis => self.axis_open = true,
             UiWindow::Saves => {}
         }
     }
 }
 
 impl UiWindow {
-    pub const ALL: [UiWindow; 10] = [
+    pub const ALL: [UiWindow; 11] = [
         UiWindow::Budget,
         UiWindow::Demand,
         UiWindow::Metrics,
@@ -229,6 +238,7 @@ impl UiWindow {
         UiWindow::Saves,
         UiWindow::Debug,
         UiWindow::Offers,
+        UiWindow::Axis,
     ];
 
     /// The window named `name` (lower case: `budget`, `jobs`, ...), for the `--open` flag.
@@ -242,6 +252,7 @@ impl UiWindow {
             "lines" => UiWindow::Lines,
             "policies" => UiWindow::Policies,
             "offers" => UiWindow::Offers,
+            "axis" => UiWindow::Axis,
             "saves" => UiWindow::Saves,
             "debug" => UiWindow::Debug,
             _ => return None,
@@ -258,6 +269,7 @@ impl UiWindow {
             UiWindow::Lines => "Lines",
             UiWindow::Policies => "City policies",
             UiWindow::Offers => "Offers",
+            UiWindow::Axis => "Corruption axis",
             UiWindow::Saves => "Save / Load",
             UiWindow::Debug => "Debug (F3)",
         }
@@ -273,6 +285,7 @@ impl UiWindow {
             UiWindow::Lines => Icon::Lines,
             UiWindow::Policies => Icon::DistrictTabPolicies,
             UiWindow::Offers => Icon::OverlayMail,
+            UiWindow::Axis => Icon::WindowAxis,
             UiWindow::Saves => Icon::Saves,
             UiWindow::Debug => Icon::Debug,
         }

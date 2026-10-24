@@ -938,6 +938,19 @@ impl Advisor {
     /// is not on cooldown (a critical one replaces a milder snackbar). `problems_only` drops
     /// the info advice.
     pub fn observe(&mut self, view: &SimView, now: f64, problems_only: bool) {
+        self.observe_hinted(view, now, problems_only, None);
+    }
+
+    /// [`observe`](Self::observe), and the one-time hints of the corruption axis (T-328,
+    /// [`crate::axis::hints`]): when no problem is due, the first hint not in `hints_seen` comes
+    /// (also with `problems_only`, the hints explain the rules) and joins it.
+    pub fn observe_hinted(
+        &mut self,
+        view: &SimView,
+        now: f64,
+        problems_only: bool,
+        hints_seen: Option<&mut std::collections::BTreeSet<String>>,
+    ) {
         let hour = view.tick.0 * 24 / TICKS_PER_DAY;
         if self.last_hour == Some(hour) {
             return;
@@ -1002,6 +1015,18 @@ impl Advisor {
             })
         } else {
             all.into_iter().next()
+        };
+        let advice = match hints_seen {
+            Some(seen) if on_screen.is_none() && advice.as_ref().is_none_or(|a| !problem(a)) => {
+                let hint = crate::axis::hints(view)
+                    .into_iter()
+                    .find(|h| !seen.contains(h.id));
+                if let Some(h) = &hint {
+                    seen.insert(h.id.to_string());
+                }
+                hint.or(advice)
+            }
+            _ => advice,
         };
         if let Some(advice) = advice {
             self.last.insert(advice.id, (day, advice.count));
@@ -1154,7 +1179,13 @@ pub fn advisor_snackbar(
         advisor.close();
         return;
     }
-    advisor.observe(view, now, state.prefs.advisor_problems_only);
+    let prefs = &mut state.prefs;
+    advisor.observe_hinted(
+        view,
+        now,
+        prefs.advisor_problems_only,
+        Some(&mut prefs.hints_seen),
+    );
     let Some(advice) = advisor.current(now).cloned() else {
         return;
     };
@@ -1424,6 +1455,68 @@ mod tests {
         adv.observe(&at_tick(v.clone(), 0), 0.0, true);
         assert!(adv.current(0.1).is_none(), "a new problem waits");
         adv
+    }
+
+    /// T-328: a corruption hint comes once when its trigger holds, is remembered in the
+    /// player's `hints_seen`, and comes again only after a reset.
+    #[test]
+    fn a_hint_comes_once_and_again_after_a_reset() {
+        let v = view_with(|sim| {
+            let mut c = sim
+                .world_mut()
+                .resource_mut::<cp_economy::CorruptionState>();
+            c.scandals.push(cp_economy::Scandal {
+                deal: "land".into(),
+                day: 1,
+                weight: 1.0,
+                trust: 1.0,
+                fine: 1,
+                undone: false,
+            });
+        });
+        let mut seen = std::collections::BTreeSet::new();
+        let mut adv = Advisor::default();
+        adv.observe_hinted(
+            &at_tick(v.clone(), hour_tick(1)),
+            0.0,
+            true,
+            Some(&mut seen),
+        );
+        assert_eq!(adv.current(0.1).map(|a| a.id), Some("hint_scandal"));
+        assert_eq!(
+            adv.current(0.1).unwrap().action,
+            Some(Action::Window(crate::panels::UiWindow::Offers))
+        );
+        assert!(seen.contains("hint_scandal"));
+        adv.close();
+        adv.observe_hinted(
+            &at_tick(v.clone(), hour_tick(2)),
+            1.0,
+            true,
+            Some(&mut seen),
+        );
+        assert_ne!(
+            adv.current(1.1).map(|a| a.id),
+            Some("hint_scandal"),
+            "a seen hint does not come again (the next unseen one may)"
+        );
+        adv.close();
+        seen.clear();
+        adv.observe_hinted(
+            &at_tick(v.clone(), hour_tick(3)),
+            2.0,
+            true,
+            Some(&mut seen),
+        );
+        assert_eq!(
+            adv.current(2.1).map(|a| a.id),
+            Some("hint_scandal"),
+            "after the reset"
+        );
+        // Without the player's hints (the tests, a hidden run) nothing comes.
+        let mut plain = Advisor::default();
+        plain.observe(&at_tick(v, hour_tick(1)), 0.0, false);
+        assert!(plain.current(0.1).is_none());
     }
 
     #[test]

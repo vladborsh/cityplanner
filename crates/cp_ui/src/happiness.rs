@@ -28,8 +28,9 @@ pub fn action(c: Complaint) -> Option<Action> {
         Complaint::Dead => Action::Overlay(Overlay::Deathcare),
         Complaint::Jobless => Action::Window(UiWindow::Jobs),
         Complaint::NoPark => Action::Panel(Category::Parks),
-        // The trust screen comes with T-328; until then the economy window.
-        Complaint::HighTax | Complaint::Distrust => Action::Window(UiWindow::Budget),
+        Complaint::HighTax => Action::Window(UiWindow::Budget),
+        // T-328: trust is on the corruption axis.
+        Complaint::Distrust => Action::Window(UiWindow::Axis),
     })
 }
 
@@ -50,7 +51,8 @@ pub fn action_hint(c: Complaint) -> &'static str {
         Complaint::Dead => "Show deathcare coverage",
         Complaint::Jobless => "Open Jobs & education",
         Complaint::NoPark => "Open Parks",
-        Complaint::HighTax | Complaint::Distrust => "Open the budget",
+        Complaint::HighTax => "Open the budget",
+        Complaint::Distrust => "Open the corruption axis",
     }
 }
 

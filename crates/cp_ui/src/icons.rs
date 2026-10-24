@@ -157,6 +157,7 @@ icons! {
     Lines => "lines",
     Saves => "saves",
     Debug => "debug",
+    WindowAxis => "window_axis",
     Info => "info",
 }
 
