@@ -95,8 +95,9 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     check_file("m1-small.sav");
     let mut sim = loaded(&fixture("m1-small.sav"));
     let people = sim.world().resource::<CitizenGrid>().citizen_count();
-    // T-300 + T-301 (format 60): the fixture holds 2479 residents.
-    assert!((2400..=3000).contains(&people), "{people} residents");
+    // T-300 + T-301 (format 60): the fixture held 2479 residents. T-318b (format 70): 2131,
+    // move-in follows the home index and unhappy homes lose households.
+    assert!((2000..=3000).contains(&people), "{people} residents");
     // T-300b: re-recorded (was 0xb1ab96f8db47fe52), format 61 and the water dirt.
     // T-305: re-recorded (was 0x422e143067e61039), 70 km/h avenues and reach by time.
     // T-302b: re-recorded (was 0x50e9581a7e49d1a5), format 63, the tram content.
