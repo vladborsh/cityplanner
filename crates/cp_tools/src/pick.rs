@@ -208,6 +208,7 @@ mod tests {
             pos: Vec2::new(x, z),
             portal: None,
             room: 0.0,
+            bike: false,
         }
     }
 

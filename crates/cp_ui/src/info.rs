@@ -424,6 +424,7 @@ mod tests {
             wellbeing: 50,
             thinks: None,
             has_car: true,
+            has_bike: false,
             location: cp_citizen::Location::Home,
             household_size: 3,
             home: Some((home, "House".into())),

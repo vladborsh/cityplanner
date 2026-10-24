@@ -57,6 +57,8 @@ pub struct InstanceData {
 pub struct AgentInstances {
     pub vehicles: [[Vec<InstanceData>; 2]; VEHICLE_KINDS],
     pub pedestrians: [Vec<InstanceData>; 2],
+    /// Cyclists (T-322) by `[detail]`: the bicycle mesh.
+    pub bikes: [Vec<InstanceData>; 2],
 }
 
 impl AgentInstances {
@@ -67,6 +69,8 @@ impl AgentInstances {
         }
         self.pedestrians[0].clear();
         self.pedestrians[1].clear();
+        self.bikes[0].clear();
+        self.bikes[1].clear();
     }
 
     pub fn vehicle_count(&self) -> usize {
@@ -75,6 +79,10 @@ impl AgentInstances {
 
     pub fn pedestrian_count(&self) -> usize {
         self.pedestrians.iter().map(Vec::len).sum()
+    }
+
+    pub fn bike_count(&self) -> usize {
+        self.bikes.iter().map(Vec::len).sum()
     }
 }
 
@@ -608,6 +616,15 @@ pub fn build_pedestrians(
             };
             let phase = (along / STRIDE + unit(hash, 16)) * std::f32::consts::TAU;
             let height = 1.65 + 0.2 * unit(hash, 48);
+            if c.bike {
+                // T-322: a rider on a bicycle; no stride, the wheels carry it.
+                out.bikes[detail].push(InstanceData {
+                    pos_yaw: [pos.x, y, pos.y, yaw],
+                    scale_phase: [1.0, height / 1.8, 1.0, 0.0],
+                    color_sway: [col[0], col[1], col[2], 0.0],
+                });
+                return;
+            }
             out.pedestrians[detail].push(InstanceData {
                 pos_yaw: [pos.x, y, pos.y, yaw],
                 scale_phase: [1.0, height / 1.8, 1.0, phase],

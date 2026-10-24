@@ -166,18 +166,20 @@ pub fn sections(view: &SimView) -> Vec<Section> {
             row("Vehicles", t.vehicles),
             row("Pedestrians", t.pedestrians),
             row("Trips in transit", t.trips_in_transit),
+            // T-322: and by bike (`trips_by_mode[3]`, `trip_minutes[2]`).
             row(
-                "By mode (foot / car / transit)",
+                "By mode (foot / bike / car / transit)",
                 format!(
-                    "{} / {} / {}",
-                    t.trips_by_mode[0], t.trips_by_mode[1], t.trips_by_mode[2]
+                    "{} / {} / {} / {}",
+                    t.trips_by_mode[0], t.trips_by_mode[3], t.trips_by_mode[1], t.trips_by_mode[2]
                 ),
             ),
             row(
-                "Average trip (foot / car)",
+                "Average trip (foot / bike / car)",
                 trf!(
-                    "{foot} / {car} min",
+                    "{foot} / {bike} / {car} min",
                     foot = format!("{:.1}", t.trip_minutes[0]),
+                    bike = format!("{:.1}", t.trip_minutes[2]),
                     car = format!("{:.1}", t.trip_minutes[1])
                 ),
             ),
@@ -651,6 +653,11 @@ mod tests {
         assert_eq!(value(&secs, "Population", "Residents"), "0");
         assert_eq!(value(&secs, "Population", "Unemployment"), "0.0 %");
         assert_eq!(value(&secs, "Traffic", "Vehicles"), "0");
+        // T-322: four modes, the bike second.
+        assert_eq!(
+            value(&secs, "Traffic", "By mode (foot / bike / car / transit)"),
+            "0 / 0 / 0 / 0"
+        );
         assert_eq!(value(&secs, "Buildings", "Total"), "0");
         assert_eq!(
             value(&secs, "Utilities", "Water"),

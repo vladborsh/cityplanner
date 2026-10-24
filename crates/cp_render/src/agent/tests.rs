@@ -34,6 +34,7 @@ fn ped(key: u64, x: f32) -> PedestrianPose {
         pos: Vec2::new(x, 5.0),
         portal: None,
         room: 0.0,
+        bike: false,
     }
 }
 
@@ -342,6 +343,7 @@ fn walker(key: u64, x: f32, room: f32, portal: Option<cp_sim::Portal>) -> Pedest
         pos: Vec2::new(x, 0.0),
         portal,
         room,
+        bike: false,
     }
 }
 
@@ -558,4 +560,42 @@ fn cars_waiting_in_a_yard_queue_three_deep() {
     let next = [yard_car(3, 0.0, true), yard_car(4, 0.0, true)];
     let mid = vehicle_positions(&cur, &next, 0.5, &looks, one_yard);
     assert!((mid[0].1.z - (z(1) + z(3)) / 2.0).abs() < 1e-4);
+}
+
+/// T-322 (§23.6 item 7): a cyclist is drawn with the bicycle mesh, a walker with the walker's;
+/// the bicycle stands on two wheels and is longer than it is wide.
+#[test]
+fn a_cyclist_is_drawn_on_a_bicycle() {
+    let cur = [
+        ped(1, 1.0),
+        PedestrianPose {
+            bike: true,
+            ..ped(2, 3.0)
+        },
+    ];
+    let mut out = AgentInstances::default();
+    build_pedestrians(
+        &cur,
+        &cur,
+        |_, _| 0.0,
+        |_, _, lo, hi| (lo, hi),
+        |_| None,
+        &cull(50.0, 1.0),
+        &mut Headings::default(),
+        &mut out,
+    );
+    assert_eq!((out.pedestrians[0].len(), out.bikes[0].len()), (1, 1));
+    assert_eq!(out.bikes[0][0].color_sway[3], 0.0, "no stride");
+    let m = crate::agent::mesh::bike_mesh(0);
+    let (lo, hi) = m
+        .positions
+        .iter()
+        .fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), p| {
+            (
+                [lo[0].min(p[0]), lo[1].min(p[1]), lo[2].min(p[2])],
+                [hi[0].max(p[0]), hi[1].max(p[1]), hi[2].max(p[2])],
+            )
+        });
+    assert!(lo[1].abs() < 0.05, "on the ground: {lo:?}");
+    assert!(hi[2] - lo[2] > 1.5 && hi[0] - lo[0] < 0.6, "{lo:?} {hi:?}");
 }

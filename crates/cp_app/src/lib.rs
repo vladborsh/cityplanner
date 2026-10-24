@@ -461,6 +461,11 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         // From the south over the user's two rows of blocks of `--scene zone-grid` (BUG-098).
         "zone-grid" => (Vec3::new(c, 330.0, c + 380.0), Vec3::new(c, 0.0, c - 10.0)),
         "bike-lanes" => (Vec3::new(c, 420.0, c + 480.0), Vec3::new(c, 0.0, c)),
+        // Down the second street from the south, its bike lane under the camera (T-322b).
+        "bike-lanes-close" => (
+            Vec3::new(c - 30.0, 18.0, c - 144.0 + 36.0),
+            Vec3::new(c - 60.0, 0.0, c - 144.0),
+        ),
         "zones" => (
             Vec3::new(c - 10.0, 420.0, c + 330.0),
             Vec3::new(c - 10.0, 0.0, c + 150.0),

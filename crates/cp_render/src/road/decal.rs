@@ -85,6 +85,8 @@ pub fn plan(
         let (text, pitch) = match kind {
             LaneKind::Bus => ("BUS", 0.6),
             LaneKind::Trolley => ("TROLLEY", 0.45),
+            // T-322 (§23.3): a bicycle, its wheels one behind the other along the lane.
+            LaneKind::Bike => (BICYCLE, 0.3),
             _ => continue,
         };
         let rows = text.len() * (ROWS + 1) - 1;
@@ -113,9 +115,16 @@ pub fn plan(
     out
 }
 
-/// The 5x7 raster of a letter, top row first.
+/// The "word" of a bike lane: one pictogram ([`glyph`] `b'%'`).
+pub const BICYCLE: &str = "%";
+
+/// The 5x7 raster of a letter, top row first; `%` is the bicycle of a bike lane (two wheels
+/// and the frame between them, seen from the side and laid along the lane).
 fn glyph(c: u8) -> Option<&'static [&'static str; ROWS]> {
     Some(match c {
+        b'%' => &[
+            ".###.", "#...#", ".###.", "..#..", ".###.", "#...#", ".###.",
+        ],
         b'B' => &[
             "####.", "#...#", "#...#", "####.", "#...#", "#...#", "####.",
         ],
@@ -204,6 +213,22 @@ mod tests {
         // The gap row between two letters is blank; the U below the B starts with 5 pixels.
         assert_eq!(lit(&f, f.rows() - 1 - 7), 0);
         assert_eq!(lit(&f, f.rows() - 1 - 8), 2);
+    }
+
+    /// T-322: a bike lane shows a bicycle every 40 m: two wheels of 8 pixels, a frame of 1.
+    #[test]
+    fn a_bike_lane_shows_a_bicycle_every_40_m() {
+        let lanes = [(LaneKind::Bike, LaneDir::Forward, -4.25, 1.5)];
+        let d = plan(&lanes, 100.0, &[]);
+        assert_eq!(d.len(), 2);
+        assert_eq!(d[0].text, BICYCLE);
+        let n: usize = (0..d[0].rows())
+            .map(|j| d[0].columns(j).iter().filter(|c| c.2).count())
+            .sum();
+        assert_eq!(n, 17);
+        for c in d[0].columns(1) {
+            assert!(c.0 >= -5.0 && c.1 <= -3.5);
+        }
     }
 
     #[test]

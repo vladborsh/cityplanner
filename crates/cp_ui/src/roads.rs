@@ -15,12 +15,23 @@ use crate::icons;
 use crate::style::Sizes;
 use crate::tile::{TileIcon, tool_tile};
 
+/// The tab and section a road type is shown under: its class, or the Bike section for every
+/// road with a bike lane (T-322, §23.3), the last.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RoadTab {
+    Class(RoadClass),
+    Bike,
+}
+
 /// What a card shows, taken from the road definition.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Card {
     pub id: RoadDefId,
     pub name: String,
     pub class: RoadClass,
+    pub tab: RoadTab,
+    /// A path of bike lanes only (T-322).
+    pub bike_path: bool,
     /// Car lanes.
     pub lanes: usize,
     pub speed_kmh: f32,
@@ -40,6 +51,13 @@ pub fn cards(content: &ContentDb) -> Vec<Card> {
             id,
             name: def.name.clone(),
             class: def.class,
+            tab: if def.lanes.iter().any(|l| l.kind == LaneKind::Bike) {
+                RoadTab::Bike
+            } else {
+                RoadTab::Class(def.class)
+            },
+            bike_path: def.class == RoadClass::Path
+                && def.lanes.iter().all(|l| l.kind == LaneKind::Bike),
             lanes: def.lanes.iter().filter(|l| l.kind == LaneKind::Car).count(),
             speed_kmh: def.speed_kmh,
             one_way: def.is_one_way(),
@@ -48,12 +66,18 @@ pub fn cards(content: &ContentDb) -> Vec<Card> {
             allows_zoning: def.allows_zoning,
         })
         .collect();
-    out.sort_by(|a, b| (a.class, a.lanes, &a.name).cmp(&(b.class, b.lanes, &b.name)));
+    out.sort_by(|a, b| (a.tab, a.class, a.lanes, &a.name).cmp(&(b.tab, b.class, b.lanes, &b.name)));
     out
 }
 
 /// "2 lanes · 50 km/h · one-way".
 pub fn card_summary(c: &Card) -> String {
+    if c.bike_path {
+        return trf!(
+            "Bike lanes only · {speed} km/h",
+            speed = format!("{:.0}", c.speed_kmh)
+        );
+    }
     if c.class == RoadClass::Path {
         return trf!(
             "Pedestrian lanes only · {speed} km/h",
@@ -72,14 +96,15 @@ pub fn card_summary(c: &Card) -> String {
     out
 }
 
-fn class_label(class: RoadClass) -> &'static str {
-    match class {
-        RoadClass::Local => "Local",
-        RoadClass::Collector => "Collector",
-        RoadClass::Arterial => "Arterial",
-        RoadClass::Highway => "Highway",
-        RoadClass::Rail => "Rail",
-        RoadClass::Path => "Paths",
+fn class_label(tab: RoadTab) -> &'static str {
+    match tab {
+        RoadTab::Class(RoadClass::Local) => "Local",
+        RoadTab::Class(RoadClass::Collector) => "Collector",
+        RoadTab::Class(RoadClass::Arterial) => "Arterial",
+        RoadTab::Class(RoadClass::Highway) => "Highway",
+        RoadTab::Class(RoadClass::Rail) => "Rail",
+        RoadTab::Class(RoadClass::Path) => "Paths",
+        RoadTab::Bike => "Bike",
     }
 }
 
@@ -165,22 +190,23 @@ pub fn path_tile(ui: &mut egui::Ui, content: &ContentDb, tools: &mut ToolState) 
     }
 }
 
-/// The road classes that have a tile, in order: the tabs of the Roads tray.
-pub fn tab_classes(content: &ContentDb) -> Vec<RoadClass> {
-    let mut classes: Vec<RoadClass> = cards(content).iter().map(|c| c.class).collect();
-    classes.dedup();
-    classes
+/// The tabs that have a tile, in order: the tabs of the Roads tray.
+pub fn tab_classes(content: &ContentDb) -> Vec<RoadTab> {
+    let mut tabs: Vec<RoadTab> = cards(content).iter().map(|c| c.tab).collect();
+    tabs.dedup();
+    tabs
 }
 
-/// The tab of a road class (T-317: Small / Medium / Large / Highway, and the footpaths).
-pub fn tab_label(class: RoadClass) -> String {
-    tr(match class {
-        RoadClass::Local => "Small",
-        RoadClass::Collector => "Medium",
-        RoadClass::Arterial => "Large",
-        RoadClass::Highway => "Highway",
-        RoadClass::Rail => "Rail",
-        RoadClass::Path => "Paths",
+/// The label of a tab (T-317: Small / Medium / Large / Highway, the footpaths; T-322: Bike).
+pub fn tab_label(tab: RoadTab) -> String {
+    tr(match tab {
+        RoadTab::Class(RoadClass::Local) => "Small",
+        RoadTab::Class(RoadClass::Collector) => "Medium",
+        RoadTab::Class(RoadClass::Arterial) => "Large",
+        RoadTab::Class(RoadClass::Highway) => "Highway",
+        RoadTab::Class(RoadClass::Rail) => "Rail",
+        RoadTab::Class(RoadClass::Path) => "Paths",
+        RoadTab::Bike => "Bike",
     })
 }
 
@@ -215,7 +241,7 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
         }
         let tiles = |ui: &mut egui::Ui| {
             ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
-            for c in cards.iter().filter(|c| c.class == class) {
+            for c in cards.iter().filter(|c| c.tab == class) {
                 if road_tile_widget(ui, content, widest, c, tools.road.road == Some(c.id)).clicked()
                 {
                     tools.road.road = Some(c.id);
@@ -316,6 +342,23 @@ mod tests {
     use crate::testutil::{click, frame_texts, input};
     use crate::tile::take_rects;
 
+    /// T-322 (§23.6 item 7): the three bike roads are a Bike tab of their own, the last, with
+    /// the bike path said to be bike lanes only.
+    #[test]
+    fn the_bike_roads_are_a_bike_tab_of_three_tiles() {
+        let db = content();
+        assert_eq!(tab_classes(&db).last(), Some(&RoadTab::Bike));
+        let bikes: Vec<String> = cards(&db)
+            .into_iter()
+            .filter(|c| c.tab == RoadTab::Bike)
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(bikes, ["Bike street", "Bike collector", "Bike path"]);
+        let path = cards(&db).into_iter().find(|c| c.bike_path).unwrap();
+        assert!(card_summary(&path).starts_with("Bike lanes only"));
+        assert_eq!(tab_label(RoadTab::Bike), "Bike");
+    }
+
     fn content() -> ContentDb {
         ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content")).unwrap()
     }
@@ -388,7 +431,7 @@ mod tests {
         assert_eq!(names, expect);
         // One header per class.
         let classes = {
-            let mut c: Vec<_> = cards.iter().map(|c| c.class).collect();
+            let mut c: Vec<_> = cards.iter().map(|c| c.tab).collect();
             c.dedup();
             c
         };

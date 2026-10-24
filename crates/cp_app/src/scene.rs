@@ -1565,8 +1565,8 @@ pub fn build_zone_grid(sim: &mut SimRunner) {
 }
 
 /// Bike lanes (T-322, §23.6 item 5): a 6 x 6 lattice of 96 m local streets whose four middle
-/// streets each way have bike lanes (`basic_2l_bike`); the rest are plain `basic_2l`. Zone it
-/// dense and compare with `--scene zone-grid`-like plain streets for the A/B.
+/// streets each way have bike lanes (`basic_2l_bike`); the rest are plain `basic_2l`. 120 demo
+/// cyclists ride it (T-322b); `--cam bike-lanes-close` looks down a bike street.
 pub const BIKE_LANES: &str = "bike-lanes";
 
 /// Builds the [`BIKE_LANES`] scene through the normal commands; returns its south-west corner.
@@ -1599,8 +1599,20 @@ pub fn build_bike_lanes(sim: &mut SimRunner) -> Vec2 {
         );
         sim.tick_once();
     }
-    sim.world_mut()
-        .insert_resource(cp_core::time::SimSpeed::Pause);
+    // Demo cyclists on the lattice (T-322b), a few seconds under way.
+    sim.tick_once();
+    let speeds = cp_traffic::BikeSpeeds::of_balance(db.balance());
+    sim.world_mut().resource_scope(
+        |w, mut agents: bevy::ecs::change_detection::Mut<cp_traffic::Agents>| {
+            let graph = w.resource::<cp_traffic::PathNetwork>().graph().clone();
+            let net = w.resource::<cp_net::NetGraph>();
+            let rng = w.resource::<cp_core::SimRng>();
+            cp_traffic::demo::add_cyclists(&mut agents, &graph, net, 120, speeds, rng, 0);
+        },
+    );
+    for _ in 0..40 {
+        sim.tick_once();
+    }
     o
 }
 

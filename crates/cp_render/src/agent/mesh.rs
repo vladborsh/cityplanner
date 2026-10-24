@@ -409,6 +409,48 @@ pub fn pedestrian_mesh(detail: usize) -> MeshData {
     m
 }
 
+/// Mesh of a cyclist at a detail level (T-322, §23.3): a rider (shirt in the instance colour)
+/// leaning forward over a bicycle of two ring wheels and a top tube, facing +z; at detail 1 one
+/// long box. Nothing swings (the colour alphas are plain).
+pub fn bike_mesh(detail: usize) -> MeshData {
+    const FRAME: [f32; 4] = [0.15, 0.17, 0.20, 0.0];
+    const TROUSERS: [f32; 4] = [0.10, 0.12, 0.2, 0.0];
+    let mut m = MeshData::default();
+    if detail > 0 {
+        push_box(&mut m, [-0.2, 0.0, -0.8], [0.2, 1.6, 0.8], TINT);
+        return m;
+    }
+    // Wheels: rings of eight blocks, radius 0.33, at z = -0.55 and +0.55.
+    for zc in [-0.55f32, 0.55] {
+        for k in 0..8 {
+            let a = k as f32 / 8.0 * std::f32::consts::TAU;
+            let (y, z) = (0.34 + 0.3 * a.sin(), zc + 0.3 * a.cos());
+            push_box(
+                &mut m,
+                [-0.03, y - 0.06, z - 0.06],
+                [0.03, y + 0.06, z + 0.06],
+                TYRE,
+            );
+        }
+    }
+    // The frame: top tube, seat post with the saddle, the fork with the bar.
+    push_box(&mut m, [-0.03, 0.62, -0.45], [0.03, 0.68, 0.45], FRAME);
+    push_box(&mut m, [-0.03, 0.34, -0.3], [0.03, 0.9, -0.24], FRAME);
+    push_box(&mut m, [-0.09, 0.9, -0.36], [0.09, 0.95, -0.18], FRAME);
+    push_box(&mut m, [-0.03, 0.34, 0.5], [0.03, 1.05, 0.56], FRAME);
+    push_box(&mut m, [-0.25, 1.02, 0.46], [0.25, 1.06, 0.56], FRAME);
+    // The rider: legs to the pedals, a torso leaning forward, arms to the bar, the head.
+    for (x0, x1) in [(-0.16, -0.02), (0.02, 0.16)] {
+        push_box(&mut m, [x0, 0.3, -0.25], [x1, 0.95, -0.1], TROUSERS);
+    }
+    push_box(&mut m, [-0.2, 0.95, -0.3], [0.2, 1.5, 0.0], TINT);
+    for (x0, x1) in [(-0.27, -0.19), (0.19, 0.27)] {
+        push_box(&mut m, [x0, 1.05, -0.05], [x1, 1.15, 0.5], TINT);
+    }
+    push_box(&mut m, [-0.1, 1.5, -0.12], [0.1, 1.75, 0.08], SKIN);
+    m
+}
+
 /// A bus shelter in metres (T-158): x along the road, z away from it (the open side faces the
 /// road, z < 0), origin on the pavement at the stop. Colours are fixed (alpha 0).
 pub fn shelter_mesh() -> MeshData {

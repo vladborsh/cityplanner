@@ -94,3 +94,46 @@ pub fn top_up(
     }
     added + ped_added
 }
+
+/// Adds `n` routed cyclists (T-322, the `bike-lanes` scene): rides of the shipped speeds between
+/// random points, from the `batch`-th sub-stream of `rng`. Returns how many were added.
+pub fn add_cyclists(
+    agents: &mut Agents,
+    graph: &PathGraph,
+    net: &NetGraph,
+    n: usize,
+    speeds: crate::astar::BikeSpeeds,
+    rng: &SimRng,
+    batch: u64,
+) -> usize {
+    let ids: Vec<_> = net.segments().map(|(id, s)| (id, s.length)).collect();
+    if ids.is_empty() {
+        return 0;
+    }
+    let mut rng = rng.fork(DEMO_STREAM ^ 0xB1C7, Tick(batch));
+    let mut added = 0;
+    for _ in 0..n * 4 {
+        if added == n {
+            break;
+        }
+        let (a, b) = (random_access(&mut rng, &ids), random_access(&mut rng, &ids));
+        let class = crate::astar::WalkClass::Bike(speeds);
+        if let Ok(route) = crate::astar::find_walk_path(graph, &a, &b, class) {
+            agents.insert_demo_pedestrian(Pedestrian {
+                trip: TripId::new(u32::MAX, 0),
+                citizen: CitizenId::new(u32::MAX, 0),
+                route,
+                leg: 0,
+                s: 0.0,
+                leg_len: 0.0,
+                started: false,
+                waited: 0,
+                pos: bevy_math::Vec2::ZERO,
+                bike: true,
+                cache: Default::default(),
+            });
+            added += 1;
+        }
+    }
+    added
+}

@@ -45,7 +45,7 @@ use bevy::render::view::ExtractedView;
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use cp_sim::SimView;
 
-use crate::agent::mesh::{pedestrian_mesh, vehicle_mesh};
+use crate::agent::mesh::{bike_mesh, pedestrian_mesh, vehicle_mesh};
 use crate::agent::{
     AgentInstances, Cull, Headings, InstanceData, VEHICLE_KINDS, VehicleLooks, build_pedestrians,
     build_vehicles,
@@ -93,8 +93,17 @@ impl ExtractComponent<RenderApp> for InstanceBatch {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Slot {
-    Vehicle { kind: usize, detail: usize },
-    Pedestrian { detail: usize },
+    Vehicle {
+        kind: usize,
+        detail: usize,
+    },
+    Pedestrian {
+        detail: usize,
+    },
+    /// Cyclists (T-322).
+    Bike {
+        detail: usize,
+    },
 }
 
 #[derive(Component)]
@@ -178,6 +187,7 @@ fn spawn_batches(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
             pedestrian_mesh(detail),
             "pedestrian batch",
         );
+        spawn(Slot::Bike { detail }, bike_mesh(detail), "bike batch");
     }
 }
 
@@ -308,6 +318,7 @@ fn build_agent_instances(
         let list = Arc::new(match batch.0 {
             Slot::Vehicle { kind, detail } => out.vehicles[kind][detail].clone(),
             Slot::Pedestrian { detail } => out.pedestrians[detail].clone(),
+            Slot::Bike { detail } => out.bikes[detail].clone(),
         });
         draws += usize::from(!list.is_empty());
         data.0 = list;

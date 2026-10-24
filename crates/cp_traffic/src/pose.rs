@@ -67,6 +67,8 @@ pub struct PedestrianPose {
     pub portal: Option<Portal>,
     /// How far either side of the lane's centre line it may be drawn, metres.
     pub room: f32,
+    /// A cyclist (T-322): drawn on a bicycle.
+    pub bike: bool,
 }
 
 /// Poses of all live agents after one tick, each list ascending by `key`.
@@ -469,6 +471,7 @@ impl Agents {
                 pos: p.pos,
                 portal: ped_portal(p, trips, graph, net, buildings),
                 room: ped_room(p, net),
+                bike: p.bike,
             })
             .collect();
         AgentFrame {

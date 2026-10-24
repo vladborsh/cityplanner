@@ -231,6 +231,8 @@ pub struct CitizenInfo {
     /// complaint; `None` when all is well.
     pub thinks: Option<cp_building::Complaint>,
     pub has_car: bool,
+    /// Owns a bike (T-322: a hash, `cp_traffic::has_bike`).
+    pub has_bike: bool,
     pub location: Location,
     pub household_size: usize,
     pub home: Option<(BuildingId, String)>,
@@ -564,6 +566,7 @@ impl SimRunner {
                     wellbeing: c.wellbeing,
                     thinks,
                     has_car: c.has_car,
+                    has_bike: cp_traffic::has_bike(id, db.balance().bike_share),
                     location: c.location,
                     household_size,
                     home: c.home.and_then(|h| Some((h, building_name(h)?))),
@@ -858,6 +861,7 @@ impl Inspection {
                     c.thinks.map_or("all is well", |t| t.label()).to_string(),
                 ),
                 row("Car", if c.has_car { "yes" } else { "no" }.to_string()),
+                row("Bike", if c.has_bike { "yes" } else { "no" }.to_string()),
                 row("Household", format!("{} people", c.household_size)),
                 row("Now", format!("{:?}", c.location)),
                 row(

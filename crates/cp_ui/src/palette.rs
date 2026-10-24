@@ -752,7 +752,7 @@ mod tests {
     }
 
     #[test]
-    fn road_cards_match_the_content_in_class_and_lane_order_and_a_click_selects() {
+    fn road_cards_match_the_content_in_tab_class_and_lane_order_and_a_click_selects() {
         let db = content();
         let cards = crate::roads::cards(&db);
         assert_eq!(
@@ -764,7 +764,8 @@ mod tests {
         assert!(
             cards
                 .windows(2)
-                .all(|w| (w[0].class, w[0].lanes) <= (w[1].class, w[1].lanes)),
+                // T-322: the bike roads last, in their own Bike tab.
+                .all(|w| (w[0].tab, w[0].class, w[0].lanes) <= (w[1].tab, w[1].class, w[1].lanes)),
             "{cards:?}"
         );
         let mut rig = Rig::new();
