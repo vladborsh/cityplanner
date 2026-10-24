@@ -93,7 +93,7 @@ pub(super) fn update_live_coverage(
     let Some((_, graph)) = live.graph.as_ref() else {
         return;
     };
-    let values = kind_coverage(graph, &view.buildings, db, kind);
+    let values = kind_coverage(graph, &view.buildings, db, &view.budgets, kind);
     live.values = Arc::new(values);
     live.kind = Some(kind);
     live.key = key;

@@ -380,7 +380,7 @@ impl BudgetTab {
 pub struct BudgetDraft {
     pub tab: BudgetTab,
     taxes: [Option<Draft>; 6],
-    budgets: [Option<Draft>; 4],
+    budgets: [Option<Draft>; BUDGETED.len()],
     /// The tile the land section asks to confirm buying (T-150).
     pub buy_tile: Option<(u8, u8)>,
 }
@@ -759,10 +759,9 @@ fn budgets_tab(
     draft: &mut BudgetDraft,
     outbox: &mut CommandOutbox,
 ) {
-    let state = &view.economy;
     ui.strong(tr("Service budgets"));
     for (i, kind) in BUDGETED.into_iter().enumerate() {
-        let current = state.budgets.get(kind);
+        let current = view.budgets.get(kind);
         let name = match kind {
             ServiceKind::Water => "Water",
             ServiceKind::Power => "Power",

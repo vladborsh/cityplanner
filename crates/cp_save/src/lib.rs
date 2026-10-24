@@ -45,7 +45,7 @@
 //! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `Goods`, `Intercity` (stops, lines, riders, line figures, buses, week's money, tourist visits, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
 //! | `ResourceDeposits` (ore and oil left per 64 m cell; a save from before v41 is filled from the map by `load_into_runner`) | yes |
 //! | `AreaMap`, `Areas`, `IndustryState` (stock and problems of the chain buildings), `IndustryLedger`, `WarehouseSettings`, `ParkState` (attractiveness, capacity, visitors and fee per park area), `LeisureTargets`, `ParkVisits` (who is inside, the walkers), `ParkLedger`, `CargoHubs` (cargo station stock and orders) | yes |
-//! | `Treasury`, `EconomyState`, `Demand`, `DemandAcc`, `LandGrids`, `Emissions` (the ground, the noise, the water), `Decay`, `HomeContentment`, `CityContentment`, `CorruptionState`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
+//! | `Treasury`, `EconomyState`, `Budgets`, `Demand`, `DemandAcc`, `LandGrids`, `Emissions` (the ground, the noise, the water), `Decay`, `HomeContentment`, `CityContentment`, `CorruptionState`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
 //! | `JunctionGeometry`, `PathNetwork` (snapshot + congestion map; the published congestion is restored from the agents) | derived, rebuilt by the first ticks |
 //! | `SimChecksum` (log hash cache), `ArenaGauges`, `PathResults` (cleared every tick), `Messages<CommandOutcome>` | transient |
 //! | `SimLimits`, `RoutineSettings`, `AgentSettings`, `SimContent`, `SimTerrain` | configuration of the runner, not of the game |
@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 74;
+pub const FORMAT_VERSION: u32 = 75;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -189,8 +189,11 @@ pub struct SaveData {
     pub agents: cp_traffic::Agents,
     /// The city's money. Added in v14.
     pub treasury: Treasury,
-    /// Tax rates, budgets, the last weekly report. Added in v14; the active loans in v20.
+    /// Tax rates, the last weekly report. Added in v14; the active loans in v20; the budgets
+    /// moved out in v75.
     pub economy: EconomyState,
+    /// The service budgets, 50..150 % per kind (§20, T-319a). Added in v75.
+    pub budgets: cp_content::Budgets,
     /// Smoothed demand and the sums of the cycle in progress. Added in v15.
     pub demand: Demand,
     pub demand_acc: DemandAcc,
@@ -319,6 +322,7 @@ impl SaveData {
             agents: world.resource::<cp_traffic::Agents>().clone(),
             treasury: *world.resource::<Treasury>(),
             economy: world.resource::<EconomyState>().clone(),
+            budgets: *world.resource::<cp_content::Budgets>(),
             demand: *world.resource::<Demand>(),
             demand_acc: *world.resource::<DemandAcc>(),
             land: world.resource::<LandGrids>().clone(),
@@ -387,6 +391,7 @@ impl SaveData {
         world.insert_resource(self.trips);
         world.insert_resource(self.treasury);
         world.insert_resource(self.economy);
+        world.insert_resource(self.budgets);
         world.insert_resource(self.demand);
         world.insert_resource(self.demand_acc);
         world.insert_resource(self.land);

@@ -335,9 +335,20 @@ fn commands_validate_their_ranges_and_change_nothing_on_error() {
             },
             EconomyError::BudgetOutOfRange(151),
         ),
+        (
+            EconomyCommand::SetBudget {
+                service: ServiceKind::Landmark,
+                pct: 80,
+            },
+            EconomyError::NoBudgetForKind,
+        ),
     ] {
         assert_eq!(apply(&mut world, &cmd), Err(err));
         assert_eq!(*world.resource::<EconomyState>(), before);
+        assert_eq!(
+            world.get_resource::<Budgets>().copied().unwrap_or_default(),
+            Budgets::default()
+        );
     }
     // The edges are allowed.
     for pct in [1, 29] {
@@ -351,19 +362,13 @@ fn commands_validate_their_ranges_and_change_nothing_on_error() {
             Some(pct)
         );
     }
-    for pct in [50, 150] {
-        let cmd = EconomyCommand::SetBudget {
-            service: ServiceKind::Sewage,
-            pct,
-        };
-        assert_eq!(apply(&mut world, &cmd), Ok(Cost::ZERO));
-        assert_eq!(
-            world
-                .resource::<EconomyState>()
-                .budgets
-                .get(ServiceKind::Sewage),
-            pct
-        );
+    // Every kind with a slider takes the edges (§20.1: the M2 services too).
+    for kind in [ServiceKind::Sewage, ServiceKind::Health] {
+        for pct in [50, 150] {
+            let cmd = EconomyCommand::SetBudget { service: kind, pct };
+            assert_eq!(apply(&mut world, &cmd), Ok(Cost::ZERO));
+            assert_eq!(world.resource::<Budgets>().get(kind), pct);
+        }
     }
 }
 
@@ -375,7 +380,7 @@ fn defaults_are_nine_percent_taxes_and_full_budgets() {
     }
     assert_eq!(s.taxes.get(ZoneType::None), None);
     for k in BUDGETED {
-        assert_eq!(s.budgets.get(k), 100);
+        assert_eq!(Budgets::default().get(k), 100);
     }
     assert_eq!(s.last_week, WeekReport::default());
 }

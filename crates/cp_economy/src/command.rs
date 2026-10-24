@@ -12,7 +12,7 @@ use cp_content::{ServiceKind, SimContent, ZoneType};
 use cp_core::{Cost, Tick, Treasury};
 use serde::{Deserialize, Serialize};
 
-use crate::state::{BUDGET_MAX, BUDGET_MIN, EconomyState, Loan, TAX_MAX, TAX_MIN};
+use crate::state::{BUDGET_MAX, BUDGET_MIN, Budgets, EconomyState, Loan, TAX_MAX, TAX_MIN};
 
 /// Commands handled by this crate.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -37,6 +37,8 @@ pub enum EconomyError {
     NoTaxForZone,
     TaxOutOfRange(u8),
     BudgetOutOfRange(u8),
+    /// The service kind has no budget slider (§20.1: landmarks, industry, cargo).
+    NoBudgetForKind,
     /// No such loan offer.
     UnknownOffer(u8),
     /// The city is smaller than the offer wants.
@@ -66,6 +68,7 @@ impl fmt::Display for EconomyError {
             Self::BudgetOutOfRange(p) => {
                 write!(f, "budget {p}% is outside {BUDGET_MIN}..={BUDGET_MAX}%")
             }
+            Self::NoBudgetForKind => write!(f, "this service has no budget"),
             Self::UnknownOffer(o) => write!(f, "no loan offer {o}"),
             Self::TooSmall { needed, have } => {
                 write!(f, "the bank wants {needed} residents, the city has {have}")
@@ -90,6 +93,16 @@ pub fn apply(world: &mut World, cmd: &EconomyCommand) -> Result<Cost, EconomyErr
     match *cmd {
         EconomyCommand::TakeLoan { offer } => return take_loan(world, offer),
         EconomyCommand::RepayLoan { offer } => return repay_loan(world, offer),
+        EconomyCommand::SetBudget { service, pct } => {
+            if !(BUDGET_MIN..=BUDGET_MAX).contains(&pct) {
+                return Err(EconomyError::BudgetOutOfRange(pct));
+            }
+            if !cp_content::budget::is_budgeted(service) {
+                return Err(EconomyError::NoBudgetForKind);
+            }
+            world.get_resource_or_init::<Budgets>().set(service, pct);
+            return Ok(Cost::ZERO);
+        }
         _ => {}
     }
     let mut state = world
@@ -104,13 +117,9 @@ pub fn apply(world: &mut World, cmd: &EconomyCommand) -> Result<Cost, EconomyErr
                 return Err(EconomyError::NoTaxForZone);
             }
         }
-        EconomyCommand::SetBudget { service, pct } => {
-            if !(BUDGET_MIN..=BUDGET_MAX).contains(&pct) {
-                return Err(EconomyError::BudgetOutOfRange(pct));
-            }
-            state.budgets.set(service, pct);
-        }
-        EconomyCommand::TakeLoan { .. } | EconomyCommand::RepayLoan { .. } => {}
+        EconomyCommand::SetBudget { .. }
+        | EconomyCommand::TakeLoan { .. }
+        | EconomyCommand::RepayLoan { .. } => {}
     }
     Ok(Cost::ZERO)
 }

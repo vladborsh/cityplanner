@@ -155,8 +155,8 @@ fn changed(
 ) -> (BTreeSet<BuildingId>, BTreeSet<BuildingId>) {
     let g = RoadGraph::new(net);
     let (before, after) = (
-        kind_coverage(&g, old, db, kind),
-        kind_coverage(&g, new, db, kind),
+        kind_coverage(&g, old, db, &Default::default(), kind),
+        kind_coverage(&g, new, db, &Default::default(), kind),
     );
     let (mut up, mut down) = (BTreeSet::new(), BTreeSet::new());
     for (id, b) in homes(new, db) {

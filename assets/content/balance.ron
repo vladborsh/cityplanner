@@ -277,6 +277,9 @@ Balance((
     park_levels: (150, 600, 2000, 5000),
     park_land: (2.0, 5.0, 9.0, 14.0, 20.0),
     park_land_radius_m: 200.0,
+    // Service budgets (§20.1) // tune later: capacity gained per point over 100 % (150 % -> x1.25), reach = capacity factor ^ exp.
+    budget_over_gain: 0.5,
+    budget_reach_exp: 0.5,
     // Goods of a unique factory sell for this many times the usual export price (T-215) // tune later.
     factory_export_mul: 4.0,
     // Cargo trains (T-216): hours between two trains at a cargo station and the units one takes. // tune later

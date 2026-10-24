@@ -223,6 +223,7 @@ fn a_clinic_on_an_arterial_reaches_farther_than_on_a_street() {
         world.resource::<NetGraph>(),
         world.resource::<BuildingGrid>(),
         &db,
+        &Default::default(),
         world.resource::<ServiceState>(),
         ServiceKind::Health,
         house,
@@ -289,6 +290,10 @@ fn live_values(world: &World, kind: ServiceKind) -> Vec<f32> {
         &g,
         world.resource::<BuildingGrid>(),
         &world.resource::<SimContent>().0,
+        &world
+            .get_resource::<cp_content::Budgets>()
+            .copied()
+            .unwrap_or_default(),
         kind,
     )
 }
@@ -374,6 +379,7 @@ fn the_nearest_facility_with_room_wins_and_a_full_one_is_skipped() {
             world.resource::<NetGraph>(),
             world.resource::<BuildingGrid>(),
             &db,
+            &Default::default(),
             world.resource::<ServiceState>(),
             ServiceKind::Health,
             house,
@@ -398,6 +404,7 @@ fn the_nearest_facility_with_room_wins_and_a_full_one_is_skipped() {
             world.resource::<NetGraph>(),
             world.resource::<BuildingGrid>(),
             &db,
+            &Default::default(),
             world.resource::<ServiceState>(),
             ServiceKind::Fire,
             house
@@ -458,6 +465,7 @@ fn the_bounded_search_finds_what_a_full_scan_of_distances_finds() {
                 net,
                 &grid2,
                 &db,
+                &Default::default(),
                 world.resource::<ServiceState>(),
                 ServiceKind::Health,
                 house,
@@ -514,4 +522,84 @@ fn the_remembered_site_results_never_outlive_a_change_of_building_access_or_road
     put(&mut world, "clinic", segs[0], 0.0);
     run_at(&mut world, &mut schedule, 320);
     agree(&world, "slot reused");
+}
+
+/// §20.6 item 3: the Health budget scales the clinic's reach by `sqrt(f)`, at the next 64-tick
+/// recomputation (the site cache is keyed by the radius), and the client's `kind_coverage`
+/// gives what the sim gives.
+#[test]
+fn the_budget_scales_the_reach_at_the_next_recomputation() {
+    let (mut world, mut schedule, _, segs) = town();
+    let on = |world: &World| -> Vec<f32> {
+        let cov = world.resource::<ServiceCoverage>();
+        segs.iter()
+            .map(|&s| cov.on_segment(ServiceKind::Health, s))
+            .collect()
+    };
+    let set = |world: &mut World, pct: u8| {
+        let mut b = cp_content::Budgets::default();
+        b.set(ServiceKind::Health, pct);
+        world.insert_resource(b);
+    };
+    run_at(&mut world, &mut schedule, 64);
+    let full = on(&world);
+    assert_eq!(full[3], 0.0, "{full:?}");
+    // 50 %: radius 300 × 0.707 = 212 m; the change waits for the boundary.
+    set(&mut world, 50);
+    run_at(&mut world, &mut schedule, 65);
+    assert_eq!(on(&world), full);
+    run_at(&mut world, &mut schedule, 128);
+    let half = on(&world);
+    let r = 300.0 * 0.5f32.sqrt();
+    for (k, got) in half.iter().enumerate() {
+        let want = (1.0 - k as f32 * 100.0 / r).max(0.0);
+        assert!((got - want).abs() < 1e-3, "{half:?}");
+    }
+    assert_eq!(half, live_values(&world, ServiceKind::Health));
+    // 150 %: 300 × 1.118 = 335 m reaches the last segment, which 100 % does not.
+    set(&mut world, 150);
+    run_at(&mut world, &mut schedule, 192);
+    let over = on(&world);
+    assert!(over[3] > 0.0, "{over:?}");
+    assert_eq!(over, live_values(&world, ServiceKind::Health));
+    // Back at 100 % the values are the first ones exactly.
+    set(&mut world, 100);
+    run_at(&mut world, &mut schedule, 256);
+    assert_eq!(on(&world), full);
+}
+
+/// §20.6 item 4: the facility search reads the capacity at the budget: a clinic of capacity
+/// 10 has room for 5 at 50 % and for 12 (12.5, halves to even) at 150 %.
+#[test]
+fn the_budget_scales_a_facilitys_daily_capacity() {
+    let (mut world, _, clinic, segs) = town();
+    let house = put(&mut world, "house", segs[1], 0.5);
+    let ask = |world: &World, pct: u8| {
+        let mut b = cp_content::Budgets::default();
+        b.set(ServiceKind::Health, pct);
+        let db = world.resource::<SimContent>().0.clone();
+        nearest_facility(
+            world.resource::<NetGraph>(),
+            world.resource::<BuildingGrid>(),
+            &db,
+            &b,
+            world.resource::<ServiceState>(),
+            ServiceKind::Health,
+            house,
+        )
+    };
+    for (used, pct, room) in [
+        (4, 50, true),
+        (5, 50, false),
+        (9, 100, true),
+        (10, 100, false),
+        (11, 150, true),
+        (12, 150, false),
+    ] {
+        world
+            .resource_mut::<ServiceState>()
+            .facility_mut(clinic)
+            .used_today = used;
+        assert_eq!(ask(&world, pct).is_some(), room, "{used} used at {pct} %");
+    }
 }

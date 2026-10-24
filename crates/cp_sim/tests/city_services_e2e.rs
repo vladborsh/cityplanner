@@ -107,6 +107,7 @@ fn a_sector_whose_service_is_not_open_is_locked() {
         unlocks,
         utilities: [(0.0, 0.0); 3],
         died_today: 0,
+        budgets: Default::default(),
     });
     for r in &rows {
         let edu = matches!(

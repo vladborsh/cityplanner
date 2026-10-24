@@ -40,6 +40,7 @@ fn week(sim: &mut SimRunner, pct: u8) -> (Cost, Cost) {
             citizens: w.resource::<cp_citizen::CitizenGrid>(),
             utilities: w.resource::<cp_utility::UtilityGraph>(),
             state: w.resource::<EconomyState>(),
+            budgets: w.resource::<cp_content::Budgets>(),
             district_map: w.resource::<cp_district::DistrictMap>(),
             districts: w.resource::<cp_district::Districts>(),
             city_policies: w.resource::<cp_district::CityPolicies>(),
@@ -133,4 +134,65 @@ fn a_mid_town_earns_between_five_and_twelve_times_its_upkeep() {
     let (income, upkeep) = week(&mut sim, 9);
     let ratio = income.0 as f64 / upkeep.0 as f64;
     assert!((5.0..12.0).contains(&ratio), "{ratio:.2}");
+}
+
+/// §20.6 item 6: the upkeep lines are linear in the budget: roads by the Roads budget, pipes
+/// and power lines by Water and Power, each service's buildings by its own (`Flow.services`).
+#[test]
+fn upkeep_lines_are_linear_in_the_budgets() {
+    use cp_content::{Budgets, ServiceKind, budget::BUDGETED};
+    let (mut sim, _) = city(1_000);
+    let lines = |sim: &mut SimRunner, pct: u8| {
+        let w = sim.world_mut();
+        let mut b = Budgets::default();
+        for k in BUDGETED {
+            b.set(k, pct);
+        }
+        w.insert_resource(b);
+        w.resource_mut::<cp_citizen::CitizenGrid>().ensure_derived();
+        let content = Arc::clone(&w.resource::<SimContent>().0);
+        let (r, _, services) = cp_economy::week::week_lines(
+            &WeekInputs {
+                content: &content,
+                net: w.resource::<NetGraph>(),
+                buildings: w.resource::<cp_building::BuildingGrid>(),
+                citizens: w.resource::<cp_citizen::CitizenGrid>(),
+                utilities: w.resource::<cp_utility::UtilityGraph>(),
+                state: w.resource::<EconomyState>(),
+                budgets: w.resource::<Budgets>(),
+                district_map: w.resource::<cp_district::DistrictMap>(),
+                districts: w.resource::<cp_district::Districts>(),
+                city_policies: w.resource::<cp_district::CityPolicies>(),
+                tax_collection: 1.0,
+            },
+            1,
+        );
+        (r, services)
+    };
+    let (full, full_s) = lines(&mut sim, 100);
+    assert!(full.road_upkeep > Cost::ZERO && full.utility_upkeep > Cost::ZERO);
+    for pct in [50u8, 150] {
+        let (r, s) = lines(&mut sim, pct);
+        let k = f64::from(pct) / 100.0;
+        let near = |got: Cost, want: Cost, what: &str| {
+            let (g, w) = (got.0 as f64, want.0 as f64 * k);
+            // Each item is rounded to the cent on its own.
+            assert!(
+                (g - w).abs() <= 1.0 + w.abs() * 5e-3,
+                "{what} at {pct} %: {g} vs {w}"
+            );
+        };
+        near(r.road_upkeep, full.road_upkeep, "roads");
+        near(r.utility_upkeep, full.utility_upkeep, "utilities");
+        near(r.building_upkeep, full.building_upkeep, "buildings");
+        for kind in [ServiceKind::Water, ServiceKind::Power, ServiceKind::Health] {
+            near(
+                s[kind as usize],
+                full_s[kind as usize],
+                &format!("{kind:?}"),
+            );
+        }
+        // The taxes do not move.
+        assert_eq!(r.income(), full.income());
+    }
 }

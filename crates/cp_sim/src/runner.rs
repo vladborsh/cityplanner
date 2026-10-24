@@ -149,6 +149,7 @@ impl SimRunner {
         world.init_resource::<cp_transit::Goods>();
         world.init_resource::<cp_transit::Intercity>();
         world.init_resource::<cp_economy::EconomyState>();
+        world.init_resource::<cp_content::Budgets>();
         world.init_resource::<cp_economy::DistrictIncome>();
         world.init_resource::<cp_economy::MoneyFlow>();
         world.init_resource::<cp_economy::DemolitionRefunds>();

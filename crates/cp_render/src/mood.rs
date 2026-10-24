@@ -167,9 +167,11 @@ pub fn moods_of(
     kinds.dedup();
     if !kinds.is_empty() {
         let g = RoadGraph::new(net);
+        // At 100 %: the budgets reach the moods with T-319c.
+        let budgets = cp_content::Budgets::default();
         for kind in kinds {
-            let before = kind_coverage(&g, old, db, kind);
-            let after = kind_coverage(&g, new, db, kind);
+            let before = kind_coverage(&g, old, db, &budgets, kind);
+            let after = kind_coverage(&g, new, db, &budgets, kind);
             let listens = |b: &Building| {
                 b.state == BuildingState::Active && reacts(kind, db.building(b.def).zone)
             };

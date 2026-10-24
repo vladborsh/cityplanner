@@ -96,6 +96,7 @@ pub fn update_health(
 
     // --- treatment ---
     let roads = net.graph();
+    let budgets = net.budgets();
     let mut finder = None;
     let bucket = tick.0 % COVERAGE_PERIOD;
     for (id, b) in buildings.iter_bucket(COVERAGE_PERIOD as u32, bucket as u32) {
@@ -110,7 +111,13 @@ pub fn update_health(
                 if station.is_none() {
                     station = finder
                         .get_or_insert_with(|| {
-                            FacilityFinder::new(&roads, &buildings, db, ServiceKind::Health)
+                            FacilityFinder::new(
+                                &roads,
+                                &buildings,
+                                db,
+                                &budgets,
+                                ServiceKind::Health,
+                            )
                         })
                         .nearest(&state, id);
                 }

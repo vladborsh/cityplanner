@@ -18,7 +18,7 @@ use cp_citizen::{CitizenGrid, DAYS_PER_YEAR, PopFlow, TripBook, TripState};
 use cp_content::{RoadClass, RoadDefId, ServiceKind, SimContent, UtilityKind, ZoneType};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{Cost, Tick, Treasury};
-use cp_economy::{EconomyState, LandGrids, segment_upkeep};
+use cp_economy::{LandGrids, segment_upkeep};
 use cp_net::NetGraph;
 use cp_traffic::Agents;
 use cp_zone::{ZoneCellRef, ZoneGrid};
@@ -320,7 +320,7 @@ pub fn update_city_stats(
     land: Res<LandGrids>,
     demand: Res<Demand>,
     treasury: Res<Treasury>,
-    economy: Res<EconomyState>,
+    budgets: Option<Res<cp_content::Budgets>>,
     district: DistrictParams,
     mut stats: ResMut<CityStats>,
 ) {
@@ -330,6 +330,7 @@ pub fn update_city_stats(
     };
     let Some(content) = content else { return };
     let db = &*content.0;
+    let budgets = budgets.as_deref().copied().unwrap_or_default();
     let demands = [demand.r, demand.c, demand.i, demand.o];
     if stage == 0 {
         let mut next = CityStats {
@@ -345,7 +346,7 @@ pub fn update_city_stats(
             &agents,
             &trips,
             &land,
-            &economy,
+            &budgets,
             &demands,
             &district.trip_times,
         );
@@ -375,6 +376,7 @@ pub fn update_city_stats(
             &citizens,
             (stage - 2) as u64,
             &reach,
+            &budgets,
         ),
         _ => {
             // Publish.
@@ -437,6 +439,7 @@ pub fn update_city_stats(
                     utilities: [0, 1, 2]
                         .map(|k| (next.utilities[k].capacity, next.utilities[k].consumption)),
                     died_today: next.pop_day.died as u32,
+                    budgets,
                 });
             let generation = stats.generation + 1;
             *stats = *next;
@@ -462,7 +465,7 @@ fn stage_citizens_traffic_land(
     agents: &Agents,
     trips: &TripBook,
     land: &LandGrids,
-    economy: &EconomyState,
+    budgets: &cp_content::Budgets,
     _demands: &[f32; 4],
     trip_times: &cp_traffic::TripTimes,
 ) {
@@ -510,7 +513,7 @@ fn stage_citizens_traffic_land(
     s.traffic.no_path = agents.stats.no_path;
     s.traffic.abstract_trips = agents.stats.abstract_trips;
     let (mut load_sum, mut segs) = (0.0f32, 0u32);
-    let roads_budget = economy.budgets.get(ServiceKind::Roads);
+    let roads_budget = budgets.get(ServiceKind::Roads);
     // By road id, ascending; keyed (not a dense Vec) because the placeholder id is u32::MAX.
     let mut groups: BTreeMap<u32, RoadGroup> = BTreeMap::new();
     let entry = cp_economy::entry_segments(net, db);
@@ -634,6 +637,7 @@ fn stage_zone_cells(
 }
 
 /// Stages 2 and 3: the buildings whose arena index has parity `half`.
+#[allow(clippy::too_many_arguments)]
 fn stage_buildings(
     s: &mut CityStats,
     db: &cp_content::ContentDb,
@@ -642,6 +646,7 @@ fn stage_buildings(
     citizens: &CitizenGrid,
     half: u64,
     reach: &cp_net::EntryReach,
+    budgets: &cp_content::Budgets,
 ) {
     let sources_of = |name: &str| db.service_id(name).map(|id| db.service(id));
     for (id, b) in buildings.iter() {
@@ -727,7 +732,8 @@ fn stage_buildings(
                 };
                 if let Some(k) = k {
                     s.utilities[k].sources += 1;
-                    s.utilities[k].capacity += svc.capacity as f32;
+                    // At the budget, as the supply pass gives it (§20.6 item 2).
+                    s.utilities[k].capacity += budgets.capacity(svc, db.balance()) as f32;
                 }
             }
             s.utilities[0].unsupplied += u32::from(f.has(BuildingFlags::NO_WATER));

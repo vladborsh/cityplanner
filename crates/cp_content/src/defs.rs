@@ -639,6 +639,10 @@ pub struct Balance {
     pub park_levels: [u32; 4],
     pub park_land: [f32; 5],
     pub park_land_radius_m: f32,
+    /// Service budgets (§20.1) // tune later: a percent over 100 gives this much capacity per
+    /// point (0.5: 150 % → ×1.25), and the reach is the capacity factor to this power.
+    pub budget_over_gain: f32,
+    pub budget_reach_exp: f32,
     /// How far water, sewage and power reach (T-181).
     pub networks: Networks,
     /// The contentment of homes (T-318, §19): factor weights, penalties and thresholds.
@@ -1056,6 +1060,8 @@ impl Balance {
             self.park_fee_max,
             self.park_fee_default,
             self.park_land_radius_m,
+            self.budget_over_gain,
+            self.budget_reach_exp,
             self.factory_export_mul,
             self.cargo_train_interval_h,
             self.cargo_train_capacity,
@@ -1236,6 +1242,8 @@ impl Default for Balance {
             park_levels: [150, 600, 2_000, 5_000],
             park_land: [2.0, 5.0, 9.0, 14.0, 20.0],
             park_land_radius_m: 200.0,
+            budget_over_gain: 0.5,
+            budget_reach_exp: 0.5,
             factory_export_mul: 4.0,
             cargo_train_interval_h: 12.0,
             cargo_train_capacity: 1200.0,

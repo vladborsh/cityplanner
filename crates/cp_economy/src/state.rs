@@ -3,7 +3,7 @@
 
 use bevy_ecs::resource::Resource;
 use cp_content::LoanOffer;
-use cp_content::{ServiceKind, ZoneType};
+use cp_content::ZoneType;
 use cp_core::{Cost, Tick};
 use serde::{Deserialize, Serialize};
 
@@ -12,9 +12,7 @@ pub const TAX_MIN: u8 = 1;
 pub const TAX_MAX: u8 = 29;
 pub const TAX_DEFAULT: u8 = 9;
 /// Budget limits and default, percent of the nominal upkeep.
-pub const BUDGET_MIN: u8 = 50;
-pub const BUDGET_MAX: u8 = 150;
-pub const BUDGET_DEFAULT: u8 = 100;
+pub use cp_content::budget::{BUDGET_DEFAULT, BUDGET_MAX, BUDGET_MIN, BUDGETED, Budgets};
 
 /// Zone types that pay tax (everything but `ZoneType::None`), in tax-table order.
 pub const TAXED_ZONES: [ZoneType; 6] = [
@@ -24,14 +22,6 @@ pub const TAXED_ZONES: [ZoneType; 6] = [
     ZoneType::ComHigh,
     ZoneType::Industrial,
     ZoneType::Office,
-];
-
-/// Budgeted service kinds, in budget-table order (the `ServiceKind` discriminants).
-pub const BUDGETED: [ServiceKind; 4] = [
-    ServiceKind::Water,
-    ServiceKind::Power,
-    ServiceKind::Roads,
-    ServiceKind::Sewage,
 ];
 
 /// Tax rate per zone type, percent.
@@ -62,38 +52,6 @@ impl TaxRates {
     /// caller's to check (the command does).
     pub fn set(&mut self, zone: ZoneType, pct: u8) -> bool {
         Self::slot(zone).map(|i| self.pct[i] = pct).is_some()
-    }
-}
-
-/// Budget percentage per service kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Budgets {
-    pct: [u8; 4],
-}
-
-impl Default for Budgets {
-    fn default() -> Self {
-        Self {
-            pct: [BUDGET_DEFAULT; 4],
-        }
-    }
-}
-
-impl Budgets {
-    /// The percentage of `kind`; kinds without a budget line (the M2 services before their
-    /// budget rows) run at the default.
-    pub fn get(&self, kind: ServiceKind) -> u8 {
-        self.pct
-            .get(kind as usize)
-            .copied()
-            .unwrap_or(BUDGET_DEFAULT)
-    }
-
-    /// Sets the percentage of `kind`; a kind without a budget line ignores it.
-    pub fn set(&mut self, kind: ServiceKind, pct: u8) {
-        if let Some(p) = self.pct.get_mut(kind as usize) {
-            *p = pct;
-        }
     }
 }
 
@@ -205,7 +163,6 @@ impl Loan {
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EconomyState {
     pub taxes: TaxRates,
-    pub budgets: Budgets,
     pub last_week: WeekReport,
     /// Active loans, ordered by offer index (T-129).
     pub loans: Vec<Loan>,

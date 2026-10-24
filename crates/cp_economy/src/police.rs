@@ -36,6 +36,7 @@ pub fn update_police(
     let bucket = tick.0 % COVERAGE_PERIOD;
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
     let roads = net.graph();
+    let budgets = net.budgets();
     let mut finder = None;
     // Grey deals that raise the crime around their target (T-325).
     let deals = corruption
@@ -87,14 +88,14 @@ pub fn update_police(
             && cover > 0.0
             && let Some(station) = finder
                 .get_or_insert_with(|| {
-                    FacilityFinder::new(&roads, &buildings, db, ServiceKind::Police)
+                    FacilityFinder::new(&roads, &buildings, db, &budgets, ServiceKind::Police)
                 })
                 .nearest(&state, id)
         {
             let svc = buildings
                 .get(station)
                 .and_then(|f| db.building_service(f.def))
-                .map(|s| db.service(s));
+                .map(|s| budgets.def(db.service(s), db.balance()));
             if let Some(svc) = svc {
                 let used = state.facility(station).copied().unwrap_or_default();
                 // A captured station (T-326) clears only `1 - captured_cut` of what it books

@@ -636,7 +636,7 @@ pub fn update_corruption(
     buildings: Res<BuildingGrid>,
     land: Res<LandGrids>,
     mut districts: Option<ResMut<Districts>>,
-    economy: Option<Res<crate::EconomyState>>,
+    budgets: Option<Res<crate::Budgets>>,
     (mut state, mut treasury, tourists): (
         ResMut<CorruptionState>,
         ResMut<Treasury>,
@@ -683,7 +683,7 @@ pub fn update_corruption(
         })
         .map(|(id, _)| id)
         .collect();
-    let budget = economy.map_or(100, |e| e.budgets.get(ServiceKind::Police));
+    let budget = budgets.map_or(100, |b| b.get(ServiceKind::Police));
     state.capture_day(k, &stations, budget, &rng, *tick);
     if let Some((fine, deal)) = state.scandal_day(k, &rng, *tick) {
         treasury.balance = treasury.balance - fine;

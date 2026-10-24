@@ -543,7 +543,7 @@ pub fn park_summary(view: &SimView, id: AreaId) -> Option<ParkSummary> {
         }
         out.buildings += 1;
         if let Some(service) = def.service.as_deref().and_then(|s| db.service_id(s)) {
-            let pct = view.economy.budgets.get(db.service(service).kind);
+            let pct = view.budgets.get(db.service(service).kind);
             out.upkeep_week += Cost::scaled(def.upkeep_week, f64::from(pct) / 100.0);
         }
     }

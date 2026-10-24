@@ -25,7 +25,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Local, Res, ResMut};
 use bevy_ecs::world::World;
 use cp_building::{AccessPoint, Building, BuildingGrid, BuildingState};
-use cp_content::{ContentDb, LaneKind, ServiceKind, SimContent};
+use cp_content::{Budgets, ContentDb, LaneKind, ServiceKind, SimContent};
 use cp_core::Tick;
 use cp_net::{NetGraph, SegmentId};
 use serde::{Deserialize, Serialize};
@@ -39,14 +39,21 @@ pub struct ServiceRoads {
     cache: std::sync::Mutex<Option<(bevy_ecs::change_detection::Tick, std::sync::Arc<RoadGraph>)>>,
 }
 
-/// The network and its cached road graph, for the systems that search along the roads.
+/// The network and its cached road graph, for the systems that search along the roads, and the
+/// service budgets (§20) they run their facilities at.
 #[derive(bevy_ecs::system::SystemParam)]
 pub struct ServiceNet<'w> {
     pub net: Res<'w, NetGraph>,
     roads: Option<Res<'w, ServiceRoads>>,
+    budgets: Option<Res<'w, Budgets>>,
 }
 
 impl ServiceNet<'_> {
+    /// The service budgets; all at 100 % in a world without them.
+    pub fn budgets(&self) -> Budgets {
+        self.budgets.as_deref().copied().unwrap_or_default()
+    }
+
     /// The road graph of the network as it is now: the cached one while the network has not
     /// changed since it was built, else built (and cached when the world has [`ServiceRoads`]).
     pub fn graph(&self) -> std::sync::Arc<RoadGraph> {
@@ -359,30 +366,37 @@ fn site_coverage_with(
     out
 }
 
-/// The service of `b` when it is an Active building with an access point and a radius.
-fn served_site(db: &ContentDb, b: &Building) -> Option<(ServiceKind, AccessPoint, f32)> {
+/// The service of `b` when it is an Active building with an access point and a radius; the
+/// radius is the one at its kind's budget (§20: `radius_m × reach_factor`).
+fn served_site(
+    db: &ContentDb,
+    budgets: &Budgets,
+    b: &Building,
+) -> Option<(ServiceKind, AccessPoint, f32)> {
     if b.state != BuildingState::Active {
         return None;
     }
     let access = b.access()?;
     let service = db.building_service(b.def)?;
     let def = db.service(service);
-    (def.radius_m > 0.0).then_some((def.kind, access, def.radius_m))
+    (def.radius_m > 0.0).then(|| (def.kind, access, budgets.radius(def, db.balance())))
 }
 
 /// The coverage of `kind` per segment index that the next recomputation gives for this
 /// network and these buildings: Active buildings of the kind in id order, max of their
-/// [`site_coverage`]. The same function backs the sim and the client's live overlay.
+/// [`site_coverage`] at the radius of the budgets. The same function backs the sim and the
+/// client's live overlay.
 pub fn kind_coverage(
     g: &RoadGraph,
     buildings: &BuildingGrid,
     db: &ContentDb,
+    budgets: &Budgets,
     kind: ServiceKind,
 ) -> Vec<f32> {
     let mut out = vec![0.0; g.seg_slots];
     let mut sc = Scratch::new(g);
     for (_, b) in buildings.iter() {
-        if let Some((k, access, radius)) = served_site(db, b)
+        if let Some((k, access, radius)) = served_site(db, budgets, b)
             && k == kind
         {
             fold_max(&mut out, &site_coverage_with(g, &mut sc, access, radius));
@@ -403,17 +417,19 @@ fn compute(
     net: &NetGraph,
     buildings: &BuildingGrid,
     content: &SimContent,
+    budgets: &Budgets,
 ) -> BTreeMap<ServiceKind, Vec<f32>> {
     compute_on(
         &std::sync::Arc::new(RoadGraph::new(net)),
         buildings,
         content,
+        budgets,
         &mut CoverageMemo::default(),
     )
 }
 
 /// What one site gave, remembered for the next recomputation: valid while the building, its
-/// access point and radius and the road graph are the same.
+/// access point and radius (so its budget, §20) and the road graph are the same.
 struct SiteMemo {
     generation: u32,
     access: (SegmentId, u32),
@@ -437,6 +453,7 @@ fn compute_on(
     g: &std::sync::Arc<RoadGraph>,
     buildings: &BuildingGrid,
     content: &SimContent,
+    budgets: &Budgets,
     memo: &mut CoverageMemo,
 ) -> BTreeMap<ServiceKind, Vec<f32>> {
     let same = memo
@@ -455,7 +472,7 @@ fn compute_on(
     let mut out: BTreeMap<ServiceKind, Vec<f32>> = BTreeMap::new();
     // Buildings in id order: the max is order-free, but the iteration is deterministic anyway.
     for (id, b) in buildings.iter() {
-        let Some((kind, access, radius)) = served_site(&content.0, b) else {
+        let Some((kind, access, radius)) = served_site(&content.0, budgets, b) else {
             continue;
         };
         let i = id.index as usize;
@@ -494,7 +511,13 @@ pub fn update_coverage(
         return;
     }
     let Some(content) = content else { return };
-    coverage.by_kind = compute_on(&net.graph(), &buildings, &content, &mut memo);
+    coverage.by_kind = compute_on(
+        &net.graph(),
+        &buildings,
+        &content,
+        &net.budgets(),
+        &mut memo,
+    );
     coverage.generation += 1;
 }
 
@@ -509,7 +532,8 @@ pub fn rebuild_coverage(world: &mut World) {
     ) else {
         return;
     };
-    let by_kind = compute(net, buildings, content);
+    let budgets = world.get_resource::<Budgets>().copied().unwrap_or_default();
+    let by_kind = compute(net, buildings, content, &budgets);
     let mut cov = world.get_resource_or_insert_with(ServiceCoverage::default);
     cov.by_kind = by_kind;
     cov.generation += 1;

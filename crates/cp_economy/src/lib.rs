@@ -3,8 +3,9 @@
 //!
 //! The [`Treasury`](cp_core::Treasury) itself lives in `cp_core` (the command paths of the
 //! road, building and utility crates charge it); this crate owns the settings
-//! ([`EconomyState`]: tax rates, budgets, last report), the `SetTaxRate`/`SetBudget` commands
-//! and [`settle_week`] (hourly since BUG-040).
+//! ([`EconomyState`]: tax rates, loans, last report), the `SetTaxRate`/`SetBudget` commands
+//! (the budgets are the `cp_content::Budgets` resource since T-319a, §20) and [`settle_week`]
+//! (hourly since BUG-040).
 
 pub mod command;
 pub mod contentment;

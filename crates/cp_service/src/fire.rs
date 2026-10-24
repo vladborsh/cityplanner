@@ -22,7 +22,9 @@
 
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingGrid, BuildingId, BuildingState, burn, demolish_building};
-use cp_content::{ContentDb, PolicyKind, ServiceKind, ServiceUnlocks, SimContent, VehicleKind};
+use cp_content::{
+    Budgets, ContentDb, PolicyKind, ServiceKind, ServiceUnlocks, SimContent, VehicleKind,
+};
 use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_DAY, TICKS_PER_HOUR};
 use cp_core::{SimRng, Tick};
 use cp_district::PolicyParams;
@@ -40,10 +42,12 @@ pub const FIRE_STREAM: u64 = 0xF14E;
 const PASSES_PER_DAY: f32 = (TICKS_PER_DAY / COVERAGE_PERIOD) as f32;
 
 /// Sends the nearest free engine to the burning building `id`; `true` when one went.
+#[allow(clippy::too_many_arguments)]
 fn dispatch(
     net: &NetGraph,
     buildings: &BuildingGrid,
     db: &ContentDb,
+    budgets: &Budgets,
     state: &mut ServiceState,
     runs: Option<&mut ServiceRuns>,
     id: BuildingId,
@@ -54,6 +58,7 @@ fn dispatch(
         net,
         buildings,
         db,
+        budgets,
         state,
         ServiceKind::Fire,
         id,
@@ -136,10 +141,12 @@ pub fn update_fire(
     mut runs: Option<ResMut<ServiceRuns>>,
     policies: PolicyParams,
     unlocks: Option<Res<ServiceUnlocks>>,
+    budgets: Option<Res<Budgets>>,
 ) {
     let Some(content) = content else { return };
     // Worlds built without the resource have every service open.
     let unlocks = unlocks.map(|u| *u).unwrap_or_default();
+    let budgets = budgets.as_deref().copied().unwrap_or_default();
     let db = &content.0;
     let bal = db.balance();
     let policies = policies.get();
@@ -178,6 +185,7 @@ pub fn update_fire(
                         &net,
                         &buildings,
                         db,
+                        &budgets,
                         &mut state,
                         runs.as_deref_mut(),
                         id,
@@ -227,6 +235,7 @@ pub fn update_fire(
                         &net,
                         &buildings,
                         db,
+                        &budgets,
                         &mut state,
                         runs.as_deref_mut(),
                         id,
@@ -261,6 +270,7 @@ pub fn update_fire(
                 &net,
                 &buildings,
                 db,
+                &budgets,
                 &mut state,
                 runs.as_deref_mut(),
                 nid,

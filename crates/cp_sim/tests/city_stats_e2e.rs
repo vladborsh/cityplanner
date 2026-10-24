@@ -284,3 +284,39 @@ fn the_daily_series_grows_once_a_day_and_keeps_thirty() {
     let d = s.daily.back().unwrap();
     assert_eq!(d.adults, s.adults);
 }
+
+/// §20.6 item 2: the metrics show the sources' capacity at the budget, as the supply pass
+/// gives it: the Power budget at 50 % halves it (each plant's capacity rounded on its own).
+#[test]
+fn utility_capacity_follows_the_budget() {
+    let mut sim = city(3);
+    to_boundary(&mut sim);
+    let full = sim.world().resource::<CityStats>().utilities[2];
+    assert!(full.sources > 0 && full.capacity > 0.0);
+    sim.world_mut()
+        .resource_mut::<cp_content::Budgets>()
+        .set(cp_content::ServiceKind::Power, 50);
+    sim.tick_once();
+    to_boundary(&mut sim);
+    let half = sim.world().resource::<CityStats>().utilities[2];
+    assert_eq!(half.sources, full.sources);
+    assert!(
+        (half.capacity - full.capacity / 2.0).abs() <= full.sources as f32 * 0.5,
+        "{} at 50 %, {} at 100 %",
+        half.capacity,
+        full.capacity
+    );
+    // The power pools of the supply pass add up to the same.
+    let pools: f32 = sim
+        .world()
+        .resource::<cp_utility::PowerPools>()
+        .pools
+        .iter()
+        .map(|p| p.capacity)
+        .sum();
+    assert!(
+        (pools - half.capacity).abs() < 1e-3,
+        "{pools} vs {}",
+        half.capacity
+    );
+}

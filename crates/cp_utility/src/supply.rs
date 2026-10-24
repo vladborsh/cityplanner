@@ -36,7 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use cp_building::{BuildingFlags, BuildingGrid, BuildingId, BuildingState};
-use cp_content::{ContentDb, Networks, PolicyKind, ServiceKind, SimContent, UtilityKind};
+use cp_content::{Budgets, ContentDb, Networks, PolicyKind, ServiceKind, SimContent, UtilityKind};
 use cp_core::Tick;
 use cp_core::curve::to_xz;
 use cp_district::{Policies, PolicyParams};
@@ -500,19 +500,21 @@ pub fn compute_supply_cached(
     graph: &UtilityGraph,
     cache: &mut AttachCache,
 ) -> Vec<u8> {
-    compute_supply_with(db, buildings, graph, cache, None)
+    compute_supply_with(db, buildings, graph, cache, None, &Budgets::default())
 }
 
 /// [`compute_supply_cached`] with the policies in force: PowerSaving (T-192) cuts the power
-/// a building needs by its `value` where it is on.
+/// a building needs by its `value` where it is on; and with the service budgets (§20): a
+/// source gives its capacity at its kind's budget.
 pub fn compute_supply_with(
     db: &ContentDb,
     buildings: &BuildingGrid,
     graph: &UtilityGraph,
     cache: &mut AttachCache,
     policies: Option<&Policies>,
+    budgets: &Budgets,
 ) -> Vec<u8> {
-    compute_supply_pools(db, buildings, graph, cache, policies).0
+    compute_supply_pools(db, buildings, graph, cache, policies, budgets).0
 }
 
 /// One power pool (BUG-087): the plants' output and what its buildings need.
@@ -575,6 +577,7 @@ pub fn compute_supply_pools(
     graph: &UtilityGraph,
     cache: &mut AttachCache,
     policies: Option<&Policies>,
+    budgets: &Budgets,
 ) -> (Vec<u8>, PowerPools, WaterPools) {
     let nets = &db.balance().networks;
     let power_gap = nets.power_gap_m;
@@ -591,7 +594,7 @@ pub fn compute_supply_pools(
                 .as_deref()
                 .and_then(|s| db.service_id(s))
                 .map(|s| db.service(s))
-                .map(|s| (s.kind, s.capacity as f32));
+                .map(|s| (s.kind, budgets.capacity(s, db.balance()) as f32));
             (needs, source)
         })
         .collect();
@@ -951,6 +954,7 @@ pub fn update_supply(
     mut pools: ResMut<PowerPools>,
     mut water: ResMut<WaterPools>,
     policies: PolicyParams,
+    budgets: Option<Res<Budgets>>,
 ) {
     if !tick.0.is_multiple_of(SUPPLY_PERIOD) {
         return;
@@ -963,6 +967,7 @@ pub fn update_supply(
         &graph,
         &mut cache,
         policies.as_ref(),
+        &budgets.as_deref().copied().unwrap_or_default(),
     );
     if *pools != found {
         *pools = found;

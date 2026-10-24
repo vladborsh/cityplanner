@@ -83,7 +83,9 @@ pub fn update_education(
         .collect();
     // One finder for the whole bucket (T-256: one per citizen rebuilt the road graph each time).
     let roads = net.graph();
-    let mut finder = crate::FacilityFinder::new(&roads, &buildings, db, ServiceKind::Education);
+    let budgets = net.budgets();
+    let mut finder =
+        crate::FacilityFinder::new(&roads, &buildings, db, &budgets, ServiceKind::Education);
     for (id, c) in visited {
         if let Some(school) = c.school {
             let tier = tier_of(school);
@@ -117,7 +119,7 @@ pub fn update_education(
         let radius = buildings
             .get(school)
             .and_then(|b| db.building_service(b.def))
-            .map_or(0.0, |s| db.service(s).radius_m);
+            .map_or(0.0, |s| budgets.radius(db.service(s), db.balance()));
         if metres >= radius {
             continue;
         }

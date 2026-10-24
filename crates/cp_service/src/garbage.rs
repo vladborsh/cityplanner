@@ -65,6 +65,7 @@ pub fn update_garbage(
     let unlocks = unlocks.map(|u| *u).unwrap_or_default();
     let db = &content.0;
     let balance = db.balance();
+    let budgets = net.budgets();
     let bucket = tick.0 % COVERAGE_PERIOD;
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
     let roads = net.graph();
@@ -125,7 +126,7 @@ pub fn update_garbage(
                     let booked = booked.get_or_insert_with(|| booked_by_trucks(r, &state));
                     let urgent = garbage as f32 >= balance.garbage_problem * URGENT;
                     let finder = finder.get_or_insert_with(|| {
-                        FacilityFinder::new(&roads, &buildings, db, ServiceKind::Garbage)
+                        FacilityFinder::new(&roads, &buildings, db, &budgets, ServiceKind::Garbage)
                     });
                     let found = finder.nearest_with_id(&state, id, |f, used, svc| {
                         let committed =
@@ -151,7 +152,7 @@ pub fn update_garbage(
             && coverage.coverage_of(ServiceKind::Garbage, b) > 0.0
             && let Some(facility) = finder
                 .get_or_insert_with(|| {
-                    FacilityFinder::new(&roads, &buildings, db, ServiceKind::Garbage)
+                    FacilityFinder::new(&roads, &buildings, db, &budgets, ServiceKind::Garbage)
                 })
                 .nearest(&state, id)
         {
@@ -161,7 +162,8 @@ pub fn update_garbage(
                 .map(|s| db.service(s));
             if let Some(svc) = svc {
                 let used = state.facility(facility).copied().unwrap_or_default();
-                let mut room = u64::from(svc.capacity.saturating_sub(used.used_today));
+                let capacity = budgets.capacity(svc, balance);
+                let mut room = u64::from(capacity.saturating_sub(used.used_today));
                 if svc.storage > 0 {
                     room = room.min(u64::from(svc.storage.saturating_sub(used.stored)));
                 }

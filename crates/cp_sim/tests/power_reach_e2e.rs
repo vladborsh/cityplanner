@@ -242,6 +242,7 @@ fn the_power_pools_are_deterministic() {
             &UtilityGraph::new(),
             &mut cp_utility::AttachCache::default(),
             None,
+            &Default::default(),
         )
     };
     assert_eq!(run(), run());
@@ -259,6 +260,7 @@ fn a_building_without_power_says_why() {
         &UtilityGraph::new(),
         &mut cp_utility::AttachCache::default(),
         None,
+        &Default::default(),
     );
     let dark = t.blocks[3]
         .1
@@ -284,6 +286,7 @@ fn a_building_without_power_says_why() {
         &UtilityGraph::new(),
         &mut cp_utility::AttachCache::default(),
         None,
+        &Default::default(),
     );
     assert_ne!(flags[lone.index as usize] & BuildingFlags::NO_POWER, 0);
     assert_eq!(pools.of(lone).map(|p| p.capacity), Some(0.0));

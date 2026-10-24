@@ -132,6 +132,8 @@ pub struct BalanceInputs<'a> {
     pub utilities: [(f32, f32); 3],
     /// Deaths in the last game day.
     pub died_today: u32,
+    /// The service budgets (§20): a facility supplies its capacity at its kind's budget.
+    pub budgets: cp_content::Budgets,
 }
 
 /// The balance of every sector, in [`Sector::ALL`] order.
@@ -149,7 +151,9 @@ pub fn city_services(i: &BalanceInputs) -> Vec<SectorBalance> {
             continue;
         }
         let def = i.db.building(b.def);
-        let svc = i.db.building_service(b.def).map(|s| i.db.service(s));
+        let svc =
+            i.db.building_service(b.def)
+                .map(|s| i.budgets.def(i.db.service(s), bal));
         if let Some(svc) = svc {
             // A service without power does not work (as the facility finder).
             if !b.flags.has(BuildingFlags::NO_POWER) {
@@ -162,7 +166,11 @@ pub fn city_services(i: &BalanceInputs) -> Vec<SectorBalance> {
                         // A post office collects and sorts a little; a facility only sorts.
                         if svc.tier == cp_service::mail::POST_OFFICE_TIER {
                             supply[idx(Sector::Mail)] += svc.capacity as f32;
-                            supply[idx(Sector::Sorting)] += bal.mail_post_sort;
+                            supply[idx(Sector::Sorting)] += bal.mail_post_sort
+                                * cp_content::budget::power_factor(
+                                    i.budgets.get(ServiceKind::Post),
+                                    bal,
+                                );
                         } else {
                             supply[idx(Sector::Sorting)] += svc.capacity as f32;
                         }

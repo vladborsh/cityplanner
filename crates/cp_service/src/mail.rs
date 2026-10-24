@@ -20,7 +20,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{BuildingFlags, BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::CitizenGrid;
-use cp_content::{ServiceKind, ServiceUnlocks, SimContent, VehicleKind, ZoneType};
+use cp_content::{Budgets, ServiceKind, ServiceUnlocks, SimContent, VehicleKind, ZoneType};
 use cp_core::Tick;
 use cp_core::time::TICKS_PER_DAY;
 use cp_traffic::{RunPoint, RunState, ServiceRuns};
@@ -103,17 +103,20 @@ impl MailState {
     }
 }
 
-/// The service definition of the building `id`, when it is a service of `ServiceKind::Post`.
-fn post_def<'a>(
-    db: &'a cp_content::ContentDb,
+/// The service definition of the building `id` at the Post budget (§20: capacity and vans),
+/// when it is a service of `ServiceKind::Post`.
+fn post_def(
+    db: &cp_content::ContentDb,
+    budgets: &Budgets,
     buildings: &BuildingGrid,
     id: BuildingId,
-) -> Option<&'a cp_content::ServiceDef> {
+) -> Option<cp_content::ServiceDef> {
     buildings
         .get(id)
         .and_then(|f| db.building_service(f.def))
         .map(|s| db.service(s))
         .filter(|s| s.kind == ServiceKind::Post)
+        .map(|s| budgets.def(s, db.balance()))
 }
 
 /// Services phase, before [`update_mail`]: once per pass (every [`COVERAGE_PERIOD`] ticks) starts
@@ -126,12 +129,14 @@ pub fn update_mail_sorting(
     runs: Option<Res<ServiceRuns>>,
     mut state: ResMut<ServiceState>,
     mut mail: ResMut<MailState>,
+    budgets: Option<Res<Budgets>>,
 ) {
     if !tick.0.is_multiple_of(COVERAGE_PERIOD) {
         return;
     }
     let Some(content) = content else { return };
     let db = &content.0;
+    let budgets = budgets.as_deref().copied().unwrap_or_default();
     if tick.0 != 0 && tick.0.is_multiple_of(TICKS_PER_DAY) {
         mail.yesterday = mail.today;
         mail.today = MailDay::default();
@@ -152,7 +157,7 @@ pub fn update_mail_sorting(
         if b.state != BuildingState::Active {
             continue;
         }
-        let Some(svc) = post_def(db, &buildings, id) else {
+        let Some(svc) = post_def(db, &budgets, &buildings, id) else {
             continue;
         };
         if svc.tier == POST_OFFICE_TIER {
@@ -167,7 +172,11 @@ pub fn update_mail_sorting(
             continue;
         }
         capacity += match svc.tier {
-            POST_OFFICE_TIER => db.balance().mail_post_sort.round() as u32,
+            POST_OFFICE_TIER => cp_content::budget::budgeted(
+                db.balance().mail_post_sort.round() as u32,
+                budgets.get(ServiceKind::Post),
+                db.balance(),
+            ),
             SORTING_TIER => svc.capacity,
             _ => 0,
         };
@@ -185,17 +194,18 @@ pub fn update_mail_sorting(
 
 /// A post office that works: Active, powered, of the post office tier and with collecting room
 /// left today (`None`: no such building).
-fn working_office<'a>(
-    db: &'a cp_content::ContentDb,
+fn working_office(
+    db: &cp_content::ContentDb,
+    budgets: &Budgets,
     buildings: &BuildingGrid,
     state: &ServiceState,
     id: BuildingId,
-) -> Option<&'a cp_content::ServiceDef> {
+) -> Option<cp_content::ServiceDef> {
     let b = buildings.get(id)?;
     if b.state != BuildingState::Active || b.flags.has(BuildingFlags::NO_POWER) {
         return None;
     }
-    let svc = post_def(db, buildings, id).filter(|s| s.tier == POST_OFFICE_TIER)?;
+    let svc = post_def(db, budgets, buildings, id).filter(|s| s.tier == POST_OFFICE_TIER)?;
     let used = state.facility(id).copied().unwrap_or_default();
     (used.used_today < svc.capacity).then_some(svc)
 }
@@ -261,6 +271,7 @@ pub fn update_mail(
     let unlocks = unlocks.map(|u| *u).unwrap_or_default();
     let db = &content.0;
     let balance = db.balance();
+    let budgets = net.budgets();
     let bucket = tick.0 % COVERAGE_PERIOD;
     let pass = (tick.0 / COVERAGE_PERIOD) % PASSES_PER_DAY;
     let roads = net.graph();
@@ -284,10 +295,10 @@ pub fn update_mail(
             let open = !mail.backlog_full(balance.mail_backlog_days);
             if open
                 && unlocks.open(ServiceKind::Post)
-                && let Some(svc) = working_office(db, &buildings, &state, office)
+                && let Some(svc) = working_office(db, &budgets, &buildings, &state, office)
             {
                 let held = u64::from(mail.pile(target));
-                let pile = collect(&mut state, &mut mail, office, svc, held);
+                let pile = collect(&mut state, &mut mail, office, &svc, held);
                 store(&mut state, &mut mail, target, pile, balance.mail_problem);
             }
         }
@@ -348,14 +359,14 @@ pub fn update_mail(
                     && open
                     && let Some((office, _)) = finder
                         .get_or_insert_with(|| {
-                            FacilityFinder::new(&roads, &buildings, db, ServiceKind::Post)
+                            FacilityFinder::new(&roads, &buildings, db, &budgets, ServiceKind::Post)
                         })
                         .nearest_with(&state, id, |used, svc| {
                             svc.tier == POST_OFFICE_TIER && used.used_today < svc.capacity
                         })
-                    && let Some(svc) = post_def(db, &buildings, office)
+                    && let Some(svc) = post_def(db, &budgets, &buildings, office)
                 {
-                    pile = collect(&mut state, &mut mail, office, svc, pile);
+                    pile = collect(&mut state, &mut mail, office, &svc, pile);
                 }
             }
             // A van is on its way (`arrived` takes the mail), or one is sent now.
@@ -366,7 +377,7 @@ pub fn update_mail(
                     && open
                     && let Some((office, _)) = finder
                         .get_or_insert_with(|| {
-                            FacilityFinder::new(&roads, &buildings, db, ServiceKind::Post)
+                            FacilityFinder::new(&roads, &buildings, db, &budgets, ServiceKind::Post)
                         })
                         .nearest_with(&state, id, has_room)
                 {

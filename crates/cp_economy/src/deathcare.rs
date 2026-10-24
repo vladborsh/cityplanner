@@ -50,6 +50,7 @@ pub fn update_deathcare(
         return;
     }
     let roads = net.graph();
+    let budgets = net.budgets();
     let mut finder = None;
     for id in homes {
         let mut dead = u32::from(grid.dead.get(&id).copied().unwrap_or(0));
@@ -59,7 +60,7 @@ pub fn update_deathcare(
         while dead > 0 && covered {
             let Some(station) = finder
                 .get_or_insert_with(|| {
-                    FacilityFinder::new(&roads, &buildings, db, ServiceKind::Deathcare)
+                    FacilityFinder::new(&roads, &buildings, db, &budgets, ServiceKind::Deathcare)
                 })
                 .nearest(&state, id)
             else {
@@ -68,7 +69,7 @@ pub fn update_deathcare(
             let Some(svc) = buildings
                 .get(station)
                 .and_then(|f| db.building_service(f.def))
-                .map(|s| db.service(s))
+                .map(|s| budgets.def(db.service(s), db.balance()))
             else {
                 break;
             };

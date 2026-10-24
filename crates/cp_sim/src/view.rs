@@ -141,8 +141,10 @@ pub struct SimView {
     pub treasury: cp_core::Treasury,
     /// What the last daily settlement booked (T-179): the top bar's trend and pop-up.
     pub flow: cp_economy::MoneyFlow,
-    /// Tax rates, budget percentages and the last settled week, read-only (budget window).
+    /// Tax rates, loans and the last settled week, read-only (budget window).
     pub economy: cp_economy::EconomyState,
+    /// The service budgets (§20.2), read-only: the budget tab, the coverage overlay and ghost.
+    pub budgets: cp_content::Budgets,
     /// Service coverage of the roads by kind, for the overlays (T-134). Shared: re-cloned
     /// only when it was recomputed.
     pub service: Arc<cp_service::ServiceCoverage>,
@@ -945,6 +947,7 @@ impl SimRunner {
             progress: self.world().resource::<crate::Progress>().clone(),
             uniques: Arc::new(self.unique_statuses()),
             economy: self.world().resource::<cp_economy::EconomyState>().clone(),
+            budgets: *self.world().resource::<cp_content::Budgets>(),
             lines: self.line_views(),
             transit_ledger: *self.world().resource::<cp_transit::TransitLedger>(),
             freight: self.freight_view(),

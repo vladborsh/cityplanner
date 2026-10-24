@@ -561,7 +561,14 @@ fn power_saving_lets_the_same_plant_carry_more_houses() {
             districts: &districts,
             city,
         };
-        compute_supply_with(&db, &b, &g, &mut AttachCache::default(), Some(&p))
+        compute_supply_with(
+            &db,
+            &b,
+            &g,
+            &mut AttachCache::default(),
+            Some(&p),
+            &Default::default(),
+        )
     };
     assert_eq!(powered(&with(&city)), 2, "policy off");
     city.mask = PolicyKind::PowerSaving.bit();
@@ -699,10 +706,43 @@ fn each_house_drinks_from_the_pool_of_its_own_pipe_network() {
     let a = add(&mut b, &db, "house", 50.0, 15.0);
     let c = add(&mut b, &db, "house", 450.0, 15.0);
     let dry = add(&mut b, &db, "house", 250.0, 15.0);
-    let (_, _, water) = compute_supply_pools(&db, &b, &g, &mut AttachCache::default(), None);
+    let (_, _, water) = compute_supply_pools(
+        &db,
+        &b,
+        &g,
+        &mut AttachCache::default(),
+        None,
+        &Default::default(),
+    );
     assert_eq!(water.pools.len(), 2);
     assert_eq!(water.of(a).unwrap().sources, vec![(west, 25.0)]);
     assert_eq!(water.of(c).unwrap().sources, vec![(east, 25.0)]);
     assert!(water.of(dry).is_none());
     assert!(water.of(west).is_none(), "a pump drinks nothing");
+}
+
+/// §20.6 item 2: a source gives its capacity at its kind's budget: the 100-unit power plant
+/// serves 5 houses of 10 at 50 %, 10 at 100 % and 12 at 150 % (125); the pool says the same.
+#[test]
+fn a_source_gives_its_capacity_at_the_budget() {
+    let db = db();
+    let mut b = BuildingGrid::new();
+    let mut g = UtilityGraph::new();
+    line(&mut g, UtilityNet::Power, 0.0, 400.0);
+    let plant = add(&mut b, &db, "bigplant", 0.0, 10.0);
+    let houses: Vec<_> = (0..14)
+        .map(|i| add(&mut b, &db, "house", 20.0 + 25.0 * i as f32, 15.0))
+        .collect();
+    for (pct, lit, cap) in [(50, 5, 50.0), (100, 10, 100.0), (150, 12, 125.0)] {
+        let mut budgets = cp_content::Budgets::default();
+        budgets.set(cp_content::ServiceKind::Power, pct);
+        let (missing, pools, _) =
+            compute_supply_pools(&db, &b, &g, &mut AttachCache::default(), None, &budgets);
+        let powered = houses
+            .iter()
+            .filter(|h| missing[h.index as usize] & BuildingFlags::NO_POWER == 0)
+            .count();
+        assert_eq!(powered, lit, "{pct} %");
+        assert_eq!(pools.of(plant).map(|p| p.capacity), Some(cap), "{pct} %");
+    }
 }

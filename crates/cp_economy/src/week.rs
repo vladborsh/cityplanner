@@ -33,10 +33,10 @@ use cp_transit::TransitLedger;
 use cp_utility::{UtilityGraph, UtilityNet};
 
 use crate::flow::{DemolitionRefunds, FLOW_HOURS, Flow, MoneyFlow, SERVICE_KINDS};
-use crate::state::{DistrictIncome, EconomyState, Loan, WeekReport};
+use crate::state::{Budgets, DistrictIncome, EconomyState, Loan, WeekReport};
 
 fn percent(pct: u8) -> f64 {
-    f64::from(pct) / 100.0
+    cp_content::budget::cost_factor(pct)
 }
 
 /// Weekly upkeep of one road segment at `budget_pct`.
@@ -90,6 +90,8 @@ pub struct WeekInputs<'a> {
     pub citizens: &'a CitizenGrid,
     pub utilities: &'a UtilityGraph,
     pub state: &'a EconomyState,
+    /// The service budgets (§20): upkeep is linear in them.
+    pub budgets: &'a Budgets,
     /// Where districts are and what tax rates they override (T-132).
     pub district_map: &'a DistrictMap,
     pub districts: &'a Districts,
@@ -177,7 +179,7 @@ pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost
         }
         if let Some(service) = i.content.building_service(b.def) {
             let kind = i.content.service(service).kind;
-            let upkeep = Cost::scaled(def.upkeep_week, percent(st.budgets.get(kind)));
+            let upkeep = Cost::scaled(def.upkeep_week, percent(i.budgets.get(kind)));
             r.building_upkeep += upkeep;
             if let Some(slot) = services.get_mut(kind as usize) {
                 *slot += upkeep;
@@ -185,7 +187,7 @@ pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost
         }
     }
 
-    let roads = st.budgets.get(ServiceKind::Roads);
+    let roads = i.budgets.get(ServiceKind::Roads);
     let entry = entry_segments(i.net, i.content);
     for (_, seg) in i.net.segments().filter(|(id, _)| !entry.contains(id)) {
         r.road_upkeep += segment_upkeep(i.content.road(seg.road), seg, roads);
@@ -199,7 +201,7 @@ pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost
         if let Some((_, def)) = i.content.utility_for_kind(kind) {
             r.utility_upkeep += Cost::scaled(
                 def.upkeep_per_m_week,
-                f64::from(link.length) * percent(st.budgets.get(service)),
+                f64::from(link.length) * percent(i.budgets.get(service)),
             );
         }
     }
@@ -251,7 +253,11 @@ pub fn settle_week(
     mut treasury: ResMut<Treasury>,
     mut district_income: ResMut<DistrictIncome>,
     mut flow: ResMut<MoneyFlow>,
-    (district_map, corruption): (Res<DistrictMap>, Option<Res<crate::CorruptionState>>),
+    (district_map, corruption, budgets): (
+        Res<DistrictMap>,
+        Option<Res<crate::CorruptionState>>,
+        Option<Res<Budgets>>,
+    ),
     districts: Res<Districts>,
     city_policies: Res<CityPolicies>,
     ledger: Option<ResMut<TransitLedger>>,
@@ -279,6 +285,7 @@ pub fn settle_week(
             citizens: &citizens,
             utilities: &utilities,
             state: &state,
+            budgets: &budgets.as_deref().copied().unwrap_or_default(),
             district_map: &district_map,
             districts: &districts,
             city_policies: &city_policies,
