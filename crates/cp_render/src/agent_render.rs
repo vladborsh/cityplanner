@@ -250,8 +250,13 @@ fn build_agent_instances(
         if parked_cache.key != Some(key)
             && (parked_cache.key.is_none() || now - parked_cache.built_at >= PARKED_REFRESH_S)
         {
-            let (cars, index) =
-                crate::parked::parked_cars(&view.net, &view.junctions, db, &view.buildings);
+            let (cars, index) = crate::parked::parked_cars(
+                &view.net,
+                &view.junctions,
+                db,
+                &view.buildings,
+                &view.parked,
+            );
             *parked_cache = ParkedCache {
                 key: Some(key),
                 built_at: now,

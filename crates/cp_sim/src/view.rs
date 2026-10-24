@@ -131,6 +131,9 @@ pub struct SimView {
     /// Poses of vehicles and pedestrians after this tick and after the previously published
     /// one, for the client to interpolate between. Shared; rebuilt only when the tick advanced.
     pub agents: Arc<AgentSnapshot>,
+    /// The cars standing in parking places and the places (T-331b2), shared: copied again when
+    /// the cars or the places changed.
+    pub parked: Arc<cp_traffic::ParkedView>,
     /// Smoothed demand (R, C, I, O) for the demand bars (§11), read-only.
     pub demand: cp_building::Demand,
     /// The contentment of every home (T-318), shared: re-cloned only when a record changed.
@@ -684,6 +687,29 @@ impl SimRunner {
         snap
     }
 
+    /// The parked cars for `SimView::parked`.
+    fn parked_snapshot(&self) -> Arc<cp_traffic::ParkedView> {
+        let agents = self.world().get_resource::<cp_traffic::Agents>();
+        let index = self.world().get_resource::<cp_traffic::ParkingIndex>();
+        let stamp = agents.map_or(0, |a| a.parked.stamp());
+        let mut cache = self.parked_cache.lock().expect("parked cache");
+        if let Some(old) = cache.as_ref()
+            && old.stamp == stamp
+            && Some(old.index.built_at()).is_some_and(|b| b == index.and_then(|i| i.built_at()))
+        {
+            return Arc::clone(old);
+        }
+        let snap = Arc::new(cp_traffic::ParkedView {
+            stamp,
+            cars: agents
+                .map(|a| a.parked.iter().map(|(c, p)| (c, *p)).collect())
+                .unwrap_or_default(),
+            index: Arc::new(index.cloned().unwrap_or_default()),
+        });
+        *cache = Some(Arc::clone(&snap));
+        snap
+    }
+
     /// The utility snapshot for `SimView::utilities`. The key hashes the id (index and
     /// generation, so a removed-then-reused slot differs) and ends of every link and the node
     /// count: links are immutable once built, so any change shows up in it.
@@ -940,6 +966,7 @@ impl SimRunner {
                 .map(|c| Arc::clone(&c.0)),
             overlays: self.overlay_data(),
             agents: self.agent_snapshot(tick),
+            parked: self.parked_snapshot(),
             demand: *self.world().resource::<cp_building::Demand>(),
             home_contentment: self.homes_snapshot(),
             city_contentment: self

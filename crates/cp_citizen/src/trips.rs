@@ -80,6 +80,18 @@ pub enum ParkPlace {
     Building(BuildingId),
 }
 
+/// The walk to a parked car at the start of a car trip (T-331b2).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Fetch {
+    /// The trip has not looked for the owner's parked car.
+    #[default]
+    No,
+    /// The owner walks from `from` to the car (`TripPark::car`).
+    ToCar,
+    /// The owner has the car; the drive starts at `TripPark::car`.
+    Done,
+}
+
 /// Where a car trip stands with its parking place (T-331b).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TripPark {
@@ -90,6 +102,10 @@ pub struct TripPark {
     /// Places given up (no route to one): at `PARK_RETRIES` the trip drives to the goal and
     /// parks abstractly.
     pub tries: u8,
+    /// The walk to the parked car the trip starts with (T-331b2).
+    pub fetch: Fetch,
+    /// The place the owner's car stood in when the trip began (`fetch` is not `No`).
+    pub car: Option<ParkPlace>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

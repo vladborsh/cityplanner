@@ -114,9 +114,10 @@ pub fn side_index(sign: f32) -> usize {
 pub struct ParkingIndex {
     kerb: Vec<[Place; 2]>,
     buildings: Vec<Place>,
-    /// Per segment and side, the `Access.s` of each place (the arc length on the segment's own
-    /// curve), in the order of the bay.
-    slots: Vec<[Vec<f32>; 2]>,
+    /// Per segment and side, each place as `(Access.s, bay s)`: the arc length on the segment's
+    /// own curve (the path service's) and on the trimmed curve (the bay's, the render's), in the
+    /// order of the bay.
+    slots: Vec<[Vec<(f32, f32)>; 2]>,
     /// The lots and garages (buildings with `ServiceKind::Parking`) by the segment of their
     /// access point.
     lots: BTreeMap<SegmentId, Vec<BuildingId>>,
@@ -156,6 +157,11 @@ impl ParkingIndex {
         })
     }
 
+    /// The tick of the last rebuild.
+    pub fn built_at(&self) -> Option<u64> {
+        self.built
+    }
+
     /// The lots and garages whose access point is on `seg`, ascending by id.
     pub fn lots_on(&self, seg: SegmentId) -> &[BuildingId] {
         self.lots.get(&seg).map_or(&[], |v| v.as_slice())
@@ -168,7 +174,16 @@ impl ParkingIndex {
             .get(seg.index as usize)?
             .get(side.min(1))?
             .get(usize::from(slot))
-            .copied()
+            .map(|s| s.0)
+    }
+
+    /// Arc length of a kerb place on the trimmed curve of its segment, where the bay is drawn.
+    pub fn kerb_bay_s(&self, seg: SegmentId, side: usize, slot: u16) -> Option<f32> {
+        self.slots
+            .get(seg.index as usize)?
+            .get(side.min(1))?
+            .get(usize::from(slot))
+            .map(|s| s.1)
     }
 
     /// Whether the place still exists (a kerb slot inside the bay, a building with places).
@@ -310,7 +325,7 @@ impl ParkingIndex {
             .max()
             .unwrap_or(0);
         let mut kerb = vec![[Place::default(); 2]; n];
-        let mut slots: Vec<[Vec<f32>; 2]> = vec![Default::default(); n];
+        let mut slots: Vec<[Vec<(f32, f32)>; 2]> = vec![Default::default(); n];
         for (id, seg) in net.segments() {
             let Some(Bays { sides, a, b }) = bays(net, geo, db, id) else {
                 continue;
@@ -327,7 +342,7 @@ impl ParkingIndex {
                     .get(&(id, side.sign as i8))
                     .map_or(&[], |v| v.as_slice());
                 let k = side_index(side.sign);
-                let free: Vec<f32> = all
+                let free: Vec<(f32, f32)> = all
                     .iter()
                     .copied()
                     .filter(|&s| !slot_blocked(near, s))
@@ -337,7 +352,7 @@ impl ParkingIndex {
                         let trimmed = trimmed.as_ref()?;
                         let at = to_xz(trimmed.point(trimmed.arc_table().s_to_t(s)));
                         let (t, _) = seg.curve.nearest_xz(at);
-                        Some(seg.curve.arc_table().t_to_s(t))
+                        Some((seg.curve.arc_table().t_to_s(t), s))
                     })
                     .collect();
                 kerb[id.index as usize][k] = Place {
@@ -397,6 +412,15 @@ pub fn building_places(db: &ContentDb, b: &Building) -> u16 {
     ((homes + work) as u32).min(u32::from(u16::MAX)) as u16
 }
 
+/// The parked cars and the places they stand in, as the client draws them (T-331b2).
+#[derive(Clone, Debug, Default)]
+pub struct ParkedView {
+    pub stamp: u64,
+    pub cars: Vec<(CitizenId, ParkedCar)>,
+    /// The index as of the last rebuild; shared, replaced when that changed.
+    pub index: std::sync::Arc<ParkingIndex>,
+}
+
 /// How far from the goal a car looks for a place, metres (§18.3).
 pub const PARK_SEARCH_M: f32 = 300.0;
 /// The search looks at no more than this many segments.
@@ -453,6 +477,21 @@ impl ParkedCars {
     /// Takes the citizen's car out of its place.
     pub fn take(&mut self, citizen: CitizenId) -> Option<ParkedCar> {
         self.cars.remove(&citizen)
+    }
+
+    /// A number that changes when the set of cars does (a cheap fold, for a view that copies
+    /// the cars only when they changed).
+    pub fn stamp(&self) -> u64 {
+        self.cars.iter().fold(self.cars.len() as u64, |h, (c, p)| {
+            h.wrapping_mul(0x100_0000_01B3)
+                ^ (u64::from(c.index) << 32 | u64::from(c.generation))
+                ^ p.since.0
+        })
+    }
+
+    /// Forgets the cars whose place is gone (a slot a new building's gate took, a yard torn down).
+    pub fn retain_places(&mut self, exists: impl Fn(ParkPlace) -> bool) {
+        self.cars.retain(|_, c| exists(c.place));
     }
 
     /// Forgets the cars of citizens that are gone.
@@ -564,6 +603,7 @@ pub fn update_parking_index(
     }
     index.rebuild(&net, &geo, &content.0, &buildings);
     agents.parked.retain_citizens(|c| grid.citizen(c).is_some());
+    agents.parked.retain_places(|p| index.exists(p));
     let reserved = book
         .iter()
         .filter(|(_, t)| !t.park.parked)

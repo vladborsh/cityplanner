@@ -28,6 +28,7 @@ pub use astar::{
     CarPath, NoPath, PedPath, find_car_path, find_car_path_lanes, find_class_path,
     find_class_path_lanes, find_ped_path, find_rail_path, find_truck_path, find_truck_path_lanes,
 };
+pub use cp_citizen::ParkPlace;
 pub use graph::{
     Access, CongestionMap, LEFT_TURN_PENALTY, PED_SPEED, PathGraph, SegEnd, Side, U_TURN_PENALTY,
 };
@@ -35,8 +36,8 @@ pub use heavy::HeavyBan;
 pub use mode::{ALWAYS_WALK_M, TripTimes, mode_by_time, track_trip_times, way_times};
 pub use parking::{
     Front, PARK_RETRIES, PARK_SEARCH_M, PARKED_CAP, PARKING_PERIOD, ParkedCar, ParkedCars,
-    ParkingIndex, Place, building_places, choose_place, kerb_fronts, place_access, side_index,
-    slot_blocked, update_parking_index,
+    ParkedView, ParkingIndex, Place, building_places, choose_place, kerb_fronts, place_access,
+    side_index, slot_blocked, update_parking_index,
 };
 pub use pose::{
     AgentFrame, AgentKey, CROSSING_ROOM_M, DOOR_WALK_M, PULL_M, PedestrianPose, Portal,

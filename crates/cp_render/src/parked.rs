@@ -16,10 +16,6 @@ use cp_net::{JunctionGeometry, NetGraph, SegmentId};
 pub use crate::road::parking::DRIVEWAY_W;
 use crate::road::parking::{BaySide, Bays, bays};
 
-/// At most this share of the places of a busy street holds a car.
-const FULLEST: f32 = 0.85;
-/// A building this far along the street (metres) from a place counts for it.
-const NEAR_M: f32 = 24.0;
 /// Pedestrians are drawn this far beyond a bay's outer edge, metres.
 const NUDGE_CLEAR: f32 = 0.35;
 /// Cell of the [`BayIndex`] grid, metres.
@@ -49,18 +45,6 @@ pub fn occupancy(db: &ContentDb, b: &cp_building::Building) -> f32 {
         o *= 0.5;
     }
     o
-}
-
-fn hash(seg: SegmentId, side: usize, slot: usize) -> u64 {
-    let mut x = (u64::from(seg.index) << 32)
-        ^ (u64::from(seg.generation) << 20)
-        ^ ((side as u64) << 16)
-        ^ slot as u64;
-    // splitmix64
-    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    x ^ (x >> 31)
 }
 
 /// One bay side of a segment, sampled for [`BayIndex`]: points of the street's axis along the
@@ -198,15 +182,35 @@ pub fn bucketed(cars: &[ParkedCar]) -> Vec<ParkedBucket> {
         .collect()
 }
 
-/// The parked cars of the whole net and the index of its bays.
+/// The parked cars of the sim (T-331b2: `Agents::parked`, one per citizen, each in the place the
+/// sim reserved) and the index of the bays. A car in a kerb place stands in that bay slot; a car
+/// in a yard or a lot stands in rows behind the building's gate or across its footprint.
 pub fn parked_cars(
     graph: &NetGraph,
     geo: &JunctionGeometry,
     db: &ContentDb,
     buildings: &BuildingGrid,
+    parked: &cp_traffic::ParkedView,
 ) -> (Vec<ParkedCar>, BayIndex) {
-    // The same fronts and the same blocked places as the sim's kerb places (T-331).
-    let fronts = cp_traffic::kerb_fronts(graph, geo, db, buildings);
+    use cp_traffic::{ParkPlace, side_index};
+    let mut kerb: std::collections::BTreeMap<(SegmentId, usize), Vec<(u16, u64)>> =
+        Default::default();
+    let mut yards: std::collections::BTreeMap<cp_building::BuildingId, Vec<u64>> =
+        Default::default();
+    for (citizen, car) in &parked.cars {
+        let key = splitmix(u64::from(citizen.index) << 32 | u64::from(citizen.generation));
+        match car.place {
+            ParkPlace::Kerb {
+                segment,
+                side,
+                slot,
+            } => kerb
+                .entry((segment, usize::from(side)))
+                .or_default()
+                .push((slot, key)),
+            ParkPlace::Building(id) => yards.entry(id).or_default().push(key),
+        }
+    }
     let mut cars = Vec::new();
     let mut index = BayIndex::default();
     for (id, _) in graph.segments() {
@@ -217,12 +221,7 @@ pub fn parked_cars(
             continue;
         };
         let table = curve.arc_table();
-        let bay = Bays {
-            sides: sides.clone(),
-            a,
-            b,
-        };
-        for (k, side) in sides.iter().enumerate() {
+        for side in &sides {
             let at = |s: f32| {
                 let t = table.s_to_t(s);
                 let tangent = to_xz(curve.tangent(t)).normalize_or_zero();
@@ -238,26 +237,11 @@ pub fn parked_cars(
                     .collect(),
                 side: *side,
             });
-            let near: &[cp_traffic::Front] = fronts
-                .get(&(id, side.sign as i8))
-                .map_or(&[], |v| v.as_slice());
-            // How busy each front is (render only).
-            let busy_of =
-                |f: &cp_traffic::Front| buildings.get(f.building).map_or(0.0, |b| occupancy(db, b));
-            for (slot, s) in bay.slots().into_iter().enumerate() {
-                if cp_traffic::slot_blocked(near, s) {
+            let k = side_index(side.sign);
+            for &(slot, key) in kerb.get(&(id, k)).map_or(&[][..], |v| v.as_slice()) {
+                let Some(s) = parked.index.kerb_bay_s(id, k, slot) else {
                     continue;
-                }
-                let busy = near
-                    .iter()
-                    .filter(|f| (f.s - s).abs() <= NEAR_M)
-                    .map(&busy_of)
-                    .fold(0.0f32, f32::max);
-                let h = hash(id, k, slot);
-                let roll = (h & 0xFFFF) as f32 / 65535.0;
-                if roll >= busy * FULLEST {
-                    continue;
-                }
+                };
                 let (c, tangent, left) = at(s);
                 let p = to_xz(c) + left * side.car_offset();
                 // Facing the traffic of its side: forward on the right, backward on the left.
@@ -265,10 +249,67 @@ pub fn parked_cars(
                 cars.push(ParkedCar {
                     pos: Vec3::new(p.x, c.y + crate::road::LIFT, p.y),
                     yaw: dir.x.atan2(dir.y),
-                    key: h,
+                    key,
                 });
             }
         }
     }
+    for (id, keys) in yards {
+        let Some(b) = buildings.get(id) else { continue };
+        let Some(access) = b.access() else { continue };
+        let Some(seg) = graph.segment(access.segment) else {
+            continue;
+        };
+        let y = seg.curve.point(access.t.clamp(0.0, 1.0)).y + crate::road::LIFT;
+        let service = db.building_service(b.def).is_some();
+        let (w, d) = b.size();
+        let (sn, cs) = b.rot.sin_cos();
+        let (ax, ay) = (Vec2::new(cs, sn), Vec2::new(-sn, cs));
+        // A lot or a garage fills its footprint in rows; a yard stands behind the gate.
+        let (origin, row_dir, col_dir, cols, nose) = if service {
+            let (hw, hd) = (
+                f32::from(w) * cp_building::FOOTPRINT_CELL_M * 0.5 - 2.0,
+                f32::from(d) * cp_building::FOOTPRINT_CELL_M * 0.5 - 3.0,
+            );
+            let cols = ((2.0 * hw / CAR_PITCH).floor() as usize).max(1);
+            (
+                b.pos - ax * hw - ay * hd,
+                ay * CAR_ROW,
+                ax * CAR_PITCH,
+                cols,
+                ay,
+            )
+        } else if let Some(p) = b.portals(graph) {
+            let t = Vec2::new(p.out.y, -p.out.x);
+            (
+                p.drive - p.out * 3.0,
+                -p.out * CAR_ROW,
+                t * CAR_PITCH,
+                3,
+                p.out,
+            )
+        } else {
+            continue;
+        };
+        for (i, key) in keys.into_iter().enumerate() {
+            let p = origin + col_dir * (i % cols) as f32 + row_dir * (i / cols) as f32;
+            cars.push(ParkedCar {
+                pos: Vec3::new(p.x, y, p.y),
+                yaw: nose.x.atan2(nose.y),
+                key,
+            });
+        }
+    }
     (cars, index)
+}
+
+/// Spacing of cars across a row and between rows in a yard or a lot, metres.
+const CAR_PITCH: f32 = 2.6;
+const CAR_ROW: f32 = 5.4;
+
+fn splitmix(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
 }

@@ -26,7 +26,8 @@ pub use system::{
     MOVE_IN_STREAM, rehome_evicted, update_citizens,
 };
 pub use trips::{
-    LeisureArrival, ParkPlace, Trip, TripBook, TripId, TripMode, TripPark, TripPurpose, TripState,
+    Fetch, LeisureArrival, ParkPlace, Trip, TripBook, TripId, TripMode, TripPark, TripPurpose,
+    TripState,
 };
 
 /// Crate name, used by the skeleton smoke test.

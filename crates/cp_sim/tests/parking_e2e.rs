@@ -374,3 +374,54 @@ fn many_cars_park_and_the_index_counts_exactly_the_parked_cars() {
         }
     }
 }
+
+#[test]
+fn the_owner_walks_to_the_parked_car_before_driving_home() {
+    let content = content();
+    let mut sim = quiet_town(&content, 5, 5, "basic_2l", 300);
+    let (cid, home, goal) = pick(&sim);
+    // The goal's yard is full, so the car stands in the street and the way back starts on foot.
+    let free = sim.world().resource::<ParkingIndex>().building(goal).free();
+    fill(&mut sim, ParkPlace::Building(goal), free, cid);
+    send(&mut sim, cid, home, goal);
+    drain(&mut sim);
+    let car = *sim
+        .world()
+        .resource::<Agents>()
+        .parked
+        .get(cid)
+        .expect("parked");
+    assert!(matches!(car.place, ParkPlace::Kerb { .. }));
+    let walked = sim.world().resource::<Agents>().stats.walked;
+    // Back home.
+    sim.world_mut()
+        .resource_mut::<CitizenGrid>()
+        .set_location(cid, Location::Work);
+    send(&mut sim, cid, goal, home);
+    let mut fetching = false;
+    for _ in 0..(TICKS_PER_DAY / 2) {
+        sim.tick_once();
+        let book = sim.world().resource::<TripBook>();
+        if book
+            .iter()
+            .any(|(_, t)| t.park.fetch == cp_citizen::Fetch::ToCar)
+        {
+            fetching = true;
+            // The car stands until its owner is at it.
+            assert!(sim.world().resource::<Agents>().parked.get(cid).is_some());
+        }
+        if book.is_empty() {
+            break;
+        }
+    }
+    assert!(fetching, "the trip starts with a walk to the car");
+    let agents = sim.world().resource::<Agents>();
+    assert!(
+        agents.stats.walked >= walked + 1,
+        "the walk to the car was walked"
+    );
+    // The car left the street spot and parks again at home.
+    let again = agents.parked.get(cid).expect("parked at home");
+    assert_ne!(again.place, car.place);
+    assert!(sim.world().resource::<TripBook>().is_empty());
+}

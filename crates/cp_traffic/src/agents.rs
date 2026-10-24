@@ -39,8 +39,8 @@ use bevy_math::Vec2;
 use bevy_tasks::{ComputeTaskPool, TaskPool};
 use cp_building::{Building, BuildingFlags, BuildingGrid};
 use cp_citizen::{
-    CitizenGrid, CitizenId, ParkPlace, Trip, TripBook, TripId, TripMode, TripPark, TripPurpose,
-    TripState, cancel_trip, complete_trip,
+    CitizenGrid, CitizenId, Fetch, ParkPlace, Trip, TripBook, TripId, TripMode, TripPark,
+    TripPurpose, TripState, cancel_trip, complete_trip,
 };
 use cp_core::curve::{CubicBezier3, to_xz};
 use cp_core::time::MOVE_SECONDS_PER_TICK;
@@ -683,6 +683,33 @@ fn place_distance(
     to_xz(seg.curve.point(t)).distance(b.pos)
 }
 
+/// The owner reaches the car (or is given it): it leaves its place and the trip goes on as a drive.
+fn take_fetched(
+    agents: &mut Agents,
+    parking: &mut ParkingIndex,
+    book: &mut TripBook,
+    tid: TripId,
+    trip: &Trip,
+) {
+    if let Some(old) = agents.parked.take(trip.citizen) {
+        parking.release(old.place);
+    }
+    give_car(book, tid, trip);
+}
+
+/// The owner has their car at once (no walk to it): the trip goes on as a drive from where it stood.
+fn give_car(book: &mut TripBook, tid: TripId, trip: &Trip) {
+    book.set_park(
+        tid,
+        TripPark {
+            fetch: Fetch::Done,
+            ..trip.park
+        },
+    );
+    book.set_mode(tid, TripMode::Car);
+    book.set_state(tid, TripState::Planned);
+}
+
 pub(crate) fn travel_ticks(cost_s: f32) -> u64 {
     ((cost_s / MOVE_SECONDS_PER_TICK).ceil() as u64).max(1)
 }
@@ -733,6 +760,31 @@ pub fn route_trips(
         if trip.mode == TripMode::Transit {
             continue;
         }
+        // The owner walks to the car they left standing (T-331b2).
+        if trip.park.fetch == Fetch::ToCar {
+            let car = trip
+                .park
+                .car
+                .and_then(|p| place_access(&parking, &net, &buildings, p));
+            let from = buildings.get(trip.from).and_then(|b| access_of(&net, b));
+            let (Some(from), Some(to)) = (from, car) else {
+                // The car or the door is gone: the owner has the car at once.
+                give_car(&mut book, tid, &trip);
+                continue;
+            };
+            let RequestId(request) = service.submit(
+                &pnet,
+                *tick,
+                PathRequest {
+                    mode: Mode::Pedestrian,
+                    from,
+                    to,
+                },
+            );
+            agents.requests.insert(request, tid);
+            book.set_state(tid, TripState::AwaitingPath { request });
+            continue;
+        }
         // The car is parked: the citizen walks on from its place to the goal (T-331b).
         if trip.park.parked {
             let goal = buildings.get(trip.to).and_then(|b| access_of(&net, b));
@@ -775,15 +827,26 @@ pub fn route_trips(
             .get(trip.from)
             .zip(buildings.get(trip.to))
             .and_then(|(a, b)| Some((access_of(&net, a)?, access_of(&net, b)?)));
-        let Some((from, to)) = access else {
+        let Some((mut from, to)) = access else {
             agents.stats.no_path += 1;
             cancel_trip(&mut grid, &mut book, tid);
             continue;
         };
+        // Having fetched the car, the drive starts where it stood.
+        let fetched = trip.park.fetch == Fetch::Done;
+        if fetched
+            && let Some(at) = trip
+                .park
+                .car
+                .and_then(|p| place_access(&parking, &net, &buildings, p))
+        {
+            from = at;
+        }
         // Trip mode by need (T-242): a citizen with a car takes the quicker of walking the real
         // route and driving it (congestion and the start penalty included). Both routes are
         // searched by the path service on its workers (T-256); the mode is set on delivery.
-        let by_time = settings.as_deref().is_none_or(|s| s.mode_by_time)
+        let by_time = !fetched
+            && settings.as_deref().is_none_or(|s| s.mode_by_time)
             && content.as_deref().is_some_and(|c| {
                 grid.citizen(trip.citizen).is_some_and(|c| c.has_car)
                     && c.0.balance().car_start_penalty_s >= 0.0
@@ -1200,6 +1263,10 @@ pub fn receive_paths(
         };
         match &outcome.result {
             PathResult::Stale => book.set_state(tid, TripState::Planned),
+            // No way on foot to the car: the owner has it at once.
+            PathResult::Pedestrian(Err(NoPath)) if trip.park.fetch == Fetch::ToCar => {
+                take_fetched(&mut agents, &mut parking, &mut book, tid, &trip);
+            }
             // No route to the place (a one-way detour, a cut-off street): ask again for another,
             // then drive to the goal (T-331b).
             PathResult::Car(Err(NoPath))
@@ -1227,6 +1294,12 @@ pub fn receive_paths(
                     }
                 }
                 cancel_trip(&mut grid, &mut book, tid);
+            }
+            PathResult::Pedestrian(Ok(_))
+                if trip.park.fetch == Fetch::ToCar
+                    && agents.pedestrians.len() >= limits.pedestrians as usize =>
+            {
+                take_fetched(&mut agents, &mut parking, &mut book, tid, &trip);
             }
             PathResult::Pedestrian(Ok(path)) if trip.mode == TripMode::Walk => {
                 // (Walking won the walk-or-drive choice: the reserved place goes back.)
@@ -1278,7 +1351,26 @@ pub fn receive_paths(
                         },
                     );
                 } else if agents.vehicles.len() < limits.vehicles as usize {
-                    // The owner takes the car they left standing (the walk to it is T-331c).
+                    // The owner walks to the car they left standing first (T-331b2); the drive
+                    // is routed again from where it stands.
+                    if trip.park.fetch == Fetch::No
+                        && let Some(old) = agents.parked.get(trip.citizen).copied()
+                        && parking.exists(old.place)
+                    {
+                        give_back(&mut parking, &mut book);
+                        book.set_park(
+                            tid,
+                            TripPark {
+                                place: None,
+                                fetch: Fetch::ToCar,
+                                car: Some(old.place),
+                                ..trip.park
+                            },
+                        );
+                        book.set_mode(tid, TripMode::Walk);
+                        book.set_state(tid, TripState::Planned);
+                        continue;
+                    }
                     if let Some(old) = agents.parked.take(trip.citizen) {
                         parking.release(old.place);
                     }
@@ -1595,6 +1687,12 @@ pub fn move_agents(
                         if let Some(runs) = runs.as_deref_mut() {
                             runs.set_state(run, crate::runs::RunState::Arrived { at: Tick(now) });
                         }
+                    } else if let Some(trip) = book
+                        .get(p.trip)
+                        .filter(|t| t.park.fetch == Fetch::ToCar)
+                        .cloned()
+                    {
+                        take_fetched(&mut agents, &mut parking, &mut book, p.trip, &trip);
                     } else {
                         complete_trip(&mut grid, &mut book, &buildings, &rng, now, p.trip);
                     }

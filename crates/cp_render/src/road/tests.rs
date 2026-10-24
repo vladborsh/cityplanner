@@ -1717,8 +1717,9 @@ fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
     let db = &*w.content;
     let id = v.net.segments().next().unwrap().0;
     let empty = cp_building::BuildingGrid::new();
-    let (cars, _) = crate::parked::parked_cars(&v.net, &v.junctions, db, &empty);
-    assert!(cars.is_empty(), "empty lots: no parked cars");
+    let none = cp_traffic::ParkedView::default();
+    let (cars, _) = crate::parked::parked_cars(&v.net, &v.junctions, db, &empty, &none);
+    assert!(cars.is_empty(), "no parked cars in the sim: none drawn");
 
     // Busy houses along the left side, a fire station in their middle.
     let mut grid = cp_building::BuildingGrid::new();
@@ -1728,7 +1729,28 @@ fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
         .collect();
     let station = 0.5;
     front(&v, db, &mut grid, "fire_station", id, station, 1.0, 1);
-    let (cars, index) = crate::parked::parked_cars(&v.net, &v.junctions, db, &grid);
+    // T-331b2: the cars drawn are the sim's: every kerb place of the houses' side holds one.
+    let mut places = cp_traffic::ParkingIndex::default();
+    places.rebuild(&v.net, &v.junctions, db, &grid);
+    let mut standing = Vec::new();
+    for side in [1] {
+        while let Some(place) = places.take_kerb(id, side) {
+            standing.push((
+                cp_core::Id::new(standing.len() as u32, 0),
+                cp_traffic::ParkedCar {
+                    place,
+                    since: Tick(0),
+                },
+            ));
+        }
+    }
+    let view = cp_traffic::ParkedView {
+        stamp: 1,
+        cars: standing,
+        index: std::sync::Arc::new(places),
+    };
+    let (cars, index) = crate::parked::parked_cars(&v.net, &v.junctions, db, &grid, &view);
+    assert_eq!(cars.len(), view.cars.len(), "one drawn car per parked car");
     assert!(cars.len() >= 2, "{} cars by busy houses", cars.len());
     // §25.1: no place overlaps a yard gate's driveway.
     let gates: Vec<f32> = houses
@@ -1762,19 +1784,10 @@ fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
             "a car before the fire station"
         );
     }
-    // T-331: a car is drawn only in a place the sim counts (same bays, same blocked places).
-    let mut places = cp_traffic::ParkingIndex::default();
-    places.rebuild(&v.net, &v.junctions, db, &grid);
-    let left = places.kerb(id, cp_traffic::side_index(1.0)).cap as usize;
-    assert!(
-        cars.len() <= left,
-        "{} cars drawn, {left} places counted",
-        cars.len()
-    );
-    assert!(places.kerb(id, cp_traffic::side_index(-1.0)).cap > 0);
+    assert!(view.index.kerb(id, cp_traffic::side_index(-1.0)).cap > 0);
     // The same city, the same cars; a pedestrian walking the bay is drawn beyond it.
     assert_eq!(
-        crate::parked::parked_cars(&v.net, &v.junctions, db, &grid).0,
+        crate::parked::parked_cars(&v.net, &v.junctions, db, &grid, &view).0,
         cars
     );
     let c = cars[0];
@@ -1795,6 +1808,53 @@ fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
     let across = Vec2::new(left.y, -left.x);
     assert_eq!(index.clip(pc, across, -0.3, 0.3), (-0.3, 0.3));
     assert_eq!(index.clip(far, left, -1.0, 1.0), (-1.0, 1.0));
+}
+
+#[test]
+fn a_car_in_a_yard_stands_behind_the_gate_and_in_a_lot_inside_the_footprint() {
+    let mut w = world();
+    w.line("basic_2l", (X0, Z0), (X0 + 96.0, Z0));
+    let v = w.view();
+    let db = &*w.content;
+    let id = v.net.segments().next().unwrap().0;
+    let mut grid = cp_building::BuildingGrid::new();
+    let house = front(&v, db, &mut grid, "apt_high_3", id, 0.3, 1.0, 3);
+    let lot = front(&v, db, &mut grid, "parking_lot", id, 0.7, 1.0, 1);
+    let mut places = cp_traffic::ParkingIndex::default();
+    places.rebuild(&v.net, &v.junctions, db, &grid);
+    let mut cars = Vec::new();
+    for (b, n) in [(house, 2), (lot, 9)] {
+        for _ in 0..n {
+            let place = places.take_building(b).expect("a place");
+            cars.push((
+                cp_core::Id::new(cars.len() as u32, 0),
+                cp_traffic::ParkedCar {
+                    place,
+                    since: Tick(0),
+                },
+            ));
+        }
+    }
+    let view = cp_traffic::ParkedView {
+        stamp: 1,
+        cars,
+        index: std::sync::Arc::new(places),
+    };
+    let (drawn, _) = crate::parked::parked_cars(&v.net, &v.junctions, db, &grid, &view);
+    assert_eq!(drawn.len(), 11);
+    let near = |b, c: &crate::parked::ParkedCar| {
+        grid.get(b)
+            .unwrap()
+            .pos
+            .distance(Vec2::new(c.pos.x, c.pos.z))
+    };
+    assert!(drawn[..2].iter().all(|c| near(house, c) < 25.0));
+    let lot_b = grid.get(lot).unwrap();
+    assert!(
+        drawn[2..]
+            .iter()
+            .all(|c| lot_b.footprint_contains(Vec2::new(c.pos.x, c.pos.z)))
+    );
 }
 
 /// T-302d: the top area of the triangles of colour `c` whose first vertex has `x0 < x < x1`.

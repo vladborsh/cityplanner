@@ -51,6 +51,8 @@ pub struct SimRunner {
     pub(crate) zone_cache: std::sync::Mutex<crate::overlay::ZoneCache>,
     /// `SimView::buildings` cache, keyed by the grid's revision.
     pub(crate) buildings_cache: std::sync::Mutex<crate::view::BuildingsCache>,
+    /// `SimView::parked`, copied again only when the cars or the places changed.
+    pub(crate) parked_cache: std::sync::Mutex<Option<std::sync::Arc<cp_traffic::ParkedView>>>,
     pub(crate) district_cache: std::sync::Mutex<crate::view::DistrictCache>,
     /// `SimView::area_map` and `SimView::areas` caches.
     pub(crate) area_cache: std::sync::Mutex<crate::view::AreaCache>,
@@ -472,6 +474,7 @@ impl SimRunner {
             net_cache: Default::default(),
             zone_cache: Default::default(),
             buildings_cache: Default::default(),
+            parked_cache: Default::default(),
             district_cache: Default::default(),
             deposits_cache: Default::default(),
             industry_cache: Default::default(),
