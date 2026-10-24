@@ -260,6 +260,11 @@ pub fn tr_value(v: &str) -> String {
         [a, "out", "of", b] if num(a) && num(b) => {
             return trf!("{a} out of {b}", a = a, b = b);
         }
+        // The households of a home: `1 of 2 (4 residents)`.
+        [a, "of", b, n, "residents)"] if num(a) && num(b) && num(n.trim_start_matches('(')) => {
+            let n: i64 = n.trim_start_matches('(').parse().unwrap_or(0);
+            return trf!(plural "{a} of {b} ({n} residents)", n = n, a = a, b = b);
+        }
         [a, "of", b, "a", "day"] if num(a) && num(b) => {
             return trf!("{a} of {b} a day", a = a, b = b);
         }
@@ -367,6 +372,21 @@ mod tests {
             waiting_to_spawn: false,
             route: vec![],
         })
+    }
+
+    /// The households row of a home is translated, the residents counted in the plural.
+    #[test]
+    fn the_households_row_is_translated_with_the_residents_plural() {
+        let ru = {
+            let _ru = crate::testutil::in_lang(cp_locale::Lang::Ru);
+            [
+                tr_value("1 of 1 (4 residents)"),
+                tr_value("2 of 3 (1 residents)"),
+            ]
+        };
+        assert_eq!(ru, ["1 из 1 (4 жителя)", "2 из 3 (1 житель)"]);
+        assert_eq!(tr_value("1 of 1 (4 residents)"), "1 of 1 (4 residents)");
+        assert_eq!(tr_value("1 of 1 (1 residents)"), "1 of 1 (1 resident)");
     }
 
     #[test]

@@ -1168,4 +1168,5 @@
     "Content": "Довольны",
     "{complaint}: {n} homes": ["{complaint}: {n} дом", "{complaint}: {n} дома", "{complaint}: {n} домов"],
     "{n} homes complain: {complaint}": ["{n} дом жалуется: {complaint}", "{n} дома жалуются: {complaint}", "{n} домов жалуются: {complaint}"],
+    "{a} of {b} ({n} residents)": ["{a} из {b} ({n} житель)", "{a} из {b} ({n} жителя)", "{a} из {b} ({n} жителей)"],
 }

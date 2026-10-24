@@ -1168,4 +1168,5 @@
     "Content": "Content",
     "{complaint}: {n} homes": ["{complaint}: {n} home", "{complaint}: {n} homes"],
     "{n} homes complain: {complaint}": ["{n} home complains: {complaint}", "{n} homes complain: {complaint}"],
+    "{a} of {b} ({n} residents)": ["{a} of {b} ({n} resident)", "{a} of {b} ({n} residents)"],
 }
