@@ -439,6 +439,8 @@ pub struct DetailCx<'a> {
     pub wall: [f32; 4],
     pub trim: [f32; 4],
     pub seed: u32,
+    /// Where the yard gate is on the front edge, lot `u` metres (§25.4); `None` without one.
+    pub gate: Option<f32>,
 }
 
 fn accent(seed: u32) -> [f32; 4] {
@@ -617,7 +619,8 @@ pub fn details(m: &mut MeshData, dc: &DetailCx, list: &[Detail]) {
                 }
             }
             Detail::Fence => {
-                // Front and the two sides, 0.3 m inside the lot edge, one board per cell.
+                // Front and the two sides, 0.3 m inside the lot edge, one board per cell. The
+                // front is open a driveway wide at the yard gate (T-330c).
                 let (hw, hd) = (dc.lot.0 * 0.5 - 0.3, dc.lot.1 * 0.5 - 0.3);
                 let board = mul(dc.wall, 0.8);
                 let ground = |u: f32, v: f32| dc.terrain.height(f.at(u, v, 0.0).xz_pair());
@@ -641,7 +644,19 @@ pub fn details(m: &mut MeshData, dc: &DetailCx, list: &[Detail]) {
                         }
                     }
                 };
-                run((-hw, -hd), (hw, -hd), f.dir(0.0, -1.0).normalize_or_zero());
+                let front = f.dir(0.0, -1.0).normalize_or_zero();
+                match dc.gate {
+                    Some(g) => {
+                        let half = crate::parked::DRIVEWAY_W * 0.5;
+                        if g - half > -hw + 0.1 {
+                            run((-hw, -hd), (g - half, -hd), front);
+                        }
+                        if g + half < hw - 0.1 {
+                            run((g + half, -hd), (hw, -hd), front);
+                        }
+                    }
+                    None => run((-hw, -hd), (hw, -hd), front),
+                }
                 run((hw, -hd), (hw, hd), f.dir(1.0, 0.0).normalize_or_zero());
                 run((-hw, hd), (-hw, -hd), f.dir(-1.0, 0.0).normalize_or_zero());
             }

@@ -1600,3 +1600,60 @@ fn the_door_is_on_the_front_wall_inside_the_lot() {
         );
     }
 }
+
+/// T-330c: a fence leaves its front open a driveway wide at the yard gate, so a car pulling out
+/// does not drive through it; without a gate the front is closed.
+#[test]
+fn a_fence_is_open_at_the_yard_gate() {
+    let e = env();
+    let f = Frame {
+        c: Vec2::new(5120.0, 5120.0),
+        u: Vec2::X,
+        v: Vec2::Y,
+    };
+    let plan = shapes::plan(Massing::Detached, 2, 5.0, 4.0, 1.0);
+    let fence = |gate: Option<f32>| {
+        let dc = shapes::DetailCx {
+            f: &f,
+            terrain: &e.terrain,
+            vols: &plan.vols,
+            plan_top: plan.top,
+            plan_front: plan.front,
+            base: 30.0,
+            floor_h: 3.0,
+            bay: 3.0,
+            lot: (16.0, 16.0),
+            roof_kind: RoofKind::Gabled,
+            wall: [0.6; 4],
+            trim: [0.4; 4],
+            seed: 1,
+            gate,
+        };
+        let mut m = MeshData::default();
+        shapes::details(&mut m, &dc, &[cp_content::Detail::Fence]);
+        // Front boards: on the front edge, 0.3 m inside the lot.
+        m.positions
+            .iter()
+            .map(|p| Vec2::new(p[0], p[2]) - f.c)
+            .filter(|p| (p.y + 7.7).abs() < 1e-3)
+            .map(|p| p.x)
+            .collect::<Vec<f32>>()
+    };
+    let closed = fence(None);
+    assert!(closed.iter().any(|&u| u < 2.0) && closed.iter().any(|&u| u > 2.0));
+    let open = fence(Some(2.0));
+    assert!(!open.is_empty());
+    let half = crate::parked::DRIVEWAY_W * 0.5;
+    // No board spans the gate: every board corner is outside it, and no run crosses it.
+    assert!(
+        open.iter()
+            .all(|&u| u <= 2.0 - half + 1e-3 || u >= 2.0 + half - 1e-3)
+    );
+    let mut corners = open.clone();
+    corners.sort_by(f32::total_cmp);
+    assert!(
+        corners
+            .windows(2)
+            .any(|w| (w[1] - w[0] - 2.0 * half).abs() < 1e-3)
+    );
+}

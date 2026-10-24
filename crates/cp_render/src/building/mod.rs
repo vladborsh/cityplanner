@@ -887,6 +887,12 @@ pub fn build_building(
         Some(corner(-1.0).lerp(corner(1.0), (t0 + t1) * 0.5))
     });
 
+    // The yard gate along the front edge (cars pull out there, §25.4): the fence leaves it open.
+    let gate = b
+        .portals(net)
+        .filter(|p| p.out.dot(f.v) < -0.7)
+        .map(|p| (p.drive - f.c).dot(f.u));
+
     // Ground: the highest corner of any box, with a foundation down to the lowest.
     let mut lo = f32::MAX;
     let mut hi = f32::MIN;
@@ -1125,6 +1131,7 @@ pub fn build_building(
                 wall: wallc,
                 trim: trimc,
                 seed: sd,
+                gate,
             };
             shapes::details(m, &dc, &style_def.details);
         }
