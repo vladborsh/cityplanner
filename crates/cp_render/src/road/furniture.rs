@@ -29,7 +29,7 @@ const POLE_H: f32 = 8.0;
 /// Distance between street trees along a street, both sides together, metres (§24.2).
 pub const TREE_SPACING_M: f32 = 12.0;
 const TRUNK: [f32; 4] = [0.42, 0.28, 0.16, 1.0];
-const CROWN: [f32; 4] = [0.20, 0.50, 0.24, 1.0];
+const CROWN: [f32; 4] = [0.13, 0.36, 0.16, 1.0];
 /// Radius of a light pool, metres.
 pub const POOL_R: f32 = 6.0;
 

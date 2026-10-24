@@ -2113,6 +2113,59 @@ pub fn build_corners(sim: &mut SimRunner) {
     }
 }
 
+/// Street trees scene (T-323): a street across a crossing street and a highway beside it, tree
+/// rows on the long street and the highway. Look with `--cam trees` (`trees-wide`).
+pub const TREES: &str = "trees";
+
+/// Builds the [`TREES`] scene through the normal commands.
+pub fn build_trees(sim: &mut SimRunner) {
+    let db = embedded_content();
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let p = |dx: f32, dz: f32| Vec2::new(c + dx, c + dz);
+    let basic = db.road_id("basic_2l").expect("basic_2l");
+    let highway = db.road_id("highway_1w_2l").expect("highway_1w_2l");
+    for (road, from, to) in [
+        (basic, p(-120.0, 0.0), p(-40.0, 0.0)),
+        (basic, p(-40.0, 0.0), p(60.0, 0.0)),
+        (basic, p(60.0, 0.0), p(140.0, 0.0)),
+        (basic, p(-40.0, -80.0), p(-40.0, 80.0)),
+        (highway, p(-120.0, -70.0), p(-40.0, -70.0)),
+        (highway, p(-40.0, -70.0), p(60.0, -70.0)),
+        (highway, p(60.0, -70.0), p(140.0, -70.0)),
+    ] {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road,
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    // The row on the long street and on the highway (the crossing street stays bare).
+    let rows: Vec<_> = sim
+        .world()
+        .resource::<cp_net::NetGraph>()
+        .segments()
+        .filter(|(_, s)| {
+            let (a, b) = (s.curve.p0, s.curve.p3);
+            (a.z - b.z).abs() < 0.5
+        })
+        .map(|(id, _)| id)
+        .collect();
+    for seg in rows {
+        sim.push_command(
+            SimCommand::Net(NetCommand::SetTrees { seg, trees: true }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+}
+
 /// Net overlay scene (T-025): a T and an X of basic streets and an X of 6-lane roads, 250 m
 /// apart along the map's middle, 160 m legs. Look at each with `--cam net-t` (`net-x`,
 /// `net-x6`) and `--net-debug`.

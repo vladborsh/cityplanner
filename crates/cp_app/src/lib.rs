@@ -339,6 +339,16 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
             )
         }
         "junction" => (Vec3::new(c - 30.0, 16.0, c + 38.0), Vec3::new(c, 0.0, c)),
+        // The tree rows of `--scene trees` (T-323): close along the street, and a wider view with the
+        // highway.
+        "trees" => (
+            Vec3::new(c - 75.0, 9.0, c + 26.0),
+            Vec3::new(c + 5.0, 2.0, c - 4.0),
+        ),
+        "trees-wide" => (
+            Vec3::new(c - 60.0, 45.0, c + 90.0),
+            Vec3::new(c + 10.0, 0.0, c - 35.0),
+        ),
         // Low over the grid looking into the always-day sun (it stands west-south-west): the
         // glint on the asphalt, shadows lying towards the camera (T-178).
         "sun" => (
@@ -737,6 +747,9 @@ pub fn build_sim(
     } else if scene == Some(scene::CARGO_SHIP) {
         let at = scene::build_cargo_ship(&mut sim);
         info!("scene cargo-ship: ports at {at:?}");
+    } else if scene == Some(scene::TREES) {
+        scene::build_trees(&mut sim);
+        info!("scene trees");
     } else if scene == Some(scene::CORNERS) {
         scene::build_corners(&mut sim);
         info!("scene corners");

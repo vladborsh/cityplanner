@@ -326,6 +326,9 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     if let Some(action) = info.run.or_else(|| happiness::take(ctx)) {
         advisor::run(action, state, overlay);
     }
+    if let Some(tool) = state.tool_goal.take() {
+        tools.select(tool);
+    }
     let line_out = lines::line_info_panel(ctx, view, picked, &mut state.lines, outbox);
     if let Some(line) = line_out.edit {
         // The tool resets itself when it is selected, so fill it afterwards.

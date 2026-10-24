@@ -49,7 +49,7 @@ pub use outbox::CommandOutbox;
 pub use pick::{Inspected, Picked, pick, pick_line, pick_with, pick_with_ray};
 pub use plugin::{
     ActiveTool, BrushDemo, BulldozeLayer, Ghost, GhostDemo, LaneDemo, PlaceDemo, SignDemo,
-    ToolState, ToolsPlugin, UpgradeDemo, UtilityDemo, bulldozer_hover, compute_ghost,
+    ToolState, ToolsPlugin, TreesDemo, UpgradeDemo, UtilityDemo, bulldozer_hover, compute_ghost,
     compute_ghost_alt, compute_utility_ghost, compute_utility_ghost_alt, road_cursor_piece,
     tool_click, tool_hotkeys,
 };

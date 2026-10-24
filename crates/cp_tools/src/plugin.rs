@@ -508,6 +508,38 @@ pub fn upgrade_demo(
     upgrade_hover(&mut state, &view, demo.at);
 }
 
+/// The Trees tool held over `at` without a cursor (`--trees-demo x,z[,whole]` of the desktop
+/// client, for the T-323 shots): the highlight and the price of the click.
+#[derive(Resource, Clone, Debug)]
+pub struct TreesDemo {
+    pub at: Vec2,
+    pub whole: bool,
+}
+
+pub fn trees_demo(
+    demo: Option<Res<TreesDemo>>,
+    view: Option<Res<SimView>>,
+    mut state: ResMut<ToolState>,
+) {
+    let (Some(demo), Some(view)) = (demo, view) else {
+        return;
+    };
+    if state.active != ActiveTool::Trees {
+        state.select(ActiveTool::Trees);
+    }
+    state.shift = demo.whole;
+    state.hover = Some(demo.at);
+    let (Some(content), Some(seg)) = (
+        view.content.as_deref(),
+        pick_segment(&view.net, demo.at, PICK_RADIUS),
+    ) else {
+        return;
+    };
+    let preview = crate::trees::trees_preview(&view.net, &view.tiles, content, seg, demo.whole);
+    state.highlight = preview.shown.clone();
+    state.trees_preview = Some(preview);
+}
+
 /// Signs set without a cursor (`--sign-demo` of the desktop client, for the T-303 shots): each
 /// `(at, sign)` puts `sign` on the road arm nearest to `at` (metres from the map centre) of the
 /// controllable junction nearest to it (`None`: toggles that junction's light instead), once, as
@@ -1141,6 +1173,7 @@ impl Plugin for ToolsPlugin {
                 (
                     place_demo,
                     upgrade_demo,
+                    trees_demo,
                     sign_demo,
                     lane_demo,
                     brush_demo,

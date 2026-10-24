@@ -109,6 +109,9 @@ pub struct UiState {
     /// Where the "show" button of the not-connected notice wants the camera (XZ, metres);
     /// taken by `apply_camera_goal` (T-117; not saved).
     pub camera_goal: Option<bevy::math::Vec2>,
+    /// A tool an advice or complaint link wants in hand (T-323: Noise opens the Trees tool);
+    /// taken where the tool state is at hand.
+    pub tool_goal: Option<cp_tools::ActiveTool>,
     /// The settings menu of the overlays panel is open.
     pub settings_open: bool,
     /// The overlays panel at the top right is folded to its strip (T-289; not saved).

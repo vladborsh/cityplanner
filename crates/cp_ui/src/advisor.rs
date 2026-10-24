@@ -87,6 +87,8 @@ pub enum Action {
     Window(crate::panels::UiWindow),
     /// The Pollution overlay and the camera over the dirtiest water source (T-300).
     PollutedSource(Vec2),
+    /// The Noise overlay and the Trees tool in hand (T-323, §24.2): trees along the road cut noise.
+    Trees,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1120,6 +1122,10 @@ pub fn run(action: Action, state: &mut UiState, overlay: &mut cp_render::Overlay
         }
         Action::Policies => state.policies_open = true,
         Action::Window(w) => state.open_window(w),
+        Action::Trees => {
+            overlay.open(Overlay::Noise);
+            state.tool_goal = Some(cp_tools::ActiveTool::Trees);
+        }
         Action::PollutedSource(at) => {
             overlay.open(Overlay::Pollution);
             state.camera_goal = Some(at);
@@ -1693,6 +1699,18 @@ mod tests {
         assert_eq!(overlay.active, Overlay::Water);
         run(Action::Jump(Vec2::new(1.0, 2.0)), &mut state, &mut overlay);
         assert_eq!(state.camera_goal, Some(Vec2::new(1.0, 2.0)));
+    }
+
+    /// T-323: the Noise complaint's link shows the noise and puts the Trees tool in hand.
+    #[test]
+    fn the_noise_complaint_opens_the_trees_tool() {
+        let action = crate::happiness::action(cp_building::Complaint::Noise).unwrap();
+        assert_eq!(action, Action::Trees);
+        let mut state = UiState::default();
+        let mut overlay = cp_render::OverlayState::default();
+        run(action, &mut state, &mut overlay);
+        assert_eq!(overlay.active, Overlay::Noise);
+        assert_eq!(state.tool_goal, Some(cp_tools::ActiveTool::Trees));
     }
 
     /// T-219: an area with chain buildings and no Main building gives `industry_no_main`; a

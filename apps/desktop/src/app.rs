@@ -59,6 +59,8 @@ pub struct Options {
     pub place_demo: Option<cp_tools::PlaceDemo>,
     /// `--upgrade-demo road,x,z[,whole]`: the upgrade tool held over (x, z) (BUG-103 shots).
     pub upgrade_demo: Option<cp_tools::UpgradeDemo>,
+    /// `--trees-demo x,z[,whole]`: the Trees tool over a point (metres from the map centre).
+    pub trees_demo: Option<cp_tools::TreesDemo>,
     pub sign_demo: Option<cp_tools::SignDemo>,
     /// `--lane-demo x,z`: the Junctions tool's Lanes mode with the arm nearest (x, z) chosen (T-313).
     pub lane_demo: Option<cp_tools::LaneDemo>,
@@ -205,6 +207,16 @@ impl Options {
                     road,
                     at: bevy::math::Vec2::new(n[0], n[1]),
                     whole: rest.contains(&"whole"),
+                })
+            }),
+            trees_demo: value("--trees-demo").and_then(|v| {
+                let mut it = v.split(',');
+                let x: f32 = it.next()?.parse().ok()?;
+                let z: f32 = it.next()?.parse().ok()?;
+                let c = cp_terrain::MAP_SIZE / 2.0;
+                Some(cp_tools::TreesDemo {
+                    at: bevy::math::Vec2::new(c + x, c + z),
+                    whole: it.next() == Some("whole"),
                 })
             }),
             sign_demo: value("--sign-demo").and_then(|v| cp_tools::SignDemo::parse(&v)),
@@ -772,6 +784,12 @@ pub fn run(opts: Options) -> AppExit {
         app.insert_resource(demo);
     }
     if let Some(demo) = opts.upgrade_demo {
+        if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
+            app.add_plugins(cp_tools::ToolsPlugin);
+        }
+        app.insert_resource(demo);
+    }
+    if let Some(demo) = opts.trees_demo {
         if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
             app.add_plugins(cp_tools::ToolsPlugin);
         }
