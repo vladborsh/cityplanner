@@ -22,7 +22,7 @@ pub use command::{
     validate_placement_except, validate_placement_for, validate_placement_over,
 };
 pub use contentment::{
-    COMPLAINTS_MAX, Complaint, HomeContentment, HomeSlot, NEUTRAL_INDEX, move_in_mul,
+    COMPLAINTS_MAX, Complaint, HomeContentment, HomeSlot, NEUTRAL_INDEX, mood_word, move_in_mul,
     move_in_passes,
 };
 pub use edge::{

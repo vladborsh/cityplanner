@@ -23,8 +23,8 @@ pub use command::{
 };
 pub use cp_traffic::{AgentFrame, PedestrianPose, VehiclePose};
 pub use inspect::{
-    BuildingInfo, CitizenInfo, GoodsInfo, Inspection, SegmentInfo, Selection, ServiceInfo,
-    TripInfo, Trouble, VehicleInfo, flag_names, key_parts,
+    BuildingInfo, CitizenInfo, GoodsInfo, Happiness, Inspection, SegmentInfo, Selection,
+    ServiceInfo, TripInfo, Trouble, VehicleInfo, flag_names, key_parts,
 };
 pub use overlay::{OverlayData, ScalarGrid, ZoneCellView, ZoneOverlay};
 pub use phase::SimPhase;

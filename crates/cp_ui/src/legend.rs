@@ -42,6 +42,10 @@ pub fn rows(overlay: Overlay) -> Vec<Row> {
             cp_render::land_value_color,
             ["Cheap", "Average", "Expensive"],
         ),
+        Overlay::Happiness => ramp(
+            |v| cp_render::happiness_color((v * 100.0).round() as u8),
+            ["Miserable", "Unhappy", "Content"],
+        ),
         // Noise and pollution are banded: `band_legend` draws their legend.
         Overlay::Garbage
         | Overlay::Health
@@ -127,7 +131,8 @@ mod tests {
                 | Overlay::Fire
                 | Overlay::Police
                 | Overlay::Education
-                | Overlay::Mail => assert_eq!(n, 3, "{o:?}"),
+                | Overlay::Mail
+                | Overlay::Happiness => assert_eq!(n, 3, "{o:?}"),
                 Overlay::Pollution | Overlay::Noise => assert_eq!(n, 0, "{o:?}: band legend"),
                 Overlay::Zones => assert_eq!(n, 4),
                 Overlay::Resources | Overlay::IndustryAreas => {

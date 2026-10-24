@@ -122,6 +122,7 @@ icons! {
     OverlayTransit => "overlay_transit",
     OverlayUnderground => "overlay_underground",
     OverlayJunctions => "overlay_junctions",
+    OverlayHappiness => "overlay_happiness",
     // Junction marks (T-303): square plates, one picture per state.
     MarkLightOn => "mark_light_on",
     MarkLightOff => "mark_light_off",
@@ -259,6 +260,7 @@ pub fn overlay_icon(overlay: cp_render::Overlay) -> Icon {
         O::Parks => Icon::OverlayParks,
         O::Underground => Icon::OverlayUnderground,
         O::Junctions => Icon::OverlayJunctions,
+        O::Happiness => Icon::OverlayHappiness,
     }
 }
 

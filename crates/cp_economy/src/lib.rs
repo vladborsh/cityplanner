@@ -22,7 +22,7 @@ pub mod week;
 
 pub use command::{EconomyCommand, EconomyError, apply};
 pub use contentment::{
-    CONTENTMENT_STREAM, CityContentment, DistrictContentment, FACTORS, HomeFacts, Scored,
+    CONTENTMENT_STREAM, CityContentment, DistrictContentment, FACTORS, HomeFacts, Scored, Troubles,
     contentment_daily, update_contentment,
 };
 pub use corruption::{CorruptionState, DealTarget, Edge, Evidence, Offer, update_corruption};

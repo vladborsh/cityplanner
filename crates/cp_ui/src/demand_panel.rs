@@ -9,7 +9,7 @@
 
 use bevy_egui::egui;
 use cp_content::ZoneType;
-use cp_locale::tr;
+use cp_locale::{tr, trf};
 use cp_sim::SimView;
 use cp_tools::{ActiveTool, ToolState};
 
@@ -74,6 +74,8 @@ pub struct DemandRects {
     /// The balance (a click opens the budget) and the population.
     pub money: Option<egui::Rect>,
     pub population: Option<egui::Rect>,
+    /// The city's happiness (a click opens the metrics window, T-318c).
+    pub happiness: Option<egui::Rect>,
     /// The category buttons.
     pub categories: Vec<(Category, egui::Rect)>,
     /// The tools of every category, right of the categories.
@@ -113,6 +115,44 @@ fn population_row(ui: &mut egui::Ui, view: &SimView, rects: &mut DemandRects) {
     crate::budget::population_trend_label(ui, view);
 }
 
+/// The city's happiness beside the population (T-318c): a smiley and the index; the hover
+/// names the three main complaints, a click opens the metrics window (Happiness on top). Shown
+/// once the contentment pass has scored a home.
+fn happiness_row(ui: &mut egui::Ui, view: &SimView, state: &mut UiState, rects: &mut DemandRects) {
+    let c = &view.city_contentment;
+    if c.homes == 0 {
+        return;
+    }
+    let r = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            crate::happiness::smiley(ui, c.city, 16.0);
+            ui.label(c.city.to_string());
+        })
+        .response;
+    let r = ui.interact(
+        r.rect,
+        egui::Id::new("happiness_gauge"),
+        egui::Sense::click(),
+    );
+    rects.happiness = Some(r.rect);
+    let r = r
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_ui(|ui| {
+            ui.strong(trf!("Happiness {n}", n = c.city));
+            for &(k, homes) in c.complaints.iter().take(3) {
+                ui.label(trf!(
+                    plural "{complaint}: {n} homes",
+                    n = homes,
+                    complaint = tr(k.label())
+                ));
+            }
+        });
+    if r.clicked() {
+        state.metrics_open = true;
+    }
+}
+
 /// The slim bottom bar (T-317), one row: money, income, population and the demand bars (a
 /// click on a bar takes its zone tool) at the left; the category buttons and the tools that
 /// work from any category (upgrade, flip, bulldozer) as one group in the middle of the screen
@@ -132,6 +172,7 @@ pub fn demand_panel(
                 money_row(ui, view, state, &mut rects);
                 ui.add_space(8.0);
                 population_row(ui, view, &mut rects);
+                happiness_row(ui, view, state, &mut rects);
                 ui.separator();
                 let r = ui
                     .small_button("▸")

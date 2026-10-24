@@ -44,11 +44,67 @@ fn spark(s: &CityStats, f: impl Fn(&cp_sim::stats::HistorySample) -> f32) -> Opt
     Some(s.history.iter().map(f).collect())
 }
 
+/// The eight contentment factors in `CityContentment::factors` order (§19.2).
+pub const FACTOR_NAMES: [&str; cp_economy::FACTORS] = [
+    "Services",
+    "Environment",
+    "Home problems",
+    "Work",
+    "Commute",
+    "Leisure",
+    "Taxes",
+    "Trust",
+];
+
+/// The Happiness section (T-318c): the city's index, the mean score of each factor, one row per
+/// district (and the homes outside them) and the index day by day.
+fn happiness_section(view: &SimView) -> Section {
+    let c = &view.city_contentment;
+    let mut rows = vec![row(
+        "Index",
+        format!("{} ({})", c.city, cp_building::mood_word(c.city)),
+    )];
+    for (name, v) in FACTOR_NAMES.iter().zip(c.factors) {
+        rows.push(row(name, v));
+    }
+    // Without districts every home is outside them: the city's row says it all.
+    let rows_of_districts = if view.districts.iter().next().is_some() {
+        &c.districts[..]
+    } else {
+        &[]
+    };
+    for d in rows_of_districts {
+        let name = match d.district {
+            Some(id) => view
+                .districts
+                .get(id)
+                .map_or_else(|| format!("#{}", id.0), |d| d.name.clone()),
+            None => tr("Outside districts"),
+        };
+        rows.push((name, d.index.to_string()));
+    }
+    let daily: Vec<f32> = view
+        .city
+        .daily
+        .iter()
+        .map(|d| f32::from(d.contentment))
+        .collect();
+    Section {
+        title: "Happiness",
+        rows,
+        spark: (!daily.is_empty()).then_some(daily),
+    }
+}
+
 /// What the window shows, from the view.
 pub fn sections(view: &SimView) -> Vec<Section> {
     let s = &*view.city;
     let week = &view.economy.last_week;
     let mut out = Vec::new();
+    // First, so the click on the bar's smiley opens the window on it.
+    if view.city_contentment.homes > 0 {
+        out.push(happiness_section(view));
+    }
 
     out.push(Section {
         title: "Population",
@@ -494,7 +550,26 @@ pub fn metrics_contents(ui: &mut egui::Ui, view: &SimView) {
             .show(ui, |ui| {
                 for (label, value) in &section.rows {
                     ui.weak(tr(label));
-                    ui.label(value);
+                    // A factor of the Happiness section is a bar with its score.
+                    match value.parse::<u8>() {
+                        Ok(v)
+                            if section.title == "Happiness"
+                                && FACTOR_NAMES.contains(&label.as_str()) =>
+                        {
+                            ui.add(
+                                egui::ProgressBar::new(f32::from(v) / 100.0)
+                                    .desired_width(160.0)
+                                    .fill(crate::happiness::Mood::of(v).colour())
+                                    .text(value.as_str()),
+                            );
+                        }
+                        _ if section.title == "Happiness" => {
+                            ui.label(crate::info::tr_value(value));
+                        }
+                        _ => {
+                            ui.label(value);
+                        }
+                    }
                     ui.end_row();
                 }
             });

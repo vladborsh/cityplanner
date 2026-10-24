@@ -97,6 +97,15 @@ pub struct BuildingInfo {
     /// Mail held by a building, or the work of a post building (T-249); `None` while the post
     /// is closed to the city, and for buildings that make no mail.
     pub mail: Option<MailInfo>,
+    /// The contentment of a home that has a record (T-318c).
+    pub happiness: Option<Happiness>,
+}
+
+/// A home's contentment index and its complaints, worst first (T-318c).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Happiness {
+    pub index: u8,
+    pub complaints: Vec<cp_building::Complaint>,
 }
 
 /// The mail of a building: what waits in it, and for a post office or sorting facility its day.
@@ -172,6 +181,9 @@ pub struct CitizenInfo {
     pub age_years: u32,
     pub education: u8,
     pub wellbeing: u8,
+    /// What the citizen thinks about (T-318c): the worst own trouble, else the home's worst
+    /// complaint; `None` when all is well.
+    pub thinks: Option<cp_building::Complaint>,
     pub has_car: bool,
     pub location: Location,
     pub household_size: usize,
@@ -393,6 +405,18 @@ impl SimRunner {
                     && w.get_resource::<cp_economy::Emissions>()
                         .is_some_and(|e| e.source_dirt(b) >= db.balance().bad_water_at);
                 let mail = mail_info(w, db, id, def);
+                let happiness = w
+                    .get_resource::<cp_building::HomeContentment>()
+                    .and_then(|h| h.get(id))
+                    .map(|s| Happiness {
+                        index: s.index,
+                        complaints: s
+                            .complaints
+                            .iter()
+                            .copied()
+                            .filter(|&c| c != cp_building::Complaint::None)
+                            .collect(),
+                    });
                 Some(Inspection::Building(BuildingInfo {
                     id,
                     def: def.id.clone(),
@@ -421,6 +445,7 @@ impl SimRunner {
                     garbage: svc.and_then(|st| st.get(id)).map_or(0, |r| r.garbage),
                     service,
                     mail,
+                    happiness,
                     goods: matches!(
                         def.zone,
                         cp_content::ZoneType::Industrial
@@ -461,11 +486,25 @@ impl SimRunner {
                 let household_size = citizens
                     .household(c.household)
                     .map_or(0, |h| h.member_ids().count());
+                let thinks = w
+                    .get_resource::<cp_building::HomeContentment>()
+                    .zip(citizens.household(c.household))
+                    .and_then(|(homes, h)| {
+                        let k = &db.balance().contentment;
+                        let own = cp_economy::Troubles::of(c, h, homes, w.resource::<Tick>().0, k);
+                        own.worst().or_else(|| {
+                            homes
+                                .get(h.home)
+                                .map(|s| s.complaints[0])
+                                .filter(|&c| c != cp_building::Complaint::None)
+                        })
+                    });
                 Some(Inspection::Citizen(CitizenInfo {
                     id,
                     age_years: c.age_days / DAYS_PER_YEAR,
                     education: c.education,
                     wellbeing: c.wellbeing,
+                    thinks,
                     has_car: c.has_car,
                     location: c.location,
                     household_size,
@@ -612,6 +651,16 @@ impl Inspection {
                         ),
                     ));
                 }
+                if let Some(h) = &b.happiness {
+                    r.push(row(
+                        "Happiness",
+                        format!("{} ({})", h.index, cp_building::mood_word(h.index)),
+                    ));
+                    // One row per complaint; the UI turns them into links to their action.
+                    for c in &h.complaints {
+                        r.push(row("Complaint", c.label().to_string()));
+                    }
+                }
                 if b.jobs.iter().any(|&j| j > 0) {
                     let workers: u32 = b.workers.iter().map(|&w| u32::from(w)).sum();
                     let jobs: u32 = b.jobs.iter().map(|&j| u32::from(j)).sum();
@@ -729,6 +778,10 @@ impl Inspection {
                 row("Age", format!("{} years", c.age_years)),
                 row("Education", c.education.to_string()),
                 row("Wellbeing", c.wellbeing.to_string()),
+                row(
+                    "Thinks",
+                    c.thinks.map_or("all is well", |t| t.label()).to_string(),
+                ),
                 row("Car", if c.has_car { "yes" } else { "no" }.to_string()),
                 row("Household", format!("{} people", c.household_size)),
                 row("Now", format!("{:?}", c.location)),

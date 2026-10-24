@@ -103,7 +103,7 @@ fn overlay_state_defaults_to_off_and_lists_every_overlay_once() {
     let mut all = Overlay::ALL.to_vec();
     all.sort_by_key(|o| o.label());
     all.dedup();
-    assert_eq!(all.len(), 23);
+    assert_eq!(all.len(), 24);
 }
 
 #[test]
@@ -279,6 +279,7 @@ fn layer_app() -> (App, Vec<(Overlay, Entity)>, Entity) {
         Overlay::Police,
         Overlay::Education,
         Overlay::Mail,
+        Overlay::Happiness,
     ]
     .map(|o| {
         (
@@ -354,6 +355,7 @@ fn switching_overlays_shows_that_layer_and_the_zone_grid_stays_on() {
         (Overlay::Noise, false),
         (Overlay::Water, false),
         (Overlay::Power, false),
+        (Overlay::Happiness, false),
     ] {
         assert_eq!(zone_fill_visible(o), on, "{o:?}");
     }
@@ -1405,4 +1407,48 @@ fn a_loud_spot_is_a_banded_core_with_contours_and_quiet_cells_stay_clear() {
         assert!(m.colors.contains(&NOISE.colors[b]));
     }
     assert!(m.colors.contains(&NOISE.line_color(3)));
+}
+
+/// T-318c: the Happiness layer tints exactly the active homes with a record, red to green.
+#[test]
+fn the_happiness_layer_tints_the_scored_homes_by_their_index() {
+    use cp_building::{Building, BuildingFlags, BuildingGrid, BuildingState, Complaint, Footprint};
+    use cp_building::{COMPLAINTS_MAX, HomeContentment};
+    assert!(
+        happiness_color(0)[0] > happiness_color(0)[1],
+        "miserable is red"
+    );
+    assert!(
+        happiness_color(100)[1] > happiness_color(100)[0],
+        "content is green"
+    );
+    let terrain = terrain();
+    let zones = ZoneGrid::default();
+    let mut buildings = BuildingGrid::default();
+    let mut put = |x: f32| {
+        buildings.insert(Building {
+            def: cp_content::BuildingDefId(0),
+            footprint: Footprint::Free { w: 2, d: 2 },
+            level: 1,
+            state: BuildingState::Active,
+            ready_at: cp_core::Tick(0),
+            pos: bevy_math::Vec2::new(x, 500.0),
+            rot: 0.0,
+            access: None,
+            flags: BuildingFlags::default(),
+            level_progress: 0.0,
+        })
+    };
+    let (a, b) = (put(400.0), put(480.0));
+    let mut homes = HomeContentment::default();
+    let none = [Complaint::None; COMPLAINTS_MAX];
+    let mesh =
+        |homes: &HomeContentment| happiness_overlay_mesh(homes, &buildings, &zones, &terrain);
+    assert!(mesh(&homes).positions.is_empty());
+    homes.set(a, 20, none);
+    let m = mesh(&homes);
+    assert_eq!(m.positions.len(), 4, "one quad: only the scored home");
+    assert!(m.colors.iter().all(|c| *c == happiness_color(20)));
+    homes.set(b, 90, none);
+    assert_eq!(mesh(&homes).positions.len(), 8);
 }

@@ -173,13 +173,15 @@ pub struct JobSlots {
     pub building: u32,
 }
 
-/// One game day for the unemployment sparkline (T-307).
+/// One game day for the daily sparklines: unemployment (T-307) and contentment (T-318c).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DailySample {
     pub day: u64,
     pub adults: u32,
     pub employed: u32,
     pub looking: u32,
+    /// The city contentment index (T-318c), as of the last contentment pass.
+    pub contentment: u8,
 }
 
 /// One hourly sample for the sparklines.
@@ -269,6 +271,8 @@ pub struct DistrictParams<'w> {
     coverage: Res<'w, cp_service::ServiceCoverage>,
     unlocks: Option<Res<'w, cp_content::ServiceUnlocks>>,
     trip_times: Res<'w, cp_traffic::TripTimes>,
+    /// The city contentment of the last pass (T-318), for the daily series.
+    contentment: Option<Res<'w, cp_economy::CityContentment>>,
 }
 
 /// Whether a road the player built is connected to the entry highway (BUG-041): some segment of
@@ -407,6 +411,7 @@ pub fn update_city_stats(
                     adults: next.adults,
                     employed: next.employed,
                     looking: next.education.iter().map(|e| e.looking).sum(),
+                    contentment: district.contentment.as_deref().map_or(0, |c| c.city),
                 });
             }
             // The last day: against the newest sample at least a day old, else the oldest.

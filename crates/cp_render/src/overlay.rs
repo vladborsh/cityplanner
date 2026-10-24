@@ -28,6 +28,7 @@ mod blob;
 mod coverage_ghost;
 mod districts;
 mod emit_ghost;
+mod happiness;
 mod industry;
 mod land;
 mod live_coverage;
@@ -44,6 +45,7 @@ pub use districts::{
     DistrictLayer, DistrictLayers, DistrictsMode, contour_edges, contour_mesh, fill_mesh,
 };
 pub use emit_ghost::{EmitGhost, EmitGhostCircles, EmitSite, emit_ghost_mesh};
+pub use happiness::{happiness_color, happiness_overlay_mesh};
 pub use industry::{
     AreaFamily, AreaLayer, AreasMode, IndustryLayers, ResourceLayer, area_contour_edges,
     area_contour_mesh, area_fill_mesh, park_color, resource_cell_color, resource_color,
@@ -101,10 +103,12 @@ pub enum Overlay {
     /// The traffic lights and priority signs of the controllable junctions (T-303). Drawn as
     /// screen marks by `cp_ui::junction_marks`, not by the overlay layers.
     Junctions,
+    /// The homes tinted by their contentment (T-318c).
+    Happiness,
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 23] = [
+    pub const ALL: [Overlay; 24] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
@@ -128,6 +132,7 @@ impl Overlay {
         Overlay::Parks,
         Overlay::Underground,
         Overlay::Junctions,
+        Overlay::Happiness,
     ];
 
     /// The overlay of an M2 service kind; `None` for the utility kinds (their own overlays).
@@ -193,6 +198,7 @@ impl Overlay {
             Overlay::Parks => "Parks",
             Overlay::Underground => "Underground",
             Overlay::Junctions => "Traffic lights",
+            Overlay::Happiness => "Happiness",
         }
     }
 }
@@ -708,7 +714,12 @@ pub struct ZoneOutlines;
 pub fn zone_fill_visible(active: Overlay) -> bool {
     !matches!(
         active,
-        Overlay::LandValue | Overlay::Pollution | Overlay::Noise | Overlay::Water | Overlay::Power
+        Overlay::LandValue
+            | Overlay::Pollution
+            | Overlay::Noise
+            | Overlay::Water
+            | Overlay::Power
+            | Overlay::Happiness
     )
 }
 
@@ -740,6 +751,7 @@ struct OverlayLayers {
     noise: LayerSource,
     water: LayerSource,
     power: LayerSource,
+    happiness: LayerSource,
     /// One layer per M2 service kind, in [`SERVICE_OVERLAYS`] order.
     service: [LayerSource; 7],
     material: Option<Handle<VertexColorMaterial>>,
@@ -957,6 +969,28 @@ fn sync_overlay_meshes(
                 false,
             );
         }
+        // The homes' tints follow their records, the buildings and the zone grid (T-318c).
+        let key = ptr(&view.home_contentment)
+            ^ ptr(&view.buildings).rotate_left(13)
+            ^ ptr(&view.zones).rotate_left(29);
+        upsert(
+            &mut l.happiness,
+            key,
+            Overlay::Happiness,
+            || {
+                happiness_overlay_mesh(
+                    &view.home_contentment,
+                    &view.buildings,
+                    &view.zones,
+                    terrain,
+                )
+            },
+            &material,
+            &mut commands,
+            &mut meshes,
+            terrain_changed,
+            false,
+        );
         // The service layers depend on the coverage, the road network, the buildings and the
         // zone grid (lot footprints).
         let key = ptr(&view.service)

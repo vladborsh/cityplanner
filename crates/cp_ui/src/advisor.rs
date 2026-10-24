@@ -858,6 +858,7 @@ impl Advisor {
         let mut all = collect(view, &mut self.unique_seen);
         all.extend(level_advice(view, &mut self.level_seen));
         all.extend(self.jobs_advice(view, day));
+        all.extend(complaint_advice(view));
         all.retain(|a| !(problems_only && a.severity == Severity::Info));
         // BUG-115: a few buildings are not a crisis.
         let active = view.city.buildings.active;
@@ -955,6 +956,53 @@ impl Advisor {
     }
 }
 
+/// T-318c: "N homes complain: <complaint>" for the city's main complaint, by the BUG-115
+/// rules counted in homes (at least [`MIN_BUILDINGS`] and [`MIN_SHARE_PERCENT`] of them); the
+/// action is the inspector's. Id `complaint_<code>`.
+pub fn complaint_advice(view: &SimView) -> Option<Advice> {
+    let c = &view.city_contentment;
+    let &(complaint, n) = c.complaints.first()?;
+    (n >= MIN_BUILDINGS && n * 100 >= MIN_SHARE_PERCENT * c.homes).then(|| Advice {
+        id: complaint_id(complaint),
+        severity: Severity::Warn,
+        text: trf!(
+            plural "{n} homes complain: {complaint}",
+            n = n,
+            complaint = tr(complaint.label())
+        ),
+        count: n,
+        icon: crate::icons::overlay_icon(Overlay::Happiness),
+        action: crate::happiness::action(complaint),
+    })
+}
+
+/// The advice id of a complaint (`complaint_<code>`, §19.5); a `&'static str` like the others.
+fn complaint_id(c: cp_building::Complaint) -> &'static str {
+    use cp_building::Complaint as C;
+    match c {
+        C::None => "complaint_none",
+        C::NoHealth => "complaint_no_health",
+        C::NoPolice => "complaint_no_police",
+        C::NoFire => "complaint_no_fire",
+        C::NoSchool => "complaint_no_school",
+        C::Pollution => "complaint_pollution",
+        C::Noise => "complaint_noise",
+        C::NoRoad => "complaint_no_road",
+        C::NoWater => "complaint_no_water",
+        C::NoPower => "complaint_no_power",
+        C::Garbage => "complaint_garbage",
+        C::Crime => "complaint_crime",
+        C::BadWater => "complaint_bad_water",
+        C::Dead => "complaint_dead",
+        C::Sick => "complaint_sick",
+        C::Jobless => "complaint_jobless",
+        C::LongCommute => "complaint_long_commute",
+        C::NoPark => "complaint_no_park",
+        C::HighTax => "complaint_high_tax",
+        C::Distrust => "complaint_distrust",
+    }
+}
+
 /// Whether work and education have a problem worth a look (T-307): unemployment, too few
 /// workers for the free slots, or too few educated ones.
 fn jobs_problem(city: &cp_sim::stats::CityStats, k: &cp_content::Balance) -> bool {
@@ -971,7 +1019,7 @@ fn jobs_problem(city: &cp_sim::stats::CityStats, k: &cp_content::Balance) -> boo
 }
 
 /// Runs the action of a "Show" click.
-fn run(action: Action, state: &mut UiState, overlay: &mut cp_render::OverlayState) {
+pub fn run(action: Action, state: &mut UiState, overlay: &mut cp_render::OverlayState) {
     match action {
         Action::Overlay(o) => overlay.open(o),
         Action::Jump(at) => state.camera_goal = Some(at),
@@ -1059,6 +1107,32 @@ mod tests {
         sim.set_content(content);
         f(&mut sim);
         sim.view()
+    }
+
+    /// T-318c: the main complaint becomes advice only from MIN_BUILDINGS homes and
+    /// MIN_SHARE_PERCENT of them; its id and action follow the complaint.
+    #[test]
+    fn the_main_complaint_is_advice_once_enough_homes_share_it() {
+        use cp_building::Complaint;
+        let mut v = view_with(|_| {});
+        let mut set = |homes: u32, n: u32| {
+            v.city_contentment.homes = homes;
+            v.city_contentment.complaints = vec![(Complaint::Jobless, n), (Complaint::Noise, 1)];
+            complaint_advice(&v)
+        };
+        assert_eq!(set(100, MIN_BUILDINGS - 1), None, "too few homes");
+        assert_eq!(set(1000, 20), None, "under MIN_SHARE_PERCENT of the homes");
+        let a = set(100, 10).expect("advice");
+        assert_eq!(a.id, "complaint_jobless");
+        assert_eq!(a.count, 10);
+        assert_eq!(a.severity, Severity::Warn);
+        assert_eq!(
+            a.action,
+            Some(Action::Window(crate::panels::UiWindow::Jobs))
+        );
+        assert!(a.text.contains("No work"), "{}", a.text);
+        v.city_contentment.complaints.clear();
+        assert_eq!(complaint_advice(&v), None);
     }
 
     /// T-201: an opening is announced once, by kind and with the building's name; the first

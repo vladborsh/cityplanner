@@ -77,6 +77,67 @@ impl Complaint {
         Complaint::HighTax,
         Complaint::Distrust,
     ];
+
+    /// The complaint in English, as the inspector and the panels show it (the UI translates it).
+    pub fn label(self) -> &'static str {
+        match self {
+            Complaint::None => "",
+            Complaint::NoHealth => "No clinic nearby",
+            Complaint::NoPolice => "No police nearby",
+            Complaint::NoFire => "No fire station nearby",
+            Complaint::NoSchool => "No school nearby",
+            Complaint::Pollution => "Polluted air",
+            Complaint::Noise => "Too noisy",
+            Complaint::NoRoad => "No road",
+            Complaint::NoWater => "No water",
+            Complaint::NoPower => "No power",
+            Complaint::Garbage => "Garbage piles up",
+            Complaint::Crime => "Crime",
+            Complaint::BadWater => "Bad water",
+            Complaint::Dead => "Uncollected dead",
+            Complaint::Sick => "Illness",
+            Complaint::Jobless => "No work",
+            Complaint::LongCommute => "Long way to work",
+            Complaint::NoPark => "No park nearby",
+            Complaint::HighTax => "Taxes too high",
+            Complaint::Distrust => "No trust in the mayor",
+        }
+    }
+
+    /// A short stable code (`no_health`, ...): the advisor's id `complaint_<code>` (§19.5).
+    pub fn code(self) -> &'static str {
+        match self {
+            Complaint::None => "none",
+            Complaint::NoHealth => "no_health",
+            Complaint::NoPolice => "no_police",
+            Complaint::NoFire => "no_fire",
+            Complaint::NoSchool => "no_school",
+            Complaint::Pollution => "pollution",
+            Complaint::Noise => "noise",
+            Complaint::NoRoad => "no_road",
+            Complaint::NoWater => "no_water",
+            Complaint::NoPower => "no_power",
+            Complaint::Garbage => "garbage",
+            Complaint::Crime => "crime",
+            Complaint::BadWater => "bad_water",
+            Complaint::Dead => "dead",
+            Complaint::Sick => "sick",
+            Complaint::Jobless => "jobless",
+            Complaint::LongCommute => "long_commute",
+            Complaint::NoPark => "no_park",
+            Complaint::HighTax => "high_tax",
+            Complaint::Distrust => "distrust",
+        }
+    }
+}
+
+/// The word of a contentment index (§19.5): content from 60, unhappy from 35, miserable below.
+pub fn mood_word(index: u8) -> &'static str {
+    match index {
+        60.. => "content",
+        35.. => "unhappy",
+        _ => "miserable",
+    }
 }
 
 /// How much likelier than plain a household moves into a home of contentment `index` (§19.4):

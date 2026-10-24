@@ -26,6 +26,7 @@ pub mod frame;
 pub mod gauges;
 mod glyphs;
 pub mod grading;
+pub mod happiness;
 pub mod hint;
 pub mod icons;
 pub mod industry;
@@ -319,7 +320,10 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
     advisor::advisor_snackbar(ctx, view, state, overlay, advisor);
     land::confirm_window(ctx, view, &mut state.budget.buy_tile, outbox);
     demolish_confirm::confirm_window(ctx, tools, outbox);
-    info_panel(ctx, inspected, picked, Some(view), tools, outbox);
+    let info = info_panel(ctx, inspected, picked, Some(view), tools, outbox);
+    if let Some(action) = info.run.or_else(|| happiness::take(ctx)) {
+        advisor::run(action, state, overlay);
+    }
     let line_out = lines::line_info_panel(ctx, view, picked, &mut state.lines, outbox);
     if let Some(line) = line_out.edit {
         // The tool resets itself when it is selected, so fill it afterwards.

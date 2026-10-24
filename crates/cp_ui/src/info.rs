@@ -19,6 +19,10 @@ pub struct InfoRects {
     pub actions: Vec<(String, egui::Rect)>,
     /// The entrance fee slider of a park panel (T-229).
     pub fee_slider: Option<egui::Rect>,
+    /// `(complaint, rectangle)` of the complaint links of a home or a citizen (T-318c).
+    pub complaints: Vec<(cp_building::Complaint, egui::Rect)>,
+    /// The action of the complaint clicked this frame; the caller runs it (overlay, window).
+    pub run: Option<crate::advisor::Action>,
 }
 
 /// The title of the panel: [`Inspection::title`] in the player's language.
@@ -66,11 +70,38 @@ pub fn info_panel(
     crate::frame::window("info_panel", Icon::Info, &title, &mut open)
         .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -8.0))
         .show(ctx, |ui| {
+            // The complaints of a home, or what a citizen thinks of, in the order of their rows.
+            let mut complaints: Vec<cp_building::Complaint> = match info {
+                Inspection::Building(b) => b
+                    .happiness
+                    .as_ref()
+                    .map_or_else(Vec::new, |h| h.complaints.clone()),
+                Inspection::Citizen(c) => c.thinks.into_iter().collect(),
+                _ => Vec::new(),
+            };
+            complaints.reverse();
             egui::Grid::new("info_rows").num_columns(2).show(ui, |ui| {
                 // The labels and the values of the sim's rows (built in English by `cp_sim`).
                 for (label, value) in info.rows() {
                     ui.weak(tr(&label));
-                    ui.label(tr_value(&value));
+                    let link = matches!(label.as_str(), "Complaint" | "Thinks")
+                        .then(|| complaints.pop())
+                        .flatten();
+                    match link {
+                        // A complaint is a link to where its cause shows (§19.5).
+                        Some(c) => {
+                            let r = ui
+                                .link(tr(c.label()))
+                                .on_hover_text(tr(crate::happiness::action_hint(c)));
+                            rects.complaints.push((c, r.rect));
+                            if r.clicked() {
+                                rects.run = crate::happiness::action(c);
+                            }
+                        }
+                        None => {
+                            ui.label(tr_value(&value));
+                        }
+                    }
                     ui.end_row();
                 }
             });
@@ -242,6 +273,13 @@ pub fn tr_value(v: &str) -> String {
         ["supply", s, "<", "demand", d] if num(s) && num(d) => {
             return trf!("supply {s} < demand {d}", s = s, d = d);
         }
+        // The happiness of a home (T-318c): `63 (content)`.
+        [n, w @ ("(content)" | "(unhappy)" | "(miserable)")] if num(n) => {
+            return format!(
+                "{n} ({})",
+                tr(&format!("mood {}", w.trim_matches(['(', ')'])))
+            );
+        }
         _ => {}
     }
     let parts: Vec<&str> = v.split(", ").collect();
@@ -362,6 +400,7 @@ mod tests {
             age_years: 30,
             education: 1,
             wellbeing: 50,
+            thinks: None,
             has_car: true,
             location: cp_citizen::Location::Home,
             household_size: 3,

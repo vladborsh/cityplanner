@@ -52,6 +52,7 @@ pub const GROUPS: [(&str, &[Overlay]); 6] = [
     (
         "City",
         &[
+            Overlay::Happiness,
             Overlay::Zones,
             Overlay::Districts,
             Overlay::IndustryAreas,

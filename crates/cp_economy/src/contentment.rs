@@ -550,6 +550,60 @@ pub fn update_contentment(
     }
 }
 
+/// A citizen's own troubles (§19.4), on top of the home's index: the daily wellbeing and the
+/// client's "Thinks" read them the same way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Troubles {
+    /// An adult without work or school in a household jobless for `jobless_complain_days`.
+    pub jobless: bool,
+    pub sick: bool,
+    /// The home's average way to work is `commute_bad_min` or more.
+    pub long_commute: bool,
+}
+
+impl Troubles {
+    pub fn of(
+        c: &cp_citizen::Citizen,
+        h: &cp_citizen::Household,
+        homes: &HomeContentment,
+        now: u64,
+        k: &ContentmentKnobs,
+    ) -> Self {
+        let jobless_home = h
+            .jobless_since
+            .is_some_and(|s| now.saturating_sub(s.0) >= days_to_ticks(k.jobless_complain_days));
+        Troubles {
+            jobless: jobless_home && c.is_adult() && c.work.is_none() && c.school.is_none(),
+            sick: c.sick_since.is_some(),
+            long_commute: homes
+                .get(h.home)
+                .is_some_and(|s| f32::from(s.commute_min) >= k.commute_bad_min),
+        }
+    }
+
+    /// The home's index (neutral without a record) less 20 for no work, 15 for illness and 10
+    /// for a long way to work.
+    pub fn wellbeing(self, home: Option<&HomeSlot>) -> u8 {
+        let index = home.map_or(cp_building::NEUTRAL_INDEX, |s| s.index);
+        let w = i32::from(index)
+            - 20 * i32::from(self.jobless)
+            - 15 * i32::from(self.sick)
+            - 10 * i32::from(self.long_commute);
+        w.clamp(0, 100) as u8
+    }
+
+    /// The worst trouble as a complaint (the order of the weights), else `None`.
+    pub fn worst(self) -> Option<Complaint> {
+        [
+            (self.jobless, Complaint::Jobless),
+            (self.sick, Complaint::Sick),
+            (self.long_commute, Complaint::LongCommute),
+        ]
+        .into_iter()
+        .find_map(|(on, c)| on.then_some(c))
+    }
+}
+
 /// `Economy`-phase system on the first tick of each game day (after [`update_contentment`],
 /// whose pass falls on the same tick), see the module docs: the move-out of the homes unhappy
 /// for `leave_days`, then every citizen's wellbeing (§19.4).
@@ -596,27 +650,15 @@ pub fn contentment_daily(
     }
 
     // Wellbeing: the home's index less the personal troubles.
-    let jobless_ticks = days_to_ticks(k.jobless_complain_days);
-    let bad_commute = k.commute_bad_min;
     let rows: Vec<(cp_citizen::CitizenId, u8)> = citizens
         .households()
         .flat_map(|(_, h)| {
-            let slot: Option<&HomeSlot> = homes.get(h.home);
-            let index = slot.map_or(cp_building::NEUTRAL_INDEX, |s| s.index);
-            let long_way = slot.is_some_and(|s| f32::from(s.commute_min) >= bad_commute);
-            let jobless_home = h
-                .jobless_since
-                .is_some_and(|s| now.saturating_sub(s.0) >= jobless_ticks);
             let grid = &*citizens;
+            let homes = &*homes;
             h.member_ids().filter_map(move |cid| {
                 let c = grid.citizen(cid)?;
-                let jobless =
-                    jobless_home && c.is_adult() && c.work.is_none() && c.school.is_none();
-                let w = i32::from(index)
-                    - 20 * i32::from(jobless)
-                    - 15 * i32::from(c.sick_since.is_some())
-                    - 10 * i32::from(long_way);
-                let w = w.clamp(0, 100) as u8;
+                let t = Troubles::of(c, h, homes, now, k);
+                let w = t.wellbeing(homes.get(h.home));
                 (w != c.wellbeing).then_some((cid, w))
             })
         })

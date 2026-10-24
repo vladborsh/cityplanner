@@ -88,6 +88,9 @@ pub struct Options {
     /// `--inspect`: the first building of the city is picked a second into the run, so the
     /// inspector shows (T-284 screenshots).
     pub inspect: bool,
+    /// `--inspect-home`: the same with the first home that has complaints, else the first scored
+    /// home (T-318c screenshots of the happiness rows).
+    pub inspect_home: bool,
     /// `--speed 1|2|3`: run the game at that speed from the start (T-281 benches).
     pub speed: Option<cp_core::SimSpeed>,
     /// `--no-qos`: leave the game's threads at the default quality of service (T-281: to
@@ -216,6 +219,7 @@ impl Options {
             no_parked: args.iter().any(|a| a == "--no-parked"),
             lang: value("--lang").and_then(|v| cp_locale::Lang::from_code(&v)),
             inspect: args.iter().any(|a| a == "--inspect"),
+            inspect_home: args.iter().any(|a| a == "--inspect-home"),
             pan: args.iter().any(|a| a == "--pan"),
             zoning: args.iter().position(|a| a == "--zoning").map(|i| {
                 let n: Vec<f32> = args
@@ -437,6 +441,29 @@ fn inspect_demo(
     }
 }
 
+/// `--inspect-home`: like [`inspect_demo`], a home with complaints (else any scored home).
+fn inspect_home_demo(
+    mut frame: Local<u32>,
+    view: Option<Res<SimView>>,
+    picked: Option<ResMut<cp_tools::Picked>>,
+) {
+    *frame += 1;
+    let (Some(view), Some(mut picked)) = (view, picked) else {
+        return;
+    };
+    if *frame < ZONING_FRAME || picked.0.is_some() {
+        return;
+    }
+    let homes = &view.home_contentment;
+    let home = homes
+        .homes()
+        .find(|(_, s)| s.complaints[0] != Default::default())
+        .or_else(|| homes.homes().next());
+    if let Some((id, _)) = home {
+        picked.0 = Some(cp_sim::inspect::Selection::Building(id));
+    }
+}
+
 /// Where `--zoning x,z` holds the cursor (world metres), if anywhere.
 #[derive(Resource)]
 struct ZoningDemo(Option<Vec2>);
@@ -574,6 +601,9 @@ pub fn run(opts: Options) -> AppExit {
     }
     if opts.inspect {
         app.add_systems(Update, inspect_demo);
+    }
+    if opts.inspect_home {
+        app.add_systems(Update, inspect_home_demo);
     }
     if let Some(hover) = opts.zoning {
         if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {

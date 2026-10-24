@@ -137,7 +137,35 @@ pub fn district_stats(view: &SimView, id: DistrictId) -> DistrictStats {
     out
 }
 
+/// The contentment row of a district (`None`: the homes in no district), if it has homes.
+pub fn district_mood(
+    view: &SimView,
+    id: Option<DistrictId>,
+) -> Option<&cp_economy::DistrictContentment> {
+    view.city_contentment
+        .districts
+        .iter()
+        .find(|d| d.district == id)
+}
+
+/// A smiley and the index of a district's homes (T-318c).
+fn mood_badge(ui: &mut egui::Ui, d: &cp_economy::DistrictContentment) {
+    crate::happiness::smiley(ui, d.index, 14.0).on_hover_text(tr("Happiness"));
+    ui.label(d.index.to_string());
+}
+
+/// The happiness of a district's homes and its three main complaints, each a link (T-318c).
+fn mood_block(ui: &mut egui::Ui, d: Option<&cp_economy::DistrictContentment>) {
+    let Some(d) = d else { return };
+    ui.horizontal(|ui| {
+        ui.weak(tr("Happiness"));
+        mood_badge(ui, d);
+    });
+    crate::happiness::complaint_links(ui, &d.complaints, 3);
+}
+
 fn stats_tab(ui: &mut egui::Ui, view: &SimView, id: DistrictId) {
+    mood_block(ui, district_mood(view, Some(id)));
     let s = district_stats(view, id);
     egui::Grid::new(("district_stats", id.0))
         .num_columns(2)
@@ -282,6 +310,17 @@ pub fn district_list(
     for (id, d) in view.districts.iter() {
         district_row(ui, view, tools, outbox, id, d);
     }
+    // The homes in no district (T-318c).
+    if let Some(outside) = district_mood(view, None)
+        && view.districts.iter().next().is_some()
+    {
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(tr("Outside districts"));
+            mood_badge(ui, outside);
+        });
+        crate::happiness::complaint_links(ui, &outside.complaints, 3);
+    }
 }
 
 fn district_row(
@@ -335,6 +374,9 @@ fn district_row(
             );
         }
         ui.data_mut(|m| m.insert_temp(key, buf));
+        if let Some(m) = district_mood(view, Some(id)) {
+            mood_badge(ui, m);
+        }
         if ui.small_button(tr("Delete")).clicked() {
             send(outbox, DistrictCommand::Delete { district: id });
             if selected {

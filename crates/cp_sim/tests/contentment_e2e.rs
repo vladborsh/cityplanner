@@ -282,3 +282,67 @@ fn happier_homes_take_more_households() {
         "held at 90 against held at 30: {arrived:?} arrivals in {room:?} home-ticks with room"
     );
 }
+
+/// §19.7 item 7: the inspector of a home lists its happiness and complaints; a resident thinks
+/// of their own trouble first, else of the home's worst complaint.
+#[test]
+fn the_inspector_shows_a_homes_happiness_and_its_residents_thoughts() {
+    let mut sim = city();
+    run(&mut sim, cp_economy::CITY_PERIOD, &Progress::ALL);
+    let (home, _) = homes_at(&sim)
+        .into_iter()
+        .find(|(id, _)| {
+            sim.world()
+                .resource::<CitizenGrid>()
+                .households()
+                .any(|(_, h)| h.home == *id)
+        })
+        .expect("an inhabited home");
+    sim.world_mut().resource_mut::<HomeContentment>().set(
+        home,
+        30,
+        [Complaint::Pollution, Complaint::NoPark, Complaint::None],
+    );
+
+    let Some(cp_sim::Inspection::Building(b)) = sim.inspect(cp_sim::Selection::Building(home))
+    else {
+        panic!("no building inspection");
+    };
+    let happiness = b.happiness.clone().expect("a home with a record");
+    assert_eq!(happiness.index, 30);
+    assert_eq!(
+        happiness.complaints,
+        [Complaint::Pollution, Complaint::NoPark]
+    );
+    let rows = cp_sim::Inspection::Building(b).rows();
+    let of = |label: &str| -> Vec<String> {
+        rows.iter()
+            .filter(|(l, _)| l == label)
+            .map(|(_, v)| v.clone())
+            .collect()
+    };
+    assert_eq!(of("Happiness"), ["30 (miserable)"]);
+    assert_eq!(of("Complaint"), ["Polluted air", "No park nearby"]);
+
+    let grid = sim.world().resource::<CitizenGrid>();
+    let (_, h) = grid.households().find(|(_, h)| h.home == home).unwrap();
+    let citizen = h.member_ids().next().unwrap();
+    let own = {
+        let c = grid.citizen(citizen).unwrap();
+        let db = sim.world().resource::<cp_content::SimContent>().0.clone();
+        cp_economy::Troubles::of(
+            c,
+            h,
+            sim.world().resource::<HomeContentment>(),
+            sim.tick().0,
+            &db.balance().contentment,
+        )
+    };
+    let Some(cp_sim::Inspection::Citizen(c)) = sim.inspect(cp_sim::Selection::Citizen(citizen))
+    else {
+        panic!("no citizen inspection");
+    };
+    assert_eq!(c.thinks, Some(own.worst().unwrap_or(Complaint::Pollution)));
+    let rows = cp_sim::Inspection::Citizen(c).rows();
+    assert!(rows.iter().any(|(l, _)| l == "Thinks"), "{rows:?}");
+}
