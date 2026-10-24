@@ -45,13 +45,16 @@ pub struct ArmMark {
     pub at: Vec2,
 }
 
-/// The mode switch of the Junctions tool in the options strip: lights and signs, or lane turns.
-pub fn mode_buttons(ui: &mut egui::Ui, tools: &mut cp_tools::ToolState) {
+/// The mode switch of the Junctions tool, in its row of the overlay panel (T-317f): lights and signs, or lane turns.
+pub fn mode_buttons(ui: &mut egui::Ui, tools: &mut cp_tools::ToolState, size: f32, pad: f32) {
     for (lanes, icon, label) in [
         (false, Icon::Junctions, "Lights and signs"),
         (true, Icon::LanesMode, "Lanes"),
     ] {
-        if crate::panels::tool_button(ui, icon, &tr(label), tools.lane_mode == lanes).clicked() {
+        let r = icon
+            .button(ui, size, pad, tools.lane_mode == lanes)
+            .on_hover_text(tr(label));
+        if r.clicked() {
             tools.lane_mode = lanes;
             tools.lane_arm = None;
         }

@@ -229,6 +229,15 @@ pub fn overlays_panel(
                                             ActiveTool::Junctions
                                         });
                                     }
+                                    // Its mode: lights and signs, or lane turns (T-313).
+                                    if on {
+                                        crate::lane_rules::mode_buttons(
+                                            ui,
+                                            tools,
+                                            OVERLAY_ICON,
+                                            Sizes::BUTTON_PAD,
+                                        );
+                                    }
                                 }
                             });
                         }
