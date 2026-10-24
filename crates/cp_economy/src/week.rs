@@ -121,6 +121,21 @@ pub type DistrictRows = Vec<(Option<DistrictId>, Cost)>;
 /// [`week_detail`] and the service upkeep by kind ([`SERVICE_ORDER`]; sums to
 /// `building_upkeep`).
 pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost; SERVICE_KINDS]) {
+    let (r, rows, services, _) = week_core(i, week, None);
+    (r, rows, services)
+}
+
+/// The tax and the upkeep of an area's chain buildings, per area id (T-316).
+pub type AreaMoney = BTreeMap<u8, (Cost, Cost)>;
+
+/// What [`week_core`] returns: the report, the tax by district, the service upkeep by kind and
+/// the money of the areas.
+pub type WeekCore = (WeekReport, DistrictRows, [Cost; SERVICE_KINDS], AreaMoney);
+
+/// [`week_lines`] and, given the area map, the tax and the service upkeep of the buildings of
+/// industrial chains by the area they stand in.
+pub fn week_core(i: &WeekInputs, week: u64, areas: Option<&cp_district::AreaMap>) -> WeekCore {
+    let mut area_money = AreaMoney::new();
     let mut services = [Cost::ZERO; SERVICE_KINDS];
     let mut by_district: BTreeMap<Option<DistrictId>, Cost> = BTreeMap::new();
     let mut r = WeekReport {
@@ -170,6 +185,12 @@ pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost
             }
             r.income_by_zone[zone_slot] += tax;
             *by_district.entry(district).or_insert(Cost::ZERO) += tax;
+            if let Some(map) = areas
+                && def.industry.is_some()
+                && let Some(a) = cp_district::area_at(map, b.pos)
+            {
+                area_money.entry(a.0).or_default().0 += tax;
+            }
         }
         // Each policy in force at the building costs `cost_per_building_week` (T-190).
         for p in i.content.policies() {
@@ -181,6 +202,12 @@ pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost
             let kind = i.content.service(service).kind;
             let upkeep = Cost::scaled(def.upkeep_week, percent(i.budgets.get(kind)));
             r.building_upkeep += upkeep;
+            if let Some(map) = areas
+                && def.industry.is_some()
+                && let Some(a) = cp_district::area_at(map, b.pos)
+            {
+                area_money.entry(a.0).or_default().1 += upkeep;
+            }
             if let Some(slot) = services.get_mut(kind as usize) {
                 *slot += upkeep;
             }
@@ -206,7 +233,7 @@ pub fn week_lines(i: &WeekInputs, week: u64) -> (WeekReport, DistrictRows, [Cost
         }
     }
     r.loan_payments = st.loans.iter().map(Loan::weekly).sum();
-    (r, by_district.into_iter().collect(), services)
+    (r, by_district.into_iter().collect(), services, area_money)
 }
 
 /// Game hours in a week.
@@ -241,7 +268,7 @@ pub fn game_hour(tick: u64) -> u64 {
 /// 168th) also books the week's transit money and the loan payments, keeps the week's
 /// [`WeekReport`] in [`EconomyState::last_week`] and the district rows. What every hour booked
 /// goes to [`MoneyFlow`].
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn settle_week(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
@@ -262,9 +289,11 @@ pub fn settle_week(
     city_policies: Res<CityPolicies>,
     ledger: Option<ResMut<TransitLedger>>,
     industry: Option<ResMut<cp_industry::IndustryLedger>>,
-    (parks, refunds): (
+    (parks, refunds, area_map, books): (
         Option<ResMut<cp_park::ParkLedger>>,
         Option<ResMut<DemolitionRefunds>>,
+        Option<Res<cp_district::AreaMap>>,
+        Option<ResMut<cp_industry::AreaBooks>>,
     ),
 ) {
     let hour = game_hour(tick.0);
@@ -277,7 +306,7 @@ pub fn settle_week(
     };
     let Some(content) = content else { return };
     citizens.ensure_derived();
-    let (mut report, rows, services) = week_lines(
+    let (mut report, rows, services, area_money) = week_core(
         &WeekInputs {
             content: &content.0,
             net: &net,
@@ -294,6 +323,7 @@ pub fn settle_week(
                 .map_or(1.0, |c| c.tax_collection(&content.0.balance().corruption)),
         },
         hour.div_ceil(HOURS_PER_WEEK),
+        area_map.as_deref(),
     );
     let mut booked = Flow {
         income_by_zone: report.income_by_zone.map(|c| hour_share(c, k)),
@@ -312,6 +342,10 @@ pub fn settle_week(
             week: hour / HOURS_PER_WEEK,
             rows,
         };
+        // What the chain buildings of each area paid and cost this week (T-316).
+        if let Some(mut books) = books {
+            books.money = area_money;
+        }
         // The week's transit money, summed by `cp_transit`, is booked and starts over (T-160).
         if let Some(mut ledger) = ledger {
             report.transit_fares = ledger.fares;

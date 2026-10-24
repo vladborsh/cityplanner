@@ -644,3 +644,159 @@ fn factories_are_deterministic() {
     let (mut a, mut b) = (play(), play());
     assert_eq!(a.checksum(), b.checksum());
 }
+
+impl Town {
+    /// Fills every job slot of the building, each education level.
+    fn staff_full(&mut self, b: BuildingId) {
+        let jobs = self
+            .db
+            .building(
+                self.sim
+                    .world()
+                    .resource::<BuildingGrid>()
+                    .get(b)
+                    .unwrap()
+                    .def,
+            )
+            .jobs;
+        let mut g = self.sim.world_mut().resource_mut::<CitizenGrid>();
+        for (edu, &n) in jobs.iter().enumerate() {
+            let mut left = usize::from(n).saturating_sub(usize::from(g.jobs_filled(b, edu)));
+            while left > 0 {
+                let k = left.min(4);
+                left -= k;
+                let hid = g.add_household(b, 0, Tick(0), &vec![(9000, edu as u8, false); k]);
+                let members: Vec<_> = g
+                    .household(hid)
+                    .unwrap()
+                    .members
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .collect();
+                for m in members {
+                    g.set_job(m, b, edu as u8);
+                }
+            }
+        }
+    }
+}
+
+/// T-316: the money of one setup over `days` days, as the treasury's change, and the running
+/// trade balance (exports minus imports) at the end of each day.
+fn run_setup(buildings: &[(&str, f32)], days: u64) -> (i64, Vec<i64>) {
+    let mut t = town(true);
+    let ids: Vec<_> = buildings.iter().map(|&(n, at)| t.put(n, at)).collect();
+    for &id in &ids {
+        t.staff_full(id);
+    }
+    let start = t.sim.world().resource::<cp_core::Treasury>().balance;
+    let (mut prev_e, mut prev_i, mut trade, mut daily) = (Cost::ZERO, Cost::ZERO, 0i64, vec![]);
+    for _ in 0..days {
+        for _ in 0..TICKS_PER_DAY {
+            t.sim.tick_once();
+            let l = *t.sim.world().resource::<IndustryLedger>();
+            // The week's settlement resets the sums: a smaller one is a new week.
+            trade += (if l.exports >= prev_e {
+                l.exports - prev_e
+            } else {
+                l.exports
+            })
+            .0;
+            trade -= (if l.imports >= prev_i {
+                l.imports - prev_i
+            } else {
+                l.imports
+            })
+            .0;
+            (prev_e, prev_i) = (l.exports, l.imports);
+        }
+        for &id in &ids {
+            t.staff_full(id);
+        }
+        daily.push(trade);
+    }
+    let end = t.sim.world().resource::<cp_core::Treasury>().balance;
+    ((end - start).0, daily)
+}
+
+/// T-316: a processor fed only by imports loses money at first (the import is bought before
+/// the output sells), then earns; per day, a full local chain beats it, and it beats a generic
+/// industrial building.
+#[test]
+fn a_processor_on_imports_pays_back_between_a_full_chain_and_plain_industrial_zoning() {
+    let days = 14;
+    let (control, _) = run_setup(&[], days);
+    let (chain, _) = run_setup(
+        &[("forest_extractor_l", 100.0), ("forest_processor_a", 500.0)],
+        days,
+    );
+    let (imports, trade) = run_setup(&[("forest_processor_a", 500.0)], days);
+    let (generic, _) = run_setup(&[("ind_1", 500.0)], days);
+    let (furn, _) = run_setup(&[("furniture_factory", 500.0)], days);
+    let (food, _) = run_setup(&[("food_factory", 500.0)], days);
+    let (car, _) = run_setup(&[("car_factory", 500.0)], days);
+    let net = |x: i64| (x - control) as f64 / 100.0 / days as f64;
+    eprintln!(
+        "per day: chain {:.1}, imports {:.1}, generic {:.1}",
+        net(chain),
+        net(imports),
+        net(generic)
+    );
+    // Factories on imported products pay too, below a full chain's day.
+    for (name, v) in [("furniture", furn), ("food", food), ("car", car)] {
+        eprintln!("factory on imports {name}: {:.1}", net(v));
+        assert!(net(v) > 0.0, "{name} factory on imports: {}", net(v));
+    }
+    assert!(net(imports) > 0.0, "positive: {}", net(imports));
+    assert!(
+        net(chain) > net(imports),
+        "chain {} > imports {}",
+        net(chain),
+        net(imports)
+    );
+    assert!(
+        net(imports) > net(generic),
+        "imports {} > generic {}",
+        net(imports),
+        net(generic)
+    );
+    // The trade balance dips (imports paid first) and ends above zero.
+    let low = *trade.iter().min().unwrap();
+    assert!(low < 0, "a dip: {trade:?}");
+    assert!(*trade.last().unwrap() > 0, "ends positive: {trade:?}");
+}
+
+/// T-316: the area's book holds what its buildings made and the trade they did, and the weekly
+/// settlement adds the taxes and the upkeep of its chain buildings.
+#[test]
+fn the_area_book_holds_the_weeks_production_trade_taxes_and_upkeep() {
+    let mut t = town(true);
+    let mill = t.put("forest_processor_a", 500.0);
+    t.staff_full(mill);
+    for _ in 0..9 * TICKS_PER_DAY {
+        t.sim.tick_once();
+        t.staff_full(mill);
+    }
+    let books = t.sim.world().resource::<cp_industry::AreaBooks>().clone();
+    let last = books.last_of(1).expect("a settled week for area 1");
+    assert!(last.imports > Cost::ZERO, "{last:?}");
+    assert!(last.exports > Cost::ZERO, "{last:?}");
+    assert!(
+        last.produced
+            .get(&CargoKind::Planks)
+            .copied()
+            .unwrap_or(0.0)
+            > 0.0,
+        "{last:?}"
+    );
+    let (taxes, upkeep) = books.money[&1];
+    assert!(
+        taxes > Cost::ZERO && upkeep > Cost::ZERO,
+        "{taxes:?} {upkeep:?}"
+    );
+    // The book adds up with the city-wide ledger (one area).
+    let l = *t.sim.world().resource::<IndustryLedger>();
+    assert_eq!(last.imports, l.last_imports);
+    assert_eq!(last.exports, l.last_exports);
+}

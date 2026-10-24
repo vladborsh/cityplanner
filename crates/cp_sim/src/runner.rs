@@ -170,6 +170,7 @@ impl SimRunner {
         world.init_resource::<cp_park::ParkLedger>();
         world.init_resource::<cp_citizen::LeisureTargets>();
         world.init_resource::<cp_industry::IndustryLedger>();
+        world.init_resource::<cp_industry::AreaBooks>();
         world.init_resource::<cp_industry::WarehouseSettings>();
         world.init_resource::<cp_transit::CargoArrivals>();
         world

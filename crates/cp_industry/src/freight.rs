@@ -18,6 +18,8 @@
 //! ([`cp_transit::trade_roll`]) picks them. More industry, more trucks through the entry both
 //! ways; the playtest prints them against the industrial job count.
 
+use std::collections::BTreeMap;
+
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Res, ResMut, SystemParam};
 use cp_building::{BuildingGrid, BuildingId, BuildingState};
@@ -68,6 +70,61 @@ impl IndustryLedger {
     }
 }
 
+/// One industrial area's trade and output over a week (T-316).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AreaBook {
+    /// Units made by the area's extractors, processors and factories, by cargo.
+    pub produced: BTreeMap<CargoKind, f32>,
+    /// What the area's trucks brought in from outside the map.
+    pub exports: Cost,
+    /// What the area's orders from the outside cost, transport fee included.
+    pub imports: Cost,
+}
+
+/// The per-area books of the cargo trade: the current game week and the last one, by area id.
+/// Saved. The week rolls itself over when the tick passes a week boundary ([`Self::roll`]), so
+/// no other system settles it.
+#[derive(Resource, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AreaBooks {
+    /// The week `now` holds (`tick / TICKS_PER_WEEK`).
+    pub week: u64,
+    pub now: BTreeMap<u8, AreaBook>,
+    pub last: BTreeMap<u8, AreaBook>,
+    /// The last settled week's worker taxes and building upkeep of each area's chain
+    /// buildings, `(taxes, upkeep)`; set by `cp_economy`'s weekly settlement.
+    pub money: BTreeMap<u8, (Cost, Cost)>,
+}
+
+impl AreaBooks {
+    pub fn is_empty(&self) -> bool {
+        self.now.is_empty() && self.last.is_empty() && self.money.is_empty()
+    }
+
+    /// Starts a new week when `tick` is in a later one than `now`'s: `now` becomes `last`.
+    pub fn roll(&mut self, tick: Tick) {
+        let week = tick.0 / cp_core::time::TICKS_PER_WEEK;
+        if week > self.week {
+            // More than one week skipped: the week before was empty.
+            self.last = if week == self.week + 1 {
+                std::mem::take(&mut self.now)
+            } else {
+                self.now.clear();
+                BTreeMap::new()
+            };
+            self.week = week;
+        }
+    }
+
+    pub fn book(&mut self, area: u8) -> &mut AreaBook {
+        self.now.entry(area).or_default()
+    }
+
+    /// The area's last settled week.
+    pub fn last_of(&self, area: u8) -> Option<&AreaBook> {
+        self.last.get(&area)
+    }
+}
+
 /// The ways in and out of the city and the sim seed (T-306), bundled so [`run_freight`] stays
 /// within `bevy_ecs`'s system parameter count.
 #[derive(SystemParam)]
@@ -93,6 +150,7 @@ pub fn run_freight(
     mut runs: ResMut<ServiceRuns>,
     mut state: ResMut<IndustryState>,
     mut ledger: ResMut<IndustryLedger>,
+    mut books: ResMut<AreaBooks>,
     mut settings: ResMut<WarehouseSettings>,
     mut via: Via,
 ) {
@@ -108,6 +166,7 @@ pub fn run_freight(
     let bal = db.balance();
 
     settings.list.retain(|id, _| buildings.get(*id).is_some());
+    books.roll(*tick);
 
     let train_wait = (bal.cargo_train_interval_h * cp_core::time::TICKS_PER_HOUR)
         .ceil()
@@ -132,8 +191,14 @@ pub fn run_freight(
             Endpoint::Building(_) => {}
             Endpoint::Outside(_) => {
                 let price = db.cargo(a.cargo).map_or(0.0, |c| c.export_price);
-                ledger.exports += Cost::scaled(price, f64::from(a.load));
+                let pay = Cost::scaled(price, f64::from(a.load));
+                ledger.exports += pay;
                 ledger.export_loads += 1;
+                if let Endpoint::Building(from) = a.from
+                    && let Some(area) = buildings.get(from).and_then(|b| area_at(&area_map, b.pos))
+                {
+                    books.book(area.0).exports += pay;
+                }
             }
         }
     }
@@ -354,7 +419,12 @@ pub fn run_freight(
                 }
                 if let Some(via) = exit_for(&entries, &sites, b.pos) {
                     let price = db.cargo(cargo).map_or(0.0, |c| c.import_price);
-                    ledger.imports += Cost::scaled(price, f64::from(load));
+                    let cost = Cost::scaled(price, f64::from(load))
+                        + Cost::scaled(bal.import_transport_fee, 1.0);
+                    ledger.imports += cost;
+                    if let Some(area) = area_at(&area_map, b.pos) {
+                        books.book(area.0).imports += cost;
+                    }
                     ledger.import_loads += 1;
                     match via {
                         // By rail: ordered at the station, the train brings it (T-216).

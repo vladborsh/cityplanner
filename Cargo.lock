@@ -2411,6 +2411,7 @@ dependencies = [
  "cp_core",
  "cp_district",
  "cp_economy",
+ "cp_industry",
  "cp_locale",
  "cp_net",
  "cp_prof",

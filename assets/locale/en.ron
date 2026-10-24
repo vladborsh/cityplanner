@@ -1217,4 +1217,13 @@
     "Scandals": "Scandals",
     "Day {day}: {deal} came out · trust -{n} · fine {money}": "Day {day}: {deal} came out · trust -{n} · fine {money}",
     "the deal is undone": "the deal is undone",
+    "Made: {cargo} {n}": "Made: {cargo} {n}",
+    "Nothing made.": "Nothing made.",
+    "Export income": "Export income",
+    "Imports incl. transport": "Imports incl. transport",
+    "Building upkeep": "Building upkeep",
+    "Workers' taxes": "Workers' taxes",
+    "Net profit": "Net profit",
+    "Last week: net of the areas": "Last week: net of the areas",
+    "{money} · {n} in loss": "{money} · {n} in loss",
 }

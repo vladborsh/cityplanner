@@ -971,6 +971,7 @@ impl ContentDb {
                     &[b.demand_unemployed_job_weight][..],
                     true,
                 ),
+                ("import_transport_fee", &[b.import_transport_fee][..], true),
             ];
             for (name, values, non_negative) in knobs {
                 if !finite(values) || (non_negative && values.iter().any(|&v| v < 0.0)) {

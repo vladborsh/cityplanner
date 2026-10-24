@@ -137,6 +137,7 @@ pub fn run_industry(
     mut deposits: ResMut<ResourceDeposits>,
     mut state: ResMut<IndustryState>,
     mut goods: ResMut<cp_transit::Goods>,
+    mut books: ResMut<AreaBooks>,
 ) {
     let (Some(content), Some(terrain)) = (content, terrain) else {
         return;
@@ -145,6 +146,7 @@ pub fn run_industry(
     if !now.0.is_multiple_of(INDUSTRY_BUCKET_TICKS) {
         return;
     }
+    books.roll(now);
     let db = &*content.0;
     let bal = db.balance();
     let bucket = (now.0 / INDUSTRY_BUCKET_TICKS) % 64;
@@ -219,7 +221,9 @@ pub fn run_industry(
                     if amount > 0.0 {
                         let total_rate: f32 = spec.outputs.iter().map(|&(_, r)| r).sum();
                         for &(cargo, rate) in &spec.outputs {
-                            state.add(id, cargo, amount * rate / total_rate);
+                            let made = amount * rate / total_rate;
+                            state.add(id, cargo, made);
+                            *books.book(area_id.0).produced.entry(cargo).or_default() += made;
                         }
                         produced = amount;
                     }
@@ -268,6 +272,7 @@ pub fn run_industry(
                             state.add(id, c, r * f * p);
                         }
                         produced += r * f * p;
+                        *books.book(area_id.0).produced.entry(c).or_default() += r * f * p;
                     }
                     IndustryProblem::None
                 }
@@ -325,7 +330,7 @@ fn take_from_lot(
     taken as f32
 }
 
-pub use freight::{IndustryLedger, run_freight};
+pub use freight::{AreaBook, AreaBooks, IndustryLedger, run_freight};
 pub use trains::run_cargo_trains;
 pub use warehouse::{
     IndustryCommand, IndustryError, WarehouseMode, WarehouseSetting, WarehouseSettings, apply,

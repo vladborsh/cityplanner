@@ -281,7 +281,7 @@ Balance((
     budget_over_gain: 0.5,
     budget_reach_exp: 0.5,
     // Goods of a unique factory sell for this many times the usual export price (T-215) // tune later.
-    factory_export_mul: 4.0,
+    factory_export_mul: 9.0,
     // Cargo trains (T-216): hours between two trains at a cargo station and the units one takes. // tune later
     cargo_train_interval_h: 12.0,
     cargo_train_capacity: 1200.0,
@@ -318,6 +318,8 @@ Balance((
     // rule (trade only when nobody near), 1 = every load crosses the edge. Shops keep BUG-095.
     industry_export_share: 0.25,
     industry_import_share: 0.25,
+    // T-316: delivery and transport of one ordered load, money, on top of the cargo's import_price // tune later
+    import_transport_fee: 20.0,
 
     // --- Work and education reminder (T-307): the advisor mentions the Jobs & education window when
     // unemployment is above jobs_unemployment_warn of the adults, free slots above jobs_shortage_share,

@@ -488,13 +488,18 @@ pub fn list_window(
         .open(&mut open)
         .anchor(
             egui::Align2::LEFT_BOTTOM,
-            egui::vec2(8.0, -(Sizes::DEMAND_H + Sizes::TRAY_H + 8.0)),
+            // Above the advisor's toast, which stands at the bottom left over the tray.
+            egui::vec2(8.0, -(Sizes::DEMAND_H + Sizes::TRAY_H + 56.0)),
         )
         .default_width(300.0)
         .resizable(false)
         .show(ctx, |ui| {
             egui::ScrollArea::vertical()
-                .max_height(260.0)
+                .max_height(if category == Category::Industry {
+                    150.0
+                } else {
+                    260.0
+                })
                 .show(ui, |ui| match category {
                     Category::Districts => crate::districts::district_list(ui, view, tools, outbox),
                     Category::Industry => {
@@ -502,6 +507,9 @@ pub fn list_window(
                     }
                     _ => crate::parks::area_list(ui, view, tools, overlay, outbox),
                 });
+            if category == Category::Industry {
+                crate::industry::area_summary_panel(ui, view, tools);
+            }
         });
     state.areas_open = open;
 }

@@ -1217,4 +1217,13 @@
     "Scandals": "Скандалы",
     "Day {day}: {deal} came out · trust -{n} · fine {money}": "День {day}: всплыла сделка «{deal}» · доверие -{n} · штраф {money}",
     "the deal is undone": "сделка отменена",
+    "Made: {cargo} {n}": "Произведено: {cargo} {n}",
+    "Nothing made.": "Ничего не произведено.",
+    "Export income": "Доход от экспорта",
+    "Imports incl. transport": "Импорт с доставкой",
+    "Building upkeep": "Содержание зданий",
+    "Workers' taxes": "Налоги рабочих",
+    "Net profit": "Чистая прибыль",
+    "Last week: net of the areas": "Прошлая неделя: итог по районам",
+    "{money} · {n} in loss": "{money} · убыточных: {n}",
 }

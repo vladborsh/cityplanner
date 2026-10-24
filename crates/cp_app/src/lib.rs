@@ -185,6 +185,7 @@ impl Plugin for GamePlugin {
                 overlays_collapsed: self.fold_overlays,
                 category: self.category,
                 demo_pointer: self.pointer,
+                areas_open: self.scene.as_deref() == Some(scene::INDUSTRY_BOOKS),
                 // T-289: a menu started open takes up its tool and shows its overlay, as a click would.
                 entered: self.category,
                 tray_tab: self
@@ -200,6 +201,12 @@ impl Plugin for GamePlugin {
             }
             if let Some(tab) = self.budget_tab {
                 ui_state.budget.tab = tab;
+            }
+            // The books demo shows the first area's panel (T-316).
+            if self.scene.as_deref() == Some(scene::INDUSTRY_BOOKS) {
+                let mut tools = cp_tools::ToolState::default();
+                tools.area.selected = Some(cp_district::AreaId(1));
+                app.insert_resource(tools);
             }
             app.insert_resource(ui_state)
                 .insert_resource(settings::SettingsSaver::new(settings, hidden))
@@ -784,6 +791,9 @@ pub fn build_sim(
     } else if scene == Some(scene::INDUSTRY) {
         let at = scene::build_industry(&mut sim);
         info!("scene industry: areas at {at:?}");
+    } else if scene == Some(scene::INDUSTRY_BOOKS) {
+        let at = scene::build_industry_books(&mut sim);
+        info!("scene industry-books: areas at {at:?}");
     } else if scene == Some(scene::CHAINS) {
         let n = scene::build_chains(&mut sim);
         info!("scene chains: {n} buildings");

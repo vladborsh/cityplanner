@@ -978,6 +978,28 @@ pub fn build_industry(sim: &mut SimRunner) -> Vec<Vec2> {
     centres
 }
 
+/// The [`INDUSTRY`] scene with a made-up last week in the books of its first area (T-316), for
+/// a shot of the area panel: `--scene industry-books --category industry --tray-tab Areas`.
+pub const INDUSTRY_BOOKS: &str = "industry-books";
+
+/// Builds the [`INDUSTRY_BOOKS`] scene: [`build_industry`] and the demo books of area 1.
+pub fn build_industry_books(sim: &mut SimRunner) -> Vec<Vec2> {
+    use cp_content::CargoKind;
+    use cp_core::Cost;
+    let at = build_industry(sim);
+    let mut books = sim.world_mut().resource_mut::<cp_industry::AreaBooks>();
+    let mut last = cp_industry::AreaBook::default();
+    last.produced.insert(CargoKind::Crops, 140.0);
+    last.produced.insert(CargoKind::Flour, 90.0);
+    last.exports = Cost::scaled(1260.0, 1.0);
+    last.imports = Cost::scaled(380.0, 1.0);
+    books.last.insert(1, last);
+    books
+        .money
+        .insert(1, (Cost::scaled(420.0, 1.0), Cost::scaled(910.0, 1.0)));
+    at
+}
+
 /// Road tunnel scene (T-173): a street dives under the river of `river_valley`. Run it with
 /// `--map river_valley` and look with `--cam tunnel` (add `--overlay underground` to see the
 /// tunnel).

@@ -580,6 +580,9 @@ pub struct Balance {
     /// the local goods are short. // tune later
     pub industry_export_share: f32,
     pub industry_import_share: f32,
+    /// T-316: what the trucks that bring an order from the outside cost on top of `import_price`,
+    /// currency units per load (delivery and transport). // tune later
+    pub import_transport_fee: f32,
     /// The factor on `export_price` for goods that left a unique factory (T-215). // tune later
     pub factory_export_mul: f32,
     /// Hours between two cargo trains at a cargo station (T-216). // tune later
@@ -1085,6 +1088,7 @@ impl Balance {
             self.move_in_car_share,
             self.industry_export_share,
             self.industry_import_share,
+            self.import_transport_fee,
         ]);
         v.extend(self.industry_levels.map(|l| l as f32));
         v.extend(self.park_levels.map(|l| l as f32));
@@ -1271,6 +1275,7 @@ impl Default for Balance {
             industry_storage_per_level: 0.1,
             industry_export_share: 0.25,
             industry_import_share: 0.25,
+            import_transport_fee: 20.0,
             networks: Networks::default(),
             contentment: ContentmentKnobs::default(),
             corruption: CorruptionKnobs::default(),

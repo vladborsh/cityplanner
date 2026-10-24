@@ -362,6 +362,13 @@ fn industry_section(view: &SimView) -> Section {
         .sum();
     let problems = view.industry.problems.len();
     let l = &view.industry_ledger;
+    // The areas' last week (T-316): the sum of their nets and how many are in the red.
+    let nets: Vec<cp_core::Cost> = areas
+        .iter()
+        .map(|(id, _)| crate::industry::area_economy(view, *id).net())
+        .collect();
+    let total: cp_core::Cost = nets.iter().copied().sum();
+    let in_red = nets.iter().filter(|n| n.0 < 0).count();
     Section {
         title: "Industry",
         rows: vec![
@@ -387,6 +394,14 @@ fn industry_section(view: &SimView) -> Section {
             row(
                 "Cargo imports (week)",
                 trf!(plural "{n} loads · {money}", n = l.import_loads, money = format_money(l.imports)),
+            ),
+            row(
+                "Last week: net of the areas",
+                trf!(
+                    "{money} · {n} in loss",
+                    money = format_money(total),
+                    n = in_red
+                ),
             ),
             row(
                 "Last week: exports / imports",

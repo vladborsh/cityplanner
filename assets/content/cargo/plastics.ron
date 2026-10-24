@@ -4,6 +4,6 @@ Cargo((
     name: "Plastics",
     icon: "zone_industrial",
     color: (90, 170, 200),
-    export_price: 12.0,
-    import_price: 17.0,
+    export_price: 30.0,
+    import_price: 42.0,
 ))

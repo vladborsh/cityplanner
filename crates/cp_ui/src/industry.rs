@@ -178,6 +178,43 @@ pub struct AreaSummary {
     pub jobs: u32,
     /// What the buildings hold, per cargo in kind order.
     pub stock: Vec<(CargoKind, f32)>,
+    /// The last week's money (T-316).
+    pub economy: AreaEconomy,
+}
+
+/// One area's last settled week in money (T-316): what its buildings made, what the trucks
+/// brought in and cost, and what its chain buildings paid and cost the city.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AreaEconomy {
+    /// Units made by cargo, in kind order.
+    pub produced: Vec<(CargoKind, f32)>,
+    pub exports: cp_core::Cost,
+    /// The cost of the orders from the outside, transport included.
+    pub imports: cp_core::Cost,
+    pub upkeep: cp_core::Cost,
+    /// The workers' taxes of the area's buildings.
+    pub taxes: cp_core::Cost,
+}
+
+impl AreaEconomy {
+    /// Export income and taxes minus imports and upkeep.
+    pub fn net(&self) -> cp_core::Cost {
+        self.exports + self.taxes - self.imports - self.upkeep
+    }
+}
+
+/// The last settled week of area `id`.
+pub fn area_economy(view: &SimView, id: AreaId) -> AreaEconomy {
+    let books = &view.area_books;
+    let book = books.last_of(id.0).cloned().unwrap_or_default();
+    let (taxes, upkeep) = books.money.get(&id.0).copied().unwrap_or_default();
+    AreaEconomy {
+        produced: book.produced.into_iter().collect(),
+        exports: book.exports,
+        imports: book.imports,
+        upkeep,
+        taxes,
+    }
 }
 
 pub fn area_summary(view: &SimView, id: AreaId) -> Option<AreaSummary> {
@@ -199,6 +236,7 @@ pub fn area_summary(view: &SimView, id: AreaId) -> Option<AreaSummary> {
         buildings: 0,
         jobs: 0,
         stock: Vec::new(),
+        economy: area_economy(view, id),
     };
     for (bid, b) in view.buildings.iter() {
         if cp_district::area_at(&view.area_map, b.pos) != Some(id) {
@@ -356,6 +394,49 @@ fn area_panel(ui: &mut egui::Ui, view: &SimView, id: AreaId) {
         for (cargo, v) in &s.stock {
             ui.label(format!("{}: {v:.0}", cargo_name(*cargo)));
         }
+        economy_rows(ui, &s.economy);
+    });
+}
+
+/// The money of the last week of one area (T-316): the net in green or red.
+fn economy_rows(ui: &mut egui::Ui, e: &AreaEconomy) {
+    use cp_tools::format_money;
+    ui.separator();
+    ui.strong(tr("Last week"));
+    for (cargo, v) in &e.produced {
+        ui.label(trf!(
+            "Made: {cargo} {n}",
+            cargo = cargo_name(*cargo),
+            n = format!("{v:.0}")
+        ));
+    }
+    if e.produced.is_empty() {
+        ui.weak(tr("Nothing made."));
+    }
+    for (label, value) in [
+        ("Export income", e.exports),
+        ("Imports incl. transport", e.imports),
+        ("Building upkeep", e.upkeep),
+        ("Workers' taxes", e.taxes),
+    ] {
+        ui.horizontal(|ui| {
+            ui.label(tr(label));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(format_money(value));
+            });
+        });
+    }
+    let net = e.net();
+    let color = if net.0 >= 0 {
+        egui::Color32::LIGHT_GREEN
+    } else {
+        egui::Color32::LIGHT_RED
+    };
+    ui.horizontal(|ui| {
+        ui.strong(tr("Net profit"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.colored_label(color, format_money(net));
+        });
     });
 }
 
@@ -597,6 +678,11 @@ pub fn area_list(
             )
         ));
     }
+}
+
+/// The summary of the chosen area, under the list (T-316: it holds the week's money, so it
+/// stays out of the list's scroll area).
+pub fn area_summary_panel(ui: &mut egui::Ui, view: &SimView, tools: &ToolState) {
     if let Some(id) = tools.area.selected {
         area_panel(ui, view, id);
     }
@@ -968,5 +1054,28 @@ pub(crate) mod tests {
         colours.dedup();
         assert_eq!(colours.len(), 4);
         assert_eq!(new_name(ResourceKind::Ore, AreaId(7)), "Ore area 7");
+    }
+}
+
+#[cfg(test)]
+mod economy_tests {
+    use super::*;
+    use cp_core::Cost;
+
+    #[test]
+    fn the_net_of_an_area_is_exports_and_taxes_less_imports_and_upkeep() {
+        let e = AreaEconomy {
+            exports: Cost(100_000),
+            imports: Cost(40_000),
+            upkeep: Cost(30_000),
+            taxes: Cost(5_000),
+            ..AreaEconomy::default()
+        };
+        assert_eq!(e.net(), Cost(35_000));
+        let loss = AreaEconomy {
+            imports: Cost(10),
+            ..AreaEconomy::default()
+        };
+        assert!(loss.net().0 < 0);
     }
 }
