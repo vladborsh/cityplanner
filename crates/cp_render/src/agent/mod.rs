@@ -29,6 +29,12 @@ const TELEPORT: f32 = 60.0;
 /// Culling sphere radii, metres.
 const VEHICLE_RADIUS: f32 = 7.0;
 const PEDESTRIAN_RADIUS: f32 = 1.5;
+/// A pedestrian near a door is drawn up to this far from where the sim has it, metres: it is
+/// culled by the sim position with this much room (§25.3).
+const PORTAL_REACH: f32 = 12.0;
+/// The slow side-to-side drift of a walker: amplitude and wavelength, metres (§25.3).
+const DRIFT_M: f32 = 0.35;
+const DRIFT_WAVE_M: f32 = 9.0;
 /// Pedestrian gait: metres walked per full stride (two steps). The swing phase is the
 /// distance walked along the heading over this, so the feet do not slide (T-297).
 pub const STRIDE: f32 = 1.4;
@@ -369,24 +375,69 @@ pub fn build_parked(
     }
 }
 
-/// Last heading of every pedestrian `(key, yaw)`, ascending by key: one that stops keeps
-/// facing the way it walked instead of snapping to a random direction (BUG-064).
+/// Last heading and sideways direction of every pedestrian `(key, yaw, side)`, ascending by
+/// key: one that stops keeps facing the way it walked instead of snapping to a random
+/// direction (BUG-064), and keeps its place across the sidewalk.
 #[derive(Clone, Debug, Default)]
 pub struct Headings {
-    list: Vec<(u64, f32)>,
-    next: Vec<(u64, f32)>,
+    list: Vec<(u64, f32, bevy_math::Vec2)>,
+    next: Vec<(u64, f32, bevy_math::Vec2)>,
+}
+
+fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Where pedestrian `c` is drawn (§25.3): `side` metres across its lane from the sim position,
+/// where `side` is the unit direction across the way it walks and `along` the distance walked
+/// along it (for the drift). The spread is the key's own share of the pose's `room` plus a slow
+/// drift, squeezed into `clip(pos, side, lo, hi)` (the bays: nobody walks through a parked
+/// car). Near
+/// a door (`portal`) the walker is drawn on its way between `door(building)` and that point.
+pub fn pedestrian_drawn(
+    c: &PedestrianPose,
+    side: bevy_math::Vec2,
+    along: f32,
+    clip: &impl Fn(bevy_math::Vec2, bevy_math::Vec2, f32, f32) -> (f32, f32),
+    door: &impl Fn(cp_building::BuildingId) -> Option<bevy_math::Vec2>,
+) -> bevy_math::Vec2 {
+    let h = mix(c.key);
+    let room = c.room.max(0.0);
+    let amp = DRIFT_M.min(room);
+    let phase = unit(mix(h), 0) * std::f32::consts::TAU;
+    let lat = (unit(h, 0) * 2.0 - 1.0) * room
+        + amp * (along / DRIFT_WAVE_M * std::f32::consts::TAU + phase).sin();
+    // The whole spread is squeezed into what the bays leave clear, not cut at its edge: nobody
+    // lines up on the bay's edge.
+    let full = room + amp;
+    let (lo, hi) = clip(c.pos, side, -full, full);
+    let x = if full > 1e-4 {
+        lo + (lat + full) / (2.0 * full) * (hi - lo).max(0.0)
+    } else {
+        0.0f32.clamp(lo, hi.max(lo))
+    };
+    let p = c.pos + side * x;
+    match c.portal.and_then(|pt| Some((pt, door(pt.building)?))) {
+        Some((pt, d)) if pt.leaving => d.lerp(p, smoothstep(pt.progress)),
+        Some((pt, d)) => p.lerp(d, smoothstep(pt.progress)),
+        None => p,
+    }
 }
 
 /// Fills `out.pedestrians`. Nothing is drawn above [`PEDESTRIAN_MAX_HEIGHT`]. `ground` gives
-/// the terrain height at (x, z). Heading follows the motion between the snapshots; a
-/// pedestrian that did not move stands (no sway) facing its last heading in `headings` (a
-/// random one the first time it is seen). `nudge` moves a drawn position (out of the parking
-/// bays, T-276; the heading follows the sim's motion).
+/// the terrain height at (x, z). Each walker is drawn at [`pedestrian_drawn`] in both snapshots
+/// and interpolated between them; the heading follows that drawn motion. A pedestrian that did
+/// not move stands (no sway) facing its last heading in `headings` (a random one the first
+/// time it is seen) and keeps its side direction. `clip` and `door` are those of
+/// [`pedestrian_drawn`].
+#[allow(clippy::too_many_arguments)]
 pub fn build_pedestrians(
     prev: &[PedestrianPose],
     cur: &[PedestrianPose],
     ground: impl Fn(f32, f32) -> f32,
-    nudge: impl Fn(bevy_math::Vec2) -> bevy_math::Vec2,
+    clip: impl Fn(bevy_math::Vec2, bevy_math::Vec2, f32, f32) -> (f32, f32),
+    door: impl Fn(cp_building::BuildingId) -> Option<bevy_math::Vec2>,
     cull: &Cull,
     headings: &mut Headings,
     out: &mut AgentInstances,
@@ -406,31 +457,46 @@ pub fn build_pedestrians(
         cur,
         |p| p.key,
         |c, p| {
-            let (pos, dir) = match p {
-                Some(p) if p.pos.distance_squared(c.pos) < TELEPORT * TELEPORT => {
-                    (p.pos.lerp(c.pos, a), c.pos - p.pos)
-                }
-                _ => (c.pos, bevy_math::Vec2::ZERO),
-            };
-            let moving = dir.length_squared() > 1e-4;
+            let p = p.filter(|p| p.pos.distance_squared(c.pos) < TELEPORT * TELEPORT);
             let hash = mix(c.key);
             while j < list.len() && list[j].0 < c.key {
                 j += 1;
             }
+            let last = list.get(j).filter(|(k, ..)| *k == c.key);
+            // Across the sidewalk: square to the way the sim moved it, else as last frame.
+            let step = p.map_or(bevy_math::Vec2::ZERO, |p| c.pos - p.pos);
+            let side = if step.length_squared() > 1e-4 {
+                let d = step.normalize();
+                bevy_math::Vec2::new(-d.y, d.x)
+            } else {
+                last.map_or(bevy_math::Vec2::X, |l| l.2)
+            };
+            let fwd = bevy_math::Vec2::new(side.y, -side.x);
+            let drawn =
+                |q: &PedestrianPose| pedestrian_drawn(q, side, q.pos.dot(fwd), &clip, &door);
+            let now = drawn(c);
+            let (pos, dir) = match p {
+                Some(p) => {
+                    let before = drawn(p);
+                    (before.lerp(now, a), now - before)
+                }
+                None => (now, bevy_math::Vec2::ZERO),
+            };
+            let moving = dir.length_squared() > 1e-4;
             let yaw = if moving {
                 dir.x.atan2(dir.y)
             } else {
-                list.get(j)
-                    .filter(|(k, _)| *k == c.key)
-                    .map_or(unit(hash, 32) * std::f32::consts::TAU, |(_, y)| *y)
+                last.map_or(unit(hash, 32) * std::f32::consts::TAU, |l| l.1)
             };
-            next.push((c.key, yaw));
-            // Culled where the sim has it (with room for the nudge), then nudged.
-            let y = ground(pos.x, pos.y);
-            if !cull.sees(Vec3::new(pos.x, y + 0.9, pos.y), PEDESTRIAN_RADIUS + 3.0) {
+            next.push((c.key, yaw, side));
+            // Culled where the sim has it, with room for the way to a door.
+            let y = ground(c.pos.x, c.pos.y);
+            if !cull.sees(
+                Vec3::new(c.pos.x, y + 0.9, c.pos.y),
+                PEDESTRIAN_RADIUS + PORTAL_REACH,
+            ) {
                 return;
             }
-            let pos = nudge(pos);
             let y = ground(pos.x, pos.y);
             let col = SHIRT_COLORS[(hash % SHIRT_COLORS.len() as u64) as usize];
             // Stateless odometer: the position projected on the heading grows by exactly the

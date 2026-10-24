@@ -97,7 +97,8 @@ fn camera_height_gates_each_kind() {
             &p,
             &p,
             |_, _| 0.0,
-            |p| p,
+            |_, _, lo, hi| (lo, hi),
+            |_| None,
             &cull(y, 0.0),
             &mut Headings::default(),
             &mut out,
@@ -150,7 +151,8 @@ fn pedestrians_face_their_motion_and_stand_still_without_sway() {
         &prev,
         &cur,
         |_, _| 2.0,
-        |p| p,
+        |_, _, lo, hi| (lo, hi),
+        |_| None,
         &cull(50.0, 1.0),
         &mut Headings::default(),
         &mut out,
@@ -243,7 +245,8 @@ fn budget_scene_builds_every_instance() {
             &peds_prev,
             &peds,
             |_, _| 0.0,
-            |p| p,
+            |_, _, lo, hi| (lo, hi),
+            |_| None,
             &c,
             &mut Headings::default(),
             &mut out,
@@ -266,7 +269,8 @@ fn a_pedestrian_that_stops_keeps_facing_the_way_it_walked() {
             prev,
             cur,
             |_, _| 0.0,
-            |p| p,
+            |_, _, lo, hi| (lo, hi),
+            |_| None,
             &cull(50.0, 0.5),
             &mut headings,
             &mut out,
@@ -297,7 +301,8 @@ fn the_walk_phase_follows_the_distance_walked_not_the_clock() {
             &[ped(1, from)],
             &[ped(1, to)],
             |_, _| 0.0,
-            |p| p,
+            |_, _, lo, hi| (lo, hi),
+            |_| None,
             &c,
             &mut Headings::default(),
             &mut out,
@@ -317,4 +322,144 @@ fn the_walking_mesh_has_two_legs_and_two_arms_and_the_far_one_stays_one_box() {
     assert_eq!(alphas(1.5, 2.5), 2, "legs");
     assert_eq!(alphas(4.5, 5.5), 2, "arms");
     assert!(mesh::pedestrian_mesh(1).colors.iter().all(|c| c[3] <= 1.0));
+}
+
+fn walker(key: u64, x: f32, room: f32, portal: Option<cp_sim::Portal>) -> PedestrianPose {
+    PedestrianPose {
+        key,
+        pos: Vec2::new(x, 0.0),
+        portal,
+        room,
+    }
+}
+
+fn no_bays(_: Vec2, _: Vec2, lo: f32, hi: f32) -> (f32, f32) {
+    (lo, hi)
+}
+
+fn no_door(_: cp_building::BuildingId) -> Option<Vec2> {
+    None
+}
+
+/// §25.5 item 4: 200 walkers along +x on a 4,5 m sidewalk (room 1,65 m) whose bay leaves the
+/// side below −1 m clear of nobody: they spread over the whole clear width, six equal bins each
+/// hold 5 % or more, nobody stands in the bay, and one key keeps its place from frame to frame.
+#[test]
+fn walkers_spread_over_the_sidewalk_and_stay_out_of_the_bay() {
+    let side = Vec2::Y;
+    let room = (4.5 - 1.2) * 0.5;
+    let (edge, top) = (-1.0, room + 0.35);
+    let bay = |_: Vec2, _: Vec2, lo: f32, hi: f32| (lo.max(edge), hi);
+    let mut bins = [0u32; 6];
+    for key in 0..200u64 {
+        let x = key as f32 * 3.7;
+        let c = walker(key << 32, x, room, None);
+        let y = pedestrian_drawn(&c, side, x, &bay, &no_door).y;
+        assert!(
+            (edge - 1e-4..=top + 1e-4).contains(&y),
+            "walker {key} at {y}"
+        );
+        bins[(((y - edge) / (top - edge) * 6.0) as usize).min(5)] += 1;
+        // Half a metre later: the drift moves it a little, never across the sidewalk.
+        let c2 = walker(key << 32, x + 0.5, room, None);
+        let y2 = pedestrian_drawn(&c2, side, x + 0.5, &bay, &no_door).y;
+        assert!((y2 - y).abs() < 0.2, "walker {key} jumped {y} -> {y2}");
+        assert_eq!(y, pedestrian_drawn(&c, side, x, &bay, &no_door).y);
+    }
+    assert!(bins.iter().all(|&b| b >= 10), "{bins:?}");
+}
+
+/// §25.5 item 5: leaving, the walker is drawn in the doorway at progress 0, exactly where it is
+/// drawn without a door at progress 1, and gets steadily farther from the door in between;
+/// entering mirrors it.
+#[test]
+fn a_walker_blends_between_its_door_and_the_sidewalk() {
+    let id = cp_core::Id::new(4, 0);
+    let door_at = Vec2::new(10.0, 9.0);
+    let door = |b: cp_building::BuildingId| (b == id).then_some(door_at);
+    let at = |progress: f32, leaving: bool| {
+        let portal = cp_sim::Portal {
+            building: id,
+            progress,
+            leaving,
+        };
+        pedestrian_drawn(
+            &walker(7, 12.0, 1.0, Some(portal)),
+            Vec2::Y,
+            12.0,
+            &no_bays,
+            &door,
+        )
+    };
+    let free = pedestrian_drawn(
+        &walker(7, 12.0, 1.0, None),
+        Vec2::Y,
+        12.0,
+        &no_bays,
+        &no_door,
+    );
+    assert!(at(0.0, true).distance(door_at) < 0.1);
+    assert!(at(1.0, true).distance(free) < 1e-5);
+    assert!(at(0.0, false).distance(free) < 1e-5);
+    assert!(at(1.0, false).distance(door_at) < 0.1);
+    let mut last = 0.0;
+    for i in 1..=10 {
+        let d = at(i as f32 / 10.0, true).distance(door_at);
+        assert!(d > last, "progress {i}/10: {d} after {last}");
+        last = d;
+    }
+    // Without a known door the portal changes nothing.
+    let lost = cp_sim::Portal {
+        building: cp_core::Id::new(5, 0),
+        progress: 0.0,
+        leaving: true,
+    };
+    let p = pedestrian_drawn(
+        &walker(7, 12.0, 1.0, Some(lost)),
+        Vec2::Y,
+        12.0,
+        &no_bays,
+        &door,
+    );
+    assert_eq!(p, free);
+}
+
+/// A walker stepping out of its door faces the way it is drawn moving (towards the sidewalk),
+/// not along the sidewalk the sim moves it on.
+#[test]
+fn a_walker_leaving_its_door_faces_the_way_it_is_drawn() {
+    let id = cp_core::Id::new(4, 0);
+    let door = |_: cp_building::BuildingId| Some(Vec2::new(0.0, 10.0));
+    let pose = |x: f32, progress: f32| {
+        walker(
+            9,
+            x,
+            0.0,
+            Some(cp_sim::Portal {
+                building: id,
+                progress,
+                leaving: true,
+            }),
+        )
+    };
+    let mut out = AgentInstances::default();
+    build_pedestrians(
+        &[pose(0.0, 0.0)],
+        &[pose(2.8, 0.28)],
+        |_, _| 0.0,
+        no_bays,
+        door,
+        &cull(50.0, 0.5),
+        &mut Headings::default(),
+        &mut out,
+    );
+    let i = out.pedestrians[0][0];
+    // Drawn from (0, 10) towards the sidewalk at y = 0: mostly −z.
+    let yaw = i.pos_yaw[3];
+    assert!(yaw.cos() < -0.5, "yaw {yaw}");
+    assert!(
+        i.pos_yaw[2] > 5.0,
+        "still in the front yard: {:?}",
+        i.pos_yaw
+    );
 }

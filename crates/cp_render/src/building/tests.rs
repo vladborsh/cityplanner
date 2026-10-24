@@ -1576,3 +1576,26 @@ fn lot_trees_stand_in_the_free_strips_and_never_on_the_building() {
         }
     }
 }
+
+/// §25.1: every zoned building draws its door on the front wall, the road side of its lot
+/// (with no road in the test the lot frame's front is +z), inside the lot.
+#[test]
+fn the_door_is_on_the_front_wall_inside_the_lot() {
+    let e = env();
+    for (def_id, def) in e.db.buildings() {
+        if def.service.is_some() {
+            continue;
+        }
+        let b = building(def_id, &e.db, BuildingState::Active, 0);
+        let p = build_building(id(1), &b, def, &e.net, &e.terrain, &e.db, Tick(0));
+        let door = p.door.unwrap_or_else(|| panic!("{}: no door", def.id));
+        let d = door - b.pos;
+        let (w, depth) = (f32::from(def.lot.0) * 8.0, f32::from(def.lot.1) * 8.0);
+        assert!(d.y > 0.0, "{}: door {d} behind the centre", def.id);
+        assert!(
+            d.y <= depth * 0.5 && d.x.abs() <= w * 0.5,
+            "{}: {d}",
+            def.id
+        );
+    }
+}

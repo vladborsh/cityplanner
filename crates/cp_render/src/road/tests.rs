@@ -1751,11 +1751,23 @@ fn parked_cars_follow_the_buildings_keep_to_the_bays_and_leave_services_free() {
         cars
     );
     let c = cars[0];
-    let p = index.nudge(Vec2::new(c.pos.x, c.pos.z));
-    let (x, _) = lateral(&v, id, p);
-    assert!(x > hi, "nudged to {x}, beyond the bay's edge {hi}");
     let far = Vec2::new(X0 + 48.0, Z0 + 7.5);
-    assert_eq!(index.nudge(far), far, "the outer sidewalk is left alone");
+    // §25.3: a walker in the bay walking along the street is spread only beyond the bay.
+    let pc = Vec2::new(c.pos.x, c.pos.z);
+    let lat = |q: Vec2| lateral(&v, id, q).0;
+    let left = Vec2::new(lat(pc + Vec2::X) - lat(pc), lat(pc + Vec2::Y) - lat(pc)).normalize();
+    for side in [left, -left] {
+        let (lo2, hi2) = index.clip(pc, side, -1.5, 1.5);
+        assert!(lo2 <= hi2);
+        for x in [lo2, hi2, (lo2 + hi2) * 0.5] {
+            let at = lat(pc + side * x);
+            assert!(at > hi, "spread to {at}, inside the bay {lo}..{hi}");
+        }
+    }
+    // Crossing the street: not this walker's bay.
+    let across = Vec2::new(left.y, -left.x);
+    assert_eq!(index.clip(pc, across, -0.3, 0.3), (-0.3, 0.3));
+    assert_eq!(index.clip(far, left, -1.0, 1.0), (-1.0, 1.0));
 }
 
 /// T-302d: the top area of the triangles of colour `c` whose first vertex has `x0 < x < x1`.

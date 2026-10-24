@@ -4,7 +4,7 @@
 //! not by a hash of the segment, the side and the place (stable: no flicker as the sim ticks)
 //! against how busy the buildings on that side next to it are ([`occupancy`]): an empty lot or a
 //! building site has none, a full house or shop most places. A place in front of a service
-//! building's access stays free. Pedestrians are drawn out of the bays ([`BayIndex::nudge`]) so
+//! building's access stays free. Pedestrians are drawn clear of the bays ([`BayIndex::clip`]) so
 //! they never walk through the cars.
 
 use bevy_math::{Vec2, Vec3};
@@ -115,14 +115,18 @@ pub struct BayIndex {
 }
 
 impl BayIndex {
-    /// Where a pedestrian at `p` is drawn: beyond the bay when it stands in one, else `p`.
-    pub fn nudge(&self, p: Vec2) -> Vec2 {
+    /// The part of `lo..=hi` that keeps `p + side × x` out of the bays near `p`, beyond each
+    /// bay's outer edge by [`NUDGE_CLEAR`] (§25.3: the spread across a sidewalk stops at the
+    /// bay instead of being pushed out of it). When nothing of the range is clear, both ends
+    /// are the clear point nearest the range.
+    pub fn clip(&self, p: Vec2, side: Vec2, lo: f32, hi: f32) -> (f32, f32) {
+        let (mut lo, mut hi) = (lo, hi);
         let cell = (
             (p.x / INDEX_CELL).floor() as i32,
             (p.y / INDEX_CELL).floor() as i32,
         );
         let Some(list) = self.cells.get(&cell) else {
-            return p;
+            return (lo, hi);
         };
         for &k in list {
             let strip = &self.strips[k as usize];
@@ -135,18 +139,40 @@ impl BayIndex {
                 }
                 let left = w[0].1.lerp(w[1].1, t).normalize_or_zero();
                 let lateral = (p - a.lerp(b, t)).dot(left);
-                let (lo, hi) = strip.side.range();
-                if lateral > lo - NUDGE_CLEAR * 0.5 && lateral < hi + NUDGE_CLEAR * 0.5 {
-                    let to = if strip.side.sign > 0.0 {
-                        hi + NUDGE_CLEAR
-                    } else {
-                        lo - NUDGE_CLEAR
-                    };
-                    return p + left * (to - lateral);
+                // How far across the street one metre of `x` moves; walking across the
+                // street (a crossing) the bay is not this walker's to keep clear of.
+                let k = side.dot(left);
+                if k.abs() < 0.3 {
+                    continue;
+                }
+                let (blo, bhi) = strip.side.range();
+                // Only the bay beside the walker's own sidewalk: the clear side is outward.
+                let (edge, outward) = if strip.side.sign > 0.0 {
+                    (bhi + NUDGE_CLEAR, 1.0)
+                } else {
+                    (blo - NUDGE_CLEAR, -1.0)
+                };
+                if (lateral - edge) * outward < -(bhi - blo) - NUDGE_CLEAR
+                    || (lateral - edge) * outward > 8.0
+                {
+                    continue;
+                }
+                // `lateral + k x` must be on the outward side of `edge`.
+                let bound = (edge - lateral) / k;
+                if k * outward > 0.0 {
+                    lo = lo.max(bound);
+                    if lo > hi {
+                        hi = lo;
+                    }
+                } else {
+                    hi = hi.min(bound);
+                    if hi < lo {
+                        lo = hi;
+                    }
                 }
             }
         }
-        p
+        (lo, hi)
     }
 
     fn add(&mut self, strip: Strip) {

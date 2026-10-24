@@ -217,6 +217,7 @@ fn build_agent_instances(
     mut headings: Local<Headings>,
     settings: Option<Res<crate::LightingSettings>>,
     mut parked_cache: Local<ParkedCache>,
+    drawn_buildings: Option<Res<crate::building_render::BuildingState>>,
 ) {
     let (Some(view), Some((cam, frustum))) = (view, camera.iter().next()) else {
         return;
@@ -277,7 +278,20 @@ fn build_agent_instances(
             &snap.prev.pedestrians,
             &snap.cur.pedestrians,
             |x, z| terrain.height(Vec2::new(x, z)),
-            |p| if parked_on { index.nudge(p) } else { p },
+            |p, side, lo, hi| {
+                if parked_on {
+                    index.clip(p, side, lo, hi)
+                } else {
+                    (lo, hi)
+                }
+            },
+            // The door the building chunk drew in the facade, else the one on the lot front.
+            |id| {
+                drawn_buildings
+                    .as_ref()
+                    .and_then(|d| d.set.piece(id)?.door)
+                    .or_else(|| Some(view.buildings.get(id)?.portals(&view.net)?.door))
+            },
             &cull,
             &mut headings,
             out,

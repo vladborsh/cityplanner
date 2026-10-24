@@ -21,7 +21,7 @@ pub use checksum::{Fnv1a, SimChecksum};
 pub use command::{
     DebugCommand, SimCommand, buildings_under, dispatch_commands, init_command_resources,
 };
-pub use cp_traffic::{AgentFrame, PedestrianPose, VehiclePose};
+pub use cp_traffic::{AgentFrame, PedestrianPose, Portal, VehiclePose};
 pub use inspect::{
     BuildingInfo, CitizenInfo, GoodsInfo, Happiness, Inspection, SegmentInfo, Selection,
     ServiceInfo, TripInfo, Trouble, VehicleInfo, flag_names, key_parts,

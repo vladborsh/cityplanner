@@ -6,7 +6,7 @@
 //! the cells and the lots are the same.
 //!
 //! One function, [`bays`], says where the bays of a segment are; the road mesh, the street
-//! furniture, the parked cars and the pedestrians' nudge out of the bays all read it.
+//! furniture, the parked cars and the pedestrians' spread clear of the bays all read it.
 
 use super::*;
 

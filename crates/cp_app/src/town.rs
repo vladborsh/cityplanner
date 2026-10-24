@@ -47,6 +47,14 @@ pub fn camera(name: &str) -> Option<(Vec3, Vec3)> {
             let c = origin() + Vec2::new(DX * 1.5, DY);
             Some((Vec3::new(c.x, 70.0, c.y + 110.0), Vec3::new(c.x, 0.0, c.y)))
         }
+        // Low over a home street, where walkers leave and enter their doors (T-329b).
+        "town-walk" => {
+            let c = origin() + Vec2::new(DX * 1.5, DY);
+            Some((
+                Vec3::new(c.x - 26.0, 16.0, c.y + 26.0),
+                Vec3::new(c.x + 6.0, 0.0, c.y - 4.0),
+            ))
+        }
         _ => None,
     }
 }

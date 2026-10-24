@@ -292,6 +292,9 @@ pub struct BuildingPiece {
     pub far: MeshData,
     pub min: Vec3,
     pub max: Vec3,
+    /// Where the front door is drawn, world XZ: the middle of the front box's front wall
+    /// (pedestrians walk out of it, §25.1). `None` when that wall is hidden.
+    pub door: Option<Vec2>,
 }
 
 impl BuildingPiece {
@@ -801,6 +804,11 @@ pub fn build_building(
     let style = facade_style(def.zone, def.level);
     let floors = u32::from(vp.floors.max(1));
     let plan = shapes::plan(style_def.massing, floors, hu, hv, cv);
+    let door = plan.vols.iter().find(|v| v.front).and_then(|v| {
+        let (t0, t1) = v.vis[0]?;
+        let corner = |su: f32| f.c + f.u * (v.cu + su * v.hu) + f.v * (v.cv - v.hv);
+        Some(corner(-1.0).lerp(corner(1.0), (t0 + t1) * 0.5))
+    });
 
     // Ground: the highest corner of any box, with a foundation down to the lowest.
     let mut lo = f32::MAX;
@@ -1078,6 +1086,7 @@ pub fn build_building(
         far,
         min,
         max,
+        door,
     }
 }
 

@@ -94,6 +94,9 @@ pub struct Options {
     /// `--inspect-home`: the same with the first home that has complaints, else the first scored
     /// home (T-318c screenshots of the happiness rows).
     pub inspect_home: bool,
+    /// `--door-demo N`: aim the camera at a walker stepping out of (or into) its door once one
+    /// shows up, and take the screenshot N frames later (T-329b shots).
+    pub door_demo: Option<u32>,
     /// `--speed 1|2|3`: run the game at that speed from the start (T-281 benches).
     pub speed: Option<cp_core::SimSpeed>,
     /// `--no-qos`: leave the game's threads at the default quality of service (T-281: to
@@ -224,6 +227,7 @@ impl Options {
             lang: value("--lang").and_then(|v| cp_locale::Lang::from_code(&v)),
             inspect: args.iter().any(|a| a == "--inspect"),
             inspect_home: args.iter().any(|a| a == "--inspect-home"),
+            door_demo: value("--door-demo").and_then(|v| v.parse().ok()),
             pan: args.iter().any(|a| a == "--pan"),
             zoning: args.iter().position(|a| a == "--zoning").map(|i| {
                 let n: Vec<f32> = args
@@ -468,6 +472,68 @@ fn inspect_home_demo(
     }
 }
 
+/// `--door-demo`: frames since the camera was aimed at a walker by its door.
+#[derive(Resource)]
+struct DoorDemo {
+    aimed: Option<u32>,
+    /// Frames the aimed camera stands before the screenshot.
+    wait: u32,
+}
+
+/// `--door-demo`: a walker on its way through its front yard (leaving preferred, about a third
+/// of the way), seen from 9 m away, once.
+fn door_demo(
+    mut demo: ResMut<DoorDemo>,
+    mut frame: Local<u32>,
+    view: Option<Res<SimView>>,
+    mut cams: Query<&mut cp_render::RtsCamera>,
+) {
+    *frame += 1;
+    if let Some(n) = demo.aimed.as_mut() {
+        *n += 1;
+        return;
+    }
+    let Some(view) = view else { return };
+    let peds = &view.agents.cur.pedestrians;
+    if frame.is_multiple_of(120) {
+        let near = peds.iter().filter(|p| p.portal.is_some()).count();
+        eprintln!("door demo: {} walkers, {near} by a door", peds.len());
+    }
+    let Some((p, door)) = peds
+        .iter()
+        .filter_map(|p| {
+            let pt = p.portal?;
+            let b = view.buildings.get(pt.building)?;
+            let close = if pt.leaving {
+                pt.progress
+            } else {
+                1.0 - pt.progress
+            };
+            (close < 0.6).then_some((p, b.portals(&view.net)?.door, pt.leaving, close))
+        })
+        .min_by(|a, b| {
+            let k = |c: f32| (c - 0.35).abs();
+            (!a.2, k(a.3)).partial_cmp(&(!b.2, k(b.3))).unwrap()
+        })
+        .map(|(p, d, ..)| (p, d))
+    else {
+        return;
+    };
+    let look = (p.pos + door) * 0.5;
+    let away = (p.pos - door).normalize_or_zero();
+    let side = bevy::math::Vec2::new(-away.y, away.x);
+    let eye = look + away * 6.0 + side * 5.0;
+    let y = view.terrain.as_ref().map_or(0.0, |t| t.height(look));
+    for mut cam in &mut cams {
+        *cam = cp_render::RtsCamera::from_pose(
+            Vec3::new(eye.x, y + 5.5, eye.y),
+            Vec3::new(look.x, y, look.y),
+        );
+    }
+    eprintln!("door demo: aimed at walker {} by its door {door}", p.key);
+    demo.aimed = Some(0);
+}
+
 /// Where `--zoning x,z` holds the cursor (world metres), if anywhere.
 #[derive(Resource)]
 struct ZoningDemo(Option<Vec2>);
@@ -611,6 +677,10 @@ pub fn run(opts: Options) -> AppExit {
     }
     if opts.inspect_home {
         app.add_systems(Update, inspect_home_demo);
+    }
+    if let Some(wait) = opts.door_demo {
+        app.insert_resource(DoorDemo { aimed: None, wait })
+            .add_systems(Update, door_demo);
     }
     if let Some(hover) = opts.zoning {
         if opts.hidden && !opts.hidden_ui && !app.is_plugin_added::<cp_tools::ToolsPlugin>() {
@@ -804,6 +874,7 @@ fn job(
     diagnostics: Res<DiagnosticsStore>,
     capture: Option<ResMut<Capture>>,
     mut exit: MessageWriter<AppExit>,
+    door_demo: Option<Res<DoorDemo>>,
 ) {
     if job.done {
         return;
@@ -827,8 +898,13 @@ fn job(
         // On a busy machine the frames are slow: give up by the clock as well as by frames.
         let since = *job.scene_since.get_or_insert(time.elapsed_secs());
         let waited = time.elapsed_secs() - since > SCENE_GIVE_UP_S;
-        let ready =
-            !job.scene || job.built_frames >= SETTLE_FRAMES || frame >= SCENE_GIVE_UP || waited;
+        let door_wait =
+            door_demo.is_some_and(|d| d.aimed.is_none_or(|n| n < d.wait.max(1))) && !waited;
+        let ready = !door_wait
+            && (!job.scene
+                || job.built_frames >= SETTLE_FRAMES
+                || frame >= SCENE_GIVE_UP
+                || waited);
         if frame >= WARMUP
             && ready
             && let Some(mut capture) = capture
