@@ -306,3 +306,49 @@ fn each_bus_out_on_a_line_costs_its_weekly_upkeep_at_the_end_of_the_week() {
         .transit_upkeep;
     assert_eq!(booked, cp_core::Cost::scaled(per_bus, buses));
 }
+
+/// §20.6 item 5 (T-319b): a line of 4 buses at a 50 % Transit budget keeps 2 on the road and
+/// its week costs half; at 150 % it runs 5 and costs ×1.5. The line's setting stays 4.
+#[test]
+fn the_transit_budget_sets_the_buses_a_line_runs_and_its_weekly_cost() {
+    for (pct, running, cost) in [(50u8, 2usize, 2.0), (150, 5, 6.0)] {
+        let mut t = town();
+        t.depot();
+        let line = t.line(&[0, 1, 2, 3]);
+        t.cmd(TransitCommand::SetLineVehicles { line, n: 4 });
+        t.sim
+            .world_mut()
+            .resource_mut::<cp_content::Budgets>()
+            .set(cp_content::ServiceKind::Transit, pct);
+        t.run(2000);
+        assert_eq!(t.buses(), running, "buses on the road at {pct} %");
+        let view = t.sim.line_view(line).unwrap();
+        assert_eq!(
+            (view.vehicles, view.running, view.budget),
+            (4, running as u16, pct)
+        );
+        assert_eq!(
+            cp_sim::buses_row(&view),
+            format!("{running} of 4 out · {running} run at {pct} % budget")
+        );
+        t.sim
+            .world_mut()
+            .insert_resource(Tick(cp_core::time::TICKS_PER_WEEK - 1));
+        t.run(3);
+        let per_bus = t
+            .sim
+            .world()
+            .resource::<cp_content::SimContent>()
+            .0
+            .balance()
+            .bus_upkeep_week;
+        let booked = t
+            .sim
+            .world()
+            .resource::<cp_economy::EconomyState>()
+            .last_week
+            .transit_upkeep;
+        // `cost` is in buses at 100 %: 4 × pct / 100.
+        assert_eq!(booked, cp_core::Cost::scaled(per_bus, cost), "at {pct} %");
+    }
+}

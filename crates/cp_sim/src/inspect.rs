@@ -34,6 +34,17 @@ pub fn level_word(v: f32) -> &'static str {
     }
 }
 
+/// The inspector's buses row of a line: "2 of 4 out", and off a 100 % Transit budget how many
+/// of them it runs, "2 of 4 out · 2 run at 50 % budget" (§20.3).
+pub fn buses_row(l: &crate::view::LineView) -> String {
+    let out = format!("{} of {} out", l.vehicles_out, l.vehicles);
+    if l.budget == cp_content::budget::BUDGET_DEFAULT {
+        out
+    } else {
+        format!("{out} · {} run at {} % budget", l.running, l.budget)
+    }
+}
+
 /// What the player clicked on. Pedestrians stand for their citizen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Selection {
@@ -766,7 +777,7 @@ impl Inspection {
             Inspection::Line(l) => vec![
                 row("Mode", format!("{:?}", l.mode)),
                 row("Stops", l.stops.to_string()),
-                row("Buses", format!("{} of {} out", l.vehicles_out, l.vehicles)),
+                row("Buses", buses_row(l)),
                 row(
                     "Riders",
                     format!("{} today, {} this week", l.riders_today, l.riders_week),

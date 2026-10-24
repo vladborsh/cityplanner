@@ -201,6 +201,9 @@ pub struct LineView {
     /// Buses asked for, and buses out on the road now.
     pub vehicles: u8,
     pub vehicles_out: u16,
+    /// The Transit budget, % (§20), and the buses it lets the line run (`Line::running`).
+    pub budget: u8,
+    pub running: u16,
     pub state: cp_transit::LineState,
     pub riders_today: u32,
     pub riders_week: u32,
@@ -996,6 +999,18 @@ impl SimRunner {
         let fleet = self.world().resource::<cp_transit::TransitFleet>();
         let l = net.lines.get(id)?;
         let s = net.stats.get(&id).copied().unwrap_or_default();
+        let budget = self
+            .world()
+            .get_resource::<cp_content::Budgets>()
+            .map_or(cp_content::budget::BUDGET_DEFAULT, |b| {
+                b.get(cp_content::ServiceKind::Transit)
+            });
+        let running = self
+            .world()
+            .get_resource::<SimContent>()
+            .map_or(usize::from(l.vehicles), |c| {
+                l.running(budget, c.0.balance())
+            });
         Some(LineView {
             id,
             name: l.name.clone(),
@@ -1004,6 +1019,8 @@ impl SimRunner {
             stops: l.stops.len(),
             vehicles: l.vehicles,
             vehicles_out: fleet.of_line(id).count() as u16,
+            budget,
+            running: running as u16,
             state: l.state,
             riders_today: s.riders_today,
             riders_week: s.riders_week,

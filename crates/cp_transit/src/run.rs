@@ -3,7 +3,8 @@
 
 use bevy_ecs::system::{Res, ResMut};
 use cp_building::{AccessPoint, BuildingFlags, BuildingGrid, BuildingId, BuildingState};
-use cp_content::{ServiceKind, SimContent, VehicleKind};
+use cp_content::budget::{BUDGET_DEFAULT, cost_factor};
+use cp_content::{Balance, Budgets, ServiceKind, SimContent, VehicleKind};
 use cp_core::time::{MOVE_SECONDS_PER_TICK, TICKS_PER_WEEK};
 use cp_core::{Cost, Tick};
 use cp_net::NetGraph;
@@ -11,7 +12,7 @@ use cp_service::RoadGraph;
 use cp_traffic::{Access, Agents, RunPoint, RunState, ServiceRuns, Side};
 
 use crate::fleet::{Bus, BusPhase, TransitFleet, TransitLedger};
-use crate::model::{LineId, LineState, StopId, TransitMode, TransitNet};
+use crate::model::{Line, LineId, LineState, StopId, TransitMode, TransitNet};
 use crate::plan::{LinePlans, is_terminus, visits};
 
 fn ticks_of(seconds: f32) -> u64 {
@@ -19,6 +20,30 @@ fn ticks_of(seconds: f32) -> u64 {
 }
 
 /// The depot of `mode` nearest by road to `stop` that has a place left for a vehicle.
+/// The Transit budget as the lines run it (§20.1).
+#[derive(Clone, Copy)]
+struct Out<'a> {
+    pct: u8,
+    bal: &'a Balance,
+}
+
+impl Out<'_> {
+    /// The buses `line` puts on the road.
+    fn of(&self, line: &Line) -> usize {
+        line.running(self.pct, self.bal)
+    }
+
+    /// One running bus's part of the line's weekly upkeep, in buses: `vehicles × pct / 100`
+    /// over the buses that run (exactly 1 at 100 %).
+    fn share(&self, line: &Line) -> f64 {
+        let running = self.of(line);
+        if running == 0 {
+            return cost_factor(self.pct);
+        }
+        f64::from(line.vehicles) * cost_factor(self.pct) / running as f64
+    }
+}
+
 fn find_depot(
     net: &NetGraph,
     buildings: &BuildingGrid,
@@ -83,6 +108,10 @@ fn find_depot(
 ///   `headway = cycle_s / vehicles`; without such a depot the line is `NoDepot`;
 /// * a bus whose run failed (the road under it went) is gone;
 /// * every week each bus out on a line costs `bus_upkeep_week` in the [`TransitLedger`].
+///
+/// The Transit budget (§20.1) sets how many of a line's `vehicles` run: [`Line::running`]
+/// (4 at 50 % → 2, at 150 % → 5); the line's setting stays. The week's cost of a line stays
+/// linear in the budget, `vehicles × upkeep × pct / 100`, spread over the buses that run.
 #[allow(clippy::too_many_arguments)]
 pub fn run_lines(
     tick: Res<Tick>,
@@ -95,22 +124,28 @@ pub fn run_lines(
     mut ledger: ResMut<TransitLedger>,
     mut runs: ResMut<ServiceRuns>,
     mut agents: ResMut<Agents>,
+    budgets: Option<Res<Budgets>>,
 ) {
     let Some(content) = content else { return };
     let db = &*content.0;
     let balance = db.balance();
     let now = *tick;
+    let out = Out {
+        pct: budgets.map_or(BUDGET_DEFAULT, |b| b.get(ServiceKind::Transit)),
+        bal: balance,
+    };
     if fleet.is_empty() && transit.lines.is_empty() {
         return;
     }
 
     if now.0 > 0 && now.0.is_multiple_of(TICKS_PER_WEEK) {
         for (_, bus) in fleet.buses.iter() {
-            let per_week = match transit.lines.get(bus.line).map(|l| l.mode) {
+            let line = transit.lines.get(bus.line);
+            let per_week = match line.map(|l| l.mode) {
                 Some(TransitMode::Metro) => balance.metro_upkeep_week,
                 _ => balance.bus_upkeep_week,
             };
-            ledger.upkeep += Cost::scaled(per_week, 1.0);
+            ledger.upkeep += Cost::scaled(per_week, line.map_or(1.0, |l| out.share(l)));
         }
     }
 
@@ -155,7 +190,7 @@ pub fn run_lines(
                         .get(bus.line)
                         .is_some_and(|l| l.mode == TransitMode::Metro) =>
             {
-                match metro_next(&transit, &fleet, &plans, id, bus, idx) {
+                match metro_next(&transit, &fleet, &plans, out, id, bus, idx) {
                     Some((next, goal, reverse)) => {
                         let to = RunPoint::Access(goal);
                         let _ = if reverse {
@@ -173,9 +208,9 @@ pub fn run_lines(
                 }
             }
             (_, BusPhase::Dwell { idx, until }) if standing && now >= until => {
-                send_on(&transit, &fleet, &mut runs, id, bus, idx);
+                send_on(&transit, &fleet, &mut runs, out, id, bus, idx);
                 // `send_on` changes the phase through the fleet below.
-                let next = next_phase(&transit, &fleet, id, bus, idx);
+                let next = next_phase(&transit, &fleet, out, id, bus, idx);
                 set_phase(&mut fleet, id, next);
             }
             _ => {}
@@ -196,14 +231,22 @@ pub fn run_lines(
             continue;
         }
         if line.mode == TransitMode::Metro {
-            send_metro(&mut transit, &plans, &mut fleet, &mut runs, line_id, now);
+            send_metro(
+                &mut transit,
+                &plans,
+                &mut fleet,
+                &mut runs,
+                out,
+                line_id,
+                now,
+            );
             continue;
         }
         let active = fleet
             .of_line(line_id)
             .filter(|(_, b)| b.phase != BusPhase::ToDepot)
             .count();
-        let wanted = usize::from(line.vehicles);
+        let wanted = out.of(line);
         if active >= wanted {
             if line.state == LineState::NoDepot {
                 set_line_state(&mut transit, line_id, LineState::Ok);
@@ -278,6 +321,7 @@ fn dwell(fleet: &mut TransitFleet, id: crate::BusId, now: Tick, dwell_s: f32) {
 fn target(
     transit: &TransitNet,
     fleet: &TransitFleet,
+    out: Out,
     id: crate::BusId,
     bus: Bus,
     idx: u16,
@@ -291,7 +335,7 @@ fn target(
         .of_line(bus.line)
         .filter(|(_, b)| b.phase != BusPhase::ToDepot)
         .position(|(b, _)| b == id)?;
-    if rank >= usize::from(line.vehicles) {
+    if rank >= out.of(line) {
         return None;
     }
     let next = (usize::from(idx) + 1) % line.stops.len();
@@ -302,11 +346,12 @@ fn send_on(
     transit: &TransitNet,
     fleet: &TransitFleet,
     runs: &mut ServiceRuns,
+    out: Out,
     id: crate::BusId,
     bus: Bus,
     idx: u16,
 ) {
-    let to = match target(transit, fleet, id, bus, idx) {
+    let to = match target(transit, fleet, out, id, bus, idx) {
         Some((_, stop)) => transit.access(stop).map(RunPoint::Access),
         None => None,
     }
@@ -317,11 +362,12 @@ fn send_on(
 fn next_phase(
     transit: &TransitNet,
     fleet: &TransitFleet,
+    out: Out,
     id: crate::BusId,
     bus: Bus,
     idx: u16,
 ) -> BusPhase {
-    match target(transit, fleet, id, bus, idx) {
+    match target(transit, fleet, out, id, bus, idx) {
         Some((next, stop)) if transit.access(stop).is_some() => BusPhase::Driving { idx: next },
         _ => BusPhase::ToDepot,
     }
@@ -344,6 +390,7 @@ fn metro_next(
     transit: &TransitNet,
     fleet: &TransitFleet,
     plans: &LinePlans,
+    out: Out,
     id: crate::BusId,
     bus: Bus,
     idx: u16,
@@ -361,7 +408,7 @@ fn metro_next(
         .of_line(bus.line)
         .filter(|(_, b)| b.phase != BusPhase::ToDepot)
         .position(|(b, _)| b == id)?;
-    if rank >= usize::from(line.vehicles) {
+    if rank >= out.of(line) {
         return None;
     }
     let pos = usize::from(idx) % visits(n);
@@ -381,6 +428,7 @@ fn send_metro(
     plans: &LinePlans,
     fleet: &mut TransitFleet,
     runs: &mut ServiceRuns,
+    out: Out,
     line_id: LineId,
     now: Tick,
 ) {
@@ -392,7 +440,7 @@ fn send_metro(
         .of_line(line_id)
         .filter(|(_, b)| b.phase != BusPhase::ToDepot)
         .count();
-    let wanted = usize::from(line.vehicles);
+    let wanted = out.of(line);
     let Some(plan) = plans
         .get(line_id)
         .filter(|p| p.is_ok() && p.legs.len() == visits(n))

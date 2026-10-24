@@ -818,6 +818,8 @@ mod tests {
             stops: 2,
             vehicles: 1,
             vehicles_out: 1,
+            budget: 100,
+            running: 1,
             state: LineState::Ok,
             riders_today: 0,
             riders_week,

@@ -244,3 +244,57 @@ fn the_weeks_entrance_fees_reach_the_books() {
         "the hour that closed the week booked it"
     );
 }
+
+/// §20.1 (T-319b): the Park budget scales a park area's attractiveness, and with it the pull of
+/// its gate among the leisure targets, at the next hourly recount; 100 % changes nothing.
+#[test]
+fn the_park_budget_scales_the_attractiveness_at_the_next_recount() {
+    let c = content();
+    let (mut sim, area) = world(&c);
+    place(&mut sim, &c, "city_park_attr_1", Vec2::new(3100.0, 3100.0)).unwrap();
+    let attract = |sim: &SimRunner| {
+        sim.world()
+            .resource::<ParkState>()
+            .get(area)
+            .unwrap()
+            .attract
+    };
+    let gate_pull = |sim: &SimRunner| {
+        sim.world()
+            .resource::<cp_citizen::LeisureTargets>()
+            .list
+            .iter()
+            .map(|t| t.weight)
+            .sum::<f32>()
+    };
+    for _ in 0..4 * cp_park::PARK_RECOUNT_TICKS {
+        sim.tick_once();
+    }
+    let full = attract(&sim);
+    let pull = gate_pull(&sim);
+    assert!(
+        full > 0.0 && pull > 0.0,
+        "the attraction stands: {full} {pull}"
+    );
+
+    sim.world_mut()
+        .resource_mut::<cp_content::Budgets>()
+        .set(cp_content::ServiceKind::Park, 50);
+    for _ in 0..cp_park::PARK_RECOUNT_TICKS + 1 {
+        sim.tick_once();
+    }
+    assert!(
+        (attract(&sim) - full * 0.5).abs() < 1e-4,
+        "{} vs {full}",
+        attract(&sim)
+    );
+    assert!((gate_pull(&sim) - pull * 0.5).abs() < 1e-4);
+
+    sim.world_mut()
+        .resource_mut::<cp_content::Budgets>()
+        .set(cp_content::ServiceKind::Park, 100);
+    for _ in 0..cp_park::PARK_RECOUNT_TICKS + 1 {
+        sim.tick_once();
+    }
+    assert_eq!(attract(&sim), full);
+}

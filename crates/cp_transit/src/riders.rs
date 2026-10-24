@@ -125,12 +125,16 @@ pub fn choose_transit(
     pnet: Res<PathNetwork>,
     grid: Res<CitizenGrid>,
     settings: Option<Res<AgentSettings>>,
+    budgets: Option<Res<cp_content::Budgets>>,
 ) {
     let Some(content) = content else { return };
     if transit.lines.is_empty() {
         return;
     }
     let balance = content.0.balance();
+    let pct = budgets.map_or(cp_content::budget::BUDGET_DEFAULT, |b| {
+        b.get(cp_content::ServiceKind::Transit)
+    });
     let policies = policies.get();
     book.ensure_derived();
     // The lines that run now and fit their plan, in line id order.
@@ -192,7 +196,7 @@ pub fn choose_transit(
                         line: line_id,
                         stop,
                         walk,
-                        wait: plan.cycle_s / f32::from(line.vehicles.max(1)) / 2.0,
+                        wait: plan.cycle_s / line.running(pct, balance).max(1) as f32 / 2.0,
                     })
                 })
                 .collect();

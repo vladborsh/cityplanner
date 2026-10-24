@@ -130,6 +130,15 @@ pub struct Line {
     pub state: LineState,
 }
 
+impl Line {
+    /// The buses (trains) the line puts on the road at the Transit budget `pct` (§20.1):
+    /// `budgeted(vehicles)`, at least one of a line that asks for any; `vehicles` itself, the
+    /// player's setting, stays.
+    pub fn running(&self, pct: u8, bal: &cp_content::Balance) -> usize {
+        cp_content::budget::budgeted(u32::from(self.vehicles), pct, bal) as usize
+    }
+}
+
 /// One ride of a journey: on `line` from stop `board` to stop `alight`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ride {

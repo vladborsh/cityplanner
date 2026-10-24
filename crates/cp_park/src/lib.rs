@@ -19,7 +19,8 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Local, Res, ResMut};
 use cp_building::{BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::{LeisureTarget, LeisureTargets, TripBook};
-use cp_content::SimContent;
+use cp_content::budget::{BUDGET_DEFAULT, power_factor};
+use cp_content::{Budgets, ServiceKind, SimContent};
 use cp_content::{ParkRole, ParkSpec};
 use cp_core::Cost;
 use cp_core::Tick;
@@ -78,14 +79,17 @@ impl ParkState {
 
 /// Recounts the attractiveness and the capacity of every park area from its buildings; keeps
 /// the visitor counters and the fee of the areas that remain, drops the areas that are gone.
+/// The attractiveness is scaled by the Park budget `budget_pct` (§20.1, `power_factor`).
 pub fn recount(
     state: &mut ParkState,
     db: &cp_content::ContentDb,
     buildings: &BuildingGrid,
     area_map: &AreaMap,
     areas: &Areas,
+    budget_pct: u8,
 ) {
     let per_level = db.balance().park_attract_per_level;
+    let budget = power_factor(budget_pct, db.balance());
     let fee_default = db
         .balance()
         .park_fee_default
@@ -130,21 +134,24 @@ pub fn recount(
             fee: fee_default,
             ..ParkAreaState::default()
         });
-        e.attract = attract * (1.0 + per_level * level);
+        e.attract = attract * (1.0 + per_level * level) * budget;
         e.capacity = capacity;
     }
 }
 
 /// The leisure targets (T-224): the gates of the parks that can take visitors, weighted by
 /// the attractiveness of their area and the entrance fee; the city parks; the unique buildings
-/// that draw tourists. Sorted by building.
+/// that draw tourists. Sorted by building. A city park's pull is scaled by the Park budget
+/// `budget_pct` like an area's attractiveness; a landmark has no budget.
 fn leisure_targets(
     db: &cp_content::ContentDb,
     buildings: &BuildingGrid,
     area_map: &AreaMap,
     areas: &Areas,
     state: &ParkState,
+    budget_pct: u8,
 ) -> Vec<LeisureTarget> {
+    let budget = power_factor(budget_pct, db.balance());
     let fee_max = db.balance().park_fee_max.max(1.0);
     let mut list = Vec::new();
     for (id, b) in buildings.iter() {
@@ -167,7 +174,7 @@ fn leisure_targets(
                 park: None,
                 attract,
                 ..
-            }) => *attract,
+            }) => *attract * budget,
             Some(_) => 0.0,
             None => def.unique.as_ref().map_or(0.0, |u| u.tourists_per_day),
         };
@@ -199,6 +206,7 @@ pub fn run_park(
     mut ledger: ResMut<ParkLedger>,
     mut targets: ResMut<LeisureTargets>,
     mut last_revision: Local<Option<u64>>,
+    budgets: Option<Res<Budgets>>,
 ) {
     // The arrivals are drained even without content, so the lists never grow.
     let arrivals: Vec<(BuildingId, Tick)> = book
@@ -212,13 +220,14 @@ pub fn run_park(
     };
     let db = &*content.0;
     let now = *tick;
+    let pct = budgets.map_or(BUDGET_DEFAULT, |b| b.get(ServiceKind::Park));
     // A new building, a new or repainted area, a level that rose.
     let changed =
         *last_revision != Some(buildings.revision()) || areas.is_changed() || area_map.is_changed();
     let hour = now.0.is_multiple_of(PARK_RECOUNT_TICKS);
     if changed || hour {
         *last_revision = Some(buildings.revision());
-        recount(&mut state, db, &buildings, &area_map, &areas);
+        recount(&mut state, db, &buildings, &area_map, &areas, pct);
     }
 
     // The day and the week begin.
@@ -280,7 +289,7 @@ pub fn run_park(
     }
     // A new level changes the attractiveness at once.
     if levelled {
-        recount(&mut state, db, &buildings, &area_map, &areas);
+        recount(&mut state, db, &buildings, &area_map, &areas, pct);
     }
     // Visits end; the areas know who is left.
     visits.inside.retain(|v| v.leave_at > now);
@@ -290,7 +299,7 @@ pub fn run_park(
     }
 
     if hour {
-        targets.list = leisure_targets(db, &buildings, &area_map, &areas, &state);
+        targets.list = leisure_targets(db, &buildings, &area_map, &areas, &state, pct);
     }
 }
 
