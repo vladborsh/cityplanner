@@ -338,8 +338,8 @@ fn shortage_of(sim: &mut SimRunner, cargo: CargoKind, until: u32) {
     });
 }
 
-/// A processor without a source for 10 days, in a shortage of Logs or not, with a warehouse
-/// that gives or not: the ledger and the days it said `NoInput`.
+/// A processor without a source for 10 days, in a shortage of Logs or not, with a stocked
+/// warehouse in `Fill` or none: the ledger and the days it said `NoInput`.
 fn ten_days_of_logs(shortage: bool, warehouse: bool) -> (IndustryLedger, u32, Town, BuildingId) {
     let mut t = town(true);
     if shortage {
@@ -349,6 +349,7 @@ fn ten_days_of_logs(shortage: bool, warehouse: bool) -> (IndustryLedger, u32, To
     if warehouse {
         let store = t.put("forest_warehouse", 800.0);
         t.seed(store, CargoKind::Logs, 1400.0);
+        set_warehouse(&mut t, store, None, Fill).unwrap();
     }
     t.staff(mill, 4);
     let mut no_input_days = 0;
@@ -414,7 +415,8 @@ fn a_shortage_fails_imports_doubles_their_price_and_a_stocked_warehouse_rides_it
     }
     assert!(t.sim.world().resource::<IndustryLedger>().import_loads > before);
 
-    // A warehouse that holds Logs feeds the processor through the shortage.
+    // A warehouse filled with Logs feeds the processor through the shortage (in `Fill` it gives
+    // in a shortage only; outside one it imports, see the Fill test below).
     let (stored, stored_days, ..) = ten_days_of_logs(true, true);
     assert_eq!(stored.import_loads, 0, "{stored:?}");
     assert!(stored_days <= normal_days, "NoInput {stored_days}");

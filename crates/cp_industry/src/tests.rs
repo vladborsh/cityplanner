@@ -38,6 +38,11 @@ fn warehouse_modes_take_in_and_give_out_as_designed() {
     assert!(!s(Empty, None).accepts(any, low, cap) && s(Empty, None).gives(any, low, cap));
     assert!(s(Balanced, None).accepts(any, low, cap) && !s(Balanced, None).accepts(any, high, cap));
     assert!(s(Balanced, None).gives(any, high, cap) && !s(Balanced, None).gives(any, low, cap));
+    // T-320b: in a shortage a Fill warehouse gives like a Balanced one; the others stay.
+    assert!(s(Fill, None).in_market(true).gives(any, high, cap));
+    assert!(!s(Fill, None).in_market(true).gives(any, low, cap));
+    assert!(!s(Fill, None).in_market(false).gives(any, high, cap));
+    assert_eq!(s(Empty, None).in_market(true), s(Empty, None));
     // A chosen cargo is the only one it handles.
     let only = s(Fill, Some(CargoKind::Planks));
     assert!(only.accepts(CargoKind::Planks, 0.0, cap) && !only.accepts(any, 0.0, cap));

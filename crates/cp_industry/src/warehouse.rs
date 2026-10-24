@@ -54,6 +54,20 @@ impl WarehouseSetting {
             }
     }
 
+    /// The setting it works by while `cargo` is or is not in a shortage (§21.1 item 3, T-320b):
+    /// in a shortage a `Fill` warehouse gives like a `Balanced` one, the dry spell it was
+    /// filled for; otherwise it is itself.
+    pub fn in_market(self, shortage: bool) -> Self {
+        if shortage && self.mode == WarehouseMode::Fill {
+            Self {
+                mode: WarehouseMode::Balanced,
+                ..self
+            }
+        } else {
+            self
+        }
+    }
+
     /// Whether it gives `cargo` out, given what it holds (`held`, all cargo) and its `cap`.
     pub fn gives(&self, cargo: CargoKind, held: f32, cap: f32) -> bool {
         self.handles(cargo)

@@ -353,7 +353,9 @@ pub fn run_freight(
             let mine: Vec<(CargoKind, f32)> = state.stock.get(&id).cloned().unwrap_or_default();
             for (cargo, amount) in mine {
                 if amount < load
-                    || !set.gives(cargo, held_all, cap)
+                    || !set
+                        .in_market(market.shortage(cargo))
+                        .gives(cargo, held_all, cap)
                     || goods
                         .hauls
                         .values()
@@ -381,7 +383,8 @@ pub fn run_freight(
                         best = Some((held, tid));
                     }
                 }
-                // T-306: a warehouse that may give (not `Fill`) sends its share abroad too.
+                // T-306: a warehouse that may give (not `Fill`) sends its share abroad too; a
+                // `Fill` one giving in a shortage keeps it for the city.
                 let near = best.map(|(_, t)| Endpoint::Building(t));
                 let to = if set.mode != WarehouseMode::Fill && goes_abroad(id, cargo) {
                     exit_for(&exits, &sites, b.pos).or(near)
@@ -414,30 +417,30 @@ pub fn run_freight(
                 {
                     continue;
                 }
-                let supplied =
-                    buildings.iter().any(|(sid, s)| {
-                        sid != id
-                            && s.state == BuildingState::Active
-                            && s.pos.distance(b.pos) <= radius
-                            && db.building(s.def).industry.as_ref().is_some_and(|ss| {
-                                match ss.role {
-                                    IndustryRole::Extractor
-                                    | IndustryRole::Processor
-                                    | IndustryRole::Factory => {
-                                        ss.outputs.iter().any(|&(c, _)| c == cargo)
-                                    }
-                                    IndustryRole::Warehouse => {
-                                        state.stock_of(sid, cargo) > 0.0
-                                            && settings.get(sid).gives(
-                                                cargo,
-                                                state.total(sid),
-                                                cap_of(sid, ss.storage),
-                                            )
-                                    }
-                                    _ => false,
+                let supplied = buildings.iter().any(|(sid, s)| {
+                    sid != id
+                        && s.state == BuildingState::Active
+                        && s.pos.distance(b.pos) <= radius
+                        && db
+                            .building(s.def)
+                            .industry
+                            .as_ref()
+                            .is_some_and(|ss| match ss.role {
+                                IndustryRole::Extractor
+                                | IndustryRole::Processor
+                                | IndustryRole::Factory => {
+                                    ss.outputs.iter().any(|&(c, _)| c == cargo)
                                 }
+                                IndustryRole::Warehouse => {
+                                    state.stock_of(sid, cargo) > 0.0
+                                        && settings
+                                            .get(sid)
+                                            .in_market(market.shortage(cargo))
+                                            .gives(cargo, state.total(sid), cap_of(sid, ss.storage))
+                                }
+                                _ => false,
                             })
-                    });
+                });
                 // T-306: a share of the input loads comes from abroad even with a supplier near.
                 if supplied && !comes_from_abroad(id, cargo) {
                     continue;

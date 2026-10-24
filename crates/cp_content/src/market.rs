@@ -158,6 +158,11 @@ impl Market {
         &mut self.cargo[cargo as usize]
     }
 
+    /// Whether `cargo` is in a shortage now.
+    pub fn shortage(&self, cargo: CargoKind) -> bool {
+        self.get(cargo).event.map(|e| e.kind) == Some(MarketEventKind::Shortage)
+    }
+
     /// The factor on the content export price of `cargo` at `tick`: level × season × event.
     pub fn export_factor(&self, k: &MarketKnobs, cargo: CargoKind, tick: Tick) -> f32 {
         let m = self.get(cargo);
@@ -192,7 +197,7 @@ impl Market {
         cargo: CargoKind,
         day: u64,
     ) -> bool {
-        self.get(cargo).event.map(|e| e.kind) == Some(MarketEventKind::Shortage)
+        self.shortage(cargo)
             && cp_core::hash_unit(seed, u64::from(who) | 1 << 40, (day << 8) | cargo as u64)
                 < k.shortage_fail
     }
