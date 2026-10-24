@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 91;
+pub const FORMAT_VERSION: u32 = 92;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -164,6 +164,7 @@ pub struct SaveData {
     pub rng: SimRng,
     pub speed: SimSpeed,
     pub queue: CommandQueue<SimCommand>,
+    /// The commands so far; `ElevationMode::Levels` (T-332) can be in it from v92.
     pub log: CommandLog<SimCommand>,
     pub tiles: TileOwnership,
     pub net: NetGraph,

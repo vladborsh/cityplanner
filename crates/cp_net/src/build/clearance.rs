@@ -182,6 +182,7 @@ mod tests {
                 cost: Cost::ZERO,
             }],
             new_nodes: Vec::new(),
+            node_elevations: Vec::new(),
             splits: Vec::new(),
             snaps: Vec::new(),
             report: SnapReport::default(),

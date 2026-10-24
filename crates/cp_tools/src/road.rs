@@ -368,16 +368,19 @@ fn direct_hit(
     };
     let level_ok = |e: cp_net::Elevation| match elevation {
         ElevationMode::Ground => e == cp_net::Elevation::Ground,
-        ElevationMode::Elevated(_) => match e {
+        // Between heights (T-332) as a raised road or a tunnel; an end takes the node's height.
+        m if m.raised() => match e {
             cp_net::Elevation::Elevated | cp_net::Elevation::Bridge => true,
             cp_net::Elevation::Ground => is_end,
             cp_net::Elevation::Tunnel => false,
         },
-        ElevationMode::Tunnel(_) => match e {
-            cp_net::Elevation::Tunnel => true,
-            cp_net::Elevation::Ground => is_end,
-            _ => false,
-        },
+        ElevationMode::Elevated(_) | ElevationMode::Tunnel(_) | ElevationMode::Levels { .. } => {
+            match e {
+                cp_net::Elevation::Tunnel => true,
+                cp_net::Elevation::Ground => is_end,
+                _ => false,
+            }
+        }
     };
     let mut ids = Vec::new();
     let mut nodes = Vec::new();

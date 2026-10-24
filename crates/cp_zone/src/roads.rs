@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use bevy_math::Vec2;
 use cp_content::RoadDefId;
 use cp_core::curve::{ArcTable, to_xz};
-use cp_net::{Elevation, NetGraph, Segment, SegmentId};
+use cp_net::{NetGraph, Segment, SegmentId};
 
 use crate::grid::RoadZoning;
 
@@ -53,9 +53,10 @@ impl RoadIndex {
     }
 
     pub fn add(&mut self, id: SegmentId, seg: &Segment, road: RoadZoning) {
-        if seg.elevation != Elevation::Ground {
+        // A deck keeps one cell more each side free (T-332); a tunnel keeps nothing.
+        let Some(half_width) = seg.elevation.ground_strip(road.half_width) else {
             return;
-        }
+        };
         let n = ((seg.length / ROAD_SAMPLE).ceil() as usize).max(1);
         let table = ArcTable::build(&seg.curve);
         let pts: Vec<Vec2> = (0..=n)
@@ -69,9 +70,9 @@ impl RoadIndex {
             let piece = RoadPiece {
                 a: w[0],
                 b: w[1],
-                half_width: road.half_width,
+                half_width,
             };
-            let b = inflate((w[0].min(w[1]), w[0].max(w[1])), road.half_width);
+            let b = inflate((w[0].min(w[1]), w[0].max(w[1])), half_width);
             for key in bucket_range(b, ROAD_BUCKET) {
                 self.buckets.entry(key).or_default().push((id, piece));
             }

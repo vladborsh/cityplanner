@@ -267,7 +267,53 @@ pub enum ElevationMode {
     /// Underground, the axis `d` metres below the terrain at each node (T-161). Appended last:
     /// older command logs read as before.
     Tunnel(f32),
+    /// A road between two heights (T-332, §18.1): the deck `from` metres over the terrain (over
+    /// the water surface where there is water) at the first vertex and `to` at the last, negative
+    /// below the terrain; in between the target is `lerp(from, to)` by the length along the path,
+    /// clamped by the slope from the fixed nodes. An end on an existing node takes the node's
+    /// height; a new end node stands at its height (in the air on a pier, or under the ground).
+    /// `from` and `to` on one side of 0 ([`RoadBuildError::LevelsCrossGround`] otherwise); both 0
+    /// is the ground. The 6 m levels of the tool are `cp_tools`' (§18.1). Appended last.
+    Levels {
+        from: f32,
+        to: f32,
+    },
 }
+
+impl ElevationMode {
+    /// The mode the validator works with: `Levels { 0, 0 }` is the ground.
+    fn normalized(self) -> Self {
+        match self {
+            Self::Levels { from, to } if from == 0.0 && to == 0.0 => Self::Ground,
+            m => m,
+        }
+    }
+
+    /// Raised: `Elevated`, or `Levels` above the ground.
+    pub fn raised(self) -> bool {
+        match self {
+            Self::Elevated(_) => true,
+            Self::Levels { from, to } => from + to > 0.0,
+            _ => false,
+        }
+    }
+
+    /// Underground: `Tunnel`, or `Levels` below the ground.
+    pub fn under(self) -> bool {
+        match self {
+            Self::Tunnel(_) => true,
+            Self::Levels { from, to } => from + to < 0.0,
+            _ => false,
+        }
+    }
+}
+
+/// A node takes a segment end within this of its own height (T-332): an end over or under a node
+/// by more than this and less than the clearance is [`crate::NetOpError::LevelMismatch`].
+pub const LEVEL_TOL: f32 = 0.5;
+/// A piece of a raised road or of a road between heights that stays within this of the ground
+/// along its whole length is a ground piece; so is a node that close (T-332, §18.1).
+pub const GROUND_PIECE_H: f32 = 1.0;
 
 /// The drawn path, in world XZ.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -404,6 +450,9 @@ pub struct RoadBuildPlan {
     pub road: RoadDefId,
     pub segments: Vec<PlannedSegment>,
     pub new_nodes: Vec<Vec3>,
+    /// The class of each new node by its own height (T-332, §18.1) when the plan's pieces are
+    /// classified so; empty otherwise (a new node then takes the class of its first segment).
+    pub node_elevations: Vec<Elevation>,
     pub splits: Vec<PlannedSplit>,
     pub snaps: Vec<AppliedSnap>,
     /// The snap at the last vertex (the cursor), with its guide line.
@@ -441,7 +490,8 @@ impl RoadBuildError {
             | Self::TooTight { pos, .. }
             | Self::RailCrossesRoad { pos }
             | Self::ElevatedClearance { pos }
-            | Self::TunnelClearance { pos } => Some(Vec2::new(pos.x, pos.z)),
+            | Self::TunnelClearance { pos }
+            | Self::LevelMismatch { pos } => Some(Vec2::new(pos.x, pos.z)),
             _ => None,
         }
     }
@@ -503,6 +553,12 @@ impl std::fmt::Display for RoadBuildError {
                     f,
                     "tunnels crossing here need {TUNNEL_CLEARANCE:.0} m between them"
                 )
+            }
+            Self::LevelMismatch { .. } => {
+                write!(f, "this junction is on another level")
+            }
+            Self::LevelsCrossGround => {
+                write!(f, "a road cannot go from a deck into a tunnel")
             }
         }
     }
@@ -587,6 +643,14 @@ pub enum RoadBuildError {
     TunnelClearance {
         pos: Vec3,
     },
+    /// A new node of the plan stands over or under an existing node, off its height by more than
+    /// [`LEVEL_TOL`] and less than the clearance (T-332): a literal plan that misses the node's
+    /// level (free drawing takes the node's height instead).
+    LevelMismatch {
+        pos: Vec3,
+    },
+    /// [`ElevationMode::Levels`] with `from` and `to` on two sides of the ground (T-332).
+    LevelsCrossGround,
 }
 
 /// Money for one segment: `metres × cost_per_m` as cents, rounded once ([`Cost::scaled`], §11).
@@ -614,6 +678,8 @@ struct Builder<'a> {
     /// The road being built is track: it only meets track.
     rail: bool,
     elev: ElevationMode,
+    /// The drawn path in the plane, for the height of [`ElevationMode::Levels`] along it.
+    raw: Vec<Vec2>,
     new_nodes: Vec<Vec3>,
     splits: Vec<PlannedSplit>,
 }
@@ -627,6 +693,16 @@ impl Builder<'_> {
             ElevationMode::Elevated(h) => y + self.terrain.water_depth(p).max(0.0) + h,
             // Under water too: a tunnel is measured from the terrain (the river bed).
             ElevationMode::Tunnel(d) => y - d,
+            // Raised from the water surface like `Elevated`, lowered from the terrain like
+            // `Tunnel`.
+            ElevationMode::Levels { from, to } => {
+                let h = from + (to - from) * path_fraction(&self.raw, p);
+                if h > 0.0 {
+                    y + self.terrain.water_depth(p).max(0.0) + h
+                } else {
+                    y + h
+                }
+            }
         }
     }
 
@@ -682,12 +758,12 @@ impl Builder<'_> {
 
     /// An existing node of the plan's level within [`crate::NODE_REUSE_EPS`] of `p` in the plane.
     fn node_under(&self, p: Vec2) -> Option<NodeId> {
-        let want = match self.elev {
-            ElevationMode::Ground => |e: Elevation| e == Elevation::Ground,
-            ElevationMode::Elevated(_) => {
-                |e: Elevation| matches!(e, Elevation::Elevated | Elevation::Bridge)
-            }
-            ElevationMode::Tunnel(_) => |e: Elevation| e == Elevation::Tunnel,
+        let want = if self.elev.raised() {
+            |e: Elevation| matches!(e, Elevation::Elevated | Elevation::Bridge)
+        } else if self.elev.under() {
+            |e: Elevation| e == Elevation::Tunnel
+        } else {
+            |e: Elevation| e == Elevation::Ground
         };
         self.graph
             .nodes()
@@ -776,11 +852,20 @@ impl Builder<'_> {
         for (id, n) in self.graph.nodes() {
             let level_ok = match self.elev {
                 ElevationMode::Ground => n.elevation == Elevation::Ground,
-                ElevationMode::Elevated(_) => match n.elevation {
-                    Elevation::Elevated | Elevation::Bridge => true,
-                    Elevation::Ground => any_level,
-                    Elevation::Tunnel => false,
-                },
+                // A road between heights is raised or under like these; its end takes the
+                // node's height (T-332).
+                ElevationMode::Elevated(_) | ElevationMode::Levels { .. } if self.elev.raised() => {
+                    match n.elevation {
+                        Elevation::Elevated | Elevation::Bridge => true,
+                        Elevation::Ground => any_level,
+                        Elevation::Tunnel => false,
+                    }
+                }
+                ElevationMode::Elevated(_) | ElevationMode::Levels { .. } => {
+                    (any_level && !self.rail && n.elevation == Elevation::Ground)
+                        || (n.elevation == Elevation::Tunnel
+                            && (any_level || (n.pos.y - self.ground_y(p)).abs() <= SAME_DEPTH_TOL))
+                }
                 ElevationMode::Tunnel(_) => {
                     // A road tunnel starts and ends on the surface (its portals): its end
                     // vertices may join a ground node (T-173).
@@ -971,6 +1056,32 @@ pub fn angle_snap_guides<'a>(
     })
 }
 
+/// How far along the polyline `raw` the point nearest to `p` is, as a share of its length
+/// (0 at the start, 1 at the end): the height of a road between heights at `p` (T-332).
+fn path_fraction(raw: &[Vec2], p: Vec2) -> f32 {
+    let total: f32 = raw.windows(2).map(|w| w[0].distance(w[1])).sum();
+    if total <= 1e-3 {
+        return 0.0;
+    }
+    let (mut best, mut best_s, mut done) = (f32::INFINITY, 0.0f32, 0.0f32);
+    for w in raw.windows(2) {
+        let d = w[1] - w[0];
+        let len = d.length();
+        let t = if len > 1e-6 {
+            ((p - w[0]).dot(d) / (len * len)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let dist = (w[0] + d * t).distance(p);
+        if dist < best - 1e-4 {
+            best = dist;
+            best_s = done + len * t;
+        }
+        done += len;
+    }
+    (best_s / total).clamp(0.0, 1.0)
+}
+
 /// Control points of a leg as a planar (Y = 0) cubic.
 fn flat_curve(a: Vec2, b: Vec2, control: Option<Vec2>) -> CubicBezier3 {
     let v3 = |p: Vec2| Vec3::new(p.x, 0.0, p.y);
@@ -994,6 +1105,47 @@ fn lift(piece: CubicBezier3, a: Vec3, b: Vec3) -> CubicBezier3 {
         at(piece.p2, a.y + (b.y - a.y) * 2.0 / 3.0),
         b,
     )
+}
+
+/// How far `p` is over the ground (T-332): over the water surface where there is water, negative
+/// below the terrain (the bed under water), 0 in between.
+fn offset_over(terrain: &Terrain, p: Vec3) -> f32 {
+    let xz = to_xz(p);
+    let bed = terrain.height(xz);
+    if p.y < bed {
+        p.y - bed
+    } else {
+        (p.y - bed - terrain.water_depth(xz).max(0.0)).max(0.0)
+    }
+}
+
+/// The class of a piece of a raised road or of a road between heights by its offset over the
+/// ground along its whole length (T-332, §18.1): within [`GROUND_PIECE_H`] everywhere it is a
+/// ground piece, else `raised` (`Elevated` or `Bridge`, decided by the water) or `Tunnel`.
+fn piece_class(
+    terrain: &Terrain,
+    curve: &CubicBezier3,
+    length: f32,
+    raised: Elevation,
+) -> Elevation {
+    let steps = ((length / WATER_SAMPLE_STEP).ceil() as usize).max(1);
+    let low = (0..=steps)
+        .all(|k| offset_over(terrain, curve.point(k as f32 / steps as f32)).abs() < GROUND_PIECE_H);
+    if low { Elevation::Ground } else { raised }
+}
+
+/// The class of a node of such a road by its own offset (T-332).
+fn node_class(terrain: &Terrain, p: Vec3) -> Elevation {
+    let o = offset_over(terrain, p);
+    if o.abs() < GROUND_PIECE_H {
+        Elevation::Ground
+    } else if o < 0.0 {
+        Elevation::Tunnel
+    } else if terrain.is_water(to_xz(p)) {
+        Elevation::Bridge
+    } else {
+        Elevation::Elevated
+    }
 }
 
 /// Whether any sample along a planar-projected piece is over water.
@@ -1340,6 +1492,7 @@ fn validate_inner(
     if req.road.index() >= content.roads().count() {
         return Err(vec![RoadBuildError::UnknownRoad(req.road)]);
     }
+    let elev = req.elevation.normalized();
     let points_ok = if let Some(plan) = literal {
         plan.pieces.iter().all(|pc| {
             cp_core::sane_point(pc.c1)
@@ -1359,18 +1512,33 @@ fn validate_inner(
             RoadPath::Free(pts) => pts.iter().all(|p| cp_core::sane_point(*p)),
         }
     };
-    let height_ok = match req.elevation {
+    let height_ok = match elev {
         ElevationMode::Ground => true,
         ElevationMode::Elevated(h) => cp_core::sane_coord(h),
         ElevationMode::Tunnel(d) => cp_core::sane_coord(d) && d > 0.0 && d <= MAX_TUNNEL_DEPTH,
+        ElevationMode::Levels { from, to } => {
+            cp_core::sane_coord(from)
+                && cp_core::sane_coord(to)
+                && from.min(to) >= -MAX_TUNNEL_DEPTH
+        }
     };
     if !points_ok || !height_ok {
         return Err(vec![RoadBuildError::BadCoordinates]);
     }
+    if let ElevationMode::Levels { from, to } = elev
+        && from * to < 0.0
+    {
+        return Err(vec![RoadBuildError::LevelsCrossGround]);
+    }
     let def = content.road(req.road);
     let mut errors = Vec::new();
-    let elevated = matches!(req.elevation, ElevationMode::Elevated(_));
-    let tunnel = matches!(req.elevation, ElevationMode::Tunnel(_));
+    // A road between heights (T-332) is a raised road or a tunnel whose heights it sets.
+    let levels = matches!(elev, ElevationMode::Levels { .. });
+    let elevated = elev.raised();
+    let tunnel = elev.under();
+    // Its pieces and nodes take their class from their height (§18.1), as do the ramps of an
+    // `Elevated` road; an old `Tunnel` keeps its classes.
+    let classify = elevated || levels;
     let variant = if elevated {
         match &def.elevated {
             Some(v) => Some(v),
@@ -1423,7 +1591,8 @@ fn validate_inner(
         terrain,
         content,
         rail,
-        elev: req.elevation,
+        elev,
+        raw: distinct.clone(),
         new_nodes: Vec::new(),
         splits: Vec::new(),
     };
@@ -1464,7 +1633,7 @@ fn validate_inner(
         }
         if node.is_none()
             && req.snap.segment
-            && matches!(req.elevation, ElevationMode::Ground)
+            && matches!(elev, ElevationMode::Ground)
             && let Some((s, t)) = b.nearest_segment(p)
         {
             let r = b.split_at(s, t);
@@ -1518,13 +1687,29 @@ fn validate_inner(
     // --- cut legs into pieces ---
     let mut segments: Vec<PlannedSegment> = Vec::new();
     // For the height of a raised road at a crossing: how far along the path it is and the
-    // ramp it climbs (the ends stand on the ground), see below.
+    // ramp it climbs from the heights its ends will have, see below.
     let path_len: f32 = verts.windows(2).map(|w| w[0].pos.distance(w[1].pos)).sum();
     let ramp_slope = def.max_slope * RAMP_SLOPE_SHARE;
-    let (ground0, ground1) = (
-        verts.first().map_or(0.0, |v| terrain.height(v.pos)),
-        verts.last().map_or(0.0, |v| terrain.height(v.pos)),
-    );
+    let end_y = |v: Option<&Vertex>, b: &Builder| match v.map(|v| (v.node, v.pos)) {
+        Some((NodeRef::New(_), p)) if levels => b.ground_y(p),
+        Some((NodeRef::New(_), p)) => terrain.height(p),
+        Some((n, _)) => b.node_pos(n).y,
+        None => 0.0,
+    };
+    let (end0, end1) = (end_y(verts.first(), &b), end_y(verts.last(), &b));
+    // The height of the road at `p`, `s` metres along the path, before the ramps are solved: the
+    // target there, clamped by the slope from both ends (an old `Tunnel` takes its depth).
+    let estimate = |b: &Builder, p: Vec2, s: f32| {
+        let target = b.ground_y(p);
+        let (a, c) = (ramp_slope * s, ramp_slope * (path_len - s).max(0.0));
+        if elevated {
+            target.min(end0 + a).min(end1 + c)
+        } else if levels {
+            target.max(end0 - a).max(end1 - c)
+        } else {
+            target
+        }
+    };
     let mut done_len = 0.0f32;
     for (li, w) in verts.windows(2).enumerate() {
         let (v0, v1) = (&w[0], &w[1]);
@@ -1584,10 +1769,7 @@ fn validate_inner(
                     // The deck there: its height over the ground, less where it still climbs
                     // its ramp from the ends of the path.
                     let s_here = done_len + tab.t_to_s(tc);
-                    let mine = b
-                        .ground_y(to_xz(leg.point(tc)))
-                        .min(ground0 + ramp_slope * s_here)
-                        .min(ground1 + ramp_slope * (path_len - s_here).max(0.0));
+                    let mine = estimate(&b, to_xz(leg.point(tc)), s_here);
                     let mut gap = (mine - at.y).abs();
                     // A path that stops a few metres past (or starts a few metres before) an old
                     // deck ends on it: the short piece is cut off, so the deck is where it joins.
@@ -1609,14 +1791,16 @@ fn validate_inner(
                 }
             }
         }
-        if !elevated {
-            let level = if tunnel {
-                Elevation::Tunnel
-            } else {
-                Elevation::Ground
-            };
+        if !elevated || classify {
             for (sid, seg) in graph.segments() {
-                if seg.elevation != level {
+                // A raised road or a road between heights meets ground roads where it is low
+                // (a ground piece, T-332); a plain tunnel meets only tunnels.
+                let meets = match seg.elevation {
+                    Elevation::Ground => !tunnel || classify,
+                    Elevation::Tunnel => tunnel,
+                    Elevation::Elevated | Elevation::Bridge => false,
+                };
+                if !meets {
                     continue;
                 }
                 for (tc, ts) in leg.intersect_xz(&seg.curve) {
@@ -1627,9 +1811,18 @@ fn validate_inner(
                         continue;
                     }
                     let at = seg.curve.point(ts);
-                    if tunnel {
+                    let here = to_xz(leg.point(tc));
+                    let mine = estimate(&b, here, done_len + tab.t_to_s(tc));
+                    if classify
+                        && seg.elevation == Elevation::Ground
+                        && offset_over(terrain, Vec3::new(here.x, mine, here.y)).abs()
+                            >= GROUND_PIECE_H
+                    {
+                        // Over or under the street: no node (the deck's own check is below).
+                        continue;
+                    }
+                    if seg.elevation == Elevation::Tunnel {
                         // Same depth: a node. Far enough apart: they pass each other.
-                        let mine = b.ground_y(to_xz(leg.point(tc)));
                         let gap = (mine - at.y).abs();
                         if gap > SAME_DEPTH_TOL {
                             if gap < TUNNEL_CLEARANCE {
@@ -1752,6 +1945,8 @@ fn validate_inner(
         let slope = ramp_slope;
         let price = |e: Elevation| match e {
             Elevation::Bridge => def.bridge.as_ref().map_or(cost_per_m, |v| v.cost_per_m),
+            // The low piece of a ramp is a ground road (T-332).
+            Elevation::Ground => def.cost_per_m,
             _ => cost_per_m,
         };
         let chain_ok = segments.windows(2).all(|w| w[0].end == w[1].start);
@@ -1774,6 +1969,10 @@ fn validate_inner(
                     NodeRef::Existing(id) => Some(graph.node(id).expect("exists").pos.y),
                     // A node made on a crossing road is where that road is.
                     NodeRef::Split(i) => Some(b.splits[i].pos.y),
+                    // Between heights a new end stands at its height (T-332).
+                    NodeRef::New(i) if (k == 0 || k == last) && levels => {
+                        Some(b.ground_y(to_xz(b.new_nodes[i])))
+                    }
                     NodeRef::New(i) if k == 0 || k == last => {
                         Some(terrain.height(to_xz(b.new_nodes[i])))
                     }
@@ -1815,7 +2014,8 @@ fn validate_inner(
                     matches!(n, NodeRef::Existing(_))
                         && f.is_some_and(|y| y > terrain.height(to_xz(b.node_pos(n))) + 0.5)
                 });
-            if !reached && !ramp_to_raised {
+            // Between heights both ends are where the command says: nothing to reach.
+            if !reached && !ramp_to_raised && !levels {
                 errors.push(RoadBuildError::RampTooShort {
                     pos: b.node_pos(nodes[0]),
                 });
@@ -1825,7 +2025,11 @@ fn validate_inner(
                     let p = to_xz(b.new_nodes[i]);
                     // A tunnel may run under water at its depth; its portals and the ramp down
                     // to it must be dry.
-                    let on_ramp = if road_tunnel {
+                    // Between heights a node in the air or under the ground is not on a ramp; one
+                    // near the ground is a ground node and its pieces are checked for water.
+                    let on_ramp = if levels {
+                        false
+                    } else if road_tunnel {
                         fixed[k].is_some() || ys[k] > target[k] + 1.0
                     } else {
                         fixed[k].is_some() || ys[k] < target[k] - 1e-3
@@ -1842,6 +2046,11 @@ fn validate_inner(
                 let (pa, pb) = (b.node_pos(sg.start), b.node_pos(sg.end));
                 sg.curve = lift(sg.curve, pa, pb);
                 sg.length = sg.curve.arc_table().length();
+                // A ramp piece that stays near the ground is a ground piece (T-332, §18.1): cut
+                // by streets, zoned along, no piers, priced as the ground road.
+                if classify {
+                    sg.elevation = piece_class(terrain, &sg.curve, sg.length, sg.elevation);
+                }
                 sg.cost = segment_cost(sg.length, price(sg.elevation));
             }
         }
@@ -1874,6 +2083,16 @@ fn validate_inner(
                     }
                 }
             }
+        }
+    }
+
+    // --- a new node over or under an old one off its height (T-332): the graph would refuse
+    // the segment, so the plan is refused here with a place ---
+    for &p in &b.new_nodes {
+        if let Some(n) = graph.level_mismatch(p) {
+            errors.push(RoadBuildError::LevelMismatch {
+                pos: graph.node(n).expect("found").pos,
+            });
         }
     }
 
@@ -1972,7 +2191,7 @@ fn validate_inner(
     }
 
     // --- a literal plan on the asphalt of a road it does not join (§6.8.3 item 1) ---
-    if literal.is_some() && matches!(req.elevation, ElevationMode::Ground) {
+    if literal.is_some() && matches!(elev, ElevationMode::Ground) {
         const TOL: f32 = 0.3;
         let ground = |e: Elevation| e == Elevation::Ground;
         let half = |road: RoadDefId| content.road(road).width / 2.0;
@@ -2042,7 +2261,7 @@ fn validate_inner(
         }
     }
 
-    if literal.is_some() && matches!(req.elevation, ElevationMode::Ground) && !rail {
+    if literal.is_some() && matches!(elev, ElevationMode::Ground) && !rail {
         for w in clearance::overlap_report(graph, content, req.road, &segments) {
             let y = terrain.height(w.pos);
             errors.push(RoadBuildError::RoadsOverlap {
@@ -2055,10 +2274,19 @@ fn validate_inner(
         return Err(errors);
     }
     let cost = Cost(segments.iter().map(|s| s.cost.0).sum());
+    let node_elevations = if classify {
+        b.new_nodes
+            .iter()
+            .map(|&p| node_class(terrain, p))
+            .collect()
+    } else {
+        Vec::new()
+    };
     Ok(RoadBuildPlan {
         road: req.road,
         segments,
         new_nodes: b.new_nodes,
+        node_elevations,
         splits: b.splits,
         snaps,
         report: *report,

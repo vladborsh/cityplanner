@@ -122,6 +122,8 @@ fn kinds(e: &[RoadBuildError]) -> Vec<&'static str> {
             RoadBuildError::RailCrossesRoad { .. } => "RailCrossesRoad",
             RoadBuildError::TunnelClearance { .. } => "TunnelClearance",
             RoadBuildError::ElevatedClearance { .. } => "ElevatedClearance",
+            RoadBuildError::LevelMismatch { .. } => "LevelMismatch",
+            RoadBuildError::LevelsCrossGround => "LevelsCrossGround",
         })
         .collect()
 }
@@ -1469,4 +1471,241 @@ fn a_path_never_meets_track_lies_only_on_the_ground() {
         no_snap(),
     );
     assert_eq!(kinds(&w.run(&r).unwrap_err()), ["NoTunnelVariant"]);
+}
+
+// ---------- roads between heights (T-332, §18.1) ----------
+
+impl W {
+    /// Builds `req` into the graph as planned (no splits expected), giving its segments.
+    fn build(&mut self, req: &RoadPathRequest) -> Vec<SegmentId> {
+        let plan = self.run(req).unwrap();
+        assert!(plan.splits.is_empty(), "{:?}", plan.splits);
+        let def = self.db.road(req.road).clone();
+        let ids = plan
+            .segments
+            .iter()
+            .map(|s| {
+                self.graph
+                    .add_segment(&def, req.road, s.curve, s.elevation)
+                    .unwrap()
+            })
+            .collect();
+        for (&p, &e) in plan.new_nodes.iter().zip(&plan.node_elevations) {
+            let id = self.graph.find_node(p).unwrap();
+            self.graph.set_node_elevation(id, e);
+        }
+        ids
+    }
+
+    fn levels(&self, road: &str, from: Vec2, to: Vec2, h0: f32, h1: f32) -> RoadPathRequest {
+        RoadPathRequest {
+            road: self.road(road),
+            path: RoadPath::Straight { from, to },
+            elevation: ElevationMode::Levels { from: h0, to: h1 },
+            snap: SnapOptions::default(),
+        }
+    }
+}
+
+fn ends(plan: &RoadBuildPlan) -> (f32, f32) {
+    let first = plan.segments.first().unwrap().curve.p0.y;
+    let last = plan.segments.last().unwrap().curve.p3.y;
+    (first, last)
+}
+
+/// Decision 9: a highway (6 %) climbs 6 m in 120 m (5 %) but not in 60 m; a street (12 %) does.
+#[test]
+fn a_ramp_of_6_m_needs_120_m_of_highway_and_60_m_of_street() {
+    let w = W::new();
+    let long = w.levels("highway_1w_2l", at(0.0, 0.0), at(120.0, 0.0), 0.0, 6.0);
+    let (first, last) = ends(&w.run(&long).unwrap());
+    assert!((first - 100.0).abs() < 0.01, "{first}");
+    assert!((last - 106.0).abs() < 0.01, "{last}");
+    let short = w.levels("highway_1w_2l", at(0.0, 0.0), at(60.0, 0.0), 0.0, 6.0);
+    let errs = kinds(&w.run(&short).unwrap_err());
+    assert!(
+        !errs.is_empty() && errs.iter().all(|k| *k == "TooSteep"),
+        "{errs:?}"
+    );
+    let street = w.levels("basic_2l", at(0.0, 0.0), at(60.0, 0.0), 0.0, 6.0);
+    assert!(w.run(&street).is_ok());
+}
+
+/// A9 ends: a new end stands at its height, an end on a node takes the node's height.
+#[test]
+fn a_new_end_stands_at_its_height_and_an_old_one_keeps_the_nodes() {
+    let mut w = W::new();
+    w.add(at(-200.0, 0.0), at(0.0, 0.0));
+    // From the end of a street to free ground: ends 6 m up, in the air.
+    let up = w.levels("basic_2l", at(0.0, 0.0), at(200.0, 0.0), 6.0, 6.0);
+    let plan = w.run(&up).unwrap();
+    assert!(matches!(plan.segments[0].start, NodeRef::Existing(_)));
+    let (first, last) = ends(&plan);
+    assert!(
+        (first - 100.0).abs() < 0.01 && (last - 106.0).abs() < 0.01,
+        "{first} {last}"
+    );
+    assert_eq!(*plan.node_elevations.last().unwrap(), Elevation::Elevated);
+    w.build(&up);
+    // On from that node to 12 m.
+    let on = w.levels("basic_2l", at(200.0, 0.0), at(400.0, 0.0), 6.0, 12.0);
+    let (first, last) = ends(&w.run(&on).unwrap());
+    assert!(
+        (first - 106.0).abs() < 0.01 && (last - 112.0).abs() < 0.01,
+        "{first} {last}"
+    );
+    // Down from 12 m onto the node: it ends at the node's 6 m.
+    let back = w.levels("basic_2l", at(200.0, 200.0), at(200.0, 0.0), 12.0, 6.0);
+    let plan = w.run(&back).unwrap();
+    assert!(matches!(
+        plan.segments.last().unwrap().end,
+        NodeRef::Existing(_)
+    ));
+    let (first, last) = ends(&plan);
+    assert!(
+        (first - 112.0).abs() < 0.01 && (last - 106.0).abs() < 0.01,
+        "{first} {last}"
+    );
+    // Asked to end 12 m up on the 6 m node, it still ends at 6 m: never a mismatch.
+    let high = w.levels("basic_2l", at(200.0, -200.0), at(200.0, 0.0), 12.0, 12.0);
+    let (_, last) = ends(&w.run(&high).unwrap());
+    assert!((last - 106.0).abs() < 0.01, "{last}");
+}
+
+#[test]
+fn heights_on_two_sides_of_the_ground_are_refused_and_zero_is_the_ground() {
+    let w = W::new();
+    let cross = w.levels("basic_2l", at(0.0, 0.0), at(300.0, 0.0), 6.0, -6.0);
+    assert_eq!(kinds(&w.run(&cross).unwrap_err()), ["LevelsCrossGround"]);
+    let bad = w.levels("basic_2l", at(0.0, 0.0), at(300.0, 0.0), 0.0, f32::NAN);
+    assert_eq!(kinds(&w.run(&bad).unwrap_err()), ["BadCoordinates"]);
+    let ground = w.levels("basic_2l", at(0.0, 0.0), at(200.0, 0.0), 0.0, 0.0);
+    let plan = w.run(&ground).unwrap();
+    assert!(
+        plan.segments
+            .iter()
+            .all(|s| s.elevation == Elevation::Ground)
+    );
+}
+
+/// A4: the pieces and nodes of a ramp take their class from their height over the ground.
+#[test]
+fn a_ramp_is_ground_where_it_is_low_and_raised_where_it_is_high() {
+    let w = W::new();
+    // 0 → 6 m over 200 m of street, cut in three: the end node is raised, the start node is a
+    // ground node; a deck that goes down below the ground is a tunnel.
+    let up = w.levels("basic_2l", at(0.0, 0.0), at(200.0, 0.0), 0.0, 6.0);
+    let plan = w.run(&up).unwrap();
+    assert_eq!(plan.node_elevations.first(), Some(&Elevation::Ground));
+    assert_eq!(plan.node_elevations.last(), Some(&Elevation::Elevated));
+    assert!(
+        plan.segments
+            .iter()
+            .all(|s| s.elevation == Elevation::Elevated)
+    );
+    let down = w.levels("basic_2l", at(0.0, 0.0), at(200.0, 0.0), 0.0, -6.0);
+    let plan = w.run(&down).unwrap();
+    assert_eq!(plan.node_elevations.first(), Some(&Elevation::Ground));
+    assert_eq!(plan.node_elevations.last(), Some(&Elevation::Tunnel));
+    assert!(
+        plan.segments
+            .iter()
+            .all(|s| s.elevation == Elevation::Tunnel)
+    );
+    // A ramp that crosses a street where it is still low meets it in a node; the short piece
+    // up to it is a ground piece.
+    let mut w = W::new();
+    w.add(at(40.0, -100.0), at(40.0, 100.0));
+    let mut r = w.levels("highway_1w_2l", at(0.0, 0.0), at(300.0, 0.0), 0.0, 6.0);
+    r.snap = no_snap();
+    let plan = w.run(&r).unwrap();
+    assert_eq!(plan.splits.len(), 1, "a node on the street");
+    assert_eq!(plan.segments[0].elevation, Elevation::Ground);
+    assert!(plan.segments.last().unwrap().elevation == Elevation::Elevated);
+}
+
+/// A3: a node takes a segment end only at its own height.
+#[test]
+fn the_graph_refuses_an_end_off_the_nodes_height() {
+    let mut w = W::new();
+    w.add(at(0.0, 0.0), at(100.0, 0.0));
+    let id = w.road("basic_2l");
+    let def = w.db.road(id).clone();
+    let p = |y: f32| Vec3::new(at(100.0, 0.0).x, y, at(100.0, 0.0).y);
+    let q = Vec3::new(at(100.0, 100.0).x, 103.0, at(100.0, 100.0).y);
+    let line = |y: f32| CubicBezier3::line(p(y), q);
+    assert_eq!(
+        w.graph.check_build(&[], &[line(103.0)]),
+        Err(crate::NetOpError::LevelMismatch(
+            w.graph.find_node(p(100.0)).unwrap()
+        ))
+    );
+    assert!(matches!(
+        w.graph
+            .add_segment(&def, id, line(103.0), Elevation::Elevated),
+        Err(crate::NetOpError::LevelMismatch(_))
+    ));
+    // On the node, or a level above it, is fine.
+    assert!(w.graph.check_build(&[], &[line(100.2)]).is_ok());
+    assert!(w.graph.check_build(&[], &[line(106.0)]).is_ok());
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(32))]
+    /// Decision 9: flat decks at two heights of {−12, −6, 6, 12, 18} crossing at 30…90°: on
+    /// different heights no node and no error, on one height one node.
+    #[test]
+    fn decks_on_one_height_meet_and_on_two_pass(
+        a in 0usize..5,
+        b in 0usize..5,
+        deg in 30.0f32..90.0,
+        off in -40.0f32..40.0,
+    ) {
+        const H: [f32; 5] = [-12.0, -6.0, 6.0, 12.0, 18.0];
+        let (ha, hb) = (H[a], H[b]);
+        let mut w = W::new();
+        let mut first = w.levels("basic_2l", at(-200.0, off), at(200.0, off), ha, ha);
+        first.snap = no_snap();
+        w.build(&first);
+        let d = Vec2::from_angle(deg.to_radians()) * 200.0;
+        let mut second = w.levels("basic_2l", C - d, C + d, hb, hb);
+        second.snap = no_snap();
+        let plan = w.run(&second);
+        proptest::prop_assert!(plan.is_ok(), "{} / {}: {:?}", ha, hb, plan.err());
+        let plan = plan.unwrap();
+        proptest::prop_assert_eq!(plan.splits.len(), usize::from(a == b), "{} / {}", ha, hb);
+    }
+}
+
+/// T-332 (§18.1 item 5): a deck's command strips reach one zone cell past its sidewalks, so the
+/// buildings under an overpass come down as under a street (BUG-096); a ground road's do not.
+#[test]
+fn a_deck_strip_is_one_cell_wider_than_its_road() {
+    let w = W::new();
+    let road = w.road("basic_2l");
+    let hw = w.db.road(road).width * 0.5;
+    let strips = |elevation| {
+        crate::command_strips(
+            &w.graph,
+            &w.terrain,
+            &w.tiles,
+            &w.db,
+            &crate::NetCommand::BuildRoad {
+                road,
+                path: RoadPath::Straight {
+                    from: at(0.0, 0.0),
+                    to: at(300.0, 0.0),
+                },
+                elevation,
+            },
+        )
+    };
+    let ground = strips(ElevationMode::Ground);
+    assert!(!ground.is_empty() && ground.iter().all(|(_, h)| (*h - hw).abs() < 1e-4));
+    let deck = strips(ElevationMode::Levels { from: 6.0, to: 6.0 });
+    assert!(!deck.is_empty());
+    assert!(
+        deck.iter()
+            .all(|(_, h)| (*h - (hw + ZONE_CELL)).abs() < 1e-4)
+    );
 }

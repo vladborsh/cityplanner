@@ -51,6 +51,10 @@ pub enum NetOpError {
     /// The rules would leave an outgoing arm unreachable from an arm it can be reached from by
     /// default.
     ArmUnreachable(NodeId, SegmentId),
+    /// A segment end over or under the node at its place, off the node's height by more than
+    /// [`crate::LEVEL_TOL`] and less than [`crate::ELEVATED_CLEARANCE`] (T-332): a node takes
+    /// roads only at its own height.
+    LevelMismatch(NodeId),
 }
 
 impl fmt::Display for NetOpError {
@@ -87,6 +91,7 @@ impl fmt::Display for NetOpError {
                     "node {n:?}: no lane would lead to segment {s:?} any more"
                 )
             }
+            Self::LevelMismatch(n) => write!(f, "node {n:?} is on another level"),
         }
     }
 }
@@ -224,6 +229,31 @@ impl NetGraph {
         id
     }
 
+    /// Sets the class of a node by its height (T-332: a plan decides it for the nodes it makes).
+    pub fn set_node_elevation(&mut self, id: NodeId, elevation: Elevation) {
+        if let Some(n) = self.nodes.get_mut(id)
+            && n.elevation != elevation
+        {
+            n.elevation = elevation;
+            self.dirty.insert(id);
+        }
+    }
+
+    /// A node a segment end at `p` that reuses no node would stand over or under, off its height
+    /// by more than [`crate::LEVEL_TOL`] and less than [`crate::ELEVATED_CLEARANCE`] (T-332):
+    /// [`NetOpError::LevelMismatch`]. Farther apart, two levels pass each other.
+    pub(crate) fn level_mismatch(&self, p: Vec3) -> Option<NodeId> {
+        self.nodes
+            .iter()
+            .find(|(_, n)| {
+                let dy = (n.pos.y - p.y).abs();
+                Vec2::new(n.pos.x - p.x, n.pos.z - p.z).length() <= NODE_REUSE_EPS
+                    && dy > crate::LEVEL_TOL
+                    && dy < crate::ELEVATED_CLEARANCE
+            })
+            .map(|(id, _)| id)
+    }
+
     /// Finds an existing node within [`NODE_REUSE_EPS`] of `p` (nearest, ties by id).
     pub fn find_node(&self, p: Vec3) -> Option<NodeId> {
         let mut best: Option<(f32, NodeId)> = None;
@@ -250,6 +280,13 @@ impl NetGraph {
         let b = self.find_node(curve.p3);
         if a.is_some() && a == b {
             return Err(NetOpError::DegenerateSegment);
+        }
+        for (found, p) in [(a, curve.p0), (b, curve.p3)] {
+            if found.is_none()
+                && let Some(n) = self.level_mismatch(p)
+            {
+                return Err(NetOpError::LevelMismatch(n));
+            }
         }
         for n in [a, b].into_iter().flatten() {
             if self
@@ -359,6 +396,13 @@ impl NetGraph {
             };
             if same {
                 return Err(NetOpError::DegenerateSegment);
+            }
+            for (found, p) in [(&a, curve.p0), (&b, curve.p3)] {
+                if found.is_none()
+                    && let Some(n) = self.level_mismatch(p)
+                {
+                    return Err(NetOpError::LevelMismatch(n));
+                }
             }
             for f in [&a, &b].into_iter().flatten() {
                 match f {

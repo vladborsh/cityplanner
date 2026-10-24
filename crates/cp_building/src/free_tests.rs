@@ -191,8 +191,10 @@ fn two_metres_from_the_road_is_road_and_twenty_is_fine() {
     );
 }
 
+/// T-332 (§18.1 item 5; T-107 let a building stand under a deck): nothing is built under an
+/// overpass, nor one zone cell either side of it.
 #[test]
-fn an_elevated_road_does_not_block_the_ground_below() {
+fn an_elevated_road_blocks_the_ground_below() {
     let mut f = Fixture::new();
     let road = f.db.road_id("basic_2l").unwrap();
     let mut net = NetGraph::new();
@@ -207,7 +209,10 @@ fn an_elevated_road_does_not_block_the_ground_below() {
     )
     .unwrap();
     f.net = net;
-    assert!(f.check(Vec2::new(5100.0, 5000.0), 0.0).is_ok());
+    assert_eq!(
+        f.check(Vec2::new(5100.0, 5000.0), 0.0),
+        Err(BuildingError::Road)
+    );
 }
 
 #[test]

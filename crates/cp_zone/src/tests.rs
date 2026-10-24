@@ -397,7 +397,7 @@ fn serde_round_trip_keeps_state_and_resyncs_without_changes() {
 }
 
 #[test]
-fn bridges_do_not_zone_or_block() {
+fn bridges_do_not_zone_but_keep_the_ground_under_them_free() {
     let mut w = World::new();
     let id = w.road("basic_2l");
     let def = w.db.road(id).clone();
@@ -416,11 +416,77 @@ fn bridges_do_not_zone_or_block() {
     w.line("basic_2l", (1045.0, 940.0), (1045.0, 1060.0));
     w.sync();
     assert_eq!(w.grid.blocks_of(s), [None, None]);
-    // The ground road's cells at x = 1045 are not blocked by the bridge above them.
-    assert_eq!(
-        w.grid.valid_cells(),
-        w.grid.blocks().map(|(_, b)| b.cell_count()).sum::<usize>()
-    );
+    // T-332 (§18.1): the ground road's cells under the bridge, and one cell either side of it,
+    // are not lots; its cells farther away are.
+    let keep = def.width / 2.0 + cp_net::ZONE_CELL;
+    let mut far = 0;
+    for (bid, b) in w.grid.blocks() {
+        for (i, ok) in b.valid.iter().enumerate() {
+            let cell = ZoneCellRef {
+                block: bid,
+                cell: i as u16,
+            };
+            let o = w.grid.cell_footprint(cell).unwrap();
+            let zs = o.corners().map(|c| c.y - 1000.0);
+            let one_side = zs.iter().all(|z| *z > 0.0) || zs.iter().all(|z| *z < 0.0);
+            let near = zs.iter().map(|z| z.abs()).fold(f32::INFINITY, f32::min);
+            if *ok {
+                assert!(
+                    one_side && near >= keep - 0.5,
+                    "a valid cell under the bridge: {:?}",
+                    o.corners()
+                );
+                far += 1;
+            }
+        }
+    }
+    assert!(far > 0, "the cells away from the bridge are lots");
+}
+
+/// T-332 (§18.1 item 5): a deck over a street keeps the street's cells under it, and one cell
+/// either side of it, free; the street's other cells stay.
+#[test]
+fn a_deck_keeps_the_cells_under_it_free() {
+    let mut w = World::new();
+    w.line("basic_2l", (1000.0, 1000.0), (1200.0, 1000.0));
+    w.sync();
+    let all = w.grid.valid_cells();
+    let id = w.road("basic_2l");
+    let def = w.db.road(id).clone();
+    w.net
+        .add_segment(
+            &def,
+            id,
+            CubicBezier3::line(
+                Vec3::new(1100.0, 6.0, 900.0),
+                Vec3::new(1100.0, 6.0, 1100.0),
+            ),
+            Elevation::Elevated,
+        )
+        .unwrap();
+    w.sync();
+    let left = w.grid.valid_cells();
+    assert!(left < all && left > all / 2, "{all} -> {left}");
+    let keep = def.width / 2.0 + cp_net::ZONE_CELL;
+    for (bid, b) in w.grid.blocks() {
+        for (i, ok) in b.valid.iter().enumerate() {
+            let cell = ZoneCellRef {
+                block: bid,
+                cell: i as u16,
+            };
+            let o = w.grid.cell_footprint(cell).unwrap();
+            if *ok {
+                let xs = o.corners().map(|c| c.x - 1100.0);
+                let one_side = xs.iter().all(|x| *x > 0.0) || xs.iter().all(|x| *x < 0.0);
+                let near = xs.iter().map(|x| x.abs()).fold(f32::INFINITY, f32::min);
+                assert!(
+                    one_side && near >= keep - 0.5,
+                    "a valid cell under the deck: {:?}",
+                    o.corners()
+                );
+            }
+        }
+    }
 }
 
 #[test]

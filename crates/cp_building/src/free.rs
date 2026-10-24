@@ -11,7 +11,7 @@ use bevy_math::Vec2;
 use cp_content::{BuildingDefId, ContentDb};
 use cp_core::Cost;
 use cp_core::curve::to_xz;
-use cp_net::{Elevation, NetGraph};
+use cp_net::NetGraph;
 use cp_terrain::{Terrain, TileOwnership};
 use cp_zone::geom::{Quad, quad_aabb, quad_segment_distance, quads_overlap};
 use cp_zone::{MAX_CELL_SLOPE, ZoneGrid};
@@ -164,10 +164,10 @@ impl<'a> RectCtx<'a> {
     ) -> Self {
         let mut roads = Vec::new();
         for (_, seg) in net.segments() {
-            if seg.elevation != Elevation::Ground {
+            // A deck keeps the cells under it free too (T-332).
+            let Some(half) = seg.elevation.ground_strip(db.road(seg.road).width / 2.0) else {
                 continue;
-            }
-            let half = db.road(seg.road).width / 2.0;
+            };
             if seg.curve.bounds_distance_xz(around) > radius + half + ROAD_CLEARANCE_M + 1.0 {
                 continue;
             }

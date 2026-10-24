@@ -66,6 +66,20 @@ pub enum Elevation {
     Tunnel,
 }
 
+impl Elevation {
+    /// How far from its centre line a segment of this height keeps the ground free, for a road
+    /// of `half_width` (asphalt and sidewalks): the strip itself on the ground, one zone cell
+    /// more each side under a deck or a bridge (T-332, §18.1: no lot and no building under an
+    /// overpass), nothing over a tunnel (only its portals, which are ground pieces).
+    pub fn ground_strip(self, half_width: f32) -> Option<f32> {
+        match self {
+            Elevation::Ground => Some(half_width),
+            Elevation::Elevated | Elevation::Bridge => Some(half_width + crate::ZONE_CELL),
+            Elevation::Tunnel => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Node {
     /// World position (Y = height).

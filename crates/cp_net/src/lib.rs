@@ -14,12 +14,13 @@ pub mod run;
 pub mod stretches;
 
 pub use build::{
-    AppliedSnap, CONTROL_SPACING, ClearanceWarning, DemolishRef, ElevationMode, MAX_TUNNEL_DEPTH,
-    NodeRef, OneWayWarning, PIER_SPACING, PlannedSegment, PlannedSplit, RoadBuildError,
-    RoadBuildPlan, RoadPath, RoadPathRequest, SAME_DEPTH_TOL, SnapKind, SnapOptions, SnapReport,
-    SnapReportKind, TUNNEL_CLEARANCE, ZONE_CELL, clearance_report, in_junction, is_plain_cut,
-    junction_reach, one_way_report, out_of_end_footprint, pier_positions, segment_cost,
-    validate_build_plan, validate_road_path, validate_road_path_report,
+    AppliedSnap, CONTROL_SPACING, ClearanceWarning, DemolishRef, ELEVATED_CLEARANCE, ElevationMode,
+    GROUND_PIECE_H, LEVEL_TOL, MAX_TUNNEL_DEPTH, NodeRef, OneWayWarning, PIER_SPACING,
+    PlannedSegment, PlannedSplit, RoadBuildError, RoadBuildPlan, RoadPath, RoadPathRequest,
+    SAME_DEPTH_TOL, SnapKind, SnapOptions, SnapReport, SnapReportKind, TUNNEL_CLEARANCE, ZONE_CELL,
+    clearance_report, in_junction, is_plain_cut, junction_reach, one_way_report,
+    out_of_end_footprint, pier_positions, segment_cost, validate_build_plan, validate_road_path,
+    validate_road_path_report,
 };
 pub use command::{
     NetCommand, NetError, PART_SNAP, apply, apply_build_plan, build_unowned, command_strips,

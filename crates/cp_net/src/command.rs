@@ -583,7 +583,8 @@ fn build_literal(world: &mut World, plan: &BuildPlan) -> Result<Cost, NetError> 
 }
 
 /// The ground strips the road command `cmd` would lay (BUG-096): each new or upgraded ground
-/// segment's curve with the half width of its road (asphalt and sidewalks). Pure, from the same
+/// segment's curve with the half width of its road (asphalt and sidewalks), a deck's with one
+/// zone cell more each side (T-332, [`Elevation::ground_strip`]). Pure, from the same
 /// validators [`apply`] uses; empty for a command that lays no road or would be refused.
 pub fn command_strips(
     graph: &NetGraph,
@@ -596,8 +597,7 @@ pub fn command_strips(
         let hw = content.road(plan.road).width * 0.5;
         plan.segments
             .iter()
-            .filter(|s| s.elevation == Elevation::Ground)
-            .map(|s| (s.curve, hw))
+            .filter_map(|s| s.elevation.ground_strip(hw).map(|h| (s.curve, h)))
             .collect()
     };
     match cmd {
@@ -786,8 +786,19 @@ pub fn apply_build_plan(
     for s in &plan.segments {
         ids.push(graph.add_segment(def, plan.road, s.curve, s.elevation)?);
     }
+    classify_new_nodes(&mut graph, plan);
     merge_joints_near_junctions(&mut graph, &content, &ids);
     Ok(ids)
+}
+
+/// Gives the plan's new nodes the classes it decided by their heights (T-332): a ramp's foot is
+/// a ground node, a node in the air a raised one, whatever the segment that made it.
+fn classify_new_nodes(graph: &mut NetGraph, plan: &RoadBuildPlan) {
+    for (&p, &e) in plan.new_nodes.iter().zip(&plan.node_elevations) {
+        if let Some(id) = graph.find_node(p) {
+            graph.set_node_elevation(id, e);
+        }
+    }
 }
 
 /// The plan's splits grouped by original segment (plan order of first appearance), each
@@ -897,6 +908,7 @@ fn apply_plan_with(
     for s in &plan.segments {
         ids.push(graph.add_segment(def, plan.road, s.curve, s.elevation)?);
     }
+    classify_new_nodes(graph, plan);
     if merge {
         merge_joints_near_junctions(graph, content, &ids);
     }
