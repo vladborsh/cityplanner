@@ -41,7 +41,10 @@ fn a_game_saved_between_passes_keeps_the_contentment_and_runs_on_alike() {
     assert!(a.world().resource::<CityContentment>().homes > 0);
     // T-318b: trips to work finished since the pass wait in the trip book for the next one.
     assert!(
-        !a.world().resource::<cp_citizen::TripBook>().commutes.is_empty(),
+        !a.world()
+            .resource::<cp_citizen::TripBook>()
+            .commutes
+            .is_empty(),
         "commutes waiting for the next pass"
     );
     let bytes = save_runner(&a, content.content_hash(), "flatlands").unwrap();
