@@ -38,7 +38,9 @@ pub fn update_police(
     let roads = net.graph();
     let mut finder = None;
     // Grey deals that raise the crime around their target (T-325).
-    let deals = corruption.map_or_else(Vec::new, |c| c.crime_areas(db, &buildings));
+    let deals = corruption
+        .as_deref()
+        .map_or_else(Vec::new, |c| c.crime_areas(db, &buildings));
     for (id, b) in buildings.iter_bucket(COVERAGE_PERIOD as u32, bucket as u32) {
         if b.state != BuildingState::Active {
             continue;
@@ -95,9 +97,21 @@ pub fn update_police(
                 .map(|s| db.service(s));
             if let Some(svc) = svc {
                 let used = state.facility(station).copied().unwrap_or_default();
-                let take = crime.min(u64::from(svc.capacity.saturating_sub(used.used_today)));
+                // A captured station (T-326) clears only `1 - captured_cut` of what it books
+                // against its capacity, so it shows as busy as ever.
+                let honest = if corruption
+                    .as_deref()
+                    .is_some_and(|c| c.is_captured(station))
+                {
+                    1.0 - bal.corruption.captured_cut
+                } else {
+                    1.0
+                };
+                let free = svc.capacity.saturating_sub(used.used_today);
+                let take = crime.min((free as f32 * honest) as u64);
                 if take > 0 {
-                    state.facility_mut(station).used_today += take as u32;
+                    let booked = ((take as f32 / honest).ceil() as u32).min(free);
+                    state.facility_mut(station).used_today += booked;
                     crime -= take;
                 }
             }

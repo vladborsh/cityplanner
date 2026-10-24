@@ -680,11 +680,36 @@ pub struct CorruptionKnobs {
     pub inbox_max: f32,
     /// Trust a declined (or lapsed) offer costs on the clan edge.
     pub decline_trust: f32,
+    /// Chance a game day that a police station not yet on the take gets captured (T-326, §5),
+    /// at `C` 100 and a police budget of 100 %: `capture_day × C / 100 × (1 + capture_budget ×
+    /// (100 − budget) / 100)`.
+    pub capture_day: f32,
+    pub capture_budget: f32,
+    /// Share of its capacity a captured station no longer uses against crime.
+    pub captured_cut: f32,
+    /// Each captured station shields the mayor from a scandal by this much ("the roof"), up to
+    /// `roof_max`.
+    pub roof_per_station: f32,
+    pub roof_max: f32,
+    /// Chance a game day of a scandal (§6): `scandal_day × Σ evidence weight × exposure × (1 −
+    /// roof)`, with exposure `scandal_exposure × (1 − scandal_c_damp × C / 100)`.
+    pub scandal_day: f32,
+    pub scandal_exposure: f32,
+    pub scandal_c_damp: f32,
+    /// What a scandal costs per unit of the revealed evidence's weight: trust and a fine (whole
+    /// money units).
+    pub scandal_trust: f32,
+    pub scandal_fine: f32,
+    /// Game days after a scandal before the next may come.
+    pub scandal_pause: f32,
+    /// With institutions `I` at least this, a scandal also undoes its deal (its effects stop,
+    /// a lifted district policy comes back).
+    pub scandal_undo_i: f32,
 }
 
 impl CorruptionKnobs {
     /// Every knob, in declaration order: for validation and the content hash.
-    pub fn knobs(&self) -> [f32; 15] {
+    pub fn knobs(&self) -> [f32; 27] {
         [
             self.trust_start,
             self.trust_recover_day,
@@ -701,6 +726,18 @@ impl CorruptionKnobs {
             self.offer_land,
             self.inbox_max,
             self.decline_trust,
+            self.capture_day,
+            self.capture_budget,
+            self.captured_cut,
+            self.roof_per_station,
+            self.roof_max,
+            self.scandal_day,
+            self.scandal_exposure,
+            self.scandal_c_damp,
+            self.scandal_trust,
+            self.scandal_fine,
+            self.scandal_pause,
+            self.scandal_undo_i,
         ]
     }
 }
@@ -723,6 +760,18 @@ impl Default for CorruptionKnobs {
             offer_land: 1.0,
             inbox_max: 3.0,
             decline_trust: 1.0,
+            capture_day: 0.02,
+            capture_budget: 1.0,
+            captured_cut: 0.5,
+            roof_per_station: 0.15,
+            roof_max: 0.6,
+            scandal_day: 0.01,
+            scandal_exposure: 0.5,
+            scandal_c_damp: 0.5,
+            scandal_trust: 3.0,
+            scandal_fine: 5000.0,
+            scandal_pause: 10.0,
+            scandal_undo_i: 50.0,
         }
     }
 }

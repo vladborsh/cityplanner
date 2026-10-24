@@ -107,7 +107,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     // T-318a: re-recorded (was 0xc240e8eb90227496), format 67, the homes' contentment is saved.
     // T-324: re-recorded (was 0xe1466aa8b57adf30), format 68, the corruption state is saved.
     // T-318b: re-recorded (was 0x2327d9f958eaacfd), format 71, trip start ticks and commutes.
-    assert_eq!(sim.checksum(), 0x9a6cb34bf9dab902, "state at load"); // T-325: re-recorded (was 0x1c7c0c4d92f1e0d8), format 72, grey deals. T-313: re-recorded (was 0x843f183090b1d8f7), format 69, lane rules. T-303a: re-recorded (was 0xf1dee787e8fe8b5f), format 62, the signs on the nodes. T-308: re-recorded, the new utility content changes the content hash.
+    assert_eq!(sim.checksum(), 0x52ab476c4d87e8aa, "state at load"); // T-326: re-recorded (was 0x9a6cb34bf9dab902), format 74, the scandals. T-325: re-recorded (was 0x1c7c0c4d92f1e0d8), format 72, grey deals. T-313: re-recorded (was 0x843f183090b1d8f7), format 69, lane rules. T-303a: re-recorded (was 0xf1dee787e8fe8b5f), format 62, the signs on the nodes. T-308: re-recorded, the new utility content changes the content hash.
     // T-280: re-recorded (was 0xa0961668822b2784 since T-282): only 15 % of car trips and
     // 25 % of goods trucks take a vehicle, the rest run abstractly, so the day after the load
     // has other cars on the road.
@@ -116,7 +116,7 @@ fn m1_small_round_trips_and_runs_to_the_recorded_checksum() {
     // of the ground per tick, so the day after the load runs differently.
     assert_eq!(
         after_a_day(&mut sim),
-        0x031d222b3121f753, // T-329a: re-recorded (was 0x749ec09458fd9988), walkers 1.19-1.61 m/s by citizen hash. T-325: re-recorded (was 0x185e48a7f33b42fe), format 72, grey deals and the corruption update. T-318b: re-recorded (was 0xef8c3714acf8a86b), format 71, the work and commute factors, move-in by contentment, move-out and wellbeing. T-313: re-recorded (was 0x69a2707ad7c5ea29), format 69, lane rules. // T-324: re-recorded (was 0x2217973baef189aa), format 68, trust and the daily corruption update. T-318a: re-recorded (was 0x5a953b38964f73b5), format 67, the contentment pass. T-314: re-recorded (was 0x6aa91e835db6a43d), format 66, free-flowing cars take one step a tick. T-315: re-recorded (was 0xa2e6dc91e00d114c), format 65, routes by measured lane delay and traffic re-routes. T-302c: re-recorded (was 0xf3b290b7e23c1445), format 64, the trolleybus content, the fixture regenerated on T-311/T-306. BUG-113: re-recorded (was 0xbda760a646dccb6b), garbage trucks go for half a problem and book the landfill's day. T-311: re-recorded (was 0x474144ecf293bb70), half the arrivals (MOVE_IN_ONE_IN 4) and the trips of the departed cancelled at once. T-302b: re-recorded (was 0x3525f19247d6d612), format 63, the tram content. T-305: re-recorded (was 0x1172029647ed4c94), 70 km/h avenues and reach by time. T-303a: re-recorded (was 0x952c338864d38fa6), format 62. T-300b: re-recorded (was 0x46c86fe1c3fd6e4d), the water dirt. T-301: re-recorded, the day is 2048 ticks and the test runs a day (was 0x68f162061e8c655). T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
+        0x3523ec2aa595fa79, // T-326: re-recorded (was 0x031d222b3121f753), format 74, the scandals. T-329a: re-recorded (was 0x749ec09458fd9988), walkers 1.19-1.61 m/s by citizen hash. T-325: re-recorded (was 0x185e48a7f33b42fe), format 72, grey deals and the corruption update. T-318b: re-recorded (was 0xef8c3714acf8a86b), format 71, the work and commute factors, move-in by contentment, move-out and wellbeing. T-313: re-recorded (was 0x69a2707ad7c5ea29), format 69, lane rules. // T-324: re-recorded (was 0x2217973baef189aa), format 68, trust and the daily corruption update. T-318a: re-recorded (was 0x5a953b38964f73b5), format 67, the contentment pass. T-314: re-recorded (was 0x6aa91e835db6a43d), format 66, free-flowing cars take one step a tick. T-315: re-recorded (was 0xa2e6dc91e00d114c), format 65, routes by measured lane delay and traffic re-routes. T-302c: re-recorded (was 0xf3b290b7e23c1445), format 64, the trolleybus content, the fixture regenerated on T-311/T-306. BUG-113: re-recorded (was 0xbda760a646dccb6b), garbage trucks go for half a problem and book the landfill's day. T-311: re-recorded (was 0x474144ecf293bb70), half the arrivals (MOVE_IN_ONE_IN 4) and the trips of the departed cancelled at once. T-302b: re-recorded (was 0x3525f19247d6d612), format 63, the tram content. T-305: re-recorded (was 0x1172029647ed4c94), 70 km/h avenues and reach by time. T-303a: re-recorded (was 0x952c338864d38fa6), format 62. T-300b: re-recorded (was 0x46c86fe1c3fd6e4d), the water dirt. T-301: re-recorded, the day is 2048 ticks and the test runs a day (was 0x68f162061e8c655). T-295: re-recorded (balance: taxes x1.6, fire x2, landfill 3500, police 2000, deaths from 50). BUG-095: re-recorded, services make no shop goods and are no industry in the demand.
         "load + a day"
     );
     // T-314: a town of 2.5k residents stays under the car budget: with visible_share_auto on
@@ -163,7 +163,8 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // T-324: re-recorded (was 0x7abb7a47e5410231), format 68, the corruption state is saved.
     // T-318b: re-recorded (was 0xb32037d8fec814ab), format 71, trip start ticks and commutes.
     // T-325: re-recorded (was 0x83a43f32f177e8cd), format 72, grey deals.
-    assert_eq!(sim.checksum(), 0x1cd996d17d1d4369, "state at load");
+    // T-326: re-recorded (was 0x1cd996d17d1d4369), format 74, the scandals.
+    assert_eq!(sim.checksum(), 0x31758a050c798ea3, "state at load");
 
     // The first tick drains the removed list; the rest of the jam keeps moving and arriving.
     sim.tick_once();
@@ -191,7 +192,8 @@ fn m1_traffic_round_trips_and_its_trips_go_on() {
     // T-318b: re-recorded (was 0x59e639e2f01f8194), format 71, the T-318b factors and effects.
     // T-325: re-recorded (was 0xb754511da09cbacb), format 72, grey deals and the corruption update.
     // T-329a: re-recorded (was 0x6405753f9c4a70ab), walkers 1.19-1.61 m/s by citizen hash.
-    assert_eq!(sim.checksum(), 0xecd140d9f407c6c6, "load + a day");
+    // T-326: re-recorded (was 0xecd140d9f407c6c6), format 74, the scandals.
+    assert_eq!(sim.checksum(), 0xaaf2d5ebce1890a2, "load + a day");
     // T-290: the trips of the saved jam arrive (completed grows by hundreds); the number in flight
     // no longer falls, the routine plans new ones all day (most of them abstract, T-280).
     let done_after = sim.world().resource::<TripBook>().completed;

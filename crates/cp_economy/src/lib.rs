@@ -27,7 +27,7 @@ pub use contentment::{
 };
 pub use corruption::{
     ActiveDeal, CorruptionCommand, CorruptionError, CorruptionState, DealTarget, Edge, Evidence,
-    Offer, update_corruption,
+    Offer, Scandal, update_corruption,
 };
 pub use deathcare::update_deathcare;
 pub use demand::{DemandAcc, shortage_jobs, smooth, update_demand};

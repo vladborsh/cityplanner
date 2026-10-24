@@ -1204,4 +1204,7 @@
     "A sponsor pays for a campaign that makes the city love its mayor. The money trail is long.": "Спонсор оплачивает кампанию, после которой город полюбит мэра. Денежный след длинный.",
     "For {n} days": ["На {n} день", "На {n} дня", "На {n} дней"],
     "Answer within {n} days": ["Ответить за {n} день", "Ответить за {n} дня", "Ответить за {n} дней"],
+    "Scandals": "Скандалы",
+    "Day {day}: {deal} came out · trust -{n} · fine {money}": "День {day}: всплыла сделка «{deal}» · доверие -{n} · штраф {money}",
+    "the deal is undone": "сделка отменена",
 }

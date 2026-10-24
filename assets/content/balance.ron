@@ -368,6 +368,13 @@ Balance((
     // Offers (T-325): from deals_population residents, one every offer_days / (1 + extra residents
     // / offer_pop_step + offer_land * mean land value / 100) days (>= offer_days_min), at most
     // inbox_max waiting. A declined or lapsed offer costs decline_trust trust on the clan edge.
+    // Captured police (T-326): a station gets captured with capture_day x C / 100 x (1 +
+    // capture_budget x (100 - police budget) / 100) a day and then uses captured_cut less of its
+    // capacity against crime; each shields from scandals by roof_per_station (<= roof_max).
+    // Scandals: scandal_day x evidence weight x exposure x (1 - roof) a day, exposure =
+    // scandal_exposure x (1 - scandal_c_damp x C / 100); one deal revealed (the heavier the
+    // likelier), trust -scandal_trust and a fine of scandal_fine per weight, then scandal_pause
+    // days of quiet; with I >= scandal_undo_i the deal is undone too.
     corruption: (
         trust_start: 60.0,
         trust_recover_day: 0.2,
@@ -384,6 +391,18 @@ Balance((
         offer_land: 1.0,
         inbox_max: 3.0,
         decline_trust: 1.0,
+        capture_day: 0.02,
+        capture_budget: 1.0,
+        captured_cut: 0.5,
+        roof_per_station: 0.15,
+        roof_max: 0.6,
+        scandal_day: 0.01,
+        scandal_exposure: 0.5,
+        scandal_c_damp: 0.5,
+        scandal_trust: 3.0,
+        scandal_fine: 5000.0,
+        scandal_pause: 10.0,
+        scandal_undo_i: 50.0,
     ),
 
     // --- Networks (T-181): distances of water, sewage and power // tune later ---

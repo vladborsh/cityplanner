@@ -1,12 +1,12 @@
 //! T-324: the corruption state is saved whole: a game saved with evidence, an offer and a
-//! captured station loads with the same state and runs on to the same checksum.
+//! captured station (and, T-326, a scandal) loads with the same state and runs on to the same checksum.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use cp_content::ContentDb;
 use cp_core::SimLimits;
-use cp_economy::{ActiveDeal, CorruptionState, DealTarget, Evidence, Offer};
+use cp_economy::{ActiveDeal, CorruptionState, DealTarget, Evidence, Offer, Scandal};
 use cp_save::{load_into_runner, save_runner};
 use cp_sim::SimRunner;
 use cp_terrain::Terrain;
@@ -59,6 +59,14 @@ fn the_corruption_state_survives_a_save_and_runs_on_alike() {
             target: Some(DealTarget::Building(station)),
             accepted_day: 1,
             until_day: 0,
+        }],
+        scandals: vec![Scandal {
+            deal: "land".into(),
+            day: 2,
+            weight: 4.0,
+            trust: 12.0,
+            fine: 20000,
+            undone: false,
         }],
     };
     a.world_mut()

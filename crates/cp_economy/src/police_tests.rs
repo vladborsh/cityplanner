@@ -218,3 +218,29 @@ fn neighborhood_watch_cuts_the_crime_of_the_buildings_in_its_district_only() {
     assert_eq!(t.crime(outside), 36);
     assert_eq!(t.crime(inside), 27);
 }
+
+#[test]
+fn a_captured_station_clears_half_the_crime_but_looks_as_busy() {
+    let day = |captured: bool| {
+        let mut t = town(20);
+        // Covered houses make ~7 crime a day each: eight are more than the station clears.
+        let houses: Vec<_> = (0..8).map(|_| t.put("house", 0)).collect();
+        let post = t.put("post", 1);
+        let mut c = crate::CorruptionState::default();
+        if captured {
+            c.captured = vec![post];
+        }
+        t.world.insert_resource(c);
+        // By the fourth day a backlog waits.
+        t.run(0, 4 * TICKS_PER_DAY - 1);
+        let crime: u32 = houses.iter().map(|&h| u32::from(t.crime(h))).sum();
+        (crime, t.used(post))
+    };
+    let (honest, honest_used) = day(false);
+    let (captured, captured_used) = day(true);
+    assert_eq!(honest_used, 20, "the station works to its capacity");
+    assert_eq!(captured_used, 20, "the captured one books as much (T-326)");
+    // The honest station clears 20 a day, the captured one 10 (captured_cut 0.5): over three
+    // days of backlog that is about 30 more.
+    assert!(captured >= honest + 25, "crime {honest} -> {captured}");
+}

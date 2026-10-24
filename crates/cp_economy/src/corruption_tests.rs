@@ -161,3 +161,158 @@ fn the_contents_six_deals_load() {
         ]
     );
 }
+
+fn evidence(deals: &[(&str, f32)]) -> CorruptionState {
+    CorruptionState {
+        corruption: 20.0,
+        trust: 70.0,
+        started: true,
+        evidence: deals
+            .iter()
+            .map(|&(d, w)| crate::Evidence {
+                deal: d.into(),
+                accepted_day: 0,
+                weight: w,
+            })
+            .collect(),
+        ..CorruptionState::default()
+    }
+}
+
+/// The first day (from day 1) a scandal breaks, and the deal it reveals.
+fn first_scandal(
+    k: &CorruptionKnobs,
+    mut s: CorruptionState,
+    seed: u64,
+) -> Option<(u32, String, CorruptionState)> {
+    let rng = cp_core::SimRng::seed_from_u64(seed);
+    for day in 1..2000u64 {
+        let tick = cp_core::Tick(day * cp_core::time::TICKS_PER_DAY);
+        if s.scandal_day(k, &rng, tick).is_some() {
+            let d = s.scandals.last().unwrap();
+            return Some((d.day, d.deal.clone(), s));
+        }
+    }
+    None
+}
+
+#[test]
+fn evidence_breaks_a_scandal_deterministically_by_the_seed_heavier_evidence_likelier() {
+    let k = k();
+    let s = evidence(&[("kickback", 2.0), ("land", 4.0)]);
+    let a = first_scandal(&k, s.clone(), 7).expect("a scandal comes");
+    let b = first_scandal(&k, s.clone(), 7).unwrap();
+    assert_eq!((a.0, &a.1), (b.0, &b.1), "same seed, same scandal");
+    assert_eq!(a.2, b.2);
+    let (_, deal, after) = a;
+    let scandal = after.scandals.last().unwrap();
+    let w = if deal == "land" { 4.0 } else { 2.0 };
+    assert_eq!(scandal.weight, w);
+    assert_eq!(scandal.trust, k.scandal_trust * w);
+    assert_eq!(after.trust, 70.0 - k.scandal_trust * w);
+    assert_eq!(scandal.fine, (k.scandal_fine * w) as i64);
+    assert_eq!(after.evidence.len(), 1, "the revealed evidence goes");
+    assert!(!scandal.undone, "no institutions, the deal stands");
+
+    // Over many seeds the heavier deal comes out about twice as often.
+    let land = (0..200)
+        .filter(|&seed| first_scandal(&k, s.clone(), seed).unwrap().1 == "land")
+        .count();
+    assert!((110..=160).contains(&land), "land revealed {land} of 200");
+
+    // No evidence, no scandal; more corruption hides it, the captured stations cover it.
+    assert!(first_scandal(&k, evidence(&[]), 7).is_none());
+    let mut hidden = s.clone();
+    hidden.corruption = 90.0;
+    let mut roofed = s.clone();
+    roofed.captured = (0..4)
+        .map(|i| cp_core::Id::<cp_building::Building>::new(i, 0))
+        .collect();
+    assert!(hidden.scandal_chance(&k) < s.scandal_chance(&k));
+    assert_eq!(roofed.roof(&k), k.roof_max);
+    assert!((roofed.scandal_chance(&k) - s.scandal_chance(&k) * (1.0 - k.roof_max)).abs() < 1e-6);
+}
+
+#[test]
+fn one_scandal_at_a_time_and_strong_institutions_undo_the_deal() {
+    let k = CorruptionKnobs {
+        scandal_day: 1.0,
+        scandal_exposure: 1.0,
+        scandal_c_damp: 0.0,
+        ..k()
+    };
+    let mut s = evidence(&[("developer", 2.0), ("land", 4.0)]);
+    s.institutions = k.scandal_undo_i;
+    s.active.push(crate::ActiveDeal {
+        deal: "developer".into(),
+        target: None,
+        accepted_day: 0,
+        until_day: 0,
+    });
+    let rng = cp_core::SimRng::seed_from_u64(1);
+    let at = |d: u64| cp_core::Tick(d * cp_core::time::TICKS_PER_DAY);
+    let mut broke = Vec::new();
+    for d in 1..=30 {
+        if let Some((fine, undone)) = s.scandal_day(&k, &rng, at(d)) {
+            broke.push((d, fine, undone.map(|a| a.deal)));
+        }
+    }
+    assert_eq!(broke.len(), 2, "{broke:?}");
+    assert_eq!(
+        broke[1].0 - broke[0].0,
+        k.scandal_pause as u64,
+        "a pause between"
+    );
+    assert!(s.evidence.is_empty());
+    assert!(s.active.is_empty(), "the developer deal is undone");
+    assert!(s.scandals.iter().all(|x| x.undone));
+    let developer = broke.iter().find(|b| b.2.is_some()).unwrap();
+    assert_eq!(developer.1, cp_core::Cost::from_units(k.scandal_fine * 2.0));
+}
+
+#[test]
+fn stations_get_captured_more_with_corruption_and_a_low_police_budget() {
+    let k = k();
+    let mut s = CorruptionState {
+        corruption: 50.0,
+        ..CorruptionState::default()
+    };
+    assert_eq!(s.capture_chance(&k, 100), k.capture_day * 0.5);
+    assert!(s.capture_chance(&k, 50) > s.capture_chance(&k, 100));
+    assert!(s.capture_chance(&k, 150) < s.capture_chance(&k, 100));
+    assert_eq!(
+        CorruptionState::default().capture_chance(&k, 50),
+        0.0,
+        "no C, no capture"
+    );
+
+    let stations: Vec<_> = (0..20)
+        .map(|i| cp_core::Id::<cp_building::Building>::new(i, 0))
+        .collect();
+    let rng = cp_core::SimRng::seed_from_u64(3);
+    s.corruption = 100.0;
+    for d in 1..=30u64 {
+        s.capture_day(
+            &k,
+            &stations,
+            50,
+            &rng,
+            cp_core::Tick(d * cp_core::time::TICKS_PER_DAY),
+        );
+    }
+    assert!(!s.captured.is_empty() && s.captured.len() < stations.len());
+    assert!(s.captured.is_sorted());
+    assert!(s.is_captured(s.captured[0]));
+    // A demolished station leaves the list.
+    let gone = s.captured[0];
+    let left: Vec<_> = stations.iter().copied().filter(|&b| b != gone).collect();
+    s.corruption = 0.0;
+    s.capture_day(
+        &k,
+        &left,
+        100,
+        &rng,
+        cp_core::Tick(31 * cp_core::time::TICKS_PER_DAY),
+    );
+    assert!(!s.is_captured(gone));
+}

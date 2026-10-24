@@ -1,12 +1,13 @@
 //! Offers (T-325, `architecture/corruption.md` §4, §10): the grey deals waiting in the inbox. A
 //! card per offer says what it brings now, what it costs in corruption and evidence, what it is
 //! about and how long it waits; Accept and Decline send `SimCommand::Corruption`. The window
-//! button in the top bar shows how many wait.
+//! button in the top bar shows how many wait. Below them, the scandals that broke (T-326, §6),
+//! newest first.
 
 use bevy_egui::egui;
 use cp_content::{ContentDb, DealDef};
 use cp_core::Cost;
-use cp_economy::{CorruptionCommand, DealTarget, Offer};
+use cp_economy::{CorruptionCommand, DealTarget, Offer, Scandal};
 use cp_locale::{tr, trf, trn};
 use cp_sim::{SimCommand, SimView};
 use cp_tools::{CommandOutbox, format_money};
@@ -161,7 +162,36 @@ pub fn offers_window(
                 }
             });
         }
+        if !c.scandals.is_empty() {
+            ui.separator();
+            ui.strong(tr("Scandals"));
+            for s in c.scandals.iter().rev().take(SCANDALS_SHOWN) {
+                ui.label(scandal_text(db, s));
+            }
+        }
     });
+}
+
+/// Scandals listed in the window, newest first.
+pub const SCANDALS_SHOWN: usize = 5;
+
+/// One line about a scandal that broke.
+pub fn scandal_text(db: &ContentDb, s: &Scandal) -> String {
+    let deal = db
+        .deal(&s.deal)
+        .map_or_else(|| s.deal.clone(), |d| tr(&d.name));
+    let line = trf!(
+        "Day {day}: {deal} came out · trust -{n} · fine {money}",
+        day = s.day.to_string(),
+        deal = deal,
+        n = format!("{:.0}", s.trust),
+        money = format_money(Cost::from_units(s.fine as f32))
+    );
+    if s.undone {
+        format!("{line} · {}", tr("the deal is undone"))
+    } else {
+        line
+    }
 }
 
 #[cfg(test)]
@@ -192,6 +222,25 @@ mod tests {
             kickback.contains(&"For 30 days".to_string()),
             "{kickback:?}"
         );
+    }
+
+    #[test]
+    fn a_scandal_line_names_the_deal_and_its_cost() {
+        let db = db();
+        let s = Scandal {
+            deal: "land".into(),
+            day: 12,
+            weight: 4.0,
+            trust: 12.0,
+            fine: 20000,
+            undone: true,
+        };
+        let line = scandal_text(&db, &s);
+        assert!(
+            line.starts_with("Day 12: Land for friends came out · trust -12 · fine "),
+            "{line}"
+        );
+        assert!(line.ends_with(" · the deal is undone"), "{line}");
     }
 
     #[test]

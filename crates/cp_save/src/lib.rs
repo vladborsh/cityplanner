@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 72;
+pub const FORMAT_VERSION: u32 = 74;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -206,7 +206,7 @@ pub struct SaveData {
     pub home_contentment: cp_building::HomeContentment,
     pub city_contentment: cp_economy::CityContentment,
     /// Corruption, institutions, trust, evidence and the inbox (T-324). Added in v68; the running
-    /// deals (T-325) and `Tourists::boost_pct` in v72.
+    /// deals (T-325) and `Tourists::boost_pct` in v72; the scandals (T-326) in v74.
     pub corruption: cp_economy::CorruptionState,
     /// Names of the definitions the `*DefId` indices above stand for. Added in v18; see
     /// [`DefNames`] and [`SaveData::remap_defs`].

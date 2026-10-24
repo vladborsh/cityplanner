@@ -1054,10 +1054,19 @@ impl ContentDb {
                     k.trust_ceiling_clan,
                     k.edge,
                     k.tax_trust_full,
+                    k.scandal_undo_i,
                 ]
                 .iter()
                 .any(|&v| v > 100.0)
-                || k.tax_loss_max > 1.0
+                || [
+                    k.tax_loss_max,
+                    k.capture_day,
+                    k.captured_cut,
+                    k.roof_max,
+                    k.scandal_c_damp,
+                ]
+                .iter()
+                .any(|&v| v > 1.0)
                 || k.offer_days_min < 1.0
                 || k.offer_days < k.offer_days_min
                 || k.offer_pop_step < 1.0
@@ -1065,7 +1074,7 @@ impl ContentDb {
                 errors.push(ContentError::new(
                     path,
                     Some("corruption"),
-                    "finite and >= 0, points <= 100, tax_loss_max <= 1, 1 <= offer_days_min <= offer_days, offer_pop_step >= 1".to_string(),
+                    "finite and >= 0, points <= 100, tax_loss_max, capture_day, captured_cut, roof_max and scandal_c_damp <= 1, 1 <= offer_days_min <= offer_days, offer_pop_step >= 1".to_string(),
                 ));
             }
             if b.level_checks == 0 {

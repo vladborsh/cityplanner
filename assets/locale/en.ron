@@ -1204,4 +1204,7 @@
     "A sponsor pays for a campaign that makes the city love its mayor. The money trail is long.": "A sponsor pays for a campaign that makes the city love its mayor. The money trail is long.",
     "For {n} days": ["For {n} day", "For {n} days"],
     "Answer within {n} days": ["Answer within {n} day", "Answer within {n} days"],
+    "Scandals": "Scandals",
+    "Day {day}: {deal} came out · trust -{n} · fine {money}": "Day {day}: {deal} came out · trust -{n} · fine {money}",
+    "the deal is undone": "the deal is undone",
 }

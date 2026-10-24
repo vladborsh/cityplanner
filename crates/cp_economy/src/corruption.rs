@@ -21,6 +21,15 @@
 //!   from the target ([`crate::EmissionInputs::boost`]), more crime around it
 //!   (`update_police`), more tourists ([`cp_transit::Tourists::boost_pct`]). Declining costs
 //!   trust on the clan edge.
+//! * **Captured police** (T-326, §5): once a day every police station not yet on the take is
+//!   captured with a chance that grows with `C` and falls with the police budget. A captured
+//!   station uses `captured_cut` less of its capacity against crime (`update_police`), though
+//!   the statistics show it working in full, and each one shields the mayor from a scandal.
+//! * **Scandals** (T-326, §6): once a day, unless one broke less than `scandal_pause` days ago,
+//!   a roll on the evidence: the more and the heavier, the likelier; `C` hides it, captured
+//!   stations cover it. One deal comes out (the heavier the likelier): trust falls, the city
+//!   pays a fine, the evidence goes, and with strong institutions the deal is undone. Recorded
+//!   in [`CorruptionState::scandals`].
 //!
 //! Saved whole; points are `f32` (same binary and platform determinism, AGENTS.md).
 
@@ -32,7 +41,9 @@ use bevy_ecs::world::World;
 use bevy_math::Vec2;
 use cp_building::{BuildingGrid, BuildingId, BuildingState};
 use cp_citizen::CitizenGrid;
-use cp_content::{ContentDb, CorruptionKnobs, DealDef, DealWants, SimContent, ZoneType};
+use cp_content::{
+    ContentDb, CorruptionKnobs, DealDef, DealWants, ServiceKind, SimContent, ZoneType,
+};
 use cp_core::time::TICKS_PER_DAY;
 use cp_core::{Cost, SimRng, Tick, Treasury};
 use cp_district::{DistrictId, Districts};
@@ -42,6 +53,10 @@ use crate::land::LandGrids;
 
 /// Sub-stream of the sim RNG the offers are drawn from (forked by the tick).
 pub const CORRUPTION_STREAM: u64 = 0xC022_0F7E;
+/// Sub-stream of the daily capture rolls of the police stations (T-326).
+pub const CAPTURE_STREAM: u64 = 0xC022_CA97;
+/// Sub-stream of the daily scandal roll (T-326).
+pub const SCANDAL_STREAM: u64 = 0xC022_5CA4;
 
 /// An accepted deal nobody has found out about yet (§2): it stays until a scandal reveals it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -50,6 +65,22 @@ pub struct Evidence {
     pub deal: String,
     pub accepted_day: u32,
     pub weight: f32,
+}
+
+/// A scandal that broke (§6, T-326): the deal that came out and what it cost.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Scandal {
+    /// The deal's content id.
+    pub deal: String,
+    pub day: u32,
+    /// The weight of the revealed evidence.
+    pub weight: f32,
+    /// Trust it cost.
+    pub trust: f32,
+    /// The fine the city paid, whole money units.
+    pub fine: i64,
+    /// Whether the deal was undone (institutions at `scandal_undo_i` or more).
+    pub undone: bool,
 }
 
 /// What an offer is about, lit on the map (§4).
@@ -125,6 +156,8 @@ pub struct CorruptionState {
     pub scandal_cooldown_until: u32,
     /// Accepted deals whose effects still run, in the order they were accepted (T-325).
     pub active: Vec<ActiveDeal>,
+    /// The scandals that broke, oldest first (T-326).
+    pub scandals: Vec<Scandal>,
 }
 
 impl Default for CorruptionState {
@@ -140,6 +173,7 @@ impl Default for CorruptionState {
             next_offer_day: 0,
             scandal_cooldown_until: 0,
             active: Vec::new(),
+            scandals: Vec::new(),
         }
     }
 }
@@ -245,6 +279,108 @@ impl CorruptionState {
             .filter_map(|a| db.deal(&a.deal))
             .map(|d| d.tourists)
             .sum()
+    }
+
+    /// Whether police station `b` is on the take (T-326).
+    pub fn is_captured(&self, b: BuildingId) -> bool {
+        self.captured.binary_search(&b).is_ok()
+    }
+
+    /// How much the captured stations shield the mayor from a scandal, `0..=roof_max`.
+    pub fn roof(&self, k: &CorruptionKnobs) -> f32 {
+        (k.roof_per_station * self.captured.len() as f32).min(k.roof_max)
+    }
+
+    /// Chance of a scandal today, cooldown aside (§6).
+    pub fn scandal_chance(&self, k: &CorruptionKnobs) -> f32 {
+        let weight: f32 = self.evidence.iter().map(|e| e.weight).sum();
+        let exposure = k.scandal_exposure * (1.0 - k.scandal_c_damp * self.corruption / 100.0);
+        (k.scandal_day * weight * exposure.max(0.0) * (1.0 - self.roof(k))).clamp(0.0, 1.0)
+    }
+
+    /// Chance today that a police station not yet on the take gets captured, with the police
+    /// budget at `budget` percent (§5).
+    pub fn capture_chance(&self, k: &CorruptionKnobs, budget: u8) -> f32 {
+        let budget = (100.0 - f32::from(budget)) / 100.0;
+        (k.capture_day * self.corruption / 100.0 * (1.0 + k.capture_budget * budget).max(0.0))
+            .clamp(0.0, 1.0)
+    }
+
+    /// The daily capture rolls: stations that are gone leave the list, each of `stations` (in
+    /// id order) not yet on the take may join it.
+    pub fn capture_day(
+        &mut self,
+        k: &CorruptionKnobs,
+        stations: &[BuildingId],
+        budget: u8,
+        rng: &SimRng,
+        tick: Tick,
+    ) {
+        self.captured.retain(|b| stations.contains(b));
+        let chance = self.capture_chance(k, budget);
+        if chance <= 0.0 {
+            return;
+        }
+        let mut r = rng.fork(CAPTURE_STREAM, tick);
+        for &b in stations {
+            if r.next_f32() < chance
+                && let Err(at) = self.captured.binary_search(&b)
+            {
+                self.captured.insert(at, b);
+            }
+        }
+    }
+
+    /// The daily scandal roll (§6). A scandal takes trust and the evidence, records itself
+    /// and returns the fine and, when the institutions undo the deal, its running effects.
+    pub fn scandal_day(
+        &mut self,
+        k: &CorruptionKnobs,
+        rng: &SimRng,
+        tick: Tick,
+    ) -> Option<(Cost, Option<ActiveDeal>)> {
+        let today = day_of(tick);
+        if self.evidence.is_empty() || today < self.scandal_cooldown_until {
+            return None;
+        }
+        let mut r = rng.fork(SCANDAL_STREAM, tick);
+        if r.next_f32() >= self.scandal_chance(k) {
+            return None;
+        }
+        let total: f32 = self.evidence.iter().map(|e| e.weight).sum();
+        let mut pick = r.next_f32() * total;
+        let at = self
+            .evidence
+            .iter()
+            .position(|e| {
+                pick -= e.weight;
+                pick < 0.0
+            })
+            .unwrap_or(self.evidence.len() - 1);
+        let e = self.evidence.remove(at);
+        let trust = (k.scandal_trust * e.weight).min(self.trust_now(k));
+        self.trust = (self.trust_now(k) - trust).clamp(0.0, 100.0);
+        self.started = true;
+        let fine = (k.scandal_fine * e.weight).round() as i64;
+        let undone = self.institutions >= k.scandal_undo_i;
+        let deal = if undone {
+            self.active
+                .iter()
+                .position(|a| a.deal == e.deal)
+                .map(|at| self.active.remove(at))
+        } else {
+            None
+        };
+        self.scandal_cooldown_until = today + k.scandal_pause.ceil() as u32;
+        self.scandals.push(Scandal {
+            deal: e.deal,
+            day: today,
+            weight: e.weight,
+            trust,
+            fine,
+            undone,
+        });
+        Some((Cost::from_units(fine as f32), deal))
     }
 
     /// What a declined (or lapsed) offer does: on the clan edge it costs trust.
@@ -499,7 +635,8 @@ pub fn update_corruption(
     citizens: Res<CitizenGrid>,
     buildings: Res<BuildingGrid>,
     land: Res<LandGrids>,
-    districts: Option<Res<Districts>>,
+    mut districts: Option<ResMut<Districts>>,
+    economy: Option<Res<crate::EconomyState>>,
     (mut state, mut treasury, tourists): (
         ResMut<CorruptionState>,
         ResMut<Treasury>,
@@ -534,6 +671,32 @@ pub fn update_corruption(
     });
     if paid.0 != 0 {
         treasury.balance += paid;
+    }
+    let k = &db.balance().corruption;
+    let stations: Vec<BuildingId> = buildings
+        .iter()
+        .filter(|(_, b)| {
+            b.state == BuildingState::Active
+                && db
+                    .building_service(b.def)
+                    .is_some_and(|s| db.service(s).kind == ServiceKind::Police)
+        })
+        .map(|(id, _)| id)
+        .collect();
+    let budget = economy.map_or(100, |e| e.budgets.get(ServiceKind::Police));
+    state.capture_day(k, &stations, budget, &rng, *tick);
+    if let Some((fine, deal)) = state.scandal_day(k, &rng, *tick) {
+        treasury.balance = treasury.balance - fine;
+        if let Some(a) = deal
+            && let Some(def) = db.deal(&a.deal)
+            && def.lift_policy
+            && let (DealWants::DistrictWith(policy), Some(DealTarget::District(d))) =
+                (def.target, a.target)
+            && let Some(ds) = districts.as_deref_mut()
+            && let Some(d) = ds.get_mut(d)
+        {
+            d.policies |= policy.bit();
+        }
     }
     let boost = (state.tourist_boost(db) * 100.0).round().clamp(0.0, 1000.0) as u16;
     if let Some(mut t) = tourists
