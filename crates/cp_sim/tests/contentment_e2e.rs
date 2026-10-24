@@ -239,7 +239,7 @@ fn happier_homes_take_more_households() {
     let mut sim = city();
     run(&mut sim, cp_economy::CITY_PERIOD, &Progress::ALL);
     let db = sim.world().resource::<cp_content::SimContent>().0.clone();
-    let happy = |id: BuildingId| id.index % 2 == 0;
+    let happy = |id: BuildingId| id.index.is_multiple_of(2);
     // Per group (happy, unhappy): households now, and homes with a free apartment.
     let count = |sim: &SimRunner| {
         let grid = sim.world().resource::<CitizenGrid>();
