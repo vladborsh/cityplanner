@@ -406,7 +406,7 @@ fn leisure_near(targets: Option<&LeisureTargets>, pos: Vec2, reach: f32) -> bool
 }
 
 /// `Economy`-phase system, see the module docs.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn update_contentment(
     tick: Res<Tick>,
     content: Option<Res<SimContent>>,
