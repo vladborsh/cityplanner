@@ -1296,3 +1296,22 @@ fn cars_follow_the_lane_rules_of_a_junction() {
     assert!(used < 800, "everybody gets through");
     assert_eq!((rig.arrived, rig.invalid, rig.stuck), (6, 0, 0));
 }
+
+#[test]
+fn every_connection_of_a_cross_knows_the_crossings_it_drives_over() {
+    let mut s = sim();
+    let arms = cross(&mut s, "basic_2l");
+    let rig = Rig::new(s);
+    let net = rig.sim.world.resource::<cp_net::NetGraph>();
+    let mut seen = 0;
+    for exits in &rig.graph.exits {
+        for ex in exits {
+            let (Some(i), Some(o)) = (ex.crossings[0], ex.crossings[1]) else {
+                panic!("a connection of a cross has no crossing on an arm");
+            };
+            // A U-turn enters and leaves by the same arm; every other turn changes arm.
+            seen += usize::from(i != o);
+        }
+    }
+    assert!(seen >= arms.len() * 3, "{seen}");
+}

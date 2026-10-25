@@ -198,6 +198,10 @@ pub(crate) struct ExitConn {
     /// Index into `PathGraph::lights`, or `u32::MAX` when the node has no light.
     pub light: u32,
     pub conflicts: Vec<Conflict>,
+    /// Indices in `Links::pedestrian` of the crossings this connection drives over: `[0]` the
+    /// one across the arm it enters from, `[1]` the one across the arm it leaves into (§18.5).
+    /// Derived, valid for this snapshot only.
+    pub crossings: [Option<u16>; 2],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -396,6 +400,15 @@ impl PathGraph {
                 g.lights.len() as u32 - 1
             });
             let links = &junction.links;
+            // The crossing across each arm of this node, by the arm's segment (§18.5).
+            let crossing_over = |lane: LaneId| -> Option<u16> {
+                let seg = net.lane(lane)?.segment;
+                links.pedestrian.iter().position(|l| {
+                    l.kind == cp_net::PedLinkKind::Crossing
+                        && net.lane(l.a).is_some_and(|a| a.segment == seg)
+                })
+                .map(|i| i as u16)
+            };
             for (ci, c) in links.connections.iter().enumerate() {
                 let (Some(from), Some(to)) = (g.car_slot(c.from), g.car_slot(c.to)) else {
                     continue;
@@ -447,6 +460,7 @@ impl PathGraph {
                     speed: conn_speed,
                     light,
                     conflicts,
+                    crossings: [crossing_over(c.from), crossing_over(c.to)],
                 });
                 let speed = g.car[to as usize].as_ref().map_or(10.0, |l| l.speed);
                 let penalty = match c.turn {
