@@ -57,6 +57,9 @@ disagrees with `cp_sim`'s dependency tree plus `cp_save`.
 - **Every sim feature ships with a headless test**: build a small world in code or load a
   fixture save, run N ticks, assert on state. A feature whose only proof is "I looked at
   it in the window" is not done.
+  Integration tests of `cp_sim`, `cp_tools` and `cp_save` live in `tests/it/<name>.rs` with a
+  `mod <name>;` line in `tests/it/main.rs` (one test binary per crate, T-334); don't add
+  top-level `tests/*.rs` files there.
 
 ## Determinism
 
