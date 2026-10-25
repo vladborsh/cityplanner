@@ -68,7 +68,10 @@ fn a_landfill_reports_served_today_and_stored_and_a_house_its_garbage() {
     assert_eq!(get(&r, "Service").as_deref(), Some("Garbage"));
     assert_eq!(get(&r, "Served today").as_deref(), Some("120 of 3500"));
     assert_eq!(get(&r, "Stored").as_deref(), Some("900 of 1000000"));
+    // T-321e: a service building has no zone; a home has one.
+    assert_eq!(get(&r, "Zone"), None);
     let r = rows(Selection::Building(house));
     assert_eq!(get(&r, "Garbage").as_deref(), Some("42"));
     assert_eq!(get(&r, "Service"), None);
+    assert!(get(&r, "Zone").is_some());
 }

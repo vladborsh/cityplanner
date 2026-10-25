@@ -787,24 +787,20 @@ impl Inspection {
         };
         match self {
             Inspection::Building(b) => {
-                let mut r = vec![
-                    row("Type", b.def.clone()),
-                    // A hotel has no zone (its def's `zone` is only a placeholder; T-321d).
-                    row(
-                        "Zone",
-                        if b.hotel.is_some() {
-                            "Tourism".to_string()
-                        } else {
-                            format!("{:?}", b.zone)
-                        },
-                    ),
+                let mut r = vec![row("Type", b.def.clone())];
+                // A service building or a hotel has no zone: its def's `zone` is only a
+                // placeholder (T-321e).
+                if b.service.is_none() && b.hotel.is_none() {
+                    r.push(row("Zone", format!("{:?}", b.zone)));
+                }
+                r.extend([
                     row("State", format!("{:?}", b.state)),
                     row(
                         "Level",
                         format!("{} (progress {:+.2})", b.level, b.level_progress),
                     ),
                     row("Lot", format!("{} x {}", b.lot.0, b.lot.1)),
-                ];
+                ]);
                 if b.apartments > 0 {
                     r.push(row(
                         "Households",

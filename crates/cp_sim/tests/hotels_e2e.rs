@@ -233,10 +233,10 @@ fn a_demolished_hotel_leaves_no_guest_behind() {
     assert_eq!(run(), run());
 }
 
-/// T-321d: the inspector shows a hotel's zone as Tourism (its def's zone is a placeholder) and
-/// its guests among the hotel rows.
+/// T-321e: the inspector shows no zone for a hotel (its def's zone is a placeholder) and its
+/// guests among the hotel rows.
 #[test]
-fn the_inspector_shows_a_hotel_as_tourism_with_its_guests() {
+fn the_inspector_shows_a_hotel_without_a_zone_with_its_guests() {
     let db = content(20, "tourism: (stay_share: 1.0)");
     let (mut sim, hotel, _) = town(&db);
     days(&mut sim, 1);
@@ -250,6 +250,6 @@ fn the_inspector_shows_a_hotel_as_tourism_with_its_guests() {
             .map(|(_, v)| v.as_str())
             .unwrap_or_else(|| panic!("{label}: {rows:?}"))
     };
-    assert_eq!(value("Zone"), "Tourism");
+    assert!(rows.iter().all(|(l, _)| l != "Zone"), "{rows:?}");
     assert_eq!(value("Guests"), format!("{} of 20", guests(&sim, hotel)));
 }
