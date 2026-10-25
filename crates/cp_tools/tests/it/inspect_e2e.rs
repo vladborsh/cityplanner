@@ -264,7 +264,12 @@ fn vehicle_and_pedestrian_panels_equal_the_records_and_picking_finds_them() {
     );
 
     // Pedestrians show their citizen.
-    let (pid, p) = agents.pedestrians().next().unwrap();
+    // (A walker, not a cyclist: which pedestrian is first depends on who waited at a zebra.)
+    let book = sim.world().resource::<TripBook>();
+    let (pid, p) = agents
+        .pedestrians()
+        .find(|(_, p)| book.get(p.trip).is_some_and(|t| t.mode == TripMode::Walk))
+        .expect("a walker is on the road");
     let pkey = cp_traffic::agent_key(pid.index, pid.generation);
     let Some(Inspection::Citizen(info)) = sim.inspect(Selection::Pedestrian(pkey)) else {
         panic!()
