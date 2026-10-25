@@ -139,6 +139,68 @@ pub struct BuildingInfo {
     pub mail: Option<MailInfo>,
     /// The contentment of a home that has a record (T-318c).
     pub happiness: Option<Happiness>,
+    /// The rooms and week of a hotel (T-321).
+    pub hotel: Option<HotelInfo>,
+}
+
+/// A hotel's guests and week (T-321, §22.5), and why it had nobody this week.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HotelInfo {
+    pub guests: u16,
+    pub rooms: u16,
+    pub stars: u8,
+    pub price_night: f32,
+    pub nights_week: u32,
+    pub revenue_week: cp_core::Cost,
+    /// With no night this week: "Off season" (winter) or "No attractions in reach".
+    pub hint: Option<&'static str>,
+}
+
+/// The [`HotelInfo`] of building `id` of def `def` at `pos`, if it is a hotel.
+fn hotel_info(
+    w: &bevy_ecs::world::World,
+    db: &cp_content::ContentDb,
+    id: BuildingId,
+    def: &cp_content::BuildingDef,
+    pos: bevy_math::Vec2,
+) -> Option<HotelInfo> {
+    let h = def.hotel.as_ref()?;
+    let slot = w
+        .get_resource::<cp_transit::HotelState>()
+        .and_then(|s| s.slots.get(&id).copied())
+        .unwrap_or_default();
+    let hint = (slot.nights_week == 0).then(|| {
+        let now = *w.resource::<Tick>();
+        let reach = db.balance().tourism_reach_m;
+        let draws = |b: &cp_building::Building| {
+            let d = db.building(b.def);
+            b.state == BuildingState::Active
+                && b.pos.distance(pos) <= reach
+                && (matches!(d.zone, ZoneType::ComLow | ZoneType::ComHigh) && d.service.is_none()
+                    || d.unique.as_ref().is_some_and(|u| u.tourists_per_day > 0.0)
+                    || d.park.is_some())
+        };
+        if cp_core::time::season(now) == cp_core::time::Season::Winter {
+            "Off season"
+        } else if !w
+            .resource::<cp_building::BuildingGrid>()
+            .iter()
+            .any(|(other, b)| other != id && draws(b))
+        {
+            "No attractions in reach"
+        } else {
+            ""
+        }
+    });
+    Some(HotelInfo {
+        guests: slot.guests,
+        rooms: h.rooms,
+        stars: h.stars,
+        price_night: h.price_night,
+        nights_week: slot.nights_week,
+        revenue_week: slot.revenue_week,
+        hint: hint.filter(|s| !s.is_empty()),
+    })
 }
 
 /// A home's contentment index and its complaints, worst first (T-318c).
@@ -506,6 +568,7 @@ impl SimRunner {
                     service,
                     mail,
                     happiness,
+                    hotel: hotel_info(w, db, id, def, b.pos),
                     goods: matches!(
                         def.zone,
                         cp_content::ZoneType::Industrial
@@ -790,6 +853,20 @@ impl Inspection {
                 }
                 if b.garbage > 0 {
                     r.push(row("Garbage", b.garbage.to_string()));
+                }
+                // A hotel (T-321, §22.5).
+                if let Some(h) = &b.hotel {
+                    r.push(row("Guests", format!("{} of {}", h.guests, h.rooms)));
+                    r.push(row("Stars", h.stars.to_string()));
+                    r.push(row("A night", format!("{:.2}", h.price_night)));
+                    r.push(row("Nights this week", h.nights_week.to_string()));
+                    r.push(row(
+                        "Revenue this week",
+                        format!("{:.2}", h.revenue_week.0 as f64 / 100.0),
+                    ));
+                    if let Some(hint) = h.hint {
+                        r.push(row("Hotel", hint.to_string()));
+                    }
                 }
                 if let Some(m) = b.mail {
                     match m.post {

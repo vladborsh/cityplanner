@@ -230,6 +230,13 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
             [Some(day.tourism), Some(week.tourism), Some(last.tourism)],
         ));
     }
+    // Hotel nights (T-321, §22.5).
+    if day.hotels != Cost::ZERO || week.hotels != Cost::ZERO || last.hotels != Cost::ZERO {
+        income.push((
+            tr("Hotels"),
+            [Some(day.hotels), Some(week.hotels), Some(last.hotels)],
+        ));
+    }
     if day.exports != Cost::ZERO || week.exports != Cost::ZERO || last.exports != Cost::ZERO {
         income.push((
             tr("Exports"),
@@ -499,6 +506,8 @@ pub struct Overview {
     pub transit_upkeep: Cost,
     /// Last week's tourism income (part of `income`), T-168.
     pub tourism: Cost,
+    /// Last week's hotel nights (part of `income`), T-321.
+    pub hotels: Cost,
     /// Last week's export income (part of `income`), T-170.
     pub exports: Cost,
     /// Last week's policy costs (part of `upkeep`), T-190.
@@ -529,7 +538,7 @@ pub fn overview(view: &SimView) -> Overview {
             .enumerate()
             .map(|(i, z)| (*z, week.income_by_zone[i]))
             .collect(),
-        income: week.income() + week.transit_fares + week.tourism + week.exports,
+        income: week.income() + week.transit_fares + week.tourism + week.hotels + week.exports,
         upkeep: week.upkeep() + week.loan_payments + week.transit_upkeep + week.policies,
         net: week.balance(),
         roads_sum: roads.iter().map(|r| r.upkeep_week).sum(),
@@ -541,6 +550,7 @@ pub fn overview(view: &SimView) -> Overview {
         transit_fares: week.transit_fares,
         transit_upkeep: week.transit_upkeep,
         tourism: week.tourism,
+        hotels: week.hotels,
         exports: week.exports,
         policies: week.policies,
         balance_history: view
@@ -579,7 +589,7 @@ fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
                 (
                     day.income(),
                     week.income(),
-                    last.income() + last.transit_fares + last.tourism + last.exports,
+                    last.income() + last.transit_fares + last.tourism + last.hotels + last.exports,
                 ),
             ),
             (
@@ -655,6 +665,9 @@ pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
         ui.end_row();
         ui.label(tr("Tourism"));
         ui.label(format_money(o.tourism));
+        ui.end_row();
+        ui.label(tr("Hotels"));
+        ui.label(format_money(o.hotels));
         ui.end_row();
         ui.label(tr("Exports"));
         ui.label(format_money(o.exports));

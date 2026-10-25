@@ -144,8 +144,8 @@ pub fn season_hint(s: Season) -> String {
 }
 
 /// The square glyph of the season of `tick`, drawn at `size` (top bar, §21.3): a sprout, a sun, a leaf, a
-/// snowflake. Hover tells what the season does.
-pub fn season_icon(ui: &mut egui::Ui, tick: Tick, size: f32) -> egui::Response {
+/// snowflake. Hover tells what the season does, with the tourists' factor `tourists` (T-321).
+pub fn season_icon(ui: &mut egui::Ui, tick: Tick, size: f32, tourists: f32) -> egui::Response {
     let s = season(tick);
     use egui::{Color32, Shape, Stroke, pos2, vec2};
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), egui::Sense::hover());
@@ -202,7 +202,12 @@ pub fn season_icon(ui: &mut egui::Ui, tick: Tick, size: f32) -> egui::Response {
             }
         }
     }
-    response.on_hover_text(format!("{}\n{}", season_line(tick), season_hint(s)))
+    response.on_hover_text(format!(
+        "{}\n{}\n{}",
+        season_line(tick),
+        season_hint(s),
+        trf!("Tourists x{mul}", mul = format!("{tourists:.1}"))
+    ))
 }
 
 /// "Shortage · 6 days left", "Glut · 3 days left", "—".

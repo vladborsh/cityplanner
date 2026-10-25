@@ -193,6 +193,7 @@ pub fn sections(view: &SimView) -> Vec<Section> {
     });
 
     out.push(transport_section(view));
+    out.push(tourism_section(view));
     out.push(industry_section(view));
     out.push(parks_section(view));
 
@@ -285,6 +286,58 @@ fn transport_section(view: &SimView) -> Section {
             row("Buildings without goods", no_goods),
         ],
         spark: None,
+    }
+}
+
+/// Tourism (T-321, §22.5): the season and its factor, tourists on the road and in the hotels,
+/// the week's visits, nights, hotel occupancy, those turned away and the money; the visits a
+/// day over the last days.
+fn tourism_section(view: &SimView) -> Section {
+    let f = &view.freight;
+    let l = &view.transit_ledger;
+    let season = cp_core::time::season(view.tick);
+    let mul = view
+        .content
+        .as_ref()
+        .map_or(1.0, |db| db.balance().tourism.season_of(season));
+    let (guests, rooms) = view
+        .content
+        .as_ref()
+        .map_or((0, 0), |db| view.hotels.occupancy(db, &view.buildings));
+    let nights: u32 = view.hotels.slots.values().map(|s| s.nights_week).sum();
+    let daily: Vec<f32> = view
+        .city
+        .daily
+        .iter()
+        .zip(view.city.daily.iter().skip(1))
+        .map(|(a, b)| b.tourist_visits.saturating_sub(a.tourist_visits) as f32)
+        .collect();
+    Section {
+        title: "Tourism",
+        rows: vec![
+            row(
+                "Season",
+                format!("{} · x{mul:.1}", tr(crate::trade::season_name(season))),
+            ),
+            row("Tourists on the road", f.tourists_now),
+            row("Hotel guests", guests),
+            row("Tourist visits (week)", f.tourists_week),
+            row("Hotel nights (week)", nights),
+            row(
+                "Hotel rooms taken",
+                if rooms == 0 {
+                    "-".to_string()
+                } else {
+                    format!(
+                        "{} · {guests} / {rooms}",
+                        percent(guests as f32 / rooms as f32)
+                    )
+                },
+            ),
+            row("Turned away (week)", f.turned_away_week),
+            row("Tourism income (week)", format_money(l.tourism + l.hotels)),
+        ],
+        spark: (daily.len() >= 2).then_some(daily),
     }
 }
 
@@ -870,11 +923,18 @@ mod tests {
             trucks_importing: 1,
             tourists_now: 4,
             tourists_week: 9,
+            tourists_in_rooms: 2,
+            turned_away_week: 3,
         };
         view.transit_ledger.export_loads = 2;
         view.transit_ledger.import_loads = 5;
         let secs = sections(&view);
         let v = |l: &str| value(&secs, "Transport and goods", l).to_string();
+        // T-321: the Tourism section.
+        assert_eq!(value(&secs, "Tourism", "Turned away (week)"), "3");
+        assert_eq!(value(&secs, "Tourism", "Tourist visits (week)"), "9");
+        assert_eq!(value(&secs, "Tourism", "Hotel rooms taken"), "-");
+        assert!(value(&secs, "Tourism", "Season").contains("x1.0"));
         assert_eq!(v("Bus riders (week)"), "42");
         assert_eq!(v("Metro riders (week)"), "7");
         assert_eq!(v("Train riders (week)"), "0");

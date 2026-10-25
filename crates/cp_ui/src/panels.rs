@@ -387,7 +387,11 @@ pub fn top_bar(root: &mut egui::Ui, view: &SimView, outbox: &mut CommandOutbox) 
             );
             centre.label(format_time(view));
             // §21.3: the season by the date.
-            crate::trade::season_icon(&mut centre, view.tick, Sizes::TOP_BAR_ICON * 0.7);
+            let tourists = view
+                .content
+                .as_ref()
+                .map_or(1.0, |db| db.balance().tourism.season_mul(view.tick));
+            crate::trade::season_icon(&mut centre, view.tick, Sizes::TOP_BAR_ICON * 0.7, tourists);
             for (speed, label) in SPEEDS {
                 let r = crate::icons::speed_icon(speed)
                     .button(

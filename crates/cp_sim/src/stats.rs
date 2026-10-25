@@ -183,6 +183,8 @@ pub struct DailySample {
     pub looking: u32,
     /// The city contentment index (T-318c), as of the last contentment pass.
     pub contentment: u8,
+    /// Tourist visits so far, all time (T-321): a day's visits are the difference of two days.
+    pub tourist_visits: u32,
 }
 
 /// One hourly sample for the sparklines.
@@ -321,7 +323,10 @@ pub fn update_city_stats(
     land: Res<LandGrids>,
     demand: Res<Demand>,
     treasury: Res<Treasury>,
-    budgets: Option<Res<cp_content::Budgets>>,
+    (budgets, tourists): (
+        Option<Res<cp_content::Budgets>>,
+        Option<Res<cp_transit::Tourists>>,
+    ),
     district: DistrictParams,
     mut stats: ResMut<CityStats>,
 ) {
@@ -415,6 +420,9 @@ pub fn update_city_stats(
                     employed: next.employed,
                     looking: next.education.iter().map(|e| e.looking).sum(),
                     contentment: district.contentment.as_deref().map_or(0, |c| c.city),
+                    tourist_visits: tourists
+                        .as_deref()
+                        .map_or(0, |t| t.customers.values().sum()),
                 });
             }
             // The last day: against the newest sample at least a day old, else the oldest.

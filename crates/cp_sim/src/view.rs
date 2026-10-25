@@ -197,6 +197,10 @@ pub struct FreightView {
     /// Tourists on the map now, and the visits that arrived since the week began.
     pub tourists_now: u32,
     pub tourists_week: u32,
+    /// Hotel guests in their rooms now, and the tourists turned away from full hotels this
+    /// week (T-321).
+    pub tourists_in_rooms: u32,
+    pub turned_away_week: u32,
 }
 
 /// One transit line as the Lines window shows it (T-160).
@@ -1025,6 +1029,8 @@ impl SimRunner {
         if let Some(t) = w.get_resource::<cp_transit::Tourists>() {
             f.tourists_now = t.visits.len() as u32;
             f.tourists_week = t.visits_week;
+            f.tourists_in_rooms = t.in_rooms() as u32;
+            f.turned_away_week = t.turned_away_week;
         }
         f
     }

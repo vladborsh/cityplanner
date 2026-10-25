@@ -1068,6 +1068,12 @@ pub struct Advisor {
     jobs_problem_since: Option<u64>,
     /// The game day of the last reminder about it.
     jobs_last: Option<u64>,
+    /// T-321: the game day the hotels were last looked at, and the days running they were
+    /// nearly full or nearly empty; whether the first summer was announced.
+    hotel_day: Option<u64>,
+    hotels_full_days: u32,
+    hotels_empty_days: u32,
+    summer_told: bool,
     /// The game hour of the last problem notification.
     last_problem_hour: Option<u64>,
     /// The game day of the last market advice (§21.3: at most one a day).
@@ -1115,6 +1121,7 @@ impl Advisor {
         all.extend(level_advice(view, &mut self.level_seen));
         all.extend(self.jobs_advice(view, day));
         all.extend(self.bike_lanes_hint(view));
+        all.extend(self.hotel_advice(view, day));
         all.extend(complaint_advice(view));
         all.retain(|a| !(problems_only && a.severity == Severity::Info));
         // BUG-115: a few buildings are not a crisis.
@@ -1193,6 +1200,9 @@ impl Advisor {
             if advice.id == BIKE_HINT {
                 self.bike_hint_shown = true;
             }
+            if advice.id == "tourism_season_info" {
+                self.summer_told = true;
+            }
             if problem(&advice) {
                 self.last_problem_hour = Some(hour);
             }
@@ -1254,6 +1264,62 @@ impl Advisor {
             icon: Icon::OverlayTraffic,
             action: Some(Action::RoadTab(crate::roads::RoadTab::Bike)),
         })
+    }
+
+    /// T-321 (§22.5): `hotels_full` when the hotels were over 90 % taken three days running and
+    /// tourists were turned away this week; `hotels_empty` when they stood under 20 % taken for a
+    /// week outside winter; `tourism_season_info` once, on the first summer with tourists.
+    fn hotel_advice(&mut self, view: &SimView, day: u64) -> Vec<Advice> {
+        let mut out = Vec::new();
+        let Some(db) = view.content.as_ref() else {
+            return out;
+        };
+        let (guests, rooms) = view.hotels.occupancy(db, &view.buildings);
+        if rooms > 0 && self.hotel_day != Some(day) {
+            self.hotel_day = Some(day);
+            let full = guests * 10 > rooms * 9;
+            let empty = guests * 5 < rooms;
+            self.hotels_full_days = if full { self.hotels_full_days + 1 } else { 0 };
+            self.hotels_empty_days = if empty { self.hotels_empty_days + 1 } else { 0 };
+        }
+        let season = cp_core::time::season(view.tick);
+        if rooms > 0 && self.hotels_full_days >= 3 && view.freight.turned_away_week > 0 {
+            out.push(Advice {
+                id: "hotels_full",
+                severity: Severity::Info,
+                text: tr("Tourists are turned away: build another hotel"),
+                count: view.freight.turned_away_week,
+                icon: Icon::Tourism,
+                action: Some(Action::Panel(Category::Buildings)),
+            });
+        }
+        if rooms > 0 && self.hotels_empty_days >= 7 && season != cp_core::time::Season::Winter {
+            out.push(Advice {
+                id: "hotels_empty",
+                severity: Severity::Info,
+                text: tr(
+                    "Hotels stand empty: more shops, parks or a unique building draw tourists",
+                ),
+                count: 1,
+                icon: Icon::Tourism,
+                action: Some(Action::Panel(Category::Buildings)),
+            });
+        }
+        if !self.summer_told
+            && season == cp_core::time::Season::Summer
+            && view.freight.tourists_week > 0
+        {
+            let mul = db.balance().tourism.season_of(season);
+            out.push(Advice {
+                id: "tourism_season_info",
+                severity: Severity::Info,
+                text: trf!("Summer: tourists x{mul}", mul = format!("{mul:.1}")),
+                count: 1,
+                icon: Icon::Tourism,
+                action: None,
+            });
+        }
+        out
     }
 
     fn close(&mut self) {
