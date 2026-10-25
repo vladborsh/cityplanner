@@ -1,0 +1,18 @@
+// T-321 (§22.2): a hotel the player places; guests sleep, pay a night and go out each day.
+// Numbers: tune later.
+Building((
+    id: "hotel_grand",
+    name: "Grand hotel",
+    zone: Industrial,
+    level: 1,
+    lot: (4, 4),
+    jobs: (6, 12, 6, 2),
+    consumption: {Water: 35.0, Sewage: 35.0, Power: 45.0},
+    tax_base: 0.0,
+    cost: 70000.0,
+    upkeep_week: 800.0,
+    styles: ["res_high_mansard_hotel_a"],
+    service: Some("hotel"),
+    icon: "hotel_grand",
+    hotel: Some((rooms: 150, stars: 3, price_night: 90.0)),
+))

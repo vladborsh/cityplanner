@@ -95,6 +95,8 @@ pub struct SimView {
     pub parks: cp_park::ParkState,
     /// The entrance fees of this week and the last settled one (T-229).
     pub park_ledger: cp_park::ParkLedger,
+    /// The hotels' guests and week (T-321).
+    pub hotels: cp_transit::HotelState,
     /// The mail waiting in the buildings, the backlog and the day's counts (T-249).
     pub mail: Arc<cp_service::MailState>,
     pub stats: SimStats,
@@ -927,6 +929,11 @@ impl SimRunner {
                 .world()
                 .get_resource::<cp_park::ParkLedger>()
                 .copied()
+                .unwrap_or_default(),
+            hotels: self
+                .world()
+                .get_resource::<cp_transit::HotelState>()
+                .cloned()
                 .unwrap_or_default(),
             mail: Arc::new(
                 self.world()

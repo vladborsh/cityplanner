@@ -57,7 +57,11 @@ fn content() -> Arc<ContentDb> {
             ("s/p.ron".into(), cp_content::TEST_STYLE_RON.into()),
             building("shop_1", 1, ""),
             building("shop_2", 2, ""),
-            building("spec_tourism_s", 1, "spec: Some(Tourism),"),
+            building(
+                "spec_tourism_s",
+                1,
+                "spec: Some(Tourism), hotel: Some((rooms: 8, stars: 1, price_night: 30.0)),",
+            ),
             building("spec_organic_s", 1, "spec: Some(Organic),"),
             spec("Tourism", 3.0),
             spec("Organic", 1.0),
@@ -398,4 +402,53 @@ fn a_tourism_shop_draws_more_tourists_than_an_organic_one_nearer_the_entry() {
     let (a, b) = (visits(touristy), visits(organic));
     assert!(a + b >= 8, "{} visits", a + b);
     assert!(a > b * 3 / 2, "{a} against {b}");
+}
+
+/// §22.7 item 5 (T-321a): a Tourism building grown in its district is a hotel (`hotel` of its
+/// def): it gets a slot in `HotelState`; the ordinary shops do not. The shipped Tourism defs
+/// and the three placed hotels carry their rooms.
+#[test]
+fn a_grown_tourism_building_is_a_hotel() {
+    let db = content();
+    let mut sim = street(&db);
+    west_district(&mut sim, Some(SpecKind::Tourism));
+    *sim.world_mut().resource_mut::<Demand>() = Demand::fixed(1.0);
+    run(&mut sim, 4000);
+    let tourism = db.building_id("spec_tourism_s").unwrap();
+    let grid = sim.world().resource::<BuildingGrid>();
+    let grown: Vec<_> = grid
+        .iter()
+        .filter(|(_, b)| b.def == tourism)
+        .map(|(id, _)| id)
+        .collect();
+    assert!(grown.len() >= 3, "{grown:?}");
+    let hotels = sim.world().resource::<cp_transit::HotelState>();
+    assert_eq!(hotels.slots.keys().copied().collect::<Vec<_>>(), grown);
+    let (guests, rooms) = hotels.occupancy(&db, grid);
+    assert_eq!((guests, rooms), (0, 8 * grown.len() as u32));
+
+    let shipped =
+        ContentDb::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content")).unwrap();
+    let rooms = |id: &str| {
+        let h = shipped
+            .building(shipped.building_id(id).unwrap())
+            .hotel
+            .unwrap();
+        (h.rooms, h.stars)
+    };
+    assert_eq!(rooms("spec_tourism_s"), (8, 1));
+    assert_eq!(rooms("spec_tourism_m"), (20, 2));
+    assert_eq!(rooms("spec_tourism_l"), (40, 2));
+    assert_eq!(rooms("hotel_small"), (20, 1));
+    assert_eq!(rooms("hotel_mid"), (60, 2));
+    assert_eq!(rooms("hotel_grand"), (150, 3));
+    let svc = shipped
+        .building(shipped.building_id("hotel_mid").unwrap())
+        .service
+        .clone()
+        .unwrap();
+    assert_eq!(
+        shipped.service(shipped.service_id(&svc).unwrap()).kind,
+        cp_content::ServiceKind::Tourism
+    );
 }

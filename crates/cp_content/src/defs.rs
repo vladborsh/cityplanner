@@ -687,6 +687,8 @@ pub struct Balance {
     pub corruption: CorruptionKnobs,
     /// The intercity market (T-320, §21): price drift, shortages and gluts, seasons.
     pub market: crate::MarketKnobs,
+    /// Tourism (T-321, §22): the season of the flow, hotel stays and outings.
+    pub tourism: crate::TourismKnobs,
 }
 
 /// Corruption, institutions and trust (`balance.ron` `corruption`, T-324,
@@ -1426,6 +1428,7 @@ impl Default for Balance {
             contentment: ContentmentKnobs::default(),
             corruption: CorruptionKnobs::default(),
             market: crate::MarketKnobs::default(),
+            tourism: crate::TourismKnobs::default(),
         }
     }
 }
@@ -1954,6 +1957,9 @@ pub struct BuildingDef {
     /// rule of the balance from `households` and `jobs` (`cp_traffic::building_places`).
     #[serde(default)]
     pub parking: u16,
+    /// The rooms of a hotel (T-321, §22.2): a placed hotel or a grown Tourism building.
+    #[serde(default)]
+    pub hotel: Option<crate::HotelSpec>,
     /// The pollution and noise this building makes (T-300, §11.1), when they are its own;
     /// `None` takes the zone or industry rule of the balance (`cp_economy::emission_of`), and
     /// `Some` with both empty silences the building.

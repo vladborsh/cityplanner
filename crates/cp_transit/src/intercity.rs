@@ -175,7 +175,9 @@ pub fn run_intercity(
                             &mut r,
                             train.station,
                             node,
-                            u32::from(balance.tourism_by_train),
+                            // T-321: the season's share of them (§22.1).
+                            (f32::from(balance.tourism_by_train) * balance.tourism.season_mul(now))
+                                .round() as u32,
                         );
                     }
                     let until = Tick(now.0 + ticks_of_hours(balance.intercity_dwell_h));

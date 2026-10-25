@@ -1311,6 +1311,7 @@ mod tests {
                 ServiceKind::Park,
                 ServiceKind::Post,
                 ServiceKind::Parking,
+                ServiceKind::Tourism,
             ],
             "the depot is in the Transport category"
         );

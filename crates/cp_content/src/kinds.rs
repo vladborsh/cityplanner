@@ -57,6 +57,8 @@ pub enum ServiceKind {
     Post = 15,
     /// Appended in T-331 (§18.3): parking lots and garages.
     Parking = 16,
+    /// Appended in T-321 (§22.2): the hotels a player places.
+    Tourism = 17,
 }
 
 /// Where a service building may stand (checked by `cp_building::validate_placement`).

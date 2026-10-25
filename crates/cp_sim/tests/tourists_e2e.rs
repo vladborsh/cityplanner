@@ -290,3 +290,31 @@ fn hidden_tourists_still_visit_and_pay_about_as_much() {
         "fewer tourist cars on the road: {all_cars} vs {few_cars}"
     );
 }
+
+/// §22.7 item 1 (T-321a): a year (28 days) of the shop town: the summer brings about 1.5 times
+/// the spring's arrivals, the winter about 0.6 times (within a fifth; the seed is fixed).
+#[test]
+fn the_season_sets_the_flow_summer_more_winter_fewer() {
+    use cp_core::time::{SEASON_DAYS, TICKS_PER_DAY};
+    let mut sim = town(true);
+    let mut by_season = [0u32; 4];
+    let mut before = customers(&sim);
+    for s in &mut by_season {
+        for _ in 0..SEASON_DAYS * TICKS_PER_DAY {
+            sim.tick_once();
+        }
+        let now = customers(&sim);
+        *s = now - before;
+        before = now;
+    }
+    let [spring, summer, autumn, winter] = by_season;
+    eprintln!("spring {spring}, summer {summer}, autumn {autumn}, winter {winter}");
+    assert!(spring >= 80, "{by_season:?}");
+    let near = |n: u32, mul: f32| {
+        let want = spring as f32 * mul;
+        (n as f32 - want).abs() <= want * 0.2
+    };
+    assert!(near(summer, 1.5), "{by_season:?}");
+    assert!(near(autumn, 0.9), "{by_season:?}");
+    assert!(near(winter, 0.6), "{by_season:?}");
+}

@@ -12,6 +12,7 @@
 pub mod command;
 pub mod fleet;
 pub mod goods;
+pub mod hotels;
 pub mod hubs;
 pub mod intercity;
 pub mod model;
@@ -31,6 +32,7 @@ pub use goods::{
     CargoArrival, CargoArrivals, Endpoint, GOODS_BUCKET_TICKS, Goods, Haul, Way, run_goods,
     trade_roll,
 };
+pub use hotels::{HotelSlot, HotelState, track_hotels};
 pub use hubs::{
     CargoHubs, Hub, HubTrain, SAIL_M, ShipPhase, ShipPose, ShipVisit, exit_for, hub_sites,
     is_hub_def, is_port_def, ship_poses, ship_route,

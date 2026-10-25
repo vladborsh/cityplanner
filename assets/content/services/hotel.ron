@@ -1,0 +1,10 @@
+// T-321 (§22.2): a hotel a player places; no coverage, no budget. Its rooms are
+// `BuildingDef.hotel`. Numbers: tune later.
+Service((
+    id: "hotel",
+    name: "Hotel",
+    kind: Tourism,
+    radius_m: 100.0,
+    capacity: 1,
+    vehicles: [],
+))

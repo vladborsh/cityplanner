@@ -490,6 +490,20 @@ Balance((
         law_upkeep: 0.2,
     ),
 
+    // --- Tourism (T-321, §22) // tune later ---
+    // season: the flow of tourists a day (cars and train) times this, spring to winter.
+    // stay_share: new tourists who try a hotel; a stay is 1..=max_nights nights; a lodger's
+    // outing starts at a random hour of outing_from..outing_to; goals nearer the hotel than
+    // walk_m are walked to.
+    tourism: (
+        season: (1.0, 1.5, 0.9, 0.6),
+        stay_share: 0.5,
+        max_nights: 3,
+        outing_from: 10,
+        outing_to: 20,
+        walk_m: 800.0,
+    ),
+
     // --- Networks (T-181): distances of water, sewage and power // tune later ---
     // power_gap_m: largest gap between the footprint edges of two buildings over which one
     //   passes power on to the other. line_reach_m / pipe_reach_m: how far a building's edge may

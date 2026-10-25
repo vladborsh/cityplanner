@@ -1092,6 +1092,19 @@ impl ContentDb {
                     "finite and >= 0, 0 < index_min <= index_max, revert_div >= 1, event_days min <= max, event_chance and shortage_fail <= 1".to_string(),
                 ));
             }
+            let t = &b.tourism;
+            if t.knobs().iter().any(|v| !v.is_finite() || *v < 0.0)
+                || t.stay_share > 1.0
+                || t.max_nights == 0
+                || t.outing_from >= t.outing_to
+                || t.outing_to > 24
+            {
+                errors.push(ContentError::new(
+                    path,
+                    Some("tourism"),
+                    "finite and >= 0, stay_share <= 1, max_nights >= 1, outing_from < outing_to <= 24".to_string(),
+                ));
+            }
             let k = &b.corruption;
             if k.knobs().iter().any(|v| !v.is_finite() || *v < 0.0)
                 || [
@@ -1216,6 +1229,13 @@ impl ContentDb {
             if b.market != defaults.market {
                 fnv1a(&mut hash, b"market");
                 for v in b.market.knobs() {
+                    fnv1a(&mut hash, &v.to_bits().to_le_bytes());
+                }
+            }
+            // T-321: the same way.
+            if b.tourism != defaults.tourism {
+                fnv1a(&mut hash, b"tourism");
+                for v in b.tourism.knobs() {
                     fnv1a(&mut hash, &v.to_bits().to_le_bytes());
                 }
             }

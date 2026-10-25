@@ -42,7 +42,7 @@
 //! | `Tick`, `SimRng`, `SimSpeed`, `CommandQueue`, `CommandLog` | yes |
 //! | `TileOwnership`, `NetGraph`, `ZoneGrid` (occupancy is rebuilt from the buildings), `BuildingGrid` (incl. the removed ids), `UtilityGraph`, `CitizenGrid` (occupancy tables rebuilt), `TripBook`, `Agents` (pools, lane state, segment load; drive tables rebuilt) | yes |
 //! | `PathService` (requests in flight) | yes, as `SavedPaths` |
-//! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `Goods`, `Intercity` (stops, lines, riders, line figures, buses, week's money, tourist visits, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
+//! | `TransitNet`, `TransitFleet`, `TransitLedger`, `Tourists`, `HotelState`, `Goods`, `Intercity` (stops, lines, riders, line figures, buses, week's money, tourist visits, hotel guests, goods stock and trucks; the routes, `LinePlans`, are derived) | yes |
 //! | `ResourceDeposits` (ore and oil left per 64 m cell; a save from before v41 is filled from the map by `load_into_runner`) | yes |
 //! | `AreaMap`, `Areas`, `IndustryState` (stock and problems of the chain buildings), `IndustryLedger`, `AreaBooks` (T-316), `WarehouseSettings`, `ParkState` (attractiveness, capacity, visitors and fee per park area), `LeisureTargets`, `ParkVisits` (who is inside, the walkers), `ParkLedger`, `CargoHubs` (cargo station stock and orders) | yes |
 //! | `Treasury`, `EconomyState`, `Budgets`, `Market`, `Demand`, `DemandAcc`, `LandGrids`, `Emissions` (the ground, the noise, the water), `Decay`, `HomeContentment`, `CityContentment`, `CorruptionState`, `WorkerShortage`, `Progress`, `DistrictMap`, `Districts`, `CityPolicies` | yes |
@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"CPSV";
 /// Current save format version.
-pub const FORMAT_VERSION: u32 = 88;
+pub const FORMAT_VERSION: u32 = 90;
 
 /// The string ids behind the dense `*DefId` indices a save holds: entry `i` of a list names the
 /// definition that index `i` meant when the file was written (`system-design.md` §12).
@@ -245,6 +245,7 @@ pub struct SaveData {
     pub ledger: cp_transit::TransitLedger,
     /// Tourists on the way and the visits each building has had (T-168). Added in v33.
     pub tourists: cp_transit::Tourists,
+    pub hotels: cp_transit::HotelState,
     /// Stock of factories and shops and the trucks on the road (T-169). Added in v34.
     pub goods: cp_transit::Goods,
     /// The intercity train and what it has brought (T-167). Added in v36.
@@ -356,6 +357,7 @@ impl SaveData {
             fleet: world.resource::<cp_transit::TransitFleet>().clone(),
             ledger: *world.resource::<cp_transit::TransitLedger>(),
             tourists: world.resource::<cp_transit::Tourists>().clone(),
+            hotels: world.resource::<cp_transit::HotelState>().clone(),
             goods: world.resource::<cp_transit::Goods>().clone(),
             intercity: world.resource::<cp_transit::Intercity>().clone(),
             deposits: world.resource::<cp_terrain::ResourceDeposits>().clone(),
@@ -426,6 +428,7 @@ impl SaveData {
         world.insert_resource(self.fleet);
         world.insert_resource(self.ledger);
         world.insert_resource(self.tourists);
+        world.insert_resource(self.hotels);
         world.insert_resource(self.goods);
         world.insert_resource(self.intercity);
         world.insert_resource(self.deposits);

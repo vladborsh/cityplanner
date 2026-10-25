@@ -159,6 +159,7 @@ impl Overlay {
             | ServiceKind::Industry
             | ServiceKind::Park
             | ServiceKind::Parking
+            | ServiceKind::Tourism
             | ServiceKind::Cargo => {
                 return None;
             }

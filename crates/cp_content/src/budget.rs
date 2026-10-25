@@ -12,7 +12,7 @@ pub const BUDGET_MIN: u8 = 50;
 pub const BUDGET_MAX: u8 = 150;
 pub const BUDGET_DEFAULT: u8 = 100;
 /// Number of service kinds (`ServiceKind` variants); new kinds are appended.
-pub const SERVICE_KINDS: usize = 17;
+pub const SERVICE_KINDS: usize = 18;
 
 /// Service kinds with a budget slider, in budget-table order (§20.1). The others (landmarks,
 /// industry, cargo) run at 100 %.

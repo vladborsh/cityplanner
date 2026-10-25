@@ -240,6 +240,11 @@ pub(crate) fn service_part(world: &World, h: &mut Fnv1a) {
     if !tourists.is_empty() {
         h.write_serialized(tourists);
     }
+    // Same for the hotels (T-321).
+    let hotels = world.resource::<cp_transit::HotelState>();
+    if !hotels.is_empty() {
+        h.write_serialized(hotels);
+    }
     let goods = world.resource::<cp_transit::Goods>();
     if !goods.is_empty() {
         h.write_serialized(goods);

@@ -2,7 +2,8 @@
 //! an entry highway, drives to a commercial building (weighted by its distance from the entry),
 //! stands there for the visit, brings `tourism_income` when it arrives, and drives back out.
 //!
-//! The flow a day is `tourism_base + tourism_per_com × commercial buildings`; the number of cars
+//! The flow a day is `tourism_base + tourism_per_com × commercial buildings`, times the season's
+//! factor (T-321, §22.1); the number of cars
 //! at once is a share of the vehicle pool. The car leaves the road for the visit and a new one
 //! drives out from the building (BUG-100: one parked in its lane held up the street). With no
 //! `Outside` node (no entry highway) or no shop there are no visits. A visit is a keep run of
@@ -222,9 +223,11 @@ pub fn run_tourists(
         }
         _ => 1.0,
     } + f32::from(tourists.boost_pct) / 100.0;
+    // T-321: and the season (§22.1: summer more, winter fewer).
     let per_tick =
         (balance.tourism_base + balance.tourism_per_com * shop_count as f32 + unique_per_day)
             * promotion
+            * balance.tourism.season_mul(now)
             / TICKS_PER_DAY as f32;
     let mut r = rng.fork(TOURISM_STREAM, now);
     let mut n = per_tick.floor() as u32;

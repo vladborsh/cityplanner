@@ -95,6 +95,7 @@ icons! {
     FlipRoad => "flip_road",
     StreetTrees => "street_trees",
     Parking => "parking",
+    Tourism => "tourism",
     Junctions => "junctions",
     BusStop => "bus_stop",
     Building => "building",

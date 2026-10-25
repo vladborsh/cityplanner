@@ -149,6 +149,7 @@ impl SimRunner {
         world.init_resource::<cp_transit::TransitFleet>();
         world.init_resource::<cp_transit::TransitLedger>();
         world.init_resource::<cp_transit::Tourists>();
+        world.init_resource::<cp_transit::HotelState>();
         world.init_resource::<cp_transit::Goods>();
         world.init_resource::<cp_transit::Intercity>();
         world.init_resource::<cp_economy::EconomyState>();
@@ -410,6 +411,8 @@ impl SimRunner {
                 // Buses: stops reached, next legs and new departures (T-156).
                 cp_transit::run_lines,
                 cp_transit::run_riders,
+                // The hotels follow the buildings (T-321).
+                cp_transit::track_hotels,
                 // Tourists drive in from the entry highway and out again (T-168).
                 cp_transit::run_tourists,
                 // The market's day: prices drift, shortages and gluts (T-320), before any trade.

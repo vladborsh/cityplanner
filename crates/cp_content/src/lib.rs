@@ -7,6 +7,7 @@ pub mod defs;
 pub mod error;
 pub mod kinds;
 pub mod market;
+pub mod tourism;
 mod validate;
 
 pub use budget::Budgets;
@@ -21,3 +22,4 @@ pub use kinds::{
     ResourceKind, ServiceKind, ServiceSite, SpecKind, UtilityKind, ZoneType,
 };
 pub use market::{Market, MarketEvent, MarketEventKind, MarketFrozen, MarketKnobs};
+pub use tourism::{HotelSpec, TourismKnobs};

@@ -177,6 +177,15 @@ pub fn building(d: &BuildingDef) -> Problems {
     if d.styles.is_empty() {
         c.bad("styles", "needs at least one style");
     }
+    if let Some(h) = &d.hotel {
+        if h.rooms == 0 {
+            c.bad("hotel.rooms", "at least one room");
+        }
+        if !(1..=3).contains(&h.stars) {
+            c.bad("hotel.stars", "1 to 3");
+        }
+        c.non_negative("hotel.price_night", h.price_night);
+    }
     if d.institution.is_some() && d.unique.is_none() {
         c.bad(
             "institution",

@@ -10,4 +10,6 @@ Building((
     tax_base: 30.0,
     styles: ["spec_tourism_s"],
     spec: Some(Tourism),
+    // T-321 (§22.2): a grown hotel; no upkeep, taxed as commerce.
+    hotel: Some((rooms: 8, stars: 1, price_night: 30.0)),
 ))
