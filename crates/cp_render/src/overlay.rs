@@ -32,6 +32,7 @@ mod happiness;
 mod industry;
 mod land;
 mod live_coverage;
+mod parking;
 mod service;
 mod tiles;
 pub mod transit;
@@ -52,6 +53,7 @@ pub use industry::{
     resources_mesh,
 };
 pub use live_coverage::{LIVE_PERIOD_S, LiveCoverage, needs_update, shown_kind};
+pub use parking::{parking_color, parking_overlay_mesh};
 pub use service::{coverage_color, service_overlay_mesh};
 pub use tiles::{border_edges, border_mesh, shade_mesh};
 pub use transit::{LineGhost, line_color};
@@ -105,10 +107,12 @@ pub enum Overlay {
     Junctions,
     /// The homes tinted by their contentment (T-318c).
     Happiness,
+    /// The bays and the lots tinted by how full their parking places are (T-331c).
+    Parking,
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 24] = [
+    pub const ALL: [Overlay; 25] = [
         Overlay::Off,
         Overlay::Traffic,
         Overlay::Zones,
@@ -133,6 +137,7 @@ impl Overlay {
         Overlay::Underground,
         Overlay::Junctions,
         Overlay::Happiness,
+        Overlay::Parking,
     ];
 
     /// The overlay of an M2 service kind; `None` for the utility kinds (their own overlays).
@@ -200,6 +205,7 @@ impl Overlay {
             Overlay::Underground => "Underground",
             Overlay::Junctions => "Traffic lights",
             Overlay::Happiness => "Happiness",
+            Overlay::Parking => "Parking",
         }
     }
 }
@@ -721,6 +727,7 @@ pub fn zone_fill_visible(active: Overlay) -> bool {
             | Overlay::Water
             | Overlay::Power
             | Overlay::Happiness
+            | Overlay::Parking
     )
 }
 
@@ -753,6 +760,7 @@ struct OverlayLayers {
     water: LayerSource,
     power: LayerSource,
     happiness: LayerSource,
+    parking: LayerSource,
     /// One layer per M2 service kind, in [`SERVICE_OVERLAYS`] order.
     service: [LayerSource; 7],
     material: Option<Handle<VertexColorMaterial>>,
@@ -981,6 +989,33 @@ fn sync_overlay_meshes(
             || {
                 happiness_overlay_mesh(
                     &view.home_contentment,
+                    &view.buildings,
+                    &view.zones,
+                    terrain,
+                )
+            },
+            &material,
+            &mut commands,
+            &mut meshes,
+            terrain_changed,
+            false,
+        );
+        // The parking places follow the index, the road network, the buildings and the zones
+        // (T-331c).
+        let key = ptr(&view.parked)
+            ^ ptr(&view.net).rotate_left(7)
+            ^ ptr(&view.buildings).rotate_left(13)
+            ^ ptr(&view.zones).rotate_left(29);
+        upsert(
+            &mut l.parking,
+            key,
+            Overlay::Parking,
+            || {
+                parking_overlay_mesh(
+                    &view.parked.index,
+                    &view.net,
+                    &view.junctions,
+                    db,
                     &view.buildings,
                     &view.zones,
                     terrain,

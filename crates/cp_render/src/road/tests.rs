@@ -1857,6 +1857,54 @@ fn a_car_in_a_yard_stands_behind_the_gate_and_in_a_lot_inside_the_footprint() {
     );
 }
 
+/// T-331c: the Parking overlay tints the bays by how full they are and the lots of the buildings
+/// with a place; a building with `NO_PARKING` is purple.
+#[test]
+fn the_parking_overlay_tints_bays_and_lots_by_how_full_they_are() {
+    use crate::overlay::{parking_color, parking_overlay_mesh};
+    let mut w = world();
+    w.line("basic_2l", (X0, Z0), (X0 + 96.0, Z0));
+    let v = w.view();
+    let db = &*w.content;
+    let id = v.net.segments().next().unwrap().0;
+    let mut grid = cp_building::BuildingGrid::new();
+    let house = front(&v, db, &mut grid, "apt_high_3", id, 0.3, 1.0, 3);
+    let zones = cp_zone::ZoneGrid::default();
+    let mut places = cp_traffic::ParkingIndex::default();
+    places.rebuild(&v.net, &v.junctions, db, &grid);
+    let mesh = |places: &cp_traffic::ParkingIndex, grid: &cp_building::BuildingGrid| {
+        parking_overlay_mesh(places, &v.net, &v.junctions, db, grid, &zones, &w.terrain)
+    };
+    let free = mesh(&places, &grid);
+    assert!(!free.positions.is_empty());
+    assert!(free.colors.iter().all(|c| *c == parking_color(0.0)));
+    // Left bay full, right bay empty, the house's yard half full.
+    while places.take_kerb(id, 1).is_some() {}
+    let half = places.building(house).cap / 2;
+    for _ in 0..half {
+        places.take_building(house);
+    }
+    let m = mesh(&places, &grid);
+    assert!(
+        m.colors.contains(&parking_color(1.0)),
+        "the full bay is red"
+    );
+    assert!(
+        m.colors.contains(&parking_color(0.0)),
+        "the empty bay is green"
+    );
+    // A building cars found no place for.
+    let mut flagged = grid.clone();
+    flagged.set_flag(house, cp_building::BuildingFlags::NO_PARKING, true);
+    let m = mesh(&places, &flagged);
+    assert!(
+        m.colors
+            .iter()
+            .any(|c| c[0] > 0.5 && c[1] < 0.2 && c[2] > 0.5),
+        "purple"
+    );
+}
+
 /// T-302d: the top area of the triangles of colour `c` whose first vertex has `x0 < x < x1`.
 fn top_area_in(m: &MeshData, c: [f32; 4], x0: f32, x1: f32, road_z: Option<f32>) -> f32 {
     (0..m.triangle_count())

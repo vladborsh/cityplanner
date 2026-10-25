@@ -134,3 +134,5 @@ fonts are not renamed-reserved; the subset keeps the upstream family names and i
   OFL 1.1. The text face of the menus and panels. U+0020–007E, U+00A0–017F, U+0400–04FF,
   U+2010–2027, U+2030–205E, U+20A0–20BF, U+2116, U+2122. Its copyright line is added to
   `assets/fonts/OFL.txt` (the licence text is the same).
+
+T-331c adds the overlay icon `overlay_parking` (a white P on a blue sign): self-made SVG (`assets/ui/icons/src/overlay_parking.svg`), CC0, same pipeline.

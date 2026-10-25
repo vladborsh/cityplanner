@@ -48,7 +48,10 @@ pub const GROUPS: [(&str, &[Overlay]); 6] = [
             Overlay::Resources,
         ],
     ),
-    ("Traffic", &[Overlay::Traffic, Overlay::Transit]),
+    (
+        "Traffic",
+        &[Overlay::Traffic, Overlay::Transit, Overlay::Parking],
+    ),
     (
         "City",
         &[
