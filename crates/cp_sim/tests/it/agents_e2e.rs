@@ -452,3 +452,40 @@ fn cars_drive_the_lattice_finish_their_trips_and_light_the_load_overlay() {
         "an empty road shows no load"
     );
 }
+
+#[test]
+fn walkers_and_cars_share_junctions_without_a_deadlock() {
+    let content = content();
+    // Narrow streets: junctions without lights, so walkers and cars give way to each other
+    // by the zebra rule (T-333).
+    let mut sim = quiet_town(&content, 5, 4, "basic_2l", 150);
+    let lights = sim
+        .world()
+        .resource::<JunctionGeometry>()
+        .iter()
+        .filter(|(_, j)| j.control.light.is_some())
+        .count();
+    assert_eq!(lights, 0, "no lights on narrow streets");
+    inject(&mut sim, 150, |i| {
+        if i % 2 == 0 {
+            TripMode::Walk
+        } else {
+            TripMode::Car
+        }
+    });
+    let stuck0 = sim.world().resource::<Agents>().stats.despawned_stuck;
+    for _ in 0..(2 * TICKS_PER_DAY) {
+        sim.tick_once();
+        if sim.world().resource::<TripBook>().is_empty() {
+            break;
+        }
+    }
+    let a = sim.world().resource::<Agents>();
+    assert!(
+        sim.world().resource::<TripBook>().is_empty(),
+        "all trips ended"
+    );
+    assert_eq!((a.pedestrian_count(), a.vehicle_count()), (0, 0));
+    assert!(a.stats.walked > 0 && a.stats.driven > 0);
+    assert_eq!(a.stats.despawned_stuck, stuck0, "nobody removed as stuck");
+}
