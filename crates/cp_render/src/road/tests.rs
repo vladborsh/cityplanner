@@ -2208,3 +2208,97 @@ fn street_trees_stand_along_streets_and_highways_when_planted() {
         assert!((5..=8).contains(&n), "{road}: {n} trees");
     }
 }
+
+/// Builds the T-332d test ramps (§18.1 "Решения T-332"): `Levels` 0 -> 6, 6 -> 12, 0 -> -6 and
+/// -6 -> -12, each 160 m of `basic_2l` on its own row.
+fn level_ramps() -> World {
+    let mut w = world();
+    for (k, (a, b)) in [(0.0, 6.0), (6.0, 12.0), (0.0, -6.0), (-6.0, -12.0)]
+        .into_iter()
+        .enumerate()
+    {
+        let z = Z0 + 200.0 * k as f32;
+        w.build(
+            "basic_2l",
+            RoadPath::Straight {
+                from: Vec2::new(X0, z),
+                to: Vec2::new(X0 + 160.0, z),
+            },
+            ElevationMode::Levels { from: a, to: b },
+        );
+    }
+    w
+}
+
+/// T-332d: the raised pieces of a ramp up to 6 and to 12 m carry side walls (their mesh reaches
+/// `PARAPET_H` above the deck at its edge), and a raised middle node, which has no piece of its
+/// own, stands on a pier down to the terrain.
+#[test]
+fn level_ramps_have_side_walls_and_piers_under_raised_middle_nodes() {
+    let w = level_ramps();
+    let v = w.view();
+    let (set, _) = w.set(&v);
+    let raised: Vec<_> = v
+        .net
+        .segments()
+        .filter(|(_, s)| s.elevation == Elevation::Elevated)
+        .collect();
+    assert_eq!(raised.len(), 4, "two pieces a ramp up");
+    for (id, seg) in raised {
+        let mesh = &set.piece(PieceKey::Segment(id)).unwrap().near;
+        // The ramps run along x: the deck height under a vertex from the segment's ends.
+        let (a, b) = (seg.curve.point(0.0), seg.curve.point(1.0));
+        let deck = |x: f32| a.y + (b.y - a.y) * ((x - a.x) / (b.x - a.x)).clamp(0.0, 1.0);
+        let above = positions(mesh)
+            .map(|q| q.y - deck(q.x))
+            .fold(f32::MIN, f32::max);
+        assert!(
+            above > PARAPET_H - 0.2 && above < PARAPET_H + 0.5,
+            "{id:?}: side wall top {above} above the deck"
+        );
+    }
+    let mut middles = 0;
+    for (id, n) in v.net.nodes() {
+        let ground = w.terrain.height(Vec2::new(n.pos.x, n.pos.z));
+        if n.elevation != Elevation::Elevated || n.pos.y - ground < 1.5 {
+            continue;
+        }
+        let piece = set
+            .piece(PieceKey::Junction(id))
+            .expect("a raised node has a piece");
+        let low = positions(&piece.near).map(|q| q.y).fold(f32::MAX, f32::min);
+        assert!(
+            low <= ground + 0.1,
+            "{id:?}: pier base {low} vs ground {ground}"
+        );
+        middles += usize::from(v.net.node(id).unwrap().segments.len() == 2);
+    }
+    assert!(middles >= 2, "the ramps' raised middle nodes");
+}
+
+/// T-332d: in the Underground view a road tunnel on level -1 (-6 m) and one on level -2
+/// (-12 m) have colours of their own; nothing of them is drawn above ground.
+#[test]
+fn level_tunnels_show_by_level_in_the_underground_view() {
+    let w = level_ramps();
+    let v = w.view();
+    let (set, _) = w.set(&v);
+    let tunnels: Vec<_> = v
+        .net
+        .segments()
+        .filter(|(_, s)| s.elevation == Elevation::Tunnel)
+        .collect();
+    assert!(tunnels.len() >= 3, "{}", tunnels.len());
+    for (id, _) in &tunnels {
+        assert!(set.piece(PieceKey::Segment(*id)).is_none());
+    }
+    let m = crate::underground::tunnel_mesh(
+        &v.net,
+        &w.content,
+        Some(&w.terrain),
+        &std::collections::BTreeSet::new(),
+    );
+    let has = |c: [f32; 3]| m.colors.iter().any(|k| k[..3] == c);
+    assert!(has(crate::underground::ROAD_TUNNEL_COLOR), "level -1");
+    assert!(has(crate::underground::DEEP_ROAD_TUNNEL_COLOR), "level -2");
+}

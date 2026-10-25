@@ -1616,6 +1616,63 @@ pub fn build_bike_lanes(sim: &mut SimRunner) -> Vec2 {
     o
 }
 
+/// Road levels (T-332d, §18.1 "Решения T-332"): three rows of `basic_2l` from west to east,
+/// drawn with the road tool's `Levels`: a ramp 0 -> 6 m and a deck on +6 m over a ground street;
+/// ramps 0 -> 6 -> 12 m and a deck on +12 m; a tunnel 0 -> -6 -> -12 m (see it with
+/// `--overlay underground`). Look at it with `--cam levels`.
+pub const LEVELS: &str = "levels";
+
+/// Builds the [`LEVELS`] scene through the normal commands; the commands the sim refused.
+pub fn build_levels(sim: &mut SimRunner) -> Vec<String> {
+    let db = embedded_content();
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let road = db.road_id("basic_2l").expect("basic_2l");
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    let x = |dx: f32| c - 240.0 + dx;
+    let mut legs = vec![
+        // The ground street under the +6 m deck.
+        (
+            Vec2::new(x(300.0), c - 220.0),
+            Vec2::new(x(300.0), c - 20.0),
+            0.0,
+            0.0,
+        ),
+    ];
+    for (z, levels) in [
+        (c - 120.0, [(0.0, 0.0), (0.0, 6.0), (6.0, 6.0)]),
+        (c, [(0.0, 6.0), (6.0, 12.0), (12.0, 12.0)]),
+        (c + 120.0, [(0.0, 0.0), (0.0, -6.0), (-6.0, -12.0)]),
+    ] {
+        for (k, (from, to)) in levels.into_iter().enumerate() {
+            let x0 = x(160.0 * k as f32);
+            legs.push((Vec2::new(x0, z), Vec2::new(x0 + 160.0, z), from, to));
+        }
+    }
+    for (from, to, a, b) in legs {
+        let elevation = if a == 0.0 && b == 0.0 {
+            ElevationMode::Ground
+        } else {
+            ElevationMode::Levels { from: a, to: b }
+        };
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road,
+                path: RoadPath::Straight { from, to },
+                elevation,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    sim.world_mut()
+        .resource_mut::<Messages<CommandOutcome>>()
+        .drain()
+        .filter_map(|o| o.result.err().map(|e| e.to_string()))
+        .collect()
+}
+
 /// Big zone blocks (BUG-056): a grid of 3 x 3 blocks of 96 and 112 m (and 100 m, a tie of the
 /// cell fit) between the road edges, every cell painted residential. Look at it with
 /// `--cam zones-big --overlay zones`.

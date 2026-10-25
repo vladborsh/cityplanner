@@ -17,6 +17,7 @@ use bevy::prelude::*;
 use cp_content::{ContentDb, RoadClass};
 use cp_net::{Elevation, NetGraph, SegmentId};
 use cp_sim::SimView;
+use cp_terrain::Terrain;
 use cp_transit::{LINE_PALETTE_RGB, TransitView};
 
 use crate::agent_render::TickFraction;
@@ -60,14 +61,21 @@ const TUNNEL_STEP: f32 = 6.0;
 const TUNNEL_ALPHA: f32 = 0.5;
 const TUNNEL_COLOR: [f32; 3] = [0.55, 0.68, 0.9];
 const PLATFORM_COLOR: [f32; 3] = [0.95, 0.85, 0.5];
+/// Road tunnels by level (T-332d): −1 (−6 m) and −2 (−12 m and below).
+pub(crate) const ROAD_TUNNEL_COLOR: [f32; 3] = [0.55, 0.5, 0.45];
+pub(crate) const DEEP_ROAD_TUNNEL_COLOR: [f32; 3] = [0.55, 0.6, 1.0];
+/// A road tunnel whose middle is deeper than this under the terrain is on level −2, metres.
+const DEEP_TUNNEL: f32 = 9.0;
 /// Half width of a line's ribbon in the tunnel, metres.
 const RIBBON_HALF: f32 = 1.3;
 
 /// The walls of every tunnel segment as a tube of the road's width; the segments in
-/// `platforms` are lighter and a little wider.
+/// `platforms` are lighter and a little wider; a road tunnel on level −2 (by its middle's depth
+/// under `terrain`) has a colour of its own.
 pub fn tunnel_mesh(
     net: &NetGraph,
     content: &ContentDb,
+    terrain: Option<&Terrain>,
     platforms: &BTreeSet<SegmentId>,
 ) -> MeshData {
     let mut m = MeshData::default();
@@ -83,7 +91,14 @@ pub fn tunnel_mesh(
         } else if def.class == RoadClass::Rail {
             TUNNEL_COLOR
         } else {
-            [0.55, 0.5, 0.45]
+            let mid = seg.curve.point(0.5);
+            let deep =
+                terrain.is_some_and(|t| t.height(Vec2::new(mid.x, mid.z)) - mid.y > DEEP_TUNNEL);
+            if deep {
+                DEEP_ROAD_TUNNEL_COLOR
+            } else {
+                ROAD_TUNNEL_COLOR
+            }
         };
         let table = seg.curve.arc_table();
         let len = table.length();
@@ -405,7 +420,12 @@ fn sync_underground(
             &mut commands,
             &mut meshes,
             wall,
-            tunnel_mesh(&view.net, content, &platform_segments(&view.transit)),
+            tunnel_mesh(
+                &view.net,
+                content,
+                view.terrain.as_deref(),
+                &platform_segments(&view.transit),
+            ),
             "tunnels",
         );
         st.ribbons = spawn_mesh(
@@ -694,7 +714,7 @@ mod tests {
             Elevation::Ground,
         )
         .unwrap();
-        let plain = tunnel_mesh(&net, &db, &BTreeSet::new());
+        let plain = tunnel_mesh(&net, &db, None, &BTreeSet::new());
         assert!(finite(&plain) && !plain.indices.is_empty());
         assert!(
             plain
@@ -704,7 +724,7 @@ mod tests {
         );
         // Every vertex hangs around the tunnel axis: nothing of the street is in it.
         assert!(plain.positions.iter().all(|p| p[1] < -12.0 + 6.0));
-        let platform = tunnel_mesh(&net, &db, &BTreeSet::from([tube]));
+        let platform = tunnel_mesh(&net, &db, None, &BTreeSet::from([tube]));
         assert_eq!(platform.positions.len(), plain.positions.len());
         assert_ne!(platform.colors[0], plain.colors[0]);
     }

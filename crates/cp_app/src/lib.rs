@@ -464,6 +464,21 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         // From the south over the user's two rows of blocks of `--scene zone-grid` (BUG-098).
         "zone-grid" => (Vec3::new(c, 330.0, c + 380.0), Vec3::new(c, 0.0, c - 10.0)),
         "bike-lanes" => (Vec3::new(c, 420.0, c + 480.0), Vec3::new(c, 0.0, c)),
+        // Obliquely from the south-east over the road levels of `--scene levels` (T-332d).
+        "levels" => (
+            Vec3::new(c + 180.0, 150.0, c + 300.0),
+            Vec3::new(c - 20.0, 0.0, c - 40.0),
+        ),
+        // Low from the south-east at the ramp 6 -> 12 m (side walls and piers).
+        "levels-close" => (
+            Vec3::new(c + 10.0, 48.0, c + 75.0),
+            Vec3::new(c - 70.0, 36.0, c),
+        ),
+        // Over the tunnel row 0 -> -6 -> -12 m (with `--overlay underground`).
+        "levels-tunnel" => (
+            Vec3::new(c + 60.0, 190.0, c + 330.0),
+            Vec3::new(c + 40.0, 0.0, c + 120.0),
+        ),
         // Down the second street from the south, its bike lane under the camera (T-322b).
         "bike-lanes-close" => (
             Vec3::new(c - 30.0, 18.0, c - 144.0 + 36.0),
@@ -820,6 +835,11 @@ pub fn build_sim(
     } else if scene == Some(scene::MARKET) {
         let n = scene::build_market(&mut sim);
         info!("scene market: {n} buildings");
+    } else if scene == Some(scene::LEVELS) {
+        for reason in scene::build_levels(&mut sim) {
+            warn!("scene command rejected: {reason}");
+        }
+        info!("scene levels");
     } else if scene == Some(scene::BIKE_LANES) {
         let o = scene::build_bike_lanes(&mut sim);
         info!("scene bike-lanes at {o:?}");

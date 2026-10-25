@@ -5,8 +5,8 @@
 //!   curves, one ring pair on straights. Lane markings are baked into the surface as extra
 //!   bands (and on/off dash quads) of vertex colour, so no two surfaces overlap and nothing
 //!   z-fights. Sidewalks are raised bands with kerb faces. Ground segments get skirts down
-//!   to the terrain; elevated and bridge segments get an underside, fascias and piers.
-//! * A **node piece** depends on the node's class (`node`, T-263): none at a middle node, a
+//!   to the terrain; elevated and bridge segments get an underside, fascias, side walls and piers.
+//! * A **node piece** depends on the node's class (`node`, T-263): none at a middle node (a pier at a raised one), a
 //!   cap at a dead end, a joint at a bend or transition, carriageway, curb curves and corner
 //!   sidewalks at a junction. Its ends are *the same points* (and heights) the neighbouring
 //!   segments use for their end rings, so there are no gaps.
@@ -46,6 +46,9 @@ pub const LIFT: f32 = 0.06;
 pub const CURB: f32 = 0.15;
 /// Deck thickness of elevated and bridge pieces, metres.
 pub const DECK: f32 = 1.0;
+/// Height and thickness of the side wall on the edges of a raised deck (T-332d), metres.
+pub const PARAPET_H: f32 = 0.9;
+const PARAPET_T: f32 = 0.3;
 /// Half side of a pier, metres.
 pub const PIER_HALF: f32 = 1.0;
 /// Dash pattern of lane dividers: painted length and period, metres.
@@ -1014,6 +1017,11 @@ fn extrude_or_rings(
                 if raised { CONCRETE } else { EMBANKMENT },
             );
         }
+        if raised {
+            let outer: Vec<Vec3> = rings.iter().map(|r| r.at(x, raise)).collect();
+            let towards: Vec<Vec3> = rings.iter().map(|r| r.at(x - side, raise)).collect();
+            parapet(&mut m, &outer, &towards);
+        }
     }
     if raised {
         let mut prev = None::<(u32, u32)>;
@@ -1134,6 +1142,36 @@ fn chevron_quads(m: &mut MeshData, a: &Ring, b: &Ring, lo: f32, hi: f32) {
         [q1, p2, p3],
     ] {
         flat_tri(m, t, ASPHALT);
+    }
+}
+
+/// The side wall along the outer edge `outer` of a raised deck (T-332d, §18.1 "Решения T-332"
+/// D1): an outer face, a top and an inner face, [`PARAPET_T`] thick towards `towards` (a point
+/// inside the deck for each point of `outer`).
+pub(super) fn parapet(m: &mut MeshData, outer: &[Vec3], towards: &[Vec3]) {
+    let inner: Vec<Vec3> = outer
+        .iter()
+        .zip(towards)
+        .map(|(p, t)| {
+            let d = Vec3::new(t.x - p.x, 0.0, t.z - p.z)
+                .try_normalize()
+                .unwrap_or(Vec3::ZERO);
+            *p + d * PARAPET_T
+        })
+        .collect();
+    let up = Vec3::Y * PARAPET_H;
+    for (o, i) in outer.windows(2).zip(inner.windows(2)) {
+        let (a, b, c, d) = (o[0], o[1], i[1], i[0]);
+        if a.distance(b) < 1e-6 {
+            continue;
+        }
+        let mid = (c + d - a - b) * 0.5;
+        let inward = Vec3::new(mid.x, 0.0, mid.z)
+            .try_normalize()
+            .unwrap_or(Vec3::X);
+        flat_quad(m, [a, b, b + up, a + up], -inward, CONCRETE);
+        flat_quad(m, [d + up, c + up, c, d], inward, CONCRETE);
+        flat_quad(m, [a + up, b + up, c + up, d + up], Vec3::Y, CONCRETE);
     }
 }
 

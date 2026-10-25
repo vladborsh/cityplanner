@@ -2,7 +2,8 @@
 //! gives a node decides its piece, and every point comes from topology (arm, side, band), never
 //! from matching coordinates:
 //! * `End`: a cap around the dead end: carriageway, and the sidewalks running round it.
-//! * `Middle`: no piece; the two segment ends meet on one mitred end line.
+//! * `Middle`: no piece; the two segment ends meet on one mitred end line (a raised one stands on
+//!   a pier, T-332d).
 //! * `Bend` and `Transition`: a joint between the two cuts, built from lines across the node
 //!   ([`cp_net::side_line`]). A bend has a line at every band boundary of its road, so lanes,
 //!   markings and sidewalks run on through it (mitred on the inside, round on the outside). A
@@ -257,7 +258,8 @@ fn wall(m: &mut MeshData, p: &[Vec3], low: f32, high: f32, towards: &[Vec3], col
     }
 }
 
-/// Skirt (ground) or fascia (raised) under the outer line `p`, whose inside is towards `inside`.
+/// Skirt (ground) or fascia and side wall (raised) on the outer line `p`, whose inside is
+/// towards `inside`.
 fn edge(m: &mut MeshData, terrain: &Terrain, raised: bool, p: &[Vec3], inside: &[Vec3]) {
     let away: Vec<Vec3> = p.iter().zip(inside).map(|(a, b)| *a * 2.0 - *b).collect();
     for i in 0..p.len().saturating_sub(1) {
@@ -283,6 +285,9 @@ fn edge(m: &mut MeshData, terrain: &Terrain, raised: bool, p: &[Vec3], inside: &
             facing,
             if raised { CONCRETE } else { EMBANKMENT },
         );
+    }
+    if raised {
+        parapet(m, p, inside);
     }
 }
 
@@ -820,10 +825,18 @@ pub(super) fn build(
     markings: bool,
 ) -> Option<MeshData> {
     let node = graph.node(j.node)?;
-    if j.class == NodeClass::Middle || node.elevation == Elevation::Tunnel {
+    if node.elevation == Elevation::Tunnel {
         return None;
     }
     let raised = node.elevation != Elevation::Ground;
+    if j.class == NodeClass::Middle {
+        // T-332d: a raised middle node has no piece but stands on a pier of its own height.
+        let mut m = MeshData::default();
+        if raised {
+            node_pier(&mut m, graph, terrain, j);
+        }
+        return (!m.positions.is_empty()).then_some(m);
+    }
     let all: Vec<ArmEnd> = j
         .arms
         .iter()
