@@ -104,7 +104,8 @@ fn no_mail_while_the_post_office_is_locked_and_vans_collect_it_after() {
     );
     let buildings = sim.world().resource::<BuildingGrid>().iter().count();
     assert!(
-        mail_problems(&sim) * 20 <= buildings,
+        // T-333: 10 % (was 5 %): vans give way to walkers on the zebras of the lattice.
+        mail_problems(&sim) * 10 <= buildings,
         "{} of {buildings} buildings have the MAIL problem",
         mail_problems(&sim)
     );

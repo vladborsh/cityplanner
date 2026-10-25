@@ -914,15 +914,14 @@ fn could_enter(
         || find_exit(g, node.id, to).is_none_or(|e| has_room(g, veh, st, o, e.to_slot, 0))
 }
 
-/// Does a pedestrian on a crossing hold a car that wants to take `ex` (§18.5)? Without a light
-/// the car yields on the crossing it enters over (the zebra) and does not enter a junction
-/// whose exit crossing is occupied either: it could not stop inside any more. With a light the
+/// Does a pedestrian on a crossing hold a car that wants to take `ex` at its stop line (§18.5)?
+/// Without a light the car yields on the crossing it enters over (the zebra); with one the
 /// walkers are in the phase of the flow across, so only the crossing it leaves over can hold it
-/// (a turn). Waiting walkers hold nobody: they step out when it is safe (`crossing_margins`).
+/// (a turn). Waiting walkers hold nobody: they step out when it is safe (`crossing_margins`),
+/// and a car already inside the junction brakes for walkers on the crossing it leaves over.
 fn crossing_blocks(st: &DriveState, ex: &ExitConn) -> bool {
-    let busy =
-        |c: Option<u32>| c.is_some_and(|c| st.walkers.get(c as usize).is_some_and(|&n| n > 0));
-    busy(ex.crossings[1]) || (ex.light == u32::MAX && busy(ex.crossings[0]))
+    ex.crossings[usize::from(ex.light != u32::MAX)]
+        .is_some_and(|c| st.walkers.get(c as usize).is_some_and(|&n| n > 0))
 }
 
 fn gate_open(

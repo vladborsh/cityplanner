@@ -1367,18 +1367,6 @@ fn walkers_on_the_zebra_hold_a_car_without_a_light_until_they_are_gone() {
 }
 
 #[test]
-fn walkers_on_the_crossing_a_car_would_leave_over_hold_it_before_the_junction() {
-    let (mut rig, id, [_, exit], _) = zebra_rig("basic_2l");
-    rig.st.walkers[exit.unwrap() as usize] = 3;
-    let t = run_ticks(&mut rig, 0, 300);
-    let v = rig.veh.get(id).expect("held");
-    assert!(!v.in_conn && v.hop == 0 && v.speed < 0.1);
-    rig.st.walkers[exit.unwrap() as usize] = 0;
-    run_ticks(&mut rig, t, 600);
-    assert_eq!((rig.arrived, rig.veh.len()), (1, 0));
-}
-
-#[test]
 fn a_slow_car_in_the_junction_stops_short_of_walkers_who_stepped_out_before_it() {
     let (mut rig, id, [_, exit], _) = zebra_rig("basic_2l");
     let exit = exit.unwrap() as usize;

@@ -1742,11 +1742,59 @@ pub fn move_agents(
     let now = tick.0;
     book.ensure_derived();
     agents.ensure_derived(&book);
-    // Where the cars are, from the end of the last tick (the walkers decide on that, §18.5).
-    let margins = if !agents.pedestrians.is_empty()
-        && agents.drive.ready
-        && agents.drive.generation == pnet.generation()
+    // The cars' state must be this tick's before the walkers look at it (§18.5), also right
+    // after a load: rebuild the drive state first.
+    let specs = content
+        .as_deref()
+        .map_or_else(VehicleSpecs::default, |c| VehicleSpecs::from_content(&c.0));
+    agents.drive.specs = specs;
+    let mut gone: Vec<Vehicle> = Vec::new();
     {
+        let graph = pnet.graph();
+        let Agents {
+            vehicles,
+            drive,
+            stats,
+            reroutes,
+            ..
+        } = &mut *agents;
+        if !drive.ready || drive.generation != pnet.generation() {
+            // Cars whose own place is gone vanish; cars whose route ahead is gone ask for a new
+            // one from where they are and carry on meanwhile (T-066).
+            for id in drive.rebuild(vehicles, graph, pnet.generation()) {
+                if let Some(v) = vehicles.remove(id) {
+                    stats.invalid_vehicles += 1;
+                    gone.push(v);
+                }
+            }
+            let broken: Vec<VehicleId> = vehicles
+                .iter()
+                .filter(|(_, v)| v.reroute.is_none() && !path_ok(graph, v))
+                .map(|(id, _)| id)
+                .collect();
+            for id in broken {
+                let request = vehicles
+                    .get(id)
+                    .and_then(|v| submit_reroute(&mut service, &pnet, *tick, v));
+                match request {
+                    Some(r) => {
+                        vehicles.get_mut(id).expect("vehicle").reroute = Some(r);
+                        reroutes.insert(r, id);
+                    }
+                    None => {
+                        // The destination lane itself is gone.
+                        if let Some(v) = vehicles.remove(id) {
+                            drive.remove(&v, id);
+                            stats.invalid_vehicles += 1;
+                            gone.push(v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Where the cars are, from the end of the last tick (the walkers decide on that, §18.5).
+    let margins = if !agents.pedestrians.is_empty() {
         crate::drive::crossing_margins(pnet.graph(), &agents.vehicles, &agents.drive)
     } else {
         Vec::new()
@@ -1852,48 +1900,11 @@ pub fn move_agents(
         vehicles,
         drive,
         stats,
-        reroutes,
         parked,
         ..
     } = &mut *agents;
     drive.walkers = walkers;
-    let mut gone: Vec<Vehicle> = Vec::new();
-    if !drive.ready || drive.generation != pnet.generation() {
-        // Cars whose own place is gone vanish; cars whose route ahead is gone ask for a new
-        // one from where they are and carry on meanwhile (T-066).
-        for id in drive.rebuild(vehicles, graph, pnet.generation()) {
-            if let Some(v) = vehicles.remove(id) {
-                stats.invalid_vehicles += 1;
-                gone.push(v);
-            }
-        }
-        let broken: Vec<VehicleId> = vehicles
-            .iter()
-            .filter(|(_, v)| v.reroute.is_none() && !path_ok(graph, v))
-            .map(|(id, _)| id)
-            .collect();
-        for id in broken {
-            let request = vehicles
-                .get(id)
-                .and_then(|v| submit_reroute(&mut service, &pnet, *tick, v));
-            match request {
-                Some(r) => {
-                    vehicles.get_mut(id).expect("vehicle").reroute = Some(r);
-                    reroutes.insert(r, id);
-                }
-                None => {
-                    // The destination lane itself is gone.
-                    if let Some(v) = vehicles.remove(id) {
-                        drive.remove(&v, id);
-                        stats.invalid_vehicles += 1;
-                        gone.push(v);
-                    }
-                }
-            }
-        }
-    }
     let pool = parallel.then(|| ComputeTaskPool::get_or_init(TaskPool::default));
-    let specs = content.map_or_else(VehicleSpecs::default, |c| VehicleSpecs::from_content(&c.0));
     let fin = drive_tick(
         vehicles,
         drive,
