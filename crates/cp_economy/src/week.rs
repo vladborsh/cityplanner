@@ -369,6 +369,7 @@ pub fn settle_week(
             report.transit_fares = ledger.fares;
             report.transit_upkeep = ledger.upkeep;
             report.tourism = ledger.tourism;
+            report.hotels = ledger.hotels;
             report.exports = ledger.exports;
             *ledger = TransitLedger::default();
         }
@@ -385,11 +386,12 @@ pub fn settle_week(
             treasury.balance += fees;
             booked.park_fees = fees;
         }
-        treasury.balance += report.transit_fares + report.tourism + report.exports
+        treasury.balance += report.transit_fares + report.tourism + report.hotels + report.exports
             - report.transit_upkeep
             - report.loan_payments;
         booked.fares = report.transit_fares;
         booked.tourism = report.tourism;
+        booked.hotels = report.hotels;
         booked.exports = report.exports;
         booked.transit_upkeep = report.transit_upkeep;
         booked.loans = report.loan_payments;

@@ -69,6 +69,9 @@ pub struct TransitLedger {
     pub exports: Cost,
     pub export_loads: u32,
     pub import_loads: u32,
+    /// What the hotel guests paid for their nights this week (T-321, §22.3).
+    #[serde(default)]
+    pub hotels: Cost,
 }
 
 impl TransitLedger {

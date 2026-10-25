@@ -76,6 +76,9 @@ pub struct WeekReport {
     /// What the visits of tourists brought, from the transit ledger (T-168). Added in v33.
     #[serde(default)]
     pub tourism: Cost,
+    /// What the hotel guests paid for their nights, from the transit ledger (T-321).
+    #[serde(default)]
+    pub hotels: Cost,
     /// What the goods trucks that left the map brought, from the transit ledger (T-170). Added
     /// in v37.
     #[serde(default)]
@@ -96,7 +99,7 @@ impl WeekReport {
 
     /// Income minus upkeep and loan payments: the change of the treasury that week.
     pub fn balance(&self) -> Cost {
-        self.income() + self.transit_fares + self.tourism + self.exports
+        self.income() + self.transit_fares + self.tourism + self.hotels + self.exports
             - self.upkeep()
             - self.transit_upkeep
             - self.loan_payments

@@ -54,7 +54,9 @@ pub use station::{
     station_reaches_outside, station_stop,
 };
 pub use sync::{rebind_stops, update_transit};
-pub use tourists::{TOURISM_STREAM, Tourist, TouristPhase, Tourists, bring_by_train, run_tourists};
+pub use tourists::{
+    Lodged, Stay, TOURISM_STREAM, Tourist, TouristPhase, Tourists, bring_by_train, run_tourists,
+};
 pub use trains::{IntercityPose, MetroTrain, intercity_pose, metro_trains, run_pose};
 pub use view::{LINE_PALETTE_RGB, LineRoute, ROUTE_STEP, TransitView, next_line_color};
 

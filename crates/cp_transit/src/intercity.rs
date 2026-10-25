@@ -132,6 +132,7 @@ pub fn run_intercity(
     buildings: Res<BuildingGrid>,
     mut intercity: ResMut<Intercity>,
     mut tourists: ResMut<Tourists>,
+    mut hotels: ResMut<crate::hotels::HotelState>,
     mut book: ResMut<TripBook>,
     mut grid: ResMut<CitizenGrid>,
     mut runs: ResMut<ServiceRuns>,
@@ -168,6 +169,8 @@ pub fn run_intercity(
                     if let Some(node) = rail_node {
                         bring_by_train(
                             &mut tourists,
+                            &mut hotels,
+                            now,
                             &mut runs,
                             db,
                             &buildings,

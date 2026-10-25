@@ -37,6 +37,8 @@ pub struct Flow {
     pub fares: Cost,
     /// Tourists' visits (T-168), booked once a week like the fares.
     pub tourism: Cost,
+    /// Hotel nights (T-321), booked once a week like the fares.
+    pub hotels: Cost,
     /// Goods sent out of the map (T-170), booked once a week like the fares.
     pub exports: Cost,
     /// Cargo sold to and bought from the outside (T-210), booked once a week.
@@ -68,6 +70,7 @@ impl Flow {
         self.tax()
             + self.fares
             + self.tourism
+            + self.hotels
             + self.exports
             + self.industry_export
             + self.park_fees
@@ -101,6 +104,7 @@ impl Flow {
         }
         self.fares += o.fares;
         self.tourism += o.tourism;
+        self.hotels += o.hotels;
         self.exports += o.exports;
         self.industry_export += o.industry_export;
         self.industry_import += o.industry_import;
@@ -120,6 +124,7 @@ impl Flow {
             income_by_zone: self.income_by_zone.map(f),
             fares: f(self.fares),
             tourism: f(self.tourism),
+            hotels: f(self.hotels),
             exports: f(self.exports),
             industry_export: f(self.industry_export),
             industry_import: f(self.industry_import),
@@ -171,6 +176,7 @@ impl MoneyFlow {
         let w: &WeekReport = &state.last_week;
         day.fares = Cost(w.transit_fares.0 / 7);
         day.tourism = Cost(w.tourism.0 / 7);
+        day.hotels = Cost(w.hotels.0 / 7);
         day.exports = Cost(w.exports.0 / 7);
         day.transit_upkeep = Cost(w.transit_upkeep.0 / 7);
         day.loans = Cost(state.loans.iter().map(|l| l.weekly().0).sum::<i64>() / 7);
