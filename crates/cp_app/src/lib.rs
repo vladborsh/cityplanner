@@ -78,6 +78,8 @@ pub struct GamePlugin {
     pub open_windows: Vec<cp_ui::UiWindow>,
     /// The tab the economy window starts on (`--budget-tab`, for screenshots).
     pub budget_tab: Option<cp_ui::budget::BudgetTab>,
+    /// The metrics section the window starts scrolled to (`--metrics-section`, for screenshots).
+    pub metrics_section: Option<String>,
     /// Open this palette category at start (`--category`, for screenshots).
     pub category: Option<cp_ui::Category>,
     /// The tab (its English name) of that category's tray at start (`--tray-tab`, T-317f
@@ -203,6 +205,7 @@ impl Plugin for GamePlugin {
             if let Some(tab) = self.budget_tab {
                 ui_state.budget.tab = tab;
             }
+            ui_state.metrics_section = self.metrics_section.clone();
             // The books demo shows the first area's panel (T-316).
             if self.scene.as_deref() == Some(scene::INDUSTRY_BOOKS) {
                 let mut tools = cp_tools::ToolState::default();
@@ -963,6 +966,12 @@ pub fn build_sim(
     } else if let Some(n) = scene.and_then(scene::parse_night) {
         let (built, dark) = scene::build_night(&mut sim, n, hour);
         info!("scene night:{n}: {built} buildings, {dark} without power");
+    } else if let Some(n) = scene.and_then(town::parse_town_hotels) {
+        let (residents, rejected) = town::build_town_hotels(&mut sim, n);
+        for reason in rejected {
+            warn!("scene command rejected: {reason}");
+        }
+        info!("scene town-hotels:{n}: {residents} residents");
     } else if let Some(n) = scene.and_then(town::parse_town) {
         let (residents, rejected) = town::build_town(&mut sim, n);
         for reason in rejected {

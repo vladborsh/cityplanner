@@ -299,7 +299,12 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         let st = &mut *state;
         budget::budget_window(ctx, &mut st.budget_open, view, &mut st.budget, outbox);
         windows::demand_window(ctx, &mut st.demand_open, view);
-        metrics::metrics_window(ctx, &mut st.metrics_open, view);
+        metrics::metrics_window(
+            ctx,
+            &mut st.metrics_open,
+            view,
+            st.metrics_section.as_deref(),
+        );
         jobs::jobs_window(ctx, &mut st.jobs_open, view);
         services::services_window(ctx, &mut st.services_open, view, overlay);
         let context = services::context_overlay(view, st.category, tools, overlay.active);

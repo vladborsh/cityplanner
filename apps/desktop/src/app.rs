@@ -78,6 +78,8 @@ pub struct Options {
     pub open_windows: Vec<cp_ui::UiWindow>,
     /// `--budget-tab budgets`: the economy window's tab at start (screenshots).
     pub budget_tab: Option<cp_ui::budget::BudgetTab>,
+    /// `--metrics-section Tourism`: the metrics window starts scrolled to that section (shots).
+    pub metrics_section: Option<String>,
     /// `--pointer x,y`: hold the pointer there in a hidden shot, so the cursor hint shows.
     pub pointer: Option<(f32, f32)>,
     /// `--ui`: keep the egui UI in a `--hidden` run, so screenshots show the panels.
@@ -279,6 +281,7 @@ impl Options {
             }),
             tray_tab: value("--tray-tab"),
             budget_tab: value("--budget-tab").and_then(|v| cp_ui::budget::BudgetTab::parse(&v)),
+            metrics_section: value("--metrics-section"),
             always_day: args.iter().any(|a| a == "--always-day"),
             net_debug: args.iter().any(|a| a == "--net-debug"),
             day_night: args.iter().any(|a| a == "--day-night") || value("--hour").is_some(),
@@ -449,7 +452,8 @@ fn pan_camera(
 /// Frame of the run at which `--zoning` switches the zone tool on.
 const ZONING_FRAME: u32 = 60;
 
-/// `--inspect`: from [`ZONING_FRAME`] on, the first building is picked while nothing is.
+/// `--inspect`: from [`ZONING_FRAME`] on, the first hotel (T-321), else the first building, is
+/// picked while nothing is.
 fn inspect_demo(
     mut frame: Local<u32>,
     view: Option<Res<SimView>>,
@@ -461,7 +465,15 @@ fn inspect_demo(
     };
     if *frame >= ZONING_FRAME
         && picked.0.is_none()
-        && let Some((id, _)) = view.buildings.iter().next()
+        && let Some((id, _)) = view
+            .buildings
+            .iter()
+            .find(|(_, b)| {
+                view.content
+                    .as_ref()
+                    .is_some_and(|db| db.building(b.def).hotel.is_some())
+            })
+            .or_else(|| view.buildings.iter().next())
     {
         picked.0 = Some(cp_sim::inspect::Selection::Building(id));
     }
@@ -831,6 +843,7 @@ pub fn run(opts: Options) -> AppExit {
             fold_overlays: opts.fold_overlays,
             open_windows: opts.open_windows.clone(),
             budget_tab: opts.budget_tab,
+            metrics_section: opts.metrics_section.clone(),
             category: opts.category,
             tray_tab: opts.tray_tab.clone(),
             pointer: opts.pointer,

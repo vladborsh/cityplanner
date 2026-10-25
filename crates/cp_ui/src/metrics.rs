@@ -612,9 +612,17 @@ pub fn sparkline(ui: &mut egui::Ui, values: &[f32], size: egui::Vec2) -> egui::R
 
 /// The sections as the window lays them out (no scroll area: tests draw it into a tall `Ui`).
 pub fn metrics_contents(ui: &mut egui::Ui, view: &SimView) {
+    metrics_contents_at(ui, view, None);
+}
+
+/// [`metrics_contents`], scrolled so the section titled `focus` starts at the top.
+fn metrics_contents_at(ui: &mut egui::Ui, view: &SimView, focus: Option<&str>) {
     for section in sections(view) {
         ui.add_space(4.0);
-        ui.strong(tr(section.title));
+        let title = ui.strong(tr(section.title));
+        if focus == Some(section.title) {
+            title.scroll_to_me(Some(egui::Align::TOP));
+        }
         egui::Grid::new(("metrics", section.title))
             .num_columns(2)
             .show(ui, |ui| {
@@ -654,11 +662,11 @@ pub fn metrics_contents(ui: &mut egui::Ui, view: &SimView) {
 }
 
 /// The window itself, shown while `*open`.
-pub fn metrics_window(ctx: &egui::Context, open: &mut bool, view: &SimView) {
+pub fn metrics_window(ctx: &egui::Context, open: &mut bool, view: &SimView, focus: Option<&str>) {
     frame::window("metrics", Icon::Metrics, &tr("City metrics"), open).show(ctx, |ui| {
         egui::ScrollArea::vertical()
             .max_height(520.0)
-            .show(ui, |ui| metrics_contents(ui, view));
+            .show(ui, |ui| metrics_contents_at(ui, view, focus));
     });
 }
 
@@ -725,13 +733,13 @@ mod tests {
         let mut shown = Vec::new();
         for t in [0.0, 0.1] {
             shown = frame_texts(&ctx, input(t, vec![]), |ui| {
-                metrics_window(ui.ctx(), &mut open, &view);
+                metrics_window(ui.ctx(), &mut open, &view, None);
             });
         }
         assert!(shown.iter().any(|(t, _)| t == "City metrics"), "{shown:?}");
         open = false;
         let shown = frame_texts(&ctx, input(0.2, vec![]), |ui| {
-            metrics_window(ui.ctx(), &mut open, &view);
+            metrics_window(ui.ctx(), &mut open, &view, None);
         });
         assert!(shown.is_empty());
     }

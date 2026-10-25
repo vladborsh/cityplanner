@@ -95,6 +95,9 @@ pub struct UiState {
     pub budget_open: bool,
     pub demand_open: bool,
     pub metrics_open: bool,
+    /// The metrics section the window holds scrolled to its top (`--metrics-section`, for
+    /// screenshots; T-321).
+    pub metrics_section: Option<String>,
     /// The Jobs & education window (T-307).
     pub jobs_open: bool,
     pub services_open: bool,

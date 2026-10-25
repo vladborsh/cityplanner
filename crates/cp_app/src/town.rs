@@ -21,6 +21,13 @@ pub fn parse_town(spec: &str) -> Option<u32> {
         .filter(|n| (50..=20_000).contains(n))
 }
 
+/// Parses `town-hotels:N` (T-321 shots): `town:N` with a small and a mid hotel on the open
+/// frontage south of it, run two days so tourists take rooms.
+pub fn parse_town_hotels(spec: &str) -> Option<u32> {
+    parse_town(&spec.replacen("town-hotels:", "town:", 1))
+        .filter(|_| spec.starts_with("town-hotels:"))
+}
+
 /// Blocks across and down.
 const COLS: usize = 4;
 const ROWS: usize = 3;
@@ -90,6 +97,38 @@ pub fn build_town(sim: &mut SimRunner, residents: u32) -> (u32, Vec<String>) {
             .filter_map(|o| o.result.err().map(|e| e.to_string())),
     );
     (population(sim), rejected)
+}
+
+/// [`build_town`], then the hotels of [`parse_town_hotels`] by the player's place command and two
+/// days for the tourists; the residents and the refused commands.
+pub fn build_town_hotels(sim: &mut SimRunner, residents: u32) -> (u32, Vec<String>) {
+    let (n, mut rejected) = build_town(sim, residents);
+    let db = sim.world().resource::<cp_content::SimContent>().0.clone();
+    let o = origin();
+    let south = o.y + ROWS as f32 * DY + cp_net::build::ZONE_CELL;
+    for (def, along) in [("hotel_small", 0.3), ("hotel_mid", 0.6)] {
+        let id = db.building_id(def).expect("hotel def");
+        let deep = f32::from(db.building(id).lot.1) * cp_building::FOOTPRINT_CELL_M;
+        sim.push_command(
+            cp_sim::SimCommand::Building(cp_building::BuildingCommand::Place {
+                def: id,
+                pos: Vec2::new(o.x + along * COLS as f32 * DX, south + deep / 2.0 + 1.0),
+                rot: 0.0,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    for _ in 0..2 * cp_core::time::TICKS_PER_DAY {
+        sim.tick_once();
+    }
+    rejected.extend(
+        sim.world_mut()
+            .resource_mut::<bevy_ecs::message::Messages<cp_core::CommandOutcome>>()
+            .drain()
+            .filter_map(|o| o.result.err().map(|e| e.to_string())),
+    );
+    (n, rejected)
 }
 
 /// The town's streets and zones as a player lays them out (the module docs), nothing grown yet;
