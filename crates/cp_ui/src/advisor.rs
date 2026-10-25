@@ -1829,6 +1829,105 @@ mod tests {
         assert!(Advisor::default().bike_lanes_hint(&lanes).is_none());
     }
 
+    /// T-321c (§22.7 item 7): `hotels_full` only after three full days with tourists turned away
+    /// this week; `hotels_empty` after a week under 20 % taken, never in winter.
+    #[test]
+    fn hotel_advice_needs_three_full_days_and_turned_away_and_is_quiet_in_winter() {
+        use cp_core::time::{SEASON_DAYS, Season, TICKS_PER_DAY};
+        let mut hotel = None;
+        let mut v = view_with(|sim| {
+            let db = std::sync::Arc::clone(&sim.world().resource::<cp_content::SimContent>().0);
+            let id = sim
+                .world_mut()
+                .resource_mut::<cp_building::BuildingGrid>()
+                .insert(cp_building::Building {
+                    def: db.building_id("hotel_small").unwrap(),
+                    footprint: cp_building::Footprint::Lot(cp_building::Lot {
+                        block: cp_core::Id::new(0, 0),
+                        col: 0,
+                        w: 2,
+                        d: 2,
+                    }),
+                    level: 1,
+                    state: cp_building::BuildingState::Active,
+                    ready_at: cp_core::Tick(0),
+                    pos: bevy::math::Vec2::new(10.0, 10.0),
+                    rot: 0.0,
+                    access: None,
+                    flags: cp_building::BuildingFlags(0),
+                    level_progress: 0.0,
+                });
+            hotel = Some(id);
+        });
+        let id = hotel.unwrap();
+        let rooms = u32::from(
+            v.content
+                .as_ref()
+                .unwrap()
+                .building(v.buildings.get(id).unwrap().def)
+                .hotel
+                .unwrap()
+                .rooms,
+        );
+        let at_season = |s: Season| {
+            let i = Season::ALL.iter().position(|&x| x == s).unwrap() as u64;
+            cp_core::Tick(i * SEASON_DAYS * TICKS_PER_DAY + TICKS_PER_DAY / 2)
+        };
+        let has = |out: &[Advice], id: &str| out.iter().any(|a| a.id == id);
+        let set_guests = |v: &mut SimView, g: u32| {
+            v.hotels.slots.insert(
+                id,
+                cp_transit::HotelSlot {
+                    guests: g as u16,
+                    ..Default::default()
+                },
+            );
+        };
+
+        // Full (over 90 %) but nobody turned away: no advice, however many days.
+        set_guests(&mut v, rooms);
+        v.tick = at_season(Season::Spring);
+        let mut adv = Advisor::default();
+        for day in 0..5 {
+            assert!(!has(&adv.hotel_advice(&v, day), "hotels_full"), "day {day}");
+        }
+        // Turned away too: only on the third full day.
+        v.freight.turned_away_week = 4;
+        let mut adv = Advisor::default();
+        assert!(!has(&adv.hotel_advice(&v, 0), "hotels_full"));
+        assert!(!has(&adv.hotel_advice(&v, 1), "hotels_full"));
+        let out = adv.hotel_advice(&v, 2);
+        let full = out
+            .iter()
+            .find(|a| a.id == "hotels_full")
+            .expect("third full day");
+        assert_eq!(full.count, 4);
+        assert_eq!(full.action, Some(Action::Panel(Category::Buildings)));
+
+        // Empty (under 20 %): a week outside winter gives the advice, winter never does.
+        v.freight.turned_away_week = 0;
+        set_guests(&mut v, 0);
+        let mut adv = Advisor::default();
+        for day in 0..6 {
+            assert!(
+                !has(&adv.hotel_advice(&v, day), "hotels_empty"),
+                "day {day}"
+            );
+        }
+        assert!(
+            has(&adv.hotel_advice(&v, 6), "hotels_empty"),
+            "after a week"
+        );
+        v.tick = at_season(Season::Winter);
+        let mut adv = Advisor::default();
+        for day in 0..10 {
+            assert!(
+                !has(&adv.hotel_advice(&v, day), "hotels_empty"),
+                "winter day {day}"
+            );
+        }
+    }
+
     #[test]
     fn five_houses_without_water_give_the_water_advice_with_the_overlay_action() {
         let all = collect(&no_water(5), &mut None);

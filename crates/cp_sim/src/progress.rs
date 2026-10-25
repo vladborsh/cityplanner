@@ -87,8 +87,9 @@ pub struct UnlockInputs {
     pub districts: u32,
     pub tourists_week: u32,
     pub uniques_built: u32,
-    /// Buildings per service kind (index `ServiceKind as usize`).
-    pub services: [u32; 16],
+    /// Buildings per service kind (index `ServiceKind as usize`; T-321: sized from the last
+    /// kind, `Tourism`, so a new kind past it must move this).
+    pub services: [u32; cp_content::ServiceKind::Tourism as usize + 1],
 }
 
 impl UnlockInputs {
