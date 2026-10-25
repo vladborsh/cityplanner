@@ -789,7 +789,15 @@ impl Inspection {
             Inspection::Building(b) => {
                 let mut r = vec![
                     row("Type", b.def.clone()),
-                    row("Zone", format!("{:?}", b.zone)),
+                    // A hotel has no zone (its def's `zone` is only a placeholder; T-321d).
+                    row(
+                        "Zone",
+                        if b.hotel.is_some() {
+                            "Tourism".to_string()
+                        } else {
+                            format!("{:?}", b.zone)
+                        },
+                    ),
                     row("State", format!("{:?}", b.state)),
                     row(
                         "Level",

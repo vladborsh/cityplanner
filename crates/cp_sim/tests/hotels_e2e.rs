@@ -232,3 +232,24 @@ fn a_demolished_hotel_leaves_no_guest_behind() {
     };
     assert_eq!(run(), run());
 }
+
+/// T-321d: the inspector shows a hotel's zone as Tourism (its def's zone is a placeholder) and
+/// its guests among the hotel rows.
+#[test]
+fn the_inspector_shows_a_hotel_as_tourism_with_its_guests() {
+    let db = content(20, "tourism: (stay_share: 1.0)");
+    let (mut sim, hotel, _) = town(&db);
+    days(&mut sim, 1);
+    let rows = sim
+        .inspect(cp_sim::inspect::Selection::Building(hotel))
+        .expect("the hotel")
+        .rows();
+    let value = |label: &str| {
+        rows.iter()
+            .find(|(l, _)| l == label)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or_else(|| panic!("{label}: {rows:?}"))
+    };
+    assert_eq!(value("Zone"), "Tourism");
+    assert_eq!(value("Guests"), format!("{} of 20", guests(&sim, hotel)));
+}
