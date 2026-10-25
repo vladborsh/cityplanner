@@ -6,9 +6,7 @@ use bevy_egui::egui;
 use cp_content::{ContentDb, LaneKind, RoadClass, RoadDefId};
 use cp_core::Cost;
 use cp_locale::{tr, trf, trn};
-use cp_tools::{
-    ActiveTool, ELEVATION_STEP, MAX_ELEVATION_LEVEL, RoadMode, ToolState, format_money,
-};
+use cp_tools::{ActiveTool, LEVEL_STEP, MAX_LEVEL, MIN_LEVEL, RoadMode, ToolState, format_money};
 
 use crate::Icon;
 use crate::icons;
@@ -110,25 +108,25 @@ fn class_label(tab: RoadTab) -> &'static str {
 
 /// The height of the road tool as the panel states it: under the ground, on it or raised.
 pub fn road_height_text(tool: &cp_tools::RoadTool) -> String {
-    if tool.underground {
-        trf!(
-            "Tunnel {m} m",
-            m = format!("{:.0}", cp_tools::ROAD_TUNNEL_DEPTH)
-        )
-    } else {
-        elevation_text(tool.level)
+    elevation_text(tool.level)
+}
+
+/// A level as the panel states it: "Ground", "Raised 12 m", "Tunnel 6 m".
+pub fn elevation_text(level: i8) -> String {
+    let m = format!("{:.0}", f32::from(level.unsigned_abs()) * LEVEL_STEP);
+    match level {
+        0 => tr("Ground"),
+        1.. => trf!("Raised {m} m", m = m),
+        _ => trf!("Tunnel {m} m", m = m),
     }
 }
 
-/// The elevation as the panel states it.
-pub fn elevation_text(level: u8) -> String {
-    if level == 0 {
-        tr("Ground")
-    } else {
-        trf!(
-            "Raised {m} m",
-            m = format!("{:.0}", f32::from(level) * ELEVATION_STEP)
-        )
+/// A level as the cursor shows it: "+2", "−1", nothing on the ground (T-332).
+pub fn level_tag(level: i8) -> Option<String> {
+    match level {
+        0 => None,
+        1.. => Some(format!("+{level}")),
+        _ => Some(format!("−{}", level.unsigned_abs())),
     }
 }
 
@@ -268,6 +266,10 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
                     }
                 }
             }
+            // T-332: the interchanges stand on highways, so they are in that row.
+            if class == RoadTab::Class(RoadClass::Highway) {
+                interchange_tiles(ui, content, tools);
+            }
         };
         if in_tray {
             ui.horizontal(tiles);
@@ -343,8 +345,8 @@ pub fn side_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
             }
         });
         ui.horizontal(|ui| {
-            let lower = tools.road.level > 0 || !tools.road.underground;
-            let raise = tools.road.underground || tools.road.level < MAX_ELEVATION_LEVEL;
+            let lower = tools.road.level > MIN_LEVEL;
+            let raise = tools.road.level < MAX_LEVEL;
             for (button, icon, hover, enabled) in [
                 (
                     SideButton::Lower,
@@ -388,6 +390,28 @@ pub fn side_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
         ui.small(road_height_text(&tools.road));
     });
     ui.ctx().data_mut(|d| d.insert_temp(side_rects_id(), rects));
+}
+
+/// One tile per interchange template (T-332): a click takes the interchange tool with it.
+fn interchange_tiles(ui: &mut egui::Ui, content: &ContentDb, tools: &mut ToolState) {
+    for def in content.interchanges() {
+        let icon = if def.icon.is_empty() {
+            &def.id
+        } else {
+            &def.icon
+        };
+        let on = tools.active == ActiveTool::Interchange
+            && tools.interchange.def.as_deref() == Some(def.id.as_str());
+        if tool_tile(ui, TileIcon::Def(icon), &tr(&def.name), on)
+            .on_hover_text(tr("Click a one-way highway beside its other carriageway."))
+            .clicked()
+        {
+            if !on {
+                tools.select(ActiveTool::Interchange);
+            }
+            tools.interchange.def = Some(def.id.clone());
+        }
+    }
 }
 
 /// The options strip of the Roads tray: mode, snaps and trees of the road tool; a word for
@@ -480,9 +504,19 @@ mod tests {
         })
     }
 
+    /// The road type tiles, in card order: the interchange tiles after the Highway row's
+    /// types (T-332) are left out.
     fn road_tiles(ctx: &egui::Context, n: usize) -> Vec<(egui::Rect, egui::Rect)> {
+        let db = content();
+        let extra = db.interchanges().len();
         let all = take_rects(ctx).0;
-        all[all.len() - n..].to_vec()
+        let mut tiles = all[all.len() - n - extra..].to_vec();
+        let after_highway = cards(&db)
+            .iter()
+            .filter(|c| c.tab <= RoadTab::Class(RoadClass::Highway))
+            .count();
+        tiles.drain(after_highway..after_highway + extra);
+        tiles
     }
 
     #[test]

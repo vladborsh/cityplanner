@@ -65,6 +65,8 @@ pub enum ActiveTool {
     /// Traffic lights and priority signs at the junctions (T-303): the clicks are on the screen
     /// marks drawn by `cp_ui::junction_marks`.
     Junctions,
+    /// Stamping an interchange template on a highway (T-332).
+    Interchange,
 }
 
 /// What the bulldozer may take (T-286, §13.5 v7.1): everything, or only one utility layer —
@@ -203,6 +205,9 @@ pub struct ToolState {
     pub flip_preview: Option<crate::flip::FlipPreview>,
     /// What the Trees tool would do to the segment under the cursor (T-323).
     pub trees_preview: Option<crate::trees::TreesPreview>,
+    /// The interchange template in hand and what a click would stamp (T-332).
+    pub interchange: crate::interchange::InterchangeTool,
+    pub interchange_preview: Option<crate::interchange::InterchangePreview>,
     pub zone: ZoneTool,
     pub district: crate::district::DistrictTool,
     /// Cells the district brush would change at the cursor (the highlight).
@@ -246,6 +251,14 @@ pub struct ToolState {
     ghost_key: Option<GhostKey>,
     utility_key: Option<UtilityGhostKey>,
     line_key: Option<LineGhostKey>,
+    interchange_key: Option<InterchangeKey>,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+struct InterchangeKey {
+    hover: (i32, i32),
+    def: Option<String>,
+    net_ptr: usize,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -308,6 +321,8 @@ impl ToolState {
         self.upgrade_preview = None;
         self.flip_preview = None;
         self.trees_preview = None;
+        self.interchange_preview = None;
+        self.interchange_key = None;
         self.ghost_key = None;
         self.zone.cancel();
         self.zone_preview.clear();
@@ -357,7 +372,7 @@ pub struct GhostDemo {
     pub road: String,
     pub from: Vec2,
     pub to: Vec2,
-    /// The road level the tool is at: `n > 0` raised by `n` keys, `-1` underground (BUG-121).
+    /// The road level the tool is at: `n` steps of 6 m, negative under the ground (BUG-121, T-332).
     pub level: i8,
     /// Send the plan once the ghost is valid and drop the tool: the built road in a shot.
     pub build: bool,
@@ -815,13 +830,8 @@ fn ghost_demo(
     }
     state.active = ActiveTool::Road;
     state.road.road = Some(road);
-    state.road.level = 0;
-    state.road.underground = false;
-    match demo.level {
-        1.. => (0..demo.level).for_each(|_| state.road.raise()),
-        ..=-1 => state.road.lower(),
-        0 => {}
-    }
+    state.road.level = demo.level.clamp(crate::MIN_LEVEL, crate::MAX_LEVEL);
+    state.road.from_level = Some(state.road.level);
     state.road.points = vec![demo.from];
     state.hover = Some(demo.to);
     let (road_tool, to) = (state.road.clone(), demo.to);
@@ -880,6 +890,10 @@ fn sync_demolish_layer(state: Res<ToolState>, mut out: ResMut<cp_render::Demolis
             .filter(|g| g.valid)
             .map_or(Vec::new(), |g| g.demolish.clone()),
         (_, ActiveTool::Upgrade) => state.upgrade_demolish.clone(),
+        (_, ActiveTool::Interchange) => state
+            .interchange_preview
+            .as_ref()
+            .map_or(Vec::new(), |p| p.demolish.clone()),
         _ => Vec::new(),
     };
     // The buildings a pipe ghost would connect (T-286), tinted blue.
@@ -1471,6 +1485,27 @@ fn send_road(
     }
 }
 
+/// The interchange tool over `p` (T-332): the stamp of the template in hand, recomputed when the
+/// cursor moves by a metre or the net changes.
+fn interchange_hover(state: &mut ToolState, view: &SimView, p: Vec2) {
+    let step = crate::interchange::ANCHOR_STEP;
+    let key = InterchangeKey {
+        hover: ((p.x / step).round() as i32, (p.y / step).round() as i32),
+        def: state.interchange.def.clone(),
+        net_ptr: std::sync::Arc::as_ptr(&view.net) as usize,
+    };
+    if state.interchange_key.as_ref() == Some(&key) {
+        return;
+    }
+    let def = view
+        .content
+        .as_deref()
+        .zip(state.interchange.def.as_deref())
+        .and_then(|(c, id)| c.interchange(id));
+    state.interchange_preview = def.map(|d| crate::interchange::interchange_preview(view, d, p));
+    state.interchange_key = Some(key);
+}
+
 fn build_command(plan: cp_net::BuildPlan) -> SimCommand {
     SimCommand::Net(NetCommand::BuildPlan { plan })
 }
@@ -1532,6 +1567,7 @@ pub fn tool_hover(
             });
             state.flip_preview = preview;
         }
+        (ActiveTool::Interchange, Some(p)) => interchange_hover(&mut state, &view, p),
         (ActiveTool::Trees, Some(p)) => {
             let preview = view.content.as_deref().and_then(|content| {
                 pick_segment(&view.net, p, PICK_RADIUS).map(|seg| {
@@ -1619,6 +1655,8 @@ pub fn tool_hover(
             state.upgrade_preview = None;
             state.flip_preview = None;
             state.trees_preview = None;
+            state.interchange_preview = None;
+            state.interchange_key = None;
             state.building_highlight = None;
             state.stop_highlight = None;
             if state.active != ActiveTool::Line {
@@ -2060,6 +2098,16 @@ pub fn tool_click(
                 state.highlight.clear();
             }
         }
+        ActiveTool::Interchange => {
+            if let Some(cmd) = state
+                .interchange_preview
+                .as_ref()
+                .and_then(crate::interchange::interchange_command)
+            {
+                send_road(&mut state, view.as_deref(), &mut outbox, vec![cmd], None);
+                state.interchange_key = None;
+            }
+        }
         ActiveTool::Trees => {
             if let Some(preview) = state.trees_preview.take() {
                 for command in crate::trees::trees_commands(&preview) {
@@ -2189,6 +2237,19 @@ fn draw_ghost(
         };
         if let Some(p) = state.hover {
             brush_circle(&mut gizmos, view, p, state.area.kind, color);
+        }
+    }
+    // The stamp of the interchange tool (T-332): lines only, red with the reason.
+    if let Some(preview) = &state.interchange_preview
+        && state.active == ActiveTool::Interchange
+    {
+        let color = if preview.valid {
+            Color::srgb(0.9, 1.0, 0.9)
+        } else {
+            Color::srgb(0.95, 0.2, 0.2)
+        };
+        for line in &preview.lines {
+            on_top.linestrip(line.iter().copied(), color);
         }
     }
     if let Some(ghost) = &state.ghost

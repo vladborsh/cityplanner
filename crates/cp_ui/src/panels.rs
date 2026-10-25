@@ -497,6 +497,14 @@ pub fn verdict(ui: &mut egui::Ui, category: Category, tools: &ToolState) {
                 ui.weak(tr("Click to start a road. Esc cancels."));
             }
         },
+        // T-332: the stamp under the cursor, or why there is none.
+        (_, ActiveTool::Interchange) => match &tools.interchange_preview {
+            Some(p) if p.valid => ok(ui, &tr("can build"), p.cost, String::new()),
+            Some(p) => bad(ui, p.error.as_slice(), &tr("cannot build here")),
+            None => {
+                ui.weak(tr("Click a one-way highway beside its other carriageway."));
+            }
+        },
         (_, ActiveTool::Flip) => match &tools.flip_preview {
             Some(f) if !f.errors.is_empty() => bad(ui, &f.errors, &tr("cannot flip")),
             Some(f) => {

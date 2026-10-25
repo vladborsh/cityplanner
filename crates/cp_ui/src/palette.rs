@@ -882,12 +882,16 @@ mod tests {
             "a height takes the road tool"
         );
         assert_eq!(rig.tools.road.level, 1);
-        for _ in 0..cp_tools::MAX_ELEVATION_LEVEL + 2 {
+        for _ in 0..8 {
             click(&mut rig, SideButton::Raise);
         }
-        assert_eq!(rig.tools.road.level, cp_tools::MAX_ELEVATION_LEVEL);
+        assert_eq!(rig.tools.road.level, cp_tools::MAX_LEVEL);
         click(&mut rig, SideButton::Lower);
-        assert_eq!(rig.tools.road.level, cp_tools::MAX_ELEVATION_LEVEL - 1);
+        assert_eq!(rig.tools.road.level, cp_tools::MAX_LEVEL - 1);
+        for _ in 0..8 {
+            click(&mut rig, SideButton::Lower);
+        }
+        assert_eq!(rig.tools.road.level, cp_tools::MIN_LEVEL);
     }
 
     /// The tray is a quarter narrower than the screen and centred; the map beside it still
@@ -1116,7 +1120,8 @@ mod tests {
     fn the_roads_tabs_filter_the_tiles_and_a_second_click_shows_all() {
         let mut rig = Rig::new();
         let db = content();
-        let all = crate::roads::cards(&db).len();
+        // A tile per road type and per interchange template (T-332, in the Highway row).
+        let all = crate::roads::cards(&db).len() + db.interchanges().len();
         rig.click_category(Category::Roads);
         assert_eq!(tiles(&mut rig).len(), all);
         rig.click_label("Large");

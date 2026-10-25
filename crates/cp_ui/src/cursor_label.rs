@@ -36,7 +36,11 @@ pub fn cursor_label(ctx: &egui::Context, tools: &ToolState) {
                 } else {
                     egui::Color32::LIGHT_RED
                 };
-                ui.colored_label(color, text);
+                // T-332: the level the road ends at, "+2" / "−1".
+                match crate::roads::level_tag(tools.road.level) {
+                    Some(tag) => ui.colored_label(color, format!("{tag} · {text}")),
+                    None => ui.colored_label(color, text),
+                };
             });
         });
 }

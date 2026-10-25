@@ -17,6 +17,7 @@ pub mod building;
 pub mod bulldozer;
 pub mod district;
 pub mod flip;
+pub mod interchange;
 pub mod lattice;
 pub mod net_debug;
 mod outbox;
@@ -44,6 +45,9 @@ pub use bulldozer::{
 pub use cp_render::UiCapture;
 pub use district::{DistrictTool, DistrictToolKind};
 pub use flip::{FlipPreview, NOT_ONE_WAY, flip_commands, flip_preview};
+pub use interchange::{
+    InterchangePreview, InterchangeTool, StampFrame, interchange_command, interchange_preview,
+};
 pub use net_debug::{DebugLine, NetDebug, net_debug_lines};
 pub use outbox::CommandOutbox;
 pub use pick::{Inspected, Picked, pick, pick_line, pick_with, pick_with_ray};
@@ -54,10 +58,10 @@ pub use plugin::{
     tool_click, tool_hotkeys,
 };
 pub use road::{
-    CHEVRON_SPACING, Cursor, ELEVATION_STEP, MAX_ELEVATION_LEVEL, MarkerKind, ROAD_TUNNEL_DEPTH,
-    RoadMarker, RoadMode, RoadTool, TOO_CLOSE, anchor_pos, chevron_lines, format_money, plan_for,
-    preview, preview_plan, quantized, resolve_cursor, road_is_one_way, road_markers, snap_label,
-    too_close, too_close_plan,
+    CHEVRON_SPACING, Cursor, LEVEL_STEP, MAX_LEVEL, MIN_LEVEL, MarkerKind, RoadMarker, RoadMode,
+    RoadTool, TOO_CLOSE, anchor_pos, chevron_lines, format_money, plan_for, preview, preview_plan,
+    quantized, resolve_cursor, road_is_one_way, road_markers, snap_label, too_close,
+    too_close_plan,
 };
 pub use transit::{
     Click, LineGhostInfo, LineTool, ROAD_PICK_RADIUS, STOP_PICK_RADIUS, Target, line_ghost,

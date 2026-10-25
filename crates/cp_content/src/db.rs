@@ -1566,7 +1566,10 @@ mod tests {
     fn interchanges_load_and_their_mistakes_are_named() {
         let db = real();
         let d = db.interchange("diamond").expect("the diamond ships");
-        assert_eq!((d.pieces.len(), d.icon.as_str()), (7, "diamond"));
+        assert_eq!(
+            (d.pieces.len(), d.icon.as_str()),
+            (7, "interchange_diamond")
+        );
         assert!(d.needs_second_carriageway);
         // The ramps' junction vertex is the middle vertex of the crossing road on A's side.
         assert_eq!(d.point_uv(3, 2, 20.0), Some((0.0, -82.0)));

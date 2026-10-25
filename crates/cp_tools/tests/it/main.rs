@@ -8,6 +8,7 @@ mod clearance_e2e;
 mod click_through;
 mod flip_tool_e2e;
 mod inspect_e2e;
+mod interchange_e2e;
 mod metro_e2e;
 mod one_way_e2e;
 mod parity_e2e;

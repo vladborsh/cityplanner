@@ -1357,4 +1357,9 @@
     "Bike path": "Bike path",
     "Bike": "Bike",
     "Bike lanes only · {speed} km/h": "Bike lanes only · {speed} km/h",
+    "needs a straight highway": "needs a straight highway",
+    "second carriageway not found": "second carriageway not found",
+    "point at a one-way highway": "point at a one-way highway",
+    "Click a one-way highway beside its other carriageway.": "Click a one-way highway beside its other carriageway.",
+    "Diamond interchange": "Diamond interchange",
 }

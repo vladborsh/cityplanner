@@ -13,10 +13,13 @@ use cp_sim::SimView;
 
 use crate::snap::{self, Hit, SnapCtx, SnapEdge, SnapNode, resolve};
 
-/// Metres of road height per PgUp/PgDn step.
-pub const ELEVATION_STEP: f32 = 5.0;
-/// Highest elevation level (`level * ELEVATION_STEP` metres).
-pub const MAX_ELEVATION_LEVEL: u8 = 4;
+/// Metres of road height per PgUp/PgDn step (T-332, §18.1 decision 1: the 6 m levels live in
+/// the tool only; the command takes metres).
+pub const LEVEL_STEP: f32 = 6.0;
+/// Lowest road level (a tunnel 12 m down).
+pub const MIN_LEVEL: i8 = -2;
+/// Highest road level (18 m up).
+pub const MAX_LEVEL: i8 = 3;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RoadMode {
@@ -28,22 +31,19 @@ pub enum RoadMode {
     Free,
 }
 
-/// Depth of the axis of a road tunnel the tool draws, metres (the content's default depth).
-pub const ROAD_TUNNEL_DEPTH: f32 = 12.0;
-
 /// State of the road tool.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RoadTool {
     pub mode: RoadMode,
     pub road: Option<RoadDefId>,
-    /// 0 = ground, otherwise raised by `level * ELEVATION_STEP`.
-    pub level: u8,
+    /// The level the tool is at now, [`MIN_LEVEL`]..=[`MAX_LEVEL`]: 0 = ground, `n` = `n *
+    /// LEVEL_STEP` metres over it (under it when negative). The end of the drawing takes it.
+    pub level: i8,
+    /// The level at the first click of the current drawing (its start); `None` before it.
+    pub from_level: Option<i8>,
     /// Depth of the axis below the terrain for a road that is built in a tunnel only (the
     /// metro track, T-164): the tool then draws `Tunnel(depth)` and the height keys do nothing.
     pub tunnel_depth: Option<f32>,
-    /// A road type that has a tunnel is built under the ground (T-173): the height keys go
-    /// below ground level (PgDn from level 0) and the tool draws `Tunnel(ROAD_TUNNEL_DEPTH)`.
-    pub underground: bool,
     /// Points clicked so far in the current drawing.
     pub points: Vec<Vec2>,
     /// The "With trees" checkbox (T-323, §24.2): the plan plants a row on its ground segments.
@@ -51,49 +51,46 @@ pub struct RoadTool {
 }
 
 impl RoadTool {
+    /// The height of the drawing (T-332): `Levels` from the level at the first click to the
+    /// level now, `Ground` when both are 0.
     pub fn elevation(&self) -> ElevationMode {
         if let Some(depth) = self.tunnel_depth {
-            ElevationMode::Tunnel(depth)
-        } else if self.underground {
-            ElevationMode::Tunnel(ROAD_TUNNEL_DEPTH)
-        } else if self.level == 0 {
+            return ElevationMode::Tunnel(depth);
+        }
+        let from = self.from_level.unwrap_or(self.level);
+        if from == 0 && self.level == 0 {
             ElevationMode::Ground
         } else {
-            ElevationMode::Elevated(f32::from(self.level) * ELEVATION_STEP)
+            ElevationMode::Levels {
+                from: f32::from(from) * LEVEL_STEP,
+                to: f32::from(self.level) * LEVEL_STEP,
+            }
         }
     }
 
     pub fn raise(&mut self) {
-        if self.tunnel_depth.is_some() {
-            return;
+        if self.tunnel_depth.is_none() {
+            self.level = (self.level + 1).min(MAX_LEVEL);
         }
-        if self.underground {
-            self.underground = false;
-            return;
-        }
-        self.level = (self.level + 1).min(MAX_ELEVATION_LEVEL);
     }
 
     pub fn lower(&mut self) {
-        if self.tunnel_depth.is_some() {
-            return;
+        if self.tunnel_depth.is_none() {
+            self.level = (self.level - 1).max(MIN_LEVEL);
         }
-        if self.level == 0 {
-            self.underground = true;
-            return;
-        }
-        self.level = self.level.saturating_sub(1);
     }
 
     pub fn set_mode(&mut self, mode: RoadMode) {
         if self.mode != mode {
             self.mode = mode;
             self.points.clear();
+            self.from_level = None;
         }
     }
 
     pub fn cancel(&mut self) {
         self.points.clear();
+        self.from_level = None;
     }
 
     /// Clicks needed before the path is complete (`None` for free mode, which ends on demand).
@@ -146,10 +143,13 @@ impl RoadTool {
         if self.mode == RoadMode::Free && self.points.last().is_some_and(|l| l.distance(p) < 1.0) {
             return self.finish_free();
         }
+        if self.points.is_empty() {
+            self.from_level = Some(self.level);
+        }
         self.points.push(p);
         if self.clicks_needed() == Some(self.points.len()) {
             let pts = std::mem::replace(&mut self.points, vec![p]);
-            let path = match self.mode {
+            let req = self.request(match self.mode {
                 RoadMode::Straight => RoadPath::Straight {
                     from: pts[0],
                     to: pts[1],
@@ -160,8 +160,10 @@ impl RoadTool {
                     to: pts[2],
                 },
                 RoadMode::Free => unreachable!("free mode has no fixed length"),
-            };
-            return self.request(path);
+            });
+            // The next piece of the chain starts where this one ended.
+            self.from_level = Some(self.level);
+            return req;
         }
         None
     }
@@ -173,7 +175,9 @@ impl RoadTool {
         }
         let last = *self.points.last()?;
         let pts = std::mem::replace(&mut self.points, vec![last]);
-        self.request(RoadPath::Free(pts))
+        let req = self.request(RoadPath::Free(pts));
+        self.from_level = Some(self.level);
+        req
     }
 }
 
@@ -967,21 +971,6 @@ pub fn sample_curve(c: &CubicBezier3, step: f32) -> Vec<Vec3> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn lowering_from_the_ground_goes_into_a_tunnel_and_raising_comes_back() {
-        let mut tool = RoadTool::default();
-        assert_eq!(tool.elevation(), ElevationMode::Ground);
-        tool.lower();
-        assert_eq!(tool.elevation(), ElevationMode::Tunnel(ROAD_TUNNEL_DEPTH));
-        tool.raise();
-        assert_eq!(tool.elevation(), ElevationMode::Ground);
-        tool.raise();
-        assert_eq!(tool.elevation(), ElevationMode::Elevated(ELEVATION_STEP));
-        tool.lower();
-        tool.lower();
-        assert_eq!(tool.elevation(), ElevationMode::Tunnel(ROAD_TUNNEL_DEPTH));
-    }
-
     use super::*;
 
     fn tool(mode: RoadMode) -> RoadTool {
@@ -1035,23 +1024,53 @@ mod tests {
     }
 
     #[test]
-    fn elevation_levels_step_and_clamp() {
+    fn levels_step_by_6_m_and_clamp_at_minus_2_and_3() {
         let mut t = tool(RoadMode::Straight);
         assert_eq!(t.elevation(), ElevationMode::Ground);
-        // Lowering from the ground goes under it (T-173), raising comes back.
         t.lower();
-        assert_eq!(t.level, 0);
-        assert_eq!(t.elevation(), ElevationMode::Tunnel(ROAD_TUNNEL_DEPTH));
+        assert_eq!(
+            t.elevation(),
+            ElevationMode::Levels {
+                from: -6.0,
+                to: -6.0
+            }
+        );
         t.raise();
-        assert_eq!(t.elevation(), ElevationMode::Ground);
         t.raise();
-        assert_eq!(t.elevation(), ElevationMode::Elevated(ELEVATION_STEP));
+        assert_eq!(t.elevation(), ElevationMode::Levels { from: 6.0, to: 6.0 });
         for _ in 0..10 {
             t.raise();
         }
-        assert_eq!(t.level, MAX_ELEVATION_LEVEL);
-        t.lower();
-        assert_eq!(t.level, MAX_ELEVATION_LEVEL - 1);
+        assert_eq!(t.level, MAX_LEVEL);
+        for _ in 0..10 {
+            t.lower();
+        }
+        assert_eq!(t.level, MIN_LEVEL);
+    }
+
+    /// T-332: the level at the first click is the start of the road, the level at the last one
+    /// its end; the next piece of the chain starts at that end.
+    #[test]
+    fn a_drawing_goes_from_the_first_clicks_level_to_the_last_ones() {
+        let mut t = tool(RoadMode::Straight);
+        t.click(Vec2::ZERO);
+        t.raise();
+        let req = t.click(Vec2::new(120.0, 0.0)).expect("two clicks");
+        assert_eq!(req.elevation, ElevationMode::Levels { from: 0.0, to: 6.0 });
+        t.raise();
+        let req = t.click(Vec2::new(240.0, 0.0)).expect("chained");
+        assert_eq!(
+            req.elevation,
+            ElevationMode::Levels {
+                from: 6.0,
+                to: 12.0
+            }
+        );
+        t.cancel();
+        t.level = 0;
+        t.click(Vec2::ZERO);
+        let req = t.click(Vec2::new(64.0, 0.0)).expect("two clicks");
+        assert_eq!(req.elevation, ElevationMode::Ground);
     }
 
     /// T-164: the metro track tool draws in a tunnel; the height keys leave it alone.

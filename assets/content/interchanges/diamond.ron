@@ -6,6 +6,7 @@
 Interchange((
     id: "diamond",
     name: "Diamond interchange",
+    icon: "interchange_diamond",
     needs_second_carriageway: true,
     length: 300.0,
     pieces: [

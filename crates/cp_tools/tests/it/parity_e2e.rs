@@ -246,7 +246,7 @@ fn a_road_type_with_a_bridge_variant_crosses_the_river_with_a_bridge_piece() {
         if def.bridge.is_none() || def.elevated.is_none() {
             continue;
         }
-        for level in 1..=cp_tools::MAX_ELEVATION_LEVEL {
+        for level in 1..=cp_tools::MAX_LEVEL {
             let (mut s, _, _) = sim("river_valley");
             let mut tool = RoadTool {
                 road: Some(id),

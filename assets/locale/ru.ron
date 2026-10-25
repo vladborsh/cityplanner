@@ -1357,4 +1357,9 @@
     "Bike path": "Велодорожка",
     "Bike": "Велосипед",
     "Bike lanes only · {speed} km/h": "Только велополосы · {speed} км/ч",
+    "needs a straight highway": "нужен прямой участок шоссе",
+    "second carriageway not found": "не найдено встречное полотно",
+    "point at a one-way highway": "наведите на одностороннее шоссе",
+    "Click a one-way highway beside its other carriageway.": "Щёлкните по одностороннему шоссе рядом со встречным полотном.",
+    "Diamond interchange": "Ромбовидная развязка",
 }

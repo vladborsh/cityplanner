@@ -1,6 +1,6 @@
-//! BUG-121: the road tool at every level (1..4) and in a tunnel, as a player draws it: pick the
-//! level, click twice, the ghost is valid and the click builds, on flat land and across an
-//! existing street. What gets built is checked against the level that was picked.
+//! BUG-121, T-332: the road tool at every level (-2..3), as a player draws it: pick the level,
+//! click, maybe change it, click again; the ghost is valid and the click builds, on flat land and
+//! across an existing street. What gets built is checked against the levels that were picked.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use cp_core::{CommandOutcome, Cost, Treasury};
 use cp_net::{Elevation, ElevationMode, NetCommand, NetGraph, RoadPath};
 use cp_sim::{SimCommand, SimRunner};
 use cp_terrain::Terrain;
-use cp_tools::{ELEVATION_STEP, RoadMode, RoadTool, compute_ghost_alt, resolve_cursor};
+use cp_tools::{LEVEL_STEP, RoadMode, RoadTool, compute_ghost_alt, resolve_cursor};
 
 const ROOT: &str = env!("CARGO_MANIFEST_DIR");
 const ROAD: &str = "basic_2l";
@@ -44,44 +44,40 @@ fn world() -> (SimRunner, Arc<ContentDb>) {
     (sim, db)
 }
 
-/// The tool at `level` (`None` = underground), two clicks from `a` to `b`: the built plan's
-/// outcome, with the ghost's verdict checked on the way.
+/// The tool at level `start` for the click at `a` and `end` for the click at `b`: the built
+/// plan's outcome, with the ghost's verdict checked on the way.
 fn draw(
     sim: &mut SimRunner,
     db: &ContentDb,
-    level: Option<u8>,
+    (start, end): (i8, i8),
     a: Vec2,
     b: Vec2,
 ) -> Result<Cost, String> {
     let mut tool = RoadTool {
         mode: RoadMode::Straight,
         road: Some(db.road_id(ROAD).unwrap()),
+        level: start,
         ..Default::default()
     };
-    match level {
-        Some(l) => (0..l).for_each(|_| tool.raise()),
-        None => tool.lower(),
-    }
     let view = sim.view();
     let qa = resolve_cursor(&view, &tool, a, false).unwrap().cursor;
     let _ = tool.click(qa);
+    tool.level = end;
     let ghost = compute_ghost_alt(&view, &tool, b, false).expect("a ghost");
     if !ghost.valid {
         return Err(format!("ghost invalid: {:?}", ghost.errors));
     }
-    // The ghost is drawn where the road will stand: raised by the level, or below the ground.
+    // The ghost is drawn where the road will stand: from one level to the other.
     let ys: Vec<f32> = ghost.polylines.iter().flatten().map(|p| p.y).collect();
     let (lo, hi) = ys
         .iter()
         .fold((f32::MAX, f32::MIN), |(l, h), y| (l.min(*y), h.max(*y)));
-    match level {
-        Some(l) => assert!(
-            (hi - lo - f32::from(l) * ELEVATION_STEP).abs() < 1.5,
-            "level {l}: the ghost rises {} m",
-            hi - lo
-        ),
-        None => assert!(hi - lo > 5.0, "the tunnel ghost dips {} m", hi - lo),
-    }
+    let rise = f32::from((end - start).unsigned_abs()) * LEVEL_STEP;
+    assert!(
+        (hi - lo - rise).abs() < 1.5,
+        "levels {start}..{end}: the ghost rises {} m",
+        hi - lo
+    );
     let plan = ghost.plan.clone().expect("a plan");
     drop(view);
     run(sim, SimCommand::Net(NetCommand::BuildPlan { plan }))
@@ -100,7 +96,7 @@ fn kinds(sim: &SimRunner) -> Vec<(Elevation, f32, f32)> {
 
 #[test]
 fn every_level_and_the_tunnel_build_on_flat_land_and_across_a_street() {
-    for level in [Some(1u8), Some(2), Some(3), Some(4), None] {
+    for level in [-2i8, -1, 1, 2, 3] {
         for crossing in [false, true] {
             let (mut sim, db) = world();
             let street = db.road_id(ROAD).unwrap();
@@ -117,50 +113,51 @@ fn every_level_and_the_tunnel_build_on_flat_land_and_across_a_street() {
             )
             .unwrap();
             let before = kinds(&sim).len();
+            let ground = kinds(&sim)[0].1;
             let (a, b) = if crossing {
                 (Vec2::new(4600.0, 3960.0), Vec2::new(4600.0, 4840.0))
             } else {
                 (Vec2::new(5000.0, 3960.0), Vec2::new(5000.0, 4840.0))
             };
-            let r = draw(&mut sim, &db, level, a, b);
+            let r = draw(&mut sim, &db, (level, level), a, b);
             let all = kinds(&sim);
             println!(
-                "level {level:?} crossing {crossing}: {r:?} -> {:?}",
+                "level {level} crossing {crossing}: {r:?} -> {:?}",
                 &all[before.min(all.len())..]
             );
-            r.unwrap_or_else(|e| panic!("level {level:?} crossing {crossing}: {e}"));
+            r.unwrap_or_else(|e| panic!("level {level} crossing {crossing}: {e}"));
             let new = &all[before..];
-            assert!(!new.is_empty(), "level {level:?}: nothing built");
-            let want = match level {
-                Some(_) => Elevation::Elevated,
-                None => Elevation::Tunnel,
+            assert!(!new.is_empty(), "level {level}: nothing built");
+            let want = if level > 0 {
+                Elevation::Elevated
+            } else {
+                Elevation::Tunnel
             };
             assert!(
                 new.iter().any(|s| s.0 == want),
-                "level {level:?} crossing {crossing}: {new:?}"
+                "level {level} crossing {crossing}: {new:?}"
             );
-            if let Some(l) = level {
-                // The flatlands stand at about 30 m: the deck rises `level * step` above its ends.
-                let low = new.iter().map(|s| s.1.min(s.2)).fold(f32::MAX, f32::min);
-                let high = new.iter().map(|s| s.1.max(s.2)).fold(f32::MIN, f32::max);
-                let top = f32::from(l) * ELEVATION_STEP;
+            // The deck stands `level * step` over the ground (about 30 m on the flatlands) end to
+            // end; across the street it keeps its height.
+            let top = ground + f32::from(level) * LEVEL_STEP;
+            for s in new {
                 assert!(
-                    (high - low - top).abs() < 1.5,
-                    "level {l}: rises {} m, want {top}: {new:?}",
-                    high - low
+                    (s.1 - top).abs() < 1.5 && (s.2 - top).abs() < 1.5,
+                    "level {level}: {new:?}, want {top}"
                 );
             }
         }
     }
 }
 
-/// Drawn from the end of a street, a raised road or a tunnel starts at that node and the lanes
-/// of the two meet there (the ramp starts on the ground). Before BUG-121 every level above 1 and
+/// Drawn from the end of a street at the ground level and ended at another level, a raised road
+/// or a tunnel starts at that node and the lanes of the two meet there (the ramp starts on the
+/// ground). Before BUG-121 every level above 1 and
 /// every tunnel was refused "too steep (12%, max 12%)": the ramp was measured along the arc of
 /// the first piece, the check along its chord.
 #[test]
 fn a_raised_road_or_tunnel_started_at_a_street_end_joins_it() {
-    for level in [Some(1u8), Some(2), Some(3), Some(4), None] {
+    for level in [-2i8, -1, 1, 2, 3] {
         let (mut sim, db) = world();
         run(
             &mut sim,
@@ -178,11 +175,11 @@ fn a_raised_road_or_tunnel_started_at_a_street_end_joins_it() {
         let r = draw(
             &mut sim,
             &db,
-            level,
+            (0, level),
             Vec2::new(4800.0, 4400.0),
             Vec2::new(5500.0, 4400.0),
         );
-        r.unwrap_or_else(|e| panic!("level {level:?}: {e}"));
+        r.unwrap_or_else(|e| panic!("level {level}: {e}"));
         let g = sim.world().resource::<NetGraph>();
         let end = g
             .nodes()
@@ -195,10 +192,10 @@ fn a_raised_road_or_tunnel_started_at_a_street_end_joins_it() {
             .map(|s| g.segment(*s).unwrap().elevation)
             .collect();
         println!(
-            "level {level:?}: nodes {nodes_before} -> {}, at the end: {kinds:?}",
+            "level {level}: nodes {nodes_before} -> {}, at the end: {kinds:?}",
             g.nodes().count()
         );
-        assert_eq!(end.1.segments.len(), 2, "level {level:?}: {kinds:?}");
+        assert_eq!(end.1.segments.len(), 2, "level {level}: {kinds:?}");
         assert!(kinds.contains(&Elevation::Ground));
     }
 }

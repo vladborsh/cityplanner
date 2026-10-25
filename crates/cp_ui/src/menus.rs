@@ -32,6 +32,7 @@ impl Remembered {
             | ActiveTool::Flip
             | ActiveTool::Trees
             | ActiveTool::Junctions
+            | ActiveTool::Interchange
             | ActiveTool::Zone => Some(Self::Tool(tools.active)),
             ActiveTool::Place => tools.building.def.map(Self::Place),
             ActiveTool::Utility => Some(Self::Utility(tools.utility.kind)),
@@ -174,6 +175,7 @@ fn belongs(c: Category, r: Remembered, content: Option<&ContentDb>) -> bool {
                     | ActiveTool::Flip
                     | ActiveTool::Trees
                     | ActiveTool::Junctions
+                    | ActiveTool::Interchange
             )
         }
         (Category::Zones, Remembered::Tool(t)) => t == ActiveTool::Zone,
