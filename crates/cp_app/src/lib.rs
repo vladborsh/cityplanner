@@ -464,6 +464,16 @@ pub fn camera_pose(name: &str) -> (Vec3, Vec3) {
         // From the south over the user's two rows of blocks of `--scene zone-grid` (BUG-098).
         "zone-grid" => (Vec3::new(c, 330.0, c + 380.0), Vec3::new(c, 0.0, c - 10.0)),
         "bike-lanes" => (Vec3::new(c, 420.0, c + 480.0), Vec3::new(c, 0.0, c)),
+        // Obliquely from the south-east over the dual highway of `--scene interchange` (T-332).
+        "interchange" => (
+            Vec3::new(c + 140.0, 170.0, c + 220.0),
+            Vec3::new(c, 0.0, c - 10.0),
+        ),
+        // The same over the east end of the highway (a stamp that runs off it).
+        "interchange-east" => (
+            Vec3::new(c + 700.0, 170.0, c + 220.0),
+            Vec3::new(c + 560.0, 0.0, c - 10.0),
+        ),
         // Obliquely from the south-east over the road levels of `--scene levels` (T-332d).
         "levels" => (
             Vec3::new(c + 180.0, 150.0, c + 300.0),
@@ -835,6 +845,11 @@ pub fn build_sim(
     } else if scene == Some(scene::MARKET) {
         let n = scene::build_market(&mut sim);
         info!("scene market: {n} buildings");
+    } else if scene == Some(scene::INTERCHANGE) {
+        for reason in scene::build_interchange(&mut sim) {
+            warn!("scene command rejected: {reason}");
+        }
+        info!("scene interchange");
     } else if scene == Some(scene::LEVELS) {
         for reason in scene::build_levels(&mut sim) {
             warn!("scene command rejected: {reason}");

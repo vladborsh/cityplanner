@@ -1616,6 +1616,43 @@ pub fn build_bike_lanes(sim: &mut SimRunner) -> Vec2 {
     o
 }
 
+/// A dual highway for the interchange tool (T-332): carriageway A, 1200 m of `highway_1w_2l`
+/// east along z = c, and B back west 20 m north of it; stamp on it with
+/// `--interchange-demo diamond,x,z`. Look at it with `--cam interchange`.
+pub const INTERCHANGE: &str = "interchange";
+
+/// Builds the [`INTERCHANGE`] scene through the normal commands; the commands the sim refused.
+pub fn build_interchange(sim: &mut SimRunner) -> Vec<String> {
+    let db = embedded_content();
+    sim.world_mut()
+        .resource_mut::<cp_core::treasury::Treasury>()
+        .balance = cp_core::Cost(1_000_000_000);
+    let road = db.road_id("highway_1w_2l").expect("highway_1w_2l");
+    let c = cp_terrain::MAP_SIZE / 2.0;
+    for (from, to) in [
+        (Vec2::new(c - 600.0, c), Vec2::new(c + 600.0, c)),
+        (
+            Vec2::new(c + 600.0, c - 20.0),
+            Vec2::new(c - 600.0, c - 20.0),
+        ),
+    ] {
+        sim.push_command(
+            SimCommand::Net(NetCommand::BuildRoad {
+                road,
+                path: RoadPath::Straight { from, to },
+                elevation: ElevationMode::Ground,
+            }),
+            sim.tick(),
+        );
+        sim.tick_once();
+    }
+    sim.world_mut()
+        .resource_mut::<Messages<CommandOutcome>>()
+        .drain()
+        .filter_map(|o| o.result.err().map(|e| e.to_string()))
+        .collect()
+}
+
 /// Road levels (T-332d, §18.1 "Решения T-332"): three rows of `basic_2l` from west to east,
 /// drawn with the road tool's `Levels`: a ramp 0 -> 6 m and a deck on +6 m over a ground street;
 /// ramps 0 -> 6 -> 12 m and a deck on +12 m; a tunnel 0 -> -6 -> -12 m (see it with

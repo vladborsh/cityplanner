@@ -364,6 +364,14 @@ impl ToolState {
     }
 }
 
+/// An interchange stamp held in place without a cursor (`--interchange-demo` of the desktop
+/// client, T-332 shots): the interchange tool with template `def`, the cursor at `at`.
+#[derive(Resource, Clone, Debug)]
+pub struct InterchangeDemo {
+    pub def: String,
+    pub at: Vec2,
+}
+
 /// A road ghost held in place without a cursor (`--ghost-demo` of the desktop client, for
 /// screenshots of the zone strip and the block guides): the road tool with `road` and one point
 /// clicked at `from`, the cursor at `to`.
@@ -809,6 +817,20 @@ fn utility_demo(
     }
 }
 
+fn interchange_demo(
+    demo: Option<Res<InterchangeDemo>>,
+    view: Option<Res<SimView>>,
+    mut state: ResMut<ToolState>,
+) {
+    let (Some(demo), Some(view)) = (demo, view) else {
+        return;
+    };
+    state.active = ActiveTool::Interchange;
+    state.interchange.def = Some(demo.def.clone());
+    state.hover = Some(demo.at);
+    interchange_hover(&mut state, &view, demo.at);
+}
+
 fn ghost_demo(
     demo: Option<Res<GhostDemo>>,
     view: Option<Res<SimView>>,
@@ -1223,7 +1245,7 @@ impl Plugin for ToolsPlugin {
             )
             .add_systems(
                 Update,
-                (ghost_demo, utility_demo, sync_zone_strip)
+                (ghost_demo, utility_demo, interchange_demo, sync_zone_strip)
                     .chain()
                     .after(tool_hover)
                     .before(draw_ghost),
@@ -2239,17 +2261,28 @@ fn draw_ghost(
             brush_circle(&mut gizmos, view, p, state.area.kind, color);
         }
     }
-    // The stamp of the interchange tool (T-332): lines only, red with the reason.
+    // The stamp of the interchange tool (T-332, D1): lines only (centres, edges and height
+    // ticks, `stamp_ghost`), red with the reason in the cursor hint.
     if let Some(preview) = &state.interchange_preview
         && state.active == ActiveTool::Interchange
     {
-        let color = if preview.valid {
-            Color::srgb(0.9, 1.0, 0.9)
+        let (color, tick) = if preview.valid {
+            (Color::srgb(0.9, 1.0, 0.9), Color::srgba(0.9, 1.0, 0.9, 0.6))
         } else {
-            Color::srgb(0.95, 0.2, 0.2)
+            (
+                Color::srgb(0.95, 0.2, 0.2),
+                Color::srgba(0.95, 0.2, 0.2, 0.6),
+            )
         };
-        for line in &preview.lines {
-            on_top.linestrip(line.iter().copied(), color);
+        let terrain = view.as_deref().and_then(|v| v.terrain.as_deref());
+        let ghost = crate::stamp_ghost::stamp_ghost_lines(&preview.lines, &[], |p| {
+            terrain.map_or(0.0, |t| t.height(p))
+        });
+        for strip in &ghost.strips {
+            on_top.linestrip(strip.iter().copied(), color);
+        }
+        for [a, b] in &ghost.ticks {
+            on_top.line(*a, *b, tick);
         }
     }
     if let Some(ghost) = &state.ghost

@@ -41,6 +41,9 @@ pub struct Options {
     /// (x1, z1) to the cursor at (x2, z2) without a cursor (screenshots of the zone strip,
     /// T-185); `level` 1..4 raised, -1 underground (BUG-121); `build`: build it, show the road.
     pub ghost_demo: Option<cp_tools::GhostDemo>,
+    /// `--interchange-demo diamond,x,z`: hold the interchange tool with that template, the
+    /// cursor at (x, z) (T-332 shots).
+    pub interchange_demo: Option<cp_tools::InterchangeDemo>,
     /// `--utility-demo water,x1,z1,...,x,z` (or `power`): hold the pipe / line tool with the
     /// points clicked and the cursor at the last (x, z); `water-bulldoze,x,z`: the bulldozer in
     /// the water layer over (x, z) (T-286 shots).
@@ -149,6 +152,15 @@ impl Options {
                 cp_render::Overlay::ALL
                     .into_iter()
                     .find(|o| o.label().eq_ignore_ascii_case(&n))
+            }),
+            interchange_demo: value("--interchange-demo").and_then(|v| {
+                let mut it = v.split(',');
+                let def = it.next()?.to_string();
+                let n: Vec<f32> = it.filter_map(|x| x.parse().ok()).collect();
+                (n.len() == 2).then(|| cp_tools::InterchangeDemo {
+                    def,
+                    at: bevy::math::Vec2::new(n[0], n[1]),
+                })
             }),
             ghost_demo: value("--ghost-demo").and_then(|v| {
                 let mut it = v.split(',');
@@ -726,6 +738,12 @@ pub fn run(opts: Options) -> AppExit {
             active,
             ..Default::default()
         });
+    }
+    if let Some(demo) = opts.interchange_demo.clone() {
+        if opts.hidden && !opts.hidden_ui {
+            app.add_plugins(cp_tools::ToolsPlugin);
+        }
+        app.insert_resource(demo);
     }
     if let Some(demo) = opts.ghost_demo {
         // The tools only run with the UI; a held ghost for a hidden screenshot needs them.
