@@ -480,6 +480,13 @@ fn walkers_and_cars_share_junctions_without_a_deadlock() {
             break;
         }
     }
+    // Service and cargo runs are no trips: let the ones still on their way arrive.
+    for _ in 0..TICKS_PER_DAY {
+        if sim.world().resource::<Agents>().vehicle_count() == 0 {
+            break;
+        }
+        sim.tick_once();
+    }
     let a = sim.world().resource::<Agents>();
     assert!(
         sim.world().resource::<TripBook>().is_empty(),
