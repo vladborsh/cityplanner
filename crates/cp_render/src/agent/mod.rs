@@ -281,7 +281,7 @@ fn queue_ranks(list: &[VehiclePose]) -> Vec<u32> {
     let mut count = std::collections::BTreeMap::<cp_building::BuildingId, u32>::new();
     list.iter()
         .map(|v| match v.portal {
-            Some(p) if waiting(v) => {
+            Some(p) if waiting(v) && p.spot.is_none() => {
                 let k = count.entry(p.building).or_insert(0);
                 *k += 1;
                 *k - 1
@@ -300,7 +300,30 @@ pub fn vehicle_drawn(
     len: f32,
     rank: u32,
     yard: &impl Fn(cp_building::BuildingId) -> Option<cp_building::Portals>,
+    spot: &impl Fn(cp_traffic::ParkPlace) -> Option<(Vec3, f32)>,
 ) -> (Vec3, f32) {
+    // A kerb place (T-331c): the car is drawn between it and the sim pose, ending in the very
+    // pose the parked car is drawn in.
+    if let Some(pt) = c.portal.filter(|p| p.spot.is_some())
+        && let Some((at, spot_yaw)) = pt.spot.and_then(spot)
+    {
+        let sim = bevy_math::Vec2::new(c.pos.x, c.pos.z);
+        let lane = bevy_math::Vec2::new(c.yaw.sin(), c.yaw.cos());
+        let mine = bevy_math::Vec2::new(spot_yaw.sin(), spot_yaw.cos());
+        let s = smoothstep(pt.progress);
+        let (pos, dir) = if pt.leaving {
+            (at.lerp(c.pos, s), mine.lerp(lane, s))
+        } else {
+            (c.pos.lerp(at, s), lane.lerp(mine, s))
+        };
+        let _ = sim;
+        let yaw = if dir.length_squared() > 1e-6 {
+            dir.x.atan2(dir.y)
+        } else {
+            c.yaw
+        };
+        return (pos, yaw);
+    }
     let Some((pt, g)) = c.portal.and_then(|pt| Some((pt, yard(pt.building)?))) else {
         return (c.pos, c.yaw);
     };
@@ -335,6 +358,7 @@ fn zip_drawn(
     alpha: f32,
     looks: &VehicleLooks,
     yard: &impl Fn(cp_building::BuildingId) -> Option<cp_building::Portals>,
+    spot: &impl Fn(cp_traffic::ParkPlace) -> Option<(Vec3, f32)>,
     mut f: impl FnMut(&VehiclePose, Vec3, f32),
 ) {
     let a = alpha.clamp(0.0, 1.0);
@@ -349,10 +373,10 @@ fn zip_drawn(
         if cur_rank[i] >= YARD_QUEUE {
             continue;
         }
-        let now = vehicle_drawn(c, len(c), cur_rank[i], yard);
+        let now = vehicle_drawn(c, len(c), cur_rank[i], yard, spot);
         let (pos, yaw) = match prev.get(j).filter(|p| p.key == c.key) {
             Some(p) if p.pos.distance_squared(c.pos) < TELEPORT * TELEPORT => {
-                let before = vehicle_drawn(p, len(p), prev_rank[j], yard);
+                let before = vehicle_drawn(p, len(p), prev_rank[j], yard, spot);
                 (before.0.lerp(now.0, a), lerp_angle(before.1, now.1, a))
             }
             _ => now,
@@ -369,9 +393,10 @@ pub fn vehicle_positions(
     alpha: f32,
     looks: &VehicleLooks,
     yard: impl Fn(cp_building::BuildingId) -> Option<cp_building::Portals>,
+    spot: impl Fn(cp_traffic::ParkPlace) -> Option<(Vec3, f32)>,
 ) -> Vec<(u64, Vec3)> {
     let mut out = Vec::with_capacity(cur.len());
-    zip_drawn(prev, cur, alpha, looks, &yard, |c, pos, _| {
+    zip_drawn(prev, cur, alpha, looks, &yard, &spot, |c, pos, _| {
         out.push((c.key, pos))
     });
     out
@@ -390,6 +415,7 @@ pub fn view_vehicle_positions(view: &cp_sim::SimView, alpha: f32) -> Vec<(u64, V
         alpha,
         &looks,
         |id| view.buildings.get(id)?.portals(&view.net),
+        |place| crate::parked::place_pose(view, place),
     )
 }
 
@@ -419,6 +445,7 @@ pub fn build_vehicles(
     cur: &[VehiclePose],
     looks: &VehicleLooks,
     yard: impl Fn(cp_building::BuildingId) -> Option<cp_building::Portals>,
+    spot: impl Fn(cp_traffic::ParkPlace) -> Option<(Vec3, f32)>,
     cull: &Cull,
     out: &mut AgentInstances,
 ) {
@@ -427,7 +454,7 @@ pub fn build_vehicles(
         return;
     }
     let detail = usize::from(h > VEHICLE_DETAIL_HEIGHT);
-    zip_drawn(prev, cur, cull.alpha, looks, &yard, |c, pos, yaw| {
+    zip_drawn(prev, cur, cull.alpha, looks, &yard, &spot, |c, pos, yaw| {
         if !cull.sees(pos, VEHICLE_RADIUS) {
             return;
         }
@@ -508,6 +535,7 @@ pub fn pedestrian_drawn(
     along: f32,
     clip: &impl Fn(bevy_math::Vec2, bevy_math::Vec2, f32, f32) -> (f32, f32),
     door: &impl Fn(cp_building::BuildingId) -> Option<bevy_math::Vec2>,
+    spot: &impl Fn(cp_traffic::ParkPlace) -> Option<(Vec3, f32)>,
 ) -> bevy_math::Vec2 {
     let h = mix(c.key);
     let room = c.room.max(0.0);
@@ -525,7 +553,12 @@ pub fn pedestrian_drawn(
         0.0f32.clamp(lo, hi.max(lo))
     };
     let p = c.pos + side * x;
-    match c.portal.and_then(|pt| Some((pt, door(pt.building)?))) {
+    // From the car just parked, or to the car left standing (T-331c): the kerb place is the door.
+    let gate = |pt: cp_sim::Portal| match pt.spot {
+        Some(place) => spot(place).map(|(at, _)| bevy_math::Vec2::new(at.x, at.z)),
+        None => door(pt.building),
+    };
+    match c.portal.and_then(|pt| Some((pt, gate(pt)?))) {
         Some((pt, d)) if pt.leaving => d.lerp(p, smoothstep(pt.progress)),
         Some((pt, d)) => p.lerp(d, smoothstep(pt.progress)),
         None => p,
@@ -545,6 +578,7 @@ pub fn build_pedestrians(
     ground: impl Fn(f32, f32) -> f32,
     clip: impl Fn(bevy_math::Vec2, bevy_math::Vec2, f32, f32) -> (f32, f32),
     door: impl Fn(cp_building::BuildingId) -> Option<bevy_math::Vec2>,
+    spot: impl Fn(cp_traffic::ParkPlace) -> Option<(Vec3, f32)>,
     cull: &Cull,
     headings: &mut Headings,
     out: &mut AgentInstances,
@@ -580,7 +614,7 @@ pub fn build_pedestrians(
             };
             let fwd = bevy_math::Vec2::new(side.y, -side.x);
             let drawn =
-                |q: &PedestrianPose| pedestrian_drawn(q, side, q.pos.dot(fwd), &clip, &door);
+                |q: &PedestrianPose| pedestrian_drawn(q, side, q.pos.dot(fwd), &clip, &door, &spot);
             let now = drawn(c);
             let (pos, dir) = match p {
                 Some(p) => {

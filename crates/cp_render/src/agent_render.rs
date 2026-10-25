@@ -282,6 +282,7 @@ fn build_agent_instances(
         &snap.cur.vehicles,
         &looks.looks,
         |id| view.buildings.get(id)?.portals(&view.net),
+        |place| crate::parked::place_pose(&view, place),
         &cull,
         out,
     );
@@ -308,6 +309,7 @@ fn build_agent_instances(
                     .and_then(|d| d.set.piece(id)?.door)
                     .or_else(|| Some(view.buildings.get(id)?.portals(&view.net)?.door))
             },
+            |place| crate::parked::place_pose(&view, place),
             &cull,
             &mut headings,
             out,

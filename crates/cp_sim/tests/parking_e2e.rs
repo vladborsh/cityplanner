@@ -425,3 +425,52 @@ fn the_owner_walks_to_the_parked_car_before_driving_home() {
     assert_ne!(again.place, car.place);
     assert!(sim.world().resource::<TripBook>().is_empty());
 }
+
+/// What the frame shows at a kerb spot this tick: `[car in, walker from the car, walker to the
+/// car, car out]`.
+fn spot_portals(sim: &SimRunner, seen: &mut [bool; 4]) {
+    let v = sim.view();
+    for c in &v.agents.cur.vehicles {
+        if let Some(p) = c.portal.filter(|p| p.spot.is_some()) {
+            seen[if p.leaving { 3 } else { 0 }] = true;
+        }
+    }
+    for w in &v.agents.cur.pedestrians {
+        if let Some(p) = w.portal.filter(|p| p.spot.is_some()) {
+            seen[if p.leaving { 1 } else { 2 }] = true;
+        }
+    }
+}
+
+#[test]
+fn cars_and_walkers_meet_the_kerb_spot_through_portals() {
+    let content = content();
+    let mut sim = quiet_town(&content, 5, 5, "basic_2l", 300);
+    let (cid, home, goal) = pick(&sim);
+    let free = sim.world().resource::<ParkingIndex>().building(goal).free();
+    fill(&mut sim, ParkPlace::Building(goal), free, cid);
+    let mut seen = [false; 4];
+    send(&mut sim, cid, home, goal);
+    for _ in 0..(TICKS_PER_DAY / 2) {
+        sim.tick_once();
+        spot_portals(&sim, &mut seen);
+        if sim.world().resource::<TripBook>().is_empty() {
+            break;
+        }
+    }
+    assert!(seen[0], "the car drives into its spot");
+    assert!(seen[1], "the walker starts at the car");
+    sim.world_mut()
+        .resource_mut::<CitizenGrid>()
+        .set_location(cid, Location::Work);
+    send(&mut sim, cid, goal, home);
+    for _ in 0..(TICKS_PER_DAY / 2) {
+        sim.tick_once();
+        spot_portals(&sim, &mut seen);
+        if sim.world().resource::<TripBook>().is_empty() {
+            break;
+        }
+    }
+    assert!(seen[2], "the walker goes to the car");
+    assert!(seen[3], "the car pulls out of its spot");
+}

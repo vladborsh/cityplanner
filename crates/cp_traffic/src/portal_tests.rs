@@ -129,7 +129,8 @@ fn a_walker_leaves_its_door_and_enters_the_next_within_ten_metres() {
         Some(Portal {
             building: t.home,
             progress: 0.5,
-            leaving: true
+            leaving: true,
+            spot: None,
         })
     );
     let entering = at(n, 46.0, 50.0).unwrap();
@@ -344,7 +345,8 @@ fn a_car_pulls_out_of_its_yard_and_into_the_next() {
         Some(Portal {
             building: t.home,
             progress: 0.0,
-            leaving: true
+            leaving: true,
+            spot: None,
         })
     );
     assert_eq!(waiting.speed, 0.0);

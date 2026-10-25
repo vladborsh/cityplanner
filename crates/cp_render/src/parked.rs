@@ -242,15 +242,8 @@ pub fn parked_cars(
                 let Some(s) = parked.index.kerb_bay_s(id, k, slot) else {
                     continue;
                 };
-                let (c, tangent, left) = at(s);
-                let p = to_xz(c) + left * side.car_offset();
-                // Facing the traffic of its side: forward on the right, backward on the left.
-                let dir = tangent * -side.sign;
-                cars.push(ParkedCar {
-                    pos: Vec3::new(p.x, c.y + crate::road::LIFT, p.y),
-                    yaw: dir.x.atan2(dir.y),
-                    key,
-                });
+                let (pos, yaw) = bay_pose(&curve, s, side);
+                cars.push(ParkedCar { pos, yaw, key });
             }
         }
     }
@@ -301,6 +294,46 @@ pub fn parked_cars(
         }
     }
     (cars, index)
+}
+
+/// Where a car stands at arc length `s` of a bay side of the trimmed `curve`, and its heading:
+/// facing the traffic of its side (forward on the right, backward on the left).
+fn bay_pose(curve: &cp_core::curve::CubicBezier3, s: f32, side: &BaySide) -> (Vec3, f32) {
+    let t = curve.arc_table().s_to_t(s);
+    let tangent = to_xz(curve.tangent(t)).normalize_or_zero();
+    let left = Vec2::new(tangent.y, -tangent.x);
+    let c = curve.point(t);
+    let p = to_xz(c) + left * side.car_offset();
+    let dir = tangent * -side.sign;
+    (
+        Vec3::new(p.x, c.y + crate::road::LIFT, p.y),
+        dir.x.atan2(dir.y),
+    )
+}
+
+/// The pose of a kerb parking place, where the parked car stands and a car pulls into or out of
+/// it (T-331c); `None` for a building's place or one that is gone.
+pub fn place_pose(view: &cp_sim::SimView, place: cp_traffic::ParkPlace) -> Option<(Vec3, f32)> {
+    let cp_traffic::ParkPlace::Kerb {
+        segment,
+        side,
+        slot,
+    } = place
+    else {
+        return None;
+    };
+    let db = view.content.as_deref()?;
+    let s = view
+        .parked
+        .index
+        .kerb_bay_s(segment, usize::from(side), slot)?;
+    let bays = bays(&view.net, &view.junctions, db, segment)?;
+    let side = bays
+        .sides
+        .iter()
+        .find(|b| cp_traffic::side_index(b.sign) == usize::from(side))?;
+    let curve = view.junctions.trimmed_curve(&view.net, segment)?;
+    Some(bay_pose(&curve, s, side))
 }
 
 /// Spacing of cars across a row and between rows in a yard or a lot, metres.

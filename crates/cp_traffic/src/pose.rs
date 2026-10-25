@@ -3,7 +3,7 @@
 
 use bevy_math::{Vec2, Vec3};
 use cp_building::{BuildingGrid, BuildingId};
-use cp_citizen::TripBook;
+use cp_citizen::{Fetch, ParkPlace, TripBook};
 use cp_net::{JunctionGeometry, LaneConnection, LaneId, NetGraph};
 
 use crate::agents::{Agents, Pedestrian, Vehicle, access_of};
@@ -45,6 +45,10 @@ pub struct Portal {
     pub progress: f32,
     /// Leaving the building, else entering it (`progress` grows either way).
     pub leaving: bool,
+    /// A kerb parking place the agent leaves from or goes to instead of the building's portal
+    /// (T-331c, §18.3): a car pulling out of or into its place in the bay, a walker starting
+    /// from or going to the car. The client draws the place with the parked cars' own pose.
+    pub spot: Option<ParkPlace>,
 }
 
 /// Metres of the walk at either end of a route that a pedestrian spends on the way between
@@ -276,6 +280,33 @@ fn ped_portal(
     }
     let left = p.leg_len - p.s;
     let trip = trips.get(p.trip)?;
+    // From the car just parked to the goal; to the car left standing (T-331c).
+    let kerb = |place: Option<ParkPlace>| place.filter(|p| matches!(p, ParkPlace::Kerb { .. }));
+    if first
+        && p.s < window
+        && !(last && p.s > left)
+        && trip.park.parked
+        && let Some(place) = kerb(trip.park.place)
+    {
+        return Some(Portal {
+            building: trip.to,
+            progress: p.s / window,
+            leaving: true,
+            spot: Some(place),
+        });
+    }
+    if last
+        && left < window
+        && trip.park.fetch == Fetch::ToCar
+        && let Some(place) = kerb(trip.park.car)
+    {
+        return Some(Portal {
+            building: trip.from,
+            progress: 1.0 - left / window,
+            leaving: false,
+            spot: Some(place),
+        });
+    }
     if first
         && p.s < window
         && (!last || p.s <= left)
@@ -292,6 +323,7 @@ fn ped_portal(
             building: trip.from,
             progress: p.s / window,
             leaving: true,
+            spot: None,
         });
     }
     if last
@@ -302,6 +334,7 @@ fn ped_portal(
             building: trip.to,
             progress: 1.0 - left / window,
             leaving: false,
+            spot: None,
         });
     }
     None
@@ -384,6 +417,71 @@ fn car_portal(
     }
     let first = v.hop == 0;
     let last = usize::from(v.hop) == v.path.steps.len();
+    // A car of a citizen's trip pulls out of the place it stood in and into the one reserved for
+    // it (T-331c): a kerb place is drawn as itself, a lot or a yard as the building's portal.
+    let trip = trips.get(v.trip).filter(|_| run_of(v).is_none());
+    let from_place = trip
+        .filter(|t| t.park.fetch == Fetch::Done)
+        .and_then(|t| t.park.car);
+    let to_place = trip.and_then(|t| t.park.place.filter(|_| !t.park.parked));
+    if (!v.spawned || first)
+        && let Some(place) = from_place
+    {
+        let gone = (v.s - v.path.start_s).max(0.0);
+        if !v.spawned || gone < PULL_M {
+            let progress = if v.spawned { gone / PULL_M } else { 0.0 };
+            match place {
+                ParkPlace::Kerb { .. } => {
+                    return Some(Portal {
+                        building: trip.map(|t| t.from)?,
+                        progress,
+                        leaving: true,
+                        spot: Some(place),
+                    });
+                }
+                ParkPlace::Building(b)
+                    if at_car_access(b, v.path.start, v.path.start_s, graph, net, buildings) =>
+                {
+                    return Some(Portal {
+                        building: b,
+                        progress,
+                        leaving: true,
+                        spot: None,
+                    });
+                }
+                ParkPlace::Building(_) => {}
+            }
+        }
+    }
+    let left = v.path.goal_s - v.s;
+    if v.spawned
+        && last
+        && left < PULL_M
+        && let Some(place) = to_place
+    {
+        let progress = (1.0 - left.max(0.0) / PULL_M).clamp(0.0, 1.0);
+        match place {
+            ParkPlace::Kerb { .. } => {
+                return Some(Portal {
+                    building: trip.map(|t| t.to)?,
+                    progress,
+                    leaving: false,
+                    spot: Some(place),
+                });
+            }
+            ParkPlace::Building(b)
+                if at_car_access(b, v.path.goal, v.path.goal_s, graph, net, buildings) =>
+            {
+                return Some(Portal {
+                    building: b,
+                    progress,
+                    leaving: false,
+                    spot: None,
+                });
+            }
+            ParkPlace::Building(_) => {}
+        }
+    }
     if !v.spawned || first {
         let from_edge = graph.car_lane(v.path.start).is_none_or(|l| l.from_outside);
         let gone = (v.s - v.path.start_s).max(0.0);
@@ -396,10 +494,10 @@ fn car_portal(
                 building: b,
                 progress: if v.spawned { gone / PULL_M } else { 0.0 },
                 leaving: true,
+                spot: None,
             });
         }
     }
-    let left = v.path.goal_s - v.s;
     if v.spawned
         && last
         && left < PULL_M
@@ -410,6 +508,7 @@ fn car_portal(
             building: b,
             progress: (1.0 - left.max(0.0) / PULL_M).clamp(0.0, 1.0),
             leaving: false,
+            spot: None,
         });
     }
     None
