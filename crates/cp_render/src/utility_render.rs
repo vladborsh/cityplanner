@@ -236,7 +236,8 @@ pub(crate) fn tube_faces(
         for k in 0..f {
             let (a, b) = (base + r * f + k, base + r * f + (k + 1) % f);
             let (c, d) = (a + f, b + f);
-            m.indices.extend_from_slice(&[a, c, b, b, c, d]);
+            // Wound outwards (T-332e): the outer surface is the front face, as its normals say.
+            m.indices.extend_from_slice(&[a, b, c, b, d, c]);
         }
     }
 }
@@ -975,5 +976,27 @@ mod tests {
     #[test]
     fn an_empty_network_draws_nothing() {
         assert!(power_mesh(&UtilityGraph::new()).indices.is_empty());
+    }
+
+    /// T-332e: every triangle of a tube faces outwards (its winding agrees with its vertex
+    /// normals), so seen from outside a pipe or a tunnel is lit, not its dark inner side.
+    #[test]
+    fn a_tube_is_wound_outwards() {
+        let mut m = MeshData::default();
+        tube_faces(
+            &mut m,
+            &[(Vec3::ZERO, Vec3::X), (Vec3::X * 2.0, Vec3::X)],
+            1.0,
+            [1.0; 4],
+            8,
+        );
+        let p = |i: u32| Vec3::from_array(m.positions[i as usize]);
+        for t in m.indices.chunks(3) {
+            let g = (p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0]));
+            assert!(
+                g.dot(Vec3::from_array(m.normals[t[0] as usize])) > 0.0,
+                "{t:?}"
+            );
+        }
     }
 }
