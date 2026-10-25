@@ -7,7 +7,7 @@
 //!
 //! §6.8.5: this file is the "through the tool" half of `net_sweep` (`cp_sim` cannot depend on
 //! `cp_tools`); the other half, the cases of the audit built as plans, is
-//! `crates/cp_sim/tests/net_sweep.rs`.
+//! `crates/cp_sim/tests/it/net_sweep.rs`.
 
 use std::path::Path;
 use std::sync::Arc;

@@ -1,6 +1,6 @@
 //! Generates `fixtures/saves/m1-small.sav` and `fixtures/saves/m1-traffic.sav` (T-046) with
 //! the current format, and prints the reference checksums the tests pin
-//! (`crates/cp_save/tests/m1_fixtures.rs`): the state after loading the file and running
+//! (`crates/cp_save/tests/it/m1_fixtures.rs`): the state after loading the file and running
 //! 2048 ticks (T-301: a game day). Run from the repo root: `cargo run -p cp_save --example gen_m1_fixtures`.
 //! Old saves are not migrated during development (T-275): when the format changes, run it again
 //! and re-pin the checksums.

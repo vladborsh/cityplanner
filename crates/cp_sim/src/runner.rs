@@ -576,7 +576,7 @@ impl SimRunner {
     /// The pairs of systems of the sim schedule whose order is not pinned although they touch the
     /// same data (Bevy's ambiguity detection, T-257): `(system a, system b, what they conflict
     /// on)`. The order of such a pair follows the schedule graph, so an unrelated new system can
-    /// flip it; `tests/schedule_ambiguity.rs` keeps this list at the pairs it knows about.
+    /// flip it; `tests/it/schedule_ambiguity.rs` keeps this list at the pairs it knows about.
     /// Builds the schedule (it would be built by the first tick anyway).
     pub fn schedule_ambiguities(&mut self) -> Vec<(String, String, Vec<String>)> {
         use bevy_ecs::schedule::{

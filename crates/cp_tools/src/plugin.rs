@@ -1342,7 +1342,7 @@ pub fn building_under(view: &SimView, p: Vec2, ray: Option<(Vec3, Vec3)>) -> Opt
     )
 }
 
-/// Exported for the headless input tests (`tests/click_through.rs`).
+/// Exported for the headless input tests (`tests/it/click_through.rs`).
 #[doc(hidden)]
 pub fn tool_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
@@ -1908,7 +1908,7 @@ fn raw_polyline(view: &SimView, path: &RoadPath) -> Vec<Vec3> {
     }
 }
 
-/// Exported for the headless input tests (`tests/click_through.rs`).
+/// Exported for the headless input tests (`tests/it/click_through.rs`).
 #[doc(hidden)]
 pub fn tool_click(
     buttons: Res<ButtonInput<MouseButton>>,

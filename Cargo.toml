@@ -76,6 +76,8 @@ cp_ui = { path = "crates/cp_ui" }
 # tests spin up a whole city; unoptimised they dominated the gate.
 [profile.dev]
 opt-level = 1
+# T-334: line tables only (backtraces keep file:line, no variable info): a much smaller target.
+debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 2
 [profile.dev.package.rand_chacha]
