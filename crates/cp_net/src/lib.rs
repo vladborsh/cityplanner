@@ -23,8 +23,9 @@ pub use build::{
     validate_road_path_report,
 };
 pub use command::{
-    NetCommand, NetError, PART_SNAP, apply, apply_build_plan, build_unowned, command_strips,
-    curve_outside_owned, part_range, plan_applied, plan_build, price_per_m, removal_value,
+    BATCH_JOIN, NetCommand, NetError, PART_SNAP, apply, apply_build_plan, build_unowned,
+    command_strips, curve_outside_owned, part_range, plan_applied, plan_build, price_per_m,
+    removal_value,
 };
 pub use connections::{LaneConnection, Links, PedLink, PedLinkKind, Turn, turn_of_arms};
 pub use control::{ControlPlan, LightPlan, Phase, Priority, Signal};

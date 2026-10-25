@@ -74,6 +74,12 @@ impl SimCommand {
             | SimCommand::NetDemolish(NetCommand::BuildPlan { plan }) => {
                 plan.road = road(plan.road)
             }
+            SimCommand::Net(NetCommand::BuildBatch { plans })
+            | SimCommand::NetDemolish(NetCommand::BuildBatch { plans }) => {
+                for plan in plans {
+                    plan.road = road(plan.road);
+                }
+            }
             SimCommand::Building(BuildingCommand::Place { def, .. }) => *def = building(*def),
             SimCommand::SetSpeed { .. }
             | SimCommand::Net(NetCommand::RemoveSegment { .. })
@@ -190,7 +196,9 @@ fn refund_of(world: &World, cmd: &SimCommand) -> Cost {
     if let SimCommand::Net(c) | SimCommand::NetDemolish(c) = cmd
         && matches!(
             c,
-            NetCommand::BuildRoad { .. } | NetCommand::BuildPlan { .. }
+            NetCommand::BuildRoad { .. }
+                | NetCommand::BuildPlan { .. }
+                | NetCommand::BuildBatch { .. }
         )
     {
         for building in buildings_under(world, c) {
@@ -344,6 +352,7 @@ fn platform_target(c: &NetCommand) -> Option<cp_net::SegmentId> {
         | NetCommand::FlipSegment { seg } => Some(*seg),
         NetCommand::BuildRoad { .. }
         | NetCommand::BuildPlan { .. }
+        | NetCommand::BuildBatch { .. }
         | NetCommand::ToggleTrafficLight { .. }
         | NetCommand::SetSign { .. }
         | NetCommand::SetTrees { .. }

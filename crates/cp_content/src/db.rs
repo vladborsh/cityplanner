@@ -234,6 +234,8 @@ pub struct ContentDb {
     cargos: Vec<CargoDef>,
     /// The grey deals, in id order (T-324).
     deals: Table<DealDef>,
+    /// The interchange templates, in id order (T-332). Not in the content hash.
+    interchanges: Table<InterchangeDef>,
     content_hash: u64,
     /// The service of each building def, its `service` name resolved once at load (T-291: the
     /// services looked it up by name for every building every tick). Derived from the tables.
@@ -395,6 +397,18 @@ impl ContentDb {
         &self.deals.defs
     }
 
+    /// The interchange templates in id order (T-332, §18.1).
+    pub fn interchanges(&self) -> &[InterchangeDef] {
+        &self.interchanges.defs
+    }
+
+    /// The interchange template with id `id`, if the content has one.
+    pub fn interchange(&self, id: &str) -> Option<&InterchangeDef> {
+        self.interchanges
+            .get_id(id)
+            .map(|i| &self.interchanges.defs[i as usize])
+    }
+
     /// The deal with id `id`, if the content has one.
     pub fn deal(&self, id: &str) -> Option<&DealDef> {
         self.deals.get_id(id).map(|i| &self.deals.defs[i as usize])
@@ -515,6 +529,7 @@ impl ContentDb {
         let mut spec_files: Vec<(String, SpecDef)> = Vec::new();
         let mut cargo_files: Vec<(String, CargoDef)> = Vec::new();
         let mut deals: Vec<(String, DealDef)> = Vec::new();
+        let mut interchanges: Vec<(String, InterchangeDef)> = Vec::new();
         for (path, text) in sources {
             match ron::from_str::<ContentFile>(&text) {
                 Ok(ContentFile::Road(d)) => roads.push((path, d)),
@@ -529,6 +544,7 @@ impl ContentDb {
                 Ok(ContentFile::Spec(d)) => spec_files.push((path, d)),
                 Ok(ContentFile::Cargo(d)) => cargo_files.push((path, d)),
                 Ok(ContentFile::Deal(d)) => deals.push((path, d)),
+                Ok(ContentFile::Interchange(d)) => interchanges.push((path, d)),
                 Err(e) => errors.push(ContentError::new(&path, None, format!("parse error: {e}"))),
             }
         }
@@ -539,6 +555,12 @@ impl ContentDb {
         let utilities = table(utilities, |d| &d.id, validate::utility, &mut errors);
         let styles = table(styles, |d| &d.id, validate::style, &mut errors);
         let deals = table(deals, |d| &d.id, validate::deal, &mut errors);
+        let mut interchanges = table(interchanges, |d| &d.id, validate::interchange, &mut errors);
+        for d in &mut interchanges.defs {
+            if d.icon.is_empty() {
+                d.icon = d.id.clone();
+            }
+        }
         let (mut buildings, mut utilities) = (buildings, utilities);
         // The icon of a def is data; a def without one uses the icon named like itself.
         for d in &mut buildings.defs {
@@ -592,6 +614,52 @@ impl ContentDb {
                         &buildings.files[i],
                         Some(&format!("styles[{k}]")),
                         format!("unknown style `{name}`"),
+                    ));
+                }
+            }
+        }
+        // Interchanges (T-332, §18.1 decision 7): known roads; a piece that joins a carriageway
+        // is one-way; a raised piece climbs within its road's max_slope (carriageway B taken at
+        // the nearest it may be, 8 m).
+        for (i, d) in interchanges.defs.iter().enumerate() {
+            for (k, p) in d.pieces.iter().enumerate() {
+                let Some(r) = roads.get_id(&p.road).map(|r| &roads.defs[r as usize]) else {
+                    errors.push(ContentError::new(
+                        &interchanges.files[i],
+                        Some(&format!("pieces[{k}].road")),
+                        format!("unknown road `{}`", p.road),
+                    ));
+                    continue;
+                };
+                let on_carriageway = p
+                    .points
+                    .iter()
+                    .any(|pt| matches!(pt, TemplatePoint::OnA(_) | TemplatePoint::OnB(_)));
+                if on_carriageway && !r.is_one_way() {
+                    errors.push(ContentError::new(
+                        &interchanges.files[i],
+                        Some(&format!("pieces[{k}].road")),
+                        format!("`{}` joins a carriageway and must be one-way", p.road),
+                    ));
+                }
+                let run: f32 = (1..p.points.len())
+                    .filter_map(|j| Some((d.point_uv(k, j - 1, 8.0)?, d.point_uv(k, j, 8.0)?)))
+                    .map(|(a, b)| ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt())
+                    .sum();
+                // An Elevated piece climbs from both ends; a Levels piece once.
+                let rise = match p.elevation {
+                    PieceElevation::Ground => 0.0,
+                    PieceElevation::Elevated(h) => 2.0 * h,
+                    PieceElevation::Levels(a, b) => (b - a).abs(),
+                };
+                if rise > r.max_slope * run + 1e-3 {
+                    errors.push(ContentError::new(
+                        &interchanges.files[i],
+                        Some(&format!("pieces[{k}].elevation")),
+                        format!(
+                            "climbs {rise} m over {run:.0} m, steeper than `{}` may ({})",
+                            p.road, r.max_slope
+                        ),
                     ));
                 }
             }
@@ -1312,6 +1380,7 @@ impl ContentDb {
             specs,
             cargos,
             deals: deals.strip(),
+            interchanges: interchanges.strip(),
             content_hash: hash,
             building_services,
         })
@@ -1491,10 +1560,91 @@ mod tests {
         ContentDb::load_dir(root).unwrap_or_else(|e| panic!("{e}"))
     }
 
+    /// T-332 (§18.1 decision 7): the shipped diamond loads; a template's mistakes are refused
+    /// with their field.
+    #[test]
+    fn interchanges_load_and_their_mistakes_are_named() {
+        let db = real();
+        let d = db.interchange("diamond").expect("the diamond ships");
+        assert_eq!((d.pieces.len(), d.icon.as_str()), (7, "diamond"));
+        assert!(d.needs_second_carriageway);
+        // The ramps' junction vertex is the middle vertex of the crossing road on A's side.
+        assert_eq!(d.point_uv(3, 2, 20.0), Some((0.0, -82.0)));
+        assert_eq!(d.point_uv(5, 2, 20.0), Some((0.0, 102.0)));
+
+        const TWO_WAY: &str = r#"Road((id: "t", name: "T", width: 10.0,
+            lanes: [(kind: Car, dir: Forward, width: 3.0, offset: 1.5),
+                    (kind: Car, dir: Backward, width: 3.0, offset: -1.5)],
+            speed_kmh: 40.0, max_slope: 0.12, cost_per_m: 1.0, upkeep_per_m_week: 0.1,
+            allows_zoning: true, rank: 1, mesh: "m", material: "x"))"#;
+        let ic = |pieces: &str, b: bool| {
+            format!(
+                "Interchange((id: \"i\", name: \"I\", needs_second_carriageway: {b}, \
+                 length: 200.0, pieces: [{pieces}]))"
+            )
+        };
+        let check = |pieces: &str, b: bool, want: &str| {
+            let text = ic(pieces, b);
+            let e = errors(&[("r.ron", ROAD), ("t.ron", TWO_WAY), ("i.ron", &text)]);
+            assert!(e.iter().any(|m| m.contains(want)), "{want}: {e:?}");
+        };
+        // A two-way through road is fine (decision 7); it is a ramp that must be one-way.
+        let ok = ic(
+            r#"(road: "t", points: [At(0.0, -90.0), At(0.0, -40.0)]),
+               (road: "r", points: [OnA(-90.0), Piece(0, 0)])"#,
+            false,
+        );
+        assert!(
+            ContentDb::from_sources(src(&[("r.ron", ROAD), ("t.ron", TWO_WAY), ("i.ron", &ok)]))
+                .is_ok()
+        );
+        check(
+            r#"(road: "t", points: [OnA(-90.0), At(0.0, -40.0)])"#,
+            false,
+            "must be one-way",
+        );
+        check(
+            r#"(road: "x", points: [At(0.0, 0.0), At(0.0, 50.0)])"#,
+            false,
+            "unknown road",
+        );
+        check(
+            r#"(road: "r", points: [At(0.0, 0.0), Piece(1, 0)]), (road: "r", points: [At(9.0, 0.0), At(0.0, 9.0)])"#,
+            false,
+            "pieces[0].points[1]",
+        );
+        check(
+            r#"(road: "r", points: [OnB(0.0), At(0.0, 50.0)])"#,
+            false,
+            "carriageway B",
+        );
+        check(
+            r#"(road: "r", points: [At(0.0, 0.0), At(500.0, 0.0)])"#,
+            false,
+            "pieces[0].points[1]",
+        );
+        // 2 × 6 m over 60 m is 20 %, over the 12 % of the road.
+        check(
+            r#"(road: "r", elevation: Elevated(6.0), points: [At(0.0, 0.0), At(0.0, 60.0)])"#,
+            false,
+            "steeper",
+        );
+        check(
+            r#"(road: "r", elevation: Levels(6.0, -6.0), points: [At(0.0, 0.0), At(0.0, 99.0)])"#,
+            false,
+            "pieces[0].elevation",
+        );
+        check(
+            r#"(road: "r", elevation: Levels(0.0, 24.0), points: [At(0.0, 0.0), At(0.0, 99.0)])"#,
+            false,
+            "pieces[0].elevation",
+        );
+    }
+
     #[test]
     fn loads_shipped_content() {
         let db = real();
-        assert_eq!(db.roads().count(), 21); // T-302: + six transit roads; T-322: + three bike roads
+        assert_eq!(db.roads().count(), 22); // T-302: + six transit roads; T-322: + three bike roads; T-332: + the ramp
         // T-190: the policies, one per kind, in kind order (T-327: nine).
         let kinds: Vec<_> = db.policies().iter().map(|p| p.kind).collect();
         assert_eq!(kinds, PolicyKind::ALL);
@@ -1515,6 +1665,7 @@ mod tests {
                 "highway_1w_2l",
                 "highway_1w_3l",
                 "highway_1w_4l",
+                "highway_ramp_1w_1l",
                 "large_6l",
                 "medium_1w_3l",
                 "medium_4l",

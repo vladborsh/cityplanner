@@ -1,0 +1,24 @@
+// The ramp of an interchange (T-332, §18.1 decision 6): a one-lane one-way highway at 60 km/h
+// that leaves and joins a carriageway. A normal road of the Highways tray too. Numbers: tune later.
+Road((
+    id: "highway_ramp_1w_1l",
+    name: "Highway ramp (one-way)",
+    class: Highway,
+    // A ramp lane is wider than a carriageway's (and its tile tells it from highway_1w_1l's).
+    width: 4.0,
+    lanes: [
+        (kind: Car, dir: Forward, width: 4.0, offset: 0.0),
+    ],
+    median_width: 0.0,
+    speed_kmh: 60,
+    max_slope: 0.06,
+    cost_per_m: 8,
+    upkeep_per_m_week: 0.08,
+    allows_zoning: false,
+    kerb_parking: false,
+    rank: 4,
+    elevated: Some((cost_per_m: 24.0, upkeep_per_m_week: 0.16, mesh: "road/highway_ramp_1w_1l_elevated")),
+    bridge: Some((cost_per_m: 48.0, upkeep_per_m_week: 0.24, mesh: "road/highway_ramp_1w_1l_bridge")),
+    mesh: "road/highway_ramp_1w_1l",
+    material: "road/asphalt",
+))

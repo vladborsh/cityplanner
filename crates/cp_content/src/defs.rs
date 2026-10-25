@@ -72,6 +72,95 @@ pub enum ContentFile {
     Cargo(CargoDef),
     /// Appended in T-324 (`architecture/corruption.md` §4).
     Deal(DealDef),
+    /// Appended in T-332 (§18.1).
+    Interchange(InterchangeDef),
+}
+
+/// An interchange template (`assets/content/interchanges/*.ron`, T-332, `system-design.md`
+/// §18.1): roads the tool stamps at a point of a one-way highway (carriageway A) as one
+/// `NetCommand::BuildBatch`. Not part of the content hash: the batch carries the roads
+/// themselves, so a replay never reads a template.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InterchangeDef {
+    pub id: String,
+    pub name: String,
+    /// UI icon; empty means the def's id.
+    #[serde(default)]
+    pub icon: String,
+    /// Stamped across two carriageways: B is the one-way highway beside A that runs the other way
+    /// (§18.1 decision 8); its distance from A parametrises the points on it.
+    #[serde(default)]
+    pub needs_second_carriageway: bool,
+    /// The straight stretch of A the template needs, metres: `length / 2` either way of the anchor.
+    pub length: f32,
+    /// The roads in build order: the through roads first, the ramps last.
+    pub pieces: Vec<InterchangePiece>,
+}
+
+/// One road of an [`InterchangeDef`]: drawn through `points` in order (the lanes of a one-way
+/// road run from the first to the last).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InterchangePiece {
+    /// A road id.
+    pub road: String,
+    #[serde(default)]
+    pub elevation: PieceElevation,
+    pub points: Vec<TemplatePoint>,
+    /// One smooth curve through the points rather than straight legs.
+    #[serde(default)]
+    pub smooth: bool,
+}
+
+/// The height of an [`InterchangePiece`], metres, as the road command takes it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum PieceElevation {
+    #[default]
+    Ground,
+    /// Raised `h` over the ground between its ends, which stand on the ground.
+    Elevated(f32),
+    /// From one height to another (`ElevationMode::Levels`).
+    Levels(f32, f32),
+}
+
+/// A point of an [`InterchangePiece`] in the anchor frame: `u` metres along carriageway A from
+/// the anchor (in its direction), `v` metres to its left, the side carriageway B is on.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum TemplatePoint {
+    /// On carriageway A at `u` (the ramp joins it there).
+    OnA(f32),
+    /// On carriageway B at `u`.
+    OnB(f32),
+    /// Open ground at `(u, v)`.
+    At(f32, f32),
+    /// Open ground at `u`, `dv` metres past carriageway B (away from A).
+    FromB(f32, f32),
+    /// Vertex `j` of the earlier piece `k`.
+    Piece(u16, u16),
+}
+
+impl InterchangeDef {
+    /// Whether a point names carriageway B.
+    pub fn uses_b(p: TemplatePoint) -> bool {
+        matches!(p, TemplatePoint::OnB(_) | TemplatePoint::FromB(..))
+    }
+
+    /// The plane position `(u, v)` of a point with carriageway B `b` metres to the left of A;
+    /// `None` for a [`TemplatePoint::Piece`] that names no earlier vertex.
+    pub fn point_uv(&self, piece: usize, j: usize, b: f32) -> Option<(f32, f32)> {
+        let p = *self.pieces.get(piece)?.points.get(j)?;
+        match p {
+            TemplatePoint::OnA(u) => Some((u, 0.0)),
+            TemplatePoint::OnB(u) => Some((u, b)),
+            TemplatePoint::At(u, v) => Some((u, v)),
+            TemplatePoint::FromB(u, dv) => Some((u, b + dv)),
+            TemplatePoint::Piece(k, i) if usize::from(k) < piece => {
+                self.point_uv(usize::from(k), usize::from(i), b)
+            }
+            TemplatePoint::Piece(..) => None,
+        }
+    }
 }
 
 /// A grey deal the city is offered (`assets/content/deals/*.ron`, `architecture/corruption.md`

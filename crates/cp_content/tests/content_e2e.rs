@@ -57,7 +57,7 @@ fn mutate(file: &str, from: &str, to: &str) -> Vec<(String, String)> {
 fn committed_content_loads_with_eleven_road_types_nine_roads_and_two_tracks() {
     let db = ContentDb::load_dir(root()).unwrap();
     // + the park path (T-222), six transit roads (T-302), three bike roads (T-322)
-    assert_eq!(db.roads().count(), 21);
+    assert_eq!(db.roads().count(), 22); // T-332: + highway_ramp_1w_1l
     let want = [
         ("basic_2l", RoadClass::Local, "Local street", false),
         (
@@ -157,6 +157,7 @@ fn committed_content_loads_with_eleven_road_types_nine_roads_and_two_tracks() {
             "highway_1w_2l",
             "highway_1w_3l",
             "highway_1w_4l",
+            "highway_ramp_1w_1l",
             "large_6l",
             "medium_1w_3l",
             "medium_4l",

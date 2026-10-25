@@ -95,7 +95,17 @@ pub enum NetCommand {
     /// `TreesNotHere` off the ground and on paths and railways. Appended last: older logs replay
     /// as before.
     SetTrees { seg: SegmentId, trees: bool },
+    /// Builds several plans as one change (T-332, §18.1 decision 7): an interchange stamp. The
+    /// sim applies them in order on one copy of the graph and keeps the copy, and charges the
+    /// sum once, only when every plan passes; otherwise nothing is built and the first error is
+    /// the answer. In a plan, an `Anchor::Free` within [`BATCH_JOIN`] of a node an earlier plan
+    /// of the batch made is that node. Appended last: older logs replay as before.
+    BuildBatch { plans: Vec<BuildPlan> },
 }
+
+/// How close (metres, in the plane) a free anchor of a [`NetCommand::BuildBatch`] plan must be
+/// to a node an earlier plan of the batch made to be that node.
+pub const BATCH_JOIN: f32 = 0.05;
 
 /// A `RemovePart` end closer than this (metres) to an end of the segment moves onto that end.
 pub const PART_SNAP: f32 = 8.0;
@@ -326,6 +336,7 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
             elevation,
         } => build_paths(world, *road, *elevation, std::slice::from_ref(path)),
         NetCommand::BuildPlan { plan } => build_literal(world, plan),
+        NetCommand::BuildBatch { plans } => build_batch(world, plans),
         NetCommand::UpgradeSegment { seg, road } => {
             let content = content()?;
             let cost_per_m = upgrade_price(world, &content, *seg, *road)?;
@@ -482,6 +493,135 @@ pub fn apply(world: &mut World, cmd: &NetCommand) -> Result<Cost, NetError> {
 /// Applies a [`BuildPlan`] literally (T-262): the anchors are the truth, the sim snaps nothing.
 /// Everything is decided (`validate_build_plan`, funds, the dry run) before the first change; the
 /// graph keeps its invariants (§6.8.3 item 2) and no joint is merged away afterwards.
+/// A plan with pieces whose points are finite and whose anchors the graph has.
+fn check_anchors(graph: &NetGraph, plan: &BuildPlan) -> Result<(), NetError> {
+    if plan.pieces.is_empty() {
+        return Err(NetError::BadPlan);
+    }
+    let known = |a: &Anchor| match a {
+        Anchor::Free(p) if p.is_finite() => Ok(()),
+        Anchor::Free(_) => Err(NetError::BadPlan),
+        Anchor::Node(n) => graph.node(*n).map(|_| ()).ok_or(NetError::UnknownNode(*n)),
+        Anchor::OnSegment(s, t) if t.is_finite() => graph
+            .segment(*s)
+            .map(|_| ())
+            .ok_or(NetError::UnknownSegment(*s)),
+        Anchor::OnSegment(..) => Err(NetError::BadPlan),
+    };
+    for piece in &plan.pieces {
+        if !(piece.c1.is_finite() && piece.c2.is_finite()) {
+            return Err(NetError::BadPlan);
+        }
+        known(&piece.from)?;
+        known(&piece.to)?;
+    }
+    Ok(())
+}
+
+/// The plans of a [`NetCommand::BuildBatch`] applied in order on a copy of `graph`: the copy,
+/// each plan as validated (on the graph as the earlier plans left it) and the price of all of
+/// them (trees included). Pure: `graph` is not touched; the first refusal is the error.
+fn run_batch(
+    graph: &NetGraph,
+    terrain: &cp_terrain::Terrain,
+    tiles: &TileOwnership,
+    content: &cp_content::ContentDb,
+    plans: &[BuildPlan],
+) -> Result<(NetGraph, Vec<RoadBuildPlan>, Cost), NetError> {
+    if plans.is_empty() {
+        return Err(NetError::BadPlan);
+    }
+    let mut work = graph.clone();
+    let mut built_all = Vec::with_capacity(plans.len());
+    let mut total = Cost::ZERO;
+    let per_m = content.balance().trees_cost_per_m;
+    for plan in plans {
+        // A free end on a node an earlier plan made is that node.
+        let mut plan = plan.clone();
+        let made = |p: Vec2| {
+            work.nodes()
+                .filter(|(id, n)| {
+                    graph.node(*id).is_none()
+                        && Vec2::new(n.pos.x, n.pos.z).distance(p) <= BATCH_JOIN
+                })
+                .map(|(id, _)| id)
+                .next()
+        };
+        for piece in &mut plan.pieces {
+            for a in [&mut piece.from, &mut piece.to] {
+                if let Anchor::Free(p) = *a
+                    && let Some(n) = made(p)
+                {
+                    *a = Anchor::Node(n);
+                }
+            }
+        }
+        check_anchors(&work, &plan)?;
+        let built =
+            validate_build_plan(&work, terrain, tiles, content, &plan).map_err(NetError::Build)?;
+        check_plan(&work, content, &built).map_err(NetError::from)?;
+        let first_new = work.next_order();
+        apply_plan_with(&mut work, content, &built, false)?;
+        let mut cost = built.cost;
+        if plan.trees {
+            cost = Cost(cost.0 + plant_trees(&mut work, content, first_new, per_m).0);
+        }
+        total = Cost(total.0 + cost.0);
+        built_all.push(built);
+    }
+    Ok((work, built_all, total))
+}
+
+/// Plants trees on the segments laid since `first_new` that take them; their price.
+fn plant_trees(
+    graph: &mut NetGraph,
+    content: &cp_content::ContentDb,
+    first_new: u32,
+    per_m: f32,
+) -> Cost {
+    let ids: Vec<_> = graph
+        .segments()
+        .filter(|(_, s)| s.order >= first_new)
+        .map(|(id, _)| id)
+        .collect();
+    let mut cost = Cost::ZERO;
+    for id in ids {
+        let s = graph.segment(id).expect("listed above");
+        if trees_allowed(content.road(s.road), s.elevation) {
+            cost = Cost(cost.0 + segment_cost(s.length, per_m).0);
+            graph.set_trees(id, true).expect("listed above");
+        }
+    }
+    cost
+}
+
+/// [`NetCommand::BuildBatch`]: all the plans or nothing, charged once (T-332).
+fn build_batch(world: &mut World, plans: &[BuildPlan]) -> Result<Cost, NetError> {
+    let content = world
+        .get_resource::<SimContent>()
+        .map(|c| c.0.clone())
+        .ok_or(NetError::Missing("content"))?;
+    let terrain = world
+        .get_resource::<SimTerrain>()
+        .map(|t| t.0.clone())
+        .ok_or(NetError::Missing("terrain"))?;
+    let tiles = world
+        .get_resource::<TileOwnership>()
+        .copied()
+        .ok_or(NetError::Missing("tile ownership"))?;
+    let (work, _, cost) = run_batch(
+        world.resource::<NetGraph>(),
+        &terrain,
+        &tiles,
+        &content,
+        plans,
+    )?;
+    check_funds(world, cost).map_err(NetError::Funds)?;
+    *world.resource_mut::<NetGraph>() = work;
+    charge_funds(world, cost);
+    Ok(cost)
+}
+
 fn build_literal(world: &mut World, plan: &BuildPlan) -> Result<Cost, NetError> {
     let content = world
         .get_resource::<SimContent>()
@@ -495,29 +635,7 @@ fn build_literal(world: &mut World, plan: &BuildPlan) -> Result<Cost, NetError> 
         .get_resource::<TileOwnership>()
         .copied()
         .ok_or(NetError::Missing("tile ownership"))?;
-    if plan.pieces.is_empty() {
-        return Err(NetError::BadPlan);
-    }
-    {
-        let graph = world.resource::<NetGraph>();
-        let known = |a: &Anchor| match a {
-            Anchor::Free(p) if p.is_finite() => Ok(()),
-            Anchor::Free(_) => Err(NetError::BadPlan),
-            Anchor::Node(n) => graph.node(*n).map(|_| ()).ok_or(NetError::UnknownNode(*n)),
-            Anchor::OnSegment(s, t) if t.is_finite() => graph
-                .segment(*s)
-                .map(|_| ())
-                .ok_or(NetError::UnknownSegment(*s)),
-            Anchor::OnSegment(..) => Err(NetError::BadPlan),
-        };
-        for piece in &plan.pieces {
-            if !(piece.c1.is_finite() && piece.c2.is_finite()) {
-                return Err(NetError::BadPlan);
-            }
-            known(&piece.from)?;
-            known(&piece.to)?;
-        }
-    }
+    check_anchors(world.resource::<NetGraph>(), plan)?;
     let cost = world.resource_scope(
         |world, mut graph: bevy_ecs::change_detection::Mut<NetGraph>| {
             let built = validate_build_plan(&graph, &terrain, &tiles, &content, plan)
@@ -543,18 +661,7 @@ fn build_literal(world: &mut World, plan: &BuildPlan) -> Result<Cost, NetError> 
                 Ok(()) => {
                     let mut cost = built.cost;
                     if plan.trees {
-                        let ids: Vec<_> = graph
-                            .segments()
-                            .filter(|(_, s)| s.order >= first_new)
-                            .map(|(id, _)| id)
-                            .collect();
-                        for id in ids {
-                            let s = graph.segment(id).expect("listed above");
-                            if trees_allowed(content.road(s.road), s.elevation) {
-                                cost = Cost(cost.0 + segment_cost(s.length, per_m).0);
-                                graph.set_trees(id, true).expect("listed above");
-                            }
-                        }
+                        cost = Cost(cost.0 + plant_trees(&mut graph, &content, first_new, per_m).0);
                     }
                     #[cfg(debug_assertions)]
                     {
@@ -617,6 +724,10 @@ pub fn command_strips(
         NetCommand::BuildPlan { plan } => {
             validate_build_plan(graph, terrain, tiles, content, plan).map_or(Vec::new(), planned)
         }
+        NetCommand::BuildBatch { plans } => run_batch(graph, terrain, tiles, content, plans)
+            .map_or(Vec::new(), |(_, built, _)| {
+                built.into_iter().flat_map(planned).collect()
+            }),
         NetCommand::UpgradeSegment { seg, road } => match graph.segment(*seg) {
             Some(s)
                 if s.elevation == Elevation::Ground && road.index() < content.roads().count() =>

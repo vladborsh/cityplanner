@@ -10,6 +10,7 @@ mod balance_e2e;
 mod balance_probe;
 mod big_lots_e2e;
 mod bikes_e2e;
+mod build_batch_e2e;
 mod build_hours_e2e;
 mod build_plan_e2e;
 mod buildings_e2e;

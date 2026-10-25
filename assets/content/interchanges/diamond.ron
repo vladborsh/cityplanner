@@ -1,0 +1,23 @@
+// The diamond (T-332, §18.1 decision 6): a collector over a dual highway. Its two ground
+// stretches meet the ramps at their middle vertex; the overpass between them is one Elevated(6)
+// path that climbs from its feet 50 m off the carriageways (12 %); four one-way ground ramps
+// leave and join the carriageways at 42°. Anchor frame: u along carriageway A, v to its left
+// (carriageway B). Numbers: tune later.
+Interchange((
+    id: "diamond",
+    name: "Diamond interchange",
+    needs_second_carriageway: true,
+    length: 300.0,
+    pieces: [
+        // 0, 1: the crossing road on the ground, A's side and B's side.
+        (road: "medium_4l", points: [At(0.0, -114.0), At(0.0, -82.0), At(0.0, -50.0)]),
+        (road: "medium_4l", points: [FromB(0.0, 50.0), FromB(0.0, 82.0), FromB(0.0, 114.0)]),
+        // 2: the overpass between their inner ends.
+        (road: "medium_4l", elevation: Elevated(6.0), points: [Piece(0, 2), Piece(1, 0)]),
+        // 3-6: the ramps. A runs +u: off before the crossing, on after it; B runs -u.
+        (road: "highway_ramp_1w_1l", smooth: true, points: [OnA(-150.0), At(-110.0, -36.0), Piece(0, 1)]),
+        (road: "highway_ramp_1w_1l", smooth: true, points: [Piece(0, 1), At(110.0, -36.0), OnA(150.0)]),
+        (road: "highway_ramp_1w_1l", smooth: true, points: [OnB(150.0), FromB(110.0, 36.0), Piece(1, 1)]),
+        (road: "highway_ramp_1w_1l", smooth: true, points: [Piece(1, 1), FromB(-110.0, 36.0), OnB(-150.0)]),
+    ],
+))

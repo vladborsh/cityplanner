@@ -1,8 +1,9 @@
 //! Per-definition range checks. Each returns `(field, message)` pairs.
 
 use crate::defs::{
-    BuildingDef, CargoDef, DealDef, LaneKind, MilestonesDef, PolicyDef, RoadClass, RoadDef,
-    RoadVariant, ServiceDef, SpecDef, StyleDef, TunnelVariant, UtilityDef, VehicleDef,
+    BuildingDef, CargoDef, DealDef, InterchangeDef, LaneKind, MilestonesDef, PieceElevation,
+    PolicyDef, RoadClass, RoadDef, RoadVariant, ServiceDef, SpecDef, StyleDef, TemplatePoint,
+    TunnelVariant, UtilityDef, VehicleDef,
 };
 use crate::error::ContentError;
 use crate::kinds::ZoneType;
@@ -432,5 +433,71 @@ pub fn cargo(d: &CargoDef) -> Problems {
     c.not_empty("icon", &d.icon);
     c.non_negative("export_price", d.export_price);
     c.non_negative("import_price", d.import_price);
+    c.0
+}
+
+/// The lowest and the highest height a piece of an interchange may have, metres (§18.1
+/// decision 7: levels −2…+3 of 6 m).
+pub const INTERCHANGE_HEIGHTS: (f32, f32) = (-12.0, 18.0);
+/// The most pieces an interchange may have.
+pub const INTERCHANGE_MAX_PIECES: usize = 64;
+
+pub fn interchange(d: &InterchangeDef) -> Problems {
+    let mut c = Check(Vec::new());
+    c.not_empty("name", &d.name);
+    c.positive("length", d.length);
+    if d.pieces.is_empty() || d.pieces.len() > INTERCHANGE_MAX_PIECES {
+        c.bad("pieces", format!("must have 1..={INTERCHANGE_MAX_PIECES}"));
+    }
+    let (lo, hi) = INTERCHANGE_HEIGHTS;
+    let in_range = |h: f32| h.is_finite() && (lo..=hi).contains(&h);
+    for (k, p) in d.pieces.iter().enumerate() {
+        let at = |f: &str| format!("pieces[{k}].{f}");
+        if p.points.len() < 2 {
+            c.bad(at("points"), "needs at least 2");
+        }
+        match p.elevation {
+            PieceElevation::Ground => {}
+            PieceElevation::Elevated(h) => {
+                if !(in_range(h) && h > 0.0) {
+                    c.bad(at("elevation"), format!("must be within 0..={hi}"));
+                }
+            }
+            PieceElevation::Levels(a, b) => {
+                if !(in_range(a) && in_range(b)) || a * b < 0.0 {
+                    c.bad(
+                        at("elevation"),
+                        format!("both heights within {lo}..={hi}, on one side of the ground"),
+                    );
+                }
+            }
+        }
+        for (j, &pt) in p.points.iter().enumerate() {
+            let field = at(&format!("points[{j}]"));
+            let (u, v) = match pt {
+                TemplatePoint::OnA(u) | TemplatePoint::OnB(u) => (u, 0.0),
+                TemplatePoint::At(u, v) | TemplatePoint::FromB(u, v) => (u, v),
+                TemplatePoint::Piece(pk, pj) => {
+                    let ok = d
+                        .pieces
+                        .get(usize::from(pk))
+                        .is_some_and(|q| usize::from(pk) < k && usize::from(pj) < q.points.len());
+                    if !ok {
+                        c.bad(&field, "names no vertex of an earlier piece");
+                    }
+                    (0.0, 0.0)
+                }
+            };
+            if !(u.is_finite() && v.is_finite()) || u.abs() > d.length / 2.0 + 1e-3 {
+                c.bad(&field, "must be finite, with |u| <= length / 2");
+            }
+            if InterchangeDef::uses_b(pt) && !d.needs_second_carriageway {
+                c.bad(
+                    &field,
+                    "is on carriageway B, which the template does not have",
+                );
+            }
+        }
+    }
     c.0
 }
