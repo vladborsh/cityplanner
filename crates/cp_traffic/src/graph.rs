@@ -198,10 +198,10 @@ pub(crate) struct ExitConn {
     /// Index into `PathGraph::lights`, or `u32::MAX` when the node has no light.
     pub light: u32,
     pub conflicts: Vec<Conflict>,
-    /// Indices in `Links::pedestrian` of the crossings this connection drives over: `[0]` the
-    /// one across the arm it enters from, `[1]` the one across the arm it leaves into (§18.5).
-    /// Derived, valid for this snapshot only.
-    pub crossings: [Option<u16>; 2],
+    /// Dense ids ([`PathGraph::crossing_id`]) of the crossings this connection drives over:
+    /// `[0]` the one across the arm it enters from, `[1]` the one across the arm it leaves
+    /// into (§18.5). Derived.
+    pub crossings: [Option<u32>; 2],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -248,6 +248,9 @@ pub struct PathGraph {
     pub(crate) exits: Vec<Vec<ExitConn>>,
     /// Signal plans of the nodes with a light, as referenced by [`ExitConn::light`].
     pub(crate) lights: Vec<LightPlan>,
+    /// Dense id of every junction crossing by `(node, index in Links::pedestrian)` (§18.5);
+    /// derived with the graph, ids in node order.
+    crossing_ids: BTreeMap<(NodeId, u16), u32>,
     /// Per segment slot: total vehicle-lane length, metres (the denominator of the load).
     pub(crate) seg_capacity: Vec<f32>,
     segments: BTreeMap<SegmentId, SegLanes>,
@@ -400,14 +403,20 @@ impl PathGraph {
                 g.lights.len() as u32 - 1
             });
             let links = &junction.links;
+            for (i, l) in links.pedestrian.iter().enumerate() {
+                if l.kind == cp_net::PedLinkKind::Crossing {
+                    let id = g.crossing_ids.len() as u32;
+                    g.crossing_ids.insert((*node, i as u16), id);
+                }
+            }
             // The crossing across each arm of this node, by the arm's segment (§18.5).
-            let crossing_over = |lane: LaneId| -> Option<u16> {
+            let crossing_over = |lane: LaneId| -> Option<u32> {
                 let seg = net.lane(lane)?.segment;
-                links.pedestrian.iter().position(|l| {
+                let i = links.pedestrian.iter().position(|l| {
                     l.kind == cp_net::PedLinkKind::Crossing
                         && net.lane(l.a).is_some_and(|a| a.segment == seg)
-                })
-                .map(|i| i as u16)
+                })?;
+                g.crossing_ids.get(&(*node, i as u16)).copied()
             };
             for (ci, c) in links.connections.iter().enumerate() {
                 let (Some(from), Some(to)) = (g.car_slot(c.from), g.car_slot(c.to)) else {
@@ -452,6 +461,7 @@ impl PathGraph {
                 let lane_speed =
                     |slot: u32| g.car[slot as usize].as_ref().map_or(10.0, |l| l.speed);
                 let conn_speed = lane_speed(from).min(lane_speed(to)).min(turn_speed);
+                let crossings = [crossing_over(c.from), crossing_over(c.to)];
                 g.exits[from as usize].push(ExitConn {
                     to: c.to,
                     to_slot: to,
@@ -460,7 +470,7 @@ impl PathGraph {
                     speed: conn_speed,
                     light,
                     conflicts,
-                    crossings: [crossing_over(c.from), crossing_over(c.to)],
+                    crossings,
                 });
                 let speed = g.car[to as usize].as_ref().map_or(10.0, |l| l.speed);
                 let penalty = match c.turn {
@@ -589,6 +599,16 @@ impl PathGraph {
 
     pub fn rail_lane_count(&self) -> usize {
         self.rail.iter().flatten().count()
+    }
+
+    /// Number of junction crossings (the length of the per-crossing tables, §18.5).
+    pub(crate) fn crossing_count(&self) -> usize {
+        self.crossing_ids.len()
+    }
+
+    /// Dense id of crossing `link` of `node`.
+    pub(crate) fn crossing_id(&self, node: NodeId, link: u16) -> Option<u32> {
+        self.crossing_ids.get(&(node, link)).copied()
     }
 
     pub(crate) fn car_slot(&self, id: LaneId) -> Option<u32> {

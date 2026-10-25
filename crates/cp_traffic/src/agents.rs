@@ -1480,9 +1480,30 @@ struct Ctx<'a> {
     generation: u64,
     /// A cyclist's speeds (T-322).
     bike: crate::astar::BikeSpeeds,
+    /// Per crossing: how far ahead of the nearest car that will drive over it a walker may
+    /// still step out, metres (`crate::drive::crossing_margins`, §18.5); empty when unknown.
+    margins: &'a [f32],
 }
 
 impl Ctx<'_> {
+    /// May a walker step out onto crossing `link` of `node` now (§18.5 item 4)? Where there is
+    /// a light, on its walk signal (`walk_green`); where there is none, when the nearest car
+    /// that will drive over it could still stop for them.
+    fn may_enter(&self, node: NodeId, link: u16) -> bool {
+        if !self.walk_green(node, link) {
+            return false;
+        }
+        let lit = self
+            .geo
+            .get(node)
+            .is_some_and(|j| j.control.light.is_some());
+        lit || self
+            .graph
+            .crossing_id(node, link)
+            .and_then(|c| self.margins.get(c as usize))
+            .is_none_or(|&m| m > 0.0)
+    }
+
     /// A cyclist's speed on `leg`, m/s: along a lane by its kind, over a junction's bike link
     /// at bike-lane speed, round a corner or over a crossing on foot.
     fn ride_speed(&self, leg: &Leg) -> f32 {
@@ -1643,7 +1664,7 @@ fn step_pedestrian(p: &mut Pedestrian, ctx: &Ctx) -> Step {
         if !p.started {
             // Entering a leg: measure it; a crossing may only be entered on a walk signal.
             if let Leg::Cross { node, link, .. } = &leg
-                && !ctx.walk_green(*node, *link)
+                && !ctx.may_enter(*node, *link)
             {
                 p.waited += 1;
                 return Step::Moving;
@@ -1692,6 +1713,7 @@ pub fn crossing_of(
         tick: 0,
         generation: 0,
         bike: crate::astar::BikeSpeeds::of_balance(&cp_content::Balance::default()),
+        margins: &[],
     };
     match ctx.leg(&p.route, p.leg as usize)? {
         Leg::Cross { node, link, .. } => Some((node, link)),
@@ -1720,6 +1742,15 @@ pub fn move_agents(
     let now = tick.0;
     book.ensure_derived();
     agents.ensure_derived(&book);
+    // Where the cars are, from the end of the last tick (the walkers decide on that, §18.5).
+    let margins = if !agents.pedestrians.is_empty()
+        && agents.drive.ready
+        && agents.drive.generation == pnet.generation()
+    {
+        crate::drive::crossing_margins(pnet.graph(), &agents.vehicles, &agents.drive)
+    } else {
+        Vec::new()
+    };
     let ctx = Ctx {
         net: &net,
         graph: pnet.graph(),
@@ -1732,6 +1763,7 @@ pub fn move_agents(
                 .as_deref()
                 .map_or(&cp_content::Balance::default(), |c| c.0.balance()),
         ),
+        margins: &margins,
     };
     let (parallel, stuck_ticks) =
         settings.map_or((true, STUCK_TICKS), |s| (s.parallel, s.stuck_ticks));
@@ -1801,6 +1833,19 @@ pub fn move_agents(
     }
     agents.stats.red_waits += red;
 
+    // Walkers on crossings, counted once for all lanes of this tick's cars (§18.5).
+    let mut walkers = vec![0u16; pnet.graph().crossing_count()];
+    for (_, p) in agents.pedestrians.iter() {
+        if p.started
+            && let Some((g, i, Leg::Cross { node, link, .. })) = p.cache.0
+            && g == pnet.generation()
+            && i == p.leg
+            && let Some(c) = pnet.graph().crossing_id(node, link)
+        {
+            walkers[c as usize] = walkers[c as usize].saturating_add(1);
+        }
+    }
+
     // Vehicles.
     let graph = pnet.graph();
     let Agents {
@@ -1811,6 +1856,7 @@ pub fn move_agents(
         parked,
         ..
     } = &mut *agents;
+    drive.walkers = walkers;
     let mut gone: Vec<Vehicle> = Vec::new();
     if !drive.ready || drive.generation != pnet.generation() {
         // Cars whose own place is gone vanish; cars whose route ahead is gone ask for a new

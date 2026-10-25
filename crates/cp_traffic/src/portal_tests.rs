@@ -251,6 +251,7 @@ fn walking_speeds_spread_by_citizen() {
         tick: 0,
         generation: pnet.generation(),
         bike: crate::astar::BikeSpeeds::of_balance(&cp_content::Balance::default()),
+        margins: &[],
     };
     let mut secs = Vec::new();
     for i in 0..1000u32 {

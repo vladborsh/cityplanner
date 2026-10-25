@@ -583,6 +583,9 @@ pub(crate) struct DriveState {
     pub hot: Vec<Hot>,
     pub ready: bool,
     pub generation: u64,
+    /// Pedestrians on each crossing (`PathGraph::crossing_id`), counted once a tick after they
+    /// have stepped and before the cars do (§18.5). Derived, not saved.
+    pub walkers: Vec<u16>,
     /// Vehicle dimensions and dynamics of the current tick (set by [`drive_tick`]).
     pub specs: VehicleSpecs,
     /// Why the stuck cars were removed, by [`StuckWhy`] (diagnostics; not saved).
@@ -911,6 +914,17 @@ fn could_enter(
         || find_exit(g, node.id, to).is_none_or(|e| has_room(g, veh, st, o, e.to_slot, 0))
 }
 
+/// Does a pedestrian on a crossing hold a car that wants to take `ex` (§18.5)? Without a light
+/// the car yields on the crossing it enters over (the zebra) and does not enter a junction
+/// whose exit crossing is occupied either: it could not stop inside any more. With a light the
+/// walkers are in the phase of the flow across, so only the crossing it leaves over can hold it
+/// (a turn). Waiting walkers hold nobody: they step out when it is safe (`crossing_margins`).
+fn crossing_blocks(st: &DriveState, ex: &ExitConn) -> bool {
+    let busy =
+        |c: Option<u32>| c.is_some_and(|c| st.walkers.get(c as usize).is_some_and(|&n| n > 0));
+    busy(ex.crossings[1]) || (ex.light == u32::MAX && busy(ex.crossings[0]))
+}
+
 fn gate_open(
     g: &PathGraph,
     veh: &Arena<Vehicle>,
@@ -931,6 +945,9 @@ fn gate_open(
             }
             Signal::Red => return false,
         }
+    }
+    if crossing_blocks(st, ex) {
+        return false;
     }
     // A car that left this lane into another connection a moment ago is still on the same spot:
     // wait until its rear has cleared the stop line by the standstill gap.
@@ -1176,6 +1193,11 @@ fn step_conn(ctx: &Ctx, key: (u32, u32), out: &mut Vec<Upd>) {
         return;
     };
     let limit = ex.speed;
+    // Walkers on the crossing it leaves over stop the head car just short of it (§18.5); a car
+    // already on the crossing cannot stop and goes on.
+    let zebra = ex.crossings[1]
+        .is_some_and(|c| ctx.st.walkers.get(c as usize).is_some_and(|&n| n > 0))
+        .then_some(ex.length);
     let mut prev: Option<&Vehicle> = None;
     for &id in list {
         let Some(v) = ctx.veh.get(id) else { continue };
@@ -1195,6 +1217,13 @@ fn step_conn(ctx: &Ctx, key: (u32, u32), out: &mut Vec<Upd>) {
                         spec_of(ctx, v).min_gap,
                     )
                 }),
+        };
+        let leader = match zebra {
+            Some(line) if prev.is_none() && v.s < line - MIN_GAP => {
+                let stop = (line, 0.0, MIN_GAP);
+                Some(leader.map_or(stop, |l| if l.0 < stop.0 { l } else { stop }))
+            }
+            _ => leader,
         };
         let (s, nv) = follow(v, spec_of(ctx, v), limit, leader);
         let ev = if prev.is_none() && s >= ex.length {
@@ -1358,6 +1387,10 @@ fn front_suspicious(
     if gate_open(g, veh, st, signal, v, ex, node.s_out) {
         return false;
     }
+    // Waiting for walkers is as legitimate as a red light (§18.5); the hard cap still applies.
+    if crossing_blocks(st, ex) {
+        return false;
+    }
     if ex.light != u32::MAX
         && g.lights[ex.light as usize].connection_signal(ex.index, signal) != Signal::Green
     {
@@ -1462,12 +1495,88 @@ fn suspicious_flags(
         walk_flags(veh, list, front, false, out);
     });
     for list in st.conns.values() {
-        // A car standing inside a junction waits for room beyond it.
-        walk_flags(veh, list, true, true, &mut out);
+        // A car standing inside a junction waits for room beyond it, or for walkers (§18.5).
+        let zebra = list.first().and_then(|&id| veh.get(id)).is_some_and(|v| {
+            let step = v.path.steps.get(v.hop as usize);
+            step.and_then(|&(from, to)| find_exit(g, from, to))
+                .and_then(|ex| ex.crossings[1])
+                .is_some_and(|c| st.walkers.get(c as usize).is_some_and(|&n| n > 0))
+        });
+        walk_flags(veh, list, !zebra, true, &mut out);
     }
     for &id in &st.waiting {
         if veh.contains(id) {
             out.push((id, false, true));
+        }
+    }
+    out
+}
+
+/// Metres a walker may use before a car reaches `dist` ahead at speed `v` can no longer be
+/// expected to stop for it: the braking distance plus the reaction margin (§18.5 item 4).
+fn zebra_clearance(spec: &VehicleSpec, v: f32, dist: f32) -> f32 {
+    dist - (v * v / (2.0 * spec.decel.max(0.1)) + v * 0.4)
+}
+
+/// Cars farther than this from a crossing do not matter to a walker about to step out.
+const ZEBRA_LOOKOUT_M: f32 = 120.0;
+
+/// Per crossing: the smallest [`zebra_clearance`] over the cars that will drive over it without
+/// a light to stop them (§18.5 item 4): the head car of every lane whose next connection enters
+/// over or leaves over it, and every car inside a connection that leaves over it. A walker steps
+/// out of the kerb only when this is positive. Read from the state of the previous tick, once
+/// per tick before the walkers move; `+inf` where no car comes.
+pub(crate) fn crossing_margins(g: &PathGraph, veh: &Arena<Vehicle>, st: &DriveState) -> Vec<f32> {
+    let mut out = vec![f32::INFINITY; g.crossing_count()];
+    let mut note = |c: Option<u32>, m: f32| {
+        if let Some(c) = c
+            && let Some(slot) = out.get_mut(c as usize)
+        {
+            *slot = slot.min(m);
+        }
+    };
+    for slot in st.occ.iter() {
+        let (Some(node), Some(&head)) = (g.car[slot].as_ref(), st.lanes[slot].first()) else {
+            continue;
+        };
+        let Some(v) = veh.get(head) else { continue };
+        let dist = node.s_out - v.s;
+        if !v.spawned || dist > ZEBRA_LOOKOUT_M {
+            continue;
+        }
+        let Some(ex) = v
+            .path
+            .steps
+            .get(v.hop as usize)
+            .and_then(|&(_, to)| find_exit(g, node.id, to))
+            .filter(|e| e.light == u32::MAX)
+        else {
+            continue;
+        };
+        let spec = st.specs.of(v);
+        note(ex.crossings[0], zebra_clearance(spec, v.speed, dist));
+        note(
+            ex.crossings[1],
+            zebra_clearance(spec, v.speed, dist + ex.length),
+        );
+    }
+    for list in st.conns.values() {
+        for &id in list {
+            let Some(v) = veh.get(id) else { continue };
+            let Some(ex) = v
+                .path
+                .steps
+                .get(v.hop as usize)
+                .and_then(|&(from, to)| find_exit(g, from, to))
+                .filter(|e| e.light == u32::MAX)
+            else {
+                continue;
+            };
+            let dist = (ex.length - v.s).max(0.0);
+            note(
+                ex.crossings[1],
+                zebra_clearance(st.specs.of(v), v.speed, dist),
+            );
         }
     }
     out

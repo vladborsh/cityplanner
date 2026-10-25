@@ -1302,7 +1302,6 @@ fn every_connection_of_a_cross_knows_the_crossings_it_drives_over() {
     let mut s = sim();
     let arms = cross(&mut s, "basic_2l");
     let rig = Rig::new(s);
-    let net = rig.sim.world.resource::<cp_net::NetGraph>();
     let mut seen = 0;
     for exits in &rig.graph.exits {
         for ex in exits {
@@ -1314,4 +1313,134 @@ fn every_connection_of_a_cross_knows_the_crossings_it_drives_over() {
         }
     }
     assert!(seen >= arms.len() * 3, "{seen}");
+}
+
+/// The connection the car `id` takes first, and its node's stop line.
+fn first_exit(rig: &Rig, id: VehicleId) -> (&crate::graph::ExitConn, f32) {
+    let v = rig.veh.get(id).unwrap();
+    v.path
+        .steps
+        .iter()
+        .find_map(|&(from, to)| {
+            let ex = find_exit(&rig.graph, from, to)?;
+            Some((ex, lane_node(&rig.graph, from)?.s_out))
+        })
+        .expect("a junction connection on the route")
+}
+
+/// A W to E car over a cross of `road`, walkers table sized for it.
+fn zebra_rig(road: &str) -> (Rig, VehicleId, [Option<u32>; 2], bool) {
+    let mut s = sim();
+    let arms = cross(&mut s, road);
+    let mut rig = Rig::new(s);
+    let id = rig.add(from_arm(arms[0], 5.0), to_arm(arms[1], 60.0));
+    rig.st.walkers = vec![0; rig.graph.crossing_count()];
+    let (ex, _) = first_exit(&rig, id);
+    let (c, lit) = (ex.crossings, ex.light != u32::MAX);
+    (rig, id, c, lit)
+}
+
+fn run_ticks(rig: &mut Rig, from: u64, n: u64) -> u64 {
+    for t in from..from + n {
+        rig.tick(t, None, STUCK_TICKS);
+    }
+    from + n
+}
+
+#[test]
+fn walkers_on_the_zebra_hold_a_car_without_a_light_until_they_are_gone() {
+    let (mut rig, id, [entry, _], lit) = zebra_rig("basic_2l");
+    assert!(!lit, "a small cross has no light");
+    rig.st.walkers[entry.unwrap() as usize] = 20;
+    let t = run_ticks(&mut rig, 0, 300);
+    let v = rig.veh.get(id).expect("still on the road");
+    let stop = first_exit(&rig, id).1;
+    assert!(
+        !v.in_conn && v.hop == 0,
+        "it waits in front of the crossing"
+    );
+    assert!(v.speed < 0.1 && v.s <= stop, "{} / {stop}", v.s);
+    assert_eq!(rig.stuck, 0, "waiting for walkers is not stuck");
+    rig.st.walkers[entry.unwrap() as usize] = 0;
+    run_ticks(&mut rig, t, 600);
+    assert_eq!((rig.arrived, rig.veh.len()), (1, 0), "it drove on");
+}
+
+#[test]
+fn walkers_on_the_crossing_a_car_would_leave_over_hold_it_before_the_junction() {
+    let (mut rig, id, [_, exit], _) = zebra_rig("basic_2l");
+    rig.st.walkers[exit.unwrap() as usize] = 3;
+    let t = run_ticks(&mut rig, 0, 300);
+    let v = rig.veh.get(id).expect("held");
+    assert!(!v.in_conn && v.hop == 0 && v.speed < 0.1);
+    rig.st.walkers[exit.unwrap() as usize] = 0;
+    run_ticks(&mut rig, t, 600);
+    assert_eq!((rig.arrived, rig.veh.len()), (1, 0));
+}
+
+#[test]
+fn a_slow_car_in_the_junction_stops_short_of_walkers_who_stepped_out_before_it() {
+    let (mut rig, id, [_, exit], _) = zebra_rig("basic_2l");
+    let exit = exit.unwrap() as usize;
+    let mut t = 0;
+    while !rig.veh.get(id).is_some_and(|v| v.in_conn) {
+        t = run_ticks(&mut rig, t, 1);
+        assert!(t < 600, "it entered the junction");
+    }
+    // A walker steps out when the car, slowed to a crawl, can still stop for them.
+    rig.veh.get_mut(id).unwrap().speed = 2.0;
+    rig.st.walkers[exit] = 3;
+    t = run_ticks(&mut rig, t, 300);
+    let len = first_exit(&rig, id).0.length;
+    let v = rig.veh.get(id).expect("held inside");
+    assert!(v.in_conn && v.speed < 0.1 && v.s < len, "{} / {len}", v.s);
+    assert_eq!(rig.stuck, 0);
+    rig.st.walkers[exit] = 0;
+    run_ticks(&mut rig, t, 600);
+    assert_eq!((rig.arrived, rig.veh.len()), (1, 0));
+}
+
+#[test]
+fn at_a_light_only_the_crossing_a_car_leaves_over_holds_it() {
+    let (mut rig, id, [entry, exit], lit) = zebra_rig("medium_4l");
+    assert!(lit, "a wide cross has a light");
+    // Walkers on the crossing across its own arm: they cross with the flow across, and the
+    // car is on red then; it does not wait for them.
+    rig.st.walkers[entry.unwrap() as usize] = 20;
+    run_ticks(&mut rig, 0, 1200);
+    assert_eq!(
+        (rig.arrived, rig.veh.len()),
+        (1, 0),
+        "the straight flow went"
+    );
+
+    let (mut rig, id2, _, _) = zebra_rig("medium_4l");
+    let _ = id;
+    rig.st.walkers[exit.unwrap() as usize] = 20;
+    run_ticks(&mut rig, 0, 1200);
+    assert_eq!(
+        rig.arrived, 0,
+        "walkers on the exit crossing hold it at green"
+    );
+    assert!(rig.veh.get(id2).is_some_and(|v| !v.in_conn && v.hop == 0));
+}
+
+#[test]
+fn a_walker_steps_out_only_before_a_car_that_can_still_stop() {
+    let (mut rig, id, [entry, _], _) = zebra_rig("basic_2l");
+    let entry = entry.unwrap() as usize;
+    run_ticks(&mut rig, 0, 1);
+    let stop = first_exit(&rig, id).1;
+    let kmh50 = 50.0 / 3.6;
+    for (dist, clear) in [(10.0, false), (60.0, true)] {
+        let v = rig.veh.get_mut(id).unwrap();
+        v.s = stop - dist;
+        v.speed = kmh50;
+        let m = crossing_margins(&rig.graph, &rig.veh, &rig.st);
+        assert_eq!(m[entry] > 0.0, clear, "{dist} m: {}", m[entry]);
+    }
+    let gone = rig.veh.remove(id).unwrap();
+    rig.st.remove(&gone, id);
+    let m = crossing_margins(&rig.graph, &rig.veh, &rig.st);
+    assert!(m.iter().all(|&x| x == f32::INFINITY), "no car, no margin");
 }
