@@ -224,12 +224,15 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
     if tools.road.road.is_none() {
         tools.road.road = cards.first().map(|c| c.id);
     }
-    side_panel(ui, tools);
-    ui.separator();
     let upgrading = tools.active == ActiveTool::Upgrade;
     let building = tools.active == ActiveTool::Road;
     let widest = content.roads().map(|(_, d)| d.width).fold(0.0, f32::max);
     let in_tray = crate::tray::in_tray(ui.ctx());
+    // In the tray the side panel is drawn outside the tiles' scroll area (palette::tray).
+    if !in_tray {
+        side_panel(ui, tools);
+        ui.separator();
+    }
     let mut first = true;
     for class in tab_classes(content) {
         if !crate::tray::is_active(ui.ctx(), &tab_label(class)) {
@@ -297,7 +300,7 @@ pub fn take_side_rects(ctx: &egui::Context) -> Vec<(SideButton, egui::Rect)> {
 /// The panel at the left of the Roads tray: the tools that change roads already built (upgrade,
 /// flip) over the elevation of the road tool, lower and raise, and the height under them. A
 /// height button takes the road tool.
-fn side_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
+pub fn side_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
     let mut rects = Vec::new();
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);

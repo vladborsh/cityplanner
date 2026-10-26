@@ -367,45 +367,53 @@ pub fn tray(
                         options(ui, category, state, view, tools, overlay);
                     });
                 });
-            egui::ScrollArea::both()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.horizontal_top(|ui| match category {
-                        Category::Roads => roads_panel(ui, view, tools),
-                        Category::Zones => zones_panel(ui, view, tools),
-                        Category::Buildings => services_panel(ui, view, tools, overlay),
-                        Category::Power => crate::buildings::buildings_panel(
-                            ui,
-                            view,
-                            tools,
-                            overlay,
-                            crate::buildings::Scope::Power,
-                        ),
-                        Category::Water => crate::buildings::buildings_panel(
-                            ui,
-                            view,
-                            tools,
-                            overlay,
-                            crate::buildings::Scope::Water,
-                        ),
-                        Category::Districts => {
-                            crate::districts::districts_panel(ui, view, tools, outbox)
-                        }
-                        Category::Transit => crate::transit::transit_panel(
-                            ui,
-                            view,
-                            tools,
-                            overlay,
-                            &mut state.lines_open,
-                        ),
-                        Category::Industry => {
-                            crate::industry::industry_panel(ui, view, tools, overlay, outbox)
-                        }
-                        Category::Parks => {
-                            crate::parks::parks_panel(ui, view, tools, overlay, outbox)
-                        }
+            ui.horizontal_top(|ui| {
+                // The Roads side panel stays put while the tiles scroll.
+                if category == Category::Roads && view.and_then(|v| v.content.as_deref()).is_some()
+                {
+                    crate::roads::side_panel(ui, tools);
+                    ui.separator();
+                }
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.horizontal_top(|ui| match category {
+                            Category::Roads => roads_panel(ui, view, tools),
+                            Category::Zones => zones_panel(ui, view, tools),
+                            Category::Buildings => services_panel(ui, view, tools, overlay),
+                            Category::Power => crate::buildings::buildings_panel(
+                                ui,
+                                view,
+                                tools,
+                                overlay,
+                                crate::buildings::Scope::Power,
+                            ),
+                            Category::Water => crate::buildings::buildings_panel(
+                                ui,
+                                view,
+                                tools,
+                                overlay,
+                                crate::buildings::Scope::Water,
+                            ),
+                            Category::Districts => {
+                                crate::districts::districts_panel(ui, view, tools, outbox)
+                            }
+                            Category::Transit => crate::transit::transit_panel(
+                                ui,
+                                view,
+                                tools,
+                                overlay,
+                                &mut state.lines_open,
+                            ),
+                            Category::Industry => {
+                                crate::industry::industry_panel(ui, view, tools, overlay, outbox)
+                            }
+                            Category::Parks => {
+                                crate::parks::parks_panel(ui, view, tools, overlay, outbox)
+                            }
+                        });
                     });
-                });
+            });
             crate::tray::leave(ui.ctx());
         });
     match at.and_then(|n| tabs.get(n)) {
@@ -845,6 +853,40 @@ mod tests {
         assert_eq!(rig.tools.road.level, cp_tools::MAX_ELEVATION_LEVEL);
         click(&mut rig, SideButton::Lower);
         assert_eq!(rig.tools.road.level, cp_tools::MAX_ELEVATION_LEVEL - 1);
+    }
+
+    /// The side panel stays in view while the road tiles scroll sideways.
+    #[test]
+    fn the_roads_side_panel_stays_while_the_tiles_scroll() {
+        use crate::roads::take_side_rects;
+        let mut rig = Rig::new();
+        rig.click_category(Category::Roads);
+        let before_tiles = tiles(&mut rig);
+        take_side_rects(&rig.ctx);
+        rig.frame(vec![]);
+        let before = take_side_rects(&rig.ctx);
+        let over = before_tiles[0].0.center();
+        rig.frame(vec![egui::Event::PointerMoved(over)]);
+        for _ in 0..5 {
+            rig.frame(vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(-400.0, 0.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            }]);
+        }
+        let after_tiles = tiles(&mut rig);
+        assert!(
+            after_tiles[0].0.left() < before_tiles[0].0.left() - 50.0,
+            "the tiles scroll: {:?} -> {:?}",
+            before_tiles[0].0,
+            after_tiles[0].0
+        );
+        take_side_rects(&rig.ctx);
+        rig.frame(vec![]);
+        let after = take_side_rects(&rig.ctx);
+        assert_eq!(before.len(), 4);
+        assert_eq!(before, after, "the side panel does not move");
     }
 
     #[test]
