@@ -217,7 +217,10 @@ pub fn tabs(category: Category, view: Option<&SimView>) -> Vec<(String, Option<I
     match category {
         Category::Roads => {
             for class in content.map(crate::roads::tab_classes).unwrap_or_default() {
-                out.push((crate::roads::tab_label(class), None));
+                out.push((
+                    crate::roads::tab_label(class),
+                    Some(crate::roads::tab_icon(class)),
+                ));
             }
         }
         // The tool kinds and the zone types are one row (T-317f): no tabs.
@@ -282,9 +285,9 @@ pub fn tabs(category: Category, view: Option<&SimView>) -> Vec<(String, Option<I
                     }
                 }
                 if !crate::parks::section_cards(content, None).is_empty() {
-                    out.push((tr("Props"), None));
+                    out.push((tr("Props"), Some(Icon::ParkProps)));
                 }
-                out.push((tr("Path"), None));
+                out.push((tr("Path"), Some(Icon::RoadTabPath)));
             }
         }
     }
@@ -347,12 +350,18 @@ pub fn tray(
                         category.icon().show(ui, Sizes::TRAY_TAB_H - 2.0);
                         ui.strong(tr(category.label()));
                         ui.separator();
-                        for (n, (label, _)) in tabs.iter().enumerate() {
+                        for (n, (label, icon)) in tabs.iter().enumerate() {
                             if tabs.len() < 2 {
                                 break;
                             }
                             let on = at == Some(n);
-                            let r = ui.selectable_label(on, label);
+                            let r = match icon {
+                                Some(icon) => ui.add(egui::Button::selectable(
+                                    on,
+                                    (icon.sized(Sizes::TAB_ICON), label.as_str()),
+                                )),
+                                None => ui.selectable_label(on, label),
+                            };
                             if r.clicked() {
                                 at = if on && filters(category) {
                                     None
@@ -853,6 +862,17 @@ mod tests {
         assert_eq!(rig.tools.road.level, cp_tools::MAX_ELEVATION_LEVEL);
         click(&mut rig, SideButton::Lower);
         assert_eq!(rig.tools.road.level, cp_tools::MAX_ELEVATION_LEVEL - 1);
+    }
+
+    /// Every tab of every tray has its small icon (user 2026-10-26).
+    #[test]
+    fn every_tab_of_every_tray_has_an_icon() {
+        let rig = Rig::new();
+        for c in Category::available(rig.view.content.as_deref()) {
+            for (label, icon) in tabs(c, Some(&rig.view)) {
+                assert!(icon.is_some(), "{c:?}: tab {label:?} has no icon");
+            }
+        }
     }
 
     /// The side panel stays in view while the road tiles scroll sideways.

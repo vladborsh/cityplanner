@@ -1,6 +1,6 @@
 //! The permanent panel at the top right of the map (T-289): every map overlay as an icon in a
-//! compact grid under its group's header, the active one lit, its name as the tooltip (T-317f).
-//! The Junctions section holds the Junctions tool beside its overlay. A small arrow folds the
+//! grid of two columns in the order of its groups, no headers (user 2026-10-26), the active one
+//! lit, its name as the tooltip (T-317f). The Junctions tool follows the Junctions overlay. A small arrow folds the
 //! panel to a thin strip (O does the same). T-298: the buttons for the windows and the settings are one row at the right end of
 //! the top bar ([`window_bar`]).
 
@@ -19,7 +19,7 @@ const OVERLAY_ICON: f32 = 24.0;
 const WINDOW_ICON: f32 = 24.0;
 /// Height of the button row in the top bar.
 const WINDOW_BAR_H: f32 = WINDOW_ICON + 2.0 * 4.0;
-const OVERLAY_COLUMNS: usize = 4;
+const OVERLAY_COLUMNS: usize = 2;
 /// Side of one overlay cell: the icon button.
 const CELL_W: f32 = OVERLAY_ICON + 2.0 * Sizes::BUTTON_PAD;
 
@@ -205,31 +205,17 @@ pub fn overlays_panel(
                         return;
                     }
                     ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
-                    // The groups with their headers, icons only.
-                    let mut cell = |ui: &mut egui::Ui, o: Overlay| {
-                        let on = overlay.active == o;
-                        let r = overlay_icon(o)
-                            .button(ui, OVERLAY_ICON, Sizes::BUTTON_PAD, on)
-                            .on_hover_ui(|ui| {
-                                ui.strong(tr(o.label()));
-                                if let Some(v) = view {
-                                    crate::gauges::overlay_hover(ui, v, o);
-                                }
-                            });
-                        rects.overlays.push((o, r.rect));
-                        if r.clicked() {
-                            overlay.open(o);
-                        }
-                    };
-                    for (title, members) in GROUPS {
-                        ui.weak(tr(title));
-                        let junctions = members == [Overlay::Junctions];
-                        for row in members.chunks(OVERLAY_COLUMNS) {
-                            ui.horizontal(|ui| {
-                                for &o in row {
-                                    cell(ui, o);
-                                }
-                                if junctions {
+                    // Every overlay in the order of its group, two to a row, icons only; the
+                    // Junctions tool closes the grid.
+                    let cells: Vec<Option<Overlay>> = GROUPS
+                        .iter()
+                        .flat_map(|(_, members)| members.iter().map(|&o| Some(o)))
+                        .chain([None])
+                        .collect();
+                    for row in cells.chunks(OVERLAY_COLUMNS) {
+                        ui.horizontal(|ui| {
+                            for &c in row {
+                                let Some(o) = c else {
                                     let on = tools.active == ActiveTool::Junctions;
                                     let r = Icon::Junctions
                                         .button(ui, OVERLAY_ICON, Sizes::BUTTON_PAD, on)
@@ -242,18 +228,34 @@ pub fn overlays_panel(
                                             ActiveTool::Junctions
                                         });
                                     }
-                                    // Its mode: lights and signs, or lane turns (T-313).
-                                    if on {
-                                        crate::lane_rules::mode_buttons(
-                                            ui,
-                                            tools,
-                                            OVERLAY_ICON,
-                                            Sizes::BUTTON_PAD,
-                                        );
-                                    }
+                                    continue;
+                                };
+                                let on = overlay.active == o;
+                                let r = overlay_icon(o)
+                                    .button(ui, OVERLAY_ICON, Sizes::BUTTON_PAD, on)
+                                    .on_hover_ui(|ui| {
+                                        ui.strong(tr(o.label()));
+                                        if let Some(v) = view {
+                                            crate::gauges::overlay_hover(ui, v, o);
+                                        }
+                                    });
+                                rects.overlays.push((o, r.rect));
+                                if r.clicked() {
+                                    overlay.open(o);
                                 }
-                            });
-                        }
+                            }
+                        });
+                    }
+                    // The Junctions tool's mode: lights and signs, or lane turns (T-313).
+                    if tools.active == ActiveTool::Junctions {
+                        ui.horizontal(|ui| {
+                            crate::lane_rules::mode_buttons(
+                                ui,
+                                tools,
+                                OVERLAY_ICON,
+                                Sizes::BUTTON_PAD,
+                            );
+                        });
                     }
                 });
         });
@@ -530,7 +532,7 @@ mod tests {
     }
 
     #[test]
-    fn the_junctions_section_holds_the_tool_beside_its_overlay() {
+    fn the_overlays_are_two_columns_without_headers_and_the_junctions_tool_closes_them() {
         let mut rig = Rig::new();
         let tool = rig.rects.junctions_tool.unwrap();
         let lights = rig
@@ -540,7 +542,36 @@ mod tests {
             .find(|(o, _)| *o == Overlay::Junctions)
             .unwrap()
             .1;
-        assert!((tool.center().y - lights.center().y).abs() < 1.0, "one row");
+        // No group headers (the two columns are checked above).
+        rig.t += 0.1;
+        let Rig {
+            ctx,
+            state,
+            overlay,
+            tools,
+            lighting,
+            files,
+            t,
+            ..
+        } = &mut rig;
+        let texts = crate::testutil::frame_texts(ctx, input(*t, vec![]), |ui| {
+            overlays_panel(ui.ctx(), state, overlay, tools, lighting, files, None);
+        });
+        for (title, _) in GROUPS {
+            assert!(!texts.iter().any(|(t, _)| t == title), "{title} header");
+        }
+        // The tool is the cell after its overlay, the last of the grid.
+        assert!(
+            tool.top() >= lights.top() - 0.5,
+            "{tool:?} after {lights:?}"
+        );
+        let last = rig
+            .rects
+            .overlays
+            .iter()
+            .map(|(_, r)| r.bottom())
+            .fold(0.0, f32::max);
+        assert!(tool.bottom() >= last - 0.5);
         rig.click(tool.center());
         assert_eq!(rig.tools.active, ActiveTool::Junctions);
         rig.click(tool.center());

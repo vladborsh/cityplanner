@@ -107,7 +107,7 @@ fn paint(
 }
 
 /// The smallest size a tile name steps down to so that its longest word fits (T-284).
-const MIN_NAME_PT: f32 = 10.0;
+const MIN_NAME_PT: f32 = 9.0;
 /// Row spacing of a tile name, in font sizes (T-284b: two rows fit under the icon).
 const NAME_LINE: f32 = 1.15;
 /// Width of the frame of a selected tile.
@@ -122,6 +122,7 @@ const NAME_TOP: f32 = Sizes::TILE_PAD + Sizes::TILE_ICON + Sizes::TILE_PAD * 0.5
 fn name_galley(ui: &egui::Ui, name: &str, color: egui::Color32) -> std::sync::Arc<egui::Galley> {
     let width = Sizes::TILE - 2.0 * Sizes::TILE_PAD;
     let mut font = egui::TextStyle::Small.resolve(ui.style());
+    font.size = font.size.min(Sizes::TILE_NAME_PT);
     let widest = |font: &egui::FontId| {
         name.split_whitespace()
             .map(|w| {
@@ -185,7 +186,7 @@ mod tests {
     use crate::testutil::{frame, input};
 
     #[test]
-    fn a_tile_is_88_by_78_with_a_40_square_icon_frame_centred_below_a_4_pad() {
+    fn a_tile_is_88_by_66_with_a_32_square_icon_frame_centred_below_a_4_pad() {
         let ctx = egui::Context::default();
         take_rects(&ctx);
         frame(&ctx, input(0.0, vec![]), |ui| {

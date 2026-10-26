@@ -10,17 +10,22 @@ impl Sizes {
     /// Icon of a category in the bottom bar (T-317; T-317f: a third lower).
     pub const PALETTE_ICON: f32 = 30.0;
     /// Height of the tool tray above the bottom bar: the tab row, one row of tiles (with the
-    /// scroll bar) and the options strip (T-317f: a third lower than the first 196).
-    pub const TRAY_H: f32 = 131.0;
+    /// scroll bar) and the options strip (T-317f: a third lower than the first 196; a quarter
+    /// lower again than 131, user 2026-10-26).
+    pub const TRAY_H: f32 = 98.0;
     /// Height of the tab row of the tray.
     pub const TRAY_TAB_H: f32 = 20.0;
+    /// The small icon in front of a tab's name.
+    pub const TAB_ICON: f32 = 14.0;
     /// The one tile of every construction tool: its width...
     pub const TILE: f32 = 88.0;
     /// ...and its height: the icon frame and two rows of the name below it (T-274 follow-up:
     /// the bold names wrap instead of losing their variant number to "…").
-    pub const TILE_H: f32 = 78.0;
+    pub const TILE_H: f32 = 66.0;
     /// The square icon frame inside a tile.
-    pub const TILE_ICON: f32 = 40.0;
+    pub const TILE_ICON: f32 = 32.0;
+    /// The face a tile's name starts at (it steps down for a long word).
+    pub const TILE_NAME_PT: f32 = 11.0;
     /// Gap between the tile's top and its icon frame (and between its sides and it).
     pub const TILE_PAD: f32 = 4.0;
     /// Corner radius of the icon frame.
