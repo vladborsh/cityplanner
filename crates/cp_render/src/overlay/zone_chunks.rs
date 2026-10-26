@@ -15,9 +15,11 @@
 //!
 //! This module is pure (no ECS): [`ZoneChunks::update`] returns the meshes to swap.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bevy::math::Vec3;
+// std::time::Instant panics in the browser (wasm32); Bevy's works on both.
+use bevy::platform::time::Instant;
 use cp_sim::{ZoneCellView, ZoneOverlay};
 use cp_terrain::Terrain;
 

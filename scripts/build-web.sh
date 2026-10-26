@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the browser demo into dist/web (index.html + wasm + assets/maps).
+# Builds the browser demo into dist/web (index.html + wasm + assets/maps, assets/sounds).
 #
 #   scripts/build-web.sh            # build
 #   python3 -m http.server -d dist/web 8080   # serve, then open http://localhost:8080
@@ -30,6 +30,7 @@ mkdir -p "$out/assets"
 wasm-bindgen --target web --no-typescript --out-dir "$out" --out-name cp_web "$wasm"
 cp apps/web/index.html "$out/"
 cp -R assets/maps "$out/assets/maps"
+cp -R assets/sounds "$out/assets/sounds"
 
 echo "built $out"
 size() { wc -c < "$1" | awk '{printf "%.2f MB", $1/1048576}'; }
