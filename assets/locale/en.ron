@@ -252,6 +252,8 @@
     "Elevation": "Elevation",
     "Lower the road (PgDn, Ctrl+Down)": "Lower the road (PgDn, Ctrl+Down)",
     "Raise the road (PgUp, Ctrl+Up)": "Raise the road (PgUp, Ctrl+Up)",
+    "Lower the road (PgDn, Cmd+Down)": "Lower the road (PgDn, Cmd+Down)",
+    "Raise the road (PgUp, Cmd+Up)": "Raise the road (PgUp, Cmd+Up)",
     "Employed": "Employed",
     "Empty": "Empty",
     "Enough homes stand empty": "Enough homes stand empty",

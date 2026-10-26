@@ -252,6 +252,8 @@
     "Elevation": "Высота",
     "Lower the road (PgDn, Ctrl+Down)": "Опустить дорогу (PgDn, Ctrl+Down)",
     "Raise the road (PgUp, Ctrl+Up)": "Поднять дорогу (PgUp, Ctrl+Up)",
+    "Lower the road (PgDn, Cmd+Down)": "Опустить дорогу (PgDn, Cmd+Down)",
+    "Raise the road (PgUp, Cmd+Up)": "Поднять дорогу (PgUp, Cmd+Up)",
     "Employed": "Работают",
     "Empty": "Опустошать",
     "Enough homes stand empty": "Пустует достаточно домов",

@@ -1342,6 +1342,13 @@ pub fn building_under(view: &SimView, p: Vec2, ray: Option<(Vec3, Vec3)>) -> Opt
     )
 }
 
+/// The modifier that turns Up/Down into the road tool's elevation keys: Cmd on a Mac, Ctrl
+/// elsewhere.
+#[cfg(target_os = "macos")]
+const ELEVATION_MODIFIER: [KeyCode; 2] = [KeyCode::SuperLeft, KeyCode::SuperRight];
+#[cfg(not(target_os = "macos"))]
+const ELEVATION_MODIFIER: [KeyCode; 2] = [KeyCode::ControlLeft, KeyCode::ControlRight];
+
 /// Exported for the headless input tests (`tests/it/click_through.rs`).
 #[doc(hidden)]
 pub fn tool_hotkeys(
@@ -1370,12 +1377,12 @@ pub fn tool_hotkeys(
         state.toggle_bulldozer();
     }
     if state.active == ActiveTool::Road {
-        // BUG-121: a laptop has no PageUp/PageDown, so Ctrl+Up/Down do the same.
-        let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-        if keys.just_pressed(KeyCode::PageUp) || (ctrl && keys.just_pressed(KeyCode::ArrowUp)) {
+        // BUG-121: a laptop has no PageUp/PageDown, so Cmd+Up/Down (Ctrl off a Mac) do the same.
+        let cmd = keys.any_pressed(ELEVATION_MODIFIER);
+        if keys.just_pressed(KeyCode::PageUp) || (cmd && keys.just_pressed(KeyCode::ArrowUp)) {
             state.road.raise();
         }
-        if keys.just_pressed(KeyCode::PageDown) || (ctrl && keys.just_pressed(KeyCode::ArrowDown)) {
+        if keys.just_pressed(KeyCode::PageDown) || (cmd && keys.just_pressed(KeyCode::ArrowDown)) {
             state.road.lower();
         }
     }

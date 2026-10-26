@@ -333,13 +333,21 @@ fn side_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
                 (
                     SideButton::Lower,
                     Icon::RoadLower,
-                    tr("Lower the road (PgDn, Ctrl+Down)"),
+                    if cfg!(target_os = "macos") {
+                        tr("Lower the road (PgDn, Cmd+Down)")
+                    } else {
+                        tr("Lower the road (PgDn, Ctrl+Down)")
+                    },
                     lower,
                 ),
                 (
                     SideButton::Raise,
                     Icon::RoadRaise,
-                    tr("Raise the road (PgUp, Ctrl+Up)"),
+                    if cfg!(target_os = "macos") {
+                        tr("Raise the road (PgUp, Cmd+Up)")
+                    } else {
+                        tr("Raise the road (PgUp, Ctrl+Up)")
+                    },
                     raise,
                 ),
             ] {
