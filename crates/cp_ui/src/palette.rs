@@ -131,46 +131,29 @@ pub fn palette(
 }
 
 /// How many buttons [`global_tools`] draws.
-pub const GLOBAL_TOOLS: usize = 3;
+pub const GLOBAL_TOOLS: usize = 1;
 
-/// The tools that work from any category, right of the categories in the bottom bar: upgrade,
-/// flip and the bulldozer (the layer of the open menu, T-286). The Junctions tool is in the
-/// overlay panel (T-317f). Returns their rectangles.
+/// The tools that work from any category, right of the categories in the bottom bar: the
+/// bulldozer (the layer of the open menu, T-286). Upgrade and Flip are in the Roads tray's side
+/// panel; the Junctions tool is in the overlay panel (T-317f). Returns their rectangles.
 pub fn global_tools(
     ui: &mut egui::Ui,
-    state: &mut UiState,
+    _state: &mut UiState,
     tools: &mut ToolState,
 ) -> Vec<(ActiveTool, egui::Rect)> {
-    let mut rects = Vec::new();
-    // The bulldozer ends the row.
-    let bulldozer_hover = match tools.menu_layer {
+    let hover = match tools.menu_layer {
         BulldozeLayer::All => tr("Bulldozer (B)"),
         BulldozeLayer::Power => tr("Bulldozer (B) — power lines and buildings only"),
         BulldozeLayer::Water => tr("Bulldozer (B) — pipes and water buildings only"),
     };
-    for (tool, icon, hover) in [
-        (ActiveTool::Upgrade, Icon::Roads, tr("Upgrade")),
-        (ActiveTool::Flip, Icon::FlipRoad, tr("Flip")),
-        (ActiveTool::Bulldozer, Icon::Bulldozer, bulldozer_hover),
-    ] {
-        let on = tools.active == tool;
-        let r = icon
-            .button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, on)
-            .on_hover_text(hover);
-        rects.push((tool, r.rect));
-        if r.clicked() {
-            if tool == ActiveTool::Bulldozer {
-                tools.toggle_bulldozer();
-            } else {
-                tools.select(if on { ActiveTool::None } else { tool });
-                // Upgrade works with the road types: show them.
-                if tool == ActiveTool::Upgrade && !on && state.category != Some(Category::Roads) {
-                    state.category = Some(Category::Roads);
-                }
-            }
-        }
+    let on = tools.active == ActiveTool::Bulldozer;
+    let r = Icon::Bulldozer
+        .button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, on)
+        .on_hover_text(hover);
+    if r.clicked() {
+        tools.toggle_bulldozer();
     }
-    rects
+    vec![(ActiveTool::Bulldozer, r.rect)]
 }
 
 /// Opens `c`'s panel, or closes it when it is open.
@@ -824,19 +807,43 @@ mod tests {
         assert!(rig.tools.upgrade_preview.is_none());
     }
 
+    /// The side panel of the Roads tray: Upgrade and Flip toggle their tools, lower and raise
+    /// stay within the levels and take the road tool.
     #[test]
-    fn elevation_buttons_stay_within_the_levels() {
+    fn the_roads_side_panel_holds_upgrade_flip_and_the_elevation() {
+        use crate::roads::{SideButton, take_side_rects};
         let mut rig = Rig::new();
         rig.click_category(Category::Roads);
         // T-289: the menu opens with the road tool in hand.
         assert_eq!(rig.tools.active, ActiveTool::Road);
-        rig.click_label("−");
-        assert_eq!(rig.tools.road.level, 0);
+        let click = |rig: &mut Rig, b: SideButton| {
+            take_side_rects(&rig.ctx);
+            rig.frame(vec![]);
+            let rects = take_side_rects(&rig.ctx);
+            let at = rects.iter().find(|(k, _)| *k == b).unwrap().1;
+            rig.click_at(at.center());
+        };
+        for (b, tool) in [
+            (SideButton::Upgrade, ActiveTool::Upgrade),
+            (SideButton::Flip, ActiveTool::Flip),
+        ] {
+            click(&mut rig, b);
+            assert_eq!(rig.tools.active, tool);
+            click(&mut rig, b);
+            assert_eq!(rig.tools.active, ActiveTool::None, "{b:?} toggles");
+        }
+        click(&mut rig, SideButton::Raise);
+        assert_eq!(
+            rig.tools.active,
+            ActiveTool::Road,
+            "a height takes the road tool"
+        );
+        assert_eq!(rig.tools.road.level, 1);
         for _ in 0..cp_tools::MAX_ELEVATION_LEVEL + 2 {
-            rig.click_label("+");
+            click(&mut rig, SideButton::Raise);
         }
         assert_eq!(rig.tools.road.level, cp_tools::MAX_ELEVATION_LEVEL);
-        rig.click_label("−");
+        click(&mut rig, SideButton::Lower);
         assert_eq!(rig.tools.road.level, cp_tools::MAX_ELEVATION_LEVEL - 1);
     }
 
@@ -1188,14 +1195,7 @@ mod tests {
             println!("({:6.1}, {:6.1})  {text}", at.x, at.y);
         }
         let all: Vec<&str> = texts.iter().map(|(t, _)| t.as_str()).collect();
-        for want in [
-            "Roads",
-            "Small",
-            "Straight",
-            "Curve",
-            "Free",
-            "Elevation (PgUp / PgDn, Ctrl+Up / Down)",
-        ] {
+        for want in ["Roads", "Small", "Straight", "Curve", "Free", "Ground"] {
             assert!(all.contains(&want), "{want:?} missing from {all:?}");
         }
         assert!(all.iter().any(|t| t.contains("can build")));

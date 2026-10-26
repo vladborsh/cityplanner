@@ -155,7 +155,7 @@ fn happiness_row(ui: &mut egui::Ui, view: &SimView, state: &mut UiState, rects: 
 
 /// The slim bottom bar (T-317), one row: money, income, population and the demand bars (a
 /// click on a bar takes its zone tool) at the left; the category buttons and the tools that
-/// work from any category (upgrade, flip, bulldozer) as one group in the middle of the screen
+/// work from any category (the bulldozer) as one group in the middle of the screen
 /// (T-317f), pushed right only when the left block would overlap it.
 pub fn demand_panel(
     root: &mut egui::Ui,
@@ -591,11 +591,8 @@ mod tests {
         // Without content: Zones and Districts only.
         assert_eq!(rig.rects.categories.len(), 2);
         let globals: Vec<_> = rig.rects.globals.iter().map(|(t, _)| *t).collect();
-        assert_eq!(globals.len(), 3);
-        assert!(
-            !globals.contains(&ActiveTool::Junctions),
-            "in the overlay panel"
-        );
+        // Upgrade and Flip are in the Roads tray, Junctions in the overlay panel.
+        assert_eq!(globals, vec![ActiveTool::Bulldozer]);
         // T-317f: categories and global tools are one group in the middle of the bar.
         let left = rig.rects.categories[0].1.left();
         let right = rig.rects.globals.last().unwrap().1.right();
@@ -604,27 +601,6 @@ mod tests {
             ((left + right) * 0.5 - mid).abs() < 6.0,
             "{left}..{right} vs {mid}"
         );
-        for tool in [ActiveTool::Upgrade, ActiveTool::Flip] {
-            assert!(globals.contains(&tool), "{tool:?}");
-            let at = rig
-                .rects
-                .globals
-                .iter()
-                .find(|(t, _)| *t == tool)
-                .unwrap()
-                .1;
-            rig.click(at.center());
-            assert_eq!(rig.tools.active, tool);
-            let at = rig
-                .rects
-                .globals
-                .iter()
-                .find(|(t, _)| *t == tool)
-                .unwrap()
-                .1;
-            rig.click(at.center());
-            assert_eq!(rig.tools.active, ActiveTool::None, "{tool:?} toggles");
-        }
         let districts = rig.rects.categories[1];
         rig.click(districts.1.center());
         assert_eq!(rig.state.category, Some(districts.0));

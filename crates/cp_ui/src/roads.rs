@@ -224,6 +224,8 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
     if tools.road.road.is_none() {
         tools.road.road = cards.first().map(|c| c.id);
     }
+    side_panel(ui, tools);
+    ui.separator();
     let upgrading = tools.active == ActiveTool::Upgrade;
     let building = tools.active == ActiveTool::Road;
     let widest = content.roads().map(|(_, d)| d.width).fold(0.0, f32::max);
@@ -273,7 +275,98 @@ pub fn roads_panel(ui: &mut egui::Ui, content: Option<&ContentDb>, tools: &mut T
     }
 }
 
-/// The options strip of the Roads tray: mode, snaps and elevation of the road tool; a word for
+/// A button of the [`side_panel`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SideButton {
+    Upgrade,
+    Flip,
+    Raise,
+    Lower,
+}
+
+fn side_rects_id() -> egui::Id {
+    egui::Id::new("cp_ui_roads_side_rects")
+}
+
+/// The rectangles of the side panel's buttons drawn since the last call.
+pub fn take_side_rects(ctx: &egui::Context) -> Vec<(SideButton, egui::Rect)> {
+    ctx.data_mut(|d| d.remove_temp::<Vec<(SideButton, egui::Rect)>>(side_rects_id()))
+        .unwrap_or_default()
+}
+
+/// The panel at the left of the Roads tray: the tools that change roads already built (upgrade,
+/// flip) over the elevation of the road tool, lower and raise, and the height under them. A
+/// height button takes the road tool.
+fn side_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
+    let mut rects = Vec::new();
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
+        ui.horizontal(|ui| {
+            for (button, tool, icon, hover) in [
+                (
+                    SideButton::Upgrade,
+                    ActiveTool::Upgrade,
+                    Icon::RoadUpgrade,
+                    tr("Upgrade"),
+                ),
+                (
+                    SideButton::Flip,
+                    ActiveTool::Flip,
+                    Icon::FlipRoad,
+                    tr("Flip"),
+                ),
+            ] {
+                let on = tools.active == tool;
+                let r = icon
+                    .button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, on)
+                    .on_hover_text(hover);
+                rects.push((button, r.rect));
+                if r.clicked() {
+                    tools.select(if on { ActiveTool::None } else { tool });
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            let lower = tools.road.level > 0 || !tools.road.underground;
+            let raise = tools.road.underground || tools.road.level < MAX_ELEVATION_LEVEL;
+            for (button, icon, hover, enabled) in [
+                (
+                    SideButton::Lower,
+                    Icon::RoadLower,
+                    tr("Lower the road (PgDn, Ctrl+Down)"),
+                    lower,
+                ),
+                (
+                    SideButton::Raise,
+                    Icon::RoadRaise,
+                    tr("Raise the road (PgUp, Ctrl+Up)"),
+                    raise,
+                ),
+            ] {
+                let r = ui
+                    .add_enabled_ui(enabled, |ui| {
+                        icon.button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, false)
+                    })
+                    .inner
+                    .on_hover_text(hover);
+                rects.push((button, r.rect));
+                if r.clicked() {
+                    if tools.active != ActiveTool::Road {
+                        tools.select(ActiveTool::Road);
+                    }
+                    match button {
+                        SideButton::Lower => tools.road.lower(),
+                        _ => tools.road.raise(),
+                    }
+                }
+            }
+        });
+        ui.small(road_height_text(&tools.road));
+    });
+    ui.ctx().data_mut(|d| d.insert_temp(side_rects_id(), rects));
+}
+
+/// The options strip of the Roads tray: mode, snaps and trees of the road tool; a word for
 /// the upgrade tool (the tiles are what it upgrades to).
 pub fn road_options(ui: &mut egui::Ui, tools: &mut ToolState) {
     if tools.active == ActiveTool::Upgrade {
@@ -313,27 +406,6 @@ pub fn road_options(ui: &mut egui::Ui, tools: &mut ToolState) {
     }
     // T-323 (§24.2): the plan plants a tree row on its ground segments.
     ui.checkbox(&mut tools.road.with_trees, tr("With trees"));
-    ui.separator();
-    ui.label(tr("Elevation (PgUp / PgDn, Ctrl+Up / Down)"));
-    if ui
-        .add_enabled(
-            tools.road.level > 0 || !tools.road.underground,
-            egui::Button::new("−"),
-        )
-        .clicked()
-    {
-        tools.road.lower();
-    }
-    ui.label(road_height_text(&tools.road));
-    if ui
-        .add_enabled(
-            tools.road.underground || tools.road.level < MAX_ELEVATION_LEVEL,
-            egui::Button::new("+"),
-        )
-        .clicked()
-    {
-        tools.road.raise();
-    }
 }
 
 #[cfg(test)]
