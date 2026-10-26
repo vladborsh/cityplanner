@@ -336,94 +336,117 @@ pub fn tray(
         .and_then(|n| tabs.get(n))
         .map(|(k, _)| k.clone())
         .unwrap_or_default();
-    let out = egui::Panel::bottom("tray")
-        .exact_size(Sizes::TRAY_H)
-        .resizable(false)
-        .show(root, |ui| {
-            crate::tray::enter(ui.ctx(), &key);
-            // One row (T-317f: the tray a third lower): the tabs, then the options strip.
-            egui::ScrollArea::horizontal()
-                .id_salt("tray_tabs")
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        category.icon().show(ui, Sizes::TRAY_TAB_H - 2.0);
-                        ui.strong(tr(category.label()));
-                        ui.separator();
-                        for (n, (label, icon)) in tabs.iter().enumerate() {
-                            if tabs.len() < 2 {
-                                break;
-                            }
-                            let on = at == Some(n);
-                            let r = match icon {
-                                Some(icon) => ui.add(egui::Button::selectable(
-                                    on,
-                                    (icon.sized(Sizes::TAB_ICON), label.as_str()),
-                                )),
-                                None => ui.selectable_label(on, label),
-                            };
-                            if r.clicked() {
-                                at = if on && filters(category) {
-                                    None
-                                } else {
-                                    Some(n)
-                                };
-                            }
-                        }
-                        if tabs.len() >= 2 {
-                            ui.separator();
-                        }
-                        options(ui, category, state, view, tools, overlay);
-                    });
-                });
-            ui.horizontal_top(|ui| {
-                // The Roads side panel stays put while the tiles scroll.
-                if category == Category::Roads && view.and_then(|v| v.content.as_deref()).is_some()
-                {
-                    crate::roads::side_panel(ui, tools);
-                    ui.separator();
-                }
-                egui::ScrollArea::both()
-                    .auto_shrink([false, false])
+    // A quarter narrower than the screen, centred on the bar (user 2026-10-26); an area, so the
+    // map on either side of it still takes the pointer.
+    let free = root.available_rect_before_wrap();
+    let width = (free.width() * Sizes::TRAY_W_SHARE).round();
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(free.center().x - width * 0.5, free.bottom() - Sizes::TRAY_H),
+        egui::vec2(width, Sizes::TRAY_H),
+    );
+    let frame = egui::Frame::side_top_panel(root.style()).corner_radius(egui::CornerRadius {
+        nw: 6,
+        ne: 6,
+        sw: 0,
+        se: 0,
+    });
+    let inner = rect - frame.total_margin();
+    let out = egui::Area::new(egui::Id::new("tray"))
+        .fixed_pos(rect.min)
+        .constrain(false)
+        .show(root.ctx(), |ui| {
+            frame.show(ui, |ui| {
+                ui.set_min_size(inner.size());
+                ui.set_max_size(inner.size());
+                crate::tray::enter(ui.ctx(), &key);
+                // One row (T-317f: the tray a third lower): the tabs, then the options strip.
+                egui::ScrollArea::horizontal()
+                    .id_salt("tray_tabs")
+                    .auto_shrink([false, true])
                     .show(ui, |ui| {
-                        ui.horizontal_top(|ui| match category {
-                            Category::Roads => roads_panel(ui, view, tools),
-                            Category::Zones => zones_panel(ui, view, tools),
-                            Category::Buildings => services_panel(ui, view, tools, overlay),
-                            Category::Power => crate::buildings::buildings_panel(
-                                ui,
-                                view,
-                                tools,
-                                overlay,
-                                crate::buildings::Scope::Power,
-                            ),
-                            Category::Water => crate::buildings::buildings_panel(
-                                ui,
-                                view,
-                                tools,
-                                overlay,
-                                crate::buildings::Scope::Water,
-                            ),
-                            Category::Districts => {
-                                crate::districts::districts_panel(ui, view, tools, outbox)
+                        ui.horizontal(|ui| {
+                            category.icon().show(ui, Sizes::TRAY_TAB_H - 2.0);
+                            ui.strong(tr(category.label()));
+                            ui.separator();
+                            for (n, (label, icon)) in tabs.iter().enumerate() {
+                                if tabs.len() < 2 {
+                                    break;
+                                }
+                                let on = at == Some(n);
+                                let r = match icon {
+                                    Some(icon) => ui.add(egui::Button::selectable(
+                                        on,
+                                        (icon.sized(Sizes::TAB_ICON), label.as_str()),
+                                    )),
+                                    None => ui.selectable_label(on, label),
+                                };
+                                if r.clicked() {
+                                    at = if on && filters(category) {
+                                        None
+                                    } else {
+                                        Some(n)
+                                    };
+                                }
                             }
-                            Category::Transit => crate::transit::transit_panel(
-                                ui,
-                                view,
-                                tools,
-                                overlay,
-                                &mut state.lines_open,
-                            ),
-                            Category::Industry => {
-                                crate::industry::industry_panel(ui, view, tools, overlay, outbox)
+                            if tabs.len() >= 2 {
+                                ui.separator();
                             }
-                            Category::Parks => {
-                                crate::parks::parks_panel(ui, view, tools, overlay, outbox)
-                            }
+                            options(ui, category, state, view, tools, overlay);
                         });
                     });
+                ui.horizontal_top(|ui| {
+                    // The Roads side panel stays put while the tiles scroll.
+                    if category == Category::Roads
+                        && view.and_then(|v| v.content.as_deref()).is_some()
+                    {
+                        crate::roads::side_panel(ui, tools);
+                        ui.separator();
+                    }
+                    egui::ScrollArea::both()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            // One row that scrolls sideways: a wrapped row does not break at
+                            // the tray's width.
+                            ui.set_max_width(f32::INFINITY);
+                            ui.horizontal_top(|ui| match category {
+                                Category::Roads => roads_panel(ui, view, tools),
+                                Category::Zones => zones_panel(ui, view, tools),
+                                Category::Buildings => services_panel(ui, view, tools, overlay),
+                                Category::Power => crate::buildings::buildings_panel(
+                                    ui,
+                                    view,
+                                    tools,
+                                    overlay,
+                                    crate::buildings::Scope::Power,
+                                ),
+                                Category::Water => crate::buildings::buildings_panel(
+                                    ui,
+                                    view,
+                                    tools,
+                                    overlay,
+                                    crate::buildings::Scope::Water,
+                                ),
+                                Category::Districts => {
+                                    crate::districts::districts_panel(ui, view, tools, outbox)
+                                }
+                                Category::Transit => crate::transit::transit_panel(
+                                    ui,
+                                    view,
+                                    tools,
+                                    overlay,
+                                    &mut state.lines_open,
+                                ),
+                                Category::Industry => crate::industry::industry_panel(
+                                    ui, view, tools, overlay, outbox,
+                                ),
+                                Category::Parks => {
+                                    crate::parks::parks_panel(ui, view, tools, overlay, outbox)
+                                }
+                            });
+                        });
+                });
+                crate::tray::leave(ui.ctx());
             });
-            crate::tray::leave(ui.ctx());
         });
     match at.and_then(|n| tabs.get(n)) {
         Some((k, _)) => match state.tray_tab.iter_mut().find(|(c, _)| *c == category) {
@@ -690,6 +713,9 @@ mod tests {
         use cp_content::ZoneType;
         use cp_tools::ZoneToolKind;
         let mut rig = Rig::new();
+        // The whole row in view: the tray is three quarters of a 1600 wide screen.
+        rig.screen = egui::vec2(1600.0, 900.0);
+        rig.frame(vec![]);
         rig.click_category(Category::Zones);
         // T-317f: tool kinds and zone types in one row, the tools first; no Eraser tile (the
         // right mouse button erases).
@@ -862,6 +888,29 @@ mod tests {
         assert_eq!(rig.tools.road.level, cp_tools::MAX_ELEVATION_LEVEL);
         click(&mut rig, SideButton::Lower);
         assert_eq!(rig.tools.road.level, cp_tools::MAX_ELEVATION_LEVEL - 1);
+    }
+
+    /// The tray is a quarter narrower than the screen and centred; the map beside it still
+    /// takes the pointer (user 2026-10-26).
+    #[test]
+    fn the_tray_is_three_quarters_wide_centred_and_the_map_beside_it_is_free() {
+        let mut rig = Rig::new();
+        rig.click_category(Category::Roads);
+        let tray = rig.panel.unwrap();
+        let w = rig.screen.x;
+        assert!(
+            (tray.width() - w * Sizes::TRAY_W_SHARE).abs() < 1.0,
+            "{tray:?}"
+        );
+        assert!((tray.center().x - w * 0.5).abs() < 1.0, "{tray:?}");
+        assert_eq!(tray.height(), Sizes::TRAY_H);
+        let beside = egui::pos2(tray.left() * 0.5, tray.center().y);
+        rig.frame(vec![egui::Event::PointerMoved(beside)]);
+        rig.frame(vec![]);
+        assert!(!rig.ctx.is_pointer_over_egui() && !crate::pointer_over_panels(&rig.ctx));
+        rig.frame(vec![egui::Event::PointerMoved(tray.center())]);
+        rig.frame(vec![]);
+        assert!(rig.ctx.is_pointer_over_egui());
     }
 
     /// Every tab of every tray has its small icon (user 2026-10-26).

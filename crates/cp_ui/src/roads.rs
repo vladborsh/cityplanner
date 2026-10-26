@@ -310,12 +310,9 @@ pub fn take_side_rects(ctx: &egui::Context) -> Vec<(SideButton, egui::Rect)> {
         .unwrap_or_default()
 }
 
-/// Icon of a side panel button: two rows of them fit the tray's tile row.
-const SIDE_ICON: f32 = 24.0;
-
 /// The panel at the left of the Roads tray: the tools that change roads already built (upgrade,
-/// flip) over the elevation of the road tool, lower and raise (the height is in the options
-/// strip). A height button takes the road tool.
+/// flip) over the elevation of the road tool, lower and raise, and the height under them. A
+/// height button takes the road tool.
 pub fn side_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
     let mut rects = Vec::new();
     ui.vertical(|ui| {
@@ -337,7 +334,7 @@ pub fn side_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
             ] {
                 let on = tools.active == tool;
                 let r = icon
-                    .button(ui, SIDE_ICON, Sizes::BUTTON_PAD, on)
+                    .button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, on)
                     .on_hover_text(hover);
                 rects.push((button, r.rect));
                 if r.clicked() {
@@ -372,7 +369,7 @@ pub fn side_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
             ] {
                 let r = ui
                     .add_enabled_ui(enabled, |ui| {
-                        icon.button(ui, SIDE_ICON, Sizes::BUTTON_PAD, false)
+                        icon.button(ui, Sizes::PALETTE_ICON, Sizes::BUTTON_PAD, false)
                     })
                     .inner
                     .on_hover_text(hover);
@@ -388,6 +385,7 @@ pub fn side_panel(ui: &mut egui::Ui, tools: &mut ToolState) {
                 }
             }
         });
+        ui.small(road_height_text(&tools.road));
     });
     ui.ctx().data_mut(|d| d.insert_temp(side_rects_id(), rects));
 }
@@ -432,9 +430,6 @@ pub fn road_options(ui: &mut egui::Ui, tools: &mut ToolState) {
     }
     // T-323 (§24.2): the plan plants a tree row on its ground segments.
     ui.checkbox(&mut tools.road.with_trees, tr("With trees"));
-    ui.separator();
-    // The height the side panel's lower / raise set.
-    ui.label(road_height_text(&tools.road));
 }
 
 #[cfg(test)]
