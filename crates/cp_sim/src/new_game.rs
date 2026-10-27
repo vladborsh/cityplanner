@@ -2,10 +2,10 @@
 //! the map edge and the entry railway into the start tile. Only [`SimRunner::new_game`] calls it; loading a save,
 //! scenes, benches and tests start from an empty network and keep their checksums.
 
-use bevy_ecs::world::World;
+use bevy_ecs::world::{Mut, World};
 use bevy_math::{Vec2, Vec3};
 use cp_content::{RoadClass, RoadDefId, SimContent};
-use cp_net::{Elevation, NetGraph, NodeKind, RoadPath, build_unowned};
+use cp_net::{Elevation, JunctionGeometry, NetGraph, NodeKind, RoadPath, build_unowned};
 use cp_terrain::SimTerrain;
 
 use crate::runner::SimRunner;
@@ -27,7 +27,16 @@ impl SimRunner {
         crate::progress::refresh_unlocks(self.world_mut());
         fill_deposits(self.world_mut());
         build_entry_road(self.world_mut())?;
-        build_entry_rail(self.world_mut())
+        build_entry_rail(self.world_mut())?;
+        // BUG-122b: a new game starts paused (BUG-059), so no `Network` phase runs before the
+        // player starts it: without this the entry roads were drawn untrimmed, crossing at the
+        // junction with no junction piece (derived geometry only; the dirty set stays for the
+        // first tick).
+        self.world_mut()
+            .resource_scope(|world, mut geo: Mut<JunctionGeometry>| {
+                cp_net::refresh_geometry(world.resource::<NetGraph>(), &mut geo);
+            });
+        Ok(())
     }
 }
 

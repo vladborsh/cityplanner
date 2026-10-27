@@ -5,6 +5,7 @@
 use std::f32::consts::{PI, TAU};
 
 use bevy_math::{Vec2, Vec3};
+use cp_content::{LaneDir, LaneKind};
 use cp_core::curve::{ArcTable, CubicBezier3, to_xz};
 
 use super::{Arm, FLAT_GAP_DEG, Junction, MAX_SETBACK, Raw, rot_ccw};
@@ -346,6 +347,22 @@ pub(super) fn class_and_wants(
         wants[i] = wants[i].max(si);
         wants[j] = wants[j].max(sj);
     }
+    let ends: Vec<_> = raws
+        .iter()
+        .map(|r| (r.segment, r.at_start, r.angle))
+        .collect();
+    if let Some(sp) = split_of(graph, &ends) {
+        // BUG-122b: each one-way road is cut where it has drawn clear of the median.
+        for (i, median) in sp.pair.into_iter().zip(sp.median) {
+            if let Some(path) = &paths[i] {
+                let (sign, reach) = (median.signum(), median.abs() + SPLIT_FLARE);
+                if let Some(s) = split_setback(path, half(&raws[i]), raws[sp.main].dir, sign, reach)
+                {
+                    wants[i] = s.max(SPLIT_MIN_SETBACK);
+                }
+            }
+        }
+    }
     (
         NodeClass::Junction,
         wants
@@ -353,6 +370,158 @@ pub(super) fn class_and_wants(
             .map(|s| (s.min(MAX_SETBACK), true))
             .collect(),
     )
+}
+
+/// How much wider than the main road's median the divider between a split's two roads is at
+/// their cuts, on each side, metres (BUG-122b).
+pub const SPLIT_FLARE: f32 = 1.5;
+/// A split's two one-way roads leave the node at most this far off the main road's axis
+/// (degrees).
+const SPLIT_DEG: f32 = 45.0;
+/// How far short of the main road's cut a split's divider ends, metres: the carriageway runs
+/// across between the divider and the median there, so the node stays one piece.
+const SPLIT_TIP_GAP: f32 = 1.0;
+/// Least setback of a split's one-way road, metres.
+const SPLIT_MIN_SETBACK: f32 = 1.0;
+
+/// A *split* node (BUG-122b): a two-way road with a median (`main`) whose halves run on as two
+/// one-way roads side by side (the entry highway into its avenue): `inbound` flows into the node
+/// on the side where `main`'s lanes flow out of it, `outbound` on the other. Each of the two
+/// is cut where its inner edge is [`SPLIT_FLARE`] out from the median edge on its side
+/// (`median`, `main`'s lateral), and the side between them runs back to the median's end at
+/// `main`'s cut (just short of it): each one-way road opens onto its own half and the divider tapers into the
+/// median, instead of the two meeting in one point. Indices are into the node's road ends.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Split {
+    pub main: usize,
+    /// The one-way road ends in counter-clockwise order (the side between them is the divider).
+    pub pair: [usize; 2],
+    /// `main`'s lateral (to its left looking out) of the median edge on each pair end's side.
+    pub median: [f32; 2],
+}
+
+/// The vehicle lanes of a segment end looking out of a node: `(xi, half width, flows in)`.
+fn vehicle_lanes(graph: &NetGraph, segment: SegmentId, at_start: bool) -> Vec<(f32, f32, bool)> {
+    let Some(seg) = graph.segment(segment) else {
+        return Vec::new();
+    };
+    seg.lanes
+        .iter()
+        .filter_map(|&l| graph.lane(l))
+        .filter(|l| !matches!(l.kind, LaneKind::Pedestrian | LaneKind::Bike))
+        .map(|l| {
+            // A lane's offset is to its segment's right in `rot_ccw` terms (as `ArmEnd::sign`).
+            let xi = if at_start { -l.offset } else { l.offset };
+            let flows_in = (l.dir == LaneDir::Forward) != at_start;
+            (xi, l.width * 0.5, flows_in)
+        })
+        .collect()
+}
+
+/// The split of a node with road ends `ends` (`(segment, at_start, angle)`, counter-clockwise),
+/// if it is one.
+pub(super) fn split_of(graph: &NetGraph, ends: &[(SegmentId, bool, f32)]) -> Option<Split> {
+    if ends.len() != 3 {
+        return None;
+    }
+    let flat = FLAT_GAP_DEG.to_radians();
+    let one_way = |i: usize| {
+        let lanes = vehicle_lanes(graph, ends[i].0, ends[i].1);
+        let first = lanes.first()?.2;
+        lanes.iter().all(|l| l.2 == first).then_some(first)
+    };
+    (0..3).find_map(|m| {
+        let (p, q) = ((m + 1) % 3, (m + 2) % 3);
+        let angle = |i: usize| ends[i].2;
+        if ccw_gap(angle(m), angle(p)) < flat
+            || ccw_gap(angle(q), angle(m)) < flat
+            || ccw_gap(angle(p), angle(q)) >= PI * 0.5
+        {
+            return None;
+        }
+        let dm = Vec2::from_angle(angle(m));
+        let lanes = vehicle_lanes(graph, ends[m].0, ends[m].1);
+        let side = |flows_in: bool| -> Option<(f32, f32)> {
+            // The sign of the lanes' lateral and the median edge on that side.
+            let mut it = lanes.iter().filter(|l| l.2 == flows_in);
+            let first = it.next()?;
+            let sign = first.0.signum();
+            let mut inner = first.0.abs() - first.1;
+            for l in it {
+                if l.0.signum() != sign {
+                    return None;
+                }
+                inner = inner.min(l.0.abs() - l.1);
+            }
+            (inner > 0.05).then_some((sign, inner))
+        };
+        let (out_sign, out_inner) = side(false)?;
+        let (in_sign, in_inner) = side(true)?;
+        if out_sign == in_sign {
+            return None;
+        }
+        let mut median = [0.0; 2];
+        for (k, i) in [p, q].into_iter().enumerate() {
+            let d = Vec2::from_angle(angle(i));
+            if d.dot(-dm) < SPLIT_DEG.to_radians().cos() {
+                return None;
+            }
+            // An inbound one-way road lies on the side where the main road's lanes leave.
+            let (sign, inner) = if one_way(i)? {
+                (out_sign, out_inner)
+            } else {
+                (in_sign, in_inner)
+            };
+            if dm.perp_dot(d).signum() != sign {
+                return None;
+            }
+            median[k] = sign * inner;
+        }
+        Some(Split {
+            main: m,
+            pair: [p, q],
+            median,
+        })
+    })
+}
+
+/// How far out along `path` (half width `h`) a split's one-way road is cut: where its inner edge
+/// is `reach` metres off the main road's axis (direction `dm`, through the node), on the side
+/// `sign`. `None` if it never gets there within [`MAX_SETBACK`].
+pub(super) fn split_setback(
+    path: &ArmPath,
+    h: f32,
+    dm: Vec2,
+    sign: f32,
+    reach: f32,
+) -> Option<f32> {
+    let off = |s: f32| {
+        [h, -h]
+            .map(|xi| sign * dm.perp_dot(path.at(s, xi)))
+            .into_iter()
+            .fold(f32::INFINITY, f32::min)
+    };
+    let end = path.length.min(MAX_SETBACK);
+    let (mut lo, mut hi) = (0.0f32, None);
+    let mut s = 0.0f32;
+    while s <= end {
+        if off(s) >= reach {
+            hi = Some(s);
+            break;
+        }
+        lo = s;
+        s += 0.5;
+    }
+    let mut hi = hi?;
+    for _ in 0..16 {
+        let mid = (lo + hi) * 0.5;
+        if off(mid) >= reach {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    Some(hi)
 }
 
 /// Points along `path` from `s_cut` back to the node, the lateral `xi` going from `x_cut` at the
@@ -465,6 +634,9 @@ pub fn side_line(
         b: vec![p1],
     };
     if round && gap < FLAT_GAP_DEG.to_radians() {
+        if let Some(line) = split_divider(graph, j, a, b, p0, p1) {
+            return line.offset(c);
+        }
         // Tangent lines into the node from both cuts.
         let (da, db) = (-pa.dir(a.setback), -pb.dir(b.setback));
         let den = da.perp_dot(db);
@@ -499,18 +671,32 @@ pub fn side_line(
             let mut wide = part(&pa, a.setback, ra, ra, 1.0);
             wide[0] = p0;
             let q = *wide.last().expect("points");
+            let mut joint = vec![q];
+            if let Some(k) = split_kerb(graph, j, a, b).filter(|&k| ra > k + 0.05) {
+                joint.extend(nose(q, pa.at(0.0, k), p1).into_iter().skip(1));
+            }
+            joint.push(p1);
             SideLine {
                 a: simplify(wide),
-                joint: vec![q, p1],
+                joint,
                 b: vec![p1],
             }
         } else {
             let mut wide = part(&pb, b.setback, rb, rb, -1.0);
             wide.reverse();
             *wide.last_mut().expect("points") = p1;
+            let q = wide[0];
+            let mut joint = vec![p0];
+            if let Some(k) = split_kerb(graph, j, b, a).filter(|&k| rb > k + 0.05) {
+                let mut n = nose(q, pb.at(0.0, -k), p0);
+                n.reverse();
+                n.pop();
+                joint.extend(n);
+            }
+            joint.push(q);
             SideLine {
                 a: vec![p0],
-                joint: vec![p0, wide[0]],
+                joint,
                 b: simplify(wide),
             }
         };
@@ -566,6 +752,83 @@ pub fn side_line(
         }
         None => straight.offset(c),
     }
+}
+
+/// The divider of a split node (see [`Split`]) when `a` and `b` are its one-way roads: from
+/// `a`'s cut (`p0`) back to the main road's median end on `a`'s side, across it, and out to
+/// `b`'s cut (`p1`). Node-relative. `None` if `j` is no split or `a`, `b` are not its pair.
+fn split_divider(
+    graph: &NetGraph,
+    j: &Junction,
+    a: &Arm,
+    b: &Arm,
+    p0: Vec2,
+    p1: Vec2,
+) -> Option<SideLine> {
+    let (sp, roads) = split_parts(graph, j)?;
+    let is = |r: &Arm, i: usize| r.segment == roads[i].segment && r.at_start == roads[i].at_start;
+    if !(is(a, sp.pair[0]) && is(b, sp.pair[1])) {
+        return None;
+    }
+    let main = roads[sp.main];
+    let pm = ArmPath::new(graph, main.segment, main.at_start, j.pos)?;
+    // Short of the cut: a divider up to the cut line would cut the node in two.
+    let s = (main.setback - SPLIT_TIP_GAP).max(0.0);
+    let (ma, mb) = (pm.at(s, sp.median[0]), pm.at(s, sp.median[1]));
+    Some(SideLine {
+        a: vec![p0, ma],
+        joint: vec![ma, mb],
+        b: vec![mb, p1],
+    })
+}
+
+/// The kerb lateral (the carriageway's edge, metres from the centre line) of a split's main road
+/// `main` on the side of its pair road `other`, when `j` is a split and these are its main road
+/// and one of its pair (see [`Split`]).
+fn split_kerb(graph: &NetGraph, j: &Junction, main: &Arm, other: &Arm) -> Option<f32> {
+    let (sp, roads) = split_parts(graph, j)?;
+    let is = |r: &Arm, i: usize| r.segment == roads[i].segment && r.at_start == roads[i].at_start;
+    let k = sp.pair.iter().position(|&i| is(other, i))?;
+    if !is(main, sp.main) {
+        return None;
+    }
+    let sign = sp.median[k].signum();
+    vehicle_lanes(graph, main.segment, main.at_start)
+        .into_iter()
+        .filter(|l| l.0.signum() == sign)
+        .map(|l| l.0.abs() + l.1)
+        .reduce(f32::max)
+}
+
+/// The rounded nose a split's main-road sidewalk ends in (BUG-122b), instead of running on,
+/// narrowing, to the one-way road's cut: from `q` (its outer edge at the node) round to the kerb
+/// line (from `q_kerb` at the node to the one-way road's cut `to`), a sidewalk width along it.
+/// Node-relative, `q` first.
+fn nose(q: Vec2, q_kerb: Vec2, to: Vec2) -> Vec<Vec2> {
+    let d = (to - q_kerb).normalize_or_zero();
+    let w = q.distance(q_kerb);
+    let (ctrl, end) = (q + d * w, q_kerb + d * w);
+    let n = 6;
+    (0..=n)
+        .map(|i| {
+            let f = i as f32 / n as f32;
+            q * (1.0 - f) * (1.0 - f) + ctrl * 2.0 * f * (1.0 - f) + end * f * f
+        })
+        .collect()
+}
+
+/// The node's split (see [`Split`]) with its road arms (the indices of the split are into them).
+fn split_parts<'a>(graph: &NetGraph, j: &'a Junction) -> Option<(Split, Vec<&'a Arm>)> {
+    let roads: Vec<&Arm> = j
+        .arms
+        .iter()
+        .filter(|r| !super::is_path_segment(graph, r.segment))
+        .collect();
+    let ends: Vec<_> = roads
+        .iter()
+        .map(|r| (r.segment, r.at_start, r.angle))
+        .collect();
+    Some((split_of(graph, &ends)?, roads))
 }
 
 #[cfg(test)]

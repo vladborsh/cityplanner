@@ -507,17 +507,19 @@ fn new_game_fills_the_deposits_from_the_resource_map() {
     assert!(any);
 }
 
-/// BUG-122: the two carriageways bend into the junction smoothly (no node along them turns more
-/// than a middle node may: before, the polyline kinked where the merge began), and the avenue
-/// keeps its width up to the junction, so both halves of it open onto the carriageways.
+/// BUG-122, BUG-122b: the two carriageways bend into the junction smoothly (no node along them
+/// turns more than a middle node may), and each opens onto its own half of the avenue: the
+/// junction is drawn from the start (a new game is paused, so no tick has run), the avenue keeps
+/// its full width up to the node, a divider runs from between the carriageways to the avenue's
+/// median, each carriageway's lanes lead only to (or come only from) the half on its side, and
+/// the two flows never cross.
 #[test]
-fn the_entry_carriageways_merge_smoothly_into_the_full_width_avenue() {
+fn the_entry_carriageways_open_onto_their_own_halves_of_the_avenue() {
     let db = content();
     for name in ["flatlands", "river_valley"] {
         let mut sim = sim_on(map(name));
         sim.new_game().unwrap();
-        sim.tick_once();
-        sim.tick_once();
+        // No tick: what the player sees before starting the game.
         let view = sim.view();
         let graph = &view.net;
         let highway = |s: cp_net::SegmentId| {
@@ -534,20 +536,85 @@ fn the_entry_carriageways_merge_smoothly_into_the_full_width_avenue() {
                 );
             }
         }
-        let (_, stub) = graph
+        let (stub_id, stub) = graph
             .segments()
             .find(|(_, s)| db.road(s.road).id == "large_6l")
             .unwrap();
-        let j = view.junctions.get(stub.start).unwrap();
+        let j = view
+            .junctions
+            .get(stub.start)
+            .unwrap_or_else(|| panic!("{name}: no junction before the first tick"));
         let avenue = j.arms.iter().find(|a| !highway(a.segment)).unwrap();
         let c = Vec2::new(j.pos.x, j.pos.z);
-        let side = Vec2::from_angle(avenue.angle).perp() * (avenue.width / 2.0);
-        for corner in [c + side, c - side] {
+        let dir = Vec2::from_angle(avenue.angle);
+        let near = |p: Vec2| j.polygon.iter().any(|q| q.distance(p) < 0.05);
+        for side in [-1.0, 1.0] {
+            let edge = c + dir.perp() * side * (avenue.width / 2.0);
             assert!(
-                j.polygon.iter().any(|p| p.distance(corner) < 0.05),
-                "{name}: the avenue is not full width at the junction: {:?}",
+                near(edge),
+                "{name}: the avenue is not full width at the junction"
+            );
+            // The divider ends at the median (1 m each side of the centre line), just short of
+            // the avenue's cut.
+            let median = c + dir * (avenue.setback - 1.0) + dir.perp() * side;
+            assert!(
+                near(median),
+                "{name}: no divider up to the median: {:?}",
                 j.polygon
             );
+        }
+        // Lanes: the inbound carriageway's lanes reach only the avenue lanes leaving the node,
+        // the outbound one's come only from those arriving; each pair on one side of the axis.
+        let lateral = |p: bevy_math::Vec3| dir.perp_dot(Vec2::new(p.x, p.z) - c);
+        let mut flows: [Vec<&cp_net::LaneConnection>; 2] = Default::default();
+        for conn in &j.links.connections {
+            let (from, to) = (graph.lane(conn.from).unwrap(), graph.lane(conn.to).unwrap());
+            if from.kind != LaneKind::Car {
+                continue;
+            }
+            match (highway(from.segment), highway(to.segment)) {
+                (true, false) => {
+                    assert_eq!(to.segment, stub_id);
+                    assert_eq!(to.dir, LaneDir::Forward, "{name}: into the wrong half");
+                    flows[0].push(conn);
+                }
+                (false, true) => {
+                    assert_eq!(from.dir, LaneDir::Backward, "{name}: from the wrong half");
+                    flows[1].push(conn);
+                }
+                _ => {}
+            }
+        }
+        assert!(!flows[0].is_empty() && !flows[1].is_empty(), "{name}");
+        for flow in &flows {
+            let sides: BTreeSet<bool> = flow
+                .iter()
+                .flat_map(|conn| [conn.curve.p0, conn.curve.p3])
+                .map(|p| lateral(p) > 0.0)
+                .collect();
+            assert_eq!(sides.len(), 1, "{name}: a flow crosses the avenue's axis");
+        }
+        let poly = |conn: &cp_net::LaneConnection| -> Vec<Vec2> {
+            (0..=16)
+                .map(|i| {
+                    let p = conn.curve.point(i as f32 / 16.0);
+                    Vec2::new(p.x, p.z)
+                })
+                .collect()
+        };
+        let cross = |a: &[Vec2], b: &[Vec2]| {
+            a.windows(2).any(|u| {
+                b.windows(2).any(|v| {
+                    let d = |p: Vec2, q: Vec2, r: Vec2| (q - p).perp_dot(r - p);
+                    d(u[0], u[1], v[0]) * d(u[0], u[1], v[1]) < 0.0
+                        && d(v[0], v[1], u[0]) * d(v[0], v[1], u[1]) < 0.0
+                })
+            })
+        };
+        for a in &flows[0] {
+            for b in &flows[1] {
+                assert!(!cross(&poly(a), &poly(b)), "{name}: the flows cross");
+            }
         }
     }
 }

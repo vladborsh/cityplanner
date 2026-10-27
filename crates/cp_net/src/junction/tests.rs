@@ -800,3 +800,59 @@ fn a_straight_transition_between_equal_widths_keeps_a_polygon() {
     assert!(is_simple(&j.polygon));
     assert!(contains(&j.polygon, to_xz(j.pos)));
 }
+
+/// BUG-122b: an avenue whose halves run on as two one-way carriageways (the entry highway) is a
+/// split: each carriageway is cut clear of the median, the divider between them runs to the
+/// median's end just short of the avenue's cut, and the polygon stays one simple piece. With the
+/// carriageways on the wrong sides (traffic would cross) it is an ordinary junction.
+#[test]
+fn a_one_way_pair_into_an_avenue_is_split_by_a_divider_to_its_median() {
+    let db = content();
+    let build = |inbound_deg: f32| {
+        let mut g = NetGraph::new();
+        let add = |g: &mut NetGraph, name: &str, from: Vec3, to: Vec3| {
+            let road = db.road_id(name).unwrap();
+            let def = db.road(road).clone();
+            g.add_segment(&def, road, CubicBezier3::line(from, to), Elevation::Ground)
+                .unwrap();
+        };
+        let at = |deg: f32, len: f32| {
+            let a = deg.to_radians();
+            C + Vec3::new(len * a.cos(), 0.0, len * a.sin())
+        };
+        add(&mut g, "large_6l", C, at(0.0, 60.0));
+        add(&mut g, "highway_1w_2l", at(inbound_deg, 80.0), C);
+        add(&mut g, "highway_1w_2l", C, at(360.0 - inbound_deg, 80.0));
+        let node = g.find_node(C).unwrap();
+        compute_junction(&g, node, 1).unwrap()
+    };
+    let median = [Vec2::new(15.0, 1.0), Vec2::new(15.0, -1.0)];
+    let has = |j: &Junction, p: Vec2| rel(j).iter().any(|q| q.distance(p) < 1e-2);
+
+    let j = build(158.0);
+    let poly = rel(&j);
+    assert!(is_simple(&poly), "{poly:?}");
+    for p in median {
+        assert!(has(&j, p), "{poly:?}");
+    }
+    let one_way: Vec<&Arm> = j.arms.iter().filter(|a| a.width < 10.0).collect();
+    assert_eq!(one_way.len(), 2);
+    for a in one_way {
+        // The inner corner is 1 m (median) + SPLIT_FLARE off the avenue's axis.
+        let inner = [a.right, a.left]
+            .map(|p| (p - to_xz(j.pos)).y.abs())
+            .into_iter()
+            .fold(f32::INFINITY, f32::min);
+        assert!((inner - 1.0 - shape::SPLIT_FLARE).abs() < 0.01, "{inner}");
+    }
+    // The avenue keeps its full width up to the node.
+    assert!(
+        poly.iter()
+            .any(|p| (p.x.abs() < 0.01) && (p.y.abs() - 16.0).abs() < 0.01)
+    );
+
+    let j = build(202.0);
+    for p in median {
+        assert!(!has(&j, p), "{:?}", rel(&j));
+    }
+}
