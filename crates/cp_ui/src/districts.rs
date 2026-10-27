@@ -397,7 +397,8 @@ fn district_row(
     }
 }
 
-/// One row per zone type: "own rate" switch, the slider, and the city rate beside it.
+/// One row per open zone type (BUG-123): "own rate" switch, the slider, and the city rate
+/// beside it.
 fn tax_block(
     ui: &mut egui::Ui,
     view: &SimView,
@@ -409,6 +410,9 @@ fn tax_block(
         let Some(slot) = cp_district::zone_slot(zone) else {
             continue;
         };
+        if !crate::windows::zone_open(view, zone) {
+            continue;
+        }
         let city = view.economy.taxes.get(zone).unwrap_or(0);
         let own = d.tax[slot];
         ui.horizontal(|ui| {

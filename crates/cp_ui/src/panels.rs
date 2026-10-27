@@ -853,7 +853,7 @@ pub fn zones_panel(ui: &mut egui::Ui, view: Option<&SimView>, tools: &mut ToolSt
 fn visible_zones(view: Option<&SimView>) -> Vec<cp_content::ZoneType> {
     PALETTE
         .into_iter()
-        .filter(|&zone| !view.is_some_and(|v| crate::windows::zone_lock(v, zone).is_some()))
+        .filter(|&zone| view.is_none_or(|v| crate::windows::zone_open(v, zone)))
         .collect()
 }
 

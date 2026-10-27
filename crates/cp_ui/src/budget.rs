@@ -9,6 +9,7 @@
 use std::ops::RangeInclusive;
 
 use crate::style::Sizes;
+use crate::windows::zone_open;
 use bevy_egui::egui;
 use cp_content::budget::{power_factor, reach_factor};
 use cp_content::{ServiceKind, ZoneType};
@@ -163,17 +164,27 @@ pub type FlowRow = (String, [Option<Cost>; 3]);
 
 /// The income and expense rows of the cash-flow table: columns last day, this week so far, last
 /// week (`None` where the figure is not kept). Expenses are positive numbers. Rows that are
-/// zero in every column are left out, except the zone taxes.
-pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, Vec<FlowRow>) {
+/// zero in every column are left out, except the taxes of the open zones and the buses once
+/// Transit is open (BUG-123: what no milestone has opened shows only if it moved money).
+pub fn flow_rows(
+    view: &SimView,
+    day: &Flow,
+    week: &Flow,
+    last: &WeekReport,
+) -> (Vec<FlowRow>, Vec<FlowRow>) {
     let mut income: Vec<FlowRow> = Vec::new();
     for (i, zone) in TAXED_ZONES.into_iter().enumerate() {
+        let money = [
+            day.income_by_zone[i],
+            week.income_by_zone[i],
+            last.income_by_zone[i],
+        ];
+        if !zone_open(view, zone) && money.iter().all(|c| *c == Cost::ZERO) {
+            continue;
+        }
         income.push((
             trf!("Tax: {zone}", zone = tr(zone_name(zone))),
-            [
-                Some(day.income_by_zone[i]),
-                Some(week.income_by_zone[i]),
-                Some(last.income_by_zone[i]),
-            ],
+            money.map(Some),
         ));
     }
     let mut expenses: Vec<FlowRow> = vec![
@@ -202,16 +213,14 @@ pub fn flow_rows(day: &Flow, week: &Flow, last: &WeekReport) -> (Vec<FlowRow>, V
             ));
         }
     }
-    let rest = [
-        (
-            "Buses",
-            [day.transit_upkeep, week.transit_upkeep, last.transit_upkeep],
-        ),
-        ("Loans", [day.loans, week.loans, last.loan_payments]),
-    ];
-    for (name, c) in rest {
-        expenses.push((tr(name), c.map(Some)));
+    let buses = [day.transit_upkeep, week.transit_upkeep, last.transit_upkeep];
+    if service_open(view, ServiceKind::Transit) || buses.iter().any(|c| *c != Cost::ZERO) {
+        expenses.push((tr("Buses"), buses.map(Some)));
     }
+    expenses.push((
+        tr("Loans"),
+        [day.loans, week.loans, last.loan_payments].map(Some),
+    ));
     if day.policies != Cost::ZERO || week.policies != Cost::ZERO || last.policies != Cost::ZERO {
         expenses.push((
             tr("Policies"),
@@ -275,7 +284,7 @@ pub fn trend_breakdown(view: &SimView) -> String {
     let Some(day) = view.flow.last_day(&view.economy) else {
         return tr("No hour booked yet.");
     };
-    let (income, expenses) = flow_rows(&day, &day, &view.economy.last_week);
+    let (income, expenses) = flow_rows(view, &day, &day, &view.economy.last_week);
     let mut out = tr("Last 24 hours:");
     for (name, c) in income {
         if let Some(c) = c[0].filter(|c| c.0 != 0) {
@@ -486,7 +495,8 @@ pub struct RoadRow {
 /// The numbers of the Overview tab, read from the view.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Overview {
-    /// Tax income of last week per zone type, in [`TAXED_ZONES`] order.
+    /// Tax income of last week per zone type, in [`TAXED_ZONES`] order; a zone no milestone has
+    /// opened only if it brought money (BUG-123).
     pub income_by_zone: Vec<(ZoneType, Cost)>,
     pub income: Cost,
     pub upkeep: Cost,
@@ -537,6 +547,7 @@ pub fn overview(view: &SimView) -> Overview {
             .iter()
             .enumerate()
             .map(|(i, z)| (*z, week.income_by_zone[i]))
+            .filter(|&(z, c)| zone_open(view, z) || c != Cost::ZERO)
             .collect(),
         income: week.income() + week.transit_fares + week.tourism + week.hotels + week.exports,
         upkeep: week.upkeep() + week.loan_payments + week.transit_upkeep + week.policies,
@@ -571,7 +582,7 @@ fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
     };
     let week = &view.flow.week_to_date;
     let last = &view.economy.last_week;
-    let (income, expenses) = flow_rows(&day, week, last);
+    let (income, expenses) = flow_rows(view, &day, week, last);
     let cell = |ui: &mut egui::Ui, c: Option<Cost>| {
         ui.label(c.map_or("–".to_string(), format_money));
     };
@@ -640,6 +651,10 @@ fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
 /// The Overview tab: last week, the balance history, income by zone and the expenses.
 pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
     let o = overview(view);
+    // A service no milestone has opened has no line unless it moved money (BUG-123).
+    let transit = service_open(view, ServiceKind::Transit)
+        || o.transit_fares != Cost::ZERO
+        || o.transit_upkeep != Cost::ZERO;
     cash_flow_table(ui, view);
     ui.separator();
     ui.strong(tr("Last week"));
@@ -656,19 +671,23 @@ pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
     ui.strong(tr("Income by zone"));
     egui::Grid::new("overview_income").show(ui, |ui| {
         for (zone, cost) in &o.income_by_zone {
-            ui.label(tr(zone_name(*zone)));
+            zone_label(ui, *zone);
             ui.label(format_money(*cost));
             ui.end_row();
         }
-        ui.label(tr("Fares"));
-        ui.label(format_money(o.transit_fares));
-        ui.end_row();
+        if transit {
+            ui.label(tr("Fares"));
+            ui.label(format_money(o.transit_fares));
+            ui.end_row();
+        }
         ui.label(tr("Tourism"));
         ui.label(format_money(o.tourism));
         ui.end_row();
-        ui.label(tr("Hotels"));
-        ui.label(format_money(o.hotels));
-        ui.end_row();
+        if service_open(view, ServiceKind::Tourism) || o.hotels != Cost::ZERO {
+            ui.label(tr("Hotels"));
+            ui.label(format_money(o.hotels));
+            ui.end_row();
+        }
         ui.label(tr("Exports"));
         ui.label(format_money(o.exports));
         ui.end_row();
@@ -698,9 +717,11 @@ pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
         ui.label(tr("Pipes and power lines"));
         ui.label(format_money(o.utility_upkeep));
         ui.end_row();
-        ui.label(tr("Public transport"));
-        ui.label(format_money(o.transit_upkeep));
-        ui.end_row();
+        if transit {
+            ui.label(tr("Public transport"));
+            ui.label(format_money(o.transit_upkeep));
+            ui.end_row();
+        }
         ui.label(tr("Loans"));
         ui.label(format_money(o.loan_payments));
         ui.end_row();
@@ -756,7 +777,8 @@ pub fn budget_contents(
     }
 }
 
-/// The Taxes tab: the tax slider of every zone type with last week's income (T-045).
+/// The Taxes tab: the tax slider of every open zone type with last week's income (T-045); a
+/// zone no milestone has opened has no row (BUG-123).
 fn taxes_tab(
     ui: &mut egui::Ui,
     view: &SimView,
@@ -768,7 +790,10 @@ fn taxes_tab(
     let day = view.flow.last_day(state);
     egui::Grid::new("budget_taxes").show(ui, |ui| {
         for (i, zone) in TAXED_ZONES.into_iter().enumerate() {
-            ui.label(tr(zone_name(zone)));
+            if !zone_open(view, zone) {
+                continue;
+            }
+            zone_label(ui, zone);
             ui.label(format_money(
                 day.map_or(Cost::ZERO, |d| d.income_by_zone[i]),
             ));
@@ -783,19 +808,33 @@ fn taxes_tab(
     });
 }
 
+/// A zone's name after its square icon of the zoning palette (BUG-123).
+fn zone_label(ui: &mut egui::Ui, zone: ZoneType) {
+    ui.horizontal(|ui| {
+        crate::icons::zone_icon(zone).show(ui, Sizes::SECTION_ICON);
+        ui.label(tr(zone_name(zone)));
+    });
+}
+
 /// The budget rows the tab shows (§20.3): the [`BUDGETED`] kinds a milestone has opened
 /// ([`cp_sim::kind_open`]); before the content is in, the four of the start.
 pub fn budget_rows(view: &SimView) -> Vec<ServiceKind> {
     BUDGETED
         .into_iter()
-        .filter(|&k| match view.content.as_deref() {
-            Some(db) => cp_sim::kind_open(&view.progress, db, k),
-            None => matches!(
-                k,
-                ServiceKind::Water | ServiceKind::Sewage | ServiceKind::Power | ServiceKind::Roads
-            ),
-        })
+        .filter(|&k| service_open(view, k))
         .collect()
+}
+
+/// Whether a milestone has opened service `kind` ([`cp_sim::kind_open`]); before the content
+/// is in, the four of the start. The budget window shows nothing of a closed one (BUG-123).
+pub fn service_open(view: &SimView, kind: ServiceKind) -> bool {
+    match view.content.as_deref() {
+        Some(db) => cp_sim::kind_open(&view.progress, db, kind),
+        None => matches!(
+            kind,
+            ServiceKind::Water | ServiceKind::Sewage | ServiceKind::Power | ServiceKind::Roads
+        ),
+    }
 }
 
 /// The sectors behind a budget row's balance bar: its own; Education the three school levels,
@@ -1582,7 +1621,12 @@ mod tests {
         view.flow.week_to_date = f;
         let day = view.flow.last_day(&view.economy).unwrap();
         assert_eq!(day.refunds, Cost(28_000));
-        let (income, _) = flow_rows(&day, &view.flow.week_to_date, &view.economy.last_week);
+        let (income, _) = flow_rows(
+            &view,
+            &day,
+            &view.flow.week_to_date,
+            &view.economy.last_week,
+        );
         let row = income
             .iter()
             .find(|(name, _)| name == "Demolition refund")
@@ -1640,6 +1684,100 @@ mod tests {
         // Everything open: all 13.
         view.progress = cp_sim::Progress::ALL;
         assert_eq!(budget_rows(&view).len(), BUDGETED.len());
+    }
+
+    /// BUG-123: before "Busy Town" the Taxes tab has no slider for ResHigh, ComHigh and Office,
+    /// and the Overview no tax line for them (unless one brought money); after it, it has.
+    #[test]
+    fn the_taxes_tab_shows_the_zones_the_milestone_opened() {
+        use std::sync::Arc;
+        let db = Arc::new(
+            cp_content::ContentDb::load_dir(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/content"
+            ))
+            .unwrap(),
+        );
+        let busy_town = db.zone_unlock_milestone(ZoneType::ResHigh).unwrap();
+        assert_eq!(db.milestones()[busy_town].population, 5000);
+        let mut sim = SimRunner::new(1);
+        sim.set_content(db);
+        let mut view = sim.view();
+        view.flow.hours.push_back((1, Flow::default()));
+        let later = [ZoneType::ResHigh, ZoneType::ComHigh, ZoneType::Office];
+        let names = |zones: &[ZoneType]| -> Vec<String> {
+            zones.iter().map(|&z| tr(zone_name(z))).collect()
+        };
+        let tax_lines = |zones: &[ZoneType]| -> Vec<String> {
+            zones
+                .iter()
+                .map(|&z| trf!("Tax: {zone}", zone = tr(zone_name(z))))
+                .collect()
+        };
+
+        // Hamlet: no line of a service that is not open yet (buses, fares, hotels) anywhere.
+        view.progress = cp_sim::Progress::START;
+        let mut text = painted(&view, &mut BudgetDraft::default());
+        text.extend(painted(&view, &mut BudgetDraft::on(BudgetTab::Budgets)));
+        for closed in [
+            "Buses",
+            "Fares",
+            "Public transport",
+            "Hotels",
+            "Health",
+            "Police",
+        ] {
+            assert!(
+                !text.iter().any(|t| t == closed),
+                "{closed} shown: {text:?}"
+            );
+        }
+        assert!(text.iter().any(|t| t == "Loans"), "{text:?}");
+
+        view.progress = cp_sim::Progress::at(u8::try_from(busy_town - 1).unwrap());
+        let text = painted(&view, &mut BudgetDraft::on(BudgetTab::Taxes));
+        for name in names(&[ZoneType::ResLow, ZoneType::ComLow, ZoneType::Industrial]) {
+            assert!(text.contains(&name), "{name} missing: {text:?}");
+        }
+        for name in names(&later) {
+            assert!(
+                !text.contains(&name),
+                "{name} shown before the milestone: {text:?}"
+            );
+        }
+        let text = painted(&view, &mut BudgetDraft::default());
+        for line in tax_lines(&later) {
+            assert!(!text.contains(&line), "{line} shown: {text:?}");
+        }
+        assert!(
+            text.contains(&tax_lines(&[ZoneType::ResLow])[0]),
+            "{text:?}"
+        );
+        // Money of a closed zone (a district of an older city, say) is still shown.
+        let mut f = Flow::default();
+        f.income_by_zone[TAXED_ZONES
+            .iter()
+            .position(|&z| z == ZoneType::Office)
+            .unwrap()] = Cost(100);
+        view.flow.hours.push_back((2, f));
+        let text = painted(&view, &mut BudgetDraft::default());
+        assert!(
+            text.contains(&tax_lines(&[ZoneType::Office])[0]),
+            "{text:?}"
+        );
+
+        view.progress = cp_sim::Progress::at(u8::try_from(busy_town).unwrap());
+        let text = painted(&view, &mut BudgetDraft::on(BudgetTab::Taxes));
+        for name in names(&later) {
+            assert!(
+                text.contains(&name),
+                "{name} missing after the milestone: {text:?}"
+            );
+        }
+        let text = painted(&view, &mut BudgetDraft::default());
+        for line in tax_lines(&later) {
+            assert!(text.contains(&line), "{line} missing: {text:?}");
+        }
     }
 
     /// The tab's figures come from the sim's factors: the effect words and the cost restated at

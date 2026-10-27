@@ -82,6 +82,14 @@ pub fn zone_lock(view: &SimView, zone: ZoneType) -> Option<String> {
     Some(crate::buildings::unlocks_at(ms.population, &ms.name))
 }
 
+/// Whether no milestone holds `zone` back (T-283); before the content is in, every zone is.
+/// The zoning palette and the tax rows (BUG-123) show only the open ones.
+pub fn zone_open(view: &SimView, zone: ZoneType) -> bool {
+    view.content
+        .as_deref()
+        .is_none_or(|db| view.progress.zone_locked_by(db, zone).is_none())
+}
+
 /// The zone group of `zone` has demand (20+) but no free painted cell a building could cover
 /// (BUG-076b): the land is used up, or what is left is too narrow for the smallest lot.
 /// "Industrial land left is too narrow for any building — zone more".
