@@ -506,3 +506,48 @@ fn new_game_fills_the_deposits_from_the_resource_map() {
     }
     assert!(any);
 }
+
+/// BUG-122: the two carriageways bend into the junction smoothly (no node along them turns more
+/// than a middle node may: before, the polyline kinked where the merge began), and the avenue
+/// keeps its width up to the junction, so both halves of it open onto the carriageways.
+#[test]
+fn the_entry_carriageways_merge_smoothly_into_the_full_width_avenue() {
+    let db = content();
+    for name in ["flatlands", "river_valley"] {
+        let mut sim = sim_on(map(name));
+        sim.new_game().unwrap();
+        sim.tick_once();
+        sim.tick_once();
+        let view = sim.view();
+        let graph = &view.net;
+        let highway = |s: cp_net::SegmentId| {
+            db.road(graph.segment(s).unwrap().road).class == RoadClass::Highway
+        };
+        for (id, n) in graph.nodes() {
+            if n.segments.len() == 2 && n.segments.iter().all(|&s| highway(s)) {
+                let class = view.junctions.get(id).unwrap().class;
+                assert_eq!(
+                    class,
+                    cp_net::NodeClass::Middle,
+                    "{name}: node at {:?}",
+                    n.pos
+                );
+            }
+        }
+        let (_, stub) = graph
+            .segments()
+            .find(|(_, s)| db.road(s.road).id == "large_6l")
+            .unwrap();
+        let j = view.junctions.get(stub.start).unwrap();
+        let avenue = j.arms.iter().find(|a| !highway(a.segment)).unwrap();
+        let c = Vec2::new(j.pos.x, j.pos.z);
+        let side = Vec2::from_angle(avenue.angle).perp() * (avenue.width / 2.0);
+        for corner in [c + side, c - side] {
+            assert!(
+                j.polygon.iter().any(|p| p.distance(corner) < 0.05),
+                "{name}: the avenue is not full width at the junction: {:?}",
+                j.polygon
+            );
+        }
+    }
+}

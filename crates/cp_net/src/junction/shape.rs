@@ -431,6 +431,9 @@ impl SideLine {
 /// centre lines, from `a`'s cut to `b`'s cut. Topology decides the shape, not coordinates:
 /// * a convex corner (gap under [`FLAT_GAP_DEG`]) of a junction, with `round`: the curb curve,
 ///   a quadratic Bezier between the two cut points whose tangents run along the arms;
+/// * a flat side (gap of [`FLAT_GAP_DEG`] up to 180 degrees) of a junction, with `round`, between
+///   two different laterals: the wider one's edge back to the node, then a straight taper to the
+///   narrower one's cut (BUG-122);
 /// * otherwise each arm contributes its own edge from its cut back to the node (a curved arm's
 ///   real offset curve; the lateral tapers to the value of the arm with the shorter setback),
 ///   and where the gap is under 180 degrees the two meet in a mitre, else they are joined by an
@@ -486,6 +489,32 @@ pub fn side_line(
             }
         }
         return straight.offset(c);
+    }
+    if round && gap < PI && (ra - rb).abs() > 1e-3 {
+        // BUG-122: the flat side of a junction between two widths (a highway carriageway into
+        // an avenue): the wider arm keeps its width up to the node, then a straight taper runs
+        // to the narrower arm's cut. Tapering both edges to the narrower one at the node
+        // pinched the wide road to the narrow one's width there.
+        let line = if ra > rb {
+            let mut wide = part(&pa, a.setback, ra, ra, 1.0);
+            wide[0] = p0;
+            let q = *wide.last().expect("points");
+            SideLine {
+                a: simplify(wide),
+                joint: vec![q, p1],
+                b: vec![p1],
+            }
+        } else {
+            let mut wide = part(&pb, b.setback, rb, rb, -1.0);
+            wide.reverse();
+            *wide.last_mut().expect("points") = p1;
+            SideLine {
+                a: vec![p0],
+                joint: vec![p0, wide[0]],
+                b: simplify(wide),
+            }
+        };
+        return line.offset(c);
     }
     let r_node = if (a.setback - b.setback).abs() < 1e-4 {
         ra.min(rb)

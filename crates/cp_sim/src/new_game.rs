@@ -3,7 +3,7 @@
 //! scenes, benches and tests start from an empty network and keep their checksums.
 
 use bevy_ecs::world::World;
-use bevy_math::Vec3;
+use bevy_math::{Vec2, Vec3};
 use cp_content::{RoadClass, RoadDefId, SimContent};
 use cp_net::{Elevation, NetGraph, NodeKind, RoadPath, build_unowned};
 use cp_terrain::SimTerrain;
@@ -88,22 +88,64 @@ pub fn build_entry_road(world: &mut World) -> Result<(), String> {
             Elevation::Ground,
         );
     }
-    for (what, road, pts) in [
-        ("inbound highway", highway, inbound),
-        ("outbound highway", highway, outbound),
-        ("stub", stub, vec![e.junction(), e.stub_end()]),
+    let (inbound_run, inbound_merge) = smooth_merge(inbound, false);
+    let (outbound_run, outbound_merge) = smooth_merge(outbound, true);
+    for (what, road, path) in [
+        ("inbound highway", highway, polyline(inbound_run)),
+        ("inbound merge", highway, inbound_merge),
+        ("outbound merge", highway, outbound_merge),
+        ("outbound highway", highway, polyline(outbound_run)),
+        ("stub", stub, polyline(vec![e.junction(), e.stub_end()])),
     ] {
-        let path = if pts.len() == 2 {
-            RoadPath::Straight {
-                from: pts[0],
-                to: pts[1],
-            }
-        } else {
-            RoadPath::Free(pts)
-        };
         build_unowned(world, road, path).map_err(|err| format!("entry road, {what}: {err}"))?;
     }
     Ok(())
+}
+
+fn polyline(pts: Vec<Vec2>) -> RoadPath {
+    if pts.len() == 2 {
+        RoadPath::Straight {
+            from: pts[0],
+            to: pts[1],
+        }
+    } else {
+        RoadPath::Free(pts)
+    }
+}
+
+/// Longest straight piece of a carriageway's last run that the merge curve takes, metres.
+const MERGE_LEAD: f32 = 40.0;
+
+/// A carriageway (in travel direction; `outbound` starts at the junction, else it ends there)
+/// split into its run along the centre line and the merge into the junction as one quadratic
+/// curve (BUG-122): the curve leaves the run [`MERGE_LEAD`] metres (at most half its last leg)
+/// before the corner where the polyline turned into the junction, with that corner as its
+/// control point, so the carriageway bends smoothly instead of kinking there and still meets
+/// the junction along the same leg.
+fn smooth_merge(mut pts: Vec<Vec2>, outbound: bool) -> (Vec<Vec2>, RoadPath) {
+    if outbound {
+        pts.reverse();
+    }
+    let n = pts.len();
+    let (j, k, prev) = (pts[n - 1], pts[n - 2], pts[n - 3]);
+    let a = k + (prev - k).normalize_or_zero() * MERGE_LEAD.min(prev.distance(k) / 2.0);
+    let mut run = pts[..n - 1].to_vec();
+    run[n - 2] = a;
+    let merge = if outbound {
+        run.reverse();
+        RoadPath::Curve {
+            from: j,
+            control: k,
+            to: a,
+        }
+    } else {
+        RoadPath::Curve {
+            from: a,
+            control: k,
+            to: j,
+        }
+    };
+    (run, merge)
 }
 
 /// Builds the entry railway of the attached map (T-166): an `Outside` node at the map edge and

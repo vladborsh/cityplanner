@@ -47,7 +47,8 @@ pub const TURNS: [f32; 7] = [5.0, 10.0, 20.0, 30.0, 45.0, 90.0, 135.0];
 
 /// The junction gallery: bends of every turn and road, curved bends, T, X and Y junctions,
 /// curved arms into a T, a change of width at a degree-2 node (also street to highway, the
-/// entry road's merge), a street into a highway, and an automatic cut on a long street.
+/// entry road's merge), a street into a highway, an automatic cut on a long street, and the
+/// entry road's two carriageways merging into an avenue.
 pub fn join_cases() -> Vec<JoinCase> {
     let o = Vec2::ZERO;
     let mut out = Vec::new();
@@ -151,6 +152,42 @@ pub fn join_cases() -> Vec<JoinCase> {
             vec![line(road, -Vec2::X * 110.0, Vec2::X * 110.0)],
         );
     }
+    // The entry road's merge (BUG-122): two one-way carriageways 32 m apart bend into one node
+    // and a large avenue leaves it; the avenue keeps its width up to the node.
+    let (a, k) = (Vec2::new(-80.0, 16.0), Vec2::new(-40.0, 16.0));
+    let flip = Vec2::new(1.0, -1.0);
+    add(
+        "entry_merge".into(),
+        vec![
+            line(
+                "highway_1w_2l",
+                Vec2::new(-160.0, -16.0),
+                Vec2::new(-80.0, -16.0),
+            ),
+            (
+                "highway_1w_2l",
+                RoadPath::Curve {
+                    from: a * flip,
+                    control: k * flip,
+                    to: o,
+                },
+            ),
+            (
+                "highway_1w_2l",
+                RoadPath::Curve {
+                    from: o,
+                    control: k,
+                    to: a,
+                },
+            ),
+            line(
+                "highway_1w_2l",
+                Vec2::new(-80.0, 16.0),
+                Vec2::new(-160.0, 16.0),
+            ),
+            line("large_6l", o, Vec2::X * 48.0),
+        ],
+    );
     out
 }
 
