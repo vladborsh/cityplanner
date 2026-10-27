@@ -14,14 +14,14 @@
 #   5. master did not move while the gate ran.
 # Then: git -C $CITYPLANNER_COORD merge --ff-only <branch>. Never pushes.
 #
-# CITYPLANNER_COORD defaults to /Users/Vladyslav_Borsh/Documents/cityplanner.
+# CITYPLANNER_COORD defaults to the main worktree of this repository (the coordinator checkout).
 # Portable bash (macOS 3.2 and Linux 5).
 set -euo pipefail
 # CP_LOW_PRIORITY=1: run at background QoS (scripts/low-priority.sh).
 . "$(dirname "$0")/low-priority.sh"
 cd "$(dirname "$0")/.."
 
-COORD="${CITYPLANNER_COORD:-/Users/Vladyslav_Borsh/Documents/cityplanner}"
+COORD="${CITYPLANNER_COORD:-$(git worktree list --porcelain | sed -n '1s/^worktree //p')}"
 
 die() {
   echo "ff-merge: $*" >&2

@@ -9,7 +9,7 @@
 ```sh
 xcode-select --install                      # компилятор C, линкер, git
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install gh                             # GitHub CLI: клон приватного репо, PR
+brew install gh                             # GitHub CLI: PR, запуски CI (gh run watch)
 gh auth login
 ```
 
@@ -46,12 +46,14 @@ cd tools/assets && npm install              # затем `node icons.mjs` пер
 ## 2. Код
 
 ```sh
-gh repo clone vladborsh/cityplanner ~/Documents/cityplanner
+git clone https://github.com/vladborsh/cityplanner ~/Documents/cityplanner
 cd ~/Documents/cityplanner
 ```
 
-Основная ветка `master`. GitHub Actions недоступны (оплата), поэтому проверка зелёного только
-локальная (шаг 4).
+Основная ветка `master`. Зелёным для слияния считается локальный `scripts/gate.sh` (шаг 4).
+После push в `master` GitHub Actions (`.github/workflows/ci.yml`) прогоняет `scripts/ci-gate.sh`:
+fmt, clippy и тесты sim-крейтов, без тестов, которым нужен GPU. Если он зелёный, веб-сборка
+выкладывается на GitHub Pages: <https://vladborsh.github.io/cityplanner/>.
 
 ## 3. Кэш компиляции (sccache) — не обязателен
 

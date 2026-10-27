@@ -1,12 +1,18 @@
 name: CI
 
+# Push to master: the CI gate, then the web build goes to GitHub Pages
+# (https://vladborsh.github.io/cityplanner/). Pull requests: the gate only.
+# The merge gate is still the local scripts/gate.sh; CI runs scripts/ci-gate.sh (required checks,
+# no test that needs a GPU or a window).
+
 on:
   pull_request:
   push:
-    branches: [master, main]
+    branches: [master]
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -15,116 +21,59 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  RUSTFLAGS: "-D warnings"
-  # No debuginfo in CI: the full-workspace test build (all test binaries linked against Bevy)
-  # otherwise fills the 14 GB ubuntu runner disk ("No space left on device", ld Bus error).
+  # No debuginfo in CI: the test build linked against Bevy otherwise fills the 14 GB ubuntu
+  # runner disk ("No space left on device", ld Bus error).
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
-  fmt:
+  gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Linux system dependencies for Bevy
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
       # Toolchain version comes from rust-toolchain.toml (rustup installs it on first cargo call).
-      - run: cargo fmt --all --check
-
-  deps-guard:
-    name: dependency guard (sim crates stay headless)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-      - run: scripts/check-sim-deps.sh
-
-  clippy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Linux system dependencies for Bevy
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
-
-  # Each sim crate is linted in its own cargo invocation so features resolve for that crate
-  # alone; `--workspace` unifies features and can hide a crate that doesn't build by itself
-  # (BUG-001). One looping job rather than a matrix: ~12 small crates share one rust-cache
-  # and one toolchain setup, which is cheaper than 12 runners each restoring the cache.
-  # No Bevy system libraries needed: sim crates are headless.
-  isolated-clippy:
-    name: isolated clippy (per sim crate)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
-      - run: scripts/check-isolated-clippy.sh
-
-  test:
-    name: test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Disk before build (Linux runner)
-        if: runner.os == 'Linux'
-        run: df -h /
-      - name: Linux system dependencies for Bevy
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked --workspace
-      - name: Disk usage after build
-        if: always() && runner.os == 'Linux'
-        run: df -h / && du -sh target 2>/dev/null || true
-
-  wasm:
-    name: wasm32 build (apps/web)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Add wasm32 target to the pinned toolchain
-        run: rustup target add wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      # Must equal the `wasm-bindgen` crate version in Cargo.lock (scripts/build-web.sh checks).
       - uses: taiki-e/install-action@v2
         with:
-          tool: wasm-bindgen@0.2.129
-      - name: Build the browser demo (dist/web)
-        run: scripts/build-web.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: web-demo
-          path: dist/web
-          if-no-files-found: error
+          tool: cargo-nextest
+      - run: scripts/ci-gate.sh
+      - name: Disk usage
+        if: always()
+        run: df -h / && du -sh target 2>/dev/null || true
 
-  bench:
-    name: bench (headless, regression gate)
+  web:
+    needs: gate
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    env:
-      BENCH_ARGS: --scenario empty --ticks 20000 --warmup 500 --seed 1
     steps:
       - uses: actions/checkout@v4
+      - run: rustup target add wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked --release -p cp_bench
-      - name: Run bench 5 times and take the median
-        run: |
-          mkdir -p bench-out
-          for i in 1 2 3 4 5; do
-            target/release/cp_bench $BENCH_ARGS --out bench-out/run-$i.json
-          done
-          target/release/cp_bench aggregate bench-out/result.json bench-out/run-*.json
-      - name: Publish numbers
-        if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: bench-result
-          path: bench-out/
-      - name: Compare with bench/baseline.json (fail on >20% regression)
-        run: |
-          if [ ! -f bench/baseline.json ]; then
-            echo "::error::bench/baseline.json is missing. Take bench-out/result.json from this run's bench-result artifact and commit it as bench/baseline.json (see bench/README.md)."
-            exit 1
-          fi
-          target/release/cp_bench compare bench/baseline.json bench-out/result.json --threshold 0.2 --floor-ms 0.05
+          key: web
+      # Must equal wasm-bindgen in Cargo.lock; scripts/build-web.sh checks it.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@0.2.129
+      - run: scripts/build-web.sh
+      - run: touch dist/web/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/web
+
+  deploy:
+    needs: web
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

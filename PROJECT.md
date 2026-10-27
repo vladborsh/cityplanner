@@ -111,7 +111,7 @@ checkout координатора. Правила:
   после cargo: `| tail` прячет код выхода), в конце ровно одна строка `PASS: N tests` (N — сумма
   по всем `test result:`) или `FAIL: <шаг>` и код 0/1. `ff-merge.sh <ветка>` (запускается из
   worktree с этой веткой) отказывает с кодом 1, если checkout координатора (`$CITYPLANNER_COORD`,
-  по умолчанию `/Users/Vladyslav_Borsh/Documents/cityplanner`) не на `master` или имеет
+  по умолчанию основной worktree репозитория) не на `master` или имеет
   незакоммиченные изменения (до запуска гейта), если ветка не содержит его `master` («rebase
   first») или в worktree есть незакоммиченное либо неотслеживаемое (не игнорируемое) — `gate.sh` тоже падает с `FAIL: untracked`; затем гоняет `gate.sh` и только при `PASS` делает
   `git -C $CITYPLANNER_COORD merge --ff-only <ветка>`. Мёржить вручную в обход скрипта нельзя.

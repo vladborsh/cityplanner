@@ -31,6 +31,10 @@ wrong. Project context lives in `PROJECT.md`; system designs live in `architectu
   `ff-merge.sh <branch> --full` runs the full `scripts/gate.sh`. The Tech Lead runs the full gate
   on master in batches (after ~4-5 merges, every ~2 h, before closing a milestone); if it is red,
   merges stop until the culprit is fixed. The determinism test stays in the full gate.
+- GitHub CI (`.github/workflows/ci.yml`, user decision 2026-10-27) runs `scripts/ci-gate.sh` on
+  every push and PR: fmt, clippy, the sim checks and the sim crates' tests only (no test that
+  needs a GPU or a window). On `master` it then deploys the web build to GitHub Pages. It does
+  not replace the local gate.
 - `CP_LOW_PRIORITY=1` runs `gate.sh`, `quick-gate.sh` and `ff-merge.sh` (and every cargo they
   start) at macOS background QoS, so a build leaves the cores to the game the user is playing
   (T-281); builds then take 2-3x longer. Default off; the Tech Lead says when it is on.
