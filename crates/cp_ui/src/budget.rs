@@ -1922,10 +1922,8 @@ fn loans_tab(ui: &mut egui::Ui, view: &SimView, outbox: &mut CommandOutbox) {
                                 .on_disabled_hover_text(tr(
                                     "Already taken; pay it off to take it again.",
                                 ));
-                        } else if o.available {
-                            if ui.button(tr("Take")).clicked() {
-                                outbox.push(take_loan_command(o.index));
-                            }
+                        } else if o.available && ui.button(tr("Take")).clicked() {
+                            outbox.push(take_loan_command(o.index));
                         }
                     });
                 });
@@ -2722,8 +2720,10 @@ mod tests {
             .position(|&z| z == ZoneType::Office)
             .unwrap()] = Cost(100);
         view.flow.hours.push_back((2, f));
-        let mut day_view = BudgetDraft::default();
-        day_view.period = Period::Day;
+        let mut day_view = BudgetDraft {
+            period: Period::Day,
+            ..Default::default()
+        };
         let text = painted(&view, &mut day_view);
         assert!(
             text.contains(&tax_lines(&[ZoneType::Office])[0]),
@@ -2932,9 +2932,11 @@ mod tests {
     #[test]
     fn the_overview_lines_follow_the_period_biggest_first() {
         let mut view = SimRunner::new(1).view();
-        let mut week = Flow::default();
-        week.road_upkeep = Cost(500);
-        week.utility_upkeep = Cost(900);
+        let mut week = Flow {
+            road_upkeep: Cost(500),
+            utility_upkeep: Cost(900),
+            ..Flow::default()
+        };
         week.income_by_zone[0] = Cost(2_000);
         view.flow.week_to_date = week;
         view.flow.hours.push_back((1, Flow::default()));
