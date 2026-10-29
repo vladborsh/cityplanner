@@ -201,8 +201,7 @@ pub fn score(f: &HomeFacts, k: &ContentmentKnobs, cover: f32) -> Scored {
     codes[F_LEISURE] = Complaint::NoPark;
 
     // 7. Tax.
-    let over = u32::from(f.tax_pct.saturating_sub(k.tax_neutral));
-    scores[F_TAX] = 100u32.saturating_sub(over * u32::from(k.tax_step)) as u8;
+    scores[F_TAX] = tax_score(f.tax_pct, k);
     codes[F_TAX] = Complaint::HighTax;
 
     // 8. Trust.
@@ -210,6 +209,14 @@ pub fn score(f: &HomeFacts, k: &ContentmentKnobs, cover: f32) -> Scored {
     codes[F_TRUST] = Complaint::Distrust;
 
     Scored { scores, codes }
+}
+
+/// The tax factor's score at a tax rate of `pct` percent: full at or below `tax_neutral`,
+/// `tax_step` points less per percent above it. The budget window shows it before and after a
+/// slider move, so it is the one formula.
+pub fn tax_score(pct: u8, k: &ContentmentKnobs) -> u8 {
+    let over = u32::from(pct.saturating_sub(k.tax_neutral));
+    100u32.saturating_sub(over * u32::from(k.tax_step)) as u8
 }
 
 /// The weighted mean of the scores, rounded: the index a home moves towards.
@@ -665,5 +672,35 @@ pub fn contentment_daily(
         .collect();
     for (cid, w) in rows {
         citizens.set_wellbeing(cid, w);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{TAX_MAX, TAX_MIN};
+
+    /// `tax_score` is the formula `score` used inline before T-336, bit for bit, on the whole
+    /// slider range and for other knobs than the defaults.
+    #[test]
+    fn tax_score_is_the_old_inline_formula_over_the_slider_range() {
+        let old = |pct: u8, k: &ContentmentKnobs| {
+            let over = u32::from(pct.saturating_sub(k.tax_neutral));
+            100u32.saturating_sub(over * u32::from(k.tax_step)) as u8
+        };
+        for (neutral, step) in [(9, 10), (0, 1), (5, 25), (20, 255), (255, 255)] {
+            let k = ContentmentKnobs {
+                tax_neutral: neutral,
+                tax_step: step,
+                ..ContentmentKnobs::default()
+            };
+            for pct in TAX_MIN..=TAX_MAX {
+                assert_eq!(tax_score(pct, &k), old(pct, &k), "{pct}% {neutral}/{step}");
+            }
+        }
+        let k = ContentmentKnobs::default();
+        assert_eq!(tax_score(9, &k), 100);
+        assert_eq!(tax_score(12, &k), 70);
+        assert_eq!(tax_score(TAX_MAX, &k), 0);
     }
 }

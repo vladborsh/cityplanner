@@ -962,6 +962,22 @@ pub fn format_money(cost: Cost) -> String {
     )
 }
 
+/// Cost as a short money string for crowded places: `$740`, `$24.6k`, `$1.2M` (decimal mark by
+/// language, minus sign `−`). The exact amount goes in a tooltip ([`format_money`]).
+pub fn format_money_short(cost: Cost) -> String {
+    let units = cost.0.unsigned_abs() / 100;
+    let sign = if cost.0 < 0 { "−" } else { "" };
+    let mark = cp_locale::decimal_mark();
+    let (whole, suffix) = match units {
+        0..=999 => return format!("{sign}${units}"),
+        1_000..=999_999 => (units as f64 / 1_000.0, "k"),
+        _ => (units as f64 / 1_000_000.0, "M"),
+    };
+    // One digit, truncated so 999 999 stays `$999.9k` and never rounds up to `$1000.0k`.
+    let tenths = (whole * 10.0).floor() as u64;
+    format!("{sign}${}{mark}{}{suffix}", tenths / 10, tenths % 10)
+}
+
 /// Points along a curve, about every `step` metres.
 pub fn sample_curve(c: &CubicBezier3, step: f32) -> Vec<Vec3> {
     let len = c.arc_table().length().max(step);
@@ -979,6 +995,21 @@ mod tests {
             road: Some(RoadDefId(0)),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn short_money_has_one_digit_and_never_rounds_up_a_unit() {
+        let c = |units: i64| Cost(units * 100);
+        assert_eq!(format_money_short(c(0)), "$0");
+        assert_eq!(format_money_short(c(999)), "$999");
+        assert_eq!(format_money_short(Cost(99_999)), "$999");
+        assert_eq!(format_money_short(c(1_000)), "$1.0k");
+        assert_eq!(format_money_short(c(24_600)), "$24.6k");
+        assert_eq!(format_money_short(c(999_999)), "$999.9k");
+        assert_eq!(format_money_short(c(1_000_000)), "$1.0M");
+        assert_eq!(format_money_short(c(1_250_000)), "$1.2M");
+        assert_eq!(format_money_short(c(-740)), "−$740");
+        assert_eq!(format_money_short(c(-24_600)), "−$24.6k");
     }
 
     #[test]

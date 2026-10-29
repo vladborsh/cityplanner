@@ -60,9 +60,9 @@ pub use plugin::{
 };
 pub use road::{
     CHEVRON_SPACING, Cursor, LEVEL_STEP, MAX_LEVEL, MIN_LEVEL, MarkerKind, RoadMarker, RoadMode,
-    RoadTool, TOO_CLOSE, anchor_pos, chevron_lines, format_money, plan_for, preview, preview_plan,
-    quantized, resolve_cursor, road_is_one_way, road_markers, snap_label, too_close,
-    too_close_plan,
+    RoadTool, TOO_CLOSE, anchor_pos, chevron_lines, format_money, format_money_short, plan_for,
+    preview, preview_plan, quantized, resolve_cursor, road_is_one_way, road_markers, snap_label,
+    too_close, too_close_plan,
 };
 pub use transit::{
     Click, LineGhostInfo, LineTool, ROAD_PICK_RADIUS, STOP_PICK_RADIUS, Target, line_ghost,

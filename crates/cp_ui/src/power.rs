@@ -202,7 +202,7 @@ fn chip_row(ui: &mut egui::Ui, chips: &[Chip]) {
 // ----- header ------------------------------------------------------------------------------
 
 /// A bar `0..=1` with a tick at `tick`.
-fn bar(ui: &mut egui::Ui, fill: f32, tick: Option<f32>, colour: egui::Color32) {
+pub(crate) fn bar(ui: &mut egui::Ui, fill: f32, tick: Option<f32>, colour: egui::Color32) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::hover());
     let p = ui.painter();
@@ -225,7 +225,7 @@ fn bar(ui: &mut egui::Ui, fill: f32, tick: Option<f32>, colour: egui::Color32) {
     }
 }
 
-fn tile(
+pub(crate) fn tile(
     ui: &mut egui::Ui,
     icon: Icon,
     title: &str,

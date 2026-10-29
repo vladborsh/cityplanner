@@ -8,19 +8,24 @@
 
 use std::ops::RangeInclusive;
 
+use crate::icons::Icon;
 use crate::style::Sizes;
 use crate::windows::zone_open;
 use bevy_egui::egui;
 use cp_content::budget::{power_factor, reach_factor};
 use cp_content::{ServiceKind, ZoneType};
 use cp_core::Cost;
+use cp_core::time::TICKS_PER_DAY;
 use cp_core::treasury::DEBT_FLOOR;
+use cp_economy::contentment::tax_score;
 use cp_economy::state::{BUDGET_MAX, BUDGET_MIN, BUDGETED, TAX_MAX, TAX_MIN, TAXED_ZONES};
 use cp_economy::{EconomyCommand, Flow, Loan, SERVICE_ORDER, WeekReport};
 use cp_locale::{tr, trf};
 use cp_sim::city_services::Sector;
+use cp_sim::tiles::{TileState, tile_state};
 use cp_sim::{SimCommand, SimView};
-use cp_tools::{CommandOutbox, format_money, zone_name};
+use cp_terrain::{TILES_PER_SIDE, TerrainCommand};
+use cp_tools::{CommandOutbox, format_money, format_money_short, zone_name};
 
 /// Demand bars show `0` (nobody wants it) to `DEMAND_RANGE`.
 pub const DEMAND_RANGE: f32 = 100.0;
@@ -54,13 +59,13 @@ pub fn debt_warning(balance: Cost) -> Option<String> {
         DebtLevel::Fine => None,
         DebtLevel::Debt => Some(trf!(
             "In debt ({balance}). Building stops at {floor}.",
-            balance = format_money(balance),
-            floor = format_money(DEBT_FLOOR)
+            balance = format_money_short(balance),
+            floor = format_money_short(DEBT_FLOOR)
         )),
         DebtLevel::NearFloor => Some(trf!(
             "Almost at the debt limit ({balance} of {floor})! Building will be refused.",
-            balance = format_money(balance),
-            floor = format_money(DEBT_FLOOR)
+            balance = format_money_short(balance),
+            floor = format_money_short(DEBT_FLOOR)
         )),
     }
 }
@@ -76,12 +81,12 @@ fn debt_colour(level: DebtLevel) -> egui::Color32 {
 /// The balance label of the top bar, coloured by [`DebtLevel`].
 pub fn money_label(ui: &mut egui::Ui, view: &SimView) -> egui::Response {
     let b = view.treasury.balance;
-    let text =
-        egui::RichText::new(format!("💰 {}", format_money(b))).color(debt_colour(debt_level(b)));
+    let text = egui::RichText::new(format!("💰 {}", format_money_short(b)))
+        .color(debt_colour(debt_level(b)));
     let r = ui.label(text);
     let tip = match debt_warning(b) {
-        Some(w) => format!("{w}\n\n{}", trend_breakdown(view)),
-        None => trend_breakdown(view),
+        Some(w) => format!("{}\n{w}\n\n{}", format_money(b), trend_breakdown(view)),
+        None => format!("{}\n\n{}", format_money(b), trend_breakdown(view)),
     };
     r.on_hover_text(tip)
 }
@@ -95,9 +100,9 @@ pub fn daily_trend(view: &SimView) -> Option<Cost> {
 /// `+$1,234.00/day` or `-$56.00/day` (the arrow is drawn by [`trend_arrow`]).
 pub fn trend_text(daily: Cost) -> String {
     if daily.0 >= 0 {
-        trf!("+{money}/day", money = format_money(daily))
+        trf!("+{money}/day", money = format_money_short(daily))
     } else {
-        trf!("-{money}/day", money = format_money(Cost(-daily.0)))
+        trf!("-{money}/day", money = format_money_short(Cost(-daily.0)))
     }
 }
 
@@ -159,10 +164,20 @@ pub fn service_line_name(kind: ServiceKind) -> &'static str {
     }
 }
 
-/// One line of the money table: a name and its amount in each column.
-pub type FlowRow = (String, [Option<Cost>; 3]);
+/// One line of the money flow: its icon, name and amount in each column (last day, this week
+/// so far, last week; `None` where the figure is not kept).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlowRow {
+    pub icon: Icon,
+    pub name: String,
+    pub money: [Option<Cost>; 3],
+}
 
-/// The income and expense rows of the cash-flow table: columns last day, this week so far, last
+fn row(icon: Icon, name: String, money: [Option<Cost>; 3]) -> FlowRow {
+    FlowRow { icon, name, money }
+}
+
+/// The income and expense rows of the cash-flow: columns last day, this week so far, last
 /// week (`None` where the figure is not kept). Expenses are positive numbers. Rows that are
 /// zero in every column are left out, except the taxes of the open zones and the buses once
 /// Transit is open (BUG-123: what no milestone has opened shows only if it moved money).
@@ -182,13 +197,15 @@ pub fn flow_rows(
         if !zone_open(view, zone) && money.iter().all(|c| *c == Cost::ZERO) {
             continue;
         }
-        income.push((
+        income.push(row(
+            crate::icons::zone_icon(zone),
             trf!("Tax: {zone}", zone = tr(zone_name(zone))),
             money.map(Some),
         ));
     }
     let mut expenses: Vec<FlowRow> = vec![
-        (
+        row(
+            Icon::Roads,
             tr("Roads"),
             [
                 Some(day.road_upkeep),
@@ -196,7 +213,8 @@ pub fn flow_rows(
                 Some(last.road_upkeep),
             ],
         ),
-        (
+        row(
+            Icon::PowerLine,
             tr("Pipes and power lines"),
             [
                 Some(day.utility_upkeep),
@@ -207,71 +225,93 @@ pub fn flow_rows(
     ];
     for (i, kind) in SERVICE_ORDER.into_iter().enumerate() {
         if day.services[i] != Cost::ZERO || week.services[i] != Cost::ZERO {
-            expenses.push((
+            expenses.push(row(
+                crate::buildings::kind_icon(kind),
                 tr(service_line_name(kind)),
                 [Some(day.services[i]), Some(week.services[i]), None],
             ));
         }
     }
+    // Last week's settled report keeps the service buildings as one figure.
+    if last.building_upkeep != Cost::ZERO {
+        expenses.push(row(
+            Icon::Services,
+            tr("Service buildings"),
+            [None, None, Some(last.building_upkeep)],
+        ));
+    }
     let buses = [day.transit_upkeep, week.transit_upkeep, last.transit_upkeep];
     if service_open(view, ServiceKind::Transit) || buses.iter().any(|c| *c != Cost::ZERO) {
-        expenses.push((tr("Buses"), buses.map(Some)));
+        expenses.push(row(Icon::Transit, tr("Buses"), buses.map(Some)));
     }
-    expenses.push((
+    expenses.push(row(
+        Icon::Budget,
         tr("Loans"),
         [day.loans, week.loans, last.loan_payments].map(Some),
     ));
     if day.policies != Cost::ZERO || week.policies != Cost::ZERO || last.policies != Cost::ZERO {
-        expenses.push((
+        expenses.push(row(
+            Icon::DistrictTabPolicies,
             tr("Policies"),
             [Some(day.policies), Some(week.policies), Some(last.policies)],
         ));
     }
     if day.fares != Cost::ZERO || week.fares != Cost::ZERO || last.transit_fares != Cost::ZERO {
-        income.push((
+        income.push(row(
+            Icon::Transit,
             tr("Fares"),
             [Some(day.fares), Some(week.fares), Some(last.transit_fares)],
         ));
     }
     if day.tourism != Cost::ZERO || week.tourism != Cost::ZERO || last.tourism != Cost::ZERO {
-        income.push((
+        income.push(row(
+            Icon::Tourism,
             tr("Tourism"),
             [Some(day.tourism), Some(week.tourism), Some(last.tourism)],
         ));
     }
     // Hotel nights (T-321, §22.5).
     if day.hotels != Cost::ZERO || week.hotels != Cost::ZERO || last.hotels != Cost::ZERO {
-        income.push((
+        income.push(row(
+            Icon::Tourism,
             tr("Hotels"),
             [Some(day.hotels), Some(week.hotels), Some(last.hotels)],
         ));
     }
     if day.exports != Cost::ZERO || week.exports != Cost::ZERO || last.exports != Cost::ZERO {
-        income.push((
+        income.push(row(
+            Icon::Industry,
             tr("Exports"),
             [Some(day.exports), Some(week.exports), Some(last.exports)],
         ));
     }
     // Cargo trade (T-210): kept for the week so far only.
     if week.industry_export != Cost::ZERO {
-        income.push((
+        income.push(row(
+            Icon::Industry,
             tr("Industry export"),
             [None, Some(week.industry_export), None],
         ));
     }
     // Entrance fees of the park areas (T-225): kept for the week so far only.
     if week.park_fees != Cost::ZERO {
-        income.push((tr("Park entry fees"), [None, Some(week.park_fees), None]));
+        income.push(row(
+            Icon::Parks,
+            tr("Park entry fees"),
+            [None, Some(week.park_fees), None],
+        ));
     }
     // What bulldozing gave back (BUG-097): the last day and the week so far.
     if day.refunds != Cost::ZERO || week.refunds != Cost::ZERO {
-        income.push((
+        income.push(row(
+            Icon::Bulldozer,
             tr("Demolition refund"),
             [Some(day.refunds), Some(week.refunds), None],
         ));
     }
     if week.industry_import != Cost::ZERO {
-        expenses.push((
+        expenses.push(row(
+            Icon::Industry,
             tr("Industry import"),
             [None, Some(week.industry_import), None],
         ));
@@ -286,14 +326,14 @@ pub fn trend_breakdown(view: &SimView) -> String {
     };
     let (income, expenses) = flow_rows(view, &day, &day, &view.economy.last_week);
     let mut out = tr("Last 24 hours:");
-    for (name, c) in income {
-        if let Some(c) = c[0].filter(|c| c.0 != 0) {
-            out += &format!("\n{name} +{}", format_money(c));
+    for r in income {
+        if let Some(c) = r.money[0].filter(|c| c.0 != 0) {
+            out += &format!("\n{} +{}", r.name, format_money(c));
         }
     }
-    for (name, c) in expenses {
-        if let Some(c) = c[0].filter(|c| c.0 != 0) {
-            out += &format!("\n{name} -{}", format_money(c));
+    for r in expenses {
+        if let Some(c) = r.money[0].filter(|c| c.0 != 0) {
+            out += &format!("\n{} -{}", r.name, format_money(c));
         }
     }
     out
@@ -376,23 +416,27 @@ pub enum BudgetTab {
     Taxes,
     Budgets,
     Loans,
+    Land,
 }
 
 impl BudgetTab {
-    pub const ALL: [BudgetTab; 4] = [
+    pub const ALL: [BudgetTab; 5] = [
         BudgetTab::Overview,
         BudgetTab::Taxes,
         BudgetTab::Budgets,
         BudgetTab::Loans,
+        BudgetTab::Land,
     ];
 
-    /// The tab named `name` (`overview`, `taxes`, `budgets`, `loans`), for `--budget-tab`.
+    /// The tab named `name` (`overview`, `taxes`, `budgets` or `services`, `loans`, `land`), for
+    /// `--budget-tab`.
     pub fn parse(name: &str) -> Option<BudgetTab> {
         Some(match name {
             "overview" => BudgetTab::Overview,
             "taxes" => BudgetTab::Taxes,
-            "budgets" => BudgetTab::Budgets,
+            "budgets" | "services" => BudgetTab::Budgets,
             "loans" => BudgetTab::Loans,
+            "land" => BudgetTab::Land,
             _ => return None,
         })
     }
@@ -401,8 +445,49 @@ impl BudgetTab {
         match self {
             BudgetTab::Overview => "Overview",
             BudgetTab::Taxes => "Taxes",
-            BudgetTab::Budgets => "Service budgets",
+            BudgetTab::Budgets => "Services",
             BudgetTab::Loans => "Loans",
+            BudgetTab::Land => "Land",
+        }
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            BudgetTab::Overview => Icon::Metrics,
+            BudgetTab::Taxes => Icon::DistrictTabTaxes,
+            BudgetTab::Budgets => Icon::Services,
+            BudgetTab::Loans => Icon::Budget,
+            BudgetTab::Land => Icon::OverlayLand,
+        }
+    }
+}
+
+/// The span the Overview's figures are for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Period {
+    Day,
+    Week,
+    #[default]
+    LastWeek,
+}
+
+impl Period {
+    pub const ALL: [Period; 3] = [Period::Day, Period::Week, Period::LastWeek];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Period::Day => "Last day",
+            Period::Week => "This week",
+            Period::LastWeek => "Last week",
+        }
+    }
+
+    /// The column of [`FlowRow::money`].
+    fn column(self) -> usize {
+        match self {
+            Period::Day => 0,
+            Period::Week => 1,
+            Period::LastWeek => 2,
         }
     }
 }
@@ -411,12 +496,16 @@ impl BudgetTab {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BudgetDraft {
     pub tab: BudgetTab,
+    /// The Overview's period (kept while the window is open).
+    pub period: Period,
     taxes: [Option<Draft>; 6],
     budgets: [Option<Draft>; BUDGETED.len()],
     /// The budget row an advice pointed at (§20.3): drawn highlighted.
     pub highlight: Option<ServiceKind>,
-    /// The tile the land section asks to confirm buying (T-150).
+    /// The tile the land overlay asks to confirm buying (T-150).
     pub buy_tile: Option<(u8, u8)>,
+    /// The tile picked in the Land tab: its card is on the right.
+    pub land_pick: Option<(u8, u8)>,
 }
 
 impl BudgetDraft {
@@ -429,15 +518,69 @@ impl BudgetDraft {
     }
 }
 
-/// One slider. Returns the value to send when the edit is finished (pointer released, or a
-/// click / key press that is not a drag), once per edit.
+// ----- colours ----------------------------------------------------------------------------
+
+const GOOD: egui::Color32 = egui::Color32::from_rgb(120, 200, 120);
+const WARN: egui::Color32 = egui::Color32::from_rgb(240, 190, 70);
+const BAD: egui::Color32 = egui::Color32::from_rgb(235, 90, 80);
+const COST: egui::Color32 = egui::Color32::from_rgb(235, 150, 70);
+const BLUE: egui::Color32 = egui::Color32::from_rgb(110, 170, 235);
+
+/// The colour of the `i`-th item of a stacked bar or a list.
+fn item_colour(i: usize) -> egui::Color32 {
+    const PALETTE: [egui::Color32; 10] = [
+        egui::Color32::from_rgb(110, 170, 235),
+        egui::Color32::from_rgb(235, 150, 70),
+        egui::Color32::from_rgb(120, 200, 120),
+        egui::Color32::from_rgb(200, 120, 200),
+        egui::Color32::from_rgb(230, 200, 90),
+        egui::Color32::from_rgb(90, 200, 200),
+        egui::Color32::from_rgb(230, 110, 110),
+        egui::Color32::from_rgb(160, 160, 230),
+        egui::Color32::from_rgb(190, 160, 110),
+        egui::Color32::from_rgb(140, 200, 160),
+    ];
+    PALETTE[i % PALETTE.len()]
+}
+
+/// A short sum with its exact amount (cents) on hover.
+fn money_label_short(ui: &mut egui::Ui, c: Cost) -> egui::Response {
+    ui.label(format_money_short(c))
+        .on_hover_text(format_money(c))
+}
+
+// ----- sliders ----------------------------------------------------------------------------
+
+/// What one frame of [`pct_slider`] reports.
+struct SliderOut {
+    /// The value to send: the edit is finished (pointer released, or a click / key press that is
+    /// not a drag, or a double click), once per edit.
+    send: Option<u8>,
+    /// The value shown now: the draft while one is open.
+    shown: u8,
+    response: egui::Response,
+}
+
+/// What a slider looks like beyond the plain widget.
+#[derive(Clone, Copy, Default)]
+struct SliderLook {
+    width: f32,
+    /// A tick on the track at this value.
+    tick: Option<u8>,
+    /// The track above `tick` is orange.
+    warn_above: bool,
+    /// A double click sets this value.
+    reset: Option<u8>,
+}
+
+/// One slider. Keeps a draft while it is dragged.
 fn pct_slider(
     ui: &mut egui::Ui,
-    label: &str,
     current: u8,
     draft: &mut Option<Draft>,
     range: RangeInclusive<u8>,
-) -> Option<u8> {
+    look: SliderLook,
+) -> SliderOut {
     if let Some(d) = *draft
         && d.sent
         && d.value == current
@@ -445,25 +588,78 @@ fn pct_slider(
         *draft = None;
     }
     let mut v = draft.map_or(current, |d| d.value);
-    let r = ui.add(egui::Slider::new(&mut v, range).suffix("%").text(label));
+    let (lo, hi) = (*range.start(), *range.end());
+    let r = ui
+        .scope(|ui| {
+            ui.spacing_mut().slider_width = look.width;
+            ui.add(egui::Slider::new(&mut v, range).show_value(false))
+        })
+        .inner;
     if r.changed() {
         *draft = Some(Draft {
             value: v,
             sent: false,
         });
     }
-    let finished = r.drag_stopped() || (r.changed() && !r.dragged());
-    match *draft {
+    if let Some(reset) = look.reset
+        && r.double_clicked()
+    {
+        *draft = Some(Draft {
+            value: reset,
+            sent: false,
+        });
+        v = reset;
+    }
+    paint_track(ui, &r, (lo, hi), v, look);
+    let finished = r.drag_stopped()
+        || (r.changed() && !r.dragged())
+        || (look.reset.is_some() && r.double_clicked());
+    let send = match *draft {
         Some(d) if finished && !d.sent => {
             *draft = Some(Draft { sent: true, ..d });
             Some(d.value)
         }
         _ => None,
+    };
+    SliderOut {
+        send,
+        shown: draft.map_or(current, |d| d.value),
+        response: r,
     }
 }
 
-/// The economy window: the balance, then the tabs Overview (history and breakdown), Taxes
-/// and Service budgets. Slider releases push commands into `outbox`.
+/// The tick and the orange part over a slider's track.
+fn paint_track(ui: &egui::Ui, r: &egui::Response, (lo, hi): (u8, u8), v: u8, look: SliderLook) {
+    let Some(tick) = look.tick else { return };
+    // egui's slider: the handle's centre runs `rect.height() / 2.5` inside the rect.
+    let radius = r.rect.height() / 2.5;
+    let (x0, x1) = (r.rect.left() + radius, r.rect.right() - radius);
+    let at = |value: u8| {
+        let t = f32::from(value.clamp(lo, hi) - lo) / f32::from((hi - lo).max(1));
+        x0 + (x1 - x0) * t
+    };
+    let y = r.rect.center().y;
+    let p = ui.painter();
+    if look.warn_above {
+        let handle = at(v);
+        for (a, b) in [(at(tick), handle - radius), (handle + radius, x1)] {
+            if b > a {
+                p.line_segment(
+                    [egui::pos2(a.max(at(tick)), y), egui::pos2(b, y)],
+                    egui::Stroke::new(3.0, COST),
+                );
+            }
+        }
+    }
+    let x = at(tick);
+    p.line_segment(
+        [egui::pos2(x, y - 6.0), egui::pos2(x, y + 6.0)],
+        egui::Stroke::new(1.5, egui::Color32::from_gray(230)),
+    );
+}
+
+/// The economy window: the header, the tabs Overview, Taxes, Services, Loans and Land. Slider
+/// releases push commands into `outbox`.
 pub fn budget_window(
     ctx: &egui::Context,
     open: &mut bool,
@@ -471,17 +667,433 @@ pub fn budget_window(
     draft: &mut BudgetDraft,
     outbox: &mut CommandOutbox,
 ) {
-    crate::frame::window(
-        "budget",
-        crate::icons::Icon::Budget,
-        &tr("Economy & budget"),
-        open,
-    )
-    .show(ctx, |ui| {
+    crate::frame::window("budget", Icon::Budget, &tr("Economy & budget"), open).show(ctx, |ui| {
         budget_contents(ui, view, draft, outbox);
-        crate::tiles::tile_section(ui, view, &mut draft.buy_tile);
     });
 }
+
+/// The width the window keeps on every tab, so it does not jump when the tab changes.
+const WINDOW_WIDTH: f32 = 700.0;
+
+// ----- header and tabs --------------------------------------------------------------------
+
+/// The inside of the economy window (separate so tests can draw it into a plain `Ui`): the
+/// header tiles, the debt banner, the tab row and the open tab.
+pub fn budget_contents(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    draft: &mut BudgetDraft,
+    outbox: &mut CommandOutbox,
+) {
+    ui.set_min_width(WINDOW_WIDTH);
+    header(ui, view);
+    banner(ui, view, draft);
+    ui.horizontal(|ui| {
+        for tab in BudgetTab::ALL {
+            let icon = egui::Image::new(tab.icon().image())
+                .fit_to_exact_size(egui::vec2(Sizes::TAB_ICON, Sizes::TAB_ICON));
+            let button =
+                egui::Button::image_and_text(icon, tr(tab.label())).selected(draft.tab == tab);
+            if ui.add(button).clicked() {
+                draft.tab = tab;
+            }
+        }
+    });
+    ui.separator();
+    match draft.tab {
+        BudgetTab::Overview => overview_tab(ui, view, draft),
+        BudgetTab::Taxes => taxes_tab(ui, view, draft, outbox),
+        BudgetTab::Budgets => budgets_tab(ui, view, draft, outbox),
+        BudgetTab::Loans => loans_tab(ui, view, outbox),
+        BudgetTab::Land => land_tab(ui, view, draft, outbox),
+    }
+}
+
+/// The three tiles: the treasury with its 7-day sparkline, the day and the week.
+fn header(ui: &mut egui::Ui, view: &SimView) {
+    let balance = view.treasury.balance;
+    let week = &view.economy.last_week;
+    ui.columns(3, |cols| {
+        crate::power::tile(&mut cols[0], Icon::Budget, &tr("Treasury"), |ui| {
+            ui.label(
+                egui::RichText::new(format_money_short(balance))
+                    .size(18.0)
+                    .strong()
+                    .color(debt_colour(debt_level(balance))),
+            );
+            let hist: Vec<f32> = view
+                .city
+                .history
+                .iter()
+                .map(|h| h.balance.0 as f32)
+                .collect();
+            crate::metrics::sparkline(ui, &hist, egui::vec2(ui.available_width(), 22.0));
+        })
+        .on_hover_text(format_money(balance));
+        crate::power::tile(&mut cols[1], Icon::Metrics, &tr("Per day"), |ui| {
+            let r = match daily_trend(view) {
+                Some(d) => {
+                    let colour = trend_colour(d.0 >= 0);
+                    ui.horizontal(|ui| {
+                        trend_arrow(ui, d.0 >= 0, colour);
+                        ui.label(
+                            egui::RichText::new(signed_short(d))
+                                .size(18.0)
+                                .strong()
+                                .color(colour),
+                        );
+                    })
+                    .response
+                    .on_hover_text(format_money(d))
+                }
+                None => ui.weak(tr("no hour booked yet")),
+            };
+            r.on_hover_text(trend_breakdown(view));
+        });
+        crate::power::tile(
+            &mut cols[2],
+            Icon::DistrictTabTaxes,
+            &tr("Week result"),
+            |ui| {
+                let net = week.balance();
+                ui.label(
+                    egui::RichText::new(signed_short(net))
+                        .size(18.0)
+                        .strong()
+                        .color(trend_colour(net.0 >= 0)),
+                )
+                .on_hover_text(format_money(net));
+            },
+        )
+        .on_hover_text(if week.week > 0 {
+            trf!("Last week closed: week {week}", week = week.week)
+        } else {
+            tr("No week closed yet.")
+        });
+    });
+}
+
+/// `+$1.2k` or `−$56`.
+fn signed_short(c: Cost) -> String {
+    if c.0 >= 0 {
+        format!("+{}", format_money_short(c))
+    } else {
+        format_money_short(c)
+    }
+}
+
+/// The debt banner under the header: yellow below zero, red near the floor; the button opens
+/// the Loans tab.
+fn banner(ui: &mut egui::Ui, view: &SimView, draft: &mut BudgetDraft) {
+    let balance = view.treasury.balance;
+    let Some(text) = debt_warning(balance) else {
+        return;
+    };
+    let colour = debt_colour(debt_level(balance));
+    egui::Frame::new()
+        .fill(colour.gamma_multiply(0.22))
+        .stroke(egui::Stroke::new(1.0, colour))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(8, 4))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.colored_label(colour, text);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(tr("Loans")).clicked() {
+                        draft.tab = BudgetTab::Loans;
+                    }
+                });
+            });
+        });
+}
+
+// ----- overview ---------------------------------------------------------------------------
+
+/// One line of the Overview: an item and its amount in the chosen period.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Line {
+    pub icon: Icon,
+    pub name: String,
+    pub amount: Cost,
+}
+
+/// The income and expense lines of `period`, biggest first; what is zero or not kept for that
+/// span is left out.
+pub fn period_lines(view: &SimView, period: Period) -> (Vec<Line>, Vec<Line>) {
+    let day = view.flow.last_day(&view.economy).unwrap_or_default();
+    let (income, expenses) =
+        flow_rows(view, &day, &view.flow.week_to_date, &view.economy.last_week);
+    let pick = |rows: Vec<FlowRow>| {
+        let mut lines: Vec<Line> = rows
+            .into_iter()
+            .filter_map(|r| {
+                let amount = r.money[period.column()].filter(|c| c.0 != 0)?;
+                Some(Line {
+                    icon: r.icon,
+                    name: r.name,
+                    amount,
+                })
+            })
+            .collect();
+        lines.sort_by_key(|l| std::cmp::Reverse(l.amount.0));
+        lines
+    };
+    (pick(income), pick(expenses))
+}
+
+fn lines_total(lines: &[Line]) -> Cost {
+    lines.iter().map(|l| l.amount).sum()
+}
+
+/// A horizontal stacked bar of `segments` against `scale` (the shared maximum), the total at
+/// its right. A segment says its name and exact sum on hover.
+fn stack_bar(
+    ui: &mut egui::Ui,
+    title: &str,
+    segments: &[(egui::Color32, String, Cost)],
+    scale: i64,
+    total: Cost,
+) {
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [70.0, 18.0],
+            egui::Label::new(egui::RichText::new(title).strong()),
+        );
+        let width = (ui.available_width() - 80.0).max(60.0);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 16.0), egui::Sense::hover());
+        ui.painter()
+            .rect_filled(rect, 3.0, egui::Color32::from_gray(34));
+        let mut x = rect.left();
+        for (i, (colour, name, amount)) in segments.iter().enumerate() {
+            let w = width * amount.0.max(0) as f32 / scale.max(1) as f32;
+            let seg =
+                egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(w, rect.height()));
+            ui.painter()
+                .rect_filled(seg.shrink2(egui::vec2(0.0, 0.0)), 0.0, *colour);
+            if i + 1 < segments.len() {
+                ui.painter().line_segment(
+                    [seg.right_top(), seg.right_bottom()],
+                    egui::Stroke::new(1.0, egui::Color32::from_gray(30)),
+                );
+            }
+            ui.interact(seg, ui.id().with((title, i)), egui::Sense::hover())
+                .on_hover_text(format!("{name}: {}", format_money(*amount)));
+            x += w;
+        }
+        money_label_short(ui, total);
+    });
+}
+
+/// One list row: icon, name and short sum over a bar `frac` long in the item's colour.
+fn money_row(ui: &mut egui::Ui, line: &Line, colour: egui::Color32, frac: f32, tip: &str) {
+    let w = ui.available_width();
+    let bg = ui.painter().add(egui::Shape::Noop);
+    let r = ui.horizontal(|ui| {
+        ui.set_min_size(egui::vec2(w, 22.0));
+        line.icon.show(ui, Sizes::SECTION_ICON);
+        ui.label(&line.name);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(format_money_short(line.amount));
+        });
+    });
+    let rect = r.response.rect;
+    ui.painter().set(
+        bg,
+        egui::Shape::rect_filled(
+            egui::Rect::from_min_size(
+                rect.min,
+                egui::vec2(w * frac.clamp(0.0, 1.0), rect.height()),
+            ),
+            3.0,
+            colour.gamma_multiply(0.22),
+        ),
+    );
+    r.response
+        .on_hover_text(format!("{}\n{tip}", format_money(line.amount)).trim_end());
+}
+
+/// The Overview tab: the period switch, the income and expense bars on one scale, the two lists
+/// and the treasury over 7 days.
+pub fn overview_tab(ui: &mut egui::Ui, view: &SimView, draft: &mut BudgetDraft) {
+    ui.horizontal(|ui| {
+        for p in Period::ALL {
+            if ui
+                .selectable_label(draft.period == p, tr(p.label()))
+                .clicked()
+            {
+                draft.period = p;
+            }
+        }
+    });
+    let (income, expenses) = period_lines(view, draft.period);
+    let (total_in, total_out) = (lines_total(&income), lines_total(&expenses));
+    let scale = total_in.0.max(total_out.0);
+    let segs = |lines: &[Line], offset: usize| -> Vec<(egui::Color32, String, Cost)> {
+        lines
+            .iter()
+            .enumerate()
+            .map(|(i, l)| (item_colour(i + offset), l.name.clone(), l.amount))
+            .collect()
+    };
+    stack_bar(ui, &tr("Income"), &segs(&income, 0), scale, total_in);
+    stack_bar(ui, &tr("Expenses"), &segs(&expenses, 3), scale, total_out);
+    ui.add_space(4.0);
+    let roads = overview(view).roads;
+    ui.columns(2, |cols| {
+        for (col, lines, offset) in [(0usize, &income, 0usize), (1, &expenses, 3)] {
+            let ui = &mut cols[col];
+            if lines.is_empty() {
+                ui.weak(tr("Nothing booked yet."));
+            }
+            for (i, line) in lines.iter().enumerate() {
+                let tip = if line.icon == Icon::Roads && col == 1 {
+                    roads_tip(&roads)
+                } else {
+                    String::new()
+                };
+                let frac = line.amount.0 as f32 / scale.max(1) as f32;
+                money_row(ui, line, item_colour(i + offset), frac, &tip);
+            }
+        }
+    });
+    ui.separator();
+    ui.horizontal(|ui| {
+        Icon::Metrics.show(ui, Sizes::SECTION_ICON);
+        ui.strong(tr("Treasury, 7 days"));
+    });
+    let samples: Vec<(u64, f32)> = view
+        .city
+        .history
+        .iter()
+        .map(|h| (h.tick, h.balance.0 as f32))
+        .collect();
+    treasury_chart(ui, &samples, egui::vec2(ui.available_width(), 110.0));
+}
+
+/// The roads' weekly upkeep by class, for the tooltip of the Roads line.
+fn roads_tip(roads: &[RoadRow]) -> String {
+    roads
+        .iter()
+        .map(|r| {
+            trf!(
+                "{name}: {money} a week",
+                name = tr(&r.name),
+                money = format_money_short(r.upkeep_week)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The treasury over the hourly history: the area under the line, the zero line, the debt floor
+/// (dashed) when it is in range, a vertical at each game day, and the value under the pointer.
+pub fn treasury_chart(ui: &mut egui::Ui, samples: &[(u64, f32)], size: egui::Vec2) {
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let p = ui.painter_at(rect);
+    p.rect_filled(rect, 3.0, egui::Color32::from_gray(26));
+    if samples.len() < 2 {
+        p.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            tr("No history yet."),
+            egui::FontId::proportional(13.0),
+            egui::Color32::GRAY,
+        );
+        return;
+    }
+    let floor = DEBT_FLOOR.0 as f32;
+    let (mut lo, mut hi) = samples
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), &(_, v)| {
+            (lo.min(v), hi.max(v))
+        });
+    // The debt floor is in the scale only once the treasury has gone far below zero.
+    if lo < floor * 0.5 {
+        lo = lo.min(floor);
+    }
+    let pad = ((hi - lo) * 0.08)
+        .max(hi.abs().max(lo.abs()) * 0.002)
+        .max(100.0);
+    (lo, hi) = (lo - pad, hi + pad);
+    let plot = rect.shrink2(egui::vec2(6.0, 6.0));
+    let y_of = |v: f32| plot.bottom() - plot.height() * (v - lo) / (hi - lo);
+    let (t0, t1) = (
+        samples[0].0,
+        samples[samples.len() - 1].0.max(samples[0].0 + 1),
+    );
+    let x_of = |t: u64| plot.left() + plot.width() * (t - t0) as f32 / (t1 - t0) as f32;
+    // Verticals at each game-day boundary.
+    let mut day = t0 / TICKS_PER_DAY + 1;
+    while day * TICKS_PER_DAY < t1 {
+        let x = x_of(day * TICKS_PER_DAY);
+        p.line_segment(
+            [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
+            egui::Stroke::new(1.0, egui::Color32::from_gray(44)),
+        );
+        day += 1;
+    }
+    // The area hangs from the zero line, or from the plot's edge when zero is out of range.
+    let zero = y_of(0.0).clamp(plot.top(), plot.bottom());
+    for w in samples.windows(2) {
+        let ((ta, va), (tb, vb)) = (w[0], w[1]);
+        let colour = if va + vb >= 0.0 { GOOD } else { BAD }.gamma_multiply(0.25);
+        p.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(x_of(ta), y_of(va)),
+                egui::pos2(x_of(tb), y_of(vb)),
+                egui::pos2(x_of(tb), zero),
+                egui::pos2(x_of(ta), zero),
+            ],
+            colour,
+            egui::Stroke::NONE,
+        ));
+    }
+    if lo < 0.0 && hi > 0.0 {
+        p.line_segment(
+            [
+                egui::pos2(plot.left(), zero),
+                egui::pos2(plot.right(), zero),
+            ],
+            egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+        );
+    }
+    if floor > lo {
+        let y = y_of(floor);
+        p.extend(egui::Shape::dashed_line(
+            &[egui::pos2(plot.left(), y), egui::pos2(plot.right(), y)],
+            egui::Stroke::new(1.0, BAD),
+            5.0,
+            4.0,
+        ));
+    }
+    let line: Vec<egui::Pos2> = samples
+        .iter()
+        .map(|&(t, v)| egui::pos2(x_of(t), y_of(v)))
+        .collect();
+    p.add(egui::Shape::line(line, egui::Stroke::new(1.8, BLUE)));
+    if let Some(pos) = response.hover_pos() {
+        let t = t0 + ((pos.x - plot.left()) / plot.width() * (t1 - t0) as f32).max(0.0) as u64;
+        let i = samples
+            .partition_point(|&(st, _)| st < t)
+            .min(samples.len() - 1);
+        let (st, v) = samples[i];
+        let x = x_of(st);
+        p.line_segment(
+            [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
+            egui::Stroke::new(1.0, egui::Color32::from_gray(200)),
+        );
+        p.circle_filled(egui::pos2(x, y_of(v)), 3.0, egui::Color32::WHITE);
+        let hour = st % TICKS_PER_DAY * 24 / TICKS_PER_DAY;
+        response.on_hover_text_at_pointer(trf!(
+            "{money} · day {day}, {hour}:00",
+            money = format_money(Cost(v as i64)),
+            day = st / TICKS_PER_DAY + 1,
+            hour = hour
+        ));
+    }
+}
+
+// ----- kept helpers ------------------------------------------------------------------------
 
 /// One road class in the overview's expenses.
 #[derive(Clone, Debug, PartialEq)]
@@ -571,249 +1183,6 @@ pub fn overview(view: &SimView) -> Overview {
             .map(|h| h.balance.0 as f32)
             .collect(),
     }
-}
-
-/// The cash-flow table (BUG-040): income by source and expenses by item for the last day, the
-/// week so far and the last week, and the balance of the last two days by hour.
-fn cash_flow_table(ui: &mut egui::Ui, view: &SimView) {
-    let Some(day) = view.flow.last_day(&view.economy) else {
-        ui.weak(tr("No game hour booked yet."));
-        return;
-    };
-    let week = &view.flow.week_to_date;
-    let last = &view.economy.last_week;
-    let (income, expenses) = flow_rows(view, &day, week, last);
-    let cell = |ui: &mut egui::Ui, c: Option<Cost>| {
-        ui.label(c.map_or("–".to_string(), format_money));
-    };
-    egui::Grid::new("cash_flow").striped(true).show(ui, |ui| {
-        ui.strong("");
-        ui.strong(tr("Last day"));
-        ui.strong(tr("This week"));
-        ui.strong(tr("Last week"));
-        ui.end_row();
-        for (title, total_title, rows, total) in [
-            (
-                "Income",
-                "Total income",
-                &income,
-                (
-                    day.income(),
-                    week.income(),
-                    last.income() + last.transit_fares + last.tourism + last.hotels + last.exports,
-                ),
-            ),
-            (
-                "Expenses",
-                "Total expenses",
-                &expenses,
-                (
-                    day.expenses(),
-                    week.expenses(),
-                    last.upkeep() + last.transit_upkeep + last.loan_payments + last.policies,
-                ),
-            ),
-        ] {
-            ui.strong(tr(title));
-            ui.end_row();
-            for (name, c) in rows {
-                ui.label(name);
-                for c in c {
-                    cell(ui, *c);
-                }
-                ui.end_row();
-            }
-            ui.strong(tr(total_title));
-            cell(ui, Some(total.0));
-            cell(ui, Some(total.1));
-            cell(ui, Some(total.2));
-            ui.end_row();
-        }
-        ui.strong(tr("Net"));
-        cell(ui, Some(day.net()));
-        cell(ui, Some(week.net()));
-        cell(ui, Some(last.balance()));
-        ui.end_row();
-    });
-    ui.weak(tr("Balance, last 2 days, by hour"));
-    let hours: Vec<f32> = view
-        .city
-        .history
-        .iter()
-        .rev()
-        .take(48)
-        .rev()
-        .map(|h| h.balance.0 as f32)
-        .collect();
-    crate::metrics::sparkline(ui, &hours, egui::vec2(260.0, 36.0));
-}
-
-/// The Overview tab: last week, the balance history, income by zone and the expenses.
-pub fn overview_tab(ui: &mut egui::Ui, view: &SimView) {
-    let o = overview(view);
-    // A service no milestone has opened has no line unless it moved money (BUG-123).
-    let transit = service_open(view, ServiceKind::Transit)
-        || o.transit_fares != Cost::ZERO
-        || o.transit_upkeep != Cost::ZERO;
-    cash_flow_table(ui, view);
-    ui.separator();
-    ui.strong(tr("Last week"));
-    egui::Grid::new("overview_week").show(ui, |ui| {
-        for (name, cost) in [("Income", o.income), ("Expenses", o.upkeep), ("Net", o.net)] {
-            ui.label(tr(name));
-            ui.label(format_money(cost));
-            ui.end_row();
-        }
-    });
-    ui.weak(tr("Balance, 7 days"));
-    crate::metrics::sparkline(ui, &o.balance_history, egui::vec2(260.0, 36.0));
-    ui.separator();
-    ui.strong(tr("Income by zone"));
-    egui::Grid::new("overview_income").show(ui, |ui| {
-        for (zone, cost) in &o.income_by_zone {
-            zone_label(ui, *zone);
-            ui.label(format_money(*cost));
-            ui.end_row();
-        }
-        if transit {
-            ui.label(tr("Fares"));
-            ui.label(format_money(o.transit_fares));
-            ui.end_row();
-        }
-        ui.label(tr("Tourism"));
-        ui.label(format_money(o.tourism));
-        ui.end_row();
-        if service_open(view, ServiceKind::Tourism) || o.hotels != Cost::ZERO {
-            ui.label(tr("Hotels"));
-            ui.label(format_money(o.hotels));
-            ui.end_row();
-        }
-        ui.label(tr("Exports"));
-        ui.label(format_money(o.exports));
-        ui.end_row();
-    });
-    ui.separator();
-    ui.strong(tr("Expenses"));
-    egui::Grid::new("overview_expenses").show(ui, |ui| {
-        for r in &o.roads {
-            ui.label(trf!(
-                "Roads: {name} ({segments} seg, {meters} m)",
-                name = tr(&r.name),
-                segments = r.segments,
-                meters = format!("{:.0}", r.meters)
-            ));
-            ui.label(format_money(r.upkeep_week));
-            ui.end_row();
-        }
-        ui.label(tr("Roads, all classes"));
-        ui.label(format_money(o.roads_sum));
-        ui.end_row();
-        ui.label(tr("Roads, settled last week"));
-        ui.label(format_money(o.road_upkeep));
-        ui.end_row();
-        ui.label(tr("Service buildings"));
-        ui.label(format_money(o.building_upkeep));
-        ui.end_row();
-        ui.label(tr("Pipes and power lines"));
-        ui.label(format_money(o.utility_upkeep));
-        ui.end_row();
-        if transit {
-            ui.label(tr("Public transport"));
-            ui.label(format_money(o.transit_upkeep));
-            ui.end_row();
-        }
-        ui.label(tr("Loans"));
-        ui.label(format_money(o.loan_payments));
-        ui.end_row();
-        ui.label(tr("Policies"));
-        ui.label(format_money(o.policies));
-        ui.end_row();
-    });
-}
-
-/// The inside of the economy window (separate so tests can draw it into a plain `Ui`): the
-/// balance header, the tab row and the open tab.
-pub fn budget_contents(
-    ui: &mut egui::Ui,
-    view: &SimView,
-    draft: &mut BudgetDraft,
-    outbox: &mut CommandOutbox,
-) {
-    let week = &view.economy.last_week;
-    let balance = view.treasury.balance;
-    ui.horizontal(|ui| {
-        money_label(ui, view);
-        match daily_trend(view) {
-            Some(d) => {
-                ui.label(egui::RichText::new(trend_text(d)).color(trend_colour(d.0 >= 0)));
-            }
-            None => {
-                ui.weak(tr("no hour booked yet"));
-            }
-        }
-        if week.week > 0 {
-            ui.label(trf!("last settled: week {week}", week = week.week));
-        }
-    });
-    if let Some(w) = debt_warning(balance) {
-        ui.colored_label(debt_colour(debt_level(balance)), format!("⚠ {w}"));
-    }
-    ui.horizontal(|ui| {
-        for tab in BudgetTab::ALL {
-            if ui
-                .selectable_label(draft.tab == tab, tr(tab.label()))
-                .clicked()
-            {
-                draft.tab = tab;
-            }
-        }
-    });
-    ui.separator();
-    match draft.tab {
-        BudgetTab::Overview => overview_tab(ui, view),
-        BudgetTab::Taxes => taxes_tab(ui, view, draft, outbox),
-        BudgetTab::Budgets => budgets_tab(ui, view, draft, outbox),
-        BudgetTab::Loans => loans_tab(ui, view, outbox),
-    }
-}
-
-/// The Taxes tab: the tax slider of every open zone type with last week's income (T-045); a
-/// zone no milestone has opened has no row (BUG-123).
-fn taxes_tab(
-    ui: &mut egui::Ui,
-    view: &SimView,
-    draft: &mut BudgetDraft,
-    outbox: &mut CommandOutbox,
-) {
-    let (state, week) = (&view.economy, &view.economy.last_week);
-    ui.strong(tr("Taxes: last day, this week, last week"));
-    let day = view.flow.last_day(state);
-    egui::Grid::new("budget_taxes").show(ui, |ui| {
-        for (i, zone) in TAXED_ZONES.into_iter().enumerate() {
-            if !zone_open(view, zone) {
-                continue;
-            }
-            zone_label(ui, zone);
-            ui.label(format_money(
-                day.map_or(Cost::ZERO, |d| d.income_by_zone[i]),
-            ));
-            ui.label(format_money(view.flow.week_to_date.income_by_zone[i]));
-            ui.label(format_money(week.income_by_zone[i]));
-            let current = state.taxes.get(zone).unwrap_or(0);
-            if let Some(pct) = pct_slider(ui, "", current, &mut draft.taxes[i], TAX_MIN..=TAX_MAX) {
-                outbox.push(tax_command(zone, pct));
-            }
-            ui.end_row();
-        }
-    });
-}
-
-/// A zone's name after its square icon of the zoning palette (BUG-123).
-fn zone_label(ui: &mut egui::Ui, zone: ZoneType) {
-    ui.horizontal(|ui| {
-        crate::icons::zone_icon(zone).show(ui, Sizes::SECTION_ICON);
-        ui.label(tr(zone_name(zone)));
-    });
 }
 
 /// The budget rows the tab shows (§20.3): the [`BUDGETED`] kinds a milestone has opened
@@ -916,142 +1285,657 @@ pub fn transit_hint(view: &SimView, pct: u8, bal: &cp_content::Balance) -> Strin
     )
 }
 
-/// The Service budgets tab (§20.3): a row per open budgeted service: its icon and name, the
-/// slider with 50 / 100 / 150 buttons, the week's cost at the slider's value, the effect and
-/// the sector's balance bar.
+// ----- taxes ------------------------------------------------------------------------------
+
+/// A cell of fixed width in a row of controls.
+fn cell<R>(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, 22.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        add,
+    )
+    .inner
+}
+
+/// A week's tax at rate `new`, from the week's income at rate `old`: income is linear in the
+/// rate. `old` of zero does not divide by zero.
+pub fn tax_estimate(income: Cost, old: u8, new: u8) -> Cost {
+    cost_at(income, old, new)
+}
+
+/// The colour of a demand bar: grey while nobody wants it, green, orange when it is hot.
+fn demand_colour(v: f32) -> egui::Color32 {
+    if v < 20.0 {
+        egui::Color32::from_gray(130)
+    } else if v < 60.0 {
+        GOOD
+    } else {
+        COST
+    }
+}
+
+/// The tooltip of a tax slider: the rate before and after, the estimate and, for homes, the
+/// contentment factor "taxes" before and after (`tax_score`).
+pub fn tax_tip(view: &SimView, zone: ZoneType, current: u8, shown: u8, income: Cost) -> String {
+    let mut out = trf!(
+        "{old}% -> {new}%\n≈ {money} a week (was {was})",
+        old = current,
+        new = shown,
+        money = format_money(tax_estimate(income, current, shown)),
+        was = format_money(income)
+    );
+    let homes = matches!(zone, ZoneType::ResLow | ZoneType::ResHigh);
+    if homes {
+        let knobs = view
+            .content
+            .as_deref()
+            .map(|db| db.balance().contentment.clone())
+            .unwrap_or_default();
+        out += &trf!(
+            "\nContentment, factor “taxes”: {old} -> {new}",
+            old = tax_score(current, &knobs),
+            new = tax_score(shown, &knobs)
+        );
+    } else {
+        out += &tr("\nTaxes do not change the contentment of these zones.");
+    }
+    out
+}
+
+/// The Taxes tab: the week's taxes and their share, a row per open zone (slider with the
+/// neutral-rate tick, the estimate at the slider's rate, the zone's current demand) and the
+/// zones a milestone has not opened yet as chips.
+fn taxes_tab(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    draft: &mut BudgetDraft,
+    outbox: &mut CommandOutbox,
+) {
+    let (state, week) = (&view.economy, &view.economy.last_week);
+    let taxes = week.income();
+    let total = lines_total(&period_lines(view, Period::LastWeek).0);
+    let share = if total.0 > 0 {
+        (taxes.0 as f64 * 100.0 / total.0 as f64).round() as i64
+    } else {
+        0
+    };
+    ui.horizontal(|ui| {
+        Icon::DistrictTabTaxes.show(ui, Sizes::SECTION_ICON);
+        ui.strong(trf!(
+            "Taxes for the week {money} · {share}% of income",
+            money = format_money_short(taxes),
+            share = share
+        ))
+        .on_hover_text(format_money(taxes));
+    });
+    let knobs = view
+        .content
+        .as_deref()
+        .map(|db| db.balance().contentment.clone())
+        .unwrap_or_default();
+    ui.add_space(4.0);
+    for (i, zone) in TAXED_ZONES.into_iter().enumerate() {
+        if !zone_open(view, zone) {
+            continue;
+        }
+        let current = state.taxes.get(zone).unwrap_or(0);
+        let income = week.income_by_zone[i];
+        ui.horizontal(|ui| {
+            cell(ui, 150.0, |ui| zone_label(ui, zone));
+            let look = SliderLook {
+                width: 190.0,
+                tick: Some(knobs.tax_neutral),
+                warn_above: true,
+                reset: None,
+            };
+            let out = cell(ui, 220.0, |ui| {
+                pct_slider(ui, current, &mut draft.taxes[i], TAX_MIN..=TAX_MAX, look)
+            });
+            if let Some(pct) = out.send {
+                outbox.push(tax_command(zone, pct));
+            }
+            let shown = out.shown;
+            cell(ui, 44.0, |ui| {
+                let colour = if shown > knobs.tax_neutral {
+                    COST
+                } else {
+                    ui.visuals().text_color()
+                };
+                ui.label(egui::RichText::new(format!("{shown}%")).color(colour));
+            });
+            cell(ui, 110.0, |ui| {
+                ui.label(trf!(
+                    "≈ {money} a week",
+                    money = format_money_short(tax_estimate(income, current, shown))
+                ))
+                .on_hover_text(trf!(
+                    "was {money} at {pct}%",
+                    money = format_money(income),
+                    pct = current
+                ));
+            });
+            let (_, demand) = crate::panels::zone_group_demand(zone, &view.demand);
+            cell(ui, 100.0, |ui| {
+                ui.add(
+                    egui::ProgressBar::new(demand_fraction(demand))
+                        .desired_width(90.0)
+                        .desired_height(8.0)
+                        .fill(demand_colour(demand)),
+                )
+                .on_hover_text(trf!("Demand now: {n}", n = format!("{demand:.0}")));
+            });
+            let tip = tax_tip(view, zone, current, shown, income);
+            if out.response.dragged() {
+                egui::Tooltip::always_open(
+                    ui.ctx().clone(),
+                    ui.layer_id(),
+                    out.response.id,
+                    egui::PopupAnchor::Pointer,
+                )
+                .show(|ui| {
+                    ui.label(tip);
+                });
+            } else {
+                out.response.on_hover_text(tip);
+            }
+        });
+    }
+    let later = closed_zones(view);
+    if !later.is_empty() {
+        ui.add_space(6.0);
+        ui.weak(tr("Open later:"));
+        ui.horizontal_wrapped(|ui| {
+            for (zone, pop) in later {
+                crate::power::chip(
+                    ui,
+                    crate::icons::zone_icon(zone),
+                    &format!(
+                        "{} · {}",
+                        tr(zone_name(zone)),
+                        crate::buildings::thousands(pop)
+                    ),
+                    None,
+                );
+            }
+        });
+    }
+}
+
+/// The taxed zones no milestone has opened yet, with the residents the milestone needs.
+pub fn closed_zones(view: &SimView) -> Vec<(ZoneType, u32)> {
+    let Some(db) = view.content.as_deref() else {
+        return Vec::new();
+    };
+    TAXED_ZONES
+        .into_iter()
+        .filter(|&z| !zone_open(view, z))
+        .filter_map(|z| {
+            let m = db.zone_unlock_milestone(z)?;
+            Some((z, db.milestones().get(m)?.population))
+        })
+        .collect()
+}
+
+/// A zone's name after its square icon of the zoning palette (BUG-123).
+fn zone_label(ui: &mut egui::Ui, zone: ZoneType) {
+    ui.horizontal(|ui| {
+        crate::icons::zone_icon(zone).show(ui, Sizes::SECTION_ICON);
+        ui.label(tr(zone_name(zone)));
+    });
+}
+
+// ----- services ---------------------------------------------------------------------------
+
+/// The groups of the Services tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServiceGroup {
+    Utilities,
+    City,
+    Transport,
+    Leisure,
+}
+
+impl ServiceGroup {
+    const ALL: [ServiceGroup; 4] = [
+        ServiceGroup::Utilities,
+        ServiceGroup::City,
+        ServiceGroup::Transport,
+        ServiceGroup::Leisure,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            ServiceGroup::Utilities => "Utilities",
+            ServiceGroup::City => "City services",
+            ServiceGroup::Transport => "Transport",
+            ServiceGroup::Leisure => "Leisure",
+        }
+    }
+}
+
+pub fn service_group(kind: ServiceKind) -> ServiceGroup {
+    match kind {
+        ServiceKind::Water | ServiceKind::Sewage | ServiceKind::Power => ServiceGroup::Utilities,
+        ServiceKind::Roads | ServiceKind::Transit => ServiceGroup::Transport,
+        ServiceKind::Park => ServiceGroup::Leisure,
+        _ => ServiceGroup::City,
+    }
+}
+
+/// The open budget rows by group, in [`SERVICE_ORDER`] inside a group; empty groups are left
+/// out.
+pub fn budget_groups(view: &SimView) -> Vec<(ServiceGroup, Vec<ServiceKind>)> {
+    let rows = budget_rows(view);
+    ServiceGroup::ALL
+        .into_iter()
+        .filter_map(|g| {
+            let mut kinds: Vec<ServiceKind> = rows
+                .iter()
+                .copied()
+                .filter(|&k| service_group(k) == g)
+                .collect();
+            kinds.sort_by_key(|k| {
+                SERVICE_ORDER
+                    .iter()
+                    .position(|o| o == k)
+                    .unwrap_or(usize::MAX)
+            });
+            (!kinds.is_empty()).then_some((g, kinds))
+        })
+        .collect()
+}
+
+/// The open sector of `kind` with the least supply against its demand.
+fn tightest_sector(
+    view: &SimView,
+    kind: ServiceKind,
+) -> Option<&cp_sim::city_services::SectorBalance> {
+    let sectors = budget_sectors(kind);
+    view.city
+        .services
+        .iter()
+        .filter(|r| !r.locked && sectors.contains(&r.sector))
+        .min_by(|a, b| coverage_of(a).total_cmp(&coverage_of(b)))
+}
+
+fn coverage_of(r: &cp_sim::city_services::SectorBalance) -> f32 {
+    r.supply / r.demand.max(1.0)
+}
+
+/// How much of its demand a service's sector supplies: `supply / demand.max(1)` of the
+/// tightest open sector, not clamped (`1.0` = exactly enough). `None` without a sector (roads,
+/// transit, parks).
+pub fn budget_coverage(view: &SimView, kind: ServiceKind) -> Option<f32> {
+    tightest_sector(view, kind).map(coverage_of)
+}
+
+/// The colour of a coverage: under 90 % red, to 105 % yellow, above green.
+pub fn coverage_colour(ratio: f32) -> egui::Color32 {
+    if ratio < 0.9 {
+        BAD
+    } else if ratio <= 1.05 {
+        WARN
+    } else {
+        GOOD
+    }
+}
+
+/// The coverage bar: filled to `ratio` of 150 %, a tick at 100 %; the label says the percent.
+fn coverage_bar(ui: &mut egui::Ui, view: &SimView, kind: ServiceKind) {
+    let Some(sector) = tightest_sector(view, kind) else {
+        ui.weak("—");
+        return;
+    };
+    let ratio = coverage_of(sector);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(90.0, 8.0), egui::Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(rect, 3.0, egui::Color32::from_gray(40));
+    let w = rect.width() * (ratio / 1.5).clamp(0.0, 1.0);
+    p.rect_filled(
+        egui::Rect::from_min_size(rect.min, egui::vec2(w, rect.height())),
+        3.0,
+        coverage_colour(ratio),
+    );
+    let x = rect.left() + rect.width() / 1.5;
+    p.line_segment(
+        [
+            egui::pos2(x, rect.top() - 2.0),
+            egui::pos2(x, rect.bottom() + 2.0),
+        ],
+        egui::Stroke::new(1.5, egui::Color32::WHITE),
+    );
+    ui.label(egui::RichText::new(format!("{:.0}%", ratio * 100.0)).color(coverage_colour(ratio)));
+    response.on_hover_ui(|ui| {
+        ui.label(trf!(
+            "Supplies {supply} — needs {demand} — margin {margin}%",
+            supply = format!("{:.0} {}", sector.supply, sector.unit),
+            demand = format!("{:.0} {}", sector.demand, sector.unit),
+            margin = format!("{:+.0}", (ratio - 1.0) * 100.0)
+        ));
+        for (frac, colour) in [
+            (sector.supply, coverage_colour(ratio)),
+            (sector.demand, egui::Color32::from_gray(160)),
+        ] {
+            let top = sector.supply.max(sector.demand).max(1.0);
+            ui.add(
+                egui::ProgressBar::new(frac / top)
+                    .desired_width(160.0)
+                    .desired_height(6.0)
+                    .fill(colour),
+            );
+        }
+    });
+}
+
+/// The tooltip of a service's name: what its budget does in words, the cost against 100 % and,
+/// for the police, the bribery risk.
+pub fn service_tip(
+    view: &SimView,
+    kind: ServiceKind,
+    current: u8,
+    shown: u8,
+    bal: &cp_content::Balance,
+) -> String {
+    let mut out = effect_text(kind, shown, bal);
+    if kind == ServiceKind::Transit {
+        out += &format!("\n{}", transit_hint(view, shown, bal));
+    }
+    if let Some(c) = week_cost(view, kind).filter(|c| c.0 != 0) {
+        let diff = cost_at(c, current, shown).0 - cost_at(c, current, 100).0;
+        let sign = if diff >= 0 { "+" } else { "−" };
+        out += &trf!(
+            "\nAgainst 100%: {sign}{money} a week",
+            sign = sign,
+            money = format_money(Cost(diff.abs()))
+        );
+    }
+    if kind == ServiceKind::Police
+        && let Some(db) = view.content.as_deref()
+    {
+        out += &format!(
+            "\n{}",
+            crate::axis::police_terms(&db.balance().corruption, shown)
+        );
+    }
+    out
+}
+
+/// The Services tab (§20.3): the weekly cost of the services as one bar, then the open rows by
+/// group: icon and name, the slider (a tick at 100), the percent, the week's cost at it and the
+/// coverage of the sector.
 fn budgets_tab(
     ui: &mut egui::Ui,
     view: &SimView,
     draft: &mut BudgetDraft,
     outbox: &mut CommandOutbox,
 ) {
-    ui.strong(tr("Service budgets"));
     let fallback = cp_content::Balance::default();
     let bal = view.content.as_deref().map_or(&fallback, |db| db.balance());
-    // Thirteen rows do not fit a small screen: they scroll, clear of the bottom bar.
-    let max = (ui.ctx().content_rect().height() * 0.6).max(240.0);
-    egui::ScrollArea::vertical()
-        .id_salt("budget_rows")
-        .max_height(max)
-        .show(ui, |ui| budget_rows_ui(ui, view, draft, outbox, bal));
+    let segs: Vec<(egui::Color32, String, Cost)> = budget_rows(view)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, k)| {
+            let c = week_cost(view, k).filter(|c| c.0 > 0)?;
+            Some((
+                item_colour(i),
+                tr(crate::buildings::kind_label(k).as_str()),
+                c,
+            ))
+        })
+        .collect();
+    let total: Cost = segs.iter().map(|s| s.2).sum();
+    stack_bar(ui, &tr("Per week"), &segs, total.0, total);
+    ui.add_space(2.0);
+    // Many rows on a small screen scroll, clear of the bottom bar.
+    let groups = budget_groups(view);
+    let rows: usize = groups.iter().map(|(_, k)| k.len() + 1).sum();
+    let free = ui.ctx().content_rect().height() * 0.62;
+    let body = |ui: &mut egui::Ui| {
+        for (group, kinds) in groups {
+            ui.weak(tr(group.label()));
+            for kind in kinds {
+                service_row(ui, view, draft, outbox, bal, kind);
+            }
+        }
+    };
+    if rows as f32 * 30.0 <= free {
+        body(ui);
+    } else {
+        egui::ScrollArea::vertical()
+            .id_salt("budget_rows")
+            .max_height(free.max(240.0))
+            .auto_shrink([false, false])
+            .show(ui, body);
+    }
 }
 
-/// The rows of [`budgets_tab`].
-fn budget_rows_ui(
+fn service_row(
     ui: &mut egui::Ui,
     view: &SimView,
     draft: &mut BudgetDraft,
     outbox: &mut CommandOutbox,
     bal: &cp_content::Balance,
+    kind: ServiceKind,
 ) {
-    for kind in budget_rows(view) {
-        let Some(i) = BUDGETED.iter().position(|&k| k == kind) else {
-            continue;
-        };
-        let current = view.budgets.get(kind);
-        let mut frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(4, 2));
-        if draft.highlight == Some(kind) {
-            frame = frame
-                .fill(ui.visuals().selection.bg_fill.gamma_multiply(0.35))
-                .corner_radius(4.0);
-        }
-        frame.show(ui, |ui| {
-            ui.horizontal(|ui| {
-                crate::buildings::kind_icon(kind).show(ui, Sizes::SECTION_ICON);
-                let name = tr(crate::buildings::kind_label(kind).as_str());
-                if let Some(pct) = pct_slider(
+    let Some(i) = BUDGETED.iter().position(|&k| k == kind) else {
+        return;
+    };
+    let current = view.budgets.get(kind);
+    let mut frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(4, 1));
+    if draft.highlight == Some(kind) {
+        frame = frame
+            .fill(ui.visuals().selection.bg_fill.gamma_multiply(0.35))
+            .corner_radius(4.0);
+    }
+    frame.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            let name = tr(crate::buildings::kind_label(kind).as_str());
+            let shown_now = draft.budgets[i].map_or(current, |d| d.value);
+            let tip = service_tip(view, kind, current, shown_now, bal);
+            cell(ui, 150.0, |ui| {
+                kind_row_label(ui, kind, &name, &tip);
+            });
+            let look = SliderLook {
+                width: 170.0,
+                tick: Some(100),
+                warn_above: false,
+                reset: Some(100),
+            };
+            let out = cell(ui, 200.0, |ui| {
+                pct_slider(
                     ui,
-                    &name,
                     current,
                     &mut draft.budgets[i],
                     BUDGET_MIN..=BUDGET_MAX,
-                ) {
-                    outbox.push(budget_command(kind, pct));
-                }
-                for mark in [BUDGET_MIN, 100, BUDGET_MAX] {
-                    if ui
-                        .small_button(format!("{mark}"))
-                        .on_hover_text(trf!("Set to {pct}%", pct = mark))
+                    look,
+                )
+            });
+            if let Some(pct) = out.send {
+                outbox.push(budget_command(kind, pct));
+            }
+            let shown = out.shown;
+            cell(ui, 62.0, |ui| {
+                let colour = match shown.cmp(&100) {
+                    std::cmp::Ordering::Less => COST,
+                    std::cmp::Ordering::Equal => ui.visuals().text_color(),
+                    std::cmp::Ordering::Greater => BLUE,
+                };
+                ui.label(egui::RichText::new(format!("{shown}%")).color(colour));
+                if shown != 100
+                    && ui
+                        .small_button("↺")
+                        .on_hover_text(tr("Back to 100%"))
                         .clicked()
-                        && mark != current
-                    {
-                        draft.budgets[i] = Some(Draft {
-                            value: mark,
-                            sent: true,
-                        });
-                        outbox.push(budget_command(kind, mark));
-                    }
+                {
+                    draft.budgets[i] = Some(Draft {
+                        value: 100,
+                        sent: true,
+                    });
+                    outbox.push(budget_command(kind, 100));
                 }
             });
-            let shown = draft.budgets[i].map_or(current, |d| d.value);
-            ui.horizontal(|ui| {
-                ui.add_space(Sizes::SECTION_ICON + 4.0);
+            cell(ui, 84.0, |ui| {
                 if let Some(c) = week_cost(view, kind).filter(|c| c.0 != 0) {
                     let c = cost_at(c, current, shown);
-                    ui.label(trf!("-{money} / week", money = format_money(c)));
-                }
-                ui.weak(effect_text(kind, shown, bal));
-                if let Some(b) = budget_balance(view, kind) {
-                    crate::services::bar(ui, b);
+                    crate::power::chip(ui, Icon::Budget, &format_money_short(c), Some(false))
+                        .on_hover_text(trf!("-{money} / week", money = format_money(c)));
                 }
             });
-            if kind == ServiceKind::Transit {
-                ui.horizontal(|ui| {
-                    ui.add_space(Sizes::SECTION_ICON + 4.0);
-                    ui.weak(transit_hint(view, shown, bal));
-                });
-            }
+            cell(ui, 140.0, |ui| coverage_bar(ui, view, kind));
         });
+    });
+}
+
+fn kind_row_label(ui: &mut egui::Ui, kind: ServiceKind, name: &str, tip: &str) {
+    ui.horizontal(|ui| {
+        crate::buildings::kind_icon(kind).show(ui, Sizes::SECTION_ICON);
+        ui.label(name);
+    })
+    .response
+    .on_hover_text(tip);
+}
+
+// ----- loans ------------------------------------------------------------------------------
+
+/// The payments' share of the week's income that the bar's tick marks.
+pub const LOAN_SHARE_LIMIT: f32 = 0.30;
+
+/// Weekly loan payments as a share of the week's income; with payments but no income, 1.
+pub fn loan_share(payments: Cost, income: Cost) -> f32 {
+    if payments.0 <= 0 {
+        0.0
+    } else if income.0 <= 0 {
+        1.0
+    } else {
+        payments.0 as f32 / income.0 as f32
     }
 }
 
-/// The Loans tab (T-130): the bank's offers with a Take button, then the active loans with a
-/// pay-off button. Only sends `TakeLoan` / `RepayLoan`; the sim checks the rest.
+/// Under 15 % green, to 30 % yellow, above red.
+pub fn loan_share_colour(share: f32) -> egui::Color32 {
+    if share < 0.15 {
+        GOOD
+    } else if share <= LOAN_SHARE_LIMIT {
+        WARN
+    } else {
+        BAD
+    }
+}
+
+/// What a loan costs over its term above the sum borrowed.
+pub fn loan_overpay(weekly: Cost, weeks: u16, amount: Cost) -> Cost {
+    Cost(weekly.0 * i64::from(weeks) - amount.0)
+}
+
+/// The Loans tab (T-130): the debt and payment tiles, the bank's offers as cards with a Take
+/// button, then the active loans with a pay-off button. Only sends `TakeLoan` / `RepayLoan`;
+/// the sim checks the rest.
 fn loans_tab(ui: &mut egui::Ui, view: &SimView, outbox: &mut CommandOutbox) {
     let offers = view.loan_offers();
+    let debt: Cost = view
+        .economy
+        .loans
+        .iter()
+        .map(|l| l.principal_left + l.interest_left)
+        .sum();
+    let weekly: Cost = view.economy.loans.iter().map(|l| l.weekly()).sum();
+    let income = lines_total(&period_lines(view, Period::LastWeek).0);
+    let share = loan_share(weekly, income);
+    ui.columns(2, |cols| {
+        crate::power::tile(&mut cols[0], Icon::Budget, &tr("Debt to the bank"), |ui| {
+            ui.label(
+                egui::RichText::new(format_money_short(debt))
+                    .size(18.0)
+                    .strong(),
+            )
+            .on_hover_text(format_money(debt));
+        });
+        crate::power::tile(
+            &mut cols[1],
+            Icon::DealMoney,
+            &trf!(
+                "Payments · {share}% of income",
+                share = (share * 100.0).round() as i64
+            ),
+            |ui| {
+                crate::power::bar(
+                    ui,
+                    share / (2.0 * LOAN_SHARE_LIMIT),
+                    Some(0.5),
+                    loan_share_colour(share),
+                );
+                ui.label(trf!("{money} a week", money = format_money_short(weekly)))
+                    .on_hover_text(format_money(weekly));
+            },
+        );
+    });
+    ui.add_space(4.0);
     ui.strong(tr("Bank offers"));
     if offers.is_empty() {
         ui.weak(tr("The bank has no offers."));
     }
     for o in &offers {
+        let amount = Cost::from_units(o.offer.amount);
         let weekly = Loan::new(o.index, &o.offer, view.tick).weekly();
-        ui.group(|ui| {
-            ui.horizontal(|ui| {
-                ui.label(trf!(
-                    plural "{amount}  ·  {pct}% interest  ·  {n} weeks",
-                    n = o.offer.weeks,
-                    amount = format_money(Cost::from_units(o.offer.amount)),
-                    pct = o.offer.interest_pct
+        let taken = o.active.is_some();
+        let closed = !o.available && !taken;
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.add_enabled_ui(!closed, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format_money_short(amount))
+                            .size(18.0)
+                            .strong(),
+                    )
+                    .on_hover_text(format_money(amount));
+                    crate::power::chip(
+                        ui,
+                        Icon::Info,
+                        &trf!("rate {pct}%", pct = o.offer.interest_pct),
+                        None,
+                    );
+                    crate::power::chip(
+                        ui,
+                        Icon::Deadline,
+                        &trf!(plural "{n} weeks", n = o.offer.weeks),
+                        None,
+                    );
+                    crate::power::chip(
+                        ui,
+                        Icon::DealMoney,
+                        &trf!("−{money} a week", money = format_money_short(weekly)),
+                        Some(false),
+                    )
+                    .on_hover_text(format_money(weekly));
+                    let over = loan_overpay(weekly, o.offer.weeks, amount);
+                    crate::power::chip(
+                        ui,
+                        Icon::Budget,
+                        &trf!("overpay {money}", money = format_money_short(over)),
+                        None,
+                    )
+                    .on_hover_text(format_money(over));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if taken {
+                            ui.add_enabled(false, egui::Button::new(tr("Taken")))
+                                .on_disabled_hover_text(tr(
+                                    "Already taken; pay it off to take it again.",
+                                ));
+                        } else if o.available {
+                            if ui.button(tr("Take")).clicked() {
+                                outbox.push(take_loan_command(o.index));
+                            }
+                        }
+                    });
+                });
+            });
+            if closed {
+                ui.weak(trf!(
+                    plural "The bank wants {n} residents.",
+                    n = o.offer.min_population
                 ));
-                let label = if o.active.is_some() {
-                    tr("Taken")
-                } else {
-                    tr("Take")
-                };
-                let r = ui.add_enabled(o.available, egui::Button::new(label));
-                let r = if o.active.is_some() {
-                    r.on_disabled_hover_text(tr("Already taken; pay it off to take it again."))
-                } else if o.available {
-                    r
-                } else {
-                    r.on_disabled_hover_text(trf!(
-                        plural "The bank wants {n} residents.",
-                        n = o.offer.min_population
-                    ))
-                };
-                if r.clicked() {
-                    outbox.push(take_loan_command(o.index));
-                }
-            });
-            ui.weak(if o.offer.min_population > 0 {
-                trf!(
-                    plural "Weekly payment {money}  ·  from {n} residents",
-                    n = o.offer.min_population,
-                    money = format_money(weekly)
-                )
-            } else {
-                trf!("Weekly payment {money}", money = format_money(weekly))
-            });
+            }
         });
     }
     ui.separator();
@@ -1060,38 +1944,108 @@ fn loans_tab(ui: &mut egui::Ui, view: &SimView, outbox: &mut CommandOutbox) {
         ui.weak(tr("No active loans."));
     }
     for l in &view.economy.loans {
-        ui.group(|ui| {
-            ui.label(trf!(
-                "Offer {offer}: debt left {debt}, interest left {interest}",
-                offer = u16::from(l.offer) + 1,
-                debt = format_money(l.principal_left),
-                interest = format_money(l.interest_left)
-            ));
+        let offer = offers.iter().find(|o| o.index == l.offer).map(|o| &o.offer);
+        let amount = offer.map_or(l.principal_left, |o| Cost::from_units(o.amount));
+        let total_weeks = offer.map_or(l.weeks_left, |o| o.weeks).max(1);
+        let paid = 1.0 - f32::from(l.weeks_left) / f32::from(total_weeks);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format_money_short(amount))
+                        .size(16.0)
+                        .strong(),
+                )
+                .on_hover_text(format_money(amount));
                 ui.label(trf!(
-                    plural "{n} weeks left  ·  {money} a week",
+                    plural "left {money} · {n} weeks",
                     n = l.weeks_left,
+                    money = format_money_short(l.principal_left + l.interest_left)
+                ))
+                .on_hover_text(trf!(
+                    "Debt left {debt}, interest left {interest}, {money} a week",
+                    debt = format_money(l.principal_left),
+                    interest = format_money(l.interest_left),
                     money = format_money(l.weekly())
                 ));
-                let can = view.treasury.balance >= l.principal_left;
-                let r = ui.add_enabled(
-                    can,
-                    egui::Button::new(trf!(
-                        "Pay off early — {money}",
-                        money = format_money(l.principal_left)
-                    )),
-                );
-                let r = if can {
-                    r
-                } else {
-                    r.on_disabled_hover_text(tr("Not enough money."))
-                };
-                if r.clicked() {
-                    outbox.push(repay_loan_command(l.offer));
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let can = view.treasury.balance >= l.principal_left;
+                    let r = ui.add_enabled(
+                        can,
+                        egui::Button::new(trf!(
+                            "Pay off {money}",
+                            money = format_money_short(l.principal_left)
+                        )),
+                    );
+                    let r = if can {
+                        r.on_hover_text(format_money(l.principal_left))
+                    } else {
+                        r.on_disabled_hover_text(trf!(
+                            "Not enough: {money} short",
+                            money = format_money(l.principal_left - view.treasury.balance)
+                        ))
+                    };
+                    if r.clicked() {
+                        outbox.push(repay_loan_command(l.offer));
+                    }
+                });
             });
+            ui.add(
+                egui::ProgressBar::new(paid.clamp(0.0, 1.0))
+                    .desired_height(6.0)
+                    .fill(GOOD),
+            );
         });
     }
+}
+
+// ----- land -------------------------------------------------------------------------------
+
+/// The Land tab: the tile grid and, beside it, the card of the picked tile with the purchase.
+fn land_tab(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    draft: &mut BudgetDraft,
+    outbox: &mut CommandOutbox,
+) {
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| crate::tiles::tile_section(ui, view, &mut draft.land_pick));
+        ui.separator();
+        ui.vertical(|ui| {
+            ui.set_min_width(220.0);
+            let owned = (0..TILES_PER_SIDE as u8)
+                .flat_map(|x| (0..TILES_PER_SIDE as u8).map(move |z| (x, z)))
+                .filter(|&t| tile_state(view, t) == TileState::Owned)
+                .count();
+            ui.strong(trf!(
+                "Owned: {n} of {m}",
+                n = owned,
+                m = TILES_PER_SIDE * TILES_PER_SIDE
+            ));
+            ui.add_space(6.0);
+            match draft.land_pick.map(|t| (t, tile_state(view, t))) {
+                Some((tile, TileState::Buyable(price))) => {
+                    ui.label(trf!("Plot {x}·{z}", x = tile.0 + 1, z = tile.1 + 1));
+                    ui.label(
+                        egui::RichText::new(format_money_short(price))
+                            .size(18.0)
+                            .strong(),
+                    )
+                    .on_hover_text(format_money(price));
+                    if ui
+                        .button(trf!("Buy for {price}", price = format_money_short(price)))
+                        .clicked()
+                    {
+                        outbox.push(SimCommand::Terrain(TerrainCommand::BuyTile { tile }));
+                        draft.land_pick = None;
+                    }
+                }
+                _ => {
+                    ui.weak(tr("Pick a plot next to your land."));
+                }
+            }
+        });
+    });
 }
 
 pub fn take_loan_command(offer: u8) -> SimCommand {
@@ -1120,8 +2074,8 @@ mod tests {
         view.flow.hours.push_back((1, f));
         // One hour is scaled up to the day: (100 - 30) × 24.
         assert_eq!(daily_trend(&view), Some(Cost(1_680)));
-        assert_eq!(trend_text(Cost(3_850)), "+$38.50/day");
-        assert_eq!(trend_text(Cost(-12_345)), "-$123.45/day");
+        assert_eq!(trend_text(Cost(3_850)), "+$38/day");
+        assert_eq!(trend_text(Cost(-12_345)), "-$123/day");
         assert!(trend_breakdown(&view).contains("Roads -"));
 
         let city = std::sync::Arc::make_mut(&mut view.city);
@@ -1175,7 +2129,7 @@ mod tests {
                 .unwrap()
                 .contains("debt limit")
         );
-        assert!(debt_warning(Cost(-100)).unwrap().contains("-$20,000.00"));
+        assert!(debt_warning(Cost(-100)).unwrap().contains("−$20.0k"));
     }
 
     #[test]
@@ -1253,9 +2207,9 @@ mod tests {
         // Find the first slider: the first widget that reacts to a press is hard to locate
         // without its rect, so scan along the row of the first tax slider.
         let mut start = None;
-        let ys = [60.0f32, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0];
+        let ys: Vec<f32> = (60..320).step_by(4).map(|y| y as f32).collect();
         'search: for y in ys {
-            for x in (200..520).step_by(10) {
+            for x in (120..520).step_by(10) {
                 let pos = egui::pos2(x as f32, y);
                 let ctx2 = egui::Context::default();
                 let mut d = BudgetDraft::on(BudgetTab::Taxes);
@@ -1430,12 +2384,7 @@ mod tests {
         let sim = SimRunner::new(1);
         let view = sim.view();
         let text = painted(&view, &mut BudgetDraft::default());
-        for want in [
-            "Last week",
-            "Income by zone",
-            "Expenses",
-            "Roads, all classes",
-        ] {
+        for want in ["Last week", "Income", "Expenses", "Treasury, 7 days"] {
             assert!(text.iter().any(|t| t == want), "{want}: {text:?}");
         }
         let o = overview(&view);
@@ -1482,16 +2431,19 @@ mod tests {
         // `cargo test -p cp_ui road_classes -- --nocapture` prints what the Overview paints.
         println!("{}", text.join(" | "));
         let week = &view.economy.last_week;
+        // The Overview's default period is last week: the roads, buildings and pipes it lists,
+        // in the short form.
         let mut values = vec![
-            format_money(o.roads_sum),
-            format_money(o.road_upkeep),
-            format_money(week.building_upkeep),
-            format_money(week.utility_upkeep),
-            format_money(week.income()),
-            format_money(week.upkeep()),
+            format_money_short(o.road_upkeep),
+            format_money_short(week.building_upkeep),
+            format_money_short(week.utility_upkeep),
         ];
-        values.extend(o.income_by_zone.iter().map(|(_, c)| format_money(*c)));
-        values.extend(o.roads.iter().map(|r| format_money(r.upkeep_week)));
+        values.extend(
+            o.income_by_zone
+                .iter()
+                .filter(|(_, c)| c.0 != 0)
+                .map(|(_, c)| format_money_short(*c)),
+        );
         for v in values {
             assert!(text.contains(&v), "{v} not painted: {text:?}");
         }
@@ -1513,7 +2465,12 @@ mod tests {
             })
         };
         draw(&mut draft, vec![]);
-        for tab in [BudgetTab::Taxes, BudgetTab::Budgets, BudgetTab::Overview] {
+        for tab in [
+            BudgetTab::Taxes,
+            BudgetTab::Budgets,
+            BudgetTab::Land,
+            BudgetTab::Overview,
+        ] {
             let texts = draw(&mut draft, vec![]);
             let (_, pos) = texts
                 .iter()
@@ -1530,54 +2487,50 @@ mod tests {
         assert!(
             text(BudgetTab::Overview)
                 .iter()
-                .any(|t| t == "Income by zone")
+                .any(|t| t == "Treasury, 7 days")
         );
         assert!(
             text(BudgetTab::Taxes)
                 .iter()
-                .any(|t| t.starts_with("Taxes"))
+                .any(|t| t.starts_with("Taxes for the week"))
         );
-        assert!(
-            text(BudgetTab::Budgets)
-                .iter()
-                .any(|t| t == "Service budgets")
-        );
+        assert!(text(BudgetTab::Budgets).iter().any(|t| t == "Per week"));
         assert!(
             !text(BudgetTab::Budgets)
                 .iter()
-                .any(|t| t == "Income by zone")
+                .any(|t| t == "Treasury, 7 days")
         );
     }
 
-    /// Draws the Loans tab, then clicks along a grid of points until a command appears.
+    /// Draws the Loans tab, then clicks each button ("Take", "Pay off …") until a command
+    /// appears.
     fn click_for_command(view: &SimView) -> Option<SimCommand> {
-        for y in (30..600).step_by(6) {
-            for x in (20..600).step_by(12) {
-                let pos = egui::pos2(x as f32, y as f32);
-                let ctx = egui::Context::default();
-                let mut draft = BudgetDraft::on(BudgetTab::Loans);
-                let mut outbox = CommandOutbox::default();
-                let ev = |pressed| egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                };
-                for (t, events) in [
-                    (0.0, vec![]),
-                    (0.1, vec![egui::Event::PointerMoved(pos), ev(true)]),
-                    (0.2, vec![ev(false)]),
-                ] {
-                    crate::testutil::frame(&ctx, input(t, events), |ui| {
-                        budget_contents(ui, view, &mut draft, &mut outbox);
-                    });
-                }
-                if let Some(c) = outbox.iter().next() {
-                    return Some(c.clone());
-                }
+        let ctx = egui::Context::default();
+        let mut draft = BudgetDraft::on(BudgetTab::Loans);
+        let mut outbox = CommandOutbox::default();
+        let mut draw = |t: f64, events: Vec<egui::Event>, draft: &mut BudgetDraft| {
+            crate::testutil::frame_texts(&ctx, input(t, events), |ui| {
+                budget_contents(ui, view, draft, &mut outbox)
+            })
+        };
+        draw(0.0, vec![], &mut draft);
+        let texts = draw(0.1, vec![], &mut draft);
+        let buttons: Vec<egui::Pos2> = texts
+            .iter()
+            .filter(|(t, _)| t == "Take" || t.starts_with("Pay off"))
+            .map(|(_, p)| *p + egui::vec2(4.0, 4.0))
+            .collect();
+        let mut t = 0.2;
+        for pos in buttons {
+            let [down, up] = crate::testutil::click(pos);
+            for events in [vec![egui::Event::PointerMoved(pos)], down, up] {
+                t += 0.1;
+                draw(t, events, &mut draft);
             }
+            t += 0.1;
+            draw(t, vec![], &mut draft);
         }
-        None
+        outbox.iter().next().cloned()
     }
 
     #[test]
@@ -1629,9 +2582,9 @@ mod tests {
         );
         let row = income
             .iter()
-            .find(|(name, _)| name == "Demolition refund")
+            .find(|r| r.name == "Demolition refund")
             .expect("the refund line");
-        assert_eq!(row.1, [Some(Cost(28_000)), Some(Cost(28_000)), None]);
+        assert_eq!(row.money, [Some(Cost(28_000)), Some(Cost(28_000)), None]);
 
         let mut tools = cp_tools::ToolState::default();
         tools.select(cp_tools::ActiveTool::Bulldozer);
@@ -1670,7 +2623,7 @@ mod tests {
         view.progress = cp_sim::Progress::at(0);
         assert_eq!(budget_rows(&view), [Water, Sewage, Power, Roads, Park]);
         let text = painted(&view, &mut BudgetDraft::on(BudgetTab::Budgets));
-        assert!(text.iter().any(|t| t == "Upkeep only"), "{text:?}");
+        assert!(text.iter().any(|t| t == "Water"), "{text:?}");
         assert!(!text.iter().any(|t| t == "Health"), "{text:?}");
         view.progress = cp_sim::Progress::at(1);
         assert_eq!(
@@ -1745,13 +2698,22 @@ mod tests {
                 "{name} shown before the milestone: {text:?}"
             );
         }
-        let text = painted(&view, &mut BudgetDraft::default());
+        // The flow lists the taxes of the open zones (the Overview hides the zero ones).
+        let tax_rows = |view: &SimView| -> Vec<String> {
+            let day = view.flow.last_day(&view.economy).unwrap_or_default();
+            flow_rows(view, &day, &view.flow.week_to_date, &view.economy.last_week)
+                .0
+                .into_iter()
+                .map(|r| r.name)
+                .collect()
+        };
+        let rows = tax_rows(&view);
         for line in tax_lines(&later) {
-            assert!(!text.contains(&line), "{line} shown: {text:?}");
+            assert!(!rows.contains(&line), "{line} shown: {rows:?}");
         }
         assert!(
-            text.contains(&tax_lines(&[ZoneType::ResLow])[0]),
-            "{text:?}"
+            rows.contains(&tax_lines(&[ZoneType::ResLow])[0]),
+            "{rows:?}"
         );
         // Money of a closed zone (a district of an older city, say) is still shown.
         let mut f = Flow::default();
@@ -1760,7 +2722,9 @@ mod tests {
             .position(|&z| z == ZoneType::Office)
             .unwrap()] = Cost(100);
         view.flow.hours.push_back((2, f));
-        let text = painted(&view, &mut BudgetDraft::default());
+        let mut day_view = BudgetDraft::default();
+        day_view.period = Period::Day;
+        let text = painted(&view, &mut day_view);
         assert!(
             text.contains(&tax_lines(&[ZoneType::Office])[0]),
             "{text:?}"
@@ -1774,9 +2738,9 @@ mod tests {
                 "{name} missing after the milestone: {text:?}"
             );
         }
-        let text = painted(&view, &mut BudgetDraft::default());
+        let rows = tax_rows(&view);
         for line in tax_lines(&later) {
-            assert!(text.contains(&line), "{line} missing: {text:?}");
+            assert!(rows.contains(&line), "{line} missing: {rows:?}");
         }
     }
 
@@ -1798,5 +2762,188 @@ mod tests {
             budget_sectors(ServiceKind::Post),
             &[Sector::Mail, Sector::Sorting]
         );
+    }
+
+    fn content_db() -> std::sync::Arc<cp_content::ContentDb> {
+        std::sync::Arc::new(
+            cp_content::ContentDb::load_dir(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/content"
+            ))
+            .unwrap(),
+        )
+    }
+
+    /// `budget_coverage` is supply over demand of the tightest open sector, not clamped; roads
+    /// (no sector) have none.
+    #[test]
+    fn the_coverage_is_supply_over_demand_of_the_tightest_sector() {
+        use cp_sim::city_services::SectorBalance;
+        let mut view = SimRunner::new(1).view();
+        let row = |sector, supply, demand, locked| SectorBalance {
+            sector,
+            supply,
+            demand,
+            unit: "u",
+            locked,
+        };
+        std::sync::Arc::make_mut(&mut view.city).services = vec![
+            row(Sector::Water, 150.0, 100.0, false),
+            row(Sector::Elementary, 90.0, 100.0, false),
+            row(Sector::HighSchool, 50.0, 100.0, false),
+            row(Sector::University, 10.0, 100.0, true),
+            row(Sector::Health, 5.0, 0.0, false),
+        ];
+        assert_eq!(budget_coverage(&view, ServiceKind::Water), Some(1.5));
+        // Education: the worst of the open school levels; the locked one does not count.
+        assert_eq!(budget_coverage(&view, ServiceKind::Education), Some(0.5));
+        // No demand: over `demand.max(1)`.
+        assert_eq!(budget_coverage(&view, ServiceKind::Health), Some(5.0));
+        assert_eq!(budget_coverage(&view, ServiceKind::Roads), None);
+        assert_eq!(budget_coverage(&view, ServiceKind::Fire), None);
+        assert_eq!(coverage_colour(0.89), BAD);
+        assert_eq!(coverage_colour(0.9), WARN);
+        assert_eq!(coverage_colour(1.05), WARN);
+        assert_eq!(coverage_colour(1.06), GOOD);
+    }
+
+    #[test]
+    fn the_tax_estimate_scales_with_the_rate_and_survives_a_zero_rate() {
+        assert_eq!(tax_estimate(Cost(90_000), 9, 12), Cost(120_000));
+        assert_eq!(tax_estimate(Cost(90_000), 9, 9), Cost(90_000));
+        assert_eq!(tax_estimate(Cost(90_000), 9, 3), Cost(30_000));
+        assert_eq!(tax_estimate(Cost(500), 0, 5), Cost(2_500));
+        assert_eq!(tax_estimate(Cost::ZERO, 0, 5), Cost::ZERO);
+        // The tooltip: homes show the contentment factor, the others say they do not.
+        let view = SimRunner::new(1).view();
+        let homes = tax_tip(&view, ZoneType::ResLow, 9, 12, Cost(90_000));
+        assert!(homes.contains("100 -> 70"), "{homes}");
+        assert!(homes.contains("$1,200.00"), "{homes}");
+        let shop = tax_tip(&view, ZoneType::ComLow, 9, 12, Cost(90_000));
+        assert!(!shop.contains("factor"), "{shop}");
+    }
+
+    #[test]
+    fn the_land_tab_is_parsed_and_only_it_draws_the_grid() {
+        assert_eq!(BudgetTab::parse("land"), Some(BudgetTab::Land));
+        assert_eq!(BudgetTab::parse("services"), Some(BudgetTab::Budgets));
+        assert_eq!(BudgetTab::parse("budgets"), Some(BudgetTab::Budgets));
+        assert_eq!(BudgetTab::ALL.len(), 5);
+        let mut sim = SimRunner::new(1);
+        sim.set_content(content_db());
+        sim.world_mut()
+            .insert_resource(cp_terrain::TileOwnership::only((2, 2)));
+        sim.world_mut().insert_resource(cp_sim::Progress::START);
+        let view = sim.view();
+        // A buyable tile is $5.0k here.
+        let price = format_money_short(Cost::from_units(5000.0));
+        for tab in [
+            BudgetTab::Overview,
+            BudgetTab::Taxes,
+            BudgetTab::Budgets,
+            BudgetTab::Loans,
+        ] {
+            let text = painted(&view, &mut BudgetDraft::on(tab));
+            assert!(!text.contains(&price), "{tab:?} shows a tile: {text:?}");
+        }
+        let text = painted(&view, &mut BudgetDraft::on(BudgetTab::Land));
+        assert!(text.contains(&price), "{text:?}");
+        assert!(text.iter().any(|t| t == "own"), "{text:?}");
+    }
+
+    /// A double click on a service slider sends its budget back to 100.
+    #[test]
+    fn a_double_click_on_a_service_slider_resets_it_to_100() {
+        let mut sim = SimRunner::new(1);
+        sim.set_content(content_db());
+        let mut view = sim.view();
+        view.budgets.set(ServiceKind::Water, 60);
+        let mut found = None;
+        'search: for y in (60..400).step_by(5) {
+            for x in (200..700).step_by(15) {
+                let pos = egui::pos2(x as f32, y as f32);
+                let ctx = egui::Context::default();
+                let mut draft = BudgetDraft::on(BudgetTab::Budgets);
+                let mut outbox = CommandOutbox::default();
+                let ev = |pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                for (t, events) in [
+                    (0.0, vec![]),
+                    (0.1, vec![egui::Event::PointerMoved(pos), ev(true)]),
+                    (0.15, vec![ev(false)]),
+                    (0.2, vec![ev(true)]),
+                    (0.25, vec![ev(false)]),
+                    (0.3, vec![]),
+                ] {
+                    crate::testutil::frame(&ctx, input(t, events), |ui| {
+                        budget_contents(ui, &view, &mut draft, &mut outbox);
+                    });
+                }
+                if outbox.iter().last() == Some(&budget_command(ServiceKind::Water, 100)) {
+                    found = Some(pos);
+                    break 'search;
+                }
+            }
+        }
+        assert!(found.is_some(), "a double click resets the Water slider");
+    }
+
+    #[test]
+    fn the_loan_tiles_say_how_much_of_the_income_the_payments_take() {
+        assert_eq!(loan_share(Cost::ZERO, Cost(100)), 0.0);
+        assert_eq!(loan_share(Cost(10), Cost::ZERO), 1.0);
+        assert_eq!(loan_share(Cost(10), Cost(100)), 0.1);
+        assert_eq!(loan_share_colour(0.1), GOOD);
+        assert_eq!(loan_share_colour(0.2), WARN);
+        assert_eq!(loan_share_colour(0.31), BAD);
+        assert_eq!(loan_overpay(Cost(110), 10, Cost(1_000)), Cost(100));
+    }
+
+    #[test]
+    fn the_services_come_in_groups_in_the_sim_order() {
+        let mut sim = SimRunner::new(1);
+        sim.set_content(content_db());
+        let mut view = sim.view();
+        view.progress = cp_sim::Progress::ALL;
+        let groups = budget_groups(&view);
+        let names: Vec<_> = groups.iter().map(|(g, _)| *g).collect();
+        assert_eq!(
+            names,
+            [
+                ServiceGroup::Utilities,
+                ServiceGroup::City,
+                ServiceGroup::Transport,
+                ServiceGroup::Leisure
+            ]
+        );
+        assert_eq!(
+            groups[0].1,
+            [ServiceKind::Water, ServiceKind::Power, ServiceKind::Sewage]
+        );
+        let all: usize = groups.iter().map(|(_, k)| k.len()).sum();
+        assert_eq!(all, BUDGETED.len());
+    }
+
+    /// The Overview period picks the column; zero lines are left out, the biggest comes first.
+    #[test]
+    fn the_overview_lines_follow_the_period_biggest_first() {
+        let mut view = SimRunner::new(1).view();
+        let mut week = Flow::default();
+        week.road_upkeep = Cost(500);
+        week.utility_upkeep = Cost(900);
+        week.income_by_zone[0] = Cost(2_000);
+        view.flow.week_to_date = week;
+        view.flow.hours.push_back((1, Flow::default()));
+        let (income, expenses) = period_lines(&view, Period::Week);
+        assert_eq!(income.len(), 1);
+        assert_eq!(income[0].amount, Cost(2_000));
+        assert_eq!(expenses[0].amount, Cost(900));
+        assert_eq!(expenses[1].amount, Cost(500));
+        let (income, expenses) = period_lines(&view, Period::LastWeek);
+        assert!(income.is_empty() && expenses.is_empty());
     }
 }

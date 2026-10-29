@@ -6,48 +6,85 @@ use cp_locale::{tr, trf};
 use cp_sim::SimView;
 use cp_sim::tiles::{TileState, tile_state};
 use cp_terrain::TILES_PER_SIDE;
-use cp_tools::format_money;
+use cp_tools::{format_money, format_money_short};
 
-/// The grid; a click on a buyable tile sets `pending`, which `land::confirm_window` confirms.
+/// The grid of the Land tab: owned tiles in blue, buyable ones with their short price, the rest
+/// dashed and without a price. A click on a buyable tile sets `pending`.
 pub fn tile_section(ui: &mut egui::Ui, view: &SimView, pending: &mut Option<(u8, u8)>) {
-    ui.separator();
-    ui.strong(tr("Land"));
-    let size = egui::vec2(46.0, 34.0);
+    let size = egui::vec2(66.0, 52.0);
+    ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
     for tz in 0..TILES_PER_SIDE as u8 {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
             for tx in 0..TILES_PER_SIDE as u8 {
                 let tile = (tx, tz);
                 let state = tile_state(view, tile);
-                let (label, hover, enabled) = match state {
-                    TileState::Owned => (tr("own"), tr("Owned"), false),
-                    TileState::Buyable(p) => (
-                        format_money(p),
-                        trf!("Buy for {price}", price = format_money(p)),
-                        true,
-                    ),
-                    TileState::NeedsMilestone => {
-                        ("—".to_owned(), tr("Opens at the next milestone"), false)
-                    }
-                    TileState::Far => (String::new(), tr("Not next to your land"), false),
-                };
+                let (rect, r) = ui.allocate_exact_size(
+                    size,
+                    if matches!(state, TileState::Buyable(_)) {
+                        egui::Sense::click()
+                    } else {
+                        egui::Sense::hover()
+                    },
+                );
+                let p = ui.painter();
                 let selected = *pending == Some(tile);
-                let button =
-                    egui::Button::new(label).selected(selected || state == TileState::Owned);
-                if ui
-                    .add_enabled(enabled, button.min_size(size))
-                    .on_hover_text(hover)
-                    .on_disabled_hover_text(tr(match state {
-                        TileState::Owned => "Owned",
-                        TileState::NeedsMilestone => "Opens at the next milestone",
-                        _ => "Not next to your land",
-                    }))
-                    .clicked()
-                {
+                let (label, hover) = match state {
+                    TileState::Owned => {
+                        p.rect_filled(rect, 5.0, egui::Color32::from_rgb(40, 78, 130));
+                        (tr("own"), tr("Owned"))
+                    }
+                    TileState::Buyable(price) => {
+                        let fill = if selected || r.hovered() { 60 } else { 44 };
+                        p.rect_filled(rect, 5.0, egui::Color32::from_gray(fill));
+                        p.rect_stroke(
+                            rect,
+                            5.0,
+                            egui::Stroke::new(
+                                if selected { 2.0 } else { 1.0 },
+                                egui::Color32::from_rgb(120, 200, 120),
+                            ),
+                            egui::StrokeKind::Inside,
+                        );
+                        (
+                            format_money_short(price),
+                            trf!("Buy for {price}", price = format_money(price)),
+                        )
+                    }
+                    TileState::NeedsMilestone => {
+                        dashed(p, rect);
+                        (String::new(), tr("Opens at the next milestone"))
+                    }
+                    TileState::Far => {
+                        dashed(p, rect);
+                        (String::new(), tr("Not next to your land"))
+                    }
+                };
+                p.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    label,
+                    egui::FontId::proportional(14.0),
+                    egui::Color32::from_gray(225),
+                );
+                if r.on_hover_text(hover).clicked() {
                     *pending = Some(tile);
                 }
             }
         });
+    }
+}
+
+/// A dashed outline: a tile that cannot be had.
+fn dashed(p: &egui::Painter, rect: egui::Rect) {
+    let stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(80));
+    let r = rect.shrink(1.0);
+    for side in [
+        [r.left_top(), r.right_top()],
+        [r.right_top(), r.right_bottom()],
+        [r.right_bottom(), r.left_bottom()],
+        [r.left_bottom(), r.left_top()],
+    ] {
+        p.extend(egui::Shape::dashed_line(&side, stroke, 4.0, 3.0));
     }
 }
 
