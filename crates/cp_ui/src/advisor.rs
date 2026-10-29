@@ -1097,11 +1097,9 @@ impl Advisor {
             .iter()
             .map(|o| (o.deal.clone(), o.expires_day))
             .collect();
-        let Some((seen_offers, seen_scandals)) =
-            self.power_seen.replace((offers.clone(), c.scandals.len()))
-        else {
-            return None;
-        };
+        let (seen_offers, seen_scandals) = self
+            .power_seen
+            .replace((offers.clone(), c.scandals.len()))?;
         if c.scandals.len() > seen_scandals
             && let Some(s) = c.scandals.last()
         {

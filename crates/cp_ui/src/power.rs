@@ -518,12 +518,11 @@ fn risk_row(
         let (rect, resp) =
             ui.allocate_exact_size(egui::vec2(5.0 * 34.0, 14.0), egui::Sense::hover());
         let p = ui.painter();
-        for i in 0..5 {
+        for (i, col) in SEGMENT_COLOURS.iter().copied().enumerate() {
             let seg = egui::Rect::from_min_size(
                 rect.min + egui::vec2(i as f32 * 34.0, 0.0),
                 egui::vec2(30.0, 14.0),
             );
-            let col = SEGMENT_COLOURS[i];
             if i < now {
                 p.rect_filled(seg, 2.0, if paused { col.gamma_multiply(0.4) } else { col });
             } else {
@@ -949,8 +948,10 @@ mod tests {
 
     impl Rig {
         fn new(view: SimView) -> Self {
-            let mut st = UiState::default();
-            st.power_open = true;
+            let st = UiState {
+                power_open: true,
+                ..UiState::default()
+            };
             let mut rig = Self {
                 ctx: egui::Context::default(),
                 st,
@@ -1022,8 +1023,7 @@ mod tests {
         // The tab and the header tile are both "Institutions": the tab is the last one.
         let at = before
             .iter()
-            .filter(|(t, _)| t == "Institutions")
-            .last()
+            .rfind(|(t, _)| t == "Institutions")
             .map(|(_, p)| *p + egui::vec2(4.0, 4.0))
             .expect("an Institutions tab");
         let [down, up] = click(at);

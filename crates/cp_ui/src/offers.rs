@@ -28,7 +28,7 @@ fn chip(icon: Icon, text: String, good: bool) -> Chip {
 pub fn short_money(units: i64) -> String {
     let sign = if units < 0 { "-" } else { "+" };
     let n = units.unsigned_abs();
-    let body = if n >= 1000 && n % 1000 == 0 {
+    let body = if n >= 1000 && n.is_multiple_of(1000) {
         format!("{}k", n / 1000)
     } else if n >= 1000 {
         format!("{:.1}k", n as f32 / 1000.0)
