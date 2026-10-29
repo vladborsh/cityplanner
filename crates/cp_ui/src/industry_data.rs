@@ -206,11 +206,66 @@ pub fn factory_lock(view: &SimView, db: &ContentDb, def: BuildingDefId) -> Optio
 
 /// The highest level among the industrial areas that have a main building.
 pub fn best_industrial_level(view: &SimView, db: &ContentDb) -> Option<u8> {
+    best_industrial_area(view, db).map(|(_, level)| level)
+}
+
+/// The industrial area with a main building of the highest level (the first of equals).
+pub fn best_industrial_area(view: &SimView, db: &ContentDb) -> Option<(AreaId, u8)> {
     view.areas
         .iter()
         .filter(|(id, a)| matches!(a.kind, AreaKind::Industry(_)) && has_main(view, db, *id))
-        .map(|(_, a)| a.level)
-        .max()
+        .map(|(id, a)| (id, a.level))
+        .reduce(|best, x| if x.1 > best.1 { x } else { best })
+}
+
+/// Why a chain building is closed in an area, for the badge of its tile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChainLock {
+    NoMain,
+    Level(u8),
+}
+
+impl ChainLock {
+    pub fn text(self) -> String {
+        match self {
+            ChainLock::NoMain => tr("needs main building"),
+            ChainLock::Level(level) => trf!("area level {level}", level = level),
+        }
+    }
+}
+
+/// The lock of a chain building in `area` (the selected area of its resource); with no area
+/// given, the best area of the resource decides (the rule of `industry_lock`). Factories: the
+/// best industrial area of any resource.
+pub fn chain_lock(
+    view: &SimView,
+    db: &ContentDb,
+    def: BuildingDefId,
+    area: Option<AreaId>,
+) -> Option<ChainLock> {
+    let spec = db.building(def).industry.as_ref()?;
+    if spec.role == IndustryRole::Main {
+        return None;
+    }
+    let level = match (spec.role, area) {
+        (IndustryRole::Factory, _) => best_industrial_level(view, db),
+        (_, Some(a)) => has_main(view, db, a).then(|| view.areas.get(a).map_or(1, |x| x.level)),
+        (_, None) => view
+            .areas
+            .iter()
+            .filter(|(id, a)| {
+                spec.resource
+                    .is_some_and(|r| a.kind == AreaKind::Industry(r))
+                    && has_main(view, db, *id)
+            })
+            .map(|(_, a)| a.level)
+            .max(),
+    };
+    match level {
+        None => Some(ChainLock::NoMain),
+        Some(l) if l < spec.min_level => Some(ChainLock::Level(spec.min_level)),
+        Some(_) => None,
+    }
 }
 
 /// Whether a main building stands in `area`.

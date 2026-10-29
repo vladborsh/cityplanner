@@ -94,38 +94,6 @@ pub(crate) fn def_image(ui: &mut egui::Ui, db: &ContentDb, def: BuildingDefId, s
     );
 }
 
-#[allow(dead_code)]
-fn dot(ui: &mut egui::Ui, colour: egui::Color32, size: f32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
-    ui.painter().rect_filled(rect, 2.0, colour);
-}
-
-/// A pill with a coloured square and a text: a cargo and an amount.
-#[allow(dead_code)]
-pub(crate) fn cargo_chip(
-    ui: &mut egui::Ui,
-    db: &ContentDb,
-    c: CargoKind,
-    text: &str,
-) -> egui::Response {
-    egui::Frame::new()
-        .fill(egui::Color32::from_gray(44))
-        .corner_radius(9.0)
-        .inner_margin(egui::Margin::symmetric(6, 2))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                dot(ui, cargo_color(db, c), 10.0);
-                ui.label(
-                    egui::RichText::new(text)
-                        .size(12.0)
-                        .color(egui::Color32::from_gray(210)),
-                );
-            });
-        })
-        .response
-}
-
 /// A pill with a building's picture and name.
 fn def_chip(ui: &mut egui::Ui, db: &ContentDb, def: BuildingDefId, tint: Option<bool>) {
     let fill = match tint {
@@ -216,6 +184,7 @@ pub fn industry_window(
         industry_sub,
         industry_money,
         industry_confirm,
+        industry_focus,
         camera_goal,
         ..
     } = st;
@@ -256,11 +225,18 @@ pub fn industry_window(
                         camera_goal,
                     },
                 ),
-                IndustryTab::Chains => {
-                    ui.weak(tr("The chains of the city"));
-                }
+                IndustryTab::Chains => crate::industry_city::chains_tab(
+                    ui,
+                    view,
+                    db,
+                    tools,
+                    overlay,
+                    outbox,
+                    industry_tab,
+                    industry_focus,
+                ),
                 IndustryTab::Market => {
-                    crate::trade::trade_tray(ui, view, 420.0);
+                    crate::industry_city::market_tab(ui, view, db, industry_focus)
                 }
             }
         });
@@ -1368,18 +1344,18 @@ mod tests {
     use crate::industry::tests::{put, world_with_areas};
     use crate::testutil::{click, frame_texts, input};
 
-    struct Rig {
+    pub(super) struct Rig {
         ctx: egui::Context,
-        st: UiState,
-        tools: ToolState,
+        pub(super) st: UiState,
+        pub(super) tools: ToolState,
         overlay: OverlayState,
         picked: Picked,
-        outbox: CommandOutbox,
-        view: SimView,
+        pub(super) outbox: CommandOutbox,
+        pub(super) view: SimView,
     }
 
     impl Rig {
-        fn new(view: SimView) -> Self {
+        pub(super) fn new(view: SimView) -> Self {
             let mut tools = ToolState::default();
             tools.area.selected = Some(AreaId(1));
             let mut rig = Self {
@@ -1413,12 +1389,12 @@ mod tests {
             })
         }
 
-        fn texts(&mut self) -> Vec<(String, egui::Pos2)> {
+        pub(super) fn texts(&mut self) -> Vec<(String, egui::Pos2)> {
             self.frame(vec![]);
             self.frame(vec![])
         }
 
-        fn click_text(&mut self, label: &str) {
+        pub(super) fn click_text(&mut self, label: &str) {
             let texts = self.texts();
             let at = texts
                 .iter()
@@ -1534,5 +1510,75 @@ mod tests {
             "{sent:?}"
         );
         assert_eq!(rig.tools.area.selected, Some(id));
+    }
+}
+
+#[cfg(test)]
+mod city_tests {
+    use super::*;
+    use crate::industry::tests::{put, world_with_areas};
+    use cp_industry::{AreaBook, AreaBooks, IndustryLedger};
+
+    #[test]
+    fn the_chains_tab_marks_what_the_city_makes_and_buys_and_links_to_the_market() {
+        let (mut sim, db, at) = world_with_areas(2);
+        put(&mut sim, &db, "forest_main", at[0]);
+        let mut b = AreaBook::default();
+        b.produced.insert(CargoKind::Logs, 450.0);
+        sim.world_mut()
+            .resource_mut::<AreaBooks>()
+            .last
+            .insert(1, b);
+        sim.world_mut()
+            .resource_mut::<IndustryLedger>()
+            .last_by_cargo[CargoKind::Logs as usize]
+            .import = 80;
+        let mut rig = super::tests::Rig::new(sim.view());
+        rig.st.industry_tab = IndustryTab::Chains;
+        let texts = rig.texts();
+        assert!(texts.iter().any(|(t, _)| t == "Logs 450 +80"), "{texts:?}");
+        // A product the area's level does not open says so.
+        assert!(
+            texts.iter().any(|(t, _)| t.starts_with("Planks")),
+            "{texts:?}"
+        );
+        rig.click_text("Logs 450 +80");
+        assert_eq!(rig.st.industry_tab, IndustryTab::Market);
+        assert_eq!(rig.st.industry_focus, Some(CargoKind::Logs));
+    }
+
+    #[test]
+    fn a_click_on_a_resource_row_opens_its_area_and_a_factory_card_picks_its_tool() {
+        let (mut sim, db, at) = world_with_areas(2);
+        put(&mut sim, &db, "forest_main", at[0]);
+        let mut rig = super::tests::Rig::new(sim.view());
+        rig.st.industry_tab = IndustryTab::Chains;
+        rig.click_text("Farming");
+        assert_eq!(rig.st.industry_tab, IndustryTab::Areas);
+        assert_eq!(rig.tools.area.selected, Some(AreaId(2)));
+        rig.st.industry_tab = IndustryTab::Chains;
+        rig.click_text("Food factory");
+        assert_eq!(rig.tools.building.def, db.building_id("food_factory"));
+    }
+
+    #[test]
+    fn the_market_tab_shows_the_season_the_cargo_cards_and_the_rest_as_chips() {
+        let (mut sim, db, at) = world_with_areas(1);
+        put(&mut sim, &db, "forest_processor_a", at[0]);
+        let mut rig = super::tests::Rig::new(sim.view());
+        rig.st.industry_tab = IndustryTab::Market;
+        let texts = rig.texts();
+        let has = |s: &str| texts.iter().any(|(t, _)| t == s);
+        assert!(
+            has("The city's cargo") && has("The city neither makes nor buys"),
+            "{texts:?}"
+        );
+        assert!(has("Logs") && has("Planks"), "{texts:?}");
+        assert!(
+            texts
+                .iter()
+                .any(|(t, _)| t.starts_with("Spring") || t.starts_with("Summer")),
+            "{texts:?}"
+        );
     }
 }

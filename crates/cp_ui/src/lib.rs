@@ -32,6 +32,7 @@ pub mod happiness;
 pub mod hint;
 pub mod icons;
 pub mod industry;
+pub mod industry_city;
 pub mod industry_data;
 pub mod industry_win;
 pub mod info;

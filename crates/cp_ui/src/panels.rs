@@ -116,6 +116,8 @@ pub struct UiState {
     pub industry_tab: crate::industry_win::IndustryTab,
     pub industry_sub: crate::industry_win::AreaSub,
     pub industry_money: crate::industry_win::MoneyWeek,
+    /// The cargo whose card the Market tab marks (a click on a cargo chip elsewhere).
+    pub industry_focus: Option<cp_content::CargoKind>,
     /// The area whose Delete asks once more.
     pub industry_confirm: Option<cp_district::AreaId>,
     /// Name drafts of the Lines window.

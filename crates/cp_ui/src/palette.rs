@@ -270,8 +270,8 @@ pub fn tabs(category: Category, view: Option<&SimView>) -> Vec<(String, Option<I
                     Some(crate::industry::resource_icon(res)),
                 ));
             }
-            // §21.3: the market of every cargo.
-            out.push((tr("Trade"), Some(Icon::Metrics)));
+            // T-337: the four factories; the market is a tab of the Industry window.
+            out.push((tr("Factories"), Some(Icon::Industry)));
         }
         Category::Parks => {
             out.push((tr("Areas"), Some(Icon::CategoryParks)));
@@ -448,6 +448,18 @@ pub fn tray(
                 crate::tray::leave(ui.ctx());
             });
         });
+    // A click inside the panel (a "Next" tile) sends the tray to another tab.
+    let goto: Option<String> = out
+        .response
+        .ctx
+        .data_mut(|d| d.remove_temp(egui::Id::new(crate::industry::TRAY_GOTO)));
+    if let Some(k) = goto.filter(|k| tabs.iter().any(|(t, _)| t == k)) {
+        match state.tray_tab.iter_mut().find(|(c, _)| *c == category) {
+            Some(slot) => slot.1 = k,
+            None => state.tray_tab.push((category, k)),
+        }
+        return Some(out.response.rect);
+    }
     match at.and_then(|n| tabs.get(n)) {
         Some((k, _)) => match state.tray_tab.iter_mut().find(|(c, _)| *c == category) {
             Some(slot) => slot.1 = k.clone(),

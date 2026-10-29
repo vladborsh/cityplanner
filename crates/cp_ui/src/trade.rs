@@ -231,7 +231,7 @@ pub fn change_text(pct: i32) -> String {
 }
 
 /// The price of one unit as money.
-fn unit_price(p: f32) -> String {
+pub(crate) fn unit_price(p: f32) -> String {
     format_money(cp_core::Cost::scaled(p, 1.0))
 }
 

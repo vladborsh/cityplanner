@@ -367,8 +367,117 @@ pub fn warehouse_controls(
     });
 }
 
-/// The chain sections of the panel: a header per resource and a row of tiles; closed ones are
-/// grey with a padlock and say why.
+/// A short text on the corner of a tile (a count, a level).
+fn text_badge(ui: &egui::Ui, tile: egui::Rect, text: &str, left: bool, colour: egui::Color32) {
+    let p = ui.painter();
+    let galley = p.layout_no_wrap(
+        text.to_string(),
+        egui::FontId::proportional(11.0),
+        egui::Color32::WHITE,
+    );
+    let size = galley.size() + egui::vec2(8.0, 2.0);
+    let at = if left {
+        tile.left_top() + egui::vec2(3.0, 3.0)
+    } else {
+        tile.right_top() + egui::vec2(-size.x - 3.0, 3.0)
+    };
+    let r = egui::Rect::from_min_size(at, size);
+    p.rect_filled(r, 7.0, colour);
+    p.galley(r.min + egui::vec2(4.0, 1.0), galley, egui::Color32::WHITE);
+}
+
+fn clip_name(name: &str) -> String {
+    if name.chars().count() <= 11 {
+        name.to_string()
+    } else {
+        format!("{}…", name.chars().take(10).collect::<String>())
+    }
+}
+
+/// "Build in zone": the zone of this resource the badges and locks count by, with its level, a
+/// drop-down of the zones of the resource and the brushes (T-337 §2.5).
+fn build_zone_block(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    res: ResourceKind,
+    zone: Option<AreaId>,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+) {
+    ui.vertical(|ui| {
+        ui.set_width(180.0);
+        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.weak(tr("Building in the zone"));
+        let zones: Vec<(AreaId, String, u8)> = view
+            .areas
+            .iter()
+            .filter(|(_, a)| a.kind == AreaKind::Industry(res))
+            .map(|(id, a)| (id, a.name.clone(), a.level))
+            .collect();
+        match zone.and_then(|z| zones.iter().find(|(id, ..)| *id == z)) {
+            Some((_, name, level)) => {
+                let _ = level;
+                let label =
+                    egui::RichText::new(format!("■ {} ▾", clip_name(name))).color(swatch(res));
+                ui.menu_button(label, |ui| {
+                    for (id, name, level) in &zones {
+                        let text = format!("{name} · {}", trf!("Lvl {level}", level = level));
+                        if ui.selectable_label(zone == Some(*id), text).clicked() {
+                            tools.area.selected = Some(*id);
+                            show_overlays(overlay);
+                            ui.close();
+                        }
+                    }
+                });
+                if let Some(a) = zone.and_then(|z| view.areas.get(z)) {
+                    let next = view
+                        .content
+                        .as_deref()
+                        .and_then(|db| {
+                            db.balance()
+                                .industry_levels
+                                .get(usize::from(a.level.saturating_sub(1)))
+                                .copied()
+                        })
+                        .unwrap_or(0);
+                    let frac = if next == 0 {
+                        1.0
+                    } else {
+                        (a.xp as f32 / next as f32).min(1.0)
+                    };
+                    ui.add(egui::ProgressBar::new(frac).desired_height(5.0));
+                }
+            }
+            None => {
+                ui.weak(tr("no area of this resource"));
+            }
+        }
+        ui.horizontal(|ui| {
+            for kind in DistrictToolKind::ALL {
+                let on = tools.active == ActiveTool::Area && tools.area.kind == kind;
+                let icon = match kind {
+                    DistrictToolKind::BrushSmall => Icon::DistrictBrushSmall,
+                    DistrictToolKind::BrushLarge => Icon::DistrictBrushLarge,
+                    DistrictToolKind::Erase => Icon::ZoneEraser,
+                };
+                let r = icon
+                    .button(ui, 16.0, 2.0, on)
+                    .on_hover_text(tr(kind.label()));
+                if r.clicked() {
+                    if tools.active != ActiveTool::Area {
+                        tools.select(ActiveTool::Area);
+                    }
+                    tools.area.set_kind(kind);
+                    show_overlays(overlay);
+                }
+            }
+        });
+    });
+}
+
+/// The chain sections of the panel: for each resource a tab with the zone block and the chain
+/// as columns Main → Extraction → Processing → Storage → Next; closed tiles are grey with the
+/// level that opens them.
 fn chain_panel(
     ui: &mut egui::Ui,
     view: &SimView,
@@ -387,37 +496,244 @@ fn chain_panel(
                 ui.strong(tr(resource_name(res)));
             });
         }
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, Sizes::TILE_GAP);
-            for card in &cards {
-                let lock = industry_lock(view, db, card.id);
-                let on = tools.active == ActiveTool::Place && tools.building.def == Some(card.id);
-                let hover = match &lock {
-                    Some(l) => format!(
-                        "{}\n{}",
-                        trf!("Locked: {reason}", reason = l),
-                        card_text(card)
-                    ),
-                    None => card_text(card),
-                };
-                let r = tool_tile_enabled(
-                    ui,
-                    TileIcon::Def(&card.icon),
-                    &tr(&card.name),
-                    on,
-                    lock.is_none(),
-                )
-                .on_hover_text(hover);
-                if lock.is_some() {
-                    badge(ui, r.rect, UniqueState::Locked);
+        // The zone the badges and locks count by: the selected one of this resource, else the
+        // first.
+        let zone = tools
+            .area
+            .selected
+            .filter(|&a| {
+                view.areas
+                    .get(a)
+                    .is_some_and(|x| x.kind == AreaKind::Industry(res))
+            })
+            .or_else(|| {
+                view.areas
+                    .iter()
+                    .find(|(_, a)| a.kind == AreaKind::Industry(res))
+                    .map(|(id, _)| id)
+            });
+        let built = zone.map(|z| crate::industry_data::area_buildings(view, z));
+        ui.horizontal_top(|ui| {
+            build_zone_block(ui, view, res, zone, tools, overlay);
+            ui.separator();
+            let columns: [(&str, &[IndustryRole]); 4] = [
+                ("Main building", &[IndustryRole::Main]),
+                ("Extraction", &[IndustryRole::Extractor]),
+                ("Processing", &[IndustryRole::Processor]),
+                ("Storage", &[IndustryRole::Warehouse]),
+            ];
+            for (n, (title, roles)) in columns.into_iter().enumerate() {
+                if n > 0 {
+                    ui.label(egui::RichText::new("▸").color(egui::Color32::from_gray(120)))
+                        .on_hover_text(tr(title));
                 }
-                if r.clicked() {
-                    select(tools, card.id);
-                    show_overlays(overlay);
-                }
+                let _ = title;
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(Sizes::TILE_GAP, 2.0);
+                    for card in cards.iter().filter(|c| {
+                        db.building(c.id)
+                            .industry
+                            .as_ref()
+                            .is_some_and(|s| roles.contains(&s.role))
+                    }) {
+                        chain_tile(ui, view, db, card, zone, built.as_deref(), tools, overlay);
+                    }
+                });
             }
+            ui.label(egui::RichText::new("▸").color(egui::Color32::from_gray(120)))
+                .on_hover_text(tr("Next"));
+            ui.horizontal_top(|ui| {
+                next_tiles(ui, view, db, res, tools, overlay);
+            });
         });
     }
+}
+
+/// One tile of a chain building: the output chip under it, a count and a lock badge.
+#[allow(clippy::too_many_arguments)]
+fn chain_tile(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    db: &ContentDb,
+    card: &Card,
+    zone: Option<AreaId>,
+    built: Option<&[crate::industry_data::ChainBuilding]>,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+) {
+    use crate::industry_data::{ChainLock, chain_lock};
+    let lock = chain_lock(view, db, card.id, zone);
+    let on = tools.active == ActiveTool::Place && tools.building.def == Some(card.id);
+    let hover = match &lock {
+        Some(l) => format!(
+            "{}\n{}",
+            trf!("Locked: {reason}", reason = l.text()),
+            card_text(card)
+        ),
+        None => card_text(card),
+    };
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        let r = tool_tile_enabled(
+            ui,
+            TileIcon::Def(&card.icon),
+            &tr(&card.name),
+            on,
+            lock.is_none(),
+        )
+        .on_hover_text(hover);
+        match lock {
+            Some(ChainLock::Level(level)) => text_badge(
+                ui,
+                r.rect,
+                &trf!("Lvl {level}", level = level),
+                false,
+                egui::Color32::from_gray(90),
+            ),
+            Some(ChainLock::NoMain) => badge(ui, r.rect, UniqueState::Locked),
+            None => {}
+        }
+        let count = built.map_or(0, |b| b.iter().filter(|c| c.def == card.id).count());
+        if count > 0 {
+            text_badge(
+                ui,
+                r.rect,
+                &format!("×{count}"),
+                true,
+                egui::Color32::from_rgb(40, 110, 70),
+            );
+        }
+        // The output beside the icon: a square in the cargo's colour and the rate.
+        let spec = db.building(card.id).industry.as_ref();
+        let (dot, text) = match spec {
+            Some(sp) => match sp.outputs.first() {
+                Some(&(c, rate)) => (
+                    Some(crate::industry_win::cargo_color(db, c)),
+                    format!("{rate:.0}"),
+                ),
+                None if sp.storage > 0.0 => (None, format!("{:.0}", sp.storage)),
+                None => (None, String::new()),
+            },
+            None => (None, String::new()),
+        };
+        if !text.is_empty() {
+            let icon_right = r.rect.center().x + Sizes::TILE_ICON * 0.5 + 3.0;
+            let p = ui.painter();
+            if let Some(c) = dot {
+                p.rect_filled(
+                    egui::Rect::from_min_size(
+                        egui::pos2(icon_right, r.rect.top() + 12.0),
+                        egui::vec2(8.0, 8.0),
+                    ),
+                    2.0,
+                    c,
+                );
+            }
+            p.text(
+                egui::pos2(icon_right, r.rect.top() + 24.0),
+                egui::Align2::LEFT_TOP,
+                text,
+                egui::FontId::proportional(10.0),
+                egui::Color32::from_gray(200),
+            );
+        }
+        if r.clicked() {
+            select(tools, card.id);
+            show_overlays(overlay);
+        }
+    });
+}
+
+/// "Next": the factories that take the products of the chain; a click opens the Factories tab
+/// with the factory chosen.
+fn next_tiles(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    db: &ContentDb,
+    res: ResourceKind,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+) {
+    let made: Vec<CargoKind> = db
+        .buildings()
+        .filter_map(|(_, d)| d.industry.as_ref())
+        .filter(|s| s.resource == Some(res) && s.role == IndustryRole::Processor)
+        .flat_map(|s| s.outputs.iter().map(|&(c, _)| c))
+        .collect();
+    for (id, d) in db.buildings() {
+        let Some(s) = d
+            .industry
+            .as_ref()
+            .filter(|s| s.role == IndustryRole::Factory)
+        else {
+            continue;
+        };
+        if !s.inputs.iter().any(|&(c, _)| made.contains(&c)) {
+            continue;
+        }
+        let lock = crate::industry_data::factory_lock(view, db, id);
+        let r = tool_tile_enabled(ui, TileIcon::Def(&d.icon), &tr(&d.name), false, true)
+            .on_hover_text(match &lock {
+                Some(l) => format!(
+                    "{}\n{}",
+                    trf!("Locked: {reason}", reason = l),
+                    tr("Open the Factories tab")
+                ),
+                None => tr("Open the Factories tab"),
+            });
+        if lock.is_some() {
+            text_badge(
+                ui,
+                r.rect,
+                &trf!("Lvl {level}", level = s.min_level),
+                false,
+                egui::Color32::from_gray(90),
+            );
+        }
+        if r.clicked() {
+            if lock.is_none() {
+                select(tools, id);
+                show_overlays(overlay);
+            }
+            ui.ctx().data_mut(|m| {
+                m.insert_temp(egui::Id::new(TRAY_GOTO), tr("Factories"));
+            });
+        }
+    }
+}
+
+/// The tray tab a click inside a panel wants to go to (read by the tray after it drew).
+pub(crate) const TRAY_GOTO: &str = "cp_tray_goto";
+
+/// The Factories tab: the four factories as wide tiles.
+fn factories_panel(
+    ui: &mut egui::Ui,
+    view: &SimView,
+    db: &ContentDb,
+    tools: &mut ToolState,
+    overlay: &mut OverlayState,
+) {
+    let status = crate::industry_data::cargo_status(view);
+    let mut none = None;
+    ui.horizontal_top(|ui| {
+        for (id, d) in db.buildings() {
+            if d.industry
+                .as_ref()
+                .is_none_or(|s| s.role != IndustryRole::Factory)
+            {
+                continue;
+            }
+            ui.allocate_ui_with_layout(
+                egui::vec2(340.0, 80.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    crate::industry_city::factory_card(
+                        ui, view, db, id, &status, tools, overlay, &mut none, true,
+                    );
+                },
+            );
+        }
+    });
 }
 
 /// The Industry panel.
@@ -479,11 +795,10 @@ pub fn industry_panel(
     });
     if let Some(db) = view.content.as_deref() {
         chain_panel(ui, view, db, tools, overlay);
+        section(ui, &tr("Factories"), |ui| {
+            factories_panel(ui, view, db, tools, overlay)
+        });
     }
-    // §21.3: the Trade table, the same as the Metrics window's.
-    section(ui, &tr("Trade"), |ui| {
-        crate::trade::trade_tray(ui, view, Sizes::TRAY_H - 40.0);
-    });
 }
 
 /// The options strip of the Industry tray: the brush, Off, the list of areas and what is painted.
@@ -644,11 +959,8 @@ pub(crate) mod tests {
             CommandOutbox::default(),
         );
         let tiles = draw(&ctx, &view, &mut tools, &mut overlay, &mut outbox, vec![]);
-        assert_eq!(
-            tiles.len(),
-            4 + 1 + 24,
-            "resources, New area, then the chain tiles"
-        );
+        // Resources, New area, the 24 chain tiles and the "Next" shortcuts to the factories.
+        assert!(tiles.len() >= 4 + 1 + 24, "{}", tiles.len());
         // New area is dead until a resource is chosen.
         press(
             &ctx,
@@ -884,6 +1196,96 @@ pub(crate) mod tests {
         .collect::<Vec<_>>()
         .join("\n");
         assert!(text.contains("Lot richness 12% (needs 30%)"), "{text}");
+    }
+
+    fn texts_of(
+        ctx: &egui::Context,
+        view: &SimView,
+        tools: &mut ToolState,
+        tab: &str,
+        events: Vec<egui::Event>,
+    ) -> Vec<(String, egui::Pos2)> {
+        let mut overlay = OverlayState::default();
+        let mut outbox = CommandOutbox::default();
+        crate::tray::enter(ctx, tab);
+        let out = crate::testutil::frame_texts(ctx, input(0.0, events), |ui| {
+            industry_panel(ui, Some(view), tools, &mut overlay, &mut outbox)
+        });
+        crate::tray::leave(ctx);
+        out
+    }
+
+    /// T-337: the tray has a Factories tab and no Trade tab (the market is in the window).
+    #[test]
+    fn the_tray_has_a_factories_tab_and_no_trade_tab() {
+        let view = view();
+        let labels: Vec<String> =
+            crate::palette::tabs(crate::palette::Category::Industry, Some(&view))
+                .into_iter()
+                .map(|(l, _)| l)
+                .collect();
+        assert!(labels.contains(&"Factories".to_string()), "{labels:?}");
+        assert!(!labels.contains(&"Trade".to_string()), "{labels:?}");
+    }
+
+    /// T-337: the Factories tab shows the four factories; a click on an open one picks its tool.
+    #[test]
+    fn the_factories_tab_shows_four_factories_and_a_click_picks_an_open_one() {
+        let (mut sim, db, at) = world_with_areas(2);
+        put(&mut sim, &db, "forest_main", at[0]);
+        let view = sim.view();
+        let ctx = egui::Context::default();
+        let mut tools = ToolState::default();
+        let texts = texts_of(&ctx, &view, &mut tools, "Factories", vec![]);
+        for name in [
+            "Food factory",
+            "Furniture factory",
+            "Electronics factory",
+            "Car factory",
+        ] {
+            assert!(texts.iter().any(|(t, _)| t == name), "{name} in {texts:?}");
+        }
+        let texts = texts_of(&ctx, &view, &mut tools, "Factories", vec![]);
+        let (_, at) = texts.iter().find(|(t, _)| t == "Food factory").unwrap();
+        let [down, up] = click(*at + egui::vec2(4.0, 4.0));
+        texts_of(&ctx, &view, &mut tools, "Factories", down);
+        texts_of(&ctx, &view, &mut tools, "Factories", up);
+        assert_eq!(tools.active, ActiveTool::Place);
+        assert_eq!(tools.building.def, db.building_id("food_factory"));
+        // A factory the zone is too low for stays shut.
+        let mut tools = ToolState::default();
+        let texts = texts_of(&ctx, &view, &mut tools, "Factories", vec![]);
+        let (_, at) = texts
+            .iter()
+            .find(|(t, _)| t == "Electronics factory")
+            .unwrap();
+        let [down, up] = click(*at + egui::vec2(4.0, 4.0));
+        texts_of(&ctx, &view, &mut tools, "Factories", down);
+        texts_of(&ctx, &view, &mut tools, "Factories", up);
+        assert_eq!(tools.building.def, None);
+    }
+
+    /// T-337: the count badge of a tile is the number of such buildings in the selected zone,
+    /// and a tile the zone's level does not open says which level does.
+    #[test]
+    fn a_resource_tab_counts_the_built_in_the_selected_zone_and_names_the_level_that_opens_a_tile()
+    {
+        let (mut sim, db, at) = world_with_areas(1);
+        put(&mut sim, &db, "forest_main", at[0]);
+        put(&mut sim, &db, "forest_extractor_s", at[0]);
+        put(&mut sim, &db, "forest_extractor_s", at[0]);
+        let view = sim.view();
+        let ctx = egui::Context::default();
+        let mut tools = ToolState::default();
+        tools.area.selected = Some(AreaId(1));
+        let texts = texts_of(&ctx, &view, &mut tools, "Forestry", vec![]);
+        let has = |s: &str| texts.iter().filter(|(t, _)| t == s).count();
+        assert_eq!(has("×2"), 1, "{texts:?}");
+        assert_eq!(has("×1"), 1, "the main building: {texts:?}");
+        assert!(
+            has("Lvl 2") >= 1,
+            "the large extractor wants level 2: {texts:?}"
+        );
     }
 
     #[test]
