@@ -534,7 +534,7 @@ mod tests {
         let staffed = |sim: &SimRunner| {
             let mut v = sim.view();
             let jobs = Arc::make_mut(&mut v.industry_jobs);
-            for (_, (f, s)) in jobs.iter_mut() {
+            for (f, s) in jobs.values_mut() {
                 *f = *s;
             }
             v
