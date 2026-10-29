@@ -1,13 +1,13 @@
-//! The corruption axis (T-328, `architecture/corruption.md` §8-10): the window with the scale
-//! `C − I`, where the city stands on it and what each edge gives; the institutions with what
-//! each brings now, later and at what risk; and the advisor's one-time hints (§10, layer 1).
+//! The corruption axis (T-328, `architecture/corruption.md` §8-10): the scale `C − I`, what each
+//! edge gives, what each institution brings now, later and at what risk, and the advisor's
+//! one-time hints (§10, layer 1). The Power window ([`crate::power`]) draws them.
 //!
 //! UI only: it reads the [`SimView`]. Which hints the player has seen lives in the player's
 //! settings ([`crate::Prefs::hints_seen`]), not in the save, with a button that resets them.
 
 use bevy_egui::egui;
 use cp_content::{ContentDb, CorruptionKnobs, InstitutionKind};
-use cp_economy::{CorruptionState, corruption::Edge};
+use cp_economy::corruption::Edge;
 use cp_locale::{tr, trf};
 use cp_sim::SimView;
 
@@ -24,18 +24,15 @@ pub const NEAR_EDGE: f32 = 10.0;
 /// Corruption from which "rumours are everywhere" and its hint comes (as [`crate::offers::rumour`]).
 pub const HINT_CORRUPTION: f32 = 30.0;
 
-/// The width of the scale in the window.
-const SCALE_W: f32 = 320.0;
-const SCALE_H: f32 = 18.0;
-const CLAN: egui::Color32 = egui::Color32::from_rgb(184, 74, 60);
-const LAW: egui::Color32 = egui::Color32::from_rgb(63, 127, 196);
-const MIDDLE: egui::Color32 = egui::Color32::from_rgb(110, 110, 118);
+pub const CLAN: egui::Color32 = egui::Color32::from_rgb(184, 74, 60);
+pub const LAW: egui::Color32 = egui::Color32::from_rgb(63, 127, 196);
+pub const MIDDLE: egui::Color32 = egui::Color32::from_rgb(110, 110, 118);
 
-fn pct(f: f32) -> String {
+pub fn pct(f: f32) -> String {
     format!("{:.0}", f * 100.0)
 }
 
-fn num(f: f32) -> String {
+pub fn num(f: f32) -> String {
     format!("{f:.0}")
 }
 
@@ -84,6 +81,24 @@ pub fn institution_name(db: &ContentDb, kind: InstitutionKind) -> String {
     db.buildings()
         .find(|(_, d)| d.institution == Some(kind))
         .map_or_else(|| format!("{kind:?}"), |(_, d)| tr(&d.name))
+}
+
+/// The institutions `I` an institution adds.
+pub fn institution_gain(k: &CorruptionKnobs, kind: InstitutionKind) -> f32 {
+    match kind {
+        InstitutionKind::Audit => k.i_audit,
+        InstitutionKind::Press => k.i_press,
+        InstitutionKind::Court => k.i_court,
+    }
+}
+
+/// How much more often the player's own deals come out with an institution.
+pub fn institution_exposure(k: &CorruptionKnobs, kind: InstitutionKind) -> f32 {
+    match kind {
+        InstitutionKind::Audit => k.exposure_audit,
+        InstitutionKind::Press => k.exposure_press,
+        InstitutionKind::Court => k.exposure_court,
+    }
 }
 
 /// "Now · later · risk" of an institution (§10, layer 2).
@@ -137,132 +152,8 @@ pub fn police_terms(k: &CorruptionKnobs, budget: u8) -> String {
     )
 }
 
-/// Paints the scale: the clan edge on the left, the rule of law on the right, the city's place
-/// as a line (exact with the audit) or a band (a guess without).
-fn scale(ui: &mut egui::Ui, c: &CorruptionState, k: &CorruptionKnobs) {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(SCALE_W, SCALE_H + 12.0), egui::Sense::hover());
-    let bar = egui::Rect::from_min_size(
-        rect.min + egui::vec2(0.0, 6.0),
-        egui::vec2(SCALE_W, SCALE_H),
-    );
-    // x of an axis value: +SCALE (clan) on the left.
-    let x = |a: f32| bar.center().x - a.clamp(-SCALE, SCALE) / SCALE * SCALE_W * 0.5;
-    let p = ui.painter();
-    let part = |from: f32, to: f32, col: egui::Color32| {
-        p.rect_filled(
-            egui::Rect::from_x_y_ranges(x(from)..=x(to), bar.y_range()),
-            0.0,
-            col,
-        );
-    };
-    part(SCALE, k.edge, CLAN);
-    part(k.edge, -k.edge, MIDDLE);
-    part(-k.edge, -SCALE, LAW);
-    let mark = egui::Color32::WHITE;
-    let a = c.axis();
-    if c.sees_exactly() {
-        p.line_segment(
-            [
-                egui::pos2(x(a), rect.top()),
-                egui::pos2(x(a), rect.bottom()),
-            ],
-            egui::Stroke::new(3.0, mark),
-        );
-    } else {
-        p.rect_filled(
-            egui::Rect::from_x_y_ranges(x(a + GUESS)..=x(a - GUESS), rect.y_range()),
-            2.0,
-            mark.gamma_multiply(0.45),
-        );
-    }
-}
-
-/// The axis window.
-pub fn axis_window(ctx: &egui::Context, open: &mut bool, view: &SimView) {
-    crate::frame::window("axis", Icon::WindowAxis, &tr("Corruption axis"), open).show(ctx, |ui| {
-        let Some(db) = view.content.as_deref() else {
-            return;
-        };
-        let k = &db.balance().corruption;
-        let c = &view.corruption;
-        ui.label(tr(
-            "Corruption (C) against institutions (I). Far enough either way, the city changes.",
-        ));
-        ui.horizontal(|ui| {
-            ui.colored_label(CLAN, tr("Clan rule"));
-            ui.add_space(SCALE_W - 150.0);
-            ui.colored_label(LAW, tr("Rule of law"));
-        });
-        scale(ui, c, k);
-        ui.strong(edge_text(c.edge(k)));
-        if c.sees_exactly() {
-            ui.label(trf!(
-                "C {c} − I {i} = {a} (edges at ±{e})",
-                c = num(c.corruption),
-                i = num(c.institutions),
-                a = num(c.axis()),
-                e = num(k.edge)
-            ));
-        } else {
-            ui.label(trf!("Institutions: {n}", n = num(c.institutions)));
-            ui.label(crate::offers::rumour(c.corruption));
-            ui.weak(tr(
-                "Without an audit chamber the city's place is a guess (the band).",
-            ));
-        }
-        ui.label(trf!(
-            "Trust in the mayor: {n} (at most {m})",
-            n = num(c.trust_now(k)),
-            m = num(c.trust_ceiling(k))
-        ));
-        ui.separator();
-        ui.colored_label(CLAN, trf!("Clan rule: C − I above {e}", e = num(k.edge)));
-        for l in clan_lines(k) {
-            ui.label(l);
-        }
-        ui.colored_label(LAW, trf!("Rule of law: I − C above {e}", e = num(k.edge)));
-        for l in law_lines(k) {
-            ui.label(l);
-        }
-        ui.separator();
-        ui.strong(tr("Institutions"));
-        for kind in InstitutionKind::ALL {
-            let status = if c.has(kind) {
-                tr("stands")
-            } else if unlocked(view, db, kind) {
-                tr("can be built")
-            } else {
-                tr("not open yet")
-            };
-            ui.label(trf!(
-                "{name}: {status}",
-                name = institution_name(db, kind),
-                status = status
-            ));
-            for l in institution_terms(k, kind) {
-                ui.weak(l);
-            }
-        }
-        ui.label(if c.tenders {
-            trf!(
-                "Transparent tenders on: institutions +{i}, building +{pct}%, no kickbacks",
-                i = num(k.i_tenders),
-                pct = pct(k.tenders_build)
-            )
-        } else {
-            tr("Transparent tenders off (City policies)")
-        });
-        ui.separator();
-        ui.label(police_terms(
-            k,
-            view.budgets.get(cp_content::ServiceKind::Police),
-        ));
-    });
-}
-
 /// Whether the institution's building is open to build.
-fn unlocked(view: &SimView, db: &ContentDb, kind: InstitutionKind) -> bool {
+pub fn unlocked(view: &SimView, db: &ContentDb, kind: InstitutionKind) -> bool {
     view.uniques
         .iter()
         .any(|u| u.unlocked && db.building(u.def).institution == Some(kind))
@@ -291,33 +182,33 @@ pub fn hints(view: &SimView) -> Vec<Advice> {
     if view.city.population as f32 >= k.deals_population {
         out.push(hint(
             "hint_deals",
-            Icon::OverlayMail,
-            tr("Grey deals now come to the Offers window: money now, corruption and evidence later."),
+            Icon::WindowPower,
+            tr("Grey deals now come to the Power window: money now, corruption and evidence later."),
             UiWindow::Offers,
         ));
     }
     if !c.active.is_empty() || !c.evidence.is_empty() {
         out.push(hint(
             "hint_first_deal",
-            Icon::WindowAxis,
+            Icon::WindowPower,
             tr("A deal taken: corruption rose and its evidence stays; one day it may come out as a scandal."),
-            UiWindow::Axis,
+            UiWindow::Power,
         ));
     }
     if !c.scandals.is_empty() {
         out.push(hint(
             "hint_scandal",
-            Icon::OverlayMail,
+            Icon::Scandal,
             tr("A scandal broke: trust fell and the city paid a fine. Institutions make scandals likelier."),
-            UiWindow::Offers,
+            UiWindow::Scandals,
         ));
     }
     if c.corruption >= HINT_CORRUPTION {
         out.push(hint(
             "hint_corruption",
-            Icon::WindowAxis,
+            Icon::WindowPower,
             tr("Rumours of bribes are everywhere: police stations start to be bought and crime rises."),
-            UiWindow::Axis,
+            UiWindow::Power,
         ));
     }
     if !c.visible_captured().is_empty() {
@@ -325,7 +216,7 @@ pub fn hints(view: &SimView) -> Vec<Advice> {
             "hint_captured",
             Icon::OverlayPolice,
             tr("The audit found police stations on the take: they fight crime less. A court frees them."),
-            UiWindow::Axis,
+            UiWindow::Power,
         ));
     }
     let a = c.axis();
@@ -338,26 +229,26 @@ pub fn hints(view: &SimView) -> Vec<Advice> {
         let n = ((k.edge - a) / mean).ceil().max(1.0) as i64;
         out.push(hint(
             "hint_near_clan",
-            Icon::WindowAxis,
+            Icon::WindowPower,
             trf!(
                 plural "About {n} more deal and the city slides to clan rule: more offers, less trust",
                 n = n
             ),
-            UiWindow::Axis,
+            UiWindow::Power,
         ));
     }
     match c.edge(k) {
         Edge::Clan => out.push(hint(
             "hint_clan",
-            Icon::WindowAxis,
+            Icon::WindowPower,
             tr("The city is under clan rule: deals come twice as often, trust stays low, crime grows."),
-            UiWindow::Axis,
+            UiWindow::Power,
         )),
         Edge::Law => out.push(hint(
             "hint_law",
-            Icon::WindowAxis,
+            Icon::WindowPower,
             tr("The city is under the rule of law: more tax and dearer land, hardly any offers."),
-            UiWindow::Axis,
+            UiWindow::Power,
         )),
         Edge::Middle => {}
     }
@@ -367,18 +258,15 @@ pub fn hints(view: &SimView) -> Vec<Advice> {
         (InstitutionKind::Court, "hint_court"),
     ] {
         if unlocked(view, db, kind) {
-            let [now, later, risk] = institution_terms(k, kind);
             out.push(hint(
                 id,
                 Icon::Buildings,
                 trf!(
-                    "{name} can be built. {now}. {later}. {risk}.",
+                    "{name} can be built: institutions +{i}, deals come out more often.",
                     name = institution_name(db, kind),
-                    now = now,
-                    later = later,
-                    risk = risk
+                    i = num(institution_gain(k, kind))
                 ),
-                UiWindow::Axis,
+                UiWindow::Institutions,
             ));
         }
     }
@@ -388,6 +276,7 @@ pub fn hints(view: &SimView) -> Vec<Advice> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cp_economy::CorruptionState;
     use std::sync::Arc;
 
     fn view_with(f: impl FnOnce(&mut CorruptionState)) -> SimView {

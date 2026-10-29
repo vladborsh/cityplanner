@@ -447,3 +447,29 @@ fn transparent_tenders_stop_the_kickback_and_its_corruption() {
         assert!(s.inbox.iter().all(|o| o.deal != "kickback"), "day {day}");
     }
 }
+
+/// T-335: the Power window's risk scale and the daily roll use one formula, built of the parts the
+/// window draws.
+#[test]
+fn the_scandal_chance_is_the_product_of_the_parts_the_window_shows() {
+    let k = k();
+    let mut s = CorruptionState {
+        corruption: 20.0,
+        present: cp_content::InstitutionKind::Press.bit(),
+        ..CorruptionState::default()
+    };
+    s.evidence.push(crate::Evidence {
+        deal: "land".into(),
+        accepted_day: 1,
+        weight: 3.0,
+    });
+    s.evidence.push(crate::Evidence {
+        deal: "casino".into(),
+        accepted_day: 2,
+        weight: 2.0,
+    });
+    assert_eq!(s.evidence_weight(), 5.0);
+    let by_hand = k.scandal_day * 5.0 * s.scandal_exposure(&k) * (1.0 - s.roof(&k));
+    assert_eq!(s.scandal_chance(&k), by_hand);
+    assert!(s.scandal_exposure(&k) > k.scandal_exposure * (1.0 - k.scandal_c_damp * 0.2));
+}

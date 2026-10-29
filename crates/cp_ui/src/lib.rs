@@ -48,6 +48,7 @@ pub mod palette;
 pub mod panels;
 pub mod parks;
 pub mod policies;
+pub mod power;
 pub mod roads;
 pub mod service_marks;
 pub mod services;
@@ -311,8 +312,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         services::overlay_services_panel(ctx, view, context, overlays_panel::width(st));
         lines::lines_window(ctx, &mut st.lines_open, view, &mut st.lines, outbox);
         policies::city_policies_window(ctx, &mut st.policies_open, view, outbox);
-        offers::offers_window(ctx, &mut st.offers_open, view, outbox);
-        axis::axis_window(ctx, &mut st.axis_open, view);
+        power::power_window(ctx, st, view, tools, outbox);
     }
     if state.debug_open {
         debug::debug_window(

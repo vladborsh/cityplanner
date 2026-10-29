@@ -404,9 +404,14 @@ impl CorruptionState {
         (k.roof_per_station * self.captured.len() as f32).min(k.roof_max)
     }
 
-    /// Chance of a scandal today, cooldown aside (§6).
-    pub fn scandal_chance(&self, k: &CorruptionKnobs) -> f32 {
-        let weight: f32 = self.evidence.iter().map(|e| e.weight).sum();
+    /// The weight of all the evidence kept (§6).
+    pub fn evidence_weight(&self) -> f32 {
+        self.evidence.iter().map(|e| e.weight).sum()
+    }
+
+    /// How findable the evidence is today (§6): the base exposure plus what each institution
+    /// adds, damped by how corrupt the city is (the Power window draws it as the "detection").
+    pub fn scandal_exposure(&self, k: &CorruptionKnobs) -> f32 {
         let mut base = k.scandal_exposure;
         for (kind, v) in [
             (InstitutionKind::Audit, k.exposure_audit),
@@ -417,7 +422,14 @@ impl CorruptionState {
                 base += v;
             }
         }
-        let exposure = base * (1.0 - k.scandal_c_damp * self.corruption / 100.0);
+        base * (1.0 - k.scandal_c_damp * self.corruption / 100.0)
+    }
+
+    /// Chance of a scandal today, cooldown aside (§6): the one formula of the daily roll and of
+    /// the Power window's risk scale (T-335).
+    pub fn scandal_chance(&self, k: &CorruptionKnobs) -> f32 {
+        let weight = self.evidence_weight();
+        let exposure = self.scandal_exposure(k);
         (k.scandal_day * weight * exposure.max(0.0) * (1.0 - self.roof(k))).clamp(0.0, 1.0)
     }
 
@@ -475,7 +487,7 @@ impl CorruptionState {
         if r.next_f32() >= self.scandal_chance(k) {
             return None;
         }
-        let total: f32 = self.evidence.iter().map(|e| e.weight).sum();
+        let total = self.evidence_weight();
         let mut pick = r.next_f32() * total;
         let at = self
             .evidence

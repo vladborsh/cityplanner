@@ -176,6 +176,30 @@ fn history_gets_exactly_24_samples_per_game_day() {
     assert!(s.history.back().unwrap().population as usize >= 1500);
 }
 
+/// T-335: the samples carry `C`, `I` and trust for the Power window's sparkline.
+#[test]
+fn history_samples_carry_corruption_institutions_and_trust() {
+    let mut sim = city(3);
+    {
+        let mut c = sim
+            .world_mut()
+            .resource_mut::<cp_economy::CorruptionState>();
+        c.corruption = 37.0;
+        c.institutions = 12.0;
+        c.trust = 61.0;
+        c.started = true;
+    }
+    to_boundary(&mut sim);
+    for _ in 0..TICKS_PER_DAY {
+        sim.tick_once();
+    }
+    let s = sim.world().resource::<CityStats>();
+    let last = s.history.back().unwrap();
+    assert!(last.corruption > 0.0, "{last:?}");
+    assert!(last.trust > 0.0 && last.trust <= 100.0, "{last:?}");
+    assert!(last.institutions >= 0.0, "{last:?}");
+}
+
 #[test]
 fn the_summary_is_outside_the_checksum_and_not_read_by_the_sim() {
     let (mut a, mut b) = (city(4), city(4));

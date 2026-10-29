@@ -201,6 +201,11 @@ pub struct HistorySample {
     pub demand: [f32; 4],
     /// The running population flow at the sample (T-179).
     pub flow: PopFlow,
+    /// Corruption `C`, institutions `I` and trust in the mayor (T-335): the Power window's
+    /// sparkline. Derived like the rest of the history: not saved, not in the checksum.
+    pub corruption: f32,
+    pub institutions: f32,
+    pub trust: f32,
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
@@ -323,9 +328,10 @@ pub fn update_city_stats(
     land: Res<LandGrids>,
     demand: Res<Demand>,
     treasury: Res<Treasury>,
-    (budgets, tourists): (
+    (budgets, tourists, corruption): (
         Option<Res<cp_content::Budgets>>,
         Option<Res<cp_transit::Tourists>>,
+        Option<Res<cp_economy::CorruptionState>>,
     ),
     district: DistrictParams,
     mut stats: ResMut<CityStats>,
@@ -404,6 +410,11 @@ pub fn update_city_stats(
                     pollution: next.land.avg_pollution,
                     demand: demands,
                     flow: next.pop_flow,
+                    corruption: corruption.as_deref().map_or(0.0, |c| c.corruption),
+                    institutions: corruption.as_deref().map_or(0.0, |c| c.institutions),
+                    trust: corruption
+                        .as_deref()
+                        .map_or(0.0, |c| c.trust_now(&db.balance().corruption)),
                 });
             }
             let mut daily = std::mem::take(&mut stats.daily);

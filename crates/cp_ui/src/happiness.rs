@@ -30,7 +30,7 @@ pub fn action(c: Complaint) -> Option<Action> {
         Complaint::NoPark => Action::Panel(Category::Parks),
         Complaint::HighTax => Action::Window(UiWindow::Budget),
         // T-328: trust is on the corruption axis.
-        Complaint::Distrust => Action::Window(UiWindow::Axis),
+        Complaint::Distrust => Action::Window(UiWindow::Power),
     })
 }
 

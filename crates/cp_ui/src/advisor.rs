@@ -6,7 +6,7 @@
 //! snackbar appears it records [`Advisor::just_shown`]; `draw_ui` turns that into an
 //! [`AdvisorShown`] message, the hook for a chime (T-189).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::ecs::message::Message;
 use bevy::math::Vec2;
@@ -1082,9 +1082,62 @@ pub struct Advisor {
     bike_hint_shown: bool,
     /// Severity of the snackbar that appeared in the last frame (taken by `draw_ui`).
     pub just_shown: Option<Severity>,
+    /// The offers of the inbox (deal, last day) and the scandals the toasts of the Power window
+    /// have seen (T-335); `None` until the first look, so a loaded game does not toast its past.
+    power_seen: Option<(BTreeSet<(String, u32)>, usize)>,
 }
 
 impl Advisor {
+    /// The toast of a new offer or a new scandal (T-335, `architecture/corruption-ui.md` §2.4).
+    fn power_toast(&mut self, view: &SimView) -> Option<Advice> {
+        let db = view.content.as_deref()?;
+        let c = &view.corruption;
+        let offers: BTreeSet<(String, u32)> = c
+            .inbox
+            .iter()
+            .map(|o| (o.deal.clone(), o.expires_day))
+            .collect();
+        let Some((seen_offers, seen_scandals)) =
+            self.power_seen.replace((offers.clone(), c.scandals.len()))
+        else {
+            return None;
+        };
+        if c.scandals.len() > seen_scandals
+            && let Some(s) = c.scandals.last()
+        {
+            return Some(Advice {
+                id: "power_scandal",
+                severity: Severity::Warn,
+                text: crate::offers::scandal_text(db, s),
+                count: 1,
+                icon: Icon::Scandal,
+                action: Some(Action::Window(crate::panels::UiWindow::Scandals)),
+            });
+        }
+        let new = c
+            .inbox
+            .iter()
+            .find(|o| !seen_offers.contains(&(o.deal.clone(), o.expires_day)))?;
+        let def = db.deal(&new.deal)?;
+        let chips: Vec<String> = crate::offers::chips(def)
+            .into_iter()
+            .take(3)
+            .map(|c| c.text)
+            .collect();
+        Some(Advice {
+            id: "power_offer",
+            severity: Severity::Info,
+            text: trf!(
+                "New offer: {name} · {chips}",
+                name = tr(&def.name),
+                chips = chips.join(" · ")
+            ),
+            count: 1,
+            icon: crate::offers::deal_icon(def),
+            action: Some(Action::Window(crate::panels::UiWindow::Offers)),
+        })
+    }
+
     /// The advice on screen at `now`.
     pub fn current(&self, now: f64) -> Option<&Advice> {
         self.shown
@@ -1110,6 +1163,13 @@ impl Advisor {
         problems_only: bool,
         hints_seen: Option<&mut std::collections::BTreeSet<String>>,
     ) {
+        if let Some(toast) = self.power_toast(view) {
+            self.just_shown = Some(toast.severity);
+            self.shown = Some(Shown {
+                advice: toast,
+                at: now,
+            });
+        }
         let hour = view.tick.0 * 24 / TICKS_PER_DAY;
         if self.last_hour == Some(hour) {
             return;
@@ -1747,7 +1807,7 @@ mod tests {
         assert_eq!(adv.current(0.1).map(|a| a.id), Some("hint_scandal"));
         assert_eq!(
             adv.current(0.1).unwrap().action,
-            Some(Action::Window(crate::panels::UiWindow::Offers))
+            Some(Action::Window(crate::panels::UiWindow::Scandals))
         );
         assert!(seen.contains("hint_scandal"));
         adv.close();
@@ -2394,5 +2454,48 @@ mod tests {
         assert_eq!(got[0].id, "industry_level_up");
         assert!(got[0].text.contains("level 2"), "{}", got[0].text);
         assert!(level_advice(&sim.view(), &mut seen).is_empty());
+    }
+
+    /// T-335: a new offer and a new scandal come as toasts with a link to their tab; what was
+    /// there on the first look does not.
+    #[test]
+    fn a_new_offer_and_a_new_scandal_come_as_toasts() {
+        let mut v = view_with(|_| {});
+        let mut adv = Advisor::default();
+        adv.observe(&v, 0.0, true);
+        assert!(adv.current(0.1).is_none());
+        v.corruption.inbox.push(cp_economy::Offer {
+            deal: "land".into(),
+            target: None,
+            expires_day: 9,
+        });
+        adv.observe(&v, 1.0, true);
+        let toast = adv.current(1.1).expect("an offer toast");
+        assert_eq!(toast.id, "power_offer");
+        assert!(
+            toast.text.starts_with("New offer: Land for friends"),
+            "{}",
+            toast.text
+        );
+        assert_eq!(
+            toast.action,
+            Some(Action::Window(crate::panels::UiWindow::Offers))
+        );
+        adv.observe(&v, 2.0, true);
+        assert_eq!(adv.current(2.1).map(|a| a.id), Some("power_offer"));
+        v.corruption.scandals.push(cp_economy::Scandal {
+            deal: "land".into(),
+            day: 3,
+            weight: 2.0,
+            trust: 10.0,
+            fine: 5000,
+            undone: false,
+        });
+        adv.observe(&v, 3.0, true);
+        let toast = adv.current(3.1).expect("a scandal toast");
+        assert_eq!(
+            (toast.id, toast.severity),
+            ("power_scandal", Severity::Warn)
+        );
     }
 }

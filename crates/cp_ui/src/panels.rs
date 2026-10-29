@@ -105,10 +105,10 @@ pub struct UiState {
     pub lines_open: bool,
     /// The City policies window (T-193).
     pub policies_open: bool,
-    /// The grey deals' inbox (T-325).
-    pub offers_open: bool,
-    /// The corruption axis (T-328).
-    pub axis_open: bool,
+    /// The Power window (T-335): grey deals, the corruption axis, institutions, scandals.
+    pub power_open: bool,
+    /// The tab the Power window was left on (not saved).
+    pub power_tab: crate::power::PowerTab,
     /// Name drafts of the Lines window.
     pub lines: crate::lines::LinesDraft,
     /// The list of districts or areas of the open tray category is open (T-317).
@@ -203,14 +203,23 @@ pub enum UiWindow {
     Lines,
     Policies,
     Saves,
-    /// The grey deals' inbox (T-325); appended.
-    Offers,
+    /// The grey deals, the corruption axis, the institutions and the scandals in one (T-335).
+    Power,
     Debug,
-    /// The corruption axis (T-328); appended.
+    /// Aliases of [`UiWindow::Power`] on a tab: `--open offers`, the advisor's links.
+    Offers,
     Axis,
+    Institutions,
+    Scandals,
 }
 
 impl UiState {
+    /// Opens the Power window on `tab`.
+    pub fn show_power(&mut self, tab: crate::power::PowerTab) {
+        self.power_open = true;
+        self.power_tab = tab;
+    }
+
     /// Opens `w` (the advisor's "Show"); the save menu is not a `UiState` window.
     pub fn open_window(&mut self, w: UiWindow) {
         match w {
@@ -221,16 +230,18 @@ impl UiState {
             UiWindow::Services => self.services_open = true,
             UiWindow::Lines => self.lines_open = true,
             UiWindow::Policies => self.policies_open = true,
-            UiWindow::Offers => self.offers_open = true,
+            UiWindow::Power | UiWindow::Axis => self.power_open = true,
+            UiWindow::Offers => self.show_power(crate::power::PowerTab::Offers),
+            UiWindow::Institutions => self.show_power(crate::power::PowerTab::Institutions),
+            UiWindow::Scandals => self.show_power(crate::power::PowerTab::Scandals),
             UiWindow::Debug => self.debug_open = true,
-            UiWindow::Axis => self.axis_open = true,
             UiWindow::Saves => {}
         }
     }
 }
 
 impl UiWindow {
-    pub const ALL: [UiWindow; 11] = [
+    pub const ALL: [UiWindow; 10] = [
         UiWindow::Budget,
         UiWindow::Demand,
         UiWindow::Metrics,
@@ -240,8 +251,7 @@ impl UiWindow {
         UiWindow::Policies,
         UiWindow::Saves,
         UiWindow::Debug,
-        UiWindow::Offers,
-        UiWindow::Axis,
+        UiWindow::Power,
     ];
 
     /// The window named `name` (lower case: `budget`, `jobs`, ...), for the `--open` flag.
@@ -254,8 +264,11 @@ impl UiWindow {
             "services" => UiWindow::Services,
             "lines" => UiWindow::Lines,
             "policies" => UiWindow::Policies,
+            "power" => UiWindow::Power,
             "offers" => UiWindow::Offers,
             "axis" => UiWindow::Axis,
+            "institutions" => UiWindow::Institutions,
+            "scandals" => UiWindow::Scandals,
             "saves" => UiWindow::Saves,
             "debug" => UiWindow::Debug,
             _ => return None,
@@ -271,8 +284,8 @@ impl UiWindow {
             UiWindow::Services => "City services (F4)",
             UiWindow::Lines => "Lines",
             UiWindow::Policies => "City policies",
-            UiWindow::Offers => "Offers",
-            UiWindow::Axis => "Corruption axis",
+            UiWindow::Power | UiWindow::Offers | UiWindow::Axis => "Mayor's power",
+            UiWindow::Institutions | UiWindow::Scandals => "Mayor's power",
             UiWindow::Saves => "Save / Load",
             UiWindow::Debug => "Debug (F3)",
         }
@@ -287,8 +300,11 @@ impl UiWindow {
             UiWindow::Services => Icon::Services,
             UiWindow::Lines => Icon::Lines,
             UiWindow::Policies => Icon::DistrictTabPolicies,
-            UiWindow::Offers => Icon::OverlayMail,
-            UiWindow::Axis => Icon::WindowAxis,
+            UiWindow::Power
+            | UiWindow::Offers
+            | UiWindow::Axis
+            | UiWindow::Institutions
+            | UiWindow::Scandals => Icon::WindowPower,
             UiWindow::Saves => Icon::Saves,
             UiWindow::Debug => Icon::Debug,
         }

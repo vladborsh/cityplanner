@@ -91,15 +91,14 @@ pub struct OverlayRects {
 
 /// The windows of the row, in order (one row in the top bar): money, charts, services, lines; policies,
 /// saves, debug; then the settings button follows.
-const ROW: [UiWindow; 11] = [
+const ROW: [UiWindow; 10] = [
     UiWindow::Budget,
     UiWindow::Metrics,
     UiWindow::Jobs,
     UiWindow::Services,
     UiWindow::Lines,
     UiWindow::Policies,
-    UiWindow::Offers,
-    UiWindow::Axis,
+    UiWindow::Power,
     UiWindow::Saves,
     UiWindow::Demand,
     UiWindow::Debug,
@@ -125,8 +124,8 @@ fn window_on(state: &UiState, files: &FileMenu, w: UiWindow) -> bool {
         UiWindow::Services => state.services_open,
         UiWindow::Lines => state.lines_open,
         UiWindow::Policies => state.policies_open,
-        UiWindow::Offers => state.offers_open,
-        UiWindow::Axis => state.axis_open,
+        UiWindow::Power | UiWindow::Offers | UiWindow::Axis => state.power_open,
+        UiWindow::Institutions | UiWindow::Scandals => state.power_open,
         UiWindow::Saves => files.open,
         UiWindow::Debug => state.debug_open,
     }
@@ -142,8 +141,8 @@ fn toggle_window(state: &mut UiState, files: &mut FileMenu, w: UiWindow) {
         UiWindow::Services => state.services_open = !on,
         UiWindow::Lines => state.lines_open = !on,
         UiWindow::Policies => state.policies_open = !on,
-        UiWindow::Offers => state.offers_open = !on,
-        UiWindow::Axis => state.axis_open = !on,
+        UiWindow::Power | UiWindow::Offers | UiWindow::Axis => state.power_open = !on,
+        UiWindow::Institutions | UiWindow::Scandals => state.power_open = !on,
         UiWindow::Saves => toggle_saves(files),
         UiWindow::Debug => state.debug_open = !on,
     }
@@ -161,7 +160,11 @@ pub fn overlays_panel(
 ) -> OverlayRects {
     let mut rects = OverlayRects::default();
     let offers = view.map_or(0, |v| v.corruption.inbox.len());
-    window_bar(ctx, state, files, offers, &mut rects);
+    let trust = view.and_then(|v| {
+        let k = &v.content.as_deref()?.balance().corruption;
+        Some(v.corruption.trust_now(k))
+    });
+    window_bar(ctx, state, files, (offers, trust), &mut rects);
     let area = egui::Area::new(egui::Id::new("overlays_panel"))
         .anchor(
             egui::Align2::RIGHT_TOP,
@@ -273,7 +276,7 @@ fn window_bar(
     ctx: &egui::Context,
     state: &mut UiState,
     files: &mut FileMenu,
-    offers: usize,
+    (offers, trust): (usize, Option<f32>),
     rects: &mut OverlayRects,
 ) {
     egui::Area::new(egui::Id::new("window_bar"))
@@ -291,7 +294,7 @@ fn window_bar(
                         .button(ui, WINDOW_ICON, Sizes::BUTTON_PAD, on)
                         .on_hover_text(tr(w.label()));
                     // The offers waiting, a number in the corner of their button (T-325).
-                    if w == UiWindow::Offers && offers > 0 {
+                    if w == UiWindow::Power && offers > 0 {
                         let at = r.rect.right_top() + egui::vec2(-5.0, 5.0);
                         let p = ui.painter();
                         p.circle_filled(at, 7.0, egui::Color32::from_rgb(200, 60, 50));
@@ -302,6 +305,22 @@ fn window_bar(
                             egui::FontId::proportional(10.0),
                             egui::Color32::WHITE,
                         );
+                    }
+                    // Trust in the mayor, a strip along the bottom of the button (T-335).
+                    if w == UiWindow::Power
+                        && let Some(t) = trust
+                    {
+                        let strip = egui::Rect::from_min_max(
+                            r.rect.left_bottom() + egui::vec2(4.0, -5.0),
+                            r.rect.right_bottom() + egui::vec2(-4.0, -2.0),
+                        );
+                        let p = ui.painter();
+                        p.rect_filled(strip, 1.5, egui::Color32::from_gray(40));
+                        let full = egui::Rect::from_min_size(
+                            strip.min,
+                            egui::vec2(strip.width() * (t / 100.0).clamp(0.0, 1.0), strip.height()),
+                        );
+                        p.rect_filled(full, 1.5, crate::power::trust_colour(t));
                     }
                     rects.windows.push((w, r.rect));
                     if r.clicked() {
@@ -614,18 +633,18 @@ mod tests {
         assert!(rig.state.jobs_open);
     }
 
-    /// T-328: the axis button opens the corruption axis; "Reset hints" empties the seen hints.
+    /// T-335: the Power button opens the window; "Reset hints" empties the seen hints.
     #[test]
-    fn the_axis_button_opens_its_window_and_the_settings_reset_the_hints() {
+    fn the_power_button_opens_its_window_and_the_settings_reset_the_hints() {
         let mut rig = Rig::new();
         let (_, rect) = *rig
             .rects
             .windows
             .iter()
-            .find(|(w, _)| *w == UiWindow::Axis)
-            .expect("an axis button");
+            .find(|(w, _)| *w == UiWindow::Power)
+            .expect("a Power button");
         rig.click(rect.center());
-        assert!(rig.state.axis_open);
+        assert!(rig.state.power_open);
         rig.state.prefs.hints_seen.insert("hint_deals".into());
         rig.click(rig.rects.settings.unwrap().center());
         rig.frame(vec![]);

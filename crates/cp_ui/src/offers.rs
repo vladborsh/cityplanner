@@ -1,19 +1,137 @@
-//! Offers (T-325, `architecture/corruption.md` §4, §10): the grey deals waiting in the inbox. A
-//! card per offer says what it brings now, what it costs in corruption and evidence, what it is
-//! about and how long it waits; Accept and Decline send `SimCommand::Corruption`. The window
-//! button in the top bar shows how many wait. Below them, the scandals that broke (T-326, §6),
-//! newest first. Above them, what the mayor knows (T-327, §9): trust and institutions always,
-//! corruption and the captured stations exactly with the audit chamber, else as rumours.
+//! The words and numbers of the grey deals (T-325, `architecture/corruption.md` §4, §10) and
+//! what the mayor knows of the city (T-327, §9). The Power window ([`crate::power`]) draws them:
+//! the chips of a deal, the lines of its tooltip, the rumours without an audit chamber.
 
-use bevy_egui::egui;
 use cp_content::{ContentDb, DealDef};
 use cp_core::Cost;
-use cp_economy::{CorruptionCommand, CorruptionState, DealTarget, Offer, Scandal};
+use cp_economy::{CorruptionState, DealTarget, Offer, Scandal};
 use cp_locale::{tr, trf, trn};
-use cp_sim::{SimCommand, SimView};
-use cp_tools::{CommandOutbox, format_money};
+use cp_sim::SimView;
+use cp_tools::format_money;
 
 use crate::icons::Icon;
+
+/// One effect of a deal as a chip: an icon and a few characters. `good`: a gain (green),
+/// else a price (orange).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Chip {
+    pub icon: Icon,
+    pub text: String,
+    pub good: bool,
+}
+
+fn chip(icon: Icon, text: String, good: bool) -> Chip {
+    Chip { icon, text, good }
+}
+
+/// `20000` as "$20k", `1500` as "$1.5k", `800` as "$800".
+pub fn short_money(units: i64) -> String {
+    let sign = if units < 0 { "-" } else { "+" };
+    let n = units.unsigned_abs();
+    let body = if n >= 1000 && n % 1000 == 0 {
+        format!("{}k", n / 1000)
+    } else if n >= 1000 {
+        format!("{:.1}k", n as f32 / 1000.0)
+    } else {
+        n.to_string()
+    };
+    format!("{sign}${body}")
+}
+
+/// The evidence of weight `w` as three dots: `●●○`.
+pub fn evidence_dots(w: f32) -> String {
+    let n = if w <= 0.0 {
+        0
+    } else if w < 2.0 {
+        1
+    } else if w < 4.0 {
+        2
+    } else {
+        3
+    };
+    format!("{}{}", "●".repeat(n), "○".repeat(3 - n))
+}
+
+/// The chips of a deal (T-335): the gains first, then the price.
+pub fn chips(def: &DealDef) -> Vec<Chip> {
+    let mut out = Vec::new();
+    if def.money != 0 {
+        out.push(chip(Icon::DealMoney, short_money(def.money), true));
+    }
+    if def.weekly != 0 {
+        out.push(chip(
+            Icon::DealMoney,
+            trf!("{money}/wk", money = short_money(def.weekly)),
+            true,
+        ));
+    }
+    if def.build_discount > 0.0 {
+        out.push(chip(
+            Icon::DealBuild,
+            format!("-{}%", (def.build_discount * 100.0).round() as i32),
+            true,
+        ));
+    }
+    if def.days > 0 {
+        out.push(chip(
+            Icon::Deadline,
+            trf!("{n} d", n = def.days.to_string()),
+            true,
+        ));
+    }
+    if def.lift_policy {
+        out.push(chip(Icon::DealBan, tr("ban lifted"), true));
+    }
+    if def.tourists > 0.0 {
+        out.push(chip(
+            Icon::DealTourists,
+            format!("+{}%", (def.tourists * 100.0).round() as i32),
+            true,
+        ));
+    }
+    if def.trust > 0.0 {
+        out.push(chip(Icon::Trust, format!("+{:.0}", def.trust), true));
+    }
+    out.push(chip(
+        Icon::Corruption,
+        format!("C +{:.0}", def.corruption),
+        false,
+    ));
+    out.push(chip(Icon::Evidence, evidence_dots(def.evidence), false));
+    if def.trust < 0.0 {
+        out.push(chip(Icon::Trust, format!("{:.0}", def.trust), false));
+    }
+    if def.pollution > 0.0 {
+        out.push(chip(
+            Icon::OverlayPollution,
+            format!("+{}%", (def.pollution * 100.0).round() as i32),
+            false,
+        ));
+    }
+    if def.crime > 0.0 {
+        out.push(chip(
+            Icon::DealCrime,
+            format!("+{}%", (def.crime * 100.0).round() as i32),
+            false,
+        ));
+    }
+    out
+}
+
+/// The icon of the card of a deal, by the effect it is about (no field of the def is needed).
+pub fn deal_icon(def: &DealDef) -> Icon {
+    if def.build_discount > 0.0 {
+        Icon::DealBuild
+    } else if def.lift_policy {
+        Icon::DealBan
+    } else if def.pollution > 0.0 {
+        Icon::OverlayPollution
+    } else if def.tourists > 0.0 {
+        Icon::DealTourists
+    } else {
+        Icon::DealMoney
+    }
+}
 
 /// The weight of the evidence in words.
 pub fn evidence_text(weight: f32) -> String {
@@ -96,7 +214,7 @@ pub fn terms(def: &DealDef) -> Vec<String> {
 }
 
 /// What the offer is about, if anything.
-fn target_text(view: &SimView, db: &ContentDb, offer: &Offer) -> Option<String> {
+pub fn target_text(view: &SimView, db: &ContentDb, offer: &Offer) -> Option<String> {
     match offer.target? {
         DealTarget::District(d) => {
             let name = view.districts.get(d)?.name.clone();
@@ -107,73 +225,6 @@ fn target_text(view: &SimView, db: &ContentDb, offer: &Offer) -> Option<String> 
             Some(trf!("At {name}", name = tr(&def.name)))
         }
     }
-}
-
-/// The Offers window.
-pub fn offers_window(
-    ctx: &egui::Context,
-    open: &mut bool,
-    view: &SimView,
-    outbox: &mut CommandOutbox,
-) {
-    crate::frame::window("offers", Icon::OverlayMail, &tr("Offers"), open).show(ctx, |ui| {
-        let Some(db) = view.content.as_deref() else {
-            return;
-        };
-        let k = &db.balance().corruption;
-        let c = &view.corruption;
-        ui.label(trf!(
-            "Trust in the mayor: {n}",
-            n = format!("{:.0}", c.trust_now(k))
-        ));
-        for line in standing(c) {
-            ui.label(line);
-        }
-        if c.inbox.is_empty() {
-            ui.weak(trf!(
-                "No offers. Grey deals start to come at {n} residents; the game does not pause for them.",
-                n = format!("{:.0}", k.deals_population)
-            ));
-        }
-        let today = cp_economy::corruption::day_of(view.tick);
-        for offer in &c.inbox {
-            let Some(def) = db.deal(&offer.deal) else {
-                continue;
-            };
-            ui.separator();
-            ui.strong(tr(&def.name));
-            ui.label(tr(&def.text));
-            if let Some(t) = target_text(view, db, offer) {
-                ui.weak(t);
-            }
-            for line in terms(def) {
-                ui.label(line);
-            }
-            ui.weak(trn(
-                "Answer within {n} days",
-                i64::from(offer.expires_day.saturating_sub(today)),
-            ));
-            ui.horizontal(|ui| {
-                if ui.button(tr("Accept")).clicked() {
-                    outbox.push(SimCommand::Corruption(CorruptionCommand::Accept {
-                        deal: offer.deal.clone(),
-                    }));
-                }
-                if ui.button(tr("Decline")).clicked() {
-                    outbox.push(SimCommand::Corruption(CorruptionCommand::Decline {
-                        deal: offer.deal.clone(),
-                    }));
-                }
-            });
-        }
-        if !c.scandals.is_empty() {
-            ui.separator();
-            ui.strong(tr("Scandals"));
-            for s in c.scandals.iter().rev().take(SCANDALS_SHOWN) {
-                ui.label(scandal_text(db, s));
-            }
-        }
-    });
 }
 
 /// What the mayor knows of the city's corruption (§9): institutions always, corruption and the
@@ -262,6 +313,25 @@ mod tests {
     }
 
     #[test]
+    fn chips_split_a_deal_into_gains_and_prices() {
+        let db = db();
+        let casino = chips(db.deal("casino").unwrap());
+        let has = |icon, good| casino.iter().any(|c| c.icon == icon && c.good == good);
+        assert!(has(Icon::DealTourists, true), "{casino:?}");
+        assert!(has(Icon::DealCrime, false), "{casino:?}");
+        assert!(has(Icon::Corruption, false), "{casino:?}");
+        let kickback = chips(db.deal("kickback").unwrap());
+        assert!(
+            kickback
+                .iter()
+                .any(|c| c.icon == Icon::Deadline && c.good && c.text == "30 d"),
+            "{kickback:?}"
+        );
+        assert_eq!(evidence_dots(3.0), "●●○");
+        assert_eq!(short_money(20_000), "+$20k");
+    }
+
+    #[test]
     fn the_audit_turns_rumours_into_numbers() {
         let mut c = CorruptionState {
             corruption: 42.0,
@@ -306,49 +376,5 @@ mod tests {
             "{line}"
         );
         assert!(line.ends_with(" · the deal is undone"), "{line}");
-    }
-
-    #[test]
-    fn accept_sends_the_corruption_command() {
-        let mut sim = cp_sim::SimRunner::new(1);
-        sim.set_content(db());
-        sim.world_mut()
-            .resource_mut::<cp_economy::CorruptionState>()
-            .inbox
-            .push(Offer {
-                deal: "land".into(),
-                target: None,
-                expires_day: 5,
-            });
-        let view = sim.view();
-        let ctx = egui::Context::default();
-        let mut outbox = CommandOutbox::default();
-        let mut open = true;
-        let mut draw = |outbox: &mut CommandOutbox, ev| {
-            crate::testutil::frame_texts(&ctx, crate::testutil::input(0.0, ev), |ui| {
-                offers_window(ui.ctx(), &mut open, &view, outbox)
-            })
-        };
-        // Twice: a window lays itself out on its first frame.
-        draw(&mut outbox, vec![]);
-        let texts = draw(&mut outbox, vec![]);
-        assert!(
-            texts.iter().any(|(t, _)| t == "Land for friends"),
-            "{texts:?}"
-        );
-        let at = texts
-            .iter()
-            .find(|(t, _)| t == "Accept")
-            .map(|(_, p)| *p + egui::vec2(4.0, 4.0))
-            .expect("an Accept button");
-        let [down, up] = crate::testutil::click(at);
-        draw(&mut outbox, down);
-        draw(&mut outbox, up);
-        assert_eq!(
-            outbox.iter().cloned().collect::<Vec<_>>(),
-            [SimCommand::Corruption(CorruptionCommand::Accept {
-                deal: "land".into()
-            })]
-        );
     }
 }
