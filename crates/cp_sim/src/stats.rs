@@ -281,6 +281,8 @@ pub struct DistrictParams<'w> {
     trip_times: Res<'w, cp_traffic::TripTimes>,
     /// The city contentment of the last pass (T-318), for the daily series.
     contentment: Option<Res<'w, cp_economy::CityContentment>>,
+    /// Corruption, institutions and trust for the history (T-335).
+    corruption: Option<Res<'w, cp_economy::CorruptionState>>,
 }
 
 /// Whether a road the player built is connected to the entry highway (BUG-041): some segment of
@@ -328,10 +330,9 @@ pub fn update_city_stats(
     land: Res<LandGrids>,
     demand: Res<Demand>,
     treasury: Res<Treasury>,
-    (budgets, tourists, corruption): (
+    (budgets, tourists): (
         Option<Res<cp_content::Budgets>>,
         Option<Res<cp_transit::Tourists>>,
-        Option<Res<cp_economy::CorruptionState>>,
     ),
     district: DistrictParams,
     mut stats: ResMut<CityStats>,
@@ -410,9 +411,13 @@ pub fn update_city_stats(
                     pollution: next.land.avg_pollution,
                     demand: demands,
                     flow: next.pop_flow,
-                    corruption: corruption.as_deref().map_or(0.0, |c| c.corruption),
-                    institutions: corruption.as_deref().map_or(0.0, |c| c.institutions),
-                    trust: corruption
+                    corruption: district.corruption.as_deref().map_or(0.0, |c| c.corruption),
+                    institutions: district
+                        .corruption
+                        .as_deref()
+                        .map_or(0.0, |c| c.institutions),
+                    trust: district
+                        .corruption
                         .as_deref()
                         .map_or(0.0, |c| c.trust_now(&db.balance().corruption)),
                 });
