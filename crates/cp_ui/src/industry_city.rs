@@ -11,7 +11,7 @@ use cp_district::{AreaId, AreaKind, DistrictCommand};
 use cp_locale::{tr, trf};
 use cp_render::OverlayState;
 use cp_sim::{SimCommand, SimView};
-use cp_tools::{ActiveTool, CommandOutbox, ToolState, format_money};
+use cp_tools::{ActiveTool, CommandOutbox, ToolState, format_money, format_money_short};
 
 use crate::icons::Icon;
 use crate::industry::{new_name, next_id, resource_icon, resource_name, show_overlays, swatch};
@@ -376,7 +376,8 @@ pub(crate) fn factory_card(
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         ui.strong(tr(&d.name));
-                        ui.weak(format_money(cp_core::Cost::from_units(d.cost)));
+                        ui.weak(format_money_short(cp_core::Cost::from_units(d.cost)))
+                            .on_hover_text(format_money(cp_core::Cost::from_units(d.cost)));
                     });
                     match &lock {
                         None => {
@@ -436,7 +437,7 @@ pub(crate) fn factory_card(
                 trf!("Would have to buy: {cargo}", cargo = buy.join(", "))
             };
             if !compact && !line.is_empty() {
-                ui.weak(line);
+                ui.add(egui::Label::new(egui::RichText::new(line).weak()).wrap());
             }
         });
     let resp = ui.interact(
@@ -550,11 +551,12 @@ pub fn market_tab(
             &tr("Exported last week"),
             |ui| {
                 ui.label(
-                    egui::RichText::new(format_money(l.last_exports))
+                    egui::RichText::new(format_money_short(l.last_exports))
                         .size(18.0)
                         .strong()
                         .color(GOOD),
-                );
+                )
+                .on_hover_text(format_money(l.last_exports));
             },
         );
         tile(
@@ -563,11 +565,12 @@ pub fn market_tab(
             &tr("Imported last week"),
             |ui| {
                 ui.label(
-                    egui::RichText::new(format_money(l.last_imports))
+                    egui::RichText::new(format_money_short(l.last_imports))
                         .size(18.0)
                         .strong()
                         .color(COST),
-                );
+                )
+                .on_hover_text(format_money(l.last_imports));
             },
         );
     });
@@ -714,7 +717,7 @@ fn market_card(ui: &mut egui::Ui, view: &SimView, db: &ContentDb, r: &TradeRow, 
             egui::Align2::LEFT_TOP,
             format!(
                 "{units} · ≈ {}",
-                format_money(cp_core::Cost::scaled(price, f64::from(units)))
+                format_money_short(cp_core::Cost::scaled(price, f64::from(units)))
             ),
             egui::FontId::proportional(11.0),
             egui::Color32::from_gray(190),

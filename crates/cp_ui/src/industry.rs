@@ -613,18 +613,26 @@ fn build_zone_block(
             .collect();
         match zone.and_then(|z| zones.iter().find(|(id, ..)| *id == z)) {
             Some((_, name, level)) => {
-                let _ = level;
                 let label =
                     egui::RichText::new(format!("■ {} ▾", clip_name(name))).color(swatch(res));
-                ui.menu_button(label, |ui| {
-                    for (id, name, level) in &zones {
-                        let text = format!("{name} · {}", trf!("Lvl {level}", level = level));
-                        if ui.selectable_label(zone == Some(*id), text).clicked() {
-                            tools.area.selected = Some(*id);
-                            show_overlays(overlay);
-                            ui.close();
+                ui.horizontal(|ui| {
+                    ui.menu_button(label, |ui| {
+                        for (id, name, level) in &zones {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .selectable_label(zone == Some(*id), clip_name(name))
+                                    .on_hover_text(name)
+                                    .clicked()
+                                {
+                                    tools.area.selected = Some(*id);
+                                    show_overlays(overlay);
+                                    ui.close();
+                                }
+                                ui.weak(trf!("Lvl {level}", level = level));
+                            });
                         }
-                    }
+                    });
+                    ui.weak(trf!("Lvl {level}", level = level));
                 });
                 if let Some(a) = zone.and_then(|z| view.areas.get(z)) {
                     let next = view

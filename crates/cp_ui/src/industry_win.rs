@@ -9,7 +9,7 @@ use cp_district::{AreaId, AreaKind, DistrictCommand, DistrictMap, NAME_MAX};
 use cp_locale::{tr, trf};
 use cp_render::OverlayState;
 use cp_sim::{Selection, SimCommand, SimView};
-use cp_tools::{ActiveTool, CommandOutbox, Picked, ToolState, format_money};
+use cp_tools::{ActiveTool, CommandOutbox, Picked, ToolState, format_money, format_money_short};
 
 use crate::icons::Icon;
 use crate::industry::{
@@ -127,7 +127,7 @@ fn arrow_money(net: cp_core::Cost) -> String {
     format!(
         "{} {}",
         if net.0 >= 0 { "▲" } else { "▼" },
-        format_money(net)
+        format_money_short(net)
     )
 }
 
@@ -306,8 +306,10 @@ fn header(ui: &mut egui::Ui, view: &SimView, db: &ContentDb) {
                     .color(money_color(net)),
             );
         })
-        .on_hover_text(tr(
-            "Net profit of all industrial areas in the last settled week.",
+        .on_hover_text(format!(
+            "{}\n{}",
+            tr("Net profit of all industrial areas in the last settled week."),
+            format_money(net)
         ));
         tile(&mut cols[3], Icon::Transit, &tr("Trucks"), |ui| {
             ui.label(
@@ -893,11 +895,16 @@ fn chain_sub(ui: &mut egui::Ui, view: &SimView, db: &ContentDb, id: AreaId) {
         ui,
         ex,
         &tr("Export"),
-        &format!("≈ {}", format_money(econ.exports)),
+        &format!("≈ {}", format_money_short(econ.exports)),
         &if exported.is_empty() {
             tr("Nothing leaves.")
         } else {
-            format!("{}\n{}", tr("Surplus last week (≈):"), exported.join("\n"))
+            format!(
+                "{}\n{}\n{}",
+                format_money(econ.exports),
+                tr("Surplus last week (≈):"),
+                exported.join("\n")
+            )
         },
     );
     let stores: Vec<&ChainBuilding> = buildings
@@ -1311,7 +1318,8 @@ fn money_sub(ui: &mut egui::Ui, view: &SimView, id: AreaId, week: &mut MoneyWeek
                     3.0,
                     if up { GOOD } else { COST },
                 );
-                ui.label(format_money(value));
+                ui.label(format_money_short(value))
+                    .on_hover_text(format_money(value));
             } else {
                 resp.on_hover_text(tr("Accrued at the end of the week"));
                 ui.weak("—");
@@ -1328,7 +1336,8 @@ fn money_sub(ui: &mut egui::Ui, view: &SimView, id: AreaId, week: &mut MoneyWeek
             3.0,
             BLUE,
         );
-        ui.colored_label(money_color(net), format_money(net));
+        ui.colored_label(money_color(net), format_money_short(net))
+            .on_hover_text(format_money(net));
     });
     ui.add_space(4.0);
     ui.weak(tr(
