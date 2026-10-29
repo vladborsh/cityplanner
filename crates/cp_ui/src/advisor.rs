@@ -278,17 +278,43 @@ pub fn level_advice(view: &SimView, seen: &mut LevelSeen) -> Vec<Advice> {
                     ("park_level_up", Icon::CategoryParks, Category::Parks)
                 }
             };
-            out.push(Advice {
-                id: adv_id,
-                severity: Severity::Info,
-                text: trf!(
+            // T-337: an industry area says what the level opened.
+            let opened = match (a.kind, view.content.as_deref()) {
+                (cp_district::AreaKind::Industry(res), Some(db)) => {
+                    let names: Vec<String> = crate::industry_data::area_unlocks(db, res, a.level)
+                        .into_iter()
+                        .take(2)
+                        .map(|d| tr(&db.building(d).name))
+                        .collect();
+                    (!names.is_empty()).then(|| names.join(", "))
+                }
+                _ => None,
+            };
+            let text = match opened {
+                Some(buildings) => trf!(
+                    "{name}: level {level}. Opened: {buildings} · storage +10%",
+                    name = a.name,
+                    level = a.level,
+                    buildings = buildings
+                ),
+                None => trf!(
                     "{name} reached level {level}",
                     name = a.name,
                     level = a.level
                 ),
+            };
+            out.push(Advice {
+                id: adv_id,
+                severity: Severity::Info,
+                text,
                 count: u32::from(a.level) * 100,
                 icon,
-                action: Some(Action::Panel(panel)),
+                action: Some(match a.kind {
+                    cp_district::AreaKind::Industry(_) => {
+                        Action::Window(crate::panels::UiWindow::Industry)
+                    }
+                    _ => Action::Panel(panel),
+                }),
             });
         }
     }
@@ -1085,9 +1111,92 @@ pub struct Advisor {
     /// The offers of the inbox (deal, last day) and the scandals the toasts of the Power window
     /// have seen (T-335); `None` until the first look, so a loaded game does not toast its past.
     power_seen: Option<(BTreeSet<(String, u32)>, usize)>,
+    /// The game hour each chain building was first seen with a problem (T-337; UI state, not
+    /// the sim's), the day of the last idle toast of each area and the hour of the last look.
+    idle_since: BTreeMap<cp_building::BuildingId, u64>,
+    idle_toasted: BTreeMap<u8, u64>,
+    idle_hour: Option<u64>,
 }
 
+/// A chain building with a problem for this many game hours is idle (T-337).
+const IDLE_HOURS: u64 = 12;
+
 impl Advisor {
+    /// The toast of a chain building that has stood idle for half a day (T-337 §2.6): at most
+    /// one a day for each area. The timer is the advisor's, not the sim's.
+    fn idle_toast(&mut self, view: &SimView) -> Option<Advice> {
+        use cp_industry::IndustryProblem as P;
+        let db = view.content.as_deref()?;
+        let hour = view.tick.0 * 24 / TICKS_PER_DAY;
+        if self.idle_hour == Some(hour) {
+            return None;
+        }
+        self.idle_hour = Some(hour);
+        let mut stuck: BTreeSet<cp_building::BuildingId> = BTreeSet::new();
+        for (id, p) in &view.industry.problems {
+            if matches!(p, P::NoInput | P::Full | P::Depleted) && view.buildings.get(*id).is_some()
+            {
+                stuck.insert(*id);
+                self.idle_since.entry(*id).or_insert(hour);
+            }
+        }
+        self.idle_since.retain(|id, _| stuck.contains(id));
+        let day = hour / 24;
+        let (id, _) = self
+            .idle_since
+            .iter()
+            .find(|&(id, &since)| {
+                hour >= since + IDLE_HOURS
+                    && view
+                        .buildings
+                        .get(*id)
+                        .and_then(|b| cp_district::area_at(&view.area_map, b.pos))
+                        .is_some_and(|a| self.idle_toasted.get(&a.0).is_none_or(|&d| d < day))
+            })
+            .map(|(id, h)| (*id, *h))?;
+        let b = view.buildings.get(id)?;
+        let area = cp_district::area_at(&view.area_map, b.pos)?;
+        self.idle_toasted.insert(area.0, day);
+        let def = db.building(b.def);
+        let building = tr(&def.name);
+        let name = view.areas.get(area).map(|a| a.name.clone())?;
+        let text = match view.industry.problem_of(id) {
+            P::NoInput => {
+                let lacking = def.industry.as_ref().and_then(|s| {
+                    s.inputs.iter().map(|&(c, _)| c).min_by(|&x, &y| {
+                        view.industry
+                            .stock_of(id, x)
+                            .total_cmp(&view.industry.stock_of(id, y))
+                    })
+                });
+                trf!(
+                    "{area}: {building} has stood idle for half a day, {cargo} is missing",
+                    area = name,
+                    building = building,
+                    cargo = lacking.map_or_else(String::new, |c| tr(&format!("{c:?}")))
+                )
+            }
+            P::Full => trf!(
+                "{area}: {building} has stood idle for half a day, its storage is full",
+                area = name,
+                building = building
+            ),
+            _ => trf!(
+                "{area}: {building} has stood idle for half a day, the ground is spent",
+                area = name,
+                building = building
+            ),
+        };
+        Some(Advice {
+            id: "industry_idle",
+            severity: Severity::Warn,
+            text,
+            count: 1,
+            icon: Icon::Industry,
+            action: Some(Action::Jump(b.pos)),
+        })
+    }
+
     /// The toast of a new offer or a new scandal (T-335, `architecture/corruption-ui.md` §2.4).
     fn power_toast(&mut self, view: &SimView) -> Option<Advice> {
         let db = view.content.as_deref()?;
@@ -1161,7 +1270,7 @@ impl Advisor {
         problems_only: bool,
         hints_seen: Option<&mut std::collections::BTreeSet<String>>,
     ) {
-        if let Some(toast) = self.power_toast(view) {
+        if let Some(toast) = self.power_toast(view).or_else(|| self.idle_toast(view)) {
             self.just_shown = Some(toast.severity);
             self.shown = Some(Shown {
                 advice: toast,
@@ -2452,6 +2561,38 @@ mod tests {
         assert_eq!(got[0].id, "industry_level_up");
         assert!(got[0].text.contains("level 2"), "{}", got[0].text);
         assert!(level_advice(&sim.view(), &mut seen).is_empty());
+    }
+
+    /// T-337: a chain building with a problem for 12 game hours gives one toast, and an area
+    /// not more than one a day.
+    #[test]
+    fn an_idle_chain_building_toasts_after_half_a_day_once_a_day_per_area() {
+        use crate::industry::tests::{put, world_with_areas};
+        use cp_industry::{IndustryProblem, IndustryState};
+        let (mut sim, db, at) = world_with_areas(1);
+        put(&mut sim, &db, "forest_main", at[0]);
+        let saw = put(&mut sim, &db, "forest_extractor_s", at[0]);
+        let mill = put(&mut sim, &db, "forest_processor_a", at[0]);
+        let mut st = IndustryState::default();
+        st.problems.insert(saw, IndustryProblem::Full);
+        st.problems.insert(mill, IndustryProblem::NoInput);
+        sim.world_mut().insert_resource(st);
+        let v = sim.view();
+        let mut adv = Advisor::default();
+        adv.observe(&at_tick(v.clone(), hour_tick(1)), 0.0, false);
+        adv.observe(&at_tick(v.clone(), hour_tick(12)), 1.0, false);
+        assert_ne!(adv.current(1.1).map(|a| a.id), Some("industry_idle"));
+        adv.observe(&at_tick(v.clone(), hour_tick(13)), 2.0, false);
+        let toast = adv.current(2.1).expect("an idle toast");
+        assert_eq!(toast.id, "industry_idle");
+        assert!(toast.text.starts_with("Forestry: "), "{}", toast.text);
+        assert!(matches!(toast.action, Some(Action::Jump(_))));
+        // The other idle building of the area waits for tomorrow.
+        adv.shown = None;
+        adv.observe(&at_tick(v.clone(), hour_tick(14)), 3.0, false);
+        assert_ne!(adv.current(3.1).map(|a| a.id), Some("industry_idle"));
+        adv.observe(&at_tick(v, hour_tick(24 + 14)), 4.0, false);
+        assert_eq!(adv.current(4.1).map(|a| a.id), Some("industry_idle"));
     }
 
     /// T-335: a new offer and a new scandal come as toasts with a link to their tab; what was

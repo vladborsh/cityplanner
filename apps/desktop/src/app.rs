@@ -101,6 +101,8 @@ pub struct Options {
     /// `--inspect`: the first building of the city is picked a second into the run, so the
     /// inspector shows (T-284 screenshots).
     pub inspect: bool,
+    /// `--inspect-def <id>`: the first building of that type is picked (T-337 screenshots).
+    pub inspect_def: Option<String>,
     /// `--inspect-home`: the same with the first home that has complaints, else the first scored
     /// home (T-318c screenshots of the happiness rows).
     pub inspect_home: bool,
@@ -257,6 +259,7 @@ impl Options {
             no_parked: args.iter().any(|a| a == "--no-parked"),
             lang: value("--lang").and_then(|v| cp_locale::Lang::from_code(&v)),
             inspect: args.iter().any(|a| a == "--inspect"),
+            inspect_def: value("--inspect-def"),
             inspect_home: args.iter().any(|a| a == "--inspect-home"),
             door_demo: value("--door-demo").and_then(|v| v.parse().ok()),
             yard_demo: value("--yard-demo").and_then(|v| v.parse().ok()),
@@ -489,6 +492,30 @@ fn inspect_demo(
                     .is_some_and(|db| db.building(b.def).hotel.is_some())
             })
             .or_else(|| view.buildings.iter().next())
+    {
+        picked.0 = Some(cp_sim::inspect::Selection::Building(id));
+    }
+}
+
+/// `--inspect-def <id>`: the first building of that type is picked while nothing is.
+#[derive(Resource)]
+struct InspectDef(String);
+
+fn inspect_def_demo(
+    mut frame: Local<u32>,
+    want: Res<InspectDef>,
+    view: Option<Res<SimView>>,
+    picked: Option<ResMut<cp_tools::Picked>>,
+) {
+    *frame += 1;
+    let (Some(view), Some(mut picked)) = (view, picked) else {
+        return;
+    };
+    if *frame >= ZONING_FRAME
+        && picked.0.is_none()
+        && let Some(db) = view.content.as_ref()
+        && let Some(def) = db.building_id(&want.0)
+        && let Some((id, _)) = view.buildings.iter().find(|(_, b)| b.def == def)
     {
         picked.0 = Some(cp_sim::inspect::Selection::Building(id));
     }
@@ -779,6 +806,10 @@ pub fn run(opts: Options) -> AppExit {
     }
     if opts.inspect {
         app.add_systems(Update, inspect_demo);
+    }
+    if let Some(def) = &opts.inspect_def {
+        app.insert_resource(InspectDef(def.clone()))
+            .add_systems(Update, inspect_def_demo);
     }
     if opts.inspect_home {
         app.add_systems(Update, inspect_home_demo);

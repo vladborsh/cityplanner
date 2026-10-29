@@ -198,12 +198,16 @@ pub fn industry_window(
             header(ui, view, db);
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                for (t, label) in [
-                    (IndustryTab::Areas, tr("Areas")),
-                    (IndustryTab::Chains, tr("Chains")),
-                    (IndustryTab::Market, tr("Market")),
+                for (t, icon, label) in [
+                    (IndustryTab::Areas, Icon::Industry, tr("Areas")),
+                    (IndustryTab::Chains, Icon::IndustryChains, tr("Chains")),
+                    (IndustryTab::Market, Icon::IndustryMarket, tr("Market")),
                 ] {
-                    if ui.selectable_label(*industry_tab == t, label).clicked() {
+                    let on = *industry_tab == t;
+                    if ui
+                        .add(egui::Button::selectable(on, (icon.sized(18.0), label)))
+                        .clicked()
+                    {
                         *industry_tab = t;
                     }
                 }

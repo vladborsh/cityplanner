@@ -271,7 +271,7 @@ pub fn tabs(category: Category, view: Option<&SimView>) -> Vec<(String, Option<I
                 ));
             }
             // T-337: the four factories; the market is a tab of the Industry window.
-            out.push((tr("Factories"), Some(Icon::Industry)));
+            out.push((tr("Factories"), Some(Icon::IndustryFactories)));
         }
         Category::Parks => {
             out.push((tr("Areas"), Some(Icon::CategoryParks)));

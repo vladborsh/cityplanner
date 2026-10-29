@@ -381,7 +381,9 @@ pub(crate) fn factory_card(
                     match &lock {
                         None => {
                             let at = best_industrial_area(view, db).and_then(|(id, l)| {
-                                view.areas.get(id).map(|a| (a.name.clone(), l))
+                                view.areas
+                                    .get(id)
+                                    .map(|a| (a.name.chars().take(12).collect::<String>(), l))
                             });
                             let text = match at {
                                 Some((name, level)) => trf!(
@@ -622,13 +624,12 @@ fn market_card(ui: &mut egui::Ui, view: &SimView, db: &ContentDb, r: &TradeRow, 
         );
     }
     let colour = cargo_color(db, r.cargo);
-    p.rect_filled(
-        egui::Rect::from_min_size(rect.min + egui::vec2(8.0, 8.0), egui::vec2(12.0, 12.0)),
-        3.0,
-        colour,
+    egui::Image::new(Icon::cargo(r.cargo).image()).paint_at(
+        ui,
+        egui::Rect::from_min_size(rect.min + egui::vec2(6.0, 5.0), egui::vec2(20.0, 20.0)),
     );
     p.text(
-        rect.min + egui::vec2(26.0, 6.0),
+        rect.min + egui::vec2(32.0, 6.0),
         egui::Align2::LEFT_TOP,
         cargo_name(r.cargo),
         egui::FontId::proportional(14.0),

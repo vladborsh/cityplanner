@@ -141,6 +141,7 @@ pub fn info_panel(
                     if let Some(db) = view.and_then(|v| v.content.as_deref()) {
                         let mut rows = crate::buildings::unique_rows(db, &b.def);
                         if let Some(v) = view {
+                            crate::industry::industry_block(ui, v, b.id);
                             rows.extend(crate::industry::industry_rows(v, b.id));
                         }
                         if !rows.is_empty() {

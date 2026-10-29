@@ -274,20 +274,162 @@ pub fn problem_text(p: cp_industry::IndustryProblem) -> Option<&'static str> {
     }
 }
 
-/// Inspector rows of a chain building: what it holds per cargo and its problem.
+/// Inspector rows of a chain building that the block does not draw: its cargo's prices.
 pub fn industry_rows(view: &SimView, id: cp_building::BuildingId) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for &(cargo, v) in view.industry.stock.get(&id).map_or(&[][..], Vec::as_slice) {
-        out.push((
-            trf!("Stock: {cargo}", cargo = cargo_name(cargo)),
-            format!("{v:.0}"),
+    crate::trade::price_rows(view, id)
+}
+
+/// A cargo mini card: its picture, name, the rate of the day and the stock against the
+/// building's cap.
+fn cargo_mini(
+    ui: &mut egui::Ui,
+    db: &ContentDb,
+    cargo: CargoKind,
+    rate: Option<f32>,
+    stock: f32,
+    cap: f32,
+) {
+    egui::Frame::new()
+        .fill(egui::Color32::from_gray(36))
+        .corner_radius(5.0)
+        .inner_margin(egui::Margin::same(4))
+        .show(ui, |ui| {
+            ui.set_width(150.0);
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::Image::new(Icon::cargo(cargo).image())
+                        .fit_to_exact_size(egui::vec2(18.0, 18.0)),
+                );
+                ui.label(egui::RichText::new(cargo_name(cargo)).size(12.0));
+                if let Some(r) = rate {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let (sign, colour) = if r < 0.0 {
+                            ("", egui::Color32::from_rgb(235, 150, 70))
+                        } else {
+                            ("+", egui::Color32::from_rgb(120, 200, 120))
+                        };
+                        ui.label(
+                            egui::RichText::new(format!("{sign}{r:.0}/{}", tr("day")))
+                                .size(11.0)
+                                .color(colour),
+                        );
+                    });
+                }
+            });
+            let frac = if cap > 0.0 {
+                (stock / cap).min(1.0)
+            } else {
+                0.0
+            };
+            let (rect, resp) =
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), 5.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(rect, 2.5, egui::Color32::from_gray(56));
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * frac, 5.0)),
+                2.5,
+                crate::industry_win::cargo_color(db, cargo),
+            );
+            resp.on_hover_text(format!("{stock:.0} / {cap:.0}"));
+        });
+}
+
+/// The block of a chain building in the inspector (T-337 §2.6): what it is, its state, the
+/// input and output with their stock and speed, the load and the prices. Nothing for a
+/// building outside the chains. A warehouse's cargo is [`warehouse_controls`].
+pub fn industry_block(ui: &mut egui::Ui, view: &SimView, id: cp_building::BuildingId) {
+    let Some(db) = view.content.as_deref() else {
+        return;
+    };
+    let Some(b) = view.buildings.get(id) else {
+        return;
+    };
+    let def = db.building(b.def);
+    let Some(spec) = def.industry.as_ref() else {
+        return;
+    };
+    let area = cp_district::area_at(&view.area_map, b.pos);
+    let me = area.and_then(|a| {
+        crate::industry_data::area_buildings(view, a)
+            .into_iter()
+            .find(|c| c.id == id)
+    });
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::Image::new(crate::icons::def_icon(&def.icon))
+                .fit_to_exact_size(egui::vec2(28.0, 28.0)),
+        );
+        ui.vertical(|ui| {
+            let product = spec.outputs.first().map(|&(c, _)| cargo_name(c));
+            ui.strong(match product {
+                Some(p) => format!("{} · {p}", tr(&def.name)),
+                None => tr(&def.name),
+            });
+            if let Some(a) = area.and_then(|a| view.areas.get(a)) {
+                ui.weak(format!(
+                    "{} · {}",
+                    a.name,
+                    trf!("Lvl {level}", level = a.level)
+                ));
+            }
+        });
+        let problem = view.industry.problem_of(id);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            match problem_text(problem) {
+                Some(t) => ui.colored_label(
+                    egui::Color32::from_rgb(235, 150, 70),
+                    format!("▲ {}", tr(t)),
+                ),
+                None => ui.colored_label(egui::Color32::from_rgb(120, 200, 120), "✓"),
+            };
+        });
+    });
+    let (load, filled, slots, cap) = me
+        .as_ref()
+        .map_or((1.0, 0, 0, 0.0), |c| (c.load(), c.filled, c.slots, c.cap));
+    if matches!(
+        spec.role,
+        IndustryRole::Extractor | IndustryRole::Processor | IndustryRole::Factory
+    ) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+            ui.vertical(|ui| {
+                for &(c, r) in &spec.inputs {
+                    cargo_mini(
+                        ui,
+                        db,
+                        c,
+                        Some(-r * load),
+                        view.industry.stock_of(id, c),
+                        cap,
+                    );
+                }
+            });
+            if !spec.inputs.is_empty() {
+                ui.label("▸");
+            }
+            ui.vertical(|ui| {
+                for &(c, r) in &spec.outputs {
+                    cargo_mini(
+                        ui,
+                        db,
+                        c,
+                        Some(r * load),
+                        view.industry.stock_of(id, c),
+                        cap,
+                    );
+                }
+            });
+        });
+    }
+    if slots > 0 {
+        ui.weak(trf!(
+            "Production {pct}% · {filled} / {slots} workers",
+            pct = (load * 100.0).round() as u32,
+            filled = filled,
+            slots = slots
         ));
     }
-    if let Some(t) = problem_text(view.industry.problem_of(id)) {
-        out.push((tr("Problem"), tr(t)));
-    }
-    out.extend(crate::trade::price_rows(view, id));
-    out
 }
 
 /// The mode and cargo buttons of a warehouse's inspector (T-219): Balanced / Fill / Empty and
@@ -324,22 +466,71 @@ pub fn warehouse_controls(
         }));
     };
     ui.separator();
+    // The fill of the warehouse and the mark of what its mode aims at.
+    let held = view.industry.total(id);
+    let cap = crate::industry_data::area_buildings(
+        view,
+        cp_district::area_at(&view.area_map, b.pos).unwrap_or(cp_district::AreaId(0)),
+    )
+    .into_iter()
+    .find(|c| c.id == id)
+    .map_or(spec.storage, |c| c.cap);
+    let target = match now.mode {
+        WarehouseMode::Balanced => 0.5,
+        WarehouseMode::Fill => 1.0,
+        WarehouseMode::Empty => 0.0,
+    };
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width().max(220.0), 10.0),
+        egui::Sense::hover(),
+    );
+    ui.painter()
+        .rect_filled(rect, 4.0, egui::Color32::from_gray(48));
+    let frac = if cap > 0.0 {
+        (held / cap).min(1.0)
+    } else {
+        0.0
+    };
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * frac, 10.0)),
+        4.0,
+        egui::Color32::from_rgb(90, 160, 230),
+    );
+    let x = rect.left() + rect.width() * target;
+    ui.painter().line_segment(
+        [
+            egui::pos2(x, rect.top() - 2.0),
+            egui::pos2(x, rect.bottom() + 2.0),
+        ],
+        egui::Stroke::new(2.0, egui::Color32::WHITE),
+    );
+    resp.on_hover_text(format!("{held:.0} / {cap:.0}"));
     ui.horizontal(|ui| {
-        for (mode, label, hint) in [
-            (WarehouseMode::Balanced, "Balanced", "Keeps about half full"),
+        for (mode, icon, label, hint) in [
+            (
+                WarehouseMode::Balanced,
+                Icon::WarehouseBalanced,
+                "Balanced",
+                "Keeps about half full",
+            ),
             (
                 WarehouseMode::Fill,
+                Icon::WarehouseFill,
                 "Fill",
                 "Takes cargo in; gives it out only in a shortage",
             ),
             (
                 WarehouseMode::Empty,
+                Icon::WarehouseEmpty,
                 "Empty",
                 "Gives cargo out and exports it, takes none",
             ),
         ] {
             let r = ui
-                .selectable_label(now.mode == mode, tr(label))
+                .add(egui::Button::selectable(
+                    now.mode == mode,
+                    (icon.sized(18.0), tr(label)),
+                ))
                 .on_hover_text(tr(hint));
             actions.push((label.to_string(), r.rect));
             if r.clicked() && now.mode != mode {
@@ -358,7 +549,13 @@ pub fn warehouse_controls(
         );
         // `label` is the English key (tests click by it); the button shows its translation.
         for (cargo, label) in options {
-            let r = ui.selectable_label(now.cargo == cargo, tr(&label));
+            let r = ui.selectable_label(now.cargo == cargo, {
+                let text = egui::RichText::new(tr(&label));
+                match cargo {
+                    Some(c) => text.color(crate::industry_win::cargo_color(db, c)),
+                    None => text,
+                }
+            });
             actions.push((label, r.rect));
             if r.clicked() && now.cargo != cargo {
                 send(cargo, now.mode);
@@ -1146,17 +1343,25 @@ pub(crate) mod tests {
         assert_eq!(s.next_xp, Some(db.balance().industry_levels[0]));
         let farm = area_summary(&view, AreaId(2)).unwrap();
         assert_eq!((farm.buildings, farm.stock.len()), (1, 1));
-        let rows = industry_rows(&view, a);
+        // T-337: the inspector block shows the stock and the problem of a building.
+        let ctx = egui::Context::default();
+        let texts = |id| {
+            crate::testutil::frame_texts(&ctx, input(0.0, vec![]), |ui| {
+                industry_block(ui, &view, id)
+            })
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect::<Vec<_>>()
+        };
+        let sawmill = texts(a);
+        assert!(sawmill.iter().any(|t| t == "▲ storage full"), "{sawmill:?}");
         assert!(
-            rows.contains(&("Stock: Logs".to_string(), "30".to_string())),
-            "{rows:?}"
+            sawmill.iter().any(|t| t.starts_with("Forest Extractor S")),
+            "{sawmill:?}"
         );
-        assert!(
-            rows.iter()
-                .any(|(l, v)| l == "Problem" && v == "storage full"),
-            "{rows:?}"
-        );
-        assert!(industry_rows(&view, b).iter().all(|(l, _)| l != "Problem"));
+        assert!(sawmill.iter().any(|t| t == "Logs"), "{sawmill:?}");
+        let main = texts(b);
+        assert!(main.iter().all(|t| !t.contains("storage full")), "{main:?}");
     }
 
     /// T-211: the chain sections list the four resources with their six buildings in role order,

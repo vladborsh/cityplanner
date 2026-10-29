@@ -1511,4 +1511,9 @@
     "✓ can build: {area} · level {level}": "✓ can build: {area} · level {level}",
     "Main building": "Main building",
     "Would have to buy: {cargo}": "Would have to buy: {cargo}",
+    "{area}: {building} has stood idle for half a day, its storage is full": "{area}: {building} has stood idle for half a day, its storage is full",
+    "{area}: {building} has stood idle for half a day, the ground is spent": "{area}: {building} has stood idle for half a day, the ground is spent",
+    "{area}: {building} has stood idle for half a day, {cargo} is missing": "{area}: {building} has stood idle for half a day, {cargo} is missing",
+    "{name}: level {level}. Opened: {buildings} · storage +10%": "{name}: level {level}. Opened: {buildings} · storage +10%",
+    "Production {pct}% · {filled} / {slots} workers": "Production {pct}% · {filled} / {slots} workers",
 }

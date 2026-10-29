@@ -66,6 +66,26 @@ icons! {
     DistrictTabStats => "district_tab_stats",
     SpecNone => "spec_none",
     Industry => "industry",
+    // The Industry window and tray (T-337).
+    IndustryChains => "industry_chains",
+    IndustryMarket => "industry_market",
+    IndustryFactories => "industry_factories",
+    WarehouseBalanced => "warehouse_balanced",
+    WarehouseFill => "warehouse_fill",
+    WarehouseEmpty => "warehouse_empty",
+    CargoGoods => "cargo_goods",
+    CargoCrops => "cargo_crops",
+    CargoLogs => "cargo_logs",
+    CargoOre => "cargo_ore",
+    CargoOil => "cargo_oil",
+    CargoAnimalProducts => "cargo_animalproducts",
+    CargoFlour => "cargo_flour",
+    CargoPlanks => "cargo_planks",
+    CargoPaper => "cargo_paper",
+    CargoMetals => "cargo_metals",
+    CargoGlass => "cargo_glass",
+    CargoPetroleum => "cargo_petroleum",
+    CargoPlastics => "cargo_plastics",
     Parks => "parks",
     CategoryParks => "category_parks",
     ParkCityPark => "park_city_park",
@@ -192,6 +212,26 @@ icons! {
 }
 
 impl Icon {
+    /// The picture of a cargo (T-337); the content's `icon` names the same file.
+    pub fn cargo(kind: cp_content::CargoKind) -> Icon {
+        use cp_content::CargoKind as C;
+        match kind {
+            C::Goods => Icon::CargoGoods,
+            C::Crops => Icon::CargoCrops,
+            C::Logs => Icon::CargoLogs,
+            C::Ore => Icon::CargoOre,
+            C::Oil => Icon::CargoOil,
+            C::AnimalProducts => Icon::CargoAnimalProducts,
+            C::Flour => Icon::CargoFlour,
+            C::Planks => Icon::CargoPlanks,
+            C::Paper => Icon::CargoPaper,
+            C::Metals => Icon::CargoMetals,
+            C::Glass => Icon::CargoGlass,
+            C::Petroleum => Icon::CargoPetroleum,
+            C::Plastics => Icon::CargoPlastics,
+        }
+    }
+
     /// An icon of `size` points as a widget with a fixed footprint: the space is taken even
     /// while the image is still loading (or cannot load), so layouts do not jump.
     pub fn show(self, ui: &mut egui::Ui, size: f32) -> egui::Response {

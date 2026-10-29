@@ -1511,4 +1511,9 @@
     "✓ can build: {area} · level {level}": "✓ можно: {area} · ур. {level}",
     "Main building": "Центр",
     "Would have to buy: {cargo}": "Придётся покупать: {cargo}",
+    "{area}: {building} has stood idle for half a day, its storage is full": "{area}: «{building}» стоит полдня — склад полон",
+    "{area}: {building} has stood idle for half a day, the ground is spent": "{area}: «{building}» стоит полдня — месторождение истощено",
+    "{area}: {building} has stood idle for half a day, {cargo} is missing": "{area}: «{building}» стоит полдня — не хватает: {cargo}",
+    "{name}: level {level}. Opened: {buildings} · storage +10%": "{name}: уровень {level}. Открыто: {buildings} · склады +10%",
+    "Production {pct}% · {filled} / {slots} workers": "Выработка {pct}% · {filled} / {slots} работников",
 }

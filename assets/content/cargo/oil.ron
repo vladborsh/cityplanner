@@ -1,8 +1,8 @@
-// Prices are placeholders // tune later (T-208). Icon: temporary until the cargo icons are drawn.
+// Prices are placeholders // tune later (T-208).
 Cargo((
     kind: Oil,
     name: "Oil",
-    icon: "zone_industrial",
+    icon: "cargo_oil",
     color: (40, 40, 50),
     export_price: 8.0,
     import_price: 12.0,
