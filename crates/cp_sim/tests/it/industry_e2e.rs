@@ -211,6 +211,31 @@ fn a_sawmill_fills_its_store_in_proportion_to_its_workers_and_nothing_without() 
     assert_eq!(problem(&sim, saw), IndustryProblem::None);
 }
 
+/// T-337: the view carries the workers `(filled, slots)` of every chain building, the pair
+/// `run_industry` takes its load from; buildings without an industry spec are not in it.
+#[test]
+fn the_view_gives_the_workers_of_a_chain_building() {
+    let c = content();
+    let mut sim = world(&c);
+    forest_area(&mut sim, &c);
+    let at = spot(&sim, 7);
+    place(&mut sim, &c, "forest_extractor_s", at).unwrap();
+    let saw = building_of(&sim, &c, "forest_extractor_s");
+    let slots: u16 = c
+        .building(c.building_id("forest_extractor_s").unwrap())
+        .jobs
+        .iter()
+        .sum();
+    assert_eq!(sim.view().industry_jobs.get(&saw), Some(&(0, slots)));
+    staff(&mut sim, saw, [4, 0, 0, 0]);
+    assert_eq!(sim.view().industry_jobs.get(&saw), Some(&(4, slots)));
+    // One run: the sim reads the same pair the view gives (the job market may move a worker).
+    days(&mut sim, 1);
+    let logs = stock(&sim, saw, CargoKind::Logs);
+    let (filled, slots) = sim.view().industry_jobs[&saw];
+    assert!(filled <= slots && logs > 0.0, "{logs} {filled}/{slots}");
+}
+
 #[test]
 fn a_processor_without_input_says_so_and_with_input_makes_planks() {
     let c = content();

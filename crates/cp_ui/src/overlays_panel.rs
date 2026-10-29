@@ -91,7 +91,7 @@ pub struct OverlayRects {
 
 /// The windows of the row, in order (one row in the top bar): money, charts, services, lines; policies,
 /// saves, debug; then the settings button follows.
-const ROW: [UiWindow; 10] = [
+const ROW: [UiWindow; 11] = [
     UiWindow::Budget,
     UiWindow::Metrics,
     UiWindow::Jobs,
@@ -99,6 +99,7 @@ const ROW: [UiWindow; 10] = [
     UiWindow::Lines,
     UiWindow::Policies,
     UiWindow::Power,
+    UiWindow::Industry,
     UiWindow::Saves,
     UiWindow::Demand,
     UiWindow::Debug,
@@ -124,6 +125,9 @@ fn window_on(state: &UiState, files: &FileMenu, w: UiWindow) -> bool {
         UiWindow::Services => state.services_open,
         UiWindow::Lines => state.lines_open,
         UiWindow::Policies => state.policies_open,
+        UiWindow::Industry | UiWindow::IndustryChains | UiWindow::IndustryMarket => {
+            state.industry_open
+        }
         UiWindow::Power | UiWindow::Offers | UiWindow::Axis => state.power_open,
         UiWindow::Institutions | UiWindow::Scandals => state.power_open,
         UiWindow::Saves => files.open,
@@ -141,6 +145,9 @@ fn toggle_window(state: &mut UiState, files: &mut FileMenu, w: UiWindow) {
         UiWindow::Services => state.services_open = !on,
         UiWindow::Lines => state.lines_open = !on,
         UiWindow::Policies => state.policies_open = !on,
+        UiWindow::Industry | UiWindow::IndustryChains | UiWindow::IndustryMarket => {
+            state.industry_open = !on
+        }
         UiWindow::Power | UiWindow::Offers | UiWindow::Axis => state.power_open = !on,
         UiWindow::Institutions | UiWindow::Scandals => state.power_open = !on,
         UiWindow::Saves => toggle_saves(files),

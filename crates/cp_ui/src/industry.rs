@@ -4,7 +4,7 @@
 
 use bevy_egui::egui;
 use cp_content::{BuildingDefId, CargoKind, ContentDb, IndustryRole, ResourceKind};
-use cp_district::{AreaId, AreaKind, DistrictCommand, NAME_MAX};
+use cp_district::{AreaId, AreaKind, DistrictCommand};
 use cp_locale::{tr, trf};
 use cp_render::{Overlay, OverlayState, resource_color};
 use cp_sim::{SimCommand, SimView};
@@ -101,7 +101,7 @@ fn send(outbox: &mut CommandOutbox, cmd: DistrictCommand) {
 }
 
 /// Shows the overlays of the category: the resources under the area tints.
-fn show_overlays(overlay: &mut OverlayState) {
+pub(crate) fn show_overlays(overlay: &mut OverlayState) {
     overlay.open_auto(Overlay::Resources);
 }
 
@@ -134,6 +134,9 @@ pub fn chain_sections(db: &ContentDb) -> Vec<(ResourceKind, Vec<Card>)> {
 /// building). The same rules as `cp_building::validate_industry_site`, read from the snapshot.
 pub fn industry_lock(view: &SimView, db: &ContentDb, def: BuildingDefId) -> Option<String> {
     let spec = db.building(def).industry.as_ref()?;
+    if spec.role == IndustryRole::Factory {
+        return crate::industry_data::factory_lock(view, db, def);
+    }
     let res = spec.resource?;
     if spec.role == IndustryRole::Main {
         return None;
@@ -364,86 +367,6 @@ pub fn warehouse_controls(
     });
 }
 
-fn area_panel(ui: &mut egui::Ui, view: &SimView, id: AreaId) {
-    let Some(s) = area_summary(view, id) else {
-        return;
-    };
-    // The summary of the chosen area stands under the list of areas (its tab).
-    if !crate::tray::is_active(ui.ctx(), &tr("Areas")) {
-        return;
-    }
-    ui.group(|ui| {
-        ui.strong(&s.name);
-        ui.label(trf!(
-            "{resource} · level {level}",
-            resource = tr(resource_name(s.resource)),
-            level = s.level
-        ));
-        let (frac, text) = match s.next_xp {
-            Some(next) => (
-                (s.xp as f32 / next.max(1) as f32).min(1.0),
-                trf!("{xp} / {next} xp", xp = s.xp, next = next),
-            ),
-            None => (1.0, trf!("{xp} xp (top level)", xp = s.xp)),
-        };
-        ui.add(egui::ProgressBar::new(frac).text(text));
-        ui.label(trf!(
-            plural "{n} buildings · {jobs} jobs",
-            n = s.buildings,
-            jobs = s.jobs
-        ));
-        if s.stock.is_empty() {
-            ui.weak(tr("Nothing stored yet."));
-        }
-        for (cargo, v) in &s.stock {
-            ui.label(format!("{}: {v:.0}", cargo_name(*cargo)));
-        }
-        economy_rows(ui, &s.economy);
-    });
-}
-
-/// The money of the last week of one area (T-316): the net in green or red.
-fn economy_rows(ui: &mut egui::Ui, e: &AreaEconomy) {
-    use cp_tools::format_money;
-    ui.separator();
-    ui.strong(tr("Last week"));
-    for (cargo, v) in &e.produced {
-        ui.label(trf!(
-            "Made: {cargo} {n}",
-            cargo = cargo_name(*cargo),
-            n = format!("{v:.0}")
-        ));
-    }
-    if e.produced.is_empty() {
-        ui.weak(tr("Nothing made."));
-    }
-    for (label, value) in [
-        ("Export income", e.exports),
-        ("Imports incl. transport", e.imports),
-        ("Building upkeep", e.upkeep),
-        ("Workers' taxes", e.taxes),
-    ] {
-        ui.horizontal(|ui| {
-            ui.label(tr(label));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(format_money(value));
-            });
-        });
-    }
-    let net = e.net();
-    let color = if net.0 >= 0 {
-        egui::Color32::LIGHT_GREEN
-    } else {
-        egui::Color32::LIGHT_RED
-    };
-    ui.horizontal(|ui| {
-        ui.strong(tr("Net profit"));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.colored_label(color, format_money(net));
-        });
-    });
-}
-
 /// The chain sections of the panel: a header per resource and a row of tiles; closed ones are
 /// grey with a padlock and say why.
 fn chain_panel(
@@ -569,7 +492,7 @@ pub fn industry_options(
     view: Option<&SimView>,
     tools: &mut ToolState,
     overlay: &mut OverlayState,
-    areas_open: &mut bool,
+    industry_open: &mut bool,
 ) {
     for kind in DistrictToolKind::ALL {
         let selected = tools.active == ActiveTool::Area && tools.area.kind == kind;
@@ -600,99 +523,13 @@ pub fn industry_options(
         tools.select(ActiveTool::None);
     }
     ui.separator();
-    if ui.selectable_label(*areas_open, tr("List ▸")).clicked() {
-        *areas_open = !*areas_open;
+    if ui.selectable_label(*industry_open, tr("Window")).clicked() {
+        *industry_open = !*industry_open;
     }
     if tools.active == ActiveTool::Area
         && let Some(a) = view.and_then(|v| tools.area.selected.and_then(|id| v.areas.get(id)))
     {
         ui.label(trf!("Painting: {name}", name = a.name));
-    }
-}
-
-/// The list of the industry areas and the summary of the chosen one (its own small window).
-pub fn area_list(
-    ui: &mut egui::Ui,
-    view: &SimView,
-    tools: &mut ToolState,
-    overlay: &mut OverlayState,
-    outbox: &mut CommandOutbox,
-) {
-    if view.areas.iter().next().is_none() {
-        ui.weak(tr(
-            "No areas yet: pick a resource, press New area, then paint with a brush.",
-        ));
-    }
-    for (id, a) in view.areas.iter() {
-        let AreaKind::Industry(kind) = a.kind else {
-            continue;
-        };
-        let selected = tools.area.selected == Some(id);
-        ui.horizontal(|ui| {
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
-            ui.painter().rect_filled(rect, 3.0, swatch(kind));
-            if selected {
-                ui.painter().rect_stroke(
-                    rect,
-                    3.0,
-                    egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
-                    egui::StrokeKind::Outside,
-                );
-            }
-            if resp.on_hover_text(tr("Choose this area")).clicked() {
-                tools.area.selected = Some(id);
-                if tools.active != ActiveTool::Area {
-                    tools.select(ActiveTool::Area);
-                }
-                show_overlays(overlay);
-            }
-            let key = egui::Id::new(("area_name", id.0));
-            let mut buf: String = ui
-                .data(|m| m.get_temp(key))
-                .unwrap_or_else(|| a.name.clone());
-            if !ui.memory(|m| m.has_focus(key)) {
-                buf = a.name.clone();
-            }
-            let r = ui.add(
-                egui::TextEdit::singleline(&mut buf)
-                    .id(key)
-                    .desired_width(130.0)
-                    .char_limit(NAME_MAX),
-            );
-            if r.lost_focus() && buf.trim() != a.name && !buf.trim().is_empty() {
-                send(
-                    outbox,
-                    DistrictCommand::RenameArea {
-                        area: id,
-                        name: buf.trim().to_string(),
-                    },
-                );
-            }
-            ui.data_mut(|m| m.insert_temp(key, buf));
-            ui.label(trf!("L{level}", level = a.level));
-            if ui.small_button(tr("Delete")).clicked() {
-                send(outbox, DistrictCommand::DeleteArea { area: id });
-                if selected {
-                    tools.area.selected = None;
-                }
-            }
-        });
-        ui.weak(format!(
-            "    {}",
-            trf!(
-                plural "{resource} · {n} cells",
-                n = view.area_map.cell_count(id),
-                resource = tr(resource_name(kind))
-            )
-        ));
-    }
-}
-
-/// The summary of the chosen area, under the list (T-316: it holds the week's money, so it
-/// stays out of the list's scroll area).
-pub fn area_summary_panel(ui: &mut egui::Ui, view: &SimView, tools: &ToolState) {
-    if let Some(id) = tools.area.selected {
-        area_panel(ui, view, id);
     }
 }
 

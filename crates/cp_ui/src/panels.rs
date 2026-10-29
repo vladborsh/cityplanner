@@ -109,6 +109,15 @@ pub struct UiState {
     pub power_open: bool,
     /// The tab the Power window was left on (not saved).
     pub power_tab: crate::power::PowerTab,
+    /// The Industry window (T-337): areas, chains, market.
+    pub industry_open: bool,
+    /// The tab the Industry window was left on, the sub-tab of the selected area and the week
+    /// the money sub-tab shows (not saved).
+    pub industry_tab: crate::industry_win::IndustryTab,
+    pub industry_sub: crate::industry_win::AreaSub,
+    pub industry_money: crate::industry_win::MoneyWeek,
+    /// The area whose Delete asks once more.
+    pub industry_confirm: Option<cp_district::AreaId>,
     /// Name drafts of the Lines window.
     pub lines: crate::lines::LinesDraft,
     /// The list of districts or areas of the open tray category is open (T-317).
@@ -203,6 +212,8 @@ pub enum UiWindow {
     Lines,
     Policies,
     Saves,
+    /// The areas, the chains and the market of the industry (T-337).
+    Industry,
     /// The grey deals, the corruption axis, the institutions and the scandals in one (T-335).
     Power,
     Debug,
@@ -211,6 +222,9 @@ pub enum UiWindow {
     Axis,
     Institutions,
     Scandals,
+    /// Aliases of [`UiWindow::Industry`] on a tab: `--open industry:chains`.
+    IndustryChains,
+    IndustryMarket,
 }
 
 impl UiState {
@@ -230,6 +244,13 @@ impl UiState {
             UiWindow::Services => self.services_open = true,
             UiWindow::Lines => self.lines_open = true,
             UiWindow::Policies => self.policies_open = true,
+            UiWindow::Industry => self.industry_open = true,
+            UiWindow::IndustryChains => {
+                self.show_industry(crate::industry_win::IndustryTab::Chains)
+            }
+            UiWindow::IndustryMarket => {
+                self.show_industry(crate::industry_win::IndustryTab::Market)
+            }
             UiWindow::Power | UiWindow::Axis => self.power_open = true,
             UiWindow::Offers => self.show_power(crate::power::PowerTab::Offers),
             UiWindow::Institutions => self.show_power(crate::power::PowerTab::Institutions),
@@ -241,7 +262,7 @@ impl UiState {
 }
 
 impl UiWindow {
-    pub const ALL: [UiWindow; 10] = [
+    pub const ALL: [UiWindow; 11] = [
         UiWindow::Budget,
         UiWindow::Demand,
         UiWindow::Metrics,
@@ -252,6 +273,7 @@ impl UiWindow {
         UiWindow::Saves,
         UiWindow::Debug,
         UiWindow::Power,
+        UiWindow::Industry,
     ];
 
     /// The window named `name` (lower case: `budget`, `jobs`, ...), for the `--open` flag.
@@ -264,6 +286,9 @@ impl UiWindow {
             "services" => UiWindow::Services,
             "lines" => UiWindow::Lines,
             "policies" => UiWindow::Policies,
+            "industry" => UiWindow::Industry,
+            "industry:chains" => UiWindow::IndustryChains,
+            "industry:market" => UiWindow::IndustryMarket,
             "power" => UiWindow::Power,
             "offers" => UiWindow::Offers,
             "axis" => UiWindow::Axis,
@@ -284,6 +309,7 @@ impl UiWindow {
             UiWindow::Services => "City services (F4)",
             UiWindow::Lines => "Lines",
             UiWindow::Policies => "City policies",
+            UiWindow::Industry | UiWindow::IndustryChains | UiWindow::IndustryMarket => "Industry",
             UiWindow::Power | UiWindow::Offers | UiWindow::Axis => "Mayor's power",
             UiWindow::Institutions | UiWindow::Scandals => "Mayor's power",
             UiWindow::Saves => "Save / Load",
@@ -300,6 +326,9 @@ impl UiWindow {
             UiWindow::Services => Icon::Services,
             UiWindow::Lines => Icon::Lines,
             UiWindow::Policies => Icon::DistrictTabPolicies,
+            UiWindow::Industry | UiWindow::IndustryChains | UiWindow::IndustryMarket => {
+                Icon::Industry
+            }
             UiWindow::Power
             | UiWindow::Offers
             | UiWindow::Axis

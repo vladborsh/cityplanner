@@ -32,6 +32,8 @@ pub mod happiness;
 pub mod hint;
 pub mod icons;
 pub mod industry;
+pub mod industry_data;
+pub mod industry_win;
 pub mod info;
 pub mod jobs;
 pub mod junction_marks;
@@ -313,6 +315,7 @@ pub(crate) fn draw_frame(ctx: &egui::Context, f: UiFrame) {
         lines::lines_window(ctx, &mut st.lines_open, view, &mut st.lines, outbox);
         policies::city_policies_window(ctx, &mut st.policies_open, view, outbox);
         power::power_window(ctx, st, view, tools, outbox);
+        industry_win::industry_window(ctx, st, view, tools, overlay, picked, outbox);
     }
     if state.debug_open {
         debug::debug_window(

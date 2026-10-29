@@ -15,6 +15,7 @@ pub struct Win<'a> {
     title: &'a str,
     open: &'a mut bool,
     anchor: Option<(egui::Align2, egui::Vec2)>,
+    default_pos: Option<egui::Pos2>,
 }
 
 /// A window with `icon` and `title`, shown while `*open`; the header's close button clears it.
@@ -25,6 +26,7 @@ pub fn window<'a>(id: &'a str, icon: Icon, title: &'a str, open: &'a mut bool) -
         title,
         open,
         anchor: None,
+        default_pos: None,
     }
 }
 
@@ -32,6 +34,12 @@ impl Win<'_> {
     /// Pins the window to a corner (the player cannot drag it away).
     pub fn anchor(mut self, align: egui::Align2, offset: egui::Vec2) -> Self {
         self.anchor = Some((align, offset));
+        self
+    }
+
+    /// Where a new window first stands (the player may drag it away).
+    pub fn default_pos(mut self, pos: egui::Pos2) -> Self {
+        self.default_pos = Some(pos);
         self
     }
 
@@ -51,6 +59,9 @@ impl Win<'_> {
             .resizable(false);
         if let Some((align, offset)) = self.anchor {
             win = win.anchor(align, offset);
+        }
+        if let Some(pos) = self.default_pos {
+            win = win.default_pos(pos);
         }
         let out = win.show(ctx, |ui| {
             ui.horizontal(|ui| {

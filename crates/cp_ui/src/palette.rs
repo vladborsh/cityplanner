@@ -473,7 +473,7 @@ fn options(
             crate::districts::districts_options(ui, view, tools, &mut state.areas_open)
         }
         Category::Industry => {
-            crate::industry::industry_options(ui, view, tools, overlay, &mut state.areas_open)
+            crate::industry::industry_options(ui, view, tools, overlay, &mut state.industry_open)
         }
         Category::Parks => {
             crate::parks::parks_options(ui, view, tools, overlay, &mut state.areas_open)
@@ -495,12 +495,7 @@ pub fn list_window(
     let (Some(category), Some(view)) = (state.category, view) else {
         return;
     };
-    if !state.areas_open
-        || !matches!(
-            category,
-            Category::Districts | Category::Industry | Category::Parks
-        )
-    {
+    if !state.areas_open || !matches!(category, Category::Districts | Category::Parks) {
         return;
     }
     let title = match category {
@@ -520,21 +515,11 @@ pub fn list_window(
         .resizable(false)
         .show(ctx, |ui| {
             egui::ScrollArea::vertical()
-                .max_height(if category == Category::Industry {
-                    150.0
-                } else {
-                    260.0
-                })
+                .max_height(260.0)
                 .show(ui, |ui| match category {
                     Category::Districts => crate::districts::district_list(ui, view, tools, outbox),
-                    Category::Industry => {
-                        crate::industry::area_list(ui, view, tools, overlay, outbox)
-                    }
                     _ => crate::parks::area_list(ui, view, tools, overlay, outbox),
                 });
-            if category == Category::Industry {
-                crate::industry::area_summary_panel(ui, view, tools);
-            }
         });
     state.areas_open = open;
 }
@@ -1163,36 +1148,20 @@ mod tests {
         );
     }
 
-    /// T-317: the list of areas is its own window, opened by the "List" button of the strip.
+    /// T-317: the list of areas is its own window, opened by the "List" button of the strip;
+    /// T-337: the Industry strip's "Window" button opens the Industry window instead.
     #[test]
-    fn the_list_button_opens_the_area_list_window() {
+    fn the_list_button_opens_the_list_and_the_window_button_the_industry_window() {
         let mut rig = Rig::new();
-        rig.click_category(Category::Industry);
+        rig.click_category(Category::Parks);
         assert!(!rig.state.areas_open);
         rig.click_label("List ▸");
         assert!(rig.state.areas_open);
-        rig.t += 0.1;
-        let Rig {
-            ctx,
-            state,
-            tools,
-            overlay,
-            outbox,
-            view,
-            t,
-            ..
-        } = &mut rig;
-        // A window needs a frame or two to size itself before it paints.
-        let mut texts = Vec::new();
-        for n in 0..4 {
-            texts = frame_texts(ctx, input(*t + 0.1 * f64::from(n), vec![]), |ui| {
-                list_window(ui.ctx(), state, Some(view), tools, overlay, outbox);
-            });
-        }
-        assert!(
-            texts.iter().any(|(t, _)| t.contains("No areas yet")),
-            "{texts:?}"
-        );
+        let mut rig = Rig::new();
+        rig.click_category(Category::Industry);
+        assert!(!rig.state.industry_open);
+        rig.click_label("Window");
+        assert!(rig.state.industry_open && !rig.state.areas_open);
     }
 
     #[test]

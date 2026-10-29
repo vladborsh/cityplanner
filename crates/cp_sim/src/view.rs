@@ -89,6 +89,9 @@ pub struct SimView {
     pub industry_ledger: cp_industry::IndustryLedger,
     /// The per-area books of the cargo trade (T-316).
     pub area_books: cp_industry::AreaBooks,
+    /// Workers `(filled, slots)` of each chain building (T-337): the load `run_industry` takes
+    /// for its output. Derived from the citizen grid; not saved, not in the checksum.
+    pub industry_jobs: Arc<std::collections::BTreeMap<cp_building::BuildingId, (u16, u16)>>,
     /// What waits at the cargo stations for the next train (T-216).
     pub cargo_hubs: cp_transit::CargoHubs,
     /// The park areas: attractiveness, capacity, visitors, fee (T-223).
@@ -695,6 +698,32 @@ impl SimRunner {
         snap
     }
 
+    /// `SimView::industry_jobs`: the workers and job slots of every building with an industry
+    /// spec, as `run_industry` counts them (all four education levels).
+    fn industry_jobs_snapshot(
+        &self,
+    ) -> std::collections::BTreeMap<cp_building::BuildingId, (u16, u16)> {
+        let mut out = std::collections::BTreeMap::new();
+        let (Some(grid), Some(content), Some(citizens)) = (
+            self.world().get_resource::<BuildingGrid>(),
+            self.world().get_resource::<SimContent>(),
+            self.world().get_resource::<cp_citizen::CitizenGrid>(),
+        ) else {
+            return out;
+        };
+        let db = &*content.0;
+        for (id, b) in grid.iter() {
+            let def = db.building(b.def);
+            if def.industry.is_none() {
+                continue;
+            }
+            let slots: u16 = def.jobs.iter().sum();
+            let filled: u16 = (0..4).map(|l| citizens.jobs_filled(id, l)).sum();
+            out.insert(id, (filled, slots));
+        }
+        out
+    }
+
     /// The parked cars for `SimView::parked`.
     fn parked_snapshot(&self) -> Arc<cp_traffic::ParkedView> {
         let agents = self.world().get_resource::<cp_traffic::Agents>();
@@ -955,6 +984,7 @@ impl SimRunner {
                 .get_resource::<cp_industry::AreaBooks>()
                 .cloned()
                 .unwrap_or_default(),
+            industry_jobs: Arc::new(self.industry_jobs_snapshot()),
             cargo_hubs: self
                 .world()
                 .get_resource::<cp_transit::CargoHubs>()

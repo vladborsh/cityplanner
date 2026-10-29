@@ -81,6 +81,7 @@ pub struct Options {
     pub open_windows: Vec<cp_ui::UiWindow>,
     /// `--budget-tab budgets`: the economy window's tab at start (screenshots).
     pub budget_tab: Option<cp_ui::budget::BudgetTab>,
+    pub industry_sub: Option<cp_ui::industry_win::AreaSub>,
     /// `--metrics-section Tourism`: the metrics window starts scrolled to that section (shots).
     pub metrics_section: Option<String>,
     /// `--pointer x,y`: hold the pointer there in a hidden shot, so the cursor hint shows.
@@ -293,6 +294,8 @@ impl Options {
             }),
             tray_tab: value("--tray-tab"),
             budget_tab: value("--budget-tab").and_then(|v| cp_ui::budget::BudgetTab::parse(&v)),
+            industry_sub: value("--industry-sub")
+                .and_then(|v| cp_ui::industry_win::AreaSub::parse(&v)),
             metrics_section: value("--metrics-section"),
             always_day: args.iter().any(|a| a == "--always-day"),
             net_debug: args.iter().any(|a| a == "--net-debug"),
@@ -861,6 +864,7 @@ pub fn run(opts: Options) -> AppExit {
             fold_overlays: opts.fold_overlays,
             open_windows: opts.open_windows.clone(),
             budget_tab: opts.budget_tab,
+            industry_sub: opts.industry_sub,
             metrics_section: opts.metrics_section.clone(),
             category: opts.category,
             tray_tab: opts.tray_tab.clone(),

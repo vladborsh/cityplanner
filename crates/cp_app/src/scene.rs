@@ -1092,7 +1092,106 @@ pub fn build_industry_books(sim: &mut SimRunner) -> Vec<Vec2> {
     books
         .money
         .insert(1, (Cost::scaled(420.0, 1.0), Cost::scaled(910.0, 1.0)));
+    chain_buildings(sim, at[0]);
     at
+}
+
+/// The farm chain of area 1 for the shots of the Industry window (T-337): a main building, two
+/// fields, both processors and a warehouse, with workers and stock. Only the scene; the sim
+/// is not asked to build them.
+fn chain_buildings(sim: &mut SimRunner, centre: Vec2) {
+    use cp_building::{AccessPoint, Building, BuildingFlags, BuildingGrid, BuildingState, Lot};
+    use cp_content::CargoKind;
+    use cp_sim::{IndustryProblem, IndustryState};
+    let db = embedded_content();
+    let layout = [
+        ("farm_main", 0.0, 0.0, 0usize),
+        ("farm_extractor_s", -60.0, -40.0, 5),
+        ("farm_extractor_s", -60.0, 40.0, 3),
+        ("farm_extractor_l", 60.0, -40.0, 9),
+        ("farm_processor_a", 60.0, 40.0, 4),
+        ("farm_processor_b", 120.0, 0.0, 3),
+        ("farm_warehouse", 0.0, 80.0, 1),
+    ];
+    let mut ids = Vec::new();
+    for (name, dx, dz, _) in layout {
+        let def = db.building_id(name).expect("a farm building");
+        let d = db.building(def);
+        let id = sim
+            .world_mut()
+            .resource_mut::<BuildingGrid>()
+            .insert(Building {
+                def,
+                footprint: cp_building::Footprint::Lot(Lot {
+                    block: cp_core::Id::new(0, 0),
+                    col: 0,
+                    w: d.lot.0,
+                    d: d.lot.1,
+                }),
+                level: d.level,
+                state: BuildingState::Active,
+                ready_at: Tick(0),
+                pos: centre + Vec2::new(dx, dz),
+                rot: 0.0,
+                access: Some(AccessPoint {
+                    segment: cp_core::Id::new(0, 0),
+                    t: 0.5,
+                }),
+                flags: BuildingFlags::default(),
+                level_progress: 0.0,
+            });
+        ids.push(id);
+    }
+    {
+        let mut g = sim.world_mut().resource_mut::<cp_citizen::CitizenGrid>();
+        for (&id, &(_, _, _, workers)) in ids.iter().zip(&layout) {
+            for k in (0..workers).step_by(4) {
+                let n = (workers - k).min(4);
+                let hid = g.add_household(id, 0, Tick(0), &vec![(9000, 0, false); n]);
+                let members: Vec<_> = g
+                    .household(hid)
+                    .unwrap()
+                    .members
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .collect();
+                for m in members {
+                    g.set_job(m, id, 0);
+                }
+            }
+        }
+    }
+    let mut st = IndustryState::default();
+    st.stock.insert(ids[1], vec![(CargoKind::Crops, 220.0)]);
+    st.stock.insert(ids[2], vec![(CargoKind::Crops, 90.0)]);
+    st.stock.insert(ids[3], vec![(CargoKind::Crops, 120.0)]);
+    st.stock.insert(
+        ids[4],
+        vec![(CargoKind::Crops, 40.0), (CargoKind::AnimalProducts, 60.0)],
+    );
+    st.stock.insert(
+        ids[5],
+        vec![(CargoKind::Crops, 10.0), (CargoKind::Flour, 90.0)],
+    );
+    st.stock.insert(
+        ids[6],
+        vec![
+            (CargoKind::Crops, 300.0),
+            (CargoKind::AnimalProducts, 140.0),
+            (CargoKind::Flour, 160.0),
+        ],
+    );
+    st.problems.insert(ids[1], IndustryProblem::Full);
+    sim.world_mut().insert_resource(st);
+    if let Some(a) = sim
+        .world_mut()
+        .resource_mut::<cp_district::Areas>()
+        .get_mut(cp_district::AreaId(1))
+    {
+        a.level = 2;
+        a.xp = 3400;
+    }
 }
 
 /// Road tunnel scene (T-173): a street dives under the river of `river_valley`. Run it with

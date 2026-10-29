@@ -78,6 +78,8 @@ pub struct GamePlugin {
     pub open_windows: Vec<cp_ui::UiWindow>,
     /// The tab the economy window starts on (`--budget-tab`, for screenshots).
     pub budget_tab: Option<cp_ui::budget::BudgetTab>,
+    /// The sub-tab of the Industry window's area (`--industry-sub`, T-337).
+    pub industry_sub: Option<cp_ui::industry_win::AreaSub>,
     /// The metrics section the window starts scrolled to (`--metrics-section`, for screenshots).
     pub metrics_section: Option<String>,
     /// Open this palette category at start (`--category`, for screenshots).
@@ -201,6 +203,9 @@ impl Plugin for GamePlugin {
             };
             for &w in &self.open_windows {
                 ui_state.open_window(w);
+            }
+            if let Some(sub) = self.industry_sub {
+                ui_state.industry_sub = sub;
             }
             if let Some(tab) = self.budget_tab {
                 ui_state.budget.tab = tab;
