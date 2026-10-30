@@ -1,0 +1,40 @@
+- [Orca brief files](orca-dispatch-brief-files.md) — long dispatch specs get truncated; put briefs in <worktree>/.data/<slot>/briefs
+- [Delivery setup](cityplanner-delivery-setup.md) — slots, ff-only merge into coord checkout, GitHub remote vladborsh/cityplanner (master)
+- [Orca ask timeout](orca-ask-timeout.md) — worker asks time out ~15 min; send a holding note before escalating to the user
+- [GitHub CI + Pages](github-ci-unavailable.md) — repo public since 2026-10-27; CI = scripts/ci-gate.sh (sim tests only) + Pages deploy; local gate still merges
+- [Separate green steps](feedback-separate-green-steps.md) — run each check alone, verify status before ff-merge
+- [Rebase drops features](rebase-drops-features.md) — reset --soft squash after master moved deletes merged work; require --diff-filter=D check
+- [Disk and target dirs](disk-target-dirs.md) — slot target dirs 40-75 GB each filled disk; clean closed slots, max 3 agents
+- [Merge wait grep](merge-wait-grep.md) — wait on `^T-0xx:` merge subject; TL commits mention ids
+- [UI icons square/uniform](ui-icons-square-uniform.md) — user rule: build-tool icons square, uniform, unique per building; Water/Power are sections of Buildings
+- [Features over testing](feedback-features-over-testing.md) — user wants feature velocity: gate only at merge, few core tests, no per-feature balancing; build M2 services
+- [Decide defaults](feedback-decide-defaults.md) — user away: pick the fitting default, hard design calls go to the Architect; log choices for the morning
+- [Batch full gate](feedback-batch-full-gate.md) — quick gate per merge, TL runs full gate on master every ~4-5 merges / 2 h / milestone close
+- [Terminal-only reports](orca-terminal-reports.md) — devs may report only in terminal; poll terminals + branches when the waiter is quiet
+- [Roads by whole cells](feedback-roads-whole-cells.md) — user rule: snap to whole visible cells, no metres/half cells; accept road fixes only via sloppy-cursor player-flow test
+- [Rebuild release after merge](rebuild-release-after-merge.md) — user plays target/release/cp_desktop; rebuild before saying a fix is ready to test
+- [Perf = CPU contention](perf-cpu-contention.md) — user's stutter came from agent builds; use taskpolicy -b for agent heavy work
+- [Background QoS for builds](feedback-taskpolicy-background.md) — default normal priority (2026-10-24); CP_LOW_PRIORITY=1 / taskpolicy -b only when the TL says the user plays
+- [Playtest CPU contention](perf-cpu-contention.md) — stutter = agents' builds on the user's Mac; CP_LOW_PRIORITY=1 while the user plays; bench only at low load
+- [Approval window 2026-10-20](approval-window-2026-10-20.md) — all approved until ~10:50; dispatch T-286 spec without asking
+- [Bench A/B content](bench-ab-content.md) — base cp_bench needs its own --content (git archive) and a detached build; delete stale JSON, keep stderr
+- [TL land worktree target](tl-land-worktree-target.md) — temp worktrees need their own target; cp_app build.rs embeds content by abs path
+- [Playtest seed A/B](playtest-seed-ab.md) — superseded by playtest-scope (2026-10-21): one seed unless the brief asks for more
+- [Architect role](feedback-architect-role.md) — Architect writes NO code (2026-10-23): only specs for hard tasks + root-cause on request; all code to devs
+- [State at reboot 2026-10-21](project-state-2026-10-21-reboot.md) — resume: full gate on tl-batch-1021, then BUG-108 follow-up; BUG-105/T-296 in progress
+- [Agent handles](orca-agent-handles.md) — current terminal handles after reboot; relaunch with --continue, check for stale sessions
+- [Review routing](feedback-review-routing.md) — Reviewer TL only at milestone close; TL merges on quick gate + own check; restart agents fresh at ~300k ctx even mid-task (WIP commit + brief)
+- [State read between passes](sim-state-read-between-passes.md) — a field a per-tick system reads but a periodic pass builds must be saved; test with a mid-cycle save
+- [No checkout during gate](feedback-no-checkout-during-gate.md) — check pgrep gate before git checkout in coord; commit tasks on tl-land instead
+- [sccache setup](sccache-setup.md) — global wrapper; add every new slot target dir to basedirs or no cross-slot hits
+- [Long commands via nohup](long-commands-nohup.md) — foreground builds die on mid-turn messages (exit 144), background tasks at 10 min; nohup + log sentinel + until loop
+- [Playtest scope](feedback-playtest-scope.md) — no playtests for visual/UI; sim 1 seed at end; rebalancing postponed (BUG-114 parked)
+- [Scoped pkill](feedback-scoped-pkill.md) — never pkill by script name (killed the TL gate); kill own PID / own target-dir path only
+- [bench-100k fixture time](bench-100k-fixture-time.md) — release fixture gen ~10 min (measured 2026-10-23); 2 h only under background QoS + load 40
+- [cp_desktop always --hidden](feedback-cp-desktop-hidden.md) — shots/tests need --hidden (+--ui), perl alarm timeout
+- [Desktop runs hidden](feedback-desktop-hidden.md) — always pass --hidden to cp_desktop for shots/demos; visible windows popped up on the user
+- [Target sweep breaks cargo](target-sweep-breaks-cargo.md) — old-mtime sweep deletes live rlibs; link errors on lib*.rlib; fix: rm -rf own <slot>/debug
+- [Waiter always on](feedback-waiter-always-on.md) — always keep a background orchestration waiter; 2026-10-23 three READYs sat unseen 8 h
+- [Landing = format order](landing-order-format-order.md) — TL 2026-10-24: branches land in save-format order; rebase only on TL go, take the assigned format number
+- [Visual bug acceptance](feedback-visual-bug-acceptance.md) — merge a visual fix only if the after-shot (user camera) no longer shows the complaint; BUG-122 merged half-done 2026-10-27
+- [Models from role files](feedback-role-models.md) — agent model = agents/roles/<role>.md ## Model (devs Sonnet); read it before every launch, it beats memory notes
